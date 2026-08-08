@@ -1,0 +1,78 @@
+{
+  "name": "quiet-choir",
+  "version": "0.0.0",
+  "description": "Harness-agnostic dynamic workflows for agents.",
+  "keywords": [
+    "agents",
+    "orchestration",
+    "workflow",
+    "workflow-engine"
+  ],
+  "homepage": "https://github.com/plx/quiet-choir#readme",
+  "bugs": {
+    "url": "https://github.com/plx/quiet-choir/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/plx/quiet-choir.git"
+  },
+  "license": "MIT",
+  "private": true,
+  "type": "module",
+  "sideEffects": false,
+  "files": [
+    "dist",
+    "src",
+    "LICENSE",
+    "README.md"
+  ],
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "engines": {
+    "node": "^22.13.0 || ^24.0.0 || ^26.0.0",
+    "npm": ">=10.9.0"
+  },
+  "scripts": {
+    "build": "rimraf dist && tsc --project tsconfig.build.json",
+    "check": "npm run format:check && npm run lint && npm run typecheck && npm run test:coverage && npm run build && npm run docs:check && npm run package:check",
+    "ci": "npm run check",
+    "clean": "rimraf coverage dist docs/api",
+    "dev": "tsc --project tsconfig.build.json --watch --preserveWatchOutput",
+    "docs": "rimraf docs/api && typedoc",
+    "docs:check": "typedoc --emit none --treatWarningsAsErrors",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "lint": "eslint . --max-warnings 0",
+    "lint:fix": "eslint . --fix --max-warnings 0",
+    "package:check": "attw --pack . --ignore-rules cjs-resolves-to-esm && publint",
+    "prepack": "npm run build",
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
+    "test:watch": "vitest",
+    "typecheck": "tsc --project tsconfig.json"
+  },
+  "devDependencies": {
+    "@arethetypeswrong/cli": "0.18.5",
+    "@eslint/js": "10.0.1",
+    "@types/node": "22.13.16",
+    "@vitest/coverage-v8": "4.1.10",
+    "eslint": "10.8.1",
+    "eslint-config-prettier": "10.1.8",
+    "globals": "17.9.0",
+    "prettier": "3.9.6",
+    "publint": "0.3.23",
+    "rimraf": "6.1.3",
+    "typedoc": "0.28.20",
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.66.0",
+    "vitest": "4.1.10"
+  }
+}

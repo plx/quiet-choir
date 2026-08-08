@@ -1,0 +1,5 @@
+coverage/
+dist/
+docs/api/
+.context/
+package-lock.json
