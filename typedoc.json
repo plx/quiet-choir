@@ -1,0 +1,29 @@
+{
+  "$schema": "https://typedoc.org/schema.json",
+  "entryPoints": ["src/index.ts"],
+  "out": "docs/api",
+  "name": "quiet-choir",
+  "readme": "README.md",
+  "projectDocuments": ["docs/architecture.md", "docs/decisions/README.md"],
+  "tsconfig": "tsconfig.build.json",
+  "includeVersion": true,
+  "excludeInternal": true,
+  "excludePrivate": true,
+  "excludeProtected": true,
+  "categorizeByGroup": true,
+  "cleanOutputDir": true,
+  "githubPages": true,
+  "hostedBaseUrl": "https://plx.github.io/quiet-choir/",
+  "gitRevision": "main",
+  "navigationLinks": {
+    "GitHub": "https://github.com/plx/quiet-choir"
+  },
+  "validation": {
+    "invalidLink": true,
+    "invalidPath": true,
+    "notDocumented": true,
+    "notExported": true,
+    "rewrittenLink": true
+  },
+  "treatValidationWarningsAsErrors": true
+}
