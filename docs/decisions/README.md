@@ -13,3 +13,7 @@ Each record should contain:
 
 Keep superseded records in place and link them to the decision that replaces them. The history is
 part of the documentation.
+
+## Decisions
+
+- [0001: Structure CLI commands as plan-execute adapters](0001-plan-execute-cli.md)

@@ -2,7 +2,7 @@
 
 Harness-agnostic dynamic workflows for agents.
 
-**Status:** This project is at the scaffold stage. The package is intentionally private and
+**Status:** This project is at the CLI spike stage. The package is intentionally private and
 versioned `0.0.0` until its workflow contracts and release policy are ready.
 
 ## Direction
@@ -31,11 +31,60 @@ npm run check
 
 Conductor workspaces run `npm ci` automatically and expose test and TypeScript watch tasks.
 
+## CLI spike
+
+Run the TypeScript sources directly while developing:
+
+```sh
+npm run cli:dev -- --help
+npm run cli:dev -- workflow typecheck ./path/to/workflow.ts
+```
+
+Or run the compiled launcher after `npm run build`:
+
+```sh
+npm run cli -- workflow typecheck ./path/to/workflow.ts
+```
+
+The initial oclif command tree is:
+
+```text
+quiet-choir
+├── workflow
+│   ├── execute       (placeholder)
+│   ├── validate      (placeholder)
+│   └── typecheck     Type-check a TypeScript workflow
+├── configuration
+│   ├── doctor        (placeholder)
+│   ├── get           (placeholder)
+│   └── set           (placeholder)
+└── info
+    └── version       Show the running package version
+```
+
+Placeholder commands print their status and exit with code 2 so scripts do not mistake them for
+successful implementations.
+
+Every command inherits `--log-level trace|debug|info|warn|error|fatal|silent` (default `info`) and
+`-v, --verbose`, which selects `trace`. The two flags are mutually exclusive. Because oclif selects
+the command before parsing inherited flags, place them after the complete command name:
+`quiet-choir workflow execute --verbose`.
+
+`workflow typecheck` requires an existing `.ts`, `.tsx`, `.mts`, or `.cts` file. It applies the
+closest `tsconfig.json`, but replaces that config's roots with the requested entrypoint so imported
+dependencies and configured ambient declaration files are checked without reporting unrelated
+implementation files. Declaration files cannot be workflow entrypoints. It always disables emit and
+forces semantic checking. Without a `tsconfig.json`, it uses strict ES2023/NodeNext defaults and the
+Node 22 declarations matching quiet-choir's minimum supported runtime. Results identify the embedded
+compiler version.
+
 ## Common commands
 
 | npm                     | just              | Purpose                                  |
 | ----------------------- | ----------------- | ---------------------------------------- |
 | `npm run dev`           | `just dev`        | Rebuild TypeScript on changes            |
+| `npm run cli:dev -- …`  | —                 | Run the CLI directly from TypeScript     |
+| `npm run cli -- …`      | —                 | Run the compiled CLI                     |
 | `npm test`              | `just test`       | Run tests once                           |
 | `npm run test:watch`    | `just test-watch` | Run tests interactively                  |
 | `npm run test:coverage` | `just coverage`   | Run tests with coverage gates            |
@@ -59,6 +108,11 @@ docs/                Hand-written guides and generated API documentation
 See [Architecture](docs/architecture.md) for dependency-direction and documentation conventions.
 Durable cross-cutting choices are recorded in
 [architecture decision records](docs/decisions/README.md).
+
+The spike deliberately does not implement layered `.quiet-choir` settings. Oclif exposes a
+platform-specific user configuration directory, but it does not provide recursive project settings
+discovery or closest-wins merging. That application-level resolver will be designed separately when
+its schema and precedence rules are known.
 
 ## Documentation
 

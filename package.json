@@ -20,8 +20,13 @@
   "private": true,
   "type": "module",
   "sideEffects": false,
+  "bin": {
+    "quiet-choir": "./bin/run.js"
+  },
   "files": [
+    "bin",
     "dist",
+    "oclif.manifest.json",
     "src",
     "LICENSE",
     "README.md"
@@ -42,9 +47,11 @@
   },
   "scripts": {
     "build": "rimraf dist && tsc --project tsconfig.build.json",
-    "check": "npm run format:check && npm run lint && npm run typecheck && npm run test:coverage && npm run build && npm run docs:check && npm run package:check",
+    "check": "npm run format:check && npm run lint && npm run typecheck && npm run test:coverage && npm run build && npm run test:cli && npm run docs:check && npm run package:check",
     "ci": "npm run check",
-    "clean": "rimraf coverage dist docs/api",
+    "clean": "rimraf coverage dist docs/api oclif.manifest.json",
+    "cli": "node ./bin/run.js",
+    "cli:dev": "tsx ./bin/dev.js",
     "dev": "tsc --project tsconfig.build.json --watch --preserveWatchOutput",
     "docs": "rimraf docs/api && typedoc",
     "docs:check": "typedoc --emit none --treatWarningsAsErrors",
@@ -52,9 +59,12 @@
     "format:check": "prettier --check .",
     "lint": "eslint . --max-warnings 0",
     "lint:fix": "eslint . --fix --max-warnings 0",
+    "manifest": "oclif manifest",
     "package:check": "attw --pack . --ignore-rules cjs-resolves-to-esm && publint",
-    "prepack": "npm run build",
+    "postpack": "rimraf oclif.manifest.json",
+    "prepack": "npm run build && npm run manifest",
     "test": "vitest run",
+    "test:cli": "node ./test/cli-smoke.mjs",
     "test:coverage": "vitest run --coverage",
     "test:watch": "vitest",
     "typecheck": "tsc --project tsconfig.json"
@@ -62,18 +72,40 @@
   "devDependencies": {
     "@arethetypeswrong/cli": "0.18.5",
     "@eslint/js": "10.0.1",
-    "@types/node": "26.1.2",
     "@typescript/native": "npm:typescript@7.0.2",
     "@vitest/coverage-v8": "4.1.10",
     "eslint": "10.8.1",
     "eslint-config-prettier": "10.1.8",
     "globals": "17.9.0",
+    "oclif": "4.23.30",
     "prettier": "3.9.6",
     "publint": "0.3.23",
     "rimraf": "6.1.3",
+    "tsx": "4.23.11",
     "typedoc": "0.28.20",
-    "typescript": "npm:@typescript/typescript6@6.0.2",
     "typescript-eslint": "8.66.0",
     "vitest": "4.1.10"
+  },
+  "dependencies": {
+    "@oclif/core": "4.13.3",
+    "@types/node": "22.13.17",
+    "typescript": "npm:@typescript/typescript6@6.0.2"
+  },
+  "oclif": {
+    "bin": "quiet-choir",
+    "commands": "./dist/commands",
+    "dirname": "quiet-choir",
+    "topicSeparator": " ",
+    "topics": {
+      "configuration": {
+        "description": "Inspect and manage quiet-choir configuration"
+      },
+      "info": {
+        "description": "Show information about quiet-choir"
+      },
+      "workflow": {
+        "description": "Execute and inspect workflows"
+      }
+    }
   }
 }
