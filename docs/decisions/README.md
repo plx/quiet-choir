@@ -17,3 +17,4 @@ part of the documentation.
 ## Decisions
 
 - [0001: Structure CLI commands as plan-execute adapters](0001-plan-execute-cli.md)
+- [0002: External TypeScript workflows with local durable steps](0002-durable-external-workflows.md)

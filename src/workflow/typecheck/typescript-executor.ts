@@ -1,5 +1,5 @@
 import { createRequire } from 'node:module';
-import { dirname, relative, resolve } from 'node:path';
+import { dirname, relative, resolve, sep } from 'node:path';
 
 import ts from 'typescript';
 
@@ -74,12 +74,28 @@ function isDeclarationFile(filePath: string): boolean {
   );
 }
 
-function configuredDiagnostics(entrypoint: string, configPath: string): readonly ts.Diagnostic[] {
+interface CompilerAnalysis {
+  readonly diagnostics: readonly ts.Diagnostic[];
+  readonly sourceFiles: readonly string[];
+}
+
+function analyzeProgram(program: ts.Program): CompilerAnalysis {
+  return {
+    diagnostics: ts.getPreEmitDiagnostics(program),
+    sourceFiles: program
+      .getSourceFiles()
+      .map((file) => resolve(file.fileName))
+      .filter((file) => !file.split(sep).includes('node_modules'))
+      .sort(),
+  };
+}
+
+function configuredDiagnostics(entrypoint: string, configPath: string): CompilerAnalysis {
   const configDirectory = dirname(configPath);
   const readResult = ts.readConfigFile(configPath, (filePath) => ts.sys.readFile(filePath));
 
   if (readResult.error !== undefined) {
-    return [readResult.error];
+    return { diagnostics: [readResult.error], sourceFiles: [] };
   }
 
   const rawConfig = isRecord(readResult.config) ? readResult.config : {};
@@ -122,10 +138,10 @@ function configuredDiagnostics(entrypoint: string, configPath: string): readonly
     rootNames,
   });
 
-  return ts.getPreEmitDiagnostics(program);
+  return analyzeProgram(program);
 }
 
-function defaultDiagnostics(plan: TypecheckPlan): readonly ts.Diagnostic[] {
+function defaultDiagnostics(plan: TypecheckPlan): CompilerAnalysis {
   const program = ts.createProgram({
     options: {
       allowImportingTsExtensions: true,
@@ -146,7 +162,7 @@ function defaultDiagnostics(plan: TypecheckPlan): readonly ts.Diagnostic[] {
     rootNames: [plan.entrypoint],
   });
 
-  return ts.getPreEmitDiagnostics(program);
+  return analyzeProgram(program);
 }
 
 /** Type-checks workflow plans with the packaged stable TypeScript compiler API. */
@@ -166,11 +182,11 @@ export class TypeScriptExecutor implements Executor<TypecheckPlan, TypecheckResu
         : `Using ${plan.configuration.profile}`,
     );
 
-    const diagnostics = (
+    const analysis =
       plan.configuration.kind === 'tsconfig'
         ? configuredDiagnostics(plan.entrypoint, plan.configuration.path)
-        : defaultDiagnostics(plan)
-    ).map(normalizeDiagnostic);
+        : defaultDiagnostics(plan);
+    const diagnostics = analysis.diagnostics.map(normalizeDiagnostic);
 
     return Promise.resolve({
       compilerVersion: ts.version,
@@ -179,6 +195,7 @@ export class TypeScriptExecutor implements Executor<TypecheckPlan, TypecheckResu
       entrypoint: plan.entrypoint,
       kind: 'workflow.typecheck.result',
       ok: !diagnostics.some((diagnostic) => diagnostic.category === 'error'),
+      sourceFiles: analysis.sourceFiles,
     });
   }
 }

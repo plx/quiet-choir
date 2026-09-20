@@ -6,7 +6,7 @@ import tseslint from 'typescript-eslint';
 
 export default defineConfig(
   {
-    ignores: ['.context/**', 'coverage/**', 'dist/**', 'docs/api/**'],
+    ignores: ['.quiet-choir/**', '.context/**', 'coverage/**', 'dist/**', 'docs/api/**'],
   },
   {
     linterOptions: {

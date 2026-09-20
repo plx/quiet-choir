@@ -9,6 +9,7 @@ definitions to a particular agent harness.
   documented there.
 - `src/application/` contains framework-independent execution contracts and small executors.
 - `src/workflow/` contains workflow-specific plans, results, analysis, and executors.
+- `src/workflow/runtime/` defines the typed workflow API and local checkpoint/replay engine.
 - `src/cli/` adapts oclif concerns such as inherited flags, logging, and presentation.
 - `src/commands/` contains thin, filesystem-discovered oclif command adapters.
 - `bin/` contains development and compiled CLI launchers.
@@ -26,6 +27,24 @@ deterministic unit testing possible.
 
 Record consequential design choices as short architecture decision records under `docs/decisions/`.
 
+## Workflow execution
+
+Workflow definitions combine ordinary TypeScript control flow with durable operations on a supplied
+context. Zod schemas infer and validate workflow inputs/outputs, local step results, and structured
+agent responses. Dedicated Claude and Codex clients submit plain-data requests through the
+replaceable `Harness` interface; the runtime owns step identity, replay, and validation
+independently of the CLI processes that perform agent work.
+
+Each local run has a JSON checkpoint and an exclusive owner lock. Completed named steps are reused
+when their inputs match; unfinished steps execute again. A resumed workflow function starts from the
+beginning, so everything outside a durable operation must be deterministic and free of side effects.
+`ctx.map` provides bounded concurrency and `ctx.sleep` records a durable wake deadline. The CLI
+checks the workflow's transitive local source fingerprint alongside its explicit version. These
+checks guard compatibility without claiming to identify changes in external dependencies or
+services. See [ADR 0002](decisions/0002-durable-external-workflows.md) for the at-least-once
+execution contract and [research notes](research.md) for the comparison to Claude's dynamic
+workflows.
+
 ## CLI execution boundary
 
 Commands follow the plan-execute pattern recorded in [ADR 0001](decisions/0001-plan-execute-cli.md):
@@ -38,6 +57,8 @@ Commands follow the plan-execute pattern recorded in [ADR 0001](decisions/0001-p
 
 The application and workflow layers do not import oclif. Compiler objects, errors, filesystem
 handles, loggers, and other live runtime objects must not escape through plan or result types.
+Workflow definitions themselves contain schemas and callbacks; they are loaded executable code, not
+serializable CLI plans. Checkpoints contain only validated JSON data.
 
 The workflow typecheck executor currently embeds the stable TypeScript 6 compiler API as a runtime
 dependency. The repository itself builds with the native TypeScript 7 compiler; TypeScript 7.0's

@@ -6,7 +6,9 @@ describe('package entry point', () => {
   it('loads as an ES module', async () => {
     const entryPoint = await import('../src/index.js');
 
-    expect(Object.keys(entryPoint)).toEqual([]);
+    expect(entryPoint.defineWorkflow).toBeTypeOf('function');
+    expect(entryPoint.runWorkflow).toBeTypeOf('function');
+    expect(entryPoint.CliHarness).toBeTypeOf('function');
   });
 });
 
