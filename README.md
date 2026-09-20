@@ -178,6 +178,12 @@ Read [Architecture](docs/architecture.md), the
 [Claude API research](docs/research.md) for the reasoning and evidence behind the spike. See
 [CONTRIBUTING.md](CONTRIBUTING.md) and [SECURITY.md](SECURITY.md) for repository conventions.
 
+## Workflow comparison lab
+
+The [Workflow Lab](comparisons/README.md) contains versioned, side-by-side comparisons of 26
+original Claude Code workflows and their direct Quiet Choir ports. It includes per-workflow notes,
+inert equivalence fixtures, and the source for the privately published comparison site.
+
 ## License
 
 [MIT](LICENSE)

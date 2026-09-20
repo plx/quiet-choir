@@ -1,0 +1,480 @@
+{
+  "method": "Deterministic differential fixtures plus interrupted durable resume; no live agents",
+  "results": [
+    {
+      "workflow": "acceptance-qa-batch",
+      "fixture": "empty",
+      "status": "passed",
+      "agentCalls": 1,
+      "steps": 1
+    },
+    {
+      "workflow": "acceptance-qa-deep",
+      "fixture": "empty",
+      "status": "passed",
+      "agentCalls": 1,
+      "steps": 1
+    },
+    {
+      "workflow": "api-migration",
+      "fixture": "empty",
+      "status": "passed",
+      "agentCalls": 1,
+      "steps": 1
+    },
+    {
+      "workflow": "bug-hunt",
+      "fixture": "empty",
+      "status": "passed",
+      "agentCalls": 6,
+      "steps": 6
+    },
+    {
+      "workflow": "codebase-atlas",
+      "fixture": "empty",
+      "status": "passed",
+      "agentCalls": 1,
+      "steps": 1
+    },
+    {
+      "workflow": "dead-code-sweep",
+      "fixture": "empty",
+      "status": "passed",
+      "agentCalls": 3,
+      "steps": 3
+    },
+    {
+      "workflow": "deep-code-review",
+      "fixture": "empty",
+      "status": "passed",
+      "agentCalls": 1,
+      "steps": 1
+    },
+    {
+      "workflow": "dependency-upgrade",
+      "fixture": "empty",
+      "status": "passed",
+      "agentCalls": 5,
+      "steps": 5
+    },
+    {
+      "workflow": "design-tournament",
+      "fixture": "empty",
+      "status": "passed",
+      "agentCalls": 8,
+      "steps": 8
+    },
+    {
+      "workflow": "docs-drift-audit",
+      "fixture": "empty",
+      "status": "passed",
+      "agentCalls": 1,
+      "steps": 1
+    },
+    {
+      "workflow": "feature-factory",
+      "fixture": "empty",
+      "status": "passed",
+      "agentCalls": 5,
+      "steps": 5
+    },
+    {
+      "workflow": "feedback-synthesis",
+      "fixture": "empty",
+      "status": "passed",
+      "agentCalls": 3,
+      "steps": 3
+    },
+    {
+      "workflow": "flaky-test-hunt",
+      "fixture": "empty",
+      "status": "passed",
+      "agentCalls": 3,
+      "steps": 3
+    },
+    {
+      "workflow": "incident-investigation",
+      "fixture": "empty",
+      "status": "passed",
+      "agentCalls": 4,
+      "steps": 4
+    },
+    {
+      "workflow": "prd-decompose",
+      "fixture": "empty",
+      "status": "passed",
+      "agentCalls": 5,
+      "steps": 5
+    },
+    {
+      "workflow": "prd-to-spec",
+      "fixture": "empty",
+      "status": "passed",
+      "agentCalls": 9,
+      "steps": 9
+    },
+    {
+      "workflow": "project-bootstrap",
+      "fixture": "empty",
+      "status": "passed",
+      "agentCalls": 2,
+      "steps": 2
+    },
+    {
+      "workflow": "refactor-campaign",
+      "fixture": "empty",
+      "status": "passed",
+      "agentCalls": 1,
+      "steps": 1
+    },
+    {
+      "workflow": "release-gate",
+      "fixture": "empty",
+      "status": "passed",
+      "agentCalls": 7,
+      "steps": 7
+    },
+    {
+      "workflow": "release-notes",
+      "fixture": "empty",
+      "status": "passed",
+      "agentCalls": 1,
+      "steps": 1
+    },
+    {
+      "workflow": "requirements-to-prd",
+      "fixture": "empty",
+      "status": "passed",
+      "agentCalls": 4,
+      "steps": 4
+    },
+    {
+      "workflow": "research-synthesis",
+      "fixture": "empty",
+      "status": "passed",
+      "agentCalls": 4,
+      "steps": 4
+    },
+    {
+      "workflow": "roadmap-plan",
+      "fixture": "empty",
+      "status": "passed",
+      "agentCalls": 1,
+      "steps": 1
+    },
+    {
+      "workflow": "sdlc-orchestrator",
+      "fixture": "empty",
+      "status": "passed",
+      "agentCalls": 1,
+      "steps": 1
+    },
+    {
+      "workflow": "security-audit",
+      "fixture": "empty",
+      "status": "passed",
+      "agentCalls": 7,
+      "steps": 7
+    },
+    {
+      "workflow": "test-gap-filler",
+      "fixture": "empty",
+      "status": "passed",
+      "agentCalls": 2,
+      "steps": 2
+    },
+    {
+      "workflow": "acceptance-qa-batch",
+      "fixture": "populated",
+      "status": "passed",
+      "agentCalls": 3,
+      "steps": 3
+    },
+    {
+      "workflow": "acceptance-qa-deep",
+      "fixture": "populated",
+      "status": "passed",
+      "agentCalls": 6,
+      "steps": 6
+    },
+    {
+      "workflow": "api-migration",
+      "fixture": "populated",
+      "status": "passed",
+      "agentCalls": 3,
+      "steps": 3
+    },
+    {
+      "workflow": "bug-hunt",
+      "fixture": "populated",
+      "status": "passed",
+      "agentCalls": 18,
+      "steps": 18
+    },
+    {
+      "workflow": "codebase-atlas",
+      "fixture": "populated",
+      "status": "passed",
+      "agentCalls": 4,
+      "steps": 4
+    },
+    {
+      "workflow": "dead-code-sweep",
+      "fixture": "populated",
+      "status": "passed",
+      "agentCalls": 4,
+      "steps": 4
+    },
+    {
+      "workflow": "deep-code-review",
+      "fixture": "populated",
+      "status": "passed",
+      "agentCalls": 8,
+      "steps": 8
+    },
+    {
+      "workflow": "dependency-upgrade",
+      "fixture": "populated",
+      "status": "passed",
+      "agentCalls": 5,
+      "steps": 5
+    },
+    {
+      "workflow": "design-tournament",
+      "fixture": "populated",
+      "status": "passed",
+      "agentCalls": 8,
+      "steps": 8
+    },
+    {
+      "workflow": "docs-drift-audit",
+      "fixture": "populated",
+      "status": "passed",
+      "agentCalls": 3,
+      "steps": 3
+    },
+    {
+      "workflow": "feature-factory",
+      "fixture": "populated",
+      "status": "passed",
+      "agentCalls": 19,
+      "steps": 19
+    },
+    {
+      "workflow": "feedback-synthesis",
+      "fixture": "populated",
+      "status": "passed",
+      "agentCalls": 5,
+      "steps": 5
+    },
+    {
+      "workflow": "flaky-test-hunt",
+      "fixture": "populated",
+      "status": "passed",
+      "agentCalls": 5,
+      "steps": 5
+    },
+    {
+      "workflow": "incident-investigation",
+      "fixture": "populated",
+      "status": "passed",
+      "agentCalls": 7,
+      "steps": 7
+    },
+    {
+      "workflow": "prd-decompose",
+      "fixture": "populated",
+      "status": "passed",
+      "agentCalls": 7,
+      "steps": 7
+    },
+    {
+      "workflow": "prd-to-spec",
+      "fixture": "populated",
+      "status": "passed",
+      "agentCalls": 18,
+      "steps": 18
+    },
+    {
+      "workflow": "project-bootstrap",
+      "fixture": "populated",
+      "status": "passed",
+      "agentCalls": 2,
+      "steps": 2
+    },
+    {
+      "workflow": "refactor-campaign",
+      "fixture": "populated",
+      "status": "passed",
+      "agentCalls": 3,
+      "steps": 3
+    },
+    {
+      "workflow": "release-gate",
+      "fixture": "populated",
+      "status": "passed",
+      "agentCalls": 7,
+      "steps": 7
+    },
+    {
+      "workflow": "release-notes",
+      "fixture": "populated",
+      "status": "passed",
+      "agentCalls": 4,
+      "steps": 4
+    },
+    {
+      "workflow": "requirements-to-prd",
+      "fixture": "populated",
+      "status": "passed",
+      "agentCalls": 9,
+      "steps": 9
+    },
+    {
+      "workflow": "research-synthesis",
+      "fixture": "populated",
+      "status": "passed",
+      "agentCalls": 7,
+      "steps": 7
+    },
+    {
+      "workflow": "roadmap-plan",
+      "fixture": "populated",
+      "status": "passed",
+      "agentCalls": 7,
+      "steps": 7
+    },
+    {
+      "workflow": "sdlc-orchestrator",
+      "fixture": "populated",
+      "status": "passed",
+      "agentCalls": 1,
+      "steps": 1
+    },
+    {
+      "workflow": "security-audit",
+      "fixture": "populated",
+      "status": "passed",
+      "agentCalls": 26,
+      "steps": 26
+    },
+    {
+      "workflow": "test-gap-filler",
+      "fixture": "populated",
+      "status": "passed",
+      "agentCalls": 5,
+      "steps": 5
+    },
+    {
+      "workflow": "api-migration",
+      "fixture": "repair",
+      "status": "passed",
+      "agentCalls": 5,
+      "steps": 5
+    },
+    {
+      "workflow": "codebase-atlas",
+      "fixture": "repair",
+      "status": "passed",
+      "agentCalls": 6,
+      "steps": 6
+    },
+    {
+      "workflow": "dead-code-sweep",
+      "fixture": "repair",
+      "status": "passed",
+      "agentCalls": 4,
+      "steps": 4
+    },
+    {
+      "workflow": "dependency-upgrade",
+      "fixture": "repair",
+      "status": "passed",
+      "agentCalls": 6,
+      "steps": 6
+    },
+    {
+      "workflow": "docs-drift-audit",
+      "fixture": "repair",
+      "status": "passed",
+      "agentCalls": 3,
+      "steps": 3
+    },
+    {
+      "workflow": "feature-factory",
+      "fixture": "repair",
+      "status": "passed",
+      "agentCalls": 20,
+      "steps": 20
+    },
+    {
+      "workflow": "flaky-test-hunt",
+      "fixture": "repair",
+      "status": "passed",
+      "agentCalls": 5,
+      "steps": 5
+    },
+    {
+      "workflow": "prd-decompose",
+      "fixture": "repair",
+      "status": "passed",
+      "agentCalls": 9,
+      "steps": 9
+    },
+    {
+      "workflow": "prd-to-spec",
+      "fixture": "repair",
+      "status": "passed",
+      "agentCalls": 19,
+      "steps": 19
+    },
+    {
+      "workflow": "project-bootstrap",
+      "fixture": "repair",
+      "status": "passed",
+      "agentCalls": 6,
+      "steps": 6
+    },
+    {
+      "workflow": "refactor-campaign",
+      "fixture": "repair",
+      "status": "passed",
+      "agentCalls": 5,
+      "steps": 5
+    },
+    {
+      "workflow": "release-gate",
+      "fixture": "repair",
+      "status": "passed",
+      "agentCalls": 13,
+      "steps": 13
+    },
+    {
+      "workflow": "release-notes",
+      "fixture": "repair",
+      "status": "passed",
+      "agentCalls": 6,
+      "steps": 6
+    },
+    {
+      "workflow": "research-synthesis",
+      "fixture": "repair",
+      "status": "passed",
+      "agentCalls": 9,
+      "steps": 9
+    },
+    {
+      "workflow": "sdlc-orchestrator",
+      "fixture": "repair",
+      "status": "passed",
+      "agentCalls": 66,
+      "steps": 66
+    },
+    {
+      "workflow": "acceptance-qa-batch",
+      "fixture": "interrupted-pipeline-resume",
+      "status": "passed",
+      "replayedSteps": 4
+    }
+  ]
+}
