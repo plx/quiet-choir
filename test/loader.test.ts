@@ -47,7 +47,8 @@ export default defineWorkflow({
   },
 });`;
 
-describe('trusted TypeScript workflow loader', () => {
+// Real compiler passes can exceed five seconds under coverage on shared CI runners.
+describe('trusted TypeScript workflow loader', { timeout: 20_000 }, () => {
   it('type-checks and validates metadata without invoking the body', async () => {
     const { file } = await fixture(
       validSource.replace(
