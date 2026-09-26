@@ -106,6 +106,7 @@ it('snapshots mutable agent options before saving and invoking the harness', asy
   };
   const workflow = defineWorkflow({
     name: 'option-snapshot',
+    strictProfiles: false,
     version: '1',
     input: z.null(),
     output: z.string(),

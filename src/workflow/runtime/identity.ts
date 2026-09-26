@@ -14,20 +14,30 @@ export function stepIdentity(components: Record<string, JsonValue>): StepIdentit
 export function agentIdentity(request: HarnessRequest, schema: JsonValue): StepIdentity {
   const options = request.options;
   const capabilities = Object.fromEntries(
-    Object.entries(options).filter(
-      ([key]) =>
-        ![
-          'prompt',
-          'model',
-          'reasoningEffort',
-          'cwd',
-          'timeoutMs',
-          'maxTurns',
-          'maxBudgetUsd',
-          'retry',
-          'onError',
-        ].includes(key),
-    ),
+    Object.entries(options)
+      .filter(
+        ([key, value]) =>
+          !(
+            (key === 'tools' || key === 'allowedTools') &&
+            Array.isArray(value) &&
+            value.length === 0
+          ) && !(key === 'sandbox' && value === 'read-only'),
+      )
+      .filter(
+        ([key]) =>
+          ![
+            'profile',
+            'prompt',
+            'model',
+            'reasoningEffort',
+            'cwd',
+            'timeoutMs',
+            'maxTurns',
+            'maxBudgetUsd',
+            'retry',
+            'onError',
+          ].includes(key),
+      ),
   );
   const namedCapabilities = Object.fromEntries(
     Object.entries(capabilities).map(([key, value]) => [

@@ -385,6 +385,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
   }
 }
 export default defineWorkflow({
+  strictProfiles: false, // Historical port input API; elevated raw tools still require class grants.
   name: meta.name,
   version: 'ultracode-direct-01',
   input,

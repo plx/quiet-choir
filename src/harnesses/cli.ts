@@ -7,13 +7,14 @@ import type { ExecutionPolicy } from '../workflow/runtime/policy.js';
 import { validateAgentOptions } from '../workflow/runtime/options.js';
 import { HarnessError } from '../workflow/runtime/harness-error.js';
 import { ConfigurationError } from '../workflow/runtime/configuration-error.js';
+import { checkAllowedTools } from '../workflow/runtime/profiles.js';
 import { prepareCodexSchema, type CodexSchemaPlan } from './codex-schema.js';
 import { runProcess } from './process.js';
 import { parseClaude, parseCodex } from './protocol.js';
 
-const defaultTimeoutMs = 900_000;
-const defaultMaxTurns = 25;
-const defaultMaxBudgetUsd = 0.25;
+const defaultTimeoutMs = 300_000;
+const defaultMaxTurns = 10;
+const defaultMaxBudgetUsd = 0.5;
 
 /** Executable overrides and resource limits for headless harness processes. */
 export interface CliHarnessOptions {
@@ -109,8 +110,14 @@ export class CliHarness implements Harness {
           String(budget),
           '--no-session-persistence',
         );
-        if (request.options.allowedTools !== undefined && request.options.allowedTools.length > 0) {
-          args.push('--allowedTools', request.options.allowedTools.join(','));
+        const allowedTools = request.options.allowedTools ?? request.options.tools ?? [];
+        try {
+          checkAllowedTools(request.options.tools ?? [], allowedTools);
+        } catch (error) {
+          throw configurationError(error);
+        }
+        if (allowedTools.length > 0) {
+          args.push('--allowedTools', allowedTools.join(','));
         }
         if (request.outputSchema !== null) {
           if (
@@ -193,6 +200,10 @@ export class CliHarness implements Harness {
         ...(outcome.kind === 'success'
           ? {
               kind: 'process',
+              ...(outcome.response.turns === undefined ? {} : { turns: outcome.response.turns }),
+              ...(outcome.response.permissionDenials === undefined
+                ? {}
+                : { permissionDenials: outcome.response.permissionDenials }),
               usage: outcome.response.usage,
               sessionId: outcome.response.sessionId,
             }

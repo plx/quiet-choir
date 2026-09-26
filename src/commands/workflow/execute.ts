@@ -1,3 +1,5 @@
+import { parseProfileOverride } from '../../workflow/runtime/profiles.js';
+import type { ProfileOverride } from '../../workflow/runtime/profiles-model.js';
 import { randomUUID } from 'node:crypto';
 import { resolve } from 'node:path';
 
@@ -16,6 +18,8 @@ interface WorkflowExecuteArgs {
 }
 
 interface WorkflowExecuteFlags {
+  profile: string[] | undefined;
+  grant: string[] | undefined;
   readonly input: string | undefined;
   readonly 'run-id': string | undefined;
   readonly resume: boolean | undefined;
@@ -79,6 +83,14 @@ export default class WorkflowExecute extends BaseCommand {
       default: '.quiet-choir/runs',
     }),
     json: Flags.boolean({ description: 'Print the completed run record as JSON', default: false }),
+    profile: Flags.string({
+      description: 'Named limit override, e.g. scout.maxTurns=50; repeatable and sticky on resume',
+      multiple: true,
+    }),
+    grant: Flags.string({
+      description: 'Authorize an elevated profile, write/exec class, or all; saved across resumes',
+      multiple: true,
+    }),
     policy: Flags.string({
       description: 'JSON policy override; repeat for ordered rules, saved across resumes',
       multiple: true,
@@ -100,7 +112,9 @@ export default class WorkflowExecute extends BaseCommand {
       this.error('--resume requires --run-id.', { exit: 2 });
     }
     let policy: PolicyOverride[];
+    let profileOverrides: ProfileOverride[];
     try {
+      profileOverrides = (flags.profile ?? []).map(parseProfileOverride);
       policy = validatePolicy(
         (flags.policy ?? []).map((value) => JSON.parse(value) as unknown),
         flags['allow-model-override'] ?? false,
@@ -144,6 +158,8 @@ export default class WorkflowExecute extends BaseCommand {
         cwd: process.cwd(),
         resume: flags.resume ?? false,
         policy,
+        profileOverrides,
+        grants: flags.grant ?? [],
         ...(flags['fork-from'] === undefined
           ? {}
           : {

@@ -2,7 +2,8 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import { z, type WorkflowContext } from 'quiet-choir';
 
 // Explicit execution controls; source workflows inherited the interactive session.
-// Tools stay disabled unless the caller opts in with $claude.tools / allowedTools.
+// Legacy strictProfiles:false ports expose $claude.tools; tools imply allowedTools unless narrowed.
+// Elevated raw tools still require write/exec/all grants at launch.
 export const executionInput = {
   $claude: z
     .object({

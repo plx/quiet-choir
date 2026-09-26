@@ -36,9 +36,16 @@ replaceable `Harness` interface; the runtime owns step identity, replay, and val
 independently of the CLI processes that perform agent work. Core-owned option schemas validate
 explicit requests before recording an effect; adapters reuse the same validators and apply their own
 defaults. Optional `Harness.policyDefaults` reports execution limits without effects. The core
-resolves those defaults, call-site policy, and sticky run overrides before invoking the adapter, and
-records per-attempt limits and provenance. `runWorkflow` and `readRun` share working-directory and
-storage resolution.
+resolves named profiles above adapter defaults, call-site policy, and sticky run overrides before
+invoking the adapter, and records per-attempt limits and provenance. `runWorkflow` and `readRun`
+share working-directory and storage resolution.
+
+Plain-data profile declarations publish a capability manifest without running the body. Strict
+profiles prohibit call-site capability replacements by default. The core preflights write/exec
+grants for declared/default roles and checks elevated built-in calls before invocation. Named grants
+are pinned to tools/permissions/sandbox and saved for resume. Profile names and limits are policy;
+resolved semantic controls remain identity. See
+[ADR 0010](decisions/0010-agent-profiles-and-grants.md).
 
 Each local run has a JSON checkpoint and an exclusive owner lock. Terminal named outcomes (successes
 or explicitly settled failures) are reused when their identities match; unfinished steps execute

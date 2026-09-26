@@ -1,3 +1,4 @@
+import { capabilityManifest } from '../src/index.js';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -211,7 +212,12 @@ describe('workflow lifecycle command adapters', () => {
       kind: 'workflow.validate.result',
       ok: true,
       entrypoint: file,
-      workflow: { name: 'test', version: '1', fingerprint: 'hash' },
+      workflow: {
+        name: 'test',
+        version: '1',
+        fingerprint: 'hash',
+        capabilities: capabilityManifest({}),
+      },
     });
     const output = await captureCommand(WorkflowValidate, [file, ...(json ? ['--json'] : [])]);
     expect(output.error).toBeUndefined();

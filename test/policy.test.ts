@@ -25,7 +25,14 @@ const reply = {
 };
 const options = () => ({ runId: 'policy', stateDir, input: null });
 const workflow = (run: (ctx: WorkflowContext) => Promise<string>) =>
-  defineWorkflow({ name: 'policy', version: '1', input: z.null(), output: z.string(), run });
+  defineWorkflow({
+    name: 'policy',
+    strictProfiles: false,
+    version: '1',
+    input: z.null(),
+    output: z.string(),
+    run,
+  });
 beforeEach(async () => {
   stateDir = await mkdtemp(join(tmpdir(), 'choir-policy-'));
 });
@@ -57,7 +64,7 @@ it('recovers a timed-out review with a sticky override and replays completed wor
   const definition = workflow(async (ctx) => {
     await ctx.claude.text('plan', { prompt: 'plan' });
     await ctx.step('local', { input: null, schema: z.string(), run: local });
-    await ctx.claude.text('review', { prompt: 'review' });
+    await ctx.claude.text('review', { prompt: 'review', timeoutMs: 100 });
     const output = await ctx.step('write', { input: null, schema: z.string(), run: write });
     if (pause) throw new Error('pause');
     return output;
@@ -68,7 +75,7 @@ it('recovers a timed-out review with a sticky override and replays completed wor
     status: 'failed',
     error: 'deadline',
     policy: { timeoutMs: 100, retry: { maxAttempts: 1, delayMs: 100 } },
-    sources: { timeoutMs: 'harness', 'retry.maxAttempts': 'runtime' },
+    sources: { timeoutMs: 'call-site', 'retry.maxAttempts': 'runtime' },
   });
   await expect(
     runWorkflow(definition, {
@@ -87,8 +94,8 @@ it('recovers a timed-out review with a sticky override and replays completed wor
   expect(result.steps['review']?.attemptHistory?.[0]).toEqual(first);
   expect(result.steps['review']?.attemptHistory?.[1]).toMatchObject({
     status: 'completed',
-    policy: { timeoutMs: 600_000, maxTurns: 25, maxBudgetUsd: 0.25, binary: 'fixture' },
-    sources: { timeoutMs: 'override:0', maxTurns: 'harness' },
+    policy: { timeoutMs: 600_000, maxTurns: 10, maxBudgetUsd: 0.5, binary: 'fixture' },
+    sources: { timeoutMs: 'override:0', maxTurns: 'profile:text' },
   });
   expect(
     result.steps['review']?.attemptHistory?.every((attempt) => attempt.finishedAt !== null),
@@ -204,11 +211,11 @@ it.each(['failed', 'running'] as const)(
 it.each([
   ['prompt', { prompt: 'different' }],
   ['model', { model: 'different' }],
-  ['tools', { tools: ['Read'] }],
+  ['tools', { tools: ['Read', 'Grep'], allowedTools: [] }],
   ['allowedTools', { allowedTools: ['Read'] }],
   ['cwd', { cwd: '..' }],
 ] as const)('names %s drift in a completed agent step', async (component, change) => {
-  let args: ClaudeOptions = { prompt: 'same' };
+  let args: ClaudeOptions = { prompt: 'same', tools: ['Read'], allowedTools: [] };
   const invoke = vi.fn<Harness['invoke']>().mockResolvedValue(reply);
   const definition = workflow(async (ctx) => {
     await ctx.claude.text('ask', args);
@@ -405,9 +412,9 @@ it.each([
 
 it('reports adapter defaults and preserves custom-harness unknowns', async () => {
   expect(new CliHarness().policyDefaults('claude')).toEqual({
-    timeoutMs: 900_000,
-    maxTurns: 25,
-    maxBudgetUsd: 0.25,
+    timeoutMs: 300_000,
+    maxTurns: 10,
+    maxBudgetUsd: 0.5,
     maxOutputBytes: 8 * 1024 * 1024,
     killGraceMs: 250,
     binary: 'claude',
@@ -418,7 +425,7 @@ it('reports adapter defaults and preserves custom-harness unknowns', async () =>
       killGraceMs: 99,
       maxOutputBytes: 100,
     }).policyDefaults('codex'),
-  ).toEqual({ timeoutMs: 900_000, maxOutputBytes: 100, killGraceMs: 99, binary: '/fixture/codex' });
+  ).toEqual({ timeoutMs: 300_000, maxOutputBytes: 100, killGraceMs: 99, binary: '/fixture/codex' });
   const result = await runWorkflow(
     workflow(async (ctx) => (await ctx.codex.text('ask', { prompt: 'x' })).output),
     { ...options(), harness: { invoke: () => Promise.resolve(reply) } },
@@ -428,7 +435,7 @@ it('reports adapter defaults and preserves custom-harness unknowns', async () =>
     requestedModel: null,
     reasoningEffort: null,
   });
-  expect(result.steps['ask']?.attemptHistory?.[0]?.policy).not.toHaveProperty('timeoutMs');
+  expect(result.steps['ask']?.attemptHistory?.[0]?.policy).toHaveProperty('timeoutMs', 300_000);
 });
 
 it('uses saved policy for a still-unfinished call on bare resume, and reset restores call-site limits', async () => {

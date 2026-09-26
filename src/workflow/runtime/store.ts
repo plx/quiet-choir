@@ -1,3 +1,5 @@
+import { profileOverrideSchema, grantsSchema, capabilityManifestSchema } from './profiles.js';
+import type { CapabilityManifest, ProfileOverride } from './profiles-model.js';
 import { randomUUID } from 'node:crypto';
 import { lstat, mkdir, open, readFile, readdir, rename, rm } from 'node:fs/promises';
 import { hostname } from 'node:os';
@@ -119,6 +121,14 @@ export interface MapRecord {
 
 /** Local checkpoint format. The format is intentionally versioned independently of workflows. */
 export interface RunRecord {
+  /** Resolved declared capabilities at the latest execution. Absent in older format-5 records. */
+  capabilities?: CapabilityManifest;
+  /** Sticky profile limit rules. */
+  profileOverrides?: ProfileOverride[];
+  /** Persisted operator grants; forks require their own grants. */
+  grants?: string[];
+  /** Capability digests pinning profile-name grants against source edits. */
+  grantedProfiles?: Record<string, string>;
   /** Checkpoint format version. */
   formatVersion: 1 | 2 | 3 | 4 | 5;
   /** Stable run identifier. */
@@ -229,6 +239,7 @@ const stepSchema = z.object({
           }),
         }),
         sources: z.record(z.string(), z.string()),
+        profile: z.string().optional(),
         requestedModel: z.string().nullable(),
         reasoningEffort: z.enum(['minimal', 'low', 'medium', 'high']).nullable(),
       }),
@@ -305,6 +316,10 @@ const recordSchema = z
         }),
       )
       .optional(),
+    capabilities: capabilityManifestSchema.optional(),
+    profileOverrides: z.array(profileOverrideSchema).optional(),
+    grants: grantsSchema.optional(),
+    grantedProfiles: z.record(z.string(), z.string().regex(/^[a-f0-9]{64}$/u)).optional(),
     policy: z.array(policyOverrideSchema).optional(),
     allowModelOverride: z.boolean().optional(),
     policyWarnings: z.array(z.string()).optional(),

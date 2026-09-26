@@ -1,4 +1,5 @@
 import type { z } from 'zod';
+import type { AgentDefaults, AgentProfile, BuiltinProfile } from './profiles-model.js';
 import type { MapStepError } from './fan-out.js';
 
 /** A value that survives checkpoint serialization without changing its meaning. */
@@ -53,6 +54,8 @@ export type EffectResult<T, TMode extends ErrorMode> = TMode extends 'return' ? 
 
 /** Options shared by headless agent calls. */
 export interface AgentOptions {
+  /** Declared role or built-in preset; omission uses workflow defaults. */
+  readonly profile?: string;
   /** Persist a terminal outcome for branching; cancellation, configuration (e.g. missing harness), and checkpoint-write failures still reject. */
   readonly onError?: ErrorMode;
   /** Instructions sent over stdin, never interpolated into a shell command. */
@@ -61,7 +64,7 @@ export interface AgentOptions {
   readonly model?: string;
   /** Working directory, relative to the workflow run's working directory. */
   readonly cwd?: string;
-  /** Wall-clock deadline in milliseconds. CliHarness default: 900,000; custom harnesses must enforce their own deadline. */
+  /** Wall-clock deadline in milliseconds; implicit text profile: 300,000. Custom harnesses must enforce it. */
   readonly timeoutMs?: number;
   /** Explicit runtime retries for calls safe to repeat; not part of replay identity. */
   readonly retry?: RetryPolicy;
@@ -69,13 +72,13 @@ export interface AgentOptions {
 
 /** Claude-specific controls. CliHarness denies unapproved tools by default. */
 export interface ClaudeOptions extends AgentOptions {
-  /** Built-in tools to expose. CliHarness default: none; the core supplies no default. */
+  /** Built-in tools to expose; use a workflow profile under default strictProfiles. Default: none. */
   readonly tools?: readonly string[];
-  /** Explicit tool permissions for this invocation. */
+  /** Narrower tool permissions; omission pre-approves the exposed tools. */
   readonly allowedTools?: readonly string[];
-  /** Maximum agent turns. CliHarness default: 25; the core supplies no default. */
+  /** Maximum agent turns; implicit text profile: 10. */
   readonly maxTurns?: number;
-  /** Per-call USD limit. CliHarness default: 0.25, enforced by Claude; the core supplies no default. */
+  /** Per-call USD limit enforced by Claude; implicit text profile: 0.50. */
   readonly maxBudgetUsd?: number;
 }
 
@@ -83,7 +86,7 @@ export interface ClaudeOptions extends AgentOptions {
 export interface CodexOptions extends AgentOptions {
   /** Structured-output encoding; compat translates common Zod shapes, strict requires a native Codex schema. CliHarness default: compat; the core supplies no default. */
   readonly structuredOutput?: 'strict' | 'compat';
-  /** Filesystem sandbox for model-generated commands. CliHarness default: read-only; the core supplies no default. */
+  /** Filesystem sandbox; declare in a workflow profile under default strictProfiles. Default: read-only. */
   readonly sandbox?: 'read-only' | 'workspace-write';
   /** Harness reasoning effort. */
   readonly reasoningEffort?: 'minimal' | 'low' | 'medium' | 'high';
@@ -132,6 +135,10 @@ export interface HarnessResponse {
   readonly usage: AgentUsage;
   /** Recoverable protocol notices, persisted as diagnostics outside the result fingerprint. */
   readonly warnings?: readonly string[];
+  /** Count of denied tool requests reported by the terminal envelope. */
+  readonly permissionDenials?: number;
+  /** Reported agent turns, when available. */
+  readonly turns?: number;
 }
 
 /** Replaceable integration port, also useful for deterministic tests. */
@@ -208,7 +215,7 @@ export interface StepDefinition<T> {
 }
 
 /** Durable operations available to ordinary TypeScript workflow code. */
-export interface WorkflowContext {
+export interface WorkflowContext<TProfile extends string = string> {
   /** Stable identifier for this execution and all resumes. */
   readonly runId: string;
   /** Current cancellation scope signal; nested maps inherit the run signal. */
@@ -218,11 +225,21 @@ export interface WorkflowContext {
   /** Prefix every effect launched in the callback; nested scopes compose without counters. */
   scope<T>(prefix: string, run: () => Promise<T>): Promise<T>;
   /** Bind a lexical prefix to a reusable context; descendants retain their nested scope prefixes. */
-  within(prefix: string): WorkflowContext;
+  within(prefix: string): WorkflowContext<TProfile>;
   /** Claude-specific headless API. */
-  readonly claude: AgentClient<ClaudeOptions>;
+  readonly claude: AgentClient<
+    Omit<ClaudeOptions, 'profile'> & {
+      /** Built-in preset or one of this workflow's declared role names. */
+      readonly profile?: BuiltinProfile | TProfile;
+    }
+  >;
   /** Codex-specific headless API. */
-  readonly codex: AgentClient<CodexOptions>;
+  readonly codex: AgentClient<
+    Omit<CodexOptions, 'profile'> & {
+      /** Built-in preset or one of this workflow's declared role names. */
+      readonly profile?: BuiltinProfile | TProfile;
+    }
+  >;
   /** Save a JSON result and reuse it on resume when its inputs match. */
   step<T>(
     id: string,
@@ -277,7 +294,13 @@ export interface WorkflowContext {
 }
 
 /** Definition of a typed workflow; plain JavaScript controls branching, loops, and composition. */
-export interface WorkflowDefinition<TInput, TOutput> {
+export interface WorkflowDefinition<TInput, TOutput, TProfile extends string = string> {
+  /** Common defaults applied after the selected preset. */
+  readonly defaults?: AgentDefaults<NoInfer<TProfile>>;
+  /** Named capability roles, resolved before executing the workflow body. */
+  readonly profiles?: Readonly<Record<TProfile, AgentProfile>>;
+  /** Prohibit raw tools/allowedTools/sandbox at call sites; defaults to true. */
+  readonly strictProfiles?: boolean;
   /** Stable workflow name, checked on resume. */
   readonly name: string;
   /** Explicit compatibility version; bump whenever code or dependencies change semantics. */
@@ -287,13 +310,13 @@ export interface WorkflowDefinition<TInput, TOutput> {
   /** Output validator and source of the inferred output type. */
   readonly output: z.ZodType<TOutput>;
   /** Workflow body. It replays from the beginning when resuming. */
-  readonly run: (context: WorkflowContext, input: TInput) => Promise<TOutput>;
+  readonly run: (context: WorkflowContext<NoInfer<TProfile>>, input: TInput) => Promise<TOutput>;
 }
 
 /** Define a workflow with input/output types inferred from its runtime schemas. */
-export function defineWorkflow<TInput, TOutput>(
-  definition: WorkflowDefinition<TInput, TOutput>,
-): WorkflowDefinition<TInput, TOutput> {
+export function defineWorkflow<TInput, TOutput, TProfile extends string = never>(
+  definition: WorkflowDefinition<TInput, TOutput, TProfile>,
+): WorkflowDefinition<TInput, TOutput, TProfile> {
   if (!definition.name.trim() || !definition.version.trim()) {
     throw new Error('Workflow name and version must be nonempty.');
   }
@@ -340,6 +363,8 @@ export interface PolicyOverride {
 
 /** Fully resolved runtime retry policy plus adapter-declared limits and their provenance. */
 export interface AttemptPolicy {
+  /** Resolved role name for agent attempts; outside semantic identity. */
+  readonly profile?: string;
   /** Limits used for this attempt; custom adapters may leave unknown defaults absent. */
   readonly policy: ExecutionPolicy & {
     /** Runtime retry values after filling in maxAttempts and delayMs. */

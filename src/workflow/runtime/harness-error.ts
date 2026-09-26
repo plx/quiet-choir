@@ -2,6 +2,10 @@ import type { AgentUsage, ErrorKind } from './model.js';
 
 /** Terminal failure reported by a harness protocol, independent of process exit status. */
 export interface ProtocolFailure {
+  /** Agent turns reported by the terminal envelope. */
+  readonly turns?: number;
+  /** Count of denied tool requests reported by the envelope. */
+  readonly permissionDenials?: number;
   /** Human-readable cause, including unwrapped API error messages. */
   readonly reason: string;
   /** Harness result subtype or terminal event name. */
@@ -26,6 +30,10 @@ export interface HarnessExit {
 
 /** Diagnostics supplied by an adapter when an invocation fails. */
 export interface HarnessErrorDetails {
+  /** Reported turns from an otherwise successful envelope followed by a process failure. */
+  readonly turns?: number;
+  /** Reported denial count from an otherwise successful envelope followed by a process failure. */
+  readonly permissionDenials?: number;
   /** Explicit adapter category when protocol metadata alone is insufficient. */
   readonly kind?: ErrorKind;
   /** Adapter that performed the invocation. */
@@ -48,6 +56,10 @@ export interface HarnessErrorDetails {
 
 /** A failed harness invocation with bounded diagnostics and recoverable usage metadata. */
 export class HarnessError extends Error {
+  /** Reported turns, or null when unavailable. */
+  public readonly turns: number | null;
+  /** Reported denied requests, or null when unavailable. */
+  public readonly permissionDenials: number | null;
   /** Structured failure category for settled outcomes and selective retries. */
   public readonly kind: ErrorKind;
   /** Adapter that performed the invocation. */
@@ -90,6 +102,8 @@ export class HarnessError extends Error {
       `${details.provider} ${reason} [exit ${exit}]${stderrTail ? `; stderr: ${stderrTail}` : ''}${stdoutTail ? `; stdout tail: ${stdoutTail}` : ''}`,
     );
     this.name = 'HarnessError';
+    this.turns = failure?.turns ?? details.turns ?? null;
+    this.permissionDenials = failure?.permissionDenials ?? details.permissionDenials ?? null;
     this.kind = details.kind ?? protocolErrorKind(failure);
     this.provider = details.provider;
     this.exit = { ...details.exit };

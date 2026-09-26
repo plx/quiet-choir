@@ -6,6 +6,7 @@ import { retryPolicySchema } from './policy.js';
 const positiveInteger = z.number().int().positive().max(Number.MAX_SAFE_INTEGER);
 const shared = {
   prompt: z.string(),
+  profile: z.string().min(1).optional(),
   onError: z.enum(['throw', 'return']).optional(),
   model: z.string().optional(),
   cwd: z.string().optional(),

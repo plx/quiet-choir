@@ -1,3 +1,13 @@
+import { profileLimitError } from './profile-diagnostics.js';
+import {
+  capabilityManifest,
+  grantsSchema,
+  profileGrantDigest,
+  requireGrant,
+  resolveProfileCall,
+  validateProfileOverrides,
+} from './profiles.js';
+import type { ProfileOverride, ResolvedProfile } from './profiles-model.js';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { resolve } from 'node:path';
 import {
@@ -115,6 +125,10 @@ export type WorkflowRun<TOutput> = RunRecord & {
 
 /** Explicit dependencies and execution policy for a workflow run. */
 export interface RunOptions extends WorkflowCodeOptions {
+  /** Sticky named limit rules, appended on resume; policyReset clears them as well. */
+  readonly profileOverrides?: readonly ProfileOverride[];
+  /** Authorize elevated profiles by name, access class (write/exec), or all; saved across resumes. */
+  readonly grants?: readonly string[];
   /** Required stable identifier. Reuse it with resume to continue an execution. */
   readonly runId: string;
   /** Checkpoint directory; defaults to .quiet-choir/runs under the working directory. */
@@ -173,6 +187,12 @@ export async function runWorkflow<TInput, TOutput>(
 ): Promise<WorkflowRun<TOutput>> {
   if (!definition.name.trim() || !definition.version.trim())
     throw new Error('Workflow name and version must be nonempty.');
+  const capabilities = capabilityManifest(definition);
+  const incomingProfiles = validateProfileOverrides(options.profileOverrides ?? [], capabilities);
+  const incomingGrants = grantsSchema.parse(jsonValue(options.grants ?? []));
+  for (const grant of incomingGrants)
+    if (!['write', 'exec', 'all'].includes(grant) && !Object.hasOwn(capabilities.profiles, grant))
+      throw new Error(`Unknown grant: ${grant}.`);
   const incomingPolicy = validatePolicy(options.policy ?? [], options.allowModelOverride ?? false);
   if (options.forkFrom !== undefined && options.resume)
     throw new Error('forkFrom creates a new run and cannot be combined with resume.');
@@ -225,6 +245,21 @@ export async function runWorkflow<TInput, TOutput>(
       [...(options.policyReset ? [] : (existing?.policy ?? [])), ...incomingPolicy],
       allowModelOverride,
     );
+    const profileOverrides = validateProfileOverrides(
+      [...(options.policyReset ? [] : (existing?.profileOverrides ?? [])), ...incomingProfiles],
+      capabilities,
+    );
+    const grants = [...new Set([...(existing?.grants ?? []), ...incomingGrants])];
+    const grantedProfiles = { ...(existing?.grantedProfiles ?? {}) };
+    for (const grant of incomingGrants) {
+      const role = capabilities.profiles[grant];
+      if (Object.hasOwn(capabilities.profiles, grant) && role)
+        grantedProfiles[grant] = profileGrantDigest(role);
+    }
+    for (const name of capabilities.requiredGrants) {
+      const role = capabilities.profiles[name];
+      if (role) requireGrant(role, grants, grantedProfiles);
+    }
     const matchedPolicy = new Set<number>();
     const input = definition.input.parse(
       options.input === undefined
@@ -240,9 +275,14 @@ export async function runWorkflow<TInput, TOutput>(
       const output = definition.output.parse(existing.output);
       if (
         incomingPolicy.length ||
+        incomingProfiles.length ||
+        incomingGrants.length ||
         options.policyReset ||
         options.allowModelOverride !== undefined
       ) {
+        existing.profileOverrides = profileOverrides;
+        existing.grants = grants;
+        existing.grantedProfiles = grantedProfiles;
         existing.policy = policy;
         existing.allowModelOverride = allowModelOverride;
         existing.policyWarnings = [];
@@ -329,6 +369,10 @@ export async function runWorkflow<TInput, TOutput>(
     const healed = new Set<string>();
     let strictHealedDivergence: Error | undefined;
     let divergenceReported = false;
+    record.profileOverrides = profileOverrides;
+    record.grants = grants;
+    record.grantedProfiles = grantedProfiles;
+    record.capabilities = capabilities;
     record.policy = policy;
     record.allowModelOverride = allowModelOverride;
     record.policyWarnings = [];
@@ -752,11 +796,20 @@ export async function runWorkflow<TInput, TOutput>(
           let request: HarnessRequest;
           let schema: z.ZodType<T>;
           let execution: AttemptPolicy;
+          let profile: ResolvedProfile;
           try {
             const data = jsonValue({ options: optionData(agentOptions, structured) }) as {
               options: TOptions & JsonValue;
             };
             validateAgentOptions(provider, data.options);
+            const resolvedProfile = resolveProfileCall(
+              capabilities,
+              provider,
+              data.options,
+              grants,
+              grantedProfiles,
+            );
+            profile = resolvedProfile.profile;
             schema = outputSchema();
             execution = resolvePolicy(
               id,
@@ -765,10 +818,30 @@ export async function runWorkflow<TInput, TOutput>(
               options.harness?.policyDefaults?.(provider) ?? {},
               policy,
               matchedPolicy,
+              profile,
+              profileOverrides,
             );
+            // Provider semantics supply model/effort defaults, while per-call and launch policy win.
+            if (execution.requestedModel === null && resolvedProfile.options.model !== undefined)
+              execution = {
+                ...execution,
+                requestedModel: resolvedProfile.options.model,
+                sources: { ...execution.sources, model: `profile:${profile.name}` },
+              };
+            const profileEffort = (resolvedProfile.options as CodexOptions).reasoningEffort;
+            if (
+              provider === 'codex' &&
+              execution.reasoningEffort === null &&
+              profileEffort !== undefined
+            )
+              execution = {
+                ...execution,
+                reasoningEffort: profileEffort,
+                sources: { ...execution.sources, reasoningEffort: `profile:${profile.name}` },
+              };
             request = jsonValue({
               provider,
-              options: data.options,
+              options: resolvedProfile.options,
               cwd: resolve(cwd, data.options.cwd ?? '.'),
               outputSchema: structured ? schemaJson(schema) : null,
             }) as unknown as HarnessRequest;
@@ -785,6 +858,8 @@ export async function runWorkflow<TInput, TOutput>(
             }),
           });
           const identity = agentIdentity(request, schemaJson(resultSchema));
+          if (profile.onPermissionDenied === 'fail')
+            Object.assign(identity, { onPermissionDenied: digest('fail') });
           const applied = { ...request.options };
           delete applied.retry;
           delete applied.onError;
@@ -811,8 +886,37 @@ export async function runWorkflow<TInput, TOutput>(
                 throw new ConfigurationError(
                   `No harness adapter configured for ${provider}. Supply RunOptions.harness.`,
                 );
-              const response = await options.harness.invoke(request, context.signal);
+              let response;
+              try {
+                response = await options.harness.invoke(request, context.signal);
+              } catch (error) {
+                if (error instanceof HarnessError) {
+                  const denials = error.permissionDenials ?? 0;
+                  if (denials > 0)
+                    step.warnings = [
+                      `Profile ${profile.name}: ${String(denials)} permission denials reported.`,
+                    ];
+                  throw profileLimitError(error, id, profile.name, execution);
+                }
+                throw error;
+              }
               if (response.warnings !== undefined) step.warnings = [...response.warnings];
+              if ((response.permissionDenials ?? 0) > 0) {
+                const warning = `Profile ${profile.name}: ${String(response.permissionDenials)} permission denials reported.`;
+                step.warnings = [...(step.warnings ?? []), warning];
+                if (profile.onPermissionDenied === 'fail')
+                  throw new HarnessError({
+                    provider,
+                    kind: 'permission',
+                    exit: { code: 0, signal: null },
+                    failure: null,
+                    reason: warning,
+                    stderr: '',
+                    stdout: '',
+                    usage: response.usage,
+                    sessionId: response.sessionId,
+                  });
+              }
               const raw: unknown = structured ? JSON.parse(response.text) : response.text;
               return {
                 output: schema.parse(raw),

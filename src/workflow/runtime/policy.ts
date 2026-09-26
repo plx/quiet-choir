@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import type { ResolvedProfile, ProfileOverride } from './profiles-model.js';
 import { errorKindSchema } from './step-error.js';
 
 import type {
@@ -106,6 +107,8 @@ export function resolvePolicy(
   defaults: ExecutionPolicy,
   overrides: readonly PolicyOverride[],
   matched: Set<number>,
+  profile?: ResolvedProfile,
+  profileOverrides: readonly ProfileOverride[] = [],
 ): AttemptPolicy {
   validateStepId(id);
   executionPolicySchema.parse(defaults);
@@ -151,7 +154,13 @@ export function resolvePolicy(
     }
   };
   apply(defaults, 'harness');
+  if (profile) apply(profile, `profile:${profile.name}`);
   apply(callSite, 'call-site');
+  if (profile)
+    profileOverrides.forEach((rule, index) => {
+      if (rule.profile === '*' || rule.profile === profile.name)
+        apply(rule, `profile-override:${String(index)}`);
+    });
   if (kind !== 'sleep')
     overrides.forEach((rule, index) => {
       if (
@@ -162,5 +171,11 @@ export function resolvePolicy(
         apply(rule, `override:${String(index)}`);
       }
     });
-  return { policy, sources, requestedModel, reasoningEffort };
+  return {
+    policy,
+    sources,
+    requestedModel,
+    reasoningEffort,
+    ...(profile ? { profile: profile.name } : {}),
+  };
 }

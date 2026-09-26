@@ -195,52 +195,55 @@ describe('headless CLI adapter', () => {
         '--tools',
         '',
         '--max-turns',
-        '25',
+        '10',
         '--max-budget-usd',
-        '0.25',
+        '0.5',
         '--no-session-persistence',
       ],
     });
     await expect(stat(join(directory, 'injected'))).rejects.toMatchObject({ code: 'ENOENT' });
   });
 
-  it('passes explicitly enabled Claude tools, limits, model and schema', async () => {
-    const { binary, directory } = await fixture(`const fs = require('node:fs');
+  it.each([true, false])(
+    'passes Claude tools and explicit/inferred permissions (narrow=%s)',
+    async (narrow) => {
+      const { binary, directory } = await fixture(`const fs = require('node:fs');
       fs.writeFileSync('args.json', JSON.stringify(process.argv.slice(2)));
       console.log(${JSON.stringify(JSON.stringify({ ...success, structured_output: { answer: 42 } }))});`);
-    const schema = { type: 'object', properties: { answer: { type: 'number' } } };
-    const result = await new CliHarness({ claudeBinary: binary }).invoke(
-      {
-        provider: 'claude',
-        cwd: directory,
-        outputSchema: schema,
-        options: {
-          prompt: 'answer',
-          tools: ['Read', 'Glob'],
-          allowedTools: ['Read'],
-          maxTurns: 1,
-          maxBudgetUsd: 0.1,
-          model: 'test-model',
+      const schema = { type: 'object', properties: { answer: { type: 'number' } } };
+      const result = await new CliHarness({ claudeBinary: binary }).invoke(
+        {
+          provider: 'claude',
+          cwd: directory,
+          outputSchema: schema,
+          options: {
+            prompt: 'answer',
+            tools: ['Read', 'Glob'],
+            ...(narrow ? { allowedTools: ['Read'] } : {}),
+            maxTurns: 1,
+            maxBudgetUsd: 0.1,
+            model: 'test-model',
+          },
         },
-      },
-      signal,
-    );
-    expect(result.text).toBe('{"answer":42}');
-    const args: unknown = JSON.parse(await readFile(join(directory, 'args.json'), 'utf8'));
-    expect(args).toEqual(
-      expect.arrayContaining([
-        'Read,Glob',
-        '--allowedTools',
-        'Read',
-        '--json-schema',
-        JSON.stringify(schema),
-        '--model',
-        'test-model',
-        '0.1',
-        '1',
-      ]),
-    );
-  });
+        signal,
+      );
+      expect(result.text).toBe('{"answer":42}');
+      const args: unknown = JSON.parse(await readFile(join(directory, 'args.json'), 'utf8'));
+      expect(args).toEqual(
+        expect.arrayContaining([
+          'Read,Glob',
+          '--allowedTools',
+          narrow ? 'Read' : 'Read,Glob',
+          '--json-schema',
+          JSON.stringify(schema),
+          '--model',
+          'test-model',
+          '0.1',
+          '1',
+        ]),
+      );
+    },
+  );
 
   it('passes Codex defaults and parses a real JSONL subprocess', async () => {
     const { binary, directory } =

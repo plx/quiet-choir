@@ -314,7 +314,7 @@ it.each([
   expect(message.length).toBeLessThan(600);
 });
 
-it('omits top-level undefined options without adding custom harness defaults', async () => {
+it('omits top-level undefined options and supplies resolved profile defaults', async () => {
   const stateDir = await directory();
   const harness = fakeHarness();
   await runWorkflow(
@@ -336,7 +336,18 @@ it('omits top-level undefined options without adding custom harness defaults', a
   );
   expect(harness.invoke).toHaveBeenCalledTimes(2);
   for (const call of vi.mocked(harness.invoke).mock.calls)
-    expect(call[0].options).toEqual({ prompt: 'p' });
+    expect(call[0].options).toEqual(
+      call[0].provider === 'claude'
+        ? {
+            prompt: 'p',
+            tools: [],
+            allowedTools: [],
+            timeoutMs: 300_000,
+            maxTurns: 10,
+            maxBudgetUsd: 0.5,
+          }
+        : { prompt: 'p', sandbox: 'read-only', timeoutMs: 300_000 },
+    );
   expect(claudeOptionsSchema.parse({ prompt: 'p' })).toEqual({ prompt: 'p' });
   expect(codexOptionsSchema.parse({ prompt: 'p' })).toEqual({ prompt: 'p' });
 });
