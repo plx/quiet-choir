@@ -1,0 +1,27 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "quiet-choir",
+  "version": "0.0.0",
+  "description": "Reference for authoring, running, inspecting, and resuming quiet-choir workflows.",
+  "author": {
+    "name": "quiet-choir contributors"
+  },
+  "homepage": "https://github.com/plx/quiet-choir",
+  "repository": "https://github.com/plx/quiet-choir",
+  "license": "MIT",
+  "keywords": ["agents", "workflows", "durability", "claude", "codex"],
+  "extensions": {
+    "com.openai": {
+      "interface": {
+        "displayName": "quiet-choir",
+        "shortDescription": "Write and resume typed agent workflows",
+        "longDescription": "Learn the quiet-choir workflow API, Claude and Codex adapters, checkpoint guarantees, progress inspection, and extension boundaries. Requires a separate quiet-choir checkout or runtime installation.",
+        "developerName": "quiet-choir contributors",
+        "category": "Developer Tools",
+        "capabilities": ["Read", "Write"],
+        "websiteURL": "https://github.com/plx/quiet-choir",
+        "defaultPrompt": ["Use quiet-choir to write a resumable agent workflow."]
+      }
+    }
+  }
+}

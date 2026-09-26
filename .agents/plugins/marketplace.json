@@ -1,0 +1,20 @@
+{
+  "name": "quiet-choir",
+  "interface": {
+    "displayName": "quiet-choir"
+  },
+  "plugins": [
+    {
+      "name": "quiet-choir",
+      "source": {
+        "source": "local",
+        "path": "./plugins/agents/quiet-choir"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Developer Tools"
+    }
+  ]
+}

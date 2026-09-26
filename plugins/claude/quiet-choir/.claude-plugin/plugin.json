@@ -1,0 +1,12 @@
+{
+  "name": "quiet-choir",
+  "version": "0.0.0",
+  "description": "Reference for authoring, running, inspecting, and resuming quiet-choir workflows.",
+  "author": {
+    "name": "quiet-choir contributors"
+  },
+  "homepage": "https://github.com/plx/quiet-choir",
+  "repository": "https://github.com/plx/quiet-choir",
+  "license": "MIT",
+  "keywords": ["agents", "workflows", "durability", "claude", "codex"]
+}
