@@ -175,6 +175,53 @@ export default defineWorkflow({
   assert.equal(inspected.status, 0, inspected.stderr);
   assert.equal(JSON.parse(inspected.stdout).output, 42);
 
+  const missing = cli('workflow', 'inspect', 'nope', '--state-dir', stateDir);
+  assert.equal(missing.status, 1, missing.stdout);
+  const missingMessage = missing.stderr.replace(/\n\s*›\s*/gu, '');
+  assert.ok(missingMessage.includes(`Run nope not found in ${stateDir}`), missing.stderr);
+  assert.match(missing.stderr, /1 runs present: smoke-run/);
+  assert.doesNotMatch(missing.stderr, /ENOENT/);
+
+  // A real host process with no rejection handler must survive detached observer/precheck failures.
+  const promiseHost = join(fixtureRoot, 'promise-host.mjs');
+  writeFileSync(
+    promiseHost,
+    `
+import assert from 'node:assert/strict';
+import { defineWorkflow, runWorkflow, readRun, z } from ${JSON.stringify(join(projectRoot, 'dist/index.js'))};
+const stateDir = ${JSON.stringify(stateDir)};
+const harness = { async invoke() { return { text: 'ok', sessionId: null, usage: { inputTokens: null, outputTokens: null, costUsd: null } }; } };
+const definition = (run) => defineWorkflow({ name: 'host', version: '1', input: z.null(), output: z.string(), run });
+const completed = await runWorkflow(definition(async (ctx) => (await ctx.claude.text('ask', { prompt: 'p' })).output), {
+  stateDir, runId: 'observer', input: null, harness,
+  onEvent: async () => { throw new Error('metrics endpoint down'); },
+});
+assert.equal(completed.status, 'completed');
+for (const kind of ['sleep', 'agent']) {
+  await assert.rejects(runWorkflow(definition(async (ctx) => {
+    if (kind === 'sleep') void ctx.sleep('bad-sleep', -1);
+    else void ctx.claude.text('bad-agent', { prompt: 'p', tools: ['Read', undefined] });
+    return 'ok';
+  }), { stateDir, runId: kind, input: null }), new RegExp('Unawaited workflow operation "bad-' + kind + '" failed:'));
+  assert.equal((await readRun({ stateDir, runId: kind })).status, 'failed');
+}
+await new Promise((resolve) => setImmediate(resolve));
+console.log('survived');
+`,
+  );
+  const promiseResult = spawnSync(
+    process.execPath,
+    ['--unhandled-rejections=strict', promiseHost],
+    {
+      cwd: projectRoot,
+      encoding: 'utf8',
+      timeout: 30_000,
+    },
+  );
+  assert.equal(promiseResult.status, 0, promiseResult.stderr);
+  assert.equal(promiseResult.stdout.trim(), 'survived');
+  assert.equal(promiseResult.stderr, '');
+
   const warningWorkflow = join(fixtureRoot, 'warning.ts');
   writeFileSync(
     warningWorkflow,

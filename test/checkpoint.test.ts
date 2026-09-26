@@ -66,7 +66,7 @@ it('retries transient completion writes without retrying the successful action',
   expect(result.status).toBe('completed');
   expect(result.output).toBe('done');
   expect(action).toHaveBeenCalledTimes(1);
-  expect((await readRun(stateDir, 'run')).steps['effect']).toMatchObject({
+  expect((await readRun({ stateDir, runId: 'run' })).steps['effect']).toMatchObject({
     status: 'completed',
     attempts: 1,
     error: null,
@@ -96,7 +96,7 @@ it('recovers the ordered queue for a later save, aborts new work, and retains a 
   });
   expect(action).toHaveBeenCalledTimes(1);
   expect(next).not.toHaveBeenCalled();
-  const saved = await readRun(stateDir, 'run');
+  const saved = await readRun({ stateDir, runId: 'run' });
   expect(saved.status).toBe('failed');
   expect(saved.steps['effect']).toMatchObject({ status: 'completed', error: null, attempts: 1 });
   expect(saved.steps['next']).toBeUndefined();
@@ -138,7 +138,7 @@ it('keeps the domain error first when failure saves and lock release all fail', 
   expect(problems.map((problem) => problem.operation)).toEqual(['save', 'save', 'release']);
   expect(problems[0]?.cause).toMatchObject({ code: 'ENOSPC' });
   expect(action).toHaveBeenCalledTimes(1);
-  const saved = await readRun(stateDir, 'run');
+  const saved = await readRun({ stateDir, runId: 'run' });
   expect(saved).toMatchObject({ status: 'running', error: null });
   expect(saved.steps['deploy']).toMatchObject({ status: 'running', error: null });
 });
@@ -214,7 +214,7 @@ it('rejects a failed final run checkpoint without reclassifying completed effect
     ),
   ).rejects.toBeInstanceOf(CheckpointError);
   expect(action).toHaveBeenCalledTimes(1);
-  expect((await readRun(stateDir, 'run')).steps['effect']).toMatchObject({
+  expect((await readRun({ stateDir, runId: 'run' })).steps['effect']).toMatchObject({
     status: 'completed',
     error: null,
   });
@@ -232,7 +232,7 @@ it.each(['EACCES', 'ENOENT'])(
     expect(result.status).toBe('completed');
     expect(result.warnings?.[0]).toContain('Could not release run run lock');
     expect(result.warnings?.[0]).toContain(code);
-    const saved = await readRun(stateDir, 'run');
+    const saved = await readRun({ stateDir, runId: 'run' });
     expect(saved.status).toBe('completed');
     expect(saved).not.toHaveProperty('warnings');
   },
@@ -263,7 +263,7 @@ it('keeps ownership loss fatal even after persisting completion', async () => {
     operation: 'release',
     message: 'Could not release run run lock: Run run lock ownership was lost.',
   });
-  expect((await readRun(stateDir, 'run')).status).toBe('completed');
+  expect((await readRun({ stateDir, runId: 'run' })).status).toBe('completed');
 });
 
 it('keeps unknown release failures fatal and retains earlier validation errors', async () => {
@@ -326,7 +326,7 @@ it('warns about a removed lock while returning the actual persisted completion',
   );
   expect(result.output).toBe('done');
   expect(result.warnings).toHaveLength(1);
-  expect((await readRun(stateDir, 'run')).output).toBe('done');
+  expect((await readRun({ stateDir, runId: 'run' })).output).toBe('done');
 });
 
 it('checks cancellation after a queued start save recovers, before launching its action', async () => {
@@ -392,7 +392,7 @@ it('preserves a successful sibling result after storage-triggered cancellation',
       options(),
     ),
   ).rejects.toBeInstanceOf(CheckpointError);
-  const saved = await readRun(stateDir, 'run');
+  const saved = await readRun({ stateDir, runId: 'run' });
   expect(saved.steps['first']).toMatchObject({
     status: 'completed',
     output: 'external action succeeded',

@@ -137,7 +137,7 @@ it('completes the captured reconnect turn, persists warnings, and replays withou
     harness: new CliHarness({ codexBinary: binary }),
   };
   await expect(runWorkflow(workflow, options)).rejects.toThrow('later failure');
-  const checkpoint = await readRun(stateDir, 'reconnect');
+  const checkpoint = await readRun({ stateDir, runId: 'reconnect' });
   expect(checkpoint.steps['agent']?.status).toBe('completed');
   expect(checkpoint.steps['agent']?.warnings?.[0]).toMatch(/^Reconnecting/u);
   expect(checkpoint.steps['agent']?.output).not.toHaveProperty('warnings');

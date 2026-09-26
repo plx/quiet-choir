@@ -89,11 +89,15 @@ describe('durable TypeScript workflows', () => {
       return before + b;
     });
     await expect(runWorkflow(definition, options)).rejects.toThrow('transient');
-    expect((await readRun(options.stateDir, options.runId)).status).toBe('failed');
+    expect((await readRun({ stateDir: options.stateDir, runId: options.runId })).status).toBe(
+      'failed',
+    );
     const result = await runWorkflow(definition, {
       ...options,
       resume: true,
-      onEvent: (e) => events.push(e.type),
+      onEvent: (e) => {
+        events.push(e.type);
+      },
     });
     expect(result.output).toBe(9);
     expect(result.steps['first']?.output).toEqual({ value: 7 });
@@ -187,7 +191,9 @@ describe('durable TypeScript workflows', () => {
     const resume = { ...options, resume: true, harness: { invoke } };
     await expect(runWorkflow(definition, resume)).rejects.toThrow();
     await expect(runWorkflow(definition, resume)).rejects.toThrow();
-    expect((await readRun(options.stateDir, options.runId)).steps['ask']?.status).toBe('failed');
+    expect(
+      (await readRun({ stateDir: options.stateDir, runId: options.runId })).steps['ask']?.status,
+    ).toBe('failed');
     expect((await runWorkflow(definition, resume)).output).toBe(42);
     expect(invoke).toHaveBeenCalledTimes(3);
   });
@@ -316,7 +322,7 @@ describe('durable TypeScript workflows', () => {
         },
       }),
     ).rejects.toThrow('stop');
-    const before = await readRun(options.stateDir, options.runId);
+    const before = await readRun({ stateDir: options.stateDir, runId: options.runId });
     const wakeAt = before.steps['wait']?.wakeAt;
     await delay(50);
     const after = await runWorkflow(definition, { ...options, resume: true });
@@ -351,7 +357,7 @@ describe('durable TypeScript workflows', () => {
     });
     await expect(runWorkflow(definition, options)).rejects.toThrow('outer failed');
     expect(settled).toBe(true);
-    const record = await readRun(options.stateDir, options.runId);
+    const record = await readRun({ stateDir: options.stateDir, runId: options.runId });
     expect(record.steps['done']?.status).toBe('completed');
     expect(record.steps['pending']?.status).toBe('failed');
     expect(record.status).toBe('failed');
@@ -406,7 +412,7 @@ describe('durable TypeScript workflows', () => {
         ),
         { ...options, runId: 'id' },
       ),
-    ).rejects.toThrow('Step ID');
+    ).rejects.toThrow('Invalid step ID');
     await expect(
       runWorkflow(
         workflow(() => Promise.resolve(NaN)),
@@ -462,6 +468,6 @@ describe('durable TypeScript workflows', () => {
         signal: AbortSignal.abort(new Error('cancelled')),
       }),
     ).rejects.toThrow('cancelled');
-    expect((await readRun(options.stateDir, 'abort')).status).toBe('failed');
+    expect((await readRun({ stateDir: options.stateDir, runId: 'abort' })).status).toBe('failed');
   });
 });

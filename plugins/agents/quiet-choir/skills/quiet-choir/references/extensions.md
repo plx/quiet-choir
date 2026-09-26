@@ -11,6 +11,15 @@ or alter a run.
 Supply `runId` and input matching the schema. Unlike the CLI's default `{}`, omitted embedded input
 is undefined for a new run; on resume it uses the saved input. Optional dependencies are `harness`,
 `cwd`, `stateDir`, `signal`, `fingerprint`, and `onEvent`. Local-only workflows need no harness.
+`readRun({ runId, cwd, stateDir })` shares execution's path resolution and storage default;
+`resolveStateDir({ cwd, stateDir })` returns the absolute directory.
+
+The core validates explicit agent options before recording a step, using exported
+`claudeOptionsSchema` and `codexOptionsSchema`. These schemas are also used by `CliHarness` and add
+no defaults. Top-level undefined option values are omitted. Invalid remaining data names the step
+and JSON path; invalid options name the field and value. Correcting an option before its step was
+recorded permits an embedded resume when the other compatibility checks still match. CLI source
+edits still change the code fingerprint.
 
 ```ts
 import { defineWorkflow, runWorkflow, z, type Harness } from 'quiet-choir';
@@ -62,6 +71,10 @@ Implement `Harness.invoke(request, signal): Promise<HarnessResponse>`. The reque
 `outputSchema` (JSON Schema or null for text). Honor cancellation, reject process/protocol failures,
 and return `{ text, sessionId, usage }`. For structured calls, `text` must contain the serialized
 JSON value; the runtime parses it, validates it, and checkpoints the result.
+
+`CliHarness` owns the documented 120-second timeout, tool, turn, budget, and sandbox defaults. The
+core does not fill them in. Custom implementations must supply their own defaults and enforce
+deadlines as well as cancellation.
 
 The adapter owns one fresh invocation, not retries, run locks, or checkpoint storage. Missing usage
 measurements and native IDs should be null. Do not treat a process's zero exit status as sufficient

@@ -78,7 +78,7 @@ it('cancels a waiting map sibling immediately and retains the first mapper failu
   expect(result).toBe('first mapper failed');
   expect(siblingDrained).toBe(true);
   expect(thirdStarted).toBe(false);
-  expect((await readRun(stateDir, 'map')).error).toBe('first mapper failed');
+  expect((await readRun({ stateDir, runId: 'map' })).error).toBe('first mapper failed');
 });
 
 it('snapshots mutable agent options before saving and invoking the harness', async () => {

@@ -11,7 +11,11 @@ The CLI still typechecks and imports the module first.
 Keep clocks, randomness, filesystem/network reads, and writes inside durable effects. Branch on
 input and saved results. Local effects have explicit `input` dependencies; their closures are not
 fingerprinted. Await operations and compose at the workflow level, never by nesting steps inside a
-local effect callback.
+local effect callback. The runtime drains launched operations and effects launched by their
+immediate continuations before releasing its lock. An ignored rejection fails the run regardless of
+when it settles; a failure that is awaited and caught may be handled in the workflow body. Arbitrary
+detached async tasks are not owned by the runner, so this protection does not replace awaiting
+operations.
 
 ## Compatibility gates
 
@@ -72,7 +76,9 @@ renamed, then their directory entry is flushed. A per-run directory lock has `ow
 a PID, hostname, and token. Dead same-host owners can be recovered; live owners and foreign-host
 owners are refused. Incomplete ownership metadata or an abandoned `recovery` directory requires
 inspection and manual cleanup only after confirming there is no active owner. Do not delete a lock
-merely because a run looks stalled.
+merely because a run looks stalled. After acquiring ownership, the runner removes only that run's
+abandoned `<runId>.json.<uuid>.tmp` files; it preserves other runs' files and unrelated temporary
+data.
 
 Cancellation cooperatively aborts and drains active work before releasing the lock. Local callbacks
 must honor their signal or draining can hang. A mapper failure cancels the whole run and stops

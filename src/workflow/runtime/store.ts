@@ -1,10 +1,11 @@
 import { randomUUID } from 'node:crypto';
-import { mkdir, open, readFile, rename, rm } from 'node:fs/promises';
+import { mkdir, open, readFile, readdir, rename, rm } from 'node:fs/promises';
 import { hostname } from 'node:os';
 import { join, resolve } from 'node:path';
 
 import { z } from 'zod';
 
+import { resolveStateDir, type StateDirectoryOptions } from './paths.js';
 import { jsonValue } from './json.js';
 import type { AgentUsage, JsonValue } from './model.js';
 
@@ -137,8 +138,16 @@ function pathFor(stateDir: string, runId: string): string {
   return join(resolve(stateDir), `${runId}.json`);
 }
 
-/** Read and validate a run without acquiring a writer lock. */
-export async function readRun(stateDir: string, runId: string): Promise<RunRecord> {
+/** Locate a run using the same cwd and stateDir defaults as runWorkflow. */
+export interface ReadRunOptions extends StateDirectoryOptions {
+  /** Stable identifier of the saved run. */
+  readonly runId: string;
+}
+
+/** Read and validate a run without acquiring a writer lock; missing files retain code ENOENT. */
+export async function readRun(options: ReadRunOptions): Promise<RunRecord> {
+  const { runId } = options;
+  const stateDir = resolveStateDir(options);
   const raw = jsonValue(JSON.parse(await readFile(pathFor(stateDir, runId), 'utf8')));
   const record = recordSchema.parse(raw);
   if (record.id !== runId) throw new Error('Checkpoint run ID does not match its filename.');
@@ -239,6 +248,18 @@ export async function lockRun(stateDir: string, runId: string): Promise<() => Pr
       await using file = await open(join(lockPath, 'owner.json'), 'wx', 0o600);
       await file.writeFile(JSON.stringify(owner));
       await file.sync();
+      // Only this run's lock owner can remove abandoned atomic-write files.
+      const prefix = `${runId}.json.`;
+      for (const entry of await readdir(resolve(stateDir), { withFileTypes: true })) {
+        if (
+          entry.isFile() &&
+          entry.name.startsWith(prefix) &&
+          /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\.tmp$/u.test(
+            entry.name.slice(prefix.length),
+          )
+        )
+          await rm(join(resolve(stateDir), entry.name), { force: true });
+      }
     } catch (error) {
       await rm(lockPath, { recursive: true, force: true });
       throw error;

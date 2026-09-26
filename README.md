@@ -120,12 +120,26 @@ failed agent calls.
 For embedding, call `runWorkflow(definition, { runId, input, harness: new CliHarness() })`. Its
 output is typed from the workflow schema. Supply `signal`, `stateDir`, `cwd`, `onEvent`, and a code
 `fingerprint` as needed. The core depends on a `Harness` interface, so tests and alternative
-integrations can replace subprocesses without changing workflows.
+integrations can replace subprocesses without changing workflows. Read the saved record with
+`readRun({ runId, cwd, stateDir })`; both APIs default to `<cwd>/.quiet-choir/runs` and resolve a
+relative `stateDir` against `cwd`. `resolveStateDir({ cwd, stateDir })` returns that absolute path.
+An `onEvent` observer may return `void` or `Promise<void>`; it is not awaited, and both synchronous
+throws and rejected promises are ignored.
+
+Explicit agent options are validated before recording the step, using the exported
+`claudeOptionsSchema` and `codexOptionsSchema` also used by `CliHarness`. Top-level undefined option
+values are omitted. Other invalid JSON names the step and offending JSON path. Embedded callers can
+correct an invalid option and resume when no step was recorded; CLI source edits still change the
+workflow fingerprint. Call-site validation runs during execution, not during `workflow validate`.
 
 ## Durability contract
 
 - The workflow body replays from the beginning. Keep orchestration deterministic; put file reads,
   randomness, clocks, network calls, and other effects inside steps. Await every workflow operation.
+  The runner drains launched operations and their immediate continuations before releasing the lock.
+  Ignored operation failures fail the run even if they settled before the body returned. Awaited and
+  caught failures may be handled by the workflow; arbitrary detached async tasks remain the caller's
+  responsibility.
 - Step IDs are unique within a run, including loop iterations and helper functions. Do not nest
   steps inside a step callback. Compose them with ordinary TypeScript functions at the workflow
   level.
@@ -141,7 +155,8 @@ integrations can replace subprocesses without changing workflows.
   callbacks.
 - Checkpoints use flushed temporary files, atomic rename, and an exclusive local writer lock. Dead
   local owners can be recovered; live or foreign-host owners are refused. Incomplete lock metadata
-  or an abandoned recovery requires inspection and manual cleanup. Use a local POSIX filesystem.
+  or an abandoned recovery requires inspection and manual cleanup. Acquiring the lock removes only
+  that run's abandoned `<runId>.json.<uuid>.tmp` files. Use a local POSIX filesystem.
 - Transient checkpoint writes retry briefly. Persistent storage errors stop new effects and never
   retry a successful action in-process. `CheckpointError` identifies save/release failures; combined
   errors preserve the workflow's original cause. A failed save can leave `running` with
@@ -161,11 +176,13 @@ restrictive creation modes; `.quiet-choir/` is gitignored.
 
 ## Harness defaults and limits
 
-Claude defaults to no built-in tools, `dontAsk` permissions, three turns, and a $0.25 per-call
-budget. Explicitly enable and allow tools through `tools` and `allowedTools`. Codex defaults to a
-read-only sandbox and approvals set to `never`; opt into `workspace-write` per call. Both have a
-120-second wall-clock limit and an 8 MiB combined output limit. Codex does not expose an equivalent
-per-call USD cap here. Model selection is explicit or inherited from the installed harness.
+`CliHarness` applies these defaults; the core supplies none. Custom `Harness` implementations own
+their defaults and must enforce deadlines. Claude defaults to no built-in tools, `dontAsk`
+permissions, three turns, and a $0.25 per-call budget. Explicitly enable and allow tools through
+`tools` and `allowedTools`. Codex defaults to a read-only sandbox and approvals set to `never`; opt
+into `workspace-write` per call. Both have a 120-second wall-clock limit and an 8 MiB combined
+output limit. Codex does not expose an equivalent per-call USD cap here. Model selection is explicit
+or inherited from the installed harness.
 
 Prompts go over stdin without a shell. Timeouts and cancellation terminate process groups on
 macOS/Linux; Windows cleanup reaches the immediate child only. These flags do not sandbox the
@@ -184,8 +201,9 @@ npm run check
 `execute` typechecks before importing the workflow. `validate` typechecks and verifies its export
 contract without calling `run`; importing either command's workflow **executes module top-level
 code**. `typecheck` performs no imports or effects. `inspect` reads a saved run without importing
-workflow code. Use `--state-dir PATH` for alternate storage and `--json` for machine-readable
-output. Do not write to stdout from workflow code when consuming JSON CLI output.
+workflow code. A missing run reports the absolute storage directory and available run IDs. Use
+`--state-dir PATH` for alternate storage and `--json` for machine-readable output. Do not write to
+stdout from workflow code when consuming JSON CLI output.
 
 Inherited `--log-level trace|debug|info|warn|error|fatal|silent` and `-v, --verbose` go after the
 command name and are mutually exclusive. Configuration commands remain explicit stubs (exit 2);
