@@ -1,0 +1,211 @@
+{
+  "acceptance-qa-batch": {
+    "summary": "Ingest a backlog, demonstrate each ticket’s acceptance criteria against the implementation, then send an adversary after tickets that passed. Compute the final pass/fail counts in code.",
+    "preserved": "The default eight-ticket cap, deferred count, demonstrate-then-break pipeline, and criterion-breaking severity threshold are unchanged. Tickets move to the breaker independently; there is no batch-wide demonstration barrier.",
+    "changes": [
+      "The three named phases are descriptive metadata and stderr output. Each ticket’s demonstration and breaker calls receive separate durable IDs."
+    ],
+    "evaluation": "The original pass-pending-manual branch is unreachable: allShown already requires every criterion to be demonstrated. That logic is retained. A skipped or failed Claude invocation now stops the run instead of producing the original null-tolerant partial result."
+  },
+  "acceptance-qa-deep": {
+    "summary": "Decompose one ticket’s explicit and implied criteria into checks, verify the delivered behavior, and challenge passing criteria for compliance with their intent. Produce a done, pending-manual, or not-done verdict.",
+    "preserved": "Explicit and implied criteria, per-criterion check→skeptic sequencing, the fail-spirit downgrade, and the final evidence-based summary are retained.",
+    "changes": [
+      "The local status type is widened to include fail-spirit. Skipped skeptic results have an optional field that disappears from the final JSON, preserving the original serialized result."
+    ],
+    "evaluation": "The skeptic only sees criteria that initially pass. A cannot-verify result remains a manual-verification case; it is not promoted to a demonstrated pass. This port adds no approval inbox or interactive pause."
+  },
+  "api-migration": {
+    "summary": "Discover call sites, partition them into disjoint file groups, transform them in bounded waves, and verify the repository. If verification fails, try one repair pass over up to three failure clusters.",
+    "preserved": "Disjoint file ownership, the batchSize wave boundary, early exit when every group in a wave is blocked, and the single verify→repair→verify cycle are unchanged.",
+    "changes": [
+      "The wave still contains batchSize groups, but the local fan-out helper runs at most eight items at once. Larger waves queue within that boundary."
+    ],
+    "evaluation": "The no-worktree approach depends on discovery actually producing disjoint paths; neither implementation proves that claim. Migration and repair are write operations. Unattempted waves after an early abort are not automatically retried within the same completed run."
+  },
+  "bug-hunt": {
+    "summary": "Rotate through bug-finding lenses, deduplicate candidates across rounds, and convene independent skeptic panels. Keep majority-upheld findings and stop after two dry rounds or the configured round cap.",
+    "preserved": "Lens rotation, the seen set covering both confirmed and refuted findings, majority arithmetic, severity ordering, and the dry-round/maxRounds stopping rules are retained.",
+    "changes": [
+      "The original 60,000-token remaining-budget exit is unavailable: Quiet Choir has no shared token ledger. The port keeps the convergence and round-cap exits."
+    ],
+    "evaluation": "The retained per-call USD cap is not a replacement for a whole-workflow budget. Distinct scopes keep skeptic IDs unique even when findings share a filename and panel labels repeat."
+  },
+  "codebase-atlas": {
+    "summary": "Survey the repository, prioritize its subsystems, deep-read them in parallel, and write an atlas. A completeness critic can request one bounded repair round.",
+    "preserved": "Core-first ordering, the default eight-subsystem cap, explicit skipped-subsystem list, synthesis barrier, and at-most-three gap repairs remain intact.",
+    "changes": [
+      "Writing the atlas and merging repairs use explicit Claude text calls. File I/O remains agent work; the port does not replace it with local filesystem steps."
+    ],
+    "evaluation": "This workflow writes docs/atlas.md by default, so it needs tools even without an out argument. Its repair round is bounded and does not guarantee that a second critic would approve the revised atlas."
+  },
+  "dead-code-sweep": {
+    "summary": "Find dead-code candidates through three independent discovery methods, deduplicate and prioritize corroborated candidates, then actively search for living references before proposing deletion.",
+    "preserved": "The candidate cap, cross-check barrier, keep-on-uncertainty prompts, report-only default, single deletion agent, and post-deletion verification are retained.",
+    "changes": [
+      "apply still gates deletion. Native agent failures propagate instead of being folded into the original keep-by-default partial results."
+    ],
+    "evaluation": "A confirmed-dead result is evidence from the agents, not a static proof of unreachability. apply:true requires explicitly enabled write tools; this site does not execute deletions."
+  },
+  "deep-code-review": {
+    "summary": "Determine the diff, review it through independent dimensions, deduplicate findings, and ask skeptics to refute each surviving candidate before producing a report.",
+    "preserved": "The scoping pass, optional dimension selection, all-reviewers barrier before deduplication, highest-severity duplicate selection, and verified-findings-only report are unchanged.",
+    "changes": [
+      "Repeated labels become scoped durable IDs. As a child of feature-factory, the review runs in a namespace within its parent’s durable run."
+    ],
+    "evaluation": "The deduplication barrier matters: it avoids paying multiple verifiers for the same cross-dimension finding. The port retains it instead of turning the whole review into an item pipeline."
+  },
+  "dependency-upgrade": {
+    "summary": "Research the target dependency while analyzing local usage, combine the evidence into an upgrade plan, apply it, and run a bounded verification-and-repair loop.",
+    "preserved": "Research and impact analysis meet at the same barrier. The reconsider-risk exit, single initial applier, three-cluster repair cap, maximum repair rounds, and final status calculation are retained.",
+    "changes": [
+      "The paired analysis results retain their distinct schema types. Each loop invocation gets a new durable ID even where its human-readable label repeats."
+    ],
+    "evaluation": "There is no report-only apply flag in the original. The final repair is not followed by an extra verification beyond the existing loop; a last-round repair may leave the result reporting the prior verification state. That behavior is preserved for this batch."
+  },
+  "design-tournament": {
+    "summary": "Generate four designs from deliberately different philosophies, anonymize them for independent judges, score the fixed rubric in code, and synthesize the winner with useful ideas from the runners-up.",
+    "preserved": "All four proposer identities, A/B/C/D anonymization, judge independence, score arithmetic, winner selection, graft prompts, and the six-point dissent threshold are unchanged.",
+    "changes": [
+      "Proposals and scores use inferred Zod response types; the final design stays free text. The requested high effort is documented but cannot be passed through ClaudeOptions."
+    ],
+    "evaluation": "Scores remain agent judgments; typed numeric fields do not enforce the prompt’s 1–10 range. The original schemas do not validate that every judge scored every proposal, and this direct port does not add that behavior."
+  },
+  "docs-drift-audit": {
+    "summary": "Inventory and prioritize documentation, extract checkable claims per document, verify those claims against the code, and optionally patch drifted text.",
+    "preserved": "Audience-priority ordering, the document cap and skipped list, one checker per document, and the three-stage extract→check→fix pipeline are retained.",
+    "changes": [
+      "The helper preserves the original stage arguments: previous result, original document, and item index. A document advances without waiting for other documents."
+    ],
+    "evaluation": "fix defaults to false. When enabled, the reported fixed count follows the original patching path; there is no independent post-patch re-audit in either version."
+  },
+  "feature-factory": {
+    "summary": "Turn a PRD into tickets, plan implementation modules, build foundations sequentially and feature modules in parallel, run deep reviews, repair findings, and verify the combined result.",
+    "preserved": "The prd-decompose and deep-code-review children are included as real ports. Foundation ordering, feature fan-out, module context, review barriers, and the final verification are retained.",
+    "changes": [
+      "Child workflows share namespaced durable steps in the parent run. The original low-token guard after foundation work is omitted because there is no shared budget API."
+    ],
+    "evaluation": "This is an expensive, write-capable composition. Headless calls need explicit tool configuration, and per-call caps do not cap aggregate spend. Shared files remain subject to the original module plan’s ownership assumptions; no automatic worktrees were added."
+  },
+  "feedback-synthesis": {
+    "summary": "Inventory a feedback corpus, calibrate a shared theme vocabulary on a sample, tag disjoint shards, aggregate counts and severity in code, then deep-dive the top themes and write a report.",
+    "preserved": "Calibration happens before tagging. The fixed vocabulary, disjoint shard instructions, coverage accounting, severity-weighted ranking, emergent-theme collection, and deep-dive cap are unchanged.",
+    "changes": [
+      "Schema descriptions and enum choices move into Zod. The aggregation remains ordinary TypeScript rather than another agent call."
+    ],
+    "evaluation": "Unknown theme keys are still ignored during aggregation, as in the source. Reported coverage comes from taggers’ counts; the orchestration does not independently reopen and recount the corpus."
+  },
+  "flaky-test-hunt": {
+    "summary": "Find suspicious tests from independent evidence sources, rank corroborated suspects, stress-run them empirically, and diagnose only tests that actually flake. Fixes are optional.",
+    "preserved": "Suspect deduplication and cap, the configured run count, stable/flaky/always-fails/could-not-run distinctions, and conditional diagnosis and repair are unchanged.",
+    "changes": [
+      "Skipped diagnoses are represented as optional intermediate fields. Calls still run through explicit Claude sessions and need command-execution tools to produce real stress evidence."
+    ],
+    "evaluation": "Always-failing and unrunnable tests are kept separate from flakes. A fixture can verify this branching but cannot establish real-world flakiness or validate an actual repair."
+  },
+  "incident-investigation": {
+    "summary": "Collect evidence before forming a story, generate competing hypotheses, try to falsify each using its predictions, and report surviving explanations with explicit uncertainty.",
+    "preserved": "Read-only instructions in every investigation prompt, independent collection, oddity handling, hypothesis/falsification barriers, and the original confidence calculation remain intact.",
+    "changes": [
+      "The port retains prompt-level read-only rules and exposes tool configuration through $claude. It does not turn those prompts into a new filesystem sandbox."
+    ],
+    "evaluation": "Choose tools consistent with the read-only charter. Confidence is a coded heuristic based on survivors and falsifications, not a probability estimate or proof of causality."
+  },
+  "prd-decompose": {
+    "summary": "Read a PRD through complementary lenses, merge extracted requirements into implementation tickets, verify coverage, and repair any identified omissions once.",
+    "preserved": "The extraction barrier, lane and sizing enums, acceptance criteria, dependency and PRD-anchor fields, open-question collection, and optional backlog document are retained.",
+    "changes": [
+      "The workflow is a normal imported definition when composed. Its input is parsed before child execution, and its calls receive a parent-specific step namespace."
+    ],
+    "evaluation": "The merger still owns ticket quality and dependency judgments. A single coverage repair is not re-checked by an additional critic; the direct port keeps that stopping point."
+  },
+  "prd-to-spec": {
+    "summary": "Ground a PRD in the codebase, draft a specification through five lenses, optionally run a design tournament for a load-bearing decision, then check implementability and product fidelity.",
+    "preserved": "Greenfield handling, lens aggregation, contested-decision ordering, the optional tournament condition, two independent verifiers, one repair, and optional file output remain intact.",
+    "changes": [
+      "The design tournament is an ordinary imported child with namespaced steps. The original optional composition remains optional; no extra design round is introduced."
+    ],
+    "evaluation": "Quiet Choir does not enforce the original one-level nesting limit. The port nevertheless keeps the same orchestration shape. Open questions are still extracted from the final markdown with the original heuristic."
+  },
+  "project-bootstrap": {
+    "summary": "Detect the stack and existing setup, plan relevant project concerns, optionally set up missing pieces, and prove the result with executable checks and one repair round.",
+    "preserved": "Detection before planning, concern filtering, skip-present handling, plan-only default, parallel setup of active concerns, and prove→repair→prove sequencing are unchanged.",
+    "changes": [
+      "apply continues to control setup. The port makes the headless Claude tool and permission configuration explicit rather than inheriting an interactive session’s setup."
+    ],
+    "evaluation": "A plan can be compared without authorizing writes. Running apply:true requires appropriate tools. Concurrent setup still assumes the planner assigns concerns that can coexist in the shared workspace."
+  },
+  "refactor-campaign": {
+    "summary": "Find measurable refactoring targets, rank payoff against risk, write characterization tests, then optionally refactor behind a green test net and verify that behavior stayed the same.",
+    "preserved": "Survey/rank ordering, the target cap, the green-net gate, net→refactor→verify pipeline, and the refactored/net-only/skipped result groups are retained.",
+    "changes": [
+      "Intermediate results explicitly model absent refactors. Status literals are annotated for TypeScript; their serialized values and decision rules are unchanged."
+    ],
+    "evaluation": "apply:false still creates characterization tests; it is not a write-free dry run. Targets run concurrently without automatic workspace isolation, so overlapping file ownership remains an original assumption to scrutinize."
+  },
+  "release-gate": {
+    "summary": "Assess release dimensions with evidence, independently confirm reported blockers, and give a gatekeeper the policy, hard-block status, and concerns for a go/conditional-go/no-go decision.",
+    "preserved": "Dimension parallelism, blocker-confirmation barrier, configurable blockOn dimensions, downgraded concerns, gatekeeper prompt, and result shape are unchanged.",
+    "changes": [
+      "The gatekeeper’s decision is schema-validated. Native failure propagation replaces the original fallback decision when that agent returns null."
+    ],
+    "evaluation": "The original hardBlock value is supplied to the gatekeeper but is not a final code-level veto over its decision. This port preserves that behavior so reviewers can evaluate the actual contract."
+  },
+  "release-notes": {
+    "summary": "Collect a commit manifest, summarize fixed-size commit slices, draft audience-specific release notes, fact-check them, and optionally repair and write the result.",
+    "preserved": "The explicit since/until range, 25-commit slices, all-summaries barrier, breaking/deprecation extraction, coverage calculation, and single fact-check repair are retained.",
+    "changes": [
+      "Every summary slice and subsequent text artifact is a durable Claude effect. Writing out the document remains an optional agent call."
+    ],
+    "evaluation": "Commit coverage is explicit, but fact-check success is still the checker’s judgment. If notes are repaired, the original does not run a second independent fact-check; this batch does not add one."
+  },
+  "requirements-to-prd": {
+    "summary": "Extract requirements through independent lenses, draft a PRD, attack it with specialist critics, and revise it while retaining assumptions, conflicts, and open questions.",
+    "preserved": "Raw-text versus path handling, prior answers as input, extraction and critique barriers, inferred-requirement labeling, and optional PRD file output are unchanged.",
+    "changes": [
+      "Structured extraction and critique replies use Zod, while the PRD stays text. Missing required material still returns the original usage result."
+    ],
+    "evaluation": "Answers arrive as input to a new invocation. The port does not add an interactive question step, and the final assumptions/open-questions lists still depend on markdown section extraction."
+  },
+  "research-synthesis": {
+    "summary": "Find leads through four research modalities, deduplicate and prioritize them, read the strongest sources deeply, synthesize a cited answer, and run one critic-driven supplementary round if needed.",
+    "preserved": "Credibility ranking, quick/standard/deep read caps, useful-reading filter, per-claim citation prompts, three-gap supplementary cap, and final confidence heuristic are retained.",
+    "changes": [
+      "Repeated synthesis calls receive separate durable IDs. The optional extra-readings argument is given an empty-array default for TypeScript, preserving its original fallback behavior."
+    ],
+    "evaluation": "Research needs suitable web or repository-reading tools. Source quality and citations still require substantive review; schema validation proves their shape, not their truth."
+  },
+  "roadmap-plan": {
+    "summary": "Decompose a specification into capabilities and dependencies, propose three sequencing strategies, choose one, stress-test its assumptions, and produce a milestone roadmap.",
+    "preserved": "The dependency/risk fields, three strategy philosophies, winner fallback, stress critic, milestone gates, and final document remain unchanged.",
+    "changes": [
+      "All stages are explicit Claude calls with typed response boundaries. The final roadmap remains free text; no scheduler or project-management system is introduced."
+    ],
+    "evaluation": "The dependency graph is agent-authored and critiqued, not independently solved or cycle-checked by the runtime. The output is a plan artifact, not an executable delivery schedule."
+  },
+  "sdlc-orchestrator": {
+    "summary": "Drive a feature through a tailored lifecycle plan. Run leaf workflows in sequence, return checkpoints for human decisions, and hand off specification and implementation conductors as separate top-level invocations.",
+    "preserved": "Plan-only mode, caller-supplied state, completed handoffs, stage applicability, autoApprove rules, gate checkpoints, and the original spec/implementation handoffs are retained.",
+    "changes": [
+      "A static registry maps the eight leaf names to their TypeScript ports. The low-token pause is unavailable. Human checkpoints remain returned data rather than a native approval mechanism.",
+      "Continuing with answers or completed handoffs requires a new Quiet Choir run ID with the returned state as input. --resume retries an interrupted run with unchanged input; it cannot accept edited answers."
+    ],
+    "evaluation": "The original checkpoint message reads stage.plan even though stages do not define it; its fallback to next is preserved. The original also advances the cursor before returning a blocked gate. Treat these as source behavior to evaluate, not newly added approval guarantees."
+  },
+  "security-audit": {
+    "summary": "Map the attack surface, audit through six specialist lenses, send each lens’s findings directly to severity-sized skeptic panels, and report only majority-upheld vulnerabilities.",
+    "preserved": "Recon context, optional lens selection, sweep→refutation pipelining, three skeptics for critical/high findings versus one for medium/low, majority thresholds, and severity-sorted reporting are retained.",
+    "changes": [
+      "Per-finding scopes disambiguate repeated refutation labels. The port keeps the absence of a cross-lens deduplication barrier."
+    ],
+    "evaluation": "Early completion of one lens can start verification while others still sweep. Nested groups can exceed the helper’s per-group concurrency bound, so it is not a global agent cap. Findings remain agent-generated claims, not certified vulnerabilities."
+  },
+  "test-gap-filler": {
+    "summary": "Find test gaps through coverage tooling and risk analysis, rank them by impact, and write and independently mutation-check tests for the highest-priority gaps.",
+    "preserved": "The two-finder barrier, corroboration merge, ranking cap, file-based sharding, sequential work within each file, independent verification, and mandatory restoration prompts are unchanged.",
+    "changes": [
+      "Each file shard keeps a private durable-ID scope while other files can proceed concurrently. Helper functions still make direct ctx.claude calls."
+    ],
+    "evaluation": "Both writers and verifiers temporarily modify production code for mutation checks. Same-file serialization is essential and preserved. Checkpoints do not make those edits transactional or guarantee restoration if the process dies mid-effect."
+  }
+}
