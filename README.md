@@ -95,9 +95,21 @@ consumer imports `quiet-choir` as above.
 
 Agent results contain `output`, native `sessionId`, and reported token/cost `usage`. Native session
 IDs are diagnostic metadata; each effect starts a fresh harness session. `object` sends JSON Schema
-to the harness and validates the returned JSON locally. Use JSON-compatible schemas, preferably
-required object properties for portable structured responses. Schema transforms and class-valued
-schemas cannot be converted to the portable JSON Schema contract.
+to the harness and validates the returned JSON locally. Codex defaults to
+`structuredOutput: 'compat'`: optional properties become nullable on the wire, non-object roots are
+wrapped, records use key/value entries (enum-keyed records require all keys), discriminated unions
+use `anyOf`, and loose objects are closed. The adapter reverses these encodings before the original
+Zod validation; nullable optionals retain null, while other optional nulls become absent properties.
+Unknown keys are not requested for loose objects. Tuples are rejected locally; use named object
+properties.
+
+Choose `structuredOutput: 'strict'` to send a native Codex schema: use an object root, make every
+property required (use `.nullable()` for missing values), and avoid records, loose objects,
+discriminated unions, and tuples. `checkCodexSchema(schema)` returns JSON paths and fixes before a
+workflow runs. `workflow validate` cannot inspect call-site schemas without running the body.
+Refinements are enforced locally, so repeat them in the prompt. Schema transforms and class-valued
+schemas cannot be converted to JSON Schema. Claude receives the original schema and also requires an
+object root; other Codex restrictions and wire transforms do not apply to it.
 
 A local effect might use `ctx.step('read', { input: { path }, schema: z.string(), run: ... })`.
 Callbacks receive `{ signal, attempt, idempotencyKey }`. Opt into retries only for repeatable

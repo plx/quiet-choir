@@ -266,8 +266,8 @@ describe('headless CLI adapter', () => {
       await fixture(`const fs = require('node:fs'); const args = process.argv.slice(2);
       const path = args[args.indexOf('--output-schema') + 1];
       fs.writeFileSync('invocation.json', JSON.stringify({ args, path, schema: JSON.parse(fs.readFileSync(path)), mode: fs.statSync(path).mode & 511 }));
-      console.log(${JSON.stringify(jsonl(codexSuccess))});`);
-    const schema = { type: 'object', properties: {} };
+      console.log(${JSON.stringify(jsonl([{ type: 'item.completed', item: { type: 'agent_message', text: '{}' } }, { type: 'turn.completed' }]))});`);
+    const schema = { type: 'object', properties: {}, required: [], additionalProperties: false };
     await new CliHarness({ codexBinary: binary }).invoke(
       {
         provider: 'codex',

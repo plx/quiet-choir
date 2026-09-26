@@ -73,3 +73,27 @@ then repeats it. Use the provided idempotency key when the external system suppo
 or make the effect safe to repeat. There are no automatic agent retries, distributed workers,
 server, or background scheduler. A durable sleep remembers its wake time but still needs a running
 process to wake. [ADR 0002](decisions/0002-durable-external-workflows.md) records these choices.
+
+## Structured schema contract (2026-09-26)
+
+The 15-shape matrix in `test/fixtures/codex-schema-matrix.json` was generated with Zod 4.5.4 and
+checked against codex-cli 0.157.1 and Claude Code 2.1.283. Sanitized results and all Claude attempt
+measurements are in `test/fixtures/schema-contract-results.json`; refresh commands are in
+[CONTRIBUTING](../CONTRIBUTING.md#harness-protocol-captures).
+
+Codex's invalid-effort probes made no inference calls: all ten rejected native shapes matched the
+local checker (including nested/nullable optionals), and all fourteen supported compatibility
+encodings passed schema validation. Tuples remain local errors in compatibility mode. Five native
+positive controls (nullable/default/union/minimum length/wrapped array) also passed. Fake-process
+and runtime tests verify decoding and original-Zod validation, including recursive references,
+nullable optionals, duplicate record keys, and local refinements.
+
+Claude returned valid structured results for eleven original shapes, including optionals, enum
+records, loose objects, and tuples. Non-object roots (array, string, and root discriminated union)
+were rejected before inference with `input_schema.type` errors; the adapter now checks only that
+observed root restriction for Claude. String-keyed records were **inconclusive**: the CLI accepted
+the request but exhausted three turns without a valid structured result, including a retry with
+ordinary keys. That is not evidence of API schema rejection, so no Claude record lint is applied.
+Three initial calls hit the $0.02 budget; selected retries used $0.05. All nineteen Claude attempts
+reported about $0.29 total (see the exact sum in the results file). These live checks are opt-in;
+normal tests use local fixtures and never call paid harnesses.
