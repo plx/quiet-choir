@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-deprecated -- Exercise the supported legacy map/replay contract. */
 import { access, mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -309,7 +310,8 @@ it.each([
   expect(message).toContain(
     `first invalid character ${JSON.stringify(character)} at index ${String(index)}`,
   );
-  expect(message.length).toBeLessThan(300);
+  // Full ID, scope and leaf are independently truncated as the scoped API adds context.
+  expect(message.length).toBeLessThan(600);
 });
 
 it('omits top-level undefined options without adding custom harness defaults', async () => {

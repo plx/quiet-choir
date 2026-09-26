@@ -27,7 +27,8 @@
     "summary": "Rotate through bug-finding lenses, deduplicate candidates across rounds, and convene independent skeptic panels. Keep majority-upheld findings and stop after two dry rounds or the configured round cap.",
     "preserved": "Lens rotation, the seen set covering both confirmed and refuted findings, majority arithmetic, severity ordering, and the dry-round/maxRounds stopping rules are retained.",
     "changes": [
-      "The original 60,000-token remaining-budget exit is unavailable: Quiet Choir has no shared token ledger. The port keeps the convergence and round-cap exits."
+      "The original 60,000-token remaining-budget exit is unavailable: Quiet Choir has no shared token ledger. The port keeps the convergence and round-cap exits.",
+      "Named maps and ctx.within replace createPort counters. Round, finding key, skeptic index, and explicit verdict leaf compose each ID. Same-round duplicate candidates retain their original behavior through occurrence keys computed before concurrency; adopting these IDs requires a new run or explicit fork."
     ],
     "evaluation": "The retained per-call USD cap is not a replacement for a whole-workflow budget. Distinct scopes keep skeptic IDs unique even when findings share a filename and panel labels repeat."
   },

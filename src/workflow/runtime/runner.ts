@@ -22,7 +22,14 @@ import {
   writeCheckpoint,
 } from './checkpoint.js';
 import { resolveStateDir } from './paths.js';
-import { agentIdentity, stepIdentity, validateStepId, type StepIdentity } from './identity.js';
+import {
+  agentIdentity,
+  stepIdentity,
+  validateStepId,
+  duplicateStepId,
+  stepId,
+  type StepIdentity,
+} from './identity.js';
 import {
   resolvePolicy,
   matchesStepGlob,
@@ -36,6 +43,8 @@ import { HarnessError } from './harness-error.js';
 import { CancelledError, FailureOrigins } from './fan-out.js';
 import { createMap } from './map.js';
 import { ExecutionScopes } from './scopes.js';
+import { NameScopes } from './names.js';
+import { bindContext } from './context.js';
 import { stepError, errorKind } from './step-error.js';
 import { ConfigurationError } from './configuration-error.js';
 import { digest, jsonValue } from './json.js';
@@ -373,6 +382,7 @@ export async function runWorkflow<TInput, TOutput>(
     const used = new Set<string>();
     const operations = new OperationTracker();
     const scopes = new ExecutionScopes(signal);
+    const names = new NameScopes();
     const origins = new FailureOrigins();
     const visitedMaps = new Set<string>();
     const maps = (record.maps ??= {});
@@ -385,6 +395,7 @@ export async function runWorkflow<TInput, TOutput>(
         id,
         async () => {
           try {
+            if (effectOperation) validateStepId(id, names.describe(id));
             return await work();
           } catch (error) {
             if (
@@ -450,9 +461,8 @@ export async function runWorkflow<TInput, TOutput>(
           'Nested durable steps are unsupported; compose steps in the workflow body.',
         );
       signal.throwIfAborted();
-      validateStepId(id);
-      if (used.has(id))
-        throw new Error(`Duplicate step ID: ${id}. Use a unique ID for each loop iteration.`);
+      validateStepId(id, names.describe(id));
+      if (used.has(id)) throw duplicateStepId(id, names.describe(id));
       used.add(id);
       scopes.step(id);
       const { maxAttempts, delayMs } = execution.policy.retry;
@@ -732,11 +742,12 @@ export async function runWorkflow<TInput, TOutput>(
       provider: 'claude' | 'codex',
     ): AgentClient<TOptions> {
       function invoke<T, TMode extends ErrorMode = 'throw'>(
-        id: string,
+        leaf: string,
         agentOptions: TOptions & { readonly onError?: TMode },
         outputSchema: () => z.ZodType<T>,
         structured: boolean,
       ): Promise<EffectResult<AgentResult<T>, TMode>> {
+        const id = names.qualify(leaf);
         return launch(id, () => {
           let request: HarnessRequest;
           let schema: z.ZodType<T>;
@@ -841,6 +852,7 @@ export async function runWorkflow<TInput, TOutput>(
       isInEffect: () => inEffect.getStore() === true,
       launch,
       scopes,
+      names,
       operations,
       origins,
       cwd,
@@ -864,18 +876,49 @@ export async function runWorkflow<TInput, TOutput>(
       },
     });
 
+    function scopeEntry<T>(action: () => T): T {
+      try {
+        if (closed) throw new Error('Workflow is closed; await all workflow operations.');
+        if (inEffect.getStore())
+          throw new Error('Do not nest workflow operations inside a local effect callback.');
+        return action();
+      } catch (error) {
+        origins.markFatal(error);
+        throw error;
+      }
+    }
     const context: WorkflowContext = {
       runId: record.id,
       get signal() {
         return scopes.signal;
       },
+      id: stepId,
+      scope: (prefix, action) =>
+        launch(
+          'scope',
+          () => {
+            const path = scopeEntry(() => {
+              if (typeof action !== 'function') throw new Error('Scope requires a callback.');
+              return names.prefix(prefix);
+            });
+            return names.run(path, action);
+          },
+          false,
+        ),
+      within: (prefix) =>
+        bindContext(
+          context,
+          names,
+          scopeEntry(() => names.bind(prefix)),
+        ),
       claude: client<ClaudeOptions>('claude'),
       codex: client<CodexOptions>('codex'),
       step: <T, TMode extends ErrorMode = 'throw'>(
-        id: string,
+        leaf: string,
         step: StepDefinition<T> & { readonly onError?: TMode },
-      ): Promise<EffectResult<T, TMode>> =>
-        launch(id, () =>
+      ): Promise<EffectResult<T, TMode>> => {
+        const id = names.qualify(leaf);
+        return launch(id, () =>
           effect(
             id,
             'step',
@@ -895,9 +938,11 @@ export async function runWorkflow<TInput, TOutput>(
             step,
             step.onError,
           ),
-        ),
-      sleep: (id, milliseconds) =>
-        launch(id, () => {
+        );
+      },
+      sleep: (leaf, milliseconds) => {
+        const id = names.qualify(leaf);
+        return launch(id, () => {
           if (
             !Number.isFinite(milliseconds) ||
             milliseconds < 0 ||
@@ -918,7 +963,8 @@ export async function runWorkflow<TInput, TOutput>(
             },
             Date.now() + milliseconds,
           );
-        }),
+        });
+      },
       map,
     };
     record.status = 'running';

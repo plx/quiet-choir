@@ -18,8 +18,8 @@ export default defineWorkflow({
   input: z.object({ topics: z.array(z.string()).max(10) }),
   output: z.object({ labels: z.array(z.string()) }),
   async run(ctx, input) {
-    const labels = await ctx.map(input.topics, 2, async (topic, index) => {
-      const result = await ctx.claude.object(`label/${String(index)}`, {
+    const labels = await ctx.map('labels', input.topics, { concurrency: 2 }, async (topic) => {
+      const result = await ctx.claude.object('label', {
         prompt: `Suggest a short label for this topic: ${topic}`,
         schema: z.object({ label: z.string() }),
       });
@@ -45,7 +45,7 @@ version requires a new run ID (a fork can reuse compatible steps). See [durabili
 | `ctx.step(id, { input, schema, run, retry?, version?, onError? })` | Validated result; stores that result and hashes of input, schema, callback source, version, and cwd |
 | `ctx.claude.text(id, options)` / `ctx.codex.text(id, options)`     | `{ output: string, sessionId, usage }`                                                              |
 | `ctx.claude.object(id, { schema, ...options })` / Codex equivalent | Same wrapper with schema-inferred `output`                                                          |
-| `ctx.map(items, concurrency, mapper, options?)`                    | Ordered bounded fan-out; optional settled map journal                                               |
+| `ctx.map(id, items, { concurrency, key?, onError? }, mapper)`      | Ordered fan-out with per-item prefixes and optional outcome journal                                 |
 | `ctx.sleep(id, milliseconds)`                                      | `null`; persists the wake deadline, then waits in this process                                      |
 | `ctx.runId`                                                        | Stable run identifier                                                                               |
 | `ctx.signal`                                                       | Current scope signal; inherits run and parent-map cancellation                                      |
@@ -76,10 +76,31 @@ inspected. Use `version` for those dependencies or invalidate the step in a fork
 
 ## Composition and retry
 
-Use ordinary `if`, loops, and async helper functions at the workflow level. Give helpers an ID
-prefix so every durable operation has a unique ID across the entire run. IDs allow 1–200 characters,
-starting with a letter or number, followed by letters, numbers, `.`, `_`, `:`, `/`, or `-`. Keep
-collection order deterministic when deriving IDs from indexes.
+Use ordinary `if`, loops, and async helper functions at the workflow level. Wrap a helper in
+`ctx.scope('review', () => helper(ctx))`, or pass `ctx.within('review')` to bind a lexical context.
+Every local/agent/sleep call receives that prefix; nested scopes compose. Keep leaf names explicit
+(`verdict`, `read`, `summarize`). IDs are fixed at launch, so completion order cannot renumber them.
+Never allocate leaf IDs with a counter shared across concurrent branches.
+
+`ctx.map('files', files, { concurrency: 3, key: (file) => ctx.id(file) }, mapper)` runs each item in
+`files/<key>/`. All keys and combined prefixes are validated before any mapper starts. Omission of
+`key` uses the input index; explicit keys help names survive reordering/filtering. External input
+such as directory listings still belongs in a durable step. A bound context used inside its own map
+retains the map/item prefix. Invoked from an unrelated scope, it uses its creation-time prefix; its
+`signal` remains the current cancellation signal.
+
+`ctx.id(...parts)` is the pure exported `stepId(...parts)` helper. Clean parts up to 64 characters
+pass through; each unsafe/long part becomes one bounded slug plus eight hex SHA-256 characters of
+the raw text. It handles spaces, `@`, `+`, `~`, Unicode, slashes, and leading punctuation. For
+example `ctx.id('a', 3)` is `a/3`; `ctx.id('src/My Component.tsx')` is
+`src-My-Component.tsx-<hash8>`. Hash suffixes reduce collisions; uniqueness checks remain required.
+Full IDs still allow 1–200 characters, starting with a letter/number and followed by letters,
+numbers, `.`, `_`, `:`, `/`, or `-`. Shorten nesting or labels when the full ID exceeds 200.
+Diagnostics name the bounded full ID, scope, leaf, bad character/index, and allowed pattern.
+
+The deprecated positional `ctx.map(items, concurrency, mapper, options?)` adds no item prefix and
+keeps existing IDs and format-5 checkpoints resumable. Adopting scopes/named maps changes IDs and
+requires a new run (or an explicit fork); accepting code changes does not rename saved effects.
 
 Await all workflow operations. The default map policy is `drain`: stop scheduling on first failure,
 let started mappers finish without sending an abort signal, then reject with `FanOutError`. Its
@@ -130,33 +151,30 @@ authoring errors, configuration errors (a missing harness, or an adapter's pre-l
 `ConfigurationError` such as a Claude schema without an object root), and checkpoint failures also
 reject instead of becoming fallback data.
 
-For best-effort fan-out, use `{ onError: 'settle', id: 'reviewers' }` as the fourth map argument:
+For best-effort fan-out, use a named map with `onError: 'settle'`:
 
 ```ts
-const results = await ctx.map(
-  topics,
-  3,
-  (topic, index) => ctx.claude.text(`review/${index}`, { prompt: topic }),
-  { onError: 'settle', id: 'reviewers' },
+const results = await ctx.map('reviewers', topics, { concurrency: 3, onError: 'settle' }, (topic) =>
+  ctx.claude.text('review', { prompt: topic }),
 );
 const votes = results.flatMap((result) => (result.ok ? [result.value.output] : []));
 ```
 
 A settled map runs all items and journals the ordered `Settled<U, MapStepError>[]`. Errors contain
 `message`, `kind`, `attempts`, and `stepId` (null for a mapper-body failure). Cancellation,
-checkpoint errors, configuration errors, and authoring guards still reject. The required run-unique
-`id` names the journal; it does not prefix leaf IDs. Resume skips committed mappers and returns
-their exact saved outcomes, including ordinary thrown body errors and caught fallback results.
-Incomplete items execute again. Do not use this to hide ignored operation failures: every launched
-child must still be awaited.
+checkpoint errors, configuration errors, and authoring guards still reject. The full map ID names
+the journal; items prefix explicit leaves with the map ID and key/index. Resume skips committed
+mappers and returns their exact saved outcomes, including ordinary thrown body errors and caught
+fallback results. Incomplete items execute again. Do not use this to hide ignored operation
+failures: every launched child must still be awaited.
 
 Map inputs/results must be lossless JSON. Every map schedules the items present when it is called;
-settled mappers receive JSON copies of that snapshot. Identity hashes item inputs, mapper source,
-optional `version`, and cwd; concurrency can change. Captured helpers/environment are invisible, so
-put dependencies in items or bump `version`. Keep leaf IDs unique across the run. Forks start fresh
-map journals and reuse eligible steps under the selected fork policy. A leaf-level
-`onError: 'return'` inside an ordinary map is also useful when only the individual call's fallback
-must be durable.
+settled mappers receive JSON copies of that snapshot. Identity hashes item inputs, resolved keys,
+original mapper source, optional `version`, and cwd; concurrency can change. Captured
+helpers/environment are invisible, so put dependencies in items or bump `version`. Keep full IDs
+unique across the run; leaves can repeat under distinct scopes. Forks start fresh map journals and
+reuse eligible steps under the selected fork policy. A leaf-level `onError: 'return'` inside an
+ordinary map is also useful when only the individual call's fallback must be durable.
 
 For transient retries, use one step ID with `retry` rather than a loop of throwing `ask/0`, `ask/1`
 calls. `retry.on` limits retries to listed error kinds; omit it to retry all effect failures except

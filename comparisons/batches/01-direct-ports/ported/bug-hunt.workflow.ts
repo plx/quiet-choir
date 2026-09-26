@@ -1,7 +1,7 @@
 // Direct port of hesreallyhim/ultracode-workflows; MIT, see ../LICENSE.
 // Source snapshot: 9b5404d11b885b28380d3eb17471ef7b17601b5e.
 import { defineWorkflow, z, type WorkflowContext } from 'quiet-choir';
-import { createPort, executionInput, normalize } from './support.js';
+import { executionInput, normalize } from './support.js';
 
 export const meta = {
   name: 'bug-hunt',
@@ -21,7 +21,6 @@ export const input = z.object({
   votes: z.number().int().nonnegative().optional(),
 });
 async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
-  const port = createPort(ctx);
   return normalize(await execute());
   async function execute() {
     const BUGS_SCHEMA = z
@@ -68,15 +67,16 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
     const majority = Math.floor(votes / 2) + 1;
     const LENSES_PER_ROUND = 3;
 
-    const seen = new Set(); // every candidate ever surfaced (confirmed OR refuted)
-    const confirmed = [];
+    type Bug = z.infer<typeof BUGS_SCHEMA>['bugs'][number];
+    const seen = new Set<string>(); // every candidate ever surfaced (confirmed OR refuted)
+    const confirmed: (Bug & { votes: string })[] = [];
     let refutedCount = 0;
     let dryRounds = 0;
     let round = 0;
 
     // Key on file + normalized title so re-worded duplicates of the same bug from a
     // later round still collide.
-    const keyOf = (b) =>
+    const keyOf = (b: Bug) =>
       `${b.file}::${b.title
         .toLowerCase()
         .replace(/[^a-z0-9]+/g, ' ')
@@ -95,24 +95,25 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
 
       // Barrier is deliberate here: the dry-round decision needs the WHOLE round's
       // yield, and dedup-vs-seen must happen before any verifier spends tokens.
+      const roundContext = ctx.within(`round-${round + 1}`);
       const found = (
-        await port.parallel(
-          'parallel-1',
-          lenses.map(
-            (lens, i) => () =>
-              ctx.claude
-                .object(port.id('agent-1', `find:r${round + 1}:${i}`), {
-                  ...args.$claude,
-                  prompt: `Hunt for real bugs in ${scope}. Your lens this round: ${lens}.
+        await roundContext.map(
+          'find',
+          lenses,
+          { concurrency: 3 },
+          async (lens) =>
+            (
+              await roundContext.claude.object('bugs', {
+                ...args.$claude,
+                prompt: `Hunt for real bugs in ${scope}. Your lens this round: ${lens}.
        Round ${round + 1} of a multi-round hunt — prefer places a first-pass
        reviewer would skim past. Report only defects that produce wrong behavior
        at runtime, each with concrete evidence and a failure scenario. An empty
        list is a valid result.`,
-                  schema: BUGS_SCHEMA,
-                  // Original phase: 'Hunt' — no matching ClaudeOptions control.
-                })
-                .then((result) => result.output),
-          ),
+                schema: BUGS_SCHEMA,
+                // Original phase: 'Hunt' — no matching ClaudeOptions control.
+              })
+            ).output,
         )
       )
         .filter(Boolean)
@@ -125,43 +126,59 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
 
       if (fresh.length === 0) {
         dryRounds++;
-        port.log(`Round ${round + 1}: nothing new (${dryRounds}/2 dry rounds)`);
+        console.error(`Round ${round + 1}: nothing new (${dryRounds}/2 dry rounds)`);
         round++;
         continue;
       }
       dryRounds = 0;
-      port.log(`Round ${round + 1}: ${found.length} reported, ${fresh.length} fresh candidates`);
+      console.error(
+        `Round ${round + 1}: ${found.length} reported, ${fresh.length} fresh candidates`,
+      );
 
       // Verify each fresh candidate with an independent skeptic panel. Panels for
       // different candidates all run concurrently.
-      const judged = await port.parallel(
-        'parallel-2',
-        fresh.map(
-          (b) => () =>
-            port
-              .parallel(
-                'parallel-3',
-                Array.from(
-                  { length: votes },
-                  (_, v) => () =>
-                    ctx.claude
-                      .object(port.id('agent-2', `verify:${b.file.split('/').pop()}:${v}`), {
-                        ...args.$claude,
-                        prompt: `Skeptic ${v + 1}/${votes}: try to REFUTE this bug claim by reading the code.
+      // Preserve same-round duplicate candidates from the original. Their occurrence keys
+      // are derived from the complete input array before any concurrent verifier starts.
+      const occurrences = new Map<string, number>();
+      const candidates = fresh.map((bug) => {
+        const raw = keyOf(bug);
+        const occurrence = occurrences.get(raw) ?? 0;
+        occurrences.set(raw, occurrence + 1);
+        return {
+          bug,
+          key: occurrence === 0 ? ctx.id(raw) : ctx.id(raw, `duplicate-${occurrence}`),
+        };
+      });
+      const judged = await roundContext.map(
+        'verify',
+        candidates,
+        {
+          concurrency: 8,
+          key: (candidate) => candidate.key,
+        },
+        async ({ bug: b }) => {
+          const verdicts = await roundContext.map(
+            'skeptic',
+            Array.from({ length: votes }, (_, index) => index),
+            { concurrency: 8 },
+            async (v) =>
+              (
+                await roundContext.claude.object('verdict', {
+                  ...args.$claude,
+                  prompt: `Skeptic ${v + 1}/${votes}: try to REFUTE this bug claim by reading the code.
          Claim: ${b.title} (${b.severity}) at ${b.file}${b.line ? ':' + b.line : ''}
          Evidence: ${b.evidence}
          Failure scenario: ${b.failureScenario}
          Look for guards, unreachable paths, caller invariants, or covering tests
          that invalidate it. Default to refuted=true if you cannot confirm the
          failure scenario is reachable.`,
-                        schema: VERDICT_SCHEMA,
-                        // Original phase: 'Verify'; effort: 'high' — no matching ClaudeOptions control.
-                      })
-                      .then((result) => result.output),
-                ),
-              )
-              .then((verdicts) => ({ bug: b, verdicts: verdicts.filter(Boolean) })),
-        ),
+                  schema: VERDICT_SCHEMA,
+                  // Original phase: 'Verify'; effort: 'high' — no matching ClaudeOptions control.
+                })
+              ).output,
+          );
+          return { bug: b, verdicts: verdicts.filter(Boolean) };
+        },
       );
 
       for (const j of judged.filter(Boolean)) {
@@ -170,7 +187,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
           confirmed.push({ ...j.bug, votes: `${upheld}/${j.verdicts.length} upheld` });
         else refutedCount++;
       }
-      port.log(`Round ${round + 1} verified: ${confirmed.length} total confirmed so far`);
+      console.error(`Round ${round + 1} verified: ${confirmed.length} total confirmed so far`);
       round++;
     }
 
@@ -185,7 +202,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
 }
 export default defineWorkflow({
   name: meta.name,
-  version: 'ultracode-direct-01',
+  version: 'ultracode-scoped-02',
   input,
   output: z.json() as unknown as z.ZodType<Awaited<ReturnType<typeof run>>>,
   run,

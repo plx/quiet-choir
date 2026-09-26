@@ -101,14 +101,14 @@ consumer imports `quiet-choir` as above.
 
 ## Operations
 
-| API                                             | Behavior                                                                                    |
-| ----------------------------------------------- | ------------------------------------------------------------------------------------------- |
-| `ctx.claude.text(id, options)`                  | Durable Claude text result                                                                  |
-| `ctx.claude.object(id, { schema, ...options })` | Durable, validated Claude structured result                                                 |
-| `ctx.codex.text` / `ctx.codex.object`           | Equivalent Codex APIs with Codex-specific options                                           |
-| `ctx.step(id, { input, schema, run, retry? })`  | Checkpoint a local effect; explicit dependencies detect replay drift                        |
-| `ctx.map(items, concurrency, mapper, options?)` | Bounded fan-out with drain, abort, or durable settle; use unique step IDs inside the mapper |
-| `ctx.sleep(id, milliseconds)`                   | Persist a wake time and wait only the remaining time after resume                           |
+| API                                                           | Behavior                                                                      |
+| ------------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| `ctx.claude.text(id, options)`                                | Durable Claude text result                                                    |
+| `ctx.claude.object(id, { schema, ...options })`               | Durable, validated Claude structured result                                   |
+| `ctx.codex.text` / `ctx.codex.object`                         | Equivalent Codex APIs with Codex-specific options                             |
+| `ctx.step(id, { input, schema, run, retry? })`                | Checkpoint a local effect; explicit dependencies detect replay drift          |
+| `ctx.map(id, items, { concurrency, key?, onError? }, mapper)` | Bounded fan-out; each item prefixes explicit leaf IDs with its map ID and key |
+| `ctx.sleep(id, milliseconds)`                                 | Persist a wake time and wait only the remaining time after resume             |
 
 Agent results contain `output`, native `sessionId`, and reported token/cost `usage`. Native session
 IDs are for correlation only: `CliHarness` uses Claude `--no-session-persistence` and Codex
@@ -210,6 +210,48 @@ implementations, native/bound functions, and environment remain invisible. Decla
 input, bump the step version, or invalidate in a fork. See
 [the recovery decision](docs/decisions/0006-code-change-recovery.md).
 
+## Scoped IDs and reusable helpers
+
+Use `await ctx.scope('round-1', async () => { ... })` to prefix every effect launched inside the
+callback. Nested scopes compose, including calls made through ordinary async helpers. Keep explicit
+leaf names such as `read`, `verdict`, or `summarize`; names are fixed at invocation and do not
+depend on completion order. Never allocate leaf IDs with a counter shared across concurrent
+branches.
+
+`const panel = ctx.within('panel')` binds a context to the current prefix plus `panel/`. It can be
+passed to helpers without a prefix argument. Calls inside that view's own scopes or maps retain
+those descendant prefixes; calls from unrelated scopes use its lexical prefix. Its `signal` still
+reads the current cancellation scope. All six effect methods, events, policies, checkpoint keys, and
+local idempotency keys use the full ID.
+
+```ts
+const review = ctx.within('round-1');
+const results = await review.map(
+  'files',
+  files,
+  { concurrency: 3, key: (file) => ctx.id(file) },
+  (file) => review.claude.text('verdict', { prompt: `Review ${file}` }),
+);
+// round-1/files/<stable-file-segment>/verdict
+```
+
+Named maps validate every key and the combined prefix before any mapper starts. Keys must be valid
+IDs and unique within the call. Omitting `key` uses the input index; use meaningful keys when
+collections can reorder or filter. Checkpoint directory listings or other external inputs even when
+using keys. A key stabilizes naming; it does not make unrecorded input durable.
+
+`ctx.id(...parts)` and exported `stepId(...parts)` are pure helpers. Clean parts of at most 64
+characters pass through (`ctx.id('a', 3)` gives `a/3`). Other parts, including paths, spaces, `@`,
+`+`, `~`, non-ASCII, and leading punctuation, become a slug plus eight hex characters of SHA-256 of
+the raw part. Each part remains one segment. Hash suffixes reduce collisions; uniqueness checks
+still apply. Full IDs retain the 200-character limit; shorten nesting/labels if that limit is hit.
+Errors show bounded full ID, scope, leaf, offending character/index, and the allowed pattern.
+
+The deprecated `ctx.map(items, concurrency, mapper, options?)` form adds no item prefix. Existing
+unscoped IDs and format-5 checkpoints remain compatible. Its settled form still requires an explicit
+`options.id` for the journal. Adopting named maps or scopes changes IDs: use a new run, optionally a
+deliberate fork; code acceptance does not rename saved steps.
+
 ## Failure handling
 
 Use `onError: 'return'` when a local or agent failure selects a fallback. It returns
@@ -228,10 +270,10 @@ invalidation.
 
 ## Fan-out failure policies
 
-`ctx.map(items, concurrency, mapper)` defaults to `onError: 'drain'`: the first mapper failure stops
-scheduling new items, lets started mappers finish and checkpoint without an abort signal, then
-rejects with `FanOutError`. Its `failures` identify input indexes and originating step IDs;
-`unscheduled` lists items never started. Drain can wait for the slowest active call. A body
+`ctx.map('items', items, { concurrency }, mapper)` defaults to `onError: 'drain'`: the first mapper
+failure stops scheduling new items, lets started mappers finish and checkpoint without an abort
+signal, then rejects with `FanOutError`. Its `failures` identify input indexes and originating step
+IDs; `unscheduled` lists items never started. Drain can wait for the slowest active call. A body
 rejection (for example from `Promise.all`) closes the workflow: effects already started finish and
 checkpoint before the run lock is released, but any new launch fails with "Workflow is closed",
 including an active mapper's next step and a map started by a still-running branch. To let sibling
@@ -247,23 +289,20 @@ and `Workflow interrupted.`; handled failures leave `rootCause` null in a comple
 Use an explicitly named settled map to retain every item's outcome, including mapper-body errors:
 
 ```ts
-const reviews = await ctx.map(
-  topics,
-  3,
-  (topic, index) => ctx.claude.text(`review/${index}`, { prompt: topic }),
-  { onError: 'settle', id: 'reviews' },
+const reviews = await ctx.map('reviews', topics, { concurrency: 3, onError: 'settle' }, (topic) =>
+  ctx.claude.text('review', { prompt: topic }),
 );
 const accepted = reviews.flatMap((review) => (review.ok ? [review.value.output] : []));
 ```
 
 This returns ordered `Settled<U, MapStepError>[]`: failures have
 `{ message, kind, attempts, stepId }`. It runs every item without cancelling siblings; cancellation,
-checkpoint failures, and authoring errors still reject. The required run-unique `id` names a map
-journal and does not prefix leaf IDs. Item inputs, mapper source, optional `version`, and cwd define
-its identity; concurrency can change on resume. Inputs and results must be lossless JSON. The map
-snapshots `items` when called; settled mappers receive JSON copies of that snapshot. Put captured
-dependencies in items or bump `version`. Resume skips each committed mapper and its owned effects
-and returns the saved outcome, so an ordinary mapper-body failure cannot heal and change a
+checkpoint failures, and authoring errors still reject. The full map ID names the journal and its
+items prefix leaf IDs. Item inputs, resolved keys, original mapper source, optional `version`, and
+cwd define its identity; concurrency can change on resume. Inputs and results must be lossless JSON.
+The map snapshots `items` when called; settled mappers receive JSON copies of that snapshot. Put
+captured dependencies in items or bump `version`. Resume skips each committed mapper and its owned
+effects and returns the saved outcome, so an ordinary mapper-body failure cannot heal and change a
 downstream fingerprint. Incomplete items execute again. Forks start fresh map journals and use the
 normal per-step reuse rules.
 

@@ -46,18 +46,21 @@ again. A resumed workflow function starts from the beginning, so everything outs
 operation must be deterministic and free of side effects. `ctx.map` provides bounded concurrency,
 scoped cancellation, and drain-by-default failure handling. Explicitly named settled maps also
 journal entire item outcomes and owned records; resume skips committed mappers. Ordinary throwing
-maps have no collection journal. `ctx.sleep` records a durable wake deadline. The CLI checks
-canonical, project-relative source hashes alongside explicit version and engine metadata. Strict
-resume remains the default. Explicit code acceptance keeps step checks, and new-run forks copy
-matching terminal outcomes with provenance (prefix reuse by default). Local identity includes
-callback source and version; captured values and helpers remain declared dependencies. These checks
-guard compatibility without claiming to identify changes in external dependencies or services. See
+maps have no collection journal. Named maps prefix items by validated key or index; scope/within
+compose explicit leaves through a separate prefix context, independent of cancellation ownership.
+`ctx.sleep` records a durable wake deadline. The CLI checks canonical, project-relative source
+hashes alongside explicit version and engine metadata. Strict resume remains the default. Explicit
+code acceptance keeps step checks, and new-run forks copy matching terminal outcomes with provenance
+(prefix reuse by default). Local identity includes callback source and version; captured values and
+helpers remain declared dependencies. These checks guard compatibility without claiming to identify
+changes in external dependencies or services. See
 [ADR 0002](decisions/0002-durable-external-workflows.md) for the at-least-once execution contract,
 [ADR 0005](decisions/0005-step-identity-and-policy.md) for step identity and execution policy,
 [ADR 0004](decisions/0004-operation-ownership.md) for promise ownership,
 [ADR 0006](decisions/0006-code-change-recovery.md) for code-change recovery,
 [ADR 0007](decisions/0007-durable-failure-outcomes.md) for explicit failure outcomes,
-[ADR 0008](decisions/0008-scoped-fan-out.md) for cancellation scopes and durable map items, and
+[ADR 0008](decisions/0008-scoped-fan-out.md) for cancellation scopes and durable map items,
+[ADR 0009](decisions/0009-scoped-step-ids.md) for stable scoped IDs, and
 [research notes](research.md) for the comparison to Claude's dynamic workflows.
 
 ## CLI execution boundary

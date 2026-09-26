@@ -24,3 +24,4 @@ part of the documentation.
 - [0006: Explicit reuse after workflow code changes](0006-code-change-recovery.md)
 - [0007: Explicit durable failure outcomes](0007-durable-failure-outcomes.md)
 - [0008: Scope map cancellation and journal settled items](0008-scoped-fan-out.md)
+- [0009: Compose explicit leaves with stable scope prefixes](0009-scoped-step-ids.md)

@@ -36,3 +36,11 @@ operation failures before committing an item. Cancellation, storage, configurati
 guards must never become settled map data. Error identity/cause tracking attributes diagnostics
 only; it does not infer durable handling. See
 [ADR 0008](../../../docs/decisions/0008-scoped-fan-out.md).
+
+Names are captured at invocation, before policy resolution or asynchronous work. Scope and named-map
+prefixes compose explicit leaves; never allocate IDs from completion-order counters. Keep naming
+separate from cancellation ownership. Bound views preserve nested prefixes only inside their own
+binding, and never snapshot the current signal. Named-map keys are all validated before work starts;
+settled identity hashes original mapper source and resolved keys. Legacy unscoped IDs/fingerprints
+must remain compatible with format 5. See
+[ADR 0009](../../../docs/decisions/0009-scoped-step-ids.md).
