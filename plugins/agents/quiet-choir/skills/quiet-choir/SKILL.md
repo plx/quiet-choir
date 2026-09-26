@@ -11,9 +11,9 @@ description: >-
 quiet-choir runs ordinary TypeScript control flow around durable, named local effects and fresh
 Claude Code/Codex sessions. Zod schemas validate inputs and results; local JSON checkpoints let an
 interrupted run replay its body and reuse completed effects. `ctx.step`, `ctx.claude`, `ctx.codex`,
-`ctx.map`, and `ctx.sleep` are the workflow API. The CLI typechecks, validates, executes, and
-inspects runs. This is a private 0.0.0 prototype with at-least-once effects, not a distributed
-service.
+`ctx.map`, and `ctx.sleep` are the durable-operation API; `ctx.runId` and `ctx.signal` expose run
+identity and cancellation. The CLI typechecks, validates, executes, and inspects runs. This is a
+private 0.0.0 prototype with at-least-once effects, not a distributed service.
 
 Use this as a reference: load the topics needed for the task, rather than every file. Installing
 this skill supplies documentation, not the runtime or harness binaries. Locate the user's
@@ -36,9 +36,15 @@ workflow workspace.
 
 - Keep orchestration deterministic and await durable operations. Put nondeterminism and side effects
   inside steps; do not nest durable operations inside a step callback.
-- Use stable, unique step IDs. Resume with the same run ID, working directory, code, version, and
-  input. Native harness session IDs cannot resume a workflow.
-- An external action may repeat after a crash. Use idempotency keys where supported; checkpoints
-  cannot undo workspace mutations or guarantee exactly-once effects.
+- Use stable, unique step IDs. Resume with `--resume`, the same run ID, `--state-dir`, and launch
+  directory, and unchanged sources, name, version, and schemas. Omit `--input` to reuse saved input.
+  Native harness session IDs cannot resume a workflow.
+- The launch directory becomes the run and agent working directory. `npm run cli --` runs from the
+  quiet-choir checkout; for another project, change there and invoke
+  `node /absolute/path/to/quiet-choir/bin/run.js`. There is no `--cwd` flag. See
+  [setup](references/setup-and-cli.md).
+- External actions may repeat after a crash or cancellation. Only `ctx.step` callbacks receive an
+  `idempotencyKey` (`runId/stepId`); pass it to systems that support deduplication. Agent calls have
+  no such key and can repeat file edits. Checkpoints cannot undo workspace mutations.
 - Harness calls inherit CLI authentication/configuration. The workflow itself is trusted executable
   code; harness permission flags do not sandbox it.

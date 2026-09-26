@@ -3,7 +3,11 @@
 ## Define a workflow
 
 Default-export `defineWorkflow({ name, version, input, output, run })`. Schemas infer TypeScript
-types and validate data at runtime. This example can be saved under `examples/` in a checkout:
+types and validate data at runtime. Callback return types also participate in inference: a wider
+return such as `T | undefined` can typecheck and then fail runtime validation, after all paid calls
+for a workflow's final output. Use an explicit `Promise<z.infer<typeof Output>>` return annotation
+and `ctx.step<string>(…)` when you need the compiler to reject wider returns. This example can be
+saved under `examples/` in a checkout:
 
 ```ts
 import { defineWorkflow, z } from '../src/index.js';
@@ -38,11 +42,16 @@ version requires a new run ID. See [durability](durability.md).
 
 | Operation                                                          | Return and composition                                                                   |
 | ------------------------------------------------------------------ | ---------------------------------------------------------------------------------------- |
-| `ctx.step(id, { input, schema, run, retry? })`                     | Validated local result; records explicit dependencies and result                         |
+| `ctx.step(id, { input, schema, run, retry? })`                     | Validated result; stores that result and a hash of `input`/schema/retry                  |
 | `ctx.claude.text(id, options)` / `ctx.codex.text(id, options)`     | `{ output: string, sessionId, usage }`                                                   |
 | `ctx.claude.object(id, { schema, ...options })` / Codex equivalent | Same wrapper with schema-inferred `output`                                               |
 | `ctx.map(items, concurrency, mapper)`                              | Ordered result array with at most `concurrency` active mappers; no checkpoint of its own |
 | `ctx.sleep(id, milliseconds)`                                      | `null`; persists the wake deadline, then waits in this process                           |
+| `ctx.runId`                                                        | Stable run identifier                                                                    |
+| `ctx.signal`                                                       | AbortSignal for run cancellation                                                         |
+
+Prompts and options are also stored only as a hash, so inspection cannot reconstruct them from the
+checkpoint.
 
 Agent operations are already durable: call them directly from the workflow, not from inside
 `ctx.step`. Local `run` receives `{ signal, attempt, idempotencyKey }`. `attempt` is the total
@@ -52,7 +61,7 @@ Pass the signal to cancellable I/O and the key to external systems that support 
 For example, inside a workflow that imports `readFile` from `node:fs/promises`:
 
 ```ts
-const contents = await ctx.step('read-source', {
+const contents = await ctx.step<string>('read-source', {
   input: { path: input.path },
   schema: z.string(),
   run: ({ signal }) => readFile(input.path, { encoding: 'utf8', signal }),
@@ -81,9 +90,17 @@ unfinished calls. Retry policy changes also affect step compatibility.
 
 ## Data constraints
 
-Use schemas that convert to JSON Schema draft-7. Required object properties are the most portable
-structured-response shape across harnesses. Avoid Zod transforms and class-valued schemas. The
-engine validates structured output locally even after the harness accepts the schema.
+Use schemas that convert to JSON Schema draft-7. Transforms, `z.date()`, `z.void()`,
+`z.undefined()`, and `z.bigint()` throw when their operation runs; `validate` checks only the
+workflow's input/output schemas. For side-effect-only steps, use `z.null()` and return `null`. The
+engine validates structured output locally even after the harness accepts its schema.
+
+For a native Codex object schema, use a `z.object` root with required properties and `.nullable()`
+for missing values. The default compat mode can encode `.optional()` and other shapes as described
+below. Claude requires an object root but does not share Codex's required-property restriction.
+Top-level undefined agent options are omitted at runtime (for example `model: input.model`), though
+`exactOptionalPropertyTypes` still rejects explicit undefined in TypeScript; omit the property in
+strict code. Undefined values nested in options or in checkpoint data remain errors.
 
 Persisted values must round-trip losslessly as JSON: no `undefined`, bigint, functions, symbols,
 NaN/infinity, negative zero, sparse arrays, cycles, accessors, or class instances. Use plain
