@@ -12,7 +12,11 @@ Supply these execution options as needed:
 
 - `runId`: required; reuse it only with `resume: true`.
 - `input`: must match the schema; omit on resume to reuse saved input. New embedded runs receive
-  undefined when omitted, whereas the CLI defaults to `{}`.
+  undefined when omitted, whereas the CLI defaults to `{}`; both inherit source input for a fork.
+- `forkFrom`: new-run source with optional `stateDir`, `reuse`, and `invalidate`; source input is
+  inherited if omitted. Source checkpoints are read-only. Do not combine this with resume.
+- `acceptCodeChange`: explicit source/schema acceptance on resume; `strictReplay` stops at early
+  ordering divergence. See [durability](durability.md#choose-a-recovery-path).
 - `resume`: set true to continue; otherwise an existing run gives `Run X already exists`.
 - `cwd`: defaults to `process.cwd()` and must match the original run on resume.
 - `stateDir`: resolves against `cwd`, defaulting to `.quiet-choir/runs`; use an absolute path and
@@ -20,7 +24,8 @@ Supply these execution options as needed:
 - `policy`, `policyReset`, `allowModelOverride`: sticky execution rules, reset, and explicit model
   override authorization; see [durability](durability.md).
 - `harness`, `signal`, `fingerprint`, and `onEvent`: integration, cancellation, code compatibility,
-  and observer dependencies. Local-only workflows need no harness.
+  and observer dependencies. `source: { hash, files }` can replace the opaque `fingerprint` for
+  detailed code diagnostics; do not supply both. Local-only workflows need no harness.
 
 `readRun({ runId, cwd, stateDir })` shares execution's path resolution and storage default;
 `resolveStateDir({ cwd, stateDir })` returns the absolute directory.
@@ -30,7 +35,7 @@ The core validates explicit agent options before recording a step, using exporte
 no defaults. Top-level undefined option values are omitted. Invalid remaining data names the step
 and JSON path; invalid options name the field and value. Correcting an option before its step was
 recorded permits an embedded resume when the other compatibility checks still match. CLI source
-edits still change the code fingerprint.
+edits change the code fingerprint and require explicit acceptance or a new run/fork.
 
 This complete embedding example uses a new temporary state directory each time, so it can run twice
 without colliding with its previous run:

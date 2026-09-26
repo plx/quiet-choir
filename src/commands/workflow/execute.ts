@@ -24,6 +24,12 @@ interface WorkflowExecuteFlags {
   readonly policy: string[] | undefined;
   readonly 'policy-reset': boolean | undefined;
   readonly 'allow-model-override': boolean | undefined;
+  readonly 'fork-from': string | undefined;
+  readonly 'fork-state-dir': string | undefined;
+  readonly reuse: 'prefix' | 'matching' | undefined;
+  readonly invalidate: string[] | undefined;
+  readonly 'accept-code-change': boolean | undefined;
+  readonly 'strict-replay': boolean | undefined;
 }
 
 export default class WorkflowExecute extends BaseCommand {
@@ -36,6 +42,30 @@ export default class WorkflowExecute extends BaseCommand {
   };
 
   public static override readonly flags: Interfaces.FlagInput<WorkflowExecuteFlags> = {
+    'fork-from': Flags.string({
+      description: 'Source run for a new run with completed-effect reuse',
+      exclusive: ['resume', 'accept-code-change'],
+    }),
+    'fork-state-dir': Flags.directory({
+      description: 'Source checkpoint directory; defaults to --state-dir',
+      dependsOn: ['fork-from'],
+    }),
+    reuse: Flags.option({ options: ['prefix', 'matching'] as const })({
+      description: 'Fork reuse mode; default prefix',
+      dependsOn: ['fork-from'],
+    }),
+    invalidate: Flags.string({
+      description: 'Fork step-ID glob forced live; repeat for more globs',
+      multiple: true,
+      dependsOn: ['fork-from'],
+    }),
+    'accept-code-change': Flags.boolean({
+      description: 'Accept and record source/schema changes; keep step checks',
+      dependsOn: ['resume'],
+    }),
+    'strict-replay': Flags.boolean({
+      description: 'Fail before live work that skips earlier completed steps',
+    }),
     input: Flags.string({
       description: 'JSON workflow input; defaults to {} for new runs, saved input on resume',
     }),
@@ -89,7 +119,7 @@ export default class WorkflowExecute extends BaseCommand {
       } catch {
         this.error('--input must contain valid JSON.', { exit: 2 });
       }
-    } else if (!flags.resume) {
+    } else if (!flags.resume && !flags['fork-from']) {
       input = {};
     }
     const runId = flags['run-id'] ?? randomUUID();
@@ -114,6 +144,22 @@ export default class WorkflowExecute extends BaseCommand {
         cwd: process.cwd(),
         resume: flags.resume ?? false,
         policy,
+        ...(flags['fork-from'] === undefined
+          ? {}
+          : {
+              forkFrom: {
+                runId: flags['fork-from'],
+                ...(flags['fork-state-dir'] === undefined
+                  ? {}
+                  : { stateDir: resolve(flags['fork-state-dir']) }),
+                ...(flags.reuse === undefined ? {} : { reuse: flags.reuse }),
+                ...(flags.invalidate === undefined ? {} : { invalidate: flags.invalidate }),
+              },
+            }),
+        ...(flags['accept-code-change'] === undefined
+          ? {}
+          : { acceptCodeChange: flags['accept-code-change'] }),
+        ...(flags['strict-replay'] === undefined ? {} : { strictReplay: flags['strict-replay'] }),
         ...(flags['policy-reset'] === undefined ? {} : { policyReset: flags['policy-reset'] }),
         ...(flags['allow-model-override'] === undefined
           ? {}

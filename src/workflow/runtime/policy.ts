@@ -79,7 +79,8 @@ export function validatePolicy(value: unknown, allowModelOverride: boolean): Pol
   return parsed.data as PolicyOverride[];
 }
 
-function matches(pattern: string, id: string): boolean {
+/** Match a bounded step-ID glob shared by policy and fork invalidation. @internal */
+export function matchesStepGlob(pattern: string, id: string): boolean {
   let expression = '^';
   for (let i = 0; i < pattern.length; i++) {
     const char = pattern.charAt(i);
@@ -151,7 +152,10 @@ export function resolvePolicy(
   apply(callSite, 'call-site');
   if (kind !== 'sleep')
     overrides.forEach((rule, index) => {
-      if ((rule.kind === undefined || rule.kind === kind) && matches(rule.match ?? '**', id)) {
+      if (
+        (rule.kind === undefined || rule.kind === kind) &&
+        matchesStepGlob(rule.match ?? '**', id)
+      ) {
         matched.add(index);
         apply(rule, `override:${String(index)}`);
       }

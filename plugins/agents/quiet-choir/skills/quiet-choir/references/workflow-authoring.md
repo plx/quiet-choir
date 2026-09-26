@@ -36,19 +36,19 @@ suffix.
 
 `name` and `version` must be nonempty. Version is an explicit compatibility string, not necessarily
 semver. Change it when semantics change, including external dependencies/configuration; a changed
-version requires a new run ID. See [durability](durability.md).
+version requires a new run ID (a fork can reuse compatible steps). See [durability](durability.md).
 
 ## Durable operations
 
-| Operation                                                          | Return and composition                                                                   |
-| ------------------------------------------------------------------ | ---------------------------------------------------------------------------------------- |
-| `ctx.step(id, { input, schema, run, retry? })`                     | Validated result; stores that result and component hashes of `input` and schema          |
-| `ctx.claude.text(id, options)` / `ctx.codex.text(id, options)`     | `{ output: string, sessionId, usage }`                                                   |
-| `ctx.claude.object(id, { schema, ...options })` / Codex equivalent | Same wrapper with schema-inferred `output`                                               |
-| `ctx.map(items, concurrency, mapper)`                              | Ordered result array with at most `concurrency` active mappers; no checkpoint of its own |
-| `ctx.sleep(id, milliseconds)`                                      | `null`; persists the wake deadline, then waits in this process                           |
-| `ctx.runId`                                                        | Stable run identifier                                                                    |
-| `ctx.signal`                                                       | AbortSignal for run cancellation                                                         |
+| Operation                                                          | Return and composition                                                                              |
+| ------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------- |
+| `ctx.step(id, { input, schema, run, retry?, version? })`           | Validated result; stores that result and hashes of input, schema, callback source, version, and cwd |
+| `ctx.claude.text(id, options)` / `ctx.codex.text(id, options)`     | `{ output: string, sessionId, usage }`                                                              |
+| `ctx.claude.object(id, { schema, ...options })` / Codex equivalent | Same wrapper with schema-inferred `output`                                                          |
+| `ctx.map(items, concurrency, mapper)`                              | Ordered result array with at most `concurrency` active mappers; no checkpoint of its own            |
+| `ctx.sleep(id, milliseconds)`                                      | `null`; persists the wake deadline, then waits in this process                                      |
+| `ctx.runId`                                                        | Stable run identifier                                                                               |
+| `ctx.signal`                                                       | AbortSignal for run cancellation                                                                    |
 
 Prompts and identity options are stored as component hashes. Resolved execution policy and requested
 model/effort are stored in plaintext per attempt; inspection cannot reconstruct prompts.
@@ -70,7 +70,9 @@ const contents = await ctx.step<string>('read-source', {
 
 This records the file contents once. A resume reuses the contents even if the file has changed;
 starting a new run is how to request a fresh read. Declare dependencies in `input`, not only in the
-callback closure. The engine cannot inspect captured values for you.
+callback closure. Callback source is hashed, but captured values and external helper bodies are not
+inspected. Use `version` for those dependencies or invalidate the step in a fork. A new run with
+`forkFrom` may reuse matching work; see [recovery](durability.md#choose-a-recovery-path).
 
 ## Composition and retry
 
