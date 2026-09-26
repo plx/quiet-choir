@@ -16,35 +16,51 @@ inspection, and extensions; the runtime is installed separately.
 
 ## Try it without an agent subscription
 
-Use Node.js 24 LTS (also supported: 22.13+ and 26) and npm 10.9+.
+Use Node.js 24.x (recommended), 22.x from 22.13, or 26.x, and npm 10.9+. Node 23.x and 25.x are
+unsupported. Run these bundled examples from the checkout root.
 
 ```sh
 npm ci
 npm run build
-npm run cli -- workflow execute examples/local.workflow.ts --run-id first
-npm run cli -- workflow inspect first
+qc_state_dir="$(mktemp -d)"
+npm run cli -- workflow execute examples/local.workflow.ts --run-id first --state-dir "$qc_state_dir"
+npm run --silent cli -- workflow inspect first --state-dir "$qc_state_dir" --json
 ```
 
 The local example uppercases words with bounded parallelism and checkpoints the results. To see
 recovery, deliberately fail its final step, then resume with the same command and `--resume`:
 
 ```sh
+qc_recovery_state_dir="$(mktemp -d)"
 npm run cli -- workflow execute examples/local.workflow.ts \
-  --run-id recovery --input '{"failOnce":true}'
+  --run-id recovery --state-dir "$qc_recovery_state_dir" --input '{"failOnce":true}'
 # Expected: exit 1, after the word steps have completed.
 
-npm run cli -- workflow execute examples/local.workflow.ts --run-id recovery --resume
+npm run --silent cli -- workflow inspect recovery --state-dir "$qc_recovery_state_dir" --json
+npm run cli -- workflow execute examples/local.workflow.ts \
+  --run-id recovery --state-dir "$qc_recovery_state_dir" --resume
 # Word steps replay from disk; only the failed summary step executes again.
 ```
 
 The CLI prints the run ID before executing. Without `--run-id`, it generates one. Reusing an
 existing ID requires `--resume`; a completed run returns its saved output without calling any
-harness.
+harness. Keep the absolute state directory for inspection and resume.
+
+The CLI launch directory becomes the recorded run `cwd`, the base for relative FILE and
+`--state-dir` paths, the default `.quiet-choir/runs`, and agent calls' relative `cwd`. Resume must
+use that same directory; there is no `--cwd` flag. `npm run cli --` launches from this checkout even
+when run in a subdirectory. For work in another project, change to that project and invoke
+`node /absolute/path/to/quiet-choir/bin/run.js workflow …`, or use `npx --no-install quiet-choir`
+where the package is already installed. An agent option's absolute `cwd` is accepted without
+confinement and must name an existing directory.
 
 ## Author a workflow
 
 Workflows default-export `defineWorkflow(...)`. Input, final output, and structured agent responses
-use [Zod](https://zod.dev/) schemas for both TypeScript inference and runtime validation.
+use [Zod](https://zod.dev/) schemas for TypeScript inference and runtime validation. Callback return
+types also affect inference: a wider `T | undefined` can typecheck, then fail final validation after
+paid calls. An explicit `Promise<z.infer<typeof Output>>` return annotation or `ctx.step<string>(…)`
+can catch that mistake earlier.
 
 ```ts
 import { defineWorkflow, z } from 'quiet-choir';
@@ -72,9 +88,10 @@ export default defineWorkflow({
 The checked-in [duet example](examples/duet.workflow.ts) is a small real two-harness workflow:
 
 ```sh
-npm run cli -- workflow validate examples/duet.workflow.ts
+npm run --silent cli -- workflow validate examples/duet.workflow.ts --json
+qc_duet_state_dir="$(mktemp -d)"
 npm run cli -- workflow execute examples/duet.workflow.ts \
-  --run-id duet --input '{"topic":"durable agent workflows"}'
+  --run-id duet --state-dir "$qc_duet_state_dir" --input '{"topic":"durable agent workflows"}'
 ```
 
 Install and sign in to `claude` and `codex` separately. The adapters invoke the installed CLIs and
@@ -94,8 +111,9 @@ consumer imports `quiet-choir` as above.
 | `ctx.sleep(id, milliseconds)`                   | Persist a wake time and wait only the remaining time after resume       |
 
 Agent results contain `output`, native `sessionId`, and reported token/cost `usage`. Native session
-IDs are diagnostic metadata; each effect starts a fresh harness session. `object` sends JSON Schema
-to the harness and validates the returned JSON locally. Codex defaults to
+IDs are for correlation only: `CliHarness` uses Claude `--no-session-persistence` and Codex
+`--ephemeral`, so these calls have no persisted local session transcript. Each effect starts fresh.
+`object` sends JSON Schema to the harness and validates the returned JSON locally. Codex defaults to
 `structuredOutput: 'compat'`: optional properties become nullable on the wire, non-object roots are
 wrapped, records use key/value entries (enum-keyed records require all keys), discriminated unions
 use `anyOf`, and loose objects are closed. The adapter reverses these encodings before the original
@@ -108,14 +126,19 @@ property required (use `.nullable()` for missing values), and avoid records, loo
 discriminated unions, and tuples. `checkCodexSchema(schema)` returns JSON paths and fixes before a
 workflow runs. `workflow validate` cannot inspect call-site schemas without running the body.
 Refinements are enforced locally, so repeat them in the prompt. Schema transforms and class-valued
-schemas cannot be converted to JSON Schema. Claude receives the original schema and also requires an
-object root; other Codex restrictions and wire transforms do not apply to it.
+schemas cannot be converted to JSON Schema. `z.date()`, `z.void()`, `z.undefined()`, and
+`z.bigint()` also fail conversion when their operation runs; `validate` checks only workflow
+input/output. Use `z.null()` and return `null` for side-effect-only steps. Claude receives the
+original schema and also requires an object root; other Codex restrictions and wire transforms do
+not apply to it.
 
 A local effect might use `ctx.step('read', { input: { path }, schema: z.string(), run: ... })`.
 Callbacks receive `{ signal, attempt, idempotencyKey }`. Opt into retries only for repeatable
 effects, with `retry: { maxAttempts: 3, delayMs: 100 }`; delays double up to 30 seconds. Agent
 effects have no automatic retries. A later explicit resume retries unfinished effects, including
-failed agent calls.
+failed agent calls. `ctx.runId` and `ctx.signal` expose run identity and cancellation. Only local
+callbacks receive `idempotencyKey`; agent calls have none and can repeat edits. Step dependencies,
+prompts, and options are stored as hashes, alongside the full validated result.
 
 For embedding, call `runWorkflow(definition, { runId, input, harness: new CliHarness() })`. Its
 output is typed from the workflow schema. Supply `signal`, `stateDir`, `cwd`, `onEvent`, and a code
@@ -144,7 +167,10 @@ workflow fingerprint. Call-site validation runs during execution, not during `wo
   steps inside a step callback. Compose them with ordinary TypeScript functions at the workflow
   level.
 - Completed effects are reused by ID and an input/options/schema fingerprint. A changed fingerprint,
-  duplicate ID, or skipped recorded step fails instead of silently reusing incompatible results.
+  duplicate ID, or skipped recorded step fails instead of silently reusing incompatible results. The
+  skipped-step check happens after the body: a divergent resume can pay for remaining effects before
+  failing, and later resumes fail again. Once recorded, failed steps also require matching prompts,
+  options (including limits), resolved `cwd`, and schemas; size limits for the worst case.
 - The CLI also hashes local compiler-discovered dependencies and the nearest tsconfig. Inputs,
   workflow name/version, schema fingerprint, and working directory must match on resume. **Bump the
   workflow version when dependency packages, environment/configuration, or other semantics change.**
@@ -162,58 +188,98 @@ workflow fingerprint. Call-site validation runs during execution, not during `wo
   errors preserve the workflow's original cause. A failed save can leave `running` with
   `error: null`. After a saved completion, cleanup `EACCES`/`ENOENT` becomes a returned warning (CLI
   stderr); changed or uncertain ownership remains fatal. Cleanup warnings are not checkpointed.
-- Effects are **at least once**: if a process dies after an external action succeeds but before its
-  result is saved, resume can repeat it. Use `idempotencyKey` with external systems that support
-  deduplication. Hard-killing the runner may also leave harness children running; stop them before
-  resuming. Native harness conversation state and workspace mutations are not transactional.
+- Effects are **at least once**. An external action can succeed without being saved after a crash or
+  hard kill. Cancellation by Ctrl-C, SIGTERM, a failing map sibling, or an uncaught failure can also
+  discard a result that arrives after cancellation: the step is saved as `failed` and repeats on
+  resume. Agent calls stopped by cancellation or deadlines may already have edited files.
+  Storage-triggered aborts preserve successful results for a later save, as described above. Only
+  `ctx.step` callbacks get `idempotencyKey` for deduplication with compatible external systems.
+  Native harness conversation state and workspace mutations are not transactional.
 - Cancellation cooperatively aborts active work and drains it before releasing ownership. Local
   callbacks must honor their signal. A failed map cancels the run and stops scheduling more items.
+  One Ctrl-C or SIGTERM drains and exits 130. A second Ctrl-C kills the runner mid-drain and can
+  leave a lock and `running` record. SIGKILL, SIGHUP (closed terminal or dropped SSH), or a crash
+  can leave detached harness children running and editing. Before resuming, check
+  `pgrep -fl 'claude --print|codex exec'` for children belonging to the interrupted run.
 
 This spike has no background scheduler, distributed workers, execution migration, human-approval
 inbox, durable event delivery, global spending ledger, or automatic worktree isolation. Sleep waits
-in the current process. Checkpoints store workflow input/output and error messages in plaintext with
-restrictive creation modes; `.quiet-choir/` is gitignored.
+in the current process. Checkpoints contain plaintext workflow input/output, every completed step's
+full validated result (including agent responses and files a step read), and errors. Files are
+created 0600 and state/lock directories 0700; existing directory permissions are not repaired.
+`.quiet-choir/` is gitignored only in this repository; exclude chosen storage in other projects too.
 
 ## Harness defaults and limits
 
 `CliHarness` applies these defaults; the core supplies none. Custom `Harness` implementations own
 their defaults and must enforce deadlines. Claude defaults to no built-in tools, `dontAsk`
 permissions, three turns, and a $0.25 per-call budget. Explicitly enable and allow tools through
-`tools` and `allowedTools`. Codex defaults to a read-only sandbox and approvals set to `never`; opt
-into `workspace-write` per call. Both have a 120-second wall-clock limit and an 8 MiB combined
-output limit. Codex does not expose an equivalent per-call USD cap here. Model selection is explicit
-or inherited from the installed harness.
+`tools` and `allowedTools`. MCP tools from config still load; `allowedTools` adds pre-approvals to
+settings allow rules, and `dontAsk` denies the rest. Codex defaults to a read-only sandbox and
+approvals set to `never`; opt into `workspace-write` per call. Both have a 120-second wall-clock
+limit and an 8 MiB combined output limit. Codex does not expose an equivalent per-call USD cap here.
+Model selection is explicit or inherited from the installed harness. Codex `reasoningEffort` accepts
+only `minimal|low|medium|high` here. Codex 0.157.1 also recognizes `none`, `xhigh`, and `max`;
+per-model support is unverified. Omission can inherit an expensive configured level. The byte cap
+counts the whole stdout/stderr stream, including command output; CLI runs cannot raise it, while
+embedders can set `CliHarnessOptions.maxOutputBytes`. A call may hit the cap after editing files.
 
 Prompts go over stdin without a shell. Timeouts and cancellation terminate process groups on
 macOS/Linux; Windows cleanup reaches the immediate child only. These flags do not sandbox the
 workflow's own TypeScript or isolate inherited hooks, MCP servers, and harness configuration. Use
-trusted workflow files and a working directory/configuration suitable for the task.
+trusted workflow files and a working directory/configuration suitable for the task. Claude's `cwd`
+selects project `.claude/` settings and hooks; `claude -p` skips the trust dialog, so hooks can run
+in never-trusted directories.
+
+Saved harness errors include reasons recovered from stdout on both zero and nonzero normal exits,
+with bounded stderr and exit metadata. A bare exit error means no usable protocol reason was found;
+check `claude auth status` / `codex login status`, schemas, and the invocation flags. Failed
+protocol attempts can retain usage/session metadata; this is still an incomplete spending ledger.
+Claude's input count is the top-level field, excluding cache reads/writes and not summing
+`modelUsage`; Codex's cache-inclusive interpretation is inferred, not verified by a live cache
+comparison. Do not compare those input counts directly. Codex cost is null; Claude cost uses
+`total_cost_usd`.
 
 ## CLI and development
 
 ```sh
-npm run cli:dev -- workflow typecheck examples/local.workflow.ts
-npm run cli:dev -- workflow validate examples/local.workflow.ts --json
-npm run cli:dev -- workflow inspect recovery --json
+npm run cli -- workflow typecheck examples/local.workflow.ts
+npm run --silent cli -- workflow validate examples/local.workflow.ts --json
+npm run --silent cli -- workflow inspect recovery --state-dir "$qc_recovery_state_dir" --json
 npm run check
 ```
+
+The inspection command reuses the earlier recovery example's state directory. `npm run cli` runs
+`dist/`; rebuild after changing `src/`. `cli:dev` also discovers `dist/commands`, because the
+current tsconfig lacks a `rootDir`/`outDir` mapping for oclif. The nearest tsconfig in or above a
+workflow applies and is fingerprinted; under this checkout, unused variables can block execution.
 
 `execute` typechecks before importing the workflow. `validate` typechecks and verifies its export
 contract without calling `run`; importing either command's workflow **executes module top-level
 code**. `typecheck` performs no imports or effects. `inspect` reads a saved run without importing
 workflow code. A missing run reports the absolute storage directory and available run IDs. Use
 `--state-dir PATH` for alternate storage and `--json` for machine-readable output. Do not write to
-stdout from workflow code when consuming JSON CLI output.
+stdout from workflow code when consuming JSON CLI output. `--json` emits one result line only on
+success: a run record for execute/inspect, or `{kind, ok, entrypoint, workflow}` for validate. A
+failed execute emits no result JSON; use stderr and inspect any saved checkpoint. Generated run IDs
+appear only on stderr, so scripts should supply `--run-id`. Module-level output precedes JSON.
+Validate reports a source hash; a saved run's fingerprint also hashes schemas and is different.
 
 Inherited `--log-level trace|debug|info|warn|error|fatal|silent` and `-v, --verbose` go after the
 command name and are mutually exclusive. Configuration commands remain explicit stubs (exit 2);
 layered project/user settings are deferred.
 
+| Exit | Meaning                                                                                                                                                                                          |
+| ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 0    | Success, including inspection of `failed`/`running` records (check `.status`). Misplaced flags between `workflow` and its command can print help and exit 0.                                     |
+| 1    | Type/import/workflow errors, missing FILE, invalid run ID, run ownership/existence errors, or incompatible resume/input. Invalid IDs are checked after module import. Read stderr for the cause. |
+| 2    | Flag/input-JSON errors, resume without a run ID, non-TypeScript/declaration entrypoints, or configuration stubs.                                                                                 |
+| 130  | SIGINT/SIGTERM during execution; cancellation drains and saves `failed` when storage is available.                                                                                               |
+
 `npm run check` includes formatting, lint, strict typechecking, tests with coverage gates, build,
 compiled CLI smoke tests, TypeDoc validation, and package checks. No automated test calls a paid
-harness. The prototype was live-tested with Codex 0.153.4 on a tiny structured response; Claude
-2.1.252 returned an expired-OAuth error before inference, so its successful integration is verified
-with fixtures only until credentials are refreshed.
+harness. Structured-output success paths for both adapters completed live with claude 2.1.283 and
+codex-cli 0.157.1; this is evidence for those versions, not a guarantee.
 
 Read [Architecture](docs/architecture.md), the
 [durability decision](docs/decisions/0002-durable-external-workflows.md), and

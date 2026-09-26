@@ -2,22 +2,29 @@
 
 These are quiet-choir's `CodexOptions`. The installed Codex CLI may expose more settings, but this
 adapter accepts only the subset below. Any agent host can author a workflow that invokes
-`ctx.codex`; installing the general-agent plugin does not replace the harness executable.
+`ctx.codex`. This plugin does not install Codex; `CliHarness` runs the first `codex` on PATH unless
+an embedding caller overrides the binary.
 
 ## Options and result
 
 Both `ctx.codex.text(id, options)` and `ctx.codex.object(id, { schema, ...options })` return
-`{ output, sessionId, usage }`. `output` is text or the locally validated structured value.
+`{ output, sessionId, usage }`. `output` is text or the locally validated structured value. These
+defaults belong to `CliHarness`; the core adds none.
 
-| Option             | Meaning and default                                                          |
-| ------------------ | ---------------------------------------------------------------------------- |
-| `prompt`           | Required instructions, sent over stdin                                       |
-| `model`            | Model name; omitted means the installed harness default                      |
-| `cwd`              | Relative to the workflow working directory; defaults to that directory       |
-| `timeoutMs`        | Per-call wall-clock limit, default 120,000                                   |
-| `sandbox`          | `read-only` (default) or `workspace-write`                                   |
-| `reasoningEffort`  | `minimal`, `low`, `medium`, or `high`; omitted means inherited configuration |
-| `skipGitRepoCheck` | Set true to permit execution outside a Git repo; omitted by default          |
+| Option             | Meaning and default                                                                                                                       |
+| ------------------ | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| `prompt`           | Required instructions, sent over stdin                                                                                                    |
+| `model`            | Model name; omitted means the installed harness default                                                                                   |
+| `cwd`              | Resolved against the run's working directory; defaults to it. Absolute paths are accepted and are not confined. The directory must exist. |
+| `timeoutMs`        | Per-call wall-clock limit, default 120,000                                                                                                |
+| `sandbox`          | `read-only` (default) or `workspace-write`                                                                                                |
+| `reasoningEffort`  | `minimal`, `low`, `medium`, or `high`; omitted means inherited configuration                                                              |
+| `skipGitRepoCheck` | Set true to permit execution outside a Git repo; omitted by default                                                                       |
+
+Codex 0.157.1 also accepts effort names `none`, `xhigh`, and `max`, which this adapter cannot pass
+through `reasoningEffort`; support for particular models is unverified. Omitting the option inherits
+user configuration, which may select an expensive level such as `xhigh`. Expanding the typed surface
+is deferred to [#46](https://github.com/plx/quiet-choir/issues/46).
 
 Inside a workflow whose input includes `topic`:
 
@@ -37,9 +44,9 @@ by default. It does not expose interactive approvals or an unrestricted sandbox.
 isolated in a worktree. Hooks, MCP servers, and inherited configuration still matter, and the
 workflow's own TypeScript runs outside these harness sandbox controls.
 
-Each effect is a fresh ephemeral call. The native thread ID is returned as `sessionId` for
-diagnostics; it cannot be used as a quiet-choir resume token. Pass previous results explicitly in
-subsequent prompts.
+Each effect is a fresh call with `--ephemeral`, so there is no persisted local session transcript.
+The native thread ID is returned as `sessionId` for correlation only, not as a workflow resume
+token. Pass previous results explicitly in subsequent prompts.
 
 ## Structured output and protocol
 
@@ -58,9 +65,13 @@ prompt. With `structuredOutput: 'strict'`, use an object root, required properti
 `.nullable()` for missing values), and avoid records, loose objects, discriminated unions, and
 tuples. Exported `checkCodexSchema(schema)` returns incompatible JSON paths and fixes without
 launching a process. `workflow validate` does not execute the body and cannot inspect these
-call-site schemas. An explicit mode is fingerprinted like other call options; keep it stable on
-resume. Claude requires an object root and receives the original JSON Schema. Other Codex
-restrictions and compatibility transforms do not apply to it.
+call-site schemas. Codex enforces strict wire schemas; raw `.optional()` properties were rejected
+before inference in the captured 0.157.1 probes. Issue
+[#35](https://github.com/plx/quiet-choir/issues/35) added the default compat encoding and local
+strict-mode diagnostics, so the old blanket warning against `.optional()` no longer applies. An
+explicit mode is fingerprinted like other call options; keep it stable on resume. Claude requires an
+object root and receives the original JSON Schema. Other Codex restrictions and compatibility
+transforms do not apply to it.
 
 The adapter reads Codex JSONL: `thread.started` supplies the thread ID, `item.completed` with
 `agent_message` supplies final text, and `turn.completed` is required for success. Exit zero plus
@@ -72,20 +83,42 @@ fails with its own reason. Without `turn.completed`, the last non-reconnect erro
 the error explains the interrupted turn; bounded earlier notices are appended. Nonzero exits,
 missing final text, and malformed protocol output also fail. Agent stdout is parsed after the
 process finishes; there is no token/tool event stream exposed through quiet-choir's progress
-observer.
+observer. This reflects the stdout diagnostics and recoverable-error fixes in
+[#33](https://github.com/plx/quiet-choir/issues/33)/#34; the earlier exit-code-only and
+fatal-on-any-error guidance is obsolete.
 
-Usage reports input/output tokens when available. `costUsd` is null for this adapter, and there is
-no Codex per-call USD cap. The default wall-clock and 8 MiB combined output limits bound the
-process, not its dollar spend. `CliHarnessOptions` can override the output limit when embedding.
+Usage reports top-level `input_tokens` and `output_tokens` when available. The interpretation of
+Codex inputs as including cached input is inferred from OpenAI semantics, not verified by a live
+cache comparison; it is not comparable with Claude's top-level field. `costUsd` is null and there is
+no Codex per-call USD cap. Failed protocol attempts can retain available usage/session metadata in
+`steps[id].failedAttempts`, with nulls when absent.
+
+The 120-second wall-clock and 8 MiB combined stdout/stderr limits bound the process, not dollar
+spend. The byte limit counts the whole JSONL stream, including command output. CLI runs cannot raise
+it; embedding callers can set `CliHarnessOptions.maxOutputBytes`. A noisy editing call may hit that
+limit after making file changes even though its result is not saved.
 
 ## Diagnosing a failure
 
-Inspect the saved step error and verify the installed CLI's authentication and supported options.
-Use `skipGitRepoCheck` only when the task belongs outside Git; changing options changes the
-checkpoint fingerprint and calls for a new run. A credentials-only repair can usually resume the
-same run. See [durability](durability.md) for compatibility and duplicate-effect risks.
+Inspect the saved step error and verify authentication with `codex login status`. Protocol reasons
+from stdout survive nonzero normal exits; a bare exit error means no usable reason was recovered.
+Check the object schema and reproduce with the same flags when needed. Credentials-only repairs can
+resume compatible runs.
+
+Once a step is recorded, the prompt, every option (including `timeoutMs`), resolved `cwd`, and
+output schema are fingerprinted. Failed steps are checked too: a call that hit its limit can resume
+only with the same limit. Any CLI source edit also changes the run fingerprint. Size limits for the
+worst case up front; use `skipGitRepoCheck` only for work outside Git. Changes to failed-step
+options remain deferred to [#40](https://github.com/plx/quiet-choir/issues/40)/#41; invalid options
+rejected before recording a step can be corrected by embedded callers. See
+[durability](durability.md) for compatibility and repeated-effect risks.
 
 quiet-choir does not automatically retry agent calls. Timeout/cancellation terminates process groups
-on macOS/Linux, with only immediate-child cleanup on Windows. After hard-killing the runner, check
-for surviving children before resuming. The prototype records a small live structured-output test
-with Codex 0.153.4; that is evidence of that test, not a version guarantee.
+on macOS/Linux, with only immediate-child cleanup on Windows. One Ctrl-C or SIGTERM cancels, drains,
+and exits 130. A second Ctrl-C kills the runner mid-drain and can leave its lock and a `running`
+record. SIGKILL, SIGHUP (closed terminal or dropped SSH), or a crash can leave detached children
+running and editing. Before resuming, check `pgrep -fl 'claude --print|codex exec'` and identify any
+children belonging to the interrupted run.
+
+Structured-output success paths for both adapters completed live with claude 2.1.283 and codex-cli
+0.157.1. That is evidence for those versions and captures, not a guarantee.
