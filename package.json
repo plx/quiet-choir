@@ -86,7 +86,7 @@
     "vitest": "4.1.10"
   },
   "dependencies": {
-    "@oclif/core": "4.13.3",
+    "@oclif/core": "5.0.0",
     "@types/node": "22.13.17",
     "tsx": "4.23.11",
     "typescript": "npm:@typescript/typescript6@6.0.2",
