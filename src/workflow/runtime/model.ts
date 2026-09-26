@@ -473,7 +473,7 @@ export interface SettledMapOptions {
 
 /** Scheduling and item identity for a named map. */
 export interface MapOptions<T> {
-  /** Maximum active mappers in this map; must be a positive integer. */
+  /** Positive local mapper bound; RunOptions.agentLimit separately caps live agents across the run. */
   readonly concurrency: number;
   /** Explicit stable item key; defaults to its index. Keys must be valid IDs and unique in this call. */
   readonly key?: (item: T, index: number) => string;

@@ -1,3 +1,5 @@
+import { parseAgentLimits } from '../../workflow/loader/agent-limits.js';
+import type { AgentLimits } from '../../workflow/runtime/agent-limiter.js';
 import { parseProfileOverride } from '../../workflow/runtime/profiles.js';
 import type { ProfileOverride } from '../../workflow/runtime/profiles-model.js';
 import { randomUUID } from 'node:crypto';
@@ -18,6 +20,8 @@ interface WorkflowExecuteArgs {
 }
 
 interface WorkflowExecuteFlags {
+  readonly 'max-agents': string | undefined;
+  readonly 'provider-limit': string[] | undefined;
   profile: string[] | undefined;
   grant: string[] | undefined;
   readonly input: string | undefined;
@@ -46,6 +50,13 @@ export default class WorkflowExecute extends BaseCommand {
   };
 
   public static override readonly flags: Interfaces.FlagInput<WorkflowExecuteFlags> = {
+    'max-agents': Flags.string({
+      description: 'Max concurrent live agents across the run; default min(8, max(1, CPUs - 2))',
+    }),
+    'provider-limit': Flags.string({
+      description: 'Additional provider ceiling, e.g. codex=1; repeatable, later rules win',
+      multiple: true,
+    }),
     'fork-from': Flags.string({
       description: 'Source run for a new run with completed-effect reuse',
       exclusive: ['resume', 'accept-code-change'],
@@ -111,9 +122,11 @@ export default class WorkflowExecute extends BaseCommand {
     if (flags.resume && flags['run-id'] === undefined) {
       this.error('--resume requires --run-id.', { exit: 2 });
     }
+    let agentLimits: AgentLimits;
     let policy: PolicyOverride[];
     let profileOverrides: ProfileOverride[];
     try {
+      agentLimits = parseAgentLimits(flags['max-agents'], flags['provider-limit'] ?? []);
       profileOverrides = (flags.profile ?? []).map(parseProfileOverride);
       policy = validatePolicy(
         (flags.policy ?? []).map((value) => JSON.parse(value) as unknown),
@@ -152,6 +165,7 @@ export default class WorkflowExecute extends BaseCommand {
       });
       const result = await executor.execute({
         kind: 'workflow.execute',
+        agentLimits,
         typecheck: analysis.plan,
         runId,
         stateDir: resolve(flags['state-dir']),

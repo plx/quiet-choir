@@ -140,3 +140,13 @@ warning before live work. See [durability](durability.md#choose-a-recovery-path)
 reports (exit 1). A loading/reading error emits `{kind, ok:false, message, diagnostics}`. This is a
 run-level check, not a preview of future steps. Its `--accept-code-change` flag checks the explicit
 acceptance mode without saving that acceptance.
+
+## Agent admission flags
+
+`workflow execute --max-agents 5 --provider-limit codex=1 --provider-limit claude=3` caps live agent
+calls across the entire run, including nested maps. Values must be positive safe decimal integers;
+repeat provider rules and the last value wins. Omitted total uses min(8, max(1, available CPUs -
+2)); unspecified providers share that total. The effective limits are logged at info level before
+workflow loading. Repeat desired limits on resume; they are not sticky and do not change
+completed-step identity. `--log-level debug` includes admission counts and wait time. `ctx.map`
+still bounds local mapper concurrency independently.

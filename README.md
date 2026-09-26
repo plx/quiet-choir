@@ -270,6 +270,21 @@ See
 for safe fallbacks, best-effort maps, classification limits, and deliberate retry via fork
 invalidation.
 
+## Agent concurrency
+
+Each run caps live harness invocations across nested maps, parallel calls and helpers sharing the
+context. The default is `min(8, max(1, availableParallelism() - 2))`. `ctx.map` concurrency still
+limits mapper bodies locally; nesting can multiply mappers while agents wait for a shared slot.
+
+Use `workflow execute --max-agents 5 --provider-limit codex=1`, or pass
+`agentLimit: { total: 5, perProvider: { codex: 1 } }` to `runWorkflow`. To cap several runs
+together, pass the same `createAgentLimiter(...)` object to each. Separate CLI processes remain
+independent. Only `harness.invoke` holds a slot: local work, replay, sleeps, retries between
+attempts and checkpoints do not. Queue time does not consume call `timeoutMs`. Limits can change on
+resume; they are not sticky or part of identity. Debug logs expose `agent.queued`/`agent.admitted`
+with wait time and live counts. See [agent concurrency](docs/agent-concurrency.md) for cancellation,
+eligible FIFO ordering and shared limits.
+
 ## Fan-out failure policies
 
 `ctx.map('items', items, { concurrency }, mapper)` defaults to `onError: 'drain'`: the first mapper

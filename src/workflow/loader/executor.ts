@@ -1,3 +1,4 @@
+import { defaultAgentLimits, validateAgentLimits } from '../runtime/agent-limiter.js';
 import { capabilityManifest } from '../runtime/profiles.js';
 import { randomUUID } from 'node:crypto';
 import { readdir } from 'node:fs/promises';
@@ -105,6 +106,15 @@ export class WorkflowExecutor implements Executor<
           );
         }
       }
+      const agentLimits =
+        plan.kind === 'workflow.execute'
+          ? validateAgentLimits(plan.agentLimits ?? defaultAgentLimits())
+          : undefined;
+      if (agentLimits)
+        this.#options.logger.log(
+          'info',
+          `Agent limits: total=${String(agentLimits.total)}; per-provider=${JSON.stringify(agentLimits.perProvider ?? {})}`,
+        );
       const checked = await new TypeScriptExecutor(this.#options.logger).execute(plan.typecheck);
       if (!checked.ok) {
         return {
@@ -171,6 +181,7 @@ export class WorkflowExecutor implements Executor<
         stateDir: plan.stateDir,
         cwd: plan.cwd,
         resume: plan.resume,
+        ...(agentLimits === undefined ? {} : { agentLimit: agentLimits }),
         ...(plan.policy === undefined ? {} : { policy: plan.policy }),
         ...(plan.profileOverrides === undefined ? {} : { profileOverrides: plan.profileOverrides }),
         ...(plan.grants === undefined ? {} : { grants: plan.grants }),
@@ -188,7 +199,8 @@ export class WorkflowExecutor implements Executor<
         onEvent: (event) => {
           this.#options.logger.log(
             event.type === 'replay.divergence' ? 'warn' : 'debug',
-            event.message ?? `${event.type} ${event.stepId} (attempt ${String(event.attempt)})`,
+            event.message ??
+              `${event.type} ${event.stepId} (attempt ${String(event.attempt)})${event.provider === undefined ? '' : ` provider=${event.provider} waitedMs=${String(event.waitedMs)} inFlight=${JSON.stringify(event.inFlight)} queued=${String(event.queued)}`}`,
           );
         },
       });

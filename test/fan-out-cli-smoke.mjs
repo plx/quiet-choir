@@ -21,13 +21,18 @@ const file = join(fixture, 'fanout.ts');
 const binaryDirectory = join(fixture, 'bin');
 const entry = join(root, 'bin/run.js');
 const env = { ...process.env, PATH: `${binaryDirectory}:${process.env.PATH}` };
+// This fixture makes CI wait for two sibling writers; it explicitly needs three live agents.
 const cli = (...args) =>
-  spawnSync(process.execPath, [entry, 'workflow', ...args], {
-    cwd: fixture,
-    env,
-    encoding: 'utf8',
-    timeout: 30_000,
-  });
+  spawnSync(
+    process.execPath,
+    [entry, 'workflow', ...args, ...(args[0] === 'execute' ? ['--max-agents', '3'] : [])],
+    {
+      cwd: fixture,
+      env,
+      encoding: 'utf8',
+      timeout: 30_000,
+    },
+  );
 const checkpoint = (id) => JSON.parse(readFileSync(join(state, `${id}.json`), 'utf8'));
 const lines = (prefix, name) =>
   readFileSync(join(fixture, `${prefix}-${name}.txt`), 'utf8')
@@ -43,6 +48,8 @@ async function interrupt(id, sleep) {
       file,
       '--run-id',
       id,
+      '--max-agents',
+      '3',
       '--state-dir',
       state,
       '--input',

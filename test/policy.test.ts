@@ -195,7 +195,11 @@ it.each(['failed', 'running'] as const)(
       },
     });
     await Promise.all(snapshots);
-    expect(events).toEqual(['step.redefined', 'step.started', 'step.completed']);
+    expect(events.filter((event) => event.startsWith('step.'))).toEqual([
+      'step.redefined',
+      'step.started',
+      'step.completed',
+    ]);
     expect(result.steps['ask']?.fingerprint).not.toBe(fingerprint);
     expect(result.steps['ask']?.redefinitions?.[0]).toMatchObject({
       fingerprint,

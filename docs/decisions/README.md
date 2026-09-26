@@ -26,5 +26,5 @@ part of the documentation.
 - [0008: Scope map cancellation and journal settled items](0008-scoped-fan-out.md)
 - [0009: Compose explicit leaves with stable scope prefixes](0009-scoped-step-ids.md)
 - [0010: Resolve named agent capabilities before effects](0010-agent-profiles-and-grants.md)
-
 - [0011: Own typed harness arguments and verify native contracts](0011-harness-controls-and-contracts.md)
+- [0012: Bound agent admission across each run](0012-agent-admission.md)
