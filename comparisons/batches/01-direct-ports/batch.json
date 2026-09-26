@@ -19,7 +19,7 @@
     "package": "quiet-choir 0.0.0",
     "sha256": "083a9c2d4a309e8a993f79c315a29f76c82d2f07d98a17a3fc1fc19d52c0664d",
     "file": "src/workflow/runtime/model.ts",
-    "description": "Prototype API at quiet-choir commit f35e329138d3c92835a65b19320d69b9cc1dc642; the hash identifies the runtime model file, not the full implementation.",
-    "revision": "f35e329138d3c92835a65b19320d69b9cc1dc642"
+    "description": "Initial porting API at quiet-choir main commit a6a7b820146fccdd3fdd053897247c5f2cee7644. The hash identifies that baseline model file, not the current implementation; the active regression suite tests the current built checkout.",
+    "revision": "a6a7b820146fccdd3fdd053897247c5f2cee7644"
   }
 }

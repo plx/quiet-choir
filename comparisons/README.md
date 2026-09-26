@@ -1,10 +1,16 @@
 # Workflow Lab
 
-[Open the privately published site](https://quiet-choir-workflow-lab.penguinamino.chatgpt.site).
+[Open the privately published site](https://quiet-choir-workflow-lab.penguinamino.chatgpt.site)
+(existing access required), or build the local reader below.
 
 Versioned before/after comparisons of Claude Code JavaScript workflows and direct Quiet Choir
 TypeScript ports. Batch 01 contains all 26 workflows from
 [ultracode-workflows at 9b5404d](https://github.com/hesreallyhim/ultracode-workflows/tree/9b5404d11b885b28380d3eb17471ef7b17601b5e/plugins/ultracode-workflows/workflows).
+
+Batch 01 is the active regression suite for the current built runtime, not a frozen set of ports.
+Its upstream originals remain immutable. The initial porting API is recorded in `apiSnapshot` at
+`a6a7b82`, a commit reachable from `main`; the recorded model-file hash belongs to that baseline.
+The suite now also uses the current `readRun({ runId, stateDir })` API in its recovery verifier.
 
 The site is a reader, not an execution console. Every original is preserved byte for byte, with its
 MIT license. Every port uses `ctx.claude` explicitly. The comparison layer adds no runtime APIs.
@@ -32,8 +38,7 @@ From the repository root:
 ```sh
 npm ci
 npm run build
-npx tsc -p comparisons/batches/01-direct-ports/tsconfig.json
-node --import tsx comparisons/scripts/verify-ports.mjs
+npm run comparisons:check
 node comparisons/scripts/build-site.mjs
 python3 -m http.server 4173 --directory .context/comparison-site/dist
 ```
@@ -46,27 +51,60 @@ reliably load its comparison data.
 
 The builder validates original-source hashes and requires a summary note for each catalog entry. It
 embeds source text, notes, catalog metadata, and shared support in `dist/data.json`, then copies the
-reader assets. It does not typecheck or execute ports. `npm run check` covers the main repository
-quality gates; run the comparison commands above separately before submitting comparison changes.
+reader assets. It does not typecheck or execute ports. `npm run comparisons:check` typechecks the
+active batch and runs its fixtures in read-only `--check` mode. It is part of `npm run check` and
+the CI quality job, after the build, because ports import the built package by name.
 
 The verification script compares outputs and prompt/reply sets against the actual original
 JavaScript under deterministic, inert harness fixtures. It also tests completed-run reuse and
 interrupted pipeline recovery through the real runtime. It never launches Claude, executes agent
 commands, or changes a target repository. `verification.json` records the cases. Fixtures are not
 live integration evidence and do not prove every branch or the quality of an agent's work. The
-verifier rewrites that report; review and commit it with the batch. Its batch path, scenario inputs,
-reply generation, and recovery case are specific to Batch 01, not a generic batch runner.
+verifier's `--check` mode fails if the report is missing or differs, without rewriting it. To update
+expected results intentionally, run `node --import tsx comparisons/scripts/verify-ports.mjs`, then
+review and commit `verification.json`. Its batch path, scenario inputs, reply generation, and
+recovery case are specific to Batch 01, not a generic batch runner.
 
-Batch 01 deliberately keeps legacy orchestration locals permissively typed (`noImplicitAny` and
-strict null checks are disabled in its own tsconfig). Inputs and agent results have concrete Zod
-schemas. The final result validator checks JSON compatibility, not its full domain shape; its
-TypeScript annotation is inferred from the body. The main library retains its strict compiler
-settings.
+Batch 01 deliberately retains all seven migration relaxations in its own tsconfig:
+
+- `noImplicitAny: false`
+- `strictNullChecks: false`
+- `exactOptionalPropertyTypes: false`
+- `noUncheckedIndexedAccess: false`
+- `noPropertyAccessFromIndexSignature: false`
+- `noUnusedLocals: false`
+- `noUnusedParameters: false`
+
+Inputs and agent results have concrete Zod schemas. Final results check JSON compatibility rather
+than a full domain shape; their TypeScript annotations are inferred from the bodies. The main
+library retains its strict settings. Making the ports repo-strict is tracked in
+[#65](https://github.com/plx/quiet-choir/issues/65): the initial audit found 273 diagnostics,
+including 116 option-spread mismatches and inherited null/index crash paths. Fix the shared options
+idiom first, then enable `strictNullChecks` and `noUncheckedIndexedAccess`; this landing does not
+silently change the originals' behavior or hide those gaps.
+
+## Regression and snapshot policy
+
+An API change that breaks an active port must update that port and its verification report in the
+same PR. Refresh `apiSnapshot.revision` and the matching API-file SHA-256 when the port's target API
+changes. Use a durable commit containing that API, reachable from the default branch after landing;
+do not leave metadata pointing only at a disposable, pre-squash head. The initial baseline above
+remains accurate while these ports continue to use that model contract. The hash is provenance for
+one file, not a claim that the entire running implementation is unchanged.
+
+Keep Batch 01 gated while it is the active suite for runtime changes such as
+[#44](https://github.com/plx/quiet-choir/issues/44),
+[#45](https://github.com/plx/quiet-choir/issues/45), and
+[#52](https://github.com/plx/quiet-choir/issues/52). When a later batch supersedes it, move
+`comparisons:check` and its verifier to the newest batch in that PR. Older batches become historical
+snapshots: reproduce them with their recorded runtime commit and matching batch revision, not by
+rebuilding a newer runtime and assuming the results describe the old API.
 
 ## Run a port
 
-The ports import the private repository's built `quiet-choir` package. Build it first. For example,
-this validates a port without invoking any agents:
+The ports import this repository's built `quiet-choir` package. The repository is public; the
+prototype package remains unpublished. Build it first. For example, this validates a port without
+invoking any agents:
 
 ```sh
 npm run cli -- workflow validate \
@@ -117,12 +155,26 @@ unchanged input.
    bookmark. New batches using the same source and data contract need no UI code changes.
 
 Ports import the current checkout's built package. To reproduce a historical batch, use its recorded
-Quiet Choir commit together with that batch's files and verification commands; rebuilding a newer
-runtime does not reproduce the old target API. Record later API experiments as new batches.
+Quiet Choir commit together with the matching historical batch revision and verification commands;
+rebuilding a newer runtime does not reproduce the old target API. Active-batch maintenance follows
+the regression policy above; comparisons of deliberately different APIs belong in new batches.
 
 The reader currently attributes all workflows to the Batch 01 upstream, and `license.txt` comes from
 the first registered batch. Comparisons from a different upstream or license need corresponding
 attribution and license-packaging changes before publication.
+
+## Site assets and publishing decision
+
+The public repository retains the static reader, the private-site link, and
+`site/.openai/hosting.json`. The link identifies an optional existing deployment that still requires
+access; local preview is available to every reader. The manifest contains the existing project's
+identity and static output path, not credentials. Keeping it preserves updates to the same Site
+instead of accidentally creating replacements. No access setting changes or deployment are part of
+landing the Workflow Lab.
+
+The publishing procedure below is retained for maintainers. Its generated checkout is created by the
+builder and stays under git-ignored `.context/`; it is not assumed to exist in a fresh clone. Public
+source availability does not imply public access to the private deployment.
 
 ## Publish an update to the existing site
 

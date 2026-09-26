@@ -9,7 +9,11 @@
 4. Run `npm run check` (or `just check`) before opening a pull request.
 
 `npm run check` verifies formatting, type-aware lint rules, TypeScript, coverage thresholds, build
-output, API documentation, and the packed module/type-resolution contract.
+output, API documentation, and the packed module/type-resolution contract. After the build,
+`comparisons:check` also typechecks the active Workflow Lab batch and verifies its saved fixture
+report without rewriting it. An API change that breaks a port must update the port, report, and API
+snapshot in the same PR; see
+[the batch policy](comparisons/README.md#regression-and-snapshot-policy).
 
 ## TypeScript and package conventions
 

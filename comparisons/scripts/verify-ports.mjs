@@ -8,6 +8,10 @@ import { join } from 'node:path';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 import ts from 'typescript';
 import { runWorkflow, readRun } from 'quiet-choir';
+const args = process.argv.slice(2);
+if (args.length > 1 || args.some((arg) => arg !== '--check'))
+  throw new Error('Usage: node --import tsx comparisons/scripts/verify-ports.mjs [--check]');
+const check = args.includes('--check');
 const base = fileURLToPath(new URL('../batches/01-direct-ports/', import.meta.url));
 const files = (await readdir(`${base}/originals`)).filter((f) => f.endsWith('.js')).sort();
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
@@ -317,7 +321,7 @@ try {
     }),
     /fixture interruption/,
   );
-  const before = await readRun(stateDir, 'resume-mid-pipeline');
+  const before = await readRun({ stateDir, runId: 'resume-mid-pipeline' });
   const completed = Object.entries(before.steps)
     .filter(([, s]) => s.status === 'completed')
     .map(([id]) => id);
@@ -327,7 +331,9 @@ try {
     stateDir,
     resume: true,
     harness,
-    onEvent: (e) => events.push(e),
+    onEvent: (e) => {
+      events.push(e);
+    },
   });
   assert.equal(resumed.output.passed, 2);
   for (const id of completed)
@@ -341,8 +347,7 @@ try {
   console.log(
     `PASS interrupted pipeline resumes with ${completed.length} completed steps replayed`,
   );
-  await writeFile(
-    `${base}/verification.json`,
+  const report =
     JSON.stringify(
       {
         method:
@@ -351,8 +356,26 @@ try {
       },
       null,
       2,
-    ) + '\n',
-  );
+    ) + '\n';
+  const reportPath = `${base}/verification.json`;
+  if (check) {
+    let expected;
+    try {
+      expected = await readFile(reportPath, 'utf8');
+    } catch (cause) {
+      throw new Error(
+        'Cannot read verification.json; run the verifier without --check to generate it.',
+        { cause },
+      );
+    }
+    if (expected !== report)
+      throw new Error(
+        'verification.json differs from the current fixtures. Run the verifier without --check, review the changes, and commit the report.',
+      );
+    console.log('PASS verification.json matches; no files changed');
+  } else {
+    await writeFile(reportPath, report);
+  }
 } finally {
   console.error = actualError;
   await rm(stateDir, { recursive: true, force: true });
