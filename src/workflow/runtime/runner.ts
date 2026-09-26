@@ -321,19 +321,28 @@ export async function runWorkflow<TInput, TOutput>(
             costUsd: z.number().nullable(),
           }),
         });
-        return launch(id, provider, jsonValue(request), resultSchema, undefined, async () => {
-          if (!options.harness)
-            throw new Error(
-              `No harness adapter configured for ${provider}. Supply RunOptions.harness.`,
-            );
-          const response = await options.harness.invoke(request, signal);
-          const raw: unknown = structured ? JSON.parse(response.text) : response.text;
-          return {
-            output: schema.parse(raw),
-            sessionId: response.sessionId,
-            usage: response.usage,
-          };
-        });
+        return launch(
+          id,
+          provider,
+          jsonValue(request),
+          resultSchema,
+          undefined,
+          async (_context, step) => {
+            if (!options.harness)
+              throw new Error(
+                `No harness adapter configured for ${provider}. Supply RunOptions.harness.`,
+              );
+            const response = await options.harness.invoke(request, signal);
+            if (response.warnings !== undefined) step.warnings = [...response.warnings];
+            else delete step.warnings;
+            const raw: unknown = structured ? JSON.parse(response.text) : response.text;
+            return {
+              output: schema.parse(raw),
+              sessionId: response.sessionId,
+              usage: response.usage,
+            };
+          },
+        );
       }
       return {
         text: (id, agentOptions) => invoke(id, agentOptions, z.string(), false),
