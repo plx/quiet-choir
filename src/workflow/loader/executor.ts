@@ -171,6 +171,11 @@ export class WorkflowExecutor implements Executor<
         stateDir: plan.stateDir,
         cwd: plan.cwd,
         resume: plan.resume,
+        ...(plan.policy === undefined ? {} : { policy: plan.policy }),
+        ...(plan.policyReset === undefined ? {} : { policyReset: plan.policyReset }),
+        ...(plan.allowModelOverride === undefined
+          ? {}
+          : { allowModelOverride: plan.allowModelOverride }),
         ...(plan.input === undefined ? {} : { input: plan.input }),
         ...(this.#options.harness === undefined ? {} : { harness: this.#options.harness }),
         ...(this.#options.signal === undefined ? {} : { signal: this.#options.signal }),

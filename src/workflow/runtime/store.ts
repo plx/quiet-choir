@@ -8,6 +8,39 @@ import { z } from 'zod';
 import { resolveStateDir, type StateDirectoryOptions } from './paths.js';
 import { jsonValue } from './json.js';
 import type { AgentUsage, JsonValue } from './model.js';
+import type { StepIdentity } from './identity.js';
+import {
+  executionPolicySchema,
+  policyOverrideSchema,
+  type AttemptPolicy,
+  type PolicyOverride,
+} from './policy.js';
+
+/** One started effect attempt, including the policy actually sent to its adapter. */
+export interface AttemptRecord extends AttemptPolicy {
+  /** Total attempt number across resumes. */
+  readonly attempt: number;
+  /** Identity fingerprint for this version of the effect. */
+  readonly fingerprint: string;
+  /** ISO timestamp saved before the effect starts. */
+  readonly startedAt: string;
+  /** ISO timestamp after settlement, or null for an interrupted attempt. */
+  finishedAt: string | null;
+  /** Last observed outcome; running may indicate an interrupted process. */
+  status: 'running' | 'completed' | 'failed';
+  /** Failure message, when available. */
+  error: string | null;
+}
+
+/** Earlier identity of an unfinished effect that was explicitly redefined. */
+export interface StepRedefinition {
+  /** Previous semantic fingerprint. */
+  readonly fingerprint: string;
+  /** Previous component hashes. */
+  readonly identity: StepIdentity;
+  /** ISO time when the new identity was adopted. */
+  readonly redefinedAt: string;
+}
 
 /** Usage recovered from one failed harness attempt, retained across resumes. */
 export interface FailedAttempt {
@@ -26,7 +59,13 @@ export interface StepRecord {
   /** Hash of explicit dependencies and output schema. */
   fingerprint: string;
   /** Last saved lifecycle state. */
-  status: 'running' | 'completed' | 'failed';
+  status: 'running' | 'completed' | 'failed' | 'superseded';
+  /** Semantic component hashes; absent in version 1 checkpoints. */
+  identity?: StepIdentity;
+  /** Prior identities of unfinished effects. */
+  redefinitions?: StepRedefinition[];
+  /** Per-attempt execution limits, provenance, and outcome. */
+  attemptHistory?: AttemptRecord[];
   /** Total started attempts across resumes. */
   attempts: number;
   /** Serialized result; null until completed. */
@@ -44,7 +83,7 @@ export interface StepRecord {
 /** Local checkpoint format. The format is intentionally versioned independently of workflows. */
 export interface RunRecord {
   /** Checkpoint format version. */
-  formatVersion: 1;
+  formatVersion: 1 | 2;
   /** Stable run identifier. */
   id: string;
   /** Workflow compatibility metadata. */
@@ -68,6 +107,12 @@ export interface RunRecord {
   error: string | null;
   /** Named checkpoints. Step IDs are unique within one run. */
   steps: Record<string, StepRecord>;
+  /** Sticky rules; subsequent invocations append unless policyReset is requested. */
+  policy?: PolicyOverride[];
+  /** Persisted authorization for saved model/effort overrides. */
+  allowModelOverride?: boolean;
+  /** Rules that matched no visited step during the latest invocation. */
+  policyWarnings?: string[];
   /** ISO creation timestamp. */
   createdAt: string;
   /** ISO timestamp of the most recent persisted change. */
@@ -86,7 +131,38 @@ const jsonSchema = z.custom<JsonValue>((value) => {
 const stepSchema = z.object({
   kind: z.enum(['step', 'claude', 'codex', 'sleep']),
   fingerprint: z.string(),
-  status: z.enum(['running', 'completed', 'failed']),
+  status: z.enum(['running', 'completed', 'failed', 'superseded']),
+  identity: z.record(z.string(), z.string()).optional(),
+  redefinitions: z
+    .array(
+      z.object({
+        fingerprint: z.string(),
+        identity: z.record(z.string(), z.string()),
+        redefinedAt: z.iso.datetime(),
+      }),
+    )
+    .optional(),
+  attemptHistory: z
+    .array(
+      z.object({
+        attempt: z.number().int().positive(),
+        fingerprint: z.string(),
+        startedAt: z.iso.datetime(),
+        finishedAt: z.iso.datetime().nullable(),
+        status: z.enum(['running', 'completed', 'failed']),
+        error: z.string().nullable(),
+        policy: executionPolicySchema.extend({
+          retry: z.object({
+            maxAttempts: z.number().int().positive(),
+            delayMs: z.number().nonnegative(),
+          }),
+        }),
+        sources: z.record(z.string(), z.string()),
+        requestedModel: z.string().nullable(),
+        reasoningEffort: z.enum(['minimal', 'low', 'medium', 'high']).nullable(),
+      }),
+    )
+    .optional(),
   attempts: z.number().int().nonnegative(),
   output: jsonSchema,
   error: z.string().nullable(),
@@ -115,19 +191,43 @@ const stepsSchema = z.custom<Record<string, StepRecord>>(
     !Array.isArray(value) &&
     Object.values(value).every((step) => stepSchema.safeParse(step).success),
 );
-const recordSchema = z.object({
-  formatVersion: z.literal(1),
-  id: z.string(),
-  workflow: z.object({ name: z.string(), version: z.string(), fingerprint: z.string().nullable() }),
-  cwd: z.string(),
-  input: jsonSchema,
-  output: jsonSchema,
-  status: z.enum(['running', 'completed', 'failed']),
-  error: z.string().nullable(),
-  steps: stepsSchema,
-  createdAt: z.iso.datetime(),
-  updatedAt: z.iso.datetime(),
-});
+const recordSchema = z
+  .object({
+    formatVersion: z.union([z.literal(1), z.literal(2)]),
+    id: z.string(),
+    workflow: z.object({
+      name: z.string(),
+      version: z.string(),
+      fingerprint: z.string().nullable(),
+    }),
+    cwd: z.string(),
+    input: jsonSchema,
+    output: jsonSchema,
+    status: z.enum(['running', 'completed', 'failed']),
+    error: z.string().nullable(),
+    steps: stepsSchema,
+    policy: z.array(policyOverrideSchema).optional(),
+    allowModelOverride: z.boolean().optional(),
+    policyWarnings: z.array(z.string()).optional(),
+    createdAt: z.iso.datetime(),
+    updatedAt: z.iso.datetime(),
+  })
+  .superRefine((record, context) => {
+    if (record.formatVersion !== 2) return;
+    if (record.policy === undefined || record.allowModelOverride === undefined)
+      context.addIssue({
+        code: 'custom',
+        message: 'Version 2 checkpoint is missing execution policy metadata',
+      });
+    for (const [id, step] of Object.entries(record.steps)) {
+      if (step.identity === undefined || step.attemptHistory === undefined)
+        context.addIssue({
+          code: 'custom',
+          path: ['steps', id],
+          message: 'Version 2 step is missing identity or attempt history',
+        });
+    }
+  });
 
 function pathFor(stateDir: string, runId: string): string {
   if (!/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$/.test(runId)) {
@@ -151,7 +251,7 @@ export async function readRun(options: ReadRunOptions): Promise<RunRecord> {
   const raw = jsonValue(JSON.parse(await readFile(pathFor(stateDir, runId), 'utf8')));
   const record = recordSchema.parse(raw);
   if (record.id !== runId) throw new Error('Checkpoint run ID does not match its filename.');
-  return record;
+  return record as RunRecord;
 }
 
 /** Atomically replace a checkpoint after flushing its content to local disk. @internal */

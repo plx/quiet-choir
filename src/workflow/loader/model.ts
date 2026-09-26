@@ -1,5 +1,6 @@
 import type { ExecutionPlan, ExecutionResult } from '../../application/execution.js';
 import type { JsonValue } from '../runtime/model.js';
+import type { PolicyOverride } from '../runtime/policy.js';
 import type { WorkflowRun } from '../runtime/runner.js';
 import type { TypecheckDiagnostic, TypecheckPlan } from '../typecheck/model.js';
 
@@ -18,6 +19,9 @@ export interface ExecuteWorkflowPlan extends ExecutionPlan {
   readonly cwd: string;
   readonly resume: boolean;
   readonly input?: JsonValue;
+  readonly policy?: readonly PolicyOverride[];
+  readonly policyReset?: boolean;
+  readonly allowModelOverride?: boolean;
 }
 
 /** Plain-data instructions for reading an existing run without importing workflow code. */
