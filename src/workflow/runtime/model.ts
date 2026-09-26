@@ -1,4 +1,5 @@
 import type { z } from 'zod';
+import type { MapStepError } from './fan-out.js';
 
 /** A value that survives checkpoint serialization without changing its meaning. */
 export type JsonValue =
@@ -20,17 +21,17 @@ export type ErrorKind =
   | 'unknown';
 
 /** Serialized final failure of an explicitly settled effect. */
-export interface StepError {
+export type StepError = Readonly<{
   /** Original failure explanation. */
   readonly message: string;
   /** Structured category, or unknown when no reliable category is available. */
   readonly kind: ErrorKind;
   /** Total started attempts for this step across resumes. */
   readonly attempts: number;
-}
+}>;
 
 /** A journaled outcome that can safely select a branch on replay. */
-export type Settled<T> =
+export type Settled<T, TError = StepError> =
   | {
       /** Successful effect. */
       readonly ok: true;
@@ -41,7 +42,7 @@ export type Settled<T> =
       /** Failed effect after applicable retries. */
       readonly ok: false;
       /** Saved failure, replayed without executing the effect again. */
-      readonly error: StepError;
+      readonly error: TError;
     };
 
 /** Throw failures by default, or persist and return the final failure. */
@@ -210,7 +211,7 @@ export interface StepDefinition<T> {
 export interface WorkflowContext {
   /** Stable identifier for this execution and all resumes. */
   readonly runId: string;
-  /** Run cancellation signal. */
+  /** Current cancellation scope signal; nested maps inherit the run signal. */
   readonly signal: AbortSignal;
   /** Claude-specific headless API. */
   readonly claude: AgentClient<ClaudeOptions>;
@@ -228,12 +229,29 @@ export interface WorkflowContext {
   ): Promise<EffectResult<T, TMode>>;
   /** Checkpoint a wall-clock wake time so resuming waits only the remaining duration. */
   sleep(id: string, milliseconds: number): Promise<null>;
-  /** Map in input order with bounded concurrency and unique step IDs. A mapper failure cancels the run and drains active workers. */
+  /**
+   * Bounded fan-out in input order. Default drain stops scheduling after failure and lets started
+   * mappers finish without aborting them. Explicit abort cancels only this map's subtree. Both
+   * reject with FanOutError after draining; an escaping failure is attributed in RunRecord.rootCause.
+   * Supply unique effect IDs inside mappers.
+   */
   map<T, U>(
     items: readonly T[],
     concurrency: number,
     mapper: (item: T, index: number) => Promise<U>,
+    options?: { readonly onError?: 'abort' | 'drain' },
   ): Promise<U[]>;
+  /**
+   * Journal every item outcome under an explicit map ID; replay skips settled mappers and their owned
+   * effects. Inputs/results must be lossless JSON. Cancellation, infrastructure, and authoring errors
+   * still reject. Failed outcomes include their originating step ID, or null for mapper-body errors.
+   */
+  map<T, U>(
+    items: readonly T[],
+    concurrency: number,
+    mapper: (item: T, index: number) => Promise<U>,
+    options: SettledMapOptions,
+  ): Promise<Settled<U, MapStepError>[]>;
 }
 
 /** Definition of a typed workflow; plain JavaScript controls branching, loops, and composition. */
@@ -311,4 +329,14 @@ export interface AttemptPolicy {
   readonly requestedModel: string | null;
   /** Explicit effort sent to Codex; null means its own configuration chooses. */
   readonly reasoningEffort: CodexOptions['reasoningEffort'] | null;
+}
+
+/** Stable identity and policy for a durable settled map. */
+export interface SettledMapOptions {
+  /** Run-unique map journal ID. This does not prefix effect IDs. */
+  readonly id: string;
+  /** Journal successes and failures for every item without cancelling siblings. */
+  readonly onError: 'settle';
+  /** Revision for captured values or helpers not visible in mapper source and items. */
+  readonly version?: string;
 }

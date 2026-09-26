@@ -1,6 +1,7 @@
 # 0007: Explicit durable failure outcomes
 
 **Status:** Accepted. Extends ADR 0005/0006; supersedes their current checkpoint-format choice.
+Extended by [0008](0008-scoped-fan-out.md) for durable aggregate outcomes and scoped cancellation.
 
 ## Context
 

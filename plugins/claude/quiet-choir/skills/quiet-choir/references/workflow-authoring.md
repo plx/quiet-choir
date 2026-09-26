@@ -45,10 +45,10 @@ version requires a new run ID (a fork can reuse compatible steps). See [durabili
 | `ctx.step(id, { input, schema, run, retry?, version?, onError? })` | Validated result; stores that result and hashes of input, schema, callback source, version, and cwd |
 | `ctx.claude.text(id, options)` / `ctx.codex.text(id, options)`     | `{ output: string, sessionId, usage }`                                                              |
 | `ctx.claude.object(id, { schema, ...options })` / Codex equivalent | Same wrapper with schema-inferred `output`                                                          |
-| `ctx.map(items, concurrency, mapper)`                              | Ordered result array with at most `concurrency` active mappers; no checkpoint of its own            |
+| `ctx.map(items, concurrency, mapper, options?)`                    | Ordered bounded fan-out; optional settled map journal                                               |
 | `ctx.sleep(id, milliseconds)`                                      | `null`; persists the wake deadline, then waits in this process                                      |
 | `ctx.runId`                                                        | Stable run identifier                                                                               |
-| `ctx.signal`                                                       | AbortSignal for run cancellation                                                                    |
+| `ctx.signal`                                                       | Current scope signal; inherits run and parent-map cancellation                                      |
 
 Prompts and identity options are stored as component hashes. Resolved execution policy and requested
 model/effort are stored in plaintext per attempt; inspection cannot reconstruct prompts.
@@ -81,9 +81,17 @@ prefix so every durable operation has a unique ID across the entire run. IDs all
 starting with a letter or number, followed by letters, numbers, `.`, `_`, `:`, `/`, or `-`. Keep
 collection order deterministic when deriving IDs from indexes.
 
-Await all workflow operations. A mapper failure aborts the run, stops new scheduling, and drains
-active workers. Parallel mappers share the working directory; use separate directories/worktrees
-when their edits could conflict. quiet-choir does not create these automatically.
+Await all workflow operations. The default map policy is `drain`: stop scheduling on first failure,
+let started mappers finish without sending an abort signal, then reject with `FanOutError`. Its
+`failures` preserve `{ index, stepId, error }` in observation order and `unscheduled` lists input
+indexes never started. A workflow-body rejection also drains pending work. Draining can wait for the
+slowest active call; configure timeouts on agent calls.
+
+Pass `{ onError: 'abort' }` to cancel only that map's subtree. Catching a failed map permits more
+work, and a caught inner-map failure does not cancel unrelated outer branches. `ctx.signal` is a
+getter for the current scope; effects capture that signal at launch. Ctrl-C/SIGTERM cancels every
+scope. Parallel mappers share the working directory; use separate directories/worktrees when their
+edits could conflict. quiet-choir does not create these automatically.
 
 Local and agent steps run once per execution unless given `retry: { maxAttempts: 3, delayMs: 100 }`.
 `maxAttempts` counts attempts in the current execution; delay doubles up to 30 seconds. Only opt
@@ -114,12 +122,37 @@ const draft = primary.ok
 agent values include `output`, `sessionId`, and `usage`. The final failure, after applicable
 retries, is saved as `settled-failed`. Replay returns that exact failure without another callback or
 harness call. `onError` is semantic identity: changing it on a terminal step requires a new
-run/fork. Cancellation (including a failing map sibling) always rejects and stays retryable;
+run/fork. Cancellation (including an explicit map abort) always rejects and stays retryable;
 authoring errors, configuration errors (a missing harness, or an adapter's pre-launch
 `ConfigurationError` such as a Claude schema without an object root), and checkpoint failures also
 reject instead of becoming fallback data.
 
-For best-effort fan-out, use `onError: 'return'` inside `ctx.map`, then branch on each `ok` value.
+For best-effort fan-out, use `{ onError: 'settle', id: 'reviewers' }` as the fourth map argument:
+
+```ts
+const results = await ctx.map(
+  topics,
+  3,
+  (topic, index) => ctx.claude.text(`review/${index}`, { prompt: topic }),
+  { onError: 'settle', id: 'reviewers' },
+);
+const votes = results.flatMap((result) => (result.ok ? [result.value.output] : []));
+```
+
+A settled map runs all items and journals the ordered `Settled<U, MapStepError>[]`. Errors contain
+`message`, `kind`, `attempts`, and `stepId` (null for a mapper-body failure). Cancellation,
+checkpoint errors, configuration errors, and authoring guards still reject. The required run-unique
+`id` names the journal; it does not prefix leaf IDs. Resume skips committed mappers and returns
+their exact saved outcomes, including ordinary thrown body errors and caught fallback results.
+Incomplete items execute again. Do not use this to hide ignored operation failures: every launched
+child must still be awaited.
+
+Map inputs/results must be lossless JSON. Identity hashes item inputs, mapper source, optional
+`version`, and cwd; concurrency can change. Captured helpers/environment are invisible, so put
+dependencies in items or bump `version`. Keep leaf IDs unique across the run. Forks start fresh map
+journals and reuse eligible steps under the selected fork policy. A leaf-level `onError: 'return'`
+inside an ordinary map is also useful when only the individual call's fallback must be durable.
+
 For transient retries, use one step ID with `retry` rather than a loop of throwing `ask/0`, `ask/1`
 calls. `retry.on` limits retries to listed error kinds; omit it to retry all effect failures except
 cancellation, configuration, and checkpoint-write failures, or use `[]` to retry none. Harness

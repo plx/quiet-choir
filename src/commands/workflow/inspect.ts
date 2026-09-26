@@ -45,7 +45,7 @@ export default class WorkflowInspect extends BaseCommand {
       this.log(
         flags.json
           ? JSON.stringify(result.run)
-          : `Run ${result.run.id}: ${result.run.status}\nWorkflow: ${result.run.workflow.name}@${result.run.workflow.version}\nSteps: ${String(Object.keys(result.run.steps).length)}\n${result.run.error ?? JSON.stringify(result.run.output, null, 2)}`,
+          : `Run ${result.run.id}: ${result.run.status}\nWorkflow: ${result.run.workflow.name}@${result.run.workflow.version}\nSteps: ${String(Object.keys(result.run.steps).length)}\n${result.run.rootCause ? `Root cause (${result.run.rootCause.stepId ?? 'workflow'}): ${result.run.rootCause.error}\n` : ''}${result.run.error ?? JSON.stringify(result.run.output, null, 2)}`,
       );
     }
   }

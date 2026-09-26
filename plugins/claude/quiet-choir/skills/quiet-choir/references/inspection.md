@@ -48,8 +48,8 @@ component `identity` hashes and `attemptHistory`: each attempt records its finge
 `policy`, value `sources`, `requestedModel`, `reasoningEffort`, `startedAt`, `finishedAt`, `status`,
 and `error`. A `running` attempt has no saved settlement. Redefined unfinished steps retain old
 hashes and change times in `redefinitions`; unvisited unfinished steps become `superseded` after a
-successful body replay. Existing terminal outcomes still must be visited. Versions 1, 2, and 3 can
-be inspected, but this format-4 runtime refuses their resumption or fork reuse.
+successful body replay. Existing terminal outcomes still must be visited. Versions 1, 2, 3, and 4
+can be inspected, but this format-5 runtime refuses their resumption or fork reuse.
 
 `workflow.identity` holds code/schema/file hashes and engine metadata. `forkedFrom` identifies a
 source snapshot, reuse mode, invalidation globs, intentional differences, and progress; each copied
@@ -77,17 +77,25 @@ children; timestamps alone do not justify removing a lock.
 A failed run can have completed sibling effects. Those effects replay on a compatible resume; an
 uncheckpointed external action may repeat. Failed steps contain error messages, not full transcripts
 or guaranteed partial output. Run-level failures (for example final schema validation) need not
-imply any step failed. There is no `cancelled` status: cancelled work is saved as `failed`, with an
-invocation-cancelled, operation-aborted, interrupt, or root-cause error. Start from the run-level
-`error`, which after an interrupt may itself be a cancellation message.
+imply any step failed. Start from `rootCause: { stepId, error }`, also shown by human inspection. A
+map's initiating step stays `failed`; an interrupted sibling is `cancelled`, with a distinct
+cancellation message and `cancelledBy` set to the initiating step ID (null for a mapper-body failure
+or run interrupt). Ctrl-C/SIGTERM records run status `cancelled` and root cause
+`{ stepId: null, error: 'Workflow interrupted.' }`. Completed or handled failures leave `rootCause`
+null when the run completes. Resolved, validated actions still save success after abort.
+
+`maps[id]` contains settled-map identity, status, and ordered item journals. Each committed item
+stores `{ ok, value/error }` and its owned step/nested-map IDs. Those outcomes replay as a unit; a
+child's `failed` status inside a committed item is diagnostic history, not a pending retry. Partial
+journals retry only uncommitted mappers. Forks create new journals.
 
 ## Live events
 
 Run with `--log-level debug` to log `step.started`, `step.completed`, `step.replayed`, and
-`step.failed`, `step.settled`, `step.redefined`, `step.superseded`, and `step.reused` events to
-stderr. `runWorkflow` also accepts an `onEvent(event)` callback returning `void | Promise<void>`.
-`replay.divergence` adds a message and `skippedStepIds`, and the CLI logs it as a warning before
-live work; `--strict-replay` stops before the next live effect:
+`step.failed`, `step.cancelled`, `step.settled`, `step.redefined`, `step.superseded`, and
+`step.reused` events to stderr. `runWorkflow` also accepts an `onEvent(event)` callback returning
+`void | Promise<void>`. `replay.divergence` adds a message and `skippedStepIds`, and the CLI logs it
+as a warning before live work; `--strict-replay` stops before the next live effect:
 
 ```ts
 onEvent: (event) => {

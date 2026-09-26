@@ -129,17 +129,34 @@ Embedded equivalents are `forkFrom: { runId, stateDir?, reuse?, invalidate? }`,
 `checkResume(definition, { runId, stateDir, cwd, fingerprint?, source?, acceptCodeChange? })` checks
 run gates without executing the supplied definition. `forkFrom` and `resume` are mutually exclusive.
 
+## Settled map replay
+
+`ctx.map(items, concurrency, mapper, { onError: 'settle', id, version? })` journals each entire
+mapper outcome under an explicit run-unique ID. Completed items replay without invoking the mapper,
+claiming their owned step and nested-map IDs as visited. A child step can remain `failed` or
+`cancelled` if its containing item saved a handled outcome; inspection retains that history, while
+resume returns the containing outcome. Running items retry. Cancellation, infrastructure failures,
+and authoring errors never become failed item values. Ignored child-operation failures prevent the
+item from committing.
+
+Map identity includes item inputs, mapper source, optional version, and cwd; it excludes
+concurrency. Changing identity after any item committed, duplicating a journal ID, or skipping a
+recorded terminal map fails replay. Explicit code acceptance does not bypass these checks.
+Inputs/results must be lossless JSON, and captured dependencies belong in items or the explicit
+version. Leaf IDs stay run-unique; a journal ID does not add a prefix. Forks start fresh map
+journals and apply their normal per-step reuse/invalidation rules, so mapper-body outcomes are
+re-evaluated in the new run.
+
 ## At-least-once effects
 
-Effects can succeed without being saved after a crash or hard kill. Cancellation by Ctrl-C, SIGTERM,
-a failing `ctx.map` sibling, or an uncaught failure can do this too: an action that finishes after
-cancellation is recorded `failed`, its result is discarded, and it repeats on resume. Agent calls
-stopped by cancellation or `timeoutMs` may already have edited files. A storage-triggered abort is
-different: the runner preserves successful results for a later save, as described below. Use the
-local step callback's stable `idempotencyKey` with systems that support deduplication; it is not
-automatically sent to the Claude/Codex CLIs. Workspace edits and harness conversation state are not
-transactional. Do not assume that retrying an error is harmless or that a new run deduplicates an
-old run's work.
+Effects can succeed without being saved after a crash or hard kill. A resolved action whose output
+validates is persisted as `completed` even after a signal abort; resume replays it. An action that
+rejects in an aborted scope is `cancelled` and can repeat on resume. Agent calls stopped by
+cancellation or `timeoutMs` may already have edited files. Persistent storage failure can still
+prevent any outcome from committing, as described below. Use the local step callback's stable
+`idempotencyKey` with systems that support deduplication; it is not automatically sent to the
+Claude/Codex CLIs. Workspace edits and harness conversation state are not transactional. Do not
+assume that retrying an error is harmless or that a new run deduplicates an old run's work.
 
 Local and agent steps retry only when explicitly given a `retry` policy; the default is one attempt.
 An explicit resume retries unfinished work. `ctx.sleep` saves a wall-clock deadline and waits only
@@ -215,10 +232,10 @@ timestamps, and outcome. Sources are `runtime`, `harness`, `call-site`, or `over
 zero-based saved rule index). Custom harness defaults are recorded only when the adapter reports
 them. `running` means settlement was not checkpointed, not proof that the process still lives.
 
-New checkpoints use format version 4. Versions 1, 2, and 3 remain inspectable, but cannot resume or
-be fork sources here: they lack the current callback/order/source/outcome contract. Refusal leaves
-their checkpoint data unchanged. Use the original runtime to resume them, or start a new run after
-accounting for previous effects. There is no automatic migration.
+New checkpoints use format version 5. Versions 1, 2, 3, and 4 remain inspectable, but cannot resume
+or be fork sources here: they lack the current callback/order/source/outcome contract. Refusal
+leaves their checkpoint data unchanged. Use the original runtime to resume them, or start a new run
+after accounting for previous effects. There is no automatic migration.
 
 ## Storage, ownership, and cancellation
 
@@ -231,14 +248,19 @@ merely because a run looks stalled. After acquiring ownership, the runner remove
 abandoned `<runId>.json.<uuid>.tmp` files; it preserves other runs' files and unrelated temporary
 data.
 
-Cancellation cooperatively aborts and drains active work before releasing the lock. Local callbacks
-must honor their signal or draining can hang. A mapper failure cancels the whole run and stops
-scheduling new items. One Ctrl-C or SIGTERM terminates harness processes, drains active work, and
-exits 130. A second Ctrl-C kills the runner mid-drain and can leave its lock and a `running` record.
-SIGKILL, SIGHUP (closed terminal or dropped SSH), or a crash can leave detached harness children
-running and editing. Before resuming, check `pgrep -fl 'claude --print|codex exec'` and identify any
-children belonging to the interrupted run. SIGHUP handling and stronger orphan cleanup are deferred
-to [#48](https://github.com/plx/quiet-choir/issues/48).
+Map failures default to `drain`: stop scheduling and let active mappers checkpoint without an abort
+signal before rejecting with `FanOutError`. Body rejections, including `Promise.all`, also drain
+pending operations without signalling them. Explicit map `abort` cancels only that subtree;
+`ctx.signal` reads the current scope. Caught map failures leave the parent scope usable. Local
+callbacks must eventually settle or draining can hang. Run interruption cancels every scope. One
+Ctrl-C or SIGTERM terminates harness processes, drains active work, saves run status `cancelled`,
+and exits 130. Interrupted steps record `cancelledBy`; inspect `rootCause` to identify the
+initiating failure instead of reading cancellation messages as independent root failures. A second
+Ctrl-C kills the runner mid-drain and can leave its lock and a `running` record. SIGKILL, SIGHUP
+(closed terminal or dropped SSH), or a crash can leave detached harness children running and
+editing. Before resuming, check `pgrep -fl 'claude --print|codex exec'` and identify any children
+belonging to the interrupted run. SIGHUP handling and stronger orphan cleanup are deferred to
+[#48](https://github.com/plx/quiet-choir/issues/48).
 
 Checkpoints contain plaintext workflow input/output, every completed step's full validated result
 (including agent responses and files a local step read), and errors. Checkpoint files are created

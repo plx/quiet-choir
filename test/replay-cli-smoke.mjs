@@ -115,7 +115,7 @@ process.stdin.on('end', () => { appendFileSync(process.env.QC_REPLAY_CALLS, prom
   writeFileSync(file, source('review', 'return undefined as unknown as string;'));
   const tail = cli('execute', file, '--run-id', 'tail', '--state-dir', state);
   assert.equal(tail.status, 1);
-  assert.match(tail.stderr, /All recorded effects completed/);
+  assert.match(tail.stderr, /All recorded work has terminal outcomes/);
   const callsBefore = readFileSync(calls, 'utf8');
   const effectsBefore = readFileSync(effects, 'utf8');
   writeFileSync(file, source('review', 'return `${value}-fixed`;'));

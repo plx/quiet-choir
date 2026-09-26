@@ -495,3 +495,25 @@ it('does not return a settled outcome when its checkpoint cannot be committed', 
   expect(action).toHaveBeenCalledTimes(1);
   expect((await readRun(options())).steps['effect']?.status).toBe('running');
 });
+
+it('preserves a mapper body failure when saving its settled outcome also fails', async () => {
+  const original = new Error('mapper rejected');
+  vi.mocked(store.writeRun).mockImplementation((directory, record) =>
+    record.maps?.['items']?.items[0]?.status === 'completed'
+      ? Promise.reject(ioError('ENOSPC'))
+      : actualStore.writeRun(directory, record),
+  );
+  const error: unknown = await runWorkflow(
+    workflow(async (ctx) => {
+      await ctx.map([0], 1, () => Promise.reject(original), { onError: 'settle', id: 'items' });
+      return 'unreachable';
+    }),
+    options(),
+  ).catch((error: unknown) => error);
+  expect(error).toBeInstanceOf(AggregateError);
+  if (!(error instanceof AggregateError)) throw error;
+  expect(error.cause).toBe(original);
+  expect(error.errors[0]).toBe(original);
+  expect(error.errors.slice(1)).toEqual([expect.any(CheckpointError), expect.any(CheckpointError)]);
+  expect((await readRun(options())).maps?.['items']?.items[0]?.status).toBe('running');
+});

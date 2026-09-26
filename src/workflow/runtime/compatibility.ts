@@ -7,7 +7,7 @@ import type { WorkflowDefinition } from './model.js';
 import type { StateDirectoryOptions } from './paths.js';
 import type { ResumeCheck, SourceFingerprint, WorkflowIdentity } from './replay-model.js';
 import { schemaJson } from './schema.js';
-import { isTerminalStep, readRun, type RunRecord } from './store.js';
+import { hasTerminalOutcomes, readRun, type RunRecord } from './store.js';
 
 /** Run-level code metadata for embedding and compatibility inspection. */
 export interface WorkflowCodeOptions {
@@ -98,8 +98,7 @@ export function compareResume(
   );
   const compatible =
     changed.length === 0 || (options.acceptCodeChange === true && canAcceptCodeChange);
-  const refinalizable =
-    saved.status === 'failed' && Object.values(saved.steps).every(isTerminalStep);
+  const refinalizable = saved.status === 'failed' && hasTerminalOutcomes(saved);
   const changes = changed
     .map((key) => (key === 'code' && files.length ? `code (${files.join(', ')})` : key))
     .join(', ');

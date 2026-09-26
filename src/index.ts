@@ -17,6 +17,7 @@ export type {
   ErrorMode,
   StepError,
   Settled,
+  SettledMapOptions,
   EffectResult,
   AgentOptions,
   ClaudeOptions,
@@ -40,6 +41,8 @@ export type { WorkflowEvent, WorkflowRun, RunOptions } from './workflow/runtime/
 export { readRun } from './workflow/runtime/store.js';
 export type {
   RunRecord,
+  MapRecord,
+  MapItemRecord,
   StepRecord,
   FailedAttempt,
   AttemptRecord,
@@ -70,3 +73,6 @@ export type {
   CodeChange,
   ResumeCheck,
 } from './workflow/runtime/replay-model.js';
+
+export { CancelledError, FanOutError } from './workflow/runtime/fan-out.js';
+export type { FanOutFailure, MapStepError, RootCause } from './workflow/runtime/fan-out.js';

@@ -23,3 +23,4 @@ part of the documentation.
 - [0005: Separate step identity from execution policy](0005-step-identity-and-policy.md)
 - [0006: Explicit reuse after workflow code changes](0006-code-change-recovery.md)
 - [0007: Explicit durable failure outcomes](0007-durable-failure-outcomes.md)
+- [0008: Scope map cancellation and journal settled items](0008-scoped-fan-out.md)

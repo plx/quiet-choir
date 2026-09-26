@@ -82,7 +82,7 @@ describe('source-aware loader recovery', { timeout: 30_000 }, () => {
     const viaAlias = await validate(join(alias, 'workflow.ts'));
     expect(viaAlias.workflow.fingerprint).toBe(original.workflow.fingerprint);
     expect(Object.keys(original.workflow.identity?.files ?? {})).toEqual(['workflow.ts']);
-    expect(original.workflow.identity?.engine).toEqual({ version: '0.0.0', formatVersion: 4 });
+    expect(original.workflow.identity?.engine).toEqual({ version: '0.0.0', formatVersion: 5 });
     const result = await execute('source');
     expect(result).toMatchObject({
       ok: true,
@@ -198,7 +198,7 @@ describe('source-aware loader recovery', { timeout: 30_000 }, () => {
     const failed = await execute('source');
     expect(failed).toMatchObject({
       ok: false,
-      message: expect.stringContaining('All recorded effects completed') as unknown,
+      message: expect.stringContaining('All recorded work has terminal outcomes') as unknown,
     });
     await writeFile(file, prefix + source(callback));
     const preview = await executor().execute({

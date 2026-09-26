@@ -8,7 +8,8 @@ import { z } from 'zod';
 import { resolveStateDir, type StateDirectoryOptions } from './paths.js';
 import { jsonValue } from './json.js';
 import { errorKindSchema, stepErrorSchema } from './step-error.js';
-import type { AgentUsage, ErrorKind, JsonValue, StepError } from './model.js';
+import type { AgentUsage, ErrorKind, JsonValue, Settled, StepError } from './model.js';
+import type { MapStepError, RootCause } from './fan-out.js';
 import type { StepIdentity } from './identity.js';
 import type { CodeChange, ForkProvenance, ReusedStep, WorkflowIdentity } from './replay-model.js';
 import {
@@ -29,7 +30,7 @@ export interface AttemptRecord extends AttemptPolicy {
   /** ISO timestamp after settlement, or null for an interrupted attempt. */
   finishedAt: string | null;
   /** Last observed outcome; running may indicate an interrupted process. */
-  status: 'running' | 'completed' | 'failed';
+  status: 'running' | 'completed' | 'failed' | 'cancelled';
   /** Failure message, when available. */
   error: string | null;
   /** Classified failure for this attempt, when it failed. */
@@ -63,7 +64,9 @@ export interface StepRecord {
   /** Hash of semantic components, including error mode. */
   fingerprint: string;
   /** Last saved lifecycle state. */
-  status: 'running' | 'completed' | 'failed' | 'settled-failed' | 'superseded';
+  status: 'running' | 'completed' | 'failed' | 'cancelled' | 'settled-failed' | 'superseded';
+  /** Effect that cancelled this scope, or null for an interrupt/mapper-body failure. */
+  cancelledBy?: string | null;
   /** Terminal failure returned to the workflow by onError: return. */
   settledError?: StepError;
   /** Semantic component hashes; absent in version 1 checkpoints. */
@@ -90,10 +93,32 @@ export interface StepRecord {
   warnings?: readonly string[];
 }
 
+/** One settled mapper's owned records and saved outcome. */
+export interface MapItemRecord {
+  /** Running items are retried; completed items replay the entire saved outcome. */
+  status: 'running' | 'completed';
+  /** Serialized mapper result/failure, or null until committed. */
+  outcome: Settled<JsonValue, MapStepError> | null;
+  /** Owned leaf IDs, including failed children whose outcome this item contains. */
+  steps: string[];
+  /** Owned nested map journal IDs. */
+  maps: string[];
+}
+
+/** Journal for an explicitly identified settled map. */
+export interface MapRecord {
+  /** Hash of item inputs, mapper source, optional version and cwd. */
+  fingerprint: string;
+  /** Partially evaluated or completely settled collection. */
+  status: 'running' | 'completed';
+  /** Item journals in input order. */
+  items: MapItemRecord[];
+}
+
 /** Local checkpoint format. The format is intentionally versioned independently of workflows. */
 export interface RunRecord {
   /** Checkpoint format version. */
-  formatVersion: 1 | 2 | 3 | 4;
+  formatVersion: 1 | 2 | 3 | 4 | 5;
   /** Stable run identifier. */
   id: string;
   /** Workflow compatibility metadata. */
@@ -114,9 +139,13 @@ export interface RunRecord {
   /** Validated final output, or null before completion. */
   output: JsonValue;
   /** Run lifecycle status. */
-  status: 'running' | 'completed' | 'failed';
+  status: 'running' | 'completed' | 'failed' | 'cancelled';
   /** Last workflow error, if any. */
   error: string | null;
+  /** First failure responsible for this invocation, or null after success; present from format 5. */
+  rootCause?: RootCause | null;
+  /** Durable settled-map outcomes, keyed by explicit map ID; present from format 5. */
+  maps?: Record<string, MapRecord>;
   /** Named checkpoints. Step IDs are unique within one run. */
   steps: Record<string, StepRecord>;
   /** Sticky rules; subsequent invocations append unless policyReset is requested. */
@@ -167,7 +196,8 @@ const stepSchema = z.object({
   seq: z.number().int().positive().optional(),
   reusedFrom: reusedStepSchema.optional(),
   fingerprint: z.string(),
-  status: z.enum(['running', 'completed', 'failed', 'settled-failed', 'superseded']),
+  status: z.enum(['running', 'completed', 'failed', 'cancelled', 'settled-failed', 'superseded']),
+  cancelledBy: z.string().nullable().optional(),
   settledError: stepErrorSchema.optional(),
   identity: z.record(z.string(), z.string()).optional(),
   redefinitions: z
@@ -186,7 +216,7 @@ const stepSchema = z.object({
         fingerprint: z.string(),
         startedAt: z.iso.datetime(),
         finishedAt: z.iso.datetime().nullable(),
-        status: z.enum(['running', 'completed', 'failed']),
+        status: z.enum(['running', 'completed', 'failed', 'cancelled']),
         error: z.string().nullable(),
         errorKind: errorKindSchema.optional(),
         policy: executionPolicySchema.extend({
@@ -232,7 +262,7 @@ const stepsSchema = z.custom<Record<string, StepRecord>>(
 );
 const recordSchema = z
   .object({
-    formatVersion: z.union([z.literal(1), z.literal(2), z.literal(3), z.literal(4)]),
+    formatVersion: z.union([z.literal(1), z.literal(2), z.literal(3), z.literal(4), z.literal(5)]),
     id: z.string(),
     workflow: z.object({
       name: z.string(),
@@ -243,9 +273,35 @@ const recordSchema = z
     cwd: z.string(),
     input: jsonSchema,
     output: jsonSchema,
-    status: z.enum(['running', 'completed', 'failed']),
+    status: z.enum(['running', 'completed', 'failed', 'cancelled']),
     error: z.string().nullable(),
     steps: stepsSchema,
+    rootCause: z.object({ stepId: z.string().nullable(), error: z.string() }).nullable().optional(),
+    maps: z
+      .record(
+        z.string(),
+        z.object({
+          fingerprint: z.string(),
+          status: z.enum(['running', 'completed']),
+          items: z.array(
+            z.object({
+              status: z.enum(['running', 'completed']),
+              outcome: z
+                .discriminatedUnion('ok', [
+                  z.object({ ok: z.literal(true), value: jsonSchema }),
+                  z.object({
+                    ok: z.literal(false),
+                    error: stepErrorSchema.extend({ stepId: z.string().nullable() }),
+                  }),
+                ])
+                .nullable(),
+              steps: z.array(z.string()),
+              maps: z.array(z.string()),
+            }),
+          ),
+        }),
+      )
+      .optional(),
     policy: z.array(policyOverrideSchema).optional(),
     allowModelOverride: z.boolean().optional(),
     policyWarnings: z.array(z.string()).optional(),
@@ -282,6 +338,26 @@ const recordSchema = z
   })
   .superRefine((record, context) => {
     if (record.formatVersion === 1) return;
+    if (record.formatVersion >= 5) {
+      if (record.maps === undefined || record.rootCause === undefined)
+        context.addIssue({ code: 'custom', message: 'Checkpoint is missing scope metadata' });
+      for (const [id, map] of Object.entries(record.maps ?? {})) {
+        for (const item of map.items) {
+          if (
+            (item.status === 'completed') !== (item.outcome !== null) ||
+            (map.status === 'completed' && item.status !== 'completed') ||
+            (item.outcome?.ok === false && item.outcome.error.kind === 'cancelled') ||
+            item.steps.some((stepId) => !Object.hasOwn(record.steps, stepId)) ||
+            item.maps.some((mapId) => !Object.hasOwn(record.maps ?? {}, mapId))
+          )
+            context.addIssue({
+              code: 'custom',
+              path: ['maps', id],
+              message: 'Invalid settled map journal or owned record references',
+            });
+        }
+      }
+    }
     if (record.policy === undefined || record.allowModelOverride === undefined)
       context.addIssue({
         code: 'custom',
@@ -495,4 +571,23 @@ export async function lockRun(stateDir: string, runId: string): Promise<() => Pr
 /** An outcome already observed by the workflow that must be preserved on replay. @internal */
 export function isTerminalStep(step: StepRecord): boolean {
   return step.status === 'completed' || step.status === 'settled-failed';
+}
+
+/** Whether all recorded work can replay without executing an unfinished item/effect. @internal */
+export function hasTerminalOutcomes(record: RunRecord): boolean {
+  const steps = new Set<string>();
+  const maps = new Set<string>();
+  for (const map of Object.values(record.maps ?? {})) {
+    for (const item of map.items) {
+      if (item.status !== 'completed') continue;
+      for (const id of item.steps) steps.add(id);
+      for (const id of item.maps) maps.add(id);
+    }
+  }
+  return (
+    Object.entries(record.steps).every(([id, step]) => isTerminalStep(step) || steps.has(id)) &&
+    Object.entries(record.maps ?? {}).every(
+      ([id, map]) => maps.has(id) || map.items.every((item) => item.status === 'completed'),
+    )
+  );
 }
