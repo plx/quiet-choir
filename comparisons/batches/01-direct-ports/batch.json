@@ -1,0 +1,25 @@
+{
+  "id": "01-direct-ports",
+  "number": "01",
+  "label": "01 · Direct ports",
+  "description": "The first translation: same Claude agents, same workflow intent, explicit API differences.",
+  "revision": "9b5404d11b885b28380d3eb17471ef7b17601b5e",
+  "sourceUrl": "https://github.com/hesreallyhim/ultracode-workflows/tree/9b5404d11b885b28380d3eb17471ef7b17601b5e/plugins/ultracode-workflows/workflows",
+  "sourceFileBase": "https://github.com/hesreallyhim/ultracode-workflows/blob/9b5404d11b885b28380d3eb17471ef7b17601b5e/plugins/ultracode-workflows/workflows/",
+  "validation": "All 26 ports typecheck under the batch’s migration settings. 67 deterministic scenarios matched original prompts and outputs; an interrupted pipeline also resumed from checkpoints (68 checks total). No live Claude agents were run; fixtures do not establish agent quality or exhaustive equivalence.",
+  "commonChanges": [
+    "agent(prompt, options) becomes an explicit ctx.claude.object or ctx.claude.text call with a durable ID, followed by result.output. JSON Schemas become Zod schemas; their field descriptions and optional properties are retained.",
+    "Phase titles remain as metadata and stderr messages. Quiet Choir has no native phase timeline. Per-call effort has no ClaudeOptions equivalent and is recorded as a comment, not silently mapped to a different model.",
+    "Fan-out helpers use ctx.map with eight concurrent items per group and isolated ID scopes. Pipelines still advance each item independently. This is not the original harness-wide concurrency ceiling; nested groups can exceed eight agents.",
+    "Quiet Choir propagates agent failures and cancels failed maps; the original harness returns null and continues. These ports fail fast and can be explicitly resumed. Completed effects replay by ID, not by an unchanged prefix of agent calls.",
+    "Fresh headless Claude sessions do not inherit the interactive conversation's permissions, model, or effort. The $claude input exposes model, tools, allowedTools, turns, timeout, and per-call USD limit. Defaults here are 40 turns, ten minutes, and $5 per call; tools remain disabled unless explicitly enabled.",
+    "Final results omit undefined object properties and turn undefined array elements into null to match JavaScript JSON transport. The final output schema checks JSON compatibility; agent response schemas are specific. This initial migration uses permissive TypeScript settings for legacy orchestration locals."
+  ],
+  "apiSnapshot": {
+    "package": "quiet-choir 0.0.0",
+    "sha256": "083a9c2d4a309e8a993f79c315a29f76c82d2f07d98a17a3fc1fc19d52c0664d",
+    "file": "src/workflow/runtime/model.ts",
+    "description": "Prototype API at quiet-choir commit f35e329138d3c92835a65b19320d69b9cc1dc642; the hash identifies the runtime model file, not the full implementation.",
+    "revision": "f35e329138d3c92835a65b19320d69b9cc1dc642"
+  }
+}

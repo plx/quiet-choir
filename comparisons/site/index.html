@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      name="description"
+      content="Compare Claude Code workflows with direct TypeScript ports to Quiet Choir, one API iteration at a time."
+    />
+    <meta name="theme-color" content="#101820" />
+    <title>Workflow Lab · Quiet Choir</title>
+    <link rel="stylesheet" href="./style.css" />
+    <script src="./app.js" type="module"></script>
+  </head>
+  <body>
+    <a class="skip" href="#comparison">Skip to comparison</a>
+    <header class="masthead">
+      <a class="brand" href="#"
+        ><span class="mark" aria-hidden="true">q/c</span
+        ><span>quiet choir <span class="brand-secondary">/ workflow lab</span></span></a
+      ><span class="masthead-note">An API, in practice.</span>
+    </header>
+    <div class="workspace">
+      <aside>
+        <label class="eyebrow" for="batch">COMPARISON BATCH</label>
+        <select id="batch" aria-label="Comparison batch"></select>
+        <p id="batch-description" class="muted"></p>
+        <div class="catalog-label">
+          <span class="eyebrow">WORKFLOWS</span><span id="count"></span>
+        </div>
+        <nav id="workflows" aria-label="Workflows"></nav>
+        <footer id="provenance"></footer>
+      </aside>
+      <main id="comparison" tabindex="-1">
+        <div id="error" role="alert" hidden></div>
+        <div id="content" aria-live="polite"></div>
+      </main>
+    </div>
+    <template id="loading"><p class="loading">Loading comparisons…</p></template>
+  </body>
+</html>

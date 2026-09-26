@@ -1,0 +1,764 @@
+[
+  {
+    "name": "acceptance-qa-batch",
+    "description": "Per ticket: demonstrate every acceptance criterion against the real code with captured evidence, then attack the feature adversarially; pass = demonstrated AND unbroken",
+    "whenToUse": "Acceptance QA on finished work — verifying tickets meet their own criteria before merge or release, beyond unit-test green",
+    "phases": [
+      {
+        "title": "Ingest",
+        "detail": "parse tickets and acceptance criteria"
+      },
+      {
+        "title": "Demonstrate",
+        "detail": "evidence agent per ticket, AC by AC"
+      },
+      {
+        "title": "Break",
+        "detail": "adversary attacks passing tickets"
+      }
+    ],
+    "fields": ["tickets", "scope", "maxTickets"],
+    "counts": {
+      "agent": 3,
+      "parallel": 0,
+      "pipeline": 1,
+      "workflow": 0
+    },
+    "hasBudget": false
+  },
+  {
+    "name": "acceptance-qa-deep",
+    "description": "Decompose a ticket's acceptance criteria into concrete checks, verify each against the actual delivered code, and adversarially re-check the passes for letter-vs-spirit",
+    "whenToUse": "Gating whether finished work truly satisfies its ticket — the check \"tests pass\" does not make, including the criteria the developer forgot",
+    "phases": [
+      {
+        "title": "Decompose",
+        "detail": "each AC -> binary-checkable sub-checks"
+      },
+      {
+        "title": "Check",
+        "detail": "verify each criterion against real code"
+      },
+      {
+        "title": "Adversarial",
+        "detail": "spirit-vs-letter re-check on passes"
+      },
+      {
+        "title": "Verdict",
+        "detail": "done / not-done with must-fixes"
+      }
+    ],
+    "fields": ["criteria", "target", "ticket"],
+    "counts": {
+      "agent": 4,
+      "parallel": 0,
+      "pipeline": 1,
+      "workflow": 0
+    },
+    "hasBudget": false
+  },
+  {
+    "name": "api-migration",
+    "description": "Discover every call site of an old API, migrate file groups in parallel, then build/test once and repair fallout",
+    "whenToUse": "Library swaps, API renames, and contract changes with many call sites needing contextual judgment — the long tail codemods cannot handle",
+    "phases": [
+      {
+        "title": "Discover",
+        "detail": "find and group every call site"
+      },
+      {
+        "title": "Transform",
+        "detail": "one migrator per file group, in waves"
+      },
+      {
+        "title": "Verify",
+        "detail": "single build/test pass + repair round"
+      }
+    ],
+    "fields": ["from", "to", "notes", "paths", "batchSize"],
+    "counts": {
+      "agent": 5,
+      "parallel": 2,
+      "pipeline": 0,
+      "workflow": 0
+    },
+    "hasBudget": false
+  },
+  {
+    "name": "bug-hunt",
+    "description": "Loop diverse bug-finder rounds until two consecutive rounds find nothing new; majority-vote verify every candidate",
+    "whenToUse": "Exhaustive bug discovery on a codebase or subsystem — when you want the tail of the distribution, not just the obvious top findings",
+    "phases": [
+      {
+        "title": "Hunt",
+        "detail": "rotating-lens finder rounds"
+      },
+      {
+        "title": "Verify",
+        "detail": "majority-vote skeptic panel per candidate"
+      }
+    ],
+    "fields": ["scope", "maxRounds", "votes"],
+    "counts": {
+      "agent": 2,
+      "parallel": 3,
+      "pipeline": 0,
+      "workflow": 0
+    },
+    "hasBudget": true
+  },
+  {
+    "name": "codebase-atlas",
+    "description": "Survey a repo into subsystems, deep-read each in parallel, and synthesize an onboarding atlas with a completeness-critic repair round",
+    "whenToUse": "Onboarding to an unfamiliar codebase, or generating the architecture doc a project never had",
+    "phases": [
+      {
+        "title": "Survey",
+        "detail": "partition the repo into subsystems"
+      },
+      {
+        "title": "Deep-read",
+        "detail": "one reader per subsystem"
+      },
+      {
+        "title": "Synthesize",
+        "detail": "merge cards into the atlas document"
+      },
+      {
+        "title": "Critique",
+        "detail": "completeness check + one repair round"
+      }
+    ],
+    "fields": ["out", "maxSubsystems"],
+    "counts": {
+      "agent": 6,
+      "parallel": 2,
+      "pipeline": 0,
+      "workflow": 0
+    },
+    "hasBudget": false
+  },
+  {
+    "name": "dead-code-sweep",
+    "description": "Find dead-code candidates via three search modalities, cross-check each with a default-to-keep skeptic, optionally remove and verify",
+    "whenToUse": "Codebase hygiene: finding provably-unused exports, files, and dependencies without breaking dynamic or reflective consumers",
+    "phases": [
+      {
+        "title": "Sweep",
+        "detail": "three modality finders in parallel"
+      },
+      {
+        "title": "Cross-check",
+        "detail": "default-to-keep skeptic per candidate"
+      },
+      {
+        "title": "Remove",
+        "detail": "delete confirmed-dead code (opt-in) and verify"
+      }
+    ],
+    "fields": ["scope", "apply", "maxCandidates"],
+    "counts": {
+      "agent": 4,
+      "parallel": 2,
+      "pipeline": 0,
+      "workflow": 0
+    },
+    "hasBudget": false
+  },
+  {
+    "name": "deep-code-review",
+    "description": "Review a change set across five dimensions, adversarially verify every finding, and synthesize a ranked report",
+    "whenToUse": "Pre-merge review of a branch, PR, or uncommitted change set when you want findings you can trust without re-reviewing them yourself",
+    "phases": [
+      {
+        "title": "Scope",
+        "detail": "resolve the diff and summarize what changed"
+      },
+      {
+        "title": "Review",
+        "detail": "one dedicated reviewer per dimension"
+      },
+      {
+        "title": "Verify",
+        "detail": "adversarial skeptic per deduped finding"
+      },
+      {
+        "title": "Synthesize",
+        "detail": "rank confirmed findings into a report"
+      }
+    ],
+    "fields": ["target", "dimensions"],
+    "counts": {
+      "agent": 4,
+      "parallel": 2,
+      "pipeline": 0,
+      "workflow": 0
+    },
+    "hasBudget": false
+  },
+  {
+    "name": "dependency-upgrade",
+    "description": "Upgrade a dependency: parallel changelog research + usage impact analysis, then apply and drive a bounded verify/fix loop",
+    "whenToUse": "Major-version dependency bumps where breaking changes are likely and usage is nontrivial",
+    "phases": [
+      {
+        "title": "Analyze",
+        "detail": "changelog research ∥ usage impact map"
+      },
+      {
+        "title": "Plan",
+        "detail": "join both analyses into an upgrade plan"
+      },
+      {
+        "title": "Apply",
+        "detail": "perform the upgrade + mechanical fixes"
+      },
+      {
+        "title": "Stabilize",
+        "detail": "verify/fix loop until green or round cap"
+      }
+    ],
+    "fields": ["package", "toVersion", "maxFixRounds"],
+    "counts": {
+      "agent": 6,
+      "parallel": 2,
+      "pipeline": 0,
+      "workflow": 0
+    },
+    "hasBudget": false
+  },
+  {
+    "name": "design-tournament",
+    "description": "Four proposers with forced-diverse design philosophies, an independent judge panel scoring a fixed rubric, and a synthesis that grafts the losers' best ideas",
+    "whenToUse": "Architecture and product decisions with a wide option space, where a single-track designer would anchor on the first workable idea",
+    "phases": [
+      {
+        "title": "Propose",
+        "detail": "four philosophies design independently"
+      },
+      {
+        "title": "Judge",
+        "detail": "independent panel scores every proposal"
+      },
+      {
+        "title": "Synthesize",
+        "detail": "winner + grafts -> final design doc"
+      }
+    ],
+    "fields": ["brief", "context", "judges", "out"],
+    "counts": {
+      "agent": 3,
+      "parallel": 2,
+      "pipeline": 0,
+      "workflow": 0
+    },
+    "hasBudget": false
+  },
+  {
+    "name": "docs-drift-audit",
+    "description": "Decompose every doc into checkable claims, verify each against the code, and report or fix the drift",
+    "whenToUse": "Pre-release doc truthfulness check, or after refactors that likely invalidated READMEs and guides",
+    "phases": [
+      {
+        "title": "Inventory",
+        "detail": "find and prioritize doc files"
+      },
+      {
+        "title": "Extract",
+        "detail": "decompose docs into checkable claims"
+      },
+      {
+        "title": "Check",
+        "detail": "verify claims against the actual code"
+      },
+      {
+        "title": "Fix",
+        "detail": "patch drifted docs in place (opt-in)"
+      }
+    ],
+    "fields": ["fix", "maxDocs", "paths"],
+    "counts": {
+      "agent": 4,
+      "parallel": 0,
+      "pipeline": 1,
+      "workflow": 0
+    },
+    "hasBudget": false
+  },
+  {
+    "name": "feature-factory",
+    "description": "Conductor: prd-decompose the spec, implement disjoint modules in parallel, deep-code-review each module as a sub-workflow, repair confirmed findings, verify globally",
+    "whenToUse": "PRD-to-reviewed-code for a feature sized to one repo — or as the template for composing your own multi-workflow conductors",
+    "phases": [
+      {
+        "title": "Decompose",
+        "detail": "prd-decompose sub-workflow -> ticketed backlog"
+      },
+      {
+        "title": "Plan modules",
+        "detail": "group tickets into disjoint file-area modules"
+      },
+      {
+        "title": "Implement",
+        "detail": "foundations first, then parallel module builders"
+      },
+      {
+        "title": "Review",
+        "detail": "one deep-code-review sub-workflow per module"
+      },
+      {
+        "title": "Stabilize",
+        "detail": "repair confirmed findings, verify globally"
+      }
+    ],
+    "fields": ["prd", "maxModules", "codebase"],
+    "counts": {
+      "agent": 4,
+      "parallel": 3,
+      "pipeline": 0,
+      "workflow": 2
+    },
+    "hasBudget": true
+  },
+  {
+    "name": "feedback-synthesis",
+    "description": "Shard a feedback corpus across parallel taggers with a calibrated theme vocabulary, aggregate in code, deep-dive top themes into a quotable report",
+    "whenToUse": "Turning large support/review/NPS corpora into ranked product themes with counts, severity, and representative quotes",
+    "phases": [
+      {
+        "title": "Inventory",
+        "detail": "manifest the corpus into countable items"
+      },
+      {
+        "title": "Calibrate",
+        "detail": "fix the theme vocabulary on a sample"
+      },
+      {
+        "title": "Tag",
+        "detail": "parallel shard taggers, fixed vocabulary"
+      },
+      {
+        "title": "Synthesize",
+        "detail": "deep-dive top themes, write the report"
+      }
+    ],
+    "fields": ["source", "focus", "deepDives"],
+    "counts": {
+      "agent": 5,
+      "parallel": 2,
+      "pipeline": 0,
+      "workflow": 0
+    },
+    "hasBudget": false
+  },
+  {
+    "name": "flaky-test-hunt",
+    "description": "Gather flaky-test suspects from git/CI/code smells, stress-run each for an empirical flake rate, then diagnose mechanisms for confirmed flakes",
+    "whenToUse": "Unexplained CI red streaks, or auditing a test suite with a reputation for randomness",
+    "phases": [
+      {
+        "title": "Suspects",
+        "detail": "git history ∥ smell grep ∥ CI artifacts"
+      },
+      {
+        "title": "Stress",
+        "detail": "N repeated runs per suspect"
+      },
+      {
+        "title": "Diagnose",
+        "detail": "mechanism + fix per confirmed flake"
+      }
+    ],
+    "fields": ["scope", "runs", "maxSuspects", "fix"],
+    "counts": {
+      "agent": 5,
+      "parallel": 1,
+      "pipeline": 1,
+      "workflow": 0
+    },
+    "hasBudget": false
+  },
+  {
+    "name": "incident-investigation",
+    "description": "Hypothesis-free parallel evidence collection, competing root-cause hypotheses, one falsifier per hypothesis, and a survivors-only report",
+    "whenToUse": "Post-incident root-cause analysis from a repo plus symptoms — structured to resist first-plausible-story bias",
+    "phases": [
+      {
+        "title": "Evidence",
+        "detail": "four hypothesis-free collectors"
+      },
+      {
+        "title": "Hypothesize",
+        "detail": "generate competing explanations"
+      },
+      {
+        "title": "Falsify",
+        "detail": "one dedicated falsifier per hypothesis"
+      },
+      {
+        "title": "Report",
+        "detail": "timeline + root cause from survivors"
+      }
+    ],
+    "fields": ["incident", "window", "artifacts"],
+    "counts": {
+      "agent": 4,
+      "parallel": 2,
+      "pipeline": 0,
+      "workflow": 0
+    },
+    "hasBudget": false
+  },
+  {
+    "name": "prd-decompose",
+    "description": "Read a PRD through five parallel lenses, merge into deduplicated tickets with acceptance criteria, and verify coverage with a reverse-direction critic",
+    "whenToUse": "Sprint planning from a PRD or spec — producing a backlog whose error states, migrations, and instrumentation are ticketed, not just the happy path",
+    "phases": [
+      {
+        "title": "Decompose",
+        "detail": "five lenses read the PRD in parallel"
+      },
+      {
+        "title": "Merge",
+        "detail": "judgment-dedupe into tickets with ACs"
+      },
+      {
+        "title": "Verify coverage",
+        "detail": "PRD-to-backlog critic + repair round"
+      }
+    ],
+    "fields": ["prd", "codebase", "out"],
+    "counts": {
+      "agent": 5,
+      "parallel": 1,
+      "pipeline": 0,
+      "workflow": 0
+    },
+    "hasBudget": false
+  },
+  {
+    "name": "prd-to-spec",
+    "description": "Ground in the codebase, draft a technical spec through five lenses, optionally settle the top architecture decision via design-tournament, and verify implementability + PRD fidelity",
+    "whenToUse": "The step between PRD and tickets: producing a spec an engineer can build from without re-deriving the architecture inside the tickets",
+    "phases": [
+      {
+        "title": "Ground",
+        "detail": "existing architecture, conventions, integration surface"
+      },
+      {
+        "title": "Draft",
+        "detail": "five technical lenses in parallel"
+      },
+      {
+        "title": "Decide",
+        "detail": "contested decisions; optional tournament child"
+      },
+      {
+        "title": "Merge",
+        "detail": "one spec from lenses + decisions"
+      },
+      {
+        "title": "Verify",
+        "detail": "implementability skeptic ∥ PRD-fidelity checker"
+      }
+    ],
+    "fields": ["prd", "codebase", "decideArchitecture", "out"],
+    "counts": {
+      "agent": 7,
+      "parallel": 2,
+      "pipeline": 0,
+      "workflow": 1
+    },
+    "hasBudget": false
+  },
+  {
+    "name": "project-bootstrap",
+    "description": "Detect or choose the stack, set up toolchain/lint/tests/CI/containers in parallel, then prove the pipeline runs green — idempotent, report-only by default",
+    "whenToUse": "Standing up a new project's dev environment and CI from a spec, or retrofitting tooling onto a repo that lacks it",
+    "phases": [
+      {
+        "title": "Detect",
+        "detail": "read existing setup + choose stack"
+      },
+      {
+        "title": "Plan",
+        "detail": "one setup plan across concerns"
+      },
+      {
+        "title": "Set up",
+        "detail": "one agent per independent concern"
+      },
+      {
+        "title": "Prove",
+        "detail": "run lint/test/build/CI-dry-run"
+      }
+    ],
+    "fields": ["apply", "spec", "stack", "concerns"],
+    "counts": {
+      "agent": 6,
+      "parallel": 1,
+      "pipeline": 0,
+      "workflow": 0
+    },
+    "hasBudget": false
+  },
+  {
+    "name": "refactor-campaign",
+    "description": "Find refactoring targets by measurable pressure, pin each target's behavior with characterization tests, refactor only behind a green net, and verify preservation",
+    "whenToUse": "Behavior-preserving technical-debt paydown — where the safety net is the point, not an afterthought",
+    "phases": [
+      {
+        "title": "Survey",
+        "detail": "find targets by complexity/duplication/coupling"
+      },
+      {
+        "title": "Rank",
+        "detail": "prioritize by payoff vs. risk"
+      },
+      {
+        "title": "Refactor",
+        "detail": "net -> refactor -> verify, per target"
+      }
+    ],
+    "fields": ["scope", "goal", "maxTargets", "apply"],
+    "counts": {
+      "agent": 5,
+      "parallel": 0,
+      "pipeline": 1,
+      "workflow": 0
+    },
+    "hasBudget": false
+  },
+  {
+    "name": "release-gate",
+    "description": "Check every release-readiness dimension with evidence (running the checks), render an evidence-based go/no-go/conditional decision, and adversarially confirm blockers",
+    "whenToUse": "The go/no-go gate before shipping — tests, coverage-on-diff, breaking changes, security, migrations/rollback, and perf, decided from evidence not vibes",
+    "phases": [
+      {
+        "title": "Assess",
+        "detail": "six readiness dimensions, with evidence"
+      },
+      {
+        "title": "Confirm",
+        "detail": "adversarially confirm each blocker"
+      },
+      {
+        "title": "Decide",
+        "detail": "go / no-go / conditional under the rubric"
+      }
+    ],
+    "fields": ["range", "policy", "blockOn"],
+    "counts": {
+      "agent": 3,
+      "parallel": 2,
+      "pipeline": 0,
+      "workflow": 0
+    },
+    "hasBudget": false
+  },
+  {
+    "name": "release-notes",
+    "description": "Shard a commit range across diff-reading summarizers, draft audience-aware notes, and bidirectionally fact-check claims against commits",
+    "whenToUse": "Cutting a release or backfilling a changelog — when the notes must be both readable and provably true to the range",
+    "phases": [
+      {
+        "title": "Collect",
+        "detail": "resolve the range into a commit manifest"
+      },
+      {
+        "title": "Summarize",
+        "detail": "parallel diff-readers over commit slices"
+      },
+      {
+        "title": "Draft",
+        "detail": "audience-aware notes from the summaries"
+      },
+      {
+        "title": "Fact-check",
+        "detail": "claims<->commits in both directions"
+      }
+    ],
+    "fields": ["since", "until", "audience", "out"],
+    "counts": {
+      "agent": 6,
+      "parallel": 1,
+      "pipeline": 0,
+      "workflow": 0
+    },
+    "hasBudget": false
+  },
+  {
+    "name": "requirements-to-prd",
+    "description": "Extract raw requirements through four lenses, draft a PRD, attack it with ambiguity/scope/feasibility critics, and surface unknowns as open questions",
+    "whenToUse": "Turning meeting notes, briefs, transcripts, or feedback piles into a PRD honest enough to build from — with unknowns surfaced, not invented",
+    "phases": [
+      {
+        "title": "Extract",
+        "detail": "four lenses over the raw material"
+      },
+      {
+        "title": "Draft",
+        "detail": "one writer, PRD structure"
+      },
+      {
+        "title": "Attack",
+        "detail": "ambiguity, scope, and feasibility critics"
+      },
+      {
+        "title": "Revise",
+        "detail": "apply critiques; unresolvables become questions"
+      }
+    ],
+    "fields": ["input", "product", "answers", "out"],
+    "counts": {
+      "agent": 4,
+      "parallel": 2,
+      "pipeline": 0,
+      "workflow": 0
+    },
+    "hasBudget": false
+  },
+  {
+    "name": "research-synthesis",
+    "description": "Multi-modal lead sweep, ranked deep-reads with per-claim citations, synthesis, and one critic-driven supplementary round",
+    "whenToUse": "Technology decisions, state-of-the-art surveys, and due diligence questions that deserve cited evidence over a single search pass",
+    "phases": [
+      {
+        "title": "Sweep",
+        "detail": "four modalities hunt for leads"
+      },
+      {
+        "title": "Deep-read",
+        "detail": "ranked leads get full readings"
+      },
+      {
+        "title": "Synthesize",
+        "detail": "cited answer from the readings"
+      },
+      {
+        "title": "Critique",
+        "detail": "gap check + one targeted extra round"
+      }
+    ],
+    "fields": ["question", "context", "depth"],
+    "counts": {
+      "agent": 5,
+      "parallel": 3,
+      "pipeline": 0,
+      "workflow": 0
+    },
+    "hasBudget": false
+  },
+  {
+    "name": "roadmap-plan",
+    "description": "Decompose a spec into capabilities, sequence them under three competing strategies, pick via panel, and stress-test the winner for hidden coupling and critical-path risk",
+    "whenToUse": "The milestone-altitude plan between spec and tickets — sequenced, gated, shippable phases with risks located",
+    "phases": [
+      {
+        "title": "Decompose",
+        "detail": "spec -> capabilities + dependency graph"
+      },
+      {
+        "title": "Sequence",
+        "detail": "three competing milestone strategies"
+      },
+      {
+        "title": "Choose",
+        "detail": "panel picks; critic stress-tests"
+      },
+      {
+        "title": "Finalize",
+        "detail": "the committed roadmap"
+      }
+    ],
+    "fields": ["spec", "horizon", "priorities", "out"],
+    "counts": {
+      "agent": 5,
+      "parallel": 1,
+      "pipeline": 0,
+      "workflow": 0
+    },
+    "hasBudget": false
+  },
+  {
+    "name": "sdlc-orchestrator",
+    "description": "Resumable lifecycle driver: runs leaf SDLC workflows inline, hands off conductor stages (spec, implementation) to the session, and pauses at every human checkpoint with full resumable state",
+    "whenToUse": "Driving a feature from requirements to a gated release with human checkpoints — the capstone that chains the library's workflows",
+    "phases": [
+      {
+        "title": "Intake",
+        "detail": "assess entry point + tailor the stage plan"
+      },
+      {
+        "title": "Drive",
+        "detail": "run/hand-off stages until a checkpoint"
+      }
+    ],
+    "fields": ["goal", "state", "inputs", "answers", "plan", "completed", "autoApprove"],
+    "counts": {
+      "agent": 2,
+      "parallel": 0,
+      "pipeline": 0,
+      "workflow": 1
+    },
+    "hasBudget": true
+  },
+  {
+    "name": "security-audit",
+    "description": "Map the attack surface, sweep it with six specialist lenses, refute findings with severity-scaled panels, and write a remediation report",
+    "whenToUse": "Defensive security audit of your own codebase — before launch, after inheriting code, or as a periodic sweep of sensitive surfaces",
+    "phases": [
+      {
+        "title": "Recon",
+        "detail": "map entry points, trust boundaries, secrets"
+      },
+      {
+        "title": "Sweep",
+        "detail": "six specialist auditors over the mapped surface"
+      },
+      {
+        "title": "Refute",
+        "detail": "severity-scaled skeptic panels"
+      },
+      {
+        "title": "Report",
+        "detail": "ranked findings with remediations"
+      }
+    ],
+    "fields": ["scope", "lenses"],
+    "counts": {
+      "agent": 4,
+      "parallel": 2,
+      "pipeline": 1,
+      "workflow": 0
+    },
+    "hasBudget": false
+  },
+  {
+    "name": "test-gap-filler",
+    "description": "Find untested high-risk code via coverage tooling + risk analysis, rank by blast radius, write and mutation-check tests per gap",
+    "whenToUse": "Raising test coverage where it matters most — before risky changes, after incidents, or ratcheting a legacy repo",
+    "phases": [
+      {
+        "title": "Find gaps",
+        "detail": "coverage tooling ∥ risk-based reading"
+      },
+      {
+        "title": "Prioritize",
+        "detail": "rank by blast radius, pick top N"
+      },
+      {
+        "title": "Fill",
+        "detail": "write, run, and mutation-check tests per gap"
+      }
+    ],
+    "fields": ["scope", "count", "framework"],
+    "counts": {
+      "agent": 5,
+      "parallel": 1,
+      "pipeline": 1,
+      "workflow": 0
+    },
+    "hasBudget": false
+  }
+]

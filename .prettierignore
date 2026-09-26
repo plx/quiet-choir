@@ -5,3 +5,6 @@ docs/api/
 package-lock.json
 
 .quiet-choir/
+
+# Immutable upstream source in its original harness dialect.
+comparisons/batches/*/originals/
