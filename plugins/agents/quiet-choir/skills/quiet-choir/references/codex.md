@@ -44,8 +44,23 @@ subsequent prompts.
 ## Structured output and protocol
 
 Object calls write JSON Schema to a private temporary file, pass it via `--output-schema`, and
-remove the file after the call. Use required JSON-compatible object properties for portability; the
-runtime parses the returned text as JSON and validates it with Zod.
+remove the file after the call. The default `structuredOutput: 'compat'` encodes ordinary Zod:
+
+- Optional properties become required and nullable on the wire. Decoding removes null only when the
+  original property was optional and did not allow null.
+- Arrays, primitives, and unions at the root are wrapped in `{ value }` and unwrapped afterward.
+- String-keyed records use arrays of `{ key, value }`; enum-keyed records require every key.
+- Discriminated unions use `anyOf`; loose objects are closed on the wire (no extra keys requested).
+- Tuples fail before launch in both modes; use a named object or a homogeneous array.
+
+The original Zod schema validates decoded output. Refinements run only locally; state them in the
+prompt. With `structuredOutput: 'strict'`, use an object root, required properties (use
+`.nullable()` for missing values), and avoid records, loose objects, discriminated unions, and
+tuples. Exported `checkCodexSchema(schema)` returns incompatible JSON paths and fixes without
+launching a process. `workflow validate` does not execute the body and cannot inspect these
+call-site schemas. An explicit mode is fingerprinted like other call options; keep it stable on
+resume. Claude requires an object root and receives the original JSON Schema. Other Codex
+restrictions and compatibility transforms do not apply to it.
 
 The adapter reads Codex JSONL: `thread.started` supplies the thread ID, `item.completed` with
 `agent_message` supplies final text, and `turn.completed` is required for success. Exit zero plus

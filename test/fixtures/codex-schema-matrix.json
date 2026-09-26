@@ -1,0 +1,339 @@
+{
+  "zodVersion": "4.5.4",
+  "cases": [
+    {
+      "name": "optional",
+      "schema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "a": {
+            "type": "string"
+          },
+          "b": {
+            "type": "number"
+          }
+        },
+        "required": ["a"],
+        "additionalProperties": false
+      },
+      "output": {
+        "a": "x"
+      },
+      "rules": ["optional"]
+    },
+    {
+      "name": "nested-optional",
+      "schema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "rows": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "value": {
+                  "type": "string"
+                }
+              },
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": ["rows"],
+        "additionalProperties": false
+      },
+      "output": {
+        "rows": [
+          {},
+          {
+            "value": "x"
+          }
+        ]
+      },
+      "rules": ["optional"]
+    },
+    {
+      "name": "nullable-optional",
+      "schema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "value": {
+            "type": ["string", "null"]
+          }
+        },
+        "additionalProperties": false
+      },
+      "output": {
+        "value": null
+      },
+      "rules": ["optional"]
+    },
+    {
+      "name": "string-record",
+      "schema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "propertyNames": {
+          "type": "string"
+        },
+        "additionalProperties": {
+          "type": "number"
+        }
+      },
+      "output": {
+        "a": 2,
+        "b": 3
+      },
+      "rules": ["record"]
+    },
+    {
+      "name": "enum-record",
+      "schema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "propertyNames": {
+          "type": "string",
+          "enum": ["a", "b"]
+        },
+        "additionalProperties": {
+          "type": "string"
+        },
+        "required": ["a", "b"]
+      },
+      "output": {
+        "a": "x",
+        "b": "y"
+      },
+      "rules": ["record"]
+    },
+    {
+      "name": "loose-object",
+      "schema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "a": {
+            "type": "string"
+          }
+        },
+        "required": ["a"],
+        "additionalProperties": {}
+      },
+      "output": {
+        "a": "x"
+      },
+      "rules": ["open-object"]
+    },
+    {
+      "name": "discriminated-union",
+      "schema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string",
+                "const": "a"
+              },
+              "a": {
+                "type": "string"
+              }
+            },
+            "required": ["kind"],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string",
+                "const": "b"
+              },
+              "b": {
+                "type": "number"
+              }
+            },
+            "required": ["kind", "b"],
+            "additionalProperties": false
+          }
+        ]
+      },
+      "output": {
+        "kind": "a"
+      },
+      "rules": ["object-root", "oneOf", "optional"]
+    },
+    {
+      "name": "array-root",
+      "schema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "output": ["x"],
+      "rules": ["object-root"]
+    },
+    {
+      "name": "string-root",
+      "schema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "string"
+      },
+      "output": "x",
+      "rules": ["object-root"]
+    },
+    {
+      "name": "tuple",
+      "schema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "pair": {
+            "type": "array",
+            "items": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "number"
+              }
+            ],
+            "additionalItems": false,
+            "minItems": 2,
+            "maxItems": 2
+          }
+        },
+        "required": ["pair"],
+        "additionalProperties": false
+      },
+      "output": {
+        "pair": ["x", 1]
+      },
+      "rules": ["tuple"]
+    },
+    {
+      "name": "nullable",
+      "schema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "value": {
+            "type": ["string", "null"]
+          }
+        },
+        "required": ["value"],
+        "additionalProperties": false
+      },
+      "output": {
+        "value": null
+      },
+      "rules": []
+    },
+    {
+      "name": "default",
+      "schema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "value": {
+            "default": "x",
+            "type": "string"
+          }
+        },
+        "required": ["value"],
+        "additionalProperties": false
+      },
+      "output": {
+        "value": "x"
+      },
+      "rules": []
+    },
+    {
+      "name": "union",
+      "schema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "value": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "a": {
+                    "type": "string"
+                  }
+                },
+                "required": ["a"],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "b": {
+                    "type": "number"
+                  }
+                },
+                "required": ["b"],
+                "additionalProperties": false
+              }
+            ]
+          }
+        },
+        "required": ["value"],
+        "additionalProperties": false
+      },
+      "output": {
+        "value": {
+          "b": 1
+        }
+      },
+      "rules": []
+    },
+    {
+      "name": "min-length",
+      "schema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "value": {
+            "type": "string",
+            "minLength": 2
+          }
+        },
+        "required": ["value"],
+        "additionalProperties": false
+      },
+      "output": {
+        "value": "xx"
+      },
+      "rules": []
+    },
+    {
+      "name": "wrapped-array",
+      "schema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "value": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": ["value"],
+        "additionalProperties": false
+      },
+      "output": {
+        "value": ["x"]
+      },
+      "rules": []
+    }
+  ]
+}

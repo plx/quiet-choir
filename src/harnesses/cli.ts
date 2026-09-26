@@ -4,6 +4,7 @@ import { isAbsolute, join } from 'node:path';
 
 import type { Harness, HarnessRequest, HarnessResponse } from '../workflow/runtime/model.js';
 import { HarnessError } from '../workflow/runtime/harness-error.js';
+import { prepareCodexSchema } from './codex-schema.js';
 import { runProcess } from './process.js';
 import { parseClaude, parseCodex } from './protocol.js';
 
@@ -52,6 +53,7 @@ export class CliHarness implements Harness {
     const args: string[] = [];
     let binary: string;
     let schemaDirectory: string | undefined;
+    let decode = (text: string): string => text;
     try {
       if (request.provider === 'claude') {
         binary = this.options.claudeBinary ?? 'claude';
@@ -76,8 +78,17 @@ export class CliHarness implements Harness {
         if (request.options.allowedTools !== undefined && request.options.allowedTools.length > 0) {
           args.push('--allowedTools', request.options.allowedTools.join(','));
         }
-        if (request.outputSchema !== null)
+        if (request.outputSchema !== null) {
+          if (
+            typeof request.outputSchema !== 'object' ||
+            Array.isArray(request.outputSchema) ||
+            request.outputSchema['type'] !== 'object'
+          )
+            throw new Error(
+              'Claude structured output requires an object root at $; wrap the schema in z.object({ value: ... }).',
+            );
           args.push('--json-schema', JSON.stringify(request.outputSchema));
+        }
       } else {
         binary = this.options.codexBinary ?? 'codex';
         args.push(
@@ -99,9 +110,14 @@ export class CliHarness implements Harness {
         }
         if (request.options.skipGitRepoCheck === true) args.push('--skip-git-repo-check');
         if (request.outputSchema !== null) {
+          const plan = prepareCodexSchema(
+            request.outputSchema,
+            request.options.structuredOutput ?? 'compat',
+          );
+          decode = plan.decode;
           schemaDirectory = await mkdtemp(join(tmpdir(), 'quiet-choir-schema-'));
           const schemaPath = join(schemaDirectory, 'output.json');
-          await writeFile(schemaPath, JSON.stringify(request.outputSchema), { mode: 0o600 });
+          await writeFile(schemaPath, JSON.stringify(plan.schema), { mode: 0o600 });
           args.push('--output-schema', schemaPath);
         }
       }
@@ -122,7 +138,7 @@ export class CliHarness implements Harness {
           ? parseClaude(result.stdout, request.outputSchema !== null)
           : parseCodex(result.stdout);
       if (result.code === 0 && result.signal === null && outcome.kind === 'success')
-        return outcome.response;
+        return { ...outcome.response, text: decode(outcome.response.text) };
       throw new HarnessError({
         provider: request.provider,
         exit: { code: result.code, signal: result.signal },
