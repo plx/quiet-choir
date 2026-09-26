@@ -1,0 +1,14 @@
+{
+  "provider": "codex",
+  "version": "0.157.1",
+  "code": 1,
+  "signal": null,
+  "structured": false,
+  "stdout": "{\"type\":\"thread.started\",\"thread_id\":\"00000000-0000-4000-8000-000000000000\"}\n{\"type\":\"turn.started\"}\n{\"type\":\"error\",\"message\":\"Reconnecting... 1/3 (rate limit exceeded: Rate limit reached (fake))\"}\n{\"type\":\"error\",\"message\":\"Reconnecting... 2/3 (rate limit exceeded: Rate limit reached (fake))\"}\n{\"type\":\"error\",\"message\":\"Reconnecting... 3/3 (rate limit exceeded: Rate limit reached (fake))\"}\n{\"type\":\"error\",\"message\":\"rate limit exceeded: Rate limit reached (fake)\"}\n{\"type\":\"turn.failed\",\"error\":{\"message\":\"rate limit exceeded: Rate limit reached (fake)\"}}\n",
+  "stderr": "",
+  "expected": {
+    "reason": "rate limit exceeded",
+    "terminalReason": null,
+    "apiStatus": null
+  }
+}
