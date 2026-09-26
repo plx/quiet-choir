@@ -108,7 +108,7 @@ it('completes the captured reconnect turn, persists warnings, and replays withou
   const calls = join(stateDir, 'calls');
   await writeFile(
     binary,
-    `#!${process.execPath}\nrequire('node:fs').appendFileSync(${JSON.stringify(calls)}, 'call\\n'); process.stdout.write(${JSON.stringify(capture.stdout)}); process.stderr.write(${JSON.stringify(capture.stderr)}); process.exitCode = ${String(capture.code)};`,
+    `#!${process.execPath}\nif (process.argv.includes("--version")) { console.log("0.157.1"); process.exit(0); }\nrequire('node:fs').appendFileSync(${JSON.stringify(calls)}, 'call\\n'); process.stdout.write(${JSON.stringify(capture.stdout)}); process.stderr.write(${JSON.stringify(capture.stderr)}); process.exitCode = ${String(capture.code)};`,
   );
   await chmod(binary, 0o700);
   let fail = true;

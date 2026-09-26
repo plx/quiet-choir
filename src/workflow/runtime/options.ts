@@ -1,3 +1,13 @@
+import {
+  commonControlFields,
+  claudeControlFields,
+  codexControlFields,
+  validateExtraArgs,
+  validateConfig,
+  validateClaudeSettings,
+  rejectBypass,
+} from './agent-controls.js';
+import type { ClaudeOptions, CodexOptions } from './model.js';
 import { z } from 'zod';
 
 import type { HarnessRequest } from './model.js';
@@ -5,6 +15,7 @@ import { retryPolicySchema } from './policy.js';
 
 const positiveInteger = z.number().int().positive().max(Number.MAX_SAFE_INTEGER);
 const shared = {
+  ...commonControlFields,
   prompt: z.string(),
   profile: z.string().min(1).optional(),
   onError: z.enum(['throw', 'return']).optional(),
@@ -17,6 +28,7 @@ const shared = {
 /** Validate explicit Claude options without supplying CliHarness defaults. */
 export const claudeOptionsSchema: z.ZodType = z.strictObject({
   ...shared,
+  ...claudeControlFields,
   tools: z.array(z.string()).optional(),
   allowedTools: z.array(z.string()).optional(),
   maxTurns: positiveInteger.optional(),
@@ -27,13 +39,17 @@ export const claudeOptionsSchema: z.ZodType = z.strictObject({
 export const codexOptionsSchema: z.ZodType = z.strictObject({
   ...shared,
   sandbox: z.enum(['read-only', 'workspace-write']).optional(),
-  reasoningEffort: z.enum(['minimal', 'low', 'medium', 'high']).optional(),
+  ...codexControlFields,
   skipGitRepoCheck: z.boolean().optional(),
   structuredOutput: z.enum(['strict', 'compat']).optional(),
 });
 
 /** Shared validation used before checkpoint creation and before direct adapter invocations. @internal */
-export function validateAgentOptions(provider: HarnessRequest['provider'], options: unknown): void {
+export function validateAgentOptions(
+  provider: HarnessRequest['provider'],
+  options: unknown,
+  resolved = true,
+): void {
   const result = (provider === 'claude' ? claudeOptionsSchema : codexOptionsSchema).safeParse(
     options,
   );
@@ -49,6 +65,23 @@ export function validateAgentOptions(provider: HarnessRequest['provider'], optio
       return `${path}: ${issue.message} (got ${rendered})`;
     });
     throw new Error(`Invalid ${provider} options: ${details.join('; ')}`);
+  }
+  const controls = options as ClaudeOptions & CodexOptions;
+  validateExtraArgs(provider, controls.extraArgs ?? []);
+  if (provider === 'codex') {
+    if (controls.effort !== undefined && controls.reasoningEffort !== undefined)
+      throw new Error('Set effort or reasoningEffort, never both.');
+    if (
+      controls.networkAccess !== undefined &&
+      controls.sandbox !== 'workspace-write' &&
+      (resolved || controls.sandbox !== undefined)
+    )
+      throw new Error('networkAccess requires sandbox workspace-write.');
+    validateConfig(controls.config ?? {});
+  } else {
+    validateClaudeSettings(controls.settings ?? {});
+    rejectBypass(controls.agents ?? {});
+    rejectBypass(controls.settings ?? {});
   }
 }
 

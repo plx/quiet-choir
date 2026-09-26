@@ -148,7 +148,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
      package's public API — verdict alive=true. When uncertain, alive=true.
      Deleting live code breaks production; keeping dead code costs nothing.`,
               schema: VERDICT_SCHEMA,
-              // Original effort: 'high' — no matching ClaudeOptions control.
+              effort: 'high',
             })
             .then((result) => result.output)
             .then((v) => ({ ...c, verdict: v })),

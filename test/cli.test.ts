@@ -8,7 +8,6 @@ import { inspect } from 'node:util';
 import { ExitError } from '@oclif/core/errors';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import ConfigurationDoctor from '../src/commands/configuration/doctor.js';
 import ConfigurationGet from '../src/commands/configuration/get.js';
 import ConfigurationSet from '../src/commands/configuration/set.js';
 import InfoVersion from '../src/commands/info/version.js';
@@ -71,7 +70,6 @@ afterEach(async () => {
 
 describe('stub command adapters', () => {
   it.each([
-    [ConfigurationDoctor, 'configuration doctor'],
     [ConfigurationGet, 'configuration get'],
     [ConfigurationSet, 'configuration set'],
   ] as const)('runs %s through a plan and executor', async (command, commandName) => {
@@ -84,21 +82,21 @@ describe('stub command adapters', () => {
   });
 
   it('maps --verbose to trace logging', async () => {
-    const output = await captureCommand(ConfigurationDoctor, ['--verbose']);
+    const output = await captureCommand(ConfigurationGet, ['--verbose']);
 
     expect(output.error).toMatchObject({ oclif: { exit: 2 } });
-    expect(output.stderr).toBe('[trace] Executing plan for configuration.doctor');
+    expect(output.stderr).toBe('[trace] Executing plan for configuration.get');
   });
 
   it('accepts an explicit inherited log level', async () => {
-    const output = await captureCommand(ConfigurationDoctor, ['--log-level', 'debug']);
+    const output = await captureCommand(ConfigurationGet, ['--log-level', 'debug']);
 
     expect(output.error).toMatchObject({ oclif: { exit: 2 } });
     expect(output.stderr).toBe('');
   });
 
   it('rejects mutually exclusive verbosity flags', async () => {
-    const output = await captureCommand(ConfigurationDoctor, ['--verbose', '--log-level', 'debug']);
+    const output = await captureCommand(ConfigurationGet, ['--verbose', '--log-level', 'debug']);
 
     expect(output.error).toBeInstanceOf(Error);
     if (output.error instanceof Error) {
@@ -336,15 +334,23 @@ describe('workflow lifecycle command adapters', () => {
   });
 
   it.each([false, true])('inspects a run without a source file (JSON=%s)', async (json) => {
-    const execute = vi
-      .spyOn(WorkflowExecutor.prototype, 'execute')
-      .mockResolvedValue({ kind: 'workflow.run.result', ok: true, run: runRecord });
+    const execute = vi.spyOn(WorkflowExecutor.prototype, 'execute').mockResolvedValue({
+      kind: 'workflow.run.result',
+      ok: true,
+      run: {
+        ...runRecord,
+        harnesses: { codex: { binary: 'codex', version: '0.157.1' } },
+        harnessWarnings: ['native version changed'],
+      },
+    });
     const output = await captureCommand(WorkflowInspect, ['test-run', ...(json ? ['--json'] : [])]);
     expect(output.error).toBeUndefined();
     expect(execute).toHaveBeenCalledWith(
       expect.objectContaining({ kind: 'workflow.inspect', runId: 'test-run' }),
     );
     expect(output.stdout).toContain(json ? '"output":42' : 'Steps: 0');
+    expect(output.stdout).toContain(json ? '"version":"0.157.1"' : 'Harness codex: codex@0.157.1');
+    expect(output.stdout).toContain('native version changed');
   });
 
   it('renders failure metadata and missing-run errors', async () => {

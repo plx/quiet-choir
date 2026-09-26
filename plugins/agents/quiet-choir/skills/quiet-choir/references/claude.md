@@ -21,7 +21,29 @@ defaults below come from the core's implicit `text` profile; custom harnesses mu
 | `maxTurns`     | Positive integer, default 10                                                                                                              |
 | `maxBudgetUsd` | Positive finite per-call USD limit, default 0.50                                                                                          |
 
-The adapter uses `claude --print --output-format json --permission-mode dontAsk` and
+Additional controls:
+
+| Option                               | Meaning                                                                             |
+| ------------------------------------ | ----------------------------------------------------------------------------------- |
+| `effort`                             | `low`, `medium`, `high`, `xhigh`, `max`; omission inherits configuration            |
+| `disallowedTools`                    | Denied tool rules, e.g. `Bash(git push:*)`                                          |
+| `permissionMode`                     | `dontAsk` (default), `acceptEdits`, or `plan`; bypass is unsupported                |
+| `systemPrompt`, `appendSystemPrompt` | Role text supplied through private temporary files                                  |
+| `agent`, `agents`                    | Native agent name and definitions with required description/prompt                  |
+| `mcpServers`, `strictMcpConfig`      | Server-name mapping and exclusive explicit MCP configuration                        |
+| `settings`                           | JSON native settings; typed model/agent/permission/MCP aliases are rejected         |
+| `fallbackModel`                      | Model string or nonempty array, passed as a comma-separated chain                   |
+| `addDirs`                            | Additional access directories relative to effect cwd                                |
+| `extraArgs`                          | Fingerprinted `--flag` or `--flag=value`; owned flags/aliases are rejected          |
+| `env`                                | Fingerprinted overlay on inherited environment; keep rotating secrets in the parent |
+
+Agents, MCP and settings also use 0600 temporary files, removed in finally. Capability controls
+belong in profiles under default strict mode; native agent/config/MCP/settings/escape/env controls
+conservatively need exec grants. Role prompts and effort may be supplied per call. Each attempt
+records requested model/effort or `"inherited"`. All these semantic values, including fallback
+models, must match for completed replay. Escape-arg paths fingerprint the path string only.
+
+The adapter defaults to `claude --print --output-format json --permission-mode dontAsk` and
 `--no-session-persistence`. Each effect starts fresh; `sessionId` is for correlation only. The
 no-persistence flag disables the local session transcript. Pass relevant earlier output explicitly
 in later prompts.
@@ -49,11 +71,12 @@ custom extends ancestors, selected role and call options follow. `tools` implies
 explicit allowed list can narrow, e.g. Bash to `Bash(npm test:*)`. Replacing tools re-infers the
 allowed list unless explicitly supplied. MCP configuration and settings permissions still apply.
 
-`strictProfiles: true` is the default: declare tools/allowedTools/sandbox in profiles, not at call
-sites. `workflow validate file.ts --json` lists `workflow.capabilities` without executing the body.
-Every declared/default write/exec role requires a launch grant, e.g. `--grant fixer`; class grants
+`strictProfiles: true` is the default: declare capability controls in profiles, including
+permissions, MCP/settings, native agents, dirs, escape args and environment.
+`workflow validate file.ts --json` lists `workflow.capabilities` without executing the body. Every
+declared/default write/exec role requires a launch grant, e.g. `--grant fixer`; class grants
 `--grant write`, `--grant exec` (includes write), and `--grant all` are also available. Grants
-persist on resume; named grants must be renewed if tools/permissions/sandbox change. The built-in
+persist on resume; named grants must be renewed if declared capability controls change. The built-in
 `edit` can be selected directly but requires a grant before that call. Declaring a role makes
 preflight happen before any workflow effects. Unknown/MCP tools conservatively require exec.
 
@@ -114,7 +137,7 @@ limits, requested model, provenance, timestamps, and outcome.
 The CLI inherits Claude authentication, configuration, hooks, and MCP setup. The call's `cwd`
 selects project `.claude/` settings and hooks. `claude -p` skips the trust dialog, so project hooks
 can run even in never-trusted directories. Disabling built-in tools does not isolate this
-configuration; explicit MCP controls remain deferred to
+configuration. Explicit MCP controls are available; hermetic isolation remains deferred to
 [#60](https://github.com/plx/quiet-choir/issues/60).
 
 The default 8 MiB limit counts combined stdout/stderr; embedding callers can override it through

@@ -29,6 +29,7 @@ try {
   writeFileSync(
     join(binaryDirectory, 'claude'),
     `#!/usr/bin/env node
+if (process.argv.includes("--version")) { console.log("2.1.283"); process.exit(0); }
 import fs from 'node:fs';
 let prompt=''; process.stdin.on('data',chunk=>prompt+=chunk);
 process.stdin.on('end',()=>{fs.appendFileSync('calls.txt',prompt+'\\n');console.log(JSON.stringify({type:'result',subtype:'success',is_error:false,result:prompt}));});

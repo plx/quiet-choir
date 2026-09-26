@@ -106,7 +106,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
    the empty state, the permission check, the error path — because "done" means
    the intent, not just the bullet points.`,
         schema: DECOMP_SCHEMA,
-        // Original effort: 'high' — no matching ClaudeOptions control.
+        effort: 'high',
       })
       .then((result) => result.output);
 
@@ -154,7 +154,8 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
      pass (all sub-checks hold), fail, partial (some hold), or cannot-verify
      (needs a running environment you lack — say so, don't guess).`,
             schema: CHECK_SCHEMA,
-            // Original phase: 'Check'; effort: 'high' — no matching ClaudeOptions control.
+            // Original phase: 'Check'.
+            effort: 'high',
           })
           .then((result) => result.output)
           .then((v) => ({ criterion: c, verdict: v })),
@@ -172,7 +173,8 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
        because a guard is disabled. honest=true only if a user relying on this
        criterion would actually be served.`,
             schema: SPIRIT_SCHEMA,
-            // Original phase: 'Adversarial'; effort: 'high' — no matching ClaudeOptions control.
+            // Original phase: 'Adversarial'.
+            effort: 'high',
           })
           .then((result) => result.output)
           .then((s) => ({ ...r, spirit: s }));
@@ -221,7 +223,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
    criteria — be specific and actionable. If done-pending-manual, name exactly
    what needs a human/environment to confirm. Return only the paragraph.`,
 
-        // Original effort: 'low' — no matching ClaudeOptions control.
+        effort: 'low',
       })
       .then((result) => result.output);
 

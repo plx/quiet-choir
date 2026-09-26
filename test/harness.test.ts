@@ -262,6 +262,7 @@ describe('headless CLI adapter', () => {
       '--ephemeral',
       '--color',
       'never',
+      '--',
       '-',
     ]);
   });

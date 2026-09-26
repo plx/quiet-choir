@@ -189,7 +189,8 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
      environment (needs live services), verdict "could-not-run" — do not
      simulate results.`,
             schema: STRESS_SCHEMA,
-            // Original phase: 'Stress'; effort: 'low' — no matching ClaudeOptions control.
+            // Original phase: 'Stress'.
+            effort: 'low',
           })
           .then((result) => result.output)
           .then((r) => ({ suspect: sus, stress: r })),
@@ -210,7 +211,8 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
        retry-wrapping is acceptable only for genuinely-external dependencies.
        ${applyFixes ? 'Then APPLY the fix, re-stress 5 runs, and report.' : 'Do not apply the fix.'}`,
             schema: DIAGNOSIS_SCHEMA,
-            // Original phase: 'Diagnose'; effort: 'high' — no matching ClaudeOptions control.
+            // Original phase: 'Diagnose'.
+            effort: 'high',
           })
           .then((result) => result.output)
           .then((d) => ({ ...r, diagnosis: d }));

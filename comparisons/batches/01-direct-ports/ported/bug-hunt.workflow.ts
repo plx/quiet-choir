@@ -173,7 +173,8 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
          that invalidate it. Default to refuted=true if you cannot confirm the
          failure scenario is reachable.`,
                   schema: VERDICT_SCHEMA,
-                  // Original phase: 'Verify'; effort: 'high' — no matching ClaudeOptions control.
+                  // Original phase: 'Verify'.
+                  effort: 'high',
                 })
               ).output,
           );

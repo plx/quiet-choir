@@ -171,7 +171,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
    upgrade looks unwise (e.g. half the codebase is on removed APIs), say
    "reconsider" and explain in riskNotes.`,
         schema: PLAN_SCHEMA,
-        // Original effort: 'high' — no matching ClaudeOptions control.
+        effort: 'high',
       })
       .then((result) => result.output);
 

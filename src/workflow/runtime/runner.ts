@@ -1,3 +1,4 @@
+import { snapshotImages } from './images.js';
 import { profileLimitError } from './profile-diagnostics.js';
 import {
   capabilityManifest,
@@ -297,8 +298,16 @@ export async function runWorkflow<TInput, TOutput>(
       return {
         ...existing,
         output: output as TOutput & JsonValue,
-        ...(existing.policyWarnings?.length || existing.replayWarnings?.length
-          ? { warnings: [...(existing.policyWarnings ?? []), ...(existing.replayWarnings ?? [])] }
+        ...(existing.policyWarnings?.length ||
+        existing.replayWarnings?.length ||
+        existing.harnessWarnings?.length
+          ? {
+              warnings: [
+                ...(existing.policyWarnings ?? []),
+                ...(existing.replayWarnings ?? []),
+                ...(existing.harnessWarnings ?? []),
+              ],
+            }
           : {}),
       };
     }
@@ -782,6 +791,7 @@ export async function runWorkflow<TInput, TOutput>(
       }
     }
 
+    const metadataRequests = new Map<string, Promise<void>>();
     function client<TOptions extends AgentOptions>(
       provider: 'claude' | 'codex',
     ): AgentClient<TOptions> {
@@ -792,7 +802,7 @@ export async function runWorkflow<TInput, TOutput>(
         structured: boolean,
       ): Promise<EffectResult<AgentResult<T>, TMode>> {
         const id = names.qualify(leaf);
-        return launch(id, () => {
+        return launch(id, async () => {
           let request: HarnessRequest;
           let schema: z.ZodType<T>;
           let execution: AttemptPolicy;
@@ -801,7 +811,7 @@ export async function runWorkflow<TInput, TOutput>(
             const data = jsonValue({ options: optionData(agentOptions, structured) }) as {
               options: TOptions & JsonValue;
             };
-            validateAgentOptions(provider, data.options);
+            validateAgentOptions(provider, data.options, false);
             const resolvedProfile = resolveProfileCall(
               capabilities,
               provider,
@@ -848,6 +858,18 @@ export async function runWorkflow<TInput, TOutput>(
           } catch (cause) {
             throw new Error(`Step ${id}: ${message(cause)}`, { cause });
           }
+          if (request.provider === 'codex' && request.options.images !== undefined)
+            request = {
+              ...request,
+              imageAttachments: await snapshotImages(request.options.images, request.cwd),
+            };
+          execution = {
+            ...execution,
+            requested: {
+              model: execution.requestedModel ?? 'inherited',
+              effort: execution.reasoningEffort ?? request.options.effort ?? 'inherited',
+            },
+          };
           const resultSchema = z.object({
             output: schema,
             sessionId: z.string().nullable(),
@@ -873,6 +895,7 @@ export async function runWorkflow<TInput, TOutput>(
               ? {}
               : { reasoningEffort: execution.reasoningEffort }),
           });
+          if (provider === 'codex' && execution.reasoningEffort !== null) delete applied.effort;
           request = { ...request, options: applied };
           validateAgentOptions(provider, request.options);
           return effect(
@@ -886,6 +909,30 @@ export async function runWorkflow<TInput, TOutput>(
                 throw new ConfigurationError(
                   `No harness adapter configured for ${provider}. Supply RunOptions.harness.`,
                 );
+              if (options.harness.metadata) {
+                let discovery = metadataRequests.get(provider);
+                if (!discovery) {
+                  discovery = (async () => {
+                    // Installation discovery is shared by the run, not owned by the first map subtree.
+                    const metadata = await options.harness?.metadata?.(request, signal);
+                    if (!metadata) return;
+                    const old = record.harnesses?.[provider];
+                    const warnings = [...(metadata.warnings ?? [])];
+                    if (old && (old.version !== metadata.version || old.binary !== metadata.binary))
+                      warnings.push(
+                        `${provider} harness changed from ${old.binary}@${old.version ?? 'unknown'} to ${metadata.binary}@${metadata.version ?? 'unknown'}; completed effects remain reusable.`,
+                      );
+                    (record.harnesses ??= {})[provider] = metadata;
+                    record.harnessWarnings = [
+                      ...new Set([...(record.harnessWarnings ?? []), ...warnings]),
+                    ];
+                    await save();
+                  })();
+                  metadataRequests.set(provider, discovery);
+                }
+                await discovery;
+                context.signal.throwIfAborted();
+              }
               let response;
               try {
                 response = await options.harness.invoke(request, context.signal);
@@ -1111,8 +1158,16 @@ export async function runWorkflow<TInput, TOutput>(
       for (const [id, step] of superseded) emit('step.superseded', id, step);
       return {
         ...structuredClone(record),
-        ...(record.policyWarnings.length || record.replayWarnings.length
-          ? { warnings: [...record.policyWarnings, ...record.replayWarnings] }
+        ...(record.policyWarnings.length ||
+        record.replayWarnings.length ||
+        record.harnessWarnings?.length
+          ? {
+              warnings: [
+                ...record.policyWarnings,
+                ...record.replayWarnings,
+                ...(record.harnessWarnings ?? []),
+              ],
+            }
           : {}),
         output: definition.output.parse(structuredClone(record.output)) as TOutput & JsonValue,
       };

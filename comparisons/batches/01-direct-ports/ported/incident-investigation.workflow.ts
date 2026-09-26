@@ -190,7 +190,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
    are what the falsifiers will attack; vague predictions make the hypothesis
    untestable, which is a defect.`,
         schema: HYPOTHESES_SCHEMA,
-        // Original effort: 'high' — no matching ClaudeOptions control.
+        effort: 'high',
       })
       .then((result) => result.output);
 
@@ -242,7 +242,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
      ONLY if every checkable prediction held under a genuine attempt to break
      it. Falsifying a hypothesis is a success, not a failure.`,
                 schema: VERDICT_SCHEMA,
-                // Original effort: 'high' — no matching ClaudeOptions control.
+                effort: 'high',
               })
               .then((result) => result.output)
               .then((v) => ({ hypothesis: h, verdict: v })),
@@ -308,7 +308,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
    (4) Prevention — 2-4 concrete changes that would have prevented or caught
    this sooner. Cite evidence sources throughout.`,
 
-        // Original effort: 'high' — no matching ClaudeOptions control.
+        effort: 'high',
       })
       .then((result) => result.output);
 

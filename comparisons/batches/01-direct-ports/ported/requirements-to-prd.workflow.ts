@@ -169,7 +169,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
    Open questions section starts from these unknowns: ${JSON.stringify(unknowns)}.
    Return only the PRD markdown.`,
 
-        // Original effort: 'high' — no matching ClaudeOptions control.
+        effort: 'high',
       })
       .then((result) => result.output);
 
@@ -212,7 +212,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
      a cut, or a question to put to the product owner. "Blocking" means building
      from this text as-is would produce the wrong product.`,
                 schema: CRITIQUE_SCHEMA,
-                // Original effort: 'high' — no matching ClaudeOptions control.
+                effort: 'high',
               })
               .then((result) => result.output),
         ),
@@ -244,7 +244,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
    ${args.out ? `Write the final PRD to ${args.out} as well.` : ''}
    Return only the final PRD markdown.`,
 
-        // Original effort: 'high' — no matching ClaudeOptions control.
+        effort: 'high',
       })
       .then((result) => result.output);
 

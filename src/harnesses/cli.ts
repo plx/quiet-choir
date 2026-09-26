@@ -1,15 +1,15 @@
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { isAbsolute, join } from 'node:path';
-
-import type { Harness, HarnessRequest, HarnessResponse } from '../workflow/runtime/model.js';
+import { isAbsolute } from 'node:path';
+import type {
+  Harness,
+  HarnessRequest,
+  HarnessResponse,
+  HarnessMetadata,
+} from '../workflow/runtime/model.js';
 import type { ExecutionPolicy } from '../workflow/runtime/policy.js';
-import { validateAgentOptions } from '../workflow/runtime/options.js';
 import { HarnessError } from '../workflow/runtime/harness-error.js';
 import { ConfigurationError } from '../workflow/runtime/configuration-error.js';
-import { checkAllowedTools } from '../workflow/runtime/profiles.js';
-import { prepareCodexSchema, type CodexSchemaPlan } from './codex-schema.js';
 import { runProcess } from './process.js';
+import { prepareInvocation } from './invocation.js';
 import { parseClaude, parseCodex } from './protocol.js';
 
 const defaultTimeoutMs = 300_000;
@@ -38,12 +38,6 @@ function timerDuration(value: number, name: string): number {
   positive(value, name);
   if (value > 2_147_483_647) throw new Error(`${name} must not exceed 2147483647ms.`);
   return value;
-}
-
-function configurationError(error: unknown): ConfigurationError {
-  return new ConfigurationError(error instanceof Error ? error.message : String(error), {
-    cause: error,
-  });
 }
 
 /** Invoke installed Claude Code and Codex CLIs with subscription authentication and bounded processes. */
@@ -75,116 +69,82 @@ export class CliHarness implements Harness {
     };
   }
 
+  /** Read the selected executable version without inference; failures become diagnostics. */
+  public async metadata(request: HarnessRequest, signal: AbortSignal): Promise<HarnessMetadata> {
+    const binary =
+      request.provider === 'claude'
+        ? (this.options.claudeBinary ?? 'claude')
+        : (this.options.codexBinary ?? 'codex');
+    try {
+      const result = await runProcess({
+        binary,
+        args: ['--version'],
+        cwd: request.cwd,
+        input: '',
+        timeoutMs: 10_000,
+        maxOutputBytes: 16_384,
+        killGraceMs: this.killGraceMs,
+        signal,
+        ...(request.options.env === undefined ? {} : { env: request.options.env }),
+      });
+      const version =
+        result.code === 0
+          ? /\b[0-9]+\.[0-9]+\.[0-9]+(?:[-+][a-zA-Z0-9.-]+)?\b/u.exec(result.stdout)?.[0]
+          : undefined;
+      return {
+        binary,
+        version: version ?? null,
+        ...(version === undefined || result.stderr.trim()
+          ? {
+              warnings: [
+                `${binary} version discovery: ${result.stderr.trim().slice(-1024) || 'unrecognized version output'}`,
+              ],
+            }
+          : {}),
+      };
+    } catch (error) {
+      signal.throwIfAborted();
+      return {
+        binary,
+        version: null,
+        warnings: [
+          `${binary} version discovery failed: ${error instanceof Error ? error.message : String(error)}`,
+        ],
+      };
+    }
+  }
+
   /** Execute a fresh headless session, rejecting cancellation, limits, and protocol failures. */
   public async invoke(request: HarnessRequest, signal: AbortSignal): Promise<HarnessResponse> {
     signal.throwIfAborted();
-    // Validation before launch rejects as configuration, never as a settled effect failure.
+    // Validation before launch rejects as configuration, never as a settled effect failure;
+    // prepareInvocation applies the same rule to option and output-schema validation.
     if (!isAbsolute(request.cwd))
       throw new ConfigurationError('Harness cwd must be an absolute path.');
-    try {
-      validateAgentOptions(request.provider, request.options);
-    } catch (error) {
-      throw configurationError(error);
-    }
     const timeoutMs = request.options.timeoutMs ?? defaultTimeoutMs;
-    const args: string[] = [];
-    let binary: string;
-    let schemaDirectory: string | undefined;
-    let decode = (text: string): string => text;
+    const binary =
+      request.provider === 'claude'
+        ? (this.options.claudeBinary ?? 'claude')
+        : (this.options.codexBinary ?? 'codex');
+    const invocation = await prepareInvocation(request);
     try {
-      if (request.provider === 'claude') {
-        binary = this.options.claudeBinary ?? 'claude';
-        const maxTurns = request.options.maxTurns ?? defaultMaxTurns;
-        const budget = request.options.maxBudgetUsd ?? defaultMaxBudgetUsd;
-        args.push(
-          '--print',
-          '--output-format',
-          'json',
-          '--permission-mode',
-          'dontAsk',
-          '--tools',
-          (request.options.tools ?? []).join(','),
-          '--max-turns',
-          String(maxTurns),
-          '--max-budget-usd',
-          String(budget),
-          '--no-session-persistence',
-        );
-        const allowedTools = request.options.allowedTools ?? request.options.tools ?? [];
-        try {
-          checkAllowedTools(request.options.tools ?? [], allowedTools);
-        } catch (error) {
-          throw configurationError(error);
-        }
-        if (allowedTools.length > 0) {
-          args.push('--allowedTools', allowedTools.join(','));
-        }
-        if (request.outputSchema !== null) {
-          if (
-            typeof request.outputSchema !== 'object' ||
-            Array.isArray(request.outputSchema) ||
-            request.outputSchema['type'] !== 'object'
-          )
-            throw new ConfigurationError(
-              'Claude structured output requires an object root at $; wrap the schema in z.object({ value: ... }).',
-            );
-          args.push('--json-schema', JSON.stringify(request.outputSchema));
-        }
-      } else {
-        binary = this.options.codexBinary ?? 'codex';
-        args.push(
-          'exec',
-          '--json',
-          '--sandbox',
-          request.options.sandbox ?? 'read-only',
-          '--config',
-          'approval_policy="never"',
-          '--ephemeral',
-          '--color',
-          'never',
-        );
-        if (request.options.reasoningEffort !== undefined) {
-          args.push(
-            '--config',
-            `model_reasoning_effort=${JSON.stringify(request.options.reasoningEffort)}`,
-          );
-        }
-        if (request.options.skipGitRepoCheck === true) args.push('--skip-git-repo-check');
-        if (request.outputSchema !== null) {
-          let plan: CodexSchemaPlan;
-          try {
-            plan = prepareCodexSchema(
-              request.outputSchema,
-              request.options.structuredOutput ?? 'compat',
-            );
-          } catch (error) {
-            throw configurationError(error);
-          }
-          decode = plan.decode;
-          schemaDirectory = await mkdtemp(join(tmpdir(), 'quiet-choir-schema-'));
-          const schemaPath = join(schemaDirectory, 'output.json');
-          await writeFile(schemaPath, JSON.stringify(plan.schema), { mode: 0o600 });
-          args.push('--output-schema', schemaPath);
-        }
-      }
-      if (request.options.model !== undefined) args.push('--model', request.options.model);
-      if (request.provider === 'codex') args.push('-');
       const result = await runProcess({
         binary,
-        args,
+        args: invocation.args,
         cwd: request.cwd,
         input: request.options.prompt,
         timeoutMs,
         maxOutputBytes: this.maxOutputBytes,
         killGraceMs: this.killGraceMs,
         signal,
+        ...(request.options.env === undefined ? {} : { env: request.options.env }),
       });
       const outcome =
         request.provider === 'claude'
           ? parseClaude(result.stdout, request.outputSchema !== null)
           : parseCodex(result.stdout);
       if (result.code === 0 && result.signal === null && outcome.kind === 'success')
-        return { ...outcome.response, text: decode(outcome.response.text) };
+        return { ...outcome.response, text: invocation.decode(outcome.response.text) };
       throw new HarnessError({
         provider: request.provider,
         exit: { code: result.code, signal: result.signal },
@@ -210,8 +170,7 @@ export class CliHarness implements Harness {
           : {}),
       });
     } finally {
-      if (schemaDirectory !== undefined)
-        await rm(schemaDirectory, { recursive: true, force: true });
+      await invocation.dispose();
     }
   }
 }

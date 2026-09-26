@@ -1,3 +1,5 @@
+import { codexEffortValues } from './agent-controls.js';
+import type { HarnessMetadata } from './model.js';
 import { profileOverrideSchema, grantsSchema, capabilityManifestSchema } from './profiles.js';
 import type { CapabilityManifest, ProfileOverride } from './profiles-model.js';
 import { randomUUID } from 'node:crypto';
@@ -121,6 +123,10 @@ export interface MapRecord {
 
 /** Local checkpoint format. The format is intentionally versioned independently of workflows. */
 export interface RunRecord {
+  /** Native harness binary/version from latest live use, with nonfatal version drift diagnostics. */
+  harnesses?: Partial<Record<'claude' | 'codex', HarnessMetadata>>;
+  /** Discovery/version warnings retained across resume. */
+  harnessWarnings?: string[];
   /** Resolved declared capabilities at the latest execution. Absent in older format-5 records. */
   capabilities?: CapabilityManifest;
   /** Sticky profile limit rules. */
@@ -241,7 +247,8 @@ const stepSchema = z.object({
         sources: z.record(z.string(), z.string()),
         profile: z.string().optional(),
         requestedModel: z.string().nullable(),
-        reasoningEffort: z.enum(['minimal', 'low', 'medium', 'high']).nullable(),
+        reasoningEffort: z.enum(codexEffortValues).nullable(),
+        requested: z.object({ model: z.string(), effort: z.string() }).optional(),
       }),
     )
     .optional(),
@@ -316,6 +323,25 @@ const recordSchema = z
         }),
       )
       .optional(),
+    harnesses: z
+      .object({
+        claude: z
+          .object({
+            binary: z.string(),
+            version: z.string().nullable(),
+            warnings: z.array(z.string()).optional(),
+          })
+          .optional(),
+        codex: z
+          .object({
+            binary: z.string(),
+            version: z.string().nullable(),
+            warnings: z.array(z.string()).optional(),
+          })
+          .optional(),
+      })
+      .optional(),
+    harnessWarnings: z.array(z.string()).optional(),
     capabilities: capabilityManifestSchema.optional(),
     profileOverrides: z.array(profileOverrideSchema).optional(),
     grants: grantsSchema.optional(),

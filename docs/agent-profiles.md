@@ -75,9 +75,13 @@ quiet-choir workflow execute review.workflow.ts --run-id review-1 --grant fixer
 Validation emits `workflow.capabilities`: resolved defaults, all named and built-in profiles,
 provider access, models, tool gates, limits, descriptions, and `requiredGrants`. It imports trusted
 source but does not evaluate the workflow body. By default, `strictProfiles: true` rejects raw
-`tools`, `allowedTools`, and `sandbox` at call sites. The manifest bounds declared agent controls;
-it does not confine workflow JavaScript, hooks, inherited MCP configuration, or arbitrary working
-directories.
+capability controls at call sites: tools, allowed/disallowed rules, permission modes, sandbox,
+MCP/settings, native agents/profiles/config, dirs, environment, escape args and network access.
+Native configuration/agent/escape/env controls and enabled network access conservatively require
+exec grants. Codex additional directories require write access. Role prompts, model, effort,
+fallbacks and image attachments remain available per call. See
+[harness controls](harness-controls.md). The manifest bounds declared agent controls; it does not
+confine workflow JavaScript, hooks, inherited MCP configuration, or arbitrary working directories.
 
 Every declared or default role with write/exec access requires authorization before the body starts,
 even if a branch never uses it. `--grant fixer` authorizes that role; `--grant write` authorizes

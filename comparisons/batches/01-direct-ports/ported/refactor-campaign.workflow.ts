@@ -147,7 +147,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
    higher risk — weight accordingly. Pick the top ${maxTargets}.
    Targets: ${JSON.stringify(survey.targets, null, 2)}`,
         schema: RANK_SCHEMA,
-        // Original effort: 'high' — no matching ClaudeOptions control.
+        effort: 'high',
       })
       .then((result) => result.output);
 
@@ -183,7 +183,8 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
      returning. If the behavior genuinely cannot be pinned (e.g. it needs live
      external systems), status "cannot-pin" — do not fake a net.`,
             schema: NET_SCHEMA,
-            // Original phase: 'Refactor'; effort: 'high' — no matching ClaudeOptions control.
+            // Original phase: 'Refactor'.
+            effort: 'high',
           })
           .then((result) => result.output)
           .then((net) => ({
@@ -227,7 +228,8 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
        behavior — REVERT the refactor (keep the net) and report status
        "net-held-reverted". Preserving behavior beats completing the refactor.`,
             schema: REFACTOR_SCHEMA,
-            // Original phase: 'Refactor'; effort: 'high' — no matching ClaudeOptions control.
+            // Original phase: 'Refactor'.
+            effort: 'high',
           })
           .then((result) => result.output)
           .then((ref) => ({ ...r, refactor: ref }));
@@ -244,7 +246,8 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
        and confirm green, then read the diff and confirm the changes are
        structural, not behavioral. If either fails, report netStillGreen=false.`,
             schema: REFACTOR_SCHEMA,
-            // Original phase: 'Refactor'; effort: 'high' — no matching ClaudeOptions control.
+            // Original phase: 'Refactor'.
+            effort: 'high',
           })
           .then((result) => result.output)
           .then((v) => ({

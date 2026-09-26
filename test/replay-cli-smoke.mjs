@@ -58,6 +58,7 @@ try {
   writeFileSync(
     join(root, 'bin/claude'),
     `#!/usr/bin/env node
+if (process.argv.includes("--version")) { console.log("2.1.283"); process.exit(0); }
 import { appendFileSync } from 'node:fs';
 let prompt = '';
 process.stdin.on('data', chunk => prompt += chunk);

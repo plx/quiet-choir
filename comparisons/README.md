@@ -128,8 +128,9 @@ adapters, not proposed additions to the runtime API. They provide stable scoped 
 per-group fan-out, pipelining, and child composition for the legacy ports. The bug-hunt port now
 uses runtime named maps and lexical contexts with explicit leaves, without `createPort`. Agent
 failures stop new map scheduling, drain started mappers without cancellation, and reject the run.
-Phases are metadata/stderr only; effort and the shared token ledger are unavailable. Per-workflow
-notes describe these differences and source behaviors deliberately retained.
+Phases are metadata/stderr only. All 68 per-call effort settings now use typed controls; the shared
+token ledger remains unavailable. Per-workflow notes describe these differences and source behaviors
+deliberately retained.
 
 An SDLC human checkpoint is returned data. To supply new answers, start a **new run ID** with that
 returned state and the answers as input. Use `--resume` only to retry an interrupted run with

@@ -38,9 +38,9 @@ assert.equal(help.status, 0, help.stderr);
 assert.match(help.stdout, /quiet-choir\/0\.0\.0/);
 assert.match(help.stdout, /workflow\s+Execute and inspect workflows/);
 
-const stub = cli('configuration', 'doctor');
+const stub = cli('configuration', 'get');
 assert.equal(stub.status, 2, stub.stderr);
-assert.match(stub.stdout, /configuration doctor is not implemented yet\./);
+assert.match(stub.stdout, /configuration get is not implemented yet\./);
 
 const fixtureRoot = mkdtempSync(join(tmpdir(), 'quiet-choir-smoke-'));
 try {

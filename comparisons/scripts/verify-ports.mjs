@@ -172,15 +172,15 @@ try {
       }
       const originalCalls = [],
         portedCalls = [];
-      const respond = (prompt, schema, calls) => {
+      const respond = (prompt, schema, calls, effort) => {
         const output = schema ? sample(schema, mode) : 'fixture text';
-        calls.push({ prompt, output });
+        calls.push({ prompt, output, effort: effort ?? null });
         return output;
       };
       async function original(workflowName, args) {
         return sources.get(workflowName)(
           args,
-          (p, o) => Promise.resolve(respond(p, o?.schema, originalCalls)),
+          (p, o) => Promise.resolve(respond(p, o?.schema, originalCalls, o?.effort)),
           (tasks) => Promise.all(tasks.map((fn) => fn())),
           (items, ...stages) =>
             Promise.all(
@@ -217,9 +217,14 @@ try {
                 text:
                   typeof request.outputSchema === 'object' && request.outputSchema !== null
                     ? JSON.stringify(
-                        respond(request.options.prompt, request.outputSchema, portedCalls),
+                        respond(
+                          request.options.prompt,
+                          request.outputSchema,
+                          portedCalls,
+                          request.options.effort,
+                        ),
                       )
-                    : respond(request.options.prompt, null, portedCalls),
+                    : respond(request.options.prompt, null, portedCalls, request.options.effort),
                 sessionId: 'fixture',
                 usage: { inputTokens: 1, outputTokens: 1, costUsd: 0 },
               };

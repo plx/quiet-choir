@@ -50,8 +50,11 @@ version requires a new run ID (a fork can reuse compatible steps). See [durabili
 | `ctx.runId`                                                        | Stable run identifier                                                                               |
 | `ctx.signal`                                                       | Current scope signal; inherits run and parent-map cancellation                                      |
 
-Prompts and identity options are stored as component hashes. Resolved execution policy and requested
-model/effort are stored in plaintext per attempt; inspection cannot reconstruct prompts.
+Call-site task prompts and identity options are stored as component hashes. Resolved execution
+policy and requested model/effort are stored in plaintext per attempt. Profile declarations are
+saved in the capability manifest, including role prompts, settings and explicit environment values.
+Keep secrets in inherited native configuration or the parent environment; inspection cannot
+reconstruct hashed call-site prompts.
 
 Agent operations are already durable: call them directly from the workflow, not from inside
 `ctx.step`. Local `run` receives `{ signal, attempt, idempotencyKey }`. `attempt` is the total

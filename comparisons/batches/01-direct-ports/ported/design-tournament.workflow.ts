@@ -197,7 +197,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
      single best idea, even for proposals you score low overall.
      PROPOSALS: ${JSON.stringify(anonymized, null, 2)}`,
                 schema: SCORES_SCHEMA,
-                // Original effort: 'high' — no matching ClaudeOptions control.
+                effort: 'high',
               })
               .then((result) => result.output),
         ),
@@ -271,7 +271,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
    accepted, rejected alternatives (with the scoreboard), and open questions.
    ${args.out ? `Write the doc to ${args.out} and return the markdown as well.` : 'Return the markdown.'}`,
 
-        // Original effort: 'high' — no matching ClaudeOptions control.
+        effort: 'high',
       })
       .then((result) => result.output);
 

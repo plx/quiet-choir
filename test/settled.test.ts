@@ -646,7 +646,10 @@ it('rejects invalid local modes and retry filters before callbacks run', async (
 
 it('replaces a timer race with a durable timeout outcome even when the agent would finish first on resume', async () => {
   const binary = join(stateDir, 'agent');
-  await writeFile(binary, `#!${process.execPath}\nsetInterval(() => {}, 1000);\n`);
+  await writeFile(
+    binary,
+    `#!${process.execPath}\nif (process.argv.includes("--version")) { console.log("0.157.1"); process.exit(0); }\nsetInterval(() => {}, 1000);\n`,
+  );
   await chmod(binary, 0o700);
   const harness = new CliHarness({ claudeBinary: binary, killGraceMs: 10 });
   const calls = vi.spyOn(harness, 'invoke');
@@ -665,7 +668,7 @@ it('replaces a timer race with a durable timeout outcome even when the agent wou
   await expect(runWorkflow(definition, { ...options(), harness })).rejects.toThrow('tail');
   await writeFile(
     binary,
-    `#!${process.execPath}\nprocess.stdout.write(JSON.stringify({type:'result',subtype:'success',result:'agent wins now'}));\n`,
+    `#!${process.execPath}\nif (process.argv.includes("--version")) { console.log("0.157.1"); process.exit(0); }\nprocess.stdout.write(JSON.stringify({type:'result',subtype:'success',result:'agent wins now'}));\n`,
   );
   tail = false;
   expect((await runWorkflow(definition, { ...options(), harness, resume: true })).output).toBe(

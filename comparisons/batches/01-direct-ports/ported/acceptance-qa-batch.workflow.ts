@@ -102,7 +102,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
    and report runContext: exactly how an agent can exercise this project —
    install/build commands, how to start it, how to run its tests, entry points.`,
         schema: TICKETS_SCHEMA,
-        // Original effort: 'low' — no matching ClaudeOptions control.
+        effort: 'low',
       })
       .then((result) => result.output);
 
@@ -140,7 +140,8 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
      description. status: demonstrated / failed / undemonstrable (needs an
      environment you lack — say so, don't fake it).`,
             schema: DEMO_SCHEMA,
-            // Original phase: 'Demonstrate'; effort: 'high' — no matching ClaudeOptions control.
+            // Original phase: 'Demonstrate'.
+            effort: 'high',
           })
           .then((result) => result.output)
           .then((demo) => ({ ticket: t, demo })),
@@ -162,7 +163,8 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
        breaks-criterion means it defeats an acceptance criterion in a case the
        criterion should have covered. Coming back empty-handed is a real result.`,
             schema: BREAK_SCHEMA,
-            // Original phase: 'Break'; effort: 'high' — no matching ClaudeOptions control.
+            // Original phase: 'Break'.
+            effort: 'high',
           })
           .then((result) => result.output)
           .then((breakResult) => ({ ...r, breakResult }));

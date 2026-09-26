@@ -129,7 +129,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
    may not land in a module that builds before its dependency's module. Tickets
    that fit no slot go in deferred (do not silently drop any id).`,
         schema: MODULES_SCHEMA,
-        // Original effort: 'high' — no matching ClaudeOptions control.
+        effort: 'high',
       })
       .then((result) => result.output);
 

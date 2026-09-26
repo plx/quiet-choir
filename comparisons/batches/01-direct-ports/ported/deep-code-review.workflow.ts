@@ -120,7 +120,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
    the list of changed files, a 2-4 sentence summary of what the change does, and
    any notes on unusually risky areas. Do not review the code itself.`,
         schema: SCOPE_SCHEMA,
-        // Original effort: 'low' — no matching ClaudeOptions control.
+        effort: 'low',
       })
       .then((result) => result.output);
 
@@ -228,7 +228,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
      against your best refutation attempt, mark it refuted — when uncertain,
      refute. If it survives, you may adjust the severity in either direction.`,
               schema: VERDICT_SCHEMA,
-              // Original effort: 'high' — no matching ClaudeOptions control.
+              effort: 'high',
             })
             .then((result) => result.output)
             .then((v) => ({ ...f, verdict: v })),
@@ -263,7 +263,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
        suggested fix. End with a one-paragraph overall assessment. Return only the
        markdown.`,
 
-              // Original effort: 'low' — no matching ClaudeOptions control.
+              effort: 'low',
             })
             .then((result) => result.output);
 

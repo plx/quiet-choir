@@ -21,6 +21,9 @@ export type {
   MapOptions,
   SettledNamedMapOptions,
   EffectResult,
+  Effort,
+  HarnessMetadata,
+  ImageAttachment,
   AgentOptions,
   ClaudeOptions,
   CodexOptions,
@@ -92,3 +95,8 @@ export type {
   ResolvedProfile,
   CapabilityManifest,
 } from './workflow/runtime/profiles-model.js';
+
+export { probeHarnessContracts, testedHarnessVersions } from './harnesses/doctor.js';
+export type { DoctorOptions, DoctorReport, DoctorCheck } from './harnesses/doctor.js';
+export { readInheritedCodexConfig } from './harnesses/doctor-config.js';
+export type { InheritedCodexConfig } from './harnesses/doctor-config.js';

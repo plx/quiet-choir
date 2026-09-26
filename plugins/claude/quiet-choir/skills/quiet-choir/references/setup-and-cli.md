@@ -104,8 +104,19 @@ Put flags after the command name, for example `workflow inspect first --json`.
 | 2    | Flag parse errors, invalid `--input` JSON, omitted FILE argument, `--resume` without `--run-id`, non-TypeScript or `.d.ts` entrypoints, or configuration stubs.                                                                                                      |
 | 130  | SIGINT/SIGTERM during execution. The runner aborts, drains, and saves `cancelled` before exiting when storage is available; a storage failure can leave an older record.                                                                                             |
 
-`configuration get/set/doctor` are stubs, not a configuration system. See
-[durability](durability.md) before recovery and [inspection](inspection.md) for saved status.
+`configuration doctor --json` runs five checks for each installed harness: tested version range,
+exact adapter argv with a zero-inference 404/400 rejection, hidden flags, enum drift and inherited
+Codex model/effort/profile. Use `--harness claude|codex|all` (default all), executable overrides
+`--claude-binary`/`--codex-binary`, and optional `--codex-home`/`--codex-profile`. Reports are
+emitted on both pass (exit 0) and drift (exit 1). Auth/transport failures, stderr warnings and any
+measured spend fail. Untested versions skip the exact-argv probe. Current tested bounds are Claude
+2.1.283 and Codex 0.157.1. Codex's argv probe uses private temporary copies of config/auth and an
+empty native profile; selected user/profile defaults are inspected separately, without printing
+secrets. Project/managed layers can override those defaults. Exported `probeHarnessContracts`
+supports CI. `harnesses` in run metadata and inspect records first live-use binary/version; version
+drift warns on resume without invalidating completed results. Only `configuration get/set` remain
+stubs. See [durability](durability.md) before recovery and [inspection](inspection.md) for saved
+status.
 
 ## Execution policy flags
 

@@ -237,7 +237,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
    Behavior & edge semantics / Operations / Out of scope / Open questions.
    Return only the spec markdown.`,
 
-        // Original effort: 'high' — no matching ClaudeOptions control.
+        effort: 'high',
       })
       .then((result) => result.output);
 
@@ -261,7 +261,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
      gap with a concrete fix.
      Spec:\n---\n${spec}\n---`,
             schema: VERIFY_SCHEMA,
-            // Original effort: 'high' — no matching ClaudeOptions control.
+            effort: 'high',
           })
           .then((result) => result.output),
       () =>
@@ -275,7 +275,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
      in the Decisions section — flag invented scope.
      Spec:\n---\n${spec}\n---`,
             schema: VERIFY_SCHEMA,
-            // Original effort: 'high' — no matching ClaudeOptions control.
+            effort: 'high',
           })
           .then((result) => result.output),
     ]);
@@ -303,7 +303,9 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
           ...args.$claude,
           prompt: `Write this spec to ${args.out} and return the path:\n${spec}`,
 
-          // Original phase: 'Verify'; effort: 'low' — no matching ClaudeOptions control.
+          // Original phase: 'Verify'.
+
+          effort: 'low',
         })
         .then((result) => result.output);
     }
