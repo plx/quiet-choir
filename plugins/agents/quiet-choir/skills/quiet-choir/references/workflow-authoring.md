@@ -42,7 +42,7 @@ version requires a new run ID. See [durability](durability.md).
 
 | Operation                                                          | Return and composition                                                                   |
 | ------------------------------------------------------------------ | ---------------------------------------------------------------------------------------- |
-| `ctx.step(id, { input, schema, run, retry? })`                     | Validated result; stores that result and a hash of `input`/schema/retry                  |
+| `ctx.step(id, { input, schema, run, retry? })`                     | Validated result; stores that result and component hashes of `input` and schema          |
 | `ctx.claude.text(id, options)` / `ctx.codex.text(id, options)`     | `{ output: string, sessionId, usage }`                                                   |
 | `ctx.claude.object(id, { schema, ...options })` / Codex equivalent | Same wrapper with schema-inferred `output`                                               |
 | `ctx.map(items, concurrency, mapper)`                              | Ordered result array with at most `concurrency` active mappers; no checkpoint of its own |
@@ -50,8 +50,8 @@ version requires a new run ID. See [durability](durability.md).
 | `ctx.runId`                                                        | Stable run identifier                                                                    |
 | `ctx.signal`                                                       | AbortSignal for run cancellation                                                         |
 
-Prompts and options are also stored only as a hash, so inspection cannot reconstruct them from the
-checkpoint.
+Prompts and identity options are stored as component hashes. Resolved execution policy and requested
+model/effort are stored in plaintext per attempt; inspection cannot reconstruct prompts.
 
 Agent operations are already durable: call them directly from the workflow, not from inside
 `ctx.step`. Local `run` receives `{ signal, attempt, idempotencyKey }`. `attempt` is the total
@@ -83,10 +83,12 @@ Await all workflow operations. A mapper failure aborts the run, stops new schedu
 active workers. Parallel mappers share the working directory; use separate directories/worktrees
 when their edits could conflict. quiet-choir does not create these automatically.
 
-Local steps run once per execution unless given `retry: { maxAttempts: 3, delayMs: 100 }`.
+Local and agent steps run once per execution unless given `retry: { maxAttempts: 3, delayMs: 100 }`.
 `maxAttempts` counts attempts in the current execution; delay doubles up to 30 seconds. Only opt
-repeatable effects into retries. Agent calls have no retry option; explicit resume retries
-unfinished calls. Retry policy changes also affect step compatibility.
+repeatable effects into retries. Explicit resume retries unfinished calls. Retry and execution
+limits are policy, so changing them does not invalidate a saved step. Run-level `policy` rules
+override call-site fields and persist across resumes; see [durability](durability.md). Completed
+identity changes remain errors; unfinished identity changes are recorded as redefinitions.
 
 ## Data constraints
 

@@ -43,6 +43,14 @@ Each step records `kind` (`step`, `claude`, `codex`, `sleep`), `status`, total `
 completed agent steps, `output` is the full `{ output, sessionId, usage }` wrapper: the model's
 answer is at `steps[stepId].output.output`.
 
+Version 2 adds run `policy`, `allowModelOverride`, and `policyWarnings`. Each step has component
+`identity` hashes and `attemptHistory`: each attempt records its fingerprint, resolved `policy`,
+value `sources`, `requestedModel`, `reasoningEffort`, `startedAt`, `finishedAt`, `status`, and
+`error`. A `running` attempt has no saved settlement. Redefined unfinished steps retain old hashes
+and change times in `redefinitions`; unvisited unfinished steps become `superseded` after a
+successful body replay. Existing completed work still must be visited. Version 1 records can be
+inspected, but this runtime refuses their resumption.
+
 ## Interpreting apparent stalls
 
 `running` is a persisted state, not proof of a live process. A crash or checkpoint-write failure can
@@ -61,8 +69,8 @@ invocation-cancelled, operation-aborted, interrupt, or root-cause error. Start f
 ## Live events
 
 Run with `--log-level debug` to log `step.started`, `step.completed`, `step.replayed`, and
-`step.failed` events to stderr. `runWorkflow` also accepts an `onEvent(event)` callback returning
-`void | Promise<void>`:
+`step.failed`, `step.redefined`, and `step.superseded` events to stderr. `runWorkflow` also accepts
+an `onEvent(event)` callback returning `void | Promise<void>`:
 
 ```ts
 onEvent: (event) => {

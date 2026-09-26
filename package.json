@@ -64,7 +64,7 @@
     "postpack": "rimraf oclif.manifest.json",
     "prepack": "npm run build && npm run manifest",
     "test": "vitest run",
-    "test:cli": "node ./test/cli-smoke.mjs",
+    "test:cli": "node ./test/cli-smoke.mjs && node ./test/policy-cli-smoke.mjs",
     "test:coverage": "vitest run --coverage",
     "test:watch": "vitest",
     "typecheck": "tsc --project tsconfig.json",

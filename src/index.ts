@@ -36,6 +36,8 @@ export type {
   RunRecord,
   StepRecord,
   FailedAttempt,
+  AttemptRecord,
+  StepRedefinition,
   ReadRunOptions,
 } from './workflow/runtime/store.js';
 export { CliHarness } from './harnesses/cli.js';
@@ -47,3 +49,5 @@ export { claudeOptionsSchema, codexOptionsSchema } from './workflow/runtime/opti
 
 export { resolveStateDir } from './workflow/runtime/paths.js';
 export type { StateDirectoryOptions } from './workflow/runtime/paths.js';
+export type { ExecutionPolicy, PolicyOverride, AttemptPolicy } from './workflow/runtime/policy.js';
+export type { StepIdentity } from './workflow/runtime/identity.js';

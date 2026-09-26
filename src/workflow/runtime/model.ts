@@ -12,8 +12,10 @@ export interface AgentOptions {
   readonly model?: string;
   /** Working directory, relative to the workflow run's working directory. */
   readonly cwd?: string;
-  /** Wall-clock deadline in milliseconds. CliHarness default: 120,000; the core supplies no default. Custom harnesses must enforce their own deadline. */
+  /** Wall-clock deadline in milliseconds. CliHarness default: 900,000; custom harnesses must enforce their own deadline. */
   readonly timeoutMs?: number;
+  /** Explicit runtime retries for calls safe to repeat; not part of replay identity. */
+  readonly retry?: RetryPolicy;
 }
 
 /** Claude-specific controls. CliHarness denies unapproved tools by default. */
@@ -22,7 +24,7 @@ export interface ClaudeOptions extends AgentOptions {
   readonly tools?: readonly string[];
   /** Explicit tool permissions for this invocation. */
   readonly allowedTools?: readonly string[];
-  /** Maximum agent turns. CliHarness default: 3; the core supplies no default. */
+  /** Maximum agent turns. CliHarness default: 25; the core supplies no default. */
   readonly maxTurns?: number;
   /** Per-call USD limit. CliHarness default: 0.25, enforced by Claude; the core supplies no default. */
   readonly maxBudgetUsd?: number;
@@ -85,6 +87,8 @@ export interface HarnessResponse {
 
 /** Replaceable integration port, also useful for deterministic tests. */
 export interface Harness {
+  /** Report effective adapter limits for attempt records. Omit unknown defaults; never perform effects here. */
+  policyDefaults?(provider: HarnessRequest['provider']): ExecutionPolicy;
   /** Invoke one fresh session; enforce your own limits, settle on abort, and reject process/protocol failure. */
   invoke(request: HarnessRequest, signal: AbortSignal): Promise<HarnessResponse>;
 }
@@ -184,4 +188,57 @@ export function defineWorkflow<TInput, TOutput>(
     throw new Error('Workflow name and version must be nonempty.');
   }
   return definition;
+}
+
+/** Execution limits reported by an adapter or resolved for an attempt. Never step identity. */
+export interface ExecutionPolicy {
+  /** Wall-clock deadline enforced by the harness. */
+  readonly timeoutMs?: number;
+  /** Claude turn limit. */
+  readonly maxTurns?: number;
+  /** Claude per-call spend limit. */
+  readonly maxBudgetUsd?: number;
+  /** Runtime retry policy; repeated effects remain at least once. */
+  readonly retry?: RetryPolicy;
+  /** Adapter's combined stdout/stderr cap. */
+  readonly maxOutputBytes?: number;
+  /** Adapter's termination grace period. */
+  readonly killGraceMs?: number;
+  /** Adapter executable name or path, when known. */
+  readonly binary?: string;
+}
+
+/** A run-level policy rule. Later matching rules win, field by field. */
+export interface PolicyOverride {
+  /** Step-ID glob: * stays within a segment; ** crosses slashes. Omission matches all IDs. */
+  readonly match?: string;
+  /** Limit the rule to an effect category. Sleep does not accept policy overrides. */
+  readonly kind?: 'claude' | 'codex' | 'step';
+  /** Harness wall-clock deadline in milliseconds. */
+  readonly timeoutMs?: number;
+  /** Claude turn limit. */
+  readonly maxTurns?: number;
+  /** Claude spend limit in USD. */
+  readonly maxBudgetUsd?: number;
+  /** Retry only effects safe to repeat. */
+  readonly retry?: RetryPolicy;
+  /** Explicitly authorized model replacement for unfinished calls only. */
+  readonly model?: string;
+  /** Explicitly authorized Codex effort replacement for unfinished calls only. */
+  readonly reasoningEffort?: CodexOptions['reasoningEffort'];
+}
+
+/** Fully resolved runtime retry policy plus adapter-declared limits and their provenance. */
+export interface AttemptPolicy {
+  /** Limits used for this attempt; custom adapters may leave unknown defaults absent. */
+  readonly policy: ExecutionPolicy & {
+    /** Runtime retry values after filling in maxAttempts and delayMs. */
+    readonly retry: Required<RetryPolicy>;
+  };
+  /** Value origins: runtime, harness, call-site, or override:N (zero-based saved rule index). */
+  readonly sources: Readonly<Record<string, string>>;
+  /** Explicit model sent to the harness; null means its own configuration chooses. */
+  readonly requestedModel: string | null;
+  /** Explicit effort sent to Codex; null means its own configuration chooses. */
+  readonly reasoningEffort: CodexOptions['reasoningEffort'] | null;
 }

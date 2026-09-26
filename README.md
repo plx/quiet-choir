@@ -135,10 +135,12 @@ not apply to it.
 A local effect might use `ctx.step('read', { input: { path }, schema: z.string(), run: ... })`.
 Callbacks receive `{ signal, attempt, idempotencyKey }`. Opt into retries only for repeatable
 effects, with `retry: { maxAttempts: 3, delayMs: 100 }`; delays double up to 30 seconds. Agent
-effects have no automatic retries. A later explicit resume retries unfinished effects, including
-failed agent calls. `ctx.runId` and `ctx.signal` expose run identity and cancellation. Only local
-callbacks receive `idempotencyKey`; agent calls have none and can repeat edits. Step dependencies,
-prompts, and options are stored as hashes, alongside the full validated result.
+effects also accept explicit retry policies; the default is one attempt. A later explicit resume
+retries unfinished effects, including failed agent calls. `ctx.runId` and `ctx.signal` expose run
+identity and cancellation. Only local callbacks receive `idempotencyKey`; agent calls have none and
+can repeat edits. Step dependencies, prompts, and identity options are stored as component hashes,
+alongside the full validated result. Resolved policy, requested model/effort, and provenance are
+recorded per attempt.
 
 For embedding, call `runWorkflow(definition, { runId, input, harness: new CliHarness() })`. Its
 output is typed from the workflow schema. Supply `signal`, `stateDir`, `cwd`, `onEvent`, and a code
@@ -155,6 +157,29 @@ values are omitted. Other invalid JSON names the step and offending JSON path. E
 correct an invalid option and resume when no step was recorded; CLI source edits still change the
 workflow fingerprint. Call-site validation runs during execution, not during `workflow validate`.
 
+To recover a timeout without editing CLI workflow source, resume with a sticky policy override:
+
+```sh
+node "$QC_CHECKOUT/bin/run.js" workflow execute review.workflow.ts \
+  --run-id review-1 --state-dir "$qc_state_dir" --resume \
+  --policy '{"match":"review","timeoutMs":600000}'
+```
+
+Use the original launch directory, state path, and absolute `QC_CHECKOUT`. Completed steps replay;
+only unfinished calls use the new deadline. Repeat `--policy` for ordered rules; later matching
+fields win over call-site options and adapter defaults. `--policy-reset` clears saved rules. A bare
+resume retains them. `model` and `reasoningEffort` overrides require `--allow-model-override` when
+added; completed calls never rerun because of policy. Embedded callers use `RunOptions.policy`,
+`policyReset`, and `allowModelOverride`, or edit call-site limits without changing their source
+fingerprint. Globs use `*` within segments and `**` across `/`.
+
+`CliHarness` defaults to 15 minutes, 25 Claude turns, and the unchanged $0.25 Claude per-call
+budget. Custom harnesses report known limits through optional `policyDefaults(provider)`; unknown
+defaults are not invented. `inspect --json` exposes saved rules and each step's `attemptHistory`,
+including resolved policy and its sources. New checkpoints use version 2. Version 1 remains
+inspectable but cannot resume with this runtime; retain the original runtime or choose a new run ID.
+See [the policy decision](docs/decisions/0005-step-identity-and-policy.md).
+
 ## Durability contract
 
 - The workflow body replays from the beginning. Keep orchestration deterministic; put file reads,
@@ -166,11 +191,11 @@ workflow fingerprint. Call-site validation runs during execution, not during `wo
 - Step IDs are unique within a run, including loop iterations and helper functions. Do not nest
   steps inside a step callback. Compose them with ordinary TypeScript functions at the workflow
   level.
-- Completed effects are reused by ID and an input/options/schema fingerprint. A changed fingerprint,
-  duplicate ID, or skipped recorded step fails instead of silently reusing incompatible results. The
-  skipped-step check happens after the body: a divergent resume can pay for remaining effects before
-  failing, and later resumes fail again. Once recorded, failed steps also require matching prompts,
-  options (including limits), resolved `cwd`, and schemas; size limits for the worst case.
+- Completed effects are reused by ID and semantic component hashes (kind, input/prompt, schema,
+  model/effort, capabilities, and resolved cwd). Errors name changed components. Timeout, turn,
+  budget, and retry policy do not affect identity. Unfinished identities may change with history
+  retained; unvisited unfinished records become `superseded`. Every completed step must still be
+  visited. That check runs after the body, so divergent control flow may perform new effects first.
 - The CLI also hashes local compiler-discovered dependencies and the nearest tsconfig. Inputs,
   workflow name/version, schema fingerprint, and working directory must match on resume. **Bump the
   workflow version when dependency packages, environment/configuration, or other semantics change.**
@@ -213,10 +238,10 @@ created 0600 and state/lock directories 0700; existing directory permissions are
 
 `CliHarness` applies these defaults; the core supplies none. Custom `Harness` implementations own
 their defaults and must enforce deadlines. Claude defaults to no built-in tools, `dontAsk`
-permissions, three turns, and a $0.25 per-call budget. Explicitly enable and allow tools through
+permissions, 25 turns, and a $0.25 per-call budget. Explicitly enable and allow tools through
 `tools` and `allowedTools`. MCP tools from config still load; `allowedTools` adds pre-approvals to
 settings allow rules, and `dontAsk` denies the rest. Codex defaults to a read-only sandbox and
-approvals set to `never`; opt into `workspace-write` per call. Both have a 120-second wall-clock
+approvals set to `never`; opt into `workspace-write` per call. Both have a 15-minute wall-clock
 limit and an 8 MiB combined output limit. Codex does not expose an equivalent per-call USD cap here.
 Model selection is explicit or inherited from the installed harness. Codex `reasoningEffort` accepts
 only `minimal|low|medium|high` here. Codex 0.157.1 also recognizes `none`, `xhigh`, and `max`;

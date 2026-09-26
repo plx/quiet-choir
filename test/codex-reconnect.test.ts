@@ -148,7 +148,7 @@ it('completes the captured reconnect turn, persists warnings, and replays withou
   expect(await readFile(calls, 'utf8')).toBe('call\n');
 });
 
-it('replays an agent checkpoint captured before warnings were supported', async () => {
+it('keeps version 1 inspectable but refuses policy-era replay without changing the checkpoint', async () => {
   const stateDir = await directory();
   await writeFile(
     join(stateDir, 'legacy.json'),
@@ -163,18 +163,22 @@ it('replays an agent checkpoint captured before warnings were supported', async 
       return (await ctx.codex.text('agent', { prompt: 'fixture' })).output;
     },
   });
-  const result = await runWorkflow(workflow, {
-    runId: 'legacy',
-    stateDir,
-    cwd: '/fixture',
-    resume: true,
-    harness: {
-      invoke() {
-        throw new Error('must replay without invoking');
+  const before = await readFile(join(stateDir, 'legacy.json'), 'utf8');
+  await expect(
+    runWorkflow(workflow, {
+      runId: 'legacy',
+      stateDir,
+      cwd: '/fixture',
+      resume: true,
+      harness: {
+        invoke() {
+          throw new Error('must replay without invoking');
+        },
       },
-    },
-  });
-  expect(result.output).toBe('legacy answer');
-  expect(result.steps['agent']?.attempts).toBe(1);
-  expect(result.steps['agent']?.warnings).toBeUndefined();
+    }),
+  ).rejects.toThrow('Checkpoint format version 1 cannot resume');
+  expect(await readFile(join(stateDir, 'legacy.json'), 'utf8')).toBe(before);
+  const saved = await readRun({ stateDir, runId: 'legacy' });
+  expect(saved.steps['agent']?.attempts).toBe(1);
+  expect(saved.steps['agent']?.warnings).toBeUndefined();
 });
