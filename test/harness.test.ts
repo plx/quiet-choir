@@ -5,8 +5,21 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { CliHarness } from '../src/harnesses/cli.js';
-import { parseClaude, parseCodex } from '../src/harnesses/protocol.js';
-import type { HarnessRequest } from '../src/workflow/runtime/model.js';
+import {
+  parseClaude as classifyClaude,
+  parseCodex as classifyCodex,
+  type ProtocolOutcome,
+} from '../src/harnesses/protocol.js';
+import type { HarnessRequest, HarnessResponse } from '../src/workflow/runtime/model.js';
+
+// Existing success/malformed-shape checks exercise the classified parser result.
+function response(outcome: ProtocolOutcome): HarnessResponse {
+  if (outcome.kind === 'success') return outcome.response;
+  throw new Error(outcome.kind === 'failure' ? outcome.failure.reason : outcome.reason);
+}
+const parseClaude = (stdout: string, structured: boolean): HarnessResponse =>
+  response(classifyClaude(stdout, structured));
+const parseCodex = (stdout: string): HarnessResponse => response(classifyCodex(stdout));
 
 const directories: string[] = [];
 const signal = new AbortController().signal;
@@ -323,13 +336,13 @@ describe('headless CLI adapter', () => {
   it.each([
     [
       "process.stderr.write('authentication needed'); process.exit(2)",
-      'code 2: authentication needed',
+      'stderr: authentication needed',
     ],
     ["process.kill(process.pid, 'SIGTERM')", 'SIGTERM'],
     ["console.log('not JSON')", 'malformed JSON'],
     [
-      `console.log(${JSON.stringify(JSON.stringify({ ...success, is_error: true }))})`,
-      'Claude reported success',
+      `console.log(${JSON.stringify(JSON.stringify({ ...success, is_error: true }))}); process.exitCode = 1`,
+      'claude success: hello [exit code 1]',
     ],
   ])('rejects failed subprocesses and invalid protocols', async (script, expected) => {
     const { binary } = await fixture(script);
