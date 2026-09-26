@@ -45,6 +45,15 @@ and token usage were zero. The observed response had **both** `subtype: "success
 process status and the error field, rather than treating the subtype as sufficient evidence of
 success. This attempt verifies the failure path, not a successful Claude completion.
 
+The September 26 review (Claude 2.1.283, Codex 0.157.1) confirmed that real terminal errors normally
+exit 1 with the reason on stdout, often with empty stderr. The adapter now classifies stdout even on
+nonzero exit, unwraps Codex API errors, and throws an exported `HarnessError` carrying process
+status, protocol diagnostics, session metadata, and reported usage. Failed-attempt usage is retained
+in the checkpoint across resumes. A parsed error also fails on exit 0; an exit-1 success envelope
+still fails and retains its usage. Deadline, cancellation, and output-limit kills may have no
+terminal envelope and cannot recover unreported usage. Sanitized captures and refresh instructions
+are in [CONTRIBUTING](../CONTRIBUTING.md#harness-protocol-captures).
+
 Installed CLI help confirms that `--tools ''` disables built-in tools, `--strict-mcp-config`
 excludes ambient MCP configuration, and `dontAsk` is available as a permission mode. It also states
 that `--bare` never reads OAuth or keychain credentials, so bare mode would prevent the intended

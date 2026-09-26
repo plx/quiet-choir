@@ -4,6 +4,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 
 import { z } from 'zod';
 
+import { HarnessError } from './harness-error.js';
 import { digest, jsonValue } from './json.js';
 import type {
   AgentClient,
@@ -279,6 +280,13 @@ export async function runWorkflow<TInput, TOutput>(
         } catch (error) {
           step.status = 'failed';
           step.error = message(error);
+          if (error instanceof HarnessError) {
+            (step.failedAttempts ??= []).push({
+              attempt: step.attempts,
+              sessionId: error.sessionId,
+              usage: error.usage,
+            });
+          }
           await save();
           emit('step.failed', id, step);
           if (signal.aborted || attempt >= maxAttempts) throw error;

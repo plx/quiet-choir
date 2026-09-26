@@ -20,8 +20,16 @@ export interface ProcessRequest {
   readonly signal: AbortSignal;
 }
 
-/** Run one bounded subprocess, cleaning up its process group on cancellation. */
-export function runProcess(request: ProcessRequest): Promise<string> {
+/** Captured output and termination status for a bounded process. */
+export interface ProcessResult {
+  readonly code: number | null;
+  readonly signal: NodeJS.Signals | null;
+  readonly stdout: string;
+  readonly stderr: string;
+}
+
+/** Capture every exit; reject only spawn, cancellation, deadline, and output-limit failures. */
+export function runProcess(request: ProcessRequest): Promise<ProcessResult> {
   request.signal.throwIfAborted();
   return new Promise((resolve, reject) => {
     const child = spawn(request.binary, [...request.args], {
@@ -105,14 +113,13 @@ export function runProcess(request: ProcessRequest): Promise<string> {
         // Also reap descendants if the group leader exited first.
         kill('SIGKILL');
         reject(failure);
-      } else if (code !== 0) {
-        const detail = Buffer.concat(stderr).toString('utf8').trim().slice(-4096);
-        reject(
-          new Error(
-            `${request.binary} exited with ${signal ?? `code ${String(code)}`}${detail ? `: ${detail}` : '.'}`,
-          ),
-        );
-      } else resolve(Buffer.concat(stdout).toString('utf8'));
+      } else
+        resolve({
+          code,
+          signal,
+          stdout: Buffer.concat(stdout).toString('utf8'),
+          stderr: Buffer.concat(stderr).toString('utf8'),
+        });
     });
     request.signal.addEventListener('abort', abort, { once: true });
     // Cancellation may have occurred while spawn was being set up.

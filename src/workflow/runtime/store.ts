@@ -6,7 +6,17 @@ import { join, resolve } from 'node:path';
 import { z } from 'zod';
 
 import { jsonValue } from './json.js';
-import type { JsonValue } from './model.js';
+import type { AgentUsage, JsonValue } from './model.js';
+
+/** Usage recovered from one failed harness attempt, retained across resumes. */
+export interface FailedAttempt {
+  /** One-based attempt number within this effect. */
+  readonly attempt: number;
+  /** Native session identifier, when available. */
+  readonly sessionId: string | null;
+  /** Usage reported before failure, or null when the protocol did not report it. */
+  readonly usage: AgentUsage | null;
+}
 
 /** Persisted state of one effect. */
 export interface StepRecord {
@@ -24,6 +34,8 @@ export interface StepRecord {
   error: string | null;
   /** Persisted deadline for sleep steps. */
   wakeAt: number | null;
+  /** Failed harness attempt measurements; absent in older checkpoints. */
+  failedAttempts?: FailedAttempt[];
 }
 
 /** Local checkpoint format. The format is intentionally versioned independently of workflows. */
@@ -76,6 +88,21 @@ const stepSchema = z.object({
   output: jsonSchema,
   error: z.string().nullable(),
   wakeAt: z.number().nullable(),
+  failedAttempts: z
+    .array(
+      z.object({
+        attempt: z.number().int().positive(),
+        sessionId: z.string().nullable(),
+        usage: z
+          .object({
+            inputTokens: z.number().nonnegative().nullable(),
+            outputTokens: z.number().nonnegative().nullable(),
+            costUsd: z.number().nonnegative().nullable(),
+          })
+          .nullable(),
+      }),
+    )
+    .optional(),
 });
 const stepsSchema = z.custom<Record<string, StepRecord>>(
   (value) =>

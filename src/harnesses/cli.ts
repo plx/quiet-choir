@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 
 import type { Harness, HarnessRequest, HarnessResponse } from '../workflow/runtime/model.js';
+import { HarnessError } from '../workflow/runtime/harness-error.js';
 import { runProcess } from './process.js';
 import { parseClaude, parseCodex } from './protocol.js';
 
@@ -106,7 +107,7 @@ export class CliHarness implements Harness {
       }
       if (request.options.model !== undefined) args.push('--model', request.options.model);
       if (request.provider === 'codex') args.push('-');
-      const stdout = await runProcess({
+      const result = await runProcess({
         binary,
         args,
         cwd: request.cwd,
@@ -116,9 +117,26 @@ export class CliHarness implements Harness {
         killGraceMs: this.killGraceMs,
         signal,
       });
-      return request.provider === 'claude'
-        ? parseClaude(stdout, request.outputSchema !== null)
-        : parseCodex(stdout);
+      const outcome =
+        request.provider === 'claude'
+          ? parseClaude(result.stdout, request.outputSchema !== null)
+          : parseCodex(result.stdout);
+      if (result.code === 0 && result.signal === null && outcome.kind === 'success')
+        return outcome.response;
+      throw new HarnessError({
+        provider: request.provider,
+        exit: { code: result.code, signal: result.signal },
+        failure: outcome.kind === 'failure' ? outcome.failure : null,
+        reason:
+          outcome.kind === 'unparseable'
+            ? outcome.reason
+            : 'process failed after a successful protocol result',
+        stderr: result.stderr,
+        stdout: result.stdout,
+        ...(outcome.kind === 'success'
+          ? { usage: outcome.response.usage, sessionId: outcome.response.sessionId }
+          : {}),
+      });
     } finally {
       if (schemaDirectory !== undefined)
         await rm(schemaDirectory, { recursive: true, force: true });
