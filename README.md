@@ -1,140 +1,182 @@
 # quiet-choir
 
-Harness-agnostic dynamic workflows for agents.
+Write agent workflows in TypeScript. Call Claude Code and Codex through dedicated typed APIs, use
+ordinary loops and branches, and resume from local checkpoints after a failure.
 
-**Status:** This project is at the CLI spike stage. The package is intentionally private and
-versioned `0.0.0` until its workflow contracts and release policy are ready.
+**Status: serious prototype spike, version 0.0.0, private package.** The CLI, runtime, and both
+harness adapters work. This is a local execution engine with at-least-once effects, not a production
+service.
 
-## Direction
+## Try it without an agent subscription
 
-`quiet-choir` is intended to provide reusable workflow definitions and orchestration without tying a
-workflow to a particular coding-agent harness, model provider, or execution environment.
-
-The initial repository establishes the engineering baseline: strict TypeScript, ESM, tests and
-coverage, linting, formatting, package validation, generated API documentation, and CI. Product APIs
-will be added incrementally rather than guessed up front.
-
-## Requirements
-
-- Node.js 24 LTS is the recommended development runtime. CI also verifies the minimum Node.js 22.13
-  release and the current even-numbered Node.js 26 line; odd-numbered releases are not supported.
-- npm 10.9 or newer.
-- [`just`](https://just.systems/) is optional; every recipe delegates to an npm script.
-
-## Setup
+Use Node.js 24 LTS (also supported: 22.13+ and 26) and npm 10.9+.
 
 ```sh
-nvm use
 npm ci
+npm run build
+npm run cli -- workflow execute examples/local.workflow.ts --run-id first
+npm run cli -- workflow inspect first
+```
+
+The local example uppercases words with bounded parallelism and checkpoints the results. To see
+recovery, deliberately fail its final step, then resume with the same command and `--resume`:
+
+```sh
+npm run cli -- workflow execute examples/local.workflow.ts \
+  --run-id recovery --input '{"failOnce":true}'
+# Expected: exit 1, after the word steps have completed.
+
+npm run cli -- workflow execute examples/local.workflow.ts --run-id recovery --resume
+# Word steps replay from disk; only the failed summary step executes again.
+```
+
+The CLI prints the run ID before executing. Without `--run-id`, it generates one. Reusing an
+existing ID requires `--resume`; a completed run returns its saved output without calling any
+harness.
+
+## Author a workflow
+
+Workflows default-export `defineWorkflow(...)`. Input, final output, and structured agent responses
+use [Zod](https://zod.dev/) schemas for both TypeScript inference and runtime validation.
+
+```ts
+import { defineWorkflow, z } from 'quiet-choir';
+
+export default defineWorkflow({
+  name: 'review-label',
+  version: '1',
+  input: z.object({ topic: z.string() }),
+  output: z.object({ label: z.string(), accepted: z.boolean() }),
+  async run(ctx, input) {
+    const proposal = await ctx.claude.object('propose', {
+      prompt: `Suggest a short label for: ${input.topic}`,
+      model: 'haiku',
+      schema: z.object({ label: z.string() }),
+    });
+    const review = await ctx.codex.object('review', {
+      prompt: `Is this label clear? ${proposal.output.label}`,
+      schema: z.object({ accepted: z.boolean() }),
+    });
+    return { label: proposal.output.label, accepted: review.output.accepted };
+  },
+});
+```
+
+The checked-in [duet example](examples/duet.workflow.ts) is a small real two-harness workflow:
+
+```sh
+npm run cli -- workflow validate examples/duet.workflow.ts
+npm run cli -- workflow execute examples/duet.workflow.ts \
+  --run-id duet --input '{"topic":"durable agent workflows"}'
+```
+
+Install and sign in to `claude` and `codex` separately. The adapters invoke the installed CLIs and
+inherit their authentication and configuration; no separate provider API key is required. The source
+examples import `../src/index.js` so they work directly in this private repository. An installed
+consumer imports `quiet-choir` as above.
+
+## Operations
+
+| API                                             | Behavior                                                                |
+| ----------------------------------------------- | ----------------------------------------------------------------------- |
+| `ctx.claude.text(id, options)`                  | Durable Claude text result                                              |
+| `ctx.claude.object(id, { schema, ...options })` | Durable, validated Claude structured result                             |
+| `ctx.codex.text` / `ctx.codex.object`           | Equivalent Codex APIs with Codex-specific options                       |
+| `ctx.step(id, { input, schema, run, retry? })`  | Checkpoint a local effect; explicit dependencies detect replay drift    |
+| `ctx.map(items, concurrency, mapper)`           | Bounded fan-out, ordered results; use unique step IDs inside the mapper |
+| `ctx.sleep(id, milliseconds)`                   | Persist a wake time and wait only the remaining time after resume       |
+
+Agent results contain `output`, native `sessionId`, and reported token/cost `usage`. Native session
+IDs are diagnostic metadata; each effect starts a fresh harness session. `object` sends JSON Schema
+to the harness and validates the returned JSON locally. Use JSON-compatible schemas, preferably
+required object properties for portable structured responses. Schema transforms and class-valued
+schemas cannot be converted to the portable JSON Schema contract.
+
+A local effect might use `ctx.step('read', { input: { path }, schema: z.string(), run: ... })`.
+Callbacks receive `{ signal, attempt, idempotencyKey }`. Opt into retries only for repeatable
+effects, with `retry: { maxAttempts: 3, delayMs: 100 }`; delays double up to 30 seconds. Agent
+effects have no automatic retries. A later explicit resume retries unfinished effects, including
+failed agent calls.
+
+For embedding, call `runWorkflow(definition, { runId, input, harness: new CliHarness() })`. Its
+output is typed from the workflow schema. Supply `signal`, `stateDir`, `cwd`, `onEvent`, and a code
+`fingerprint` as needed. The core depends on a `Harness` interface, so tests and alternative
+integrations can replace subprocesses without changing workflows.
+
+## Durability contract
+
+- The workflow body replays from the beginning. Keep orchestration deterministic; put file reads,
+  randomness, clocks, network calls, and other effects inside steps. Await every workflow operation.
+- Step IDs are unique within a run, including loop iterations and helper functions. Do not nest
+  steps inside a step callback. Compose them with ordinary TypeScript functions at the workflow
+  level.
+- Completed effects are reused by ID and an input/options/schema fingerprint. A changed fingerprint,
+  duplicate ID, or skipped recorded step fails instead of silently reusing incompatible results.
+- The CLI also hashes local compiler-discovered dependencies and the nearest tsconfig. Inputs,
+  workflow name/version, schema fingerprint, and working directory must match on resume. **Bump the
+  workflow version when dependency packages, environment/configuration, or other semantics change.**
+  Dynamic imports assembled at runtime, external files, and node_modules are not fully
+  fingerprinted.
+- Results must be lossless JSON. Undefined, NaN, infinities, negative zero, functions, cycles,
+  sparse arrays, getters, and class instances are rejected. Checkpoints contain data, never
+  callbacks.
+- Checkpoints use flushed temporary files, atomic rename, and an exclusive local writer lock. Dead
+  local owners can be recovered; live or foreign-host owners are refused. Incomplete lock metadata
+  or an abandoned recovery requires inspection and manual cleanup. Use a local POSIX filesystem.
+- Effects are **at least once**: if a process dies after an external action succeeds but before its
+  result is saved, resume can repeat it. Use `idempotencyKey` with external systems that support
+  deduplication. Hard-killing the runner may also leave harness children running; stop them before
+  resuming. Native harness conversation state and workspace mutations are not transactional.
+- Cancellation cooperatively aborts active work and drains it before releasing ownership. Local
+  callbacks must honor their signal. A failed map cancels the run and stops scheduling more items.
+
+This spike has no background scheduler, distributed workers, execution migration, human-approval
+inbox, durable event delivery, global spending ledger, or automatic worktree isolation. Sleep waits
+in the current process. Checkpoints store workflow input/output and error messages in plaintext with
+restrictive creation modes; `.quiet-choir/` is gitignored.
+
+## Harness defaults and limits
+
+Claude defaults to no built-in tools, `dontAsk` permissions, three turns, and a $0.25 per-call
+budget. Explicitly enable and allow tools through `tools` and `allowedTools`. Codex defaults to a
+read-only sandbox and approvals set to `never`; opt into `workspace-write` per call. Both have a
+120-second wall-clock limit and an 8 MiB combined output limit. Codex does not expose an equivalent
+per-call USD cap here. Model selection is explicit or inherited from the installed harness.
+
+Prompts go over stdin without a shell. Timeouts and cancellation terminate process groups on
+macOS/Linux; Windows cleanup reaches the immediate child only. These flags do not sandbox the
+workflow's own TypeScript or isolate inherited hooks, MCP servers, and harness configuration. Use
+trusted workflow files and a working directory/configuration suitable for the task.
+
+## CLI and development
+
+```sh
+npm run cli:dev -- workflow typecheck examples/local.workflow.ts
+npm run cli:dev -- workflow validate examples/local.workflow.ts --json
+npm run cli:dev -- workflow inspect recovery --json
 npm run check
 ```
 
-Conductor workspaces run `npm ci` automatically and expose test and TypeScript watch tasks.
+`execute` typechecks before importing the workflow. `validate` typechecks and verifies its export
+contract without calling `run`; importing either command's workflow **executes module top-level
+code**. `typecheck` performs no imports or effects. `inspect` reads a saved run without importing
+workflow code. Use `--state-dir PATH` for alternate storage and `--json` for machine-readable
+output. Do not write to stdout from workflow code when consuming JSON CLI output.
 
-## CLI spike
+Inherited `--log-level trace|debug|info|warn|error|fatal|silent` and `-v, --verbose` go after the
+command name and are mutually exclusive. Configuration commands remain explicit stubs (exit 2);
+layered project/user settings are deferred.
 
-Run the TypeScript sources directly while developing:
+`npm run check` includes formatting, lint, strict typechecking, tests with coverage gates, build,
+compiled CLI smoke tests, TypeDoc validation, and package checks. No automated test calls a paid
+harness. The prototype was live-tested with Codex 0.153.4 on a tiny structured response; Claude
+2.1.252 returned an expired-OAuth error before inference, so its successful integration is verified
+with fixtures only until credentials are refreshed.
 
-```sh
-npm run cli:dev -- --help
-npm run cli:dev -- workflow typecheck ./path/to/workflow.ts
-```
-
-Or run the compiled launcher after `npm run build`:
-
-```sh
-npm run cli -- workflow typecheck ./path/to/workflow.ts
-```
-
-The initial oclif command tree is:
-
-```text
-quiet-choir
-├── workflow
-│   ├── execute       (placeholder)
-│   ├── validate      (placeholder)
-│   └── typecheck     Type-check a TypeScript workflow
-├── configuration
-│   ├── doctor        (placeholder)
-│   ├── get           (placeholder)
-│   └── set           (placeholder)
-└── info
-    └── version       Show the running package version
-```
-
-Placeholder commands print their status and exit with code 2 so scripts do not mistake them for
-successful implementations.
-
-Every command inherits `--log-level trace|debug|info|warn|error|fatal|silent` (default `info`) and
-`-v, --verbose`, which selects `trace`. The two flags are mutually exclusive. Because oclif selects
-the command before parsing inherited flags, place them after the complete command name:
-`quiet-choir workflow execute --verbose`.
-
-`workflow typecheck` requires an existing `.ts`, `.tsx`, `.mts`, or `.cts` file. It applies the
-closest `tsconfig.json`, but replaces that config's roots with the requested entrypoint so imported
-dependencies and configured ambient declaration files are checked without reporting unrelated
-implementation files. Declaration files cannot be workflow entrypoints. It always disables emit and
-forces semantic checking. Without a `tsconfig.json`, it uses strict ES2023/NodeNext defaults and the
-Node 22 declarations matching quiet-choir's minimum supported runtime. Results identify the embedded
-compiler version.
-
-## Common commands
-
-| npm                     | just              | Purpose                                  |
-| ----------------------- | ----------------- | ---------------------------------------- |
-| `npm run dev`           | `just dev`        | Rebuild TypeScript on changes            |
-| `npm run cli:dev -- …`  | —                 | Run the CLI directly from TypeScript     |
-| `npm run cli -- …`      | —                 | Run the compiled CLI                     |
-| `npm test`              | `just test`       | Run tests once                           |
-| `npm run test:watch`    | `just test-watch` | Run tests interactively                  |
-| `npm run test:coverage` | `just coverage`   | Run tests with coverage gates            |
-| `npm run format`        | `just format`     | Format source and configuration          |
-| `npm run lint`          | `just lint`       | Run type-aware lint rules                |
-| `npm run typecheck`     | `just typecheck`  | Type-check without emitting              |
-| `npm run build`         | `just build`      | Emit ESM, declarations, and source maps  |
-| `npm run docs`          | `just docs`       | Generate the TypeDoc site in `docs/api/` |
-| `npm run check`         | `just check`      | Reproduce all required CI checks         |
-
-## Project structure
-
-```text
-src/                 Production TypeScript and the public package entry point
-test/                Behavior-focused Vitest tests
-docs/                Hand-written guides and generated API documentation
-.github/workflows/   CI, dependency review, and documentation deployment
-.conductor/          Shared Conductor workspace scripts
-```
-
-See [Architecture](docs/architecture.md) for dependency-direction and documentation conventions.
-Durable cross-cutting choices are recorded in
-[architecture decision records](docs/decisions/README.md).
-
-The spike deliberately does not implement layered `.quiet-choir` settings. Oclif exposes a
-platform-specific user configuration directory, but it does not provide recursive project settings
-discovery or closest-wins merging. That application-level resolver will be designed separately when
-its schema and precedence rules are known.
-
-## Documentation
-
-Public exports should have TypeDoc-compatible doc comments and be re-exported from `src/index.ts`.
-`npm run docs:check` treats broken links and undocumented public APIs as validation failures.
-Changes merged to `main` are built and published by the GitHub Pages workflow after the repository's
-Pages source is set to **GitHub Actions**.
-
-## One-time repository settings
-
-After this scaffold reaches `main`:
-
-1. Set GitHub Pages to use **GitHub Actions** as its source.
-2. Enable Dependabot alerts, Dependabot security updates, and private vulnerability reporting.
-3. Protect `main` with pull requests and the CI, dependency-review, and CodeQL checks required.
-
-CodeQL is configured by `.github/workflows/codeql.yml`; do not also enable CodeQL default setup.
-
-## Contributing and security
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) for the development workflow. Please report vulnerabilities
-using the process in [SECURITY.md](SECURITY.md).
+Read [Architecture](docs/architecture.md), the
+[durability decision](docs/decisions/0002-durable-external-workflows.md), and
+[Claude API research](docs/research.md) for the reasoning and evidence behind the spike. See
+[CONTRIBUTING.md](CONTRIBUTING.md) and [SECURITY.md](SECURITY.md) for repository conventions.
 
 ## License
 

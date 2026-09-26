@@ -50,6 +50,8 @@ export interface TypecheckResult extends ExecutionResult {
   readonly entrypoint: string;
   readonly kind: 'workflow.typecheck.result';
   readonly ok: boolean;
+  /** Local source dependencies discovered by the compiler, including declarations. */
+  readonly sourceFiles: readonly string[];
 }
 
 /** Result of analyzing an entrypoint before execution. */
