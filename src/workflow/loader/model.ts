@@ -2,6 +2,7 @@ import type { ExecutionPlan, ExecutionResult } from '../../application/execution
 import type { JsonValue } from '../runtime/model.js';
 import type { PolicyOverride } from '../runtime/policy.js';
 import type { WorkflowRun } from '../runtime/runner.js';
+import type { ForkOptions, ResumeCheck, WorkflowIdentity } from '../runtime/replay-model.js';
 import type { TypecheckDiagnostic, TypecheckPlan } from '../typecheck/model.js';
 
 /** Plain-data instructions for checking and importing a trusted workflow module. */
@@ -22,6 +23,19 @@ export interface ExecuteWorkflowPlan extends ExecutionPlan {
   readonly policy?: readonly PolicyOverride[];
   readonly policyReset?: boolean;
   readonly allowModelOverride?: boolean;
+  readonly forkFrom?: ForkOptions;
+  readonly acceptCodeChange?: boolean;
+  readonly strictReplay?: boolean;
+}
+
+/** Read-only run-level compatibility inspection after checking/importing trusted source. */
+export interface CheckResumePlan extends ExecutionPlan {
+  readonly kind: 'workflow.check-resume';
+  readonly typecheck: TypecheckPlan;
+  readonly runId: string;
+  readonly stateDir: string;
+  readonly cwd: string;
+  readonly acceptCodeChange?: boolean;
 }
 
 /** Plain-data instructions for reading an existing run without importing workflow code. */
@@ -48,7 +62,13 @@ export type WorkflowCommandResult = ExecutionResult &
           readonly name: string;
           readonly version: string;
           readonly fingerprint: string;
+          readonly identity?: WorkflowIdentity;
         };
+      }
+    | {
+        readonly kind: 'workflow.check-resume.result';
+        readonly ok: true;
+        readonly check: ResumeCheck;
       }
     | {
         readonly kind: 'workflow.run.result';

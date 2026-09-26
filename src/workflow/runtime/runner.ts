@@ -1,5 +1,15 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { resolve } from 'node:path';
+import {
+  canonicalCwd,
+  compareResume,
+  workflowSnapshot,
+  type WorkflowCodeOptions,
+} from './compatibility.js';
+import { engineInfo, oldFormatMessage } from './engine.js';
+import { loadFork, pinnedFork, reuseCandidate, validateFork } from './fork.js';
+import type { ForkOptions, ResumeCheck } from './replay-model.js';
+import { schemaJson } from './schema.js';
 import { setTimeout as delay } from 'node:timers/promises';
 
 import { z } from 'zod';
@@ -48,7 +58,13 @@ export interface WorkflowEvent {
     | 'step.replayed'
     | 'step.failed'
     | 'step.redefined'
-    | 'step.superseded';
+    | 'step.superseded'
+    | 'step.reused'
+    | 'replay.divergence';
+  /** Replay divergence diagnosis, when relevant. */
+  readonly message?: string;
+  /** Previously completed steps not yet visited before a live effect. */
+  readonly skippedStepIds?: readonly string[];
   /** Owning execution. */
   readonly runId: string;
   /** Named effect. */
@@ -66,7 +82,7 @@ export type WorkflowRun<TOutput> = RunRecord & {
 };
 
 /** Explicit dependencies and execution policy for a workflow run. */
-export interface RunOptions {
+export interface RunOptions extends WorkflowCodeOptions {
   /** Required stable identifier. Reuse it with resume to continue an execution. */
   readonly runId: string;
   /** Checkpoint directory; defaults to .quiet-choir/runs under the working directory. */
@@ -81,8 +97,12 @@ export interface RunOptions {
   readonly harness?: Harness;
   /** Cancellation signal, forwarded to all active effects. */
   readonly signal?: AbortSignal;
-  /** Caller-provided code fingerprint; CLI supplies a hash of local TypeScript dependencies. */
-  readonly fingerprint?: string;
+  /** Create a new run, reusing completed effects from an immutable source snapshot. */
+  readonly forkFrom?: ForkOptions;
+  /** Explicitly accept only source/schema changes on resume; local callback identity still applies. */
+  readonly acceptCodeChange?: boolean;
+  /** Fail before a live effect when earlier completed steps have not been visited. */
+  readonly strictReplay?: boolean;
   /** Sticky rules appended to saved overrides; later matching values win. */
   readonly policy?: readonly PolicyOverride[];
   /** Discard saved rules before applying this invocation's rules. */
@@ -95,15 +115,6 @@ export interface RunOptions {
 
 function message(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
-}
-
-function schemaJson(schema: z.ZodType): JsonValue {
-  // Zod attaches non-enumerable implementation metadata to its generated schema.
-  // Serialize this trusted schema document before applying the checkpoint data rules.
-  const generated: unknown = JSON.parse(
-    JSON.stringify(z.toJSONSchema(schema, { target: 'draft-7' })),
-  );
-  return jsonValue(generated);
 }
 
 async function waitUntil(timestamp: number, signal: AbortSignal): Promise<void> {
@@ -123,13 +134,15 @@ export async function runWorkflow<TInput, TOutput>(
   if (!definition.name.trim() || !definition.version.trim())
     throw new Error('Workflow name and version must be nonempty.');
   const incomingPolicy = validatePolicy(options.policy ?? [], options.allowModelOverride ?? false);
-  const cwd = resolve(options.cwd ?? process.cwd());
+  if (options.forkFrom !== undefined && options.resume)
+    throw new Error('forkFrom creates a new run and cannot be combined with resume.');
+  if (options.acceptCodeChange && !options.resume)
+    throw new Error('acceptCodeChange requires resume.');
+  const fork = options.forkFrom === undefined ? undefined : validateFork(options.forkFrom);
+  const cwd = await canonicalCwd(options.cwd);
   const stateDir = resolveStateDir(options);
-  const fingerprint = digest({
-    code: options.fingerprint ?? null,
-    input: schemaJson(definition.input),
-    output: schemaJson(definition.output),
-  });
+  const snapshot = workflowSnapshot(definition, options);
+  const { fingerprint } = snapshot;
   const release = await lockRun(stateDir, options.runId);
   const controller = new AbortController();
   const abort = (): void => {
@@ -150,10 +163,21 @@ export async function runWorkflow<TInput, TOutput>(
       throw new Error(`Run ${options.runId} already exists; use resume or choose a new run ID.`);
     if (!existing && options.resume)
       throw new Error(`Run ${options.runId} does not exist; cannot resume.`);
-    if (existing?.formatVersion === 1)
-      throw new Error(
-        'Checkpoint format version 1 cannot resume with identity/policy separation. Inspect it with workflow inspect; use the original runtime to resume it or start a new run ID. No checkpoint was changed.',
-      );
+    if (existing && existing.formatVersion !== engineInfo.formatVersion)
+      throw new Error(oldFormatMessage(existing.formatVersion));
+    const forkStateDir =
+      fork === undefined
+        ? undefined
+        : await canonicalCwd(fork.stateDir === undefined ? stateDir : resolve(cwd, fork.stateDir));
+    if (fork?.runId === options.runId && forkStateDir === (await canonicalCwd(stateDir)))
+      throw new Error('A fork must use a different target checkpoint.');
+    let forkSource =
+      fork && forkStateDir ? await loadFork(fork.runId, forkStateDir, definition.name) : undefined;
+    let compatibility: ResumeCheck | undefined;
+    if (existing) {
+      compatibility = compareResume(definition, options, cwd, existing);
+      if (!compatibility.compatible) throw new Error(compatibility.message);
+    }
     const allowModelOverride =
       options.allowModelOverride ??
       (options.policyReset ? false : (existing?.allowModelOverride ?? false));
@@ -162,24 +186,17 @@ export async function runWorkflow<TInput, TOutput>(
       allowModelOverride,
     );
     const matchedPolicy = new Set<number>();
-    if (
-      existing &&
-      (existing.workflow.name !== definition.name ||
-        existing.workflow.version !== definition.version ||
-        existing.workflow.fingerprint !== fingerprint ||
-        existing.cwd !== cwd)
-    ) {
-      throw new Error(
-        'Workflow code, schemas, version, name, or working directory changed; start a new run.',
-      );
-    }
     const input = definition.input.parse(
-      options.input === undefined && existing ? existing.input : options.input,
+      options.input === undefined
+        ? existing
+          ? existing.input
+          : forkSource
+            ? forkSource.input
+            : options.input
+        : options.input,
     );
     const savedInput = jsonValue(input);
-    if (existing && digest(existing.input) !== digest(savedInput))
-      throw new Error('Workflow input changed; start a new run.');
-    if (existing?.status === 'completed') {
+    if (existing?.status === 'completed' && !options.acceptCodeChange) {
       const output = definition.output.parse(existing.output);
       if (
         incomingPolicy.length ||
@@ -200,14 +217,16 @@ export async function runWorkflow<TInput, TOutput>(
       return {
         ...existing,
         output: output as TOutput & JsonValue,
-        ...(existing.policyWarnings?.length ? { warnings: existing.policyWarnings } : {}),
+        ...(existing.policyWarnings?.length || existing.replayWarnings?.length
+          ? { warnings: [...(existing.policyWarnings ?? []), ...(existing.replayWarnings ?? [])] }
+          : {}),
       };
     }
     const now = new Date().toISOString();
     const record: RunRecord = existing ?? {
-      formatVersion: 2,
+      formatVersion: 3,
       id: options.runId,
-      workflow: { name: definition.name, version: definition.version, fingerprint },
+      workflow: { name: definition.name, version: definition.version, ...snapshot },
       cwd,
       input: savedInput,
       output: null,
@@ -217,6 +236,41 @@ export async function runWorkflow<TInput, TOutput>(
       createdAt: now,
       updatedAt: now,
     };
+    if (options.acceptCodeChange && compatibility) {
+      (record.codeChanges ??= []).push({
+        at: now,
+        from: record.workflow.fingerprint,
+        to: fingerprint,
+        files: [...compatibility.files],
+        components: [...compatibility.changed],
+      });
+      record.workflow = { name: definition.name, version: definition.version, ...snapshot };
+    }
+    if (fork && forkSource && forkStateDir) {
+      record.forkedFrom = {
+        runId: fork.runId,
+        stateDir: forkStateDir,
+        sourceDigest: digest(forkSource),
+        fingerprint: forkSource.workflow.fingerprint,
+        reuse: fork.reuse ?? 'prefix',
+        invalidate: [...(fork.invalidate ?? [])],
+        differences: [...compareResume(definition, { ...options, input }, cwd, forkSource).changed],
+        at: now,
+        cursor: 0,
+        reuseClosed: false,
+      };
+    } else if (record.forkedFrom) forkSource = await pinnedFork(record.forkedFrom);
+    const replayWarnings = (record.replayWarnings = record.forkedFrom?.warning
+      ? [record.forkedFrom.warning]
+      : []);
+    delete record.recoveryHint;
+    const previousCompleted = Object.entries(record.steps)
+      .filter(([, step]) => step.status === 'completed')
+      .map(([id, step]) => ({ id, seq: step.seq ?? 0 }));
+    let nextSeq =
+      Object.values(record.steps).reduce((highest, step) => Math.max(highest, step.seq ?? 0), 0) +
+      1;
+    let divergenceReported = false;
     record.policy = policy;
     record.allowModelOverride = allowModelOverride;
     record.policyWarnings = [];
@@ -271,10 +325,21 @@ export async function runWorkflow<TInput, TOutput>(
     const operations = new OperationTracker();
     const inEffect = new AsyncLocalStorage<boolean>();
     let closed = false;
-    const emit = (type: WorkflowEvent['type'], id: string, step: StepRecord): void => {
+    const emit = (
+      type: WorkflowEvent['type'],
+      id: string,
+      step: StepRecord,
+      details: { message?: string; skippedStepIds?: readonly string[] } = {},
+    ): void => {
       try {
         void Promise.resolve(
-          options.onEvent?.({ type, runId: record.id, stepId: id, attempt: step.attempts }),
+          options.onEvent?.({
+            type,
+            runId: record.id,
+            stepId: id,
+            attempt: step.attempts,
+            ...details,
+          }),
         ).catch(() => {
           /* Observers never own the workflow outcome. */
         });
@@ -292,6 +357,7 @@ export async function runWorkflow<TInput, TOutput>(
       action: (context: StepContext, step: StepRecord) => Promise<T> | T,
       wakeAt: number | null,
       requestedIdentity?: StepIdentity,
+      local?: StepDefinition<T>,
     ): Promise<T> {
       if (closed) throw new Error('Workflow is closed; await all workflow operations.');
       if (inEffect.getStore())
@@ -308,9 +374,29 @@ export async function runWorkflow<TInput, TOutput>(
       let stepFingerprint: string;
       try {
         jsonValue({ dependencies });
+        if (
+          local &&
+          (typeof local.run !== 'function' ||
+            (local.version !== undefined &&
+              (typeof local.version !== 'string' || !local.version.trim())))
+        )
+          throw new Error(
+            'Local effects require a run callback and, when supplied, a nonempty string version.',
+          );
         identity =
           requestedIdentity ??
-          stepIdentity({ kind, input: dependencies, schema: schemaJson(schema) });
+          stepIdentity({
+            kind,
+            input: dependencies,
+            schema: schemaJson(schema),
+            ...(local
+              ? {
+                  callback: Function.prototype.toString.call(local.run),
+                  version: local.version ?? null,
+                  cwd,
+                }
+              : {}),
+          });
         stepFingerprint = digest(identity);
       } catch (cause) {
         throw new Error(`Step ${id}: ${message(cause)}`, { cause });
@@ -331,6 +417,38 @@ export async function runWorkflow<TInput, TOutput>(
         emit('step.replayed', id, prior);
         return output;
       }
+      if (!prior && record.forkedFrom) {
+        const candidate = reuseCandidate(
+          record.forkedFrom,
+          forkSource,
+          id,
+          kind,
+          stepFingerprint,
+          (sourceStep) => schema.safeParse(structuredClone(sourceStep.output)).success,
+        );
+        if (candidate) {
+          const copied: StepRecord = {
+            ...structuredClone(candidate),
+            seq: nextSeq++,
+            reusedFrom: {
+              runId: record.forkedFrom.runId,
+              stateDir: record.forkedFrom.stateDir,
+              stepId: id,
+              fingerprint: stepFingerprint,
+              at: new Date().toISOString(),
+            },
+          };
+          Object.defineProperty(record.steps, id, {
+            value: copied,
+            enumerable: true,
+            configurable: true,
+            writable: true,
+          });
+          await save();
+          emit('step.reused', id, copied);
+          return schema.parse(structuredClone(copied.output));
+        }
+      }
       const step: StepRecord = prior ?? {
         kind,
         fingerprint: stepFingerprint,
@@ -340,8 +458,24 @@ export async function runWorkflow<TInput, TOutput>(
         error: null,
         wakeAt,
         identity,
+        seq: nextSeq++,
         attemptHistory: [],
       };
+      if (!divergenceReported) {
+        const skipped = previousCompleted
+          .filter((previous) => previous.seq < (step.seq ?? 0) && !used.has(previous.id))
+          .map((previous) => previous.id);
+        if (skipped.length) {
+          divergenceReported = true;
+          const warning = `Replay divergence before live step ${id}: earlier completed steps (${skipped.join(', ')}) have not been visited. Order is a concurrency heuristic; restore the replay path or fork a new run.`;
+          replayWarnings.push(warning);
+          const failure = options.strictReplay ? new Error(warning) : undefined;
+          if (failure) controller.abort(failure);
+          await save();
+          emit('replay.divergence', id, step, { message: warning, skippedStepIds: skipped });
+          if (failure) throw failure;
+        }
+      }
       if (redefined) {
         (step.redefinitions ??= []).push({
           fingerprint: step.fingerprint,
@@ -543,6 +677,8 @@ export async function runWorkflow<TInput, TOutput>(
             ),
             step.run,
             null,
+            undefined,
+            step,
           ),
         ),
       sleep: (id, milliseconds) =>
@@ -632,7 +768,9 @@ export async function runWorkflow<TInput, TOutput>(
       for (const [id, step] of superseded) emit('step.superseded', id, step);
       return {
         ...structuredClone(record),
-        ...(record.policyWarnings.length ? { warnings: record.policyWarnings } : {}),
+        ...(record.policyWarnings.length || record.replayWarnings.length
+          ? { warnings: [...record.policyWarnings, ...record.replayWarnings] }
+          : {}),
         output: definition.output.parse(structuredClone(record.output)) as TOutput & JsonValue,
       };
     } catch (error) {
@@ -641,6 +779,9 @@ export async function runWorkflow<TInput, TOutput>(
       await operations.drain();
       record.status = 'failed';
       record.error = message(error);
+      if (Object.values(record.steps).every((step) => step.status === 'completed'))
+        record.recoveryHint =
+          'All recorded effects completed. Fix the workflow tail/output and use --resume --accept-code-change to re-finalize; unchanged step identities reuse their results.';
       warnUnmatched();
       await trySave();
       throw error;

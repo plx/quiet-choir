@@ -1,5 +1,5 @@
-import { createHash, randomUUID } from 'node:crypto';
-import { readFile, readdir } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
+import { readdir } from 'node:fs/promises';
 
 import { tsImport } from 'tsx/esm/api';
 import { register as registerCommonJs } from 'tsx/cjs/api';
@@ -13,9 +13,11 @@ import { resolveStateDir } from '../runtime/paths.js';
 import { errorCode } from '../runtime/checkpoint.js';
 import { readRun } from '../runtime/store.js';
 import { TypeScriptExecutor } from '../typecheck/typescript-executor.js';
-import type { TypecheckPlan } from '../typecheck/model.js';
+import { fingerprintSources } from './source.js';
+import { checkResume, workflowSnapshot } from '../runtime/compatibility.js';
 import type {
   ExecuteWorkflowPlan,
+  CheckResumePlan,
   InspectWorkflowPlan,
   ValidateWorkflowPlan,
   WorkflowCommandResult,
@@ -57,27 +59,9 @@ function workflowDefinition(module: unknown): WorkflowDefinition<unknown, unknow
   return definition as unknown as WorkflowDefinition<unknown, unknown>;
 }
 
-async function fingerprint(plan: TypecheckPlan, sourceFiles: readonly string[]): Promise<string> {
-  const files = [
-    ...new Set([
-      ...sourceFiles,
-      ...(plan.configuration.kind === 'tsconfig' ? [plan.configuration.path] : []),
-    ]),
-  ].sort();
-  const hash = createHash('sha256');
-  for (const file of files) {
-    hash
-      .update(file)
-      .update('\0')
-      .update(await readFile(file))
-      .update('\0');
-  }
-  return hash.digest('hex');
-}
-
 /** Type-check, import, and optionally run trusted workflow code behind a plain-data boundary. */
 export class WorkflowExecutor implements Executor<
-  ValidateWorkflowPlan | ExecuteWorkflowPlan | InspectWorkflowPlan,
+  ValidateWorkflowPlan | ExecuteWorkflowPlan | InspectWorkflowPlan | CheckResumePlan,
   WorkflowCommandResult
 > {
   readonly #options: WorkflowExecutorOptions;
@@ -87,7 +71,7 @@ export class WorkflowExecutor implements Executor<
   }
 
   public async execute(
-    plan: ValidateWorkflowPlan | ExecuteWorkflowPlan | InspectWorkflowPlan,
+    plan: ValidateWorkflowPlan | ExecuteWorkflowPlan | InspectWorkflowPlan | CheckResumePlan,
   ): Promise<WorkflowCommandResult> {
     let unregister: (() => void) | undefined;
     try {
@@ -129,7 +113,7 @@ export class WorkflowExecutor implements Executor<
           diagnostics: checked.diagnostics,
         };
       }
-      const sourceFingerprint = await fingerprint(plan.typecheck, checked.sourceFiles);
+      const source = await fingerprintSources(plan.typecheck, checked.sourceFiles);
       this.#options.logger.log(
         'debug',
         `Importing trusted workflow module ${plan.typecheck.entrypoint}`,
@@ -162,10 +146,24 @@ export class WorkflowExecutor implements Executor<
           workflow: {
             name: definition.name,
             version: definition.version,
-            fingerprint: sourceFingerprint,
+            ...workflowSnapshot(definition, { source }),
           },
         };
       }
+      if (plan.kind === 'workflow.check-resume')
+        return {
+          kind: 'workflow.check-resume.result',
+          ok: true,
+          check: await checkResume(definition, {
+            runId: plan.runId,
+            stateDir: plan.stateDir,
+            cwd: plan.cwd,
+            source,
+            ...(plan.acceptCodeChange === undefined
+              ? {}
+              : { acceptCodeChange: plan.acceptCodeChange }),
+          }),
+        };
       const run = await runWorkflow(definition, {
         runId: plan.runId,
         stateDir: plan.stateDir,
@@ -179,20 +177,31 @@ export class WorkflowExecutor implements Executor<
         ...(plan.input === undefined ? {} : { input: plan.input }),
         ...(this.#options.harness === undefined ? {} : { harness: this.#options.harness }),
         ...(this.#options.signal === undefined ? {} : { signal: this.#options.signal }),
-        fingerprint: sourceFingerprint,
+        source,
+        ...(plan.forkFrom === undefined ? {} : { forkFrom: plan.forkFrom }),
+        ...(plan.acceptCodeChange === undefined ? {} : { acceptCodeChange: plan.acceptCodeChange }),
+        ...(plan.strictReplay === undefined ? {} : { strictReplay: plan.strictReplay }),
         onEvent: (event) => {
           this.#options.logger.log(
-            'debug',
-            `${event.type} ${event.stepId} (attempt ${String(event.attempt)})`,
+            event.type === 'replay.divergence' ? 'warn' : 'debug',
+            event.message ?? `${event.type} ${event.stepId} (attempt ${String(event.attempt)})`,
           );
         },
       });
       return { kind: 'workflow.run.result', ok: true, run };
     } catch (error: unknown) {
+      const checkpoint =
+        plan.kind === 'workflow.execute'
+          ? await readRun({ runId: plan.runId, stateDir: plan.stateDir }).catch(() => undefined)
+          : undefined;
+      const message = error instanceof Error ? error.message : String(error);
       return {
         kind: 'workflow.error',
         ok: false,
-        message: error instanceof Error ? error.message : String(error),
+        message:
+          checkpoint?.recoveryHint && !message.includes('re-finalize')
+            ? `${message} ${checkpoint.recoveryHint}`
+            : message,
         diagnostics: [],
       };
     } finally {

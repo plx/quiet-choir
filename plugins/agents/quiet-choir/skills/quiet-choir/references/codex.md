@@ -109,8 +109,8 @@ Timeout and explicit retry policy are excluded from step identity. Raise `timeou
 sticky `--policy` rule without editing source or rerunning completed calls. A model or effort
 override requires `--allow-model-override` and affects unfinished attempts only. Completed prompts,
 schemas, model/effort, cwd, sandbox, and other capabilities still must match. Embedded callers may
-redefine unfinished steps with history; CLI source edits still fail the run fingerprint gate. See
-[durability](durability.md#recovering-a-timeout-or-turn-limit) for the recovery recipe and
+redefine unfinished steps with history; CLI source edits require explicit code acceptance or a fork.
+See [durability](durability.md#recovering-a-timeout-or-turn-limit) for the recovery recipe and
 `attemptHistory` fields. Use `skipGitRepoCheck` only for work outside Git.
 
 Agent calls accept `retry: { maxAttempts, delayMs? }` for explicitly repeatable work; the default
