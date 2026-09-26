@@ -44,11 +44,15 @@ Each local run has a JSON checkpoint and an exclusive owner lock. Completed name
 when their inputs match; unfinished steps execute again. A resumed workflow function starts from the
 beginning, so everything outside a durable operation must be deterministic and free of side effects.
 `ctx.map` provides bounded concurrency and `ctx.sleep` records a durable wake deadline. The CLI
-checks the workflow's transitive local source fingerprint alongside its explicit version. These
-checks guard compatibility without claiming to identify changes in external dependencies or
-services. See [ADR 0002](decisions/0002-durable-external-workflows.md) for the at-least-once
-execution contract, [ADR 0005](decisions/0005-step-identity-and-policy.md) for step identity and
-execution policy, [ADR 0004](decisions/0004-operation-ownership.md) for promise ownership, and
+checks canonical, project-relative source hashes alongside explicit version and engine metadata.
+Strict resume remains the default. Explicit code acceptance keeps step checks, and new-run forks
+copy matching completed effects with provenance (prefix reuse by default). Local identity includes
+callback source and version; captured values and helpers remain declared dependencies. These checks
+guard compatibility without claiming to identify changes in external dependencies or services. See
+[ADR 0002](decisions/0002-durable-external-workflows.md) for the at-least-once execution contract,
+[ADR 0005](decisions/0005-step-identity-and-policy.md) for step identity and execution policy,
+[ADR 0004](decisions/0004-operation-ownership.md) for promise ownership,
+[ADR 0006](decisions/0006-code-change-recovery.md) for code-change recovery, and
 [research notes](research.md) for the comparison to Claude's dynamic workflows.
 
 ## CLI execution boundary

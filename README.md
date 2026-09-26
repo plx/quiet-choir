@@ -176,9 +176,37 @@ fingerprint. Globs use `*` within segments and `**` across `/`.
 `CliHarness` defaults to 15 minutes, 25 Claude turns, and the unchanged $0.25 Claude per-call
 budget. Custom harnesses report known limits through optional `policyDefaults(provider)`; unknown
 defaults are not invented. `inspect --json` exposes saved rules and each step's `attemptHistory`,
-including resolved policy and its sources. New checkpoints use version 2. Version 1 remains
-inspectable but cannot resume with this runtime; retain the original runtime or choose a new run ID.
-See [the policy decision](docs/decisions/0005-step-identity-and-policy.md).
+including resolved policy and its sources. New checkpoints use version 3. Versions 1 and 2 remain
+inspectable but cannot resume or supply fork reuse with this runtime; retain the original runtime or
+choose a new run ID. See [the policy decision](docs/decisions/0005-step-identity-and-policy.md).
+
+To recover after editing workflow code, choose an explicit reuse path:
+
+```sh
+node "$QC_CHECKOUT/bin/run.js" workflow check-resume review.workflow.ts \
+  --run-id review-1 --state-dir "$qc_state_dir" --json
+node "$QC_CHECKOUT/bin/run.js" workflow execute review.workflow.ts \
+  --run-id review-2 --state-dir "$qc_state_dir" --fork-from review-1
+# Or accept a tail-only fix on the original run:
+node "$QC_CHECKOUT/bin/run.js" workflow execute review.workflow.ts \
+  --run-id review-1 --state-dir "$qc_state_dir" --resume --accept-code-change
+```
+
+Forks preserve the source checkpoint and default to reusing the unchanged launch prefix. The first
+miss ends reuse; later effects run live. `--reuse matching` explicitly reuses all matching completed
+IDs, which requires accounting for undeclared workspace dependencies. Repeat
+`--invalidate 'path/**'` to force effects live. Forks inherit source input when omitted, accept new
+explicit input/version, and require the same workflow name. Inspect `forkedFrom` and each copied
+step's `reusedFrom` for provenance. Resume the target normally after interruption; source changes
+close further reuse.
+
+`--accept-code-change` waives only source/run-schema gates, keeping name/version, engine, cwd,
+validated input, completed-step identity, and replay checks. Each use is recorded in `codeChanges`.
+A tail/output fix can finish with zero repeated effects. Local step identity now hashes callback
+source and optional `version` as well as input/schema/cwd. The CLI loader removes callback comments
+and formatting; captured values, helper implementations, native/bound functions, and environment
+remain invisible. Declare dependencies in input, bump the step version, or invalidate in a fork. See
+[the recovery decision](docs/decisions/0006-code-change-recovery.md).
 
 ## Durability contract
 
@@ -192,15 +220,18 @@ See [the policy decision](docs/decisions/0005-step-identity-and-policy.md).
   steps inside a step callback. Compose them with ordinary TypeScript functions at the workflow
   level.
 - Completed effects are reused by ID and semantic component hashes (kind, input/prompt, schema,
-  model/effort, capabilities, and resolved cwd). Errors name changed components. Timeout, turn,
-  budget, and retry policy do not affect identity. Unfinished identities may change with history
-  retained; unvisited unfinished records become `superseded`. Every completed step must still be
-  visited. That check runs after the body, so divergent control flow may perform new effects first.
-- The CLI also hashes local compiler-discovered dependencies and the nearest tsconfig. Inputs,
-  workflow name/version, schema fingerprint, and working directory must match on resume. **Bump the
-  workflow version when dependency packages, environment/configuration, or other semantics change.**
-  Dynamic imports assembled at runtime, external files, and node_modules are not fully
-  fingerprinted.
+  model/effort, capabilities, resolved cwd, and local callback source/version). Errors name changed
+  components. Timeout, turn, budget, and retry policy do not affect identity. Unfinished identities
+  may change with history retained; unvisited unfinished records become `superseded`. Every
+  completed step must still be visited. An early `replay.divergence` event warns before live work
+  when earlier completed steps remain unvisited; `--strict-replay` aborts there. The final
+  skipped-step check still applies.
+- The CLI hashes raw bytes of local compiler-discovered dependencies and the nearest tsconfig under
+  real, project-relative paths. Engine `src/`/`dist/` files are excluded (except an explicit
+  entrypoint); package/format versions are recorded separately. Inputs, workflow name/version,
+  schema fingerprint, and working directory must match on resume. **Bump the workflow version when
+  dependency packages, environment/configuration, or other semantics change.** Dynamic imports
+  assembled at runtime, external files, and node_modules are not fully fingerprinted.
 - Results must be lossless JSON. Undefined, NaN, infinities, negative zero, functions, cycles,
   sparse arrays, getters, and class instances are rejected. Checkpoints contain data, never
   callbacks.
@@ -288,7 +319,10 @@ stdout from workflow code when consuming JSON CLI output. `--json` emits one res
 success: a run record for execute/inspect, or `{kind, ok, entrypoint, workflow}` for validate. A
 failed execute emits no result JSON; use stderr and inspect any saved checkpoint. Generated run IDs
 appear only on stderr, so scripts should supply `--run-id`. Module-level output precedes JSON.
-Validate reports a source hash; a saved run's fingerprint also hashes schemas and is different.
+Validate reports the same full source/schema/engine fingerprint that a new run stores.
+`workflow check-resume FILE --run-id ID --json` reports run compatibility and changed components
+without acquiring a writer lock or executing the workflow body. It still imports trusted top-level
+code and does not predict dynamic step compatibility.
 
 Inherited `--log-level trace|debug|info|warn|error|fatal|silent` and `-v, --verbose` go after the
 command name and are mutually exclusive. Configuration commands remain explicit stubs (exit 2);

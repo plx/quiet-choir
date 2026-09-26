@@ -51,3 +51,16 @@ export { resolveStateDir } from './workflow/runtime/paths.js';
 export type { StateDirectoryOptions } from './workflow/runtime/paths.js';
 export type { ExecutionPolicy, PolicyOverride, AttemptPolicy } from './workflow/runtime/policy.js';
 export type { StepIdentity } from './workflow/runtime/identity.js';
+
+export { checkResume } from './workflow/runtime/compatibility.js';
+export type { CheckResumeOptions, WorkflowCodeOptions } from './workflow/runtime/compatibility.js';
+export type {
+  EngineInfo,
+  SourceFingerprint,
+  WorkflowIdentity,
+  ForkOptions,
+  ForkProvenance,
+  ReusedStep,
+  CodeChange,
+  ResumeCheck,
+} from './workflow/runtime/replay-model.js';

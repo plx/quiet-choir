@@ -75,9 +75,10 @@ excluded from identity. Raise them with a sticky CLI `--policy` rule or embedded
 without rerunning completed steps; see the
 [timeout recovery recipe](durability.md#recovering-a-timeout-or-turn-limit). Completed prompts,
 schemas, model, cwd, and capabilities still must match. Embedded callers may redefine unfinished
-steps with history retained. CLI source edits still change the run fingerprint. A model override
-requires explicit `--allow-model-override`; it affects unfinished attempts only. `attemptHistory`
-records resolved limits, requested model, provenance, timestamps, and outcome.
+steps with history retained. CLI source edits require explicit code acceptance or a fork, as
+described in [durability](durability.md#choose-a-recovery-path). A model override requires explicit
+`--allow-model-override`; it affects unfinished attempts only. `attemptHistory` records resolved
+limits, requested model, provenance, timestamps, and outcome.
 
 ## Configuration and cancellation
 

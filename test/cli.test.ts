@@ -13,6 +13,7 @@ import ConfigurationSet from '../src/commands/configuration/set.js';
 import InfoVersion from '../src/commands/info/version.js';
 import WorkflowExecute from '../src/commands/workflow/execute.js';
 import WorkflowInspect from '../src/commands/workflow/inspect.js';
+import WorkflowCheckResume from '../src/commands/workflow/check-resume.js';
 import { WorkflowExecutor } from '../src/workflow/loader/executor.js';
 import type { RunRecord } from '../src/workflow/runtime/store.js';
 import WorkflowTypecheck from '../src/commands/workflow/typecheck.js';
@@ -356,5 +357,134 @@ describe('workflow lifecycle command adapters', () => {
     });
     const missing = await captureCommand(WorkflowInspect, ['missing']);
     expect(missing.error).toMatchObject({ oclif: { exit: 1 }, message: 'Run does not exist.' });
+  });
+});
+
+describe('recovery command adapters', () => {
+  it.each([false, true])(
+    'prints a compatibility report and uses its exit status (compatible=%s)',
+    async (compatible) => {
+      const file = await workflowFile();
+      const check = {
+        compatible,
+        changed: compatible ? [] : ['code'],
+        unchanged: ['name'],
+        files: [],
+        fingerprint: 'new',
+        savedFingerprint: 'old',
+        canAcceptCodeChange: true,
+        refinalizable: true,
+        message: 'compatibility report',
+      };
+      const execute = vi
+        .spyOn(WorkflowExecutor.prototype, 'execute')
+        .mockResolvedValue({ kind: 'workflow.check-resume.result', ok: true, check });
+      const output = await captureCommand(WorkflowCheckResume, [
+        file,
+        '--run-id',
+        'r',
+        '--json',
+        '--accept-code-change',
+      ]);
+      expect(JSON.parse(output.stdout)).toMatchObject({ check });
+      expect(execute).toHaveBeenCalledWith(
+        expect.objectContaining({ kind: 'workflow.check-resume', acceptCodeChange: true }),
+      );
+      if (compatible) expect(output.error).toBeUndefined();
+      else expect(output.error).toMatchObject({ oclif: { exit: 1 } });
+    },
+  );
+
+  it.each([false, true])('reports check-resume load failures (JSON=%s)', async (json) => {
+    const file = await workflowFile();
+    vi.spyOn(WorkflowExecutor.prototype, 'execute').mockResolvedValue(failedResult);
+    const output = await captureCommand(WorkflowCheckResume, [
+      file,
+      '--run-id',
+      'r',
+      ...(json ? ['--json'] : []),
+    ]);
+    expect(output.error).toMatchObject({ oclif: { exit: 1 } });
+    if (json) expect(JSON.parse(output.stdout)).toMatchObject({ ok: false });
+    else expect(output.stderr).toContain('TS2322');
+  });
+
+  it('passes explicit fork and replay options as data and inherits source input when omitted', async () => {
+    const file = await workflowFile();
+    const execute = vi
+      .spyOn(WorkflowExecutor.prototype, 'execute')
+      .mockResolvedValue({ kind: 'workflow.run.result', ok: true, run: runRecord });
+    const fork = await captureCommand(WorkflowExecute, [
+      file,
+      '--run-id',
+      'new',
+      '--fork-from',
+      'old',
+      '--fork-state-dir',
+      projectRoot,
+      '--reuse',
+      'matching',
+      '--invalidate',
+      'reports/**',
+      '--strict-replay',
+    ]);
+    expect(fork.error).toBeUndefined();
+    expect(execute.mock.calls[0]?.[0]).toMatchObject({
+      forkFrom: {
+        runId: 'old',
+        stateDir: projectRoot,
+        reuse: 'matching',
+        invalidate: ['reports/**'],
+      },
+      strictReplay: true,
+    });
+    expect(execute.mock.calls[0]?.[0]).not.toHaveProperty('input');
+    const resume = await captureCommand(WorkflowExecute, [
+      file,
+      '--run-id',
+      'old',
+      '--resume',
+      '--accept-code-change',
+    ]);
+    expect(resume.error).toBeUndefined();
+    expect(execute.mock.calls[1]?.[0]).toMatchObject({ resume: true, acceptCodeChange: true });
+  });
+
+  it('rejects incompatible recovery flags and detached fork modifiers', async () => {
+    const file = await workflowFile();
+    for (const flags of [
+      ['--resume', '--fork-from', 'old'],
+      ['--accept-code-change'],
+      ['--reuse', 'matching'],
+      ['--invalidate', 'a'],
+    ]) {
+      expect(
+        (await captureCommand(WorkflowExecute, [file, '--run-id', 'new', ...flags])).error,
+      ).toBeInstanceOf(Error);
+    }
+    const bad = await captureCommand(WorkflowCheckResume, [
+      await workflowFile('js'),
+      '--run-id',
+      'r',
+    ]);
+    expect(bad.error).toMatchObject({ oclif: { exit: 2 } });
+    vi.spyOn(WorkflowExecutor.prototype, 'execute').mockResolvedValue({
+      kind: 'workflow.check-resume.result',
+      ok: true,
+      check: {
+        compatible: true,
+        changed: [],
+        unchanged: [],
+        files: [],
+        fingerprint: 'same',
+        savedFingerprint: 'same',
+        canAcceptCodeChange: true,
+        refinalizable: false,
+        message: 'compatible',
+      },
+    });
+    expect((await captureCommand(WorkflowCheckResume, [file, '--run-id', 'r'])).stdout).toBe(
+      'compatible',
+    );
   });
 });

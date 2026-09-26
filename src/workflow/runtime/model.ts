@@ -134,6 +134,8 @@ export interface StepContext {
 
 /** A local durable effect. Keep nondeterminism and side effects inside its callback. */
 export interface StepDefinition<T> {
+  /** Explicit revision for captured values, helpers, or environment not visible in callback source. */
+  readonly version?: string;
   /** Explicit JSON-serializable dependencies, checked for drift on replay. */
   readonly input: JsonValue;
   /** Runtime validator for the result, also applied on replay. */

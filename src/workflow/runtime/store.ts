@@ -9,6 +9,7 @@ import { resolveStateDir, type StateDirectoryOptions } from './paths.js';
 import { jsonValue } from './json.js';
 import type { AgentUsage, JsonValue } from './model.js';
 import type { StepIdentity } from './identity.js';
+import type { CodeChange, ForkProvenance, ReusedStep, WorkflowIdentity } from './replay-model.js';
 import {
   executionPolicySchema,
   policyOverrideSchema,
@@ -66,6 +67,10 @@ export interface StepRecord {
   redefinitions?: StepRedefinition[];
   /** Per-attempt execution limits, provenance, and outcome. */
   attemptHistory?: AttemptRecord[];
+  /** First-use ordering within this run; present in format 3. */
+  seq?: number;
+  /** Source checkpoint of a reused completed effect. */
+  reusedFrom?: ReusedStep;
   /** Total started attempts across resumes. */
   attempts: number;
   /** Serialized result; null until completed. */
@@ -83,7 +88,7 @@ export interface StepRecord {
 /** Local checkpoint format. The format is intentionally versioned independently of workflows. */
 export interface RunRecord {
   /** Checkpoint format version. */
-  formatVersion: 1 | 2;
+  formatVersion: 1 | 2 | 3;
   /** Stable run identifier. */
   id: string;
   /** Workflow compatibility metadata. */
@@ -94,6 +99,8 @@ export interface RunRecord {
     version: string;
     /** Optional caller-supplied code fingerprint. */
     fingerprint: string | null;
+    /** Component hashes and engine compatibility, present in format 3. */
+    identity?: WorkflowIdentity;
   };
   /** Absolute working directory, fixed across resumes. */
   cwd: string;
@@ -113,6 +120,14 @@ export interface RunRecord {
   allowModelOverride?: boolean;
   /** Rules that matched no visited step during the latest invocation. */
   policyWarnings?: string[];
+  /** Source snapshot and reuse progress, if this run was forked. */
+  forkedFrom?: ForkProvenance;
+  /** Explicit source/schema acceptance history. */
+  codeChanges?: CodeChange[];
+  /** Replay-order warnings from the latest invocation. */
+  replayWarnings?: string[];
+  /** Guidance when all recorded effects completed before a tail/output failure. */
+  recoveryHint?: string;
   /** ISO creation timestamp. */
   createdAt: string;
   /** ISO timestamp of the most recent persisted change. */
@@ -128,8 +143,24 @@ const jsonSchema = z.custom<JsonValue>((value) => {
     return false;
   }
 });
+const reusedStepSchema = z.object({
+  runId: z.string(),
+  stateDir: z.string(),
+  stepId: z.string(),
+  fingerprint: z.string(),
+  at: z.iso.datetime(),
+});
+const workflowIdentitySchema = z.object({
+  code: z.string().nullable(),
+  files: z.record(z.string(), z.string()),
+  inputSchema: z.string(),
+  outputSchema: z.string(),
+  engine: z.object({ version: z.string(), formatVersion: z.number().int().positive() }),
+});
 const stepSchema = z.object({
   kind: z.enum(['step', 'claude', 'codex', 'sleep']),
+  seq: z.number().int().positive().optional(),
+  reusedFrom: reusedStepSchema.optional(),
   fingerprint: z.string(),
   status: z.enum(['running', 'completed', 'failed', 'superseded']),
   identity: z.record(z.string(), z.string()).optional(),
@@ -193,12 +224,13 @@ const stepsSchema = z.custom<Record<string, StepRecord>>(
 );
 const recordSchema = z
   .object({
-    formatVersion: z.union([z.literal(1), z.literal(2)]),
+    formatVersion: z.union([z.literal(1), z.literal(2), z.literal(3)]),
     id: z.string(),
     workflow: z.object({
       name: z.string(),
       version: z.string(),
       fingerprint: z.string().nullable(),
+      identity: workflowIdentitySchema.optional(),
     }),
     cwd: z.string(),
     input: jsonSchema,
@@ -209,22 +241,65 @@ const recordSchema = z
     policy: z.array(policyOverrideSchema).optional(),
     allowModelOverride: z.boolean().optional(),
     policyWarnings: z.array(z.string()).optional(),
+    forkedFrom: z
+      .object({
+        runId: z.string(),
+        stateDir: z.string(),
+        sourceDigest: z.string(),
+        fingerprint: z.string().nullable(),
+        reuse: z.enum(['prefix', 'matching']),
+        invalidate: z.array(z.string()),
+        differences: z.array(z.string()),
+        at: z.iso.datetime(),
+        cursor: z.number().int().nonnegative(),
+        reuseClosed: z.boolean(),
+        warning: z.string().optional(),
+      })
+      .optional(),
+    codeChanges: z
+      .array(
+        z.object({
+          at: z.iso.datetime(),
+          from: z.string().nullable(),
+          to: z.string(),
+          files: z.array(z.string()),
+          components: z.array(z.string()),
+        }),
+      )
+      .optional(),
+    replayWarnings: z.array(z.string()).optional(),
+    recoveryHint: z.string().optional(),
     createdAt: z.iso.datetime(),
     updatedAt: z.iso.datetime(),
   })
   .superRefine((record, context) => {
-    if (record.formatVersion !== 2) return;
+    if (record.formatVersion === 1) return;
     if (record.policy === undefined || record.allowModelOverride === undefined)
       context.addIssue({
         code: 'custom',
-        message: 'Version 2 checkpoint is missing execution policy metadata',
+        message: 'Checkpoint is missing execution policy metadata',
       });
+    if (record.formatVersion === 3 && record.workflow.identity === undefined)
+      context.addIssue({
+        code: 'custom',
+        message: 'Version 3 checkpoint is missing workflow identity',
+      });
+    const sequences = new Set<number>();
     for (const [id, step] of Object.entries(record.steps)) {
+      if (record.formatVersion === 3) {
+        if (step.seq === undefined || sequences.has(step.seq))
+          context.addIssue({
+            code: 'custom',
+            path: ['steps', id, 'seq'],
+            message: 'Version 3 steps require unique positive seq values',
+          });
+        else sequences.add(step.seq);
+      }
       if (step.identity === undefined || step.attemptHistory === undefined)
         context.addIssue({
           code: 'custom',
           path: ['steps', id],
-          message: 'Version 2 step is missing identity or attempt history',
+          message: 'Step is missing identity or attempt history',
         });
     }
   });
