@@ -36,6 +36,8 @@ export interface StepRecord {
   wakeAt: number | null;
   /** Failed harness attempt measurements; absent in older checkpoints. */
   failedAttempts?: FailedAttempt[];
+  /** Recoverable harness notices; independent of the agent result and its fingerprint. */
+  warnings?: readonly string[];
 }
 
 /** Local checkpoint format. The format is intentionally versioned independently of workflows. */
@@ -88,6 +90,7 @@ const stepSchema = z.object({
   output: jsonSchema,
   error: z.string().nullable(),
   wakeAt: z.number().nullable(),
+  warnings: z.array(z.string()).optional(),
   failedAttempts: z
     .array(
       z.object({

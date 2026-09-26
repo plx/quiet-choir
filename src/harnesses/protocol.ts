@@ -128,7 +128,7 @@ export function parseCodex(stdout: string): ProtocolOutcome {
     let tokens: AgentUsage | null = null;
     let failed: ReturnType<typeof apiError> | undefined;
     let lastError: ReturnType<typeof apiError> | undefined;
-    let sawError = false;
+    const notices: string[] = [];
     for (const line of stdout.split(/\r?\n/u).filter((line) => line.trim())) {
       const data = parse(line, 'Codex');
       if (typeof data['type'] !== 'string') throw new Error('Codex event is missing its type.');
@@ -154,19 +154,24 @@ export function parseCodex(stdout: string): ProtocolOutcome {
           if (data['usage'] !== undefined) tokens = usage(data['usage']);
           break;
         case 'error': {
-          sawError = true;
           const error = apiError(data['message'] ?? data['error'] ?? 'agent failure');
+          notices.push(error.reason);
+          if (notices.length > 32) notices.shift();
           if (!error.reason.startsWith('Reconnecting...')) lastError = error;
           break;
         }
       }
     }
-    if (failed !== undefined || sawError) {
+    if (failed !== undefined || (!completed && notices.length > 0)) {
       const error = failed ?? lastError;
+      const history = notices
+        .filter((notice) => notice !== error?.reason)
+        .join('; ')
+        .slice(-4096);
       return {
         kind: 'failure',
         failure: {
-          reason: error?.reason ?? 'Codex output ended without a successful terminal turn.',
+          reason: `${error?.reason ?? 'Codex output ended without turn.completed; the call may have been interrupted.'}${history ? `; notices: ${history}` : ''}`,
           subtype: failed === undefined ? 'error' : 'turn.failed',
           terminalReason: null,
           apiStatus: error?.status ?? null,
@@ -180,6 +185,14 @@ export function parseCodex(stdout: string): ProtocolOutcome {
         'Codex output ended without turn.completed; the call may have been interrupted.',
       );
     if (text === undefined) throw new Error('Codex completed without a final agent_message.');
-    return { kind: 'success', response: { text, sessionId, usage: tokens ?? usage(undefined) } };
+    return {
+      kind: 'success',
+      response: {
+        text,
+        sessionId,
+        usage: tokens ?? usage(undefined),
+        ...(notices.length > 0 ? { warnings: notices } : {}),
+      },
+    };
   });
 }
