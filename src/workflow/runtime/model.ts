@@ -12,27 +12,27 @@ export interface AgentOptions {
   readonly model?: string;
   /** Working directory, relative to the workflow run's working directory. */
   readonly cwd?: string;
-  /** Wall-clock deadline in milliseconds; defaults to 120,000. */
+  /** Wall-clock deadline in milliseconds. CliHarness default: 120,000; custom harnesses must enforce their own deadline. */
   readonly timeoutMs?: number;
 }
 
-/** Claude-specific controls. Headless calls deny unapproved tools by default. */
+/** Claude-specific controls. CliHarness denies unapproved tools by default. */
 export interface ClaudeOptions extends AgentOptions {
-  /** Built-in tools to expose; defaults to none. */
+  /** Built-in tools to expose. CliHarness default: none; the core supplies no default. */
   readonly tools?: readonly string[];
   /** Explicit tool permissions for this invocation. */
   readonly allowedTools?: readonly string[];
-  /** Maximum agent turns; defaults to 3. */
+  /** Maximum agent turns. CliHarness default: 3; the core supplies no default. */
   readonly maxTurns?: number;
-  /** Per-call USD limit reported/enforced by Claude; defaults to 0.25. */
+  /** Per-call USD limit. CliHarness default: 0.25, enforced by Claude; the core supplies no default. */
   readonly maxBudgetUsd?: number;
 }
 
-/** Codex-specific controls; sandbox defaults to read-only and approvals to never. */
+/** Codex-specific controls. CliHarness defaults to read-only sandbox and never approving. */
 export interface CodexOptions extends AgentOptions {
-  /** Structured-output encoding; compat translates common Zod shapes, strict requires a native Codex schema. Defaults to compat. */
+  /** Structured-output encoding; compat translates common Zod shapes, strict requires a native Codex schema. CliHarness default: compat; the core supplies no default. */
   readonly structuredOutput?: 'strict' | 'compat';
-  /** Filesystem sandbox for model-generated commands. */
+  /** Filesystem sandbox for model-generated commands. CliHarness default: read-only; the core supplies no default. */
   readonly sandbox?: 'read-only' | 'workspace-write';
   /** Harness reasoning effort. */
   readonly reasoningEffort?: 'minimal' | 'low' | 'medium' | 'high';

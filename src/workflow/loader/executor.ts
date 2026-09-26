@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { readFile } from 'node:fs/promises';
+import { readFile, readdir } from 'node:fs/promises';
 
 import { tsImport } from 'tsx/esm/api';
 import { register as registerCommonJs } from 'tsx/cjs/api';
@@ -9,6 +9,8 @@ import { z } from 'zod';
 import type { ExecutionLogger, Executor } from '../../application/execution.js';
 import type { Harness, WorkflowDefinition } from '../runtime/model.js';
 import { runWorkflow } from '../runtime/runner.js';
+import { resolveStateDir } from '../runtime/paths.js';
+import { errorCode } from '../runtime/checkpoint.js';
 import { readRun } from '../runtime/store.js';
 import { TypeScriptExecutor } from '../typecheck/typescript-executor.js';
 import type { TypecheckPlan } from '../typecheck/model.js';
@@ -36,19 +38,21 @@ function isSchema(value: unknown): boolean {
 
 function workflowDefinition(module: unknown): WorkflowDefinition<unknown, unknown> {
   const definition: unknown = isRecord(module) ? module['default'] : undefined;
-  if (
-    !isRecord(definition) ||
-    typeof definition['name'] !== 'string' ||
-    !definition['name'].trim() ||
-    typeof definition['version'] !== 'string' ||
-    !definition['version'].trim() ||
-    typeof definition['run'] !== 'function' ||
-    !isSchema(definition['input']) ||
-    !isSchema(definition['output'])
-  ) {
+  if (!isRecord(definition))
     throw new Error(
       'Workflow must default-export a defineWorkflow({ name, version, input, output, run }) definition.',
     );
+  for (const field of ['name', 'version']) {
+    if (typeof definition[field] !== 'string' || !definition[field].trim())
+      throw new Error(`Workflow "${field}" must be a nonempty string.`);
+  }
+  if (typeof definition['run'] !== 'function')
+    throw new Error('Workflow "run" must be a function.');
+  for (const field of ['input', 'output']) {
+    if (!isSchema(definition[field]))
+      throw new Error(
+        `Workflow "${field}" is not a zod 4 schema (zod/v3 and zod/mini are unsupported; import { z } from 'quiet-choir').`,
+      );
   }
   return definition as unknown as WorkflowDefinition<unknown, unknown>;
 }
@@ -88,11 +92,33 @@ export class WorkflowExecutor implements Executor<
     let unregister: (() => void) | undefined;
     try {
       if (plan.kind === 'workflow.inspect') {
-        return {
-          kind: 'workflow.run.result',
-          ok: true,
-          run: await readRun(plan.stateDir, plan.runId),
-        };
+        const stateDir = resolveStateDir({ stateDir: plan.stateDir });
+        try {
+          return {
+            kind: 'workflow.run.result',
+            ok: true,
+            run: await readRun({ stateDir, runId: plan.runId }),
+          };
+        } catch (cause) {
+          if (errorCode(cause) !== 'ENOENT') throw cause;
+          const entries = await readdir(stateDir, { withFileTypes: true }).catch(
+            (error: unknown) => {
+              if (errorCode(error) === 'ENOENT') return [];
+              throw error;
+            },
+          );
+          const ids = entries
+            .filter(
+              (entry) =>
+                entry.isFile() && /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}\.json$/u.test(entry.name),
+            )
+            .map((entry) => entry.name.slice(0, -5))
+            .sort();
+          throw new Error(
+            `Run ${plan.runId} not found in ${stateDir} (${String(ids.length)} runs present${ids.length ? `: ${ids.slice(0, 20).join(', ')}${ids.length > 20 ? ', …' : ''}` : ''}). --state-dir resolves against the current directory.`,
+            { cause },
+          );
+        }
       }
       const checked = await new TypeScriptExecutor(this.#options.logger).execute(plan.typecheck);
       if (!checked.ok) {

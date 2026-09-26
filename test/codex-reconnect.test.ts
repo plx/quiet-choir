@@ -137,7 +137,7 @@ it('completes the captured reconnect turn, persists warnings, and replays withou
     harness: new CliHarness({ codexBinary: binary }),
   };
   await expect(runWorkflow(workflow, options)).rejects.toThrow('later failure');
-  const checkpoint = await readRun(stateDir, 'reconnect');
+  const checkpoint = await readRun({ stateDir, runId: 'reconnect' });
   expect(checkpoint.steps['agent']?.status).toBe('completed');
   expect(checkpoint.steps['agent']?.warnings?.[0]).toMatch(/^Reconnecting/u);
   expect(checkpoint.steps['agent']?.output).not.toHaveProperty('warnings');
@@ -211,7 +211,7 @@ it('clears stale warnings when a resumed attempt fails before the harness respon
       },
     }),
   ).rejects.toThrow();
-  const checkpoint = await readRun(stateDir, 'stale-warnings');
+  const checkpoint = await readRun({ stateDir, runId: 'stale-warnings' });
   expect(checkpoint.steps['agent']?.warnings).toEqual(['w']);
 
   await expect(
@@ -220,19 +220,19 @@ it('clears stale warnings when a resumed attempt fails before the harness respon
       resume: true,
       harness: {
         async invoke() {
-          const running = await readRun(stateDir, 'stale-warnings');
+          const running = await readRun({ stateDir, runId: 'stale-warnings' });
           expect(running.steps['agent']?.warnings).toBeUndefined();
           throw new Error('harness unavailable');
         },
       },
     }),
   ).rejects.toThrow('harness unavailable');
-  const resumed = await readRun(stateDir, 'stale-warnings');
+  const resumed = await readRun({ stateDir, runId: 'stale-warnings' });
   expect(resumed.steps['agent']?.warnings).toBeUndefined();
 
   await expect(runWorkflow(workflow, { ...options, resume: true })).rejects.toThrow(
     'No harness adapter configured',
   );
-  const resumedWithoutHarness = await readRun(stateDir, 'stale-warnings');
+  const resumedWithoutHarness = await readRun({ stateDir, runId: 'stale-warnings' });
   expect(resumedWithoutHarness.steps['agent']?.warnings).toBeUndefined();
 });

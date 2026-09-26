@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 
 import type { Harness, HarnessRequest, HarnessResponse } from '../workflow/runtime/model.js';
+import { validateAgentOptions } from '../workflow/runtime/options.js';
 import { HarnessError } from '../workflow/runtime/harness-error.js';
 import { prepareCodexSchema } from './codex-schema.js';
 import { runProcess } from './process.js';
@@ -49,7 +50,8 @@ export class CliHarness implements Harness {
   public async invoke(request: HarnessRequest, signal: AbortSignal): Promise<HarnessResponse> {
     signal.throwIfAborted();
     if (!isAbsolute(request.cwd)) throw new Error('Harness cwd must be an absolute path.');
-    const timeoutMs = timerDuration(request.options.timeoutMs ?? 120_000, 'timeoutMs');
+    validateAgentOptions(request.provider, request.options);
+    const timeoutMs = request.options.timeoutMs ?? 120_000;
     const args: string[] = [];
     let binary: string;
     let schemaDirectory: string | undefined;
@@ -57,10 +59,8 @@ export class CliHarness implements Harness {
     try {
       if (request.provider === 'claude') {
         binary = this.options.claudeBinary ?? 'claude';
-        const maxTurns = positive(request.options.maxTurns ?? 3, 'maxTurns');
+        const maxTurns = request.options.maxTurns ?? 3;
         const budget = request.options.maxBudgetUsd ?? 0.25;
-        if (!Number.isFinite(budget) || budget <= 0)
-          throw new Error('maxBudgetUsd must be positive and finite.');
         args.push(
           '--print',
           '--output-format',
