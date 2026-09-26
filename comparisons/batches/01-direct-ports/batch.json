@@ -17,9 +17,9 @@
   ],
   "apiSnapshot": {
     "package": "quiet-choir 0.0.0",
-    "sha256": "6fae3e933e4df64b6a520f0614d5d786529fc9e01228f69fceb4f3ec93cc614c",
+    "sha256": "6b97b42db17e5203400ced98a64c3f5551110c3eb91938250ac22b6b1ba5fadd",
     "file": "src/workflow/runtime/model.ts",
-    "description": "Agent-profile API used by the active ports at quiet-choir commit b35a0a1a71745a93c58e18bb2e4108f46aa0cc2e. Historical ports explicitly retain raw input capabilities with strictProfiles:false and still require class grants. The hash identifies this model file; the regression suite tests the current built checkout.",
-    "revision": "b35a0a1a71745a93c58e18bb2e4108f46aa0cc2e"
+    "description": "Harness-control API used by the active ports at quiet-choir commit 11471b2c8b0e2e1d23dd5831097ae59cafd6efa1. All 68 original effort controls are executable and verified alongside prompts and outputs. Historical ports retain strictProfiles:false with class grants for elevated raw capabilities. The hash identifies this model file; regression tests use the current built checkout.",
+    "revision": "11471b2c8b0e2e1d23dd5831097ae59cafd6efa1"
   }
 }
