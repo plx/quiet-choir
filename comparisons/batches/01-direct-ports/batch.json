@@ -17,9 +17,9 @@
   ],
   "apiSnapshot": {
     "package": "quiet-choir 0.0.0",
-    "sha256": "18ea2ceb67c88824808d0c0f431baf889092b1a7ef49b4111f247e80ecc89894",
+    "sha256": "6fae3e933e4df64b6a520f0614d5d786529fc9e01228f69fceb4f3ec93cc614c",
     "file": "src/workflow/runtime/model.ts",
-    "description": "Scoped-ID API used by the active bug-hunt port at quiet-choir commit 5b3717404a160575135de831215e215e13c9d2aa. Other ports retain supported legacy overloads. The hash identifies this model file; the regression suite tests the current built checkout.",
-    "revision": "5b3717404a160575135de831215e215e13c9d2aa"
+    "description": "Agent-profile API used by the active ports at quiet-choir commit b35a0a1a71745a93c58e18bb2e4108f46aa0cc2e. Historical ports explicitly retain raw input capabilities with strictProfiles:false and still require class grants. The hash identifies this model file; the regression suite tests the current built checkout.",
+    "revision": "b35a0a1a71745a93c58e18bb2e4108f46aa0cc2e"
   }
 }
