@@ -4,7 +4,7 @@ import { engineInfo, oldFormatMessage } from './engine.js';
 import { digest, jsonValue } from './json.js';
 import { matchesStepGlob, policyOverrideSchema } from './policy.js';
 import type { ForkOptions, ForkProvenance } from './replay-model.js';
-import { readRun, type RunRecord, type StepRecord } from './store.js';
+import { isTerminalStep, readRun, type RunRecord, type StepRecord } from './store.js';
 
 /** Validate fork settings before acquiring a writer or running effects. @internal */
 export function validateFork(value: unknown): ForkOptions {
@@ -65,7 +65,8 @@ export function reuseCandidate(
   const step = candidate?.[1];
   if (
     candidate?.[0] === id &&
-    step?.status === 'completed' &&
+    step !== undefined &&
+    isTerminalStep(step) &&
     step.kind === kind &&
     step.fingerprint === fingerprint &&
     !provenance.invalidate.some((glob) => matchesStepGlob(glob, id)) &&

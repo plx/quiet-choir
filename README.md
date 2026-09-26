@@ -176,9 +176,10 @@ fingerprint. Globs use `*` within segments and `**` across `/`.
 `CliHarness` defaults to 15 minutes, 25 Claude turns, and the unchanged $0.25 Claude per-call
 budget. Custom harnesses report known limits through optional `policyDefaults(provider)`; unknown
 defaults are not invented. `inspect --json` exposes saved rules and each step's `attemptHistory`,
-including resolved policy and its sources. New checkpoints use version 3. Versions 1 and 2 remain
-inspectable but cannot resume or supply fork reuse with this runtime; retain the original runtime or
-choose a new run ID. See [the policy decision](docs/decisions/0005-step-identity-and-policy.md).
+including resolved policy and its sources. New checkpoints use version 4. Versions 1, 2, and 3
+remain inspectable but cannot resume or supply fork reuse with this runtime; retain the original
+runtime or choose a new run ID. See
+[the policy decision](docs/decisions/0005-step-identity-and-policy.md).
 
 To recover after editing workflow code, choose an explicit reuse path:
 
@@ -193,7 +194,7 @@ node "$QC_CHECKOUT/bin/run.js" workflow execute review.workflow.ts \
 ```
 
 Forks preserve the source checkpoint and default to reusing the unchanged launch prefix. The first
-miss ends reuse; later effects run live. `--reuse matching` explicitly reuses all matching completed
+miss ends reuse; later effects run live. `--reuse matching` explicitly reuses all matching terminal
 IDs, which requires accounting for undeclared workspace dependencies. Repeat
 `--invalidate 'path/**'` to force effects live. Forks inherit source input when omitted, accept new
 explicit input/version, and require the same workflow name. Inspect `forkedFrom` and each copied
@@ -201,13 +202,29 @@ step's `reusedFrom` for provenance. Resume the target normally after interruptio
 close further reuse.
 
 `--accept-code-change` waives only source/run-schema gates, keeping name/version, engine, cwd,
-validated input, completed-step identity, and replay checks. Each use that actually changes code,
+validated input, terminal-step identity, and replay checks. Each use that actually changes code,
 schemas, or files is recorded in `codeChanges`. A tail/output fix can finish with zero repeated
 effects. Local step identity now hashes callback source and optional `version` as well as
 input/schema/cwd. The CLI loader removes callback comments and formatting; captured values, helper
 implementations, native/bound functions, and environment remain invisible. Declare dependencies in
 input, bump the step version, or invalidate in a fork. See
 [the recovery decision](docs/decisions/0006-code-change-recovery.md).
+
+## Failure handling
+
+Use `onError: 'return'` when a local or agent failure selects a fallback. It returns
+`{ ok: true, value }` or `{ ok: false, error: { message, kind, attempts } }` and saves final
+failures as `settled-failed`. Those outcomes replay without another call. Throwing remains the
+default; a caught throwing call may heal and change the replay path. Cancellation still rejects.
+
+Use one ID with `retry: { maxAttempts: 3, delayMs: 100, on: ['rate-limit', 'timeout'] }` for
+transient retries. Retry policy can change on resume; `onError` is step identity. Do not race
+durable operations with `Promise.race`/`Promise.any`: replay may choose a different winner. Agent
+`timeoutMs` plus `onError: 'return'` journals a timeout decision. Durable races are deferred to #57.
+See
+[failure handling](plugins/agents/quiet-choir/skills/quiet-choir/references/workflow-authoring.md#failure-handling)
+for safe fallbacks, best-effort maps, classification limits, and deliberate retry via fork
+invalidation.
 
 ## Durability contract
 
@@ -220,12 +237,12 @@ input, bump the step version, or invalidate in a fork. See
 - Step IDs are unique within a run, including loop iterations and helper functions. Do not nest
   steps inside a step callback. Compose them with ordinary TypeScript functions at the workflow
   level.
-- Completed effects are reused by ID and semantic component hashes (kind, input/prompt, schema,
-  model/effort, capabilities, resolved cwd, and local callback source/version). Errors name changed
-  components. Timeout, turn, budget, and retry policy do not affect identity. Unfinished identities
-  may change with history retained; unvisited unfinished records become `superseded`. Every
-  completed step must still be visited. An early `replay.divergence` event warns before live work
-  when earlier completed steps remain unvisited; `--strict-replay` aborts there. The final
+- Terminal outcomes are reused by ID and semantic component hashes (kind, input/prompt, schema,
+  onError, model/effort, capabilities, resolved cwd, and local callback source/version). Errors name
+  changed components. Timeout, turn, budget, and retry policy do not affect identity. Unfinished
+  identities may change with history retained; unvisited unfinished records become `superseded`.
+  Every terminal step must still be visited. An early `replay.divergence` event warns before live
+  work when earlier terminal steps remain unvisited; `--strict-replay` aborts there. The final
   skipped-step check still applies.
 - The CLI hashes raw bytes of local compiler-discovered dependencies and the nearest tsconfig under
   real, project-relative paths. Engine `src/`/`dist/` files are excluded (except an explicit

@@ -22,3 +22,4 @@ part of the documentation.
 - [0004: Own workflow operations until drained](0004-operation-ownership.md)
 - [0005: Separate step identity from execution policy](0005-step-identity-and-policy.md)
 - [0006: Explicit reuse after workflow code changes](0006-code-change-recovery.md)
+- [0007: Explicit durable failure outcomes](0007-durable-failure-outcomes.md)

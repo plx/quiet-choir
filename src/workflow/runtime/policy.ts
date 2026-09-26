@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { errorKindSchema } from './step-error.js';
 
 import type {
   AttemptPolicy,
@@ -17,6 +18,7 @@ const duration = positive.max(2_147_483_647);
 export const retryPolicySchema = z.strictObject({
   maxAttempts: positive,
   delayMs: z.number().nonnegative().max(Number.MAX_SAFE_INTEGER).optional(),
+  on: z.array(errorKindSchema).optional(),
 });
 const limits = {
   timeoutMs: duration.optional(),
@@ -109,9 +111,9 @@ export function resolvePolicy(
   executionPolicySchema.parse(defaults);
   if (callSite.retry !== undefined && !retryPolicySchema.safeParse(callSite.retry).success)
     throw new Error(
-      'Retry policy requires positive integer maxAttempts and a nonnegative finite delayMs.',
+      'Retry policy requires positive integer maxAttempts, a nonnegative finite delayMs, and valid error kinds in on.',
     );
-  const policy: ExecutionPolicy & { retry: Required<RetryPolicy> } = {
+  const policy: AttemptPolicy['policy'] = {
     retry: { maxAttempts: 1, delayMs: 100 },
   };
   const sources: Record<string, string> = {
@@ -133,7 +135,7 @@ export function resolvePolicy(
       if (key === 'retry') {
         for (const [field, limit] of Object.entries(value as RetryPolicy) as [
           string,
-          number | undefined,
+          RetryPolicy[keyof RetryPolicy] | undefined,
         ][]) {
           if (limit === undefined) continue;
           Object.assign(policy.retry, { [field]: limit });

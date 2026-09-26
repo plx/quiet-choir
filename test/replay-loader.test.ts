@@ -82,7 +82,7 @@ describe('source-aware loader recovery', { timeout: 30_000 }, () => {
     const viaAlias = await validate(join(alias, 'workflow.ts'));
     expect(viaAlias.workflow.fingerprint).toBe(original.workflow.fingerprint);
     expect(Object.keys(original.workflow.identity?.files ?? {})).toEqual(['workflow.ts']);
-    expect(original.workflow.identity?.engine).toEqual({ version: '0.0.0', formatVersion: 3 });
+    expect(original.workflow.identity?.engine).toEqual({ version: '0.0.0', formatVersion: 4 });
     const result = await execute('source');
     expect(result).toMatchObject({
       ok: true,

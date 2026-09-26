@@ -103,7 +103,7 @@ overlays call-site fields and sticky rules, and sends the resolved limit values 
 not invent custom-harness defaults. Unknown defaults stay absent from attempt policy;
 `requestedModel: null` means the native configuration chooses. Custom implementations must enforce
 the supplied limits and settle on abort; otherwise draining can hang while the run holds its lock.
-The core owns retries and removes `retry` from the adapter request.
+The core owns retries and removes `retry` and `onError` from the adapter request.
 
 The adapter owns one fresh invocation, not retries, run locks, or checkpoint storage. Missing usage
 measurements and native IDs must be `null`, never `undefined`. An omitted usage field fails the step

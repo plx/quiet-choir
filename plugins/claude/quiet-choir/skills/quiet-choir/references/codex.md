@@ -112,13 +112,17 @@ redefine unfinished steps with history; CLI source edits require explicit code a
 See [durability](durability.md#recovering-a-timeout-or-turn-limit) for the recovery recipe and
 `attemptHistory` fields. Use `skipGitRepoCheck` only for work outside Git.
 
-Agent calls accept `retry: { maxAttempts, delayMs? }` for explicitly repeatable work; the default
-remains one attempt. Timeout/cancellation terminates process groups on macOS/Linux, with only
-immediate-child cleanup on Windows. One Ctrl-C or SIGTERM cancels, drains, and exits 130. A second
-Ctrl-C kills the runner mid-drain and can leave its lock and a `running` record. SIGKILL, SIGHUP
-(closed terminal or dropped SSH), or a crash can leave detached children running and editing. Before
-resuming, check `pgrep -fl 'claude --print|codex exec'` and identify any children belonging to the
-interrupted run.
+Agent calls accept `retry: { maxAttempts, delayMs?, on? }` for explicitly repeatable work; the
+default remains one attempt. Timeout/cancellation terminates process groups on macOS/Linux, with
+only immediate-child cleanup on Windows. One Ctrl-C or SIGTERM cancels, drains, and exits 130. A
+second Ctrl-C kills the runner mid-drain and can leave its lock and a `running` record. SIGKILL,
+SIGHUP (closed terminal or dropped SSH), or a crash can leave detached children running and editing.
+Before resuming, check `pgrep -fl 'claude --print|codex exec'` and identify any children belonging
+to the interrupted run.
 
 Structured-output success paths for both adapters completed live with claude 2.1.283 and codex-cli
 0.157.1. That is evidence for those versions and captures, not a guarantee.
+
+Use `onError: 'return'` to persist final failures before branching to a fallback. Cancellation still
+rejects; replay never retries a saved `settled-failed` outcome. `retry.on` filters structured error
+categories. See [failure handling](workflow-authoring.md#failure-handling).

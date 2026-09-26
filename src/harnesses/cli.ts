@@ -173,7 +173,11 @@ export class CliHarness implements Harness {
         stderr: result.stderr,
         stdout: result.stdout,
         ...(outcome.kind === 'success'
-          ? { usage: outcome.response.usage, sessionId: outcome.response.sessionId }
+          ? {
+              kind: 'process',
+              usage: outcome.response.usage,
+              sessionId: outcome.response.sessionId,
+            }
           : {}),
       });
     } finally {

@@ -13,6 +13,11 @@ export type {
 } from './workflow/runtime/harness-error.js';
 export type {
   JsonValue,
+  ErrorKind,
+  ErrorMode,
+  StepError,
+  Settled,
+  EffectResult,
   AgentOptions,
   ClaudeOptions,
   CodexOptions,

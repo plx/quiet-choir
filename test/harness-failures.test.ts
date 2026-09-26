@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { CliHarness, HarnessError, defineWorkflow, readRun, runWorkflow, z } from '../src/index.js';
-import type { HarnessRequest } from '../src/index.js';
+import type { AgentClient, ClaudeOptions, CodexOptions, HarnessRequest } from '../src/index.js';
 import { parseCodex } from '../src/harnesses/protocol.js';
 
 const directories: string[] = [];
@@ -76,7 +76,7 @@ describe('captured exit-1 failures', () => {
         input: z.null(),
         output: z.string(),
         async run(ctx) {
-          const client = ctx[capture.provider];
+          const client: AgentClient<ClaudeOptions | CodexOptions> = ctx[capture.provider];
           if (capture.structured)
             return (
               await client.object('agent', {

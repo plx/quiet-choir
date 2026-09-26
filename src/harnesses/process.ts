@@ -63,10 +63,20 @@ export function runProcess(request: ProcessRequest): Promise<ProcessResult> {
       }, request.killGraceMs);
     };
     const abort = (): void => {
-      stop(new Error(`${request.binary} invocation cancelled.`, { cause: request.signal.reason }));
+      stop(
+        Object.assign(
+          new Error(`${request.binary} invocation cancelled.`, { cause: request.signal.reason }),
+          { code: 'ABORT_ERR' },
+        ),
+      );
     };
     const deadline = setTimeout(() => {
-      stop(new Error(`${request.binary} exceeded its ${String(request.timeoutMs)}ms deadline.`));
+      stop(
+        Object.assign(
+          new Error(`${request.binary} exceeded its ${String(request.timeoutMs)}ms deadline.`),
+          { code: 'ETIMEDOUT' },
+        ),
+      );
     }, request.timeoutMs);
     const cleanup = (): void => {
       settled = true;
@@ -78,8 +88,11 @@ export function runProcess(request: ProcessRequest): Promise<ProcessResult> {
       bytes += chunk.length;
       if (bytes > request.maxOutputBytes) {
         stop(
-          new Error(
-            `${request.binary} exceeded its ${String(request.maxOutputBytes)}-byte output limit.`,
+          Object.assign(
+            new Error(
+              `${request.binary} exceeded its ${String(request.maxOutputBytes)}-byte output limit.`,
+            ),
+            { code: 'QUIET_CHOIR_OUTPUT_LIMIT' },
           ),
         );
       } else chunks.push(chunk);
@@ -98,11 +111,14 @@ export function runProcess(request: ProcessRequest): Promise<ProcessResult> {
     child.once('error', (error: NodeJS.ErrnoException) => {
       cleanup();
       reject(
-        new Error(
-          error.code === 'ENOENT'
-            ? `Cannot start ${request.binary}. Install the harness CLI and check PATH and the working directory.`
-            : `Cannot start ${request.binary}: ${error.message}`,
-          { cause: error },
+        Object.assign(
+          new Error(
+            error.code === 'ENOENT'
+              ? `Cannot start ${request.binary}. Install the harness CLI and check PATH and the working directory.`
+              : `Cannot start ${request.binary}: ${error.message}`,
+            { cause: error },
+          ),
+          { code: error.code },
         ),
       );
     });

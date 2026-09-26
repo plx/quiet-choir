@@ -7,7 +7,7 @@ import type { WorkflowDefinition } from './model.js';
 import type { StateDirectoryOptions } from './paths.js';
 import type { ResumeCheck, SourceFingerprint, WorkflowIdentity } from './replay-model.js';
 import { schemaJson } from './schema.js';
-import { readRun, type RunRecord } from './store.js';
+import { isTerminalStep, readRun, type RunRecord } from './store.js';
 
 /** Run-level code metadata for embedding and compatibility inspection. */
 export interface WorkflowCodeOptions {
@@ -99,13 +99,12 @@ export function compareResume(
   const compatible =
     changed.length === 0 || (options.acceptCodeChange === true && canAcceptCodeChange);
   const refinalizable =
-    saved.status === 'failed' &&
-    Object.values(saved.steps).every((step) => step.status === 'completed');
+    saved.status === 'failed' && Object.values(saved.steps).every(isTerminalStep);
   const changes = changed
     .map((key) => (key === 'code' && files.length ? `code (${files.join(', ')})` : key))
     .join(', ');
   const hint = refinalizable
-    ? ' All recorded effects completed; a tail/output fix can re-finalize with --resume --accept-code-change and zero repeated effects if step identities and replay order remain compatible.'
+    ? ' All recorded effects have terminal outcomes; a tail/output fix can re-finalize with --resume --accept-code-change and zero repeated effects if step identities and replay order remain compatible.'
     : '';
   const message =
     saved.formatVersion !== engineInfo.formatVersion

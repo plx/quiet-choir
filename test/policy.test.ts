@@ -457,7 +457,11 @@ it('does not include capability options with reserved component names in another
   const invoke = vi.fn<Harness['invoke']>().mockResolvedValue(reply);
   const definition = workflow(
     async (ctx) =>
-      (await ctx.claude.text('ask', { prompt: 'x', kind: 'first' } as ClaudeOptions)).output,
+      (
+        await ctx.claude.text('ask', { prompt: 'x', kind: 'first' } as ClaudeOptions & {
+          readonly onError?: 'throw';
+        })
+      ).output,
   );
   await expect(runWorkflow(definition, { ...options(), harness: { invoke } })).rejects.toThrow(
     'Unrecognized key(s) "kind"',

@@ -18,3 +18,9 @@ One local writer owns each run. Cancellation and mapper failures abort and drain
 before releasing ownership. Observers cannot invalidate a committed effect. Changes to scheduling,
 serialization, or locking should preserve these relationships, including on failure paths. The
 durability rationale is in [ADR 0002](../../../docs/decisions/0002-durable-external-workflows.md).
+
+A settled failure is a terminal branch decision, just like a completed result: identity and path
+checks must preserve it on replay and fork reuse. Cancellation and infrastructure failures never
+become fallback values. Retry filtering remains policy; retain every attempt's diagnostics. Do not
+infer handling from JavaScript error identity/cause chains. See
+[ADR 0007](../../../docs/decisions/0007-durable-failure-outcomes.md).

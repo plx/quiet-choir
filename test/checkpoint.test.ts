@@ -471,3 +471,27 @@ it('preserves a successful sibling result after storage-triggered cancellation',
     attempts: 1,
   });
 });
+
+it('does not return a settled outcome when its checkpoint cannot be committed', async () => {
+  const original = new Error('domain failure before settlement');
+  const action = vi.fn(() => {
+    throw original;
+  });
+  vi.mocked(store.writeRun).mockImplementation((directory, record) =>
+    record.steps['effect']?.status === 'settled-failed'
+      ? Promise.reject(ioError('ENOSPC'))
+      : actualStore.writeRun(directory, record),
+  );
+  const error: unknown = await runWorkflow(
+    workflow(async (ctx) => {
+      await ctx.step('effect', { input: null, schema: z.string(), onError: 'return', run: action });
+      return 'must not branch on an uncommitted failure';
+    }),
+    options(),
+  ).catch((error: unknown) => error);
+  expect(error).toBeInstanceOf(AggregateError);
+  expect((error as AggregateError).cause).toBe(original);
+  expect(String(error)).toContain('ENOSPC');
+  expect(action).toHaveBeenCalledTimes(1);
+  expect((await readRun(options())).steps['effect']?.status).toBe('running');
+});
