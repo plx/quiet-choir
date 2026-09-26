@@ -209,7 +209,7 @@ describe('durable TypeScript workflows', () => {
     await expect(runWorkflow(definition, options)).rejects.toThrow('pause');
     input = 2;
     await expect(runWorkflow(definition, { ...options, resume: true })).rejects.toThrow(
-      'changed inputs',
+      'input changed on a completed step',
     );
     skip = true;
     await expect(

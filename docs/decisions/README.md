@@ -20,3 +20,4 @@ part of the documentation.
 - [0002: External TypeScript workflows with local durable steps](0002-durable-external-workflows.md)
 - [0003: Separate workflow outcomes from checkpoint failures](0003-checkpoint-failure-precedence.md)
 - [0004: Own workflow operations until drained](0004-operation-ownership.md)
+- [0005: Separate step identity from execution policy](0005-step-identity-and-policy.md)

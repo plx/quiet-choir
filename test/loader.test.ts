@@ -170,8 +170,8 @@ export const invalid: number = 'wrong';`);
     const first = await executor().execute(plan(file));
     await writeFile(helper, 'export const factor = 3;');
     const second = await executor().execute(plan(file));
-    expect(first.ok).toBe(true);
-    expect(second.ok).toBe(true);
+    expect(first.ok, JSON.stringify(first)).toBe(true);
+    expect(second.ok, JSON.stringify(second)).toBe(true);
     if (first.kind === 'workflow.validate.result' && second.kind === 'workflow.validate.result') {
       expect(first.workflow.fingerprint).not.toBe(second.workflow.fingerprint);
     }

@@ -15,10 +15,10 @@ defaults below come from `CliHarness`, not the core or custom harnesses.
 | `prompt`       | Required instructions, delivered on stdin without a shell                                                                                 |
 | `model`        | Claude model name/alias; omitted means the installed harness default                                                                      |
 | `cwd`          | Resolved against the run's working directory; defaults to it. Absolute paths are accepted and are not confined. The directory must exist. |
-| `timeoutMs`    | Per-call wall-clock limit, default 120,000                                                                                                |
+| `timeoutMs`    | Per-call wall-clock limit, default 900,000 (15 minutes)                                                                                   |
 | `tools`        | Built-in tools exposed to the call; default empty                                                                                         |
 | `allowedTools` | Tools pre-approved in addition to settings allow rules; omitted by default                                                                |
-| `maxTurns`     | Positive integer, default 3                                                                                                               |
+| `maxTurns`     | Positive integer, default 25                                                                                                              |
 | `maxBudgetUsd` | Positive finite per-call USD limit, default 0.25                                                                                          |
 
 The adapter uses `claude --print --output-format json --permission-mode dontAsk` and
@@ -68,14 +68,16 @@ attempts can retain session/usage metadata in `steps[id].failedAttempts`; succes
 in the completed result. Missing failure metadata and partial calls still make this an incomplete
 spending ledger.
 
-quiet-choir does not automatically retry agent calls. Fix authentication externally and resume a
-compatible run. Once a step is recorded, its prompt, every option (including `timeoutMs`,
-`maxTurns`, and `maxBudgetUsd`), resolved `cwd`, and output schema are fingerprinted, including for
-failed steps. A call that hit a limit can resume only with the same limit. Any CLI source edit also
-changes the run fingerprint. Size limits for the worst case up front; changes to failed-step options
-remain deferred to [#40](https://github.com/plx/quiet-choir/issues/40)/#41. Invalid options rejected
-before recording a step can be corrected in an embedded run as described in
-[extensions](extensions.md).
+Agent calls accept `retry: { maxAttempts, delayMs? }`; the default remains one attempt. Only retry
+calls safe to repeat, since earlier attempts may already have edited files. Fix authentication
+externally and resume. Limits (`timeoutMs`, `maxTurns`, `maxBudgetUsd`) and retry policy are
+excluded from identity. Raise them with a sticky CLI `--policy` rule or embedded `RunOptions.policy`
+without rerunning completed steps; see the
+[timeout recovery recipe](durability.md#recovering-a-timeout-or-turn-limit). Completed prompts,
+schemas, model, cwd, and capabilities still must match. Embedded callers may redefine unfinished
+steps with history retained. CLI source edits still change the run fingerprint. A model override
+requires explicit `--allow-model-override`; it affects unfinished attempts only. `attemptHistory`
+records resolved limits, requested model, provenance, timestamps, and outcome.
 
 ## Configuration and cancellation
 

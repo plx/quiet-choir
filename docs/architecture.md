@@ -35,7 +35,10 @@ agent responses. Dedicated Claude and Codex clients submit plain-data requests t
 replaceable `Harness` interface; the runtime owns step identity, replay, and validation
 independently of the CLI processes that perform agent work. Core-owned option schemas validate
 explicit requests before recording an effect; adapters reuse the same validators and apply their own
-defaults. `runWorkflow` and `readRun` share working-directory and storage resolution.
+defaults. Optional `Harness.policyDefaults` reports execution limits without effects. The core
+resolves those defaults, call-site policy, and sticky run overrides before invoking the adapter, and
+records per-attempt limits and provenance. `runWorkflow` and `readRun` share working-directory and
+storage resolution.
 
 Each local run has a JSON checkpoint and an exclusive owner lock. Completed named steps are reused
 when their inputs match; unfinished steps execute again. A resumed workflow function starts from the
@@ -44,7 +47,8 @@ beginning, so everything outside a durable operation must be deterministic and f
 checks the workflow's transitive local source fingerprint alongside its explicit version. These
 checks guard compatibility without claiming to identify changes in external dependencies or
 services. See [ADR 0002](decisions/0002-durable-external-workflows.md) for the at-least-once
-execution contract, [ADR 0004](decisions/0004-operation-ownership.md) for promise ownership, and
+execution contract, [ADR 0005](decisions/0005-step-identity-and-policy.md) for step identity and
+execution policy, [ADR 0004](decisions/0004-operation-ownership.md) for promise ownership, and
 [research notes](research.md) for the comparison to Claude's dynamic workflows.
 
 ## CLI execution boundary

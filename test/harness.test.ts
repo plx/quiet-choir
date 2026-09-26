@@ -193,7 +193,7 @@ describe('headless CLI adapter', () => {
         '--tools',
         '',
         '--max-turns',
-        '3',
+        '25',
         '--max-budget-usd',
         '0.25',
         '--no-session-persistence',

@@ -16,7 +16,7 @@ defaults belong to `CliHarness`; the core adds none.
 | `prompt`           | Required instructions, sent over stdin                                                                                                    |
 | `model`            | Model name; omitted means the installed harness default                                                                                   |
 | `cwd`              | Resolved against the run's working directory; defaults to it. Absolute paths are accepted and are not confined. The directory must exist. |
-| `timeoutMs`        | Per-call wall-clock limit, default 120,000                                                                                                |
+| `timeoutMs`        | Per-call wall-clock limit, default 900,000 (15 minutes)                                                                                   |
 | `sandbox`          | `read-only` (default) or `workspace-write`                                                                                                |
 | `reasoningEffort`  | `minimal`, `low`, `medium`, or `high`; omitted means inherited configuration                                                              |
 | `skipGitRepoCheck` | Set true to permit execution outside a Git repo; omitted by default                                                                       |
@@ -69,7 +69,7 @@ call-site schemas. Codex enforces strict wire schemas; raw `.optional()` propert
 before inference in the captured 0.157.1 probes. Issue
 [#35](https://github.com/plx/quiet-choir/issues/35) added the default compat encoding and local
 strict-mode diagnostics, so the old blanket warning against `.optional()` no longer applies. An
-explicit mode is fingerprinted like other call options; keep it stable on resume. Claude requires an
+explicit mode is part of identity; keep it stable for completed-step replay. Claude requires an
 object root and receives the original JSON Schema. Other Codex restrictions and compatibility
 transforms do not apply to it.
 
@@ -93,10 +93,10 @@ cache comparison; it is not comparable with Claude's top-level field. `costUsd` 
 no Codex per-call USD cap. Failed protocol attempts can retain available usage/session metadata in
 `steps[id].failedAttempts`, with nulls when absent.
 
-The 120-second wall-clock and 8 MiB combined stdout/stderr limits bound the process, not dollar
-spend. The byte limit counts the whole JSONL stream, including command output. CLI runs cannot raise
-it; embedding callers can set `CliHarnessOptions.maxOutputBytes`. A noisy editing call may hit that
-limit after making file changes even though its result is not saved.
+The default 15-minute wall-clock and 8 MiB combined stdout/stderr limits bound the process, not
+dollar spend. The byte limit counts the whole JSONL stream, including command output. CLI runs
+cannot raise it; embedding callers can set `CliHarnessOptions.maxOutputBytes`. A noisy editing call
+may hit that limit after making file changes even though its result is not saved.
 
 ## Diagnosing a failure
 
@@ -105,20 +105,21 @@ from stdout survive nonzero normal exits; a bare exit error means no usable reas
 Check the object schema and reproduce with the same flags when needed. Credentials-only repairs can
 resume compatible runs.
 
-Once a step is recorded, the prompt, every option (including `timeoutMs`), resolved `cwd`, and
-output schema are fingerprinted. Failed steps are checked too: a call that hit its limit can resume
-only with the same limit. Any CLI source edit also changes the run fingerprint. Size limits for the
-worst case up front; use `skipGitRepoCheck` only for work outside Git. Changes to failed-step
-options remain deferred to [#40](https://github.com/plx/quiet-choir/issues/40)/#41; invalid options
-rejected before recording a step can be corrected by embedded callers. See
-[durability](durability.md) for compatibility and repeated-effect risks.
+Timeout and explicit retry policy are excluded from step identity. Raise `timeoutMs` through a
+sticky `--policy` rule without editing source or rerunning completed calls. A model or effort
+override requires `--allow-model-override` and affects unfinished attempts only. Completed prompts,
+schemas, model/effort, cwd, sandbox, and other capabilities still must match. Embedded callers may
+redefine unfinished steps with history; CLI source edits still fail the run fingerprint gate. See
+[durability](durability.md#recovering-a-timeout-or-turn-limit) for the recovery recipe and
+`attemptHistory` fields. Use `skipGitRepoCheck` only for work outside Git.
 
-quiet-choir does not automatically retry agent calls. Timeout/cancellation terminates process groups
-on macOS/Linux, with only immediate-child cleanup on Windows. One Ctrl-C or SIGTERM cancels, drains,
-and exits 130. A second Ctrl-C kills the runner mid-drain and can leave its lock and a `running`
-record. SIGKILL, SIGHUP (closed terminal or dropped SSH), or a crash can leave detached children
-running and editing. Before resuming, check `pgrep -fl 'claude --print|codex exec'` and identify any
-children belonging to the interrupted run.
+Agent calls accept `retry: { maxAttempts, delayMs? }` for explicitly repeatable work; the default
+remains one attempt. Timeout/cancellation terminates process groups on macOS/Linux, with only
+immediate-child cleanup on Windows. One Ctrl-C or SIGTERM cancels, drains, and exits 130. A second
+Ctrl-C kills the runner mid-drain and can leave its lock and a `running` record. SIGKILL, SIGHUP
+(closed terminal or dropped SSH), or a crash can leave detached children running and editing. Before
+resuming, check `pgrep -fl 'claude --print|codex exec'` and identify any children belonging to the
+interrupted run.
 
 Structured-output success paths for both adapters completed live with claude 2.1.283 and codex-cli
 0.157.1. That is evidence for those versions and captures, not a guarantee.

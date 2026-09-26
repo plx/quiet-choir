@@ -100,3 +100,12 @@ Put flags after the command name, for example `workflow inspect first --json`.
 
 `configuration get/set/doctor` are stubs, not a configuration system. See
 [durability](durability.md) before recovery and [inspection](inspection.md) for saved status.
+
+## Execution policy flags
+
+Repeat `--policy '{"match":"review","timeoutMs":600000}'` to append ordered, sticky JSON rules.
+`--policy-reset` clears saved rules first. New model/effort rules also require
+`--allow-model-override`; completed calls never rerun because of an override. Invalid rules fail
+with exit 2 before module loading. See
+[durability](durability.md#recovering-a-timeout-or-turn-limit) for compatibility and timeout
+recovery.

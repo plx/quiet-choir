@@ -12,7 +12,13 @@ import {
   writeCheckpoint,
 } from './checkpoint.js';
 import { resolveStateDir } from './paths.js';
-import { validateStepId } from './identity.js';
+import { agentIdentity, stepIdentity, validateStepId, type StepIdentity } from './identity.js';
+import {
+  resolvePolicy,
+  validatePolicy,
+  type AttemptPolicy,
+  type PolicyOverride,
+} from './policy.js';
 import { OperationTracker } from './tracking.js';
 import { optionData, validateAgentOptions } from './options.js';
 import { HarnessError } from './harness-error.js';
@@ -26,7 +32,6 @@ import type {
   Harness,
   HarnessRequest,
   JsonValue,
-  RetryPolicy,
   StepContext,
   StepDefinition,
   WorkflowContext,
@@ -37,7 +42,13 @@ import { lockRun, readRun, type RunRecord, type StepRecord } from './store.js';
 /** A lightweight notification emitted after the associated checkpoint is persisted. */
 export interface WorkflowEvent {
   /** Event lifecycle transition. */
-  readonly type: 'step.started' | 'step.completed' | 'step.replayed' | 'step.failed';
+  readonly type:
+    | 'step.started'
+    | 'step.completed'
+    | 'step.replayed'
+    | 'step.failed'
+    | 'step.redefined'
+    | 'step.superseded';
   /** Owning execution. */
   readonly runId: string;
   /** Named effect. */
@@ -50,7 +61,7 @@ export interface WorkflowEvent {
 export type WorkflowRun<TOutput> = RunRecord & {
   /** Final validated output, inferred from the workflow schema. */
   readonly output: TOutput;
-  /** Cleanup warnings from this invocation, returned after a persisted completion; not checkpointed. */
+  /** Policy warnings plus invocation-only cleanup warnings, returned after a persisted completion. */
   readonly warnings?: readonly string[];
 };
 
@@ -72,6 +83,12 @@ export interface RunOptions {
   readonly signal?: AbortSignal;
   /** Caller-provided code fingerprint; CLI supplies a hash of local TypeScript dependencies. */
   readonly fingerprint?: string;
+  /** Sticky rules appended to saved overrides; later matching values win. */
+  readonly policy?: readonly PolicyOverride[];
+  /** Discard saved rules before applying this invocation's rules. */
+  readonly policyReset?: boolean;
+  /** Authorize new model/effort overrides; saved authorization stays with sticky rules. */
+  readonly allowModelOverride?: boolean;
   /** Unawaited observer; synchronous throws and promise rejections cannot affect execution. */
   readonly onEvent?: (event: WorkflowEvent) => void | Promise<void>;
 }
@@ -105,6 +122,7 @@ export async function runWorkflow<TInput, TOutput>(
 ): Promise<WorkflowRun<TOutput>> {
   if (!definition.name.trim() || !definition.version.trim())
     throw new Error('Workflow name and version must be nonempty.');
+  const incomingPolicy = validatePolicy(options.policy ?? [], options.allowModelOverride ?? false);
   const cwd = resolve(options.cwd ?? process.cwd());
   const stateDir = resolveStateDir(options);
   const fingerprint = digest({
@@ -132,6 +150,18 @@ export async function runWorkflow<TInput, TOutput>(
       throw new Error(`Run ${options.runId} already exists; use resume or choose a new run ID.`);
     if (!existing && options.resume)
       throw new Error(`Run ${options.runId} does not exist; cannot resume.`);
+    if (existing?.formatVersion === 1)
+      throw new Error(
+        'Checkpoint format version 1 cannot resume with identity/policy separation. Inspect it with workflow inspect; use the original runtime to resume it or start a new run ID. No checkpoint was changed.',
+      );
+    const allowModelOverride =
+      options.allowModelOverride ??
+      (options.policyReset ? false : (existing?.allowModelOverride ?? false));
+    const policy = validatePolicy(
+      [...(options.policyReset ? [] : (existing?.policy ?? [])), ...incomingPolicy],
+      allowModelOverride,
+    );
+    const matchedPolicy = new Set<number>();
     if (
       existing &&
       (existing.workflow.name !== definition.name ||
@@ -151,11 +181,31 @@ export async function runWorkflow<TInput, TOutput>(
       throw new Error('Workflow input changed; start a new run.');
     if (existing?.status === 'completed') {
       const output = definition.output.parse(existing.output);
-      return { ...existing, output: output as TOutput & JsonValue };
+      if (
+        incomingPolicy.length ||
+        options.policyReset ||
+        options.allowModelOverride !== undefined
+      ) {
+        existing.policy = policy;
+        existing.allowModelOverride = allowModelOverride;
+        existing.policyWarnings = [];
+        existing.updatedAt = new Date().toISOString();
+        await writeCheckpoint(
+          stateDir,
+          existing.id,
+          () => structuredClone(existing),
+          'Could not save execution policy',
+        );
+      }
+      return {
+        ...existing,
+        output: output as TOutput & JsonValue,
+        ...(existing.policyWarnings?.length ? { warnings: existing.policyWarnings } : {}),
+      };
     }
     const now = new Date().toISOString();
     const record: RunRecord = existing ?? {
-      formatVersion: 1,
+      formatVersion: 2,
       id: options.runId,
       workflow: { name: definition.name, version: definition.version, fingerprint },
       cwd,
@@ -166,6 +216,18 @@ export async function runWorkflow<TInput, TOutput>(
       steps: {},
       createdAt: now,
       updatedAt: now,
+    };
+    record.policy = policy;
+    record.allowModelOverride = allowModelOverride;
+    record.policyWarnings = [];
+    const warnUnmatched = (): void => {
+      record.policyWarnings = policy.flatMap((rule, index) =>
+        matchedPolicy.has(index)
+          ? []
+          : [
+              `Policy override ${String(index)} (${rule.kind ?? 'any kind'} ${rule.match ?? '**'}) matched no visited step.`,
+            ],
+      );
     };
     let writeQueue = Promise.resolve();
     function save(context = `Could not save run ${record.id}`): Promise<void> {
@@ -221,28 +283,15 @@ export async function runWorkflow<TInput, TOutput>(
       }
     };
 
-    function launch<T>(
-      id: string,
-      kind: StepRecord['kind'],
-      dependencies: JsonValue,
-      schema: z.ZodType<T>,
-      retry: RetryPolicy | undefined,
-      action: (context: StepContext, step: StepRecord) => Promise<T> | T,
-      wakeAt: number | null = null,
-    ): Promise<T> {
-      return operations.launch(id, () =>
-        effect(id, kind, dependencies, schema, retry, action, wakeAt),
-      );
-    }
-
     async function effect<T>(
       id: string,
       kind: StepRecord['kind'],
       dependencies: JsonValue,
       schema: z.ZodType<T>,
-      retry: RetryPolicy | undefined,
+      execution: AttemptPolicy,
       action: (context: StepContext, step: StepRecord) => Promise<T> | T,
       wakeAt: number | null,
+      requestedIdentity?: StepIdentity,
     ): Promise<T> {
       if (closed) throw new Error('Workflow is closed; await all workflow operations.');
       if (inEffect.getStore())
@@ -254,32 +303,28 @@ export async function runWorkflow<TInput, TOutput>(
       if (used.has(id))
         throw new Error(`Duplicate step ID: ${id}. Use a unique ID for each loop iteration.`);
       used.add(id);
-      const maxAttempts = retry?.maxAttempts ?? 1;
-      const delayMs = retry?.delayMs ?? 100;
-      if (
-        !Number.isInteger(maxAttempts) ||
-        maxAttempts < 1 ||
-        !Number.isFinite(delayMs) ||
-        delayMs < 0
-      ) {
-        throw new Error(
-          'Retry policy requires positive integer maxAttempts and a nonnegative finite delayMs.',
-        );
-      }
+      const { maxAttempts, delayMs } = execution.policy.retry;
+      let identity: StepIdentity;
       let stepFingerprint: string;
       try {
-        stepFingerprint = digest({
-          kind,
-          dependencies,
-          schema: schemaJson(schema),
-          retry: { maxAttempts, delayMs },
-        });
+        jsonValue({ dependencies });
+        identity =
+          requestedIdentity ??
+          stepIdentity({ kind, input: dependencies, schema: schemaJson(schema) });
+        stepFingerprint = digest(identity);
       } catch (cause) {
         throw new Error(`Step ${id}: ${message(cause)}`, { cause });
       }
       const prior = Object.hasOwn(record.steps, id) ? record.steps[id] : undefined;
-      if (prior && (prior.kind !== kind || prior.fingerprint !== stepFingerprint)) {
-        throw new Error(`Step ${id} changed inputs, options, kind, or schema; start a new run.`);
+      const redefined =
+        prior !== undefined && (prior.kind !== kind || prior.fingerprint !== stepFingerprint);
+      if (redefined && prior.status === 'completed') {
+        const changed = [
+          ...new Set([...Object.keys(prior.identity ?? {}), ...Object.keys(identity)]),
+        ].filter((key) => prior.identity?.[key] !== identity[key]);
+        throw new Error(
+          `Step ${id}: ${changed.join(', ') || 'identity'} changed on a completed step; start a new run.`,
+        );
       }
       if (prior?.status === 'completed') {
         const output = schema.parse(structuredClone(prior.output));
@@ -294,18 +339,48 @@ export async function runWorkflow<TInput, TOutput>(
         output: null,
         error: null,
         wakeAt,
+        identity,
+        attemptHistory: [],
       };
+      if (redefined) {
+        (step.redefinitions ??= []).push({
+          fingerprint: step.fingerprint,
+          identity: step.identity ?? {},
+          redefinedAt: new Date().toISOString(),
+        });
+        step.kind = kind;
+        step.fingerprint = stepFingerprint;
+        step.identity = identity;
+        step.wakeAt = wakeAt;
+        step.output = null;
+        step.error = null;
+        step.status = 'running';
+      }
       Object.defineProperty(record.steps, id, {
         value: step,
         enumerable: true,
         configurable: true,
         writable: true,
       });
+      if (redefined) {
+        await save();
+        emit('step.redefined', id, step);
+      }
       for (let attempt = 1; ; attempt++) {
         signal.throwIfAborted();
         step.attempts++;
         step.status = 'running';
         step.error = null;
+        const attemptRecord = {
+          ...structuredClone(execution),
+          attempt: step.attempts,
+          fingerprint: stepFingerprint,
+          startedAt: new Date().toISOString(),
+          finishedAt: null as string | null,
+          status: 'running' as 'running' | 'completed' | 'failed',
+          error: null as string | null,
+        };
+        (step.attemptHistory ??= []).push(attemptRecord);
         await save();
         signal.throwIfAborted();
         emit('step.started', id, step);
@@ -328,6 +403,9 @@ export async function runWorkflow<TInput, TOutput>(
         } catch (error) {
           step.status = 'failed';
           step.error = message(error);
+          attemptRecord.status = 'failed';
+          attemptRecord.finishedAt = new Date().toISOString();
+          attemptRecord.error = step.error;
           if (error instanceof HarnessError) {
             (step.failedAttempts ??= []).push({
               attempt: step.attempts,
@@ -341,6 +419,8 @@ export async function runWorkflow<TInput, TOutput>(
           continue;
         }
         step.status = 'completed';
+        attemptRecord.status = 'completed';
+        attemptRecord.finishedAt = new Date().toISOString();
         await save(
           `Step ${id} completed but its checkpoint write failed; resume may repeat it unless a later save recovers the result`,
         );
@@ -361,12 +441,21 @@ export async function runWorkflow<TInput, TOutput>(
         return operations.launch(id, () => {
           let request: HarnessRequest;
           let schema: z.ZodType<T>;
+          let execution: AttemptPolicy;
           try {
             const data = jsonValue({ options: optionData(agentOptions, structured) }) as {
               options: TOptions & JsonValue;
             };
             validateAgentOptions(provider, data.options);
             schema = outputSchema();
+            execution = resolvePolicy(
+              id,
+              provider,
+              data.options,
+              options.harness?.policyDefaults?.(provider) ?? {},
+              policy,
+              matchedPolicy,
+            );
             request = jsonValue({
               provider,
               options: data.options,
@@ -385,12 +474,27 @@ export async function runWorkflow<TInput, TOutput>(
               costUsd: z.number().nullable(),
             }),
           });
+          const identity = agentIdentity(request, schemaJson(resultSchema));
+          const applied = { ...request.options };
+          delete applied.retry;
+          const { timeoutMs, maxTurns, maxBudgetUsd } = execution.policy;
+          Object.assign(applied, {
+            ...(timeoutMs === undefined ? {} : { timeoutMs }),
+            ...(maxTurns === undefined ? {} : { maxTurns }),
+            ...(maxBudgetUsd === undefined ? {} : { maxBudgetUsd }),
+            ...(execution.requestedModel === null ? {} : { model: execution.requestedModel }),
+            ...(execution.reasoningEffort === null
+              ? {}
+              : { reasoningEffort: execution.reasoningEffort }),
+          });
+          request = { ...request, options: applied };
+          validateAgentOptions(provider, request.options);
           return effect(
             id,
             provider,
             jsonValue(request),
             resultSchema,
-            undefined,
+            execution,
             async (_context, step) => {
               if (!options.harness)
                 throw new Error(
@@ -407,6 +511,7 @@ export async function runWorkflow<TInput, TOutput>(
               };
             },
             null,
+            identity,
           );
         });
       }
@@ -422,7 +527,24 @@ export async function runWorkflow<TInput, TOutput>(
       claude: client<ClaudeOptions>('claude'),
       codex: client<CodexOptions>('codex'),
       step: <T>(id: string, step: StepDefinition<T>): Promise<T> =>
-        launch(id, 'step', step.input, step.schema, step.retry, step.run),
+        operations.launch(id, () =>
+          effect(
+            id,
+            'step',
+            step.input,
+            step.schema,
+            resolvePolicy(
+              id,
+              'step',
+              step.retry === undefined ? {} : { retry: step.retry },
+              {},
+              policy,
+              matchedPolicy,
+            ),
+            step.run,
+            null,
+          ),
+        ),
       sleep: (id, milliseconds) =>
         operations.launch(id, () => {
           if (
@@ -438,7 +560,7 @@ export async function runWorkflow<TInput, TOutput>(
             'sleep',
             milliseconds,
             z.null(),
-            undefined,
+            resolvePolicy(id, 'sleep', {}, {}, [], matchedPolicy),
             async (_context, step) => {
               await waitUntil(step.wakeAt ?? Date.now(), signal);
               return null;
@@ -492,16 +614,25 @@ export async function runWorkflow<TInput, TOutput>(
       operations.assertObserved();
       closed = true;
       signal.throwIfAborted();
-      const missing = Object.keys(record.steps).filter((id) => !used.has(id));
+      const missing = Object.keys(record.steps).filter(
+        (id) => !used.has(id) && record.steps[id]?.status === 'completed',
+      );
       if (missing.length)
         throw new Error(
           `Replay skipped recorded steps (${missing.join(', ')}); workflow control flow changed.`,
         );
+      const superseded = Object.entries(record.steps).filter(
+        ([id, step]) => !used.has(id) && step.status !== 'superseded',
+      );
+      for (const [, step] of superseded) step.status = 'superseded';
+      warnUnmatched();
       record.output = jsonValue(definition.output.parse(output));
       record.status = 'completed';
       await save();
+      for (const [id, step] of superseded) emit('step.superseded', id, step);
       return {
         ...structuredClone(record),
+        ...(record.policyWarnings.length ? { warnings: record.policyWarnings } : {}),
         output: definition.output.parse(structuredClone(record.output)) as TOutput & JsonValue,
       };
     } catch (error) {
@@ -510,6 +641,7 @@ export async function runWorkflow<TInput, TOutput>(
       await operations.drain();
       record.status = 'failed';
       record.error = message(error);
+      warnUnmatched();
       await trySave();
       throw error;
     }
@@ -532,7 +664,7 @@ export async function runWorkflow<TInput, TOutput>(
       `Could not release run ${options.runId} lock`,
     );
     if (outcome.ok && (errorCode(cause) === 'EACCES' || errorCode(cause) === 'ENOENT')) {
-      return { ...outcome.run, warnings: [error.message] };
+      return { ...outcome.run, warnings: [...(outcome.run.warnings ?? []), error.message] };
     }
     // Unknown ownership and ownership changes remain fatal even after a successful save.
     checkpointProblems.push(error);
