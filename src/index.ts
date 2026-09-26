@@ -28,6 +28,7 @@ export type {
   WorkflowContext,
   WorkflowDefinition,
 } from './workflow/runtime/model.js';
+export { CheckpointError } from './workflow/runtime/checkpoint.js';
 export { runWorkflow } from './workflow/runtime/runner.js';
 export type { WorkflowEvent, WorkflowRun, RunOptions } from './workflow/runtime/runner.js';
 export { readRun } from './workflow/runtime/store.js';

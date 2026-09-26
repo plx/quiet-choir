@@ -273,6 +273,27 @@ describe('workflow lifecycle command adapters', () => {
     expect(output.stdout).toContain(json ? '"output":42' : 'Run test-run completed.');
   });
 
+  it.each([false, true])(
+    'prints cleanup warnings to stderr without failing the completed run (JSON=%s)',
+    async (json) => {
+      const file = await workflowFile();
+      vi.spyOn(WorkflowExecutor.prototype, 'execute').mockResolvedValue({
+        kind: 'workflow.run.result',
+        ok: true,
+        run: { ...runRecord, warnings: ['Could not release run test-run lock: EACCES'] },
+      });
+      const output = await captureCommand(WorkflowExecute, [
+        file,
+        '--run-id',
+        'test-run',
+        ...(json ? ['--json'] : []),
+      ]);
+      expect(output.error).toBeUndefined();
+      expect(output.stderr).toContain('Warning: Could not release run test-run lock: EACCES');
+      expect(output.stdout).toContain(json ? '"status":"completed"' : 'Run test-run completed.');
+    },
+  );
+
   it('preserves saved input on resume and removes signal handlers', async () => {
     const file = await workflowFile();
     const interruptListeners = process.listenerCount('SIGINT');
