@@ -12,7 +12,7 @@ export interface AgentOptions {
   readonly model?: string;
   /** Working directory, relative to the workflow run's working directory. */
   readonly cwd?: string;
-  /** Wall-clock deadline in milliseconds. CliHarness default: 120,000; custom harnesses must enforce their own deadline. */
+  /** Wall-clock deadline in milliseconds. CliHarness default: 120,000; the core supplies no default. Custom harnesses must enforce their own deadline. */
   readonly timeoutMs?: number;
 }
 
@@ -85,7 +85,7 @@ export interface HarnessResponse {
 
 /** Replaceable integration port, also useful for deterministic tests. */
 export interface Harness {
-  /** Invoke one fresh headless session and reject on process or protocol failure. */
+  /** Invoke one fresh session; enforce your own limits, settle on abort, and reject process/protocol failure. */
   invoke(request: HarnessRequest, signal: AbortSignal): Promise<HarnessResponse>;
 }
 

@@ -2,27 +2,43 @@
 
 ## Locate the runtime
 
-The skill bundle contains documentation only. quiet-choir is currently a private, unpublished
-package. Use an existing checkout of `https://github.com/plx/quiet-choir`, or clone it into the
-user's chosen development location if needed. Do not assume `npm install quiet-choir` or
-`npx quiet-choir` can fetch this prototype from a registry.
+The skill bundle contains documentation only. quiet-choir is a private, unpublished package. Use an
+existing checkout of `https://github.com/plx/quiet-choir`, or clone it into the user's chosen
+location. Do not assume `npm install quiet-choir` or `npx quiet-choir` can fetch it from a registry.
+A consumer that installed a local checkout or tarball can use its `quiet-choir` executable and
+import from `quiet-choir`.
 
-In the checkout, use Node.js 24 LTS (also supported: 22.13+ and 26) and npm 10.9+:
+Use Node.js 24.x (recommended), 22.x from 22.13, or 26.x, with npm 10.9+. Node 23.x and 25.x are
+unsupported. From a fresh checkout:
 
 ```sh
 npm ci
 npm run build
-npm run cli -- workflow execute examples/local.workflow.ts --run-id first
-npm run cli -- workflow inspect first --json
+qc_state_dir="$(mktemp -d)"
+npm run cli -- workflow execute examples/local.workflow.ts --run-id first --state-dir "$qc_state_dir"
+npm run --silent cli -- workflow inspect first --state-dir "$qc_state_dir" --json
 ```
 
-The local example needs no harness account. For agent effects, install and authenticate `claude`
-and/or `codex` separately. `CliHarness` invokes those executables from PATH and inherits their
-authentication; quiet-choir requires no additional provider API key.
+Keep `qc_state_dir` for inspection and resume in this shell. The local example needs no harness
+account. Agent effects need separately installed and authenticated `claude` and/or `codex` binaries;
+`CliHarness` uses PATH and inherits their authentication, with no additional provider API key.
 
-The commands below run from the checkout root. `npm run cli --` uses the built CLI;
-`npm run cli:dev --` runs the source CLI. When a consumer has installed this package from a local
-checkout or tarball, its executable is `quiet-choir` and its imports use `quiet-choir`.
+The CLI's launch directory becomes the recorded run `cwd`. It is the base for relative FILE and
+`--state-dir` paths, the default `.quiet-choir/runs`, and each agent call's relative `cwd`. It must
+match on resume; there is no `--cwd` flag. `npm run cli --` runs from the quiet-choir checkout even
+when invoked in one of its subdirectories, so use these npm examples for the bundled workflows. For
+another project, change to that project and invoke the checkout's launcher by absolute path (replace
+both paths and provide that project's `workflow.ts`):
+
+```sh
+cd /path/to/target-project
+node /absolute/path/to/quiet-choir/bin/run.js workflow execute workflow.ts --run-id project-run
+```
+
+Where the package is already installed, `npx --no-install quiet-choir workflow …` also preserves the
+project directory. `npm run cli` runs `dist/`, so rebuild after changing `src/`. `cli:dev` also
+loads `dist/commands`: this checkout's tsconfig has no `rootDir`/`outDir` mapping for oclif's
+development command discovery.
 
 ## Choose the command
 
@@ -33,36 +49,54 @@ checkout or tarball, its executable is `quiet-choir` and its imports use `quiet-
 | `workflow execute FILE`        | Typechecks, imports, and executes or resumes                                                              |
 | `workflow inspect RUN_ID`      | Reads the saved run without importing workflow code or acquiring a writer lock                            |
 
-Entrypoints must be TypeScript source (`.ts`, `.tsx`, `.mts`, `.cts`), not declaration files.
-Typechecking uses the nearest tsconfig or strict Node defaults. Both `validate` and `execute` run
-module top-level code on import. Keep top-level code free of effects even for completed resumes.
-`validate` cannot check step-specific schemas/options that are constructed only inside `run`.
+Entrypoints must be TypeScript source (`.ts`, `.tsx`, `.mts`, `.cts`), not declaration files. The
+nearest `tsconfig.json` in or above the workflow directory applies and is fingerprinted. Under the
+checkout this is the repo's strict config: an unused variable can block execution. Without a config,
+strict Node defaults apply. Both `validate` and `execute` run module top-level code on import, even
+for completed resumes. `validate` cannot check step schemas/options constructed inside `run`.
+
+From the checkout, using a fresh absolute state directory:
 
 ```sh
-npm run cli -- workflow validate examples/duet.workflow.ts --json
+npm run --silent cli -- workflow validate examples/duet.workflow.ts --json
+qc_duet_state_dir="$(mktemp -d)"
 npm run cli -- workflow execute examples/duet.workflow.ts \
-  --run-id duet --input '{"topic":"durable agent workflows"}' --log-level debug
+  --run-id duet --state-dir "$qc_duet_state_dir" \
+  --input '{"topic":"durable agent workflows"}' --log-level debug
 ```
 
-The second command makes real harness calls. The local example is preferable for testing setup.
+The execute command makes real harness calls and needs authentication. Use the local example to
+check setup without paid calls.
 
 ## Run identity and output
 
-- `--run-id ID` selects the run; a new execution otherwise generates a UUID and prints it to stderr.
-  IDs allow 1–128 letters, numbers, underscores, or hyphens and must start with a letter or number.
-- `--input JSON` supplies input inline. New CLI runs default to `{}`. A resume with no `--input`
-  uses the saved input; it must not be replaced with different input.
-- `--resume --run-id ID` requires an existing run. Reusing an ID without `--resume` fails.
-- `--state-dir PATH` on execute/inspect selects storage (default `.quiet-choir/runs`, relative to
-  the shell working directory). Use the same directory for inspection and resume.
-- `--json` is supported by validate, execute, and inspect, but not typecheck. For successful
-  execute/inspect it is the run record. Use `npm run --silent cli -- ... --json` to suppress npm's
-  script banner when piping; workflow code must also keep stdout clean. Failures can still emit
-  diagnostics on stderr.
-- `--log-level debug` includes step events on stderr. Log levels range from `trace` to `silent`;
+- `--run-id ID` selects the run. New runs otherwise generate a UUID, printed only to stderr. Supply
+  an ID in scripts. IDs allow 1–128 letters, numbers, underscores, or hyphens and must start with a
+  letter or number.
+- `--input JSON` supplies inline input. New CLI runs default to `{}`; omit it on resume to reuse the
+  saved input. Changed input is refused.
+- Resume with `--resume --run-id ID`, the same launch directory and `--state-dir`, and unchanged
+  sources, name, version, and schemas. Reusing an ID without `--resume` fails.
+- `--state-dir PATH` on execute/inspect selects storage. Its default is `.quiet-choir/runs` under
+  the CLI launch directory. Use an absolute path and repeat it for inspection/resume.
+- `--json` writes one JSON line to stdout only on success: the run record for execute/inspect, or
+  `{kind, ok, entrypoint, workflow}` for validate. It is unsupported by typecheck. Failed
+  `execute --json` emits no result JSON; read stderr, then inspect the run if a checkpoint exists.
+- Use `npm run --silent cli -- … --json` to suppress npm's banner when piping. Module-level
+  `console.log` output precedes the JSON; workflow code must keep stdout clean too.
+- Validate's `workflow.fingerprint` is a source hash. Execution hashes that value together with
+  schemas, so it is a different fingerprint from the saved run's `workflow.fingerprint`.
+- `--log-level debug` includes step events on stderr. Levels range from `trace` to `silent`;
   `-v`/`--verbose` is an alternative and cannot be combined with `--log-level`.
 
-Put flags after the command name. Execution errors return exit 1; malformed CLI use can return 2,
-and interrupted execution returns 130. `configuration get/set/doctor` are stubs (exit 2), not a
-configuration system. See [durability](durability.md) before recovery and
-[inspection](inspection.md) for machine-readable status.
+Put flags after the command name, for example `workflow inspect first --json`.
+
+| Exit | Meaning                                                                                                                                                                                                                                                     |
+| ---- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 0    | Success. `inspect` also exits 0 for `failed` and `running` records: check `.status`. Misplaced flags between `workflow` and its command can print help and exit 0.                                                                                          |
+| 1    | Type errors, missing FILE, invalid run ID, existing/missing/locked run, incompatible resume, changed input, or workflow/step failure. Read stderr to distinguish them. An invalid run ID is checked after module import, so top-level code has already run. |
+| 2    | Flag parse errors, invalid `--input` JSON, `--resume` without `--run-id`, non-TypeScript or `.d.ts` entrypoints, or configuration stubs.                                                                                                                    |
+| 130  | SIGINT/SIGTERM during execution. The runner aborts, drains, and saves `failed` before exiting when storage is available; a storage failure can leave an older record.                                                                                       |
+
+`configuration get/set/doctor` are stubs, not a configuration system. See
+[durability](durability.md) before recovery and [inspection](inspection.md) for saved status.

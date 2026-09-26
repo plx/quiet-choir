@@ -1,30 +1,34 @@
 # Claude Code calls
 
 These are quiet-choir's `ClaudeOptions`, not the full Claude Code CLI surface or Claude's native
-workflow API. A caller in any agent host can use `ctx.claude`; the host running the skill does not
-determine which harness a workflow invokes.
+workflow API. Any agent host can use `ctx.claude`. This plugin does not install Claude Code;
+`CliHarness` runs the first `claude` on PATH unless an embedding caller overrides the binary.
 
 ## Options and result
 
 Both `ctx.claude.text(id, options)` and `ctx.claude.object(id, { schema, ...options })` return
-`{ output, sessionId, usage }`. `output` is text or the locally validated structured value.
+`{ output, sessionId, usage }`. `output` is text or the locally validated structured value. The
+defaults below come from `CliHarness`, not the core or custom harnesses.
 
-| Option         | Meaning and default                                                              |
-| -------------- | -------------------------------------------------------------------------------- |
-| `prompt`       | Required instructions, delivered on stdin without a shell                        |
-| `model`        | Claude model name/alias; omitted means the installed harness default             |
-| `cwd`          | Directory relative to the workflow working directory; defaults to that directory |
-| `timeoutMs`    | Per-call wall-clock limit, default 120,000                                       |
-| `tools`        | Built-in tools exposed to the call; default empty                                |
-| `allowedTools` | Explicit tool permissions for this call; omitted by default                      |
-| `maxTurns`     | Positive integer, default 3                                                      |
-| `maxBudgetUsd` | Positive finite per-call USD limit, default 0.25                                 |
+| Option         | Meaning and CliHarness default                                                                                                            |
+| -------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| `prompt`       | Required instructions, delivered on stdin without a shell                                                                                 |
+| `model`        | Claude model name/alias; omitted means the installed harness default                                                                      |
+| `cwd`          | Resolved against the run's working directory; defaults to it. Absolute paths are accepted and are not confined. The directory must exist. |
+| `timeoutMs`    | Per-call wall-clock limit, default 120,000                                                                                                |
+| `tools`        | Built-in tools exposed to the call; default empty                                                                                         |
+| `allowedTools` | Tools pre-approved in addition to settings allow rules; omitted by default                                                                |
+| `maxTurns`     | Positive integer, default 3                                                                                                               |
+| `maxBudgetUsd` | Positive finite per-call USD limit, default 0.25                                                                                          |
 
 The adapter uses `claude --print --output-format json --permission-mode dontAsk` and
-`--no-session-persistence`. Each effect starts fresh; `sessionId` is diagnostic metadata. If a later
-step needs context from an earlier call, pass relevant output in its prompt.
+`--no-session-persistence`. Each effect starts fresh; `sessionId` is for correlation only. The
+no-persistence flag disables the local session transcript. Pass relevant earlier output explicitly
+in later prompts.
 
-To read source files, expose and allow the needed tools explicitly, for example inside `run`:
+`tools` decides which built-in tools exist; the default is none. MCP tools from configuration still
+load. `allowedTools` pre-approves tools on top of settings allow rules, and `dontAsk` denies the
+rest. To read source files, expose and allow the needed tools explicitly, for example inside `run`:
 
 ```ts
 const result = await ctx.claude.object('review', {
@@ -37,30 +41,61 @@ const result = await ctx.claude.object('review', {
 });
 ```
 
-Keep tool permissions appropriate to the requested task. `dontAsk` denies tools that lack permission
-instead of presenting an interactive approval prompt. quiet-choir does not expose a
-permission-bypass mode. The limits apply per call, not across the workflow; bounded concurrency does
-not impose a total spending cap.
+Keep permissions appropriate to the task. quiet-choir exposes no permission-bypass mode. Limits
+apply per call, not across the workflow; bounded concurrency does not impose a total spending cap.
 
 ## Structured output and errors
 
-Object calls pass converted JSON Schema through `--json-schema`. The adapter requires a terminal
-`result` with `subtype: success` and no `is_error: true`. Text calls read `result`; object calls
-require `structured_output`. A process exiting zero with a reported agent failure still fails the
-step. The runtime then parses and validates output against the original Zod schema.
+Object calls require an object-root schema and pass its JSON Schema through `--json-schema`.
+Successful terminal `result` envelopes have `subtype: success` and no `is_error: true`. Text calls
+read `result`; object calls require `structured_output`. The runtime parses and validates output
+against the original Zod schema.
 
-Usage includes reported input/output tokens and `total_cost_usd` when available; missing
-measurements become null. Inspect the step's saved error for authentication, turn/budget limits,
-missing structured output, invalid JSON, or schema mismatch. quiet-choir does not automatically
-retry failed Claude calls. Fix authentication externally and resume compatible runs; changing call
-options/code generally requires a new run. See [recovery](durability.md).
+The adapter parses stdout on both zero and nonzero normal exits. Saved errors retain reported
+reasons, subtype, terminal reason, and API status when available, plus the exit code and bounded
+stderr. Auth, API, turn-limit, and budget failures normally exit 1. Exit zero cannot override a
+reported failure. A bare exit error means no usable protocol reason was recovered: check
+`claude auth status`, the schema, and the same invocation's flags when reproducing manually. This is
+the current behavior after issue [#33](https://github.com/plx/quiet-choir/issues/33), replacing the
+earlier exit-code-only warning.
 
-The CLI inherits local Claude authentication, configuration, hooks, and MCP setup. Disabling
-built-in tools is not complete isolation of the harness environment. Both adapters enforce an 8 MiB
-combined stdout/stderr limit by default; the embedding caller can change it through
-`CliHarnessOptions`. Timeouts and cancellation terminate the process group on macOS/Linux; Windows
-cleanup reaches the immediate child only.
+`usage.costUsd` is Claude's `total_cost_usd`; in the recorded 2.1.283 call it matched per-model cost
+totals. `inputTokens` is the top-level `usage.input_tokens`, excluding cache reads/writes and not
+summing `modelUsage`: one captured call reported 19 versus about 22.6k inputs in the per-model
+uncached/cache totals. Do not compare this field directly with Codex input counts. Unavailable
+measurements are null. Since [#33](https://github.com/plx/quiet-choir/issues/33), failed protocol
+attempts can retain session/usage metadata in `steps[id].failedAttempts`; successful usage remains
+in the completed result. Missing failure metadata and partial calls still make this an incomplete
+spending ledger.
 
-The prototype's recorded successful Claude protocol tests use fixtures; its initial live check
-stopped at expired OAuth before inference. Do not treat fixture coverage as proof of a successful
-call with the current credentials or CLI version.
+quiet-choir does not automatically retry agent calls. Fix authentication externally and resume a
+compatible run. Once a step is recorded, its prompt, every option (including `timeoutMs`,
+`maxTurns`, and `maxBudgetUsd`), resolved `cwd`, and output schema are fingerprinted, including for
+failed steps. A call that hit a limit can resume only with the same limit. Any CLI source edit also
+changes the run fingerprint. Size limits for the worst case up front; changes to failed-step options
+remain deferred to [#40](https://github.com/plx/quiet-choir/issues/40)/#41. Invalid options rejected
+before recording a step can be corrected in an embedded run as described in
+[extensions](extensions.md).
+
+## Configuration and cancellation
+
+The CLI inherits Claude authentication, configuration, hooks, and MCP setup. The call's `cwd`
+selects project `.claude/` settings and hooks. `claude -p` skips the trust dialog, so project hooks
+can run even in never-trusted directories. Disabling built-in tools does not isolate this
+configuration; explicit MCP controls remain deferred to
+[#60](https://github.com/plx/quiet-choir/issues/60).
+
+The default 8 MiB limit counts combined stdout/stderr; embedding callers can override it through
+`CliHarnessOptions`. CLI executions cannot raise it. Timeout/cancellation terminates process groups
+on macOS/Linux; Windows cleanup reaches the immediate child only. A stopped call may already have
+edited files.
+
+One Ctrl-C or SIGTERM requests cancellation, terminates harness processes, drains work, and
+exits 130. A second Ctrl-C kills the runner mid-drain and can leave its lock and a `running`
+checkpoint. SIGKILL, SIGHUP (closed terminal or dropped SSH), or a crash can leave detached harness
+children running and editing. Before resuming, check `pgrep -fl 'claude --print|codex exec'` and
+identify any children belonging to the interrupted run. See [durability](durability.md).
+
+Structured-output success paths for both adapters completed live with claude 2.1.283 and codex-cli
+0.157.1. That is evidence for those versions and captures, not a guarantee for other versions or the
+current credentials.
