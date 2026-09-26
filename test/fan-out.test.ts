@@ -615,3 +615,54 @@ it('forks into fresh map outcomes while reusing eligible source leaves', async (
   expect(result.steps['leaf']?.reusedFrom?.runId).toBe('fanout');
   expect(await readRun(options())).toEqual(original);
 });
+
+it('records cancellation during retry backoff without overwriting the failed attempt', async () => {
+  const failed = deferred();
+  const retried = vi.fn(() => {
+    throw new Error('transient failure');
+  });
+  const events: string[] = [];
+  const definition = workflow((ctx) =>
+    ctx.map(
+      [0, 1],
+      2,
+      (index) =>
+        index === 0
+          ? ctx.step('primary', {
+              input: null,
+              schema: z.null(),
+              run: async () => {
+                await failed.promise;
+                throw new Error('primary cause');
+              },
+            })
+          : ctx.step('backoff', {
+              input: null,
+              schema: z.null(),
+              retry: { maxAttempts: 3, delayMs: 5000 },
+              run: retried,
+            }),
+      { onError: 'abort' },
+    ),
+  );
+  await expect(
+    runWorkflow(definition, {
+      ...options(),
+      onEvent(event) {
+        events.push(`${event.type}:${event.stepId}`);
+        if (event.type === 'step.failed' && event.stepId === 'backoff') failed.resolve();
+      },
+    }),
+  ).rejects.toThrow('primary cause');
+  const record = await readRun(options());
+  expect(record.rootCause).toEqual({ stepId: 'primary', error: 'primary cause' });
+  expect(record.steps['backoff']).toMatchObject({
+    status: 'cancelled',
+    cancelledBy: 'primary',
+    attempts: 1,
+    error: 'Map cancelled by step primary.',
+    attemptHistory: [{ status: 'failed', error: 'transient failure' }],
+  });
+  expect(events).toContain('step.cancelled:backoff');
+  expect(retried).toHaveBeenCalledTimes(1);
+});

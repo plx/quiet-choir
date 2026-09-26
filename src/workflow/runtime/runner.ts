@@ -149,6 +149,12 @@ async function waitUntil(timestamp: number, signal: AbortSignal): Promise<void> 
   }
 }
 
+function cancellationError(signal: AbortSignal, cause: unknown): CancelledError {
+  if (signal.reason instanceof CancelledError)
+    return new CancelledError(signal.reason.cancelledBy, cause, signal.reason.scope);
+  return cause instanceof CancelledError ? cause : new CancelledError(null, cause, 'map');
+}
+
 /** Run or resume a workflow with local, at-least-once durable effects. Throws after saving failures. */
 export async function runWorkflow<TInput, TOutput>(
   definition: WorkflowDefinition<TInput, TOutput>,
@@ -617,13 +623,7 @@ export async function runWorkflow<TInput, TOutput>(
           step.output = jsonValue(output);
         } catch (cause) {
           const cancellation = signal.aborted || errorKind(cause) === 'cancelled';
-          const error = cancellation
-            ? signal.reason instanceof CancelledError
-              ? new CancelledError(signal.reason.cancelledBy, cause, signal.reason.scope)
-              : cause instanceof CancelledError
-                ? cause
-                : new CancelledError(null, cause, 'map')
-            : cause;
+          const error = cancellation ? cancellationError(signal, cause) : cause;
           origins.remember(error, id);
           const outcome = stepError(error, step.attempts);
           step.status = cancellation ? 'cancelled' : 'failed';
@@ -660,8 +660,21 @@ export async function runWorkflow<TInput, TOutput>(
             return replay(step);
           }
           if (await trySave()) emit(cancellation ? 'step.cancelled' : 'step.failed', id, step);
-          if (signal.aborted || !retry) throw error;
-          await waitUntil(Date.now() + Math.min(30_000, delayMs * 2 ** (attempt - 1)), signal);
+          if (!retry || signal.reason instanceof CheckpointError) throw error;
+          try {
+            await waitUntil(Date.now() + Math.min(30_000, delayMs * 2 ** (attempt - 1)), signal);
+          } catch (cause) {
+            if (signal.reason instanceof CheckpointError) throw error;
+            if (errorKind(cause) !== 'cancelled') throw cause;
+            const cancelled = cancellationError(signal, cause);
+            origins.remember(cancelled, id);
+            step.status = 'cancelled';
+            step.cancelledBy = cancelled.cancelledBy;
+            step.error = cancelled.message;
+            // The completed failed attempt remains history; cancellation interrupted its backoff.
+            if (await trySave()) emit('step.cancelled', id, step);
+            throw cancelled;
+          }
           continue;
         }
         step.status = 'completed';
