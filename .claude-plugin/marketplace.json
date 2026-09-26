@@ -1,0 +1,14 @@
+{
+  "name": "quiet-choir",
+  "description": "Reference skills for quiet-choir TypeScript agent workflows.",
+  "owner": {
+    "name": "quiet-choir contributors"
+  },
+  "plugins": [
+    {
+      "name": "quiet-choir",
+      "source": "./plugins/claude/quiet-choir",
+      "description": "Reference for authoring, running, inspecting, and resuming quiet-choir workflows."
+    }
+  ]
+}
