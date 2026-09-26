@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -83,19 +83,36 @@ export const invalid: number = 'wrong';`);
   });
 
   it.each([
-    'export const named = {};',
-    'export default null;',
-    'export default {name:"",version:"1",run(){}};',
-    'export default {name:"test",version:1,run(){}};',
-    'export default {name:"test",version:"1",run:42};',
-    'export default {name:"test",version:"1",run(){},input:{},output:{}};',
-    `${imports} export default {name:"test",version:"1",run(){},input:z.string(),output:{}};`,
-  ])('rejects an invalid default export', async (source) => {
+    ['export const named = {};', 'default-export'],
+    ['export default null;', 'default-export'],
+    ['export default {name:"",version:"1",run(){}};', '"name" must be a nonempty string'],
+    ['export default {name:"test",version:1,run(){}};', '"version" must be a nonempty string'],
+    ['export default {name:"test",version:"1",run:42};', '"run" must be a function'],
+    [
+      'export default {name:"test",version:"1",run(){},input:{},output:{}};',
+      '"input" is not a zod 4 schema',
+    ],
+    [
+      `${imports} export default {name:"test",version:"1",run(){},input:z.string(),output:{}};`,
+      '"output" is not a zod 4 schema',
+    ],
+  ])('identifies the invalid default-export field', async (source, message) => {
     const { file } = await fixture(source);
     const result = await executor().execute(plan(file));
     expect(result).toMatchObject({
       ok: false,
-      message: expect.stringContaining('default-export') as unknown,
+      message: expect.stringContaining(message) as unknown,
+    });
+  });
+
+  it.each(['zod/v3', 'zod/mini'])('explains unsupported %s schemas', async (library) => {
+    const { file } = await fixture(`
+      import * as unsupported from '${library}';
+      export default { name: 'schema', version: '1', input: unsupported.string(), output: unsupported.string(), async run() { return 'ok'; } };
+    `);
+    expect(await executor().execute(plan(file))).toMatchObject({
+      ok: false,
+      message: `Workflow "input" is not a zod 4 schema (zod/v3 and zod/mini are unsupported; import { z } from 'quiet-choir').`,
     });
   });
 
@@ -212,5 +229,25 @@ export const invalid: number = 'wrong';`);
       stateDir: root,
     });
     expect(inspected).toMatchObject({ ok: false });
+  });
+  it('lists available runs and the absolute directory when inspect cannot find a run', async () => {
+    const fixtureInfo = await fixture(validSource);
+    const root = join(fixtureInfo.root, 'runs');
+    await mkdir(root);
+    for (const name of ['beta.json', 'alpha.json', 'notes.txt', 'alpha.json.backup'])
+      await writeFile(join(root, name), '{}');
+    expect(
+      await executor().execute({ kind: 'workflow.inspect', stateDir: root, runId: 'nope' }),
+    ).toMatchObject({
+      ok: false,
+      message: `Run nope not found in ${root} (2 runs present: alpha, beta). --state-dir resolves against the current directory.`,
+    });
+    const absent = join(root, 'absent');
+    expect(
+      await executor().execute({ kind: 'workflow.inspect', stateDir: absent, runId: 'nope' }),
+    ).toMatchObject({
+      ok: false,
+      message: `Run nope not found in ${absent} (0 runs present). --state-dir resolves against the current directory.`,
+    });
   });
 });

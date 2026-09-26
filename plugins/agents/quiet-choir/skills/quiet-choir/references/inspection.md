@@ -12,7 +12,11 @@ npm run --silent cli -- workflow inspect recovery --state-dir /path/to/runs --js
 
 Inspection does not import the workflow or take the writer lock. Each read sees a persisted
 checkpoint, not the live JavaScript stack. There is no watch command; repeat inspection if needed.
-For embedding, `await readRun(stateDir, runId)` returns the same validated record.
+For embedding, `await readRun({ runId, cwd, stateDir })` returns the same validated record. Like
+`runWorkflow`, it defaults to `<cwd>/.quiet-choir/runs` and resolves relative `stateDir` paths
+against `cwd` (default: `process.cwd()`). `resolveStateDir({ cwd, stateDir })` returns the absolute
+directory. A missing CLI inspection names that directory and lists the run IDs present; embedded
+`readRun` retains the filesystem error's `code: 'ENOENT'`.
 
 Checkpoints are `<stateDir>/<runId>.json`, with a sibling `<runId>.json.lock/` while owned. Prefer
 `inspect` or `readRun` to validate data. A JSON inspection result has these useful fields:
@@ -48,7 +52,8 @@ imply any step failed.
 ## Live events
 
 Run with `--log-level debug` to log `step.started`, `step.completed`, `step.replayed`, and
-`step.failed` events to stderr. `runWorkflow` also accepts a synchronous `onEvent(event)` callback:
+`step.failed` events to stderr. `runWorkflow` also accepts an `onEvent(event)` callback returning
+`void | Promise<void>`:
 
 ```ts
 onEvent: (event) => {
@@ -58,9 +63,10 @@ onEvent: (event) => {
 
 An event includes `type`, `runId`, `stepId`, and `attempt`. Notifications reflect persisted step
 state; `step.replayed` refers to the existing completion and does not increment attempts. Observer
-exceptions are ignored so they cannot invalidate execution. Notifications are not durably queued or
-guaranteed to be delivered. `onEvent` is not a token stream, tool trace, or run-lifecycle event API;
-use the returned record or checkpoint for final status.
+synchronous exceptions and asynchronous rejections are ignored so they cannot invalidate execution.
+Observers are not awaited and cannot delay effects or hold the run lock. Notifications are not
+durably queued or guaranteed to be delivered. `onEvent` is not a token stream, tool trace, or
+run-lifecycle event API; use the returned record or checkpoint for final status.
 
 Usage values come from the harness and may be null. Codex cost is always null in this adapter.
 Stored successful-call usage does not include every failed/abandoned call and is not a complete

@@ -11,6 +11,10 @@ import {
   withCheckpointErrors,
   writeCheckpoint,
 } from './checkpoint.js';
+import { resolveStateDir } from './paths.js';
+import { validateStepId } from './identity.js';
+import { OperationTracker } from './tracking.js';
+import { optionData, validateAgentOptions } from './options.js';
 import { HarnessError } from './harness-error.js';
 import { digest, jsonValue } from './json.js';
 import type {
@@ -68,8 +72,8 @@ export interface RunOptions {
   readonly signal?: AbortSignal;
   /** Caller-provided code fingerprint; CLI supplies a hash of local TypeScript dependencies. */
   readonly fingerprint?: string;
-  /** Optional observer. Observer exceptions are ignored so they cannot affect execution. */
-  readonly onEvent?: (event: WorkflowEvent) => void;
+  /** Unawaited observer; synchronous throws and promise rejections cannot affect execution. */
+  readonly onEvent?: (event: WorkflowEvent) => void | Promise<void>;
 }
 
 function message(error: unknown): string {
@@ -102,7 +106,7 @@ export async function runWorkflow<TInput, TOutput>(
   if (!definition.name.trim() || !definition.version.trim())
     throw new Error('Workflow name and version must be nonempty.');
   const cwd = resolve(options.cwd ?? process.cwd());
-  const stateDir = resolve(cwd, options.stateDir ?? '.quiet-choir/runs');
+  const stateDir = resolveStateDir(options);
   const fingerprint = digest({
     code: options.fingerprint ?? null,
     input: schemaJson(definition.input),
@@ -120,7 +124,7 @@ export async function runWorkflow<TInput, TOutput>(
   async function executeOwned(): Promise<WorkflowRun<TOutput>> {
     let existing: RunRecord | undefined;
     try {
-      existing = await readRun(stateDir, options.runId);
+      existing = await readRun({ stateDir, runId: options.runId });
     } catch (error) {
       if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;
     }
@@ -202,12 +206,16 @@ export async function runWorkflow<TInput, TOutput>(
       }
     }
     const used = new Set<string>();
-    const pending = new Set<Promise<unknown>>();
+    const operations = new OperationTracker();
     const inEffect = new AsyncLocalStorage<boolean>();
     let closed = false;
     const emit = (type: WorkflowEvent['type'], id: string, step: StepRecord): void => {
       try {
-        options.onEvent?.({ type, runId: record.id, stepId: id, attempt: step.attempts });
+        void Promise.resolve(
+          options.onEvent?.({ type, runId: record.id, stepId: id, attempt: step.attempts }),
+        ).catch(() => {
+          /* Observers never own the workflow outcome. */
+        });
       } catch {
         /* Observers must not invalidate committed effects. */
       }
@@ -222,14 +230,9 @@ export async function runWorkflow<TInput, TOutput>(
       action: (context: StepContext, step: StepRecord) => Promise<T> | T,
       wakeAt: number | null = null,
     ): Promise<T> {
-      const promise = effect(id, kind, dependencies, schema, retry, action, wakeAt);
-      pending.add(promise);
-      // Track active work without creating unhandled rejected cleanup promises.
-      void promise.then(
-        () => pending.delete(promise),
-        () => pending.delete(promise),
+      return operations.launch(id, () =>
+        effect(id, kind, dependencies, schema, retry, action, wakeAt),
       );
-      return promise;
     }
 
     async function effect<T>(
@@ -247,8 +250,7 @@ export async function runWorkflow<TInput, TOutput>(
           'Nested durable steps are unsupported; compose steps in the workflow body.',
         );
       signal.throwIfAborted();
-      if (!/^[a-zA-Z0-9][a-zA-Z0-9._:/-]{0,199}$/.test(id))
-        throw new Error('Step ID must be 1–200 characters, starting with a letter or number.');
+      validateStepId(id);
       if (used.has(id))
         throw new Error(`Duplicate step ID: ${id}. Use a unique ID for each loop iteration.`);
       used.add(id);
@@ -264,12 +266,17 @@ export async function runWorkflow<TInput, TOutput>(
           'Retry policy requires positive integer maxAttempts and a nonnegative finite delayMs.',
         );
       }
-      const stepFingerprint = digest({
-        kind,
-        dependencies,
-        schema: schemaJson(schema),
-        retry: { maxAttempts, delayMs },
-      });
+      let stepFingerprint: string;
+      try {
+        stepFingerprint = digest({
+          kind,
+          dependencies,
+          schema: schemaJson(schema),
+          retry: { maxAttempts, delayMs },
+        });
+      } catch (cause) {
+        throw new Error(`Step ${id}: ${message(cause)}`, { cause });
+      }
       const prior = Object.hasOwn(record.steps, id) ? record.steps[id] : undefined;
       if (prior && (prior.kind !== kind || prior.fingerprint !== stepFingerprint)) {
         throw new Error(`Step ${id} changed inputs, options, kind, or schema; start a new run.`);
@@ -345,58 +352,67 @@ export async function runWorkflow<TInput, TOutput>(
     function client<TOptions extends AgentOptions>(
       provider: 'claude' | 'codex',
     ): AgentClient<TOptions> {
-      async function invoke<T>(
+      function invoke<T>(
         id: string,
         agentOptions: TOptions,
-        schema: z.ZodType<T>,
+        outputSchema: () => z.ZodType<T>,
         structured: boolean,
       ): Promise<AgentResult<T>> {
-        const initialRequest: HarnessRequest = {
-          provider,
-          options: agentOptions,
-          cwd: resolve(cwd, agentOptions.cwd ?? '.'),
-          outputSchema: structured ? schemaJson(schema) : null,
-        };
-        // Keep execution and its fingerprint identical if the caller mutates its options later.
-        const request = jsonValue(initialRequest) as unknown as HarnessRequest;
-        const resultSchema = z.object({
-          output: schema,
-          sessionId: z.string().nullable(),
-          usage: z.object({
-            inputTokens: z.number().nullable(),
-            outputTokens: z.number().nullable(),
-            costUsd: z.number().nullable(),
-          }),
-        });
-        return launch(
-          id,
-          provider,
-          jsonValue(request),
-          resultSchema,
-          undefined,
-          async (_context, step) => {
-            if (!options.harness)
-              throw new Error(
-                `No harness adapter configured for ${provider}. Supply RunOptions.harness.`,
-              );
-            const response = await options.harness.invoke(request, signal);
-            if (response.warnings !== undefined) step.warnings = [...response.warnings];
-            else delete step.warnings;
-            const raw: unknown = structured ? JSON.parse(response.text) : response.text;
-            return {
-              output: schema.parse(raw),
-              sessionId: response.sessionId,
-              usage: response.usage,
+        return operations.launch(id, () => {
+          let request: HarnessRequest;
+          let schema: z.ZodType<T>;
+          try {
+            const data = jsonValue({ options: optionData(agentOptions, structured) }) as {
+              options: TOptions & JsonValue;
             };
-          },
-        );
+            validateAgentOptions(provider, data.options);
+            schema = outputSchema();
+            request = jsonValue({
+              provider,
+              options: data.options,
+              cwd: resolve(cwd, data.options.cwd ?? '.'),
+              outputSchema: structured ? schemaJson(schema) : null,
+            }) as unknown as HarnessRequest;
+          } catch (cause) {
+            throw new Error(`Step ${id}: ${message(cause)}`, { cause });
+          }
+          const resultSchema = z.object({
+            output: schema,
+            sessionId: z.string().nullable(),
+            usage: z.object({
+              inputTokens: z.number().nullable(),
+              outputTokens: z.number().nullable(),
+              costUsd: z.number().nullable(),
+            }),
+          });
+          return effect(
+            id,
+            provider,
+            jsonValue(request),
+            resultSchema,
+            undefined,
+            async (_context, step) => {
+              if (!options.harness)
+                throw new Error(
+                  `No harness adapter configured for ${provider}. Supply RunOptions.harness.`,
+                );
+              const response = await options.harness.invoke(request, signal);
+              if (response.warnings !== undefined) step.warnings = [...response.warnings];
+              else delete step.warnings;
+              const raw: unknown = structured ? JSON.parse(response.text) : response.text;
+              return {
+                output: schema.parse(raw),
+                sessionId: response.sessionId,
+                usage: response.usage,
+              };
+            },
+            null,
+          );
+        });
       }
       return {
-        text: (id, agentOptions) => invoke(id, agentOptions, z.string(), false),
-        object: (id, agentOptions) => {
-          const { schema, ...rest } = agentOptions;
-          return invoke(id, rest as unknown as TOptions, schema, true);
-        },
+        text: (id, agentOptions) => invoke(id, agentOptions, () => z.string(), false),
+        object: (id, agentOptions) => invoke(id, agentOptions, () => agentOptions.schema, true),
       };
     }
 
@@ -407,63 +423,64 @@ export async function runWorkflow<TInput, TOutput>(
       codex: client<CodexOptions>('codex'),
       step: <T>(id: string, step: StepDefinition<T>): Promise<T> =>
         launch(id, 'step', step.input, step.schema, step.retry, step.run),
-      sleep: (id, milliseconds) => {
-        if (
-          !Number.isFinite(milliseconds) ||
-          milliseconds < 0 ||
-          milliseconds > Number.MAX_SAFE_INTEGER - Date.now()
-        ) {
-          return Promise.reject(
-            new Error('Sleep duration must be a finite nonnegative safe duration.'),
+      sleep: (id, milliseconds) =>
+        operations.launch(id, () => {
+          if (
+            !Number.isFinite(milliseconds) ||
+            milliseconds < 0 ||
+            milliseconds > Number.MAX_SAFE_INTEGER - Date.now()
+          )
+            throw new Error(
+              `Step ${id}: Sleep duration must be a finite nonnegative safe duration (got ${String(milliseconds)}).`,
+            );
+          return effect(
+            id,
+            'sleep',
+            milliseconds,
+            z.null(),
+            undefined,
+            async (_context, step) => {
+              await waitUntil(step.wakeAt ?? Date.now(), signal);
+              return null;
+            },
+            Date.now() + milliseconds,
           );
-        }
-        return launch(
-          id,
-          'sleep',
-          milliseconds,
-          z.null(),
-          undefined,
-          async (_context, step) => {
-            await waitUntil(step.wakeAt ?? Date.now(), signal);
-            return null;
-          },
-          Date.now() + milliseconds,
-        );
-      },
-      map: async <T, U>(
+        }),
+      map: <T, U>(
         items: readonly T[],
         concurrency: number,
         mapper: (item: T, index: number) => Promise<U>,
-      ): Promise<U[]> => {
-        if (!Number.isInteger(concurrency) || concurrency < 1)
-          throw new Error('Map concurrency must be a positive integer.');
-        const results: U[] = new Array<U>(items.length);
-        let next = 0;
-        const state: { failed: boolean; error: unknown } = { failed: false, error: undefined };
-        const fail = (error: unknown): void => {
-          if (state.failed) return;
-          state.failed = true;
-          state.error = error;
-          // A sibling may itself be waiting for cancellation. Abort before draining it.
-          controller.abort(error);
-        };
-        await Promise.all(
-          Array.from({ length: Math.min(concurrency, items.length) }, async () => {
-            while (!state.failed) {
-              try {
-                signal.throwIfAborted();
-                const index = next++;
-                if (index >= items.length) return;
-                results[index] = await mapper(items[index] as T, index);
-              } catch (error) {
-                fail(error);
+      ): Promise<U[]> =>
+        operations.launch('map', async () => {
+          if (!Number.isInteger(concurrency) || concurrency < 1)
+            throw new Error('Map concurrency must be a positive integer.');
+          const results: U[] = new Array<U>(items.length);
+          let next = 0;
+          const state: { failed: boolean; error: unknown } = { failed: false, error: undefined };
+          const fail = (error: unknown): void => {
+            if (state.failed) return;
+            state.failed = true;
+            state.error = error;
+            // A sibling may itself be waiting for cancellation. Abort before draining it.
+            controller.abort(error);
+          };
+          await Promise.all(
+            Array.from({ length: Math.min(concurrency, items.length) }, async () => {
+              while (!state.failed) {
+                try {
+                  signal.throwIfAborted();
+                  const index = next++;
+                  if (index >= items.length) return;
+                  results[index] = await mapper(items[index] as T, index);
+                } catch (error) {
+                  fail(error);
+                }
               }
-            }
-          }),
-        );
-        if (state.failed) throw state.error;
-        return results;
-      },
+            }),
+          );
+          if (state.failed) throw state.error;
+          return results;
+        }),
     };
     record.status = 'running';
     record.error = null;
@@ -471,9 +488,8 @@ export async function runWorkflow<TInput, TOutput>(
     try {
       signal.throwIfAborted();
       const output = await definition.run(context, input);
-      const remaining = await Promise.allSettled([...pending]);
-      const failure = remaining.find((result) => result.status === 'rejected');
-      if (failure?.status === 'rejected') throw failure.reason;
+      await operations.drain();
+      operations.assertObserved();
       closed = true;
       signal.throwIfAborted();
       const missing = Object.keys(record.steps).filter((id) => !used.has(id));
@@ -491,7 +507,7 @@ export async function runWorkflow<TInput, TOutput>(
     } catch (error) {
       closed = true;
       controller.abort(error);
-      await Promise.allSettled([...pending]);
+      await operations.drain();
       record.status = 'failed';
       record.error = message(error);
       await trySave();
