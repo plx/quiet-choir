@@ -81,3 +81,23 @@ scheduling new items. Hard termination bypasses graceful cleanup and can leave c
 Checkpoints use restrictive creation modes but contain plaintext input/output and error messages.
 Keep the state directory out of version control. There is no migration engine, distributed lease,
 background scheduler, approval inbox, durable event bus, or global spending ledger in this version.
+
+## When checkpointing fails
+
+The runner retries transient filesystem write errors up to three times, with 100 ms and 300 ms
+between attempts. Writes stay ordered, and one failed write does not poison later saves. If writes
+remain unsuccessful, the runner aborts and drains active work before releasing ownership; new
+effects cannot start. A completed action is not marked failed or rerun in-process just because its
+save failed. A later failure-state save may still recover the completion. If it did not, resume can
+repeat the external action under the normal at-least-once contract.
+
+A stale `running` checkpoint with `error: null` can mean storage failed, not only a crash or a long
+call. Check the execution error as well as the saved record. Exported `CheckpointError` identifies
+`save` versus `release`; combined errors preserve the workflow error first. If the state directory
+was removed, the runner names it and does not recreate it or silently reacquire ownership.
+
+After a persisted completion, `EACCES`/`ENOENT` during lock release produces an invocation warning
+and preserves the successful result. The CLI prints the warning on stderr; embedded and JSON results
+expose `warnings`. These warnings are not checkpointed. Lost or uncertain ownership still fails,
+because another writer may have replaced the checkpoint. Inspect and repair any retained lock before
+running again; do not repeat the effects merely to retry cleanup.

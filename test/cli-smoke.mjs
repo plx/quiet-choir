@@ -175,6 +175,43 @@ export default defineWorkflow({
   assert.equal(inspected.status, 0, inspected.stderr);
   assert.equal(JSON.parse(inspected.stdout).output, 42);
 
+  const warningWorkflow = join(fixtureRoot, 'warning.ts');
+  writeFileSync(
+    warningWorkflow,
+    `
+import { rm } from 'node:fs/promises';
+import { defineWorkflow } from ${JSON.stringify(join(projectRoot, 'dist/index.js'))};
+import { z } from 'zod';
+export default defineWorkflow({
+  name: 'warning', version: '1', input: z.object({}), output: z.string(),
+  async run(ctx) {
+    return ctx.step('remove-lock', { input: null, schema: z.string(), async run() {
+      await rm(${JSON.stringify(join(stateDir, 'warning-run.json.lock'))}, { recursive: true });
+      return 'done';
+    }});
+  },
+});
+`,
+  );
+  const warning = cli(
+    'workflow',
+    'execute',
+    warningWorkflow,
+    '--run-id',
+    'warning-run',
+    '--state-dir',
+    stateDir,
+    '--json',
+  );
+  assert.equal(warning.status, 0, warning.stderr);
+  assert.equal(JSON.parse(warning.stdout).output, 'done');
+  assert.equal(JSON.parse(warning.stdout).warnings.length, 1);
+  assert.match(warning.stderr, /Warning: Could not release run warning-run lock/);
+  assert.equal(
+    JSON.parse(readFileSync(join(stateDir, 'warning-run.json'), 'utf8')).status,
+    'completed',
+  );
+
   const crashWorkflow = join(fixtureRoot, 'crash.ts');
   const crashEffects = join(fixtureRoot, 'crash-effects.txt');
   writeFileSync(

@@ -4,6 +4,13 @@ import { setTimeout as delay } from 'node:timers/promises';
 
 import { z } from 'zod';
 
+import {
+  CheckpointError,
+  checkpointError,
+  errorCode,
+  withCheckpointErrors,
+  writeCheckpoint,
+} from './checkpoint.js';
 import { HarnessError } from './harness-error.js';
 import { digest, jsonValue } from './json.js';
 import type {
@@ -21,7 +28,7 @@ import type {
   WorkflowContext,
   WorkflowDefinition,
 } from './model.js';
-import { lockRun, readRun, writeRun, type RunRecord, type StepRecord } from './store.js';
+import { lockRun, readRun, type RunRecord, type StepRecord } from './store.js';
 
 /** A lightweight notification emitted after the associated checkpoint is persisted. */
 export interface WorkflowEvent {
@@ -39,6 +46,8 @@ export interface WorkflowEvent {
 export type WorkflowRun<TOutput> = RunRecord & {
   /** Final validated output, inferred from the workflow schema. */
   readonly output: TOutput;
+  /** Cleanup warnings from this invocation, returned after a persisted completion; not checkpointed. */
+  readonly warnings?: readonly string[];
 };
 
 /** Explicit dependencies and execution policy for a workflow run. */
@@ -107,7 +116,8 @@ export async function runWorkflow<TInput, TOutput>(
   options.signal?.addEventListener('abort', abort, { once: true });
   if (options.signal?.aborted) abort();
   const { signal } = controller;
-  try {
+  const checkpointProblems: CheckpointError[] = [];
+  async function executeOwned(): Promise<WorkflowRun<TOutput>> {
     let existing: RunRecord | undefined;
     try {
       existing = await readRun(stateDir, options.runId);
@@ -154,10 +164,42 @@ export async function runWorkflow<TInput, TOutput>(
       updatedAt: now,
     };
     let writeQueue = Promise.resolve();
-    function save(): Promise<void> {
-      record.updatedAt = new Date().toISOString();
-      writeQueue = writeQueue.then(() => writeRun(stateDir, structuredClone(record)));
-      return writeQueue;
+    function save(context = `Could not save run ${record.id}`): Promise<void> {
+      const write = writeQueue
+        .catch(() => {
+          /* A failed write must not poison later snapshots. */
+        })
+        .then(async () => {
+          try {
+            await writeCheckpoint(
+              stateDir,
+              record.id,
+              () => {
+                record.updatedAt = new Date().toISOString();
+                return structuredClone(record);
+              },
+              context,
+            );
+          } catch (error) {
+            const failure =
+              error instanceof CheckpointError
+                ? error
+                : await checkpointError('save', stateDir, record.id, error, context);
+            checkpointProblems.push(failure);
+            controller.abort(failure);
+            throw failure;
+          }
+        });
+      writeQueue = write;
+      return write;
+    }
+    async function trySave(): Promise<boolean> {
+      try {
+        await save();
+        return true;
+      } catch {
+        return false;
+      }
     }
     const used = new Set<string>();
     const pending = new Set<Promise<unknown>>();
@@ -258,6 +300,7 @@ export async function runWorkflow<TInput, TOutput>(
         step.status = 'running';
         step.error = null;
         await save();
+        signal.throwIfAborted();
         emit('step.started', id, step);
         try {
           const result = await inEffect.run(true, () =>
@@ -270,13 +313,11 @@ export async function runWorkflow<TInput, TOutput>(
               step,
             ),
           );
-          signal.throwIfAborted();
+          // A storage-triggered abort must not discard an action that returned successfully.
+          // Preserve its validated result for a later save while keeping new actions stopped.
+          if (!(signal.reason instanceof CheckpointError)) signal.throwIfAborted();
           const output = schema.parse(result);
           step.output = jsonValue(output);
-          step.status = 'completed';
-          await save();
-          emit('step.completed', id, step);
-          return schema.parse(structuredClone(step.output));
         } catch (error) {
           step.status = 'failed';
           step.error = message(error);
@@ -287,11 +328,17 @@ export async function runWorkflow<TInput, TOutput>(
               usage: error.usage,
             });
           }
-          await save();
-          emit('step.failed', id, step);
+          if (await trySave()) emit('step.failed', id, step);
           if (signal.aborted || attempt >= maxAttempts) throw error;
           await waitUntil(Date.now() + Math.min(30_000, delayMs * 2 ** (attempt - 1)), signal);
+          continue;
         }
+        step.status = 'completed';
+        await save(
+          `Step ${id} completed but its checkpoint write failed; resume may repeat it unless a later save recovers the result`,
+        );
+        emit('step.completed', id, step);
+        return schema.parse(structuredClone(step.output));
       }
     }
 
@@ -447,11 +494,34 @@ export async function runWorkflow<TInput, TOutput>(
       await Promise.allSettled([...pending]);
       record.status = 'failed';
       record.error = message(error);
-      await save();
+      await trySave();
       throw error;
     }
-  } finally {
-    options.signal?.removeEventListener('abort', abort);
-    await release();
   }
+  let outcome: { ok: true; run: WorkflowRun<TOutput> } | { ok: false; error: unknown };
+  try {
+    outcome = { ok: true, run: await executeOwned() };
+  } catch (error) {
+    outcome = { ok: false, error };
+  }
+  options.signal?.removeEventListener('abort', abort);
+  try {
+    await release();
+  } catch (cause) {
+    const error = await checkpointError(
+      'release',
+      stateDir,
+      options.runId,
+      cause,
+      `Could not release run ${options.runId} lock`,
+    );
+    if (outcome.ok && (errorCode(cause) === 'EACCES' || errorCode(cause) === 'ENOENT')) {
+      return { ...outcome.run, warnings: [error.message] };
+    }
+    // Unknown ownership and ownership changes remain fatal even after a successful save.
+    checkpointProblems.push(error);
+    if (outcome.ok) outcome = { ok: false, error };
+  }
+  if (!outcome.ok) throw withCheckpointErrors(outcome.error, checkpointProblems);
+  return outcome.run;
 }

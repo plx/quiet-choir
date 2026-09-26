@@ -327,12 +327,17 @@ describe('durable TypeScript workflows', () => {
   it('cancels siblings and retains their completed checkpoints on an outer failure', async () => {
     const options = await setup();
     let settled = false;
+    let markStarted: (() => void) | undefined;
+    const started = new Promise<void>((resolve) => {
+      markStarted = resolve;
+    });
     const definition = workflow(async (ctx) => {
       await ctx.step('done', { input: null, schema: z.number(), run: () => 1 });
       void ctx.step('pending', {
         input: null,
         schema: z.number(),
         run: async ({ signal }) => {
+          markStarted?.();
           try {
             await delay(1000, undefined, { signal });
           } finally {
@@ -341,7 +346,7 @@ describe('durable TypeScript workflows', () => {
           return 2;
         },
       });
-      await delay(5);
+      await started;
       throw new Error('outer failed');
     });
     await expect(runWorkflow(definition, options)).rejects.toThrow('outer failed');

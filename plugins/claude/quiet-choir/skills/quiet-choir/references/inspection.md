@@ -34,10 +34,11 @@ answer is at `steps[stepId].output.output`.
 
 ## Interpreting apparent stalls
 
-`running` is a persisted state, not proof of a live process. After a crash it may stay that way. A
-long agent call or sleep also leaves `updatedAt` unchanged. Inspect process/lock ownership and the
-sleep deadline before deciding a run is abandoned. Follow [recovery](durability.md) for locks and
-orphaned children; timestamps alone do not justify removing a lock.
+`running` is a persisted state, not proof of a live process. A crash or checkpoint-write failure can
+leave `status: "running", error: null`, even after an external action finished. A long agent call or
+sleep also leaves `updatedAt` unchanged. Inspect process/lock ownership and the sleep deadline
+before deciding a run is abandoned. Follow [recovery](durability.md) for locks and orphaned
+children; timestamps alone do not justify removing a lock.
 
 A failed run can have completed sibling effects. Those effects replay on a compatible resume; an
 uncheckpointed external action may repeat. Failed steps contain error messages, not full transcripts
@@ -64,3 +65,19 @@ use the returned record or checkpoint for final status.
 Usage values come from the harness and may be null. Codex cost is always null in this adapter.
 Stored successful-call usage does not include every failed/abandoned call and is not a complete
 spending ledger. Replaying saved usage does not indicate a new charge.
+
+## Checkpoint and cleanup diagnostics
+
+`CheckpointError` distinguishes storage operations (`save` or `release`) from workflow failures.
+When both fail, the domain error leads the message; an `AggregateError` retains the checkpoint
+errors in `errors` and the primary error in `cause`. Brief transient write errors are retried, but
+persistent errors stop new effects. A successful action is never retried in-process because its
+completion write failed. A later save can recover it; inspect the actual saved step before resume,
+since an uncheckpointed action can repeat.
+
+A persisted completion still succeeds if lock cleanup fails with `EACCES` or `ENOENT`. The CLI
+prints a warning to stderr and includes `warnings` in the returned run (`--json`); embedding callers
+receive `WorkflowRun.warnings`. These cleanup warnings belong to that invocation and are not saved
+after ownership is released. Repair permissions or inspect the lock before another run. Changed or
+unknown ownership remains an error. A removed state directory is named explicitly and is not
+silently recreated. See [durability](durability.md) for recovery precautions.

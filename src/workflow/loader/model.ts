@@ -1,6 +1,6 @@
 import type { ExecutionPlan, ExecutionResult } from '../../application/execution.js';
 import type { JsonValue } from '../runtime/model.js';
-import type { RunRecord } from '../runtime/store.js';
+import type { WorkflowRun } from '../runtime/runner.js';
 import type { TypecheckDiagnostic, TypecheckPlan } from '../typecheck/model.js';
 
 /** Plain-data instructions for checking and importing a trusted workflow module. */
@@ -49,6 +49,6 @@ export type WorkflowCommandResult = ExecutionResult &
     | {
         readonly kind: 'workflow.run.result';
         readonly ok: true;
-        readonly run: RunRecord;
+        readonly run: WorkflowRun<JsonValue>;
       }
   );
