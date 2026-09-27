@@ -150,11 +150,13 @@ their exact saved outcomes, including ordinary thrown body errors and caught fal
 Incomplete items execute again. Do not use this to hide ignored operation failures: every launched
 child must still be awaited.
 
-Map inputs/results must be lossless JSON. Identity hashes item inputs, mapper source, optional
-`version`, and cwd; concurrency can change. Captured helpers/environment are invisible, so put
-dependencies in items or bump `version`. Keep leaf IDs unique across the run. Forks start fresh map
-journals and reuse eligible steps under the selected fork policy. A leaf-level `onError: 'return'`
-inside an ordinary map is also useful when only the individual call's fallback must be durable.
+Map inputs/results must be lossless JSON. Every map schedules the items present when it is called;
+settled mappers receive JSON copies of that snapshot. Identity hashes item inputs, mapper source,
+optional `version`, and cwd; concurrency can change. Captured helpers/environment are invisible, so
+put dependencies in items or bump `version`. Keep leaf IDs unique across the run. Forks start fresh
+map journals and reuse eligible steps under the selected fork policy. A leaf-level
+`onError: 'return'` inside an ordinary map is also useful when only the individual call's fallback
+must be durable.
 
 For transient retries, use one step ID with `retry` rather than a loop of throwing `ask/0`, `ask/1`
 calls. `retry.on` limits retries to listed error kinds; omit it to retry all effect failures except

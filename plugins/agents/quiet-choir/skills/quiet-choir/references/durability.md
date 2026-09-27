@@ -143,9 +143,10 @@ Map identity includes item inputs, mapper source, optional version, and cwd; it 
 concurrency. Changing identity after any item committed, duplicating a journal ID, or skipping a
 recorded terminal map fails replay. Explicit code acceptance does not bypass these checks.
 Inputs/results must be lossless JSON, and captured dependencies belong in items or the explicit
-version. Leaf IDs stay run-unique; a journal ID does not add a prefix. Forks start fresh map
-journals and apply their normal per-step reuse/invalidation rules, so mapper-body outcomes are
-re-evaluated in the new run.
+version. Items are snapshotted when `ctx.map` is called; settled mappers receive JSON copies of the
+fingerprinted snapshot, so later caller edits cannot change the processed items. Leaf IDs stay
+run-unique; a journal ID does not add a prefix. Forks start fresh map journals and apply their
+normal per-step reuse/invalidation rules, so mapper-body outcomes are re-evaluated in the new run.
 
 ## At-least-once effects
 

@@ -95,6 +95,8 @@ export function createMap(dependencies: MapDependencies): WorkflowContext['map']
           throw validationError('Map concurrency must be a positive integer.');
         if (!Array.isArray(items) || typeof mapper !== 'function')
           throw validationError('Map requires an array and a mapper callback.');
+        // Fix scheduling to the items present at call time; later caller edits cannot add work.
+        let snapshot: readonly T[] = Array.from<T>(items);
         const policy = settings.onError ?? 'drain';
         if (!['abort', 'drain', 'settle'].includes(policy))
           throw validationError('Map onError must be abort, drain, or settle.');
@@ -121,8 +123,11 @@ export function createMap(dependencies: MapDependencies): WorkflowContext['map']
             throw validationError(`Duplicate settled map ID: ${settings.id}.`);
           visitedMaps.add(settings.id);
           scopes.map(settings.id);
+          // Fingerprint, journal, and process one detached JSON copy of the items.
+          const data = jsonData(items) as JsonValue[];
+          snapshot = data as readonly unknown[] as readonly T[];
           const fingerprint = digest({
-            items: jsonData(items),
+            items: data,
             mapper: Function.prototype.toString.call(mapper),
             version: settings.version ?? null,
             cwd,
@@ -141,7 +146,7 @@ export function createMap(dependencies: MapDependencies): WorkflowContext['map']
           journal ??= {
             fingerprint,
             status: 'running',
-            items: items.map(() => ({ status: 'running', outcome: null, steps: [], maps: [] })),
+            items: data.map(() => ({ status: 'running', outcome: null, steps: [], maps: [] })),
           };
           Object.defineProperty(maps, settings.id, {
             value: journal,
@@ -153,7 +158,7 @@ export function createMap(dependencies: MapDependencies): WorkflowContext['map']
         }
         const saved = journal;
         const results: (U | Settled<U, MapStepError>)[] = new Array<U | Settled<U, MapStepError>>(
-          items.length,
+          snapshot.length,
         );
         const failures: FanOutFailure[] = [];
         let fatal: { error: unknown } | undefined;
@@ -166,11 +171,11 @@ export function createMap(dependencies: MapDependencies): WorkflowContext['map']
         };
         await scopes.run(mapScope, () =>
           Promise.all(
-            Array.from({ length: Math.min(concurrency, items.length) }, async () => {
+            Array.from({ length: Math.min(concurrency, snapshot.length) }, async () => {
               while (fatal === undefined && (policy === 'settle' || failures.length === 0)) {
                 if (mapSignal.aborted) break;
                 const index = next++;
-                if (index >= items.length) return;
+                if (index >= snapshot.length) return;
                 const itemScope = scopes.create(mapSignal);
                 await scopes.run(itemScope, async () => {
                   const item = saved?.items[index];
@@ -198,7 +203,7 @@ export function createMap(dependencies: MapDependencies): WorkflowContext['map']
                     let output: U | undefined;
                     let rejected: { error: unknown } | undefined;
                     try {
-                      output = await mapper(items[index] as T, index);
+                      output = await mapper(snapshot[index] as T, index);
                     } catch (error) {
                       rejected = { error };
                     }
@@ -271,7 +276,7 @@ export function createMap(dependencies: MapDependencies): WorkflowContext['map']
           throw new FanOutError(
             policy === 'abort' ? 'abort' : 'drain',
             failures,
-            Array.from({ length: Math.max(0, items.length - next) }, (_, index) => next + index),
+            Array.from({ length: Math.max(0, snapshot.length - next) }, (_, index) => next + index),
           );
         mapSignal.throwIfAborted();
         if (saved) {

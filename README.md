@@ -260,9 +260,10 @@ This returns ordered `Settled<U, MapStepError>[]`: failures have
 `{ message, kind, attempts, stepId }`. It runs every item without cancelling siblings; cancellation,
 checkpoint failures, and authoring errors still reject. The required run-unique `id` names a map
 journal and does not prefix leaf IDs. Item inputs, mapper source, optional `version`, and cwd define
-its identity; concurrency can change on resume. Inputs and results must be lossless JSON. Put
-captured dependencies in items or bump `version`. Resume skips each committed mapper and its owned
-effects and returns the saved outcome, so an ordinary mapper-body failure cannot heal and change a
+its identity; concurrency can change on resume. Inputs and results must be lossless JSON. The map
+snapshots `items` when called; settled mappers receive JSON copies of that snapshot. Put captured
+dependencies in items or bump `version`. Resume skips each committed mapper and its owned effects
+and returns the saved outcome, so an ordinary mapper-body failure cannot heal and change a
 downstream fingerprint. Incomplete items execute again. Forks start fresh map journals and use the
 normal per-step reuse rules.
 

@@ -537,6 +537,56 @@ it('keeps empty-map identity and path checks, and allows concurrency changes', a
   expect((await runWorkflow(definition, { ...options(), resume: true })).output).toBe('done');
 });
 
+it('processes the settled-map snapshot when the caller mutates items during the initial save', async () => {
+  const seen: unknown[] = [];
+  const definition = workflow(async (ctx) => {
+    const second = { n: 1 };
+    const items = [{ n: 0 }, second];
+    const pending = ctx.map(
+      items,
+      2,
+      (item) => {
+        seen.push(structuredClone(item));
+        return Promise.resolve(item.n);
+      },
+      { onError: 'settle', id: 'items' },
+    );
+    // The mapper cannot start until the initial journal checkpoint save resolves.
+    items[0] = { n: 99 };
+    second.n = 98;
+    items.push({ n: 2 });
+    return pending;
+  });
+  const result = await runWorkflow(definition, options());
+  expect(seen).toEqual([{ n: 0 }, { n: 1 }]);
+  expect(result.output).toEqual([
+    { ok: true, value: 0 },
+    { ok: true, value: 1 },
+  ]);
+  const journal = (await readRun(options())).maps?.['items'];
+  expect(journal?.items.map((item) => item.status)).toEqual(['completed', 'completed']);
+  expect(journal?.status).toBe('completed');
+});
+
+it('schedules only the elements present when an ordinary map starts', async () => {
+  const seen: unknown[] = [];
+  const first = { n: 0 };
+  const definition = workflow(async (ctx) => {
+    const items = [first];
+    const pending = ctx.map(items, 1, async (item) => {
+      await nextTurn();
+      seen.push(item);
+      return item.n;
+    });
+    items.push({ n: 1 });
+    return pending;
+  });
+  const result = await runWorkflow(definition, options());
+  expect(result.output).toEqual([0]);
+  expect(seen).toEqual([first]);
+  expect(seen[0]).toBe(first);
+});
+
 it('rejects invalid or duplicate map identities before invoking affected mappers', async () => {
   const mapper = vi.fn(() => Promise.resolve('value'));
   for (const [index, settings] of [
