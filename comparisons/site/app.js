@@ -92,7 +92,7 @@ function renderRoute() {
       .join(
         '',
       )}<span class="tabmeta">BATCH ${escape(batch.number)} / ${batch.workflows.length} WORKFLOWS</span></div>
-    <section id="panel" role="tabpanel" aria-labelledby="tab-${tab}">${tab === 'source' ? sourceView() : tab === 'notes' ? notesView() : supportView()}</section>`;
+    <section id="panel" role="tabpanel" aria-labelledby="tab-${escape(tab)}">${tab === 'source' ? sourceView() : tab === 'notes' ? notesView() : supportView()}</section>`;
   document.title = `${title(workflow.name)} · ${batch.label} · Workflow Lab`;
   document.querySelectorAll('[data-tab]').forEach((button) => {
     button.addEventListener('click', () => route({ view: button.dataset.tab }));
