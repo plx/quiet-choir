@@ -19,9 +19,9 @@
   ],
   "apiSnapshot": {
     "package": "quiet-choir 0.0.0",
-    "sha256": "21b265230c23c66836922bc42607bf60b107233b7e97bf3bce21fdd117aeca28",
+    "sha256": "77d8f671a7f1591bd0be97f3fb7ab0aaa8472d0e5a953a84c8873e8d433140fa",
     "file": "src/workflow/runtime/model.ts",
-    "description": "Runtime API used by the active ports at quiet-choir commit ed1d0ade3438ae8823e2217c9478dde61e76595a. Durable now/wait/sleepUntil/poll APIs add recorded clocks, one-record readiness waits, and due-run ticking; new long sleeps can suspend, while legacy sleeps retain replay. The legacy context forwards all four new helpers alongside ask/approve and value overloads. Storage format 7 preserves replay contract 6. Bootstrap/SDLC retain their six question contracts, and all 68 comparison cases remain unchanged. This model-file hash is provenance for that file, not the entire runtime; regression tests use the current built checkout. Broad historical port schema/normalization cleanup remains #65.",
-    "revision": "ed1d0ade3438ae8823e2217c9478dde61e76595a"
+    "description": "Runtime API used by the active ports at quiet-choir commit 907b6a5dc22d57fb5a1bba1f95691efcf717b5a5. Durable exec/exec.json and readFile/writeFile add deterministic commands and atomic text publication, while ctx.cwd exposes the canonical project directory. Durable now/wait/sleepUntil/poll APIs add recorded clocks, one-record readiness waits, and due-run ticking; new long sleeps can suspend, while legacy sleeps retain replay. The legacy context forwards all new helpers alongside ask/approve and value overloads. ProcessRunner remains an injected integration; agent calls, budgets, bootstrap/SDLC question contracts, and the 68 comparison cases are unchanged. Storage format 7 preserves replay contract 6. This model-file hash is provenance for that file, not the entire runtime; regression tests use the current built checkout. Rewriting deterministic work in the historical ports and comparing cost/failure behavior remains #65.",
+    "revision": "907b6a5dc22d57fb5a1bba1f95691efcf717b5a5"
   }
 }
