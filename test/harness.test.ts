@@ -158,7 +158,6 @@ describe('Codex event protocol', () => {
 
   it.each([
     [[{ type: 'turn.failed', error: { message: 'quota exhausted' } }], 'quota exhausted'],
-    [[...codexSuccess, { type: 'error', message: 'late failure' }], 'late failure'],
     [[{ type: 'error' }], 'agent failure'],
     [[{}], 'missing its type'],
     [[{ type: 'item.completed', item: { type: 'agent_message' } }], 'missing final text'],

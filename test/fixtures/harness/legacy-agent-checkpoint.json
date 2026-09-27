@@ -1,0 +1,35 @@
+{
+  "createdAt": "2026-09-26T18:20:26.440Z",
+  "cwd": "/fixture",
+  "error": "later failure",
+  "formatVersion": 1,
+  "id": "legacy",
+  "input": null,
+  "output": null,
+  "status": "failed",
+  "steps": {
+    "agent": {
+      "attempts": 1,
+      "error": null,
+      "fingerprint": "2cb9a826b55bf696cde51c3690af68dee10a439f3e8ebe62dd5c52ef4b6c7f0d",
+      "kind": "codex",
+      "output": {
+        "output": "legacy answer",
+        "sessionId": "legacy-thread",
+        "usage": {
+          "costUsd": null,
+          "inputTokens": 13,
+          "outputTokens": 4
+        }
+      },
+      "status": "completed",
+      "wakeAt": null
+    }
+  },
+  "updatedAt": "2026-09-26T18:20:26.478Z",
+  "workflow": {
+    "fingerprint": "b0e06405bf7f9682037cb16f73dc7f0a3d9d710c419866a51c86b12a91c7daaa",
+    "name": "legacy-reconnect",
+    "version": "1"
+  }
+}

@@ -77,6 +77,8 @@ export interface HarnessResponse {
   readonly sessionId: string | null;
   /** Usage metadata for this invocation. */
   readonly usage: AgentUsage;
+  /** Recoverable protocol notices, persisted as diagnostics outside the result fingerprint. */
+  readonly warnings?: readonly string[];
 }
 
 /** Replaceable integration port, also useful for deterministic tests. */

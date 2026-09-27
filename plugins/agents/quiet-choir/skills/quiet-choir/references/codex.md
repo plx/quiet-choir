@@ -48,10 +48,16 @@ remove the file after the call. Use required JSON-compatible object properties f
 runtime parses the returned text as JSON and validates it with Zod.
 
 The adapter reads Codex JSONL: `thread.started` supplies the thread ID, `item.completed` with
-`agent_message` supplies final text, and `turn.completed` is required for success. `turn.failed`,
-`error`, missing final text, or truncated output without `turn.completed` fails the step even if the
-process exits zero. Agent stdout is parsed after the process finishes; there is no token/tool event
-stream exposed through quiet-choir's progress observer.
+`agent_message` supplies final text, and `turn.completed` is required for success. Exit zero plus
+both final events and no `turn.failed` completes the step. Top-level `error` events (including
+reconnect notices and notices after completion) are warnings when the turn succeeds. Inspect
+`steps.<id>.warnings` in the saved run; the adapter retains the last 32 notices, each bounded to
+2048 characters. They do not change the result shape or replay fingerprint. `turn.failed` always
+fails with its own reason. Without `turn.completed`, the last non-reconnect error is the reason, or
+the error explains the interrupted turn; bounded earlier notices are appended. Nonzero exits,
+missing final text, and malformed protocol output also fail. Agent stdout is parsed after the
+process finishes; there is no token/tool event stream exposed through quiet-choir's progress
+observer.
 
 Usage reports input/output tokens when available. `costUsd` is null for this adapter, and there is
 no Codex per-call USD cap. The default wall-clock and 8 MiB combined output limits bound the
