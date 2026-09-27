@@ -99,6 +99,7 @@ export default class WorkflowExecute extends BaseCommand {
         this.error(result.message, { exit: controller.signal.aborted ? 130 : 1 });
       }
       if (result.kind === 'workflow.run.result') {
+        for (const warning of result.run.warnings ?? []) this.logToStderr(`Warning: ${warning}`);
         this.log(
           flags.json
             ? JSON.stringify(result.run)

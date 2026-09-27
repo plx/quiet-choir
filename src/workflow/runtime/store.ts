@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { mkdir, open, readFile, rename, rm } from 'node:fs/promises';
+import { lstat, mkdir, open, readFile, rename, rm } from 'node:fs/promises';
 import { hostname } from 'node:os';
 import { join, resolve } from 'node:path';
 
@@ -187,6 +187,19 @@ function isDead(pid: number): boolean {
   }
 }
 
+function isErrno(error: unknown, code: string): boolean {
+  return error instanceof Error && 'code' in error && error.code === code;
+}
+
+async function lockGone(lockPath: string): Promise<boolean> {
+  try {
+    await lstat(lockPath);
+    return false;
+  } catch (error) {
+    return isErrno(error, 'ENOENT');
+  }
+}
+
 /** Acquire a single local writer, recovering a dead local owner conservatively. @internal */
 export async function lockRun(stateDir: string, runId: string): Promise<() => Promise<void>> {
   const lockPath = `${pathFor(stateDir, runId)}.lock`;
@@ -244,9 +257,19 @@ export async function lockRun(stateDir: string, runId: string): Promise<() => Pr
       throw error;
     }
     return async () => {
-      const current = ownerSchema.parse(
-        JSON.parse(await readFile(join(lockPath, 'owner.json'), 'utf8')),
-      );
+      let current;
+      try {
+        current = ownerSchema.parse(
+          JSON.parse(await readFile(join(lockPath, 'owner.json'), 'utf8')),
+        );
+      } catch (cause) {
+        // A vanished lock keeps its errno; missing or unreadable metadata in a present lock does not,
+        // so callers cannot mistake unverified ownership for a cleanup-only failure.
+        if (isErrno(cause, 'ENOENT') && (await lockGone(lockPath))) throw cause;
+        throw new Error(`Run ${runId} lock ownership could not be verified; inspect ${lockPath}.`, {
+          cause,
+        });
+      }
       if (current.token !== owner.token) throw new Error(`Run ${runId} lock ownership was lost.`);
       await rm(lockPath, { recursive: true });
     };
