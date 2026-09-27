@@ -1,0 +1,50 @@
+{
+  "capturedAt": "2026-09-27T11:02:12.811Z",
+  "transport": "local fake APIs and dummy keys; no inference",
+  "cases": [
+    {
+      "name": "claude-restricted",
+      "version": "2.1.283 (Claude Code)",
+      "inheritedHooksExecuted": true,
+      "restrictedHooksExecuted": false,
+      "projectInstructionsExcluded": true,
+      "tools": [],
+      "mcpServers": [],
+      "memoryFieldPresent": false
+    },
+    {
+      "name": "claude-explicit-opt-ins",
+      "settingsHook": true,
+      "mcpServer": true,
+      "plugin": true,
+      "appendPrompt": true,
+      "namedBashTool": true
+    },
+    {
+      "name": "claude-file-boundaries",
+      "outsideReadDenied": true,
+      "addedDirectoryReadAllowed": true,
+      "protectedSettingsWriteDenied": true
+    },
+    {
+      "name": "codex-restricted",
+      "version": "codex-cli 0.157.1",
+      "inheritedProviderIgnored": true,
+      "explicitProviderReachedLocalApi": true
+    }
+  ],
+  "oauthEvidence": {
+    "source": "Earlier issue #60 audit; retained local init-restricted captures",
+    "claudeVersion": "2.1.283",
+    "apiKeySource": "none",
+    "response": "invalid model, after authentication",
+    "tools": [],
+    "mcpServers": [],
+    "hookEvents": 0,
+    "memoryFieldPresent": false,
+    "totalCostUsd": 0,
+    "reportedInputAndOutputTokens": 0,
+    "limitation": "No successful inference or fresh account-availability claim.",
+    "apiErrorStatus": 404
+  }
+}

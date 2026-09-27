@@ -112,6 +112,7 @@ ceiling. quiet-choir's remaining run-wide spend/token controls are tracked in
 | Isolate overlapping writers, share a checkout, integrate pinned changes    | [Worktrees](references/worktrees.md)                         |
 | Run durable commands, publish text, or guard a mutation                    | [Commands and files](references/commands-files.md)           |
 | Define schemas, compose steps, branch, map, and retry                      | [Workflow authoring](references/workflow-authoring.md)       |
+| Control native configuration, environment, and checkout trust              | [Harness isolation](references/harness-isolation.md)         |
 | Select profiles, shared call options, identity, usage, or process limits   | [Agent calls](references/agent-calls.md)                     |
 | Select provider-specific controls or diagnose native protocol failures     | [Claude](references/claude.md), [Codex](references/codex.md) |
 | Rehearse with fixtures/dry-run before paying                               | [Rehearsal](references/rehearsal.md)                         |
@@ -133,7 +134,8 @@ same run after delivery.
 - Rehearse agent work with `--dry-run --json`. Commands are synthesized; files/local
   callbacks/imports still run unless a step is explicitly stubbed. For worktree effects, use a
   fixture harness in a temporary repository instead: dry-run cannot simulate Git isolation. Native
-  calls inherit installed CLI authentication and permissions.
+  calls retain native authentication and default to restricted configuration; see
+  [harness isolation](references/harness-isolation.md).
 - Effects are at least once. Pass `idempotencyKey` to systems that support deduplication; native
   CLIs do not deduplicate edits with it. Checkpoints cannot undo mutations.
 - This private 0.0.0 engine executes trusted TypeScript locally. Harness permission flags do not

@@ -74,11 +74,12 @@ spending ledger.
 
 ## Configuration and cancellation
 
-The CLI inherits Claude authentication, configuration, hooks, and MCP setup. The call's `cwd`
-selects project `.claude/` settings and hooks. `claude -p` skips the trust dialog, so project hooks
-can run even in never-trusted directories. Disabling built-in tools does not isolate this
-configuration. Explicit MCP controls are available; hermetic isolation remains deferred to
-[#60](https://github.com/plx/quiet-choir/issues/60).
+The CLI retains native authentication and defaults to `--restricted --strict-mcp-config`.
+User/project hooks, discovered MCP, project instructions, and user plugins/memory do not load
+implicitly. Typed settings/MCP/plugin/prompt options opt content back in; managed policy remains. An
+explicit inherited role selects project `.claude/` settings from `cwd`; headless Claude skips trust
+prompts, so never use it on an untrusted checkout. See [harness isolation](harness-isolation.md) for
+environment scrubbing, protected-write limits, and verified native behavior.
 
 See [process lifecycle](agent-calls.md#process-lifecycle) for deadlines, output caps, signals, and
 orphan recovery. A stopped call may already have edited files.

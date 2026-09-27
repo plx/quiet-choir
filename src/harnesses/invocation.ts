@@ -8,6 +8,7 @@ import { checkAllowedTools } from '../workflow/runtime/profiles.js';
 import { tomlLiteral } from '../workflow/runtime/agent-controls.js';
 import { snapshotImages } from '../workflow/runtime/images.js';
 import { prepareCodexSchema } from './codex-schema.js';
+import { resolveIsolation } from '../workflow/runtime/agent-isolation.js';
 
 /** Run pre-launch validation, rejecting as configuration rather than a settled effect failure. */
 function validate<T>(check: () => T): T {
@@ -48,8 +49,9 @@ export interface CliArgumentPlan {
 
 /** Build and validate argv without filesystem access or processes. @internal */
 export function planInvocation(request: HarnessRequestInput): CliArgumentPlan {
-  validate(() => {
+  const isolation = validate(() => {
     validateAgentOptions(request.provider, request.options);
+    return resolveIsolation(request.options).isolation;
   });
   const artifacts: CliPlanArtifact[] = [];
   const args: string[] = [];
@@ -85,6 +87,7 @@ export function planInvocation(request: HarnessRequestInput): CliArgumentPlan {
       String(options.maxBudgetUsd ?? 0.5),
       '--no-session-persistence',
     );
+    if (isolation === 'restricted') args.push('--restricted', '--strict-mcp-config');
     if (allowed.length) args.push('--allowedTools', allowed.join(','));
     if (options.disallowedTools?.length)
       args.push('--disallowedTools', options.disallowedTools.join(','));
@@ -101,7 +104,8 @@ export function planInvocation(request: HarnessRequestInput): CliArgumentPlan {
         '--mcp-config',
         file('mcp.json', JSON.stringify({ mcpServers: options.mcpServers })),
       );
-    if (options.strictMcpConfig) args.push('--strict-mcp-config');
+    if (options.strictMcpConfig && isolation !== 'restricted') args.push('--strict-mcp-config');
+    for (const path of options.plugins ?? []) args.push('--plugin-dir', resolve(request.cwd, path));
     if (options.settings !== undefined)
       args.push('--settings', file('settings.json', JSON.stringify(options.settings)));
     if (options.fallbackModel !== undefined)
@@ -135,6 +139,7 @@ export function planInvocation(request: HarnessRequestInput): CliArgumentPlan {
       '--color',
       'never',
     );
+    if (isolation === 'restricted') args.push('--ignore-user-config', '--ignore-rules');
     if (options.harnessProfile !== undefined) args.push('--profile', options.harnessProfile);
     const effort = options.effort ?? options.reasoningEffort;
     if (effort !== undefined)

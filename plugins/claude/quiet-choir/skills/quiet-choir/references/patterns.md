@@ -434,8 +434,8 @@ then record a latch" workaround was superseded by implemented
 
 **Rule:** checkpoint the expensive investigation before requesting a small structured result. A
 schema failure can then retry extraction alone. Choose an approved lower-cost extraction model in a
-profile when appropriate; omitted models inherit native configuration. Keep the schema small and put
-semantic constraints in the extraction prompt too.
+profile when appropriate; omitted models use native defaults under the chosen isolation mode. Keep
+the schema small and put semantic constraints in the extraction prompt too.
 
 <!-- skills-check: example pattern-work-then-extract -->
 

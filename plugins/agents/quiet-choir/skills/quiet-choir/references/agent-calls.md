@@ -47,7 +47,9 @@ options. Replacing Claude tools re-infers allowedTools unless supplied explicitl
 `strictProfiles: true`, declare capability controls in profiles, including permissions, MCP, native
 config/agents, dirs, escape args, and environment. `workflow validate FILE --json` lists resolved
 `workflow.capabilities` without running the body. Unknown tools/native config controls
-conservatively require exec capability. These declarations do not isolate inherited configuration.
+conservatively require exec capability. Configuration loading defaults to restricted mode;
+[harness isolation](harness-isolation.md) explains inherited roles, environment edits, and provider
+boundaries.
 
 Every declared/default write or exec role needs a launch grant: `--grant fixer`, `--grant write`,
 `--grant exec` (includes write), or `--grant all`. Declared roles preflight before effects;

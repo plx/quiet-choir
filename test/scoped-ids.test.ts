@@ -218,7 +218,7 @@ it('inspects the real format-5 legacy-map checkpoint but refuses execution acros
   expect(saved.steps['legacy/0']?.output).toMatchObject({ output: 'item-0' });
   expect(Object.keys(saved.steps)).toEqual(['legacy/0', 'legacy/1']);
   expect(invoke).not.toHaveBeenCalled();
-  // Semantic identities are unchanged even though the execution epoch now requires format 6.
+  // Current agent identities explicitly pin restricted mode; old captures lack that component.
   const fresh = await runWorkflow(definition, {
     stateDir,
     runId: 'fresh',
@@ -227,7 +227,10 @@ it('inspects the real format-5 legacy-map checkpoint but refuses execution acros
     harness,
   });
   for (const id of Object.keys(saved.steps))
-    expect(fresh.steps[id]?.fingerprint).toBe(saved.steps[id]?.fingerprint);
+    expect(fresh.steps[id]?.identity).toEqual({
+      ...saved.steps[id]?.identity,
+      'option.isolation': expect.any(String) as unknown,
+    });
   expect(await readRun({ stateDir, runId: 'legacy-map' })).toEqual(saved);
 });
 

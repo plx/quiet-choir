@@ -2,6 +2,11 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- Default agent configuration to `restricted`, with explicit inherited roles and independent Git
+  `worktree` selection. Scrub host-session environment, support fingerprinted `env.set`/`env.unset`,
+  and retain only names/digests in environment diagnostics. Existing agent fingerprints can become
+  incompatible. See [harness isolation](docs/harness-isolation.md) for native boundaries and probes.
+
 - Add runtime-owned Git worktree isolation for Claude and Codex calls, with a pinned base, fresh
   retry directories, and captured commit results. Shared `ctx.worktree` handles serialize effects
   and restore completed snapshots; `ctx.merge` integrates changes in input order with explicit

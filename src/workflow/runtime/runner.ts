@@ -62,7 +62,8 @@ import {
 import { snapshotImages } from './images.js';
 import { profileLimitError } from './profile-diagnostics.js';
 import {
-  capabilityManifest,
+  resolveCapabilities,
+  publicCapabilityManifest,
   grantsSchema,
   profileGrantDigest,
   requireGrant,
@@ -373,7 +374,7 @@ export async function runWorkflow<TInput, TOutput>(
   if (options.rehearsal !== undefined && harnessKind !== 'dry-run')
     throw new Error('Rehearsal hooks require a dry-run harness.');
   const limiter = resolveAgentLimiter(options.agentLimit);
-  const capabilities = capabilityManifest(definition);
+  const capabilities = resolveCapabilities(definition);
   const incomingProfiles = validateProfileOverrides(options.profileOverrides ?? [], capabilities);
   const incomingGrants = grantsSchema.parse(jsonValue(options.grants ?? []));
   for (const grant of incomingGrants)
@@ -690,7 +691,7 @@ export async function runWorkflow<TInput, TOutput>(
     record.profileOverrides = profileOverrides;
     record.grants = grants;
     record.grantedProfiles = grantedProfiles;
-    record.capabilities = capabilities;
+    record.capabilities = publicCapabilityManifest(capabilities);
     record.policy = policy;
     record.allowModelOverride = allowModelOverride;
     record.policyWarnings = [];
@@ -948,6 +949,10 @@ export async function runWorkflow<TInput, TOutput>(
       }
       const prior = Object.hasOwn(record.steps, id) ? record.steps[id] : undefined;
       if (prior?.legacyIdentity === 1) {
+        if ((kind === 'claude' || kind === 'codex') && isTerminalStep(prior))
+          throw new Error(
+            `Step ${id}: original format-one agent has no pinned isolation mode; start a new run or invalidate it in a fork.`,
+          );
         const oldFingerprint = digest({
           kind,
           dependencies: legacyDependencies ?? jsonValue(dependencies),
@@ -1522,7 +1527,8 @@ export async function runWorkflow<TInput, TOutput>(
               costUsd: z.number().nullable(),
             }),
           });
-          const isolation = request.options.isolation;
+          const isolation =
+            request.options.worktree === true ? 'worktree' : request.options.worktree;
           const resultSchema =
             isolation === undefined
               ? baseResultSchema
@@ -1533,7 +1539,7 @@ export async function runWorkflow<TInput, TOutput>(
           const applied = { ...request.options };
           delete applied.retry;
           delete applied.onError;
-          delete applied.isolation;
+          delete applied.worktree;
           const { timeoutMs, maxTurns, maxBudgetUsd } = execution.policy;
           Object.assign(applied, {
             ...(timeoutMs === undefined ? {} : { timeoutMs }),
@@ -1584,6 +1590,14 @@ export async function runWorkflow<TInput, TOutput>(
                     if (old && (old.version !== metadata.version || old.binary !== metadata.binary))
                       warnings.push(
                         `${provider} harness changed from ${old.binary}@${old.version ?? 'unknown'} to ${metadata.binary}@${metadata.version ?? 'unknown'}; completed effects remain reusable.`,
+                      );
+                    if (
+                      old?.environment &&
+                      metadata.environment &&
+                      digest(old.environment) !== digest(metadata.environment)
+                    )
+                      warnings.push(
+                        `${provider} inherited environment or scrubbed variable names changed; values are not recorded or fingerprinted.`,
                       );
                     (record.harnesses ??= {})[provider] = metadata;
                     record.harnessWarnings = [

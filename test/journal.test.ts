@@ -371,7 +371,7 @@ it('recovers a crash after the old-binary guard but before the first directory s
   );
 });
 
-it('migrates a real format-one capture and checks its original local, agent, and sleep identities', async () => {
+it('migrates a real format-one local identity but refuses a completed agent without pinned isolation', async () => {
   const original = await fs.readFile(
     new URL('./fixtures/storage/v1.json', import.meta.url),
     'utf8',
@@ -407,15 +407,14 @@ it('migrates a real format-one capture and checks its original local, agent, and
   };
   await expect(runWorkflow(definition, options)).rejects.toThrow('format version 1');
   expect(await fs.readFile(join(stateDir, 'legacy.json'), 'utf8')).toBe(original);
-  const migrated = await runWorkflow(definition, { ...options, acceptCodeChange: true });
-  expect(migrated.output).toBe('7/legacy answer');
+  await expect(runWorkflow(definition, { ...options, acceptCodeChange: true })).rejects.toThrow(
+    'no pinned isolation mode',
+  );
+  const migrated = await readRun(options);
   expect(calls).toBe(0);
   expect(migrated.formatVersion).toBe(7);
-  expect(
-    Object.values(migrated.steps).every(
-      (step) => step.legacyIdentity === undefined && step.attempts === 1,
-    ),
-  ).toBe(true);
+  expect(migrated.steps['local']?.legacyIdentity).toBeUndefined();
+  expect(migrated.steps['agent']?.legacyIdentity).toBe(1);
   expect(migrated.steps['agent']?.legacyAttempts).toBe(1);
   expect(await fs.readFile(join(stateDir, 'legacy.json.v1'), 'utf8')).toBe(original);
   expect((await readRun(options)).codeChanges).toHaveLength(1);

@@ -100,7 +100,7 @@ it('passes every Claude control literally and stores large/structured values in 
   };
   expect(result.input).toBe(controls.prompt);
   expect(result.env).toBe('literal $SECRET');
-  expect(result.parent).toBe(controls.env?.['PATH']);
+  expect(controls.env).toHaveProperty('PATH', result.parent);
   expect(result.args).toEqual(
     expect.arrayContaining([
       '--effort',
@@ -254,6 +254,11 @@ const reserved = {
     'agents',
     'mcp-config',
     'strict-mcp-config',
+    'restricted',
+    'bare',
+    'safe-mode',
+    'setting-sources',
+    'plugin-dir',
     'settings',
     'fallback-model',
     'max-turns',
@@ -278,6 +283,8 @@ const reserved = {
     'image',
     'add-dir',
     'skip-git-repo-check',
+    'ignore-user-config',
+    'ignore-rules',
     'ask-for-approval',
     'full-auto',
   ],
@@ -386,6 +393,9 @@ const semanticOptions: [HarnessRequest['provider'], object][] = [
   ['claude', { mcpServers: { s: { command: 'node' } } }],
   ['claude', { strictMcpConfig: true }],
   ['claude', { settings: { hooks: {} } }],
+  ['claude', { plugins: ['review-plugin'] }],
+  ['claude', { env: { unset: ['REMOVE'] } }],
+  ['claude', { isolation: 'inherit' }],
   ['claude', { fallbackModel: ['other'] }],
   ['claude', { addDirs: ['more'] }],
   ['claude', { extraArgs: ['--no-chrome'] }],

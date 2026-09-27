@@ -21,14 +21,14 @@ These are resolved through the shared profile/grant rules.
 | `config`          | JSON values rendered as TOML per dotted key; rejects null and aliases of owned controls                                              |
 | `images`          | Regular files resolved against effect cwd; contents fingerprinted, snapshotted before launch and re-hashed on resume (keep readable) |
 
-Effort omission inherits native configuration, potentially an expensive level. Model-specific
-support remains native CLI behavior. Capability controls belong in profiles under strict mode.
-Native profiles/config/escape/env and enabled network access conservatively require exec grants;
-additional writable directories require write access. Explicit config values enter identity;
-external native config files do not. `images` snapshots use 0600 files cleaned on every outcome;
-renaming unchanged bytes can replay, changing bytes cannot. Escape args fingerprint strings only,
-not files at paths embedded in them. Record model/effort selections under each attempt's
-`requested`, with `"inherited"` for omissions.
+Effort omission uses native defaults under the selected configuration mode. Set it explicitly for
+repeatable cost expectations. Model-specific support remains native CLI behavior. Capability
+controls belong in profiles under strict mode. Native profiles/config/escape/env and enabled network
+access conservatively require exec grants; additional writable directories require write access.
+Explicit config values enter identity; external native config files do not. `images` snapshots use
+0600 files cleaned on every outcome; renaming unchanged bytes can replay, changing bytes cannot.
+Escape args fingerprint strings only, not files at paths embedded in them. Record model/effort
+selections under each attempt's `requested`, with `"inherited"` for omissions.
 
 Declare shared roles on `defineWorkflow`, for example
 `defaults: { codex: { reasoningEffort: 'medium' } }` and
@@ -49,15 +49,17 @@ const result = await ctx.codex.object('review', {
 ```
 
 The adapter runs
-`codex exec --json --sandbox read-only --config approval_policy="never" --ephemeral --color never -- -`
+`codex exec --json --sandbox read-only --config approval_policy="never" --ephemeral --color never --ignore-user-config --ignore-rules -- -`
 by default. It does not expose interactive approvals or an unrestricted sandbox. Declare an
 `edit`-based role with `codex: { sandbox: 'workspace-write' }` for authorized editing tasks and
 launch with `--grant role`. Add `isolation: 'worktree'` for a fresh checkout on every attempt, or
 pass a `ctx.worktree` handle for serialized write/test/fix effects. Shard structurally disjoint
 files; isolate overlapping targets, concurrent runners, and retries unsafe on partial edits. See
-[worktrees](worktrees.md) for snapshots and explicit integration. Hooks, MCP servers, and inherited
-configuration still matter, and the workflow's own TypeScript runs outside these harness sandbox
-controls.
+[worktrees](worktrees.md) for snapshots and explicit integration. Restricted mode skips user config
+and execpolicy rules, while native project/managed instruction behavior remains. Custom providers
+need explicit `config` or an inherited role. Authentication still uses `CODEX_HOME`. See
+[harness isolation](harness-isolation.md); the workflow's own TypeScript remains outside this
+boundary.
 
 Calls use `--ephemeral`, so the native thread ID is correlation metadata and no local session
 transcript is persisted.

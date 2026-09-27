@@ -28,8 +28,10 @@ const integration = await ctx.merge('integrate', [edit.worktree]);
 ```
 
 Declare and grant the editing profile as usual. Isolation does not grant tools or filesystem access.
-It is not a sandbox: a command can still write outside its directory, and native hooks, MCP servers,
-configuration, and additional directories keep their existing implications.
+It is not a sandbox: a command can still write outside its directory. Native configuration now
+defaults to restricted mode; [harness isolation](harness-isolation.md) explains explicit opt-ins and
+remaining managed-policy dependencies. Use `worktree: true` or a handle to combine checkout
+isolation with an explicit `isolation: 'inherit'` role.
 
 ## Attempt lifecycle
 

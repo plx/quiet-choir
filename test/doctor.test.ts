@@ -22,7 +22,8 @@ afterEach(async () => {
   await rm(directory, { recursive: true, force: true });
 });
 const projectRoot = dirname(dirname(fileURLToPath(import.meta.url)));
-const codexHelp = '--json --output-schema --ephemeral --config --image --profile --add-dir';
+const codexHelp =
+  '--json --output-schema --ephemeral --config --image --profile --add-dir --ignore-user-config --ignore-rules';
 const claudeHelp =
   '--effort <level> effort (choices: "low", "medium", "high", "xhigh", "max")\n  --permission-mode <mode> permissions (choices: "acceptEdits", "auto", "bypassPermissions", "manual", "dontAsk", "plan")';
 async function binary(provider: 'claude' | 'codex', mode = 'ok'): Promise<string> {
@@ -105,6 +106,7 @@ it('runs five checks per harness using full adapter argv and proves zero inferen
       '--effort',
       '--agent',
       '--agents',
+      '--restricted',
       '--strict-mcp-config',
       '--settings',
       '--fallback-model',
@@ -119,6 +121,8 @@ it('runs five checks per harness using full adapter argv and proves zero inferen
       '--profile',
       'quiet-choir-probe',
       '--strict-config',
+      '--ignore-user-config',
+      '--ignore-rules',
       'sandbox_workspace_write.network_access=false',
     ]),
   );

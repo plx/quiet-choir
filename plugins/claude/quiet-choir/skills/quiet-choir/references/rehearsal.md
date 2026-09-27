@@ -199,3 +199,7 @@ the suspended result. It never synthesizes a human approval. Its `rehearsal` rep
 temporary state was removed; `stateDir`, `resumeCommand`, and each `answerCommand` are null. Start a
 real run before requesting and delivering the decision. Later branches have not been rehearsed.
 Local callbacks before the question still ran unless explicitly stubbed.
+
+The opt-in `npm run test:contract:isolation` uses installed native CLIs with fresh temporary homes,
+dummy keys, and local fake APIs to verify restricted configuration behavior without upstream
+inference. See the [isolation guide](harness-isolation.md).

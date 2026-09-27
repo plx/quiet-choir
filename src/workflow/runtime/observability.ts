@@ -1,6 +1,8 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { createHash } from 'node:crypto';
 import { digest, jsonValue } from './json.js';
+import { environmentSummary } from './agent-environment.js';
+import { resolveIsolation } from './agent-isolation.js';
 import type { JsonValue, HarnessRequestInput } from './model.js';
 import type { AttemptPolicy } from './policy.js';
 import type { RunRecord } from './store.js';
@@ -34,6 +36,8 @@ export function requestSummary(
 ): RequestSummary {
   const options = request.options;
   return {
+    isolation: resolveIsolation(options).isolation,
+    environment: environmentSummary(options.env),
     provider: request.provider,
     model: execution.requestedModel,
     profile: execution.profile ?? null,

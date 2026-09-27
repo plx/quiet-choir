@@ -1,10 +1,7 @@
+import type { AgentEnvironment, HostEnvironmentSummary } from './agent-environment-model.js';
+import type { AgentIsolation, AgentWorktree } from './agent-isolation.js';
 import type { MergeOptions, MergeResult } from './worktree-model.js';
-import type {
-  WorktreeIsolation,
-  WorktreeChange,
-  WorktreeHandle,
-  WorktreeCreateOptions,
-} from './worktree-model.js';
+import type { WorktreeChange, WorktreeHandle, WorktreeCreateOptions } from './worktree-model.js';
 import type {
   ReadFileOptions,
   ReadFileResult,
@@ -89,6 +86,8 @@ export type Effort = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 
 /** Native harness installation captured for diagnostics, outside semantic identity. */
 export interface HarnessMetadata {
+  /** Parent variable names and scrubbed host-session names, never values. */
+  readonly environment?: HostEnvironmentSummary;
   /** Executable selected by the adapter. */
   readonly binary: string;
   /** Version string, or null if version discovery failed. */
@@ -107,16 +106,18 @@ export interface ImageAttachment {
 
 /** Options shared by headless agent calls. */
 export interface AgentOptions {
-  /** Fresh detached checkout per attempt, or a serialized shared handle. */
-  readonly isolation?: WorktreeIsolation;
+  /** Native configuration loading, default restricted; also accepts the original worktree shorthand. */
+  readonly isolation?: AgentIsolation;
+  /** Select a managed checkout independently from native configuration loading. */
+  readonly worktree?: AgentWorktree;
   /** Shared reasoning effort; cannot accompany Codex reasoningEffort. */
   readonly effort?: Effort;
   /** Additional tool directories; Codex treats these as writable roots. */
   readonly addDirs?: readonly string[];
   /** Fingerprinted escape hatch; use --flag=value for values, never reserved/typed flags. */
   readonly extraArgs?: readonly string[];
-  /** Fingerprinted environment overlay. Keep rotating secrets in the parent environment. */
-  readonly env?: Readonly<Record<string, string>>;
+  /** Fingerprinted set/unset edits after host scrubbing; flat set-only overlays remain supported. */
+  readonly env?: AgentEnvironment;
   /** Declared role or built-in preset; omission uses workflow defaults. */
   readonly profile?: string;
   /** Persist a terminal outcome for branching; cancellation, configuration (e.g. missing harness), and checkpoint-write failures still reject. */
@@ -135,6 +136,8 @@ export interface AgentOptions {
 
 /** Claude-specific controls. CliHarness denies unapproved tools by default. */
 export interface ClaudeOptions extends AgentOptions {
+  /** Explicit plugin directories; native code is trusted and paths enter semantic identity. */
+  readonly plugins?: readonly string[];
   /** Explicit deny rules such as Bash(git push:*). */
   readonly disallowedTools?: readonly string[];
   /** Permission mode; bypass and interactive modes remain unsupported. */

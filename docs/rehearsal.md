@@ -192,3 +192,7 @@ before committing them. Ordinary tests replay the corpus and never need native a
 General timing-only waits also skip delays. Polls perform their initial read-only observation;
 unresolved external waits suspend, and signal values are never fabricated. Notification hooks are
 disabled in rehearsal. `skippedSleeps` includes timing-only wait records.
+
+The opt-in `npm run test:contract:isolation` uses installed native CLIs with fresh temporary homes,
+dummy keys, and local fake APIs to verify restricted configuration behavior without upstream
+inference. See the [isolation guide](harness-isolation.md).

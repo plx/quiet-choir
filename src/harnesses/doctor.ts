@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { ProcessSupervisor } from '../processes/supervisor.js';
 import type { HarnessMetadata, HarnessRequestInput } from '../workflow/runtime/model.js';
+import { childEnvironment } from './environment.js';
 import {
   effortValues,
   codexEffortValues,
@@ -182,7 +183,8 @@ export async function probeHarnessContracts(options: DoctorOptions = {}): Promis
           });
         },
         signal,
-        ...(env ? { env } : {}),
+        env: env ?? childEnvironment(undefined, undefined).env,
+        inheritEnv: false,
       });
     const check = async (
       name: DoctorCheck['check'],
@@ -324,7 +326,7 @@ export async function probeHarnessContracts(options: DoctorOptions = {}): Promis
             invocation.args[index] = 'model_reasoning_effort="bogus"';
           }
           const env = {
-            ...request.options.env,
+            ...childEnvironment(request.options.env, undefined).env,
             ...(provider === 'codex' ? { CODEX_HOME: probeHome } : {}),
           };
           exact = await probe(invocation.args, directory, env);
@@ -368,6 +370,8 @@ export async function probeHarnessContracts(options: DoctorOptions = {}): Promis
           '--image',
           '--profile',
           '--add-dir',
+          '--ignore-user-config',
+          '--ignore-rules',
         ].filter((flag) => !help.includes(flag));
         return {
           ok: result.code === 0 && missing.length === 0 && !warning(result),
@@ -433,12 +437,12 @@ export async function probeHarnessContracts(options: DoctorOptions = {}): Promis
         return {
           ok: true,
           message:
-            'Model/effort inherit native configuration when omitted; doctor does not read Claude authentication/settings secrets.',
+            'Restricted mode skips user/project settings; omitted model/effort use remaining native defaults. Doctor does not read Claude authentication/settings secrets.',
         };
       inherited = await readInheritedCodexConfig(codexHome(options), options.codexProfile);
       return {
         ok: true,
-        message: `User/profile configuration: model=${inherited.model ?? 'inherited CLI default'}, effort=${inherited.effort ?? 'inherited CLI default'}, profile=${inherited.profile ?? 'none'}. Project/managed layers may further override these values.`,
+        message: `User/profile configuration: model=${inherited.model ?? 'inherited CLI default'}, effort=${inherited.effort ?? 'inherited CLI default'}, profile=${inherited.profile ?? 'none'}. These are inherit-mode diagnostics; restricted calls ignore user configuration. Project/managed layers may further override native defaults.`,
       };
     });
   }
