@@ -65,13 +65,43 @@ afterEach(async () => {
 });
 
 describe('checkpoint storage', () => {
+  it('cleans only the acquired run’s abandoned UUID temp files', async () => {
+    const uuid = '12345678-1234-1234-1234-123456789abc';
+    const stale = `run-1.json.${uuid}.tmp`;
+    const preserved = [
+      'run-1.json',
+      'run-1.json.notes.tmp',
+      `run-2.json.${uuid}.tmp`,
+      `run-1.json.${uuid}.tmp.backup`,
+      'notes.tmp',
+    ];
+    for (const name of [stale, ...preserved]) await fs.writeFile(join(stateDir, name), 'keep');
+    const foreignRelease = await lockRun(stateDir, 'run-2');
+    // A live foreign writer may be in the middle of an atomic write.
+    await fs.writeFile(join(stateDir, `run-2.json.${uuid}.tmp`), 'live');
+    const release = await lockRun(stateDir, 'run-1');
+    try {
+      await expect(fs.access(join(stateDir, stale))).rejects.toMatchObject({ code: 'ENOENT' });
+      for (const name of preserved)
+        await expect(fs.access(join(stateDir, name))).resolves.toBeUndefined();
+      await fs.writeFile(join(stateDir, stale), 'active');
+      await expect(lockRun(stateDir, 'run-1')).rejects.toThrow('locked by PID');
+      expect(await fs.readFile(join(stateDir, stale), 'utf8')).toBe('active');
+    } finally {
+      await release();
+      await foreignRelease();
+    }
+    const nextRelease = await lockRun(stateDir, 'run-1');
+    await nextRelease();
+    await expect(fs.access(join(stateDir, stale))).rejects.toMatchObject({ code: 'ENOENT' });
+  });
   it('round-trips and atomically replaces complete checkpoints with private permissions', async () => {
     const original = record();
     await writeRun(stateDir, original);
-    expect(await readRun(stateDir, original.id)).toEqual(original);
+    expect(await readRun({ stateDir, runId: original.id })).toEqual(original);
     const updated: RunRecord = { ...original, status: 'completed', output: { done: true } };
     await writeRun(stateDir, updated);
-    expect(await readRun(stateDir, original.id)).toEqual(updated);
+    expect(await readRun({ stateDir, runId: original.id })).toEqual(updated);
     expect(await fs.readdir(stateDir)).toEqual(['run-1.json']);
     expect((await fs.stat(join(stateDir, 'run-1.json'))).mode & 0o777).toBe(0o600);
   });
@@ -82,7 +112,7 @@ describe('checkpoint storage', () => {
     Object.defineProperty(saved.steps, '__proto__', { value: step(), enumerable: true });
     Object.defineProperty(saved.steps, 'constructor', { value: step(), enumerable: true });
     await writeRun(stateDir, saved);
-    const loaded = await readRun(stateDir, saved.id);
+    const loaded = await readRun({ stateDir, runId: saved.id });
     expect(JSON.stringify(loaded.input)).toBe(JSON.stringify(saved.input));
     expect(Object.hasOwn(loaded.steps, '__proto__')).toBe(true);
     expect(loaded.steps['__proto__']).toEqual(step());
@@ -92,7 +122,7 @@ describe('checkpoint storage', () => {
   it.each(['', '../escape', '/absolute', '.hidden', 'a/b', 'a'.repeat(129)])(
     'rejects unsafe run ID %s before accessing storage',
     async (id) => {
-      await expect(readRun(stateDir, id)).rejects.toThrow(/Run ID/);
+      await expect(readRun({ stateDir, runId: id })).rejects.toThrow(/Run ID/);
       await expect(lockRun(stateDir, id)).rejects.toThrow(/Run ID/);
       await expect(writeRun(stateDir, record(id))).rejects.toThrow(/Run ID/);
       expect(await fs.readdir(stateDir)).toEqual([]);
@@ -109,7 +139,7 @@ describe('checkpoint storage', () => {
       JSON.stringify({ ...record(), steps: JSON.parse('{"__proto__":"invalid"}') as unknown }),
     ]) {
       await fs.writeFile(path, content);
-      await expect(readRun(stateDir, 'run-1')).rejects.toThrow();
+      await expect(readRun({ stateDir, runId: 'run-1' })).rejects.toThrow();
     }
   });
 
@@ -123,7 +153,7 @@ describe('checkpoint storage', () => {
       return handle;
     });
     await expect(writeRun(stateDir, { ...original, output: 'new' })).rejects.toThrow('disk full');
-    expect(await readRun(stateDir, original.id)).toEqual(original);
+    expect(await readRun({ stateDir, runId: original.id })).toEqual(original);
     expect(await fs.readdir(stateDir)).toEqual(['run-1.json']);
   });
 
@@ -138,7 +168,7 @@ describe('checkpoint storage', () => {
     await expect(writeRun(stateDir, { ...record(), input: { bad: Infinity } })).rejects.toThrow(
       /lossless JSON/,
     );
-    expect(await readRun(stateDir, 'run-1')).toEqual(record());
+    expect(await readRun({ stateDir, runId: 'run-1' })).toEqual(record());
   });
 });
 

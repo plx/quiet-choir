@@ -108,7 +108,7 @@ describe('captured exit-1 failures', () => {
         expect(error.failure?.reason).not.toMatch(/^Reconnecting/u);
         if (capture.name === 'claude-auth.json') expect(error.message).not.toContain('success');
         expect(error.stderrTail).toBe(capture.stderr.trim());
-        const saved = await readRun(directory, 'capture');
+        const saved = await readRun({ stateDir: directory, runId: 'capture' });
         expect(saved.steps['agent']?.error).toBe(error.message);
         expect(saved.steps['agent']?.failedAttempts).toHaveLength(resume ? 2 : 1);
         expect(saved.steps['agent']?.failedAttempts?.at(-1)).toEqual({

@@ -32,8 +32,18 @@ export { CheckpointError } from './workflow/runtime/checkpoint.js';
 export { runWorkflow } from './workflow/runtime/runner.js';
 export type { WorkflowEvent, WorkflowRun, RunOptions } from './workflow/runtime/runner.js';
 export { readRun } from './workflow/runtime/store.js';
-export type { RunRecord, StepRecord, FailedAttempt } from './workflow/runtime/store.js';
+export type {
+  RunRecord,
+  StepRecord,
+  FailedAttempt,
+  ReadRunOptions,
+} from './workflow/runtime/store.js';
 export { CliHarness } from './harnesses/cli.js';
 export { checkCodexSchema } from './harnesses/codex-schema.js';
 export type { SchemaIssue } from './harnesses/codex-schema.js';
 export type { CliHarnessOptions } from './harnesses/cli.js';
+
+export { claudeOptionsSchema, codexOptionsSchema } from './workflow/runtime/options.js';
+
+export { resolveStateDir } from './workflow/runtime/paths.js';
+export type { StateDirectoryOptions } from './workflow/runtime/paths.js';
