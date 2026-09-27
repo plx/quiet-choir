@@ -59,7 +59,15 @@ export function checkCodexSchema(schema: z.ZodType | JsonValue): SchemaIssue[] {
   };
   const visit = (value: JsonValue, path: string, isRoot = false): void => {
     const node = object(value);
-    if (!node) return;
+    if (!node) {
+      if (isRoot)
+        add(
+          path,
+          'object-root',
+          'Wrap the root in z.object({ value: ... }), or use structuredOutput: "compat".',
+        );
+      return;
+    }
     if (active.has(node)) return;
     active.add(node);
     if (typeof node['$ref'] === 'string') {
@@ -178,7 +186,13 @@ export function prepareCodexSchema(schema: JsonValue, mode: 'strict' | 'compat')
   }
   function compile(value: JsonValue): Plan {
     const node = object(value);
-    if (!node) return { wire: {}, decode: (value) => value };
+    if (!node) {
+      if (value === false)
+        throw new Error(
+          'Codex cannot represent a schema that always fails validation (the JSON Schema `false`); that contract can never be met, so structuredOutput: "compat" has no wire encoding for it.',
+        );
+      return { wire: {}, decode: (value) => value };
+    }
     const cached = plans.get(node);
     if (cached) return cached;
     const plan: Plan = { wire: {}, decode: (value) => value };

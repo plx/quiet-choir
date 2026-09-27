@@ -260,6 +260,27 @@ it('does not mutate the supplied schema and leaves strict native schemas unchang
   });
 });
 
+it('rejects boolean root schemas instead of skipping the root check', () => {
+  const issue = {
+    path: '$',
+    rule: 'object-root',
+    fix: 'Wrap the root in z.object({ value: ... }), or use structuredOutput: "compat".',
+  };
+  expect(checkCodexSchema(false)).toEqual([issue]);
+  expect(checkCodexSchema(true)).toEqual([issue]);
+  expect(() => prepareCodexSchema(false, 'strict')).toThrow('object-root');
+  // `false` can never be satisfied on the wire (compat has no way to encode "always invalid"),
+  // so it must be rejected locally rather than compiled into an unrestricted `{ value: {} }`.
+  expect(() => prepareCodexSchema(false, 'compat')).toThrow('always fails validation');
+  // `true` accepts anything, so wrapping it as `{ value: {} }` is a faithful encoding.
+  expect(prepareCodexSchema(true, 'compat').schema).toEqual({
+    type: 'object',
+    properties: { value: {} },
+    required: ['value'],
+    additionalProperties: false,
+  });
+});
+
 it.each(['discriminated-union', 'array-root', 'string-root'])(
   'rejects the observed Claude %s root before spawning',
   async (name) => {
