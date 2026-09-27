@@ -270,9 +270,12 @@ it('drains Promise.all siblings without a signal and records the actual root cau
 it('refuses new launches after a body rejection while started effects checkpoint', async () => {
   let broken = true;
   const started = deferred();
+  const reported = deferred();
   const first = vi.fn(async () => {
     started.resolve();
-    await delay(20);
+    // Finish only after the failure has rejected the body and closed the workflow.
+    await reported.promise;
+    await nextTurn();
     return 'a';
   });
   const second = vi.fn(() => 'b');
@@ -294,7 +297,14 @@ it('refuses new launches after a body rejection while started effects checkpoint
     ]);
     return 'done';
   });
-  await expect(runWorkflow(definition, options())).rejects.toThrow('first cause');
+  await expect(
+    runWorkflow(definition, {
+      ...options(),
+      onEvent(event) {
+        if (event.type === 'step.failed' && event.stepId === 'failure') reported.resolve();
+      },
+    }),
+  ).rejects.toThrow('first cause');
   const saved = await readRun(options());
   expect(saved).toMatchObject({
     status: 'failed',
