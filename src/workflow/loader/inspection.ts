@@ -1,3 +1,4 @@
+import type { ExecSummary, ExecDiagnostics } from '../runtime/exec-model.js';
 import { setTimeout as delay } from 'node:timers/promises';
 import { digest } from '../runtime/json.js';
 import { readRequiredRun } from '../runtime/read-required-run.js';
@@ -51,6 +52,8 @@ export interface RunSummary {
     readonly elapsedMs: number | null;
     readonly attempts: number;
     readonly request: RequestSummary | null;
+    readonly exec: ExecSummary | null;
+    readonly execError: ExecDiagnostics | null;
     readonly error: string | null;
     readonly rootCause: boolean;
   }[];
@@ -199,8 +202,10 @@ export function summarizeRun(
       : null,
     counts,
     steps: entries
-      .filter(([, step]) =>
-        ['running', 'failed', 'cancelled', 'settled-failed', 'waiting'].includes(step.status),
+      .filter(
+        ([, step]) =>
+          step.kind === 'exec' ||
+          ['running', 'failed', 'cancelled', 'settled-failed', 'waiting'].includes(step.status),
       )
       .map(([id, step]) => ({
         id,
@@ -216,6 +221,8 @@ export function summarizeRun(
             : (step.durationMs ?? null),
         attempts: step.attempts,
         request: step.request ?? null,
+        exec: step.exec ?? null,
+        execError: step.execError ?? null,
         error: step.error,
         rootCause: run.rootCause?.stepId === id,
       })),

@@ -24,6 +24,7 @@ import {
   runWorkflow,
   z,
   type Harness,
+  type ProcessRunRequest,
   type HarnessInvocation,
   type HarnessRequest,
   type HarnessResponse,
@@ -549,4 +550,72 @@ it('bounded review/revise exits immediately when approved', async () => {
   const result = await replayAfterTail(revise, { draft: 'initial', rounds: 5 }, harness);
   expect(result.output).toEqual({ approved: true, draft: 'initial' });
   expect(harness.calls).toHaveLength(1);
+});
+
+it('replays durable command verdicts and gh JSON snapshots after a tail failure', async () => {
+  const verdict = (await import('../examples/patterns/command-verdict.workflow.js')).default;
+  const github = (await import('../examples/patterns/github-snapshot.workflow.js')).default;
+  for (const [name, workflow, input] of [
+    ['verdict', verdict, { argv: ['fake', 'test'] }],
+    ['github', github, { repo: 'enterprise.test/owner/repo', pr: 1 }],
+  ] as const) {
+    let calls = 0;
+    const wrapped = tailFailure(workflow as WorkflowDefinition<unknown, unknown>);
+    const setup = {
+      ...options(),
+      runId: name,
+      input,
+      processRunner: {
+        run: (request: ProcessRunRequest) => {
+          calls++;
+          return Promise.resolve({
+            code: request.schema ? 0 : 1,
+            signal: null,
+            stdout: request.schema ? '{"headRefOid":"abc","state":"OPEN"}' : '',
+            stderr: '',
+            truncated: false,
+            durationMs: 1,
+          });
+        },
+      },
+    };
+    await expect(runWorkflow(wrapped, setup)).rejects.toThrow('Injected tail failure');
+    const resumed = await runWorkflow(wrapped, { ...setup, resume: true });
+    expect(resumed.output).toEqual(
+      name === 'verdict' ? { green: false, code: 1 } : { headRefOid: 'abc', state: 'OPEN' },
+    );
+    expect(calls).toBe(1);
+  }
+});
+
+it('replays file publication and mutation-guard recipes without repeating mutations', async () => {
+  const update = (await import('../examples/patterns/file-update.workflow.js')).default;
+  const guard = (await import('../examples/patterns/guard-mutation.workflow.js')).default;
+  const { NodeProcessRunner } = await import('../src/index.js');
+  await execute('git', ['init', '-q'], { cwd: root });
+  const file = join(root, 'file');
+  await writeFile(file, 'baseline\r\n');
+  const updateSetup = { ...options(), input: { file, prefix: 'new\r\n' } };
+  const wrappedUpdate = tailFailure(update);
+  await expect(runWorkflow(wrappedUpdate, updateSetup)).rejects.toThrow('Injected tail failure');
+  await runWorkflow(wrappedUpdate, { ...updateSetup, resume: true });
+  expect(await readFile(file, 'utf8')).toBe('new\r\nbaseline\r\n');
+  const wrappedGuard = tailFailure(guard);
+  const guardSetup = {
+    ...options(),
+    runId: 'guard',
+    input: {
+      file,
+      argv: [
+        process.execPath,
+        '-e',
+        "require('node:fs').writeFileSync('file','mutation');process.exitCode=1;",
+      ],
+    },
+    processRunner: new NodeProcessRunner(),
+  };
+  await expect(runWorkflow(wrappedGuard, guardSetup)).rejects.toThrow('Injected tail failure');
+  const resumed = await runWorkflow(wrappedGuard, { ...guardSetup, resume: true });
+  expect(resumed.output).toBe(1);
+  expect(await readFile(file, 'utf8')).toBe('new\r\nbaseline\r\n');
 });

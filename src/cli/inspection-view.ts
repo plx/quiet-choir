@@ -68,6 +68,16 @@ export function formatRunSummary(run: RunSummary, verbose = false): string {
     lines.push(`Harness ${provider}: ${value.binary}@${value.version ?? 'unknown'}`);
   for (const step of run.steps) {
     const request = step.request;
+    if (step.exec) {
+      const command = step.exec.command;
+      lines.push(
+        `Command ${step.id}${'shell' in command ? ' [SHELL]' : ' [argv]'}: ${JSON.stringify(command)} (cwd ${step.exec.cwd})`,
+      );
+    }
+    if (step.execError)
+      lines.push(
+        `Command exit: ${step.execError.signal ?? String(step.execError.code)}; stderr tail: ${JSON.stringify(step.execError.stderrTail)}`,
+      );
     const limits = request
       ? [
           request.limits.timeoutMs === null

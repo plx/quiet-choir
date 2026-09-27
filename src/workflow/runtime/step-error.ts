@@ -1,3 +1,4 @@
+import { ExecError } from './exec-error.js';
 import { z } from 'zod';
 
 import { CancelledError } from './fan-out.js';
@@ -30,6 +31,7 @@ export const stepErrorSchema = z.object({
 /** Classify structured metadata, never guessed substrings of user-controlled error messages. @internal */
 export function errorKind(error: unknown): ErrorKind {
   if (error instanceof CancelledError) return 'cancelled';
+  if (error instanceof ExecError) return error.kind;
   if (error instanceof HarnessError) return error.kind;
   if (error instanceof z.ZodError || error instanceof SyntaxError) return 'schema';
   if (error instanceof Error) {

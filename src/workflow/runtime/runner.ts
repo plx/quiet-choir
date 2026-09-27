@@ -1,3 +1,18 @@
+import type { ReadFileResult, WriteFileResult, WriteFileOptions } from './file-model.js';
+import {
+  filePath,
+  fileDigest,
+  snapshotFile,
+  replaceFile,
+  readFileOptionsSchema,
+  writeFileOptionsSchema,
+  readFileResultSchema,
+  writeFileResultSchema,
+} from './files.js';
+import { executeCommand, prepareExec } from './exec.js';
+import { execResultSchema } from './exec-schema.js';
+import { ExecError } from './exec-error.js';
+import type { Command, ExecOptions, ExecResult, ExecSummary, ProcessRunner } from './exec-model.js';
 import { prepareLegacyReplay } from './legacy.js';
 import { RunActivity } from './activity.js';
 import { FileRunStore, type RunStore } from './run-store.js';
@@ -221,6 +236,8 @@ export function assertCompleted<T>(result: WorkflowResult<T>): asserts result is
 
 /** Explicit dependencies and execution policy for a workflow run. */
 export interface RunOptions extends WorkflowCodeOptions {
+  /** Process integration for durable exec; never implicitly spawned by the core. */
+  readonly processRunner?: ProcessRunner;
   /** Wall clock and cancellable timer used by now, waits, and legacy sleeps. */
   readonly clock?: WorkflowClock;
   /** Suspend when quiescent by default; block keeps waits in this process. Waits due within one second stay live. */
@@ -838,6 +855,7 @@ export async function runWorkflow<TInput, TOutput>(
       observedRequest: RequestSummary | null = null,
       observedPhase: PhaseInfo | null = observations.phase,
       legacyDependencies?: JsonValue,
+      observedExec?: ExecSummary,
     ): Promise<EffectResult<T, TMode>> {
       const signal = scopes.signal;
       const value = (output: T): EffectResult<T, TMode> =>
@@ -918,9 +936,9 @@ export async function runWorkflow<TInput, TOutput>(
       }
       const redefined =
         prior !== undefined && (prior.kind !== kind || prior.fingerprint !== stepFingerprint);
-      if (redefined && prior.kind === 'ask')
+      if (redefined && (prior.kind === 'ask' || prior.kind === 'wait'))
         throw new Error(
-          `Step ${id}: a question cannot be redefined as another effect; use a new ID.`,
+          `Step ${id}: a ${prior.kind === 'ask' ? 'question' : 'wait'} cannot be redefined as another effect; use a new ID.`,
         );
       if (redefined && isTerminalStep(prior)) {
         const changed = [
@@ -1028,6 +1046,9 @@ export async function runWorkflow<TInput, TOutput>(
         step.errorStack = null;
         step.phase = observedPhase?.title ?? null;
         step.request = observedRequest;
+        if (observedExec) step.exec = structuredClone(observedExec);
+        else delete step.exec;
+        delete step.execError;
         step.startedAt = new Date().toISOString();
         step.finishedAt = null;
         step.durationMs = null;
@@ -1042,6 +1063,7 @@ export async function runWorkflow<TInput, TOutput>(
           usage: null,
           errorStack: null,
           request: structuredClone(observedRequest),
+          ...(observedExec ? { exec: structuredClone(observedExec) } : {}),
           startedAt: step.startedAt,
           finishedAt: null as string | null,
           status: 'running',
@@ -1056,6 +1078,7 @@ export async function runWorkflow<TInput, TOutput>(
             action(
               {
                 signal,
+                cwd,
                 idempotencyKey: `${record.id}/${id}`,
                 attempt: step.attempts,
               },
@@ -1088,6 +1111,10 @@ export async function runWorkflow<TInput, TOutput>(
             Math.round(performance.now() - attemptStarted),
           );
           attemptRecord.error = step.error;
+          if (cause instanceof ExecError) {
+            step.execError = structuredClone(cause.diagnostics);
+            attemptRecord.execError = structuredClone(cause.diagnostics);
+          }
           if (cause instanceof HarnessError) {
             if (cause.usage !== null) attemptRecord.usage = structuredClone(cause.usage);
             (step.failedAttempts ??= []).push({
@@ -1188,6 +1215,98 @@ export async function runWorkflow<TInput, TOutput>(
           }) as T,
         );
       }
+    }
+
+    function processInvocation(id: string, context: StepContext): HarnessInvocation {
+      return {
+        signal: context.signal,
+        runId: options.runId,
+        stepId: id,
+        attempt: context.attempt,
+        trackProcess: async (child) => {
+          try {
+            return await storage.trackProcess(
+              { runId: options.runId, stepId: id, attempt: context.attempt },
+              child,
+            );
+          } catch (cause) {
+            const error = await checkpointError(
+              'process',
+              stateDir,
+              options.runId,
+              cause,
+              `Could not record process for ${id}`,
+            );
+            checkpointProblems.push(error);
+            controller.abort(error);
+            throw error;
+          }
+        },
+      };
+    }
+
+    function exec<T>(
+      leaf: string,
+      command: Command,
+      settings: ExecOptions,
+      schema: z.ZodType<T> | null,
+    ): Promise<T | ExecResult> {
+      const id = names.qualify(leaf);
+      const phase = observations.phase;
+      return launch(id, async () => {
+        if (schema !== null && !(schema instanceof z.ZodType))
+          throw new Error('exec.json requires a Zod schema.');
+        const prepared = await prepareExec(command, settings, cwd, schema !== null);
+        const execution = resolvePolicy(
+          id,
+          'exec',
+          prepared.settings,
+          { timeoutMs: 300_000, maxOutputBytes: 1_048_576 },
+          policy,
+          matchedPolicy,
+        );
+        const outputSchema = schema ?? execResultSchema;
+        const jsonSchema = schemaJson(outputSchema);
+        options.rehearsal?.onSchema?.(id, outputSchema);
+        const identity = stepIdentity({
+          kind: 'exec',
+          ...(jsonValue(prepared.summary) as Record<string, JsonValue>),
+          schema: jsonSchema,
+        });
+        return effect<T | ExecResult>(
+          id,
+          'exec',
+          null,
+          outputSchema,
+          execution,
+          (context) =>
+            executeCommand(
+              options.processRunner,
+              {
+                command: prepared.summary.command,
+                cwd: prepared.summary.cwd,
+                env: prepared.env,
+                inheritEnv: prepared.summary.inheritEnv,
+                input: prepared.input,
+                timeoutMs: execution.policy.timeoutMs ?? 300_000,
+                maxOutputBytes: execution.policy.maxOutputBytes ?? 1_048_576,
+                capture: schema ? 'error' : 'truncate',
+                schema: schema ? jsonSchema : null,
+              },
+              processInvocation(id, context),
+              prepared.summary.okExitCodes,
+              schema,
+            ),
+          null,
+          identity,
+          undefined,
+          undefined,
+          null,
+          phase,
+          undefined,
+          prepared.summary,
+        );
+      });
     }
 
     const metadataRequests = new Map<string, Promise<void>>();
@@ -1360,31 +1479,7 @@ export async function runWorkflow<TInput, TOutput>(
                   idempotencyKey: context.idempotencyKey,
                 },
               };
-              const invocation: HarnessInvocation = {
-                signal: context.signal,
-                runId: options.runId,
-                stepId: id,
-                attempt: context.attempt,
-                trackProcess: async (child) => {
-                  try {
-                    return await storage.trackProcess(
-                      { runId: options.runId, stepId: id, attempt: context.attempt },
-                      child,
-                    );
-                  } catch (cause) {
-                    const error = await checkpointError(
-                      'process',
-                      stateDir,
-                      options.runId,
-                      cause,
-                      `Could not record harness process for ${id}`,
-                    );
-                    checkpointProblems.push(error);
-                    controller.abort(error);
-                    throw error;
-                  }
-                },
-              };
+              const invocation = processInvocation(id, context);
               if (options.harness.metadata) {
                 let discovery = metadataRequests.get(provider);
                 if (!discovery) {
@@ -1705,6 +1800,87 @@ export async function runWorkflow<TInput, TOutput>(
       );
     }
     const context: WorkflowContext = {
+      cwd,
+      readFile: (leaf, path, settings = {}) => {
+        const id = names.qualify(leaf);
+        const phase = observations.phase;
+        return launch(id, async () => {
+          const checked = readFileOptionsSchema.parse(settings);
+          const target = await filePath(cwd, path, checked.allowOutsideCwd);
+          return effect<ReadFileResult>(
+            id,
+            'read-file',
+            null,
+            readFileResultSchema,
+            resolvePolicy(id, 'step', {}, {}, policy, matchedPolicy),
+            async (context) => {
+              const stub = options.rehearsal?.localStep?.(id, schemaJson(readFileResultSchema));
+              return stub
+                ? readFileResultSchema.parse(stub.output)
+                : snapshotFile(target, checked.maxBytes ?? 1_048_576, context.signal);
+            },
+            null,
+            stepIdentity({
+              kind: 'read-file',
+              path: target,
+              schema: schemaJson(readFileResultSchema),
+            }),
+            undefined,
+            undefined,
+            null,
+            phase,
+          );
+        });
+      },
+      writeFile: (leaf, path, content, settings = {}) => {
+        const id = names.qualify(leaf);
+        const phase = observations.phase;
+        return launch(id, async () => {
+          const checked = writeFileOptionsSchema.parse(settings);
+          if (typeof content !== 'string') throw new Error('File content must be a string.');
+          const target = await filePath(cwd, path, checked.allowOutsideCwd);
+          return effect<WriteFileResult>(
+            id,
+            'write-file',
+            null,
+            writeFileResultSchema,
+            resolvePolicy(id, 'step', {}, {}, policy, matchedPolicy),
+            async (context) => {
+              const stub = options.rehearsal?.localStep?.(id, schemaJson(writeFileResultSchema));
+              return stub
+                ? writeFileResultSchema.parse(stub.output)
+                : replaceFile(target, content, checked as WriteFileOptions, context.signal);
+            },
+            null,
+            stepIdentity({
+              kind: 'write-file',
+              path: target,
+              sha256: fileDigest(content),
+              ifMatch: checked.ifMatch ?? null,
+              createOnly: checked.ifMatch === null,
+              schema: schemaJson(writeFileResultSchema),
+            }),
+            undefined,
+            undefined,
+            null,
+            phase,
+          );
+        });
+      },
+      exec: Object.assign(
+        (id: string, command: Command, settings: ExecOptions = {}) =>
+          exec<never>(id, command, settings, null),
+        {
+          json: <T>(
+            id: string,
+            command: Command,
+            settings: ExecOptions & { readonly schema: z.ZodType<T> },
+          ): Promise<T> => {
+            const { schema, ...rest } = settings;
+            return exec(id, command, rest, schema) as Promise<T>;
+          },
+        },
+      ),
       now: (id) =>
         context.step(id, {
           input: null,

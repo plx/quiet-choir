@@ -1,3 +1,10 @@
+import type {
+  ReadFileOptions,
+  ReadFileResult,
+  WriteFileOptions,
+  WriteFileResult,
+} from './file-model.js';
+import type { ExecFunction } from './exec-model.js';
 import type { AskOptions, ApproveOptions, Approval } from './question-model.js';
 import type {
   WaitSources,
@@ -353,6 +360,8 @@ export interface RetryPolicy {
 
 /** Context supplied to a local effect. */
 export interface StepContext {
+  /** Canonical workflow working directory. */
+  readonly cwd: string;
   /** Cooperative cancellation signal; effects should pass it to cancellable operations. */
   readonly signal: AbortSignal;
   /** Stable run/step key for deduplicating external side effects. */
@@ -379,6 +388,19 @@ export interface StepDefinition<T> {
 
 /** Durable operations available to ordinary TypeScript workflow code. */
 export interface WorkflowContext<TProfile extends string = string> {
+  /** Canonical workflow working directory. */
+  readonly cwd: string;
+  /** Operator-privileged durable commands; agent tool grants do not restrict this API. */
+  readonly exec: ExecFunction;
+  /** Atomically publish UTF-8 content and save a hash-only receipt. Creates missing parent directories. */
+  writeFile(
+    id: string,
+    path: string,
+    content: string,
+    options?: WriteFileOptions,
+  ): Promise<WriteFileResult>;
+  /** Save a size-capped UTF-8 snapshot; later reads with this ID replay it. */
+  readFile(id: string, path: string, options?: ReadFileOptions): Promise<ReadFileResult>;
   /** Record the current clock once and replay it as a stable deadline anchor. */
   now(id: string): Promise<number>;
   /** Choose and persist one signal, poll, or deadline outcome. Never race durable operations yourself. */
@@ -532,7 +554,9 @@ export interface PolicyOverride {
   /** Step-ID glob: * stays within a segment; ** crosses slashes. Omission matches all IDs. */
   readonly match?: string;
   /** Limit the rule to an effect category. Sleep does not accept policy overrides. */
-  readonly kind?: 'claude' | 'codex' | 'step';
+  readonly kind?: 'claude' | 'codex' | 'step' | 'exec';
+  /** Output cap: per stream for exec, combined for native agents. */
+  readonly maxOutputBytes?: number;
   /** Harness wall-clock deadline in milliseconds. */
   readonly timeoutMs?: number;
   /** Claude turn limit. */

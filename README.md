@@ -388,6 +388,15 @@ effects and returns the saved outcome, so an ordinary mapper-body failure cannot
 downstream fingerprint. Incomplete items execute again. Forks start fresh map journals and use the
 normal per-step reuse rules.
 
+## Durable commands and files
+
+Use `ctx.exec` for direct argv commands and `ctx.exec.json` for schema-validated stdout. Commands
+have operator privileges; branch on actual test exits with `okExitCodes: 'any'`. The CLI supplies
+the process runner, while embedders inject `new NodeProcessRunner()`. `ctx.readFile` saves a bounded
+snapshot, `ctx.writeFile` publishes exact text with a hash-only receipt, and `guardFile` preserves a
+Git blob around one journaled mutation body. See [contracts and limits](docs/command-effects.md) and
+[verified recipes](plugins/agents/quiet-choir/skills/quiet-choir/references/patterns.md#commands-and-test-verdicts).
+
 ## Durable questions
 
 Use `ctx.ask` or `ctx.approve` to keep human decisions attached to the plan and run that requested

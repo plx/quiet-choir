@@ -337,7 +337,7 @@ describe('headless CLI adapter', () => {
         request('claude'),
         testInvocation(signal),
       ),
-    ).rejects.toThrow('Install the harness CLI');
+    ).rejects.toThrow('Check the executable, PATH');
     const { binary } = await fixture('');
     await chmod(binary, 0o600);
     const launch = new CliHarness({ codexBinary: binary }).invoke(

@@ -2,6 +2,12 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- Add operator-privileged durable `ctx.exec`/`ctx.exec.json` through an injected process runner,
+  bounded per-stream capture, exit diagnostics, and child idempotency metadata. Add canonical cwd,
+  memoized `readFile`, atomic hash-receipt `writeFile`, and raw-Git-blob `guardFile` restoration
+  after one journaled body. Commands are synthesized in dry-run; files remain real unless stubbed.
+  See [command and file contracts](docs/command-effects.md).
+
 - Add recorded `ctx.now`, one-record signal/poll/deadline waits, `sleepUntil`, and bounded `poll`.
   Long sleeps suspend after active work drains; `--wait-mode block` retains live waiting.
   `workflow tick` resumes due stored entrypoints under the normal lock, with bounded watch and

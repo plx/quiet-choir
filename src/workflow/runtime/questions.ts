@@ -415,6 +415,7 @@ export class RunQuestions {
     const poll = waiter.sources.poll;
     if (poll && (expired || progress.nextCheckAt === null || now >= progress.nextCheckAt)) {
       const context: StepContext = {
+        cwd: this.#deps.record.cwd,
         signal: waiter.signal,
         idempotencyKey: `${this.#deps.record.id}/${id}`,
         attempt: 1,
