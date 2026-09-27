@@ -18,9 +18,9 @@
   ],
   "apiSnapshot": {
     "package": "quiet-choir 0.0.0",
-    "sha256": "63ba150da54c35564e4985dad19a60ef431018e0924ad5cf406cdf2779d9bb46",
+    "sha256": "70304adec1bf710eaf331af3e448408ea07a43e80fde1d2ceb83d27c77b3c386",
     "file": "src/workflow/runtime/model.ts",
-    "description": "Runtime API used by the active ports at quiet-choir commit 1d39571214a0e6ac8d6638414c8b4bab12a95851. Shared helpers now use ctx.phase and ctx.log for persisted, replay-marked observations. Format 6 records executions, resolved requests, attempt timing/usage/stacks, and bounded events; inspect/list/watch expose progress without imports. Saved workflow failures expose WorkflowRunError with original cause and saved state. Semantic effect identities, original prompts, all 68 effort settings, and fixture outputs remain unchanged. Native calls retain run/step/attempt identity, durable process registration, bounded cleanup and orphan recovery. Historical ports keep strictProfiles:false with class grants for elevated raw capabilities. This hash identifies the model file; regression tests use the current built checkout.",
+    "description": "Runtime API used by the active ports at quiet-choir commit 1d39571214a0e6ac8d6638414c8b4bab12a95851. Shared helpers now use ctx.phase and ctx.log for persisted, replay-marked observations. Format 6 records executions, resolved requests, attempt timing/usage/stacks, bounded events, and harness-kind provenance; inspect/list/watch expose progress without imports. Saved workflow failures expose WorkflowRunError with original cause and saved state. Harness requests carry durable call metadata outside semantic fingerprints; CLI fixture/dry-run execution uses the native argument planner and temporary resume previews. Semantic effect identities, original prompts, all 68 effort settings, and fixture outputs remain unchanged. Native calls retain run/step/attempt identity, durable process registration, bounded cleanup and orphan recovery. Historical ports keep strictProfiles:false with class grants for elevated raw capabilities. This hash identifies the model file; regression tests use the current built checkout.",
     "revision": "1d39571214a0e6ac8d6638414c8b4bab12a95851"
   }
 }
