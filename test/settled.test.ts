@@ -430,8 +430,34 @@ it('classifies structured errors without guessing from message text', () => {
     'output-limit',
   );
   expect(errorKind(Object.assign(new Error('missing'), { code: 'ENOENT' }))).toBe('process');
+  expect(errorKind(Object.assign(new Error('denied'), { code: 'EACCES' }))).toBe('unknown');
+  expect(errorKind(Object.assign(new Error('denied'), { code: 'EACCES', phase: 'spawn' }))).toBe(
+    'process',
+  );
   expect(errorKind(Object.assign(new Error('abort'), { code: 'ABORT_ERR' }))).toBe('cancelled');
   expect(errorKind('failure')).toBe('unknown');
+});
+
+it('classifies and retries any subprocess launch failure as a process failure', async () => {
+  const binary = join(stateDir, 'claude');
+  await writeFile(binary, `#!${process.execPath}\n`);
+  await chmod(binary, 0o600);
+  const harness = new CliHarness({ claudeBinary: binary });
+  const calls = vi.spyOn(harness, 'invoke');
+  const definition = workflow(async (ctx) => {
+    const result = await ctx.claude.text('launch', {
+      prompt: 'p',
+      onError: 'return',
+      retry: { maxAttempts: 2, delayMs: 0, on: ['process'] },
+    });
+    return result.ok
+      ? result.value.output
+      : `${result.error.kind}/${String(result.error.attempts)}`;
+  });
+  expect((await runWorkflow(definition, { ...options(), harness })).output).toBe('process/2');
+  expect(calls).toHaveBeenCalledTimes(2);
+  const attempts = (await readRun(options())).steps['launch']?.attemptHistory ?? [];
+  expect(attempts.map((attempt) => attempt.errorKind)).toEqual(['process', 'process']);
 });
 
 it('changes retry filters on an unfinished call without changing its identity', async () => {

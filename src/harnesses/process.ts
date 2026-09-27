@@ -110,6 +110,7 @@ export function runProcess(request: ProcessRequest): Promise<ProcessResult> {
     });
     child.once('error', (error: NodeJS.ErrnoException) => {
       cleanup();
+      // `phase` marks every launch failure as a process failure, whatever its errno code.
       reject(
         Object.assign(
           new Error(
@@ -118,7 +119,7 @@ export function runProcess(request: ProcessRequest): Promise<ProcessResult> {
               : `Cannot start ${request.binary}: ${error.message}`,
             { cause: error },
           ),
-          { code: error.code },
+          { code: error.code, phase: 'spawn' },
         ),
       );
     });

@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import { CliHarness } from '../src/harnesses/cli.js';
 import { ConfigurationError } from '../src/workflow/runtime/configuration-error.js';
+import { errorKind } from '../src/workflow/runtime/step-error.js';
 import {
   parseClaude as classifyClaude,
   parseCodex as classifyCodex,
@@ -328,9 +329,11 @@ describe('headless CLI adapter', () => {
     ).rejects.toThrow('Install the harness CLI');
     const { binary } = await fixture('');
     await chmod(binary, 0o600);
-    await expect(
-      new CliHarness({ codexBinary: binary }).invoke(request('codex'), signal),
-    ).rejects.toThrow('Cannot start');
+    const launch = new CliHarness({ codexBinary: binary }).invoke(request('codex'), signal);
+    await expect(launch).rejects.toThrow('Cannot start');
+    const error: unknown = await launch.catch((caught: unknown) => caught);
+    expect(error).toMatchObject({ code: 'EACCES', phase: 'spawn' });
+    expect(errorKind(error)).toBe('process');
   });
 
   it.each([

@@ -33,6 +33,8 @@ export function errorKind(error: unknown): ErrorKind {
   if (error instanceof Error) {
     if (error.name === 'AbortError') return 'cancelled';
     if (error.name === 'TimeoutError') return 'timeout';
+    // runProcess marks subprocess launch failures; any errno code there is a process failure.
+    if ('phase' in error && error.phase === 'spawn') return 'process';
     const code = 'code' in error ? error.code : undefined;
     if (code === 'ETIMEDOUT') return 'timeout';
     if (code === 'ABORT_ERR') return 'cancelled';
