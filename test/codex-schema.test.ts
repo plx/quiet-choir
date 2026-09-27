@@ -141,6 +141,31 @@ it('retains nullable optionals and strips null only from non-nullable optionals 
   expect(schema.safeParse(decoded).success).toBe(true);
 });
 
+it('keeps partial enum-record keys optional while full enum records stay required', () => {
+  const partial = z.partialRecord(z.enum(['a', 'b']), z.object({ n: z.number() }));
+  const partialPlan = prepareCodexSchema(jsonSchema(partial), 'compat');
+  const partialWire = partialPlan.schema as Record<string, unknown>;
+  expect(partialWire['required']).toEqual(['a', 'b']);
+  const partialProperties = partialWire['properties'] as Record<string, unknown>;
+  for (const key of ['a', 'b']) {
+    expect(partialProperties[key]).toMatchObject({ anyOf: [{ type: 'object' }, { type: 'null' }] });
+  }
+  const decoded: unknown = JSON.parse(partialPlan.decode('{"a":{"n":1},"b":null}'));
+  expect(decoded).toEqual({ a: { n: 1 } });
+  expect(partial.safeParse(decoded).success).toBe(true);
+
+  const full = z.record(z.enum(['a', 'b']), z.object({ n: z.number() }));
+  const fullPlan = prepareCodexSchema(jsonSchema(full), 'compat');
+  const fullWire = fullPlan.schema as Record<string, unknown>;
+  expect(fullWire['required']).toEqual(['a', 'b']);
+  const fullProperties = fullWire['properties'] as Record<string, unknown>;
+  for (const key of ['a', 'b']) {
+    expect(fullProperties[key]).toMatchObject({ type: 'object' });
+    expect(fullProperties[key]).not.toHaveProperty('anyOf');
+  }
+  expect(() => fullPlan.decode('{"a":{"n":1},"b":null}')).toThrow();
+});
+
 it('supports shared and recursive local schema references', () => {
   const schema = {
     type: 'object',

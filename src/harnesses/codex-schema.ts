@@ -287,11 +287,7 @@ export function prepareCodexSchema(schema: JsonValue, mode: 'strict' | 'compat')
                 }),
               )
             : (object(node['properties']) ?? {});
-        const required = names
-          ? Object.keys(properties)
-          : Array.isArray(node['required'])
-            ? node['required']
-            : [];
+        const required = Array.isArray(node['required']) ? node['required'] : [];
         const children = Object.entries(properties).map(([key, child]) => ({
           key,
           plan: compile(child),

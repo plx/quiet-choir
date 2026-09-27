@@ -110,6 +110,33 @@
       "rules": ["record"]
     },
     {
+      "name": "partial-enum-record",
+      "schema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "propertyNames": {
+          "type": "string",
+          "enum": ["a", "b"]
+        },
+        "additionalProperties": {
+          "type": "object",
+          "properties": {
+            "n": {
+              "type": "number"
+            }
+          },
+          "required": ["n"],
+          "additionalProperties": false
+        }
+      },
+      "output": {
+        "a": {
+          "n": 1
+        }
+      },
+      "rules": ["record"]
+    },
+    {
       "name": "loose-object",
       "schema": {
         "$schema": "http://json-schema.org/draft-07/schema#",

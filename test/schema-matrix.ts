@@ -46,6 +46,13 @@ export const schemaMatrix = [
     rules: ['record'],
   },
   {
+    name: 'partial-enum-record',
+    schema: z.partialRecord(z.enum(['a', 'b']), z.object({ n: z.number() })),
+    wire: { a: { n: 1 }, b: null },
+    output: { a: { n: 1 } },
+    rules: ['record'],
+  },
+  {
     name: 'loose-object',
     schema: z.looseObject({ a: z.string() }),
     wire: { a: 'x' },
