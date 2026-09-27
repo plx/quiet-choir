@@ -281,6 +281,38 @@ it.each(['external', 'sibling'] as const)('never settles %s cancellation', async
   expect(step?.settledError).toBeUndefined();
 });
 
+it('records a signal-driven failure as cancelled even when the effect rejects with a plain error', async () => {
+  const controller = new AbortController();
+  let started!: () => void;
+  const ready = new Promise<void>((resolve) => {
+    started = resolve;
+  });
+  const definition = workflow(async (ctx) => {
+    await ctx.step('waiting', {
+      input: null,
+      schema: z.string(),
+      onError: 'return',
+      run: async ({ signal }) => {
+        started();
+        await new Promise<void>((_resolve, reject) => {
+          signal.addEventListener('abort', () => { reject(new Error('stopped')); }, { once: true });
+        });
+        return 'never';
+      },
+    });
+    return 'never';
+  });
+  const pending = runWorkflow(definition, { ...options(), signal: controller.signal });
+  const failed = expect(pending).rejects.toThrow('stopped');
+  await ready;
+  controller.abort(new Error('cancelled'));
+  await failed;
+  const step = (await readRun(options())).steps['waiting'];
+  expect(step).toMatchObject({ status: 'failed' });
+  expect(step?.settledError).toBeUndefined();
+  expect(step?.attemptHistory?.at(-1)).toMatchObject({ errorKind: 'cancelled' });
+});
+
 it('does not settle an AbortError even when the run signal was not aborted', async () => {
   const result = runWorkflow(
     workflow(async (ctx) => {

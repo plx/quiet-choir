@@ -578,7 +578,10 @@ export async function runWorkflow<TInput, TOutput>(
           const output = schema.parse(result);
           step.output = jsonValue(output);
         } catch (error) {
-          const outcome = stepError(error, step.attempts);
+          const classified = stepError(error, step.attempts);
+          const outcome = signal.aborted
+            ? { ...classified, kind: 'cancelled' as const }
+            : classified;
           step.status = 'failed';
           step.error = outcome.message;
           attemptRecord.errorKind = outcome.kind;
@@ -592,7 +595,7 @@ export async function runWorkflow<TInput, TOutput>(
               usage: error.usage,
             });
           }
-          const cancellation = signal.aborted || outcome.kind === 'cancelled';
+          const cancellation = outcome.kind === 'cancelled';
           const fatal =
             cancellation ||
             checkpointProblems.includes(error as CheckpointError) ||
