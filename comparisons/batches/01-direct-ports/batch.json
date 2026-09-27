@@ -12,14 +12,15 @@
     "Phase titles remain as metadata and stderr messages. Quiet Choir has no native phase timeline. All 68 original per-call effort settings use the shared effort control and are checked alongside prompts and outputs.",
     "Legacy fan-out helpers use ctx.map with eight concurrent items per group and isolated ID scopes. Bug-hunt uses runtime named maps and ctx.within with semantic leaf IDs instead of the counter allocator. Pipelines still advance each item independently. The runtime independently caps live agents across these nested groups at min(8, max(1, available CPUs - 2)) by default; --max-agents and --provider-limit configure that shared ceiling.",
     "Quiet Choir propagates agent failures and drains started mappers without cancellation by default; the original harness returns null and continues. These ports stop scheduling after a failure and can be explicitly resumed. Completed effects replay by ID, not by an unchanged prefix of agent calls.",
+    "Native harness calls record child groups before task input and reap them on every leader exit. Inherited pipes drain for a bounded period; --kill-grace-ms sets the TERM grace. Resume refuses recorded live or unverified orphans, and --resume --kill-orphans stops identity-confirmed survivors before replacement calls. First INT/TERM/HUP drains; a second signal force-kills tracked groups. Escaped sessions and a spawn-to-record gap remain.",
     "Fresh headless Claude sessions do not inherit the interactive conversation's permissions, model, or effort. The $claude input exposes model, tools, allowedTools, turns, timeout, and per-call USD limit. Defaults here are 40 turns, ten minutes, and $5 per call; tools remain disabled unless explicitly enabled. Historical ports explicitly set strictProfiles:false to preserve this input API. Tools now imply allowedTools unless narrowed; elevated raw tools require write/exec/all launch grants. New workflows should declare named roles, and --profile can raise limits without editing saved input.",
     "Final results omit undefined object properties and turn undefined array elements into null to match JavaScript JSON transport. The final output schema checks JSON compatibility; agent response schemas are specific. This initial migration uses permissive TypeScript settings for legacy orchestration locals."
   ],
   "apiSnapshot": {
     "package": "quiet-choir 0.0.0",
-    "sha256": "fcf295c026fd3aa78a7b042b8a2f464b71b31bfbe346bfc888c9b5ceff7ef894",
+    "sha256": "06d7064bd1e8360b704e49c86d0c61809384764e08b94435c3d10f85618b35e1",
     "file": "src/workflow/runtime/model.ts",
-    "description": "Agent-admission API used by the active ports at quiet-choir commit 6aa8668cab2c91e673863f46a2a297d86fd5c3c4. Nested helpers share the run-wide live agent cap while retaining local mapper bounds and all 68 original effort settings. Historical ports retain strictProfiles:false with class grants for elevated raw capabilities. The hash identifies this model file; regression tests use the current built checkout.",
-    "revision": "6aa8668cab2c91e673863f46a2a297d86fd5c3c4"
+    "description": "Process-ownership harness API used by the active ports at quiet-choir commit 534a85967c5dd330422d09834a06bc2b2e994345. Native calls receive run/step/attempt identity and durable process registration; bounded cleanup and orphan recovery preserve format-5 replay. Nested helpers retain run-wide admission, local mapper bounds and all 68 effort settings. Historical ports keep strictProfiles:false with class grants for elevated raw capabilities. This hash identifies the model file; regression tests use the current built checkout.",
+    "revision": "534a85967c5dd330422d09834a06bc2b2e994345"
   }
 }
