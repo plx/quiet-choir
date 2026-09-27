@@ -1,4 +1,4 @@
-import type { AgentUsage } from './model.js';
+import type { AgentUsage, ErrorKind } from './model.js';
 
 /** Terminal failure reported by a harness protocol, independent of process exit status. */
 export interface ProtocolFailure {
@@ -26,6 +26,8 @@ export interface HarnessExit {
 
 /** Diagnostics supplied by an adapter when an invocation fails. */
 export interface HarnessErrorDetails {
+  /** Explicit adapter category when protocol metadata alone is insufficient. */
+  readonly kind?: ErrorKind;
   /** Adapter that performed the invocation. */
   readonly provider: 'claude' | 'codex';
   /** Observed process termination. */
@@ -46,6 +48,8 @@ export interface HarnessErrorDetails {
 
 /** A failed harness invocation with bounded diagnostics and recoverable usage metadata. */
 export class HarnessError extends Error {
+  /** Structured failure category for settled outcomes and selective retries. */
+  public readonly kind: ErrorKind;
   /** Adapter that performed the invocation. */
   public readonly provider: 'claude' | 'codex';
   /** Observed process termination. */
@@ -86,6 +90,7 @@ export class HarnessError extends Error {
       `${details.provider} ${reason} [exit ${exit}]${stderrTail ? `; stderr: ${stderrTail}` : ''}${stdoutTail ? `; stdout tail: ${stdoutTail}` : ''}`,
     );
     this.name = 'HarnessError';
+    this.kind = details.kind ?? protocolErrorKind(failure);
     this.provider = details.provider;
     this.exit = { ...details.exit };
     this.failure = failure;
@@ -94,4 +99,17 @@ export class HarnessError extends Error {
     this.usage = failure?.usage ?? details.usage ?? null;
     this.sessionId = failure?.sessionId ?? details.sessionId ?? null;
   }
+}
+
+function protocolErrorKind(failure: ProtocolFailure | null): ErrorKind {
+  if (failure === null) return 'protocol';
+  if (failure.apiStatus === 429) return 'rate-limit';
+  if (failure.apiStatus === 401) return 'authentication';
+  if (failure.apiStatus === 403) return 'permission';
+  if (failure.apiStatus === 408 || failure.apiStatus === 504) return 'timeout';
+  const reasons = [failure.subtype, failure.terminalReason];
+  if (reasons.includes('error_max_turns') || reasons.includes('max_turns')) return 'turn-limit';
+  if (reasons.includes('error_max_budget_usd') || reasons.includes('budget_exhausted'))
+    return 'budget-limit';
+  return 'unknown';
 }

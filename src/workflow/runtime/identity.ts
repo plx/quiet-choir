@@ -24,6 +24,7 @@ export function agentIdentity(request: HarnessRequest, schema: JsonValue): StepI
           'maxTurns',
           'maxBudgetUsd',
           'retry',
+          'onError',
         ].includes(key),
     ),
   );
@@ -38,6 +39,7 @@ export function agentIdentity(request: HarnessRequest, schema: JsonValue): StepI
   return stepIdentity({
     ...(jsonValue(namedCapabilities) as Record<string, JsonValue>),
     kind: request.provider,
+    onError: options.onError ?? 'throw',
     prompt: options.prompt,
     model: options.model ?? null,
     reasoningEffort:

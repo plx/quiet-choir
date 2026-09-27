@@ -10,10 +10,10 @@ export const engineInfo: EngineInfo = {
     .object({ version: z.string() })
     .parse(JSON.parse(readFileSync(new URL('../../../package.json', import.meta.url), 'utf8')))
     .version,
-  formatVersion: 3,
+  formatVersion: 4,
 };
 
-/** Explain a checkpoint that predates callback identity. @internal */
+/** Explain a checkpoint that predates the current durable-outcome contract. @internal */
 export function oldFormatMessage(version: number): string {
-  return `Checkpoint format version ${String(version)} cannot resume or fork with callback-aware identity (current format 3). Inspect it with workflow inspect; use the original runtime to resume it or start a new run ID. No checkpoint was changed.`;
+  return `Checkpoint format version ${String(version)} cannot resume or fork with the current durable-outcome contract (current format 4). Inspect it with workflow inspect; use the original runtime to resume it or start a new run ID. No checkpoint was changed.`;
 }

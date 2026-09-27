@@ -326,7 +326,7 @@ it('omits top-level undefined options without adding custom harness defaults', a
         prompt: 'p',
         model: undefined,
         schema: z.string(),
-      } as unknown as CodexOptions & { schema: z.ZodString });
+      } as unknown as CodexOptions & { schema: z.ZodString; onError?: 'throw' });
       expect(structured.output).toBe('ok');
       return 'ok';
     }),

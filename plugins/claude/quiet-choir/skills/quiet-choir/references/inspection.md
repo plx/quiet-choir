@@ -48,18 +48,23 @@ component `identity` hashes and `attemptHistory`: each attempt records its finge
 `policy`, value `sources`, `requestedModel`, `reasoningEffort`, `startedAt`, `finishedAt`, `status`,
 and `error`. A `running` attempt has no saved settlement. Redefined unfinished steps retain old
 hashes and change times in `redefinitions`; unvisited unfinished steps become `superseded` after a
-successful body replay. Existing completed work still must be visited. Versions 1 and 2 can be
-inspected, but this format-3 runtime refuses their resumption or fork reuse.
+successful body replay. Existing terminal outcomes still must be visited. Versions 1, 2, and 3 can
+be inspected, but this format-4 runtime refuses their resumption or fork reuse.
 
 `workflow.identity` holds code/schema/file hashes and engine metadata. `forkedFrom` identifies a
 source snapshot, reuse mode, invalidation globs, intentional differences, and progress; each copied
 step records `reusedFrom`. Its attempts/history describe the source work, not fresh target calls.
 `seq` records first-use order in the target. `codeChanges` audits explicit source/schema acceptance;
 `replayWarnings` captures ordering or lost-fork-source warnings. `recoveryHint` identifies a failed
-run whose recorded effects all completed, so a tail-only fix may re-finalize with no repeated work.
-Use `workflow check-resume FILE --run-id ID --json` to compare run gates without a writer lock; it
-imports trusted source but does not call its body. Unlike inspection alone, it can identify changed
-source files and schemas.
+run whose recorded effects all have terminal outcomes, so a tail-only fix may re-finalize with no
+repeated work. Use `workflow check-resume FILE --run-id ID --json` to compare run gates without a
+writer lock; it imports trusted source but does not call its body. Unlike inspection alone, it can
+identify changed source files and schemas.
+
+A `settled-failed` step is terminal: `settledError` saves `message`, `kind`, and total `attempts`.
+Failed `attemptHistory` entries retain `errorKind`. A run may complete with settled failures.
+`step.settled` follows a committed outcome; `replay.divergence` can include `healedStepId` and later
+`skippedStepIds`.
 
 ## Interpreting apparent stalls
 
@@ -79,10 +84,10 @@ invocation-cancelled, operation-aborted, interrupt, or root-cause error. Start f
 ## Live events
 
 Run with `--log-level debug` to log `step.started`, `step.completed`, `step.replayed`, and
-`step.failed`, `step.redefined`, `step.superseded`, and `step.reused` events to stderr.
-`runWorkflow` also accepts an `onEvent(event)` callback returning `void | Promise<void>`.
+`step.failed`, `step.settled`, `step.redefined`, `step.superseded`, and `step.reused` events to
+stderr. `runWorkflow` also accepts an `onEvent(event)` callback returning `void | Promise<void>`.
 `replay.divergence` adds a message and `skippedStepIds`, and the CLI logs it as a warning before
-live work; `--strict-replay` aborts there:
+live work; `--strict-replay` stops before the next live effect:
 
 ```ts
 onEvent: (event) => {

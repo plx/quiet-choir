@@ -4,9 +4,9 @@
 
 The run checkpoint stores input/output, workflow identity, working directory, step records, and
 errors as JSON. It stores neither closures nor a call stack. A resume runs the workflow body from
-the beginning: completed effects replay saved results; unfinished/failed effects execute again. A
-completed compatible strict resume returns saved final output without running the workflow body or a
-harness. The CLI still typechecks and imports the module first.
+the beginning: terminal outcomes replay saved results or settled failures; unfinished/failed effects
+execute again. A completed compatible strict resume returns saved final output without running the
+workflow body or a harness. The CLI still typechecks and imports the module first.
 
 Keep clocks, randomness, filesystem/network reads, and writes inside durable effects. Branch on
 input and saved results. Local effects hash explicit `input`, callback source, an optional step
@@ -20,13 +20,13 @@ operations.
 
 ## Compatibility gates
 
-| Scope            | Compatibility rule                                                                                                                |
-| ---------------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| Run              | Name, version, source/schema/engine fingerprint, canonical cwd, and validated input still match                                   |
-| Completed step   | ID, kind, input/prompt, schema, local callback/version, model/effort, capabilities, and cwd match; errors name changed components |
-| Unfinished step  | A changed identity is adopted, the old hashes remain in `redefinitions`, and `step.redefined` is emitted                          |
-| Execution policy | `timeoutMs`, `maxTurns`, `maxBudgetUsd`, and `retry` may change without invalidating any step                                     |
-| Replay path      | Every completed step must be visited; unvisited unfinished records become `superseded` when the body completes                    |
+| Scope            | Compatibility rule                                                                                                                         |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| Run              | Name, version, source/schema/engine fingerprint, canonical cwd, and validated input still match                                            |
+| Terminal step    | ID, kind, input/prompt, schema, local callback/version, onError, model/effort, capabilities, and cwd match; errors name changed components |
+| Unfinished step  | A changed identity is adopted, the old hashes remain in `redefinitions`, and `step.redefined` is emitted                                   |
+| Execution policy | `timeoutMs`, `maxTurns`, `maxBudgetUsd`, and `retry` may change without invalidating any step                                              |
+| Replay path      | Every terminal step must be visited; unvisited unfinished records become `superseded` when the body completes                              |
 
 The CLI hashes raw bytes of compiler-discovered local source files and the nearest tsconfig, using
 real paths named relative to the tsconfig directory (or nearest package root, then entrypoint
@@ -42,25 +42,36 @@ native harness configuration are not fully captured. Embedded callers supply `fi
 `source: { hash, files }` for detailed diagnostics, never both. Use declared inputs and explicit
 step/workflow versions for semantic changes these hashes cannot see. Do not edit checkpoints.
 
-Every completed step must still be visited on resume. Before the first live effect with unvisited
-earlier completed `seq` values, the runner emits `replay.divergence` and records `replayWarnings`.
+Every terminal step must still be visited on resume. Before the first live effect with unvisited
+earlier terminal `seq` values, the runner emits `replay.divergence` and records `replayWarnings`.
 `--strict-replay` aborts before that effect and cancels/drains other work; default mode warns and
 the end-of-body skipped-step check remains. Launch order can vary under `ctx.map`, so this early
 check is a heuristic, not proof of incompatible logic. A warning may precede paid effects in default
 mode. Results are revalidated on replay; dependencies/results must be lossless JSON.
 
+Terminal steps are `completed` successes or `settled-failed` outcomes explicitly requested with
+`onError: 'return'`. Both are immutable on resume and eligible for fork reuse. A failed/running
+record is retryable; a settled failure is a saved branch decision. Invalidate it in a new prefix
+fork to request another attempt. See [failure handling](workflow-authoring.md#failure-handling).
+
+When a previously failed step succeeds and later recorded steps exist, `replay.divergence` warns
+immediately, names the healed step and later IDs, and saves the warning. `--strict-replay` then
+stops before the next live effect, while permitting terminal replay. Concurrent work already in
+flight can still finish. The end-of-run skipped-path error also names healed steps. This is a
+heuristic; explicit settled outcomes prevent the branch from changing in the first place.
+
 ## Choose a recovery path
 
-| Path                            | What stays fixed and what can change                                                                                               |
-| ------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
-| `--resume`                      | Same run, source/schema identity, name/version, engine, cwd, and validated input; unfinished work retries                          |
-| `--resume --accept-code-change` | Explicitly waive only source/run-schema changes; keep name/version, engine, cwd, input, completed-step identity, and replay checks |
-| `--fork-from OLD`               | New run, same workflow name; source/version/input may change, completed effects are copied only when their identity matches        |
+| Path                            | What stays fixed and what can change                                                                                              |
+| ------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| `--resume`                      | Same run, source/schema identity, name/version, engine, cwd, and validated input; unfinished work retries                         |
+| `--resume --accept-code-change` | Explicitly waive only source/run-schema changes; keep name/version, engine, cwd, input, terminal-step identity, and replay checks |
+| `--fork-from OLD`               | New run, same workflow name; source/version/input may change, terminal outcomes are copied only when their identity matches       |
 
 Forks default to `--reuse prefix`: consume source steps in first-use `seq` order, stopping reuse at
 the first missing, changed, unfinished, skipped, or invalidated effect. All later effects run live.
 This avoids reusing later workspace-dependent work after an earlier effect reruns.
-`--reuse matching` explicitly reuses every matching completed ID; it can reuse a result whose
+`--reuse matching` explicitly reuses every matching terminal ID; it can reuse a result whose
 undeclared filesystem inputs changed when an earlier effect reran. Choose it only when dependencies
 are fully represented by input/prompt/schema/versions. Neither mode reconstructs workspace edits or
 provides isolation. Review the workspace and previous effects before repeating writes.
@@ -81,7 +92,7 @@ node "$QC_CHECKOUT/bin/run.js" workflow execute review.workflow.ts \
 `check-resume` acquires no writer lock, never calls the workflow body or harness, and does not write
 the checkpoint. It still typechecks/imports trusted module top-level code. Its JSON `check` reports
 `compatible`, changed/unchanged components, file differences, whether code acceptance is possible,
-and whether a failed run has only completed effects. Exit 0 means the run-level gates pass; exit 1
+and whether a failed run has only terminal outcomes. Exit 0 means the run-level gates pass; exit 1
 means incompatibility or a load/read failure. Add `--accept-code-change` to check that mode. It does
 not predict dynamically constructed steps, step compatibility, or replay order, and a concurrent
 writer can change state after the check.
@@ -140,7 +151,7 @@ process.
 1. Inspect the run in its original state directory; identify failed/running effects and any external
    actions that may already have happened. Stop orphaned harness children after a hard kill.
 2. Repair transient dependencies (for example credentials or a service outage). Retain the original
-   source, run schemas, input, working directory, version, and completed-step identity. Execution
+   source, run schemas, input, working directory, version, and terminal-step identity. Execution
    limits can change through policy overrides without changing the source.
 3. Choose strict resume, explicit code acceptance, or a fork using the table above. A change to a
    completed effect's identity requires a new run/fork. Use `check-resume` before choosing a path.
@@ -204,9 +215,9 @@ timestamps, and outcome. Sources are `runtime`, `harness`, `call-site`, or `over
 zero-based saved rule index). Custom harness defaults are recorded only when the adapter reports
 them. `running` means settlement was not checkpointed, not proof that the process still lives.
 
-New checkpoints use format version 3. Versions 1 and 2 remain inspectable, but cannot resume or be
-fork sources here: they lack the current callback/order/source contract. Refusal leaves their
-checkpoint data unchanged. Use the original runtime to resume them, or start a new run after
+New checkpoints use format version 4. Versions 1, 2, and 3 remain inspectable, but cannot resume or
+be fork sources here: they lack the current callback/order/source/outcome contract. Refusal leaves
+their checkpoint data unchanged. Use the original runtime to resume them, or start a new run after
 accounting for previous effects. There is no automatic migration.
 
 ## Storage, ownership, and cancellation

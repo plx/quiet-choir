@@ -67,8 +67,8 @@ attempts can retain session/usage metadata in `steps[id].failedAttempts`; succes
 in the completed result. Missing failure metadata and partial calls still make this an incomplete
 spending ledger.
 
-Agent calls accept `retry: { maxAttempts, delayMs? }`; the default remains one attempt. Only retry
-calls safe to repeat, since earlier attempts may already have edited files. Fix authentication
+Agent calls accept `retry: { maxAttempts, delayMs?, on? }`; the default remains one attempt. Only
+retry calls safe to repeat, since earlier attempts may already have edited files. Fix authentication
 externally and resume. Limits (`timeoutMs`, `maxTurns`, `maxBudgetUsd`) and retry policy are
 excluded from identity. Raise them with a sticky CLI `--policy` rule or embedded `RunOptions.policy`
 without rerunning completed steps; see the
@@ -101,3 +101,7 @@ identify any children belonging to the interrupted run. See [durability](durabil
 Structured-output success paths for both adapters completed live with claude 2.1.283 and codex-cli
 0.157.1. That is evidence for those versions and captures, not a guarantee for other versions or the
 current credentials.
+
+Use `onError: 'return'` to persist final failures before branching to a fallback. Cancellation still
+rejects; replay never retries a saved `settled-failed` outcome. `retry.on` filters structured error
+categories. See [failure handling](workflow-authoring.md#failure-handling).

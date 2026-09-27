@@ -7,7 +7,8 @@ import { z } from 'zod';
 
 import { resolveStateDir, type StateDirectoryOptions } from './paths.js';
 import { jsonValue } from './json.js';
-import type { AgentUsage, JsonValue } from './model.js';
+import { errorKindSchema, stepErrorSchema } from './step-error.js';
+import type { AgentUsage, ErrorKind, JsonValue, StepError } from './model.js';
 import type { StepIdentity } from './identity.js';
 import type { CodeChange, ForkProvenance, ReusedStep, WorkflowIdentity } from './replay-model.js';
 import {
@@ -31,6 +32,8 @@ export interface AttemptRecord extends AttemptPolicy {
   status: 'running' | 'completed' | 'failed';
   /** Failure message, when available. */
   error: string | null;
+  /** Classified failure for this attempt, when it failed. */
+  errorKind?: ErrorKind;
 }
 
 /** Earlier identity of an unfinished effect that was explicitly redefined. */
@@ -57,17 +60,19 @@ export interface FailedAttempt {
 export interface StepRecord {
   /** Effect category; included in replay compatibility checks. */
   kind: 'step' | 'claude' | 'codex' | 'sleep';
-  /** Hash of explicit dependencies and output schema. */
+  /** Hash of semantic components, including error mode. */
   fingerprint: string;
   /** Last saved lifecycle state. */
-  status: 'running' | 'completed' | 'failed' | 'superseded';
+  status: 'running' | 'completed' | 'failed' | 'settled-failed' | 'superseded';
+  /** Terminal failure returned to the workflow by onError: return. */
+  settledError?: StepError;
   /** Semantic component hashes; absent in version 1 checkpoints. */
   identity?: StepIdentity;
   /** Prior identities of unfinished effects. */
   redefinitions?: StepRedefinition[];
   /** Per-attempt execution limits, provenance, and outcome. */
   attemptHistory?: AttemptRecord[];
-  /** First-use ordering within this run; present in format 3. */
+  /** First-use ordering within this run; present from format 3. */
   seq?: number;
   /** Source checkpoint of a reused completed effect. */
   reusedFrom?: ReusedStep;
@@ -88,7 +93,7 @@ export interface StepRecord {
 /** Local checkpoint format. The format is intentionally versioned independently of workflows. */
 export interface RunRecord {
   /** Checkpoint format version. */
-  formatVersion: 1 | 2 | 3;
+  formatVersion: 1 | 2 | 3 | 4;
   /** Stable run identifier. */
   id: string;
   /** Workflow compatibility metadata. */
@@ -99,7 +104,7 @@ export interface RunRecord {
     version: string;
     /** Optional caller-supplied code fingerprint. */
     fingerprint: string | null;
-    /** Component hashes and engine compatibility, present in format 3. */
+    /** Component hashes and engine compatibility, present from format 3. */
     identity?: WorkflowIdentity;
   };
   /** Absolute working directory, fixed across resumes. */
@@ -126,7 +131,7 @@ export interface RunRecord {
   codeChanges?: CodeChange[];
   /** Replay-order warnings from the latest invocation. */
   replayWarnings?: string[];
-  /** Guidance when all recorded effects completed before a tail/output failure. */
+  /** Guidance when all recorded effects reached terminal outcomes before a tail/output failure. */
   recoveryHint?: string;
   /** ISO creation timestamp. */
   createdAt: string;
@@ -162,7 +167,8 @@ const stepSchema = z.object({
   seq: z.number().int().positive().optional(),
   reusedFrom: reusedStepSchema.optional(),
   fingerprint: z.string(),
-  status: z.enum(['running', 'completed', 'failed', 'superseded']),
+  status: z.enum(['running', 'completed', 'failed', 'settled-failed', 'superseded']),
+  settledError: stepErrorSchema.optional(),
   identity: z.record(z.string(), z.string()).optional(),
   redefinitions: z
     .array(
@@ -182,10 +188,12 @@ const stepSchema = z.object({
         finishedAt: z.iso.datetime().nullable(),
         status: z.enum(['running', 'completed', 'failed']),
         error: z.string().nullable(),
+        errorKind: errorKindSchema.optional(),
         policy: executionPolicySchema.extend({
           retry: z.object({
             maxAttempts: z.number().int().positive(),
             delayMs: z.number().nonnegative(),
+            on: z.array(errorKindSchema).optional(),
           }),
         }),
         sources: z.record(z.string(), z.string()),
@@ -224,7 +232,7 @@ const stepsSchema = z.custom<Record<string, StepRecord>>(
 );
 const recordSchema = z
   .object({
-    formatVersion: z.union([z.literal(1), z.literal(2), z.literal(3)]),
+    formatVersion: z.union([z.literal(1), z.literal(2), z.literal(3), z.literal(4)]),
     id: z.string(),
     workflow: z.object({
       name: z.string(),
@@ -279,19 +287,30 @@ const recordSchema = z
         code: 'custom',
         message: 'Checkpoint is missing execution policy metadata',
       });
-    if (record.formatVersion === 3 && record.workflow.identity === undefined)
+    if (record.formatVersion >= 3 && record.workflow.identity === undefined)
       context.addIssue({
         code: 'custom',
-        message: 'Version 3 checkpoint is missing workflow identity',
+        message: 'Checkpoint is missing workflow identity',
       });
     const sequences = new Set<number>();
     for (const [id, step] of Object.entries(record.steps)) {
-      if (record.formatVersion === 3) {
+      if (
+        step.status === 'settled-failed' &&
+        (record.formatVersion < 4 ||
+          step.settledError === undefined ||
+          step.settledError.kind === 'cancelled')
+      )
+        context.addIssue({
+          code: 'custom',
+          path: ['steps', id],
+          message: 'Settled failures require format 4 and a non-cancellation outcome',
+        });
+      if (record.formatVersion >= 3) {
         if (step.seq === undefined || sequences.has(step.seq))
           context.addIssue({
             code: 'custom',
             path: ['steps', id, 'seq'],
-            message: 'Version 3 steps require unique positive seq values',
+            message: 'Steps require unique positive seq values',
           });
         else sequences.add(step.seq);
       }
@@ -471,4 +490,9 @@ export async function lockRun(stateDir: string, runId: string): Promise<() => Pr
     };
   }
   throw new Error(`Could not acquire run ${runId}; retry after competing writers finish.`);
+}
+
+/** An outcome already observed by the workflow that must be preserved on replay. @internal */
+export function isTerminalStep(step: StepRecord): boolean {
+  return step.status === 'completed' || step.status === 'settled-failed';
 }

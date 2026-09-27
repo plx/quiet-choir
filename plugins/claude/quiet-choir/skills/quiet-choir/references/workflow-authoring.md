@@ -42,7 +42,7 @@ version requires a new run ID (a fork can reuse compatible steps). See [durabili
 
 | Operation                                                          | Return and composition                                                                              |
 | ------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------- |
-| `ctx.step(id, { input, schema, run, retry?, version? })`           | Validated result; stores that result and hashes of input, schema, callback source, version, and cwd |
+| `ctx.step(id, { input, schema, run, retry?, version?, onError? })` | Validated result; stores that result and hashes of input, schema, callback source, version, and cwd |
 | `ctx.claude.text(id, options)` / `ctx.codex.text(id, options)`     | `{ output: string, sessionId, usage }`                                                              |
 | `ctx.claude.object(id, { schema, ...options })` / Codex equivalent | Same wrapper with schema-inferred `output`                                                          |
 | `ctx.map(items, concurrency, mapper)`                              | Ordered result array with at most `concurrency` active mappers; no checkpoint of its own            |
@@ -91,6 +91,62 @@ repeatable effects into retries. Explicit resume retries unfinished calls. Retry
 limits are policy, so changing them does not invalidate a saved step. Run-level `policy` rules
 override call-site fields and persist across resumes; see [durability](durability.md). Completed
 identity changes remain errors; unfinished identity changes are recorded as redefinitions.
+
+## Failure handling
+
+A caught throwing call remains retryable on resume. If it heals, a fallback can disappear or a later
+completed step can receive different input. The runner cannot infer that a JavaScript catch made a
+durable decision. Use `onError: 'return'` whenever failure selects later workflow work:
+
+```ts
+const primary = await ctx.claude.text('draft', {
+  prompt: 'Write a draft.',
+  onError: 'return',
+  retry: { maxAttempts: 3, delayMs: 100, on: ['rate-limit', 'timeout'] },
+});
+const draft = primary.ok
+  ? primary.value.output
+  : (await ctx.codex.text('fallback', { prompt: 'Write the fallback draft.' })).output;
+```
+
+`text`, `object`, and `ctx.step` return `Settled<T>` in this mode: `{ ok: true, value }` or
+`{ ok: false, error: { message, kind, attempts } }`. The success value retains its normal type;
+agent values include `output`, `sessionId`, and `usage`. The final failure, after applicable
+retries, is saved as `settled-failed`. Replay returns that exact failure without another callback or
+harness call. `onError` is semantic identity: changing it on a terminal step requires a new
+run/fork. Cancellation (including a failing map sibling) always rejects and stays retryable;
+authoring errors, configuration errors (a missing harness, or an adapter's pre-launch
+`ConfigurationError` such as a Claude schema without an object root), and checkpoint failures also
+reject instead of becoming fallback data.
+
+For best-effort fan-out, use `onError: 'return'` inside `ctx.map`, then branch on each `ok` value.
+For transient retries, use one step ID with `retry` rather than a loop of throwing `ask/0`, `ask/1`
+calls. `retry.on` limits retries to listed error kinds; omit it to retry all effect failures except
+cancellation, configuration, and checkpoint-write failures, or use `[]` to retry none. Harness
+process failures (`process`, including any CLI launch failure such as a missing or non-executable
+binary), `authentication`, and `permission` are ordinary effect failures: they are settled under
+`onError: 'return'`, and `retry.on` should exclude them. It is execution policy and can be changed
+on resume. Each attempt retains its error and category. Every agent retry starts a fresh session;
+previous filesystem edits remain.
+
+Kinds include `timeout`, `rate-limit`, `schema`, `authentication`, `permission`, `turn-limit`,
+`budget-limit`, `output-limit`, `process`, `protocol`, `cancelled`, and `unknown`. Classification
+uses structured protocol metadata, process codes, or error types. Plain messages are not guessed:
+for example, a Codex failure that reports rate limiting only as prose remains `unknown`. Custom
+adapters can set `HarnessErrorDetails.kind`. Broadly typed options with a dynamic `onError` produce
+a union result; preserve the literal mode (or explicitly use `onError: 'throw'`) to narrow it.
+
+Do not use `Promise.race` or `Promise.any` over durable operations. Replay timing can pick a
+different winner, and the runner drains losing work instead of cancelling it. Use an agent's
+`timeoutMs` with `onError: 'return'` for timeout decisions. There is no `ctx.race`; a durable winner
+journal and scoped loser cancellation are deferred to
+[#57](https://github.com/plx/quiet-choir/issues/57).
+
+Automatic failure stickiness and `--retry-failed` are not implemented: inferring handling from error
+identity/cause chains can freeze an ordinary retry loop permanently. A saved settled failure is a
+terminal decision. To intentionally try it again, fork with `--invalidate 'STEP-ID'`; prefix mode
+also reruns everything after that decision. `matching` can retain work based on the old failure, so
+use it only with complete declared dependencies. See [durability](durability.md).
 
 ## Data constraints
 

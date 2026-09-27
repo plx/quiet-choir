@@ -13,6 +13,11 @@ export type {
 } from './workflow/runtime/harness-error.js';
 export type {
   JsonValue,
+  ErrorKind,
+  ErrorMode,
+  StepError,
+  Settled,
+  EffectResult,
   AgentOptions,
   ClaudeOptions,
   CodexOptions,
@@ -29,6 +34,7 @@ export type {
   WorkflowDefinition,
 } from './workflow/runtime/model.js';
 export { CheckpointError } from './workflow/runtime/checkpoint.js';
+export { ConfigurationError } from './workflow/runtime/configuration-error.js';
 export { runWorkflow } from './workflow/runtime/runner.js';
 export type { WorkflowEvent, WorkflowRun, RunOptions } from './workflow/runtime/runner.js';
 export { readRun } from './workflow/runtime/store.js';

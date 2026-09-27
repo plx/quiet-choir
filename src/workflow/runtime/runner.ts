@@ -32,9 +32,14 @@ import {
 import { OperationTracker } from './tracking.js';
 import { optionData, validateAgentOptions } from './options.js';
 import { HarnessError } from './harness-error.js';
+import { stepError } from './step-error.js';
+import { ConfigurationError } from './configuration-error.js';
 import { digest, jsonValue } from './json.js';
 import type {
   AgentClient,
+  ErrorMode,
+  EffectResult,
+  Settled,
   AgentOptions,
   AgentResult,
   ClaudeOptions,
@@ -47,7 +52,16 @@ import type {
   WorkflowContext,
   WorkflowDefinition,
 } from './model.js';
-import { lockRun, readRun, type RunRecord, type StepRecord } from './store.js';
+import {
+  isTerminalStep,
+  lockRun,
+  readRun,
+  type RunRecord,
+  type StepRecord,
+  type AttemptRecord,
+} from './store.js';
+
+export { ConfigurationError } from './configuration-error.js';
 
 /** A lightweight notification emitted after the associated checkpoint is persisted. */
 export interface WorkflowEvent {
@@ -57,14 +71,17 @@ export interface WorkflowEvent {
     | 'step.completed'
     | 'step.replayed'
     | 'step.failed'
+    | 'step.settled'
     | 'step.redefined'
     | 'step.superseded'
     | 'step.reused'
     | 'replay.divergence';
   /** Replay divergence diagnosis, when relevant. */
   readonly message?: string;
-  /** Previously completed steps not yet visited before a live effect. */
+  /** Terminal or later recorded steps not yet visited before a live effect. */
   readonly skippedStepIds?: readonly string[];
+  /** Failed step whose recovery could change a previously observed branch. */
+  readonly healedStepId?: string;
   /** Owning execution. */
   readonly runId: string;
   /** Named effect. */
@@ -101,7 +118,7 @@ export interface RunOptions extends WorkflowCodeOptions {
   readonly forkFrom?: ForkOptions;
   /** Explicitly accept only source/schema changes on resume; local callback identity still applies. */
   readonly acceptCodeChange?: boolean;
-  /** Fail before a live effect when earlier completed steps have not been visited. */
+  /** Fail before a live effect when earlier terminal steps have not been visited. */
   readonly strictReplay?: boolean;
   /** Sticky rules appended to saved overrides; later matching values win. */
   readonly policy?: readonly PolicyOverride[];
@@ -224,7 +241,7 @@ export async function runWorkflow<TInput, TOutput>(
     }
     const now = new Date().toISOString();
     const record: RunRecord = existing ?? {
-      formatVersion: 3,
+      formatVersion: 4,
       id: options.runId,
       workflow: { name: definition.name, version: definition.version, ...snapshot },
       cwd,
@@ -264,12 +281,18 @@ export async function runWorkflow<TInput, TOutput>(
       ? [record.forkedFrom.warning]
       : []);
     delete record.recoveryHint;
-    const previousCompleted = Object.entries(record.steps)
-      .filter(([, step]) => step.status === 'completed')
+    const previousTerminal = Object.entries(record.steps)
+      .filter(([, step]) => isTerminalStep(step))
       .map(([id, step]) => ({ id, seq: step.seq ?? 0 }));
     let nextSeq =
       Object.values(record.steps).reduce((highest, step) => Math.max(highest, step.seq ?? 0), 0) +
       1;
+    const priorSequence = Object.entries(record.steps).map(([id, step]) => ({
+      id,
+      seq: step.seq ?? 0,
+    }));
+    const healed = new Set<string>();
+    let strictHealedDivergence: Error | undefined;
     let divergenceReported = false;
     record.policy = policy;
     record.allowModelOverride = allowModelOverride;
@@ -329,7 +352,7 @@ export async function runWorkflow<TInput, TOutput>(
       type: WorkflowEvent['type'],
       id: string,
       step: StepRecord,
-      details: { message?: string; skippedStepIds?: readonly string[] } = {},
+      details: { message?: string; skippedStepIds?: readonly string[]; healedStepId?: string } = {},
     ): void => {
       try {
         void Promise.resolve(
@@ -348,7 +371,7 @@ export async function runWorkflow<TInput, TOutput>(
       }
     };
 
-    async function effect<T>(
+    async function effect<T, TMode extends ErrorMode = 'throw'>(
       id: string,
       kind: StepRecord['kind'],
       dependencies: JsonValue,
@@ -358,7 +381,14 @@ export async function runWorkflow<TInput, TOutput>(
       wakeAt: number | null,
       requestedIdentity?: StepIdentity,
       local?: StepDefinition<T>,
-    ): Promise<T> {
+      onError?: TMode,
+    ): Promise<EffectResult<T, TMode>> {
+      const value = (output: T): EffectResult<T, TMode> =>
+        (onError === 'return' ? { ok: true, value: output } : output) as EffectResult<T, TMode>;
+      const replay = (step: StepRecord): EffectResult<T, TMode> =>
+        step.status === 'settled-failed'
+          ? ({ ok: false, error: structuredClone(step.settledError) } as EffectResult<T, TMode>)
+          : value(schema.parse(structuredClone(step.output)));
       if (closed) throw new Error('Workflow is closed; await all workflow operations.');
       if (inEffect.getStore())
         throw new Error(
@@ -374,6 +404,8 @@ export async function runWorkflow<TInput, TOutput>(
       let stepFingerprint: string;
       try {
         jsonValue({ dependencies });
+        if (onError !== undefined && onError !== 'throw' && onError !== 'return')
+          throw new Error('onError must be throw or return.');
         if (
           local &&
           (typeof local.run !== 'function' ||
@@ -387,6 +419,7 @@ export async function runWorkflow<TInput, TOutput>(
           requestedIdentity ??
           stepIdentity({
             kind,
+            onError: onError ?? 'throw',
             input: dependencies,
             schema: schemaJson(schema),
             ...(local
@@ -404,19 +437,20 @@ export async function runWorkflow<TInput, TOutput>(
       const prior = Object.hasOwn(record.steps, id) ? record.steps[id] : undefined;
       const redefined =
         prior !== undefined && (prior.kind !== kind || prior.fingerprint !== stepFingerprint);
-      if (redefined && prior.status === 'completed') {
+      if (redefined && isTerminalStep(prior)) {
         const changed = [
           ...new Set([...Object.keys(prior.identity ?? {}), ...Object.keys(identity)]),
         ].filter((key) => prior.identity?.[key] !== identity[key]);
         throw new Error(
-          `Step ${id}: ${changed.join(', ') || 'identity'} changed on a completed step; start a new run.`,
+          `Step ${id}: ${changed.join(', ') || 'identity'} changed on a ${prior.status === 'completed' ? 'completed' : 'settled-failed'} step; start a new run.`,
         );
       }
-      if (prior?.status === 'completed') {
-        const output = schema.parse(structuredClone(prior.output));
+      if (prior && isTerminalStep(prior)) {
+        const output = replay(prior);
         emit('step.replayed', id, prior);
         return output;
       }
+      const wasFailed = prior?.status === 'failed';
       if (!prior && record.forkedFrom) {
         const candidate = reuseCandidate(
           record.forkedFrom,
@@ -424,7 +458,10 @@ export async function runWorkflow<TInput, TOutput>(
           id,
           kind,
           stepFingerprint,
-          (sourceStep) => schema.safeParse(structuredClone(sourceStep.output)).success,
+          (sourceStep) =>
+            sourceStep.status === 'settled-failed'
+              ? onError === 'return' && sourceStep.settledError !== undefined
+              : schema.safeParse(structuredClone(sourceStep.output)).success,
         );
         if (candidate) {
           const copied: StepRecord = {
@@ -446,8 +483,12 @@ export async function runWorkflow<TInput, TOutput>(
           });
           await save();
           emit('step.reused', id, copied);
-          return schema.parse(structuredClone(copied.output));
+          return replay(copied);
         }
+      }
+      if (strictHealedDivergence) {
+        controller.abort(strictHealedDivergence);
+        throw strictHealedDivergence;
       }
       const step: StepRecord = prior ?? {
         kind,
@@ -462,12 +503,12 @@ export async function runWorkflow<TInput, TOutput>(
         attemptHistory: [],
       };
       if (!divergenceReported) {
-        const skipped = previousCompleted
+        const skipped = previousTerminal
           .filter((previous) => previous.seq < (step.seq ?? 0) && !used.has(previous.id))
           .map((previous) => previous.id);
         if (skipped.length) {
           divergenceReported = true;
-          const warning = `Replay divergence before live step ${id}: earlier completed steps (${skipped.join(', ')}) have not been visited. Order is a concurrency heuristic; restore the replay path or fork a new run.`;
+          const warning = `Replay divergence before live step ${id}: earlier terminal steps (${skipped.join(', ')}) have not been visited. Order is a concurrency heuristic; restore the replay path or fork a new run.`;
           replayWarnings.push(warning);
           const failure = options.strictReplay ? new Error(warning) : undefined;
           if (failure) controller.abort(failure);
@@ -489,6 +530,7 @@ export async function runWorkflow<TInput, TOutput>(
         step.output = null;
         step.error = null;
         step.status = 'running';
+        delete step.settledError;
       }
       Object.defineProperty(record.steps, id, {
         value: step,
@@ -506,13 +548,13 @@ export async function runWorkflow<TInput, TOutput>(
         step.status = 'running';
         step.error = null;
         delete step.warnings;
-        const attemptRecord = {
+        const attemptRecord: AttemptRecord = {
           ...structuredClone(execution),
           attempt: step.attempts,
           fingerprint: stepFingerprint,
           startedAt: new Date().toISOString(),
           finishedAt: null as string | null,
-          status: 'running' as 'running' | 'completed' | 'failed',
+          status: 'running',
           error: null as string | null,
         };
         (step.attemptHistory ??= []).push(attemptRecord);
@@ -536,8 +578,13 @@ export async function runWorkflow<TInput, TOutput>(
           const output = schema.parse(result);
           step.output = jsonValue(output);
         } catch (error) {
+          const classified = stepError(error, step.attempts);
+          const outcome = signal.aborted
+            ? { ...classified, kind: 'cancelled' as const }
+            : classified;
           step.status = 'failed';
-          step.error = message(error);
+          step.error = outcome.message;
+          attemptRecord.errorKind = outcome.kind;
           attemptRecord.status = 'failed';
           attemptRecord.finishedAt = new Date().toISOString();
           attemptRecord.error = step.error;
@@ -548,8 +595,25 @@ export async function runWorkflow<TInput, TOutput>(
               usage: error.usage,
             });
           }
+          const cancellation = outcome.kind === 'cancelled';
+          const fatal =
+            cancellation ||
+            checkpointProblems.includes(error as CheckpointError) ||
+            error instanceof ConfigurationError;
+          const retry =
+            !fatal &&
+            attempt < maxAttempts &&
+            (execution.policy.retry.on === undefined ||
+              execution.policy.retry.on.includes(outcome.kind));
+          if (!fatal && !retry && onError === 'return') {
+            step.status = 'settled-failed';
+            step.settledError = outcome;
+            if (!(await trySave())) throw error;
+            emit('step.settled', id, step);
+            return replay(step);
+          }
           if (await trySave()) emit('step.failed', id, step);
-          if (signal.aborted || attempt >= maxAttempts) throw error;
+          if (signal.aborted || !retry) throw error;
           await waitUntil(Date.now() + Math.min(30_000, delayMs * 2 ** (attempt - 1)), signal);
           continue;
         }
@@ -560,19 +624,36 @@ export async function runWorkflow<TInput, TOutput>(
           `Step ${id} completed but its checkpoint write failed; resume may repeat it unless a later save recovers the result`,
         );
         emit('step.completed', id, step);
-        return schema.parse(structuredClone(step.output));
+        if (wasFailed && !healed.has(id)) {
+          const later = priorSequence
+            .filter((other) => other.seq > (step.seq ?? 0))
+            .map((other) => other.id);
+          if (later.length) {
+            healed.add(id);
+            const warning = `Healed step ${id} now succeeded; later recorded steps (${later.join(', ')}) may depend on its earlier failure. Use onError: return for durable fallback decisions.`;
+            replayWarnings.push(warning);
+            if (options.strictReplay) strictHealedDivergence = new Error(warning);
+            await save();
+            emit('replay.divergence', id, step, {
+              message: warning,
+              healedStepId: id,
+              skippedStepIds: later,
+            });
+          }
+        }
+        return value(schema.parse(structuredClone(step.output)));
       }
     }
 
     function client<TOptions extends AgentOptions>(
       provider: 'claude' | 'codex',
     ): AgentClient<TOptions> {
-      function invoke<T>(
+      function invoke<T, TMode extends ErrorMode = 'throw'>(
         id: string,
-        agentOptions: TOptions,
+        agentOptions: TOptions & { readonly onError?: TMode },
         outputSchema: () => z.ZodType<T>,
         structured: boolean,
-      ): Promise<AgentResult<T>> {
+      ): Promise<EffectResult<AgentResult<T>, TMode>> {
         return operations.launch(id, () => {
           let request: HarnessRequest;
           let schema: z.ZodType<T>;
@@ -612,6 +693,7 @@ export async function runWorkflow<TInput, TOutput>(
           const identity = agentIdentity(request, schemaJson(resultSchema));
           const applied = { ...request.options };
           delete applied.retry;
+          delete applied.onError;
           const { timeoutMs, maxTurns, maxBudgetUsd } = execution.policy;
           Object.assign(applied, {
             ...(timeoutMs === undefined ? {} : { timeoutMs }),
@@ -632,7 +714,7 @@ export async function runWorkflow<TInput, TOutput>(
             execution,
             async (_context, step) => {
               if (!options.harness)
-                throw new Error(
+                throw new ConfigurationError(
                   `No harness adapter configured for ${provider}. Supply RunOptions.harness.`,
                 );
               const response = await options.harness.invoke(request, signal);
@@ -646,12 +728,28 @@ export async function runWorkflow<TInput, TOutput>(
             },
             null,
             identity,
+            undefined,
+            agentOptions.onError,
           );
         });
       }
+      function object<T>(
+        id: string,
+        agentOptions: TOptions & { readonly schema: z.ZodType<T>; readonly onError: 'return' },
+      ): Promise<Settled<AgentResult<T>>>;
+      function object<T, TMode extends ErrorMode = 'throw'>(
+        id: string,
+        agentOptions: TOptions & { readonly schema: z.ZodType<T>; readonly onError?: TMode },
+      ): Promise<EffectResult<AgentResult<T>, TMode>>;
+      function object<T>(
+        id: string,
+        agentOptions: TOptions & { readonly schema: z.ZodType<T> },
+      ): Promise<AgentResult<T> | Settled<AgentResult<T>>> {
+        return invoke<T, ErrorMode>(id, agentOptions, () => agentOptions.schema, true);
+      }
       return {
         text: (id, agentOptions) => invoke(id, agentOptions, () => z.string(), false),
-        object: (id, agentOptions) => invoke(id, agentOptions, () => agentOptions.schema, true),
+        object,
       };
     }
 
@@ -660,7 +758,10 @@ export async function runWorkflow<TInput, TOutput>(
       signal,
       claude: client<ClaudeOptions>('claude'),
       codex: client<CodexOptions>('codex'),
-      step: <T>(id: string, step: StepDefinition<T>): Promise<T> =>
+      step: <T, TMode extends ErrorMode = 'throw'>(
+        id: string,
+        step: StepDefinition<T> & { readonly onError?: TMode },
+      ): Promise<EffectResult<T, TMode>> =>
         operations.launch(id, () =>
           effect(
             id,
@@ -679,6 +780,7 @@ export async function runWorkflow<TInput, TOutput>(
             null,
             undefined,
             step,
+            step.onError,
           ),
         ),
       sleep: (id, milliseconds) =>
@@ -751,12 +853,12 @@ export async function runWorkflow<TInput, TOutput>(
       operations.assertObserved();
       closed = true;
       signal.throwIfAborted();
-      const missing = Object.keys(record.steps).filter(
-        (id) => !used.has(id) && record.steps[id]?.status === 'completed',
-      );
+      const missing = Object.entries(record.steps)
+        .filter(([id, step]) => !used.has(id) && isTerminalStep(step))
+        .map(([id]) => id);
       if (missing.length)
         throw new Error(
-          `Replay skipped recorded steps (${missing.join(', ')}); workflow control flow changed.`,
+          `Replay skipped recorded steps (${missing.join(', ')}); workflow control flow changed.${healed.size ? ` Healed steps: ${[...healed].join(', ')}.` : ''}`,
         );
       const superseded = Object.entries(record.steps).filter(
         ([id, step]) => !used.has(id) && step.status !== 'superseded',
@@ -780,9 +882,9 @@ export async function runWorkflow<TInput, TOutput>(
       await operations.drain();
       record.status = 'failed';
       record.error = message(error);
-      if (Object.values(record.steps).every((step) => step.status === 'completed'))
+      if (Object.values(record.steps).every(isTerminalStep))
         record.recoveryHint =
-          'All recorded effects completed. Fix the workflow tail/output and use --resume --accept-code-change to re-finalize; unchanged step identities reuse their results.';
+          'All recorded effects completed or returned a saved failure. Fix the workflow tail/output and use --resume --accept-code-change to re-finalize; unchanged step identities reuse their results.';
       warnUnmatched();
       await trySave();
       throw error;

@@ -243,16 +243,19 @@ it('rejects an old format, different name, existing target, invalid flags, or in
     }),
   ).rejects.toThrow();
   expect(await readFile(path, 'utf8')).toBe(before);
-  await writeFile(path, JSON.stringify({ ...(JSON.parse(before) as object), formatVersion: 2 }));
-  const legacy = await readFile(path, 'utf8');
-  await expect(
-    runWorkflow(definition, { ...options('old-fork'), forkFrom: { runId: 'source' } }),
-  ).rejects.toThrow('format version 2');
-  await expect(runWorkflow(definition, { ...options(), resume: true })).rejects.toThrow(
-    'format version 2',
-  );
-  expect((await checkResume(definition, options())).compatible).toBe(false);
-  expect(await readFile(path, 'utf8')).toBe(legacy);
+  for (const formatVersion of [2, 3]) {
+    await writeFile(path, JSON.stringify({ ...(JSON.parse(before) as object), formatVersion }));
+    const legacy = await readFile(path, 'utf8');
+    expect((await readRun(options())).formatVersion).toBe(formatVersion);
+    await expect(
+      runWorkflow(definition, { ...options('old-fork'), forkFrom: { runId: 'source' } }),
+    ).rejects.toThrow(`format version ${String(formatVersion)}`);
+    await expect(runWorkflow(definition, { ...options(), resume: true })).rejects.toThrow(
+      `format version ${String(formatVersion)}`,
+    );
+    expect((await checkResume(definition, options())).compatible).toBe(false);
+    expect(await readFile(path, 'utf8')).toBe(legacy);
+  }
 });
 
 it('accepts a fix to an unfinished callback with both code-change and step-redefinition history', async () => {

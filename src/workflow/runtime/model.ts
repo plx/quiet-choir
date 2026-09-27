@@ -4,8 +4,56 @@ import type { z } from 'zod';
 export type JsonValue =
   null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
 
+/** Stable categories used by settled outcomes and selective retry. */
+export type ErrorKind =
+  | 'timeout'
+  | 'rate-limit'
+  | 'schema'
+  | 'authentication'
+  | 'permission'
+  | 'turn-limit'
+  | 'budget-limit'
+  | 'output-limit'
+  | 'process'
+  | 'protocol'
+  | 'cancelled'
+  | 'unknown';
+
+/** Serialized final failure of an explicitly settled effect. */
+export interface StepError {
+  /** Original failure explanation. */
+  readonly message: string;
+  /** Structured category, or unknown when no reliable category is available. */
+  readonly kind: ErrorKind;
+  /** Total started attempts for this step across resumes. */
+  readonly attempts: number;
+}
+
+/** A journaled outcome that can safely select a branch on replay. */
+export type Settled<T> =
+  | {
+      /** Successful effect. */
+      readonly ok: true;
+      /** Validated effect result. */
+      readonly value: T;
+    }
+  | {
+      /** Failed effect after applicable retries. */
+      readonly ok: false;
+      /** Saved failure, replayed without executing the effect again. */
+      readonly error: StepError;
+    };
+
+/** Throw failures by default, or persist and return the final failure. */
+export type ErrorMode = 'throw' | 'return';
+
+/** Return type selected by an effect's error mode. */
+export type EffectResult<T, TMode extends ErrorMode> = TMode extends 'return' ? Settled<T> : T;
+
 /** Options shared by headless agent calls. */
 export interface AgentOptions {
+  /** Persist a terminal outcome for branching; cancellation, configuration (e.g. missing harness), and checkpoint-write failures still reject. */
+  readonly onError?: ErrorMode;
   /** Instructions sent over stdin, never interpolated into a shell command. */
   readonly prompt: string;
   /** Model name or harness alias; omission uses the harness default. */
@@ -106,12 +154,20 @@ export interface AgentResult<T> {
 /** Dedicated typed API for a harness, with durable calls keyed by unique step IDs. */
 export interface AgentClient<TOptions extends AgentOptions> {
   /** Invoke the harness for a plain text response. */
-  text(id: string, options: TOptions): Promise<AgentResult<string>>;
+  text<TMode extends ErrorMode = 'throw'>(
+    id: string,
+    options: TOptions & { readonly onError?: TMode },
+  ): Promise<EffectResult<AgentResult<string>, TMode>>;
   /** Request structured output and validate it locally before checkpointing. */
   object<T>(
     id: string,
-    options: TOptions & { readonly schema: z.ZodType<T> },
-  ): Promise<AgentResult<T>>;
+    options: TOptions & { readonly schema: z.ZodType<T>; readonly onError: 'return' },
+  ): Promise<Settled<AgentResult<T>>>;
+  /** Request structured output with an inferred or dynamic error mode. */
+  object<T, TMode extends ErrorMode = 'throw'>(
+    id: string,
+    options: TOptions & { readonly schema: z.ZodType<T>; readonly onError?: TMode },
+  ): Promise<EffectResult<AgentResult<T>, TMode>>;
 }
 
 /** Retry policy explicitly opted into for an effect that is safe to repeat. */
@@ -120,6 +176,8 @@ export interface RetryPolicy {
   readonly maxAttempts: number;
   /** Initial delay in milliseconds, doubled on each retry; defaults to 100. */
   readonly delayMs?: number;
+  /** Retry only these categories; omission retries all non-cancellation effect failures, [] retries none. */
+  readonly on?: readonly ErrorKind[];
 }
 
 /** Context supplied to a local effect. */
@@ -134,6 +192,8 @@ export interface StepContext {
 
 /** A local durable effect. Keep nondeterminism and side effects inside its callback. */
 export interface StepDefinition<T> {
+  /** Persist and return final failures as Settled<T>; cancellation still rejects. */
+  readonly onError?: ErrorMode;
   /** Explicit revision for captured values, helpers, or environment not visible in callback source. */
   readonly version?: string;
   /** Explicit JSON-serializable dependencies, checked for drift on replay. */
@@ -157,7 +217,15 @@ export interface WorkflowContext {
   /** Codex-specific headless API. */
   readonly codex: AgentClient<CodexOptions>;
   /** Save a JSON result and reuse it on resume when its inputs match. */
-  step<T>(id: string, definition: StepDefinition<T>): Promise<T>;
+  step<T>(
+    id: string,
+    definition: StepDefinition<T> & { readonly onError: 'return' },
+  ): Promise<Settled<T>>;
+  /** Save a JSON result with an inferred or dynamic error mode. */
+  step<T, TMode extends ErrorMode = 'throw'>(
+    id: string,
+    definition: StepDefinition<T> & { readonly onError?: TMode },
+  ): Promise<EffectResult<T, TMode>>;
   /** Checkpoint a wall-clock wake time so resuming waits only the remaining duration. */
   sleep(id: string, milliseconds: number): Promise<null>;
   /** Map in input order with bounded concurrency and unique step IDs. A mapper failure cancels the run and drains active workers. */
@@ -235,7 +303,7 @@ export interface AttemptPolicy {
   /** Limits used for this attempt; custom adapters may leave unknown defaults absent. */
   readonly policy: ExecutionPolicy & {
     /** Runtime retry values after filling in maxAttempts and delayMs. */
-    readonly retry: Required<RetryPolicy>;
+    readonly retry: RetryPolicy & Required<Pick<RetryPolicy, 'maxAttempts' | 'delayMs'>>;
   };
   /** Value origins: runtime, harness, call-site, or override:N (zero-based saved rule index). */
   readonly sources: Readonly<Record<string, string>>;
