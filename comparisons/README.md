@@ -9,10 +9,11 @@ TypeScript ports. Batch 01 contains all 26 workflows from
 
 Batch 01 is the active regression suite for the current built runtime, not a frozen set of ports.
 Its upstream originals remain immutable. The initial ports targeted `a6a7b82`; `apiSnapshot` now
-records the runtime API at `9291be9`, including direct-output agent values, schema-only callback
-inference, and omission of undefined object members, on top of persisted phases/logs, executions,
-timing, usage, request diagnostics, and saved-failure wrappers with original causes. Shared helpers
-forward to `ctx.phase` and `ctx.log`, and the shared legacy context forwards the new `value`
+records the runtime API at `f7fa0af`, including durable `ask`/`approve`, the completed/suspended
+result union, and lock-free answer delivery, on top of direct-output agent values, schema-only
+callback inference, omission of undefined object members, persisted phases/logs, executions, timing,
+usage, request diagnostics, and saved-failure wrappers with original causes. Shared helpers forward
+to `ctx.phase` and `ctx.log`, and the shared legacy context forwards `ask`/`approve` and `value`
 overloads; broad port normalization/cast/catchall cleanup remains #65. Returned values keep schema
 field order. The active suite has 61 unchanged differential checks, which preserve original prompts,
 effort settings, and outputs, six durable-question contracts for bootstrap/SDLC, and one
