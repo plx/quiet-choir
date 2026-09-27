@@ -7,6 +7,13 @@ ordinary loops and branches, and resume from local checkpoints after a failure.
 harness adapters work. This is a local execution engine with at-least-once effects, not a production
 service.
 
+## Agent documentation
+
+For agents working on this repository, start with [AGENTS.md](AGENTS.md). To teach an agent to use
+quiet-choir, install its [Claude Code or Codex reference plugin](docs/plugins.md). Each plugin
+bundles a concise skill with topic-specific references for authoring, harness options, durability,
+inspection, and extensions; the runtime is installed separately.
+
 ## Try it without an agent subscription
 
 Use Node.js 24 LTS (also supported: 22.13+ and 26) and npm 10.9+.
