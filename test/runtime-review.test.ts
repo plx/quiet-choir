@@ -24,7 +24,7 @@ afterEach(async () => {
   );
 });
 
-it('cancels a waiting map sibling immediately and retains the first mapper failure', async () => {
+it('explicit abort cancels a waiting map sibling immediately and retains the first mapper failure', async () => {
   // The sibling waits on a 10s timer; give the deadlock detector a generous
   // margin so CPU contention from other concurrently-run test files cannot
   // produce a false "deadlocked" result before the real rejection propagates.
@@ -42,26 +42,31 @@ it('cancels a waiting map sibling immediately and retains the first mapper failu
     input: z.null(),
     output: z.array(z.null()),
     run: async (context) =>
-      context.map([0, 1, 2], 2, async (item) => {
-        if (item === 0) {
-          await ready;
-          throw new Error('first mapper failed');
-        }
-        if (item === 2) thirdStarted = true;
-        return context.step('waiting-sibling', {
-          input: null,
-          schema: z.null(),
-          run: async ({ signal }) => {
-            markReady();
-            try {
-              await delay(10_000, undefined, { signal });
-            } finally {
-              siblingDrained = true;
-            }
-            return null;
-          },
-        });
-      }),
+      context.map(
+        [0, 1, 2],
+        2,
+        async (item) => {
+          if (item === 0) {
+            await ready;
+            throw new Error('first mapper failed');
+          }
+          if (item === 2) thirdStarted = true;
+          return context.step('waiting-sibling', {
+            input: null,
+            schema: z.null(),
+            run: async ({ signal }) => {
+              markReady();
+              try {
+                await delay(10_000, undefined, { signal });
+              } finally {
+                siblingDrained = true;
+              }
+              return null;
+            },
+          });
+        },
+        { onError: 'abort' },
+      ),
   });
   const invocation = runWorkflow(workflow, {
     runId: 'map',

@@ -101,14 +101,14 @@ consumer imports `quiet-choir` as above.
 
 ## Operations
 
-| API                                             | Behavior                                                                |
-| ----------------------------------------------- | ----------------------------------------------------------------------- |
-| `ctx.claude.text(id, options)`                  | Durable Claude text result                                              |
-| `ctx.claude.object(id, { schema, ...options })` | Durable, validated Claude structured result                             |
-| `ctx.codex.text` / `ctx.codex.object`           | Equivalent Codex APIs with Codex-specific options                       |
-| `ctx.step(id, { input, schema, run, retry? })`  | Checkpoint a local effect; explicit dependencies detect replay drift    |
-| `ctx.map(items, concurrency, mapper)`           | Bounded fan-out, ordered results; use unique step IDs inside the mapper |
-| `ctx.sleep(id, milliseconds)`                   | Persist a wake time and wait only the remaining time after resume       |
+| API                                             | Behavior                                                                                    |
+| ----------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| `ctx.claude.text(id, options)`                  | Durable Claude text result                                                                  |
+| `ctx.claude.object(id, { schema, ...options })` | Durable, validated Claude structured result                                                 |
+| `ctx.codex.text` / `ctx.codex.object`           | Equivalent Codex APIs with Codex-specific options                                           |
+| `ctx.step(id, { input, schema, run, retry? })`  | Checkpoint a local effect; explicit dependencies detect replay drift                        |
+| `ctx.map(items, concurrency, mapper, options?)` | Bounded fan-out with drain, abort, or durable settle; use unique step IDs inside the mapper |
+| `ctx.sleep(id, milliseconds)`                   | Persist a wake time and wait only the remaining time after resume                           |
 
 Agent results contain `output`, native `sessionId`, and reported token/cost `usage`. Native session
 IDs are for correlation only: `CliHarness` uses Claude `--no-session-persistence` and Codex
@@ -176,7 +176,7 @@ fingerprint. Globs use `*` within segments and `**` across `/`.
 `CliHarness` defaults to 15 minutes, 25 Claude turns, and the unchanged $0.25 Claude per-call
 budget. Custom harnesses report known limits through optional `policyDefaults(provider)`; unknown
 defaults are not invented. `inspect --json` exposes saved rules and each step's `attemptHistory`,
-including resolved policy and its sources. New checkpoints use version 4. Versions 1, 2, and 3
+including resolved policy and its sources. New checkpoints use version 5. Versions 1, 2, 3, and 4
 remain inspectable but cannot resume or supply fork reuse with this runtime; retain the original
 runtime or choose a new run ID. See
 [the policy decision](docs/decisions/0005-step-identity-and-policy.md).
@@ -226,6 +226,47 @@ See
 for safe fallbacks, best-effort maps, classification limits, and deliberate retry via fork
 invalidation.
 
+## Fan-out failure policies
+
+`ctx.map(items, concurrency, mapper)` defaults to `onError: 'drain'`: the first mapper failure stops
+scheduling new items, lets started mappers finish and checkpoint without an abort signal, then
+rejects with `FanOutError`. Its `failures` identify input indexes and originating step IDs;
+`unscheduled` lists items never started. Drain can wait for the slowest active call. A body
+rejection (for example from `Promise.all`) closes the workflow: effects already started finish and
+checkpoint before the run lock is released, but any new launch fails with "Workflow is closed",
+including an active mapper's next step and a map started by a still-running branch. To let sibling
+branches finish, catch inside each branch or use `Promise.allSettled`.
+
+Pass `{ onError: 'abort' }` to cancel just that map's subtree after a failure. Catching a failed map
+allows later workflow steps, and a caught inner-map failure leaves other outer branches running.
+`ctx.signal` and each effect's signal refer to the current scope. Run interruption still cancels all
+scopes. Interrupted effects have status `cancelled` and `cancelledBy`; the initiating effect stays
+`failed`. Inspect `rootCause: { stepId, error }` for the run's cause. Ctrl-C records a null step ID
+and `Workflow interrupted.`; handled failures leave `rootCause` null in a completed run.
+
+Use an explicitly named settled map to retain every item's outcome, including mapper-body errors:
+
+```ts
+const reviews = await ctx.map(
+  topics,
+  3,
+  (topic, index) => ctx.claude.text(`review/${index}`, { prompt: topic }),
+  { onError: 'settle', id: 'reviews' },
+);
+const accepted = reviews.flatMap((review) => (review.ok ? [review.value.output] : []));
+```
+
+This returns ordered `Settled<U, MapStepError>[]`: failures have
+`{ message, kind, attempts, stepId }`. It runs every item without cancelling siblings; cancellation,
+checkpoint failures, and authoring errors still reject. The required run-unique `id` names a map
+journal and does not prefix leaf IDs. Item inputs, mapper source, optional `version`, and cwd define
+its identity; concurrency can change on resume. Inputs and results must be lossless JSON. The map
+snapshots `items` when called; settled mappers receive JSON copies of that snapshot. Put captured
+dependencies in items or bump `version`. Resume skips each committed mapper and its owned effects
+and returns the saved outcome, so an ordinary mapper-body failure cannot heal and change a
+downstream fingerprint. Incomplete items execute again. Forks start fresh map journals and use the
+normal per-step reuse rules.
+
 ## Durability contract
 
 - The workflow body replays from the beginning. Keep orchestration deterministic; put file reads,
@@ -242,8 +283,8 @@ invalidation.
   changed components. Timeout, turn, budget, and retry policy do not affect identity. Unfinished
   identities may change with history retained; unvisited unfinished records become `superseded`.
   Every terminal step must still be visited. An early `replay.divergence` event warns before live
-  work when earlier terminal steps remain unvisited; `--strict-replay` aborts there. The final
-  skipped-step check still applies.
+  work when earlier terminal steps or committed settled maps remain unvisited; `--strict-replay`
+  aborts there. The final skipped-step and skipped-map checks still apply.
 - The CLI hashes raw bytes of local compiler-discovered dependencies and the nearest tsconfig under
   real, project-relative paths. Engine `src/`/`dist/` files are excluded (except an explicit
   entrypoint); package/format versions are recorded separately. Inputs, workflow name/version,
@@ -265,17 +306,18 @@ invalidation.
   stderr). Changed ownership and missing or unreadable ownership metadata remain fatal. Cleanup
   warnings are not checkpointed.
 - Effects are **at least once**. An external action can succeed without being saved after a crash or
-  hard kill. Cancellation by Ctrl-C, SIGTERM, a failing map sibling, or an uncaught failure can also
-  discard a result that arrives after cancellation: the step is saved as `failed` and repeats on
-  resume. Agent calls stopped by cancellation or deadlines may already have edited files.
-  Storage-triggered aborts preserve successful results for a later save, as described above. Only
+  hard kill. A resolved, validated effect is saved as `completed` even if its signal has just been
+  aborted; resume replays it. A rejected effect in an aborted scope is `cancelled` and can repeat on
+  resume. Agent calls stopped by cancellation or deadlines may already have edited files. Only
   `ctx.step` callbacks get `idempotencyKey` for deduplication with compatible external systems.
   Native harness conversation state and workspace mutations are not transactional.
-- Cancellation cooperatively aborts active work and drains it before releasing ownership. Local
-  callbacks must honor their signal. A failed map cancels the run and stops scheduling more items.
-  One Ctrl-C or SIGTERM drains and exits 130. A second Ctrl-C kills the runner mid-drain and can
-  leave a lock and `running` record. SIGKILL, SIGHUP (closed terminal or dropped SSH), or a crash
-  can leave detached harness children running and editing. Before resuming, check
+- Map and body failures drain started work without signalling cancellation by default. Explicit map
+  `abort` affects only that subtree; `ctx.signal` reads the current scope. Run cancellation
+  cooperatively aborts every scope and drains before releasing ownership. Local callbacks must
+  eventually settle; a callback that ignores cancellation can delay exit indefinitely. One Ctrl-C or
+  SIGTERM cancels, drains, and exits 130. A second Ctrl-C kills the runner mid-drain and can leave a
+  lock and `running` record. SIGKILL, SIGHUP (closed terminal or dropped SSH), or a crash can leave
+  detached harness children running and editing. Before resuming, check
   `pgrep -fl 'claude --print|codex exec'` for children belonging to the interrupted run.
 
 This spike has no background scheduler, distributed workers, execution migration, human-approval
@@ -353,7 +395,7 @@ layered project/user settings are deferred.
 | 0    | Success, including inspection of `failed`/`running` records (check `.status`). Misplaced flags between `workflow` and its command can print help and exit 0.                                              |
 | 1    | Type/import/workflow errors, nonexistent FILE path, invalid run ID, run ownership/existence errors, or incompatible resume/input. Invalid IDs are checked after module import. Read stderr for the cause. |
 | 2    | Flag/input-JSON errors, omitted FILE argument, resume without a run ID, non-TypeScript/declaration entrypoints, or configuration stubs.                                                                   |
-| 130  | SIGINT/SIGTERM during execution; cancellation drains and saves `failed` when storage is available.                                                                                                        |
+| 130  | SIGINT/SIGTERM during execution; cancellation drains and saves `cancelled` when storage is available.                                                                                                     |
 
 `npm run check` includes formatting, lint, strict typechecking, tests with coverage gates, build,
 compiled CLI smoke tests, TypeDoc validation, and package checks. No automated test calls a paid

@@ -243,7 +243,7 @@ it('rejects an old format, different name, existing target, invalid flags, or in
     }),
   ).rejects.toThrow();
   expect(await readFile(path, 'utf8')).toBe(before);
-  for (const formatVersion of [2, 3]) {
+  for (const formatVersion of [2, 3, 4]) {
     await writeFile(path, JSON.stringify({ ...(JSON.parse(before) as object), formatVersion }));
     const legacy = await readFile(path, 'utf8');
     expect((await readRun(options())).formatVersion).toBe(formatVersion);
@@ -361,7 +361,9 @@ it('re-finalizes an output-validation failure with no repeated effects and recor
     return broken ? (undefined as unknown as string) : value;
   });
   await expect(runWorkflow(definition, options())).rejects.toThrow();
-  expect((await readRun(options())).recoveryHint).toContain('All recorded effects completed');
+  expect((await readRun(options())).recoveryHint).toContain(
+    'All recorded work has terminal outcomes',
+  );
   broken = false;
   const changed = {
     ...definition,

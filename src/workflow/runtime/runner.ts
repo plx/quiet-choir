@@ -25,6 +25,7 @@ import { resolveStateDir } from './paths.js';
 import { agentIdentity, stepIdentity, validateStepId, type StepIdentity } from './identity.js';
 import {
   resolvePolicy,
+  matchesStepGlob,
   validatePolicy,
   type AttemptPolicy,
   type PolicyOverride,
@@ -32,7 +33,10 @@ import {
 import { OperationTracker } from './tracking.js';
 import { optionData, validateAgentOptions } from './options.js';
 import { HarnessError } from './harness-error.js';
-import { stepError } from './step-error.js';
+import { CancelledError, FailureOrigins } from './fan-out.js';
+import { createMap } from './map.js';
+import { ExecutionScopes } from './scopes.js';
+import { stepError, errorKind } from './step-error.js';
 import { ConfigurationError } from './configuration-error.js';
 import { digest, jsonValue } from './json.js';
 import type {
@@ -53,6 +57,7 @@ import type {
   WorkflowDefinition,
 } from './model.js';
 import {
+  hasTerminalOutcomes,
   isTerminalStep,
   lockRun,
   readRun,
@@ -71,6 +76,7 @@ export interface WorkflowEvent {
     | 'step.completed'
     | 'step.replayed'
     | 'step.failed'
+    | 'step.cancelled'
     | 'step.settled'
     | 'step.redefined'
     | 'step.superseded'
@@ -143,6 +149,14 @@ async function waitUntil(timestamp: number, signal: AbortSignal): Promise<void> 
   }
 }
 
+/** Describe the boundary that aborted `signal`; callers must only pass an aborted signal. */
+function cancellationError(signal: AbortSignal, cause: unknown): CancelledError {
+  if (signal.reason instanceof CancelledError)
+    return new CancelledError(signal.reason.cancelledBy, cause, signal.reason.scope);
+  // Only the run controller aborts with another reason: a checkpoint failure or strict replay.
+  return new CancelledError(null, cause, 'run');
+}
+
 /** Run or resume a workflow with local, at-least-once durable effects. Throws after saving failures. */
 export async function runWorkflow<TInput, TOutput>(
   definition: WorkflowDefinition<TInput, TOutput>,
@@ -163,7 +177,7 @@ export async function runWorkflow<TInput, TOutput>(
   const release = await lockRun(stateDir, options.runId);
   const controller = new AbortController();
   const abort = (): void => {
-    controller.abort(options.signal?.reason);
+    controller.abort(new CancelledError(null, options.signal?.reason));
   };
   options.signal?.addEventListener('abort', abort, { once: true });
   if (options.signal?.aborted) abort();
@@ -241,7 +255,9 @@ export async function runWorkflow<TInput, TOutput>(
     }
     const now = new Date().toISOString();
     const record: RunRecord = existing ?? {
-      formatVersion: 4,
+      formatVersion: 5,
+      rootCause: null,
+      maps: {},
       id: options.runId,
       workflow: { name: definition.name, version: definition.version, ...snapshot },
       cwd,
@@ -284,9 +300,19 @@ export async function runWorkflow<TInput, TOutput>(
     const previousTerminal = Object.entries(record.steps)
       .filter(([, step]) => isTerminalStep(step))
       .map(([id, step]) => ({ id, seq: step.seq ?? 0 }));
+    // Committed settled maps join the pre-live skip check; their seq shares the step counter.
+    const previousTerminalMaps = Object.entries(record.maps ?? {})
+      .filter(
+        ([, journal]) =>
+          journal.status === 'completed' ||
+          journal.items.some((item) => item.status === 'completed'),
+      )
+      .map(([id, journal]) => ({ id, seq: journal.seq ?? 0 }));
     let nextSeq =
-      Object.values(record.steps).reduce((highest, step) => Math.max(highest, step.seq ?? 0), 0) +
-      1;
+      [...Object.values(record.steps), ...Object.values(record.maps ?? {})].reduce(
+        (highest, entry) => Math.max(highest, entry.seq ?? 0),
+        0,
+      ) + 1;
     const priorSequence = Object.entries(record.steps).map(([id, step]) => ({
       id,
       seq: step.seq ?? 0,
@@ -346,6 +372,34 @@ export async function runWorkflow<TInput, TOutput>(
     }
     const used = new Set<string>();
     const operations = new OperationTracker();
+    const scopes = new ExecutionScopes(signal);
+    const origins = new FailureOrigins();
+    const visitedMaps = new Set<string>();
+    const maps = (record.maps ??= {});
+    function launch<T>(
+      id: string,
+      work: () => T | PromiseLike<T>,
+      effectOperation = true,
+    ): Promise<T> {
+      return operations.launch(
+        id,
+        async () => {
+          try {
+            return await work();
+          } catch (error) {
+            if (
+              effectOperation &&
+              origins.find(error).stepId === null &&
+              !(error instanceof CancelledError) &&
+              !(error instanceof CheckpointError)
+            )
+              origins.markFatal(error);
+            throw error;
+          }
+        },
+        scopes.owners,
+      );
+    }
     const inEffect = new AsyncLocalStorage<boolean>();
     let closed = false;
     const emit = (
@@ -383,6 +437,7 @@ export async function runWorkflow<TInput, TOutput>(
       local?: StepDefinition<T>,
       onError?: TMode,
     ): Promise<EffectResult<T, TMode>> {
+      const signal = scopes.signal;
       const value = (output: T): EffectResult<T, TMode> =>
         (onError === 'return' ? { ok: true, value: output } : output) as EffectResult<T, TMode>;
       const replay = (step: StepRecord): EffectResult<T, TMode> =>
@@ -399,6 +454,7 @@ export async function runWorkflow<TInput, TOutput>(
       if (used.has(id))
         throw new Error(`Duplicate step ID: ${id}. Use a unique ID for each loop iteration.`);
       used.add(id);
+      scopes.step(id);
       const { maxAttempts, delayMs } = execution.policy.retry;
       let identity: StepIdentity;
       let stepFingerprint: string;
@@ -506,9 +562,18 @@ export async function runWorkflow<TInput, TOutput>(
         const skipped = previousTerminal
           .filter((previous) => previous.seq < (step.seq ?? 0) && !used.has(previous.id))
           .map((previous) => previous.id);
-        if (skipped.length) {
+        const skippedMaps = previousTerminalMaps
+          .filter((previous) => previous.seq < (step.seq ?? 0) && !visitedMaps.has(previous.id))
+          .map((previous) => previous.id);
+        if (skipped.length || skippedMaps.length) {
           divergenceReported = true;
-          const warning = `Replay divergence before live step ${id}: earlier terminal steps (${skipped.join(', ')}) have not been visited. Order is a concurrency heuristic; restore the replay path or fork a new run.`;
+          const unvisited = [
+            ...(skipped.length ? [`earlier terminal steps (${skipped.join(', ')})`] : []),
+            ...(skippedMaps.length
+              ? [`earlier committed settled maps (${skippedMaps.join(', ')})`]
+              : []),
+          ].join(' and ');
+          const warning = `Replay divergence before live step ${id}: ${unvisited} have not been visited. Order is a concurrency heuristic; restore the replay path or fork a new run.`;
           replayWarnings.push(warning);
           const failure = options.strictReplay ? new Error(warning) : undefined;
           if (failure) controller.abort(failure);
@@ -548,6 +613,7 @@ export async function runWorkflow<TInput, TOutput>(
         step.status = 'running';
         step.error = null;
         delete step.warnings;
+        delete step.cancelledBy;
         const attemptRecord: AttemptRecord = {
           ...structuredClone(execution),
           attempt: step.attempts,
@@ -559,9 +625,9 @@ export async function runWorkflow<TInput, TOutput>(
         };
         (step.attemptHistory ??= []).push(attemptRecord);
         await save();
-        signal.throwIfAborted();
-        emit('step.started', id, step);
         try {
+          signal.throwIfAborted();
+          emit('step.started', id, step);
           const result = await inEffect.run(true, () =>
             action(
               {
@@ -572,34 +638,38 @@ export async function runWorkflow<TInput, TOutput>(
               step,
             ),
           );
-          // A storage-triggered abort must not discard an action that returned successfully.
-          // Preserve its validated result for a later save while keeping new actions stopped.
-          if (!(signal.reason instanceof CheckpointError)) signal.throwIfAborted();
+          // A resolved, valid result is durable work even if cancellation arrived meanwhile.
+          // The scope still rejects its next launch.
           const output = schema.parse(result);
           step.output = jsonValue(output);
-        } catch (error) {
-          const classified = stepError(error, step.attempts);
-          const outcome = signal.aborted
-            ? { ...classified, kind: 'cancelled' as const }
-            : classified;
-          step.status = 'failed';
+        } catch (cause) {
+          // Only an aborted scope signal is a scope cancellation. A callback's own AbortError
+          // keeps its message and fails the step, but is still never retried or settled.
+          const scoped = signal.aborted;
+          const error = scoped ? cancellationError(signal, cause) : cause;
+          origins.remember(error, id);
+          const outcome = stepError(error, step.attempts);
+          step.status = scoped ? 'cancelled' : 'failed';
+          if (error instanceof CancelledError) step.cancelledBy = error.cancelledBy;
           step.error = outcome.message;
           attemptRecord.errorKind = outcome.kind;
-          attemptRecord.status = 'failed';
+          attemptRecord.status = scoped ? 'cancelled' : 'failed';
           attemptRecord.finishedAt = new Date().toISOString();
           attemptRecord.error = step.error;
-          if (error instanceof HarnessError) {
+          if (cause instanceof HarnessError) {
             (step.failedAttempts ??= []).push({
               attempt: step.attempts,
-              sessionId: error.sessionId,
-              usage: error.usage,
+              sessionId: cause.sessionId,
+              usage: cause.usage,
             });
           }
-          const cancellation = outcome.kind === 'cancelled';
-          const fatal =
-            cancellation ||
-            checkpointProblems.includes(error as CheckpointError) ||
-            error instanceof ConfigurationError;
+          // Only this run's own storage failures are fatal; a domain error reusing the class is not.
+          const infrastructure =
+            checkpointProblems.includes(cause as CheckpointError) ||
+            cause instanceof ConfigurationError;
+          // Configuration failures must also never become settled map data.
+          if (cause instanceof ConfigurationError) origins.markFatal(error);
+          const fatal = scoped || errorKind(cause) === 'cancelled' || infrastructure;
           const retry =
             !fatal &&
             attempt < maxAttempts &&
@@ -612,9 +682,22 @@ export async function runWorkflow<TInput, TOutput>(
             emit('step.settled', id, step);
             return replay(step);
           }
-          if (await trySave()) emit('step.failed', id, step);
-          if (signal.aborted || !retry) throw error;
-          await waitUntil(Date.now() + Math.min(30_000, delayMs * 2 ** (attempt - 1)), signal);
+          if (await trySave()) emit(scoped ? 'step.cancelled' : 'step.failed', id, step);
+          if (!retry || signal.reason instanceof CheckpointError) throw error;
+          try {
+            await waitUntil(Date.now() + Math.min(30_000, delayMs * 2 ** (attempt - 1)), signal);
+          } catch (cause) {
+            if (signal.reason instanceof CheckpointError) throw error;
+            if (errorKind(cause) !== 'cancelled') throw cause;
+            const cancelled = cancellationError(signal, cause);
+            origins.remember(cancelled, id);
+            step.status = 'cancelled';
+            step.cancelledBy = cancelled.cancelledBy;
+            step.error = cancelled.message;
+            // The completed failed attempt remains history; cancellation interrupted its backoff.
+            if (await trySave()) emit('step.cancelled', id, step);
+            throw cancelled;
+          }
           continue;
         }
         step.status = 'completed';
@@ -654,7 +737,7 @@ export async function runWorkflow<TInput, TOutput>(
         outputSchema: () => z.ZodType<T>,
         structured: boolean,
       ): Promise<EffectResult<AgentResult<T>, TMode>> {
-        return operations.launch(id, () => {
+        return launch(id, () => {
           let request: HarnessRequest;
           let schema: z.ZodType<T>;
           let execution: AttemptPolicy;
@@ -712,12 +795,12 @@ export async function runWorkflow<TInput, TOutput>(
             jsonValue(request),
             resultSchema,
             execution,
-            async (_context, step) => {
+            async (context, step) => {
               if (!options.harness)
                 throw new ConfigurationError(
                   `No harness adapter configured for ${provider}. Supply RunOptions.harness.`,
                 );
-              const response = await options.harness.invoke(request, signal);
+              const response = await options.harness.invoke(request, context.signal);
               if (response.warnings !== undefined) step.warnings = [...response.warnings];
               const raw: unknown = structured ? JSON.parse(response.text) : response.text;
               return {
@@ -753,16 +836,46 @@ export async function runWorkflow<TInput, TOutput>(
       };
     }
 
+    const map = createMap({
+      isClosed: () => closed,
+      isInEffect: () => inEffect.getStore() === true,
+      launch,
+      scopes,
+      operations,
+      origins,
+      cwd,
+      record,
+      maps,
+      used,
+      visitedMaps,
+      save,
+      nextSeq: () => nextSeq++,
+      isCheckpointFailure: (error) => checkpointProblems.includes(error as CheckpointError),
+      replayed: (id, step) => {
+        if (step.kind !== 'sleep')
+          policy.forEach((rule, index) => {
+            if (
+              (rule.kind === undefined || rule.kind === step.kind) &&
+              matchesStepGlob(rule.match ?? '**', id)
+            )
+              matchedPolicy.add(index);
+          });
+        emit('step.replayed', id, step);
+      },
+    });
+
     const context: WorkflowContext = {
       runId: record.id,
-      signal,
+      get signal() {
+        return scopes.signal;
+      },
       claude: client<ClaudeOptions>('claude'),
       codex: client<CodexOptions>('codex'),
       step: <T, TMode extends ErrorMode = 'throw'>(
         id: string,
         step: StepDefinition<T> & { readonly onError?: TMode },
       ): Promise<EffectResult<T, TMode>> =>
-        operations.launch(id, () =>
+        launch(id, () =>
           effect(
             id,
             'step',
@@ -784,7 +897,7 @@ export async function runWorkflow<TInput, TOutput>(
           ),
         ),
       sleep: (id, milliseconds) =>
-        operations.launch(id, () => {
+        launch(id, () => {
           if (
             !Number.isFinite(milliseconds) ||
             milliseconds < 0 ||
@@ -799,52 +912,19 @@ export async function runWorkflow<TInput, TOutput>(
             milliseconds,
             z.null(),
             resolvePolicy(id, 'sleep', {}, {}, [], matchedPolicy),
-            async (_context, step) => {
-              await waitUntil(step.wakeAt ?? Date.now(), signal);
+            async (context, step) => {
+              await waitUntil(step.wakeAt ?? Date.now(), context.signal);
               return null;
             },
             Date.now() + milliseconds,
           );
         }),
-      map: <T, U>(
-        items: readonly T[],
-        concurrency: number,
-        mapper: (item: T, index: number) => Promise<U>,
-      ): Promise<U[]> =>
-        operations.launch('map', async () => {
-          if (!Number.isInteger(concurrency) || concurrency < 1)
-            throw new Error('Map concurrency must be a positive integer.');
-          const results: U[] = new Array<U>(items.length);
-          let next = 0;
-          const state: { failed: boolean; error: unknown } = { failed: false, error: undefined };
-          const fail = (error: unknown): void => {
-            if (state.failed) return;
-            state.failed = true;
-            state.error = error;
-            // A sibling may itself be waiting for cancellation. Abort before draining it.
-            controller.abort(error);
-          };
-          await Promise.all(
-            Array.from({ length: Math.min(concurrency, items.length) }, async () => {
-              while (!state.failed) {
-                try {
-                  signal.throwIfAborted();
-                  const index = next++;
-                  if (index >= items.length) return;
-                  results[index] = await mapper(items[index] as T, index);
-                } catch (error) {
-                  fail(error);
-                }
-              }
-            }),
-          );
-          if (state.failed) throw state.error;
-          return results;
-        }),
+      map,
     };
     record.status = 'running';
     record.error = null;
     record.output = null;
+    record.rootCause = null;
     await save();
     try {
       signal.throwIfAborted();
@@ -853,6 +933,16 @@ export async function runWorkflow<TInput, TOutput>(
       operations.assertObserved();
       closed = true;
       signal.throwIfAborted();
+      const missingMaps = Object.keys(maps).filter(
+        (id) =>
+          !visitedMaps.has(id) &&
+          (maps[id]?.status === 'completed' ||
+            maps[id]?.items.some((item) => item.status === 'completed')),
+      );
+      if (missingMaps.length)
+        throw new Error(
+          `Replay skipped settled maps (${missingMaps.join(', ')}); workflow control flow changed.`,
+        );
       const missing = Object.entries(record.steps)
         .filter(([id, step]) => !used.has(id) && isTerminalStep(step))
         .map(([id]) => id);
@@ -876,15 +966,25 @@ export async function runWorkflow<TInput, TOutput>(
           : {}),
         output: definition.output.parse(structuredClone(record.output)) as TOutput & JsonValue,
       };
-    } catch (error) {
+    } catch (caught) {
       closed = true;
-      controller.abort(error);
+      const interrupted =
+        options.signal?.aborted === true &&
+        (errorKind(caught) === 'cancelled' ||
+          errorKind(origins.find(caught).error) === 'cancelled');
+      const error: unknown = interrupted ? options.signal.reason : caught;
+      record.rootCause = interrupted
+        ? { stepId: null, error: message(error) }
+        : origins.root(error);
+      // Body failures stop new launches but preserve in-flight work. Only explicit cancellation
+      // or checkpoint failure aborts a scope; draining here does not send a signal.
       await operations.drain();
-      record.status = 'failed';
+      // A callback's own AbortError is a failure; only scope cancellation cancels the run.
+      record.status = interrupted || error instanceof CancelledError ? 'cancelled' : 'failed';
       record.error = message(error);
-      if (Object.values(record.steps).every(isTerminalStep))
+      if (hasTerminalOutcomes(record))
         record.recoveryHint =
-          'All recorded effects completed or returned a saved failure. Fix the workflow tail/output and use --resume --accept-code-change to re-finalize; unchanged step identities reuse their results.';
+          'All recorded work has terminal outcomes, including settled map items. Fix the workflow tail/output and use --resume --accept-code-change to re-finalize; unchanged identities reuse their results.';
       warnUnmatched();
       await trySave();
       throw error;

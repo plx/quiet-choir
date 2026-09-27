@@ -472,6 +472,49 @@ it('preserves a successful sibling result after storage-triggered cancellation',
   });
 });
 
+it('labels a sibling cancelled by a checkpoint failure as a workflow cancellation', async () => {
+  let failures = 0;
+  vi.mocked(store.writeRun).mockImplementation((directory, record) => {
+    if (record.steps['second']?.status === 'completed' && failures++ < 3)
+      return Promise.reject(ioError('EIO'));
+    return actualStore.writeRun(directory, record);
+  });
+  await expect(
+    runWorkflow(
+      workflow(async (ctx) => {
+        await Promise.all([
+          ctx.step('first', {
+            input: null,
+            schema: z.string(),
+            run({ signal }) {
+              return new Promise<string>((_resolve, reject) => {
+                signal.addEventListener(
+                  'abort',
+                  () => {
+                    reject(new DOMException('stopped', 'AbortError'));
+                  },
+                  { once: true },
+                );
+              });
+            },
+          }),
+          ctx.step('second', { input: null, schema: z.string(), run: () => 'done' }),
+        ]);
+        return 'done';
+      }),
+      options(),
+    ),
+  ).rejects.toBeInstanceOf(CheckpointError);
+  const saved = await readRun({ stateDir, runId: 'run' });
+  // The run controller, not a map, aborted this scope.
+  expect(saved.steps['first']).toMatchObject({
+    status: 'cancelled',
+    error: 'Workflow cancelled.',
+    cancelledBy: null,
+  });
+  expect(saved.status).toBe('failed');
+});
+
 it('does not return a settled outcome when its checkpoint cannot be committed', async () => {
   const original = new Error('domain failure before settlement');
   const action = vi.fn(() => {
@@ -494,4 +537,26 @@ it('does not return a settled outcome when its checkpoint cannot be committed', 
   expect(String(error)).toContain('ENOSPC');
   expect(action).toHaveBeenCalledTimes(1);
   expect((await readRun(options())).steps['effect']?.status).toBe('running');
+});
+
+it('preserves a mapper body failure when saving its settled outcome also fails', async () => {
+  const original = new Error('mapper rejected');
+  vi.mocked(store.writeRun).mockImplementation((directory, record) =>
+    record.maps?.['items']?.items[0]?.status === 'completed'
+      ? Promise.reject(ioError('ENOSPC'))
+      : actualStore.writeRun(directory, record),
+  );
+  const error: unknown = await runWorkflow(
+    workflow(async (ctx) => {
+      await ctx.map([0], 1, () => Promise.reject(original), { onError: 'settle', id: 'items' });
+      return 'unreachable';
+    }),
+    options(),
+  ).catch((error: unknown) => error);
+  expect(error).toBeInstanceOf(AggregateError);
+  if (!(error instanceof AggregateError)) throw error;
+  expect(error.cause).toBe(original);
+  expect(error.errors[0]).toBe(original);
+  expect(error.errors.slice(1)).toEqual([expect.any(CheckpointError), expect.any(CheckpointError)]);
+  expect((await readRun(options())).maps?.['items']?.items[0]?.status).toBe('running');
 });

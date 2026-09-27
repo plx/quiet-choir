@@ -102,7 +102,7 @@ Put flags after the command name, for example `workflow inspect first --json`.
 | 0    | Success. `inspect` also exits 0 for `failed` and `running` records: check `.status`. Misplaced flags between `workflow` and its command can print help and exit 0.                                                                                                   |
 | 1    | Type errors, nonexistent FILE path, invalid run ID, existing/missing/locked run, incompatible resume, changed input, or workflow/step failure. Read stderr to distinguish them. An invalid run ID is checked after module import, so top-level code has already run. |
 | 2    | Flag parse errors, invalid `--input` JSON, omitted FILE argument, `--resume` without `--run-id`, non-TypeScript or `.d.ts` entrypoints, or configuration stubs.                                                                                                      |
-| 130  | SIGINT/SIGTERM during execution. The runner aborts, drains, and saves `failed` before exiting when storage is available; a storage failure can leave an older record.                                                                                                |
+| 130  | SIGINT/SIGTERM during execution. The runner aborts, drains, and saves `cancelled` before exiting when storage is available; a storage failure can leave an older record.                                                                                             |
 
 `configuration get/set/doctor` are stubs, not a configuration system. See
 [durability](durability.md) before recovery and [inspection](inspection.md) for saved status.

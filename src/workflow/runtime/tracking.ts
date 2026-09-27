@@ -21,11 +21,19 @@ class OperationPromise<T> extends Promise<T> {
 
 /** Tracks owned work without treating internal drain handlers as user error handling. @internal */
 export class OperationTracker {
-  private readonly pending = new Set<Promise<void>>();
-  private readonly failures: { id: string; promise: OperationPromise<unknown>; error: unknown }[] =
-    [];
+  private readonly pending = new Map<Promise<void>, readonly object[]>();
+  private readonly failures: {
+    id: string;
+    promise: OperationPromise<unknown>;
+    error: unknown;
+    owners: readonly object[];
+  }[] = [];
 
-  public launch<T>(id: string, work: () => T | PromiseLike<T>): Promise<T> {
+  public launch<T>(
+    id: string,
+    work: () => T | PromiseLike<T>,
+    owners: readonly object[] = [],
+  ): Promise<T> {
     const promise = new OperationPromise<T>((resolve) => {
       resolve(work());
     });
@@ -35,25 +43,32 @@ export class OperationTracker {
       },
       (error) => {
         this.pending.delete(done);
-        this.failures.push({ id, promise, error });
+        this.failures.push({ id, promise, error, owners });
       },
     );
-    this.pending.add(done);
+    this.pending.set(done, owners);
     return promise;
   }
 
   /** Waits until no owned work is pending after the microtask queue has fully flushed. */
-  public async drain(): Promise<void> {
+  public async drain(owner?: object): Promise<void> {
+    const owned = (): Promise<void>[] =>
+      [...this.pending]
+        .filter(([, owners]) => owner === undefined || owners.includes(owner))
+        .map(([promise]) => promise);
     for (;;) {
-      while (this.pending.size > 0) await Promise.all([...this.pending]);
+      for (let pending = owned(); pending.length; pending = owned()) await Promise.all(pending);
       // A macrotask yield lets pure-microtask continuation chains launch their next operation.
       await new Promise<void>((resolve) => setImmediate(resolve));
-      if (this.pending.size === 0) return;
+      if (!owned().length) return;
     }
   }
 
-  public assertObserved(): void {
-    const failure = this.failures.find((failure) => !failure.promise.observed);
+  public assertObserved(owner?: object): void {
+    const failure = this.failures.find(
+      (failure) =>
+        !failure.promise.observed && (owner === undefined || failure.owners.includes(owner)),
+    );
     if (failure)
       throw new Error(
         `Unawaited workflow operation ${JSON.stringify(failure.id)} failed: ${failure.error instanceof Error ? failure.error.message : String(failure.error)}; await all workflow operations.`,

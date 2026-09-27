@@ -261,11 +261,16 @@ it.each(['external', 'sibling'] as const)('never settles %s cancellation', async
         },
       });
     if (origin === 'sibling')
-      await ctx.map([0, 1], 2, async (index) => {
-        if (index === 0) return waiting();
-        await ready;
-        throw new Error('sibling failed');
-      });
+      await ctx.map(
+        [0, 1],
+        2,
+        async (index) => {
+          if (index === 0) return waiting();
+          await ready;
+          throw new Error('sibling failed');
+        },
+        { onError: 'abort' },
+      );
     else await waiting();
     return 'never';
   });
@@ -277,7 +282,7 @@ it.each(['external', 'sibling'] as const)('never settles %s cancellation', async
   if (origin === 'external') controller.abort(new Error('cancelled'));
   await failed;
   const step = (await readRun(options())).steps['waiting'];
-  expect(step).toMatchObject({ status: 'failed', attempts: 1 });
+  expect(step).toMatchObject({ status: 'cancelled', attempts: 1 });
   expect(step?.settledError).toBeUndefined();
 });
 
@@ -309,17 +314,18 @@ it('records a signal-driven failure as cancelled even when the effect rejects wi
     return 'never';
   });
   const pending = runWorkflow(definition, { ...options(), signal: controller.signal });
-  const failed = expect(pending).rejects.toThrow('stopped');
+  // A run interrupt rejects with its own reason; the plain effect error stays diagnostic cause.
+  const failed = expect(pending).rejects.toThrow('cancelled');
   await ready;
   controller.abort(new Error('cancelled'));
   await failed;
   const step = (await readRun(options())).steps['waiting'];
-  expect(step).toMatchObject({ status: 'failed' });
+  expect(step).toMatchObject({ status: 'cancelled' });
   expect(step?.settledError).toBeUndefined();
   expect(step?.attemptHistory?.at(-1)).toMatchObject({ errorKind: 'cancelled' });
 });
 
-it('does not settle an AbortError even when the run signal was not aborted', async () => {
+it('fails without settling an AbortError when the run signal was not aborted', async () => {
   const result = runWorkflow(
     workflow(async (ctx) => {
       await ctx.step('cancel', {
@@ -335,7 +341,19 @@ it('does not settle an AbortError even when the run signal was not aborted', asy
     options(),
   );
   await expect(result).rejects.toThrow('cancelled');
-  expect((await readRun(options())).steps['cancel']?.status).toBe('failed');
+  const saved = await readRun(options());
+  // No scope was cancelled: keep the callback's own error, but never retry or settle it.
+  expect(saved.steps['cancel']).toMatchObject({ status: 'failed', error: 'cancelled' });
+  expect(saved.steps['cancel']?.settledError).toBeUndefined();
+  expect(saved.steps['cancel']?.cancelledBy).toBeUndefined();
+  expect(saved.steps['cancel']?.attemptHistory?.at(-1)).toMatchObject({
+    status: 'failed',
+    errorKind: 'cancelled',
+  });
+  expect(saved).toMatchObject({
+    status: 'failed',
+    rootCause: { stepId: 'cancel', error: 'cancelled' },
+  });
 });
 
 it('settles a domain error that reuses the CheckpointError class as its own outcome', async () => {

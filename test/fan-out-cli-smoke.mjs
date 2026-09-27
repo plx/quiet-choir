@@ -1,0 +1,218 @@
+import assert from 'node:assert/strict';
+import { spawn, spawnSync } from 'node:child_process';
+import {
+  mkdtempSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+  existsSync,
+} from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { setTimeout as delay } from 'node:timers/promises';
+
+const root = dirname(dirname(fileURLToPath(import.meta.url)));
+const fixture = mkdtempSync(join(tmpdir(), 'quiet-choir-fanout-cli-'));
+const state = join(fixture, 'state');
+const file = join(fixture, 'fanout.ts');
+const binaryDirectory = join(fixture, 'bin');
+const entry = join(root, 'bin/run.js');
+const env = { ...process.env, PATH: `${binaryDirectory}:${process.env.PATH}` };
+const cli = (...args) =>
+  spawnSync(process.execPath, [entry, 'workflow', ...args], {
+    cwd: fixture,
+    env,
+    encoding: 'utf8',
+    timeout: 30_000,
+  });
+const checkpoint = (id) => JSON.parse(readFileSync(join(state, `${id}.json`), 'utf8'));
+const lines = (prefix, name) =>
+  readFileSync(join(fixture, `${prefix}-${name}.txt`), 'utf8')
+    .trim()
+    .split('\n').length;
+async function interrupt(id, sleep) {
+  const child = spawn(
+    process.execPath,
+    [
+      entry,
+      'workflow',
+      'execute',
+      file,
+      '--run-id',
+      id,
+      '--state-dir',
+      state,
+      '--input',
+      JSON.stringify({ prefix: id, sleep }),
+    ],
+    { cwd: fixture, env },
+  );
+  let stderr = '';
+  child.stderr.on('data', (chunk) => {
+    stderr += chunk;
+  });
+  child.stdout.resume();
+  const exited = new Promise((resolve, reject) => {
+    child.once('error', reject);
+    child.once('exit', (code, signal) => resolve({ code, signal }));
+  });
+  const deadline = Date.now() + 20_000;
+  try {
+    for (;;) {
+      const path = join(state, `${id}.json`);
+      if (existsSync(path)) {
+        const record = checkpoint(id);
+        if (
+          sleep
+            ? record.steps.nap?.status === 'running'
+            : record.steps.lint?.status === 'running' && existsSync(join(fixture, `${id}-lint.txt`))
+        )
+          break;
+      }
+      if (child.exitCode !== null) throw new Error(`CLI exited before interruption: ${stderr}`);
+      if (Date.now() > deadline) throw new Error('CLI did not start its interrupt target');
+      await delay(20);
+    }
+    assert.equal(existsSync(join(state, `${id}.json.lock`)), true);
+    child.kill('SIGINT');
+    const result = await Promise.race([
+      exited,
+      delay(10_000, undefined, { ref: false }).then(() => {
+        throw new Error('CLI did not exit after SIGINT');
+      }),
+    ]);
+    assert.equal(result.code, 130, stderr);
+    assert.match(stderr, /Workflow interrupted/);
+    const record = checkpoint(id);
+    assert.equal(record.status, 'cancelled');
+    assert.deepEqual(record.rootCause, { stepId: null, error: 'Workflow interrupted.' });
+    assert.equal(record.steps[sleep ? 'nap' : 'lint'].status, 'cancelled');
+    assert.equal(record.steps[sleep ? 'nap' : 'lint'].cancelledBy, null);
+    assert.equal(existsSync(join(state, `${id}.json.lock`)), false);
+  } finally {
+    if (child.exitCode === null && child.signalCode === null) {
+      child.kill('SIGTERM');
+      await exited;
+    }
+  }
+}
+try {
+  mkdirSync(binaryDirectory);
+  mkdirSync(join(fixture, 'node_modules'));
+  symlinkSync(root, join(fixture, 'node_modules/quiet-choir'));
+  symlinkSync(join(root, 'node_modules/@types'), join(fixture, 'node_modules/@types'));
+  writeFileSync(join(fixture, 'package.json'), '{"type":"module"}');
+  writeFileSync(
+    join(binaryDirectory, 'claude'),
+    `#!/usr/bin/env node
+import fs from 'node:fs';
+let prompt = '';
+process.stdin.on('data', chunk => prompt += chunk);
+process.stdin.on('end', () => {
+  const {prefix,name} = JSON.parse(prompt);
+  fs.appendFileSync(prefix + '-calls.txt', name + '\\n');
+  const ok = () => { console.log(JSON.stringify({type:'result',subtype:'success',is_error:false,result:name})); };
+  process.on('SIGTERM', () => { fs.appendFileSync(prefix+'-signals.txt', name+'\\n'); process.exit(143); });
+  if (name === 'ci') {
+    if (fs.existsSync(prefix+'-healed')) return ok();
+    const timer = setInterval(() => {
+      if (['lint','tests'].every(writer => fs.existsSync(prefix+'-'+writer+'.txt') && fs.readFileSync(prefix+'-'+writer+'.txt','utf8').split('\\n').length > 2)) {
+        clearInterval(timer);
+        console.log(JSON.stringify({type:'result',subtype:'error_during_execution',is_error:true,errors:['CI failed']}));
+        process.exitCode=1;
+      }
+    },5);
+  } else {
+    let count = 0;
+    const timer = setInterval(() => {
+      fs.appendFileSync(prefix+'-'+name+'.txt', 'line\\n');
+      if (++count === 10) { clearInterval(timer); ok(); }
+    },60);
+  }
+});
+`,
+    { mode: 0o700 },
+  );
+  writeFileSync(
+    file,
+    `import { defineWorkflow, z } from 'quiet-choir';
+export default defineWorkflow({name:'fanout-cli',version:'1',input:z.object({prefix:z.string(),policy:z.enum(['drain','abort']).default('drain'),sleep:z.boolean().default(false)}),output:z.array(z.string()),async run(ctx,input) {
+  if(input.sleep) { await ctx.sleep('nap',10000); return []; }
+  return ctx.map(['ci','lint','tests'],3,async(name)=>(await ctx.claude.text(name,{prompt:JSON.stringify({prefix:input.prefix,name})})).output,{onError:input.policy});
+}});
+`,
+  );
+  const first = cli(
+    'execute',
+    file,
+    '--run-id',
+    'drain',
+    '--state-dir',
+    state,
+    '--input',
+    '{"prefix":"drain"}',
+  );
+  assert.equal(first.status, 1, first.stderr);
+  assert.match(first.stderr, /CI failed/);
+  const saved = checkpoint('drain');
+  assert.equal(saved.rootCause.stepId, 'ci');
+  assert.match(saved.rootCause.error, /CI failed/);
+  assert.equal(saved.steps.ci.status, 'failed');
+  for (const name of ['lint', 'tests']) {
+    assert.equal(lines('drain', name), 10);
+    assert.equal(saved.steps[name].status, 'completed');
+  }
+  assert.equal(existsSync(join(fixture, 'drain-signals.txt')), false);
+  writeFileSync(join(fixture, 'drain-healed'), 'yes');
+  const resumed = cli(
+    'execute',
+    file,
+    '--run-id',
+    'drain',
+    '--state-dir',
+    state,
+    '--resume',
+    '--json',
+  );
+  assert.equal(resumed.status, 0, resumed.stderr);
+  assert.deepEqual(JSON.parse(resumed.stdout).output, ['ci', 'lint', 'tests']);
+  for (const name of ['lint', 'tests']) assert.equal(lines('drain', name), 10);
+  assert.deepEqual(
+    readFileSync(join(fixture, 'drain-calls.txt'), 'utf8').trim().split('\n').sort(),
+    ['ci', 'ci', 'lint', 'tests'],
+  );
+
+  const aborted = cli(
+    'execute',
+    file,
+    '--run-id',
+    'abort',
+    '--state-dir',
+    state,
+    '--input',
+    '{"prefix":"abort","policy":"abort"}',
+  );
+  assert.equal(aborted.status, 1, aborted.stderr);
+  const interrupted = checkpoint('abort');
+  assert.equal(interrupted.status, 'failed');
+  assert.equal(interrupted.rootCause.stepId, 'ci');
+  for (const name of ['lint', 'tests']) {
+    assert.equal(interrupted.steps[name].status, 'cancelled');
+    assert.equal(interrupted.steps[name].cancelledBy, 'ci');
+    assert.doesNotMatch(interrupted.steps[name].error, /CI failed/);
+    assert.ok(lines('abort', name) < 10);
+  }
+  const inspected = cli('inspect', 'abort', '--state-dir', state);
+  assert.equal(inspected.status, 0, inspected.stderr);
+  assert.match(inspected.stdout, /Root cause \(ci\):.*CI failed/);
+  await interrupt('interrupt-agent', false);
+  await interrupt('interrupt-sleep', true);
+  console.log(
+    'PASS CLI drain preserves 10-line writers across resume; scoped abort and SIGINT persist cancellation/rootCause',
+  );
+} finally {
+  rmSync(fixture, { recursive: true, force: true });
+}

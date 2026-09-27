@@ -330,7 +330,7 @@ describe('durable TypeScript workflows', () => {
     expect(after.steps['wait']?.attempts).toBe(2);
   });
 
-  it('cancels siblings and retains their completed checkpoints on an outer failure', async () => {
+  it('drains siblings and retains their completed checkpoints on an outer failure', async () => {
     const options = await setup();
     let settled = false;
     let markStarted: (() => void) | undefined;
@@ -359,7 +359,7 @@ describe('durable TypeScript workflows', () => {
     expect(settled).toBe(true);
     const record = await readRun({ stateDir: options.stateDir, runId: options.runId });
     expect(record.steps['done']?.status).toBe('completed');
-    expect(record.steps['pending']?.status).toBe('failed');
+    expect(record.steps['pending']?.status).toBe('completed');
     expect(record.status).toBe('failed');
   });
 
@@ -468,6 +468,8 @@ describe('durable TypeScript workflows', () => {
         signal: AbortSignal.abort(new Error('cancelled')),
       }),
     ).rejects.toThrow('cancelled');
-    expect((await readRun({ stateDir: options.stateDir, runId: 'abort' })).status).toBe('failed');
+    expect((await readRun({ stateDir: options.stateDir, runId: 'abort' })).status).toBe(
+      'cancelled',
+    );
   });
 });
