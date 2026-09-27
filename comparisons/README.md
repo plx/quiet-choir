@@ -9,7 +9,7 @@ TypeScript ports. Batch 01 contains all 26 workflows from
 
 Batch 01 is the active regression suite for the current built runtime, not a frozen set of ports.
 Its upstream originals remain immutable. The initial ports targeted `a6a7b82`; `apiSnapshot` now
-records the scoped-ID API at `bae78f7` used by bug-hunt. Other ports retain supported legacy
+records the scoped-ID API at `5b37174` used by bug-hunt. Other ports retain supported legacy
 overloads. The recorded model-file hash belongs to that commit; regression tests use the current
 built checkout, including `readRun({ runId, stateDir })` in the recovery verifier.
 
