@@ -3,11 +3,16 @@ import { tmpdir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 
 import type { Harness, HarnessRequest, HarnessResponse } from '../workflow/runtime/model.js';
+import type { ExecutionPolicy } from '../workflow/runtime/policy.js';
 import { validateAgentOptions } from '../workflow/runtime/options.js';
 import { HarnessError } from '../workflow/runtime/harness-error.js';
 import { prepareCodexSchema } from './codex-schema.js';
 import { runProcess } from './process.js';
 import { parseClaude, parseCodex } from './protocol.js';
+
+const defaultTimeoutMs = 900_000;
+const defaultMaxTurns = 25;
+const defaultMaxBudgetUsd = 0.25;
 
 /** Executable overrides and resource limits for headless harness processes. */
 export interface CliHarnessOptions {
@@ -46,12 +51,28 @@ export class CliHarness implements Harness {
     this.killGraceMs = timerDuration(options.killGraceMs ?? 250, 'killGraceMs');
   }
 
+  /** Adapter-owned defaults exposed to the runtime for accurate per-attempt policy records. */
+  public policyDefaults(provider: HarnessRequest['provider']): ExecutionPolicy {
+    return {
+      timeoutMs: defaultTimeoutMs,
+      maxOutputBytes: this.maxOutputBytes,
+      killGraceMs: this.killGraceMs,
+      binary:
+        provider === 'claude'
+          ? (this.options.claudeBinary ?? 'claude')
+          : (this.options.codexBinary ?? 'codex'),
+      ...(provider === 'claude'
+        ? { maxTurns: defaultMaxTurns, maxBudgetUsd: defaultMaxBudgetUsd }
+        : {}),
+    };
+  }
+
   /** Execute a fresh headless session, rejecting cancellation, limits, and protocol failures. */
   public async invoke(request: HarnessRequest, signal: AbortSignal): Promise<HarnessResponse> {
     signal.throwIfAborted();
     if (!isAbsolute(request.cwd)) throw new Error('Harness cwd must be an absolute path.');
     validateAgentOptions(request.provider, request.options);
-    const timeoutMs = request.options.timeoutMs ?? 120_000;
+    const timeoutMs = request.options.timeoutMs ?? defaultTimeoutMs;
     const args: string[] = [];
     let binary: string;
     let schemaDirectory: string | undefined;
@@ -59,8 +80,8 @@ export class CliHarness implements Harness {
     try {
       if (request.provider === 'claude') {
         binary = this.options.claudeBinary ?? 'claude';
-        const maxTurns = request.options.maxTurns ?? 3;
-        const budget = request.options.maxBudgetUsd ?? 0.25;
+        const maxTurns = request.options.maxTurns ?? defaultMaxTurns;
+        const budget = request.options.maxBudgetUsd ?? defaultMaxBudgetUsd;
         args.push(
           '--print',
           '--output-format',

@@ -9,6 +9,7 @@ import { CliHarness } from '../../harnesses/cli.js';
 import { WorkflowExecutor } from '../../workflow/loader/executor.js';
 import type { JsonValue } from '../../workflow/runtime/model.js';
 import { analyzeTypecheckEntrypoint } from '../../workflow/typecheck/plan.js';
+import { validatePolicy, type PolicyOverride } from '../../workflow/runtime/policy.js';
 
 interface WorkflowExecuteArgs {
   readonly file: string;
@@ -20,6 +21,9 @@ interface WorkflowExecuteFlags {
   readonly resume: boolean | undefined;
   readonly 'state-dir': string;
   readonly json: boolean | undefined;
+  readonly policy: string[] | undefined;
+  readonly 'policy-reset': boolean | undefined;
+  readonly 'allow-model-override': boolean | undefined;
 }
 
 export default class WorkflowExecute extends BaseCommand {
@@ -45,6 +49,16 @@ export default class WorkflowExecute extends BaseCommand {
       default: '.quiet-choir/runs',
     }),
     json: Flags.boolean({ description: 'Print the completed run record as JSON', default: false }),
+    policy: Flags.string({
+      description: 'JSON policy override; repeat for ordered rules, saved across resumes',
+      multiple: true,
+    }),
+    'policy-reset': Flags.boolean({
+      description: 'Clear saved policy overrides before applying new rules',
+    }),
+    'allow-model-override': Flags.boolean({
+      description: 'Authorize model/effort overrides for unfinished calls',
+    }),
   };
 
   public static override readonly summary =
@@ -54,6 +68,15 @@ export default class WorkflowExecute extends BaseCommand {
     const { args, flags } = await this.parse(WorkflowExecute);
     if (flags.resume && flags['run-id'] === undefined) {
       this.error('--resume requires --run-id.', { exit: 2 });
+    }
+    let policy: PolicyOverride[];
+    try {
+      policy = validatePolicy(
+        (flags.policy ?? []).map((value) => JSON.parse(value) as unknown),
+        flags['allow-model-override'] ?? false,
+      );
+    } catch (error) {
+      this.error(error instanceof Error ? error.message : 'Invalid --policy JSON.', { exit: 2 });
     }
     const analysis = analyzeTypecheckEntrypoint(args.file, process.cwd());
     if (!analysis.ok) {
@@ -90,6 +113,11 @@ export default class WorkflowExecute extends BaseCommand {
         stateDir: resolve(flags['state-dir']),
         cwd: process.cwd(),
         resume: flags.resume ?? false,
+        policy,
+        ...(flags['policy-reset'] === undefined ? {} : { policyReset: flags['policy-reset'] }),
+        ...(flags['allow-model-override'] === undefined
+          ? {}
+          : { allowModelOverride: flags['allow-model-override'] }),
         ...(input === undefined ? {} : { input }),
       });
       if (!result.ok) {
