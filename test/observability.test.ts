@@ -327,9 +327,10 @@ it('records cancellation separately from the root agent failure and retains inte
       ctx.claude.text('ask', { prompt: String(n) }),
     ),
   );
-  await expect(runWorkflow(definition, { ...options(), harness: { invoke } })).rejects.toThrow(
-    'Step agents/1/ask (claude) failed:',
-  );
+  // The barrier needs all three siblings admitted, including on one-slot CI defaults.
+  await expect(
+    runWorkflow(definition, { ...options(), agentLimit: 3, harness: { invoke } }),
+  ).rejects.toThrow('Step agents/1/ask (claude) failed:');
   const first = await readRun(options());
   expect(first.rootCause?.stepId).toBe('agents/1/ask');
   expect(first.steps['agents/0/ask']).toMatchObject({
