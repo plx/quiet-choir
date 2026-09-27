@@ -64,7 +64,11 @@ export interface DoctorOptions {
 export interface DoctorReport {
   /** All requested checks passed. */
   readonly ok: boolean;
-  /** Whether every attempted exact-argv probe proved a zero-inference rejection. */
+  /**
+   * True only when every requested harness's exact-argv probe actually ran and proved a
+   * zero-spend rejection; a skipped probe (missing executable, version drift, or an
+   * untested version) counts as unverified, not proven.
+   */
   readonly zeroInference: boolean;
   /** Five checks per requested harness. */
   readonly checks: readonly DoctorCheck[];
@@ -191,12 +195,12 @@ export async function probeHarnessContracts(options: DoctorOptions = {}): Promis
     let exact: ProcessResult | undefined;
     let rejection = '';
     await check('argv', async () => {
+      const previousZeroInference = zeroInference;
+      zeroInference = false;
       if (!checks.find((entry) => entry.provider === provider && entry.check === 'version')?.ok)
         throw new Error(
           'Exact-argv probe requires a contract-tested CLI version without warnings.',
         );
-      const previousZeroInference = zeroInference;
-      zeroInference = false;
       const directory = await mkdtemp(join(tmpdir(), 'quiet-choir-doctor-'));
       try {
         const image = join(directory, 'probe.png');

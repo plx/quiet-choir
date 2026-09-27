@@ -173,6 +173,7 @@ it('reports version drift and skips the potentially unsafe inference probe', asy
     codexHome: directory,
   });
   expect(report.ok).toBe(false);
+  expect(report.zeroInference).toBe(false);
   expect(report.checks.find((check) => check.check === 'argv')?.message).toContain(
     'contract-tested',
   );
@@ -197,6 +198,7 @@ it('bounds missing executables, timeouts, invalid deadlines, and cancellation', 
     codexHome: directory,
   });
   expect(missing.ok).toBe(false);
+  expect(missing.zeroInference).toBe(false);
   expect(missing.checks).toHaveLength(5);
   const timeout = await probeHarnessContracts({
     harness: 'codex',
