@@ -385,7 +385,7 @@ it('re-finalizes an output-validation failure with no repeated effects and recor
 });
 
 it('clears stale output before re-finalizing, so a failed re-finalization reports null output', async () => {
-  const definition = workflow(async () => 'done');
+  const definition = workflow(() => Promise.resolve('done'));
   await runWorkflow(definition, options());
   const before = await readRun(options());
   expect(before.status).toBe('completed');
