@@ -115,7 +115,9 @@ agent values include `output`, `sessionId`, and `usage`. The final failure, afte
 retries, is saved as `settled-failed`. Replay returns that exact failure without another callback or
 harness call. `onError` is semantic identity: changing it on a terminal step requires a new
 run/fork. Cancellation (including a failing map sibling) always rejects and stays retryable;
-authoring errors and checkpoint failures also reject instead of becoming fallback data.
+authoring errors, configuration errors (a missing harness, or an adapter's pre-launch
+`ConfigurationError` such as a Claude schema without an object root), and checkpoint failures also
+reject instead of becoming fallback data.
 
 For best-effort fan-out, use `onError: 'return'` inside `ctx.map`, then branch on each `ok` value.
 For transient retries, use one step ID with `retry` rather than a loop of throwing `ask/0`, `ask/1`

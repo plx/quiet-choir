@@ -6,7 +6,8 @@ import type { Harness, HarnessRequest, HarnessResponse } from '../workflow/runti
 import type { ExecutionPolicy } from '../workflow/runtime/policy.js';
 import { validateAgentOptions } from '../workflow/runtime/options.js';
 import { HarnessError } from '../workflow/runtime/harness-error.js';
-import { prepareCodexSchema } from './codex-schema.js';
+import { ConfigurationError } from '../workflow/runtime/configuration-error.js';
+import { prepareCodexSchema, type CodexSchemaPlan } from './codex-schema.js';
 import { runProcess } from './process.js';
 import { parseClaude, parseCodex } from './protocol.js';
 
@@ -36,6 +37,12 @@ function timerDuration(value: number, name: string): number {
   positive(value, name);
   if (value > 2_147_483_647) throw new Error(`${name} must not exceed 2147483647ms.`);
   return value;
+}
+
+function configurationError(error: unknown): ConfigurationError {
+  return new ConfigurationError(error instanceof Error ? error.message : String(error), {
+    cause: error,
+  });
 }
 
 /** Invoke installed Claude Code and Codex CLIs with subscription authentication and bounded processes. */
@@ -70,8 +77,14 @@ export class CliHarness implements Harness {
   /** Execute a fresh headless session, rejecting cancellation, limits, and protocol failures. */
   public async invoke(request: HarnessRequest, signal: AbortSignal): Promise<HarnessResponse> {
     signal.throwIfAborted();
-    if (!isAbsolute(request.cwd)) throw new Error('Harness cwd must be an absolute path.');
-    validateAgentOptions(request.provider, request.options);
+    // Validation before launch rejects as configuration, never as a settled effect failure.
+    if (!isAbsolute(request.cwd))
+      throw new ConfigurationError('Harness cwd must be an absolute path.');
+    try {
+      validateAgentOptions(request.provider, request.options);
+    } catch (error) {
+      throw configurationError(error);
+    }
     const timeoutMs = request.options.timeoutMs ?? defaultTimeoutMs;
     const args: string[] = [];
     let binary: string;
@@ -105,7 +118,7 @@ export class CliHarness implements Harness {
             Array.isArray(request.outputSchema) ||
             request.outputSchema['type'] !== 'object'
           )
-            throw new Error(
+            throw new ConfigurationError(
               'Claude structured output requires an object root at $; wrap the schema in z.object({ value: ... }).',
             );
           args.push('--json-schema', JSON.stringify(request.outputSchema));
@@ -131,10 +144,15 @@ export class CliHarness implements Harness {
         }
         if (request.options.skipGitRepoCheck === true) args.push('--skip-git-repo-check');
         if (request.outputSchema !== null) {
-          const plan = prepareCodexSchema(
-            request.outputSchema,
-            request.options.structuredOutput ?? 'compat',
-          );
+          let plan: CodexSchemaPlan;
+          try {
+            plan = prepareCodexSchema(
+              request.outputSchema,
+              request.options.structuredOutput ?? 'compat',
+            );
+          } catch (error) {
+            throw configurationError(error);
+          }
           decode = plan.decode;
           schemaDirectory = await mkdtemp(join(tmpdir(), 'quiet-choir-schema-'));
           const schemaPath = join(schemaDirectory, 'output.json');

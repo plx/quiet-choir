@@ -108,8 +108,10 @@ The core owns retries and removes `retry` and `onError` from the adapter request
 The adapter owns one fresh invocation, not retries, run locks, or checkpoint storage. Missing usage
 measurements and native IDs must be `null`, never `undefined`. An omitted usage field fails the step
 after the call returns. Do not treat a process's zero exit status as sufficient if its protocol
-reports failure. Exercise adapters with fake executables and protocol fixtures before making real
-calls.
+reports failure. Throw the exported `ConfigurationError` for validation that fails before launch
+(for example, a schema the provider cannot enforce): it rejects even under `onError: 'return'` and
+is never retried, so a corrected call runs live on resume. Other thrown errors are effect failures.
+Exercise adapters with fake executables and protocol fixtures before making real calls.
 
 The provider union and `ctx.claude`/`ctx.codex` clients are currently fixed. A custom `Harness` can
 replace their transport/integration; adding `ctx.someOtherProvider` requires an explicit core API

@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { CliHarness } from '../src/harnesses/cli.js';
+import { ConfigurationError } from '../src/workflow/runtime/configuration-error.js';
 import {
   parseClaude as classifyClaude,
   parseCodex as classifyCodex,
@@ -453,5 +454,25 @@ describe('headless CLI adapter', () => {
         signal,
       ),
     ).rejects.toThrow('maxBudgetUsd');
+  });
+
+  it('signals pre-launch validation failures as configuration errors', async () => {
+    const harness = new CliHarness({
+      claudeBinary: '/missing/claude',
+      codexBinary: '/missing/codex',
+    });
+    const tuple = { type: 'array', prefixItems: [{ type: 'string' }] };
+    for (const invalid of [
+      request('claude', 'relative'),
+      { ...request('claude'), options: { prompt: '', timeoutMs: 0 } },
+      { ...request('claude'), outputSchema: { type: 'array', items: { type: 'string' } } },
+      { ...request('codex'), outputSchema: tuple },
+    ]) {
+      await expect(harness.invoke(invalid, signal)).rejects.toBeInstanceOf(ConfigurationError);
+    }
+    // Launch failures after validation remain ordinary effect failures.
+    await expect(harness.invoke(request('claude'), signal)).rejects.not.toBeInstanceOf(
+      ConfigurationError,
+    );
   });
 });

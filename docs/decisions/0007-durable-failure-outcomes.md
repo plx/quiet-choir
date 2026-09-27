@@ -21,8 +21,12 @@ provides the deliberate way to reconsider a saved failure and its downstream dec
 
 Cancellation is not a settled outcome. External abort, sibling cancellation, and typed cancellation
 errors reject and leave retryable failures. Authoring/identity errors occur before invocation and
-reject. Checkpoint failures also reject; no uncommitted outcome is returned to the body, and domain
-error precedence remains as specified in ADR 0003.
+reject. Configuration failures reject too, leaving the step unfinished so a corrected configuration
+runs it live on resume: a missing harness, and any validation a harness adapter performs before
+launch. Adapters signal the latter with the exported `ConfigurationError` (`CliHarness` does so for
+a relative `cwd`, invalid options, and output schemas its provider cannot enforce); any other
+adapter error is an ordinary effect failure. Checkpoint failures also reject; no uncommitted outcome
+is returned to the body, and domain error precedence remains as specified in ADR 0003.
 
 The existing runtime retry loop accepts `retry.on` categories. Omission retains opt-in retry of all
 ordinary effect errors; an empty list disables retries. Filters and attempt limits remain policy,

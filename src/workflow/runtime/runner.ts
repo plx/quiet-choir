@@ -33,19 +33,7 @@ import { OperationTracker } from './tracking.js';
 import { optionData, validateAgentOptions } from './options.js';
 import { HarnessError } from './harness-error.js';
 import { stepError } from './step-error.js';
-
-/**
- * A workflow misconfiguration (for example, a missing harness adapter) discovered while
- * starting an effect. Never a settled outcome or a retry target: it always rejects, the same
- * way cancellation and checkpoint-write failures do, since supplying the missing configuration
- * on resume must still be able to run the effect live.
- */
-export class ConfigurationError extends Error {
-  public constructor(message: string) {
-    super(message);
-    this.name = 'ConfigurationError';
-  }
-}
+import { ConfigurationError } from './configuration-error.js';
 import { digest, jsonValue } from './json.js';
 import type {
   AgentClient,
@@ -72,6 +60,8 @@ import {
   type StepRecord,
   type AttemptRecord,
 } from './store.js';
+
+export { ConfigurationError } from './configuration-error.js';
 
 /** A lightweight notification emitted after the associated checkpoint is persisted. */
 export interface WorkflowEvent {

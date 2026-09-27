@@ -20,7 +20,9 @@ serialization, or locking should preserve these relationships, including on fail
 durability rationale is in [ADR 0002](../../../docs/decisions/0002-durable-external-workflows.md).
 
 A settled failure is a terminal branch decision, just like a completed result: identity and path
-checks must preserve it on replay and fork reuse. Cancellation, configuration (e.g. missing
-harness), and checkpoint-write failures never become fallback values. Retry filtering remains
-policy; retain every attempt's diagnostics. Do not infer handling from JavaScript error
-identity/cause chains. See [ADR 0007](../../../docs/decisions/0007-durable-failure-outcomes.md).
+checks must preserve it on replay and fork reuse. Cancellation, configuration, and checkpoint-write
+failures never become fallback values. Configuration failures are a missing harness or a
+`ConfigurationError` thrown by a harness adapter for validation that fails before launch. Retry
+filtering remains policy; retain every attempt's diagnostics. Do not infer handling from JavaScript
+error identity/cause chains. See
+[ADR 0007](../../../docs/decisions/0007-durable-failure-outcomes.md).

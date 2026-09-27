@@ -507,6 +507,39 @@ it('rejects a missing harness instead of settling it as a failed outcome', async
   expect(result.output).toBe('ok');
 });
 
+it('rejects adapter configuration failures instead of settling or retrying them', async () => {
+  const binary = join(stateDir, 'claude');
+  await writeFile(
+    binary,
+    `#!${process.execPath}\nprocess.stdout.write(JSON.stringify({type:'result',subtype:'success',result:'',structured_output:{answer:'fixed'}}));\n`,
+  );
+  await chmod(binary, 0o700);
+  const harness = new CliHarness({ claudeBinary: binary });
+  const calls = vi.spyOn(harness, 'invoke');
+  let schema: z.ZodType = z.array(z.string());
+  const definition = workflow(async (ctx) => {
+    const result = await ctx.claude.object('shape', {
+      prompt: 'p',
+      schema,
+      onError: 'return',
+      retry: { maxAttempts: 3, delayMs: 0 },
+    });
+    return result.ok ? JSON.stringify(result.value.output) : 'fallback';
+  });
+  await expect(runWorkflow(definition, { ...options(), harness })).rejects.toThrow(
+    'Claude structured output requires an object root',
+  );
+  expect(calls).toHaveBeenCalledTimes(1);
+  const step = (await readRun(options())).steps['shape'];
+  expect(step?.status).toBe('failed');
+  expect(step?.settledError).toBeUndefined();
+  schema = z.object({ answer: z.string() });
+  const result = await runWorkflow(definition, { ...options(), harness, resume: true });
+  expect(result.output).toBe('{"answer":"fixed"}');
+  expect(result.steps['shape']?.status).toBe('completed');
+  expect(calls).toHaveBeenCalledTimes(2);
+});
+
 it('rejects invalid local modes and retry filters before callbacks run', async () => {
   const action = vi.fn(() => null);
   for (const extra of [{ onError: 'ignore' }, { retry: { maxAttempts: 2, on: ['bogus'] } }]) {
