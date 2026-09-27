@@ -13,7 +13,7 @@ import {
   type RunRecord,
   type StepRecord,
 } from '../runtime/store.js';
-import type { AgentUsage } from '../runtime/model.js';
+import { summarizeUsage } from '../runtime/usage-summary.js';
 import type { RequestSummary, RunEvent, UsageSummary } from '../runtime/observability-model.js';
 
 /** Inspection states are derived; stale never overwrites the checkpoint status. @internal */
@@ -84,60 +84,6 @@ function stale(run: RunRecord, ownership: RunOwnership): boolean {
       ownership.owner?.state === 'dead' ||
       ownership.owner?.state === 'released')
   );
-}
-
-function usage(run: RunRecord): UsageSummary {
-  const attempts: (AgentUsage | null)[] = [];
-  for (const step of Object.values(run.steps)) {
-    if (step.reusedFrom) continue;
-    if (step.attemptHistory) {
-      for (let n = 1; n <= (step.legacyAttempts ?? 0); n++) {
-        if (step.kind === 'claude' || step.kind === 'codex') attempts.push(legacyUsage(step, n));
-      }
-      for (const attempt of step.attemptHistory) {
-        if (
-          attempt.request === null ||
-          (attempt.request === undefined && step.kind !== 'claude' && step.kind !== 'codex')
-        )
-          continue;
-        attempts.push(
-          attempt.usage === undefined ? legacyUsage(step, attempt.attempt) : attempt.usage,
-        );
-      }
-    } else if (step.kind === 'claude' || step.kind === 'codex') {
-      for (let n = 1; n <= step.attempts; n++) attempts.push(legacyUsage(step, n));
-    }
-  }
-  const sum = (field: keyof AgentUsage): number | null => {
-    const values = attempts.flatMap((value) => (value?.[field] == null ? [] : [value[field]]));
-    return values.length || !attempts.length ? values.reduce((a, b) => a + b, 0) : null;
-  };
-  return {
-    attempts: attempts.length,
-    incompleteAttempts: attempts.filter(
-      (value) => !value || Object.values(value).some((v) => v === null),
-    ).length,
-    inputTokens: sum('inputTokens'),
-    outputTokens: sum('outputTokens'),
-    costUsd: sum('costUsd'),
-  };
-}
-
-function legacyUsage(step: StepRecord, attempt: number): AgentUsage | null {
-  const failed = step.failedAttempts?.find((entry) => entry.attempt === attempt);
-  if (failed) return failed.usage;
-  if (attempt !== step.attempts || step.status !== 'completed') return null;
-  const output = step.output;
-  const value =
-    output && typeof output === 'object' && !Array.isArray(output) ? output['usage'] : null;
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-  const metric = (field: string) =>
-    typeof value[field] === 'number' && value[field] >= 0 ? value[field] : null;
-  return {
-    inputTokens: metric('inputTokens'),
-    outputTokens: metric('outputTokens'),
-    costUsd: metric('costUsd'),
-  };
 }
 
 /** No source import, lock acquisition, or checkpoint mutation. @internal */
@@ -247,7 +193,7 @@ export function summarizeRun(
     rootCause: run.rootCause ?? null,
     error: run.error,
     errorStack: run.errorStack ?? null,
-    usage: usage(run),
+    usage: summarizeUsage(run),
     recent,
     warnings: [
       ...(run.policyWarnings ?? []),

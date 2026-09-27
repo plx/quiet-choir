@@ -96,11 +96,14 @@ function responses(response, scenario, count) {
     response: {
       id,
       usage: {
-        input_tokens: 10,
-        input_tokens_details: { cached_tokens: 0 },
-        output_tokens: 3,
-        output_tokens_details: { reasoning_tokens: 0 },
-        total_tokens: 13,
+        input_tokens: scenario === 'codex-usage-success' ? 100 : 10,
+        input_tokens_details: {
+          cached_tokens: scenario === 'codex-usage-success' ? 40 : 0,
+          cache_write_tokens: scenario === 'codex-usage-success' ? 20 : 0,
+        },
+        output_tokens: scenario === 'codex-usage-success' ? 30 : 3,
+        output_tokens_details: { reasoning_tokens: scenario === 'codex-usage-success' ? 12 : 0 },
+        total_tokens: scenario === 'codex-usage-success' ? 130 : 13,
       },
     },
   });

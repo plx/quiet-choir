@@ -25,6 +25,8 @@ export interface ValidateWorkflowPlan extends ExecutionPlan {
 
 /** Plain-data instructions for starting or resuming a workflow. */
 export interface ExecuteWorkflowPlan extends ExecutionPlan {
+  readonly maxRunCostUsd?: number | null;
+  readonly maxRunAgentAttempts?: number | null;
   readonly progress?: boolean;
   readonly kind: 'workflow.execute';
   readonly harness?: HarnessSelection;

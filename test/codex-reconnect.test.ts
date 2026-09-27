@@ -36,7 +36,7 @@ it('accepts notices before and after a successful terminal turn and exposes warn
         { type: 'error', message: 'late notice' },
       ]),
     ),
-  ).toEqual({
+  ).toMatchObject({
     kind: 'success',
     response: {
       text: 'done',

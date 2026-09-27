@@ -1,0 +1,356 @@
+{
+  "nextWakeAt": null,
+  "seq": 3,
+  "engine": {
+    "quietChoir": "0.0.0",
+    "node": "v24.20.0"
+  },
+  "formatVersion": 7,
+  "sessionSalt": "1c94b15e-2231-41c8-ac17-f00023a17f48",
+  "executions": [
+    {
+      "n": 1,
+      "pid": 16052,
+      "startedAt": "2026-09-27T13:03:35.039Z",
+      "endedAt": "2026-09-27T13:03:35.078Z",
+      "outcome": "failed",
+      "error": "fixture tail",
+      "errorStack": "Error: fixture tail\n    at Object.run (file:///fixture/.context/create-pre-usage-fixture.mjs:8:79)\n    at async executeOwned (file:///fixture/dist/workflow/runtime/runner.js:1562:28)\n    at async runWorkflow (file:///fixture/dist/workflow/runtime/runner.js:1703:36)\n    at async file:///fixture/.context/create-pre-usage-fixture.mjs:11:3"
+    }
+  ],
+  "events": [
+    {
+      "at": "2026-09-27T13:03:35.039Z",
+      "execution": 1,
+      "type": "run.started",
+      "phase": null,
+      "total": null,
+      "message": null,
+      "data": null,
+      "stepId": null
+    },
+    {
+      "at": "2026-09-27T13:03:35.078Z",
+      "execution": 1,
+      "type": "run.failed",
+      "phase": null,
+      "total": null,
+      "message": "fixture tail",
+      "data": null,
+      "stepId": null
+    }
+  ],
+  "eventCounts": {},
+  "phase": null,
+  "errorStack": "Error: fixture tail\n    at Object.run (file:///fixture/.context/create-pre-usage-fixture.mjs:8:79)\n    at async executeOwned (file:///fixture/dist/workflow/runtime/runner.js:1562:28)\n    at async runWorkflow (file:///fixture/dist/workflow/runtime/runner.js:1703:36)\n    at async file:///fixture/.context/create-pre-usage-fixture.mjs:11:3",
+  "id": "pre-usage",
+  "workflow": {
+    "name": "usage-compatibility",
+    "version": "1",
+    "fingerprint": "839d19f76f69aec0e0e43ae20628d39b0a961236e84d989d0cd587b83377ba26",
+    "identity": {
+      "code": "usage-compatibility",
+      "files": {},
+      "inputSchema": "199490fad0bd9dd1925ebbce2ed02f949ef0396fcbabcd41baa5ffa3b1ea49b2",
+      "outputSchema": "199490fad0bd9dd1925ebbce2ed02f949ef0396fcbabcd41baa5ffa3b1ea49b2",
+      "engine": {
+        "version": "0.0.0",
+        "formatVersion": 6
+      }
+    }
+  },
+  "cwd": "/",
+  "input": null,
+  "output": null,
+  "status": "failed",
+  "error": "fixture tail",
+  "steps": {
+    "agent": {
+      "attemptHistory": [
+        {
+          "attempt": 1,
+          "diagnostics": {},
+          "durationMs": 8,
+          "error": null,
+          "errorStack": null,
+          "execution": 1,
+          "fingerprint": "69df105b5c24c491e6fd50ecb2247b0f01244712aece5d592f519aac40604e6d",
+          "finishedAt": "2026-09-27T13:03:35.073Z",
+          "policy": {
+            "maxBudgetUsd": 0.5,
+            "maxTranscriptBytes": 67108864,
+            "maxTurns": 10,
+            "retry": {
+              "delayMs": 100,
+              "maxAttempts": 1
+            },
+            "timeoutMs": 300000,
+            "transcripts": "off"
+          },
+          "profile": "text",
+          "reasoningEffort": null,
+          "request": {
+            "cwd": "/",
+            "environment": {
+              "set": [],
+              "sha256": "2427b8a3193f4941d731ebcc7f2ea9ae4029bd00b6f30c119edb89cc70dd7247",
+              "unset": []
+            },
+            "isolation": "restricted",
+            "limits": {
+              "killGraceMs": null,
+              "maxBudgetUsd": 0.5,
+              "maxTurns": 10,
+              "sandbox": null,
+              "timeoutMs": 300000
+            },
+            "model": null,
+            "profile": "text",
+            "promptPreview": "hello",
+            "promptSha256": "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
+            "provider": "claude",
+            "structured": false,
+            "tools": []
+          },
+          "requested": {
+            "effort": "inherited",
+            "model": "inherited"
+          },
+          "requestedModel": null,
+          "requestedSessionId": "1168860a-89df-561e-bee3-3ec2b6e61132",
+          "sessionId": "fixture-session",
+          "sources": {
+            "maxBudgetUsd": "profile:text",
+            "maxTranscriptBytes": "runtime",
+            "maxTurns": "profile:text",
+            "retry.delayMs": "runtime",
+            "retry.maxAttempts": "runtime",
+            "timeoutMs": "profile:text",
+            "transcripts": "override:0"
+          },
+          "startedAt": "2026-09-27T13:03:35.065Z",
+          "status": "completed",
+          "usage": {
+            "costUsd": 0.01,
+            "inputTokens": 12,
+            "outputTokens": 3
+          }
+        }
+      ],
+      "attempts": 1,
+      "durationMs": 8,
+      "error": null,
+      "errorStack": null,
+      "fingerprint": "69df105b5c24c491e6fd50ecb2247b0f01244712aece5d592f519aac40604e6d",
+      "finishedAt": "2026-09-27T13:03:35.073Z",
+      "identity": {
+        "cwd": "df7e940f72aa93cbcb6d70cc35124b0767c7a0e353043c7c24b660ea9be7b952",
+        "kind": "389432cbf83f3d1b64029a75864ec96f8fd06451b4c99d7b28385d395d480bfa",
+        "model": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+        "onError": "a8ae35eaddff8b9970e3075d77d711798ddfa511a5391581aef83e1a8ebbf64f",
+        "option.isolation": "cd28dab5321c1d3031e52e50cf1d8a3f5db1f8b1088046c8025efb84bd02ba03",
+        "prompt": "5aa762ae383fbb727af3c7a36d4940a5b8c40a989452d2304fc958ff3f354e7a",
+        "reasoningEffort": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+        "schema": "1a7dffe553dca5717f29f1586271c9a170f0aa97be651b7f2e59bbaecde9bbd1"
+      },
+      "kind": "claude",
+      "output": {
+        "diagnostics": {},
+        "output": "hello",
+        "sessionId": "fixture-session",
+        "usage": {
+          "costUsd": 0.01,
+          "inputTokens": 12,
+          "outputTokens": 3
+        }
+      },
+      "phase": null,
+      "request": {
+        "cwd": "/",
+        "environment": {
+          "set": [],
+          "sha256": "2427b8a3193f4941d731ebcc7f2ea9ae4029bd00b6f30c119edb89cc70dd7247",
+          "unset": []
+        },
+        "isolation": "restricted",
+        "limits": {
+          "killGraceMs": null,
+          "maxBudgetUsd": 0.5,
+          "maxTurns": 10,
+          "sandbox": null,
+          "timeoutMs": 300000
+        },
+        "model": null,
+        "profile": "text",
+        "promptPreview": "hello",
+        "promptSha256": "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
+        "provider": "claude",
+        "structured": false,
+        "tools": []
+      },
+      "seq": 1,
+      "startedAt": "2026-09-27T13:03:35.065Z",
+      "status": "completed",
+      "wakeAt": null
+    }
+  },
+  "rootCause": {
+    "stepId": null,
+    "error": "fixture tail"
+  },
+  "maps": {},
+  "harness": {
+    "kind": "custom",
+    "previousKinds": []
+  },
+  "capabilities": {
+    "strictProfiles": true,
+    "defaultProfile": "text",
+    "defaults": {
+      "timeoutMs": 300000,
+      "maxTurns": 10,
+      "maxBudgetUsd": 0.5,
+      "access": "read",
+      "expectsToolUse": true,
+      "onPermissionDenied": "warn",
+      "claude": {
+        "isolation": "restricted",
+        "tools": [],
+        "allowedTools": []
+      },
+      "codex": {
+        "isolation": "restricted",
+        "sandbox": "read-only"
+      },
+      "name": "text",
+      "environment": {
+        "claude": {
+          "sha256": "2427b8a3193f4941d731ebcc7f2ea9ae4029bd00b6f30c119edb89cc70dd7247",
+          "set": [],
+          "unset": []
+        },
+        "codex": {
+          "sha256": "2427b8a3193f4941d731ebcc7f2ea9ae4029bd00b6f30c119edb89cc70dd7247",
+          "set": [],
+          "unset": []
+        }
+      },
+      "claudeAccess": "none",
+      "codexAccess": "read"
+    },
+    "profiles": {
+      "edit": {
+        "timeoutMs": 1800000,
+        "maxTurns": 40,
+        "maxBudgetUsd": 5,
+        "access": "write",
+        "expectsToolUse": true,
+        "onPermissionDenied": "warn",
+        "claude": {
+          "isolation": "restricted",
+          "tools": ["Read", "Grep", "Glob", "Edit", "Write"],
+          "allowedTools": ["Read", "Grep", "Glob", "Edit", "Write"]
+        },
+        "codex": {
+          "isolation": "restricted",
+          "sandbox": "workspace-write"
+        },
+        "name": "edit",
+        "environment": {
+          "claude": {
+            "sha256": "2427b8a3193f4941d731ebcc7f2ea9ae4029bd00b6f30c119edb89cc70dd7247",
+            "set": [],
+            "unset": []
+          },
+          "codex": {
+            "sha256": "2427b8a3193f4941d731ebcc7f2ea9ae4029bd00b6f30c119edb89cc70dd7247",
+            "set": [],
+            "unset": []
+          }
+        },
+        "claudeAccess": "write",
+        "codexAccess": "write"
+      },
+      "readonly": {
+        "timeoutMs": 900000,
+        "maxTurns": 25,
+        "maxBudgetUsd": 2,
+        "access": "read",
+        "expectsToolUse": true,
+        "onPermissionDenied": "warn",
+        "claude": {
+          "isolation": "restricted",
+          "tools": ["Read", "Grep", "Glob"],
+          "allowedTools": ["Read", "Grep", "Glob"]
+        },
+        "codex": {
+          "isolation": "restricted",
+          "sandbox": "read-only"
+        },
+        "name": "readonly",
+        "environment": {
+          "claude": {
+            "sha256": "2427b8a3193f4941d731ebcc7f2ea9ae4029bd00b6f30c119edb89cc70dd7247",
+            "set": [],
+            "unset": []
+          },
+          "codex": {
+            "sha256": "2427b8a3193f4941d731ebcc7f2ea9ae4029bd00b6f30c119edb89cc70dd7247",
+            "set": [],
+            "unset": []
+          }
+        },
+        "claudeAccess": "read",
+        "codexAccess": "read"
+      },
+      "text": {
+        "timeoutMs": 300000,
+        "maxTurns": 10,
+        "maxBudgetUsd": 0.5,
+        "access": "read",
+        "expectsToolUse": true,
+        "onPermissionDenied": "warn",
+        "claude": {
+          "isolation": "restricted",
+          "tools": [],
+          "allowedTools": []
+        },
+        "codex": {
+          "isolation": "restricted",
+          "sandbox": "read-only"
+        },
+        "name": "text",
+        "environment": {
+          "claude": {
+            "sha256": "2427b8a3193f4941d731ebcc7f2ea9ae4029bd00b6f30c119edb89cc70dd7247",
+            "set": [],
+            "unset": []
+          },
+          "codex": {
+            "sha256": "2427b8a3193f4941d731ebcc7f2ea9ae4029bd00b6f30c119edb89cc70dd7247",
+            "set": [],
+            "unset": []
+          }
+        },
+        "claudeAccess": "none",
+        "codexAccess": "read"
+      }
+    },
+    "requiredGrants": []
+  },
+  "profileOverrides": [],
+  "grants": [],
+  "grantedProfiles": {},
+  "policy": [
+    {
+      "kind": "claude",
+      "transcripts": "off"
+    }
+  ],
+  "allowModelOverride": false,
+  "policyWarnings": [],
+  "replayWarnings": [],
+  "recoveryHint": "All recorded work has terminal outcomes, including settled map items. Fix the workflow tail/output and use --resume --accept-code-change to re-finalize; unchanged identities reuse their results.",
+  "createdAt": "2026-09-27T13:03:35.038Z",
+  "updatedAt": "2026-09-27T13:03:35.078Z"
+}

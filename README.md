@@ -521,10 +521,13 @@ Saved harness errors include reasons recovered from stdout on both zero and nonz
 with bounded stderr and exit metadata. A bare exit error means no usable protocol reason was found;
 check `claude auth status` / `codex login status`, schemas, and the invocation flags. Failed
 protocol attempts can retain usage/session metadata; this is still an incomplete spending ledger.
-Claude's input count is the top-level field, excluding cache reads/writes and not summing
-`modelUsage`; Codex's cache-inclusive interpretation is inferred, not verified by a live cache
-comparison. Do not compare those input counts directly. Codex cost is null; Claude cost uses
-`total_cost_usd`.
+Claude token totals now come from `modelUsage`, including uncached input, cache reads and writes;
+Codex retains its total input and all cache/reasoning fields. Missing categories and Codex cost stay
+null. `summarizeUsage(run)` and inspection include every recorded attempt, unknown counts, and
+harness/model breakdowns. `workflow inspect ID --json` adds `usageSummary`. Use `--max-run-cost-usd`
+and `--max-run-agent-attempts` to gate new calls across resumes. These sticky caps drain admitted
+work and fail the run when tripped; raise them on resume or use `off` to clear one. In-flight calls
+can overshoot reported cost. See [usage and budgets](docs/usage-and-budgets.md).
 
 ## Progress and monitoring
 

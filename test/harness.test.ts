@@ -13,16 +13,16 @@ import {
   parseCodex as classifyCodex,
   type ProtocolOutcome,
 } from '../src/harnesses/protocol.js';
-import type { HarnessRequestInput, HarnessResponse } from '../src/workflow/runtime/model.js';
+import type { HarnessRequestInput } from '../src/workflow/runtime/model.js';
 
 // Existing success/malformed-shape checks exercise the classified parser result.
-function response(outcome: ProtocolOutcome): HarnessResponse {
+function response(outcome: ProtocolOutcome) {
   if (outcome.kind === 'success') return outcome.response;
   throw new Error(outcome.kind === 'failure' ? outcome.failure.reason : outcome.reason);
 }
-const parseClaude = (stdout: string, structured: boolean): HarnessResponse =>
+const parseClaude = (stdout: string, structured: boolean) =>
   response(classifyClaude(stdout, structured));
-const parseCodex = (stdout: string): HarnessResponse => response(classifyCodex(stdout));
+const parseCodex = (stdout: string) => response(classifyCodex(stdout));
 
 const directories: string[] = [];
 const signal = new AbortController().signal;
@@ -67,10 +67,15 @@ afterEach(async () => {
 
 describe('Claude result protocol', () => {
   it('normalizes text, session and usage', () => {
-    expect(parseClaude(JSON.stringify(success), false)).toEqual({
+    expect(parseClaude(JSON.stringify(success), false)).toMatchObject({
       text: 'hello',
       sessionId: 'claude-session',
-      usage: { inputTokens: 12, outputTokens: 3, costUsd: 0.01 },
+      usage: {
+        inputTokens: null,
+        outputTokens: null,
+        costUsd: 0.01,
+        reported: { usage: success.usage },
+      },
     });
   });
 
@@ -133,7 +138,7 @@ describe('Codex event protocol', () => {
       parseCodex(
         `\n${jsonl([{ type: 'item.completed', item: { type: 'agent_message', text: 'earlier' } }, ...codexSuccess])}\r\n`,
       ),
-    ).toEqual({
+    ).toMatchObject({
       text: 'hello',
       sessionId: 'codex-thread',
       usage: { inputTokens: 13, outputTokens: 4, costUsd: null },
@@ -152,7 +157,7 @@ describe('Codex event protocol', () => {
           { type: 'turn.completed' },
         ]),
       ),
-    ).toEqual({
+    ).toMatchObject({
       text: '',
       sessionId: null,
       usage: { inputTokens: null, outputTokens: null, costUsd: null },

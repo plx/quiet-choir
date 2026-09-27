@@ -1,3 +1,5 @@
+import { runBudgetSchema, type RunBudgetPolicy, type RunBudgetStop } from './run-budget.js';
+import { agentUsageSchema } from './usage.js';
 import { mergePreparationSchema, type MergePreparation } from './worktree-schema.js';
 import type { AgentDiagnostics, AgentTranscript } from './agent-stream-model.js';
 import { agentDiagnosticsSchema, agentTranscriptSchema } from './agent-stream-schema.js';
@@ -88,7 +90,7 @@ export interface AttemptRecord extends AttemptPolicy {
   /** ISO timestamp after settlement, or null for an interrupted attempt. */
   finishedAt: string | null;
   /** Last observed outcome; running may indicate an interrupted process. */
-  status: 'running' | 'completed' | 'failed' | 'cancelled';
+  status: 'running' | 'completed' | 'failed' | 'cancelled' | 'interrupted';
   /** Failure message, when available. */
   error: string | null;
   /** Classified failure for this attempt, when it failed. */
@@ -225,6 +227,10 @@ export interface MapRecord {
 
 /** Local checkpoint format. The format is intentionally versioned independently of workflows. */
 export interface RunRecord {
+  /** Sticky operator caps; omission in old records means unlimited. */
+  runBudget?: RunBudgetPolicy;
+  /** Latest budget refusal, without a corresponding agent attempt. */
+  budgetStop?: RunBudgetStop;
   /** Random UUID namespace used to derive Claude attempt session IDs. */
   sessionSalt?: string;
   /** Runtime-owned worktree caches, handles, and durable pins. */
@@ -367,11 +373,8 @@ const requestSummarySchema = z.object({
   promptSha256: z.string().regex(/^[a-f0-9]{64}$/u),
   promptPreview: z.string().max(200),
 });
-const usageSchema = z.object({
-  inputTokens: z.number().nonnegative().nullable(),
-  outputTokens: z.number().nonnegative().nullable(),
-  costUsd: z.number().nonnegative().nullable(),
-});
+const usageSchema = agentUsageSchema;
+
 const timingFields = {
   exec: execSummarySchema.optional(),
   execError: execDiagnosticsSchema.optional(),
@@ -450,7 +453,7 @@ const stepSchema = z.object({
         fingerprint: z.string(),
         startedAt: z.iso.datetime(),
         finishedAt: z.iso.datetime().nullable(),
-        status: z.enum(['running', 'completed', 'failed', 'cancelled']),
+        status: z.enum(['running', 'completed', 'failed', 'cancelled', 'interrupted']),
         error: z.string().nullable(),
         errorKind: errorKindSchema.optional(),
         policy: executionPolicySchema.extend({
@@ -512,6 +515,16 @@ const recordFieldsSchema = z.object({
     z.literal(6),
     z.literal(7),
   ]),
+  runBudget: runBudgetSchema.optional(),
+  budgetStop: z
+    .object({
+      stepId: z.string(),
+      metric: z.enum(['maxRunCostUsd', 'maxRunAgentAttempts']),
+      limit: z.number().nonnegative(),
+      observed: z.number().nonnegative(),
+      at: z.iso.datetime(),
+    })
+    .optional(),
   sessionSalt: z.uuid().optional(),
   executions: z
     .array(

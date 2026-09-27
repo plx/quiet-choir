@@ -43,11 +43,15 @@ export class HarnessStream {
     structured: boolean,
     limit: number,
     context: HarnessInvocation,
+    requested: string | null = null,
   ) {
     this.#provider = provider;
     this.#context = context;
     this.#limit = limit;
-    this.protocol = provider === 'claude' ? new ClaudeProtocol(structured) : new CodexProtocol();
+    this.protocol =
+      provider === 'claude'
+        ? new ClaudeProtocol(structured, requested)
+        : new CodexProtocol(requested);
     this.#lines = new ProtocolLines(
       limit,
       (line) => this.#consume(line),

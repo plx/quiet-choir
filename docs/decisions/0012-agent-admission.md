@@ -2,7 +2,8 @@
 
 ## Status
 
-Accepted.
+Accepted. Budget-enabled attempt setup is refined by [0025](0025-attempt-usage-and-run-budgets.md);
+the original window below remains for uncapped runs.
 
 ## Context
 

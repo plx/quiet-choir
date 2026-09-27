@@ -1,3 +1,5 @@
+import { parseRunBudget, runBudgetFlags } from '../../cli/run-budget.js';
+import type { RunBudgetPolicy } from '../../workflow/runtime/run-budget.js';
 import { Args, Flags, type Interfaces } from '@oclif/core';
 import { WorkflowCommand } from '../../cli/workflow-command.js';
 import { WorkflowExecutor } from '../../workflow/loader/executor.js';
@@ -15,6 +17,8 @@ export default class WorkflowResume extends WorkflowCommand {
     }),
   };
   public static override readonly flags: Interfaces.FlagInput<{
+    readonly 'max-run-cost-usd': string | undefined;
+    readonly 'max-run-agent-attempts': string | undefined;
     readonly 'state-dir': string | undefined;
     readonly json: boolean | undefined;
     readonly 'accept-code-change': boolean | undefined;
@@ -25,6 +29,7 @@ export default class WorkflowResume extends WorkflowCommand {
     readonly 'notify-command': string | undefined;
     readonly 'wait-mode': 'suspend' | 'block' | undefined;
   }> = {
+    ...runBudgetFlags,
     'notify-command': Flags.string({
       description: 'Best-effort sh -c hook receiving event JSON on stdin',
       env: 'QUIET_CHOIR_NOTIFY_COMMAND',
@@ -56,8 +61,10 @@ export default class WorkflowResume extends WorkflowCommand {
     const { args, flags } = await this.parse(WorkflowResume);
     const stateDir = this.runContext(args.runId, flags['state-dir']);
     this.logToStderr(`Run ID: ${args.runId}\nState directory: ${stateDir}`);
+    let runBudget: Partial<RunBudgetPolicy>;
     let harness: HarnessSelection;
     try {
+      runBudget = parseRunBudget(flags['max-run-cost-usd'], flags['max-run-agent-attempts']);
       harness = await readHarnessSelection(flags.harness, flags['harness-config'], process.cwd());
     } catch (error) {
       this.fail('usage.flag', error instanceof Error ? error.message : String(error));
@@ -69,6 +76,7 @@ export default class WorkflowResume extends WorkflowCommand {
     });
     const result = await executor.execute({
       kind: 'workflow.resume',
+      ...runBudget,
       ...(flags['notify-command'] === undefined ? {} : { notifyCommand: flags['notify-command'] }),
       ...(flags['wait-mode'] === undefined ? {} : { waitMode: flags['wait-mode'] }),
       runId: args.runId,

@@ -22,6 +22,7 @@ import type { PhaseOptions } from './observability-model.js';
 import type { z } from 'zod';
 import type { AgentDefaults, AgentProfile, BuiltinProfile } from './profiles-model.js';
 import type { MapStepError } from './fan-out.js';
+import type { ModelUsage, TokenCounts } from './usage-model.js';
 
 /** A value that survives checkpoint serialization without changing its meaning. */
 export type JsonValue =
@@ -246,12 +247,29 @@ export type HarnessRequest = HarnessRequestInput & {
 
 /** Usage reported by the harness, with null for unavailable measurements. */
 export interface AgentUsage {
-  /** Uncached and/or total input tokens as reported by the harness. */
+  /** Total processed input for current native adapters; legacy values retain their original meaning. */
   readonly inputTokens: number | null;
-  /** Generated output tokens. */
+  /** Generated output tokens, including reasoning. */
   readonly outputTokens: number | null;
-  /** Estimated USD cost, when the harness reports it. */
+  /** Harness-reported USD estimate, not a bill; null where unavailable. */
   readonly costUsd: number | null;
+  /** Disjoint categories where known; reasoning is a subset of output. */
+  readonly tokens?: TokenCounts;
+  /** Measurements attributed to effective models; do not add these to the top-level totals. */
+  readonly byModel?: Readonly<Record<string, ModelUsage>>;
+  /** Requested model after policy resolution, and effective names only when actually reported. */
+  readonly model?: {
+    /** Model option after policy resolution; null when the harness chooses its own default. */
+    readonly requested: string | null;
+    /** Native model identifiers, or null when the harness does not establish them. */
+    readonly effective: readonly string[] | null;
+  };
+  /** At least one measurement was reported, or all measurements are unavailable. */
+  readonly completeness?: 'reported' | 'unavailable';
+  /** Verbatim native usage fields, including cache TTLs and cost basis. */
+  readonly reported?: JsonValue;
+  /** JSON-compatible custom measurements are preserved outside the identity contract. */
+  readonly [key: string]: unknown;
 }
 
 /** Normalized response from a headless harness. */
@@ -262,8 +280,8 @@ export interface HarnessResponse {
   readonly text: string;
   /** Native session/thread identifier for diagnostics; not a workflow resume token. */
   readonly sessionId: string | null;
-  /** Usage metadata for this invocation. */
-  readonly usage: AgentUsage;
+  /** Optional partial measurements; the runtime fills absent values with null and preserves extras. */
+  readonly usage?: Partial<AgentUsage> | null;
   /** Recoverable protocol notices, persisted as diagnostics outside the result fingerprint. */
   readonly warnings?: readonly string[];
   /** Count of denied tool requests reported by the terminal envelope. */

@@ -124,13 +124,14 @@ while valid late callback results still commit as completed. Run interrupts have
 `WorkflowRunError` exposes `runId`, `stepId`, saved `run`, and original `cause`, with a message such
 as `Step word/1 (claude) failed: …`. `-v` on execute or inspect prints the stored stack/cause chain.
 
-Usage totals sum locally started agent attempts, including reported usage from failed calls and
-responses that failed schema validation. Replayed attempts are counted once; copied fork history is
-excluded from the target's local total. Known portions of each metric are summed; an entirely
-unknown metric stays null (zero when there were no agent attempts). `incompleteAttempts` identifies
-partial coverage. Legacy records use their existing successful/failed usage where available. This is
-not a billing ledger: abandoned calls and unreported usage remain unknown, and provider token
-definitions differ. No prices are inferred.
+Usage totals come from exported `summarizeUsage(run)`: one entry per local agent attempt, including
+failed and interrupted work, with replay counted once and fork reuse excluded. Text includes
+provider/model breakdowns and unknown counts. Full `inspect --json` adds `usageSummary`; compact
+JSON retains `usage`. Known portions are summed, all-unknown stays null, and no attempts totals
+zero. `unknownUsageAttempts`, `unknownCostAttempts`, and per-category `unknownTokens` describe gaps.
+Legacy history fallback sets `undercounted`; legacy token semantics warn separately. Requested model
+aliases are never assumed effective. See [usage and budgets](usage-and-budgets.md) for provider
+categories, raw evidence, caps, and their limitations.
 
 Storage format 7 retains replay contract 6. Flat format-6 runs migrate automatically on resume;
 original format 1 migrates by verifying its legacy step identities and must migrate before fork

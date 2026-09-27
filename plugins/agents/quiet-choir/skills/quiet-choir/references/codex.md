@@ -104,11 +104,12 @@ notices are appended. Nonzero exits, missing final text, and malformed protocol 
 Agent stdout is parsed incrementally. `agent.progress` delivers bounded, lossy tool/status summaries
 and `--progress` prints them to stderr; these are not individual token events.
 
-Usage reports top-level `input_tokens` and `output_tokens` when available. The interpretation of
-Codex inputs as including cached input is inferred from OpenAI semantics, not verified by a live
-cache comparison; it is not comparable with Claude's top-level field. `costUsd` is null and there is
-no Codex per-call USD cap. Failed protocol attempts can retain available usage/session metadata in
-`steps[id].failedAttempts`, with nulls when absent.
+Usage retains all five native counters: total input, cached input, cache-write input, output and
+reasoning. Nonzero pass-through is captured from 0.157.1 against the local fake API. Reasoning is
+included in output; the disjoint cache-write partition remains unverified, so `uncachedInput` is
+null. Requested models are recorded without inventing an effective model. `costUsd` is null and
+there is no native per-call USD cap. Pair the run-wide cost gate with an attempt cap; see
+[usage and budgets](usage-budgets.md).
 
 ## Diagnosing a failure
 

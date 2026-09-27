@@ -104,3 +104,10 @@ grace is 3000 ms (`--kill-grace-ms`). Use the
 [ownership/recovery procedure](operating-runs.md#stalls-and-orphan-recovery) before replacement
 work. Unknown identities are never signaled. Escaped groups and the spawn-to-record crash gap
 require separate investigation; stopped calls may already have edited files.
+
+## Usage and run caps
+
+Current native usage includes token categories, requested/effective model evidence and raw usage.
+Use [usage and budgets](usage-budgets.md) to interpret nulls, count failures once, inspect totals,
+and set sticky run-wide cost/attempt gates. These are operator stops outside effect identity;
+per-call retries or settled error handling cannot bypass a latched run gate.

@@ -2,6 +2,13 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- Normalize native usage into explicit token categories and effective-model totals; preserve raw and
+  custom measurements without changing the preceding agent fingerprint schema. Inspection exposes
+  public `summarizeUsage` totals, unknown counts and interrupted attempts.
+- Add sticky run-wide reported-cost and attempt gates. Refusals leave no agent record, drain
+  admitted calls and latch failure; higher limits on resume preserve completed work. These are
+  admission gates, not hard billing ceilings.
+
 - Stream Claude/Codex output incrementally, save early native IDs, and expose `--progress` live
   activity. Keep capped private transcripts and failed response/validation evidence per attempt,
   with CLI-settable policy limits and retention. Add extensible result diagnostics and per-call
