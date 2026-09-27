@@ -1,11 +1,10 @@
-import { readdir } from 'node:fs/promises';
 import { setTimeout as delay } from 'node:timers/promises';
 import { digest } from '../runtime/json.js';
-import { isValidRunId } from '../runtime/run-errors.js';
 import { readRequiredRun } from '../runtime/read-required-run.js';
-import { resolveStateDir } from '../runtime/paths.js';
+import { resolveStateDir, projectStateDirectories } from '../runtime/paths.js';
 import {
   inspectRunOwnership,
+  listRunIds,
   type ReadRunOptions,
   type RunOwnership,
   type RunRecord,
@@ -19,6 +18,8 @@ export type InspectionStatus = RunRecord['status'] | 'stale';
 
 /** Compact plain-data projection, shared by text, JSON summary, watch, and list. @internal */
 export interface RunSummary {
+  readonly cwd: string;
+  readonly stateDir?: string;
   readonly harnesses: NonNullable<RunRecord['harnesses']>;
   readonly id: string;
   readonly workflow: { readonly name: string; readonly version: string };
@@ -81,6 +82,9 @@ function usage(run: RunRecord): UsageSummary {
   for (const step of Object.values(run.steps)) {
     if (step.reusedFrom) continue;
     if (step.attemptHistory) {
+      for (let n = 1; n <= (step.legacyAttempts ?? 0); n++) {
+        if (step.kind === 'claude' || step.kind === 'codex') attempts.push(legacyUsage(step, n));
+      }
       for (const attempt of step.attemptHistory) {
         if (
           attempt.request === null ||
@@ -167,6 +171,7 @@ export function summarizeRun(
       .sort()
       .at(-1) ?? run.updatedAt;
   return {
+    cwd: run.cwd,
     harnesses: run.harnesses ?? {},
     id: run.id,
     workflow: { name: run.workflow.name, version: run.workflow.version },
@@ -232,10 +237,16 @@ export function summarizeRun(
  * ownership read; otherwise retry, bounded, against the fresh pair. @internal
  */
 export async function inspectRun(options: ReadRunOptions): Promise<RunInspection> {
+  const stateDir = resolveStateDir(options);
+  const inspection = (run: RunRecord, ownership: RunOwnership): RunInspection => ({
+    run,
+    ownership,
+    summary: { ...summarizeRun(run, ownership), stateDir },
+  });
   let run = await readRequiredRun(options);
   let ownership = await inspectRunOwnership(options);
   for (let attempt = 0; attempt < 3; attempt++) {
-    if (!stale(run, ownership)) return { run, ownership, summary: summarizeRun(run, ownership) };
+    if (!stale(run, ownership)) return inspection(run, ownership);
     const before = digest(run);
     run = await readRequiredRun(options);
     if (run.status !== 'running' || digest(run) !== before) {
@@ -244,11 +255,13 @@ export async function inspectRun(options: ReadRunOptions): Promise<RunInspection
     }
     break;
   }
-  return { run, ownership, summary: summarizeRun(run, ownership) };
+  return inspection(run, ownership);
 }
 
 /** Enumerate only checkpoint filenames, skip unreadable runs, and retain diagnostics. @internal */
 export async function listRuns(options: {
+  readonly all?: boolean;
+  readonly additionalStateDirs?: readonly string[];
   readonly stateDir: string;
   readonly status?: InspectionStatus;
 }): Promise<{
@@ -257,19 +270,26 @@ export async function listRuns(options: {
   readonly warnings: readonly string[];
 }> {
   const stateDir = resolveStateDir(options);
-  const files = await readdir(stateDir).catch((error: unknown) => {
-    if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return [];
-    throw error;
-  });
+  const projects = options.all
+    ? await projectStateDirectories()
+    : { directories: [], warnings: [] };
+  const roots = new Set([
+    stateDir,
+    ...(options.additionalStateDirs ?? []),
+    ...projects.directories,
+  ]);
   const runs: RunSummary[] = [];
-  const warnings: string[] = [];
-  for (const file of files.sort()) {
-    if (!file.endsWith('.json') || !isValidRunId(file.slice(0, -5))) continue;
-    try {
-      const { summary } = await inspectRun({ stateDir, runId: file.slice(0, -5) });
-      if (options.status === undefined || summary.status === options.status) runs.push(summary);
-    } catch (error) {
-      warnings.push(`Skipped ${file}: ${error instanceof Error ? error.message : String(error)}`);
+  const warnings: string[] = [...projects.warnings];
+  for (const directory of roots) {
+    for (const runId of await listRunIds(directory)) {
+      try {
+        const { summary } = await inspectRun({ stateDir: directory, runId });
+        if (options.status === undefined || summary.status === options.status) runs.push(summary);
+      } catch (error) {
+        warnings.push(
+          `Skipped ${runId} in ${directory}: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
     }
   }
   runs.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt) || a.id.localeCompare(b.id));

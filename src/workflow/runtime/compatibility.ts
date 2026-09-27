@@ -1,3 +1,4 @@
+import { legacyWorkflowFingerprint } from './legacy.js';
 import { readRequiredRun } from './read-required-run.js';
 import { realpath } from 'node:fs/promises';
 import { resolve } from 'node:path';
@@ -65,11 +66,14 @@ export function compareResume(
 ): ResumeCheck {
   const current = workflowSnapshot(definition, options);
   const prior = saved.workflow.identity;
-  const files = [
-    ...new Set([...Object.keys(prior?.files ?? {}), ...Object.keys(current.identity.files)]),
-  ]
-    .filter((file) => prior?.files[file] !== current.identity.files[file])
-    .sort();
+  const legacy = saved.formatVersion === 1;
+  const legacyMatches =
+    legacy && saved.workflow.fingerprint === legacyWorkflowFingerprint(definition, options);
+  const files = legacy
+    ? []
+    : [...new Set([...Object.keys(prior?.files ?? {}), ...Object.keys(current.identity.files)])]
+        .filter((file) => prior?.files[file] !== current.identity.files[file])
+        .sort();
   let inputMatches = false;
   let inputValid = false;
   try {
@@ -84,13 +88,14 @@ export function compareResume(
   const tests: Record<string, boolean> = {
     name: saved.workflow.name === definition.name,
     version: saved.workflow.version === definition.version,
-    code: prior?.code === current.identity.code && files.length === 0,
-    'input schema': prior?.inputSchema === current.identity.inputSchema,
-    'output schema': prior?.outputSchema === current.identity.outputSchema,
+    code: legacy ? legacyMatches : prior?.code === current.identity.code && files.length === 0,
+    'input schema': legacy ? legacyMatches : prior?.inputSchema === current.identity.inputSchema,
+    'output schema': legacy ? legacyMatches : prior?.outputSchema === current.identity.outputSchema,
     cwd: saved.cwd === cwd,
     input: inputMatches,
-    engine: prior !== undefined && digest(prior.engine) === digest(current.identity.engine),
-    'checkpoint format': saved.formatVersion === engineInfo.formatVersion,
+    engine:
+      legacy || (prior !== undefined && digest(prior.engine) === digest(current.identity.engine)),
+    'checkpoint format': [1, 6, 7].includes(saved.formatVersion),
   };
   const changed = Object.keys(tests).filter((key) => !tests[key]);
   const unchanged = Object.keys(tests).filter((key) => tests[key]);
@@ -106,9 +111,10 @@ export function compareResume(
   const hint = refinalizable
     ? ' All recorded effects have terminal outcomes; a tail/output fix can re-finalize with --resume --accept-code-change and zero repeated effects if step identities and replay order remain compatible.'
     : '';
-  const message =
-    saved.formatVersion !== engineInfo.formatVersion
-      ? oldFormatMessage(saved.formatVersion)
+  const message = ![1, 6, 7].includes(saved.formatVersion)
+    ? oldFormatMessage(saved.formatVersion)
+    : legacy && changed.length > 0
+      ? `Checkpoint format version 1: workflow ${changes} changed. ${canAcceptCodeChange ? 'Its original aggregate cannot separate code from schema drift; --accept-code-change authorizes migration while preserving original per-step checks. Source hashes from older CLIs include engine files and absolute paths.' : 'Restore the original name, version, cwd and input, or start a new run.'}`
       : changed.length === 0
         ? `Run ${saved.id} is compatible at run level; step identity and replay checks still run during execution.${hint}`
         : `Workflow ${changes} changed; ${unchanged.join(', ')} unchanged.${!inputValid ? ' Saved/supplied input does not validate.' : ''} ${canAcceptCodeChange ? `Use --resume --accept-code-change or create a new run with --fork-from ${saved.id}.` : `Start a new run${tests['name'] ? `, optionally with --fork-from ${saved.id}` : ''}.`}${hint}`;

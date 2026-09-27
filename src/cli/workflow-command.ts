@@ -1,5 +1,6 @@
+import { resolveStateDir } from '../workflow/runtime/paths.js';
 import { stat } from 'node:fs/promises';
-import { readFileSync, writeSync } from 'node:fs';
+import { writeSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { BaseCommand } from './base-command.js';
 import {
@@ -15,7 +16,7 @@ import { analyzeTypecheckEntrypoint } from '../workflow/typecheck/plan.js';
 import type { TypecheckPlan } from '../workflow/typecheck/model.js';
 import { tolerateClosedTerminal, executionSignals } from './signals.js';
 import { ProcessSupervisor } from '../processes/supervisor.js';
-import { parseRunRecord, readRun, type RunRecord } from '../workflow/runtime/store.js';
+import { readRunSync, readRun, type RunRecord } from '../workflow/runtime/store.js';
 
 /** Workflow presentation boundary, including failures that occur before argument parsing. @internal */
 export abstract class WorkflowCommand extends BaseCommand {
@@ -106,9 +107,20 @@ export abstract class WorkflowCommand extends BaseCommand {
     throw new WorkflowCommandError(failure, humanExitOnly);
   }
 
-  protected runContext(runId: string, stateDir: string): void {
-    this.failureContext = { runId, stateDir: resolve(stateDir) };
+  protected runContext(runId: string, stateDir?: string): string {
+    this.failureContext = { runId, stateDir: null };
     this.validateRunId(runId);
+    const resolved = resolveStateDir({ runId, ...(stateDir === undefined ? {} : { stateDir }) });
+    this.failureContext = { runId, stateDir: resolved };
+    if (
+      stateDir === undefined &&
+      process.env['QUIET_CHOIR_STATE_DIR'] === undefined &&
+      resolved === resolve('.quiet-choir/runs')
+    )
+      this.logToStderr(
+        `Warning: legacy state directory ${resolved}; new runs use project-specific XDG storage.`,
+      );
+    return resolved;
   }
 
   protected validateRunId(runId: string): void {
@@ -185,7 +197,7 @@ export abstract class WorkflowCommand extends BaseCommand {
     let run: RunRecord | null = null;
     if (runId && stateDir && isValidRunId(runId)) {
       try {
-        run = parseRunRecord(readFileSync(resolve(stateDir, `${runId}.json`), 'utf8'), runId);
+        run = readRunSync({ stateDir, runId });
       } catch {
         /* Report the last readable checkpoint only. */
       }

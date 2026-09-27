@@ -1,8 +1,7 @@
-import { readdir } from 'node:fs/promises';
 import { errorCode } from './checkpoint.js';
 import { resolveStateDir } from './paths.js';
-import { isValidRunId, RunRefusedError } from './run-errors.js';
-import { readRun, type ReadRunOptions, type RunRecord } from './store.js';
+import { RunRefusedError } from './run-errors.js';
+import { readRun, listRunIds, type ReadRunOptions, type RunRecord } from './store.js';
 
 /** Explain a missing checkpoint with a bounded directory listing. @internal */
 export async function missingRunError(
@@ -10,17 +9,9 @@ export async function missingRunError(
   cause?: unknown,
 ): Promise<RunRefusedError> {
   const stateDir = resolveStateDir(options);
-  const entries = await readdir(stateDir, { withFileTypes: true }).catch((error: unknown) => {
-    if (errorCode(error) === 'ENOENT') return [];
+  const ids = await listRunIds(stateDir).catch((error: unknown) => {
     throw unreadableRunError(options, error);
   });
-  const ids = entries
-    .filter(
-      (entry) =>
-        entry.isFile() && entry.name.endsWith('.json') && isValidRunId(entry.name.slice(0, -5)),
-    )
-    .map((entry) => entry.name.slice(0, -5))
-    .sort();
   const available = ids.slice(0, 20);
   return new RunRefusedError(
     'run.not_found',

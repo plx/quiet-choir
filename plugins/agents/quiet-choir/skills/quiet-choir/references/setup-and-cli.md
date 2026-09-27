@@ -24,11 +24,12 @@ account. Agent effects need separately installed and authenticated `claude` and/
 `CliHarness` uses PATH and inherits their authentication, with no additional provider API key.
 
 The CLI's launch directory becomes the recorded run `cwd`. It is the base for relative FILE and
-`--state-dir` paths, the default `.quiet-choir/runs`, and each agent call's relative `cwd`. It must
-match on resume; there is no `--cwd` flag. `npm run cli --` runs from the quiet-choir checkout even
-when invoked in one of its subdirectories, so use these npm examples for the bundled workflows. For
-another project, change to that project and invoke the checkout's launcher by absolute path (replace
-both paths and provide that project's `workflow.ts`):
+`--state-dir` paths and each agent call's relative `cwd`. Execution with a file must match that
+working directory on resume; resume by ID uses the stored launch directory. There is no `--cwd`
+flag. `npm run cli --` runs from the quiet-choir checkout even when invoked in one of its
+subdirectories, so use these npm examples for the bundled workflows. For another project, change to
+that project and invoke the checkout's launcher by absolute path (replace both paths and provide
+that project's `workflow.ts`):
 
 ```sh
 cd /path/to/target-project
@@ -69,10 +70,15 @@ run: source hashing does not prove unchanged dependency behavior, and engine com
 separate gate. Use [code recovery](durability.md#choose-a-recovery-path) for intentional workflow
 edits.
 
-The current default state directory is `<launch-directory>/.quiet-choir/runs`; it is not necessarily
-ignored in another repository. Set an absolute external `--state-dir` and reuse it for execute,
-inspect, list, and resume. Checkpoints contain plaintext inputs, prompts/previews, outputs, errors,
-and logs; keep the state directory private and out of version control.
+Storage resolves explicit `--state-dir`, then `QUIET_CHOIR_STATE_DIR`, then an existing run's legacy
+`<launch-directory>/.quiet-choir/runs` location, then
+`${XDG_STATE_HOME:-~/.local/state}/quiet-choir/<project>-<hash>/runs`. The project hash uses
+canonical `realpath(cwd)`. The CLI prints the absolute state directory and includes it in
+execute/resume JSON; retain it when operating from another project. `workflow list --all` discovers
+registered default projects without importing code. New state containers self-ignore with
+`.gitignore` containing `*`. Checkpoints contain plaintext inputs, prompts/previews, outputs,
+errors, and answers; keep them private. See
+[storage and ownership](durability.md#storage-ownership-and-cancellation).
 
 ## Choose the command
 
@@ -130,18 +136,20 @@ compiler configuration. See the
   input. JSON errors name the source and zero-based character position. New CLI runs default to
   `{}`; omit it on resume to reuse the saved input. Forks also inherit source input by default;
   explicit fork input may differ. Resume still requires equal validated input.
-- Resume with `--resume --run-id ID`, the same launch directory and `--state-dir`, and unchanged
-  sources, name, version, and schemas. Reusing an ID without `--resume` fails.
+- Resume with `execute --resume --run-id ID` or `resume ID`; both can load stored launch paths. Use
+  the printed `--state-dir` from another project. A supplied different FILE is refused before
+  import. Old/embedded runs without launch metadata still need FILE or their embedding application.
+  Source, name, version, schema, and step identity checks remain. Reusing an ID without resume
+  fails.
 - `--kill-grace-ms N` sets the TERM-to-KILL grace for calls and orphan recovery (default 3000).
   Repeat it on resume; it is not sticky. `--resume --kill-orphans` stops identity-confirmed children
   of a dead/released owner before replacement effects. Unverified identities refuse recovery.
-- `--state-dir PATH` on execute/inspect/check-resume selects storage. Its default is
-  `.quiet-choir/runs` under the CLI launch directory. Use an absolute path and repeat it for
-  inspection/resume.
+- `--state-dir PATH` selects a runs container, resolving relative paths against the launch cwd.
+  Without it, environment, legacy-run, and external project defaults apply as described above.
 - `--json` on execute/inspect/validate/typecheck/check-resume writes exactly one JSON line to
-  stdout, including failures and argument errors. Execute returns its run record; inspect adds
-  current `ownership`; validate returns `{kind, ok, entrypoint, workflow}`; typecheck returns its
-  compiler result. Failures use
+  stdout, including failures and argument errors. Execute returns its run record plus `stateDir`;
+  inspect adds current `ownership`; validate returns `{kind, ok, entrypoint, workflow}`; typecheck
+  returns its compiler result. Failures use
   `{kind:"workflow.error",ok:false,exitCode,error:{code,message,stepId,details}, runId,stateDir,status,failedSteps,diagnostics,run}`.
   `run` is the actual saved record or null. `error.stepId` identifies the root effect; body failures
   and interrupts use null. Generated IDs are included, so no follow-up inspect is needed to recover

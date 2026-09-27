@@ -195,7 +195,7 @@ it('lists newest first, filters stale/cancelled, skips unreadable files, and nev
   const all = await listRuns({ stateDir });
   expect(all.runs.map((run) => run.id)).toEqual(['fresh', 'cancelled', 'old']);
   expect(all.warnings).toHaveLength(1);
-  expect(all.warnings[0]).toContain('Skipped bad.json');
+  expect(all.warnings[0]).toContain('Skipped bad');
   expect((await listRuns({ stateDir, status: 'stale' })).runs.map((run) => run.id)).toEqual([
     'fresh',
   ]);

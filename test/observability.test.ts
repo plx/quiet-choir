@@ -90,7 +90,7 @@ it('persists resolved request diagnostics, monotonic attempt timing, and validat
       policy: [{ match: 'z-first', timeoutMs: 200, maxBudgetUsd: 0.3 }],
     },
   );
-  expect(run.formatVersion).toBe(6);
+  expect(run.formatVersion).toBe(7);
   expect(run.executions).toMatchObject([{ n: 1, pid: process.pid, outcome: 'completed' }]);
   const first = run.steps['z-first'];
   expect(first).toMatchObject({
@@ -513,7 +513,7 @@ it('keeps primitive failures and format-six required metadata readable without i
   ).rejects.toMatchObject({ message: 'null' });
   const run = await readRun(options());
   expect(run.executions?.[0]).toMatchObject({ outcome: 'failed', error: 'null', errorStack: null });
-  const path = join(stateDir, 'observe.json');
+  const path = join(stateDir, 'observe', 'run.json');
   const bytes = await readFile(path, 'utf8');
   for (const field of ['events', 'executions', 'eventCounts', 'phase', 'errorStack']) {
     const malformed = JSON.parse(bytes) as Record<string, unknown>;

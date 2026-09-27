@@ -1,4 +1,3 @@
-import { resolve } from 'node:path';
 import { Args, Flags, type Interfaces } from '@oclif/core';
 import { WorkflowCommand } from '../../cli/workflow-command.js';
 import { WorkflowExecutor } from '../../workflow/loader/executor.js';
@@ -18,7 +17,7 @@ export default class WorkflowAnswer extends WorkflowCommand {
     stepId: Args.string({ description: 'Fully qualified question step ID', required: true }),
   };
   public static override readonly flags: Interfaces.FlagInput<{
-    readonly 'state-dir': string;
+    readonly 'state-dir': string | undefined;
     readonly value: string;
     readonly by: string | undefined;
     readonly resume: boolean | undefined;
@@ -26,8 +25,8 @@ export default class WorkflowAnswer extends WorkflowCommand {
     readonly 'harness-config': string | undefined;
   }> = {
     'state-dir': Flags.directory({
-      description: 'Local durable run storage',
-      default: '.quiet-choir/runs',
+      description:
+        'Runs container; defaults to environment, legacy run discovery, then project XDG state',
     }),
     value: Flags.string({
       aliases: ['json'],
@@ -49,7 +48,7 @@ export default class WorkflowAnswer extends WorkflowCommand {
     'Validate and deliver an answer without taking the run lock';
   public async run(): Promise<void> {
     const { args, flags } = await this.parse(WorkflowAnswer);
-    this.runContext(args.runId, flags['state-dir']);
+    const stateDir = this.runContext(args.runId, flags['state-dir']);
     let value: JsonValue;
     try {
       value = jsonValue(JSON.parse(flags.value));
@@ -74,7 +73,7 @@ export default class WorkflowAnswer extends WorkflowCommand {
       runId: args.runId,
       stepId: args.stepId,
       value,
-      stateDir: resolve(flags['state-dir']),
+      stateDir: stateDir,
       resume: flags.resume ?? false,
       ...(flags.by === undefined ? {} : { by: flags.by }),
       ...(harness === undefined ? {} : { harness }),

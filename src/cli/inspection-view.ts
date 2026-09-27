@@ -106,13 +106,13 @@ export function formatRunSummary(run: RunSummary, verbose = false): string {
 }
 
 /** One row per run; no source loading or result payload expansion. @internal */
-export function formatRunList(runs: readonly RunSummary[]): string {
+export function formatRunList(runs: readonly RunSummary[], showProject = false): string {
   if (!runs.length) return 'No runs found.';
   return [
-    'ID  WORKFLOW  STATUS  STEPS  USAGE  UPDATED  OWNER',
+    `ID  WORKFLOW  STATUS  STEPS  USAGE  UPDATED  OWNER${showProject ? '  PROJECT  STATE' : ''}`,
     ...runs.map(
       (run) =>
-        `${run.id}  ${run.workflow.name}@${run.workflow.version}  ${run.status}  ${String(run.counts.completed)}/${String(run.counts.total)} completed, ${String(run.counts.running)} running, ${String(run.counts.failed)} failed, ${String(run.counts.cancelled)} cancelled, ${String(run.counts['settled-failed'])} settled-failed, ${String(run.counts.superseded)} superseded, ${String(run.counts.waiting)} waiting, ${String(run.counts.withdrawn)} withdrawn  ${cost(run)}  ${run.updatedAt}  ${owner(run)}`,
+        `${run.id}  ${run.workflow.name}@${run.workflow.version}  ${run.status}  ${String(run.counts.completed)}/${String(run.counts.total)} completed, ${String(run.counts.running)} running, ${String(run.counts.failed)} failed, ${String(run.counts.cancelled)} cancelled, ${String(run.counts['settled-failed'])} settled-failed, ${String(run.counts.superseded)} superseded, ${String(run.counts.waiting)} waiting, ${String(run.counts.withdrawn)} withdrawn  ${cost(run)}  ${run.updatedAt}  ${owner(run)}${showProject ? `  ${run.cwd}  ${run.stateDir ?? 'unknown'}` : ''}`,
     ),
   ].join('\n');
 }

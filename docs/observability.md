@@ -132,6 +132,7 @@ partial coverage. Legacy records use their existing successful/failed usage wher
 not a billing ledger: abandoned calls and unreported usage remain unknown, and provider token
 definitions differ. No prices are inferred.
 
-Formats 1–5 remain readable for inspection, but cannot resume or supply fork reuse in this format-6
-runtime. Use the original runtime or start a new run. Old files are never silently migrated. Effect
-IDs and semantic fingerprints are unchanged by the added diagnostics.
+Storage format 7 retains replay contract 6. Flat format-6 runs migrate automatically on resume;
+original format 1 migrates by verifying its legacy step identities and must migrate before fork
+reuse. Formats 2–5 remain inspection-only here. See [storage migration](storage.md#legacy-records).
+Effect IDs and semantic fingerprints are unchanged by the added diagnostics.

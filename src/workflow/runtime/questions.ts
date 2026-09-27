@@ -4,7 +4,7 @@ import { basename } from 'node:path';
 import type { z } from 'zod';
 import type { RunActivity } from './activity.js';
 import { CancelledError } from './fan-out.js';
-import { answerPath } from './inbox.js';
+import { answerCandidates } from './inbox.js';
 import { digest, jsonValue } from './json.js';
 import { stepIdentity } from './identity.js';
 import { answerEnvelopeSchema, questionRequest, validateAnswerAuthor } from './question-schema.js';
@@ -167,15 +167,19 @@ export class RunQuestions {
       for (const [id, waiter] of this.#waiters) {
         const step = record.steps[id];
         if (!step?.question || step.status !== 'waiting') continue;
-        const path = answerPath(stateDir, record.id, id);
-        let text: string;
-        try {
-          if ((await stat(path)).size > 1_048_576) text = '';
-          else text = await readFile(path, 'utf8');
-        } catch (error) {
-          if (error instanceof Error && 'code' in error && error.code === 'ENOENT') continue;
-          throw error;
+        let delivery: { path: string; text: string } | undefined;
+        for (const path of answerCandidates(stateDir, record.id, id)) {
+          try {
+            const text = (await stat(path)).size > 1_048_576 ? '' : await readFile(path, 'utf8');
+            delivery = { path, text };
+            break;
+          } catch (error) {
+            if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT'))
+              throw error;
+          }
         }
+        if (!delivery) continue;
+        const { path, text } = delivery;
         if (this.#closed || !this.#waiters.has(id)) continue;
         let value: JsonValue;
         let envelope: ReturnType<typeof answerEnvelopeSchema.parse>;

@@ -22,14 +22,16 @@ a mapper. A body failure keeps questions waiting. Real interrupts still cancel w
 embedding return is `WorkflowResult<T>`: completed typed output or suspended `output:null` with
 `pending`. Narrow by `status`, or call `assertCompleted` where suspension is unexpected.
 
-The flat inbox is `<stateDir>/<runId>.inbox/`. Answer writers use private flushed temporary files
-and exclusive hard links, never the run lock. Encoded IDs over 180 characters use a hash filename.
-First delivery wins; a duplicate exits 3. Early validation uses stored JSON Schema without loading
-code; invalid data exits 2 and writes nothing. The owner polls at 200 ms and validates actual Zod
-refinements before saving/continuing. Malformed, stale-fingerprint, or invalid answers move to
-`.rejected.<uuid>.json`; the last 20 errors are retained in `rejections`. Accepted files remain as
-audit data. A successful write is queued delivery, not guaranteed consumption after a concurrent
-withdrawal. Answer envelopes are at most 1 MiB.
+The inbox is `<stateDir>/<runId>/inbox/`. Answer writers use private flushed temporary files,
+exclusive hard links, and a directory flush, never the run lock. Filenames combine a bounded
+100-character encoded prefix with the full SHA-256 of the JSON-encoded exact ID; case variants stay
+distinct and quarantine suffixes fit ordinary filesystem component limits. Migrated owners also scan
+legacy deliveries. First delivery wins; a duplicate exits 3. Early validation uses stored JSON
+Schema without loading code; invalid data exits 2 and writes nothing. The owner polls at 200 ms and
+validates actual Zod refinements before saving/continuing. Malformed, stale-fingerprint, or invalid
+answers move to `.rejected.<uuid>.json`; the last 20 errors are retained in `rejections`. Accepted
+files remain as audit data. A successful write is queued delivery, not guaranteed consumption after
+a concurrent withdrawal. Answer envelopes are at most 1 MiB.
 
 Audience defaults to `any`; `human` requires self-asserted `human:<name>` attribution and must be
 routed to the human. Filesystem permissions are the trust boundary. Answers remain untrusted data.
@@ -274,25 +276,61 @@ timestamps, and outcome. Sources are `runtime`, `harness`, `call-site`, or `over
 zero-based saved rule index). Custom harness defaults are recorded only when the adapter reports
 them. `running` means settlement was not checkpointed, not proof that the process still lives.
 
-New checkpoints use format version 6. Versions 1–5 remain inspectable, but cannot resume or be fork
-sources here: they lack the current callback/order/source/outcome contract. Refusal leaves their
-checkpoint data unchanged. Use the original runtime to resume them, or start a new run after
-accounting for previous effects. There is no automatic migration.
+## Legacy records
+
+New checkpoints use storage format 7 while preserving replay contract 6. Compatible flat format-6
+runs migrate automatically under both legacy and current locks, retaining exact `<runId>.json.v6`
+backup bytes and a rejecting format-7 marker at the old filename. Original format-1 runs also
+migrate with a `.json.v1` backup: their first body replay verifies original dependencies, schemas,
+retries, and raw agent options before assigning current identities. Original attempt counts are
+retained; unknown old timing/callback hashes are not fabricated. A changed original step still
+refuses reuse.
+
+Format 1 has only an aggregate code/schema fingerprint. A mismatch requires explicit code
+acceptance; name, version, cwd, input, and old step checks remain. Old CLI hashing included absolute
+paths and engine files, so an engine upgrade alone can require acceptance. Format-1 sources must
+migrate before fork reuse. Intermediate private formats 2–5 remain inspectable but require their
+original runtime to resume. Backups and markers are retained, never automatically deleted. An
+interrupted initial migration can recover its original backup; a finished marker cannot substitute
+for missing current state.
 
 ## Storage, ownership, and cancellation
 
-The target is a local POSIX filesystem. Checkpoints are flushed to temporary files, atomically
-renamed, then their directory entry is flushed. A per-run directory lock has `owner.json` containing
-a PID, hostname, birth identity and token. Dead/released same-host owners can be recovered only
-after checking child records in `processes/<pgid>.json` (PID on Windows). Live and foreign-host
-owners are refused. Confirmed live or unverified children cause exit 3 before replacement work.
-Inspect first; `--resume --kill-orphans` stops only identity-confirmed groups and verifies they are
-gone. Reused PIDs are never signaled; missing identity, malformed records and leaderless surviving
-groups remain for separate inspection. Incomplete ownership metadata or an abandoned `recovery`
-directory requires inspection and manual cleanup only after confirming there is no active owner. Do
-not delete a lock merely because a run looks stalled. After acquiring ownership, the runner removes
-only that run's abandoned `<runId>.json.<uuid>.tmp` files; it preserves other runs' files and
-unrelated temporary data.
+The target is a local POSIX filesystem. Storage resolves explicit `stateDir`, then
+`QUIET_CHOIR_STATE_DIR`, then an existing run's legacy `<cwd>/.quiet-choir/runs`, then
+`${XDG_STATE_HOME:-~/.local/state}/quiet-choir/<project>-<hash>/runs`. The bounded project basename
+and first 12 SHA-256 characters of `realpath(cwd)` distinguish worktrees while sharing symlink
+aliases. `project.json` registers default projects for `workflow list --all`. Retain the CLI's
+printed absolute state path when operating from another project.
+
+Each `<stateDir>/<runId>/` contains `run.json`, `journal.jsonl`, `lock/`, and on-demand `inbox/` and
+`artifacts/<encoded-prefix>--<full-hash>/<attempt>/`. `worktrees/` is reserved for future use; no
+checkout is created automatically. Artifact directory components are bounded and distinguish exact
+IDs even on case-insensitive filesystems. Artifact writers must use 0600; diagnostic bytes need not
+be synced and are never replay inputs. This revision allocates locations, not transcripts.
+
+Concurrent saves share journal appends and flushes. Completions, failures, questions, run status,
+and sleep wake deadlines are durable before their promises/events become observable. Ordinary starts
+are appended unsynced: process crashes retain them, but power loss can undercount attempts. Failed
+writes retry without rerunning successful actions in that process. Compaction flushes and atomically
+renames a snapshot, flushes its directory, then truncates the journal. It runs on status changes or
+roughly 4 MiB of journal data. Read with `readRun` or `inspect`, which apply entries newer than root
+`seq` and retry compaction races; `cat run.json` alone can be stale. Readers ignore a torn final
+line, which the next owner truncates. Complete corruption, sequence gaps, and missing journals
+refuse.
+
+A per-run `lock/` has `owner.json` containing a PID, hostname, birth identity and token.
+Dead/released same-host owners can be recovered only after checking child records in
+`processes/<pgid>.json` (PID on Windows). Live and foreign-host owners are refused. Confirmed live
+or unverified children cause exit 3 before replacement work. Inspect first;
+`--resume --kill-orphans` stops only identity-confirmed groups and verifies they are gone. Reused
+PIDs are never signaled; missing identity, malformed records and leaderless surviving groups remain
+for separate inspection. Incomplete ownership metadata or an abandoned `recovery` directory requires
+inspection and manual cleanup only after confirming there is no active owner. Do not delete a lock
+merely because a run looks stalled. Migrated runs acquire the legacy guard before the current lock
+and hold both through release; new children belong to the current lock. This prevents an abandoned
+old guard from bypassing a live new owner. Owner-only cleanup removes recognized UUID snapshot
+temporary files for that run and preserves unrelated data.
 
 Map failures default to `drain`: stop scheduling and let active mappers checkpoint without an abort
 signal before rejecting with `FanOutError`. Body rejections, including `Promise.all`, close the
@@ -331,9 +369,11 @@ processes separately; do not delete a lock because its checkpoint is old. No cle
 Checkpoints contain plaintext workflow input/output, every completed step's full validated result
 (including agent responses and files a local step read), and errors. Checkpoint files are created
 0600; state/lock directories are created 0700. These modes do not repair pre-existing directory
-permissions. `.quiet-choir/` is gitignored only in this repository; exclude your chosen state
-directory in other projects too. There is no migration engine, distributed lease, background
-scheduler, durable event bus, or global spending ledger in this version.
+permissions. New state containers get a non-overwriting `.gitignore` containing `*`, protecting
+in-tree state from ordinary `git add -A`, `git clean -fd`, and `git stash -u`; `git clean -fdx` can
+still remove it. External state avoids ordinary workspace cleanup but does not isolate same-user
+unsandboxed code. There is no distributed lease, background scheduler, durable event bus, or global
+spending ledger in this version.
 
 ## When checkpointing fails
 

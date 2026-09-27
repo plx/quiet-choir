@@ -1,11 +1,17 @@
+import { createStorageDirectory, syncDirectory } from './storage-io.js';
 import { createHash, randomUUID } from 'node:crypto';
-import { link, mkdir, open, readFile, readdir, rm } from 'node:fs/promises';
-import { join } from 'node:path';
+import { link, open, readFile, rm, stat } from 'node:fs/promises';
+import { basename, dirname, join } from 'node:path';
 import { z } from 'zod';
 import { jsonValue, digest } from './json.js';
 import { validateStepId } from './identity.js';
-import { resolveStateDir, type StateDirectoryOptions } from './paths.js';
-import { readRun, type RunRecord } from './store.js';
+import {
+  resolveStateDir,
+  runInboxPath,
+  runDirectory,
+  type StateDirectoryOptions,
+} from './paths.js';
+import { readRun, listRunIds, type RunRecord } from './store.js';
 import { isValidRunId, runIdMessage } from './run-errors.js';
 import { answerEnvelopeSchema, validateAnswerAuthor } from './question-schema.js';
 import type { JsonValue } from './model.js';
@@ -51,8 +57,22 @@ export function answerPath(stateDir: string, runId: string, stepId: string): str
   if (!isValidRunId(runId)) throw new Error(runIdMessage);
   validateStepId(stepId);
   const encoded = encodeURIComponent(stepId);
-  const filename = encoded.length <= 180 ? encoded : `~sha256-${digest(stepId)}`;
-  return join(stateDir, `${runId}.inbox`, `${filename}.answer.json`);
+  const filename = `${encoded.slice(0, 100)}--${digest(stepId)}`;
+  return join(runInboxPath(stateDir, runId), `${filename}.answer.json`);
+}
+
+/** Current and pre-migration answer names; old in-flight deliveries remain consumable. @internal */
+export function answerCandidates(stateDir: string, runId: string, stepId: string): string[] {
+  const encoded = encodeURIComponent(stepId);
+  const legacy = `${encoded.length <= 180 ? encoded : `~sha256-${digest(stepId)}`}.answer.json`;
+  return [
+    ...new Set([
+      answerPath(stateDir, runId, stepId),
+      join(stateDir, `${runId}.inbox`, basename(answerPath(stateDir, runId, stepId))),
+      join(runDirectory(stateDir, runId), 'inbox', legacy),
+      join(stateDir, `${runId}.inbox`, legacy),
+    ]),
+  ];
 }
 
 /** Write one exclusive, fsynced inbox delivery without acquiring the run lock or importing code. */
@@ -94,9 +114,21 @@ export async function writeAnswer(options: WriteAnswerOptions): Promise<AnswerDe
   });
   if (Buffer.byteLength(serialized) > 1_048_576)
     throw new AnswerError('invalid', 'Answer envelope exceeds 1 MiB.');
-  const directory = join(stateDir, `${run.id}.inbox`);
   const path = answerPath(stateDir, run.id, options.stepId);
-  await mkdir(directory, { recursive: true, mode: 0o700 });
+  for (const candidate of answerCandidates(stateDir, run.id, options.stepId)) {
+    if (candidate === path) continue;
+    const existing = await stat(candidate).catch((error: unknown) => {
+      if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return undefined;
+      throw error;
+    });
+    if (existing)
+      throw new AnswerError(
+        'conflict',
+        `Question ${options.stepId} already has a legacy inbox delivery.`,
+      );
+  }
+  const directory = dirname(path);
+  await createStorageDirectory(directory);
   const temporary = join(directory, `.answer-${randomUUID()}.tmp`);
   try {
     const file = await open(temporary, 'wx', 0o600);
@@ -108,6 +140,7 @@ export async function writeAnswer(options: WriteAnswerOptions): Promise<AnswerDe
     }
     try {
       await link(temporary, path);
+      await syncDirectory(directory);
     } catch (error) {
       if (error instanceof Error && 'code' in error && error.code === 'EEXIST')
         throw new AnswerError(
@@ -177,17 +210,9 @@ export async function pendingQuestions(
 /** List every waiting question by reading checkpoints and source bytes only; never imports code. */
 export async function listPending(options: StateDirectoryOptions = {}): Promise<PendingQuestion[]> {
   const stateDir = resolveStateDir(options);
-  let files: string[];
-  try {
-    files = await readdir(stateDir);
-  } catch (error) {
-    if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return [];
-    throw error;
-  }
   const pending: PendingQuestion[] = [];
-  for (const file of files.sort()) {
-    if (!file.endsWith('.json') || !isValidRunId(file.slice(0, -5))) continue;
-    const run = await readRun({ stateDir, runId: file.slice(0, -5) });
+  for (const runId of await listRunIds(stateDir)) {
+    const run = await readRun({ stateDir, runId });
     pending.push(...(await pendingQuestions(run, stateDir)));
   }
   return pending;

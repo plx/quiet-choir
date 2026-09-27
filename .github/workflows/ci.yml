@@ -68,6 +68,12 @@ jobs:
       - name: Test schema-first workflow values CLI
         run: node test/schema-values-cli-smoke.mjs
 
+      - name: Test durable question CLI
+        run: node test/questions-cli-smoke.mjs
+
+      - name: Test journal storage CLI
+        run: node test/storage-cli-smoke.mjs
+
       - name: Check Workflow Lab comparisons
         run: npm run comparisons:check
 

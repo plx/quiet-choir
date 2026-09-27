@@ -1,3 +1,4 @@
+import { realpath } from 'node:fs/promises';
 import { fixturesFromRun } from './fixtures.js';
 import { CliHarness } from '../../harnesses/cli.js';
 import { FixtureHarness } from '../../harnesses/fixture.js';
@@ -164,7 +165,13 @@ export class WorkflowExecutor implements Executor<
         return {
           kind: 'workflow.pending.result',
           ok: true,
-          pending: await listPending({ stateDir: plan.stateDir }),
+          pending: (
+            await Promise.all(
+              [...new Set([plan.stateDir, ...(plan.additionalStateDirs ?? [])])].map((stateDir) =>
+                listPending({ stateDir }),
+              ),
+            )
+          ).flat(),
         };
       }
       if (plan.kind === 'workflow.answer') {
@@ -234,6 +241,19 @@ export class WorkflowExecutor implements Executor<
           'info',
           `Agent limits: total=${String(agentLimits.total)}; per-provider=${JSON.stringify(agentLimits.perProvider ?? {})}`,
         );
+      if (plan.kind === 'workflow.execute' && plan.resume) {
+        const saved = await readRequiredRun({ runId: plan.runId, stateDir: plan.stateDir });
+        if (saved.launch) {
+          const requested = await realpath(plan.typecheck.entrypoint);
+          if (requested !== saved.launch.entrypoint)
+            throw new RunRefusedError(
+              'run.incompatible',
+              saved.id,
+              `Run ${saved.id} was launched from ${saved.launch.entrypoint}; requested ${requested}. Use its stored entrypoint or fork a new run.`,
+              { storedEntrypoint: saved.launch.entrypoint, requestedEntrypoint: requested },
+            );
+        }
+      }
       stage = 'load.typecheck';
       const checked = await new TypeScriptExecutor(this.#options.logger).execute(plan.typecheck);
       if (!checked.ok)

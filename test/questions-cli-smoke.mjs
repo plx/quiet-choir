@@ -48,7 +48,7 @@ try {
   assert.equal(suspended.pending[0].codeChanged, false);
   assert.equal(suspended.run.launch.entrypoint, realpathSync(file));
   assert.equal(suspended.run.launch.tsconfig, null);
-  assert.equal(existsSync(join(stateDir, 'gate.json.lock')), false);
+  assert.equal(existsSync(join(stateDir, 'gate', 'lock')), false);
   assert.equal(readFileSync(calls, 'utf8'), 'plan\n');
   rmSync(imported);
   writeFileSync(file, 'this is deliberately invalid TypeScript');
@@ -67,7 +67,7 @@ try {
   );
   assert.equal(invalid.status, 2, invalid.stderr);
   assert.equal(JSON.parse(invalid.stdout).error.code, 'answer.invalid');
-  assert.equal(existsSync(join(stateDir, 'gate.inbox')), false);
+  assert.equal(existsSync(join(stateDir, 'gate', 'inbox')), false);
   const guard = cli('answer', 'gate', 'approve', '--json', '{"approved":true}');
   assert.equal(guard.status, 2, guard.stderr);
   const answered = cli(
@@ -125,7 +125,7 @@ try {
     previewResult.rehearsal.warnings.some((warning) => warning.includes('unanswered question')),
   );
   assert.equal(previewResult.stateDir, null);
-  assert.equal(existsSync(join(stateDir, 'preview.json')), false);
+  assert.equal(existsSync(join(stateDir, 'preview', 'run.json')), false);
 } finally {
   rmSync(root, { recursive: true, force: true });
 }

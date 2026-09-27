@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
-import { mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { afterEach, beforeEach, expect, expectTypeOf, it } from 'vitest';
 import {
@@ -279,7 +279,9 @@ it('validates early without writing and permits exactly one concurrent writer', 
   for (const result of results)
     if (result.status === 'rejected') expect(result.reason).toMatchObject({ reason: 'conflict' });
   expect((await stat(answerPath(stateDir, 'questions', 'gate'))).mode & 0o777).toBe(0o600);
-  expect(await readdir(join(stateDir, 'questions.inbox'))).toEqual(['gate.answer.json']);
+  expect(await readdir(join(stateDir, 'questions', 'inbox'))).toEqual([
+    answerPath(stateDir, 'questions', 'gate').split('/').at(-1),
+  ]);
   const result = await runWorkflow(definition, { ...options(), resume: true });
   assertCompleted(result);
   expect(result.output).toBe('ship');
@@ -301,8 +303,8 @@ it('quarantines authoritative refinement failures and accepts a corrected delive
   expect(rejected.status).toBe('suspended');
   const pending = await listPending({ stateDir });
   expect(pending[0]?.rejections[0]?.error).toContain('Must be even');
-  expect(await readdir(join(stateDir, 'questions.inbox'))).toHaveLength(1);
-  expect((await readdir(join(stateDir, 'questions.inbox')))[0]).toContain('.rejected.');
+  expect(await readdir(join(stateDir, 'questions', 'inbox'))).toHaveLength(1);
+  expect((await readdir(join(stateDir, 'questions', 'inbox')))[0]).toContain('.rejected.');
   await writeAnswer({ ...options(), stepId: 'refined', value: 4 });
   const result = await runWorkflow(definition, { ...options(), resume: true });
   expect(result.output).toBe(4);
@@ -491,4 +493,33 @@ it('keeps hashed long-ID filenames disjoint from every legal short ID', async ()
   await writeAnswer({ ...options(), stepId: long, value: 1 });
   await writeAnswer({ ...options(), stepId: short, value: 2 });
   expect((await runWorkflow(definition, { ...options(), resume: true })).output).toEqual([1, 2]);
+});
+
+it('keeps case-variant questions distinct on case-insensitive filesystems', async () => {
+  const definition = workflow((ctx) =>
+    Promise.all([ctx.ask('Case', question), ctx.ask('case', question)]),
+  );
+  expect((await runWorkflow(definition, options())).status).toBe('suspended');
+  const [upper, lower] = await Promise.all([
+    writeAnswer({ ...options(), stepId: 'Case', value: 'ship' }),
+    writeAnswer({ ...options(), stepId: 'case', value: 'revise' }),
+  ]);
+  expect(upper.path.toLowerCase()).not.toBe(lower.path.toLowerCase());
+  expect((await runWorkflow(definition, { ...options(), resume: true })).output).toEqual([
+    'ship',
+    'revise',
+  ]);
+});
+
+it('ingests an answer published in the old inbox after migration has moved it', async () => {
+  const definition = workflow((ctx) => ctx.ask('gate', question));
+  expect((await runWorkflow(definition, options())).status).toBe('suspended');
+  const delivery = await writeAnswer({ ...options(), stepId: 'gate', value: 'ship' });
+  const oldInbox = join(stateDir, 'questions.inbox');
+  await mkdir(oldInbox);
+  await rename(delivery.path, join(oldInbox, basename(delivery.path)));
+  await expect(
+    writeAnswer({ ...options(), stepId: 'gate', value: 'revise' }),
+  ).rejects.toMatchObject({ reason: 'conflict' });
+  expect((await runWorkflow(definition, { ...options(), resume: true })).output).toBe('ship');
 });

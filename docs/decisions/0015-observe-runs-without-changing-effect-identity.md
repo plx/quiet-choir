@@ -2,6 +2,9 @@
 
 Status: Accepted
 
+Storage/layout and migration details below are superseded by
+[ADR 0019](0019-journal-storage-and-project-state.md); the orchestration contracts remain.
+
 ## Context
 
 Supervisors need timing, resolved requests, progress, usage, and root-cause attribution without

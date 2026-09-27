@@ -42,14 +42,17 @@ npm run cli -- workflow execute examples/local.workflow.ts \
 # Word steps replay from disk; only the failed summary step executes again.
 ```
 
-The CLI prints the run ID before executing. Without `--run-id`, it generates one. Reusing an
-existing ID requires `--resume`; a completed run returns its saved output without calling any
-harness. Keep the absolute state directory for inspection and resume.
+The CLI prints the run ID and absolute state directory before executing. Without `--run-id`, it
+generates one. Reusing an existing ID requires `--resume`; a completed run returns its saved output
+without calling any harness. Keep the absolute state directory for inspection and resume.
 
 The CLI launch directory becomes the recorded run `cwd`, the base for relative FILE and
-`--state-dir` paths, the default `.quiet-choir/runs`, and agent calls' relative `cwd`. Resume must
-use that same directory; there is no `--cwd` flag. `npm run cli --` launches from this checkout even
-when run in a subdirectory. For work in another project, change to that project and invoke
+`--state-dir` paths and agent calls' relative `cwd`. The default state container is outside the
+workspace under a project-specific XDG root. `workflow execute --resume --run-id RUN` and
+`workflow resume RUN` can load the stored entrypoint/cwd; pass `--state-dir` when operating from
+another project. A supplied FILE must match the original entrypoint. There is no `--cwd` flag.
+`npm run cli --` launches from this checkout even when run in a subdirectory. For work in another
+project, change to that project and invoke
 `node /absolute/path/to/quiet-choir/bin/run.js workflow …`, or use `npx --no-install quiet-choir`
 where the package is already installed. An agent option's absolute `cwd` is accepted without
 confinement and must name an existing directory.
@@ -195,10 +198,12 @@ For embedding, call `runWorkflow(definition, { runId, input, harness: new CliHar
 output is typed from the workflow schema. Supply `signal`, `stateDir`, `cwd`, `onEvent`, and a code
 `fingerprint` as needed. The core depends on a `Harness` interface, so tests and alternative
 integrations can replace subprocesses without changing workflows. Read the saved record with
-`readRun({ runId, cwd, stateDir })`; both APIs default to `<cwd>/.quiet-choir/runs` and resolve a
-relative `stateDir` against `cwd`. `resolveStateDir({ cwd, stateDir })` returns that absolute path.
-An `onEvent` observer may return `void` or `Promise<void>`; it is not awaited, and both synchronous
-throws and rejected promises are ignored.
+`readRun({ runId, cwd, stateDir })`; explicit state paths resolve against `cwd`, followed by the
+`QUIET_CHOIR_STATE_DIR` environment, legacy run discovery, and project-specific XDG state.
+`resolveStateDir({ cwd, stateDir, runId })` returns that absolute path. `workflow list --all` finds
+registered projects. See [storage layout, migration, and durability](docs/storage.md). An `onEvent`
+observer may return `void` or `Promise<void>`; it is not awaited, and both synchronous throws and
+rejected promises are ignored.
 
 Explicit agent options are validated before recording the step, using the exported
 `claudeOptionsSchema` and `codexOptionsSchema` also used by `CliHarness`. Top-level undefined option
@@ -300,10 +305,10 @@ still apply. Full IDs retain the 200-character limit; shorten nesting/labels if 
 Errors show bounded full ID, scope, leaf, offending character/index, and the allowed pattern.
 
 The deprecated `ctx.map(items, concurrency, mapper, options?)` form adds no item prefix. Existing
-unscoped IDs and semantic fingerprints remain unchanged. Format-5 records remain inspectable; the
-current execution epoch requires format 6. Its settled form still requires an explicit `options.id`
-for the journal. Adopting named maps or scopes changes IDs: use a new run, optionally a deliberate
-fork; code acceptance does not rename saved steps.
+unscoped IDs and semantic fingerprints remain unchanged. Storage format 7 preserves replay contract
+6; flat format-6 runs migrate automatically. Format-5 records remain inspectable. Its settled form
+still requires an explicit `options.id` for the journal. Adopting named maps or scopes changes IDs:
+use a new run, optionally a deliberate fork; code acceptance does not rename saved steps.
 
 ## Failure handling
 
@@ -411,10 +416,11 @@ import. `workflow resume RUN` uses its stored entrypoint. Embedded callers narro
 - Results must be lossless JSON. Undefined, NaN, infinities, negative zero, functions, cycles,
   sparse arrays, getters, and class instances are rejected. Checkpoints contain data, never
   callbacks.
-- Checkpoints use flushed temporary files, atomic rename, and an exclusive local writer lock. Dead
-  local owners can be recovered; live or foreign-host owners are refused. Incomplete lock metadata
-  or an abandoned recovery requires inspection and manual cleanup. Acquiring the lock removes only
-  that run's abandoned `<runId>.json.<uuid>.tmp` files. Use a local POSIX filesystem.
+- Runs use an atomic snapshot and an append-only journal with shared durable commits. An exclusive
+  local writer owns both; readers apply entries newer than the snapshot sequence. Dead local owners
+  can be recovered; live or foreign-host owners are refused. Incomplete lock metadata or an
+  abandoned recovery requires inspection and manual cleanup. Acquiring the lock removes only that
+  run's recognized UUID snapshot temporary files. Use a local POSIX filesystem.
 - Transient checkpoint writes retry briefly. Persistent storage errors stop new effects and never
   retry a successful action in-process. `CheckpointError` identifies save/release failures; combined
   errors preserve the workflow's original cause. A successfully saved failure is thrown as

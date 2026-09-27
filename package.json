@@ -64,13 +64,14 @@
     "postpack": "rimraf oclif.manifest.json",
     "prepack": "npm run build && npm run manifest",
     "test": "vitest run",
-    "test:cli": "node ./test/cli-smoke.mjs && node ./test/policy-cli-smoke.mjs && node ./test/replay-cli-smoke.mjs && node ./test/settled-cli-smoke.mjs && node ./test/fan-out-cli-smoke.mjs && node ./test/scoped-ids-cli-smoke.mjs && node ./test/profiles-cli-smoke.mjs && node ./test/agent-limits-cli-smoke.mjs && node ./test/process-lifecycle-cli-smoke.mjs && node ./test/scriptable-cli-smoke.mjs && node ./test/observability-cli-smoke.mjs && node ./test/rehearsal-cli-smoke.mjs && node ./test/schema-values-cli-smoke.mjs && node ./test/skills-cli-smoke.mjs && node ./test/questions-cli-smoke.mjs",
+    "test:cli": "node ./test/cli-smoke.mjs && node ./test/policy-cli-smoke.mjs && node ./test/replay-cli-smoke.mjs && node ./test/settled-cli-smoke.mjs && node ./test/fan-out-cli-smoke.mjs && node ./test/scoped-ids-cli-smoke.mjs && node ./test/profiles-cli-smoke.mjs && node ./test/agent-limits-cli-smoke.mjs && node ./test/process-lifecycle-cli-smoke.mjs && node ./test/scriptable-cli-smoke.mjs && node ./test/observability-cli-smoke.mjs && node ./test/rehearsal-cli-smoke.mjs && node ./test/schema-values-cli-smoke.mjs && node ./test/skills-cli-smoke.mjs && node ./test/questions-cli-smoke.mjs && node ./test/storage-cli-smoke.mjs",
     "test:coverage": "vitest run --coverage",
     "test:watch": "vitest",
     "typecheck": "tsc --project tsconfig.json",
     "comparisons:check": "tsc -p comparisons/batches/01-direct-ports/tsconfig.json && node --import tsx comparisons/scripts/verify-ports.mjs --check",
     "test:contract": "node ./test/harness-contract.mjs",
-    "skills:check": "node scripts/check-skills.mjs && node --test test/skills-check.test.mjs"
+    "skills:check": "node scripts/check-skills.mjs && node --test test/skills-check.test.mjs",
+    "test:storage-benchmark": "node ./test/storage-benchmark.mjs"
   },
   "devDependencies": {
     "@arethetypeswrong/cli": "0.18.5",

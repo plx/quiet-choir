@@ -1,3 +1,4 @@
+import { readRunSync } from '../dist/workflow/runtime/store.js';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
@@ -61,8 +62,8 @@ const execute = (id, mode = 'pass') => [
   '--input',
   JSON.stringify({ mode }),
 ];
-const pathFor = (id) => join(state, `${id}.json`);
-const saved = (id) => JSON.parse(readFileSync(pathFor(id), 'utf8'));
+const pathFor = (id) => join(state, id, 'run.json');
+const saved = (id) => readRunSync({ stateDir: state, runId: id });
 const active = (id) => existsSync(pathFor(id)) && saved(id).steps['wait']?.status === 'running';
 try {
   writeFileSync(join(root, 'package.json'), '{"type":"module"}');
@@ -86,7 +87,7 @@ export default defineWorkflow({ name:'observe-cli', version:'1', input:z.object(
   );
   const good = run(execute('good'));
   assert.equal(good.status, 0, good.stderr);
-  assert.equal(good.value.formatVersion, 6);
+  assert.equal(good.value.formatVersion, 7);
   assert.match(good.stderr, /\d{4}-\d{2}-\d{2}T\S+ good phase verify/);
   assert.match(good.stderr, /good log begin/);
   const fail = run([...execute('bad', 'fail'), '-v']);
@@ -174,7 +175,7 @@ export default defineWorkflow({ name:'observe-cli', version:'1', input:z.object(
     ['abandoned'],
   );
   assert.equal(listed.value.warnings.length, 1);
-  assert.match(listed.stderr, /Skipped broken.json/);
+  assert.match(listed.stderr, /Skipped broken/);
   assert.match(run(['list'], false).stdout, /ID {2}WORKFLOW {2}STATUS/);
   const all = run(['list']).value.runs;
   assert.deepEqual(

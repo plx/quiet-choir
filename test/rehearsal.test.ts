@@ -582,7 +582,7 @@ describe('rehearsal execution and isolation', () => {
     const fixture = new FixtureHarness({ version: 1, calls: [{ step: 'one', text: 'saved' }] });
     await runWorkflow(definition, { ...options, harness: fixture });
     const cli = new CliHarness({ claudeBinary: '/never-spawn' });
-    const before = await readFile(join(options.stateDir, `${options.runId}.json`), 'utf8');
+    const before = await readFile(join(options.stateDir, options.runId, 'run.json'), 'utf8');
     await expect(
       runWorkflow(definition, { ...options, harness: cli, resume: true }),
     ).rejects.toThrow('--allow-harness-change');
@@ -594,7 +594,7 @@ describe('rehearsal execution and isolation', () => {
         forkFrom: { runId: options.runId },
       }),
     ).rejects.toThrow('--allow-harness-change');
-    expect(await readFile(join(options.stateDir, `${options.runId}.json`), 'utf8')).toBe(before);
+    expect(await readFile(join(options.stateDir, options.runId, 'run.json'), 'utf8')).toBe(before);
     expect(
       (
         await runWorkflow(definition, {
@@ -635,13 +635,15 @@ describe('rehearsal execution and isolation', () => {
     );
     await writeFile(join(options.stateDir, 'unrelated.lock'), 'do not touch');
     const before = await Promise.all(
-      (await readdir(options.stateDir))
+      (await readdir(options.stateDir, { recursive: true, withFileTypes: true }))
+        .filter((entry) => entry.isFile())
+        .map((entry) => join(entry.parentPath, entry.name))
         .sort()
-        .map(async (name) => [name, await readFile(join(options.stateDir, name), 'utf8')]),
+        .map(async (path) => [path, await readFile(path, 'utf8')]),
     );
     const temporary = await rehearsalState(options.runId, options.stateDir, true);
     try {
-      expect(await readdir(temporary.stateDir)).toEqual([`${options.runId}.json`]);
+      expect(await readdir(temporary.stateDir)).toEqual([options.runId]);
       const harness = new RehearsalHarness({ kind: 'cli', config: {} });
       const run = await runWorkflow(definition, {
         ...options,
@@ -664,9 +666,11 @@ describe('rehearsal execution and isolation', () => {
     }
     expect(
       await Promise.all(
-        (await readdir(options.stateDir))
+        (await readdir(options.stateDir, { recursive: true, withFileTypes: true }))
+          .filter((entry) => entry.isFile())
+          .map((entry) => join(entry.parentPath, entry.name))
           .sort()
-          .map(async (name) => [name, await readFile(join(options.stateDir, name), 'utf8')]),
+          .map(async (path) => [path, await readFile(path, 'utf8')]),
       ),
     ).toEqual(before);
     await expect(readdir(temporary.stateDir)).rejects.toMatchObject({ code: 'ENOENT' });

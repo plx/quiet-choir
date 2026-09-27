@@ -42,7 +42,12 @@ function run(args, store = state, json = true) {
       cwd: root,
       encoding: 'utf8',
       timeout: 30_000,
-      env: { ...process.env, QUIET_CHOIR_FAKE_ROUTES: routes, QUIET_CHOIR_FAKE_LOG: calls },
+      env: {
+        ...process.env,
+        XDG_STATE_HOME: join(root, 'xdg'),
+        QUIET_CHOIR_FAKE_ROUTES: routes,
+        QUIET_CHOIR_FAKE_LOG: calls,
+      },
     },
   );
   assert.equal(result.error, undefined, result.error?.message);
@@ -114,6 +119,7 @@ export default defineWorkflow({name:'rehearsal-cli',version:'1',input:z.object({
   assert(existsSync(marker), 'ordinary local callback did not run');
   assert(!existsSync(forbidden), 'dry-run spawned the configured CLI, including its version probe');
   assert(!existsSync(join(root, '.quiet-choir')), 'dry-run wrote default state');
+  assert(!existsSync(join(root, 'xdg')), 'dry-run wrote external default state');
   assert.equal(dry.value.calls[1].prompt, 'dry-run:triage/items/0');
   assert(dry.value.calls[0].plan.argv.includes('--json-schema'));
   assert.match(dry.stderr, /Local callbacks.*run for real/u);
@@ -151,14 +157,14 @@ export default defineWorkflow({name:'rehearsal-cli',version:'1',input:z.object({
   assert.equal(fixture.status, 0, fixture.stderr);
   assert.equal(fixture.value.output, 'first answer / second answer');
   assert.equal(fixture.value.harness.kind, 'fixture');
-  const bytes = readFileSync(join(state, 'fixture.json'), 'utf8');
+  const bytes = readFileSync(join(state, 'fixture', 'run.json'), 'utf8');
   const exported = run(['fixtures', 'fixture']);
   assert.equal(exported.status, 0, exported.stderr);
   assert.deepEqual(
     exported.value.calls.map((call) => call.step),
     ['one', 'two'],
   );
-  assert.equal(readFileSync(join(state, 'fixture.json'), 'utf8'), bytes);
+  assert.equal(readFileSync(join(state, 'fixture', 'run.json'), 'utf8'), bytes);
   writeFileSync(join(root, 'export.json'), JSON.stringify(exported.value));
   assert.equal(
     run([...execute('export', 'text'), '--harness', 'fixture:export.json']).value.output,
@@ -176,7 +182,7 @@ export default defineWorkflow({name:'rehearsal-cli',version:'1',input:z.object({
   assert.equal(completePreview.value.calls.length, 0);
   assert.equal(completePreview.value.replays.length, 2);
   assert.equal(completePreview.value.nominalClaudeCeilingUsd, 0);
-  assert.equal(readFileSync(join(state, 'fixture.json'), 'utf8'), bytes);
+  assert.equal(readFileSync(join(state, 'fixture', 'run.json'), 'utf8'), bytes);
 
   writeFileSync(
     routes,
@@ -188,8 +194,8 @@ export default defineWorkflow({name:'rehearsal-cli',version:'1',input:z.object({
   assert.equal(partial.value.error.stepId, 'two');
   assert.equal(partial.value.run.harness.kind, 'cli');
   assert.match(partial.value.error.message, /invalid_json_schema|Invalid schema/u);
-  const partialBytes = readFileSync(join(state, 'partial.json'), 'utf8');
-  const lock = join(state, 'partial.json.lock');
+  const partialBytes = readFileSync(join(state, 'partial', 'run.json'), 'utf8');
+  const lock = join(state, 'partial', 'lock');
   mkdirSync(lock);
   writeFileSync(join(lock, 'owner.json'), 'source lock must not be inspected or removed');
   const count = readFileSync(calls, 'utf8').trim().split('\n').length;
@@ -208,7 +214,7 @@ export default defineWorkflow({name:'rehearsal-cli',version:'1',input:z.object({
   assert.deepEqual(preview.value.providerCounts, { claude: 0, codex: 1 });
   assert.equal(preview.value.calls[0].attempt, 2);
   assert.match(preview.value.run.output, /hello from captured claude \/ \[dry-run codex two\]/u);
-  assert.equal(readFileSync(join(state, 'partial.json'), 'utf8'), partialBytes);
+  assert.equal(readFileSync(join(state, 'partial', 'run.json'), 'utf8'), partialBytes);
   assert.equal(
     readFileSync(join(lock, 'owner.json'), 'utf8'),
     'source lock must not be inspected or removed',
@@ -221,7 +227,7 @@ export default defineWorkflow({name:'rehearsal-cli',version:'1',input:z.object({
 
   const malformed = run([...execute('malformed', 'text'), '--harness-config', '{"unknown":true}']);
   assert.equal(malformed.status, 2);
-  assert(!existsSync(join(state, 'malformed.json')));
+  assert(!existsSync(join(state, 'malformed', 'run.json')));
   const noMatch = join(root, 'no-match.json');
   writeFileSync(noMatch, '{"version":1,"calls":[]}');
   const unmatched = run([...execute('unmatched', 'text'), '--harness', `fixture:${noMatch}`]);
@@ -237,7 +243,7 @@ export default defineWorkflow({name:'rehearsal-cli',version:'1',input:z.object({
   assert.equal(overridden.status, 0, overridden.stderr);
   assert.equal(overridden.value.run.output, 'first answer / second answer');
   assert(overridden.value.calls.every((call) => call.outputSource === 'fixture'));
-  assert(!existsSync(join(state, 'overridden.json')));
+  assert(!existsSync(join(state, 'overridden', 'run.json')));
   writeFileSync(
     file,
     readFileSync(file, 'utf8') + '\n// explicit source change for preview compatibility\n',
@@ -256,7 +262,7 @@ export default defineWorkflow({name:'rehearsal-cli',version:'1',input:z.object({
   ]);
   assert.equal(accepted.status, 0, accepted.stderr);
   assert.equal(accepted.value.calls.length, 1);
-  assert.equal(readFileSync(join(state, 'partial.json'), 'utf8'), partialBytes);
+  assert.equal(readFileSync(join(state, 'partial', 'run.json'), 'utf8'), partialBytes);
   console.log(
     'Rehearsal CLI: dry-run, fixtures/config/export, named late failures, process-free preview, and harness guards passed.',
   );

@@ -2,6 +2,17 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- **Storage revision:** new runs use format 7, per-run directories, coalesced append-only journals,
+  and project-specific XDG state outside the working tree by default. Preserve observable outcomes
+  before promise settlement, compact by status/size, and recover torn tails under ownership.
+  `RunStore` separates orchestration from owned persistence. Original format 1 and flat format 6
+  migrate with retained backups and old-binary guards; formats 2–5 remain inspectable. See
+  [local storage](docs/storage.md).
+- `workflow execute --resume --run-id RUN` can omit FILE. Stored launch paths are used, different
+  supplied entrypoints are refused before import, and state paths appear in text/JSON output.
+  `workflow list --all` discovers registered projects without loading source. New state containers
+  self-ignore under Git; answers live in each run's inbox with case-distinct bounded names.
+
 - Add durable `ctx.ask`/`ctx.approve`, quiescent suspension, and an atomic lock-free answer inbox
   with early JSON Schema and authoritative Zod validation. Started sibling work finishes before
   suspension. `runWorkflow` now returns a completed/suspended union; narrow by `status` or use
@@ -48,9 +59,9 @@
 - `workflow inspect` now shows a dashboard; `--json --summary`, `--watch --interval`, and
   `workflow list --status` support monitoring without imports. Watch JSON is JSONL and exits
   0/1/130/3 for completed/failed/cancelled/stale. `-v` prints saved failure stacks.
-- **Breaking:** new checkpoints use format 6. Formats 1–5 remain readable but cannot resume or
-  supply fork reuse. Step semantic fingerprints are unchanged. Existing `attemptHistory` and
-  cancellation status are extended rather than duplicated. Custom contexts must forward phase/log.
+- Observability introduced format 6; the storage revision above defines current migration support.
+  Step semantic fingerprints are unchanged. Existing `attemptHistory` and cancellation status are
+  extended rather than duplicated. Custom contexts must forward phase/log.
 - `WorkflowRunError` now exposes `runId` and names the root step/kind in its message, preserving the
   original `cause`. Prompt previews and log data are persisted; treat checkpoints as sensitive. See
   [run observability](docs/observability.md).
@@ -59,8 +70,8 @@
   run ID, root effect, and the actual saved checkpoint. Typecheck supports `--json`; workflow stdout
   is redirected to stderr in JSON mode. Input accepts inline JSON, `@file`, and `-` for stdin.
 - **Breaking:** exit 1 now means a saved workflow failure. Usage, run refusals, and loading errors
-  use 2, 3, and 4; storage failures use 74; interrupts use 130. Exit 75 is reserved. Check-resume
-  incompatibility now uses exit 3 with its comparison in `error.details`.
+  use 2, 3, and 4; storage failures use 74; interrupts use 130. Exit 75 means durable suspension.
+  Check-resume incompatibility now uses exit 3 with its comparison in `error.details`.
 - **Breaking:** successfully saved failed/cancelled runs reject with `WorkflowRunError`. Match the
   original error class through `.cause`; `.run` and `.stepId` carry saved context. Existing
   checkpoint aggregates retain the original primary cause. Refusals and input-schema errors now use

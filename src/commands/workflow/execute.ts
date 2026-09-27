@@ -19,7 +19,7 @@ import type { JsonValue } from '../../workflow/runtime/model.js';
 import { validatePolicy, type PolicyOverride } from '../../workflow/runtime/policy.js';
 
 interface WorkflowExecuteArgs {
-  readonly file: string;
+  readonly file: string | undefined;
 }
 
 interface WorkflowExecuteFlags {
@@ -37,7 +37,7 @@ interface WorkflowExecuteFlags {
   readonly input: string | undefined;
   readonly 'run-id': string | undefined;
   readonly resume: boolean | undefined;
-  readonly 'state-dir': string;
+  readonly 'state-dir': string | undefined;
   readonly json: boolean | undefined;
   readonly policy: string[] | undefined;
   readonly 'policy-reset': boolean | undefined;
@@ -54,7 +54,6 @@ export default class WorkflowExecute extends WorkflowCommand {
   public static override readonly args: Interfaces.ArgInput<WorkflowExecuteArgs> = {
     file: Args.string({
       description: 'Trusted TypeScript workflow module',
-      required: true,
     }),
   };
 
@@ -124,8 +123,8 @@ export default class WorkflowExecute extends WorkflowCommand {
       default: false,
     }),
     'state-dir': Flags.directory({
-      description: 'Local durable run storage',
-      default: '.quiet-choir/runs',
+      description:
+        'Runs container; defaults to environment, legacy run discovery, then project XDG state',
     }),
     json: Flags.boolean({
       description: 'Print the run record or structured error as JSON',
@@ -157,7 +156,7 @@ export default class WorkflowExecute extends WorkflowCommand {
   public async run(): Promise<void> {
     const { args, flags } = await this.parse(WorkflowExecute);
     const runId = flags['run-id'] ?? randomUUID();
-    this.runContext(runId, flags['state-dir']);
+    const stateDir = this.runContext(runId, flags['state-dir']);
     if (flags['fork-from'] !== undefined) this.validateRunId(flags['fork-from']);
     if (flags.resume && flags['run-id'] === undefined)
       this.fail('usage.resume_requires_run_id', '--resume requires --run-id.');
@@ -194,18 +193,28 @@ export default class WorkflowExecute extends WorkflowCommand {
     } catch (error) {
       this.fail('usage.flag', error instanceof Error ? error.message : 'Invalid --policy JSON.');
     }
-    const typecheck = await this.entrypoint(args.file);
+    if (args.file === undefined && !flags.resume)
+      this.fail('usage.flag', 'A workflow file is required unless --resume --run-id is used.');
+    const launch =
+      args.file === undefined
+        ? { kind: 'workflow.resume' as const }
+        : {
+            kind: 'workflow.execute' as const,
+            typecheck: await this.entrypoint(args.file),
+            cwd: process.cwd(),
+            resume: flags.resume ?? false,
+          };
     let input: JsonValue | undefined;
     if (flags.input !== undefined) input = await readWorkflowInput(flags.input, this.signal);
     else if (!flags.resume && !flags['fork-from']) input = {};
-    this.logToStderr(`Run ID: ${runId}`);
+    this.logToStderr(`Run ID: ${runId}\nState directory: ${stateDir}`);
     const executor = new WorkflowExecutor({
       logger: this.createExecutionLogger(flags),
       processSupervisor: this.processSupervisor,
       signal: this.signal,
     });
     const result = await executor.execute({
-      kind: 'workflow.execute',
+      ...launch,
       harness,
       dryRun: flags['dry-run'] ?? false,
       stubSteps: flags['stub-steps'] ?? [],
@@ -213,11 +222,8 @@ export default class WorkflowExecute extends WorkflowCommand {
       agentLimits,
       killGraceMs,
       ...(flags['kill-orphans'] === undefined ? {} : { killOrphans: flags['kill-orphans'] }),
-      typecheck,
       runId,
-      stateDir: resolve(flags['state-dir']),
-      cwd: process.cwd(),
-      resume: flags.resume ?? false,
+      stateDir: stateDir,
       policy,
       profileOverrides,
       grants: flags.grant ?? [],
@@ -263,7 +269,7 @@ export default class WorkflowExecute extends WorkflowCommand {
       }
       this.outputSavedCompletion(
         result.rehearsal === undefined
-          ? result.run
+          ? { ...result.run, stateDir }
           : { ...result.rehearsal, ok: true, run: result.run },
         `Run ${result.run.id} ${result.run.status}.\n${JSON.stringify(result.run.output, null, 2)}`,
       );

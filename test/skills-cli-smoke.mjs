@@ -74,7 +74,7 @@ try {
     let saved;
     for (let tries = 0; tries < 300; tries++) {
       try {
-        saved = JSON.parse(await readFile(join(state, 'first.json'), 'utf8'));
+        saved = JSON.parse(await readFile(join(state, 'first', 'run.json'), 'utf8'));
       } catch (error) {
         if (error.code !== 'ENOENT') throw error;
       }

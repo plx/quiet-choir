@@ -1,3 +1,4 @@
+import { readRunSync } from '../dist/workflow/runtime/store.js';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
@@ -19,7 +20,7 @@ const cli = (...args) =>
     encoding: 'utf8',
     timeout: 30_000,
   });
-const checkpoint = (id) => JSON.parse(readFileSync(join(state, `${id}.json`), 'utf8'));
+const checkpoint = (id) => readRunSync({ stateDir: state, runId: id });
 try {
   mkdirSync(binaryDirectory);
   mkdirSync(join(fixture, 'node_modules'));
@@ -58,7 +59,7 @@ export default defineWorkflow({name:'scoped-cli',version:'1',input:z.object({inv
       .sort(),
     ids.sort(),
   );
-  assert.equal(before.formatVersion, 6);
+  assert.equal(before.formatVersion, 7);
   const calls = readFileSync(join(fixture, 'calls.txt'), 'utf8');
   assert.equal(calls.trim().split('\n').length, 4);
   const resumed = cli('execute', file, '--run-id', 'scoped', '--state-dir', state, '--resume');

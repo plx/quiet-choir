@@ -1,3 +1,4 @@
+import { readRunSync } from '../dist/workflow/runtime/store.js';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
@@ -44,7 +45,7 @@ function failure(args, code, exit, input) {
   return result;
 }
 const execute = (...args) => ['execute', file, '--state-dir', state, ...args];
-const saved = (id) => JSON.parse(readFileSync(join(state, `${id}.json`), 'utf8'));
+const saved = (id) => readRunSync({ stateDir: state, runId: id });
 async function until(action, explanation) {
   for (let attempt = 0; attempt < 1500; attempt++) {
     if (action()) return;
@@ -151,7 +152,7 @@ export default defineWorkflow({ name:'json', version:'1',
     'usage.input_schema',
     2,
   );
-  assert.equal(existsSync(join(state, 'bad-input.json')), false);
+  assert.equal(existsSync(join(state, 'bad-input', 'run.json')), false);
   failure(
     execute('--resume', '--run-id', 'file', '--input', '{"value":"wrong"}'),
     'usage.input_schema',
@@ -164,7 +165,7 @@ export default defineWorkflow({ name:'json', version:'1',
     'run.input_changed',
     3,
   );
-  const before = readFileSync(join(state, 'file.json'), 'utf8');
+  const before = readFileSync(join(state, 'file', 'run.json'), 'utf8');
   writeFileSync(file, readFileSync(file, 'utf8').replace("version:'1'", "version:'2'"));
   const incompatible = failure(
     execute('--resume', '--run-id', 'file'),
@@ -172,9 +173,9 @@ export default defineWorkflow({ name:'json', version:'1',
     3,
   ).document;
   assert.ok(incompatible.error.details.changed.includes('version'));
-  assert.equal(readFileSync(join(state, 'file.json'), 'utf8'), before);
-  const lock = join(state, 'locked.json.lock');
-  mkdirSync(lock);
+  assert.equal(readFileSync(join(state, 'file', 'run.json'), 'utf8'), before);
+  const lock = join(state, 'locked', 'lock');
+  mkdirSync(lock, { recursive: true });
   writeFileSync(
     join(lock, 'owner.json'),
     JSON.stringify({ pid: process.pid, host: hostname(), token: 'fixture' }),
@@ -194,11 +195,21 @@ export default defineWorkflow({ name:'json', version:'1',
 
   const brokenResume = join(root, 'broken-resume.ts');
   writeFileSync(brokenResume, 'const wrong: number = "wrong"; export default {};');
-  const loadFailure = failure(
+  const differentFile = failure(
     ['execute', brokenResume, '--resume', '--run-id', 'file', '--state-dir', state],
+    'run.incompatible',
+    3,
+  ).document;
+  assert.ok(differentFile.error.message.includes('broken-resume.ts'));
+  assert.ok(differentFile.error.message.includes('workflow.ts'));
+  const originalSource = readFileSync(file, 'utf8');
+  writeFileSync(file, readFileSync(brokenResume, 'utf8'));
+  const loadFailure = failure(
+    ['execute', file, '--resume', '--run-id', 'file', '--state-dir', state],
     'load.typecheck',
     4,
   ).document;
+  writeFileSync(file, originalSource);
   assert.equal(loadFailure.status, 'completed');
   assert.deepEqual(loadFailure.run, JSON.parse(before));
   for (const [name, source, code] of [
@@ -241,7 +252,7 @@ export default defineWorkflow({ name:'json', version:'1',
     // A signal between the attempt save and the callback start cancels before the stuck callback.
     await until(
       () =>
-        existsSync(join(state, `${id}.json`)) &&
+        existsSync(join(state, id, 'run.json')) &&
         saved(id).steps.wait?.status === 'running' &&
         (mode !== 'stuck' || stderr.includes('stuck started')),
       `No active wait: ${stderr}`,

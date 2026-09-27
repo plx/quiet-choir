@@ -1,3 +1,4 @@
+import { resolveStateDir } from '../src/index.js';
 import WorkflowList from '../src/commands/workflow/list.js';
 import { summarizeRun } from '../src/workflow/loader/inspection.js';
 import { workflowFailure } from '../src/workflow/loader/failure.js';
@@ -305,7 +306,9 @@ describe('workflow lifecycle command adapters', () => {
       ...(json ? ['--json'] : []),
     ]);
     expect(output.error).toBeUndefined();
-    expect(output.stderr).toBe('Run ID: test-run');
+    expect(output.stderr).toBe(
+      `Run ID: test-run\nState directory: ${resolveStateDir({ runId: 'test-run' })}`,
+    );
     expect(execute).toHaveBeenCalledWith(
       expect.objectContaining({ input: { value: 2 }, runId: 'test-run', resume: false }),
     );

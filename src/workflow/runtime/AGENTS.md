@@ -42,7 +42,9 @@ prefixes compose explicit leaves; never allocate IDs from completion-order count
 separate from cancellation ownership. Bound views preserve nested prefixes only inside their own
 binding, and never snapshot the current signal. Named-map keys are all validated before work starts;
 settled identity hashes original mapper source and resolved keys. Legacy unscoped IDs/fingerprints
-remain semantically compatible with format-5 identities; execution gates require format 6. See
+remain semantically compatible with format-5 identities; storage format 7 preserves replay
+contract 6. Flat format 6 migrates automatically; original format 1 verifies legacy identities
+during migration. Formats 2–5 stay read-only. See
 [ADR 0009](../../../docs/decisions/0009-scoped-step-ids.md).
 
 Agent admission is run-wide (or shared explicitly across runs). Only Harness.invoke holds a slot;
@@ -75,3 +77,12 @@ waiting questions. Keep abandoned promises excluded from error-path drains after
 owner ingests inbox files with the actual Zod schema; lock-free writers validate early from stored
 JSON Schema and publish exclusively. See
 [ADR 0018](../../../docs/decisions/0018-durable-questions.md).
+
+Journal batches commit every observable outcome before resolving their waiters. Ordinary starts may
+be unsynced, but sleep deadlines and questions may not. Commit snapshots before truncating covered
+journal bytes; validate gaps/corruption and repair only a torn final line under ownership. Readers
+must retry compaction sequence races and must not fall back to a completed migration marker when
+current state is missing. Acquire legacy guards before current locks, hold both through
+drain/release, and register all new children in the current lock. Keep storage sequence/version and
+informational engine versions out of effect identity. See
+[ADR 0019](../../../docs/decisions/0019-journal-storage-and-project-state.md).

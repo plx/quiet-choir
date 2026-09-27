@@ -66,7 +66,7 @@ export default defineWorkflow({name:'fallback-cli',version:'1',input:z.object({}
   const inspected = cli('inspect', 'recovery', '--state-dir', state, '--json');
   assert.equal(inspected.status, 0, inspected.stderr);
   const initial = JSON.parse(inspected.stdout);
-  assert.equal(initial.formatVersion, 6);
+  assert.equal(initial.formatVersion, 7);
   assert.equal(initial.steps.primary.status, 'settled-failed');
   assert.equal(initial.steps.primary.settledError.kind, 'turn-limit');
   assert.equal(initial.steps.primary.attemptHistory[0].errorKind, 'turn-limit');
@@ -80,7 +80,7 @@ export default defineWorkflow({name:'fallback-cli',version:'1',input:z.object({}
     'final',
   ]);
   assert.equal(readFileSync(join(fixture, 'writes.txt'), 'utf8'), 'fallback\n');
-  const source = readFileSync(join(state, 'recovery.json'), 'utf8');
+  const source = readFileSync(join(state, 'recovery', 'run.json'), 'utf8');
   const fork = cli(
     'execute',
     file,
@@ -96,7 +96,7 @@ export default defineWorkflow({name:'fallback-cli',version:'1',input:z.object({}
   );
   assert.equal(fork.status, 0, fork.stderr);
   assert.equal(JSON.parse(fork.stdout).output, 'primaryfinal');
-  assert.equal(readFileSync(join(state, 'recovery.json'), 'utf8'), source);
+  assert.equal(readFileSync(join(state, 'recovery', 'run.json'), 'utf8'), source);
   console.log(
     'PASS CLI settled failure replay, attempt categories, immutable source, and explicit retry through fork invalidation',
   );

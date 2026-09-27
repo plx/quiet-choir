@@ -72,7 +72,7 @@ async function childProcess(): Promise<HarnessProcess> {
   };
 }
 async function abandon(): Promise<void> {
-  const path = join(directory, 'run.json.lock', 'owner.json');
+  const path = join(directory, 'run', 'lock', 'owner.json');
   const owner = JSON.parse(await fs.readFile(path, 'utf8')) as Record<string, unknown>;
   await fs.writeFile(path, JSON.stringify({ ...owner, pid: 2_000_000_000, osStartTime: null }));
 }
@@ -82,7 +82,7 @@ describe.skipIf(process.platform === 'win32')('durable harness ownership', () =>
     const lock = await lockRun(directory, 'run');
     const child = await childProcess();
     const lease = await lock.trackProcess(context, child);
-    const path = join(directory, 'run.json.lock', 'processes', `${String(child.pid)}.json`);
+    const path = join(directory, 'run', 'lock', 'processes', `${String(child.pid)}.json`);
     const raw = await fs.readFile(path, 'utf8');
     expect(JSON.parse(raw)).toMatchObject({ ...context, ...child });
     expect((await fs.stat(path)).mode & 0o777).toBe(0o600);
@@ -111,12 +111,12 @@ describe.skipIf(process.platform === 'win32')('durable harness ownership', () =>
     const child = await childProcess();
     await lock.trackProcess(context, child);
     await abandon();
-    const before = await fs.readFile(join(directory, 'run.json.lock', 'owner.json'), 'utf8');
+    const before = await fs.readFile(join(directory, 'run', 'lock', 'owner.json'), 'utf8');
     await expect(lockRun(directory, 'run')).rejects.toMatchObject({
       code: 'run.orphans',
       runId: 'run',
     });
-    expect(await fs.readFile(join(directory, 'run.json.lock', 'owner.json'), 'utf8')).toBe(before);
+    expect(await fs.readFile(join(directory, 'run', 'lock', 'owner.json'), 'utf8')).toBe(before);
     expect(groupState(child)).toBe('alive');
     const inspected = await inspectRunOwnership({ stateDir: directory, runId: 'run' });
     expect(inspected.owner?.state).toBe('dead');
@@ -180,7 +180,7 @@ describe.skipIf(process.platform === 'win32')('durable harness ownership', () =>
     const child = await childProcess();
     await lock.trackProcess(context, { ...child, osStartTime: null });
     await abandon();
-    const path = join(directory, 'run.json.lock', 'processes', 'malformed.json');
+    const path = join(directory, 'run', 'lock', 'processes', 'malformed.json');
     await fs.writeFile(path, '{bad');
     const kill = vi.spyOn(process, 'kill');
     await expect(
@@ -190,7 +190,7 @@ describe.skipIf(process.platform === 'win32')('durable harness ownership', () =>
     const result = await inspectRunOwnership({ stateDir: directory, runId: 'run' });
     expect(result.processes.map((entry) => entry.state)).toEqual(['unknown', 'unknown']);
     expect(await fs.readFile(path, 'utf8')).toBe('{bad');
-    expect(await fs.readdir(join(directory, 'run.json.lock'))).not.toContain('recovery');
+    expect(await fs.readdir(join(directory, 'run', 'lock'))).not.toContain('recovery');
   });
 
   it('retains children on release and allows recovery while the original embedder is still alive', async () => {
@@ -267,8 +267,8 @@ describe.skipIf(process.platform === 'win32')('durable harness ownership', () =>
 });
 
 it('reports incomplete and remote ownership without claiming local child identities', async () => {
-  const lockPath = join(directory, 'run.json.lock');
-  await fs.mkdir(lockPath);
+  const lockPath = join(directory, 'run', 'lock');
+  await fs.mkdir(lockPath, { recursive: true });
   expect((await inspectRunOwnership({ stateDir: directory, runId: 'run' })).warning).toBeTruthy();
   await fs.writeFile(
     join(lockPath, 'owner.json'),
