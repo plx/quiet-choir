@@ -129,7 +129,9 @@ export class CliHarness implements Harness {
         failure: outcome.kind === 'failure' ? outcome.failure : null,
         reason:
           outcome.kind === 'unparseable'
-            ? outcome.reason
+            ? result.stdout.trim() === '' && (result.code !== 0 || result.signal !== null)
+              ? `exited with ${result.signal ?? `code ${String(result.code)}`} (no protocol output)`
+              : outcome.reason
             : 'process failed after a successful protocol result',
         stderr: result.stderr,
         stdout: result.stdout,

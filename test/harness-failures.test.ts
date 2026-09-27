@@ -175,6 +175,7 @@ it.each(['', 'not-json'.repeat(1000)])(
     if (!(error instanceof HarnessError)) throw new Error('Expected HarnessError');
     expect(error.exit.code).toBe(9);
     expect(error.message).toContain('exit code 9');
+    if (stdout === '') expect(error.message).toContain('no protocol output');
     expect(error.failure).toBeNull();
     expect(error.usage).toBeNull();
     expect(error.stderrTail).toHaveLength(1024);
