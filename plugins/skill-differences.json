@@ -1,0 +1,7 @@
+[
+  {
+    "file": "SKILL.md",
+    "region": "claude-host",
+    "reason": "Claude's invocation and native Workflow comparison apply only in the Claude package."
+  }
+]

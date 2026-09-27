@@ -51,20 +51,55 @@ The Claude package has its own `.claude-plugin/plugin.json` and skill tree. See
 plugin paths from the repository root, not the catalog's hidden directory.
 
 Keep the two packages physically independent: no symlinks, cross-package references, or generation
-step that forces their content to match. Review both when runtime behavior changes, but allow
-host-specific skill structure and instructions to diverge. Each skill bundles references for
-setup/CLI, authoring, Claude, Codex, durability, inspection, and extensions.
+step that forces their content to match. Review both when runtime behavior changes. Task routes now
+cover cross-project setup, background operation, triage, authoring, shared agent controls, provider
+protocols, rehearsal, durability, and embedding.
 
-For validation, run:
+Host-specific instructions can diverge inside named `skills-difference` regions. Each region needs
+an exact file/region/reason entry in [the allowlist](../plugins/skill-differences.json), and both
+copies retain its markers (the general copy can leave the region empty). The checker rejects
+unknown, malformed, duplicate, or unused rules and all other byte/file-list differences. Review the
+allowlist with the prose change; it is not a whole-file exception or a synchronization mechanism.
+
+Run offline validation and the documented recipes with:
+
+```sh
+npm run skills:check
+npm run build
+node test/skills-cli-smoke.mjs
+```
+
+`npm run check` includes all three stages, and CI runs them in Quality and package. The skill check:
+
+- Parses YAML frontmatter and validates both documentation-plugin manifests. The portable schema's
+  normative validation keywords are pinned from Agent Plugins 1.0.0; Claude's schema explicitly
+  covers this repository's documentation-only manifest fields. It also checks marketplace paths.
+- Rejects symlinks and verifies Markdown links/anchors stay inside their physical installed package.
+  External URLs are syntax-checked; validation does not depend on network availability.
+- Compares the physical skill trees against the narrow difference allowlist.
+- Compiles every complete `ts`/`typescript` fence from both copies against `src/index.ts`, with the
+  repository's strict compiler options. Only recognized module import specifiers are redirected;
+  example code and prompt strings are preserved. Diagnostics name the Markdown file and line.
+
+Precede a deliberately incomplete code fence with
+`<!-- skills-check: fragment; reason: Explain the omitted surrounding context. -->`. Do not mark a
+broken complete example as a fragment. Executable recipes use
+`<!-- skills-check: example example-id -->`; the smoke test extracts those actual fences. It runs
+the shell golden path and jq summary in throwaway Git projects outside the checkout, verifies the
+projects stay clean, and executes logging/resume recipes with a fake harness and captured native
+protocol bytes. No credentials or paid calls are needed. `jq`, Git, and a POSIX shell must be on
+PATH for that smoke test (available on the CI Ubuntu runner).
+
+Mutation tests prove rejection of broken TypeScript, both invalid manifests, a bad marketplace path,
+dangling links/anchors, package escapes, unintended differences, malformed annotations, duplicate
+frontmatter, and symlinked deliverables.
+
+Host-side Claude packaging checks remain useful when its CLI is installed:
 
 ```sh
 claude plugin validate .
 claude plugin validate ./plugins/claude/quiet-choir
-npm run check
 ```
 
-Also validate the portable manifest against its declared JSON Schema and check that each marketplace
-source and skill-relative reference resolves within its package. `npm run check` covers repository
-checks but does not validate plugin schemas or reference links. The older Codex
-compatibility-manifest validator expects `.codex-plugin/plugin.json` and is not a validator for this
-portable format. No live harness call is needed to validate documentation packaging.
+The older Codex compatibility-manifest validator expects `.codex-plugin/plugin.json` and is not a
+validator for this portable format. No live harness call is needed for documentation packaging.

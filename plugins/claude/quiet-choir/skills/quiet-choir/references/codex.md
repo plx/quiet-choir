@@ -5,32 +5,21 @@ adapter provides typed controls and a fingerprinted escape hatch. Any agent host
 workflow that invokes `ctx.codex`. This plugin does not install Codex; `CliHarness` runs the first
 `codex` on PATH unless an embedding caller overrides the binary.
 
-## Options and result
+Read [agent calls](agent-calls.md) for result methods, shared options/defaults, profiles, grants,
+usage, retries, identity, and process recovery.
 
-Both `ctx.codex.text(id, options)` and `ctx.codex.object(id, { schema, ...options })` return
-`{ output, sessionId, usage }`. `output` is text or the locally validated structured value. These
-defaults come from the core's implicit `text` profile; custom harnesses must enforce them.
+## Codex controls
 
-| Option             | Meaning and default                                                                                                                       |
-| ------------------ | ----------------------------------------------------------------------------------------------------------------------------------------- |
-| `prompt`           | Required instructions, sent over stdin                                                                                                    |
-| `model`            | Model name; omitted means the installed harness default                                                                                   |
-| `cwd`              | Resolved against the run's working directory; defaults to it. Absolute paths are accepted and are not confined. The directory must exist. |
-| `timeoutMs`        | Per-call wall-clock limit, default 300,000 (5 minutes)                                                                                    |
-| `sandbox`          | `read-only` (default) or `workspace-write`                                                                                                |
-| `reasoningEffort`  | `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`; conflicts with `effort`                                                       |
-| `skipGitRepoCheck` | Set true to permit execution outside a Git repo; omitted by default                                                                       |
+`reasoningEffort` accepts none/minimal/low/medium/high/xhigh/max; set it or shared `effort`, never
+both. `sandbox` is read-only or workspace-write. `skipGitRepoCheck: true` permits calls outside Git.
+These are resolved through the shared profile/grant rules.
 
 | Additional option | Meaning                                                                                                                              |
 | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| `effort`          | Shared `low`, `medium`, `high`, `xhigh`, `max`; set this or reasoningEffort, never both                                              |
 | `networkAccess`   | Explicit boolean under workspace-write; requires that sandbox even when false                                                        |
 | `harnessProfile`  | Native Codex profile (`--profile`); `profile` still selects a quiet-choir role                                                       |
 | `config`          | JSON values rendered as TOML per dotted key; rejects null and aliases of owned controls                                              |
 | `images`          | Regular files resolved against effect cwd; contents fingerprinted, snapshotted before launch and re-hashed on resume (keep readable) |
-| `addDirs`         | Additional **writable** directories, resolved against effect cwd                                                                     |
-| `extraArgs`       | Fingerprinted `--flag` or `--flag=value`; owned flags/aliases and subcommands rejected                                               |
-| `env`             | Fingerprinted overlay; keep rotating secrets in the parent environment                                                               |
 
 Effort omission inherits native configuration, potentially an expensive level. Model-specific
 support remains native CLI behavior. Capability controls belong in profiles under strict mode.
@@ -43,22 +32,12 @@ not files at paths embedded in them. Record model/effort selections under each a
 
 Declare shared roles on `defineWorkflow`, for example
 `defaults: { codex: { reasoningEffort: 'medium' } }` and
-`profiles: { skeptic: { extends: 'readonly', codex: { reasoningEffort: 'high' } } }`. The role can
-be used with either provider. `text` and `readonly` both use read-only for Codex; `edit` uses
-workspace-write. Codex text has access class read, because read-only is its tightest sandbox.
-Turn/budget profile limits apply only to Claude; Codex honors timeoutMs.
-
-`workflow validate file.ts --json` publishes resolved roles without running the body. Default
-`strictProfiles: true` prohibits raw call-site capability controls, including sandbox, dirs, native
-profiles/config, network, escape args and environment. Every declared/default write/exec role needs
-a launch grant by name or class, saved on resume. Selecting built-in `edit` directly requires a
-grant before that call. Named grants are pinned to declared capabilities, so changed capabilities
-require a fresh grant. These declarations do not isolate inherited hooks/MCP config or workflow
-JavaScript. See [Claude profiles](claude.md) for shared merge, grant and recovery rules. Raise a
-role deadline without source edits using `--resume --run-id r1 --profile skeptic.timeoutMs=1800000`;
-profile names and limits stay outside identity, resolved model/effort/sandbox stay inside.
+`profiles: { skeptic: { extends: 'readonly', codex: { reasoningEffort: 'high' } } }`. See
+[profiles and grants](agent-calls.md#select-a-role-and-grant-its-capabilities).
 
 Inside a workflow whose input includes `topic`:
+
+<!-- skills-check: fragment; reason: Inside a workflow with ctx, input.topic, and z in scope. -->
 
 ```ts
 const result = await ctx.codex.object('review', {
@@ -77,9 +56,8 @@ launch with `--grant role`; the effect's working directory is not automatically 
 worktree. Hooks, MCP servers, and inherited configuration still matter, and the workflow's own
 TypeScript runs outside these harness sandbox controls.
 
-Each effect is a fresh call with `--ephemeral`, so there is no persisted local session transcript.
-The native thread ID is returned as `sessionId` for correlation only, not as a workflow resume
-token. Pass previous results explicitly in subsequent prompts.
+Calls use `--ephemeral`, so the native thread ID is correlation metadata and no local session
+transcript is persisted.
 
 ## Structured output and protocol
 
@@ -125,11 +103,6 @@ cache comparison; it is not comparable with Claude's top-level field. `costUsd` 
 no Codex per-call USD cap. Failed protocol attempts can retain available usage/session metadata in
 `steps[id].failedAttempts`, with nulls when absent.
 
-The implicit text profile's five-minute wall-clock and 8 MiB combined stdout/stderr limits bound the
-process, not dollar spend. The byte limit counts the whole JSONL stream, including command output.
-CLI runs cannot raise it; embedding callers can set `CliHarnessOptions.maxOutputBytes`. A noisy
-editing call may hit that limit after making file changes even though its result is not saved.
-
 ## Diagnosing a failure
 
 Inspect the saved step error and verify authentication with `codex login status`. Protocol reasons
@@ -137,28 +110,6 @@ from stdout survive nonzero normal exits; a bare exit error means no usable reas
 Check the object schema and reproduce with the same flags when needed. Credentials-only repairs can
 resume compatible runs.
 
-Timeout and explicit retry policy are excluded from step identity. Raise `timeoutMs` through a
-sticky `--policy` rule without editing source or rerunning completed calls. A model or effort
-override requires `--allow-model-override` and affects unfinished attempts only. Completed prompts,
-schemas, model/effort, cwd, sandbox, and other capabilities still must match. Embedded callers may
-redefine unfinished steps with history; CLI source edits require explicit code acceptance or a fork.
-See [durability](durability.md#recovering-a-timeout-or-turn-limit) for the recovery recipe and
-`attemptHistory` fields. Use `skipGitRepoCheck` only for work outside Git.
-
-Agent calls accept `retry: { maxAttempts, delayMs?, on? }` for explicitly repeatable work; the
-default remains one attempt. Every leader exit reaps owned process groups on macOS/Linux, with only
-immediate-child cleanup on Windows. One Ctrl-C, SIGTERM or SIGHUP cancels, reaps owned groups,
-drains and exits 130. A second signal synchronously SIGKILLs tracked groups and exits 130; the lock
-and an older checkpoint may remain. SIGKILL or a crash can leave children running and editing.
-Inspect owner/process liveness before retrying. Resume refuses live or unverified recorded children
-(exit 3); use `--resume --kill-orphans` to stop identity-confirmed survivors first. The default TERM
-grace is 3000ms, configurable with `--kill-grace-ms`. Unknown identities are retained and never
-signaled; escaped groups and the spawn-to-record crash gap still need separate investigation. See
-[durability](durability.md) for recovery and platform limits.
-
-Structured-output success paths for both adapters completed live with claude 2.1.283 and codex-cli
-0.157.1. That is evidence for those versions and captures, not a guarantee.
-
-Use `onError: 'return'` to persist final failures before branching to a fallback. Cancellation still
-rejects; replay never retries a saved `settled-failed` outcome. `retry.on` filters structured error
-categories. See [failure handling](workflow-authoring.md#failure-handling).
+For limit changes, retry policy, output caps, cancellation, and orphan recovery, use
+[agent calls](agent-calls.md) and [operating a run](operating-runs.md). A noisy editing call can hit
+the combined output cap after making file changes. Use `skipGitRepoCheck` only for work outside Git.

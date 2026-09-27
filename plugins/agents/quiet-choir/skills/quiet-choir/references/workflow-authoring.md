@@ -63,6 +63,8 @@ Pass the signal to cancellable I/O and the key to external systems that support 
 
 For example, inside a workflow that imports `readFile` from `node:fs/promises`:
 
+<!-- skills-check: fragment; reason: Workflow-body pattern with ctx, schemas, and surrounding definition omitted. -->
+
 ```ts
 const contents = await ctx.step('read-source', {
   input: { path: input.path },
@@ -152,6 +154,8 @@ A caught throwing call remains retryable on resume. If it heals, a fallback can 
 completed step can receive different input. The runner cannot infer that a JavaScript catch made a
 durable decision. Use `onError: 'return'` whenever failure selects later workflow work:
 
+<!-- skills-check: fragment; reason: Workflow-body pattern with ctx, schemas, and surrounding definition omitted. -->
+
 ```ts
 const primary = await ctx.claude.value('draft', {
   prompt: 'Write a draft.',
@@ -174,6 +178,8 @@ harness, or an adapter's pre-launch `ConfigurationError` such as a Claude schema
 root), and checkpoint failures also reject instead of becoming fallback data.
 
 For best-effort fan-out, use a named map with `onError: 'settle'`:
+
+<!-- skills-check: fragment; reason: Workflow-body pattern with ctx, schemas, and surrounding definition omitted. -->
 
 ```ts
 const results = await ctx.map('reviewers', topics, { concurrency: 3, onError: 'settle' }, (topic) =>

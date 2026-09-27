@@ -1,5 +1,77 @@
 # Progress inspection
 
+## Locate
+
+Use the same absolute state directory as execution. From the intended project, with the
+[golden-path variables](../SKILL.md#run-a-first-workflow-against-a-project) still set:
+
+```sh
+node "$QC_CHECKOUT/bin/run.js" workflow list --state-dir "$QC_RUNS" --json
+node "$QC_CHECKOUT/bin/run.js" workflow list --state-dir "$QC_RUNS" --status stale --json
+```
+
+List does not import workflow source. A missing directory gives an empty list; unreadable records
+produce warnings. Do not accidentally use `npm run cli` from the runtime checkout to inspect a
+relative state path belonging to another project.
+
+## Read
+
+```sh
+node "$QC_CHECKOUT/bin/run.js" workflow inspect first --state-dir "$QC_RUNS" --json --summary
+node "$QC_CHECKOUT/bin/run.js" workflow inspect first --state-dir "$QC_RUNS" --json
+```
+
+Use the [jq summary](operating-runs.md#poll-the-saved-state) for open steps, attempts, and errors.
+An initial missing checkpoint can mean loading or a pre-record failure: read the redirected result
+and log. Ordinary inspect exits 0 for any readable status. Timestamps are not heartbeats.
+
+## Classify and act
+
+| Observation                                          | Action                                                                                                                                  |
+| ---------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| `completed`                                          | Read `output`; settled failures may be intentional results. No recovery needed.                                                         |
+| `failed`                                             | Read `rootCause`, step error, and attempt diagnostics; fix the cause, then choose compatible resume, explicit code acceptance, or fork. |
+| `cancelled`                                          | Determine who interrupted it; inspect children, then resume if continuing is intended.                                                  |
+| `running`, live owner                                | Wait/watch; inspect running sleeps' `wakeAt` and the log before calling it stalled.                                                     |
+| Derived `stale`, absent/dead/released owner          | Inspect children; plain resume recovers safe ownership automatically.                                                                   |
+| Live/unverified children, remote or incomplete owner | Follow [ownership recovery](operating-runs.md#stalls-and-orphan-recovery); do not infer permission to kill from PID or age alone.       |
+
+Run-level `.status` saves running/completed/failed/cancelled. Summary/list/watch can derive `stale`
+from ownership without rewriting that saved status. A failed run may have reusable completed
+siblings; a run-level output validation error may have no failed step. Start from `rootCause`. See
+[code recovery](durability.md#choose-a-recovery-path) before editing and resuming.
+
+## Match a symptom to its next action
+
+These are exact current message strings or templates (angle-bracket fields vary). Harness messages
+can be wrapped by a step prefix and include `[exit code …]` and bounded diagnostic tails. For
+scripts, use stable CLI `error.code` and structured harness categories instead of parsing prose.
+
+| Symptom                                                                                                    | Likely cause                                            | Next action                                                                                                                    |
+| ---------------------------------------------------------------------------------------------------------- | ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| `Run <id> already exists; use resume or choose a new run ID.`                                              | New execution reused an ID                              | Resume the intended run, or choose a fresh ID.                                                                                 |
+| `Run <id> is locked by PID <pid> on <host>.`                                                               | Live/foreign owner                                      | Inspect ownership on that host; wait or deliberately cancel its runner.                                                        |
+| `Run <id> is locked with incomplete ownership metadata; inspect <path> before removing an abandoned lock.` | Acquisition in progress or damaged lock                 | Recheck and investigate ownership; do not remove an active writer's lock.                                                      |
+| `Run <id> has <count> live or unverified harness processes …`                                              | Survivor or unverifiable child record                   | Inspect; `--resume --kill-orphans` handles only confirmed identities.                                                          |
+| `Workflow <changes> changed; <unchanged> unchanged.`                                                       | Source/schema or name/version/cwd compatibility changed | Read `check-resume --json` details; compare saved cwd/name/version. Accept eligible code edits or fork/start anew as directed. |
+| `Checkpoint format version <n> cannot resume or fork with the current durable-outcome contract …`          | Older runtime record                                    | Inspect it; use its original runtime to resume or start a fresh ID.                                                            |
+| `Claude did not return structured_output for the requested schema.`                                        | Native protocol drift or missing structured result      | Inspect bounded stdout/stderr and the requested schema; verify the installed CLI contract.                                     |
+| `Codex output ended without turn.completed; the call may have been interrupted.`                           | Truncated/incomplete native turn                        | Inspect process outcome and saved notices; confirm no live child before retry.                                                 |
+| `Codex completed without a final agent_message.`                                                           | Terminal event lacked final text                        | Inspect native output/contract; do not equate exit 0 with a usable answer.                                                     |
+| `<binary> exceeded its <n>ms deadline.`                                                                    | Per-call timeout                                        | Inspect effects; raise a sticky timeout limit and resume if safe to repeat.                                                    |
+| `<binary> exceeded its <n>-byte output limit.`                                                             | Combined stdout/stderr cap                              | Reduce noisy output or configure an embedded adapter cap; inspect existing file edits before retry.                            |
+| Harness `HTTP 401` / `HTTP 403`                                                                            | Reported authentication / permission error              | Repair credentials or authorized permissions, then resume; do not change models as an auth workaround.                         |
+| Harness `error_max_turns` / `max_turns`                                                                    | Claude turn limit                                       | Raise `--profile role.maxTurns=N` or matching policy; the error includes current role/limit.                                   |
+| Harness `error_max_budget_usd` / `budget_exhausted`                                                        | Claude per-call USD limit                               | Review reported spend; raise the authorized limit or reduce the task.                                                          |
+| Harness `turn.failed: <reason>`                                                                            | Codex reported terminal failure                         | Fix the recorded API/schema/transport cause; earlier edits may persist.                                                        |
+
+`validate` and execution now share the same source/schema/engine fingerprint. Use `check-resume` for
+a detailed comparison of all gates, including name, version, cwd, and input. Source hashing excludes
+the engine's own src/dist, so rebuilding runtime typings is not by itself a workflow source change.
+Local JSON boundary errors identify the boundary and path: omit undefined object members, use null
+for absent array positions, and return JSON data rather than class instances. See
+[authoring](workflow-authoring.md).
+
 ## Inspect without executing
 
 After the [recovery example](durability.md), reuse its absolute `qc_state_dir` in the same shell:
@@ -161,6 +233,8 @@ Run with `--log-level debug` to log `step.started`, `step.completed`, `step.repl
 `step.reused` events to stderr. `runWorkflow` also accepts an `onEvent(event)` callback returning
 `void | Promise<void>`. `replay.divergence` adds a message and `skippedStepIds`, and the CLI logs it
 as a warning before live work; `--strict-replay` stops before the next live effect:
+
+<!-- skills-check: fragment; reason: onEvent property inside runWorkflow options. -->
 
 ```ts
 onEvent: (event) => {

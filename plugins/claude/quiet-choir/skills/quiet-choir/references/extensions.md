@@ -98,7 +98,112 @@ Adapter kinds are persisted outside identity; switching them on resume/fork need
 `allowHarnessChange: true`. Use explicit distinct `kind` names for custom modes. See
 [rehearsal](rehearsal.md) for the loop, synthesis limits, and repository-only fake native CLIs.
 
+## Keep raw responses when local validation fails
+
+This decorator logs a completed adapter response before core JSON/Zod validation. It forwards kind,
+metadata, policy defaults, cancellation, and process registration unchanged. A logging failure is
+best effort: it cannot invalidate an already completed external call. Use a private absolute log
+path outside the worktree; new files use mode 0600 (existing permissions are not changed).
+
+<!-- skills-check: example logging-harness -->
+
+```ts
+import { appendFile } from 'node:fs/promises';
+import { CliHarness, type Harness } from 'quiet-choir';
+
+export function loggingHarness(logFile: string, inner: Harness = new CliHarness()): Harness {
+  const metadata = inner.metadata?.bind(inner);
+  const policyDefaults = inner.policyDefaults?.bind(inner);
+  return {
+    ...(inner.kind === undefined ? {} : { kind: inner.kind }),
+    ...(metadata === undefined ? {} : { metadata }),
+    ...(policyDefaults === undefined ? {} : { policyDefaults }),
+    async invoke(request, invocation) {
+      const response = await inner.invoke(request, invocation);
+      try {
+        await appendFile(
+          logFile,
+          JSON.stringify({
+            provider: request.provider,
+            call: request.call,
+            text: response.text,
+            sessionId: response.sessionId,
+            usage: response.usage,
+          }) + '\n',
+          { mode: 0o600 },
+        );
+      } catch (error) {
+        console.error('Could not append harness response log:', error);
+      }
+      return response;
+    },
+  };
+}
+```
+
+Only returned responses are logged here. A thrown protocol/process failure instead exposes
+`HarnessError` diagnostics; neither this file nor `onEvent` is a streaming native transcript.
+Repeated attempts append repeated records. The caller chooses retention and access permissions.
+
+## Resume if present, otherwise start
+
+Read and execute with the same absolute `cwd` and `stateDir`. Only ENOENT means a new run;
+permission, corrupt-record, and other errors must propagate. The writer lock still guards the race
+between this read and execution, so simultaneous starters can refuse safely rather than overwrite
+one another.
+
+<!-- skills-check: example resume-or-start -->
+
+```ts
+import { readRun, runWorkflow, type Harness, type WorkflowDefinition } from 'quiet-choir';
+
+export async function resumeOrStart<TInput, TOutput>(
+  workflow: WorkflowDefinition<TInput, TOutput>,
+  options: {
+    runId: string;
+    cwd: string;
+    stateDir: string;
+    input: unknown;
+    fingerprint: string;
+    harness?: Harness;
+  },
+) {
+  const { input, ...shared } = options;
+  let exists = true;
+  try {
+    await readRun(shared);
+  } catch (error) {
+    if (error instanceof Error && 'code' in error && error.code === 'ENOENT') exists = false;
+    else throw error;
+  }
+  return runWorkflow(workflow, {
+    ...shared,
+    resume: exists,
+    ...(exists ? {} : { input }),
+  });
+}
+```
+
+The caller must update `fingerprint` for meaningful code/dependency changes. Local callback source
+is part of step identity, but values captured by closures and external helpers are not fully
+represented by a constant caller fingerprint. Supply step `input`/`version` for those dependencies;
+do not assume a constant like `review-v3` detects all edits. The CLI computes source hashes for you.
+This recipe deliberately omits input on resume so it reuses the saved input.
+
 ## Implement an integration
+
+Before using a custom harness, verify this contract with fake responses/processes:
+
+- Settle promptly when `invocation.signal` aborts; otherwise draining holds the run lock
+  indefinitely.
+- Enforce resolved `timeoutMs` and every supported provider limit yourself. Core profile resolution
+  supplies defaults but does not supervise an arbitrary adapter's internal transport.
+- Use absolute `request.cwd`, not unresolved `request.options.cwd`.
+- Return `sessionId` and every usage field as values or `null`, never undefined.
+- Reject process and protocol failures, including reported failure with process exit 0.
+- Perform one attempt only; retries belong to the core.
+- Register children before sending task input, preserve OS birth identity, and release only after
+  reaping, using the invocation port below.
 
 Implement `Harness.invoke(request, invocation): Promise<HarnessResponse>`. The request carries a
 `provider` discriminator (`claude` or `codex`), its typed `options`, an absolute `cwd`, and
@@ -149,21 +254,3 @@ helpers. Call them at the workflow level inside `ctx.scope('review', () => helpe
 supply prefixes. Do not use a shared completion-order counter for IDs. Use `ctx.id(...)` for path or
 title segments and `ctx.step` for individual local effects. Do not wrap a multi-step helper in
 another durable step, and do not run effects at module import time.
-
-For source changes in a checkout, `src/index.ts` is the deliberate public boundary. The core owns
-replay, validation, retries, locks, and checkpoints and reaches adapters only through `Harness`;
-adapters depend on that contract. CLI executors consume plain-data plans/results outside oclif. The
-workflow compiler embeds TypeScript 6's stable API, while the repository build uses TypeScript 7;
-these are separate roles.
-
-## Agent plugins versus runtime extensions
-
-The repository distributes two documentation plugins: a portable Agent Plugins package for general
-agents (including Codex), and a Claude Code package. These packages supply skills and references;
-they do not register runtime providers or bundle the engine. Their skill files are physically
-separate and may evolve independently.
-
-When extending either documentation package, keep installed references inside that skill's
-`references/` directory and link them from `SKILL.md`. Do not link to files outside the installed
-plugin or assume its cache directory is a runtime checkout. Keep runtime API claims grounded in the
-implementation; research proposals are not supported features.
