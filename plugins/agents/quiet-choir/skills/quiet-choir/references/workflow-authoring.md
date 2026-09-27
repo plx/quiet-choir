@@ -84,8 +84,11 @@ collection order deterministic when deriving IDs from indexes.
 Await all workflow operations. The default map policy is `drain`: stop scheduling on first failure,
 let started mappers finish without sending an abort signal, then reject with `FanOutError`. Its
 `failures` preserve `{ index, stepId, error }` in observation order and `unscheduled` lists input
-indexes never started. A workflow-body rejection also drains pending work. Draining can wait for the
-slowest active call; configure timeouts on agent calls.
+indexes never started. A workflow-body rejection closes the workflow: effects already started finish
+and checkpoint, but any new launch fails with "Workflow is closed", including an active mapper's
+next step and a map started by a still-running branch. To let sibling branches finish, catch inside
+each branch or use `Promise.allSettled`. Draining can wait for the slowest active call; configure
+timeouts on agent calls.
 
 Pass `{ onError: 'abort' }` to cancel only that map's subtree. Catching a failed map permits more
 work, and a caught inner-map failure does not cancel unrelated outer branches. `ctx.signal` is a

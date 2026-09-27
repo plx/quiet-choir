@@ -232,8 +232,10 @@ invalidation.
 scheduling new items, lets started mappers finish and checkpoint without an abort signal, then
 rejects with `FanOutError`. Its `failures` identify input indexes and originating step IDs;
 `unscheduled` lists items never started. Drain can wait for the slowest active call. A body
-rejection (for example from `Promise.all`) also drains pending operations before releasing the run
-lock.
+rejection (for example from `Promise.all`) closes the workflow: effects already started finish and
+checkpoint before the run lock is released, but any new launch fails with "Workflow is closed",
+including an active mapper's next step and a map started by a still-running branch. To let sibling
+branches finish, catch inside each branch or use `Promise.allSettled`.
 
 Pass `{ onError: 'abort' }` to cancel just that map's subtree after a failure. Catching a failed map
 allows later workflow steps, and a caught inner-map failure leaves other outer branches running.

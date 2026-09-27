@@ -267,6 +267,50 @@ it('drains Promise.all siblings without a signal and records the actual root cau
   });
 });
 
+it('refuses new launches after a body rejection while started effects checkpoint', async () => {
+  let broken = true;
+  const started = deferred();
+  const first = vi.fn(async () => {
+    started.resolve();
+    await delay(20);
+    return 'a';
+  });
+  const second = vi.fn(() => 'b');
+  const definition = workflow(async (ctx) => {
+    await Promise.all([
+      ctx.map([0], 1, async () => {
+        await ctx.step('a', { input: null, schema: z.string(), run: first });
+        return ctx.step('b', { input: null, schema: z.string(), run: second });
+      }),
+      ctx.step('failure', {
+        input: null,
+        schema: z.null(),
+        run: async () => {
+          await started.promise;
+          if (broken) throw new Error('first cause');
+          return null;
+        },
+      }),
+    ]);
+    return 'done';
+  });
+  await expect(runWorkflow(definition, options())).rejects.toThrow('first cause');
+  const saved = await readRun(options());
+  expect(saved).toMatchObject({
+    status: 'failed',
+    rootCause: { stepId: 'failure', error: 'first cause' },
+    steps: { a: { status: 'completed', output: 'a' } },
+  });
+  // The closed workflow refused the active mapper's next launch, so it never started.
+  expect(saved.steps['b']).toBeUndefined();
+  expect(second).not.toHaveBeenCalled();
+  broken = false;
+  const resumed = await runWorkflow(definition, { ...options(), resume: true });
+  expect(resumed.output).toBe('done');
+  expect(first).toHaveBeenCalledTimes(1);
+  expect(second).toHaveBeenCalledTimes(1);
+});
+
 it('journals all settled mapper outcomes, including body errors, and replays an identical array', async () => {
   let broken = true;
   const called: number[] = [];

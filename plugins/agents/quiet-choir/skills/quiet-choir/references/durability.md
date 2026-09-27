@@ -249,18 +249,20 @@ abandoned `<runId>.json.<uuid>.tmp` files; it preserves other runs' files and un
 data.
 
 Map failures default to `drain`: stop scheduling and let active mappers checkpoint without an abort
-signal before rejecting with `FanOutError`. Body rejections, including `Promise.all`, also drain
-pending operations without signalling them. Explicit map `abort` cancels only that subtree;
-`ctx.signal` reads the current scope. Caught map failures leave the parent scope usable. Local
-callbacks must eventually settle or draining can hang. Run interruption cancels every scope. One
-Ctrl-C or SIGTERM terminates harness processes, drains active work, saves run status `cancelled`,
-and exits 130. Interrupted steps record `cancelledBy`; inspect `rootCause` to identify the
-initiating failure instead of reading cancellation messages as independent root failures. A second
-Ctrl-C kills the runner mid-drain and can leave its lock and a `running` record. SIGKILL, SIGHUP
-(closed terminal or dropped SSH), or a crash can leave detached harness children running and
-editing. Before resuming, check `pgrep -fl 'claude --print|codex exec'` and identify any children
-belonging to the interrupted run. SIGHUP handling and stronger orphan cleanup are deferred to
-[#48](https://github.com/plx/quiet-choir/issues/48).
+signal before rejecting with `FanOutError`. Body rejections, including `Promise.all`, close the
+workflow: effects already started finish and checkpoint without a signal, but every new launch fails
+with "Workflow is closed", including an active mapper's next step or a map started by a
+still-running branch. Catch inside branches or use `Promise.allSettled` to let siblings finish.
+Explicit map `abort` cancels only that subtree; `ctx.signal` reads the current scope. Caught map
+failures leave the parent scope usable. Local callbacks must eventually settle or draining can hang.
+Run interruption cancels every scope. One Ctrl-C or SIGTERM terminates harness processes, drains
+active work, saves run status `cancelled`, and exits 130. Interrupted steps record `cancelledBy`;
+inspect `rootCause` to identify the initiating failure instead of reading cancellation messages as
+independent root failures. A second Ctrl-C kills the runner mid-drain and can leave its lock and a
+`running` record. SIGKILL, SIGHUP (closed terminal or dropped SSH), or a crash can leave detached
+harness children running and editing. Before resuming, check `pgrep -fl 'claude --print|codex exec'`
+and identify any children belonging to the interrupted run. SIGHUP handling and stronger orphan
+cleanup are deferred to [#48](https://github.com/plx/quiet-choir/issues/48).
 
 Checkpoints contain plaintext workflow input/output, every completed step's full validated result
 (including agent responses and files a local step read), and errors. Checkpoint files are created
