@@ -201,7 +201,8 @@ step's `reusedFrom` for provenance. Resume the target normally after interruptio
 close further reuse.
 
 `--accept-code-change` waives only source/run-schema gates, keeping name/version, engine, cwd,
-validated input, completed-step identity, and replay checks. Each use is recorded in `codeChanges`.
+validated input, completed-step identity, and replay checks. Each use that actually changes code,
+schemas, or files is recorded in `codeChanges`.
 A tail/output fix can finish with zero repeated effects. Local step identity now hashes callback
 source and optional `version` as well as input/schema/cwd. The CLI loader removes callback comments
 and formatting; captured values, helper implementations, native/bound functions, and environment

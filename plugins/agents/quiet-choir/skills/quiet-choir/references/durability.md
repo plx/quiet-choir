@@ -96,12 +96,15 @@ Resume the target with `--resume` alone after interruption. Reuse progress survi
 snapshot changed or disappeared, existing copied results remain and remaining work runs live with a
 warning instead of borrowing new source results.
 
-Each use of `--accept-code-change` records `codeChanges` with old/new fingerprints, changed files,
-components, and time, even if execution later fails. It runs the body even for a previously
-completed run. A fixed unfinished callback can execute again; a changed completed callback still
-fails its step check. If only the body tail/output validation failed, a tail-only fix can finish
-with zero repeated effects. `recoveryHint` and CLI errors identify this case, subject to step
-checks. The accepted source becomes the basis for later strict resumes.
+Each use of `--accept-code-change` that actually changes code, schemas, or files records
+`codeChanges` with old/new fingerprints, changed files, components, and time, even if execution
+later fails; an accepted resume with nothing changed leaves `codeChanges` untouched. It runs the
+body even for a previously completed run, first clearing any stale output so a failed
+re-finalization never reports a prior result. A fixed unfinished callback can execute again; a
+changed completed callback still fails its step check. If only the body tail/output validation
+failed, a tail-only fix can finish with zero repeated effects. `recoveryHint` and CLI errors
+identify this case, subject to step checks. The accepted source becomes the basis for later strict
+resumes.
 
 Local callback identity uses the loaded function's `toString()` plus optional `version`. Under the
 CLI's tsx loader, comment/formatting-only callback edits preserve that source string; logic changes

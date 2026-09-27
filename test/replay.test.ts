@@ -278,6 +278,13 @@ it('accepts a fix to an unfinished callback with both code-change and step-redef
   expect(resumed.steps['local']?.redefinitions).toHaveLength(1);
   expect(resumed.steps['local']?.attemptHistory).toHaveLength(2);
   await runWorkflow(definition, { ...options(), resume: true, fingerprint: 'code-2' });
+  const reaccepted = await runWorkflow(definition, {
+    ...options(),
+    resume: true,
+    fingerprint: 'code-2',
+    acceptCodeChange: true,
+  });
+  expect(reaccepted.codeChanges).toHaveLength(1);
 });
 
 it('rejects edited completed callbacks on accepted resume and runs them live in a fork', async () => {

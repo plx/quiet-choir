@@ -236,7 +236,7 @@ export async function runWorkflow<TInput, TOutput>(
       createdAt: now,
       updatedAt: now,
     };
-    if (options.acceptCodeChange && compatibility) {
+    if (options.acceptCodeChange && compatibility && compatibility.changed.length > 0) {
       (record.codeChanges ??= []).push({
         at: now,
         from: record.workflow.fingerprint,
