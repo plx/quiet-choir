@@ -81,6 +81,10 @@ inspected. Use `version` for those dependencies or invalidate the step in a fork
 
 ## Composition and retry
 
+Read the [verified cookbook](patterns.md) before choosing a control-flow pattern. Its
+[traps table](patterns.md#traps) explains replay-sensitive catches, retry loops, races, deadlines,
+and the current guards that supersede older workarounds.
+
 Use ordinary `if`, loops, and async helper functions at the workflow level. Wrap a helper in
 `ctx.scope('review', () => helper(ctx))`, or pass `ctx.within('review')` to bind a lexical context.
 Every local/agent/sleep call receives that prefix; nested scopes compose. Keep leaf names explicit

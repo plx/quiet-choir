@@ -2,6 +2,10 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- Add twelve runnable, failure/resume-tested workflow patterns and a current traps table to both
+  authoring skills. `skills:check` keeps their complete fences, worktree helper, and rehearsal
+  fixture identical to `examples/patterns/`; every workflow recipe is at most 30 lines.
+
 - Reorganize both distributed skills around cross-project setup, background operation, inspection,
   recovery, shared agent controls, and embedding recipes. The Claude package compares native
   Workflow with the implemented runtime. `skills:check` validates manifests, links, intentional

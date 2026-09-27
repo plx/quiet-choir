@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "calls": [
+    { "step": "draft", "text": "A fixture draft." },
+    { "step": "review", "output": { "approved": true } }
+  ]
+}

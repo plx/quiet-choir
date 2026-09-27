@@ -1,0 +1,72 @@
+[
+  {
+    "id": "pattern-cross-harness",
+    "file": "cross-harness.workflow.ts",
+    "kind": "workflow"
+  },
+  {
+    "id": "pattern-tolerant-panel",
+    "file": "tolerant-panel.workflow.ts",
+    "kind": "workflow"
+  },
+  {
+    "id": "pattern-loop-until-dry",
+    "file": "loop-until-dry.workflow.ts",
+    "kind": "workflow"
+  },
+  {
+    "id": "pattern-per-item-pipeline",
+    "file": "per-item-pipeline.workflow.ts",
+    "kind": "workflow"
+  },
+  {
+    "id": "pattern-review-revise",
+    "file": "review-revise.workflow.ts",
+    "kind": "workflow"
+  },
+  {
+    "id": "pattern-reusable-helper",
+    "file": "reusable-helper.workflow.ts",
+    "kind": "workflow"
+  },
+  {
+    "id": "pattern-worktrees",
+    "file": "worktrees.workflow.ts",
+    "kind": "workflow"
+  },
+  {
+    "id": "pattern-polling",
+    "file": "polling.workflow.ts",
+    "kind": "workflow"
+  },
+  {
+    "id": "pattern-salvage",
+    "file": "salvage.workflow.ts",
+    "kind": "workflow"
+  },
+  {
+    "id": "pattern-latch",
+    "file": "latch.workflow.ts",
+    "kind": "workflow"
+  },
+  {
+    "id": "pattern-work-then-extract",
+    "file": "work-then-extract.workflow.ts",
+    "kind": "workflow"
+  },
+  {
+    "id": "pattern-rehearse",
+    "file": "rehearse.workflow.ts",
+    "kind": "workflow"
+  },
+  {
+    "id": "pattern-worktree-helper",
+    "file": "worktree-helper.ts",
+    "kind": "support"
+  },
+  {
+    "id": "pattern-rehearse-fixtures",
+    "file": "rehearse.fixtures.json",
+    "kind": "fixture"
+  }
+]

@@ -80,6 +80,10 @@ node test/skills-cli-smoke.mjs
 - Compiles every complete `ts`/`typescript` fence from both copies against `src/index.ts`, with the
   repository's strict compiler options. Only recognized module import specifiers are redirected;
   example code and prompt strings are preserved. Diagnostics name the Markdown file and line.
+- Checks every cookbook fence against [its registered source](../examples/patterns/recipes.json),
+  including the bundled worktree-helper module and fixture JSON. Workflow recipes are limited to 30
+  lines. Identical examples compile in their source location so relative helper imports resolve;
+  `test/patterns.test.ts` runs each recipe with fake responses, an injected failure, and resume.
 
 Precede a deliberately incomplete code fence with
 `<!-- skills-check: fragment; reason: Explain the omitted surrounding context. -->`. Do not mark a

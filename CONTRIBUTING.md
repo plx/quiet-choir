@@ -17,6 +17,12 @@ also typechecks the active Workflow Lab batch and verifies its saved fixture rep
 rewriting it. An API change that breaks a port must update the port, report, and API snapshot in the
 same PR; see [the batch policy](comparisons/README.md#regression-and-snapshot-policy).
 
+Cookbook changes must update `examples/patterns/` and the corresponding named fences in both
+physical skill copies. `skills:check` enforces source equality and the 30-line workflow limit;
+`test/patterns.test.ts` verifies failure/resume behavior with fake harnesses and temporary Git
+worktrees. Keep support modules complete and bundled in the installed references. When a runtime
+primitive supersedes a workaround, update its recipe and traps in the same PR.
+
 ## TypeScript and package conventions
 
 - The project is ESM-only. Relative imports in TypeScript use `.js` suffixes so emitted files work
