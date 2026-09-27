@@ -219,12 +219,20 @@ it('clears stale warnings when a resumed attempt fails before the harness respon
       ...options,
       resume: true,
       harness: {
-        invoke() {
-          return Promise.reject(new Error('harness unavailable'));
+        async invoke() {
+          const running = await readRun(stateDir, 'stale-warnings');
+          expect(running.steps['agent']?.warnings).toBeUndefined();
+          throw new Error('harness unavailable');
         },
       },
     }),
   ).rejects.toThrow('harness unavailable');
   const resumed = await readRun(stateDir, 'stale-warnings');
   expect(resumed.steps['agent']?.warnings).toBeUndefined();
+
+  await expect(runWorkflow(workflow, { ...options, resume: true })).rejects.toThrow(
+    'No harness adapter configured',
+  );
+  const resumedWithoutHarness = await readRun(stateDir, 'stale-warnings');
+  expect(resumedWithoutHarness.steps['agent']?.warnings).toBeUndefined();
 });

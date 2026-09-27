@@ -257,6 +257,7 @@ export async function runWorkflow<TInput, TOutput>(
         step.attempts++;
         step.status = 'running';
         step.error = null;
+        delete step.warnings;
         await save();
         emit('step.started', id, step);
         try {
@@ -332,7 +333,6 @@ export async function runWorkflow<TInput, TOutput>(
               throw new Error(
                 `No harness adapter configured for ${provider}. Supply RunOptions.harness.`,
               );
-            delete step.warnings;
             const response = await options.harness.invoke(request, signal);
             if (response.warnings !== undefined) step.warnings = [...response.warnings];
             const raw: unknown = structured ? JSON.parse(response.text) : response.text;
