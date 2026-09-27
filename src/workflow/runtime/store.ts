@@ -109,6 +109,8 @@ export interface MapItemRecord {
 export interface MapRecord {
   /** Hash of item inputs, mapper source, optional version and cwd. */
   fingerprint: string;
+  /** First-use ordering shared with step seq values; absent in journals saved before it existed. */
+  seq?: number;
   /** Partially evaluated or completely settled collection. */
   status: 'running' | 'completed';
   /** Item journals in input order. */
@@ -282,6 +284,7 @@ const recordSchema = z
         z.string(),
         z.object({
           fingerprint: z.string(),
+          seq: z.number().int().positive().optional(),
           status: z.enum(['running', 'completed']),
           items: z.array(
             z.object({

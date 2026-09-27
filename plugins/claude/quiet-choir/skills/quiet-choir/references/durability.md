@@ -43,11 +43,12 @@ native harness configuration are not fully captured. Embedded callers supply `fi
 step/workflow versions for semantic changes these hashes cannot see. Do not edit checkpoints.
 
 Every terminal step must still be visited on resume. Before the first live effect with unvisited
-earlier terminal `seq` values, the runner emits `replay.divergence` and records `replayWarnings`.
-`--strict-replay` aborts before that effect and cancels/drains other work; default mode warns and
-the end-of-body skipped-step check remains. Launch order can vary under `ctx.map`, so this early
-check is a heuristic, not proof of incompatible logic. A warning may precede paid effects in default
-mode. Results are revalidated on replay; dependencies/results must be lossless JSON.
+earlier terminal steps or committed settled maps (by shared `seq`), the runner emits
+`replay.divergence` and records `replayWarnings`. `--strict-replay` aborts before that effect and
+cancels/drains other work; default mode warns and the end-of-body skipped-step/map checks remain.
+Launch order can vary under `ctx.map`, so this early check is a heuristic, not proof of incompatible
+logic. A warning may precede paid effects in default mode. Results are revalidated on replay;
+dependencies/results must be lossless JSON.
 
 Terminal steps are `completed` successes or `settled-failed` outcomes explicitly requested with
 `onError: 'return'`. Both are immutable on resume and eligible for fork reuse. A failed/running
@@ -141,12 +142,13 @@ item from committing.
 
 Map identity includes item inputs, mapper source, optional version, and cwd; it excludes
 concurrency. Changing identity after any item committed, duplicating a journal ID, or skipping a
-recorded terminal map fails replay. Explicit code acceptance does not bypass these checks.
-Inputs/results must be lossless JSON, and captured dependencies belong in items or the explicit
-version. Items are snapshotted when `ctx.map` is called; settled mappers receive JSON copies of the
-fingerprinted snapshot, so later caller edits cannot change the processed items. Leaf IDs stay
-run-unique; a journal ID does not add a prefix. Forks start fresh map journals and apply their
-normal per-step reuse/invalidation rules, so mapper-body outcomes are re-evaluated in the new run.
+recorded terminal map fails replay; a skipped map also triggers the pre-live divergence check.
+Explicit code acceptance does not bypass these checks. Inputs/results must be lossless JSON, and
+captured dependencies belong in items or the explicit version. Items are snapshotted when `ctx.map`
+is called; settled mappers receive JSON copies of the fingerprinted snapshot, so later caller edits
+cannot change the processed items. Leaf IDs stay run-unique; a journal ID does not add a prefix.
+Forks start fresh map journals and apply their normal per-step reuse/invalidation rules, so
+mapper-body outcomes are re-evaluated in the new run.
 
 ## At-least-once effects
 

@@ -509,6 +509,58 @@ it('does not cache an item that ignored a failed operation', async () => {
   expect((await readRun(options())).maps?.['items']?.items[0]?.status).toBe('running');
 });
 
+it.each([false, true])(
+  'detects a skipped settled map before a later live step (strictReplay: %s)',
+  async (strictReplay) => {
+    let branch = true;
+    let tail = true;
+    const effect = vi.fn(() => 'published');
+    const definition = workflow(async (ctx) => {
+      // The mapper body owns its outcome; no leaf step records the map's path.
+      if (branch)
+        await ctx.map([0, 1], 2, (value) => Promise.resolve(value * 2), {
+          onError: 'settle',
+          id: 'reviews',
+        });
+      if (tail) throw new Error('tail');
+      return ctx.step('publish', { input: null, schema: z.string(), run: effect });
+    });
+    await expect(runWorkflow(definition, options())).rejects.toThrow('tail');
+    expect((await readRun(options())).maps?.['reviews']).toMatchObject({
+      seq: 1,
+      status: 'completed',
+    });
+    branch = false;
+    tail = false;
+    const warnings: { message?: string; skippedStepIds?: readonly string[] }[] = [];
+    await expect(
+      runWorkflow(definition, {
+        ...options(),
+        resume: true,
+        strictReplay,
+        onEvent(event) {
+          if (event.type === 'replay.divergence') {
+            expect(effect).not.toHaveBeenCalled();
+            warnings.push(event);
+          }
+        },
+      }),
+    ).rejects.toThrow(strictReplay ? 'Replay divergence' : 'Replay skipped settled maps (reviews)');
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]?.skippedStepIds).toEqual([]);
+    expect(warnings[0]?.message).toContain('earlier committed settled maps (reviews)');
+    const saved = await readRun(options());
+    expect(saved.replayWarnings).toEqual([warnings[0]?.message]);
+    if (strictReplay) {
+      expect(effect).not.toHaveBeenCalled();
+      expect(saved.steps['publish']).toBeUndefined();
+    } else {
+      expect(effect).toHaveBeenCalledTimes(1);
+      expect(saved.steps['publish']).toMatchObject({ status: 'completed', seq: 2 });
+    }
+  },
+);
+
 it('keeps empty-map identity and path checks, and allows concurrency changes', async () => {
   let skip = false;
   let changed = false;

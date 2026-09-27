@@ -283,8 +283,8 @@ normal per-step reuse rules.
   changed components. Timeout, turn, budget, and retry policy do not affect identity. Unfinished
   identities may change with history retained; unvisited unfinished records become `superseded`.
   Every terminal step must still be visited. An early `replay.divergence` event warns before live
-  work when earlier terminal steps remain unvisited; `--strict-replay` aborts there. The final
-  skipped-step check still applies.
+  work when earlier terminal steps or committed settled maps remain unvisited; `--strict-replay`
+  aborts there. The final skipped-step and skipped-map checks still apply.
 - The CLI hashes raw bytes of local compiler-discovered dependencies and the nearest tsconfig under
   real, project-relative paths. Engine `src/`/`dist/` files are excluded (except an explicit
   entrypoint); package/format versions are recorded separately. Inputs, workflow name/version,

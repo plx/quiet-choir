@@ -300,9 +300,19 @@ export async function runWorkflow<TInput, TOutput>(
     const previousTerminal = Object.entries(record.steps)
       .filter(([, step]) => isTerminalStep(step))
       .map(([id, step]) => ({ id, seq: step.seq ?? 0 }));
+    // Committed settled maps join the pre-live skip check; their seq shares the step counter.
+    const previousTerminalMaps = Object.entries(record.maps ?? {})
+      .filter(
+        ([, journal]) =>
+          journal.status === 'completed' ||
+          journal.items.some((item) => item.status === 'completed'),
+      )
+      .map(([id, journal]) => ({ id, seq: journal.seq ?? 0 }));
     let nextSeq =
-      Object.values(record.steps).reduce((highest, step) => Math.max(highest, step.seq ?? 0), 0) +
-      1;
+      [...Object.values(record.steps), ...Object.values(record.maps ?? {})].reduce(
+        (highest, entry) => Math.max(highest, entry.seq ?? 0),
+        0,
+      ) + 1;
     const priorSequence = Object.entries(record.steps).map(([id, step]) => ({
       id,
       seq: step.seq ?? 0,
@@ -552,9 +562,18 @@ export async function runWorkflow<TInput, TOutput>(
         const skipped = previousTerminal
           .filter((previous) => previous.seq < (step.seq ?? 0) && !used.has(previous.id))
           .map((previous) => previous.id);
-        if (skipped.length) {
+        const skippedMaps = previousTerminalMaps
+          .filter((previous) => previous.seq < (step.seq ?? 0) && !visitedMaps.has(previous.id))
+          .map((previous) => previous.id);
+        if (skipped.length || skippedMaps.length) {
           divergenceReported = true;
-          const warning = `Replay divergence before live step ${id}: earlier terminal steps (${skipped.join(', ')}) have not been visited. Order is a concurrency heuristic; restore the replay path or fork a new run.`;
+          const unvisited = [
+            ...(skipped.length ? [`earlier terminal steps (${skipped.join(', ')})`] : []),
+            ...(skippedMaps.length
+              ? [`earlier committed settled maps (${skippedMaps.join(', ')})`]
+              : []),
+          ].join(' and ');
+          const warning = `Replay divergence before live step ${id}: ${unvisited} have not been visited. Order is a concurrency heuristic; restore the replay path or fork a new run.`;
           replayWarnings.push(warning);
           const failure = options.strictReplay ? new Error(warning) : undefined;
           if (failure) controller.abort(failure);
@@ -830,6 +849,7 @@ export async function runWorkflow<TInput, TOutput>(
       used,
       visitedMaps,
       save,
+      nextSeq: () => nextSeq++,
       isCheckpointFailure: (error) => checkpointProblems.includes(error as CheckpointError),
       replayed: (id, step) => {
         if (step.kind !== 'sleep')

@@ -31,6 +31,8 @@ interface MapDependencies {
   readonly used: Set<string>;
   readonly visitedMaps: Set<string>;
   readonly save: () => Promise<void>;
+  /** Allocate the next run-wide first-use ordering value, shared with leaf steps. */
+  readonly nextSeq: () => number;
   /** Whether an error is this run's own checkpoint failure, not a domain error reusing the class. */
   readonly isCheckpointFailure: (error: unknown) => boolean;
   readonly replayed: (id: string, step: StepRecord) => void;
@@ -51,6 +53,7 @@ export function createMap(dependencies: MapDependencies): WorkflowContext['map']
     used,
     visitedMaps,
     save,
+    nextSeq,
     isCheckpointFailure,
     replayed,
   } = dependencies;
@@ -146,8 +149,10 @@ export function createMap(dependencies: MapDependencies): WorkflowContext['map']
               );
             journal = undefined;
           }
+          // A reused journal keeps its first-use order; a new or reset one takes the next seq.
           journal ??= {
             fingerprint,
+            seq: nextSeq(),
             status: 'running',
             items: data.map(() => ({ status: 'running', outcome: null, steps: [], maps: [] })),
           };

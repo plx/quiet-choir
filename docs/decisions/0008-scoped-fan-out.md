@@ -47,8 +47,10 @@ journals, after draining and checking unobserved child failures. Failure values 
 `StepError` with `stepId`. Ordinary mapper errors are durable; cancellation, infrastructure
 (checkpoint and configuration) failures, and authoring guards reject. Resume returns committed items
 without calling their mappers, claims owned records as visited, and retries only incomplete items.
-Duplicate IDs, changed terminal map identity, and missing terminal maps remain replay errors. Even
-an empty completed map has identity/path protection.
+Duplicate IDs, changed terminal map identity, and missing terminal maps remain replay errors. Each
+journal takes a `seq` from the step counter, so a skipped committed map also triggers the pre-live
+`replay.divergence` check before later live effects. Even an empty completed map has identity/path
+protection.
 
 Format 5 stores run `rootCause`, run/step/attempt cancellation states, and map item journals. Old
 formats 1–4 remain inspectable but cannot resume or provide fork reuse. Forks start fresh map
