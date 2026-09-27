@@ -128,6 +128,37 @@ it('drains immediate continuations to completion while retaining the writer lock
   expect(await readFile(join(stateDir, 'chain.json'), 'utf8')).toBe(checkpoint);
 });
 
+it('drains detached continuations several microtasks deep', async () => {
+  const stateDir = await directory();
+  const unhandled: unknown[] = [];
+  const onUnhandled = (reason: unknown): void => {
+    unhandled.push(reason);
+  };
+  process.on('unhandledRejection', onUnhandled);
+  try {
+    let chain: Promise<void> | undefined;
+    const result = await runWorkflow(
+      workflow((ctx) => {
+        chain = (async () => {
+          await ctx.step('a', local);
+          await Promise.resolve();
+          await Promise.resolve();
+          await ctx.step('b', local);
+        })();
+        return Promise.resolve('ok');
+      }),
+      { stateDir, runId: 'deep', input: null },
+    );
+    expect(Object.keys(result.steps)).toEqual(['a', 'b']);
+    expect(Object.values(result.steps).every((step) => step.status === 'completed')).toBe(true);
+    await chain;
+    await delay(10);
+    expect(unhandled).toEqual([]);
+  } finally {
+    process.off('unhandledRejection', onUnhandled);
+  }
+});
+
 it.each([false, true])(
   'fails ignored effects whether settled before the body returns: %s',
   async (early) => {

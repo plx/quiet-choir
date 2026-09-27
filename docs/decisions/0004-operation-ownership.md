@@ -32,10 +32,12 @@ files. Another active run's files and unrelated temporary data remain untouched.
 ## Consequences
 
 Ignored direct operation failures now fail deterministically, including precheck failures that never
-create a step record. Immediate continuations can launch effects safely during draining. Authors
-must still await all operations: the runner does not own arbitrary detached async functions, timers,
-or promises derived by user code. Consuming an operation transfers responsibility for the resulting
-promise to its caller. A callback that never settles can still prevent draining.
+create a step record. Immediate continuations can launch effects safely during draining: before
+declaring quiescence, draining yields a macrotask so any continuation reachable without timers or
+I/O runs, however many microtasks deep. Authors must still await all operations: the runner does not
+own arbitrary detached async functions, timers, or promises derived by user code. Consuming an
+operation transfers responsibility for the resulting promise to its caller. A callback that never
+settles can still prevent draining.
 
 This does not persist JavaScript error handling or continuations. Replay behavior for caught failed
 effects remains a separate concern. Observers remain best-effort telemetry with no delivery

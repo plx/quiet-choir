@@ -42,8 +42,14 @@ export class OperationTracker {
     return promise;
   }
 
+  /** Waits until no owned work is pending after the microtask queue has fully flushed. */
   public async drain(): Promise<void> {
-    while (this.pending.size > 0) await Promise.all([...this.pending]);
+    for (;;) {
+      while (this.pending.size > 0) await Promise.all([...this.pending]);
+      // A macrotask yield lets pure-microtask continuation chains launch their next operation.
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      if (this.pending.size === 0) return;
+    }
   }
 
   public assertObserved(): void {
