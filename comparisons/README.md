@@ -9,12 +9,14 @@ TypeScript ports. Batch 01 contains all 26 workflows from
 
 Batch 01 is the active regression suite for the current built runtime, not a frozen set of ports.
 Its upstream originals remain immutable. The initial ports targeted `a6a7b82`; `apiSnapshot` now
-records the runtime API at `73e27b7`, including saved-failure wrappers with original causes. Ports
-need no behavior changes. Native calls retain run/step/attempt identity and durable child
-registration; nested ports retain their admission caps and 68 effort settings. Historical ports
-explicitly retain raw input capabilities with `strictProfiles: false`. The unchanged model-file hash
-belongs to that commit; regression tests use the current built checkout, including
-`readRun({ runId, stateDir })` in the recovery verifier.
+records the runtime API at `1d39571`, including persisted phases/logs, executions, timing, usage,
+request diagnostics, and saved-failure wrappers with original causes. Shared helpers now forward to
+`ctx.phase` and `ctx.log`; original prompts, effort settings, and fixture outputs remain unchanged.
+Native calls retain run/step/attempt identity, durable child registration, and admission caps.
+Bug-hunt uses scoped IDs; other ports retain supported legacy overloads. Historical ports explicitly
+retain raw input capabilities with `strictProfiles: false`. The model-file hash belongs to that
+commit; regression tests use the current built checkout, including `readRun({ runId, stateDir })` in
+the recovery verifier.
 
 The site is a reader, not an execution console. Every original is preserved byte for byte, with its
 MIT license. Every port uses `ctx.claude` explicitly. The comparison layer adds no runtime APIs.
