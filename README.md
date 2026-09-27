@@ -202,11 +202,11 @@ close further reuse.
 
 `--accept-code-change` waives only source/run-schema gates, keeping name/version, engine, cwd,
 validated input, completed-step identity, and replay checks. Each use that actually changes code,
-schemas, or files is recorded in `codeChanges`.
-A tail/output fix can finish with zero repeated effects. Local step identity now hashes callback
-source and optional `version` as well as input/schema/cwd. The CLI loader removes callback comments
-and formatting; captured values, helper implementations, native/bound functions, and environment
-remain invisible. Declare dependencies in input, bump the step version, or invalidate in a fork. See
+schemas, or files is recorded in `codeChanges`. A tail/output fix can finish with zero repeated
+effects. Local step identity now hashes callback source and optional `version` as well as
+input/schema/cwd. The CLI loader removes callback comments and formatting; captured values, helper
+implementations, native/bound functions, and environment remain invisible. Declare dependencies in
+input, bump the step version, or invalidate in a fork. See
 [the recovery decision](docs/decisions/0006-code-change-recovery.md).
 
 ## Durability contract
