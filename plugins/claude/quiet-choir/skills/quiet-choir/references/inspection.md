@@ -75,9 +75,11 @@ persistent errors stop new effects. A successful action is never retried in-proc
 completion write failed. A later save can recover it; inspect the actual saved step before resume,
 since an uncheckpointed action can repeat.
 
-A persisted completion still succeeds if lock cleanup fails with `EACCES` or `ENOENT`. The CLI
-prints a warning to stderr and includes `warnings` in the returned run (`--json`); embedding callers
-receive `WorkflowRun.warnings`. These cleanup warnings belong to that invocation and are not saved
-after ownership is released. Repair permissions or inspect the lock before another run. Changed or
-unknown ownership remains an error. A removed state directory is named explicitly and is not
-silently recreated. See [durability](durability.md) for recovery precautions.
+A persisted completion still succeeds if the lock directory is already gone, or if its removal fails
+with `EACCES` or `ENOENT` after ownership was verified. The CLI prints a warning to stderr and
+includes `warnings` in the returned run (`--json`); embedding callers receive
+`WorkflowRun.warnings`. These cleanup warnings belong to that invocation and are not saved after
+ownership is released. Repair permissions or inspect the lock before another run. Changed ownership,
+or missing or unreadable ownership metadata in a remaining lock, remains an error. A removed state
+directory is named explicitly and is not silently recreated. See [durability](durability.md) for
+recovery precautions.

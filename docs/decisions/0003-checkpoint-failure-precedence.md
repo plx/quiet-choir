@@ -27,11 +27,12 @@ Export `CheckpointError` with `save` and `release` operations and an underlying 
 error precedence: workflow/effect error, save errors, then release errors. Multiple problems become
 an `AggregateError` with the primary message first, since the CLI presents that message.
 
-A saved completion resolves with invocation warnings if release fails with `EACCES` or `ENOENT`.
-Other release failures, including changed or unknown ownership, remain fatal. Return cleanup
-warnings to embedding/JSON callers and print them on CLI stderr. Do not persist warnings after
-ownership has been released. Name a removed state directory and never recreate/reacquire it
-implicitly.
+A saved completion resolves with invocation warnings if the lock directory is already gone or its
+removal fails with `EACCES` or `ENOENT` after the ownership token was verified. Other release
+failures remain fatal, including changed ownership and missing or unreadable `owner.json` in a lock
+directory that still exists. Return cleanup warnings to embedding/JSON callers and print them on CLI
+stderr. Do not persist warnings after ownership has been released. Name a removed state directory
+and never recreate/reacquire it implicitly.
 
 ## Consequences
 

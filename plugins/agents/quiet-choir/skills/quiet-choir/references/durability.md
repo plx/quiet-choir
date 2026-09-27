@@ -96,8 +96,10 @@ call. Check the execution error as well as the saved record. Exported `Checkpoin
 `save` versus `release`; combined errors preserve the workflow error first. If the state directory
 was removed, the runner names it and does not recreate it or silently reacquire ownership.
 
-After a persisted completion, `EACCES`/`ENOENT` during lock release produces an invocation warning
-and preserves the successful result. The CLI prints the warning on stderr; embedded and JSON results
-expose `warnings`. These warnings are not checkpointed. Lost or uncertain ownership still fails,
-because another writer may have replaced the checkpoint. Inspect and repair any retained lock before
-running again; do not repeat the effects merely to retry cleanup.
+After a persisted completion, lock release produces an invocation warning and preserves the
+successful result only when the lock directory is already gone or its removal fails with
+`EACCES`/`ENOENT` after the ownership token was verified. The CLI prints the warning on stderr;
+embedded and JSON results expose `warnings`. These warnings are not checkpointed. Lost ownership,
+and missing or unreadable `owner.json` in a remaining lock directory, still fail, because another
+writer may have replaced the checkpoint. Inspect and repair any retained lock before running again;
+do not repeat the effects merely to retry cleanup.

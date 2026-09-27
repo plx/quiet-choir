@@ -145,8 +145,10 @@ integrations can replace subprocesses without changing workflows.
 - Transient checkpoint writes retry briefly. Persistent storage errors stop new effects and never
   retry a successful action in-process. `CheckpointError` identifies save/release failures; combined
   errors preserve the workflow's original cause. A failed save can leave `running` with
-  `error: null`. After a saved completion, cleanup `EACCES`/`ENOENT` becomes a returned warning (CLI
-  stderr); changed or uncertain ownership remains fatal. Cleanup warnings are not checkpointed.
+  `error: null`. After a saved completion, a lock directory that is already gone, or removal that
+  fails with `EACCES`/`ENOENT` after ownership was verified, becomes a returned warning (CLI
+  stderr). Changed ownership and missing or unreadable ownership metadata remain fatal. Cleanup
+  warnings are not checkpointed.
 - Effects are **at least once**: if a process dies after an external action succeeds but before its
   result is saved, resume can repeat it. Use `idempotencyKey` with external systems that support
   deduplication. Hard-killing the runner may also leave harness children running; stop them before
