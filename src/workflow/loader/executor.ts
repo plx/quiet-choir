@@ -1,9 +1,18 @@
+import { jsonValue } from '../runtime/json.js';
+import { workflowFailure } from './failure.js';
+import { readRequiredRun } from '../runtime/read-required-run.js';
+import {
+  isValidRunId,
+  runIdMessage,
+  RunRefusedError,
+  WorkflowInputError,
+  WorkflowRunError,
+  type CliErrorCode,
+} from '../runtime/run-errors.js';
 import { defaultAgentLimits, validateAgentLimits } from '../runtime/agent-limiter.js';
 import type { ProcessSupervisor } from '../../processes/supervisor.js';
-import { OrphanProcessesError } from '../runtime/process-registry.js';
 import { capabilityManifest } from '../runtime/profiles.js';
 import { randomUUID } from 'node:crypto';
-import { readdir } from 'node:fs/promises';
 
 import { tsImport } from 'tsx/esm/api';
 import { register as registerCommonJs } from 'tsx/cjs/api';
@@ -14,11 +23,11 @@ import type { ExecutionLogger, Executor } from '../../application/execution.js';
 import type { Harness, WorkflowDefinition } from '../runtime/model.js';
 import { runWorkflow } from '../runtime/runner.js';
 import { resolveStateDir } from '../runtime/paths.js';
-import { errorCode } from '../runtime/checkpoint.js';
+import { CheckpointError } from '../runtime/checkpoint.js';
 import { readRun, inspectRunOwnership } from '../runtime/store.js';
 import { TypeScriptExecutor } from '../typecheck/typescript-executor.js';
 import { fingerprintSources } from './source.js';
-import { checkResume, workflowSnapshot } from '../runtime/compatibility.js';
+import { canonicalCwd, compareResume, workflowSnapshot } from '../runtime/compatibility.js';
 import type {
   ExecuteWorkflowPlan,
   CheckResumePlan,
@@ -79,37 +88,25 @@ export class WorkflowExecutor implements Executor<
     plan: ValidateWorkflowPlan | ExecuteWorkflowPlan | InspectWorkflowPlan | CheckResumePlan,
   ): Promise<WorkflowCommandResult> {
     let unregister: (() => void) | undefined;
+    let stage: CliErrorCode = 'load.typecheck';
+    const context =
+      'runId' in plan
+        ? { runId: plan.runId, stateDir: resolveStateDir({ stateDir: plan.stateDir }) }
+        : { runId: null, stateDir: null };
     try {
+      if ('runId' in plan && !isValidRunId(plan.runId))
+        return workflowFailure('usage.run_id', runIdMessage, context);
+      if (plan.kind === 'workflow.execute' && plan.forkFrom && !isValidRunId(plan.forkFrom.runId))
+        return workflowFailure('usage.run_id', runIdMessage, context);
       if (plan.kind === 'workflow.inspect') {
-        const stateDir = resolveStateDir({ stateDir: plan.stateDir });
-        try {
-          return {
-            kind: 'workflow.run.result',
-            ok: true,
-            run: await readRun({ stateDir, runId: plan.runId }),
-            ownership: await inspectRunOwnership({ stateDir, runId: plan.runId }),
-          };
-        } catch (cause) {
-          if (errorCode(cause) !== 'ENOENT') throw cause;
-          const entries = await readdir(stateDir, { withFileTypes: true }).catch(
-            (error: unknown) => {
-              if (errorCode(error) === 'ENOENT') return [];
-              throw error;
-            },
-          );
-          const ids = entries
-            .filter(
-              (entry) =>
-                entry.isFile() && /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}\.json$/u.test(entry.name),
-            )
-            .map((entry) => entry.name.slice(0, -5))
-            .sort();
-          throw new Error(
-            `Run ${plan.runId} not found in ${stateDir} (${String(ids.length)} runs present${ids.length ? `: ${ids.slice(0, 20).join(', ')}${ids.length > 20 ? ', …' : ''}` : ''}). --state-dir resolves against the current directory.`,
-            { cause },
-          );
-        }
+        return {
+          kind: 'workflow.run.result',
+          ok: true,
+          run: await readRequiredRun({ stateDir: plan.stateDir, runId: plan.runId }),
+          ownership: await inspectRunOwnership({ stateDir: plan.stateDir, runId: plan.runId }),
+        };
       }
+      stage = 'usage.flag';
       const agentLimits =
         plan.kind === 'workflow.execute'
           ? validateAgentLimits(plan.agentLimits ?? defaultAgentLimits())
@@ -119,15 +116,21 @@ export class WorkflowExecutor implements Executor<
           'info',
           `Agent limits: total=${String(agentLimits.total)}; per-provider=${JSON.stringify(agentLimits.perProvider ?? {})}`,
         );
+      stage = 'load.typecheck';
       const checked = await new TypeScriptExecutor(this.#options.logger).execute(plan.typecheck);
-      if (!checked.ok) {
-        return {
-          kind: 'workflow.error',
-          ok: false,
-          message: 'Workflow type check failed.',
+      if (!checked.ok)
+        return workflowFailure('load.typecheck', 'Workflow type check failed.', {
+          ...context,
+          run:
+            context.runId && context.stateDir
+              ? await readRun({ runId: context.runId, stateDir: context.stateDir }).catch(
+                  () => null,
+                )
+              : null,
           diagnostics: checked.diagnostics,
-        };
-      }
+        });
+      this.#options.signal?.throwIfAborted();
+      stage = 'load.import';
       const source = await fingerprintSources(plan.typecheck, checked.sourceFiles);
       this.#options.logger.log(
         'debug',
@@ -150,6 +153,8 @@ export class WorkflowExecutor implements Executor<
             : {}),
         });
       }
+      this.#options.signal?.throwIfAborted();
+      stage = 'load.definition';
       const definition = workflowDefinition(module);
       z.toJSONSchema(definition.input, { target: 'draft-7' });
       z.toJSONSchema(definition.output, { target: 'draft-7' });
@@ -166,20 +171,28 @@ export class WorkflowExecutor implements Executor<
           },
         };
       }
-      if (plan.kind === 'workflow.check-resume')
-        return {
-          kind: 'workflow.check-resume.result',
-          ok: true,
-          check: await checkResume(definition, {
-            runId: plan.runId,
-            stateDir: plan.stateDir,
-            cwd: plan.cwd,
+      if (plan.kind === 'workflow.check-resume') {
+        const run = await readRequiredRun({ runId: plan.runId, stateDir: plan.stateDir });
+        const check = compareResume(
+          definition,
+          {
             source,
             ...(plan.acceptCodeChange === undefined
               ? {}
               : { acceptCodeChange: plan.acceptCodeChange }),
-          }),
-        };
+          },
+          await canonicalCwd(plan.cwd),
+          run,
+        );
+        if (!check.compatible)
+          return workflowFailure('run.incompatible', check.message, {
+            ...context,
+            run,
+            details: jsonValue(check),
+          });
+        return { kind: 'workflow.check-resume.result', ok: true, check };
+      }
+      stage = 'usage.flag';
       const run = await runWorkflow(definition, {
         runId: plan.runId,
         stateDir: plan.stateDir,
@@ -215,23 +228,52 @@ export class WorkflowExecutor implements Executor<
       });
       return { kind: 'workflow.run.result', ok: true, run };
     } catch (error: unknown) {
-      const checkpoint =
-        plan.kind === 'workflow.execute'
-          ? await readRun({ runId: plan.runId, stateDir: plan.stateDir }).catch(() => undefined)
-          : undefined;
+      const run =
+        error instanceof WorkflowRunError
+          ? error.run
+          : context.runId && context.stateDir && isValidRunId(context.runId)
+            ? await readRun({ runId: context.runId, stateDir: context.stateDir }).catch(() => null)
+            : null;
       const message = error instanceof Error ? error.message : String(error);
-      return {
-        kind: 'workflow.error',
-        ok: false,
-        message:
-          checkpoint?.recoveryHint && !message.includes('re-finalize')
-            ? `${message} ${checkpoint.recoveryHint}`
-            : message,
-        diagnostics: [],
-        ...(error instanceof OrphanProcessesError ? { exitCode: 3, code: error.code } : {}),
-      };
+      const code = this.#options.signal?.aborted
+        ? 'workflow.interrupted'
+        : hasCheckpointError(error)
+          ? 'workflow.storage'
+          : error instanceof WorkflowRunError
+            ? error.run.status === 'cancelled'
+              ? 'workflow.interrupted'
+              : 'workflow.failed'
+            : error instanceof RunRefusedError || error instanceof WorkflowInputError
+              ? error.code
+              : stage;
+      return workflowFailure(
+        code,
+        run?.recoveryHint && !message.includes('re-finalize')
+          ? `${message} ${run.recoveryHint}`
+          : message,
+        {
+          ...context,
+          run,
+          stepId: error instanceof WorkflowRunError ? error.stepId : null,
+          details:
+            error instanceof RunRefusedError || error instanceof WorkflowInputError
+              ? error.details
+              : null,
+        },
+      );
     } finally {
       unregister?.();
     }
   }
+}
+
+function hasCheckpointError(error: unknown, seen = new Set<unknown>()): boolean {
+  if (!(error instanceof Error) || seen.has(error)) return false;
+  seen.add(error);
+  return (
+    error instanceof CheckpointError ||
+    hasCheckpointError(error.cause, seen) ||
+    (error instanceof AggregateError &&
+      error.errors.some((entry: unknown) => hasCheckpointError(entry, seen)))
+  );
 }

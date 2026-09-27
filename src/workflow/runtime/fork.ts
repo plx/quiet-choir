@@ -1,3 +1,5 @@
+import { RunRefusedError } from './run-errors.js';
+import { readRequiredRun } from './read-required-run.js';
 import { z } from 'zod';
 
 import { engineInfo, oldFormatMessage } from './engine.js';
@@ -22,11 +24,18 @@ export function validateFork(value: unknown): ForkOptions {
 
 /** Load a source for a new fork without taking its writer lock. @internal */
 export async function loadFork(runId: string, stateDir: string, name: string): Promise<RunRecord> {
-  const source = await readRun({ runId, stateDir });
+  const source = await readRequiredRun({ runId, stateDir });
   if (source.formatVersion !== engineInfo.formatVersion)
-    throw new Error(oldFormatMessage(source.formatVersion));
+    throw new RunRefusedError('run.incompatible', runId, oldFormatMessage(source.formatVersion), {
+      formatVersion: source.formatVersion,
+    });
   if (source.workflow.name !== name)
-    throw new Error(`Fork source workflow name ${source.workflow.name} does not match ${name}.`);
+    throw new RunRefusedError(
+      'run.incompatible',
+      runId,
+      `Fork source workflow name ${source.workflow.name} does not match ${name}.`,
+      { name, savedName: source.workflow.name },
+    );
   return source;
 }
 

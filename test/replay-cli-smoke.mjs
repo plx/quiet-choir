@@ -105,11 +105,11 @@ process.stdin.on('end', () => { appendFileSync(process.env.QC_REPLAY_CALLS, prom
   assert.equal(readFileSync(join(state, 'source.json'), 'utf8'), before);
 
   const report = cli('check-resume', file, '--run-id', 'source', '--state-dir', state, '--json');
-  assert.equal(report.status, 1, report.stderr);
-  assert.deepEqual(JSON.parse(report.stdout).check.files, ['workflow.ts']);
+  assert.equal(report.status, 3, report.stderr);
+  assert.deepEqual(JSON.parse(report.stdout).error.details.files, ['workflow.ts']);
   assert.equal(readFileSync(join(state, 'source.json'), 'utf8'), before);
   const failedResume = cli('execute', file, '--run-id', 'source', '--state-dir', state, '--resume');
-  assert.equal(failedResume.status, 1);
+  assert.equal(failedResume.status, 3);
   assert.match(failedResume.stderr, /workflow\.ts/);
 
   // A tail-only edit can re-finalize a failed run without repeating any effect.

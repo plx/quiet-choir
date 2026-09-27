@@ -59,7 +59,7 @@ async run(ctx){writeFileSync('body-started','yes');await ctx.claude.text('saved'
   assert.equal(existsSync(join(fixture, 'body-started')), false);
   const args = ['execute', file, '--run-id', 'profiles', '--state-dir', state];
   const denied = cli(...args);
-  assert.equal(denied.status, 1, denied.stderr);
+  assert.equal(denied.status, 2, denied.stderr);
   assert.match(denied.stderr, /--grant fixer/);
   assert.equal(existsSync(join(fixture, 'body-started')), false);
   assert.equal(existsSync(join(state, 'profiles.json')), false);
@@ -95,7 +95,7 @@ async run(ctx){writeFileSync('body-started','yes');await ctx.claude.text('saved'
   assert.match(invalid.stderr, /Invalid --profile/);
   writeFileSync(file, source.replace("profile:'scout'", "profile:'scuot'"));
   const typo = cli('validate', file, '--json');
-  assert.equal(typo.status, 1, typo.stderr);
+  assert.equal(typo.status, 4, typo.stderr);
   assert.match(typo.stderr, /scuot/);
   assert.equal(readFileSync(join(fixture, 'calls.jsonl'), 'utf8'), calls);
   console.log(

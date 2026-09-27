@@ -1,3 +1,4 @@
+import { readRequiredRun } from './read-required-run.js';
 import { realpath } from 'node:fs/promises';
 import { resolve } from 'node:path';
 
@@ -7,7 +8,7 @@ import type { WorkflowDefinition } from './model.js';
 import type { StateDirectoryOptions } from './paths.js';
 import type { ResumeCheck, SourceFingerprint, WorkflowIdentity } from './replay-model.js';
 import { schemaJson } from './schema.js';
-import { hasTerminalOutcomes, readRun, type RunRecord } from './store.js';
+import { hasTerminalOutcomes, type RunRecord } from './store.js';
 
 /** Run-level code metadata for embedding and compatibility inspection. */
 export interface WorkflowCodeOptions {
@@ -133,6 +134,6 @@ export async function checkResume<TInput, TOutput>(
     definition,
     options,
     await canonicalCwd(options.cwd),
-    await readRun(options),
+    await readRequiredRun(options),
   );
 }

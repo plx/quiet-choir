@@ -30,3 +30,5 @@ part of the documentation.
 - [0012: Bound agent admission across each run](0012-agent-admission.md)
 
 - [0013: Bound process cleanup and retain child ownership across runner death](0013-process-ownership.md)
+
+- [0014: Preserve saved state through the CLI error boundary](0014-scriptable-cli-errors.md)

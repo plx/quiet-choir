@@ -252,7 +252,10 @@ describe.skipIf(process.platform === 'win32')('durable harness ownership', () =>
     } catch (cause) {
       error = cause;
     }
-    expect(error).toBeInstanceOf(CheckpointError);
+    expect(error).toMatchObject({
+      name: 'WorkflowRunError',
+      cause: expect.any(CheckpointError) as unknown,
+    });
     expect((error as CheckpointError).message).toContain('disk full');
     expect(calls).toBe(1);
     expect(await fs.readFile(executed, 'utf8').catch(() => null)).toBeNull();

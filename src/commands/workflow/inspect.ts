@@ -2,7 +2,7 @@ import { resolve } from 'node:path';
 
 import { Args, Flags, type Interfaces } from '@oclif/core';
 
-import { BaseCommand } from '../../cli/base-command.js';
+import { WorkflowCommand } from '../../cli/workflow-command.js';
 import { WorkflowExecutor } from '../../workflow/loader/executor.js';
 
 import type { RunOwnership } from '../../workflow/runtime/store.js';
@@ -22,7 +22,7 @@ interface WorkflowInspectFlags {
   readonly json: boolean | undefined;
 }
 
-export default class WorkflowInspect extends BaseCommand {
+export default class WorkflowInspect extends WorkflowCommand {
   public static override readonly args: Interfaces.ArgInput<WorkflowInspectArgs> = {
     runId: Args.string({ description: 'Persisted run identifier', required: true }),
   };
@@ -40,6 +40,7 @@ export default class WorkflowInspect extends BaseCommand {
 
   public async run(): Promise<void> {
     const { args, flags } = await this.parse(WorkflowInspect);
+    this.runContext(args.runId, flags['state-dir']);
     const executor = new WorkflowExecutor({ logger: this.createExecutionLogger(flags) });
     const result = await executor.execute({
       kind: 'workflow.inspect',
@@ -47,22 +48,21 @@ export default class WorkflowInspect extends BaseCommand {
       stateDir: resolve(flags['state-dir']),
     });
     if (!result.ok) {
-      this.error(result.message, { exit: 1 });
+      this.failResult(result);
     }
     if (result.kind === 'workflow.run.result') {
-      this.log(
-        flags.json
-          ? JSON.stringify({ ...result.run, ownership: result.ownership })
-          : `Run ${result.run.id}: ${result.run.status}\n${ownershipText(result.ownership)}Workflow: ${result.run.workflow.name}@${result.run.workflow.version}\nSteps: ${String(Object.keys(result.run.steps).length)}\n${Object.entries(
-              result.run.harnesses ?? {},
-            )
-              .map(
-                ([provider, value]) =>
-                  `Harness ${provider}: ${value.binary}@${value.version ?? 'unknown'}\n`,
-              )
-              .join(
-                '',
-              )}${(result.run.harnessWarnings ?? []).map((warning) => `Warning: ${warning}\n`).join('')}${result.run.rootCause ? `Root cause (${result.run.rootCause.stepId ?? 'workflow'}): ${result.run.rootCause.error}\n` : ''}${result.run.error ?? JSON.stringify(result.run.output, null, 2)}`,
+      this.output(
+        { ...result.run, ownership: result.ownership },
+        `Run ${result.run.id}: ${result.run.status}\n${ownershipText(result.ownership)}Workflow: ${result.run.workflow.name}@${result.run.workflow.version}\nSteps: ${String(Object.keys(result.run.steps).length)}\n${Object.entries(
+          result.run.harnesses ?? {},
+        )
+          .map(
+            ([provider, value]) =>
+              `Harness ${provider}: ${value.binary}@${value.version ?? 'unknown'}\n`,
+          )
+          .join(
+            '',
+          )}${(result.run.harnessWarnings ?? []).map((warning) => `Warning: ${warning}\n`).join('')}${result.run.rootCause ? `Root cause (${result.run.rootCause.stepId ?? 'workflow'}): ${result.run.rootCause.error}\n` : ''}${result.run.error ?? JSON.stringify(result.run.output, null, 2)}`,
       );
     }
   }

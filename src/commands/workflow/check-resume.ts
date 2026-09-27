@@ -2,10 +2,9 @@ import { resolve } from 'node:path';
 
 import { Args, Flags, type Interfaces } from '@oclif/core';
 
-import { BaseCommand } from '../../cli/base-command.js';
+import { WorkflowCommand } from '../../cli/workflow-command.js';
 import { formatTypecheckDiagnostic } from '../../cli/presentation.js';
 import { WorkflowExecutor } from '../../workflow/loader/executor.js';
-import { analyzeTypecheckEntrypoint } from '../../workflow/typecheck/plan.js';
 
 interface CheckArgs {
   readonly file: string;
@@ -18,11 +17,10 @@ interface CheckFlags {
 }
 
 /** CLI adapter for read-only run compatibility inspection. */
-export default class WorkflowCheckResume extends BaseCommand {
+export default class WorkflowCheckResume extends WorkflowCommand {
   public static override readonly args: Interfaces.ArgInput<CheckArgs> = {
-    file: Args.file({
+    file: Args.string({
       description: 'Trusted workflow module to check',
-      exists: true,
       required: true,
     }),
   };
@@ -47,12 +45,15 @@ export default class WorkflowCheckResume extends BaseCommand {
 
   public async run(): Promise<void> {
     const { args, flags } = await this.parse(WorkflowCheckResume);
-    const analysis = analyzeTypecheckEntrypoint(args.file, process.cwd());
-    if (!analysis.ok) this.error(analysis.error.message, { code: analysis.error.code, exit: 2 });
-    const executor = new WorkflowExecutor({ logger: this.createExecutionLogger(flags) });
+    this.runContext(flags['run-id'], flags['state-dir']);
+    const typecheck = await this.entrypoint(args.file);
+    const executor = new WorkflowExecutor({
+      logger: this.createExecutionLogger(flags),
+      signal: this.signal,
+    });
     const result = await executor.execute({
       kind: 'workflow.check-resume',
-      typecheck: analysis.plan,
+      typecheck,
       runId: flags['run-id'],
       stateDir: resolve(flags['state-dir']),
       cwd: process.cwd(),
@@ -61,17 +62,12 @@ export default class WorkflowCheckResume extends BaseCommand {
         : { acceptCodeChange: flags['accept-code-change'] }),
     });
     if (!result.ok) {
-      if (flags.json) {
-        this.log(JSON.stringify(result));
-        this.exit(1);
-      }
       for (const diagnostic of result.diagnostics)
         this.logToStderr(formatTypecheckDiagnostic(diagnostic, process.cwd()));
-      this.error(result.message, { exit: 1 });
+      this.failResult(result);
     }
     if (result.kind === 'workflow.check-resume.result') {
-      this.log(flags.json ? JSON.stringify(result) : result.check.message);
-      if (!result.check.compatible) this.exit(1);
+      this.output(result, result.check.message);
     }
   }
 }

@@ -94,8 +94,8 @@ it('recovers the ordered queue for a later save, aborts new work, and retains a 
     return ctx.step('next', { input: null, schema: z.string(), run: next });
   });
   await expect(runWorkflow(definition, options())).rejects.toMatchObject({
-    name: 'CheckpointError',
-    operation: 'save',
+    name: 'WorkflowRunError',
+    cause: { name: 'CheckpointError', operation: 'save' },
   });
   expect(action).toHaveBeenCalledTimes(1);
   expect(next).not.toHaveBeenCalled();
@@ -215,7 +215,10 @@ it('rejects a failed final run checkpoint without reclassifying completed effect
       workflow((ctx) => ctx.step('effect', { input: null, schema: z.string(), run: action })),
       options(),
     ),
-  ).rejects.toBeInstanceOf(CheckpointError);
+  ).rejects.toMatchObject({
+    name: 'WorkflowRunError',
+    cause: expect.any(CheckpointError) as unknown,
+  });
   expect(action).toHaveBeenCalledTimes(1);
   expect((await readRun({ stateDir, runId: 'run' })).steps['effect']).toMatchObject({
     status: 'completed',
@@ -285,7 +288,10 @@ it('keeps unknown release failures fatal and retains earlier validation errors',
   ).catch((error: unknown) => error);
   expect(error).toBeInstanceOf(AggregateError);
   if (!(error instanceof AggregateError)) throw new Error('Expected aggregate');
-  expect(error.errors[0]).toBeInstanceOf(z.ZodError);
+  expect(error.errors[0]).toMatchObject({
+    name: 'WorkflowInputError',
+    cause: expect.any(z.ZodError) as unknown,
+  });
   expect(error.errors[1]).toMatchObject({ operation: 'release', cause: releaseError });
 });
 
@@ -420,7 +426,10 @@ it('checks cancellation after a queued start save recovers, before launching its
       }),
       options(),
     ),
-  ).rejects.toBeInstanceOf(CheckpointError);
+  ).rejects.toMatchObject({
+    name: 'WorkflowRunError',
+    cause: expect.any(CheckpointError) as unknown,
+  });
   expect(first).toHaveBeenCalledTimes(1);
   expect(second).not.toHaveBeenCalled();
   expect(third).not.toHaveBeenCalled();
@@ -459,7 +468,10 @@ it('preserves a successful sibling result after storage-triggered cancellation',
       }),
       options(),
     ),
-  ).rejects.toBeInstanceOf(CheckpointError);
+  ).rejects.toMatchObject({
+    name: 'WorkflowRunError',
+    cause: expect.any(CheckpointError) as unknown,
+  });
   const saved = await readRun({ stateDir, runId: 'run' });
   expect(saved.steps['first']).toMatchObject({
     status: 'completed',
@@ -507,7 +519,10 @@ it('labels a sibling cancelled by a checkpoint failure as a workflow cancellatio
       }),
       options(),
     ),
-  ).rejects.toBeInstanceOf(CheckpointError);
+  ).rejects.toMatchObject({
+    name: 'WorkflowRunError',
+    cause: expect.any(CheckpointError) as unknown,
+  });
   const saved = await readRun({ stateDir, runId: 'run' });
   // The run controller, not a map, aborted this scope.
   expect(saved.steps['first']).toMatchObject({

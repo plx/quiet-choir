@@ -2,6 +2,19 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- Workflow CLI failures now emit one JSON document with stable error codes, a generated/requested
+  run ID, root effect, and the actual saved checkpoint. Typecheck supports `--json`; workflow stdout
+  is redirected to stderr in JSON mode. Input accepts inline JSON, `@file`, and `-` for stdin.
+- **Breaking:** exit 1 now means a saved workflow failure. Usage, run refusals, and loading errors
+  use 2, 3, and 4; storage failures use 74; interrupts use 130. Exit 75 is reserved. Check-resume
+  incompatibility now uses exit 3 with its comparison in `error.details`.
+- **Breaking:** successfully saved failed/cancelled runs reject with `WorkflowRunError`. Match the
+  original error class through `.cause`; `.run` and `.stepId` carry saved context. Existing
+  checkpoint aggregates retain the original primary cause. Refusals and input-schema errors now use
+  `RunRefusedError` and `WorkflowInputError`. `readRun` still exposes ENOENT for missing files.
+- Export `CliErrorCode`, `WorkflowRunError`, `RunRefusedError`, `WorkflowInputError`, and
+  `isValidRunId`. Invalid CLI run IDs are rejected before any workflow import.
+
 - Harness calls settle after bounded output draining and reap owned groups on every exit. Cleanup
   grace defaults to 3000ms, settable with `--kill-grace-ms`. SIGINT/SIGTERM/SIGHUP first drain; a
   second signal synchronously kills tracked groups and exits 130.

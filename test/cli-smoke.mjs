@@ -54,10 +54,10 @@ try {
   assert.match(valid.stdout, /Type check passed/);
 
   const invalid = cli('workflow', 'typecheck', invalidEntrypoint);
-  assert.equal(invalid.status, 1, invalid.stdout);
+  assert.equal(invalid.status, 4, invalid.stdout);
   assert.match(invalid.stderr, /error TS2322/);
   const invalidExecute = cli('workflow', 'execute', invalidEntrypoint);
-  assert.equal(invalidExecute.status, 1, invalidExecute.stdout);
+  assert.equal(invalidExecute.status, 4, invalidExecute.stdout);
   assert.match(invalidExecute.stderr, /error TS2322/);
 
   const workflow = join(fixtureRoot, 'workflow.ts');
@@ -107,7 +107,7 @@ export default defineWorkflow({
     '--state-dir',
     stateDir,
   );
-  assert.equal(badInput.status, 1, badInput.stdout);
+  assert.equal(badInput.status, 2, badInput.stdout);
   assert.equal(existsSync(effects), false, 'Input validation must precede effects');
 
   const failed = cli(
@@ -168,7 +168,7 @@ export default defineWorkflow({
     stateDir,
     '--resume',
   );
-  assert.equal(drift.status, 1, drift.stdout);
+  assert.equal(drift.status, 3, drift.stdout);
   assert.match(drift.stderr, /fingerprint|changed|incompatible/i);
 
   rmSync(workflow);
@@ -177,7 +177,7 @@ export default defineWorkflow({
   assert.equal(JSON.parse(inspected.stdout).output, 42);
 
   const missing = cli('workflow', 'inspect', 'nope', '--state-dir', stateDir);
-  assert.equal(missing.status, 1, missing.stdout);
+  assert.equal(missing.status, 3, missing.stdout);
   const missingMessage = missing.stderr.replace(/\n\s*›\s*/gu, '');
   assert.ok(missingMessage.includes(`Run nope not found in ${stateDir}`), missing.stderr);
   assert.match(missing.stderr, /1 runs present: smoke-run/);

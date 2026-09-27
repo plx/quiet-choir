@@ -96,6 +96,10 @@ Commands follow the plan-execute pattern recorded in [ADR 0001](decisions/0001-p
 3. Receive a plain-data result.
 4. Render that result and translate it into CLI output and an exit status.
 
+The workflow executor preserves typed failure context as plain data. The CLI owns stable numeric
+exits and JSON rendering, including parser failures and stdout redirection; see
+[ADR 0014](decisions/0014-scriptable-cli-errors.md) and [CLI contract](cli-contract.md).
+
 The application and workflow layers do not import oclif. Compiler objects, errors, filesystem
 handles, loggers, and other live runtime objects must not escape through plan or result types.
 Workflow definitions themselves contain schemas and callbacks; they are loaded executable code, not

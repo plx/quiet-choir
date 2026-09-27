@@ -45,3 +45,6 @@ the local single-writer boundary without promising transactional external effect
 ADR 0013 adds `process` registry persistence failures and retains child ownership when cleanup
 cannot be confirmed. Saved completions then return warnings while the released-owner lock remains
 inspectable; changed or unknown run ownership is still fatal.
+
+ADR 0014 wraps successfully saved failures in `WorkflowRunError`; the prior rejection/aggregate
+remains its cause. CLI storage failures use exit 74 and report the actual saved state.

@@ -1,6 +1,5 @@
+import { readWorkflowInput } from '../../cli/input.js';
 import { parseAgentLimits } from '../../workflow/loader/agent-limits.js';
-import { ProcessSupervisor } from '../../processes/supervisor.js';
-import { tolerateClosedTerminal, executionSignals } from '../../cli/signals.js';
 import type { AgentLimits } from '../../workflow/runtime/agent-limiter.js';
 import { parseProfileOverride } from '../../workflow/runtime/profiles.js';
 import type { ProfileOverride } from '../../workflow/runtime/profiles-model.js';
@@ -9,12 +8,11 @@ import { resolve } from 'node:path';
 
 import { Args, Flags, type Interfaces } from '@oclif/core';
 
-import { BaseCommand } from '../../cli/base-command.js';
+import { WorkflowCommand } from '../../cli/workflow-command.js';
 import { formatTypecheckDiagnostic } from '../../cli/presentation.js';
 import { CliHarness } from '../../harnesses/cli.js';
 import { WorkflowExecutor } from '../../workflow/loader/executor.js';
 import type { JsonValue } from '../../workflow/runtime/model.js';
-import { analyzeTypecheckEntrypoint } from '../../workflow/typecheck/plan.js';
 import { validatePolicy, type PolicyOverride } from '../../workflow/runtime/policy.js';
 
 interface WorkflowExecuteArgs {
@@ -44,11 +42,10 @@ interface WorkflowExecuteFlags {
   readonly 'strict-replay': boolean | undefined;
 }
 
-export default class WorkflowExecute extends BaseCommand {
+export default class WorkflowExecute extends WorkflowCommand {
   public static override readonly args: Interfaces.ArgInput<WorkflowExecuteArgs> = {
-    file: Args.file({
+    file: Args.string({
       description: 'Trusted TypeScript workflow module',
-      exists: true,
       required: true,
     }),
   };
@@ -94,7 +91,8 @@ export default class WorkflowExecute extends BaseCommand {
       description: 'Fail before live work that skips earlier completed steps',
     }),
     input: Flags.string({
-      description: 'JSON workflow input; defaults to {} for new runs, saved input on resume',
+      description:
+        'JSON input, @file, or - for stdin; defaults to {} for new runs, saved input on resume',
     }),
     'run-id': Flags.string({ description: 'Run identifier; generated for new runs' }),
     resume: Flags.boolean({
@@ -105,7 +103,10 @@ export default class WorkflowExecute extends BaseCommand {
       description: 'Local durable run storage',
       default: '.quiet-choir/runs',
     }),
-    json: Flags.boolean({ description: 'Print the completed run record as JSON', default: false }),
+    json: Flags.boolean({
+      description: 'Print the run record or structured error as JSON',
+      default: false,
+    }),
     profile: Flags.string({
       description: 'Named limit override, e.g. scout.maxTurns=50; repeatable and sticky on resume',
       multiple: true,
@@ -131,9 +132,11 @@ export default class WorkflowExecute extends BaseCommand {
 
   public async run(): Promise<void> {
     const { args, flags } = await this.parse(WorkflowExecute);
-    if (flags.resume && flags['run-id'] === undefined) {
-      this.error('--resume requires --run-id.', { exit: 2 });
-    }
+    const runId = flags['run-id'] ?? randomUUID();
+    this.runContext(runId, flags['state-dir']);
+    if (flags['fork-from'] !== undefined) this.validateRunId(flags['fork-from']);
+    if (flags.resume && flags['run-id'] === undefined)
+      this.fail('usage.resume_requires_run_id', '--resume requires --run-id.');
     let agentLimits: AgentLimits;
     let killGraceMs: number;
     let policy: PolicyOverride[];
@@ -153,89 +156,66 @@ export default class WorkflowExecute extends BaseCommand {
         flags['allow-model-override'] ?? false,
       );
     } catch (error) {
-      this.error(error instanceof Error ? error.message : 'Invalid --policy JSON.', { exit: 2 });
+      this.fail('usage.flag', error instanceof Error ? error.message : 'Invalid --policy JSON.');
     }
-    const analysis = analyzeTypecheckEntrypoint(args.file, process.cwd());
-    if (!analysis.ok) {
-      this.error(analysis.error.message, { code: analysis.error.code, exit: 2 });
-    }
+    const typecheck = await this.entrypoint(args.file);
     let input: JsonValue | undefined;
-    if (flags.input !== undefined) {
-      try {
-        input = JSON.parse(flags.input) as JsonValue;
-      } catch {
-        this.error('--input must contain valid JSON.', { exit: 2 });
-      }
-    } else if (!flags.resume && !flags['fork-from']) {
-      input = {};
-    }
-    const runId = flags['run-id'] ?? randomUUID();
-    tolerateClosedTerminal();
+    if (flags.input !== undefined) input = await readWorkflowInput(flags.input, this.signal);
+    else if (!flags.resume && !flags['fork-from']) input = {};
     this.logToStderr(`Run ID: ${runId}`);
-    const processSupervisor = new ProcessSupervisor();
-    const controller = executionSignals(processSupervisor, (message) => {
-      this.logToStderr(message);
+    const executor = new WorkflowExecutor({
+      logger: this.createExecutionLogger(flags),
+      harness: new CliHarness({ killGraceMs }),
+      processSupervisor: this.processSupervisor,
+      signal: this.signal,
     });
-    try {
-      const executor = new WorkflowExecutor({
-        logger: this.createExecutionLogger(flags),
-        harness: new CliHarness({ killGraceMs }),
-        processSupervisor,
-        signal: controller.signal,
-      });
-      const result = await executor.execute({
-        kind: 'workflow.execute',
-        agentLimits,
-        killGraceMs,
-        ...(flags['kill-orphans'] === undefined ? {} : { killOrphans: flags['kill-orphans'] }),
-        typecheck: analysis.plan,
-        runId,
-        stateDir: resolve(flags['state-dir']),
-        cwd: process.cwd(),
-        resume: flags.resume ?? false,
-        policy,
-        profileOverrides,
-        grants: flags.grant ?? [],
-        ...(flags['fork-from'] === undefined
-          ? {}
-          : {
-              forkFrom: {
-                runId: flags['fork-from'],
-                ...(flags['fork-state-dir'] === undefined
-                  ? {}
-                  : { stateDir: resolve(flags['fork-state-dir']) }),
-                ...(flags.reuse === undefined ? {} : { reuse: flags.reuse }),
-                ...(flags.invalidate === undefined ? {} : { invalidate: flags.invalidate }),
-              },
-            }),
-        ...(flags['accept-code-change'] === undefined
-          ? {}
-          : { acceptCodeChange: flags['accept-code-change'] }),
-        ...(flags['strict-replay'] === undefined ? {} : { strictReplay: flags['strict-replay'] }),
-        ...(flags['policy-reset'] === undefined ? {} : { policyReset: flags['policy-reset'] }),
-        ...(flags['allow-model-override'] === undefined
-          ? {}
-          : { allowModelOverride: flags['allow-model-override'] }),
-        ...(input === undefined ? {} : { input }),
-      });
-      if (!result.ok) {
-        for (const diagnostic of result.diagnostics) {
-          this.logToStderr(formatTypecheckDiagnostic(diagnostic, process.cwd()));
-        }
-        this.error(result.message, {
-          exit: controller.signal.aborted ? 130 : (result.exitCode ?? 1),
-        });
+    const result = await executor.execute({
+      kind: 'workflow.execute',
+      agentLimits,
+      killGraceMs,
+      ...(flags['kill-orphans'] === undefined ? {} : { killOrphans: flags['kill-orphans'] }),
+      typecheck,
+      runId,
+      stateDir: resolve(flags['state-dir']),
+      cwd: process.cwd(),
+      resume: flags.resume ?? false,
+      policy,
+      profileOverrides,
+      grants: flags.grant ?? [],
+      ...(flags['fork-from'] === undefined
+        ? {}
+        : {
+            forkFrom: {
+              runId: flags['fork-from'],
+              ...(flags['fork-state-dir'] === undefined
+                ? {}
+                : { stateDir: resolve(flags['fork-state-dir']) }),
+              ...(flags.reuse === undefined ? {} : { reuse: flags.reuse }),
+              ...(flags.invalidate === undefined ? {} : { invalidate: flags.invalidate }),
+            },
+          }),
+      ...(flags['accept-code-change'] === undefined
+        ? {}
+        : { acceptCodeChange: flags['accept-code-change'] }),
+      ...(flags['strict-replay'] === undefined ? {} : { strictReplay: flags['strict-replay'] }),
+      ...(flags['policy-reset'] === undefined ? {} : { policyReset: flags['policy-reset'] }),
+      ...(flags['allow-model-override'] === undefined
+        ? {}
+        : { allowModelOverride: flags['allow-model-override'] }),
+      ...(input === undefined ? {} : { input }),
+    });
+    if (!result.ok) {
+      for (const diagnostic of result.diagnostics) {
+        this.logToStderr(formatTypecheckDiagnostic(diagnostic, process.cwd()));
       }
-      if (result.kind === 'workflow.run.result') {
-        for (const warning of result.run.warnings ?? []) this.logToStderr(`Warning: ${warning}`);
-        this.log(
-          flags.json
-            ? JSON.stringify(result.run)
-            : `Run ${result.run.id} ${result.run.status}.\n${JSON.stringify(result.run.output, null, 2)}`,
-        );
-      }
-    } finally {
-      controller.dispose();
+      this.failResult(result);
+    }
+    if (result.kind === 'workflow.run.result') {
+      for (const warning of result.run.warnings ?? []) this.logToStderr(`Warning: ${warning}`);
+      this.output(
+        result.run,
+        `Run ${result.run.id} ${result.run.status}.\n${JSON.stringify(result.run.output, null, 2)}`,
+      );
     }
   }
 }

@@ -1,3 +1,5 @@
+import { RunRefusedError } from './run-errors.js';
+import { jsonValue } from './json.js';
 import { mkdir, open, readFile, readdir, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -49,11 +51,9 @@ const processSchema = z
   );
 
 /** A live or unverifiable process record prevents replacement work. */
-export class OrphanProcessesError extends Error {
-  /** Stable refusal code, reserved within the run.* exit-3 family. */
-  public readonly code = 'run.orphans';
-  /** Run that could not acquire/release ownership. */
-  public readonly runId: string;
+export class OrphanProcessesError extends RunRefusedError {
+  /** Stable refusal code for live or unverifiable child processes. */
+  public override readonly code = 'run.orphans';
   /** Read-only observations retained for inspection. */
   public readonly processes: readonly HarnessProcessInspection[];
 
@@ -63,10 +63,12 @@ export class OrphanProcessesError extends Error {
       (entry) => entry.state === 'alive' || entry.state === 'unknown',
     );
     super(
+      'run.orphans',
+      runId,
       `Run ${runId} has ${String(pending.length)} live or unverified harness processes (${pending.map((entry) => (entry.process ? `${entry.process.binary} pid ${String(entry.process.pid)}, step ${entry.process.stepId}, attempt ${String(entry.process.attempt)}: ${entry.state}` : `${entry.file}: ${entry.detail ?? 'invalid record'}`)).join('; ')}). Stop confirmed processes with --kill-orphans, or wait. Unverified identities are never signaled; inspect the retained lock.`,
+      jsonValue({ processes }),
     );
     this.name = 'OrphanProcessesError';
-    this.runId = runId;
     this.processes = processes;
   }
 }

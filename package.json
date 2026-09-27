@@ -64,7 +64,7 @@
     "postpack": "rimraf oclif.manifest.json",
     "prepack": "npm run build && npm run manifest",
     "test": "vitest run",
-    "test:cli": "node ./test/cli-smoke.mjs && node ./test/policy-cli-smoke.mjs && node ./test/replay-cli-smoke.mjs && node ./test/settled-cli-smoke.mjs && node ./test/fan-out-cli-smoke.mjs && node ./test/scoped-ids-cli-smoke.mjs && node ./test/profiles-cli-smoke.mjs && node ./test/agent-limits-cli-smoke.mjs && node ./test/process-lifecycle-cli-smoke.mjs",
+    "test:cli": "node ./test/cli-smoke.mjs && node ./test/policy-cli-smoke.mjs && node ./test/replay-cli-smoke.mjs && node ./test/settled-cli-smoke.mjs && node ./test/fan-out-cli-smoke.mjs && node ./test/scoped-ids-cli-smoke.mjs && node ./test/profiles-cli-smoke.mjs && node ./test/agent-limits-cli-smoke.mjs && node ./test/process-lifecycle-cli-smoke.mjs && node ./test/scriptable-cli-smoke.mjs",
     "test:coverage": "vitest run --coverage",
     "test:watch": "vitest",
     "typecheck": "tsc --project tsconfig.json",

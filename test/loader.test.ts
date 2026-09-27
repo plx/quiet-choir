@@ -1,3 +1,4 @@
+import { workflowFailure } from '../src/workflow/loader/failure.js';
 import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -119,12 +120,7 @@ export const invalid: number = 'wrong';`);
   it('reports module initialization errors as plain data', async () => {
     const { file } = await fixture('throw "module initialization failed"; export default {};');
     const result = await executor().execute(plan(file));
-    expect(result).toEqual({
-      kind: 'workflow.error',
-      ok: false,
-      message: 'module initialization failed',
-      diagnostics: [],
-    });
+    expect(result).toEqual(workflowFailure('load.import', 'module initialization failed'));
   });
 
   it('supports CommonJS TypeScript default exports', async () => {

@@ -1,9 +1,8 @@
 import { Args, Flags, type Interfaces } from '@oclif/core';
 
-import { BaseCommand } from '../../cli/base-command.js';
+import { WorkflowCommand } from '../../cli/workflow-command.js';
 import { formatTypecheckDiagnostic } from '../../cli/presentation.js';
 import { WorkflowExecutor } from '../../workflow/loader/executor.js';
-import { analyzeTypecheckEntrypoint } from '../../workflow/typecheck/plan.js';
 
 interface WorkflowValidateArgs {
   readonly file: string;
@@ -13,11 +12,10 @@ interface WorkflowValidateFlags {
   readonly json: boolean | undefined;
 }
 
-export default class WorkflowValidate extends BaseCommand {
+export default class WorkflowValidate extends WorkflowCommand {
   public static override readonly args: Interfaces.ArgInput<WorkflowValidateArgs> = {
-    file: Args.file({
+    file: Args.string({
       description: 'Trusted TypeScript workflow module',
-      exists: true,
       required: true,
     }),
   };
@@ -33,23 +31,22 @@ export default class WorkflowValidate extends BaseCommand {
 
   public async run(): Promise<void> {
     const { args, flags } = await this.parse(WorkflowValidate);
-    const analysis = analyzeTypecheckEntrypoint(args.file, process.cwd());
-    if (!analysis.ok) {
-      this.error(analysis.error.message, { code: analysis.error.code, exit: 2 });
-    }
-    const executor = new WorkflowExecutor({ logger: this.createExecutionLogger(flags) });
-    const result = await executor.execute({ kind: 'workflow.validate', typecheck: analysis.plan });
+    const typecheck = await this.entrypoint(args.file);
+    const executor = new WorkflowExecutor({
+      logger: this.createExecutionLogger(flags),
+      signal: this.signal,
+    });
+    const result = await executor.execute({ kind: 'workflow.validate', typecheck });
     if (!result.ok) {
       for (const diagnostic of result.diagnostics) {
         this.logToStderr(formatTypecheckDiagnostic(diagnostic, process.cwd()));
       }
-      this.error(result.message, { exit: 1 });
+      this.failResult(result);
     }
     if (result.kind === 'workflow.validate.result') {
-      this.log(
-        flags.json
-          ? JSON.stringify(result)
-          : `Validated ${result.workflow.name}@${result.workflow.version} (${result.entrypoint}).`,
+      this.output(
+        result,
+        `Validated ${result.workflow.name}@${result.workflow.version} (${result.entrypoint}).`,
       );
     }
   }

@@ -1,5 +1,5 @@
 #!/usr/bin/env node
 
-import { execute } from '@oclif/core';
+import { launchCli } from '../src/cli/launch.ts';
 
-await execute({ development: true, dir: import.meta.url });
+await launchCli({ development: true, dir: import.meta.url });

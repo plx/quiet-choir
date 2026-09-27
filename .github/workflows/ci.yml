@@ -50,6 +50,9 @@ jobs:
       - name: Test compiled process recovery CLI
         run: node test/process-lifecycle-cli-smoke.mjs
 
+      - name: Test scriptable workflow CLI
+        run: node test/scriptable-cli-smoke.mjs
+
       - name: Check Workflow Lab comparisons
         run: npm run comparisons:check
 

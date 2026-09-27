@@ -118,3 +118,11 @@ export type {
   HarnessProcessRecord,
   HarnessProcessInspection,
 } from './workflow/runtime/process-registry.js';
+
+export {
+  WorkflowRunError,
+  WorkflowInputError,
+  RunRefusedError,
+  isValidRunId,
+} from './workflow/runtime/run-errors.js';
+export type { CliErrorCode } from './workflow/runtime/run-errors.js';

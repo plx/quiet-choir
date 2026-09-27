@@ -167,6 +167,8 @@ export default defineWorkflow({name:'process-lifecycle-cli',version:'1',input:z.
     assert.match(inspect.stdout, new RegExp(`pid ${pid} .*step agents/`));
   const refused = cli([...argsFor('killed'), '--resume'], envFor('killed', 'finish'));
   assert.equal(refused.status, 3, refused.stderr);
+  assert.equal(JSON.parse(refused.stdout).error.code, 'run.orphans');
+  assert.deepEqual(JSON.parse(refused.stdout).run, JSON.parse(checkpoint));
   assert.match(refused.stderr, /live or unverified harness processes/);
   assert.equal(calls('killed').length, 3);
   assert.equal(readFileSync(join(state, 'killed.json'), 'utf8'), checkpoint);

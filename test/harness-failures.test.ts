@@ -1,3 +1,4 @@
+import { WorkflowRunError } from '../src/index.js';
 import { testInvocation } from './harness-invocation.js';
 import { chmod, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -90,9 +91,13 @@ describe('captured exit-1 failures', () => {
       });
       const options = { runId: 'capture', stateDir: directory, input: null, harness };
       for (const resume of [false, true]) {
-        const error: unknown = await runWorkflow(definition, { ...options, resume }).catch(
+        const failure: unknown = await runWorkflow(definition, { ...options, resume }).catch(
           (error: unknown) => error,
         );
+        expect(failure).toBeInstanceOf(WorkflowRunError);
+        if (!(failure instanceof WorkflowRunError)) throw failure;
+        const error = failure.cause;
+        expect(failure.stepId).toBe('agent');
         expect(error).toBeInstanceOf(HarnessError);
         if (!(error instanceof HarnessError)) throw new Error('Expected HarnessError');
         expect(error.message).toContain(capture.expected.reason);
