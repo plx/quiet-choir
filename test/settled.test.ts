@@ -325,7 +325,7 @@ it('records a signal-driven failure as cancelled even when the effect rejects wi
   expect(step?.attemptHistory?.at(-1)).toMatchObject({ errorKind: 'cancelled' });
 });
 
-it('does not settle an AbortError even when the run signal was not aborted', async () => {
+it('fails without settling an AbortError when the run signal was not aborted', async () => {
   const result = runWorkflow(
     workflow(async (ctx) => {
       await ctx.step('cancel', {
@@ -341,7 +341,19 @@ it('does not settle an AbortError even when the run signal was not aborted', asy
     options(),
   );
   await expect(result).rejects.toThrow('cancelled');
-  expect((await readRun(options())).steps['cancel']?.status).toBe('cancelled');
+  const saved = await readRun(options());
+  // No scope was cancelled: keep the callback's own error, but never retry or settle it.
+  expect(saved.steps['cancel']).toMatchObject({ status: 'failed', error: 'cancelled' });
+  expect(saved.steps['cancel']?.settledError).toBeUndefined();
+  expect(saved.steps['cancel']?.cancelledBy).toBeUndefined();
+  expect(saved.steps['cancel']?.attemptHistory?.at(-1)).toMatchObject({
+    status: 'failed',
+    errorKind: 'cancelled',
+  });
+  expect(saved).toMatchObject({
+    status: 'failed',
+    rootCause: { stepId: 'cancel', error: 'cancelled' },
+  });
 });
 
 it('settles a domain error that reuses the CheckpointError class as its own outcome', async () => {

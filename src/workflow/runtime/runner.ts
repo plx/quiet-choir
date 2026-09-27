@@ -622,15 +622,17 @@ export async function runWorkflow<TInput, TOutput>(
           const output = schema.parse(result);
           step.output = jsonValue(output);
         } catch (cause) {
-          const cancellation = signal.aborted || errorKind(cause) === 'cancelled';
-          const error = cancellation ? cancellationError(signal, cause) : cause;
+          // Only an aborted scope signal is a scope cancellation. A callback's own AbortError
+          // keeps its message and fails the step, but is still never retried or settled.
+          const scoped = signal.aborted;
+          const error = scoped ? cancellationError(signal, cause) : cause;
           origins.remember(error, id);
           const outcome = stepError(error, step.attempts);
-          step.status = cancellation ? 'cancelled' : 'failed';
+          step.status = scoped ? 'cancelled' : 'failed';
           if (error instanceof CancelledError) step.cancelledBy = error.cancelledBy;
           step.error = outcome.message;
           attemptRecord.errorKind = outcome.kind;
-          attemptRecord.status = cancellation ? 'cancelled' : 'failed';
+          attemptRecord.status = scoped ? 'cancelled' : 'failed';
           attemptRecord.finishedAt = new Date().toISOString();
           attemptRecord.error = step.error;
           if (cause instanceof HarnessError) {
@@ -646,7 +648,7 @@ export async function runWorkflow<TInput, TOutput>(
             cause instanceof ConfigurationError;
           // Configuration failures must also never become settled map data.
           if (cause instanceof ConfigurationError) origins.markFatal(error);
-          const fatal = cancellation || infrastructure;
+          const fatal = scoped || errorKind(cause) === 'cancelled' || infrastructure;
           const retry =
             !fatal &&
             attempt < maxAttempts &&
@@ -659,7 +661,7 @@ export async function runWorkflow<TInput, TOutput>(
             emit('step.settled', id, step);
             return replay(step);
           }
-          if (await trySave()) emit(cancellation ? 'step.cancelled' : 'step.failed', id, step);
+          if (await trySave()) emit(scoped ? 'step.cancelled' : 'step.failed', id, step);
           if (!retry || signal.reason instanceof CheckpointError) throw error;
           try {
             await waitUntil(Date.now() + Math.min(30_000, delayMs * 2 ** (attempt - 1)), signal);
@@ -955,7 +957,8 @@ export async function runWorkflow<TInput, TOutput>(
       // Body failures stop new launches but preserve in-flight work. Only explicit cancellation
       // or checkpoint failure aborts a scope; draining here does not send a signal.
       await operations.drain();
-      record.status = interrupted || errorKind(error) === 'cancelled' ? 'cancelled' : 'failed';
+      // A callback's own AbortError is a failure; only scope cancellation cancels the run.
+      record.status = interrupted || error instanceof CancelledError ? 'cancelled' : 'failed';
       record.error = message(error);
       if (hasTerminalOutcomes(record))
         record.recoveryHint =
