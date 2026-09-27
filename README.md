@@ -271,12 +271,12 @@ Inherited `--log-level trace|debug|info|warn|error|fatal|silent` and `-v, --verb
 command name and are mutually exclusive. Configuration commands remain explicit stubs (exit 2);
 layered project/user settings are deferred.
 
-| Exit | Meaning                                                                                                                                                                                          |
-| ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| 0    | Success, including inspection of `failed`/`running` records (check `.status`). Misplaced flags between `workflow` and its command can print help and exit 0.                                     |
-| 1    | Type/import/workflow errors, missing FILE, invalid run ID, run ownership/existence errors, or incompatible resume/input. Invalid IDs are checked after module import. Read stderr for the cause. |
-| 2    | Flag/input-JSON errors, resume without a run ID, non-TypeScript/declaration entrypoints, or configuration stubs.                                                                                 |
-| 130  | SIGINT/SIGTERM during execution; cancellation drains and saves `failed` when storage is available.                                                                                               |
+| Exit | Meaning                                                                                                                                                                                                   |
+| ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 0    | Success, including inspection of `failed`/`running` records (check `.status`). Misplaced flags between `workflow` and its command can print help and exit 0.                                              |
+| 1    | Type/import/workflow errors, nonexistent FILE path, invalid run ID, run ownership/existence errors, or incompatible resume/input. Invalid IDs are checked after module import. Read stderr for the cause. |
+| 2    | Flag/input-JSON errors, omitted FILE argument, resume without a run ID, non-TypeScript/declaration entrypoints, or configuration stubs.                                                                   |
+| 130  | SIGINT/SIGTERM during execution; cancellation drains and saves `failed` when storage is available.                                                                                                        |
 
 `npm run check` includes formatting, lint, strict typechecking, tests with coverage gates, build,
 compiled CLI smoke tests, TypeDoc validation, and package checks. No automated test calls a paid
