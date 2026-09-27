@@ -96,14 +96,15 @@ Implement `Harness.invoke(request, signal): Promise<HarnessResponse>`. The reque
 and return `{ text, sessionId, usage }`. For structured calls, `text` must contain the serialized
 JSON value; the runtime parses it, validates it, and checkpoints the result.
 
-`CliHarness` owns the 15-minute deadline, 25-turn Claude allowance, $0.25 Claude budget, and tool/
-sandbox defaults. Optional `Harness.policyDefaults(provider)` reports adapter-owned execution limits
+The core resolves profile limits (text: five minutes, 10 Claude turns, $0.50) and tool/sandbox
+defaults. Optional `Harness.policyDefaults(provider)` reports adapter-owned execution limits
 (including binary/output cap/kill grace) without side effects. The core records reported limits,
-overlays call-site fields and sticky rules, and sends the resolved limit values to `invoke`. It does
-not invent custom-harness defaults. Unknown defaults stay absent from attempt policy;
-`requestedModel: null` means the native configuration chooses. Custom implementations must enforce
-the supplied limits and settle on abort; otherwise draining can hang while the run holds its lock.
-The core owns retries and removes `retry` and `onError` from the adapter request.
+overlays profiles, call-site fields and sticky rules, and sends the resolved limit values to
+`invoke`. It does not invent adapter-specific defaults. Unknown adapter fields stay absent from
+attempt policy; `requestedModel: null` means the native configuration chooses. Custom
+implementations must enforce the supplied limits and settle on abort; otherwise draining can hang
+while the run holds its lock. The core owns retries and removes `retry` and `onError` from the
+adapter request.
 
 The adapter owns one fresh invocation, not retries, run locks, or checkpoint storage. Missing usage
 measurements and native IDs must be `null`, never `undefined`. An omitted usage field fails the step

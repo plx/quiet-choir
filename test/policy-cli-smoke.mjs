@@ -85,9 +85,9 @@ export default defineWorkflow({ name: 'policy-cli', version: '1', input: z.objec
   assert.equal(attempts[0].sources.timeoutMs, 'call-site');
   assert.equal(attempts[1].policy.timeoutMs, 600000);
   assert.equal(attempts[1].sources.timeoutMs, 'override:0');
-  assert.equal(attempts[1].policy.maxTurns, 25);
-  assert.equal(attempts[1].sources.maxTurns, 'harness');
-  assert.equal(attempts[1].policy.maxBudgetUsd, 0.25);
+  assert.equal(attempts[1].policy.maxTurns, 10);
+  assert.equal(attempts[1].sources.maxTurns, 'profile:text');
+  assert.equal(attempts[1].policy.maxBudgetUsd, 0.5);
   assert.equal(attempts[1].policy.binary, 'claude');
   assert.deepEqual(saved.policy, [{ match: 'review', timeoutMs: 600000 }]);
   const bare = cli(...args, '--resume', '--json');

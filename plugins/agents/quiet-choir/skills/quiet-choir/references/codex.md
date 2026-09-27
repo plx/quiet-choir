@@ -9,14 +9,14 @@ an embedding caller overrides the binary.
 
 Both `ctx.codex.text(id, options)` and `ctx.codex.object(id, { schema, ...options })` return
 `{ output, sessionId, usage }`. `output` is text or the locally validated structured value. These
-defaults belong to `CliHarness`; the core adds none.
+defaults come from the core's implicit `text` profile; custom harnesses must enforce them.
 
 | Option             | Meaning and default                                                                                                                       |
 | ------------------ | ----------------------------------------------------------------------------------------------------------------------------------------- |
 | `prompt`           | Required instructions, sent over stdin                                                                                                    |
 | `model`            | Model name; omitted means the installed harness default                                                                                   |
 | `cwd`              | Resolved against the run's working directory; defaults to it. Absolute paths are accepted and are not confined. The directory must exist. |
-| `timeoutMs`        | Per-call wall-clock limit, default 900,000 (15 minutes)                                                                                   |
+| `timeoutMs`        | Per-call wall-clock limit, default 300,000 (5 minutes)                                                                                    |
 | `sandbox`          | `read-only` (default) or `workspace-write`                                                                                                |
 | `reasoningEffort`  | `minimal`, `low`, `medium`, or `high`; omitted means inherited configuration                                                              |
 | `skipGitRepoCheck` | Set true to permit execution outside a Git repo; omitted by default                                                                       |
@@ -26,12 +26,29 @@ through `reasoningEffort`; support for particular models is unverified. Omitting
 user configuration, which may select an expensive level such as `xhigh`. Expanding the typed surface
 is deferred to [#46](https://github.com/plx/quiet-choir/issues/46).
 
+Declare shared roles on `defineWorkflow`, for example
+`defaults: { codex: { reasoningEffort: 'medium' } }` and
+`profiles: { skeptic: { extends: 'readonly', codex: { reasoningEffort: 'high' } } }`. The role can
+be used with either provider. `text` and `readonly` both use read-only for Codex; `edit` uses
+workspace-write. Codex text has access class read, because read-only is its tightest sandbox.
+Turn/budget profile limits apply only to Claude; Codex honors timeoutMs.
+
+`workflow validate file.ts --json` publishes resolved roles without running the body. Default
+`strictProfiles: true` prohibits raw call-site sandbox/tools/allowedTools. Every declared/default
+write/exec role needs a launch grant by name or class, saved on resume. Selecting built-in `edit`
+directly requires a grant before that call. Named grants are pinned to tools and sandbox, so changed
+capabilities require a fresh grant. These declarations do not isolate inherited hooks/MCP config or
+workflow JavaScript. See [Claude profiles](claude.md) for shared merge, grant and recovery rules.
+Raise a role deadline without source edits using
+`--resume --run-id r1 --profile skeptic.timeoutMs=1800000`; profile names and limits stay outside
+identity, resolved model/effort/sandbox stay inside.
+
 Inside a workflow whose input includes `topic`:
 
 ```ts
 const result = await ctx.codex.object('review', {
   prompt: `Assess the clarity of this topic: ${input.topic}. Do not use tools.`,
-  sandbox: 'read-only',
+  profile: 'readonly',
   reasoningEffort: 'low',
   schema: z.object({ accepted: z.boolean(), reason: z.string() }),
 });
@@ -39,10 +56,11 @@ const result = await ctx.codex.object('review', {
 
 The adapter runs
 `codex exec --json --sandbox read-only --config approval_policy="never" --ephemeral --color never -`
-by default. It does not expose interactive approvals or an unrestricted sandbox. Select
-`workspace-write` for authorized editing tasks; the effect's working directory is not automatically
-isolated in a worktree. Hooks, MCP servers, and inherited configuration still matter, and the
-workflow's own TypeScript runs outside these harness sandbox controls.
+by default. It does not expose interactive approvals or an unrestricted sandbox. Declare an
+`edit`-based role with `codex: { sandbox: 'workspace-write' }` for authorized editing tasks and
+launch with `--grant role`; the effect's working directory is not automatically isolated in a
+worktree. Hooks, MCP servers, and inherited configuration still matter, and the workflow's own
+TypeScript runs outside these harness sandbox controls.
 
 Each effect is a fresh call with `--ephemeral`, so there is no persisted local session transcript.
 The native thread ID is returned as `sessionId` for correlation only, not as a workflow resume
@@ -92,10 +110,10 @@ cache comparison; it is not comparable with Claude's top-level field. `costUsd` 
 no Codex per-call USD cap. Failed protocol attempts can retain available usage/session metadata in
 `steps[id].failedAttempts`, with nulls when absent.
 
-The default 15-minute wall-clock and 8 MiB combined stdout/stderr limits bound the process, not
-dollar spend. The byte limit counts the whole JSONL stream, including command output. CLI runs
-cannot raise it; embedding callers can set `CliHarnessOptions.maxOutputBytes`. A noisy editing call
-may hit that limit after making file changes even though its result is not saved.
+The implicit text profile's five-minute wall-clock and 8 MiB combined stdout/stderr limits bound the
+process, not dollar spend. The byte limit counts the whole JSONL stream, including command output.
+CLI runs cannot raise it; embedding callers can set `CliHarnessOptions.maxOutputBytes`. A noisy
+editing call may hit that limit after making file changes even though its result is not saved.
 
 ## Diagnosing a failure
 

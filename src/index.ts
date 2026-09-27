@@ -80,3 +80,15 @@ export { CancelledError, FanOutError } from './workflow/runtime/fan-out.js';
 export type { FanOutFailure, MapStepError, RootCause } from './workflow/runtime/fan-out.js';
 
 export { stepId } from './workflow/runtime/identity.js';
+
+export { capabilityManifest } from './workflow/runtime/profiles.js';
+export type {
+  BuiltinProfile,
+  AccessClass,
+  ProfileLimits,
+  AgentProfile,
+  AgentDefaults,
+  ProfileOverride,
+  ResolvedProfile,
+  CapabilityManifest,
+} from './workflow/runtime/profiles-model.js';

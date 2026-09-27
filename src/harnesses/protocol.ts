@@ -89,7 +89,12 @@ export function parseClaude(stdout: string, structured: boolean): ProtocolOutcom
   return classify(() => {
     const data = parse(stdout, 'Claude');
     if (data['type'] !== 'result') throw new Error('Claude did not return a terminal result.');
+    const turns = number(data['num_turns']);
     const metadata = {
+      ...(turns === null ? {} : { turns }),
+      ...(Array.isArray(data['permission_denials'])
+        ? { permissionDenials: data['permission_denials'].length }
+        : {}),
       sessionId: string(data['session_id']),
       usage: usage(data['usage'], data['total_cost_usd']),
     };

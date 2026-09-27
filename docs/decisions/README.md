@@ -25,3 +25,4 @@ part of the documentation.
 - [0007: Explicit durable failure outcomes](0007-durable-failure-outcomes.md)
 - [0008: Scope map cancellation and journal settled items](0008-scoped-fan-out.md)
 - [0009: Compose explicit leaves with stable scope prefixes](0009-scoped-step-ids.md)
+- [0010: Resolve named agent capabilities before effects](0010-agent-profiles-and-grants.md)

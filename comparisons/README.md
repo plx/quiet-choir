@@ -9,9 +9,10 @@ TypeScript ports. Batch 01 contains all 26 workflows from
 
 Batch 01 is the active regression suite for the current built runtime, not a frozen set of ports.
 Its upstream originals remain immutable. The initial ports targeted `a6a7b82`; `apiSnapshot` now
-records the scoped-ID API at `5b37174` used by bug-hunt. Other ports retain supported legacy
-overloads. The recorded model-file hash belongs to that commit; regression tests use the current
-built checkout, including `readRun({ runId, stateDir })` in the recovery verifier.
+records the agent-profile API at `b35a0a1` used by the active ports. Historical ports explicitly
+retain raw input capabilities with `strictProfiles: false`. The recorded model-file hash belongs to
+that commit; regression tests use the current built checkout, including
+`readRun({ runId, stateDir })` in the recovery verifier.
 
 The site is a reader, not an execution console. Every original is preserved byte for byte, with its
 MIT license. Every port uses `ctx.claude` explicitly. The comparison layer adds no runtime APIs.
@@ -115,7 +116,11 @@ npm run cli -- workflow validate \
 Execute through the existing `workflow execute` command when desired. Supply the original workflow
 arguments as JSON plus an optional `$claude` object. It accepts `model`, `tools`, `allowedTools`,
 `maxTurns`, `maxBudgetUsd`, and `timeoutMs`. The batch defaults to 40 turns, $5, and ten minutes
-**per agent call**; built-in tools stay disabled unless explicitly enabled and allowed.
+**per agent call**; built-in tools stay disabled unless explicitly enabled. These historical ports
+set `strictProfiles: false` to preserve their input API. Tools now imply allowedTools unless
+narrowed; elevated raw tools need class grants (`--grant write`, `--grant exec`, or `--grant all`).
+Limits can also be raised with `--profile '*.maxTurns=60'` without changing saved input. New
+workflows should declare named roles; see [agent profiles](../docs/agent-profiles.md).
 Tool-dependent workflows require suitable configuration. No workflow-level budget is implied.
 
 The shared support files are displayed on the site as part of each comparison. They are local

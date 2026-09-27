@@ -1,3 +1,4 @@
+import type { CapabilityManifest, ProfileOverride } from '../runtime/profiles-model.js';
 import type { ExecutionPlan, ExecutionResult } from '../../application/execution.js';
 import type { JsonValue } from '../runtime/model.js';
 import type { PolicyOverride } from '../runtime/policy.js';
@@ -21,6 +22,8 @@ export interface ExecuteWorkflowPlan extends ExecutionPlan {
   readonly resume: boolean;
   readonly input?: JsonValue;
   readonly policy?: readonly PolicyOverride[];
+  readonly profileOverrides?: readonly ProfileOverride[];
+  readonly grants?: readonly string[];
   readonly policyReset?: boolean;
   readonly allowModelOverride?: boolean;
   readonly forkFrom?: ForkOptions;
@@ -63,6 +66,7 @@ export type WorkflowCommandResult = ExecutionResult &
           readonly version: string;
           readonly fingerprint: string;
           readonly identity?: WorkflowIdentity;
+          readonly capabilities: CapabilityManifest;
         };
       }
     | {

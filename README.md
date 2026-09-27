@@ -173,9 +173,11 @@ added; completed calls never rerun because of policy. Embedded callers use `RunO
 `policyReset`, and `allowModelOverride`, or edit call-site limits without changing their source
 fingerprint. Globs use `*` within segments and `**` across `/`.
 
-`CliHarness` defaults to 15 minutes, 25 Claude turns, and the unchanged $0.25 Claude per-call
-budget. Custom harnesses report known limits through optional `policyDefaults(provider)`; unknown
-defaults are not invented. `inspect --json` exposes saved rules and each step's `attemptHistory`,
+The implicit `text` profile supplies a five-minute deadline, 10 Claude turns and a $0.50 per-call
+budget. `readonly` and `edit` supply larger limits. Custom harnesses receive those resolved options,
+must enforce them, and can report adapter-specific defaults through `policyDefaults(provider)`. See
+[agent profiles and launch grants](docs/agent-profiles.md) for declarations, `--profile` recovery,
+and strict capability checks. `inspect --json` exposes saved rules and each step's `attemptHistory`,
 including resolved policy and its sources. New checkpoints use version 5. Versions 1, 2, 3, and 4
 remain inspectable but cannot resume or supply fork reuse with this runtime; retain the original
 runtime or choose a new run ID. See
@@ -368,18 +370,19 @@ created 0600 and state/lock directories 0700; existing directory permissions are
 
 ## Harness defaults and limits
 
-`CliHarness` applies these defaults; the core supplies none. Custom `Harness` implementations own
-their defaults and must enforce deadlines. Claude defaults to no built-in tools, `dontAsk`
-permissions, 25 turns, and a $0.25 per-call budget. Explicitly enable and allow tools through
-`tools` and `allowedTools`. MCP tools from config still load; `allowedTools` adds pre-approvals to
-settings allow rules, and `dontAsk` denies the rest. Codex defaults to a read-only sandbox and
-approvals set to `never`; opt into `workspace-write` per call. Both have a 15-minute wall-clock
-limit and an 8 MiB combined output limit. Codex does not expose an equivalent per-call USD cap here.
-Model selection is explicit or inherited from the installed harness. Codex `reasoningEffort` accepts
-only `minimal|low|medium|high` here. Codex 0.157.1 also recognizes `none`, `xhigh`, and `max`;
-per-model support is unverified. Omission can inherit an expensive configured level. The byte cap
-counts the whole stdout/stderr stream, including command output; CLI runs cannot raise it, while
-embedders can set `CliHarnessOptions.maxOutputBytes`. A call may hit the cap after editing files.
+The core resolves named [agent profiles](docs/agent-profiles.md) before invoking a harness. The
+implicit `text` profile is tool-less for Claude, read-only for Codex, and limited to five minutes,
+10 Claude turns and $0.50 per Claude call. `readonly` grants file-reading tools; `edit` adds writing
+and requires an operator grant. Declare roles on `defineWorkflow`, select with `profile`, and use
+`--grant role` at launch. Raw call-site tools/sandbox are rejected under default `strictProfiles`.
+`tools` implies `allowedTools` unless explicitly narrowed. Claude uses `dontAsk`; allowed rules add
+to inherited settings permissions. Codex uses approval policy `never`. MCP tools and hooks can still
+load from configuration. The combined output cap is 8 MiB; Codex has no per-call USD cap here. Model
+selection is explicit or inherited from the installed harness. Codex `reasoningEffort` accepts only
+`minimal|low|medium|high` here. Codex 0.157.1 also recognizes `none`, `xhigh`, and `max`; per-model
+support is unverified. Omission can inherit an expensive configured level. The byte cap counts the
+whole stdout/stderr stream, including command output; CLI runs cannot raise it, while embedders can
+set `CliHarnessOptions.maxOutputBytes`. A call may hit the cap after editing files.
 
 Prompts go over stdin without a shell. Timeouts and cancellation terminate process groups on
 macOS/Linux; Windows cleanup reaches the immediate child only. These flags do not sandbox the

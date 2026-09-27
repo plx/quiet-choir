@@ -1,3 +1,4 @@
+import { capabilityManifest } from '../runtime/profiles.js';
 import { randomUUID } from 'node:crypto';
 import { readdir } from 'node:fs/promises';
 
@@ -147,6 +148,7 @@ export class WorkflowExecutor implements Executor<
             name: definition.name,
             version: definition.version,
             ...workflowSnapshot(definition, { source }),
+            capabilities: capabilityManifest(definition),
           },
         };
       }
@@ -170,6 +172,8 @@ export class WorkflowExecutor implements Executor<
         cwd: plan.cwd,
         resume: plan.resume,
         ...(plan.policy === undefined ? {} : { policy: plan.policy }),
+        ...(plan.profileOverrides === undefined ? {} : { profileOverrides: plan.profileOverrides }),
+        ...(plan.grants === undefined ? {} : { grants: plan.grants }),
         ...(plan.policyReset === undefined ? {} : { policyReset: plan.policyReset }),
         ...(plan.allowModelOverride === undefined
           ? {}

@@ -12,14 +12,14 @@
     "Phase titles remain as metadata and stderr messages. Quiet Choir has no native phase timeline. Per-call effort has no ClaudeOptions equivalent and is recorded as a comment, not silently mapped to a different model.",
     "Legacy fan-out helpers use ctx.map with eight concurrent items per group and isolated ID scopes. Bug-hunt uses runtime named maps and ctx.within with semantic leaf IDs instead of the counter allocator. Pipelines still advance each item independently. This is not the original harness-wide concurrency ceiling; nested groups can exceed eight agents.",
     "Quiet Choir propagates agent failures and drains started mappers without cancellation by default; the original harness returns null and continues. These ports stop scheduling after a failure and can be explicitly resumed. Completed effects replay by ID, not by an unchanged prefix of agent calls.",
-    "Fresh headless Claude sessions do not inherit the interactive conversation's permissions, model, or effort. The $claude input exposes model, tools, allowedTools, turns, timeout, and per-call USD limit. Defaults here are 40 turns, ten minutes, and $5 per call; tools remain disabled unless explicitly enabled.",
+    "Fresh headless Claude sessions do not inherit the interactive conversation's permissions, model, or effort. The $claude input exposes model, tools, allowedTools, turns, timeout, and per-call USD limit. Defaults here are 40 turns, ten minutes, and $5 per call; tools remain disabled unless explicitly enabled. Historical ports explicitly set strictProfiles:false to preserve this input API. Tools now imply allowedTools unless narrowed; elevated raw tools require write/exec/all launch grants. New workflows should declare named roles, and --profile can raise limits without editing saved input.",
     "Final results omit undefined object properties and turn undefined array elements into null to match JavaScript JSON transport. The final output schema checks JSON compatibility; agent response schemas are specific. This initial migration uses permissive TypeScript settings for legacy orchestration locals."
   ],
   "apiSnapshot": {
     "package": "quiet-choir 0.0.0",
-    "sha256": "18ea2ceb67c88824808d0c0f431baf889092b1a7ef49b4111f247e80ecc89894",
+    "sha256": "6fae3e933e4df64b6a520f0614d5d786529fc9e01228f69fceb4f3ec93cc614c",
     "file": "src/workflow/runtime/model.ts",
-    "description": "Scoped-ID API used by the active bug-hunt port at quiet-choir commit 5b3717404a160575135de831215e215e13c9d2aa. Other ports retain supported legacy overloads. The hash identifies this model file; the regression suite tests the current built checkout.",
-    "revision": "5b3717404a160575135de831215e215e13c9d2aa"
+    "description": "Agent-profile API used by the active ports at quiet-choir commit b35a0a1a71745a93c58e18bb2e4108f46aa0cc2e. Historical ports explicitly retain raw input capabilities with strictProfiles:false and still require class grants. The hash identifies this model file; the regression suite tests the current built checkout.",
+    "revision": "b35a0a1a71745a93c58e18bb2e4108f46aa0cc2e"
   }
 }

@@ -8,38 +8,68 @@ workflow API. Any agent host can use `ctx.claude`. This plugin does not install 
 
 Both `ctx.claude.text(id, options)` and `ctx.claude.object(id, { schema, ...options })` return
 `{ output, sessionId, usage }`. `output` is text or the locally validated structured value. The
-defaults below come from `CliHarness`, not the core or custom harnesses.
+defaults below come from the core's implicit `text` profile; custom harnesses must enforce them.
 
 | Option         | Meaning and CliHarness default                                                                                                            |
 | -------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
 | `prompt`       | Required instructions, delivered on stdin without a shell                                                                                 |
 | `model`        | Claude model name/alias; omitted means the installed harness default                                                                      |
 | `cwd`          | Resolved against the run's working directory; defaults to it. Absolute paths are accepted and are not confined. The directory must exist. |
-| `timeoutMs`    | Per-call wall-clock limit, default 900,000 (15 minutes)                                                                                   |
+| `timeoutMs`    | Per-call wall-clock limit, default 300,000 (5 minutes)                                                                                    |
 | `tools`        | Built-in tools exposed to the call; default empty                                                                                         |
-| `allowedTools` | Tools pre-approved in addition to settings allow rules; omitted by default                                                                |
-| `maxTurns`     | Positive integer, default 25                                                                                                              |
-| `maxBudgetUsd` | Positive finite per-call USD limit, default 0.25                                                                                          |
+| `allowedTools` | Narrower permissions; omission copies tools. Declare these gates in a profile                                                             |
+| `maxTurns`     | Positive integer, default 10                                                                                                              |
+| `maxBudgetUsd` | Positive finite per-call USD limit, default 0.50                                                                                          |
 
 The adapter uses `claude --print --output-format json --permission-mode dontAsk` and
 `--no-session-persistence`. Each effect starts fresh; `sessionId` is for correlation only. The
 no-persistence flag disables the local session transcript. Pass relevant earlier output explicitly
 in later prompts.
 
-`tools` decides which built-in tools exist; the default is none. MCP tools from configuration still
-load. `allowedTools` pre-approves tools on top of settings allow rules, and `dontAsk` denies the
-rest. To read source files, expose and allow the needed tools explicitly, for example inside `run`:
+Declare roles on `defineWorkflow` and choose them per call:
 
 ```ts
+// Definition fields, alongside name/version/input/output/run:
+profiles: {
+  scout: { extends: 'readonly', maxTurns: 30, description: 'Reads source' },
+  fixer: { extends: 'edit', onPermissionDenied: 'fail' },
+},
+
+// Inside run:
 const result = await ctx.claude.object('review', {
-  prompt: 'Read src/index.ts and summarize the public API. Do not edit files.',
-  tools: ['Read'],
-  allowedTools: ['Read'],
-  maxTurns: 5,
-  maxBudgetUsd: 0.25,
+  profile: 'scout',
+  prompt: 'Read src/index.ts and summarize the public API.',
   schema: z.object({ summary: z.string() }),
 });
 ```
+
+`text` is tool-less (10 turns/$0.50/300s), `readonly` exposes Read/Grep/Glob (25 turns/$2/900s), and
+`edit` adds Edit/Write (40 turns/$5/1800s). Workflow defaults apply after the built-in preset;
+custom extends ancestors, selected role and call options follow. `tools` implies `allowedTools`; an
+explicit allowed list can narrow, e.g. Bash to `Bash(npm test:*)`. Replacing tools re-infers the
+allowed list unless explicitly supplied. MCP configuration and settings permissions still apply.
+
+`strictProfiles: true` is the default: declare tools/allowedTools/sandbox in profiles, not at call
+sites. `workflow validate file.ts --json` lists `workflow.capabilities` without executing the body.
+Every declared/default write/exec role requires a launch grant, e.g. `--grant fixer`; class grants
+`--grant write`, `--grant exec` (includes write), and `--grant all` are also available. Grants
+persist on resume; named grants must be renewed if tools/permissions/sandbox change. The built-in
+`edit` can be selected directly but requires a grant before that call. Declaring a role makes
+preflight happen before any workflow effects. Unknown/MCP tools conservatively require exec.
+
+Recover with `--resume --run-id r1 --profile scout.maxTurns=60` or
+`--profile '*.timeoutMs=1800000'`. The three profile override fields are maxTurns, maxBudgetUsd and
+timeoutMs. Rules persist; `--policy-reset` clears both profile and step rules. Existing step
+`--policy` rules take precedence. Embedders use
+`profileOverrides: [{ profile: 'scout', maxTurns: 60 }]` and `grants: ['fixer']`. Profile
+names/limits stay outside identity; resolved semantic fields stay inside. Cap failures include
+configured limit, role, reported turns/cost and the recovery flag. Permission denials appear in
+saved step warnings; `onPermissionDenied: 'fail'` makes them permission-kind failures while
+retaining usage. Tool-count warnings and idle timeouts await #61/#62; idleTimeoutMs is not
+supported.
+
+Use `strictProfiles: false` only to migrate legacy raw capability calls; elevated raw calls require
+class/all grants, and the manifest no longer bounds those call-site replacements.
 
 Keep permissions appropriate to the task. quiet-choir exposes no permission-bypass mode. Limits
 apply per call, not across the workflow; bounded concurrency does not impose a total spending cap.
