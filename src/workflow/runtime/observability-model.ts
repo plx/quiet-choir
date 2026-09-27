@@ -73,6 +73,8 @@ export interface ExecutionRecord {
 
 /** Persisted lifecycle, phase, or log entry. Step transitions also have live WorkflowEvents. */
 export interface RunEvent {
+  /** Inline frame at the observation call site, or null/absent for root events. */
+  readonly frame?: string | null;
   /** ISO event time. */
   readonly at: string;
   /** Body execution that first recorded this entry. */

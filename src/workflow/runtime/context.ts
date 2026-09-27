@@ -14,6 +14,7 @@ export function bindContext(
   return {
     runId: context.runId,
     cwd: context.cwd,
+    workflow: bind(context.workflow.bind(context)),
     merge: bind(context.merge.bind(context)),
     worktree: bind(context.worktree.bind(context)),
     writeFile: bind(context.writeFile.bind(context)),

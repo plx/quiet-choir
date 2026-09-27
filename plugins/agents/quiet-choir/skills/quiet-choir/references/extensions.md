@@ -273,6 +273,11 @@ through `RunOptions.store`.
 
 ## Reuse workflow logic
 
+Use `ctx.workflow(id, childDefinition, input)` for a typed child with recorded name/version,
+validated I/O, a scoped namespace and delegated profiles. Declare `children` for name dispatch and
+for any child used inside a settled map. The root run owns its waits, budgets and concurrency; see
+[child workflows and discovery](child-workflows.md).
+
 Ordinary async functions taking `WorkflowContext` are the extension mechanism for multi-step
 helpers. Call them at the workflow level inside `ctx.scope('review', () => helper(ctx))`, or pass
 `ctx.within('review')` for a lexical context. Helpers use explicit leaves; nested scopes/named maps

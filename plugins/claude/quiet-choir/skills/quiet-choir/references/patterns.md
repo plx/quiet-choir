@@ -218,37 +218,45 @@ planned; ordinary bounded loops remain the API.
 
 ## Reusable helper
 
-**Rule:** helpers receive a context scoped by their caller and use explicit leaf IDs. Calling this
-helper for another file cannot collide with its earlier `verdict`. `ctx.id(path)` makes a stable
-legal item segment; it does not read the file or make the path a security boundary.
+**Rule:** a typed inline child validates its input/output, records its identity, and scopes every
+effect. Named map keys separate files; `ctx.workflow` separates each review frame. `ctx.id(path)`
+makes a stable legal item segment, not a filesystem security boundary.
 
 <!-- skills-check: example pattern-reusable-helper -->
 
 ```ts
-import { defineWorkflow, z, type WorkflowContext } from '../../src/index.js';
+import { defineWorkflow, z } from '../../src/index.js';
 
-async function reviewFile(ctx: WorkflowContext, path: string): Promise<string> {
-  return ctx.claude.value('verdict', {
-    profile: 'readonly',
-    prompt: `Read and review this file: ${path}`,
-  });
-}
+const reviewFile = defineWorkflow({
+  name: 'review-file',
+  version: '1',
+  input: z.object({ path: z.string().describe('File to review') }),
+  output: z.string(),
+  async run(ctx, input) {
+    return ctx.claude.value('verdict', {
+      profile: 'readonly',
+      prompt: `Read and review this file: ${input.path}`,
+    });
+  },
+});
 export default defineWorkflow({
   name: 'reusable-helper',
-  version: '1',
+  version: '2',
+  children: [reviewFile],
   input: z.object({ paths: z.array(z.string()).max(8) }),
   output: z.array(z.string()),
   async run(ctx, input) {
     return ctx.map('files', input.paths, { concurrency: 2, key: (path) => ctx.id(path) }, (path) =>
-      reviewFile(ctx.within('review'), path),
+      ctx.workflow('review', reviewFile, { path }),
     );
   },
 });
 ```
 
-**Cost:** one call per file; scopes add no agent calls. **Supersession:** manual prefix-threading
-was superseded by implemented [#44](https://github.com/plx/quiet-choir/issues/44). This uses
-`within` inside a named map; `ctx.scope` is the dynamic equivalent.
+**Cost:** one call per file; child frames add no inference. **Supersession:** implemented
+[#63](https://github.com/plx/quiet-choir/issues/63) adds child identity, validated I/O and profile
+delegation to the scoped-helper recipe. Plain function helpers can still use `within` or `scope`;
+see [child workflows and discovery](child-workflows.md).
 
 ## Worktree per item
 

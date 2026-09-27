@@ -136,3 +136,12 @@ history once, exclude fork reuse, and flag legacy fallback. Budget refusals latc
 wait for admitted agent outcomes before rejecting; never abort paid siblings or settle the stop as
 workflow data. Resume marks prior running agent attempts interrupted. See
 [ADR 0025](../../../docs/decisions/0025-attempt-usage-and-run-budgets.md).
+
+Inline children own frame records and operation scopes, not cached bodies or separate runs. Keep
+child I/O/name/version identity checked on replay, including declared children inside skipped
+settled mappers. Every child in a settled map must be declared. Child namespaces compact
+independently from ordinary scope IDs; preserve parent links and frame attribution. Delegation may
+narrow parent roles and limits but never create authority for descendants. Children share the root's
+limiter, budgets, quiescence and cancellation; parked child frames cannot keep a run artificially
+active. Journal child changes individually. See
+[ADR 0026](../../../docs/decisions/0026-inline-children-and-definition-registry.md).

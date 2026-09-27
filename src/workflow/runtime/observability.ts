@@ -73,6 +73,7 @@ export class RunObservations {
   readonly #prior: Record<string, number>;
   readonly #counts: Record<string, number> = {};
   readonly #pending = new Set<Promise<void>>();
+  readonly #frame: () => string | null;
   #scheduled: { readonly callbacks: (() => void)[] } | undefined;
   #error: Error | undefined;
 
@@ -80,10 +81,12 @@ export class RunObservations {
     record: RunRecord,
     save: () => Promise<void>,
     notify: (event: RunEvent, replayed: boolean) => void,
+    frame: () => string | null = () => null,
   ) {
     this.#record = record;
     this.#save = save;
     this.#notify = notify;
+    this.#frame = frame;
     this.#prior = { ...record.eventCounts };
     this.execution = {
       n: (record.executions?.at(-1)?.n ?? 0) + 1,
@@ -107,6 +110,17 @@ export class RunObservations {
 
   public run<T>(body: () => T): T {
     return this.#storage.run(this.#root, body);
+  }
+  /** Keep a child's imperative phase updates out of the parent and concurrent sibling frames. */
+  public async isolate<T>(body: () => Promise<T>): Promise<T> {
+    const frame: PhaseFrame = { phase: this.phase };
+    this.#active.add(frame);
+    try {
+      return await this.#storage.run(frame, body);
+    } finally {
+      this.#active.delete(frame);
+      this.#updatePhase();
+    }
   }
 
   public lifecycle(
@@ -195,7 +209,8 @@ export class RunObservations {
 
   #event(type: 'phase' | 'log', message: string, data: JsonValue): void {
     const phase = this.phase;
-    const key = digest({ type, message, data, phase });
+    const frame = this.#frame();
+    const key = digest({ type, message, data, phase, ...(frame === null ? {} : { frame }) });
     const n = (this.#counts[key] ?? 0) + 1;
     this.#counts[key] = n;
     const replayed = n <= (this.#prior[key] ?? 0);
@@ -208,6 +223,7 @@ export class RunObservations {
       message,
       data,
       stepId: null,
+      ...(frame === null ? {} : { frame }),
     };
     if (!replayed) {
       (this.#record.eventCounts ??= {})[key] = n;

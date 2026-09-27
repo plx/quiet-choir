@@ -250,6 +250,15 @@ describe('workflow lifecycle command adapters', () => {
         version: '1',
         fingerprint: 'hash',
         capabilities: capabilityManifest({}),
+        description: null,
+        whenToUse: null,
+        phases: [],
+        inputSchema: {},
+        outputSchema: {},
+        profiles: {},
+        children: [],
+        recursive: false,
+        entrypoint: file,
       },
     });
     const output = await captureCommand(WorkflowValidate, [file, ...(json ? ['--json'] : [])]);

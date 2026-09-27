@@ -45,6 +45,7 @@ interface MapDependencies {
   /** Whether an error is this run's own checkpoint failure, not a domain error reusing the class. */
   readonly isCheckpointFailure: (error: unknown) => boolean;
   readonly replayed: (id: string, step: StepRecord) => void;
+  readonly replayChild: (id: string) => void;
 }
 
 /** Build scoped fan-out with an optional explicit durable item journal. @internal */
@@ -66,6 +67,7 @@ export function createMap(dependencies: MapDependencies): WorkflowContext['map']
     nextSeq,
     isCheckpointFailure,
     replayed,
+    replayChild,
   } = dependencies;
   function validationError(message: string): Error {
     const error = new Error(message);
@@ -186,7 +188,7 @@ export function createMap(dependencies: MapDependencies): WorkflowContext['map']
         const controller = new AbortController();
         const mapSignal = AbortSignal.any([scopes.signal, controller.signal]);
         mapSignal.throwIfAborted();
-        const mapScope = scopes.create(mapSignal);
+        const mapScope = scopes.create(mapSignal, settings.onError === 'settle');
         let journal: MapRecord | undefined;
         if (settings.onError === 'settle' && journalId !== undefined) {
           if (
@@ -196,6 +198,8 @@ export function createMap(dependencies: MapDependencies): WorkflowContext['map']
             throw validationError('Map version must be a nonempty string.');
           if (visitedMaps.has(journalId))
             throw validationError(`Duplicate settled map ID: ${journalId}.`);
+          if (record.children?.[journalId])
+            throw validationError(`Settled map ${journalId} collides with a recorded child frame.`);
           visitedMaps.add(journalId);
           scopes.map(journalId);
           // Fingerprint, journal, and process one detached JSON copy of the items.
@@ -274,6 +278,7 @@ export function createMap(dependencies: MapDependencies): WorkflowContext['map']
                           visitedMaps.add(id);
                           scopes.map(id);
                         }
+                        for (const id of item.children ?? []) replayChild(id);
                         results[index] = structuredClone(item.outcome) as Settled<U, MapStepError>;
                         return;
                       }
@@ -303,6 +308,7 @@ export function createMap(dependencies: MapDependencies): WorkflowContext['map']
                           Object.hasOwn(record.steps, id),
                         );
                         item.maps = [...itemScope.maps].filter((id) => Object.hasOwn(maps, id));
+                        item.children = [...itemScope.children];
                         await save();
                         results[index] = structuredClone(item.outcome) as Settled<U, MapStepError>;
                       } else results[index] = output as U;
@@ -333,6 +339,7 @@ export function createMap(dependencies: MapDependencies): WorkflowContext['map']
                           Object.hasOwn(record.steps, id),
                         );
                         item.maps = [...itemScope.maps].filter((id) => Object.hasOwn(maps, id));
+                        item.children = [...itemScope.children];
                         try {
                           await save();
                         } catch {

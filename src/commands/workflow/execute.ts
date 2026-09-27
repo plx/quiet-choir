@@ -1,4 +1,5 @@
 import { parseRunBudget, runBudgetFlags } from '../../cli/run-budget.js';
+import { existsSync } from 'node:fs';
 import type { RunBudgetPolicy } from '../../workflow/runtime/run-budget.js';
 import { readWorkflowInput } from '../../cli/input.js';
 import { parseAgentLimits } from '../../workflow/loader/agent-limits.js';
@@ -25,6 +26,8 @@ interface WorkflowExecuteArgs {
 }
 
 interface WorkflowExecuteFlags {
+  readonly 'max-child-depth': number | undefined;
+  readonly 'registry-dir': string[] | undefined;
   readonly 'max-run-cost-usd': string | undefined;
   readonly 'max-run-agent-attempts': string | undefined;
   readonly progress: boolean | undefined;
@@ -69,6 +72,15 @@ export default class WorkflowExecute extends WorkflowCommand {
   };
 
   public static override readonly flags: Interfaces.FlagInput<WorkflowExecuteFlags> = {
+    'max-child-depth': Flags.integer({
+      min: 0,
+      max: Number.MAX_SAFE_INTEGER,
+      description: 'Sticky inline child depth limit; default 8, root depth 0',
+    }),
+    'registry-dir': Flags.string({
+      multiple: true,
+      description: 'Trusted directory to search when the workflow argument is a registry name',
+    }),
     ...runBudgetFlags,
     progress: Flags.boolean({ description: 'Print bounded live agent activity to stderr' }),
     transcripts: Flags.option({ options: ['on', 'on-failure', 'off'] as const })({
@@ -247,12 +259,22 @@ export default class WorkflowExecute extends WorkflowCommand {
     const launch =
       args.file === undefined
         ? { kind: 'workflow.resume' as const }
-        : {
-            kind: 'workflow.execute' as const,
-            typecheck: await this.entrypoint(args.file),
-            cwd: process.cwd(),
-            resume: flags.resume ?? false,
-          };
+        : !existsSync(args.file) && !/[\\/]|\.(?:ts|tsx|mts|cts)$/iu.test(args.file)
+          ? {
+              kind: 'workflow.execute-name' as const,
+              name: args.file,
+              directories: (flags['registry-dir']?.length ? flags['registry-dir'] : ['.']).map(
+                (path) => resolve(path),
+              ),
+              cwd: process.cwd(),
+              resume: flags.resume ?? false,
+            }
+          : {
+              kind: 'workflow.execute' as const,
+              typecheck: await this.entrypoint(args.file),
+              cwd: process.cwd(),
+              resume: flags.resume ?? false,
+            };
     let input: JsonValue | undefined;
     if (flags.input !== undefined) input = await readWorkflowInput(flags.input, this.signal);
     else if (!flags.resume && !flags['fork-from']) input = {};
@@ -264,6 +286,9 @@ export default class WorkflowExecute extends WorkflowCommand {
     });
     const result = await executor.execute({
       ...launch,
+      ...(flags['max-child-depth'] === undefined
+        ? {}
+        : { maxChildDepth: flags['max-child-depth'] }),
       ...(flags.progress === undefined ? {} : { progress: flags.progress }),
       ...(flags['notify-command'] === undefined ? {} : { notifyCommand: flags['notify-command'] }),
       ...(flags['wait-mode'] === undefined ? {} : { waitMode: flags['wait-mode'] }),

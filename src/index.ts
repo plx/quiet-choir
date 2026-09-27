@@ -10,6 +10,13 @@ export type { UsageTotals, AgentAttemptOutcome } from './workflow/runtime/usage-
 export type { TokenCounts, ModelUsage } from './workflow/runtime/usage-model.js';
 export { z } from 'zod';
 export type {
+  ChildOptions,
+  ChildRecord,
+  WorkflowDeclaration,
+  WorkflowDescription,
+  WorkflowPhase,
+} from './workflow/runtime/child-model.js';
+export type {
   AgentDiagnostics,
   AgentProgress,
   AgentTranscript,

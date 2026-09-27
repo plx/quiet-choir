@@ -23,6 +23,7 @@ import type { z } from 'zod';
 import type { AgentDefaults, AgentProfile, BuiltinProfile } from './profiles-model.js';
 import type { MapStepError } from './fan-out.js';
 import type { ModelUsage, TokenCounts } from './usage-model.js';
+import type { ChildOptions, WorkflowDeclaration, WorkflowPhase } from './child-model.js';
 
 /** A value that survives checkpoint serialization without changing its meaning. */
 export type JsonValue =
@@ -441,6 +442,20 @@ export interface StepDefinition<T> {
 
 /** Durable operations available to ordinary TypeScript workflow code. */
 export interface WorkflowContext<TProfile extends string = string> {
+  /** Run a typed child inline with validated I/O, recorded identity, and a scoped effect namespace. */
+  workflow<I, O, P extends string>(
+    id: string,
+    child: WorkflowDefinition<I, O, P>,
+    input: NoInfer<I>,
+    options?: ChildOptions,
+  ): Promise<O>;
+  /** Dispatch only among the current workflow's declared children; validate input and return JSON. */
+  workflow(
+    id: string,
+    childName: string,
+    input: JsonValue,
+    options?: ChildOptions,
+  ): Promise<JsonValue>;
   /** Integrate pinned changes in input order; only target checkout modifies the source working tree. */
   merge(
     id: string,
@@ -562,6 +577,14 @@ export interface WorkflowContext<TProfile extends string = string> {
 
 /** Definition of a typed workflow; plain JavaScript controls branching, loops, and composition. */
 export interface WorkflowDefinition<TInput, TOutput, TProfile extends string = string> {
+  /** Human purpose, outside runtime replay identity. */
+  readonly description?: string;
+  /** Guidance for choosing this workflow, outside runtime replay identity. */
+  readonly whenToUse?: string;
+  /** Expected stages; these descriptions do not emit progress events. */
+  readonly phases?: readonly WorkflowPhase[];
+  /** Inline children available for discovery and name-based dispatch. */
+  readonly children?: readonly WorkflowDeclaration[];
   /** Common defaults applied after the selected preset. */
   readonly defaults?: AgentDefaults<NoInfer<TProfile>>;
   /** Named capability roles, resolved before executing the workflow body. */

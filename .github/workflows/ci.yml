@@ -92,6 +92,9 @@ jobs:
       - name: Test usage and run budget CLI
         run: node test/usage-cli-smoke.mjs
 
+      - name: Test child workflow and registry CLI
+        run: node test/children-cli-smoke.mjs
+
       - name: Check Workflow Lab comparisons
         run: npm run comparisons:check
 

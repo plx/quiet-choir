@@ -1,5 +1,6 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { validateStepId } from './identity.js';
+import { createHash } from 'node:crypto';
 
 /** A lexical context binding and its nested bindings. @internal */
 export interface NameFrame {
@@ -16,6 +17,14 @@ export class NameScopes {
   public qualify(leaf: string): string {
     // Preserve invalid runtime values for the tracked validator instead of coercing them into IDs.
     return typeof leaf === 'string' ? this.path + leaf : leaf;
+  }
+  /** Keep child namespaces bounded without changing any existing ordinary scope spelling. */
+  public childId(leaf: string): string {
+    validateStepId(leaf);
+    const expanded = this.qualify(leaf);
+    return expanded.length <= 96
+      ? expanded
+      : `child:${createHash('sha256').update(expanded).digest('hex')}`;
   }
   public describe(id: string): { scope: string; leaf: string } {
     return {

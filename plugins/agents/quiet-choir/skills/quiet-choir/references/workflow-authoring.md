@@ -297,3 +297,10 @@ prompt. See [Codex](codex.md) for the full encoding rules. Claude also requires 
 receives the original schema.
 
 Read [durable waits](waits.md) for source precedence, suspension, notifications, and ticking.
+
+## Typed child workflows
+
+Use required Zod fields with `.describe()` for required arguments; validation publishes those input
+schemas. `ctx.workflow` composes typed definitions or declared names with separate frame identity
+and validated output. Add `description`, `whenToUse`, `phases`, and `children` for discovery. See
+[child workflows](child-workflows.md).

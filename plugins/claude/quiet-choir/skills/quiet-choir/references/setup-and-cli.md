@@ -237,3 +237,11 @@ retention.
 
 Use [workflow tick](waits.md) for due stored entrypoints and bounded watching; --wait-mode block on
 execute/resume keeps waits live.
+
+## Discover trusted definitions
+
+`workflow list-defs [DIR…] --json` publishes schemas, descriptions and declared child trees without
+calling bodies. It imports trusted modules on cache misses; `--refresh` forces revalidation.
+`workflow execute NAME --registry-dir DIR` resolves a unique name and then uses normal execution.
+Directory defaults to the current directory; duplicate names fail. See
+[child workflows and discovery](child-workflows.md).

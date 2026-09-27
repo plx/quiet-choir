@@ -14,6 +14,10 @@ quiet-choir, install its [Claude Code or Codex reference plugin](docs/plugins.md
 bundles a concise skill with topic-specific references for authoring, harness options, durability,
 inspection, and extensions; the runtime is installed separately.
 
+Use [inline child workflows](docs/child-workflows.md) to compose typed workflows in one run with
+recorded identities, delegated profiles and a visible tree. `workflow validate --json` publishes
+schemas and descriptions; `workflow list-defs` discovers trusted definitions for execution by name.
+
 ## Try it without an agent subscription
 
 Use Node.js 24.x (recommended), 22.x from 22.13, or 26.x, and npm 10.9+. Node 23.x and 25.x are
