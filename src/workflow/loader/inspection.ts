@@ -1,3 +1,5 @@
+import { existsSync } from 'node:fs';
+import type { WorktreeStep } from '../runtime/worktree-schema.js';
 import type { ExecSummary, ExecDiagnostics } from '../runtime/exec-model.js';
 import { setTimeout as delay } from 'node:timers/promises';
 import { digest } from '../runtime/json.js';
@@ -54,6 +56,9 @@ export interface RunSummary {
     readonly request: RequestSummary | null;
     readonly exec: ExecSummary | null;
     readonly execError: ExecDiagnostics | null;
+    readonly worktree:
+      (WorktreeStep & { readonly directoryState: 'present' | 'missing' | 'removed' }) | null;
+    readonly merge: StepRecord['merge'] | null;
     readonly error: string | null;
     readonly rootCause: boolean;
   }[];
@@ -205,6 +210,8 @@ export function summarizeRun(
       .filter(
         ([, step]) =>
           step.kind === 'exec' ||
+          step.worktree !== undefined ||
+          step.merge !== undefined ||
           ['running', 'failed', 'cancelled', 'settled-failed', 'waiting'].includes(step.status),
       )
       .map(([id, step]) => ({
@@ -223,6 +230,17 @@ export function summarizeRun(
         request: step.request ?? null,
         exec: step.exec ?? null,
         execError: step.execError ?? null,
+        worktree: step.worktree
+          ? {
+              ...step.worktree,
+              directoryState: existsSync(step.worktree.path)
+                ? ('present' as const)
+                : run.worktrees?.caches[digest(step.worktree.path)]?.state === 'removed'
+                  ? ('removed' as const)
+                  : ('missing' as const),
+            }
+          : null,
+        merge: step.merge ?? null,
         error: step.error,
         rootCause: run.rootCause?.stepId === id,
       })),
@@ -235,6 +253,7 @@ export function summarizeRun(
       ...(run.policyWarnings ?? []),
       ...(run.replayWarnings ?? []),
       ...(run.harnessWarnings ?? []),
+      ...(run.worktreeWarnings ?? []),
       ...(ownership.warning ? [ownership.warning] : []),
     ],
   };

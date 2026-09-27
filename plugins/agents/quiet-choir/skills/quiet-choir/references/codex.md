@@ -52,9 +52,12 @@ The adapter runs
 `codex exec --json --sandbox read-only --config approval_policy="never" --ephemeral --color never -- -`
 by default. It does not expose interactive approvals or an unrestricted sandbox. Declare an
 `edit`-based role with `codex: { sandbox: 'workspace-write' }` for authorized editing tasks and
-launch with `--grant role`; the effect's working directory is not automatically isolated in a
-worktree. Hooks, MCP servers, and inherited configuration still matter, and the workflow's own
-TypeScript runs outside these harness sandbox controls.
+launch with `--grant role`. Add `isolation: 'worktree'` for a fresh checkout on every attempt, or
+pass a `ctx.worktree` handle for serialized write/test/fix effects. Shard structurally disjoint
+files; isolate overlapping targets, concurrent runners, and retries unsafe on partial edits. See
+[worktrees](worktrees.md) for snapshots and explicit integration. Hooks, MCP servers, and inherited
+configuration still matter, and the workflow's own TypeScript runs outside these harness sandbox
+controls.
 
 Calls use `--ephemeral`, so the native thread ID is correlation metadata and no local session
 transcript is persisted.

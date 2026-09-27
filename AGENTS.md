@@ -7,8 +7,8 @@ execution; quiet-choir owns checkpointing and replay.
 
 This is a private, version 0.0.0 prototype. Resume restarts the workflow body and reuses completed
 effects; it does not restore a JavaScript continuation or a native agent conversation. Effects are
-at least once, and filesystem edits are not rolled back. There is no service, scheduler, distributed
-worker, or automatic worktree isolation.
+at least once; ordinary filesystem edits are not rolled back. Explicit runtime worktree isolation
+provides fresh attempts and pinned snapshots. There is no service, scheduler, or distributed worker.
 
 The public boundary is `src/index.ts`. The core owns orchestration and depends on the `Harness`
 interface; adapters depend on that contract. CLI commands translate arguments into plain-data

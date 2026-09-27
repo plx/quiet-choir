@@ -61,7 +61,8 @@ Artifact directories are allocated on demand. Their component uses at most 100 e
 and a full SHA-256 of the exact ID, distinguishing case variants on case-insensitive filesystems and
 fitting the 255-byte component limit. Artifact writers must create diagnostic files with mode 0600;
 their bytes need not be fsynced and are never replay inputs. This revision provides the location,
-not transcript capture or automatic worktree management.
+not transcript capture. Opt-in [worktree isolation](worktrees.md) uses its own recorded cache root
+and pinned Git refs; the default root stays outside the checkout.
 
 Run records, journals, owners, and answers use 0600; new directories use 0700. Existing permissions
 are not repaired. State includes plaintext input, outputs, prompts/previews, and answers. Moving it

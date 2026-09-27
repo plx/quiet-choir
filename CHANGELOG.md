@@ -2,6 +2,12 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- Add runtime-owned Git worktree isolation for Claude and Codex calls, with a pinned base, fresh
+  retry directories, and captured commit results. Shared `ctx.worktree` handles serialize effects
+  and restore completed snapshots; `ctx.merge` integrates changes in input order with explicit
+  conflict and target policies. Inspection and source-free `workflow clean` expose and remove owned
+  caches and optional refs. See [worktree isolation](docs/worktrees.md).
+
 - Add operator-privileged durable `ctx.exec`/`ctx.exec.json` through an injected process runner,
   bounded per-stream capture, exit diagnostics, and child idempotency metadata. Add canonical cwd,
   memoized `readFile`, atomic hash-receipt `writeFile`, and raw-Git-blob `guardFile` restoration
@@ -32,8 +38,8 @@
   redo answers to their requesting stage. See [durable questions](docs/questions.md).
 
 - Add twelve runnable, failure/resume-tested workflow patterns and a current traps table to both
-  authoring skills. `skills:check` keeps their complete fences, worktree helper, and rehearsal
-  fixture identical to `examples/patterns/`; every workflow recipe is at most 30 lines.
+  authoring skills. `skills:check` keeps their complete fences and rehearsal fixture identical to
+  `examples/patterns/`; every workflow recipe is at most 30 lines.
 
 - Reorganize both distributed skills around cross-project setup, background operation, inspection,
   recovery, shared agent controls, and embedding recipes. The Claude package compares native

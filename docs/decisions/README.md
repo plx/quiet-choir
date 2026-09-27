@@ -46,3 +46,5 @@ part of the documentation.
 - [0020: Resolve external readiness in one durable wait](0020-durable-waits-and-tick.md)
 
 - [0021: Keep deterministic commands and file effects in the durable core contract](0021-durable-commands-and-files.md)
+
+- [0022: Runtime-owned worktree isolation](0022-runtime-owned-worktree-isolation.md)

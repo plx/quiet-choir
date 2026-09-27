@@ -68,6 +68,17 @@ export function formatRunSummary(run: RunSummary, verbose = false): string {
     lines.push(`Harness ${provider}: ${value.binary}@${value.version ?? 'unknown'}`);
   for (const step of run.steps) {
     const request = step.request;
+    if (step.worktree) {
+      const w = step.worktree;
+      lines.push(
+        `Worktree ${step.id}: base ${w.base}, commit ${w.commit ?? 'unchanged'}; ${w.directoryState} ${w.path}`,
+      );
+      for (const file of w.files) lines.push(`  ${file.status} ${JSON.stringify(file.path)}`);
+    }
+    if (step.merge)
+      lines.push(
+        `Integration ${step.id}: base ${step.merge.base}, target ${step.merge.ref}, commit ${step.merge.result?.commit ?? 'pending'}${step.merge.result?.conflicts.length ? `; ${String(step.merge.result.conflicts.length)} conflicts` : ''}`,
+      );
     if (step.exec) {
       const command = step.exec.command;
       lines.push(

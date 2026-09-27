@@ -152,6 +152,14 @@ output. With `onError: 'return'`, it returns `Settled<T>` or `Settled<string>`. 
 `step.completed` events include `usage` and `sessionId`; replay/reuse events do not report usage
 again. Observers receive a detached copy.
 
+Set agent `isolation: 'worktree'` for a fresh checkout on every attempt, or create a shared
+`ctx.worktree(id)` handle for write → test → fix effects. Isolated result methods include a pinned
+`worktree` change; `ctx.merge(id, changes)` integrates in input order to a run-owned ref by default.
+The source checkout changes only with explicit `target: 'checkout'`. Use sharding for structurally
+disjoint files; isolate overlapping writers or commands that observe concurrent edits. See
+[worktree isolation, policies, and cleanup](docs/worktrees.md). `workflow clean RUN [--refs]`
+removes owned caches and optionally pins without importing source.
+
 `object()` and `text()` results contain `output`, native `sessionId`, and reported token/cost
 `usage`. Native session IDs are for correlation only: `CliHarness` uses Claude
 `--no-session-persistence` and Codex `--ephemeral`, so these calls have no persisted local session
@@ -194,7 +202,7 @@ failure). An unchanged in-flight run can now fail the pre-execution typecheck on
 code and use the explicit code-change recovery path described below.
 
 A local effect might use `ctx.step('read', { input: { path }, schema: z.string(), run: ... })`.
-Callbacks receive `{ signal, attempt, idempotencyKey }`. Opt into retries only for repeatable
+Callbacks receive `{ cwd, signal, attempt, idempotencyKey }`. Opt into retries only for repeatable
 effects, with `retry: { maxAttempts: 3, delayMs: 100 }`; delays double up to 30 seconds. Agent
 effects also accept explicit retry policies; the default is one attempt. A later explicit resume
 retries unfinished effects, including failed agent calls. `ctx.runId` and `ctx.signal` expose run
@@ -465,11 +473,11 @@ import. `workflow resume RUN` uses its stored entrypoint. Embedded callers narro
   [process lifecycle](docs/process-lifecycle.md).
 
 This spike has no background scheduler, distributed workers, execution migration, durable event
-delivery, global spending ledger, or automatic worktree isolation. Sleep waits in the current
-process. Checkpoints contain plaintext workflow input/output, every completed step's full validated
-result (including agent responses and files a step read), and errors. Files are created 0600 and
-state/lock directories 0700; existing directory permissions are not repaired. `.quiet-choir/` is
-gitignored only in this repository; exclude chosen storage in other projects too.
+delivery, or global spending ledger. Worktree isolation is opt-in. Long sleeps suspend by default.
+Checkpoints contain plaintext workflow input/output, every completed step's full validated result
+(including agent responses and files a step read), and errors. Files are created 0600 and state/lock
+directories 0700; existing directory permissions are not repaired. `.quiet-choir/` is gitignored
+only in this repository; exclude chosen storage in other projects too.
 
 ## Harness defaults and limits
 

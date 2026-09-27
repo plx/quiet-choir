@@ -1,3 +1,12 @@
+import { mergeOptionsSchema, mergeResultSchema } from './worktree-schema.js';
+import { RunWorktrees, type WorktreeLease } from './worktrees.js';
+import { isolationIdentity } from './worktree-identity.js';
+import {
+  worktreeChangeSchema,
+  worktreeHandleSchema,
+  worktreeCreateSchema,
+} from './worktree-schema.js';
+import type { WorktreeIsolation, WorktreePolicy, MergeOptions } from './worktree-model.js';
 import type { ReadFileResult, WriteFileResult, WriteFileOptions } from './file-model.js';
 import {
   filePath,
@@ -236,7 +245,9 @@ export function assertCompleted<T>(result: WorkflowResult<T>): asserts result is
 
 /** Explicit dependencies and execution policy for a workflow run. */
 export interface RunOptions extends WorkflowCodeOptions {
-  /** Process integration for durable exec; never implicitly spawned by the core. */
+  /** Runtime-owned checkout cache and dependency provisioning policy. */
+  readonly worktrees?: WorktreePolicy;
+  /** Process integration for durable exec and worktree Git operations; the core never spawns. */
   readonly processRunner?: ProcessRunner;
   /** Wall clock and cancellable timer used by now, waits, and legacy sleeps. */
   readonly clock?: WorkflowClock;
@@ -841,13 +852,27 @@ export async function runWorkflow<TInput, TOutput>(
       }
     }
 
+    const worktrees = new RunWorktrees(
+      record,
+      options.processRunner,
+      options.worktrees ?? {},
+      save,
+      processInvocation,
+      signal,
+    );
+
     async function effect<T, TMode extends ErrorMode = 'throw'>(
       id: string,
       kind: StepRecord['kind'],
       dependencies: JsonInput,
       schema: z.ZodType<T>,
       execution: AttemptPolicy,
-      action: (context: StepContext, step: StepRecord, attempt: AttemptRecord) => Promise<T> | T,
+      action: (
+        context: StepContext,
+        step: StepRecord,
+        attempt: AttemptRecord,
+        releaseAfterSave: (release: () => void) => void,
+      ) => Promise<T> | T,
       wakeAt: number | null,
       requestedIdentity?: StepIdentity,
       local?: StepDefinition<T>,
@@ -856,6 +881,11 @@ export async function runWorkflow<TInput, TOutput>(
       observedPhase: PhaseInfo | null = observations.phase,
       legacyDependencies?: JsonValue,
       observedExec?: ExecSummary,
+      isolation?: {
+        readonly value: WorktreeIsolation;
+        readonly cwd: string;
+        readonly agent?: boolean;
+      },
     ): Promise<EffectResult<T, TMode>> {
       const signal = scopes.signal;
       const value = (output: T): EffectResult<T, TMode> =>
@@ -906,6 +936,9 @@ export async function runWorkflow<TInput, TOutput>(
                   callback: Function.prototype.toString.call(local.run),
                   version: local.version ?? null,
                   cwd,
+                  ...(local.worktree === undefined
+                    ? {}
+                    : { worktree: isolationIdentity(local.worktree) }),
                 }
               : {}),
           });
@@ -953,6 +986,10 @@ export async function runWorkflow<TInput, TOutput>(
         emit('step.replayed', id, prior);
         return output;
       }
+      if (options.rehearsal && (isolation || kind === 'worktree' || kind === 'merge'))
+        throw new Error(
+          'Dry-run does not simulate Git worktree effects. Use a fixture harness in a temporary repository to rehearse isolation without paid calls.',
+        );
       const wasFailed = prior?.status === 'failed';
       if (!prior && record.forkedFrom) {
         const candidate = reuseCandidate(
@@ -962,9 +999,11 @@ export async function runWorkflow<TInput, TOutput>(
           kind,
           stepFingerprint,
           (sourceStep) =>
-            sourceStep.status === 'settled-failed'
-              ? onError === 'return' && sourceStep.settledError !== undefined
-              : schema.safeParse(structuredClone(sourceStep.output)).success,
+            kind === 'worktree'
+              ? false
+              : sourceStep.status === 'settled-failed'
+                ? onError === 'return' && sourceStep.settledError !== undefined
+                : schema.safeParse(structuredClone(sourceStep.output)).success,
         );
         if (candidate) {
           const copied: StepRecord = {
@@ -1026,6 +1065,8 @@ export async function runWorkflow<TInput, TOutput>(
         step.error = null;
         step.status = 'running';
         delete step.settledError;
+        delete step.worktree;
+        delete step.merge;
       }
       Object.defineProperty(record.steps, id, {
         value: step,
@@ -1071,149 +1112,184 @@ export async function runWorkflow<TInput, TOutput>(
         };
         (step.attemptHistory ??= []).push(attemptRecord);
         await save(undefined, kind === 'sleep');
+        let lease: WorktreeLease | undefined;
+        const releases: (() => void)[] = [];
         try {
-          signal.throwIfAborted();
-          emit('step.started', id, step);
-          const result = await inEffect.run(true, () =>
-            action(
-              {
+          try {
+            signal.throwIfAborted();
+            emit('step.started', id, step);
+            const result = await inEffect.run(true, async () => {
+              const context: StepContext = {
                 signal,
                 cwd,
                 idempotencyKey: `${record.id}/${id}`,
                 attempt: step.attempts,
-              },
-              step,
-              attemptRecord,
-            ),
-          );
-          // A resolved, valid result is durable work even if cancellation arrived meanwhile.
-          // The scope still rejects its next launch.
-          const output = schema.parse(result);
-          step.output = jsonValue(output, `Step "${id}" output`);
-        } catch (cause) {
-          // Only an aborted scope signal is a scope cancellation. A callback's own AbortError
-          // keeps its message and fails the step, but is still never retried or settled. This
-          // run's own storage failure (e.g. process registration) aborts the run but stays a failure.
-          const scoped = signal.aborted && !checkpointProblems.includes(cause as CheckpointError);
-          const error = scoped ? cancellationError(signal, cause) : cause;
-          origins.remember(error, id);
-          const outcome = stepError(error, step.attempts);
-          step.status = scoped ? 'cancelled' : 'failed';
-          if (error instanceof CancelledError) step.cancelledBy = error.cancelledBy;
-          step.error = outcome.message;
-          step.errorStack = errorStack(error);
-          attemptRecord.errorStack = step.errorStack;
-          attemptRecord.errorKind = outcome.kind;
-          attemptRecord.status = scoped ? 'cancelled' : 'failed';
+              };
+              if (isolation)
+                lease = await worktrees.prepare(
+                  id,
+                  isolation.value,
+                  isolation.cwd,
+                  context,
+                  step,
+                  attemptRecord,
+                );
+              signal.throwIfAborted();
+              return action(
+                lease ? { ...context, cwd: lease.cwd } : context,
+                step,
+                attemptRecord,
+                (release) => {
+                  releases.push(release);
+                },
+              );
+            });
+            // A resolved, valid result is durable work even if cancellation arrived meanwhile.
+            // The scope still rejects its next launch.
+            const output = schema.parse(result);
+            step.output = jsonValue(output, `Step "${id}" output`);
+            if (lease) {
+              const activeLease = lease;
+              const { base, commit, ref, files } = await inEffect.run(true, () =>
+                activeLease.capture(),
+              );
+              const change = { base, commit, ref, files };
+              if (isolation?.agent)
+                step.output = jsonValue(
+                  schema.parse({ ...output, worktree: change }),
+                  `Step "${id}" output`,
+                );
+            }
+          } catch (cause) {
+            lease?.failed();
+            // Only an aborted scope signal is a scope cancellation. A callback's own AbortError
+            // keeps its message and fails the step, but is still never retried or settled. This
+            // run's own storage failure (e.g. process registration) aborts the run but stays a failure.
+            const scoped = signal.aborted && !checkpointProblems.includes(cause as CheckpointError);
+            const error = scoped ? cancellationError(signal, cause) : cause;
+            origins.remember(error, id);
+            const outcome = stepError(error, step.attempts);
+            step.status = scoped ? 'cancelled' : 'failed';
+            if (error instanceof CancelledError) step.cancelledBy = error.cancelledBy;
+            step.error = outcome.message;
+            step.errorStack = errorStack(error);
+            attemptRecord.errorStack = step.errorStack;
+            attemptRecord.errorKind = outcome.kind;
+            attemptRecord.status = scoped ? 'cancelled' : 'failed';
+            step.finishedAt = attemptRecord.finishedAt = new Date().toISOString();
+            step.durationMs = attemptRecord.durationMs = Math.max(
+              0,
+              Math.round(performance.now() - attemptStarted),
+            );
+            attemptRecord.error = step.error;
+            if (cause instanceof ExecError) {
+              step.execError = structuredClone(cause.diagnostics);
+              attemptRecord.execError = structuredClone(cause.diagnostics);
+            }
+            if (cause instanceof HarnessError) {
+              if (cause.usage !== null) attemptRecord.usage = structuredClone(cause.usage);
+              (step.failedAttempts ??= []).push({
+                attempt: step.attempts,
+                sessionId: cause.sessionId,
+                usage: cause.usage,
+              });
+            }
+            // Only this run's own storage failures are fatal; a domain error reusing the class is not.
+            const infrastructure =
+              checkpointProblems.includes(cause as CheckpointError) ||
+              cause instanceof ConfigurationError;
+            // Configuration failures must also never become settled map data.
+            if (cause instanceof ConfigurationError) origins.markFatal(error);
+            const fatal = scoped || errorKind(cause) === 'cancelled' || infrastructure;
+            const retry =
+              !fatal &&
+              attempt < maxAttempts &&
+              (execution.policy.retry.on === undefined ||
+                execution.policy.retry.on.includes(outcome.kind));
+            if (!fatal && !retry && onError === 'return') {
+              step.status = 'settled-failed';
+              step.settledError = outcome;
+              if (!(await trySave())) throw error;
+              emit('step.settled', id, step);
+              return replay(step);
+            }
+            if (await trySave()) emit(scoped ? 'step.cancelled' : 'step.failed', id, step);
+            if (!retry || signal.reason instanceof CheckpointError) throw error;
+            try {
+              await waitUntil(
+                clockNow(clock) + Math.min(30_000, delayMs * 2 ** (attempt - 1)),
+                signal,
+                clock,
+              );
+            } catch (cause) {
+              if (signal.reason instanceof CheckpointError) throw error;
+              if (errorKind(cause) !== 'cancelled') throw cause;
+              const cancelled = cancellationError(signal, cause);
+              origins.remember(cancelled, id);
+              step.status = 'cancelled';
+              step.cancelledBy = cancelled.cancelledBy;
+              step.error = cancelled.message;
+              step.errorStack = errorStack(cancelled);
+              step.finishedAt = new Date().toISOString();
+              step.durationMs = Math.max(0, Math.round(performance.now() - attemptStarted));
+              // The completed failed attempt remains history; cancellation interrupted its backoff.
+              if (await trySave()) emit('step.cancelled', id, step);
+              throw cancelled;
+            }
+            continue;
+          }
+          step.status = 'completed';
+          attemptRecord.status = 'completed';
+          lease?.completed();
           step.finishedAt = attemptRecord.finishedAt = new Date().toISOString();
           step.durationMs = attemptRecord.durationMs = Math.max(
             0,
             Math.round(performance.now() - attemptStarted),
           );
-          attemptRecord.error = step.error;
-          if (cause instanceof ExecError) {
-            step.execError = structuredClone(cause.diagnostics);
-            attemptRecord.execError = structuredClone(cause.diagnostics);
+          await save(
+            `Step ${id} completed but its checkpoint write failed; resume may repeat it unless a later save recovers the result`,
+          );
+          const metadata =
+            kind === 'claude' || kind === 'codex'
+              ? (step.output as unknown as AgentResult<unknown>)
+              : undefined;
+          emit(
+            'step.completed',
+            id,
+            step,
+            metadata === undefined
+              ? {}
+              : {
+                  usage: metadata.usage,
+                  sessionId: metadata.sessionId,
+                },
+          );
+          if (wasFailed && !healed.has(id)) {
+            const later = priorSequence
+              .filter((other) => other.seq > (step.seq ?? 0))
+              .map((other) => other.id);
+            if (later.length) {
+              healed.add(id);
+              const warning = `Healed step ${id} now succeeded; later recorded steps (${later.join(', ')}) may depend on its earlier failure. Use onError: return for durable fallback decisions.`;
+              replayWarnings.push(warning);
+              if (options.strictReplay) strictHealedDivergence = new Error(warning);
+              await save();
+              emit('replay.divergence', id, step, {
+                message: warning,
+                healedStepId: id,
+                skippedStepIds: later,
+              });
+            }
           }
-          if (cause instanceof HarnessError) {
-            if (cause.usage !== null) attemptRecord.usage = structuredClone(cause.usage);
-            (step.failedAttempts ??= []).push({
-              attempt: step.attempts,
-              sessionId: cause.sessionId,
-              usage: cause.usage,
-            });
-          }
-          // Only this run's own storage failures are fatal; a domain error reusing the class is not.
-          const infrastructure =
-            checkpointProblems.includes(cause as CheckpointError) ||
-            cause instanceof ConfigurationError;
-          // Configuration failures must also never become settled map data.
-          if (cause instanceof ConfigurationError) origins.markFatal(error);
-          const fatal = scoped || errorKind(cause) === 'cancelled' || infrastructure;
-          const retry =
-            !fatal &&
-            attempt < maxAttempts &&
-            (execution.policy.retry.on === undefined ||
-              execution.policy.retry.on.includes(outcome.kind));
-          if (!fatal && !retry && onError === 'return') {
-            step.status = 'settled-failed';
-            step.settledError = outcome;
-            if (!(await trySave())) throw error;
-            emit('step.settled', id, step);
-            return replay(step);
-          }
-          if (await trySave()) emit(scoped ? 'step.cancelled' : 'step.failed', id, step);
-          if (!retry || signal.reason instanceof CheckpointError) throw error;
-          try {
-            await waitUntil(
-              clockNow(clock) + Math.min(30_000, delayMs * 2 ** (attempt - 1)),
-              signal,
-              clock,
-            );
-          } catch (cause) {
-            if (signal.reason instanceof CheckpointError) throw error;
-            if (errorKind(cause) !== 'cancelled') throw cause;
-            const cancelled = cancellationError(signal, cause);
-            origins.remember(cancelled, id);
-            step.status = 'cancelled';
-            step.cancelledBy = cancelled.cancelledBy;
-            step.error = cancelled.message;
-            step.errorStack = errorStack(cancelled);
-            step.finishedAt = new Date().toISOString();
-            step.durationMs = Math.max(0, Math.round(performance.now() - attemptStarted));
-            // The completed failed attempt remains history; cancellation interrupted its backoff.
-            if (await trySave()) emit('step.cancelled', id, step);
-            throw cancelled;
-          }
-          continue;
+          return value(
+            jsonValue(schema.parse(structuredClone(step.output)), `Step "${id}" output`, {
+              canonical: false,
+            }) as T,
+          );
+        } finally {
+          lease?.release();
+          for (const release of releases.reverse()) release();
         }
-        step.status = 'completed';
-        attemptRecord.status = 'completed';
-        step.finishedAt = attemptRecord.finishedAt = new Date().toISOString();
-        step.durationMs = attemptRecord.durationMs = Math.max(
-          0,
-          Math.round(performance.now() - attemptStarted),
-        );
-        await save(
-          `Step ${id} completed but its checkpoint write failed; resume may repeat it unless a later save recovers the result`,
-        );
-        const metadata =
-          kind === 'claude' || kind === 'codex'
-            ? (step.output as unknown as AgentResult<unknown>)
-            : undefined;
-        emit(
-          'step.completed',
-          id,
-          step,
-          metadata === undefined
-            ? {}
-            : {
-                usage: metadata.usage,
-                sessionId: metadata.sessionId,
-              },
-        );
-        if (wasFailed && !healed.has(id)) {
-          const later = priorSequence
-            .filter((other) => other.seq > (step.seq ?? 0))
-            .map((other) => other.id);
-          if (later.length) {
-            healed.add(id);
-            const warning = `Healed step ${id} now succeeded; later recorded steps (${later.join(', ')}) may depend on its earlier failure. Use onError: return for durable fallback decisions.`;
-            replayWarnings.push(warning);
-            if (options.strictReplay) strictHealedDivergence = new Error(warning);
-            await save();
-            emit('replay.divergence', id, step, {
-              message: warning,
-              healedStepId: id,
-              skippedStepIds: later,
-            });
-          }
-        }
-        return value(
-          jsonValue(schema.parse(structuredClone(step.output)), `Step "${id}" output`, {
-            canonical: false,
-          }) as T,
-        );
       }
     }
 
@@ -1270,6 +1346,9 @@ export async function runWorkflow<TInput, TOutput>(
         options.rehearsal?.onSchema?.(id, outputSchema);
         const identity = stepIdentity({
           kind: 'exec',
+          ...(prepared.settings.worktree === undefined
+            ? {}
+            : { worktree: isolationIdentity(prepared.settings.worktree) }),
           ...(jsonValue(prepared.summary) as Record<string, JsonValue>),
           schema: jsonSchema,
         });
@@ -1284,7 +1363,7 @@ export async function runWorkflow<TInput, TOutput>(
               options.processRunner,
               {
                 command: prepared.summary.command,
-                cwd: prepared.summary.cwd,
+                cwd: prepared.settings.worktree === undefined ? prepared.summary.cwd : context.cwd,
                 env: prepared.env,
                 inheritEnv: prepared.summary.inheritEnv,
                 input: prepared.input,
@@ -1305,6 +1384,9 @@ export async function runWorkflow<TInput, TOutput>(
           phase,
           undefined,
           prepared.summary,
+          prepared.settings.worktree === undefined
+            ? undefined
+            : { value: prepared.settings.worktree, cwd: prepared.summary.cwd },
         );
       });
     }
@@ -1431,7 +1513,7 @@ export async function runWorkflow<TInput, TOutput>(
               effort: execution.reasoningEffort ?? request.options.effort ?? 'inherited',
             },
           };
-          const resultSchema = z.object({
+          const baseResultSchema = z.object({
             output: schema,
             sessionId: z.string().nullable(),
             usage: z.object({
@@ -1440,12 +1522,18 @@ export async function runWorkflow<TInput, TOutput>(
               costUsd: z.number().nullable(),
             }),
           });
+          const isolation = request.options.isolation;
+          const resultSchema =
+            isolation === undefined
+              ? baseResultSchema
+              : baseResultSchema.extend({ worktree: worktreeChangeSchema });
           const identity = agentIdentity(request, schemaJson(resultSchema));
           if (profile.onPermissionDenied === 'fail')
             Object.assign(identity, { onPermissionDenied: digest('fail') });
           const applied = { ...request.options };
           delete applied.retry;
           delete applied.onError;
+          delete applied.isolation;
           const { timeoutMs, maxTurns, maxBudgetUsd } = execution.policy;
           Object.assign(applied, {
             ...(timeoutMs === undefined ? {} : { timeoutMs }),
@@ -1472,6 +1560,7 @@ export async function runWorkflow<TInput, TOutput>(
                 );
               const liveRequest: HarnessRequest = {
                 ...request,
+                ...(isolation === undefined ? {} : { cwd: context.cwd }),
                 call: {
                   runId: options.runId,
                   stepId: id,
@@ -1556,6 +1645,9 @@ export async function runWorkflow<TInput, TOutput>(
                 output: schema.parse(raw),
                 sessionId: response.sessionId,
                 usage: response.usage,
+                ...(step.worktree
+                  ? { worktree: { base: step.worktree.base, commit: null, ref: null, files: [] } }
+                  : {}),
               };
             },
             null,
@@ -1565,6 +1657,10 @@ export async function runWorkflow<TInput, TOutput>(
             requestSummary(request, execution),
             phase,
             legacyRequest,
+            undefined,
+            isolation === undefined
+              ? undefined
+              : { value: isolation, cwd: request.cwd, agent: true },
           );
           return select(result);
         });
@@ -1867,6 +1963,50 @@ export async function runWorkflow<TInput, TOutput>(
           );
         });
       },
+      merge: (leaf, changes, settings = {}) => {
+        const id = names.qualify(leaf);
+        return launch(id, () => {
+          const checked = mergeOptionsSchema.parse(settings) as MergeOptions;
+          const inputs = z
+            .array(z.union([worktreeChangeSchema, worktreeHandleSchema]))
+            .parse(changes);
+          const dependencies = jsonValue({
+            changes: inputs.map((change) =>
+              'id' in change
+                ? isolationIdentity(change)
+                : { base: change.base, commit: change.commit },
+            ),
+            strategy: checked.strategy ?? 'rebase',
+            onConflict: checked.onConflict ?? 'report',
+            target: checked.target ?? 'ref',
+          });
+          return effect(
+            id,
+            'merge',
+            dependencies,
+            mergeResultSchema,
+            resolvePolicy(id, 'step', {}, {}, [], matchedPolicy),
+            (context, step, attempt, releaseAfterSave) =>
+              worktrees.merge(id, inputs, checked, context, step, attempt, releaseAfterSave),
+            null,
+          );
+        });
+      },
+      worktree: (leaf, settings = {}) => {
+        const id = names.qualify(leaf);
+        return launch(id, () => {
+          const parsed = worktreeCreateSchema.parse(settings);
+          return effect(
+            id,
+            'worktree',
+            parsed,
+            worktreeHandleSchema,
+            resolvePolicy(id, 'step', {}, {}, [], matchedPolicy),
+            (context, step, attempt) => worktrees.create(id, parsed.base, context, step, attempt),
+            null,
+          );
+        });
+      },
       exec: Object.assign(
         (id: string, command: Command, settings: ExecOptions = {}) =>
           exec<never>(id, command, settings, null),
@@ -1970,6 +2110,13 @@ export async function runWorkflow<TInput, TOutput>(
             undefined,
             step,
             step.onError,
+            null,
+            observations.phase,
+            undefined,
+            undefined,
+            step.worktree === undefined
+              ? undefined
+              : { value: worktreeHandleSchema.parse(step.worktree), cwd },
           ),
         );
       },
@@ -2049,6 +2196,7 @@ export async function runWorkflow<TInput, TOutput>(
           // No effect remains to await discovery, so any unsettled request is abandoned.
           await drainDiscovery();
           signal.throwIfAborted();
+          if (!options.rehearsal) await worktrees.cleanup(false);
           record.status = 'suspended';
           record.output = null;
           warnUnmatched();
@@ -2115,6 +2263,7 @@ export async function runWorkflow<TInput, TOutput>(
       for (const [, step] of superseded) step.status = 'superseded';
       warnUnmatched();
       record.output = jsonValue(definition.output.parse(output), 'Workflow output');
+      if (!options.rehearsal) await worktrees.cleanup(true);
       record.status = 'completed';
       const priorEvents = [...(record.events ?? [])];
       const completed = observations.lifecycle('run.completed');
@@ -2132,12 +2281,14 @@ export async function runWorkflow<TInput, TOutput>(
         status: 'completed',
         ...(record.policyWarnings.length ||
         record.replayWarnings.length ||
-        record.harnessWarnings?.length
+        record.harnessWarnings?.length ||
+        record.worktreeWarnings?.length
           ? {
               warnings: [
                 ...record.policyWarnings,
                 ...record.replayWarnings,
                 ...(record.harnessWarnings ?? []),
+                ...(record.worktreeWarnings ?? []),
               ],
             }
           : {}),
@@ -2165,6 +2316,7 @@ export async function runWorkflow<TInput, TOutput>(
       await questions.close();
       observationsClosed = true;
       await observations.flush().catch(() => undefined);
+      if (!options.rehearsal) await worktrees.cleanup(false).catch(() => undefined);
       // A callback's own AbortError is a failure; only scope cancellation cancels the run.
       record.status = interrupted || error instanceof CancelledError ? 'cancelled' : 'failed';
       record.error = message(error);

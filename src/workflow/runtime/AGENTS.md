@@ -104,3 +104,11 @@ reject truncation. File receipts contain hashes, not write content; reads remain
 Conditional rename is optimistic, not protection from unrelated writers. Guard bodies have terminal
 journaled outcomes so an already replayed restore cannot be followed by a rerun mutation. See
 [ADR 0021](../../../docs/decisions/0021-durable-commands-and-files.md).
+
+Worktree isolation belongs above harness adapters and uses ProcessRunner for tracked Git commands.
+Pin the logical base before any invocation; retries never reuse failed per-call directories. Shared
+handle and integration locks span durable outcome saves, not only callbacks. A valid result after
+abort still gets captured. Forks may reuse immutable changes, never another run’s handle ownership.
+Git merge computations leave checkouts alone; only an explicit clean checkout target may update its
+tree. Cleanup touches only ledger-owned caches/refs, and failed cleanup cannot repeat valid work.
+See [ADR 0022](../../../docs/decisions/0022-runtime-owned-worktree-isolation.md).

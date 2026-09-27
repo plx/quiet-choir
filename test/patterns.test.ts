@@ -1,15 +1,5 @@
 import { execFile } from 'node:child_process';
-import {
-  mkdtemp,
-  mkdir,
-  readFile,
-  realpath,
-  rename,
-  rm,
-  symlink,
-  unlink,
-  writeFile,
-} from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, realpath, rename, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -19,6 +9,7 @@ import {
   assertCompleted,
   writeAnswer,
   FixtureHarness,
+  NodeProcessRunner,
   parseHarnessFixtures,
   readRun,
   runWorkflow,
@@ -43,7 +34,6 @@ import latch from '../examples/patterns/latch.workflow.js';
 import extraction from '../examples/patterns/work-then-extract.workflow.js';
 import rehearse from '../examples/patterns/rehearse.workflow.js';
 import humanReview from '../examples/patterns/human-review.workflow.js';
-import { ensureWorktree } from '../examples/patterns/worktree-helper.js';
 
 it('replays a human-reviewed plan and its answer after a tail failure', async () => {
   const harness = new Fake(() => 'The saved plan');
@@ -263,8 +253,9 @@ it('reusable helper gives repeated leaf IDs distinct stable file scopes', async 
   expect(ids.every((id) => id.endsWith('/review/verdict'))).toBe(true);
 });
 
-async function initRepo(): Promise<string> {
-  const repo = join(root, 'repo');
+it('worktree recipe integrates pinned edits and replays without repeating writers', async () => {
+  const repo = join(root, 'repo'),
+    worktreeRoot = join(root, 'worktrees');
   await mkdir(repo);
   await execute('git', ['init', '--quiet'], { cwd: repo });
   const hooks = join(root, 'empty-hooks');
@@ -286,114 +277,44 @@ async function initRepo(): Promise<string> {
     ],
     { cwd: repo },
   );
-  return repo;
-}
-
-it('worktree recipe keeps edits across failure/resume and helper refuses changed ownership', async () => {
-  const repo = await initRepo(),
-    worktreeRoot = join(root, 'worktrees');
   const harness = new Fake(async (request) => {
-    await writeFile(join(request.cwd, 'result.txt'), request.options.prompt);
+    await writeFile(
+      join(request.cwd, `${request.options.prompt.endsWith('first') ? 'first' : 'second'}.txt`),
+      request.options.prompt,
+    );
     return request.cwd;
   });
   const workflow = tailFailure(worktrees);
-  const setup = { ...options(), cwd: repo, grants: ['editor'], harness };
+  const setup = {
+    ...options(),
+    cwd: repo,
+    grants: ['editor'],
+    harness,
+    processRunner: new NodeProcessRunner(),
+    worktrees: { root: worktreeRoot },
+  };
   await expect(
     runWorkflow(workflow, {
       ...setup,
-      input: { repo, root: worktreeRoot, items: ['first', 'second'] },
+      input: { items: ['first', 'second'] },
     }),
   ).rejects.toThrow('Injected tail failure');
   const result = await runWorkflow(workflow, { ...setup, resume: true });
   expect(harness.calls).toHaveLength(2);
-  expect(new Set(result.output).size).toBe(2);
-  expect((await execute('git', ['status', '--porcelain'], { cwd: repo })).stdout).toBe('');
   assertCompleted(result);
-  const first = result.output[0];
-  expect(first).toBeDefined();
-  if (!first) throw new Error('Missing worktree result');
-  const reuse = {
-    repo,
-    root: worktreeRoot,
-    runId: 'pattern',
-    item: 'first',
-    signal: new AbortController().signal,
-  };
-  expect(await ensureWorktree(reuse)).toBe(first);
-  expect(await readFile(join(first, 'result.txt'), 'utf8')).toBe('Implement: first');
-  await execute('git', ['switch', '-c', 'unrelated-branch'], { cwd: first });
-  await expect(ensureWorktree(reuse)).rejects.toThrow('Worktree registration changed');
-  expect(await readFile(join(first, 'result.txt'), 'utf8')).toBe('Implement: first');
-});
-
-it('worktree recipe revalidates ownership before a resumed edit', async () => {
-  const repo = await initRepo(),
-    worktreeRoot = join(root, 'worktrees');
-  const harness = new Fake(() => {
-    throw new Error('Editor unavailable');
-  });
-  const setup = { ...options(), cwd: repo, grants: ['editor'], harness };
-  await expect(
-    runWorkflow(worktrees, { ...setup, input: { repo, root: worktreeRoot, items: ['first'] } }),
-  ).rejects.toThrow('Editor unavailable');
-  const edits = harness.count('items/first/edit');
-  expect(edits).toBeGreaterThan(0);
-  expect((await readRun(setup)).steps['items/first/worktree']?.status).toBe('completed');
-  const target = await ensureWorktree({
-    repo,
-    root: worktreeRoot,
-    runId: 'pattern',
-    item: 'first',
-    signal: new AbortController().signal,
-  });
-  await execute('git', ['switch', '-c', 'unrelated-branch'], { cwd: target });
-  await expect(runWorkflow(worktrees, { ...setup, resume: true })).rejects.toThrow(
-    'Worktree registration changed',
-  );
-  expect(harness.calls).toHaveLength(edits);
-});
-
-it('worktree recipe rejects a resume whose root now resolves to a different worktree', async () => {
-  const repo = await initRepo();
-  const realRoot = join(root, 'real-root'),
-    otherRoot = join(root, 'other-root');
-  await mkdir(realRoot, { recursive: true });
-  await mkdir(otherRoot, { recursive: true });
-  const worktreeRoot = join(root, 'worktrees-link');
-  await symlink(realRoot, worktreeRoot);
-  const harness = new Fake(() => {
-    throw new Error('Editor unavailable');
-  });
-  const setup = { ...options(), cwd: repo, grants: ['editor'], harness };
-  await expect(
-    runWorkflow(worktrees, { ...setup, input: { repo, root: worktreeRoot, items: ['first'] } }),
-  ).rejects.toThrow('Editor unavailable');
-  const edits = harness.count('items/first/edit');
-  expect(edits).toBeGreaterThan(0);
-  expect((await readRun(setup)).steps['items/first/worktree']?.status).toBe('completed');
-  await unlink(worktreeRoot);
-  await symlink(otherRoot, worktreeRoot);
-  await expect(runWorkflow(worktrees, { ...setup, resume: true })).rejects.toThrow(
-    'Worktree moved from',
-  );
-  expect(harness.calls).toHaveLength(edits);
-});
-
-it('worktree helper gives the same run and item distinct branches under different roots', async () => {
-  const repo = await initRepo();
-  const signal = new AbortController().signal;
-  const paths = [];
-  for (const worktreeRoot of [join(root, 'roots/a'), join(root, 'roots/b')])
-    paths.push(
-      await ensureWorktree({ repo, root: worktreeRoot, runId: 'pattern', item: 'first', signal }),
-    );
-  const branches = await Promise.all(
-    paths.map(async (cwd) =>
-      (await execute('git', ['branch', '--show-current'], { cwd })).stdout.trim(),
+  expect(result.output.conflicts).toEqual([]);
+  expect(
+    (await execute('git', ['show', `${result.output.commit}:first.txt`], { cwd: repo })).stdout,
+  ).toBe('Implement: first');
+  expect(
+    (await execute('git', ['show', `${result.output.commit}:second.txt`], { cwd: repo })).stdout,
+  ).toBe('Implement: second');
+  expect((await execute('git', ['status', '--porcelain'], { cwd: repo })).stdout).toBe('');
+  expect(
+    (await execute('git', ['worktree', 'list', '--porcelain'], { cwd: repo })).stdout.match(
+      /^worktree /gmu,
     ),
-  );
-  expect(new Set(branches).size).toBe(2);
-  expect(branches.every((branch) => branch.startsWith('quiet-choir-'))).toBe(true);
+  ).toHaveLength(1);
 });
 
 it('polling resumes after cancellation with its original deadline and times out as data', async () => {

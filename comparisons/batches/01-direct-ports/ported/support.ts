@@ -43,6 +43,8 @@ export function scopedContext(ctx: WorkflowContext, prefix: string): WorkflowCon
     exec: Object.assign(prefixed(ctx.exec), { json: prefixed(ctx.exec.json) }),
     readFile: prefixed(ctx.readFile),
     writeFile: prefixed(ctx.writeFile),
+    worktree: prefixed(ctx.worktree),
+    merge: prefixed(ctx.merge),
     now: prefixed(ctx.now),
     wait: prefixed(ctx.wait),
     poll: prefixed(ctx.poll),

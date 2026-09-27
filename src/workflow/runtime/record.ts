@@ -1,3 +1,10 @@
+import { mergePreparationSchema, type MergePreparation } from './worktree-schema.js';
+import {
+  worktreeStepSchema,
+  worktreeLedgerSchema,
+  type WorktreeStep,
+  type WorktreeLedger,
+} from './worktree-schema.js';
 import type { ExecSummary, ExecDiagnostics } from './exec-model.js';
 import { execSummarySchema, execDiagnosticsSchema } from './exec-schema.js';
 import { z } from 'zod';
@@ -37,6 +44,8 @@ import {
 
 /** One started effect attempt, including the policy actually sent to its adapter. */
 export interface AttemptRecord extends AttemptPolicy {
+  /** Isolation base, cache path, and captured snapshot for this attempt. */
+  worktree?: WorktreeStep;
   /** Command attempted, without environment values or stdin. */
   readonly exec?: ExecSummary;
   /** Bounded command failure diagnostics. */
@@ -90,6 +99,10 @@ export interface FailedAttempt {
 
 /** Persisted state of one effect. */
 export interface StepRecord {
+  /** Resolved inputs and target publication intent for a durable integration. */
+  merge?: MergePreparation;
+  /** Latest isolation state; resolved base remains pinned on unfinished retries. */
+  worktree?: WorktreeStep;
   /** Latest command description; shell execution is explicit. */
   exec?: ExecSummary;
   /** Latest command failure diagnostics. */
@@ -117,7 +130,17 @@ export interface StepRecord {
 
   /** Effect category; included in replay compatibility checks. */
   kind:
-    'step' | 'claude' | 'codex' | 'sleep' | 'ask' | 'wait' | 'exec' | 'read-file' | 'write-file';
+    | 'step'
+    | 'claude'
+    | 'codex'
+    | 'sleep'
+    | 'ask'
+    | 'wait'
+    | 'exec'
+    | 'read-file'
+    | 'write-file'
+    | 'worktree'
+    | 'merge';
   /** Hash of semantic components, including error mode. */
   fingerprint: string;
   /** Last saved lifecycle state. */
@@ -184,6 +207,10 @@ export interface MapRecord {
 
 /** Local checkpoint format. The format is intentionally versioned independently of workflows. */
 export interface RunRecord {
+  /** Runtime-owned worktree caches, handles, and durable pins. */
+  worktrees?: WorktreeLedger;
+  /** Nonfatal isolation and cache cleanup diagnostics. */
+  worktreeWarnings?: string[];
   /** Earliest parked deadline/poll; null when only an external signal can wake the run. */
   nextWakeAt?: number | null;
   /** Source launch metadata for resume by ID; absent for older and embedded runs. */
@@ -333,6 +360,8 @@ const timingFields = {
   request: requestSummarySchema.nullable().optional(),
 };
 const stepSchema = z.object({
+  merge: mergePreparationSchema.optional(),
+  worktree: worktreeStepSchema.optional(),
   legacyIdentity: z.literal(1).optional(),
   legacyAttempts: z.number().int().nonnegative().optional(),
   question: questionRecordSchema.optional(),
@@ -349,6 +378,8 @@ const stepSchema = z.object({
     'exec',
     'read-file',
     'write-file',
+    'worktree',
+    'merge',
   ]),
   seq: z.number().int().positive().optional(),
   reusedFrom: reusedStepSchema.optional(),
@@ -378,6 +409,7 @@ const stepSchema = z.object({
   attemptHistory: z
     .array(
       z.object({
+        worktree: worktreeStepSchema.optional(),
         execution: z.number().int().positive().optional(),
         exec: execSummarySchema.optional(),
         execError: execDiagnosticsSchema.optional(),
@@ -436,6 +468,8 @@ const stepsSchema = z.custom<Record<string, StepRecord>>(
     Object.values(value).every((step) => stepSchema.safeParse(step).success),
 );
 const recordFieldsSchema = z.object({
+  worktrees: worktreeLedgerSchema.optional(),
+  worktreeWarnings: z.array(z.string()).optional(),
   nextWakeAt: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).nullable().optional(),
   launch: workflowLaunchSchema.optional(),
   seq: z.number().int().nonnegative().optional(),

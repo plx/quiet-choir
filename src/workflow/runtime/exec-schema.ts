@@ -1,3 +1,4 @@
+import { worktreeHandleSchema } from './worktree-schema.js';
 import { z } from 'zod';
 import { retryPolicySchema } from './policy.js';
 
@@ -9,6 +10,7 @@ export const commandSchema = z.union([
 ]);
 /** @internal */
 export const execOptionsSchema = z.strictObject({
+  worktree: worktreeHandleSchema.optional(),
   cwd: argument.min(1).optional(),
   env: z
     .record(

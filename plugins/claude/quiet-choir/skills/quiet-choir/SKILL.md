@@ -109,6 +109,7 @@ ceiling. quiet-choir's remaining run-wide spend/token controls are tracked in
 | Locate a run, classify its state, act on exact errors                      | [Inspection and triage](references/inspection.md)            |
 | Park for readiness, a deadline, or an external signal                      | [Durable waits and tick](references/waits.md)                |
 | Write loops, fan-out, failure handling, or waits                           | [Verified patterns and traps](references/patterns.md)        |
+| Isolate overlapping writers, share a checkout, integrate pinned changes    | [Worktrees](references/worktrees.md)                         |
 | Run durable commands, publish text, or guard a mutation                    | [Commands and files](references/commands-files.md)           |
 | Define schemas, compose steps, branch, map, and retry                      | [Workflow authoring](references/workflow-authoring.md)       |
 | Select profiles, shared call options, identity, usage, or process limits   | [Agent calls](references/agent-calls.md)                     |
@@ -130,9 +131,10 @@ same run after delivery.
   `--input` to reuse saved input. Source/schema edits need explicit acceptance or a fork; native
   session IDs cannot resume the workflow.
 - Rehearse agent work with `--dry-run --json`. Commands are synthesized; files/local
-  callbacks/imports still run unless a step is explicitly stubbed. Native calls inherit installed
-  CLI authentication and permissions.
+  callbacks/imports still run unless a step is explicitly stubbed. For worktree effects, use a
+  fixture harness in a temporary repository instead: dry-run cannot simulate Git isolation. Native
+  calls inherit installed CLI authentication and permissions.
 - Effects are at least once. Pass `idempotencyKey` to systems that support deduplication; native
   CLIs do not deduplicate edits with it. Checkpoints cannot undo mutations.
 - This private 0.0.0 engine executes trusted TypeScript locally. Harness permission flags do not
-  sandbox workflow code; there is no service, scheduler, or automatic worktree isolation.
+  sandbox workflow code; there is no service or scheduler. Worktree isolation is explicit.
