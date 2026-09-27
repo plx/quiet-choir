@@ -49,7 +49,9 @@ remove the file after the call. The default `structuredOutput: 'compat'` encodes
 - Optional properties become required and nullable on the wire. Decoding removes null only when the
   original property was optional and did not allow null.
 - Arrays, primitives, and unions at the root are wrapped in `{ value }` and unwrapped afterward.
-- String-keyed records use arrays of `{ key, value }`; enum-keyed records require every key.
+- String-keyed records use arrays of `{ key, value }`; enum-keyed records (`z.record`) require every
+  key, and enum-keyed partial records (`z.partialRecord`) send every key nullable and drop nulls on
+  decode.
 - Discriminated unions use `anyOf`; loose objects are closed on the wire (no extra keys requested).
 - Tuples fail before launch in both modes; use a named object or a homogeneous array.
 
