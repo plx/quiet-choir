@@ -1,14 +1,14 @@
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import type { HarnessRequestInput } from '../workflow/runtime/model.js';
-import { validateAgentOptions } from '../workflow/runtime/options.js';
-import { ConfigurationError } from '../workflow/runtime/configuration-error.js';
-import { checkAllowedTools } from '../workflow/runtime/profiles.js';
-import { tomlLiteral } from '../workflow/runtime/agent-controls.js';
-import { snapshotImages } from '../workflow/runtime/images.js';
+import type { BuiltinHarnessRequestInput as HarnessRequestInput } from '../harness-kit.js';
+import { validateAgentOptions } from '../harness-kit.js';
+import { ConfigurationError } from '../harness-kit.js';
+import { checkAllowedTools } from '../harness-kit.js';
+import { tomlLiteral } from '../harness-kit.js';
+import { snapshotImages } from '../harness-kit.js';
 import { prepareCodexSchema } from './codex-schema.js';
-import { resolveIsolation } from '../workflow/runtime/agent-isolation.js';
+import { resolveIsolation } from '../harness-kit.js';
 
 /** Run pre-launch validation, rejecting as configuration rather than a settled effect failure. */
 function validate<T>(check: () => T): T {
@@ -53,7 +53,7 @@ export function planInvocation(
   sessionId?: string | null,
 ): CliArgumentPlan {
   const isolation = validate(() => {
-    validateAgentOptions(request.provider, request.options);
+    validateAgentOptions(request.harness, request.options);
     return resolveIsolation(request.options).isolation;
   });
   const artifacts: CliPlanArtifact[] = [];
@@ -70,7 +70,7 @@ export function planInvocation(
     });
     return placeholder;
   };
-  if (request.provider === 'claude') {
+  if (request.harness === 'claude') {
     const options = request.options;
     const allowed = options.allowedTools ?? options.tools ?? [];
     validate(() => {
@@ -193,7 +193,7 @@ export function planInvocation(
     args.push('--add-dir', resolve(request.cwd, path));
   if (request.options.model !== undefined) args.push('--model', request.options.model);
   args.push(...(request.options.extraArgs ?? []));
-  if (request.provider === 'codex') args.push('--', '-');
+  if (request.harness === 'codex') args.push('--', '-');
   return { argv: args, artifacts };
 }
 
@@ -207,9 +207,9 @@ export async function invocationRequest(
   signal?: AbortSignal,
 ): Promise<HarnessRequestInput> {
   validate(() => {
-    validateAgentOptions(request.provider, request.options);
+    validateAgentOptions(request.harness, request.options);
   });
-  if (request.provider !== 'codex' || request.imageAttachments !== undefined) return request;
+  if (request.harness !== 'codex' || request.imageAttachments !== undefined) return request;
   return {
     ...request,
     imageAttachments: await snapshotImages(request.options.images ?? [], request.cwd, signal),
@@ -236,9 +236,9 @@ export async function materializeInvocation(
         throw new Error('Invalid private artifact reference in invocation plan.');
       args[artifact.argument] = original === artifact.placeholder ? path : `--image=${path}`;
     }
-    const { provider, outputSchema, options } = request;
+    const { harness, outputSchema, options } = request;
     const decode =
-      provider === 'codex' && outputSchema !== null
+      harness === 'codex' && outputSchema !== null
         ? validate(() => prepareCodexSchema(outputSchema, options.structuredOutput ?? 'compat'))
             .decode
         : (text: string): string => text;

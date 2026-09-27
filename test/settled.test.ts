@@ -34,7 +34,7 @@ const reply = {
 };
 const failure = (kind: ErrorKind) =>
   new HarnessError({
-    provider: 'claude',
+    harness: 'claude',
     kind,
     exit: { code: 1, signal: null },
     failure: null,
@@ -557,7 +557,7 @@ it.each([
   'classifies protocol status %j / reason %j as %s',
   (apiStatus, terminalReason, expected) => {
     const error = new HarnessError({
-      provider: 'codex',
+      harness: 'codex',
       exit: { code: 1, signal: null },
       reason: 'error',
       stderr: '',

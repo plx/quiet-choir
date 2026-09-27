@@ -1,5 +1,5 @@
-import type { AgentDiagnostics, AgentProgress } from '../workflow/runtime/agent-stream-model.js';
-import type { HarnessInvocation, JsonValue } from '../workflow/runtime/model.js';
+import type { AgentDiagnostics, AgentProgress } from '../harness-kit.js';
+import type { HarnessInvocation, JsonValue } from '../harness-kit.js';
 import { ClaudeProtocol, CodexProtocol, type ProtocolOutcome } from './protocol.js';
 import { irrelevantLine, ProtocolLines, retainedLimit } from './lines.js';
 
@@ -27,7 +27,7 @@ function count(value: unknown): number | null {
 export class HarnessStream {
   public readonly protocol: ClaudeProtocol | CodexProtocol;
   readonly #lines: ProtocolLines;
-  readonly #provider: 'claude' | 'codex';
+  readonly #harness: 'claude' | 'codex';
   readonly #context: HarnessInvocation;
   readonly #limit: number;
   readonly #diagnostics: Record<string, JsonValue> = { model: null, cliVersion: null };
@@ -39,24 +39,24 @@ export class HarnessStream {
   #sawStdout = false;
 
   public constructor(
-    provider: 'claude' | 'codex',
+    harness: 'claude' | 'codex',
     structured: boolean,
     limit: number,
     context: HarnessInvocation,
     requested: string | null = null,
   ) {
-    this.#provider = provider;
+    this.#harness = harness;
     this.#context = context;
     this.#limit = limit;
     this.protocol =
-      provider === 'claude'
+      harness === 'claude'
         ? new ClaudeProtocol(structured, requested)
         : new CodexProtocol(requested);
     this.#lines = new ProtocolLines(
       limit,
       (line) => this.#consume(line),
       (prefix) => {
-        if (!irrelevantLine(provider, prefix)) return false;
+        if (!irrelevantLine(harness, prefix)) return false;
         this.#skippedLines++;
         return true;
       },
@@ -114,14 +114,14 @@ export class HarnessStream {
       data = object(JSON.parse(line) as unknown);
     } catch (cause) {
       throw Object.assign(
-        new Error(`${this.#provider} returned malformed JSON. Check the installed CLI version.`, {
+        new Error(`${this.#harness} returned malformed JSON. Check the installed CLI version.`, {
           cause,
         }),
         { code: 'QUIET_CHOIR_PROTOCOL' },
       );
     }
     if (!data)
-      throw Object.assign(new Error(`${this.#provider} returned a non-object protocol message.`), {
+      throw Object.assign(new Error(`${this.#harness} returned a non-object protocol message.`), {
         code: 'QUIET_CHOIR_PROTOCOL',
       });
     try {
@@ -131,7 +131,7 @@ export class HarnessStream {
         code: 'QUIET_CHOIR_PROTOCOL',
       });
     }
-    const progress = this.#provider === 'claude' ? this.#claude(data) : this.#codex(data);
+    const progress = this.#harness === 'claude' ? this.#claude(data) : this.#codex(data);
     if (
       this.protocol.retainedBytes + Buffer.byteLength(JSON.stringify(this.#diagnostics)) >
       this.#limit

@@ -637,6 +637,11 @@ export class RunWorktrees {
         if (!within(dirname(path), cache.path) || cache.path === dirname(path))
           throw new Error('Cache path escaped run directory.');
         const invocation = this.invocation(cache.stepId, {
+          reportUsage: () => {
+            throw new Error(
+              'Usage reporting is only available inside an active local step callback.',
+            );
+          },
           cwd: this.record.cwd,
           signal: new AbortController().signal,
           attempt: cache.attempt,

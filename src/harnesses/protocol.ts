@@ -1,5 +1,5 @@
-import type { ProtocolFailure } from '../workflow/runtime/harness-error.js';
-import type { AgentUsage, HarnessResponse } from '../workflow/runtime/model.js';
+import type { ProtocolFailure } from '../harness-kit.js';
+import type { AgentUsage, HarnessResponse } from '../harness-kit.js';
 import { claudeUsage, codexUsage } from './usage.js';
 
 /** Protocol classification, evaluated independently of the process exit code. */
@@ -17,17 +17,17 @@ function record(value: unknown): Record<string, unknown> | undefined {
     : undefined;
 }
 
-function parse(value: string, provider: string): Record<string, unknown> {
+function parse(value: string, harness: string): Record<string, unknown> {
   let parsed: unknown;
   try {
     parsed = JSON.parse(value);
   } catch (cause) {
-    throw new Error(`${provider} returned malformed JSON. Check the installed CLI version.`, {
+    throw new Error(`${harness} returned malformed JSON. Check the installed CLI version.`, {
       cause,
     });
   }
   const object = record(parsed);
-  if (object === undefined) throw new Error(`${provider} returned a non-object protocol message.`);
+  if (object === undefined) throw new Error(`${harness} returned a non-object protocol message.`);
   return object;
 }
 

@@ -58,7 +58,7 @@ export async function replay(provider) {
       throw new Error('Fake CLI routes require version:1 and calls.');
     const rule = routes.calls.find(
       (rule) =>
-        (rule.provider === undefined || rule.provider === provider) &&
+        (rule.harness === undefined || rule.harness === provider) &&
         (rule.step === undefined || matches(rule.step, identity.stepId ?? '')) &&
         (rule.prompt === undefined || new RegExp(rule.prompt, 'u').test(stdin)),
     );
@@ -70,7 +70,7 @@ export async function replay(provider) {
     await readFile(new URL(`../fixtures/harness/${scenario}.json`, import.meta.url), 'utf8'),
   );
   if (
-    capture.provider !== provider ||
+    (capture.harness ?? capture.provider) !== provider ||
     typeof capture.version !== 'string' ||
     !Number.isInteger(capture.code) ||
     typeof capture.stdout !== 'string' ||
@@ -81,7 +81,7 @@ export async function replay(provider) {
     await appendFile(
       resolve(process.env['QUIET_CHOIR_FAKE_LOG']),
       JSON.stringify({
-        provider,
+        harness: provider,
         version: capture.version,
         scenario,
         ...identity,

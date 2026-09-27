@@ -25,7 +25,7 @@ export default class WorkflowResume extends WorkflowCommand {
     readonly 'accept-code-change': boolean | undefined;
     readonly 'allow-harness-change': boolean | undefined;
     readonly 'kill-orphans': boolean | undefined;
-    readonly harness: string;
+    readonly harness: string[];
     readonly 'harness-config': string | undefined;
     readonly 'notify-command': string | undefined;
     readonly 'wait-mode': 'suspend' | 'block' | undefined;
@@ -58,8 +58,15 @@ export default class WorkflowResume extends WorkflowCommand {
     'kill-orphans': Flags.boolean({
       description: 'Recover identity-confirmed orphan children before resuming',
     }),
-    harness: Flags.string({ description: 'cli or fixture:<JSON file>', default: 'cli' }),
-    'harness-config': Flags.string({ description: 'CliHarness configuration JSON or @file' }),
+    harness: Flags.string({
+      description: 'cli, fixture:<file>, or name=fixture:<file>; repeatable',
+      multiple: true,
+      default: ['cli'],
+    }),
+    'harness-config': Flags.string({
+      env: 'QUIET_CHOIR_HARNESS_CONFIG',
+      description: 'Adapter configuration JSON or @file (harnesses.<name> for packages)',
+    }),
   };
   public static override readonly summary =
     'Resume a run using its stored entrypoint and working directory';

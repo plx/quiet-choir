@@ -189,7 +189,7 @@ try {
           input: normalize(input),
           harness: {
             async invoke(request) {
-              assert.equal(request.provider, 'claude');
+              assert.equal(request.harness, 'claude');
               return {
                 text:
                   typeof request.outputSchema === 'object' && request.outputSchema !== null

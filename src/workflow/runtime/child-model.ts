@@ -1,9 +1,13 @@
+import type { HarnessCapabilities } from './harness-model.js';
+import type { HarnessDeclaration } from './harness-model.js';
 import type { z } from 'zod';
-import type { JsonValue, WorkflowContext } from './model.js';
+import type { JsonValue } from './model.js';
 import type { AgentDefaults, AgentProfile, CapabilityManifest } from './profiles-model.js';
 
 /** A child declaration with erased input/output types; typed calls use WorkflowDefinition directly. */
 export interface WorkflowDeclaration {
+  /** Explicit typed agent registrations available in this child. */
+  readonly harnesses?: readonly HarnessDeclaration[];
   /** Stable dispatch name. */
   readonly name: string;
   /** Explicit compatibility version. */
@@ -13,7 +17,7 @@ export interface WorkflowDeclaration {
   /** Output schema, validated before returning to the parent. */
   readonly output: z.ZodType;
   /** Callable body; the never input makes typed definitions assignable without permitting unchecked calls. */
-  readonly run: (context: WorkflowContext<never>, input: never) => Promise<unknown>;
+  readonly run: (context: never, input: never) => Promise<unknown>;
   /** Human purpose, outside replay identity. */
   readonly description?: string;
   /** Selection guidance, outside replay identity. */
@@ -77,6 +81,21 @@ export interface ChildRecord {
 
 /** JSON-safe workflow discovery data, obtained without calling the workflow body. */
 export interface WorkflowDescription {
+  /** Explicit and implicit harness contracts, listed without constructing adapters. */
+  readonly harnesses: readonly {
+    /** Persisted registration name. */
+    readonly name: string;
+    /** Semantic option revision. */
+    readonly revision: number;
+    /** Strict registered option schema. */
+    readonly options: JsonValue;
+    /** Declared structured response and tool support. */
+    readonly capabilities: HarnessCapabilities;
+    /** Whether the package provides an adapter factory. */
+    readonly factory: boolean;
+    /** Whether a zero-inference installation probe is available. */
+    readonly probe: boolean;
+  }[];
   /** Stable name. */
   readonly name: string;
   /** Compatibility version. */

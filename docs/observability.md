@@ -103,7 +103,7 @@ checkpoint-start waiting; the call's timeout starts only when admitted. Inspecti
 separately. A crash can leave a running attempt with no finish time. Earlier history stays
 unchanged.
 
-Request summaries contain provider, explicit model (null means inherited native configuration),
+Request summaries contain harness, explicit model (null means inherited native configuration),
 profile, effective timeout/turn/budget/sandbox/cleanup limits, tools, cwd, structured-output flag,
 SHA-256 of the UTF-8 prompt, and its first 200 UTF-16 code units. These diagnostics are outside
 semantic identity. **Checkpoints contain prompt previews, log data, and stack paths; treat them as
@@ -126,11 +126,11 @@ as `Step word/1 (claude) failed: …`. `-v` on execute or inspect prints the sto
 
 Usage totals come from exported `summarizeUsage(run)`: one entry per local agent attempt, including
 failed and interrupted work, with replay counted once and fork reuse excluded. Text includes
-provider/model breakdowns and unknown counts. Full `inspect --json` adds `usageSummary`; compact
-JSON retains `usage`. Known portions are summed, all-unknown stays null, and no attempts totals
-zero. `unknownUsageAttempts`, `unknownCostAttempts`, and per-category `unknownTokens` describe gaps.
+harness/model breakdowns and unknown counts. Full `inspect --json` adds `usageSummary`; compact JSON
+retains `usage`. Known portions are summed, all-unknown stays null, and no attempts totals zero.
+`unknownUsageAttempts`, `unknownCostAttempts`, and per-category `unknownTokens` describe gaps.
 Legacy history fallback sets `undercounted`; legacy token semantics warn separately. Requested model
-aliases are never assumed effective. See [usage and budgets](usage-and-budgets.md) for provider
+aliases are never assumed effective. See [usage and budgets](usage-and-budgets.md) for measurement
 categories, raw evidence, caps, and their limitations.
 
 Storage format 7 retains replay contract 6. Flat format-6 runs migrate automatically on resume;

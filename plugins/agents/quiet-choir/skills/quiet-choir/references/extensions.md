@@ -136,7 +136,7 @@ export function loggingHarness(logFile: string, inner: Harness = new CliHarness(
         await appendFile(
           logFile,
           JSON.stringify({
-            provider: request.provider,
+            harness: request.harness,
             call: request.call,
             text: response.text,
             sessionId: response.sessionId,
@@ -209,7 +209,7 @@ Before using a custom harness, verify this contract with fake responses/processe
 
 - Settle promptly when `invocation.signal` aborts; otherwise draining holds the run lock
   indefinitely.
-- Enforce resolved `timeoutMs` and every supported provider limit yourself. Core profile resolution
+- Enforce resolved `timeoutMs` and every supported harness limit yourself. Core profile resolution
   supplies defaults but does not supervise an arbitrary adapter's internal transport.
 - Use absolute `request.cwd`, not unresolved `request.options.cwd`.
 - Return `sessionId` as a value or null. Usage may be missing or partial; the runtime normalizes
@@ -220,11 +220,12 @@ Before using a custom harness, verify this contract with fake responses/processe
   reaping, using the invocation port below.
 
 Implement `Harness.invoke(request, invocation): Promise<HarnessResponse>`. The request carries a
-`provider` discriminator (`claude` or `codex`), its typed `options`, an absolute `cwd`, and
-`outputSchema` (JSON Schema or null for text), and `call: {runId, stepId, attempt, idempotencyKey}`.
-The call identity is attached after fingerprinting; attempts accumulate across resume, while
-`idempotencyKey` stays `runId/stepId`. Honor cancellation, reject process/protocol failures, and
-return `{ text, sessionId, usage?, diagnostics? }`. For structured calls, `text` must contain the
+`harness` name and semantic `revision`, its typed `options`, an absolute `cwd`, and `outputSchema`
+(JSON Schema or null for text), and `call: {runId, stepId, attempt, idempotencyKey}`. The same run
+ID, step ID, attempt and idempotency key are also direct request fields. The call identity is
+attached after fingerprinting; attempts accumulate across resume, while `idempotencyKey` stays
+`runId/stepId`. Honor cancellation, reject process/protocol failures, and return
+`{ text, sessionId, usage?, diagnostics? }`. For structured calls, `text` must contain the
 serialized JSON value; the runtime parses it, validates it, and checkpoints the result.
 
 `HarnessInvocation` also optionally supplies resolved `policy`, requested `sessionId`,
@@ -247,7 +248,7 @@ a `ProcessSupervisor` to `runWorkflow` and call its `forceKill()` from their own
 handler. CLI signal handlers are not installed by the core. See [durability](durability.md).
 
 The core resolves profile limits (text: five minutes, 10 Claude turns, $0.50) and tool/sandbox
-defaults. Optional `Harness.policyDefaults(provider)` reports adapter-owned execution limits
+defaults. Optional `Harness.policyDefaults(harness)` reports adapter-owned execution limits
 (including binary/output cap/kill grace) without side effects. The core records reported limits,
 overlays profiles, call-site fields and sticky rules, and sends the resolved limit values to
 `invoke`. It does not invent adapter-specific defaults. Unknown adapter fields stay absent from
@@ -266,10 +267,41 @@ before launch (for example, a schema the provider cannot enforce): it rejects ev
 errors are effect failures. Exercise adapters with fake executables and protocol fixtures before
 making real calls.
 
-The provider union and `ctx.claude`/`ctx.codex` clients are currently fixed. A custom `Harness` can
-replace their transport/integration; adding `ctx.someOtherProvider` requires an explicit core API
-change. There is no runtime registry for arbitrary providers or middleware; storage is injected
-through `RunOptions.store`.
+Register a third harness with
+`defineHarness({ name, revision, options, capabilities, createAdapter })` and
+`defineWorkflow({ harnesses: [definition], ... })`. The strict Zod object schema owns its option
+names; `ctx.agent(name)` infers options and removes structured methods when
+`structuredOutput: 'none'`. Claude/Codex shorthands remain available. A model-service option may be
+called `provider`; the request's harness name identifies the adapter instead.
+
+`HarnessAdapter.invoke(request, signal, invocation?)` performs one attempt. Runtime calls supply the
+optional ownership context. Lookup is `RunOptions.adapters[name]`, then the legacy catch-all
+`harness`, then `definition.createAdapter(harnessConfigurations[name] ?? {})`. Factories stay unused
+on replay. Fresh missing adapters and duplicate names fail before effects; recorded names and
+revisions must still be declared. Increment revision when recorded options change meaning. New
+records have `kind: 'agent'`, harness and revision; preceding built-in records normalize on read,
+and their revision-one fingerprint hashes remain stable.
+
+Package profiles use `profiles.<role>.harnesses.<name>`. Declare `capabilityKeys` and a pure
+`access` classifier accepting partial profile options; without a classifier access defaults to exec.
+Strict profiles own capability controls. Child calls cannot exceed delegated roles. `policy` lists
+option keys excluded from semantic identity; adapter defaults and operator configuration are also
+outside identity. Custom adapters must enforce the resolved policy supplied in the invocation
+context.
+
+Import `runProcess`, `createFakeBinary`, and `assertHarnessConformance` from
+`quiet-choir/harness-kit`. Pass `invocation.trackProcess` to the process runner so registration
+precedes input. The conformance suite requires caller-supplied fakes for cancellation, structured
+JSON, unavailable usage, protocol failure on exit zero, and nonzero failures on stdout. Never point
+it at a paid agent installation. `ClaudeAdapter` and `CodexAdapter` pass that suite; `CliHarness`
+remains their compatibility dispatcher and rejects unknown names.
+
+CLI package config uses `--harness-config '{"harnesses":{"third":{"binary":"third-cli"}}}'` or
+`@file` / `QUIET_CHOIR_HARNESS_CONFIG`. Override selected names with repeatable
+`--harness third=fixture:FILE`; global fixture/dry-run modes remain available. Adapter code comes
+from trusted workflow imports, never package-name discovery. `configuration doctor --workflow FILE`
+lists registrations and calls optional zero-inference probes. A helper generic over an unresolved
+registry can lose structured-client inference; prefer a concrete registry or a narrow context port.
 
 ## Reuse workflow logic
 
@@ -284,3 +316,19 @@ helpers. Call them at the workflow level inside `ctx.scope('review', () => helpe
 supply prefixes. Do not use a shared completion-order counter for IDs. Use `ctx.id(...)` for path or
 title segments and `ctx.step` for individual local effects. Do not wrap a multi-step helper in
 another durable step, and do not run effects at module import time.
+
+## Service helper pattern
+
+Use ordinary helper functions for decisions, GitHub and Linear operations. Each operation should
+make exactly one `ctx.step`, `ctx.exec` or `ctx.wait` at workflow level. `StepDefinition.meta` can
+label `{ integration: 'decision', op: 'choose' }` without affecting replay identity. Explicit
+inputs/version capture meaningful service-operation changes; pass the stable idempotency key to
+services that support deduplication. Never put credentials in inputs or metadata.
+
+`quiet-choir/decision` exports `decision(ctx, transport).choose(id, question)` as a reference with
+an injected transport and a validated answer/probability distribution. It is not a JEV SDK adapter.
+The callback's `reportUsage(usage)` replaces cumulative usage for that attempt and saves it with its
+outcome, including local validation failure. Reports after the callback returns reject. Inspect
+separates `integrationUsage`/`byIntegration` from agent totals; helpers do not consume agent attempt
+slots, while reported cost contributes to the next agent's cost gate. Replay makes no transport
+call.

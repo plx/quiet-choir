@@ -6,18 +6,18 @@ import type {
   HarnessRequest,
   HarnessResponse,
   JsonValue,
-} from '../workflow/runtime/model.js';
-import { ConfigurationError } from '../workflow/runtime/configuration-error.js';
-import { jsonValue } from '../workflow/runtime/json.js';
-import { matchesStepGlob } from '../workflow/runtime/policy.js';
+} from '../harness-kit.js';
+import { ConfigurationError } from '../harness-kit.js';
+import { jsonValue } from '../harness-kit.js';
+import { matchesStepGlob } from '../harness-kit.js';
 import { synthesizeOutput } from './synthesize.js';
 
 /** One first-match fixture rule; exactly one of output, text, or error must be present. */
 export interface FixtureCall {
   /** Step-ID glob: * stays within a segment; ** crosses segments. */
   readonly step: string;
-  /** Restrict this rule to one provider. */
-  readonly provider?: 'claude' | 'codex';
+  /** Restrict this rule to one harness. */
+  readonly harness?: string;
   /** Restrict this rule to a cumulative one-based attempt. */
   readonly attempt?: number;
   /** Structured output, including null, validated by the workflow's original schema. */
@@ -47,6 +47,10 @@ const rule = z
       .min(1)
       .max(200)
       .regex(/^[a-zA-Z0-9*][a-zA-Z0-9._:/*-]*$/u),
+    harness: z
+      .string()
+      .regex(/^[a-z][a-z0-9-]{0,31}$/u)
+      .optional(),
     provider: z.enum(['claude', 'codex']).optional(),
     attempt: z.number().int().positive().optional(),
     output: z.json().optional(),
@@ -62,6 +66,17 @@ const rule = z
       .optional(),
   })
   .strict()
+  .refine(
+    (value) =>
+      value.harness === undefined ||
+      value.provider === undefined ||
+      value.harness === value.provider,
+    'Conflicting harness and legacy provider names.',
+  )
+  .transform(({ provider, ...value }) => ({
+    ...value,
+    ...(value.harness === undefined && provider !== undefined ? { harness: provider } : {}),
+  }))
   .refine(
     (value) => ['output', 'text', 'error'].filter((key) => Object.hasOwn(value, key)).length === 1,
     'Exactly one of output, text, or error is required.',
@@ -95,7 +110,7 @@ export class FixtureHarness implements Harness {
     const index = this.fixtures.calls.findIndex(
       (entry) =>
         matchesStepGlob(entry.step, request.call.stepId) &&
-        (entry.provider === undefined || entry.provider === request.provider) &&
+        (entry.harness === undefined || entry.harness === request.harness) &&
         (entry.attempt === undefined || entry.attempt === request.call.attempt),
     );
     const fixture = this.fixtures.calls[index];
@@ -110,7 +125,7 @@ export class FixtureHarness implements Harness {
     if (!fixture && this.fixtures.unmatched !== 'synthesize')
       return Promise.reject(
         new ConfigurationError(
-          `No fixture matches step ${request.call.stepId} (${request.provider}, attempt ${String(request.call.attempt)}).`,
+          `No fixture matches step ${request.call.stepId} (${request.harness}, attempt ${String(request.call.attempt)}).`,
         ),
       );
     if (fixture?.error !== undefined)
@@ -123,7 +138,7 @@ export class FixtureHarness implements Harness {
             ? fixture.output
             : JSON.stringify(fixture.output)
           : request.outputSchema === null
-            ? `[dry-run ${request.provider} ${request.call.stepId}]`
+            ? `[dry-run ${request.harness} ${request.call.stepId}]`
             : JSON.stringify(synthesizeOutput(request.outputSchema, request.call.stepId))),
       sessionId: null,
       usage: {

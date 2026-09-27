@@ -14,6 +14,14 @@ export function bindContext(
   return {
     runId: context.runId,
     cwd: context.cwd,
+    agent: (name: Parameters<WorkflowContext['agent']>[0]) => {
+      const client = context.agent(name);
+      return {
+        value: bind(client.value.bind(client)),
+        text: bind(client.text.bind(client)),
+        object: bind(client.object.bind(client)),
+      };
+    },
     workflow: bind(context.workflow.bind(context)),
     merge: bind(context.merge.bind(context)),
     worktree: bind(context.worktree.bind(context)),

@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
-import { jsonValue } from '../workflow/runtime/json.js';
-import type { JsonValue } from '../workflow/runtime/model.js';
+import { jsonValue } from '../harness-kit.js';
+import type { JsonValue } from '../harness-kit.js';
 
 type Schema = Record<string, JsonValue>;
 

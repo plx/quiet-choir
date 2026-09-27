@@ -48,7 +48,7 @@ it('persists resolved request diagnostics, monotonic attempt timing, and validat
     .fn<Harness['invoke']>()
     .mockRejectedValueOnce(
       new HarnessError({
-        provider: 'claude',
+        harness: 'claude',
         kind: 'rate-limit',
         exit: { code: 1, signal: null },
         failure: null,
@@ -98,7 +98,7 @@ it('persists resolved request diagnostics, monotonic attempt timing, and validat
     phase: 'verify',
     status: 'completed',
     request: {
-      provider: 'claude',
+      harness: 'claude',
       model: 'sonnet',
       profile: 'text',
       structured: false,
@@ -125,7 +125,7 @@ it('persists resolved request diagnostics, monotonic attempt timing, and validat
     phase: 'verify',
     status: 'settled-failed',
     request: {
-      provider: 'codex',
+      harness: 'codex',
       model: null,
       structured: true,
       limits: { maxTurns: null, maxBudgetUsd: null, sandbox: 'read-only' },

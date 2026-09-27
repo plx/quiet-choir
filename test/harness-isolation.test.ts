@@ -74,7 +74,7 @@ it.each(['claude', 'codex'] as const)(
         unset: ['QC_REMOVE'],
       },
     };
-    const request = { provider, options, cwd: directory, outputSchema: null };
+    const request = { harness: provider, options, cwd: directory, outputSchema: null };
     const context = testInvocation();
     const metadata = await harness.metadata(request, context);
     expect(metadata.environment?.variables).toContain('ANTHROPIC_API_KEY');
@@ -113,7 +113,7 @@ it('supports explicit inherit and scrub policy overrides without changing the pa
   const harness = new CliHarness();
   for (const provider of ['claude', 'codex'] as const) {
     const plan = harness.plan({
-      provider,
+      harness: provider,
       cwd: directory,
       outputSchema: null,
       options: { prompt: '', isolation: 'inherit' },

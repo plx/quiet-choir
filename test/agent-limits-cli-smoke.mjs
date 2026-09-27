@@ -81,8 +81,8 @@ export default defineWorkflow({name:'agent-limits-cli',version:'1',input:z.objec
   );
   assert.equal(first.status, 1, first.stderr);
   assert.match(first.stderr, /tail pause/);
-  assert.match(first.stderr, /Agent limits: total=3; per-provider=\{"codex":1\}/);
-  assert.match(first.stderr, /agent.queued .*provider=.*inFlight=.*queued=/);
+  assert.match(first.stderr, /Agent limits: total=3; per-harness=\{"codex":1\}/);
+  assert.match(first.stderr, /agent.queued .*harness=.*inFlight=.*queued=/);
   assert.match(first.stderr, /agent.admitted .*waitedMs=/);
   const events = readFileSync(join(directory, 'agents.jsonl'), 'utf8')
     .trim()

@@ -15,7 +15,7 @@ export function parseAgentLimits(
     providers.map((rule) => {
       const match = /^([a-zA-Z][a-zA-Z0-9_-]*)=([1-9][0-9]*)$/u.exec(rule);
       if (!match?.[1] || !match[2])
-        throw new Error('--provider-limit must be provider=<positive integer>, e.g. claude=2.');
+        throw new Error('--harness-limit must be harness=<positive integer>, e.g. claude=2.');
       return [match[1], Number(match[2])];
     }),
   );

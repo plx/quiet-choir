@@ -1,7 +1,7 @@
 import { z } from 'zod';
-import { ConfigurationError } from '../workflow/runtime/configuration-error.js';
-import { jsonValue } from '../workflow/runtime/json.js';
-import type { JsonValue } from '../workflow/runtime/model.js';
+import { ConfigurationError } from '../harness-kit.js';
+import { jsonValue } from '../harness-kit.js';
+import type { JsonValue } from '../harness-kit.js';
 
 type Node = Record<string, JsonValue>;
 function object(value: JsonValue | undefined): Node | undefined {

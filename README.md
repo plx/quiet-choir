@@ -71,7 +71,7 @@ npm run --silent cli -- workflow execute examples/duet.workflow.ts \
 Dry-run synthesizes agent responses, validates the same native argv/schema plans, skips durable
 sleeps, and removes its temporary checkpoints. **Local callbacks and imported code run for real**;
 use `--stub-steps 'publish/**'` to synthesize selected local effects. Inspect full prompts, resolved
-limits, per-provider counts, the nominal Claude ceiling, and warnings before a native run. Only the
+limits, per-harness counts, the nominal Claude ceiling, and warnings before a native run. Only the
 rehearsed path is covered; minimal arrays can understate fan-out.
 
 Use `--harness fixture:./fixtures.json` for named fixture responses, or combine it with `--dry-run`
@@ -252,7 +252,7 @@ fingerprint. Globs use `*` within segments and `**` across `/`.
 
 The implicit `text` profile supplies a five-minute deadline, 10 Claude turns and a $0.50 per-call
 budget. `readonly` and `edit` supply larger limits. Custom harnesses receive those resolved options,
-must enforce them, and can report adapter-specific defaults through `policyDefaults(provider)`. See
+must enforce them, and can report adapter-specific defaults through `policyDefaults(harness)`. See
 [agent profiles and launch grants](docs/agent-profiles.md) for declarations, `--profile` recovery,
 and strict capability checks. `inspect --json` exposes saved rules and each step's `attemptHistory`,
 including resolved policy and its sources. New checkpoints use version 6. Versions 1, 2, 3, 4, and 5
@@ -354,7 +354,7 @@ Each run caps live harness invocations across nested maps, parallel calls and he
 context. The default is `min(8, max(1, availableParallelism() - 2))`. `ctx.map` concurrency still
 limits mapper bodies locally; nesting can multiply mappers while agents wait for a shared slot.
 
-Use `workflow execute --max-agents 5 --provider-limit codex=1`, or pass
+Use `workflow execute --max-agents 5 --harness-limit codex=1`, or pass
 `agentLimit: { total: 5, perProvider: { codex: 1 } }` to `runWorkflow`. To cap several runs
 together, pass the same `createAgentLimiter(...)` object to each. Separate CLI processes remain
 independent. Only `harness.invoke` holds a slot: local work, replay, sleeps, retries between
@@ -532,6 +532,23 @@ harness/model breakdowns. `workflow inspect ID --json` adds `usageSummary`. Use 
 and `--max-run-agent-attempts` to gate new calls across resumes. These sticky caps drain admitted
 work and fail the run when tripped; raise them on resume or use `off` to clear one. In-flight calls
 can overshoot reported cost. See [usage and budgets](docs/usage-and-budgets.md).
+
+## Additional harnesses and service helpers
+
+A package exports `defineHarness({ name, revision, options, capabilities, createAdapter })`. Declare
+it in `defineWorkflow({ harnesses: [third], ... })`, then use `ctx.agent('third')` with inferred
+options. Text-only registrations have no structured method. `ctx.claude` and `ctx.codex` remain
+available. Operator adapters override the compatibility catch-all, which overrides factories;
+completed replay constructs no adapter. Package revisions make changed option semantics explicit.
+
+The CLI accepts `--harness-config '{"harnesses":{"third":{"binary":"third-cli"}}}'` (or `@file` /
+`QUIET_CHOIR_HARNESS_CONFIG`) and repeated `--harness third=fixture:FILE` overrides.
+`configuration doctor --workflow FILE` lists trusted registrations and runs optional zero-inference
+probes. `quiet-choir/harness-kit` supplies process ownership, fake binaries and the adapter
+conformance suite. Additional service operations use one ordinary effect per helper call; the
+transport-injected `quiet-choir/decision` reference preserves answers and probability distributions.
+See
+[the integration decision](docs/decisions/0027-typed-harness-registry-and-integration-helpers.md).
 
 ## Progress and monitoring
 

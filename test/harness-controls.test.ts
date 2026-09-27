@@ -14,7 +14,6 @@ import {
   type ClaudeOptions,
   type CodexOptions,
   type Harness,
-  type HarnessRequest,
 } from '../src/index.js';
 import {
   validateExtraArgs,
@@ -88,7 +87,7 @@ it('passes every Claude control literally and stores large/structured values in 
     },
   };
   await new CliHarness({ claudeBinary: basename(path) }).invoke(
-    { provider: 'claude', cwd: directory, outputSchema: null, options: controls },
+    { harness: 'claude', cwd: directory, outputSchema: null, options: controls },
     testInvocation(signal),
   );
   const result = JSON.parse(await readFile(join(directory, 'capture.json'), 'utf8')) as {
@@ -155,7 +154,7 @@ it('passes every Codex control, preserves TOML values, snapshots images, and sep
     env: { QC_TEST: 'overlay', PATH: `${directory}${delimiter}${process.env['PATH'] ?? ''}` },
   };
   await new CliHarness({ codexBinary: basename(path) }).invoke(
-    { provider: 'codex', cwd: directory, outputSchema: null, options },
+    { harness: 'codex', cwd: directory, outputSchema: null, options },
     testInvocation(signal),
   );
   const result = JSON.parse(await readFile(join(directory, 'capture.json'), 'utf8')) as {
@@ -198,7 +197,7 @@ it.each(['failure', 'timeout', 'abort'] as const)(
     const controller = new AbortController();
     const invocation = new CliHarness({ claudeBinary: path }).invoke(
       {
-        provider: 'claude',
+        harness: 'claude',
         cwd: directory,
         outputSchema: null,
         options: {
@@ -328,7 +327,7 @@ it.each(['claude', 'codex'] as const)(
     await expect(
       new CliHarness({ claudeBinary: '/absent', codexBinary: '/absent' }).invoke(
         {
-          provider,
+          harness: provider,
           cwd: directory,
           outputSchema: null,
           options: { prompt: 'x', extraArgs: ['--model=x'] },
@@ -340,7 +339,7 @@ it.each(['claude', 'codex'] as const)(
 );
 it('rejects typed enum conflicts, bypass settings and config shadowing before spawn', async () => {
   const harness = new CliHarness({ claudeBinary: '/absent', codexBinary: '/absent' });
-  const invalid: [HarnessRequest['provider'], object][] = [
+  const invalid: ['claude' | 'codex', object][] = [
     ['claude', { effort: 'ultra' }],
     ['claude', { permissionMode: 'bypassPermissions' }],
     [
@@ -357,7 +356,7 @@ it('rejects typed enum conflicts, bypass settings and config shadowing before sp
     await expect(
       harness.invoke(
         {
-          provider,
+          harness: provider,
           cwd: directory,
           outputSchema: null,
           options: { prompt: 'x', ...options },
@@ -383,7 +382,7 @@ it('rejects typed enum conflicts, bypass settings and config shadowing before sp
   expect(() => tomlLiteral({ value: [null] })).toThrow('null');
 });
 
-const semanticOptions: [HarnessRequest['provider'], object][] = [
+const semanticOptions: ['claude' | 'codex', object][] = [
   ['claude', { effort: 'high' }],
   ['claude', { disallowedTools: ['Bash'] }],
   ['claude', { permissionMode: 'plan' }],
@@ -528,7 +527,7 @@ it('reports run interruption during image snapshotting as cancellation, not a sn
   const controller = new AbortController();
   const invoke = vi.fn<Harness['invoke']>().mockImplementation((request) => {
     // Interrupt after the first effect launches; its valid result still commits.
-    if (request.provider === 'claude') controller.abort(new Error('interrupted'));
+    if (request.harness === 'claude') controller.abort(new Error('interrupted'));
     return Promise.resolve(reply);
   });
   const definition = defineWorkflow({
@@ -595,7 +594,7 @@ it('captures first-use versions, warns on resumed drift, and records inherited/r
     effort: 'inherited',
   });
   expect(result.steps['two']?.attemptHistory?.[0]?.sources).not.toHaveProperty('effort');
-  expect((await readRun(setup())).harnesses?.claude).toEqual({ binary: 'fake', version: '2' });
+  expect((await readRun(setup())).harnesses?.['claude']).toEqual({ binary: 'fake', version: '2' });
   await runWorkflow(definition, { ...setup(), harness: { metadata, invoke }, resume: true });
   expect(metadata).toHaveBeenCalledTimes(2);
 });

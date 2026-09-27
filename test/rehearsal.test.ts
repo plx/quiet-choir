@@ -17,7 +17,7 @@ import {
   z,
   type Harness,
   type HarnessRequest,
-  type HarnessRequestInput,
+  type BuiltinHarnessRequestInput as HarnessRequestInput,
   type WorkflowContext,
 } from '../src/index.js';
 import { RehearsalHarness, rehearsalState } from '../src/workflow/loader/rehearsal.js';
@@ -48,7 +48,12 @@ function workflow(run: (ctx: WorkflowContext) => Promise<string>) {
 }
 function request(stepId = 'one', provider: 'claude' | 'codex' = 'claude'): HarnessRequest {
   return {
-    provider,
+    harness: provider,
+    revision: 1,
+    runId: 'fixture',
+    stepId,
+    attempt: 1,
+    idempotencyKey: `fixture/${stepId}`,
     cwd: process.cwd(),
     options: { prompt: 'prompt' },
     outputSchema: null,
@@ -157,8 +162,8 @@ describe('fixture routing and export', () => {
     const harness = new FixtureHarness({
       version: 1,
       calls: [
-        { step: 'review/*', provider: 'codex', attempt: 1, error: 'simulated' },
-        { step: 'review/**', provider: 'codex', output: { answer: 2 }, usage: { costUsd: 0.01 } },
+        { step: 'review/*', harness: 'codex', attempt: 1, error: 'simulated' },
+        { step: 'review/**', harness: 'codex', output: { answer: 2 }, usage: { costUsd: 0.01 } },
         { step: '**', text: 'fallback' },
       ],
     });
@@ -261,7 +266,7 @@ describe('fixture routing and export', () => {
     await expect(readHarnessSelection('cli', '{"killGraceMs":0}', stateDir)).rejects.toThrow();
     await expect(
       readHarnessSelection('module:./never-import.ts', undefined, stateDir),
-    ).rejects.toThrow('#64');
+    ).rejects.toThrow('defineWorkflow({ harnesses })');
     await expect(readHarnessSelection('fixture:', undefined, stateDir)).rejects.toThrow(
       '--harness',
     );
@@ -660,7 +665,7 @@ describe('rehearsal execution and isolation', () => {
       });
       expect(run.output).toBe('saved[dry-run codex two]');
       expect(harness.report(run)).toMatchObject({
-        replays: [{ stepId: 'one', kind: 'claude' }],
+        replays: [{ stepId: 'one', kind: 'agent' }],
         providerCounts: { claude: 0, codex: 1 },
       });
     } finally {
@@ -687,7 +692,7 @@ describe('pure native argument planning', () => {
       const input: HarnessRequestInput =
         provider === 'claude'
           ? {
-              provider,
+              harness: provider,
               cwd: process.cwd(),
               outputSchema: json(z.object({ answer: z.string() })),
               options: {
@@ -700,7 +705,7 @@ describe('pure native argument planning', () => {
               },
             }
           : {
-              provider,
+              harness: provider,
               cwd: process.cwd(),
               outputSchema: json(z.object({ answer: z.string().optional() })),
               options: {
@@ -748,14 +753,14 @@ describe('pure native argument planning', () => {
     expect(() =>
       harness.plan({
         ...request('x', 'codex'),
-        provider: 'codex',
+        harness: 'codex',
         options: { prompt: 'x', images: ['/must-not-read'] },
       }),
     ).toThrow('imageAttachments');
     expect(() =>
       harness.plan({
         ...request('x', 'codex'),
-        provider: 'codex',
+        harness: 'codex',
         options: { prompt: 'x', structuredOutput: 'strict' },
         outputSchema: json(z.object({ value: z.string().optional() })),
       }),
@@ -843,7 +848,7 @@ it('selects a shipped fake CLI envelope by prompt pattern and logs its original 
   await expect(
     new CliHarness({ claudeBinary: binary }).invoke(
       {
-        provider: 'claude',
+        harness: 'claude',
         cwd,
         outputSchema: null,
         options: {

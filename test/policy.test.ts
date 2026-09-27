@@ -472,26 +472,22 @@ it('uses saved policy for a still-unfinished call on bare resume, and reset rest
   ).toEqual(['call-site', 'override:0', 'override:0', 'call-site']);
 });
 
-it('does not include capability options with reserved component names in another component', async () => {
+it('rejects undeclared native options even when their names resemble identity components', async () => {
   // Built-in option schemas are strict, so runWorkflow rejects the unknown key before any effect.
   const invoke = vi.fn<Harness['invoke']>().mockResolvedValue(reply);
-  const definition = workflow(
-    async (ctx) =>
-      (
-        await ctx.claude.text('ask', { prompt: 'x', kind: 'first' } as ClaudeOptions & {
-          readonly onError?: 'throw';
-        })
-      ).output,
-  );
-  await expect(runWorkflow(definition, { ...options(), harness: { invoke } })).rejects.toThrow(
-    'Unrecognized key(s) "kind"',
-  );
+  const definition = workflow(async (ctx) => {
+    await ctx.claude.text('ask', { prompt: 'x', kind: 'extra' } as ClaudeOptions);
+    return 'unreachable';
+  });
+  const setup = { ...options(), harness: { invoke } };
+  await expect(runWorkflow(definition, setup)).rejects.toThrow('Unrecognized key(s) "kind"');
   expect(invoke).not.toHaveBeenCalled();
+  expect((await readRun(options())).steps).toEqual({});
   // Identity still namespaces unknown capability options so they cannot shadow a component.
   const identity = (kind: string) =>
     agentIdentity(
       {
-        provider: 'claude',
+        harness: 'claude',
         cwd: '/w',
         outputSchema: null,
         options: { prompt: 'x', kind } as ClaudeOptions,

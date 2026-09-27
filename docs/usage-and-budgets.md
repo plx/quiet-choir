@@ -59,6 +59,14 @@ change preserves fingerprints from the preceding runtime. Earlier isolation and 
 still have their documented compatibility boundaries; this does not make those older completed agent
 calls reusable. Storage format remains 7, replay contract 6.
 
+Integration helpers can report cumulative local attempt usage with `StepContext.reportUsage(usage)`
+inside an ordinary `ctx.step` callback. Each report replaces that attempt's previous report and is
+saved with its success or failure. Reports after the callback returns are rejected. Set
+`StepDefinition.meta.integration` to attribute the operation; otherwise its group is `local`.
+`usageSummary.integrationUsage` and `byIntegration` keep these totals separate from agent attempts.
+Reported helper cost contributes to the next agent's cost gate, while helper calls never consume
+agent-attempt slots. Metadata is visible in inspection but does not change step identity.
+
 ## Stop new attempts after a threshold
 
 ```sh

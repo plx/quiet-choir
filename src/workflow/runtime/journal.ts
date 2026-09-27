@@ -8,6 +8,7 @@ import type { JsonValue } from './model.js';
 import { runDirectory } from './paths.js';
 import {
   parseRunRecord,
+  normalizeStoredHarnesses,
   validateRunRecord,
   validateRecordChange,
   type RunRecord,
@@ -91,6 +92,7 @@ export function replayJournal(snapshot: string, journal: string, runId: string):
     apply(record, entry);
     seq = entry.seq;
   }
+  normalizeStoredHarnesses(record);
   validateRunRecord(record);
   return record;
 }

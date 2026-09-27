@@ -112,7 +112,7 @@ export default defineWorkflow({name:'rehearsal-cli',version:'1',input:z.object({
   );
   assert.equal(dry.status, 0, dry.stderr);
   assert.equal(dry.value.kind, 'workflow.rehearsal');
-  assert.deepEqual(dry.value.providerCounts, { claude: 1, codex: 1 });
+  assert.deepEqual(dry.value.harnessCounts, { claude: 1, codex: 1 });
   assert.equal(dry.value.nominalClaudeCeilingUsd, 0.5);
   assert.deepEqual(dry.value.skippedSleeps, ['pause']);
   assert.equal(dry.value.run.harness.kind, 'dry-run');
@@ -210,7 +210,8 @@ export default defineWorkflow({name:'rehearsal-cli',version:'1',input:z.object({
     JSON.stringify({ claudeBinary: bomb, codexBinary: bomb }),
   ]);
   assert.equal(preview.status, 0, preview.stderr);
-  assert.deepEqual(preview.value.replays, [{ stepId: 'one', kind: 'claude' }]);
+  assert.deepEqual(preview.value.replays, [{ stepId: 'one', kind: 'agent' }]);
+  assert.deepEqual(preview.value.harnessCounts, { codex: 1 });
   assert.deepEqual(preview.value.providerCounts, { claude: 0, codex: 1 });
   assert.equal(preview.value.calls[0].attempt, 2);
   assert.match(preview.value.run.output, /hello from captured claude \/ \[dry-run codex two\]/u);

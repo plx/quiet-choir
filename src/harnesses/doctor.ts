@@ -1,15 +1,15 @@
+import type { WorkflowDescription } from '../harness-kit.js';
 import { mkdtemp, rm, writeFile, readFile, mkdir } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { ProcessSupervisor } from '../processes/supervisor.js';
-import type { HarnessMetadata, HarnessRequestInput } from '../workflow/runtime/model.js';
+import type {
+  HarnessMetadata,
+  BuiltinHarnessRequestInput as HarnessRequestInput,
+} from '../harness-kit.js';
 import { childEnvironment } from './environment.js';
-import {
-  effortValues,
-  codexEffortValues,
-  permissionModeValues,
-} from '../workflow/runtime/agent-controls.js';
+import { effortValues, codexEffortValues, permissionModeValues } from '../harness-kit.js';
 import { prepareInvocation } from './invocation.js';
 import { runProcess, type ProcessResult } from './process.js';
 import { parseClaude, parseCodex } from './protocol.js';
@@ -35,9 +35,9 @@ export const testedHarnessVersions = {
 /** One independently reported installation/contract check. */
 export interface DoctorCheck {
   /** Native CLI checked, or config for inherited default inspection. */
-  readonly provider: 'claude' | 'codex';
+  readonly harness: string;
   /** Stable check identifier. */
-  readonly check: 'version' | 'argv' | 'hidden-flags' | 'enums' | 'inherited-defaults';
+  readonly check: 'version' | 'argv' | 'hidden-flags' | 'enums' | 'inherited-defaults' | 'registry';
   /** Pass or detected drift/error; warnings count as failure. */
   readonly ok: boolean;
   /** Bounded diagnostic without full config or prompt contents. */
@@ -68,6 +68,8 @@ export interface DoctorOptions {
 }
 /** Serializable contract report; ok is false for drift, warnings, auth failures, or uncertain cost. */
 export interface DoctorReport {
+  /** Workflow registry descriptions, when --workflow is supplied. */
+  readonly registered?: WorkflowDescription['harnesses'];
   /** All requested checks passed. */
   readonly ok: boolean;
   /**
@@ -79,7 +81,7 @@ export interface DoctorReport {
   /** Five checks per requested harness. */
   readonly checks: readonly DoctorCheck[];
   /** Observed versions and configured executable names. */
-  readonly harnesses: Partial<Record<'claude' | 'codex', HarnessMetadata>>;
+  readonly harnesses: Record<string, HarnessMetadata>;
   /** Selected Codex config values, when inspection succeeded. */
   readonly inherited?: InheritedCodexConfig;
 }
@@ -156,10 +158,10 @@ export async function probeHarnessContracts(options: DoctorOptions = {}): Promis
   const harnesses: DoctorReport['harnesses'] = {};
   let inherited: InheritedCodexConfig | undefined;
   let zeroInference = true;
-  for (const provider of providers) {
+  for (const harness of providers) {
     signal.throwIfAborted();
     const binary =
-      provider === 'claude' ? (options.claudeBinary ?? 'claude') : (options.codexBinary ?? 'codex');
+      harness === 'claude' ? (options.claudeBinary ?? 'claude') : (options.codexBinary ?? 'codex');
     const probe = (
       args: readonly string[],
       cwd = options.cwd ?? process.cwd(),
@@ -191,18 +193,18 @@ export async function probeHarnessContracts(options: DoctorOptions = {}): Promis
       run: () => Promise<{ ok: boolean; message: string }>,
     ): Promise<void> => {
       try {
-        checks.push({ provider, check: name, ...(await run()) });
+        checks.push({ harness, check: name, ...(await run()) });
       } catch (error) {
         signal.throwIfAborted();
-        checks.push({ provider, check: name, ok: false, message: message(error) });
+        checks.push({ harness, check: name, ok: false, message: message(error) });
       }
     };
     await check('version', async () => {
       const result = await probe(['--version']);
       const version =
         /\b[0-9]+\.[0-9]+\.[0-9]+(?:[-+][a-zA-Z0-9.-]+)?\b/u.exec(result.stdout)?.[0] ?? null;
-      harnesses[provider] = { binary, version };
-      const tested = testedHarnessVersions[provider];
+      harnesses[harness] = { binary, version };
+      const tested = testedHarnessVersions[harness];
       return {
         ok:
           result.code === 0 &&
@@ -218,7 +220,7 @@ export async function probeHarnessContracts(options: DoctorOptions = {}): Promis
     await check('argv', async () => {
       const previousZeroInference = zeroInference;
       zeroInference = false;
-      if (!checks.find((entry) => entry.provider === provider && entry.check === 'version')?.ok)
+      if (!checks.find((entry) => entry.harness === harness && entry.check === 'version')?.ok)
         throw new Error(
           'Exact-argv probe requires a contract-tested CLI version without warnings.',
         );
@@ -237,7 +239,7 @@ export async function probeHarnessContracts(options: DoctorOptions = {}): Promis
         // Only the two native auth/config files are copied; no directory scan or secret logging.
         const probeHome = join(directory, 'codex-home');
         let inheritedModel: string | null = null;
-        if (provider === 'codex') {
+        if (harness === 'codex') {
           inheritedModel = (
             await readInheritedCodexConfig(codexHome(options), options.codexProfile)
           ).model;
@@ -258,9 +260,9 @@ export async function probeHarnessContracts(options: DoctorOptions = {}): Promis
         }
         const invalidModel = `claude-quiet-choir-nonexistent-${randomUUID()}`;
         const request: HarnessRequestInput =
-          provider === 'claude'
+          harness === 'claude'
             ? {
-                provider,
+                harness,
                 cwd: directory,
                 outputSchema: {
                   type: 'object',
@@ -292,7 +294,7 @@ export async function probeHarnessContracts(options: DoctorOptions = {}): Promis
                 },
               }
             : {
-                provider,
+                harness,
                 cwd: directory,
                 outputSchema: {
                   type: 'object',
@@ -322,7 +324,7 @@ export async function probeHarnessContracts(options: DoctorOptions = {}): Promis
         const invocation = await prepareInvocation(request, signal);
         try {
           // Deliberately invalid effort is possible only in this diagnostic, after ordinary validation.
-          if (provider === 'codex') {
+          if (harness === 'codex') {
             const index = invocation.args.findIndex((arg) =>
               arg.startsWith('model_reasoning_effort='),
             );
@@ -331,29 +333,29 @@ export async function probeHarnessContracts(options: DoctorOptions = {}): Promis
           }
           const env = {
             ...childEnvironment(request.options.env, undefined).env,
-            ...(provider === 'codex' ? { CODEX_HOME: probeHome } : {}),
+            ...(harness === 'codex' ? { CODEX_HOME: probeHome } : {}),
           };
           exact = await probe(invocation.args, directory, env);
           const parsed =
-            provider === 'claude' ? parseClaude(exact.stdout, true) : parseCodex(exact.stdout);
+            harness === 'claude' ? parseClaude(exact.stdout, true) : parseCodex(exact.stdout);
           rejection = parsed.kind === 'failure' ? parsed.failure.reason : '';
           const zero =
             parsed.kind === 'failure' &&
             noMeasuredSpend(exact.stdout) &&
-            (provider === 'claude'
+            (harness === 'claude'
               ? parsed.failure.apiStatus === 404 &&
                 parsed.failure.usage?.costUsd === 0 &&
                 rejection.includes(invalidModel)
               : parsed.failure.apiStatus === 400 &&
                 rejection.includes("Invalid value: 'bogus'") &&
                 rejection.includes('Supported values are:'));
-          // Retain earlier provider failures rather than allowing a later successful probe to erase them.
+          // Retain earlier harness failures rather than allowing a later successful probe to erase them.
           zeroInference = zero && previousZeroInference;
           return {
             ok: zero && exact.code === 1 && exact.signal === null && !warning(exact),
             message: zero
               ? `Verified pre-inference rejection with zero reported spend${warning(exact) ? `; process/stderr warning: ${[...exact.warnings, exact.stderr.slice(-1024)].filter(Boolean).join('; ')}` : ''}.`
-              : `Expected zero-cost ${provider === 'claude' ? '404 invalid model' : '400 invalid effort'}; received ${parsed.kind === 'failure' ? rejection : parsed.kind}${exact.stderr ? `; stderr: ${exact.stderr.slice(-1024)}` : ''}`,
+              : `Expected zero-cost ${harness === 'claude' ? '404 invalid model' : '400 invalid effort'}; received ${parsed.kind === 'failure' ? rejection : parsed.kind}${exact.stderr ? `; stderr: ${exact.stderr.slice(-1024)}` : ''}`,
           };
         } finally {
           await invocation.dispose();
@@ -363,7 +365,7 @@ export async function probeHarnessContracts(options: DoctorOptions = {}): Promis
       }
     });
     await check('hidden-flags', async () => {
-      if (provider === 'codex') {
+      if (harness === 'codex') {
         const result = await probe(['exec', '--help']);
         help = result.stdout;
         const missing = [
@@ -412,7 +414,7 @@ export async function probeHarnessContracts(options: DoctorOptions = {}): Promis
       };
     });
     await check('enums', async () => {
-      if (provider === 'codex') {
+      if (harness === 'codex') {
         const list = rejection.split('Supported values are:')[1]?.split('.')[0] ?? '';
         const values = [...list.matchAll(/'([^']+)'/gu)].flatMap((match) =>
           match[1] ? [match[1]] : [],
@@ -437,7 +439,7 @@ export async function probeHarnessContracts(options: DoctorOptions = {}): Promis
       };
     });
     await check('inherited-defaults', async () => {
-      if (provider === 'claude')
+      if (harness === 'claude')
         return {
           ok: true,
           message:

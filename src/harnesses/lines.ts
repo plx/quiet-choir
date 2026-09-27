@@ -83,8 +83,8 @@ export class ProtocolLines {
 }
 
 /** Only recognize the native outer header, never type-like text inside command output. @internal */
-export function irrelevantLine(provider: 'claude' | 'codex', prefix: string): boolean {
-  if (provider === 'claude')
+export function irrelevantLine(harness: 'claude' | 'codex', prefix: string): boolean {
+  if (harness === 'claude')
     return (
       /^\s*\{\s*"type"\s*:\s*"(?:assistant|user)"\s*[,}]/u.test(prefix) ||
       /^\s*\{\s*"type"\s*:\s*"system"\s*,\s*"subtype"\s*:\s*"(?:commands_changed|hook_started|hook_progress|hook_response|session_state_changed)"\s*[,}]/u.test(

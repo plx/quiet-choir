@@ -134,7 +134,7 @@ try {
       }),
     );
     const raw = JSON.parse((await readFile(log, 'utf8')).trim());
-    assert.equal(raw.provider, 'claude');
+    assert.equal(raw.harness, 'claude');
     assert.deepEqual(JSON.parse(raw.text), { answer: 'captured answer' });
     assert.equal(raw.usage.inputTokens, 7);
     assert.equal(raw.call.stepId, 'ask');
@@ -201,7 +201,7 @@ try {
     try {
       const response = await noLog.invoke(
         {
-          provider: 'codex',
+          harness: 'codex',
           options: { prompt: 'p' },
           cwd: target,
           outputSchema: null,

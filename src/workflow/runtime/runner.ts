@@ -1,3 +1,10 @@
+import {
+  HarnessRegistry,
+  harnessOptions,
+  type HarnessAdapters,
+  type HarnessConfigurations,
+} from './harness-registry.js';
+import type { HarnessDeclaration, WorkflowHarnesses } from './harness-model.js';
 import { RunBudget, RunBudgetExceededError, runBudgetSchema } from './run-budget.js';
 import { RunChildren } from './children.js';
 import { checkedDefinition, describeWorkflow } from './definition.js';
@@ -65,7 +72,7 @@ import {
 import { missingRunError, unreadableRunError } from './read-required-run.js';
 import type { ProcessSupervisor } from '../../processes/supervisor.js';
 import { OrphanProcessesError } from './process-registry.js';
-import type { HarnessInvocation } from './model.js';
+import type { HarnessInvocation, HarnessMetadata } from './model.js';
 import {
   resolveAgentLimiter,
   type AgentLimiter,
@@ -189,8 +196,8 @@ export type WorkflowEvent = {
   /** An earlier execution already persisted this occurrence. */
   readonly replayed?: boolean;
   /** Provider requesting or receiving admission, present on agent events. */
-  readonly provider?: string;
-  /** Reserved slots by provider, present on agent events. */
+  readonly harness?: string;
+  /** Reserved slots by harness, present on agent events. */
   readonly inFlight?: AgentLimiterSnapshot['inFlight'];
   /** Waiting requests at this notification; immediate admission can report zero. */
   readonly queued?: number;
@@ -323,6 +330,10 @@ export interface RunOptions extends WorkflowCodeOptions {
   readonly resume?: boolean;
   /** Harness integration. Local-only workflows do not need this dependency. */
   readonly harness?: Harness;
+  /** Named adapters take precedence over the legacy catch-all and declared factories. */
+  readonly adapters?: HarnessAdapters;
+  /** Per-harness operator configuration supplied only to declared adapter factories. */
+  readonly harnessConfigurations?: HarnessConfigurations;
   /** Explicitly accept replaying outputs recorded under a different harness kind, including forks. */
   readonly allowHarnessChange?: boolean;
   /** Live rehearsal hooks. Requires a harness whose kind is dry-run; local callbacks otherwise run normally. */
@@ -447,15 +458,22 @@ function preserveFirstSessionId(
 }
 
 /** Run or resume a workflow with local, at-least-once durable effects. Throws after saving failures. */
-export async function runWorkflow<TInput, TOutput>(
-  definition: WorkflowDefinition<TInput, TOutput>,
+export async function runWorkflow<
+  TInput,
+  TOutput,
+  TProfile extends string,
+  H extends readonly HarnessDeclaration[],
+>(
+  definition: WorkflowDefinition<TInput, TOutput, TProfile, H>,
   options: RunOptions,
 ): Promise<WorkflowResult<TOutput>> {
   if (!isValidRunId(options.runId)) throw new Error(runIdMessage);
   if (!definition.name.trim() || !definition.version.trim())
     throw new Error('Workflow name and version must be nonempty.');
   if (options.launch) workflowLaunchSchema.parse(options.launch);
-  const harnessKind = options.harness?.kind ?? (options.harness ? 'custom' : 'none');
+  const registry = new HarnessRegistry(options);
+  registry.definitions(definition);
+  let harnessKind = registry.kind(checkedDefinition(definition));
   if (typeof harnessKind !== 'string' || !harnessKind.trim() || harnessKind.length > 100)
     throw new Error('Harness kind must be a nonempty string of at most 100 characters.');
   // 'none' marks a run with no agent outputs, which any harness may adopt without authorization.
@@ -576,6 +594,8 @@ export async function runWorkflow<TInput, TOutput>(
       );
     let forkSource =
       fork && forkStateDir ? await loadFork(fork.runId, forkStateDir, definition.name) : undefined;
+    if (!registry.configured(checkedDefinition(definition)))
+      harnessKind = existing?.harness?.kind ?? forkSource?.harness?.kind ?? harnessKind;
     function requireHarnessChange(source: RunRecord | undefined): void {
       // Unlabelled legacy records remain resumable: their historical adapter cannot be inferred.
       // A source that never had an adapter holds no agent outputs, so any harness may adopt it.
@@ -678,6 +698,18 @@ export async function runWorkflow<TInput, TOutput>(
     });
     const maxChildDepth =
       incomingChildDepth ?? (options.policyReset ? undefined : existing?.maxChildDepth) ?? 8;
+    registry.preflight(checkedDefinition(definition), existing ?? forkSource, null);
+    if (!existing && !forkSource) {
+      const pending = [...(definition.children ?? [])];
+      const visited = new Set<object>();
+      while (pending.length) {
+        const child = pending.pop();
+        if (!child || visited.has(child)) continue;
+        visited.add(child);
+        registry.preflight(child, undefined, null);
+        pending.push(...(child.children ?? []));
+      }
+    }
     if (
       existing?.status === 'completed' &&
       !options.acceptCodeChange &&
@@ -754,7 +786,11 @@ export async function runWorkflow<TInput, TOutput>(
           attempt.request === undefined ? legacyAttemptKind(step, attempt.attempt) : undefined;
         if (
           attempt.status === 'running' &&
-          (attempt.request || legacyKind === 'claude' || legacyKind === 'codex')
+          (attempt.integration ||
+            attempt.request ||
+            legacyKind === 'agent' ||
+            legacyKind === 'claude' ||
+            legacyKind === 'codex')
         ) {
           attempt.status = 'interrupted';
           attempt.error ??=
@@ -943,6 +979,9 @@ export async function runWorkflow<TInput, TOutput>(
       pins: grantedProfiles,
       overrides: profileOverrides,
       maxDepth: maxChildDepth,
+      preflight: (owner, frame) => {
+        registry.preflight(owner, existing ?? forkSource, frame);
+      },
       record,
       names,
       scopes,
@@ -990,11 +1029,11 @@ export async function runWorkflow<TInput, TOutput>(
       type: 'agent.queued' | 'agent.admitted',
       id: string,
       step: StepRecord,
-      provider: string,
+      harness: string,
       waitedMs: number,
     ): void => {
       try {
-        emit(type, id, step, { provider, waitedMs, ...limiter.snapshot() });
+        emit(type, id, step, { harness, waitedMs, ...limiter.snapshot() });
       } catch {
         /* Custom diagnostics must not leak or invalidate an invocation slot. */
       }
@@ -1003,7 +1042,7 @@ export async function runWorkflow<TInput, TOutput>(
     async function budgetAdmission(
       id: string,
       step: StepRecord,
-      provider: string,
+      harness: string,
       signal: AbortSignal,
     ): Promise<{ permit: AgentPermit; finish: () => void }> {
       const refuse = (): Promise<never> => {
@@ -1011,8 +1050,8 @@ export async function runWorkflow<TInput, TOutput>(
         return budget.refuse();
       };
       if (budget.check(id)) return refuse();
-      const admission = limiter.acquire(provider, AbortSignal.any([signal, budget.signal]));
-      emitAdmission('agent.queued', id, step, provider, 0);
+      const admission = limiter.acquire(harness, AbortSignal.any([signal, budget.signal]));
+      emitAdmission('agent.queued', id, step, harness, 0);
       let permit: AgentPermit;
       try {
         permit = await admission;
@@ -1110,6 +1149,10 @@ export async function runWorkflow<TInput, TOutput>(
       },
     ): Promise<EffectResult<T, TMode>> {
       const signal = scopes.signal;
+      const meta =
+        local?.meta === undefined
+          ? undefined
+          : z.record(z.string(), z.json()).parse(jsonValue(local.meta, `Step ${id} metadata`));
       const value = (output: T): EffectResult<T, TMode> =>
         (onError === 'return' ? { ok: true, value: output } : output) as EffectResult<T, TMode>;
       const replay = (step: StepRecord): EffectResult<T, TMode> =>
@@ -1172,12 +1215,13 @@ export async function runWorkflow<TInput, TOutput>(
       }
       const prior = Object.hasOwn(record.steps, id) ? record.steps[id] : undefined;
       if (prior?.legacyIdentity === 1) {
-        if ((kind === 'claude' || kind === 'codex') && isTerminalStep(prior))
+        if ((kind === 'agent' || kind === 'claude' || kind === 'codex') && isTerminalStep(prior))
           throw new Error(
             `Step ${id}: original format-one agent has no pinned isolation mode; start a new run or invalidate it in a fork.`,
           );
+        const legacyKind = kind === 'agent' ? (observedRequest?.harness ?? kind) : kind;
         const oldFingerprint = digest({
-          kind,
+          kind: legacyKind,
           dependencies: legacyDependencies ?? jsonValue(dependencies),
           schema: schemaJson(schema),
           retry: {
@@ -1185,10 +1229,19 @@ export async function runWorkflow<TInput, TOutput>(
             delayMs: local?.retry?.delayMs ?? 100,
           },
         });
-        if (prior.kind !== kind || prior.fingerprint !== oldFingerprint || onError === 'return')
+        if (
+          prior.kind !== legacyKind ||
+          prior.fingerprint !== oldFingerprint ||
+          onError === 'return'
+        )
           throw new Error(
             `Step ${id}: original format-one identity changed; restore its inputs/options/schema/retry before migrating or start a new run.`,
           );
+        prior.kind = kind;
+        if (kind === 'agent' && observedRequest) {
+          prior.harness = observedRequest.harness;
+          prior.revision = observedRequest.revision ?? 1;
+        }
         prior.fingerprint = stepFingerprint;
         prior.identity = identity;
         prior.seq = nextSeq++;
@@ -1264,6 +1317,10 @@ export async function runWorkflow<TInput, TOutput>(
       }
       const step: StepRecord = prior ?? {
         kind,
+        ...(meta === undefined ? {} : { meta }),
+        ...(kind === 'agent' && observedRequest
+          ? { harness: observedRequest.harness, revision: observedRequest.revision ?? 1 }
+          : {}),
         fingerprint: stepFingerprint,
         status: 'running',
         attempts: 0,
@@ -1281,7 +1338,7 @@ export async function runWorkflow<TInput, TOutput>(
         errorStack: null,
       };
       await beforeLive(id, step);
-      const agent = kind === 'claude' || kind === 'codex';
+      const agent = kind === 'agent' || kind === 'claude' || kind === 'codex';
       for (let attempt = 1; ; attempt++) {
         signal.throwIfAborted();
         // Captured before budget admission: a saturated limiter's queue wait is part of the
@@ -1291,7 +1348,9 @@ export async function runWorkflow<TInput, TOutput>(
         let admitted: Awaited<ReturnType<typeof budgetAdmission>> | undefined;
         try {
           admitted =
-            agent && budget.enabled ? await budgetAdmission(id, step, kind, signal) : undefined;
+            agent && budget.enabled
+              ? await budgetAdmission(id, step, step.harness ?? kind, signal)
+              : undefined;
         } catch (cause) {
           // A queued first attempt leaves no record; a queued retry must not stay 'failed'.
           if (
@@ -1322,6 +1381,10 @@ export async function runWorkflow<TInput, TOutput>(
                 attempts: step.attempts,
               });
               step.kind = kind;
+              if (kind === 'agent' && observedRequest) {
+                step.harness = observedRequest.harness;
+                step.revision = observedRequest.revision ?? 1;
+              }
               step.fingerprint = stepFingerprint;
               step.identity = identity;
               step.wakeAt = wakeAt;
@@ -1373,7 +1436,7 @@ export async function runWorkflow<TInput, TOutput>(
             status: 'running',
             error: null as string | null,
           };
-          if (kind === 'claude')
+          if (step.harness === 'claude' || kind === 'claude')
             attemptRecord.requestedSessionId = deriveAgentSessionId(sessionSalt, id, step.attempts);
           (step.attemptHistory ??= []).push(attemptRecord);
           await save(undefined, kind === 'sleep' || agent);
@@ -1410,7 +1473,24 @@ export async function runWorkflow<TInput, TOutput>(
               signal.throwIfAborted();
               emit('step.started', id, step);
               const result = await inEffect.run(true, async () => {
+                let reporting = true;
                 const context: StepContext = {
+                  reportUsage: (usage) => {
+                    if (
+                      !reporting ||
+                      kind !== 'step' ||
+                      attemptRecord.status !== 'running' ||
+                      closed
+                    )
+                      throw new Error(
+                        `Step ${id}: usage must be reported inside its active local callback.`,
+                      );
+                    attemptRecord.usage = normalizeUsage(usage);
+                    attemptRecord.integration =
+                      typeof meta?.['integration'] === 'string'
+                        ? meta['integration'].slice(0, 100) || 'local'
+                        : 'local';
+                  },
                   signal,
                   cwd,
                   idempotencyKey: `${record.id}/${id}`,
@@ -1435,7 +1515,7 @@ export async function runWorkflow<TInput, TOutput>(
                     transcript = await storage.transcript(
                       id,
                       step.attempts,
-                      kind,
+                      step.harness ?? kind,
                       execution.policy.maxTranscriptBytes ?? 64 * 1024 * 1024,
                     );
                     recordTranscript();
@@ -1444,16 +1524,20 @@ export async function runWorkflow<TInput, TOutput>(
                     return transcriptFailure(error);
                   }
                 }
-                return action(
-                  lease ? { ...context, cwd: lease.cwd } : context,
-                  step,
-                  attemptRecord,
-                  (release) => {
-                    releases.push(release);
-                  },
-                  transcript,
-                  admitted?.permit,
-                );
+                try {
+                  return await action(
+                    lease ? { ...context, cwd: lease.cwd } : context,
+                    step,
+                    attemptRecord,
+                    (release) => {
+                      releases.push(release);
+                    },
+                    transcript,
+                    admitted?.permit,
+                  );
+                } finally {
+                  reporting = false;
+                }
               });
               if (transcript) {
                 transcriptClosed = true;
@@ -1539,7 +1623,7 @@ export async function runWorkflow<TInput, TOutput>(
                   usage: attemptRecord.usage ?? null,
                 });
                 emit('agent.finished', id, step, {
-                  provider: kind,
+                  harness: step.harness ?? kind,
                   outcome: scoped ? 'cancelled' : 'failed',
                   sessionId: attemptRecord.sessionId ?? attemptRecord.requestedSessionId ?? null,
                   ...(attemptRecord.usage ? { usage: attemptRecord.usage } : {}),
@@ -1626,12 +1710,12 @@ export async function runWorkflow<TInput, TOutput>(
               await save();
             }
             const metadata =
-              kind === 'claude' || kind === 'codex'
+              kind === 'agent' || kind === 'claude' || kind === 'codex'
                 ? (step.output as unknown as AgentResult<unknown>)
                 : undefined;
             if (metadata)
               emit('agent.finished', id, step, {
-                provider: kind,
+                harness: step.harness ?? kind,
                 outcome: 'completed',
                 sessionId: metadata.sessionId,
                 usage: metadata.usage,
@@ -1779,7 +1863,8 @@ export async function runWorkflow<TInput, TOutput>(
       });
     }
 
-    const metadataRequests = new Map<string, Promise<void>>();
+    // Keyed by registration; a Map (not WeakMap) so draining can release abandoned discovery.
+    const metadataRequests = new Map<object, Promise<HarnessMetadata | undefined>>();
     // Discovery is run-owned; an aborted scope may abandon its wait, so draining releases the rest.
     const discoveryController = new AbortController();
     const discoverySignal = AbortSignal.any([signal, discoveryController.signal]);
@@ -1788,12 +1873,10 @@ export async function runWorkflow<TInput, TOutput>(
       discoveryController.abort(new CancelledError(null, undefined));
       await Promise.allSettled(metadataRequests.values());
     }
-    function client<TOptions extends AgentOptions>(
-      provider: 'claude' | 'codex',
-    ): AgentClient<TOptions> {
+    function client<TOptions extends AgentOptions>(harness: string): AgentClient<TOptions> {
       function invoke<T, TMode extends ErrorMode, TResult>(
         leaf: string,
-        agentOptions: TOptions & { readonly onError?: TMode },
+        agentOptions: TOptions & { readonly onError?: TMode | undefined },
         outputSchema: () => z.ZodType<T>,
         structured: boolean,
         select: (result: EffectResult<AgentResult<T>, TMode>) => TResult,
@@ -1801,11 +1884,22 @@ export async function runWorkflow<TInput, TOutput>(
         const id = names.qualify(leaf);
         const phase = observations.phase;
         return launch(id, async () => {
-          let request: HarnessRequestInput;
+          let request: HarnessRequestInput<ClaudeOptions & CodexOptions>;
           let schema: z.ZodType<T>;
           let execution: AttemptPolicy;
           let profile: ResolvedProfile;
           let legacyRequest: JsonValue;
+          const registration = registry.definitions(children.definition).get(harness);
+          if (!registration)
+            throw new Error(
+              `Workflow ${children.definition.name} has no declared harness ${harness}.`,
+            );
+          if (structured && registration.capabilities.structuredOutput === 'none')
+            throw new Error(`Harness ${harness} does not support structured output.`);
+          const native = harness === 'claude' || harness === 'codex';
+          const saved = record.steps[id];
+          const replayOnly = saved !== undefined && isTerminalStep(saved);
+          let adapter: Harness | undefined;
           try {
             const data = jsonValue(
               { options: optionData(agentOptions, structured) },
@@ -1813,29 +1907,37 @@ export async function runWorkflow<TInput, TOutput>(
             ) as {
               options: TOptions & JsonValue;
             };
-            validateAgentOptions(provider, data.options, false);
+            if (native) validateAgentOptions(harness, data.options, false);
+            harnessOptions(registration, data.options);
             const resolvedProfile = resolveProfileCall(
               children.authority?.manifest ?? capabilities,
-              provider,
+              harness,
               data.options,
               children.authority?.grants ?? grants,
               children.authority?.pins ?? grantedProfiles,
+              registration,
             );
             profile = resolvedProfile.profile;
-            children.authority?.check(profile.name, provider, resolvedProfile.options);
+            children.authority?.check(profile.name, harness, resolvedProfile.options, registration);
             schema = outputSchema();
             legacyRequest = jsonValue({
-              provider,
+              provider: harness,
               options: data.options,
               cwd: resolve(cwd, data.options.cwd ?? '.'),
               outputSchema: structured ? schemaJson(schema) : null,
             });
             options.rehearsal?.onSchema?.(id, schema);
+            // A missing adapter is reported by the live attempt as a ConfigurationError, so the
+            // step records the failure and it is never settled, retried, or journaled as map data.
+            adapter =
+              replayOnly || !registry.available(registration)
+                ? undefined
+                : registry.adapter(registration);
             execution = resolvePolicy(
               id,
-              provider,
+              harness,
               data.options,
-              options.harness?.policyDefaults?.(provider) ?? {},
+              adapter?.policyDefaults?.(harness) ?? {},
               policy,
               matchedPolicy,
               profile,
@@ -1862,7 +1964,7 @@ export async function runWorkflow<TInput, TOutput>(
               };
             const profileEffort = (resolvedProfile.options as CodexOptions).reasoningEffort;
             if (
-              provider === 'codex' &&
+              harness === 'codex' &&
               execution.reasoningEffort === null &&
               profileEffort !== undefined
             )
@@ -1878,22 +1980,25 @@ export async function runWorkflow<TInput, TOutput>(
                 sources: {
                   ...execution.sources,
                   effort:
-                    data.options.effort === undefined ? `profile:${profile.name}` : 'call-site',
+                    (data.options as { readonly effort?: unknown }).effort === undefined
+                      ? `profile:${profile.name}`
+                      : 'call-site',
                 },
               };
             request = jsonValue(
               {
-                provider,
+                harness,
+                revision: registration.revision,
                 options: resolvedProfile.options,
                 cwd: resolve(cwd, data.options.cwd ?? '.'),
                 outputSchema: structured ? schemaJson(schema) : null,
               },
               `Step "${id}" agent request`,
-            ) as unknown as HarnessRequestInput;
+            ) as unknown as HarnessRequestInput<ClaudeOptions & CodexOptions>;
           } catch (cause) {
             throw new Error(`Step ${id}: ${message(cause)}`, { cause });
           }
-          if (request.provider === 'codex' && request.options.images !== undefined) {
+          if (request.harness === 'codex' && request.options.images !== undefined) {
             // The same scope signal the effect captures below; interruption must release a stalled read.
             const signal = scopes.signal;
             try {
@@ -1926,10 +2031,10 @@ export async function runWorkflow<TInput, TOutput>(
             isolation === undefined
               ? baseResultSchema
               : baseResultSchema.extend({ worktree: worktreeChangeSchema });
-          const identity = agentIdentity(request, schemaJson(identitySchema));
+          const identity = agentIdentity(request, schemaJson(identitySchema), registration);
           const resultSchema = identitySchema.extend({ usage: agentUsageSchema });
           const onPermissionDenied =
-            provider === 'claude'
+            harness === 'claude'
               ? ((request.options as ClaudeOptions).onPermissionDenied ??
                 profile.onPermissionDenied)
               : profile.onPermissionDenied;
@@ -1940,7 +2045,7 @@ export async function runWorkflow<TInput, TOutput>(
           delete applied.onError;
           delete applied.worktree;
           const { timeoutMs, maxTurns, maxBudgetUsd } = execution.policy;
-          Object.assign(applied, {
+          const policyOptions = {
             ...(timeoutMs === undefined ? {} : { timeoutMs }),
             ...(maxTurns === undefined ? {} : { maxTurns }),
             ...(maxBudgetUsd === undefined ? {} : { maxBudgetUsd }),
@@ -1948,24 +2053,38 @@ export async function runWorkflow<TInput, TOutput>(
             ...(execution.reasoningEffort === null
               ? {}
               : { reasoningEffort: execution.reasoningEffort }),
-          });
-          if (provider === 'codex' && execution.reasoningEffort !== null) delete applied.effort;
+          };
+          const shape =
+            registration.options instanceof z.ZodObject
+              ? (registration.options.shape as Record<string, unknown>)
+              : {};
+          Object.assign(
+            applied,
+            Object.fromEntries(
+              Object.entries(policyOptions).filter(([key]) => native || Object.hasOwn(shape, key)),
+            ),
+          );
+          if (harness === 'codex' && execution.reasoningEffort !== null) delete applied.effort;
           request = { ...request, options: applied };
-          validateAgentOptions(provider, request.options);
+          if (native) validateAgentOptions(harness, request.options);
+          else harnessOptions(registration, request.options);
           const result = await effect(
             id,
-            provider,
+            'agent',
             jsonValue(request, `Step "${id}" agent request`),
             resultSchema,
             execution,
             async (context, step, attempt, _release, transcript, reservedPermit) => {
-              if (!options.harness)
-                throw new ConfigurationError(
-                  `No harness adapter configured for ${provider}. Supply RunOptions.harness.`,
-                );
+              // A missing adapter rejects as ConfigurationError: never settled or retried.
+              const liveAdapter = adapter ?? registry.adapter(registration);
               const liveRequest: HarnessRequest = {
                 ...request,
                 ...(isolation === undefined ? {} : { cwd: context.cwd }),
+                revision: request.revision ?? 1,
+                runId: options.runId,
+                stepId: id,
+                attempt: context.attempt,
+                idempotencyKey: context.idempotencyKey,
                 call: {
                   runId: options.runId,
                   stepId: id,
@@ -1974,21 +2093,22 @@ export async function runWorkflow<TInput, TOutput>(
                 },
               };
               const processContext = processInvocation(id, context);
-              if (options.harness.metadata) {
-                let discovery = metadataRequests.get(provider);
+              let cliVersion: string | null = null;
+              if (liveAdapter.metadata) {
+                let discovery = metadataRequests.get(registration);
                 if (!discovery) {
                   discovery = (async () => {
                     // Installation discovery is shared by the run, not owned by the first map subtree.
-                    const metadata = await options.harness?.metadata?.(liveRequest, {
+                    const metadata = await liveAdapter.metadata?.(liveRequest, {
                       ...processContext,
                       signal: discoverySignal,
                     });
                     if (!metadata) return;
-                    const old = record.harnesses?.[provider];
+                    const old = record.harnesses?.[harness];
                     const warnings = [...(metadata.warnings ?? [])];
                     if (old && (old.version !== metadata.version || old.binary !== metadata.binary))
                       warnings.push(
-                        `${provider} harness changed from ${old.binary}@${old.version ?? 'unknown'} to ${metadata.binary}@${metadata.version ?? 'unknown'}; completed effects remain reusable.`,
+                        `${harness} harness changed from ${old.binary}@${old.version ?? 'unknown'} to ${metadata.binary}@${metadata.version ?? 'unknown'}; completed effects remain reusable.`,
                       );
                     if (
                       old?.environment &&
@@ -1996,19 +2116,28 @@ export async function runWorkflow<TInput, TOutput>(
                       digest(old.environment) !== digest(metadata.environment)
                     )
                       warnings.push(
-                        `${provider} inherited environment or scrubbed variable names changed; values are not recorded or fingerprinted.`,
+                        `${harness} inherited environment or scrubbed variable names changed; values are not recorded or fingerprinted.`,
                       );
-                    (record.harnesses ??= {})[provider] = metadata;
+                    (record.harnesses ??= {})[harness] = metadata;
                     record.harnessWarnings = [
                       ...new Set([...(record.harnessWarnings ?? []), ...warnings]),
                     ];
                     await save();
+                    return metadata;
                   })();
                   // Abandoned waits must not leave an unobserved rejection behind.
                   discovery.catch(() => undefined);
-                  metadataRequests.set(provider, discovery);
+                  metadataRequests.set(registration, discovery);
                 }
-                await untilAborted(discovery, context.signal);
+                const metadata = await untilAborted(discovery, context.signal);
+                if (metadata) {
+                  cliVersion = metadata.version;
+                  attempt.diagnostics = {
+                    ...attempt.diagnostics,
+                    binary: metadata.binary,
+                    cliVersion: metadata.version,
+                  };
+                }
                 context.signal.throwIfAborted();
               }
               const invocation: HarnessInvocation = {
@@ -2029,7 +2158,7 @@ export async function runWorkflow<TInput, TOutput>(
                       ...(progress.cliVersion ? { cliVersion: progress.cliVersion } : {}),
                     };
                   emit('agent.progress', id, step, {
-                    provider,
+                    harness,
                     progress,
                     sessionId: attempt.sessionId ?? attempt.requestedSessionId ?? null,
                   });
@@ -2057,21 +2186,21 @@ export async function runWorkflow<TInput, TOutput>(
               try {
                 let permit = reservedPermit;
                 if (!permit) {
-                  const admission = limiter.acquire(provider, context.signal);
-                  emitAdmission('agent.queued', id, step, provider, 0);
+                  const admission = limiter.acquire(harness, context.signal);
+                  emitAdmission('agent.queued', id, step, harness, 0);
                   permit = await admission;
                 }
                 try {
                   context.signal.throwIfAborted();
-                  emitAdmission('agent.admitted', id, step, provider, permit.waitedMs);
+                  emitAdmission('agent.admitted', id, step, harness, permit.waitedMs);
                   context.signal.throwIfAborted();
                   emit('agent.started', id, step, {
-                    provider,
+                    harness,
                     sessionId: attempt.requestedSessionId ?? null,
                     model: request.options.model ?? null,
-                    cliVersion: record.harnesses?.[provider]?.version ?? null,
+                    cliVersion,
                   });
-                  response = await options.harness.invoke(liveRequest, invocation);
+                  response = await liveAdapter.invoke(liveRequest, invocation);
                 } finally {
                   permit.release();
                 }
@@ -2122,7 +2251,7 @@ export async function runWorkflow<TInput, TOutput>(
                 step.warnings = [...(step.warnings ?? []), warning];
                 if (onPermissionDenied === 'fail')
                   throw new HarnessError({
-                    provider,
+                    harness,
                     kind: 'permission',
                     exit: { code: 0, signal: null },
                     failure: null,
@@ -2175,7 +2304,10 @@ export async function runWorkflow<TInput, TOutput>(
       ): Promise<Settled<AgentResult<T>>>;
       function object<T, TMode extends ErrorMode = 'throw'>(
         id: string,
-        agentOptions: TOptions & { readonly schema: z.ZodType<T>; readonly onError?: TMode },
+        agentOptions: TOptions & {
+          readonly schema: z.ZodType<T>;
+          readonly onError?: TMode | undefined;
+        },
       ): Promise<EffectResult<AgentResult<T>, TMode>>;
       function object<T>(
         id: string,
@@ -2195,11 +2327,14 @@ export async function runWorkflow<TInput, TOutput>(
       ): Promise<Settled<T>>;
       function value<T, TMode extends ErrorMode = 'throw'>(
         id: string,
-        agentOptions: TOptions & { readonly schema: z.ZodType<T>; readonly onError?: TMode },
+        agentOptions: TOptions & {
+          readonly schema: z.ZodType<T>;
+          readonly onError?: TMode | undefined;
+        },
       ): Promise<EffectResult<T, TMode>>;
       function value<TMode extends ErrorMode = 'throw'>(
         id: string,
-        agentOptions: TOptions & { readonly schema?: never; readonly onError?: TMode },
+        agentOptions: TOptions & { readonly schema?: never; readonly onError?: TMode | undefined },
       ): Promise<EffectResult<string, TMode>>;
       function value<T>(
         id: string,
@@ -2407,6 +2542,7 @@ export async function runWorkflow<TInput, TOutput>(
       );
     }
     const context: WorkflowContext = {
+      agent: (name: string) => client(name),
       workflow: children.invoke,
       cwd,
       readFile: (leaf, path, settings = {}) => {
@@ -2594,7 +2730,7 @@ export async function runWorkflow<TInput, TOutput>(
       codex: client<CodexOptions>('codex'),
       step: <T, TMode extends ErrorMode = 'throw'>(
         leaf: string,
-        step: StepDefinition<T> & { readonly onError?: TMode },
+        step: StepDefinition<T> & { readonly onError?: TMode | undefined },
       ): Promise<EffectResult<T, TMode>> => {
         const id = names.qualify(leaf);
         return launch(id, () =>
@@ -2687,7 +2823,12 @@ export async function runWorkflow<TInput, TOutput>(
       let bodyOutput: { value: TOutput } | undefined;
       // This promise always has a rejection handler, even when suspension abandons the body.
       const body = Promise.resolve().then(() =>
-        observations.run(() => definition.run(context, bodyInput)),
+        observations.run(() =>
+          definition.run(
+            context as unknown as WorkflowContext<TProfile, WorkflowHarnesses<H>>,
+            bodyInput,
+          ),
+        ),
       );
       const completedBody = body.then(async (value) => {
         bodyOutput = { value };

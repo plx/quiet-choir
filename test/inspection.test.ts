@@ -82,7 +82,7 @@ it('shows all status counts, first-use order, phase progress, limits, root cause
       input: null,
       harness: {
         invoke: (request) => {
-          if (request.provider === 'codex') throw new Error('handled');
+          if (request.harness === 'codex') throw new Error('handled');
           return Promise.resolve({
             text: 'done',
             sessionId: null,

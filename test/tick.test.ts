@@ -288,7 +288,7 @@ describe('tick loader and operator hooks', { timeout: 40_000 }, () => {
       }),
     ).toMatchObject({ ok: true, resumed: 1, completed: ['run'], exitCode: 0 });
     const capture = JSON.parse(await readFile(f.agentLog, 'utf8')) as Record<string, unknown>;
-    expect(capture).toMatchObject({ provider: 'claude', scenario: 'claude-text-success' });
+    expect(capture).toMatchObject({ harness: 'claude', scenario: 'claude-text-success' });
   });
 
   it('uses the injected clock, not the system clock, to judge readiness', async () => {

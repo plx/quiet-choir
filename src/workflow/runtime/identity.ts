@@ -1,9 +1,10 @@
 import { isolationIdentity } from './worktree-identity.js';
-import { resolveIsolation } from './agent-isolation.js';
+import { legacyAgentIdentity } from './legacy-agent.js';
+import type { HarnessDeclaration } from './harness-model.js';
 import { environmentEdits } from './agent-environment.js';
 import { createHash } from 'node:crypto';
 import { digest, jsonValue } from './json.js';
-import type { HarnessRequestInput, JsonValue } from './model.js';
+import type { HarnessRequestInput, BuiltinHarnessRequestInput, JsonValue } from './model.js';
 
 /** Component hashes explain drift without persisting prompts or dependencies. */
 export type StepIdentity = Readonly<Record<string, string>>;
@@ -14,57 +15,31 @@ export function stepIdentity(components: Record<string, JsonValue>): StepIdentit
 }
 
 /** Explicit request identity before any authorized execution overrides. @internal */
-export function agentIdentity(request: HarnessRequestInput, schema: JsonValue): StepIdentity {
-  const options = resolveIsolation(request.options);
+export function agentIdentity(
+  request: HarnessRequestInput,
+  schema: JsonValue,
+  definition?: HarnessDeclaration,
+): StepIdentity {
+  if (
+    (request.harness === 'claude' || request.harness === 'codex') &&
+    (request.revision ?? 1) === 1
+  )
+    return legacyAgentIdentity(request as BuiltinHarnessRequestInput, schema);
+  const options = { ...request.options };
+  Reflect.deleteProperty(options, 'profile');
+  Reflect.deleteProperty(options, 'retry');
+  Reflect.deleteProperty(options, 'timeoutMs');
+  for (const key of definition?.policy ?? []) Reflect.deleteProperty(options, key);
   if (options.worktree !== undefined)
     Object.assign(options, {
       worktree: isolationIdentity(options.worktree === true ? 'worktree' : options.worktree),
     });
   if (options.env !== undefined) Object.assign(options, { env: environmentEdits(options.env) });
-  if (request.provider === 'codex' && request.imageAttachments !== undefined)
-    Object.assign(options, { images: request.imageAttachments.map((image) => image.sha256) });
-  const capabilities = Object.fromEntries(
-    Object.entries(options)
-      .filter(
-        ([key, value]) =>
-          !(
-            (key === 'tools' || key === 'allowedTools') &&
-            Array.isArray(value) &&
-            value.length === 0
-          ) && !(key === 'sandbox' && value === 'read-only'),
-      )
-      .filter(
-        ([key]) =>
-          ![
-            'profile',
-            'prompt',
-            'model',
-            'reasoningEffort',
-            'cwd',
-            'timeoutMs',
-            'maxTurns',
-            'maxBudgetUsd',
-            'retry',
-            'onError',
-          ].includes(key),
-      ),
-  );
-  const namedCapabilities = Object.fromEntries(
-    Object.entries(capabilities).map(([key, value]) => [
-      ['tools', 'allowedTools', 'sandbox', 'skipGitRepoCheck', 'structuredOutput'].includes(key)
-        ? key
-        : `option.${key}`,
-      value,
-    ]),
-  );
   return stepIdentity({
-    ...(jsonValue(namedCapabilities) as Record<string, JsonValue>),
-    kind: request.provider,
-    onError: options.onError ?? 'throw',
-    prompt: options.prompt,
-    model: options.model ?? null,
-    reasoningEffort:
-      request.provider === 'codex' ? (request.options.reasoningEffort ?? null) : null,
+    kind: 'agent',
+    harness: request.harness,
+    revision: request.revision ?? 1,
+    options: jsonValue(options),
     cwd: request.cwd,
     schema,
   });

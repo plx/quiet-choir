@@ -1,3 +1,4 @@
+import { harnessDefinitions } from './harness-registry.js';
 import { z } from 'zod';
 import type { WorkflowDeclaration, WorkflowDescription } from './child-model.js';
 import { jsonValue } from './json.js';
@@ -32,6 +33,11 @@ export function checkedDefinition(value: unknown): WorkflowDeclaration {
     throw new Error(
       `Workflow ${String(definition['name'])} children must be an array of definitions.`,
     );
+  if (definition['harnesses'] !== undefined && !Array.isArray(definition['harnesses']))
+    throw new Error(
+      `Workflow ${String(definition['name'])} harnesses must be an array of definitions.`,
+    );
+  harnessDefinitions(value as WorkflowDeclaration);
   return value as WorkflowDeclaration;
 }
 
@@ -52,6 +58,14 @@ export function describeWorkflow(
     return {
       definition,
       description: {
+        harnesses: [...harnessDefinitions(definition).values()].map((item) => ({
+          name: item.name,
+          revision: item.revision,
+          options: schemaJson(item.options),
+          capabilities: item.capabilities,
+          factory: item.createAdapter !== undefined,
+          probe: item.probe !== undefined,
+        })),
         name: definition.name,
         version: definition.version,
         description: definition.description ?? null,

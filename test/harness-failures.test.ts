@@ -18,19 +18,21 @@ import { parseCodex } from '../src/harnesses/protocol.js';
 
 const directories: string[] = [];
 const signal = new AbortController().signal;
-const captureSchema = z.object({
-  provider: z.enum(['claude', 'codex']),
-  version: z.string(),
-  code: z.number(),
-  stdout: z.string(),
-  stderr: z.string(),
-  structured: z.boolean(),
-  expected: z.object({
-    reason: z.string(),
-    terminalReason: z.string().nullable(),
-    apiStatus: z.number().nullable(),
-  }),
-});
+const captureSchema = z
+  .object({
+    provider: z.enum(['claude', 'codex']),
+    version: z.string(),
+    code: z.number(),
+    stdout: z.string(),
+    stderr: z.string(),
+    structured: z.boolean(),
+    expected: z.object({
+      reason: z.string(),
+      terminalReason: z.string().nullable(),
+      apiStatus: z.number().nullable(),
+    }),
+  })
+  .transform(({ provider, ...capture }) => ({ ...capture, harness: provider }));
 const fixtureDirectory = new URL('./fixtures/harness/', import.meta.url);
 const captures = await Promise.all(
   (await readdir(fixtureDirectory))
@@ -63,7 +65,12 @@ async function binaryFor(
 }
 
 function request(provider: 'claude' | 'codex'): HarnessRequestInput {
-  return { provider, options: { prompt: 'fixture' }, outputSchema: null, cwd: process.cwd() };
+  return {
+    harness: provider,
+    options: { prompt: 'fixture' },
+    outputSchema: null,
+    cwd: process.cwd(),
+  };
 }
 
 afterEach(async () => {
@@ -79,7 +86,7 @@ describe('captured exit-1 failures', () => {
     async (capture) => {
       const directory = await mkdtemp(join(tmpdir(), 'quiet-choir-captured-cli-'));
       directories.push(directory);
-      const binary = fileURLToPath(new URL(`./bin/fake-${capture.provider}.mjs`, import.meta.url));
+      const binary = fileURLToPath(new URL(`./bin/fake-${capture.harness}.mjs`, import.meta.url));
       vi.stubEnv('QUIET_CHOIR_FAKE_SCENARIO', capture.name.replace(/\.json$/u, ''));
       const harness = new CliHarness({ claudeBinary: binary, codexBinary: binary });
       const definition = defineWorkflow({
@@ -88,7 +95,7 @@ describe('captured exit-1 failures', () => {
         input: z.null(),
         output: z.string(),
         async run(ctx) {
-          const client: AgentClient<ClaudeOptions | CodexOptions> = ctx[capture.provider];
+          const client: AgentClient<ClaudeOptions | CodexOptions> = ctx[capture.harness];
           if (capture.structured)
             return (
               await client.object('agent', {
@@ -132,7 +139,7 @@ describe('captured exit-1 failures', () => {
           sessionId: error.sessionId,
           usage: error.usage,
         });
-        if (capture.provider === 'claude') {
+        if (capture.harness === 'claude') {
           const raw = z
             .object({
               usage: z.json(),

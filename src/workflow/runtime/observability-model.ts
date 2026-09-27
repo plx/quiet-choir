@@ -23,7 +23,9 @@ export interface RequestSummary {
   /** Explicit environment names and digest, never values. */
   readonly environment?: EnvironmentSummary;
   /** Selected harness. */
-  readonly provider: 'claude' | 'codex';
+  readonly harness: string;
+  /** Option-semantics revision; absent in preceding-runtime records. */
+  readonly revision?: number;
   /** Explicit resolved model; null means inherited native configuration. */
   readonly model: string | null;
   /** Resolved capability profile. */

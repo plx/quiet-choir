@@ -7,13 +7,13 @@ import { z } from 'zod';
 export interface AgentLimits {
   /** Maximum live harness invocations across all providers. */
   readonly total: number;
-  /** Optional additional ceilings by provider; unspecified providers share the total ceiling. */
+  /** Optional additional ceilings by harness; unspecified providers share the total ceiling. */
   readonly perProvider?: Readonly<Record<string, number>>;
 }
 
 /** Detached view of admission state; counts include reserved invocation slots. */
 export interface AgentLimiterSnapshot {
-  /** Reserved slots by provider; idle providers are omitted. */
+  /** Reserved slots by harness; idle providers are omitted. */
   readonly inFlight: Readonly<Record<string, number>>;
   /** Requests waiting for a slot. */
   readonly queued: number;
@@ -30,7 +30,7 @@ export interface AgentPermit {
 /** Admission boundary shared by every live agent invocation; custom policies may reject acquire. */
 export interface AgentLimiter {
   /** Admit FIFO among eligible requests, or reject promptly if cancelled while queued. */
-  acquire(provider: string, signal: AbortSignal): Promise<AgentPermit>;
+  acquire(harness: string, signal: AbortSignal): Promise<AgentPermit>;
   /** Return detached counts without exposing mutable limiter state. */
   snapshot(): AgentLimiterSnapshot;
 }
@@ -56,7 +56,7 @@ export function defaultAgentLimits(): AgentLimits {
 }
 
 interface Waiter {
-  readonly provider: string;
+  readonly harness: string;
   readonly signal: AbortSignal;
   readonly started: number;
   readonly resolve: (permit: AgentPermit) => void;
@@ -83,15 +83,15 @@ export function createAgentLimiter(limits: AgentLimits): AgentLimiter {
     for (let index = 0; index < queue.length && total < checked.total;) {
       const waiter = queue[index];
       if (!waiter) break;
-      const count = active.get(waiter.provider) ?? 0;
-      if (count >= (ceilings.get(waiter.provider) ?? checked.total)) {
+      const count = active.get(waiter.harness) ?? 0;
+      if (count >= (ceilings.get(waiter.harness) ?? checked.total)) {
         index++;
         continue;
       }
       queue.splice(index, 1);
       removeListener(waiter);
       total++;
-      active.set(waiter.provider, count + 1);
+      active.set(waiter.harness, count + 1);
       let released = false;
       waiter.resolve({
         waitedMs: Math.max(0, performance.now() - waiter.started),
@@ -99,21 +99,21 @@ export function createAgentLimiter(limits: AgentLimits): AgentLimiter {
           if (released) return;
           released = true;
           total--;
-          const remaining = (active.get(waiter.provider) ?? 1) - 1;
-          if (remaining === 0) active.delete(waiter.provider);
-          else active.set(waiter.provider, remaining);
+          const remaining = (active.get(waiter.harness) ?? 1) - 1;
+          if (remaining === 0) active.delete(waiter.harness);
+          else active.set(waiter.harness, remaining);
           pump();
         },
       });
     }
   };
   return {
-    acquire(provider, signal) {
+    acquire(harness, signal) {
       return new Promise<AgentPermit>((resolve, reject) => {
-        if (typeof provider !== 'string' || !provider.length)
-          throw new Error('Agent provider must be a nonempty string.');
+        if (typeof harness !== 'string' || !harness.length)
+          throw new Error('Agent harness must be a nonempty string.');
         signal.throwIfAborted();
-        const waiter: Waiter = { provider, signal, started: performance.now(), resolve, reject };
+        const waiter: Waiter = { harness, signal, started: performance.now(), resolve, reject };
         let group = groups.get(signal);
         if (!group) {
           const waiters = new Set<Waiter>();

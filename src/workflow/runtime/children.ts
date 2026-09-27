@@ -28,6 +28,7 @@ interface Dependencies {
   readonly pins: Readonly<Record<string, string>>;
   readonly overrides: readonly ProfileOverride[];
   readonly maxDepth: number;
+  readonly preflight: (definition: WorkflowDeclaration, frame: string | null) => void;
   readonly record: RunRecord;
   readonly names: NameScopes;
   readonly scopes: ExecutionScopes;
@@ -75,6 +76,7 @@ export class RunChildren {
     while (pending.length) {
       const next = pending.pop();
       if (!next) break;
+      this.#deps.preflight(next.definition, next.parent);
       for (const { id, saved } of this.#previous.get(next.parent) ?? []) {
         if (!saved.declared || visited.has(id)) continue;
         visited.add(id);
@@ -97,6 +99,10 @@ export class RunChildren {
         pending.push({ definition: current, parent: id });
       }
     }
+  }
+
+  public get definition(): WorkflowDeclaration {
+    return this.#storage.getStore()?.definition ?? this.#deps.definition;
   }
 
   public get frame(): string | null {

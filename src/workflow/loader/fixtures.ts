@@ -1,3 +1,4 @@
+import { stepHarness } from '../runtime/harness-registry.js';
 import { z } from 'zod';
 import { parseHarnessFixtures, type HarnessFixtures } from '../../harnesses/fixture.js';
 import { RunRefusedError } from '../runtime/run-errors.js';
@@ -23,14 +24,11 @@ export function fixturesFromRun(run: RunRecord): HarnessFixtures {
     version: 1,
     unmatched: 'error',
     calls: Object.entries(run.steps)
-      .filter(
-        ([, step]) =>
-          (step.kind === 'claude' || step.kind === 'codex') && step.status === 'completed',
-      )
+      .filter(([, step]) => stepHarness(step) !== null && step.status === 'completed')
       .sort((a, b) => (a[1].seq ?? 0) - (b[1].seq ?? 0))
       .map(([stepId, step]) => {
         const data = result.parse(step.output);
-        return { step: stepId, provider: step.kind, output: data.output, usage: data.usage };
+        return { step: stepId, harness: stepHarness(step), output: data.output, usage: data.usage };
       }),
   });
 }

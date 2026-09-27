@@ -10,9 +10,10 @@ effects; it does not restore a JavaScript continuation or a native agent convers
 at least once; ordinary filesystem edits are not rolled back. Explicit runtime worktree isolation
 provides fresh attempts and pinned snapshots. There is no service, scheduler, or distributed worker.
 
-The public boundary is `src/index.ts`. The core owns orchestration and depends on the `Harness`
-interface; adapters depend on that contract. CLI commands translate arguments into plain-data
-plans/results and leave execution to framework-independent executors. See
+The public boundary is `src/index.ts` plus the documented `harness-kit` and `decision` subpaths. The
+core owns orchestration and depends on `HarnessAdapter`/`Harness` contracts; adapters depend on the
+public harness kit, and service helpers use public context methods. CLI commands translate arguments
+into plain-data plans/results and leave execution to framework-independent executors. See
 [architecture](docs/architecture.md) and [decisions](docs/decisions/README.md) before changing these
 boundaries.
 

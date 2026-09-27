@@ -44,7 +44,11 @@ export async function pinnedFork(provenance: ForkProvenance): Promise<RunRecord 
   if (provenance.reuseClosed) return undefined;
   try {
     const source = await readRun(provenance);
-    if (digest(source) === provenance.sourceDigest) return source;
+    if (
+      digest(source) === provenance.sourceDigest ||
+      priorHarnessDigest(source) === provenance.sourceDigest
+    )
+      return source;
     provenance.warning =
       'Fork source changed since this run began; remaining effects will execute live.';
   } catch {
@@ -86,4 +90,34 @@ export function reuseCandidate(
   }
   if (provenance.reuse === 'prefix') provenance.reuseClosed = true;
   return undefined;
+}
+
+/** Reconstruct only the preceding harness field representation for an existing fork's source pin. */
+function priorHarnessDigest(source: RunRecord): string {
+  const prior = structuredClone(source);
+  const summary = (request: StepRecord['request']): void => {
+    if (
+      !request ||
+      request.revision !== undefined ||
+      !['claude', 'codex'].includes(request.harness)
+    )
+      return;
+    Object.assign(request, { provider: request.harness });
+    Reflect.deleteProperty(request, 'harness');
+  };
+  for (const step of Object.values(prior.steps)) {
+    if (
+      step.kind === 'agent' &&
+      step.revision === 1 &&
+      (step.harness === 'claude' || step.harness === 'codex') &&
+      step.request?.revision === undefined
+    ) {
+      step.kind = step.harness;
+      delete step.harness;
+      delete step.revision;
+    }
+    summary(step.request);
+    for (const attempt of step.attemptHistory ?? []) summary(attempt.request);
+  }
+  return digest(prior);
 }

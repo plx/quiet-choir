@@ -54,6 +54,7 @@ export interface RunSummary {
     readonly id: string;
     readonly seq: number | null;
     readonly kind: StepRecord['kind'];
+    readonly meta: StepRecord['meta'] | null;
     readonly status: StepRecord['status'];
     readonly phase: string | null;
     readonly startedAt: string | null;
@@ -218,6 +219,7 @@ export function summarizeRun(
         id,
         seq: step.seq ?? null,
         kind: step.kind,
+        meta: step.meta ?? null,
         status: step.status,
         phase: step.phase ?? null,
         startedAt: step.startedAt ?? null,

@@ -166,7 +166,7 @@ describe('durable TypeScript workflows', () => {
     expect(result.output).toBe(42);
     expect(invoke).toHaveBeenCalledTimes(2);
     expect(invoke.mock.calls[0]?.[0]).toMatchObject({
-      provider: 'claude',
+      harness: 'claude',
       outputSchema: { type: 'object' },
     });
     expect(invoke.mock.calls[0]?.[0].options).not.toHaveProperty('schema');
@@ -248,7 +248,9 @@ describe('durable TypeScript workflows', () => {
     await expect(
       runWorkflow(definition, { ...options, resume: true, allowHarnessChange: true }),
     ).rejects.toThrow('pause');
-    expect((await readRun(options)).harness).toEqual({ kind: 'none', previousKinds: ['fixture'] });
+    // An adapter-less resume keeps the recorded kind (see ADR 0027), so the run never becomes a
+    // harness-less 'none' run that another harness could adopt without authorization.
+    expect((await readRun(options)).harness).toEqual({ kind: 'fixture', previousKinds: [] });
     pause = false;
     const cli = { kind: 'cli', invoke };
     await expect(

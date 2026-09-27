@@ -40,7 +40,7 @@ export class AttemptTranscript implements AgentTranscriptWriter {
     runDirectory: string,
     stepId: string,
     attempt: number,
-    provider: 'claude' | 'codex',
+    harness: string,
     cap = 64 * 1024 * 1024,
   ): Promise<AttemptTranscript> {
     if (!Number.isSafeInteger(cap) || cap < 128)
@@ -51,7 +51,7 @@ export class AttemptTranscript implements AgentTranscriptWriter {
     await privateDirectory(directory);
     await syncDirectory(runDirectory);
     await syncDirectory(parent);
-    const path = join(directory, `${String(attempt)}.${provider}.jsonl`);
+    const path = join(directory, `${String(attempt)}.${harness}.jsonl`);
     const file = await open(
       path,
       constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW,

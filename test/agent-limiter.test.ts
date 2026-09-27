@@ -396,14 +396,14 @@ it('starts the native call deadline after queueing and emits admission counts an
   const requested = events.find((event) => event.type === 'agent.queued');
   const admitted = events.find((event) => event.type === 'agent.admitted');
   expect(requested).toMatchObject({
-    provider: 'claude',
+    harness: 'claude',
     inFlight: { claude: 1 },
     queued: 1,
     waitedMs: 0,
     stepId: 'ask',
   });
   expect(admitted).toMatchObject({
-    provider: 'claude',
+    harness: 'claude',
     inFlight: { claude: 1 },
     queued: 0,
     stepId: 'ask',

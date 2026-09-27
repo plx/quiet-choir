@@ -136,7 +136,7 @@ it('cross-harness fan-in drains a slow sibling and resumes only the failed revie
     siblingStarted = resolve;
   });
   const harness = new Fake(async (request, { signal }) => {
-    if (request.provider === 'codex') {
+    if (request.harness === 'codex') {
       siblingStarted();
       await delay(20, undefined, { signal });
       return JSON.stringify({ approved: true, reason: 'slow saved review' });
@@ -148,8 +148,8 @@ it('cross-harness fan-in drains a slow sibling and resumes only the failed revie
   const input = {
     topic: 'typed workflows',
     reviewers: [
-      { id: 'fast', provider: 'claude' as const, lens: 'clarity' },
-      { id: 'slow', provider: 'codex' as const, lens: 'correctness' },
+      { id: 'fast', harness: 'claude' as const, lens: 'clarity' },
+      { id: 'slow', harness: 'codex' as const, lens: 'correctness' },
     ],
   };
   await expect(runWorkflow(cross, { ...options(), input, harness })).rejects.toThrow(
@@ -228,7 +228,7 @@ it('per-item pipeline resumes the failed stage and reuses sibling stages', async
 
 it('bounded review/revise returns exhaustion as data and replays without new reviews', async () => {
   const harness = new Fake((request) =>
-    request.provider === 'codex'
+    request.harness === 'codex'
       ? JSON.stringify({ approved: false, feedback: 'Please clarify.' })
       : 'revised draft',
   );

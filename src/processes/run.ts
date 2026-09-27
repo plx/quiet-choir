@@ -47,12 +47,19 @@ export interface ProcessRequest {
 
 /** Captured output and termination status for a bounded process. */
 export interface ProcessResult {
+  /** Leader exit code, or null when terminated by signal. */
   readonly code: number | null;
+  /** Observed terminating signal, or null for an ordinary exit. */
   readonly signal: NodeJS.Signals | null;
+  /** Bounded standard output; streaming mode sends bytes to callbacks instead. */
   readonly stdout: string;
+  /** Bounded standard error, including the retained tail in streaming mode. */
   readonly stderr: string;
+  /** Cleanup or inherited-pipe diagnostics that do not discard a valid result. */
   readonly warnings: readonly string[];
+  /** Whether capture or pipe draining omitted bytes. */
   readonly truncated: boolean;
+  /** Elapsed monotonic wall time for the owned invocation. */
   readonly durationMs: number;
 }
 

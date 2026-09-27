@@ -4,7 +4,7 @@ import { measurement, normalizeUsage, usageObject } from './usage.js';
 import type { AgentAttemptOutcome, UsageTotals, UsageSummary, TokenCounts } from './usage-model.js';
 
 interface Entry {
-  readonly provider: string;
+  readonly harness: string;
   readonly outcome: AgentAttemptOutcome;
   readonly usage: AgentUsage | null;
   readonly legacy: boolean;
@@ -42,17 +42,18 @@ function entries(run: RunRecord): { values: Entry[]; ambiguous: number } {
     const history = new Map(step.attemptHistory?.map((attempt) => [attempt.attempt, attempt]));
     for (let n = 1; n <= step.attempts; n++) {
       const attempt = history.get(n);
-      let provider: string | undefined;
-      if (attempt?.request) provider = attempt.request.provider;
+      let harness: string | undefined;
+      if (attempt?.request) harness = attempt.request.harness;
       else if (attempt?.request === undefined) {
         const kind = legacyAttemptKind(step, n);
-        // Possibly paid work of unknown provider: never charged, but reported as undercounting.
+        // Possibly paid work of unknown harness: never charged, but reported as undercounting.
         if (kind === undefined) ambiguous++;
-        else if (kind === 'claude' || kind === 'codex') provider = kind;
+        else if (kind === 'claude' || kind === 'codex') harness = kind;
+        else if (kind === 'agent') harness = step.harness;
       }
-      if (!provider) continue;
+      if (!harness) continue;
       values.push({
-        provider,
+        harness,
         outcome:
           attempt?.status ??
           (n === step.attempts && step.status === 'completed'
@@ -118,6 +119,21 @@ function totals(values: readonly Entry[]): UsageTotals {
  */
 export function summarizeUsage(run: RunRecord): UsageSummary {
   const { values: all, ambiguous } = entries(run);
+  const integrations = new Map<string, Entry[]>();
+  for (const step of Object.values(run.steps)) {
+    if (step.reusedFrom) continue;
+    for (const attempt of step.attemptHistory ?? []) {
+      if (!attempt.integration) continue;
+      const group = integrations.get(attempt.integration) ?? [];
+      group.push({
+        harness: attempt.integration,
+        outcome: attempt.status,
+        usage: attempt.usage ?? null,
+        legacy: false,
+      });
+      integrations.set(attempt.integration, group);
+    }
+  }
   const harnesses = new Map<string, Entry[]>();
   const models = new Map<string, Entry[]>();
   const add = (map: Map<string, Entry[]>, key: string, entry: Entry): void => {
@@ -126,7 +142,7 @@ export function summarizeUsage(run: RunRecord): UsageSummary {
     map.set(key, list);
   };
   for (const entry of all) {
-    add(harnesses, entry.provider, entry);
+    add(harnesses, entry.harness, entry);
     const perModel = Object.entries(entry.usage?.byModel ?? {});
     if (perModel.length) {
       for (const [name, usage] of perModel)
@@ -155,6 +171,10 @@ export function summarizeUsage(run: RunRecord): UsageSummary {
   ).length;
   return {
     ...totals(all),
+    integrationUsage: totals([...integrations.values()].flat()),
+    byIntegration: Object.fromEntries(
+      [...integrations].map(([name, group]) => [name, totals(group)]),
+    ),
     byHarness: Object.fromEntries([...harnesses].map(([name, group]) => [name, totals(group)])),
     byModel: Object.fromEntries([...models].map(([name, group]) => [name, totals(group)])),
     legacyAttempts,
@@ -168,7 +188,7 @@ export function summarizeUsage(run: RunRecord): UsageSummary {
         : []),
       ...(legacyTokenAttempts
         ? [
-            'Legacy token counts retain provider-specific semantics; they are not normalized session totals.',
+            'Legacy token counts retain harness-specific semantics; they are not normalized session totals.',
           ]
         : []),
       ...(models.has('(unknown)')

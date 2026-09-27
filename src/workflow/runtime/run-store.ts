@@ -35,7 +35,7 @@ export interface OwnedRunStore {
   transcript?(
     stepId: string,
     attempt: number,
-    provider: 'claude' | 'codex',
+    harness: string,
     maxBytes: number,
   ): Promise<AgentTranscriptWriter>;
   /** Read existing state under this writer's ownership; absence is undefined. */
@@ -186,7 +186,7 @@ class FileOwnedRun implements OwnedRunStore {
   public async transcript(
     stepId: string,
     attempt: number,
-    provider: 'claude' | 'codex',
+    harness: string,
     maxBytes: number,
   ): Promise<AgentTranscriptWriter> {
     if (this.#closed) throw new Error('Run storage is closed.');
@@ -197,7 +197,7 @@ class FileOwnedRun implements OwnedRunStore {
       runDirectory(this.stateDir, this.runId),
       stepId,
       attempt,
-      provider,
+      harness,
       maxBytes,
     );
   }

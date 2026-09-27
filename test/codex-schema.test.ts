@@ -82,7 +82,7 @@ it.each(schemaMatrix.filter((entry) => entry.rules.length > 0))(
     await expect(
       new CliHarness({ codexBinary: binary }).invoke(
         {
-          provider: 'codex',
+          harness: 'codex',
           cwd: process.cwd(),
           options: { prompt: 'fixture', structuredOutput: 'strict' },
           outputSchema: jsonSchema(schema),
@@ -273,7 +273,7 @@ it('preserves original validation and refuses tuples in compatibility mode befor
   await expect(
     new CliHarness({ codexBinary: binary }).invoke(
       {
-        provider: 'codex',
+        harness: 'codex',
         cwd: process.cwd(),
         options: { prompt: 'fixture' },
         outputSchema: jsonSchema(z.tuple([z.string()])),
@@ -422,7 +422,7 @@ it.each(['discriminated-union', 'array-root', 'string-root'])(
     await expect(
       new CliHarness({ claudeBinary: binary }).invoke(
         {
-          provider: 'claude',
+          harness: 'claude',
           cwd: process.cwd(),
           options: { prompt: 'fixture' },
           outputSchema: jsonSchema(entry.schema),
@@ -447,7 +447,7 @@ it.each(
   );
   const response = await new CliHarness({ claudeBinary: binary }).invoke(
     {
-      provider: 'claude',
+      harness: 'claude',
       cwd: process.cwd(),
       options: { prompt: 'fixture' },
       outputSchema: jsonSchema(schema),

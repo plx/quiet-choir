@@ -100,7 +100,9 @@ it.each(['claude', 'codex'] as const)(
     });
     for (const id of ['scope/one', 'scope/two']) {
       expect(live.steps[id]).toMatchObject({
-        kind: provider,
+        kind: 'agent',
+        harness: provider,
+        revision: 1,
         identity: before.steps[id]?.identity,
         fingerprint: before.steps[id]?.fingerprint,
         output: {

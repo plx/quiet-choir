@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import { digest, jsonValue } from './json.js';
 import { environmentSummary } from './agent-environment.js';
 import { resolveIsolation } from './agent-isolation.js';
-import type { JsonValue, HarnessRequestInput } from './model.js';
+import type { JsonValue, HarnessRequestInput, ClaudeOptions, CodexOptions } from './model.js';
 import type { AttemptPolicy } from './policy.js';
 import type { RunRecord } from './store.js';
 import type {
@@ -38,18 +38,22 @@ export function requestSummary(
   return {
     isolation: resolveIsolation(options).isolation,
     environment: environmentSummary(options.env),
-    provider: request.provider,
+    harness: request.harness,
+    revision: request.revision ?? 1,
     model: execution.requestedModel,
     profile: execution.profile ?? null,
     limits: {
       timeoutMs: execution.policy.timeoutMs ?? null,
-      maxTurns: request.provider === 'claude' ? (execution.policy.maxTurns ?? null) : null,
-      maxBudgetUsd: request.provider === 'claude' ? (execution.policy.maxBudgetUsd ?? null) : null,
-      sandbox: request.provider === 'codex' ? (request.options.sandbox ?? null) : null,
+      maxTurns: request.harness === 'claude' ? (execution.policy.maxTurns ?? null) : null,
+      maxBudgetUsd: request.harness === 'claude' ? (execution.policy.maxBudgetUsd ?? null) : null,
+      sandbox:
+        request.harness === 'codex' ? ((request.options as CodexOptions).sandbox ?? null) : null,
       killGraceMs: execution.policy.killGraceMs ?? null,
     },
     tools:
-      request.provider === 'claude' && request.options.tools ? [...request.options.tools] : null,
+      request.harness === 'claude' && (request.options as ClaudeOptions).tools
+        ? [...((request.options as ClaudeOptions).tools ?? [])]
+        : null,
     cwd: request.cwd,
     structured: request.outputSchema !== null,
     promptSha256: createHash('sha256').update(options.prompt).digest('hex'),

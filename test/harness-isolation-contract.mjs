@@ -111,7 +111,7 @@ async function execute(provider, name, options = {}, tool) {
       ? options({ cwd, outside, plugin, hookDefinition, serverFile })
       : options;
   const request = {
-    provider,
+    harness: provider,
     cwd,
     outputSchema: null,
     options: {
