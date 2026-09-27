@@ -95,6 +95,9 @@ export function createMap(dependencies: MapDependencies): WorkflowContext['map']
           throw validationError('Map concurrency must be a positive integer.');
         if (!Array.isArray(items) || typeof mapper !== 'function')
           throw validationError('Map requires an array and a mapper callback.');
+        const provided: unknown = settings;
+        if (provided === null || typeof provided !== 'object')
+          throw validationError('Map options must be an object when provided.');
         // Fix scheduling to the items present at call time; later caller edits cannot add work.
         let snapshot: readonly T[] = Array.from<T>(items);
         const policy = settings.onError ?? 'drain';

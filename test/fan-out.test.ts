@@ -615,6 +615,23 @@ it('rejects invalid or duplicate map identities before invoking affected mappers
   expect(mapper).not.toHaveBeenCalled();
 });
 
+it('rejects null nested map options as an authoring error instead of journaling it', async () => {
+  const mapper = vi.fn(() => Promise.resolve('value'));
+  await expect(
+    runWorkflow(
+      workflow((ctx) =>
+        ctx.map([0], 1, () => ctx.map([0], 1, mapper, null as never), {
+          onError: 'settle',
+          id: 'outer',
+        }),
+      ),
+      options(),
+    ),
+  ).rejects.toThrow('Map options must be an object when provided.');
+  expect(mapper).not.toHaveBeenCalled();
+  expect((await readRun(options())).maps?.['outer']?.items[0]?.status).toBe('running');
+});
+
 it('does not convert nested validation errors into saved fallback values', async () => {
   await expect(
     runWorkflow(
