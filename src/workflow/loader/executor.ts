@@ -1,4 +1,5 @@
 import { jsonValue } from '../runtime/json.js';
+import { inspectRun, listRuns, watchRun, type RunInspection } from './inspection.js';
 import { workflowFailure } from './failure.js';
 import { readRequiredRun } from '../runtime/read-required-run.js';
 import {
@@ -24,7 +25,7 @@ import type { Harness, WorkflowDefinition } from '../runtime/model.js';
 import { runWorkflow } from '../runtime/runner.js';
 import { resolveStateDir } from '../runtime/paths.js';
 import { CheckpointError } from '../runtime/checkpoint.js';
-import { readRun, inspectRunOwnership } from '../runtime/store.js';
+import { readRun } from '../runtime/store.js';
 import { TypeScriptExecutor } from '../typecheck/typescript-executor.js';
 import { fingerprintSources } from './source.js';
 import { canonicalCwd, compareResume, workflowSnapshot } from '../runtime/compatibility.js';
@@ -32,6 +33,8 @@ import type {
   ExecuteWorkflowPlan,
   CheckResumePlan,
   InspectWorkflowPlan,
+  WatchWorkflowPlan,
+  ListWorkflowsPlan,
   ValidateWorkflowPlan,
   WorkflowCommandResult,
 } from './model.js';
@@ -42,6 +45,7 @@ export interface WorkflowExecutorOptions {
   readonly harness?: Harness;
   readonly signal?: AbortSignal;
   readonly processSupervisor?: ProcessSupervisor;
+  readonly onInspection?: (value: RunInspection) => void;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -75,7 +79,12 @@ function workflowDefinition(module: unknown): WorkflowDefinition<unknown, unknow
 
 /** Type-check, import, and optionally run trusted workflow code behind a plain-data boundary. */
 export class WorkflowExecutor implements Executor<
-  ValidateWorkflowPlan | ExecuteWorkflowPlan | InspectWorkflowPlan | CheckResumePlan,
+  | ValidateWorkflowPlan
+  | ExecuteWorkflowPlan
+  | InspectWorkflowPlan
+  | CheckResumePlan
+  | WatchWorkflowPlan
+  | ListWorkflowsPlan,
   WorkflowCommandResult
 > {
   readonly #options: WorkflowExecutorOptions;
@@ -85,25 +94,46 @@ export class WorkflowExecutor implements Executor<
   }
 
   public async execute(
-    plan: ValidateWorkflowPlan | ExecuteWorkflowPlan | InspectWorkflowPlan | CheckResumePlan,
+    plan:
+      | ValidateWorkflowPlan
+      | ExecuteWorkflowPlan
+      | InspectWorkflowPlan
+      | CheckResumePlan
+      | WatchWorkflowPlan
+      | ListWorkflowsPlan,
   ): Promise<WorkflowCommandResult> {
     let unregister: (() => void) | undefined;
     let stage: CliErrorCode = 'load.typecheck';
     const context =
       'runId' in plan
         ? { runId: plan.runId, stateDir: resolveStateDir({ stateDir: plan.stateDir }) }
-        : { runId: null, stateDir: null };
+        : {
+            runId: null,
+            stateDir: 'stateDir' in plan ? resolveStateDir({ stateDir: plan.stateDir }) : null,
+          };
     try {
       if ('runId' in plan && !isValidRunId(plan.runId))
         return workflowFailure('usage.run_id', runIdMessage, context);
       if (plan.kind === 'workflow.execute' && plan.forkFrom && !isValidRunId(plan.forkFrom.runId))
         return workflowFailure('usage.run_id', runIdMessage, context);
-      if (plan.kind === 'workflow.inspect') {
+      if (plan.kind === 'workflow.list') {
+        stage = 'run.unreadable';
+        return { kind: 'workflow.list.result', ok: true, ...(await listRuns(plan)) };
+      }
+      if (plan.kind === 'workflow.inspect' || plan.kind === 'workflow.watch') {
+        stage = 'run.unreadable';
+        const inspection =
+          plan.kind === 'workflow.watch'
+            ? await watchRun(
+                plan,
+                this.#options.onInspection ?? (() => undefined),
+                this.#options.signal,
+              )
+            : await inspectRun(plan);
         return {
           kind: 'workflow.run.result',
           ok: true,
-          run: await readRequiredRun({ stateDir: plan.stateDir, runId: plan.runId }),
-          ownership: await inspectRunOwnership({ stateDir: plan.stateDir, runId: plan.runId }),
+          ...inspection,
         };
       }
       stage = 'usage.flag';
@@ -219,10 +249,13 @@ export class WorkflowExecutor implements Executor<
         ...(plan.acceptCodeChange === undefined ? {} : { acceptCodeChange: plan.acceptCodeChange }),
         ...(plan.strictReplay === undefined ? {} : { strictReplay: plan.strictReplay }),
         onEvent: (event) => {
-          this.#options.logger.log(
-            event.type === 'replay.divergence' ? 'warn' : 'debug',
+          const observational = event.type === 'phase' || event.type === 'log';
+          const detail =
             event.message ??
-              `${event.type} ${event.stepId} (attempt ${String(event.attempt)})${event.provider === undefined ? '' : ` provider=${event.provider} waitedMs=${String(event.waitedMs)} inFlight=${JSON.stringify(event.inFlight)} queued=${String(event.queued)}`}`,
+            `${event.stepId ?? ''} (attempt ${String(event.attempt)})${event.provider === undefined ? '' : ` provider=${event.provider} waitedMs=${String(event.waitedMs)} inFlight=${JSON.stringify(event.inFlight)} queued=${String(event.queued)}`}`;
+          this.#options.logger.log(
+            observational ? 'info' : event.type === 'replay.divergence' ? 'warn' : 'debug',
+            `${event.at} ${event.runId} ${event.type} ${detail}${event.data == null ? '' : ` ${JSON.stringify(event.data)}`}${event.replayed ? ' (replay)' : ''}`,
           );
         },
       });

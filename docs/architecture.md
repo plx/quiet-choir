@@ -86,6 +86,13 @@ before replacement work, and read-only inspection reports liveness separately fr
 CLI owns INT/TERM/HUP handling and injects a live ProcessSupervisor outside the plain-data plan. See
 [ADR 0013](decisions/0013-process-ownership.md) and [process lifecycle](process-lifecycle.md).
 
+Phases and logs persist outside effect identity, with scoped attribution in a separate context. The
+runtime owns their asynchronous saves and drains them before releasing the writer. Format 6 adds
+body-execution history, per-attempt measurements, and a bounded event payload list. Inspection,
+watch, and list project that record alongside ownership without source imports or lock acquisition.
+See [ADR 0015](decisions/0015-observe-runs-without-changing-effect-identity.md) and
+[run observability](observability.md).
+
 ## CLI execution boundary
 
 Commands follow the plan-execute pattern recorded in [ADR 0001](decisions/0001-plan-execute-cli.md):

@@ -77,7 +77,7 @@ it('forks the unchanged launch prefix, records differences/provenance, and never
     },
   );
   expect(calls).toEqual(['new review', 'write']);
-  expect(events[0]).toBe('step.reused');
+  expect(events.slice(0, 2)).toEqual(['run.started', 'step.reused']);
   expect(fork.steps['plan']?.reusedFrom).toMatchObject({ runId: 'source', stepId: 'plan' });
   expect(fork.steps['review']?.reusedFrom).toBeUndefined();
   expect(fork.forkedFrom).toMatchObject({
@@ -244,7 +244,7 @@ it('rejects an old format, different name, existing target, invalid flags, or in
     }),
   ).rejects.toThrow();
   expect(await readFile(path, 'utf8')).toBe(before);
-  for (const formatVersion of [2, 3, 4]) {
+  for (const formatVersion of [1, 2, 3, 4, 5]) {
     await writeFile(path, JSON.stringify({ ...(JSON.parse(before) as object), formatVersion }));
     const legacy = await readFile(path, 'utf8');
     expect((await readRun(options())).formatVersion).toBe(formatVersion);

@@ -131,9 +131,11 @@ per-group mapper fan-out, pipelining, and child composition for the legacy ports
 agent limit now independently caps native calls across these nested groups; configure it with
 `--max-agents` and `--provider-limit`. The bug-hunt port now uses runtime named maps and lexical
 contexts with explicit leaves, without `createPort`. Agent failures stop new map scheduling, drain
-started mappers without cancellation, and reject the run. Phases are metadata/stderr only. All 68
-per-call effort settings now use typed controls; the shared token ledger remains unavailable.
-Per-workflow notes describe these differences and source behaviors deliberately retained.
+started mappers without cancellation, and reject the run. Shared phase/log helpers now persist
+observations and echo replays through ctx.phase/ctx.log; inspect/list/watch expose saved progress.
+All 68 per-call effort settings use typed controls. Reported per-attempt usage is visible in
+dashboards; the original shared token-ledger API remains unavailable. Per-workflow notes describe
+these differences and source behaviors deliberately retained.
 
 An SDLC human checkpoint is returned data. To supply new answers, start a **new run ID** with that
 returned state and the answers as input. Use `--resume` only to retry an interrupted run with

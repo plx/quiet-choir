@@ -1,3 +1,5 @@
+import WorkflowList from '../src/commands/workflow/list.js';
+import { summarizeRun } from '../src/workflow/loader/inspection.js';
 import { workflowFailure } from '../src/workflow/loader/failure.js';
 import { capabilityManifest } from '../src/index.js';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
@@ -423,9 +425,16 @@ describe('workflow lifecycle command adapters', () => {
       const stateDir = await mkdtemp(join(tmpdir(), 'quiet-choir-cli-'));
       temporaryDirectories.push(stateDir);
       await writeFile(join(stateDir, 'test-run.json'), JSON.stringify(runRecord));
+      const ownership = { locked: false, owner: null, processes: [] };
       vi.spyOn(WorkflowExecutor.prototype, 'execute').mockImplementation(() => {
         process.emit('SIGINT');
-        return Promise.resolve({ kind: 'workflow.run.result', ok: true, run: runRecord });
+        return Promise.resolve({
+          kind: 'workflow.run.result',
+          ok: true,
+          run: runRecord,
+          ownership,
+          summary: summarizeRun(runRecord, ownership),
+        });
       });
       const output = await captureCommand(WorkflowInspect, [
         'test-run',
@@ -447,14 +456,18 @@ describe('workflow lifecycle command adapters', () => {
   );
 
   it.each([false, true])('inspects a run without a source file (JSON=%s)', async (json) => {
+    const run = {
+      ...runRecord,
+      harnesses: { codex: { binary: 'codex', version: '0.157.1' } },
+      harnessWarnings: ['native version changed'],
+    };
+    const ownership = { locked: false, owner: null, processes: [] };
     const execute = vi.spyOn(WorkflowExecutor.prototype, 'execute').mockResolvedValue({
       kind: 'workflow.run.result',
       ok: true,
-      run: {
-        ...runRecord,
-        harnesses: { codex: { binary: 'codex', version: '0.157.1' } },
-        harnessWarnings: ['native version changed'],
-      },
+      run,
+      ownership,
+      summary: summarizeRun(run, ownership),
     });
     const output = await captureCommand(WorkflowInspect, ['test-run', ...(json ? ['--json'] : [])]);
     expect(output.error).toBeUndefined();
@@ -471,6 +484,11 @@ describe('workflow lifecycle command adapters', () => {
       kind: 'workflow.run.result',
       ok: true,
       run: { ...runRecord, status: 'failed', error: 'Effect failed.' },
+      ownership: { locked: false, owner: null, processes: [] },
+      summary: summarizeRun(
+        { ...runRecord, status: 'failed', error: 'Effect failed.' },
+        { locked: false, owner: null, processes: [] },
+      ),
     });
     const failed = await captureCommand(WorkflowInspect, ['test-run']);
     expect(failed.stdout).toContain('Effect failed.');
@@ -612,5 +630,62 @@ describe('recovery command adapters', () => {
     expect((await captureCommand(WorkflowCheckResume, [file, '--run-id', 'r'])).stdout).toBe(
       'compatible',
     );
+  });
+});
+
+describe('monitoring command adapters', () => {
+  it.each([false, true])('lists and filters saved runs (JSON=%s)', async (json) => {
+    const summary = summarizeRun(runRecord, { locked: false, owner: null, processes: [] });
+    const execute = vi.spyOn(WorkflowExecutor.prototype, 'execute').mockResolvedValue({
+      kind: 'workflow.list.result',
+      ok: true,
+      stateDir: projectRoot,
+      runs: [summary],
+      warnings: ['Skipped corrupt checkpoint'],
+    });
+    const output = await captureCommand(WorkflowList, [
+      '--status',
+      'completed',
+      ...(json ? ['--json'] : []),
+    ]);
+    expect(output.error).toBeUndefined();
+    expect(output.stdout).toContain(
+      json ? '"kind":"workflow.list.result"' : 'test-run  test@1  completed',
+    );
+    expect(output.stderr).toContain('Skipped corrupt checkpoint');
+    expect(execute).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'workflow.list', status: 'completed' }),
+    );
+  });
+  it('renders compact summaries and returns the watched terminal status without an error document', async () => {
+    const ownership = { locked: false, owner: null, processes: [] };
+    const summary = summarizeRun({ ...runRecord, status: 'failed' }, ownership);
+    const execute = vi.spyOn(WorkflowExecutor.prototype, 'execute').mockResolvedValue({
+      kind: 'workflow.run.result',
+      ok: true,
+      run: runRecord,
+      ownership,
+      summary,
+    });
+    const output = await captureCommand(WorkflowInspect, ['test-run', '--json', '--summary']);
+    expect(output.stdout).toContain('"counts"');
+    expect(output.stdout).not.toContain('"output":42');
+    const previous = process.exitCode;
+    try {
+      const watched = await captureCommand(WorkflowInspect, [
+        'test-run',
+        '--watch',
+        '--interval',
+        '250ms',
+      ]);
+      expect(watched.error).toBeUndefined();
+      expect(watched.stdout).toBe('');
+      expect(process.exitCode).toBe(1);
+      expect(execute).toHaveBeenLastCalledWith(
+        expect.objectContaining({ kind: 'workflow.watch', intervalMs: 250 }),
+      );
+    } finally {
+      process.exitCode = previous;
+    }
   });
 });

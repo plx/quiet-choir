@@ -8,15 +8,21 @@ process's banner.
 
 Success documents retain their shapes: execute returns a run, inspect returns a run with current
 ownership diagnostics, validate returns workflow metadata, typecheck returns its compiler result,
-and check-resume returns a compatible comparison in `check`. Inspect exits 0 for any readable
-checkpoint status, including `failed`, `cancelled`, and `running`.
+and check-resume returns a compatible comparison in `check`. `inspect --json --summary` returns the
+compact dashboard, and `workflow list --json` returns `{kind, ok, stateDir, runs, warnings}`.
+`inspect --watch --json` emits JSONL per checkpoint/ownership change, ending with a snapshot and
+exit 0/1/130/3 for completed/failed/cancelled/stale. It does not add an error document for an
+observed failure. An interrupted watcher emits an error document and leaves the observed run
+untouched. See [run observability](observability.md) for polling, stale detection, and partial
+usage. Non-watching inspect exits 0 for any readable checkpoint status, including `failed`,
+`cancelled`, and `running`.
 
 Failures have these fields:
 
 | Field                         | Meaning                                                                                                                 |
 | ----------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
 | `kind`, `ok`, `exitCode`      | `"workflow.error"`, `false`, and the process exit code                                                                  |
-| `error.code`, `error.message` | Stable code and the unwrapped diagnostic                                                                                |
+| `error.code`, `error.message` | Stable code and diagnostic naming the root effect when available                                                        |
 | `error.stepId`                | Root failing effect, or null for a body failure or interruption; never an aborted sibling                               |
 | `error.details`               | Structured context: lock PID/host, schema issues, input source/position, compatibility comparison, or available run IDs |
 | `runId`, `stateDir`           | Requested/generated ID and absolute storage directory when known; otherwise null                                        |
@@ -76,10 +82,11 @@ offset. Omitting input retains `{}` for new runs and the saved/source input for 
 ## Embedding migration
 
 `runWorkflow` throws `WorkflowRunError` after saving a failed/cancelled run. Its `run` is the saved
-snapshot, `stepId` is the root effect, and `cause` is the prior rejection. Match application errors,
-`HarnessError`, or `FanOutError` through `cause`. If checkpoint problems were combined, that cause
-is the existing `AggregateError`, whose cause remains the original primary failure. An unsuccessful
-failure save leaves the existing checkpoint-error behavior intact and does not invent a saved run.
+snapshot, `runId` identifies it, `stepId` is the root effect, and `cause` is the prior rejection.
+Match application errors, `HarnessError`, or `FanOutError` through `cause`. If checkpoint problems
+were combined, that cause is the existing `AggregateError`, whose cause remains the original primary
+failure. An unsuccessful failure save leaves the existing checkpoint-error behavior intact and does
+not invent a saved run.
 
 `RunRefusedError` has a stable `run.*` code, run ID, plain details, and an optional underlying
 cause. `WorkflowInputError` has `usage.input_schema`, validation issues, and the validator cause.

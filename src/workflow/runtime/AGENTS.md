@@ -42,7 +42,7 @@ prefixes compose explicit leaves; never allocate IDs from completion-order count
 separate from cancellation ownership. Bound views preserve nested prefixes only inside their own
 binding, and never snapshot the current signal. Named-map keys are all validated before work starts;
 settled identity hashes original mapper source and resolved keys. Legacy unscoped IDs/fingerprints
-must remain compatible with format 5. See
+remain semantically compatible with format-5 identities; execution gates require format 6. See
 [ADR 0009](../../../docs/decisions/0009-scoped-step-ids.md).
 
 Agent admission is run-wide (or shared explicitly across runs). Only Harness.invoke holds a slot;
@@ -58,3 +58,10 @@ Inspect and recover recorded children before deleting a dead/released owner's lo
 unverified recovery identities or a known reused PID. Signal handlers remain a CLI/embedder concern;
 live supervision stays outside serializable plans. See
 [ADR 0013](../../../docs/decisions/0013-process-ownership.md).
+
+Phase/log observations have no durable IDs or fingerprint components. Own and drain their saves,
+including late callbacks, before releasing the writer. Keep scoped phase attribution separate from
+names/cancellation and capture it before asynchronous request preparation. Retain kth-occurrence
+replay counts after payload eviction; never claim a completion that failed to commit. Read-only
+stale status is derived from ownership, not written into a checkpoint. See
+[ADR 0015](../../../docs/decisions/0015-observe-runs-without-changing-effect-identity.md).

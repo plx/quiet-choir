@@ -66,7 +66,7 @@ export default defineWorkflow({name:'fallback-cli',version:'1',input:z.object({}
   const inspected = cli('inspect', 'recovery', '--state-dir', state, '--json');
   assert.equal(inspected.status, 0, inspected.stderr);
   const initial = JSON.parse(inspected.stdout);
-  assert.equal(initial.formatVersion, 5);
+  assert.equal(initial.formatVersion, 6);
   assert.equal(initial.steps.primary.status, 'settled-failed');
   assert.equal(initial.steps.primary.settledError.kind, 'turn-limit');
   assert.equal(initial.steps.primary.attemptHistory[0].errorKind, 'turn-limit');

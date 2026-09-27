@@ -228,7 +228,7 @@ it('does not start the body when its initial checkpoint cannot be saved', async 
   expect(store.writeRun).toHaveBeenCalledTimes(3);
 });
 
-it('rejects a failed final run checkpoint without reclassifying completed effects', async () => {
+it('rejects a failed final run checkpoint without reclassifying completed effects or claiming completion', async () => {
   vi.mocked(store.writeRun).mockImplementation((directory, record) =>
     record.status === 'completed'
       ? Promise.reject(ioError('EIO'))
@@ -249,6 +249,34 @@ it('rejects a failed final run checkpoint without reclassifying completed effect
     status: 'completed',
     error: null,
   });
+  const saved = await readRun(options());
+  expect(saved.events?.map((event) => event.type)).toEqual(['run.started', 'run.failed']);
+  expect(saved.executions?.[0]?.outcome).toBe('failed');
+});
+
+it('owns phase/log saves and preserves committed observations after a storage failure', async () => {
+  let failures = 0;
+  vi.mocked(store.writeRun).mockImplementation((directory, record) => {
+    if (record.events?.some((event) => event.type === 'log') && failures++ < 3) {
+      return Promise.reject(ioError('ENOSPC'));
+    }
+    return actualStore.writeRun(directory, record);
+  });
+  await expect(
+    runWorkflow(
+      workflow((ctx) => {
+        ctx.phase('local');
+        ctx.log('diagnostic');
+        return Promise.resolve('done');
+      }),
+      options(),
+    ),
+  ).rejects.toThrow('ENOSPC');
+  const saved = await readRun(options());
+  expect(saved.status).toBe('failed');
+  expect(saved.events?.some((event) => event.type === 'run.completed')).toBe(false);
+  expect(saved.events?.some((event) => event.message === 'diagnostic')).toBe(true);
+  expect(saved.executions?.[0]?.outcome).toBe('failed');
 });
 
 it.each(['EACCES', 'ENOENT'])(

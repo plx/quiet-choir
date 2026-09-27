@@ -162,7 +162,8 @@ export default defineWorkflow({name:'process-lifecycle-cli',version:'1',input:z.
   const checkpoint = readFileSync(join(state, 'killed.json'), 'utf8');
   const inspect = cli(['inspect', 'killed', '--state-dir', state]);
   assert.equal(inspect.status, 0, inspect.stderr);
-  assert.match(inspect.stdout, /dead: stale lock/);
+  assert.match(inspect.stdout, /^Run killed: stale /);
+  assert.match(inspect.stdout, /Owner: pid \d+ \(dead\)/);
   for (const { pid } of original)
     assert.match(inspect.stdout, new RegExp(`pid ${pid} .*step agents/`));
   const refused = cli([...argsFor('killed'), '--resume'], envFor('killed', 'finish'));

@@ -102,8 +102,10 @@ numbers, `.`, `_`, `:`, `/`, or `-`. Shorten nesting or labels when the full ID 
 Diagnostics name the bounded full ID, scope, leaf, bad character/index, and allowed pattern.
 
 The deprecated positional `ctx.map(items, concurrency, mapper, options?)` adds no item prefix and
-keeps existing IDs and format-5 checkpoints resumable. Adopting scopes/named maps changes IDs and
-requires a new run (or an explicit fork); accepting code changes does not rename saved effects.
+keeps existing IDs and semantic fingerprints unchanged. Format-5 records are inspectable but require
+the original runtime for resumption; the current execution epoch requires format 6. Adopting
+scopes/named maps changes IDs and requires a new run (or an explicit fork); accepting code changes
+does not rename saved effects.
 
 Await all workflow operations. The default map policy is `drain`: stop scheduling on first failure,
 let started mappers finish without sending an abort signal, then reject with `FanOutError`. Its

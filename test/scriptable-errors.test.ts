@@ -325,7 +325,8 @@ export default defineWorkflow({
       signal: controller.signal,
       logger: {
         log(_level, message) {
-          if (!message.startsWith('step.started wait')) return;
+          // Debug events are `<at> <runId> <type> <detail>`.
+          if (!message.includes(' step.started wait ')) return;
           // Every save after the interrupt, including the cancellation snapshot, fails.
           vi.mocked(store.writeRun).mockRejectedValue(
             Object.assign(new Error('injected ENOSPC'), { code: 'ENOSPC' }),

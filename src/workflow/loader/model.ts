@@ -1,4 +1,5 @@
 import type { WorkflowFailure } from './failure.js';
+import type { InspectionStatus, RunSummary } from './inspection.js';
 import type { AgentLimits } from '../runtime/agent-limiter.js';
 import type { RunOwnership } from '../runtime/store.js';
 import type { CapabilityManifest, ProfileOverride } from '../runtime/profiles-model.js';
@@ -54,10 +55,32 @@ export interface InspectWorkflowPlan extends ExecutionPlan {
   readonly stateDir: string;
 }
 
+/** Read-only monitoring, with live output supplied to the executor separately. */
+export interface WatchWorkflowPlan extends ExecutionPlan {
+  readonly kind: 'workflow.watch';
+  readonly runId: string;
+  readonly stateDir: string;
+  readonly intervalMs: number;
+}
+
+/** Enumerate checkpoints without loading workflow modules. */
+export interface ListWorkflowsPlan extends ExecutionPlan {
+  readonly kind: 'workflow.list';
+  readonly stateDir: string;
+  readonly status?: InspectionStatus;
+}
+
 /** The outcome of a workflow command, without live schemas or loaded modules. */
 export type WorkflowCommandResult = ExecutionResult &
   (
     | WorkflowFailure
+    | {
+        readonly kind: 'workflow.list.result';
+        readonly ok: true;
+        readonly stateDir: string;
+        readonly runs: readonly RunSummary[];
+        readonly warnings: readonly string[];
+      }
     | {
         readonly kind: 'workflow.validate.result';
         readonly ok: true;
@@ -80,5 +103,6 @@ export type WorkflowCommandResult = ExecutionResult &
         readonly ok: true;
         readonly run: WorkflowRun<JsonValue>;
         readonly ownership?: RunOwnership;
+        readonly summary?: RunSummary;
       }
   );

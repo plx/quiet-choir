@@ -101,8 +101,7 @@ export function createPort(ctx: WorkflowContext) {
     id,
     parallel,
     pipeline,
-    // These are stderr messages only; there is no native phase/progress model.
-    phase: (title: string) => console.error(`[phase] ${title}`),
-    log: (message: string) => console.error(message),
+    phase: (title: string) => ctx.phase(title),
+    log: (message: string) => ctx.log(message),
   };
 }

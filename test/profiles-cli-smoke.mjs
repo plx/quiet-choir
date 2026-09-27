@@ -66,7 +66,7 @@ async run(ctx){writeFileSync('body-started','yes');await ctx.claude.text('saved'
   const first = cli(...args, '--grant', 'fixer');
   assert.equal(first.status, 1, first.stderr);
   assert.match(first.stderr, /--resume[\s›]*--profile scout.maxTurns=60/);
-  assert.match(first.stderr, /turns=30; costUsd=0.31/);
+  assert.match(first.stderr, /turns=30;[\s›]*costUsd=0.31/);
   assert.deepEqual(checkpoint().steps.pending.warnings, [
     'Profile scout: 1 permission denials reported.',
   ]);

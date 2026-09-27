@@ -18,6 +18,7 @@ const expectedCommands = [
   'workflow:check-resume',
   'workflow:execute',
   'workflow:inspect',
+  'workflow:list',
   'workflow:typecheck',
   'workflow:validate',
 ];

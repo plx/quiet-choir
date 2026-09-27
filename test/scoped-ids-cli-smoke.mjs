@@ -58,7 +58,7 @@ export default defineWorkflow({name:'scoped-cli',version:'1',input:z.object({inv
       .sort(),
     ids.sort(),
   );
-  assert.equal(before.formatVersion, 5);
+  assert.equal(before.formatVersion, 6);
   const calls = readFileSync(join(fixture, 'calls.txt'), 'utf8');
   assert.equal(calls.trim().split('\n').length, 4);
   const resumed = cli('execute', file, '--run-id', 'scoped', '--state-dir', state, '--resume');
