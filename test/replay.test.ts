@@ -384,6 +384,26 @@ it('re-finalizes an output-validation failure with no repeated effects and recor
   expect(effect).toHaveBeenCalledTimes(1);
 });
 
+it('clears stale output before re-finalizing, so a failed re-finalization reports null output', async () => {
+  const definition = workflow(async () => 'done');
+  await runWorkflow(definition, options());
+  const before = await readRun(options());
+  expect(before.status).toBe('completed');
+  expect(before.output).toBe('done');
+  const broken = { ...definition, output: z.literal('other') };
+  await expect(
+    runWorkflow(broken, {
+      ...options(),
+      resume: true,
+      fingerprint: 'code-2',
+      acceptCodeChange: true,
+    }),
+  ).rejects.toThrow();
+  const after = await readRun(options());
+  expect(after.status).toBe('failed');
+  expect(after.output).toBeNull();
+});
+
 it('checks compatibility while a writer lock exists, itemizes changed files, and retains non-code gates', async () => {
   const run = vi.fn(() => Promise.resolve('done'));
   const definition = workflow(run);

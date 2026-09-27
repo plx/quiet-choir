@@ -742,6 +742,7 @@ export async function runWorkflow<TInput, TOutput>(
     };
     record.status = 'running';
     record.error = null;
+    record.output = null;
     await save();
     try {
       signal.throwIfAborted();
