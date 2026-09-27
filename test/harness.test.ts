@@ -342,7 +342,7 @@ describe('headless CLI adapter', () => {
     ["console.log('not JSON')", 'malformed JSON'],
     [
       `console.log(${JSON.stringify(JSON.stringify({ ...success, is_error: true }))}); process.exitCode = 1`,
-      'claude success: hello [exit code 1]',
+      'claude error: hello [exit code 1]',
     ],
   ])('rejects failed subprocesses and invalid protocols', async (script, expected) => {
     const { binary } = await fixture(script);

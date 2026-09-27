@@ -70,14 +70,18 @@ export class HarnessError extends Error {
     const reason =
       failure === null
         ? details.reason
-        : [
-            failure.subtype,
-            failure.terminalReason,
-            failure.apiStatus === null ? null : `HTTP ${String(failure.apiStatus)}`,
-            failure.reason,
-          ]
-            .filter(Boolean)
-            .join(': ');
+        : (() => {
+            // A `success` subtype paired with `is_error: true` is not a success; never label the
+            // message with it. Fall back to a generic "error" label when nothing else describes it.
+            const label = [
+              failure.subtype === 'success' ? null : failure.subtype,
+              failure.terminalReason,
+              failure.apiStatus === null ? null : `HTTP ${String(failure.apiStatus)}`,
+            ].filter(Boolean);
+            return [...(label.length > 0 ? label : ['error']), failure.reason]
+              .filter(Boolean)
+              .join(': ');
+          })();
     super(
       `${details.provider} ${reason} [exit ${exit}]${stderrTail ? `; stderr: ${stderrTail}` : ''}${stdoutTail ? `; stdout tail: ${stdoutTail}` : ''}`,
     );

@@ -101,6 +101,7 @@ describe('captured exit-1 failures', () => {
         if (capture.expected.apiStatus)
           expect(error.message).toContain(`HTTP ${String(capture.expected.apiStatus)}`);
         expect(error.failure?.reason).not.toMatch(/^Reconnecting/u);
+        if (capture.name === 'claude-auth.json') expect(error.message).not.toContain('success');
         expect(error.stderrTail).toBe(capture.stderr.trim());
         const saved = await readRun(directory, 'capture');
         expect(saved.steps['agent']?.error).toBe(error.message);
@@ -189,7 +190,7 @@ it.each([0, 1])('fails a protocol error on exit %s without quoting plain text', 
   );
   await expect(
     new CliHarness({ claudeBinary: binary }).invoke(request('claude'), signal),
-  ).rejects.toThrow(`claude success: auth expired [exit code ${String(code)}]`);
+  ).rejects.toThrow(`claude error: auth expired [exit code ${String(code)}]`);
 });
 
 it('retains usage when a success envelope is followed by a nonzero exit', async () => {
