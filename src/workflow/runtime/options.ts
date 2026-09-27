@@ -11,7 +11,7 @@ const shared = {
 };
 
 /** Validate explicit Claude options without supplying CliHarness defaults. */
-export const claudeOptionsSchema: z.ZodType = z.object({
+export const claudeOptionsSchema: z.ZodType = z.strictObject({
   ...shared,
   tools: z.array(z.string()).optional(),
   allowedTools: z.array(z.string()).optional(),
@@ -20,7 +20,7 @@ export const claudeOptionsSchema: z.ZodType = z.object({
 });
 
 /** Validate explicit Codex options without supplying CliHarness defaults. */
-export const codexOptionsSchema: z.ZodType = z.object({
+export const codexOptionsSchema: z.ZodType = z.strictObject({
   ...shared,
   sandbox: z.enum(['read-only', 'workspace-write']).optional(),
   reasoningEffort: z.enum(['minimal', 'low', 'medium', 'high']).optional(),
@@ -35,11 +35,14 @@ export function validateAgentOptions(provider: HarnessRequest['provider'], optio
   );
   if (!result.success) {
     const details = result.error.issues.map((issue) => {
+      const path = issue.path.map(String).join('.') || 'options';
+      if (issue.code === 'unrecognized_keys')
+        return `${path}: Unrecognized key(s) ${issue.keys.map((key) => JSON.stringify(key)).join(', ')}`;
       let value: unknown = options;
       for (const key of issue.path)
         value = value !== null && typeof value === 'object' ? Reflect.get(value, key) : undefined;
       const rendered = typeof value === 'string' ? JSON.stringify(value) : String(value);
-      return `${issue.path.map(String).join('.') || 'options'}: ${issue.message} (got ${rendered})`;
+      return `${path}: ${issue.message} (got ${rendered})`;
     });
     throw new Error(`Invalid ${provider} options: ${details.join('; ')}`);
   }

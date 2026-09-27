@@ -6,6 +6,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { afterEach, expect, it, vi } from 'vitest';
 
 import {
+  CliHarness,
   claudeOptionsSchema,
   codexOptionsSchema,
   defineWorkflow,
@@ -389,6 +390,43 @@ it.each([
   );
   expect((await readRun({ stateDir, runId: 'options' })).steps).toEqual({});
   expect(harness.invoke).not.toHaveBeenCalled();
+});
+
+it.each([
+  ['claude', { prompt: 'p', maxTurn: 5 }, 'maxTurn'],
+  ['codex', { prompt: 'p', reasoningEfort: 'high' }, 'reasoningEfort'],
+] as const)(
+  'rejects unknown %s option keys before recording an effect',
+  async (provider, options, key) => {
+    const stateDir = await directory();
+    const harness = fakeHarness();
+    const run = runWorkflow(
+      workflow(async (ctx) => {
+        await ctx[provider].text('ask', options);
+        return 'ok';
+      }),
+      { stateDir, runId: 'unknown-key', input: null, harness },
+    );
+    await expect(run).rejects.toThrow(`Step ask: Invalid ${provider} options:`);
+    await expect(run).rejects.toThrow(new RegExp(`Unrecognized key\\(s\\).*${key}`));
+    expect((await readRun({ stateDir, runId: 'unknown-key' })).steps).toEqual({});
+    expect(harness.invoke).not.toHaveBeenCalled();
+  },
+);
+
+it('rejects a CliHarness.invoke request with an unknown option key', async () => {
+  const controller = new AbortController();
+  await expect(
+    new CliHarness().invoke(
+      {
+        provider: 'claude',
+        cwd: process.cwd(),
+        outputSchema: null,
+        options: { prompt: 'p', maxTurn: 5 } as unknown as ClaudeOptions,
+      },
+      controller.signal,
+    ),
+  ).rejects.toThrow(/Unrecognized key\(s\).*maxTurn/);
 });
 
 it('resumes after correcting an invalid option without repeating earlier effects', async () => {
