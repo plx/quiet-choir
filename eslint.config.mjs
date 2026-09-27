@@ -6,7 +6,15 @@ import tseslint from 'typescript-eslint';
 
 export default defineConfig(
   {
-    ignores: ['.quiet-choir/**', '.context/**', 'coverage/**', 'dist/**', 'docs/api/**'],
+    // Comparison snapshots use their own migration tsconfig and fixture checks.
+    ignores: [
+      '.quiet-choir/**',
+      '.context/**',
+      'coverage/**',
+      'dist/**',
+      'docs/api/**',
+      'comparisons/batches/**',
+    ],
   },
   {
     linterOptions: {
@@ -43,6 +51,10 @@ export default defineConfig(
     languageOptions: {
       globals: globals.node,
     },
+  },
+  {
+    files: ['comparisons/site/*.js'],
+    languageOptions: { globals: globals.browser },
   },
   prettier,
 );
