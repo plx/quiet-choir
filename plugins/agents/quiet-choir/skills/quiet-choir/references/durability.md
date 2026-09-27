@@ -132,23 +132,24 @@ run gates without executing the supplied definition. `forkFrom` and `resume` are
 
 ## Settled map replay
 
-`ctx.map(items, concurrency, mapper, { onError: 'settle', id, version? })` journals each entire
-mapper outcome under an explicit run-unique ID. Completed items replay without invoking the mapper,
-claiming their owned step and nested-map IDs as visited. A child step can remain `failed` or
+`ctx.map(id, items, { concurrency, onError: 'settle', key?, version? }, mapper)` journals each
+entire mapper outcome under an explicit run-unique ID. Completed items replay without invoking the
+mapper, claiming their owned step and nested-map IDs as visited. A child step can remain `failed` or
 `cancelled` if its containing item saved a handled outcome; inspection retains that history, while
 resume returns the containing outcome. Running items retry. Cancellation, infrastructure failures,
 and authoring errors never become failed item values. Ignored child-operation failures prevent the
 item from committing.
 
-Map identity includes item inputs, mapper source, optional version, and cwd; it excludes
-concurrency. Changing identity after any item committed, duplicating a journal ID, or skipping a
-recorded terminal map fails replay; a skipped map also triggers the pre-live divergence check.
-Explicit code acceptance does not bypass these checks. Inputs/results must be lossless JSON, and
-captured dependencies belong in items or the explicit version. Items are snapshotted when `ctx.map`
-is called; settled mappers receive JSON copies of the fingerprinted snapshot, so later caller edits
-cannot change the processed items. Leaf IDs stay run-unique; a journal ID does not add a prefix.
-Forks start fresh map journals and apply their normal per-step reuse/invalidation rules, so
-mapper-body outcomes are re-evaluated in the new run.
+Named-map identity includes item inputs, resolved keys, original mapper source, optional version,
+and cwd; it excludes concurrency. Changing identity after any item committed, duplicating a journal
+ID, or skipping a recorded terminal map fails replay; a skipped map also triggers the pre-live
+divergence check. Explicit code acceptance does not bypass these checks. Inputs/results must be
+lossless JSON, and captured dependencies belong in items or the explicit version. Items are
+snapshotted when `ctx.map` is called; settled mappers receive JSON copies of the fingerprinted
+snapshot, so later caller edits cannot change the processed items. Full IDs stay run-unique; named
+maps prefix each item as `mapId/key/`. The deprecated positional form still uses an explicit
+`options.id` journal without adding an item prefix. Forks start fresh map journals and apply their
+normal per-step reuse/invalidation rules, so mapper-body outcomes are re-evaluated in the new run.
 
 ## At-least-once effects
 

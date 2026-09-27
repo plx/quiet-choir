@@ -18,6 +18,8 @@ export type {
   StepError,
   Settled,
   SettledMapOptions,
+  MapOptions,
+  SettledNamedMapOptions,
   EffectResult,
   AgentOptions,
   ClaudeOptions,
@@ -76,3 +78,5 @@ export type {
 
 export { CancelledError, FanOutError } from './workflow/runtime/fan-out.js';
 export type { FanOutFailure, MapStepError, RootCause } from './workflow/runtime/fan-out.js';
+
+export { stepId } from './workflow/runtime/identity.js';

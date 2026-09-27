@@ -213,6 +213,12 @@ export interface WorkflowContext {
   readonly runId: string;
   /** Current cancellation scope signal; nested maps inherit the run signal. */
   readonly signal: AbortSignal;
+  /** Pure stable segments from arbitrary text/numbers; identical to exported stepId. */
+  id(...parts: readonly (string | number)[]): string;
+  /** Prefix every effect launched in the callback; nested scopes compose without counters. */
+  scope<T>(prefix: string, run: () => Promise<T>): Promise<T>;
+  /** Bind a lexical prefix to a reusable context; descendants retain their nested scope prefixes. */
+  within(prefix: string): WorkflowContext;
   /** Claude-specific headless API. */
   readonly claude: AgentClient<ClaudeOptions>;
   /** Codex-specific headless API. */
@@ -229,11 +235,26 @@ export interface WorkflowContext {
   ): Promise<EffectResult<T, TMode>>;
   /** Checkpoint a wall-clock wake time so resuming waits only the remaining duration. */
   sleep(id: string, milliseconds: number): Promise<null>;
+  /** Scope each item as id/key (index by default); validate all keys before starting any mapper. */
+  map<T, U>(
+    id: string,
+    items: readonly T[],
+    options: MapOptions<T>,
+    mapper: (item: T, index: number) => Promise<U>,
+  ): Promise<U[]>;
+  /** Journal whole item outcomes under the named map ID, including mapper-body failures. */
+  map<T, U>(
+    id: string,
+    items: readonly T[],
+    options: SettledNamedMapOptions<T>,
+    mapper: (item: T, index: number) => Promise<U>,
+  ): Promise<Settled<U, MapStepError>[]>;
   /**
    * Bounded fan-out in input order. Default drain stops scheduling after failure and lets started
    * mappers finish without aborting them. Explicit abort cancels only this map's subtree. Both
    * reject with FanOutError after draining; an escaping failure is attributed in RunRecord.rootCause.
    * Supply unique effect IDs inside mappers.
+   * @deprecated Use the named map overload for per-item prefixes. This form keeps legacy IDs.
    */
   map<T, U>(
     items: readonly T[],
@@ -245,6 +266,7 @@ export interface WorkflowContext {
    * Journal every item outcome under an explicit map ID; replay skips settled mappers and their owned
    * effects. Inputs/results must be lossless JSON. Cancellation, infrastructure, and authoring errors
    * still reject. Failed outcomes include their originating step ID, or null for mapper-body errors.
+   * @deprecated Use the named settled map overload. This form keeps legacy IDs and journals.
    */
   map<T, U>(
     items: readonly T[],
@@ -338,5 +360,23 @@ export interface SettledMapOptions {
   /** Journal successes and failures for every item without cancelling siblings. */
   readonly onError: 'settle';
   /** Revision for captured values or helpers not visible in mapper source and items. */
+  readonly version?: string;
+}
+
+/** Scheduling and item identity for a named map. */
+export interface MapOptions<T> {
+  /** Maximum active mappers in this map; must be a positive integer. */
+  readonly concurrency: number;
+  /** Explicit stable item key; defaults to its index. Keys must be valid IDs and unique in this call. */
+  readonly key?: (item: T, index: number) => string;
+  /** Default drain lets started work finish; abort cancels only this subtree. */
+  readonly onError?: 'drain' | 'abort';
+}
+
+/** Named map with durable aggregate decisions. */
+export interface SettledNamedMapOptions<T> extends Omit<MapOptions<T>, 'onError'> {
+  /** Persist each entire mapper outcome; cancellation/infrastructure/authoring errors still reject. */
+  readonly onError: 'settle';
+  /** Revision for dependencies not represented by item data, keys, or mapper source. */
   readonly version?: string;
 }

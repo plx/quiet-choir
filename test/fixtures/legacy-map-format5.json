@@ -1,0 +1,136 @@
+{
+  "formatVersion": 5,
+  "id": "legacy-map",
+  "workflow": {
+    "name": "legacy-map-fixture",
+    "version": "1",
+    "fingerprint": "85a4473aa50c84da636342e9811fdd03b19ef5ecf598f2ffe5372ce43af4478f",
+    "identity": {
+      "code": "legacy-map-v5",
+      "files": {},
+      "inputSchema": "199490fad0bd9dd1925ebbce2ed02f949ef0396fcbabcd41baa5ffa3b1ea49b2",
+      "outputSchema": "a61e89a5e55333f42b675a8c2bbb323de9f669563ce9ccc7adf6401835bdd43e",
+      "engine": {
+        "version": "0.0.0",
+        "formatVersion": 5
+      }
+    }
+  },
+  "cwd": "/",
+  "input": null,
+  "output": null,
+  "status": "failed",
+  "error": "tail failed",
+  "steps": {
+    "legacy/0": {
+      "attemptHistory": [
+        {
+          "attempt": 1,
+          "error": null,
+          "fingerprint": "261ff24b012951072806f7ee4e2bb0f9fadf5896e189240b1422269e52a560db",
+          "finishedAt": "2026-09-26T21:44:32.923Z",
+          "policy": {
+            "retry": {
+              "delayMs": 100,
+              "maxAttempts": 1
+            }
+          },
+          "reasoningEffort": null,
+          "requestedModel": null,
+          "sources": {
+            "retry.delayMs": "runtime",
+            "retry.maxAttempts": "runtime"
+          },
+          "startedAt": "2026-09-26T21:44:32.911Z",
+          "status": "completed"
+        }
+      ],
+      "attempts": 1,
+      "error": null,
+      "fingerprint": "261ff24b012951072806f7ee4e2bb0f9fadf5896e189240b1422269e52a560db",
+      "identity": {
+        "cwd": "df7e940f72aa93cbcb6d70cc35124b0767c7a0e353043c7c24b660ea9be7b952",
+        "kind": "389432cbf83f3d1b64029a75864ec96f8fd06451b4c99d7b28385d395d480bfa",
+        "model": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+        "onError": "a8ae35eaddff8b9970e3075d77d711798ddfa511a5391581aef83e1a8ebbf64f",
+        "prompt": "c1ce306cfc501c4e4dac14f823072a5762c09644299b26e8f597279d17194069",
+        "reasoningEffort": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+        "schema": "367293222408ef1e376489f1e60e1e82c854eb185410f0f6ea1b22a6d72ca502"
+      },
+      "kind": "claude",
+      "output": {
+        "output": "item-0",
+        "sessionId": null,
+        "usage": {
+          "costUsd": null,
+          "inputTokens": null,
+          "outputTokens": null
+        }
+      },
+      "seq": 1,
+      "status": "completed",
+      "wakeAt": null
+    },
+    "legacy/1": {
+      "attemptHistory": [
+        {
+          "attempt": 1,
+          "error": null,
+          "fingerprint": "311d7b374e58e41cffc0c4e359348ebdd3688c280120909717c7ba312aed2e81",
+          "finishedAt": "2026-09-26T21:44:32.933Z",
+          "policy": {
+            "retry": {
+              "delayMs": 100,
+              "maxAttempts": 1
+            }
+          },
+          "reasoningEffort": null,
+          "requestedModel": null,
+          "sources": {
+            "retry.delayMs": "runtime",
+            "retry.maxAttempts": "runtime"
+          },
+          "startedAt": "2026-09-26T21:44:32.911Z",
+          "status": "completed"
+        }
+      ],
+      "attempts": 1,
+      "error": null,
+      "fingerprint": "311d7b374e58e41cffc0c4e359348ebdd3688c280120909717c7ba312aed2e81",
+      "identity": {
+        "cwd": "df7e940f72aa93cbcb6d70cc35124b0767c7a0e353043c7c24b660ea9be7b952",
+        "kind": "389432cbf83f3d1b64029a75864ec96f8fd06451b4c99d7b28385d395d480bfa",
+        "model": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+        "onError": "a8ae35eaddff8b9970e3075d77d711798ddfa511a5391581aef83e1a8ebbf64f",
+        "prompt": "6b9fab15cf3bab24bacf1e649163458a1bf2d32573bacd23e95a35bb8f93c2e4",
+        "reasoningEffort": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+        "schema": "367293222408ef1e376489f1e60e1e82c854eb185410f0f6ea1b22a6d72ca502"
+      },
+      "kind": "claude",
+      "output": {
+        "output": "item-1",
+        "sessionId": null,
+        "usage": {
+          "costUsd": null,
+          "inputTokens": null,
+          "outputTokens": null
+        }
+      },
+      "seq": 2,
+      "status": "completed",
+      "wakeAt": null
+    }
+  },
+  "rootCause": {
+    "stepId": null,
+    "error": "tail failed"
+  },
+  "maps": {},
+  "policy": [],
+  "allowModelOverride": false,
+  "policyWarnings": [],
+  "replayWarnings": [],
+  "recoveryHint": "All recorded work has terminal outcomes, including settled map items. Fix the workflow tail/output and use --resume --accept-code-change to re-finalize; unchanged identities reuse their results.",
+  "createdAt": "2026-09-26T21:44:32.896Z",
+  "updatedAt": "2026-09-26T21:44:32.954Z"
+}

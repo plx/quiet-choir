@@ -38,6 +38,9 @@ records; check `status`. A JSON inspection result has these useful fields:
 | `steps`                                   | Object keyed by durable step ID; absent IDs have not been recorded |
 | `output`                                  | Final workflow result; use only when the run is completed          |
 
+Checkpoint keys, events, and policy matches use the full scope/map/item/leaf ID. Local
+`idempotencyKey` is `runId/fullId`; ID helpers do not hide or truncate checkpoint keys.
+
 Each step records `kind` (`step`, `claude`, `codex`, `sleep`), `status`, total `attempts`,
 `fingerprint`, `output`, `error`, and `wakeAt` (epoch milliseconds for sleep, otherwise null). For
 completed agent steps, `output` is the full `{ output, sessionId, usage }` wrapper: the model's

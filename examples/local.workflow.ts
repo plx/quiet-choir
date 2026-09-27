@@ -3,15 +3,15 @@ import { defineWorkflow, z } from '../src/index.js';
 // Run with --input '{"failOnce":true}' to demonstrate failure followed by durable resume.
 export default defineWorkflow({
   name: 'local-demo',
-  version: '1',
+  version: '2',
   input: z.object({
     words: z.array(z.string()).max(20).default(['typed', 'durable', 'workflows']),
     failOnce: z.boolean().default(false),
   }),
   output: z.object({ words: z.array(z.string()), characters: z.number() }),
   async run(ctx, input) {
-    const words = await ctx.map(input.words, 2, (word, index) =>
-      ctx.step(`word/${String(index)}`, {
+    const words = await ctx.map('words', input.words, { concurrency: 2 }, (word) =>
+      ctx.step('uppercase', {
         input: word,
         schema: z.string(),
         run: () => word.toUpperCase(),

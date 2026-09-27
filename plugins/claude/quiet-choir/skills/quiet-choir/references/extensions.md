@@ -119,10 +119,12 @@ change. There is no runtime registry for arbitrary providers, storage backends, 
 
 ## Reuse workflow logic
 
-Ordinary async functions taking `WorkflowContext` and an ID prefix are the extension mechanism for
-multi-step helpers. Call them at the workflow level and derive stable child IDs from the prefix. Use
-`ctx.step` for individual local effects. Do not wrap a multi-step helper in another durable step,
-and do not run effects at module import time.
+Ordinary async functions taking `WorkflowContext` are the extension mechanism for multi-step
+helpers. Call them at the workflow level inside `ctx.scope('review', () => helper(ctx))`, or pass
+`ctx.within('review')` for a lexical context. Helpers use explicit leaves; nested scopes/named maps
+supply prefixes. Do not use a shared completion-order counter for IDs. Use `ctx.id(...)` for path or
+title segments and `ctx.step` for individual local effects. Do not wrap a multi-step helper in
+another durable step, and do not run effects at module import time.
 
 For source changes in a checkout, `src/index.ts` is the deliberate public boundary. The core owns
 replay, validation, retries, locks, and checkpoints and reaches adapters only through `Harness`;
