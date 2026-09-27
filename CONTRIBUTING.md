@@ -27,3 +27,19 @@ output, API documentation, and the packed module/type-resolution contract.
 Keep pull requests reviewable and explain observable behavior changes. CI must pass on every
 supported Node.js line. Update hand-written guides and API comments in the same change as the
 behavior they describe.
+
+## Harness protocol captures
+
+`test/fixtures/harness/` contains sanitized stdout/stderr and process exit codes captured with
+Claude Code 2.1.283 and codex-cli 0.157.1. The tests replay those bytes through fake executables; no
+credentials, network, or paid inference are needed. Exit 1 is the normal protocol-error path.
+
+To refresh captures, use an isolated CLI configuration and a local fake API: set
+`ANTHROPIC_BASE_URL` and `CLAUDE_CONFIG_DIR` for Claude, or a custom Responses API provider in an
+isolated `CODEX_HOME` for Codex. Fake responses can exercise authentication errors, tool loops that
+reach turn/budget limits, invalid structured output, rate limits, and dropped SSE connections.
+Unknown Claude models and invalid Codex effort values can also be captured as zero-inference
+validation probes. Explicitly capture stdout, stderr, exit code, and CLI version separately; do not
+assume stderr carries the error. Replace session/UUID/tool IDs and local paths before checking in
+captures, and review all bytes for credentials or private prompt content. Reported fake-API costs
+are CLI calculations over fixture token counts, not actual spending.

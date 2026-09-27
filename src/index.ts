@@ -5,6 +5,12 @@
  */
 export { z } from 'zod';
 export { defineWorkflow } from './workflow/runtime/model.js';
+export { HarnessError } from './workflow/runtime/harness-error.js';
+export type {
+  HarnessExit,
+  HarnessErrorDetails,
+  ProtocolFailure,
+} from './workflow/runtime/harness-error.js';
 export type {
   JsonValue,
   AgentOptions,
@@ -25,6 +31,6 @@ export type {
 export { runWorkflow } from './workflow/runtime/runner.js';
 export type { WorkflowEvent, WorkflowRun, RunOptions } from './workflow/runtime/runner.js';
 export { readRun } from './workflow/runtime/store.js';
-export type { RunRecord, StepRecord } from './workflow/runtime/store.js';
+export type { RunRecord, StepRecord, FailedAttempt } from './workflow/runtime/store.js';
 export { CliHarness } from './harnesses/cli.js';
 export type { CliHarnessOptions } from './harnesses/cli.js';

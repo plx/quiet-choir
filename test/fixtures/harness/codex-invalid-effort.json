@@ -1,0 +1,14 @@
+{
+  "provider": "codex",
+  "version": "0.157.1",
+  "code": 1,
+  "signal": null,
+  "structured": false,
+  "stdout": "{\"type\":\"thread.started\",\"thread_id\":\"00000000-0000-4000-8000-000000000000\"}\n{\"type\":\"turn.started\"}\n{\"type\":\"error\",\"message\":\"{\\n  \\\"type\\\": \\\"error\\\",\\n  \\\"error\\\": {\\n    \\\"type\\\": \\\"invalid_request_error\\\",\\n    \\\"code\\\": null,\\n    \\\"message\\\": \\\"[ReasoningEffortParam] [reasoning.effort] [invalid_enum_value] Invalid value: 'bogus'. Supported values are: 'none', 'minimal', 'low', 'medium', 'high', 'xhigh', and 'max'.\\\",\\n    \\\"param\\\": null\\n  },\\n  \\\"status\\\": 400\\n}\"}\n{\"type\":\"turn.failed\",\"error\":{\"message\":\"{\\n  \\\"type\\\": \\\"error\\\",\\n  \\\"error\\\": {\\n    \\\"type\\\": \\\"invalid_request_error\\\",\\n    \\\"code\\\": null,\\n    \\\"message\\\": \\\"[ReasoningEffortParam] [reasoning.effort] [invalid_enum_value] Invalid value: 'bogus'. Supported values are: 'none', 'minimal', 'low', 'medium', 'high', 'xhigh', and 'max'.\\\",\\n    \\\"param\\\": null\\n  },\\n  \\\"status\\\": 400\\n}\"}}\n",
+  "stderr": "",
+  "expected": {
+    "reason": "Invalid value: 'bogus'",
+    "terminalReason": null,
+    "apiStatus": 400
+  }
+}
