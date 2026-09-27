@@ -473,6 +473,7 @@ describe('headless CLI adapter', () => {
       { ...request('claude'), options: { prompt: '', timeoutMs: 0 } },
       { ...request('claude'), outputSchema: { type: 'array', items: { type: 'string' } } },
       { ...request('codex'), outputSchema: tuple },
+      { ...request('claude'), options: { prompt: '', tools: ['Read'], allowedTools: ['Bash'] } },
     ]) {
       await expect(harness.invoke(invalid, signal)).rejects.toBeInstanceOf(ConfigurationError);
     }
