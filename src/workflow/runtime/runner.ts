@@ -604,7 +604,9 @@ export async function runWorkflow<TInput, TOutput>(
           }
           const cancellation = signal.aborted || outcome.kind === 'cancelled';
           const fatal =
-            cancellation || error instanceof CheckpointError || error instanceof ConfigurationError;
+            cancellation ||
+            checkpointProblems.includes(error as CheckpointError) ||
+            error instanceof ConfigurationError;
           const retry =
             !fatal &&
             attempt < maxAttempts &&

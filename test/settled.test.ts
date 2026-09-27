@@ -6,6 +6,7 @@ import { afterEach, beforeEach, expect, expectTypeOf, it, vi } from 'vitest';
 
 import {
   defineWorkflow,
+  CheckpointError,
   CliHarness,
   HarnessError,
   readRun,
@@ -297,6 +298,46 @@ it('does not settle an AbortError even when the run signal was not aborted', asy
   );
   await expect(result).rejects.toThrow('cancelled');
   expect((await readRun(options())).steps['cancel']?.status).toBe('failed');
+});
+
+it('settles a domain error that reuses the CheckpointError class as its own outcome', async () => {
+  const local = vi.fn(() => {
+    throw new CheckpointError('save', 'domain', null);
+  });
+  const definition = workflow(async (ctx) => {
+    const result = await ctx.step('local', {
+      input: null,
+      schema: z.string(),
+      onError: 'return',
+      run: local,
+    });
+    return result.ok ? 'unexpected' : result.error.kind;
+  });
+  const result = await runWorkflow(definition, options());
+  expect(result.output).toBe('unknown');
+  expect(result.steps['local']?.status).toBe('settled-failed');
+  await runWorkflow(definition, { ...options(), resume: true });
+  expect(local).toHaveBeenCalledTimes(1);
+});
+
+it('retries a domain error that reuses the CheckpointError class instead of treating it as fatal', async () => {
+  const local = vi.fn(() => {
+    throw new CheckpointError('save', 'domain', null);
+  });
+  await expect(
+    runWorkflow(
+      workflow((ctx) =>
+        ctx.step('local', {
+          input: null,
+          schema: z.string(),
+          retry: { maxAttempts: 2, delayMs: 0 },
+          run: local,
+        }),
+      ),
+      options(),
+    ),
+  ).rejects.toThrow('domain');
+  expect(local).toHaveBeenCalledTimes(2);
 });
 
 it('keeps error mode in identity and preserves terminal failures during forks', async () => {
