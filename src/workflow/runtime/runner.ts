@@ -332,9 +332,9 @@ export async function runWorkflow<TInput, TOutput>(
               throw new Error(
                 `No harness adapter configured for ${provider}. Supply RunOptions.harness.`,
               );
+            delete step.warnings;
             const response = await options.harness.invoke(request, signal);
             if (response.warnings !== undefined) step.warnings = [...response.warnings];
-            else delete step.warnings;
             const raw: unknown = structured ? JSON.parse(response.text) : response.text;
             return {
               output: schema.parse(raw),

@@ -178,3 +178,53 @@ it('replays an agent checkpoint captured before warnings were supported', async 
   expect(result.steps['agent']?.attempts).toBe(1);
   expect(result.steps['agent']?.warnings).toBeUndefined();
 });
+
+it('clears stale warnings when a resumed attempt fails before the harness responds', async () => {
+  const stateDir = await directory();
+  const workflow = defineWorkflow({
+    name: 'stale-warnings',
+    version: '1',
+    input: z.null(),
+    output: z.object({ answer: z.number() }),
+    async run(ctx) {
+      return (
+        await ctx.codex.object('agent', {
+          prompt: 'fixture',
+          schema: z.object({ answer: z.number() }),
+        })
+      ).output;
+    },
+  });
+  const options = { runId: 'stale-warnings', stateDir, input: null };
+  await expect(
+    runWorkflow(workflow, {
+      ...options,
+      harness: {
+        invoke() {
+          return Promise.resolve({
+            text: 'not json',
+            sessionId: null,
+            usage: { inputTokens: null, outputTokens: null, costUsd: null },
+            warnings: ['w'],
+          });
+        },
+      },
+    }),
+  ).rejects.toThrow();
+  const checkpoint = await readRun(stateDir, 'stale-warnings');
+  expect(checkpoint.steps['agent']?.warnings).toEqual(['w']);
+
+  await expect(
+    runWorkflow(workflow, {
+      ...options,
+      resume: true,
+      harness: {
+        invoke() {
+          return Promise.reject(new Error('harness unavailable'));
+        },
+      },
+    }),
+  ).rejects.toThrow('harness unavailable');
+  const resumed = await readRun(stateDir, 'stale-warnings');
+  expect(resumed.steps['agent']?.warnings).toBeUndefined();
+});
