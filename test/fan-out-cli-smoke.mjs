@@ -76,6 +76,7 @@ async function interrupt(id, sleep) {
       if (Date.now() > deadline) throw new Error('CLI did not start its interrupt target');
       await delay(20);
     }
+    assert.equal(existsSync(join(state, `${id}.json.lock`)), true);
     child.kill('SIGINT');
     const result = await Promise.race([
       exited,
@@ -90,7 +91,7 @@ async function interrupt(id, sleep) {
     assert.deepEqual(record.rootCause, { stepId: null, error: 'Workflow interrupted.' });
     assert.equal(record.steps[sleep ? 'nap' : 'lint'].status, 'cancelled');
     assert.equal(record.steps[sleep ? 'nap' : 'lint'].cancelledBy, null);
-    assert.equal(existsSync(join(state, `${id}.lock`)), false);
+    assert.equal(existsSync(join(state, `${id}.json.lock`)), false);
   } finally {
     if (child.exitCode === null && child.signalCode === null) {
       child.kill('SIGTERM');
