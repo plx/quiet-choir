@@ -43,3 +43,18 @@ validation probes. Explicitly capture stdout, stderr, exit code, and CLI version
 assume stderr carries the error. Replace session/UUID/tool IDs and local paths before checking in
 captures, and review all bytes for credentials or private prompt content. Reported fake-API costs
 are CLI calculations over fixture token counts, not actual spending.
+
+The opt-in schema contract matrix uses the pinned Zod-generated fixtures in
+`test/fixtures/codex-schema-matrix.json`. Run `npm run build` first, then:
+
+```sh
+node test/harness-schema-contract.mjs --codex
+node test/harness-schema-contract.mjs --claude
+```
+
+These are excluded from `npm run check`. Codex uses an invalid reasoning effort to distinguish
+schema rejection from accepted schemas without inference. Claude uses Haiku, no built-in tools,
+isolated settings/MCP, three turns, and a $0.05 budget per shape; **it makes paid calls** and CLI
+budgets may overshoot by the final turn. Pass comma-separated case names as a second argument to
+retry selected cases. Set `QUIET_CHOIR_CONTRACT_REPORT` to save a JSON report. Authentication,
+transport, or budget failures are inconclusive and must not be recorded as schema rejections.

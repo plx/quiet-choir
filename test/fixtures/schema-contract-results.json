@@ -1,0 +1,547 @@
+{
+  "codex": {
+    "provider": "codex",
+    "version": "codex-cli 0.157.1",
+    "zodVersion": "4.5.4",
+    "date": "2026-09-26T18:34:53.985Z",
+    "cases": [
+      {
+        "name": "optional",
+        "mode": "strict",
+        "status": "schema-rejected",
+        "code": 1
+      },
+      {
+        "name": "optional",
+        "mode": "compat",
+        "status": "schema-accepted",
+        "code": 1
+      },
+      {
+        "name": "nested-optional",
+        "mode": "strict",
+        "status": "schema-rejected",
+        "code": 1
+      },
+      {
+        "name": "nested-optional",
+        "mode": "compat",
+        "status": "schema-accepted",
+        "code": 1
+      },
+      {
+        "name": "nullable-optional",
+        "mode": "strict",
+        "status": "schema-rejected",
+        "code": 1
+      },
+      {
+        "name": "nullable-optional",
+        "mode": "compat",
+        "status": "schema-accepted",
+        "code": 1
+      },
+      {
+        "name": "string-record",
+        "mode": "strict",
+        "status": "schema-rejected",
+        "code": 1
+      },
+      {
+        "name": "string-record",
+        "mode": "compat",
+        "status": "schema-accepted",
+        "code": 1
+      },
+      {
+        "name": "enum-record",
+        "mode": "strict",
+        "status": "schema-rejected",
+        "code": 1
+      },
+      {
+        "name": "enum-record",
+        "mode": "compat",
+        "status": "schema-accepted",
+        "code": 1
+      },
+      {
+        "name": "loose-object",
+        "mode": "strict",
+        "status": "schema-rejected",
+        "code": 1
+      },
+      {
+        "name": "loose-object",
+        "mode": "compat",
+        "status": "schema-accepted",
+        "code": 1
+      },
+      {
+        "name": "discriminated-union",
+        "mode": "strict",
+        "status": "schema-rejected",
+        "code": 1
+      },
+      {
+        "name": "discriminated-union",
+        "mode": "compat",
+        "status": "schema-accepted",
+        "code": 1
+      },
+      {
+        "name": "array-root",
+        "mode": "strict",
+        "status": "schema-rejected",
+        "code": 1
+      },
+      {
+        "name": "array-root",
+        "mode": "compat",
+        "status": "schema-accepted",
+        "code": 1
+      },
+      {
+        "name": "string-root",
+        "mode": "strict",
+        "status": "schema-rejected",
+        "code": 1
+      },
+      {
+        "name": "string-root",
+        "mode": "compat",
+        "status": "schema-accepted",
+        "code": 1
+      },
+      {
+        "name": "tuple",
+        "mode": "strict",
+        "status": "schema-rejected",
+        "code": 1
+      },
+      {
+        "name": "nullable",
+        "mode": "strict",
+        "status": "schema-accepted",
+        "code": 1
+      },
+      {
+        "name": "nullable",
+        "mode": "compat",
+        "status": "schema-accepted",
+        "code": 1
+      },
+      {
+        "name": "default",
+        "mode": "strict",
+        "status": "schema-accepted",
+        "code": 1
+      },
+      {
+        "name": "default",
+        "mode": "compat",
+        "status": "schema-accepted",
+        "code": 1
+      },
+      {
+        "name": "union",
+        "mode": "strict",
+        "status": "schema-accepted",
+        "code": 1
+      },
+      {
+        "name": "union",
+        "mode": "compat",
+        "status": "schema-accepted",
+        "code": 1
+      },
+      {
+        "name": "min-length",
+        "mode": "strict",
+        "status": "schema-accepted",
+        "code": 1
+      },
+      {
+        "name": "min-length",
+        "mode": "compat",
+        "status": "schema-accepted",
+        "code": 1
+      },
+      {
+        "name": "wrapped-array",
+        "mode": "strict",
+        "status": "schema-accepted",
+        "code": 1
+      },
+      {
+        "name": "wrapped-array",
+        "mode": "compat",
+        "status": "schema-accepted",
+        "code": 1
+      }
+    ]
+  },
+  "claude": {
+    "provider": "claude",
+    "version": "2.1.283 (Claude Code)",
+    "zodVersion": "4.5.4",
+    "date": "2026-09-26T18:31:57.850Z",
+    "cases": [
+      {
+        "name": "optional",
+        "status": "success",
+        "code": 0,
+        "usage": {
+          "inputTokens": 10,
+          "outputTokens": 190,
+          "costUsd": 0.01574
+        }
+      },
+      {
+        "name": "nested-optional",
+        "status": "success",
+        "code": 0,
+        "usage": {
+          "inputTokens": 10,
+          "outputTokens": 343,
+          "costUsd": 0.016559
+        }
+      },
+      {
+        "name": "nullable-optional",
+        "status": "success",
+        "code": 0,
+        "usage": {
+          "inputTokens": 10,
+          "outputTokens": 113,
+          "costUsd": 0.015331000000000001
+        }
+      },
+      {
+        "name": "string-record",
+        "status": "inconclusive",
+        "code": 1,
+        "reason": "Reached maximum number of turns (3)",
+        "usage": {
+          "inputTokens": 26,
+          "outputTokens": 932,
+          "costUsd": 0.0223225
+        }
+      },
+      {
+        "name": "enum-record",
+        "status": "success",
+        "code": 0,
+        "usage": {
+          "inputTokens": 10,
+          "outputTokens": 312,
+          "costUsd": 0.01637
+        }
+      },
+      {
+        "name": "loose-object",
+        "status": "success",
+        "code": 0,
+        "usage": {
+          "inputTokens": 10,
+          "outputTokens": 112,
+          "costUsd": 0.01533
+        }
+      },
+      {
+        "name": "discriminated-union",
+        "status": "schema-rejected",
+        "code": 1,
+        "reason": "API Error: 400 tools.0.custom.input_schema.type: Field required",
+        "usage": {
+          "inputTokens": 0,
+          "outputTokens": 0,
+          "costUsd": 0
+        }
+      },
+      {
+        "name": "array-root",
+        "status": "schema-rejected",
+        "code": 1,
+        "reason": "API Error: 400 tools.0.custom.input_schema.type: Input should be 'object'",
+        "usage": {
+          "inputTokens": 0,
+          "outputTokens": 0,
+          "costUsd": 0
+        }
+      },
+      {
+        "name": "string-root",
+        "status": "schema-rejected",
+        "code": 1,
+        "reason": "API Error: 400 tools.0.custom.input_schema.type: Input should be 'object'",
+        "usage": {
+          "inputTokens": 0,
+          "outputTokens": 0,
+          "costUsd": 0
+        }
+      },
+      {
+        "name": "tuple",
+        "status": "success",
+        "code": 0,
+        "usage": {
+          "inputTokens": 10,
+          "outputTokens": 142,
+          "costUsd": 0.015564
+        }
+      },
+      {
+        "name": "nullable",
+        "status": "success",
+        "code": 0,
+        "usage": {
+          "inputTokens": 10,
+          "outputTokens": 131,
+          "costUsd": 0.015433
+        }
+      },
+      {
+        "name": "default",
+        "status": "success",
+        "code": 0,
+        "usage": {
+          "inputTokens": 10,
+          "outputTokens": 211,
+          "costUsd": 0.015837
+        }
+      },
+      {
+        "name": "union",
+        "status": "success",
+        "code": 0,
+        "usage": {
+          "inputTokens": 10,
+          "outputTokens": 175,
+          "costUsd": 0.015781
+        }
+      },
+      {
+        "name": "min-length",
+        "status": "success",
+        "code": 0,
+        "usage": {
+          "inputTokens": 10,
+          "outputTokens": 392,
+          "costUsd": 0.016744000000000002
+        }
+      },
+      {
+        "name": "wrapped-array",
+        "status": "success",
+        "code": 0,
+        "usage": {
+          "inputTokens": 20,
+          "outputTokens": 659,
+          "costUsd": 0.019692200000000003
+        }
+      }
+    ],
+    "attempts": [
+      {
+        "name": "optional",
+        "status": "success",
+        "code": 0,
+        "usage": {
+          "inputTokens": 10,
+          "outputTokens": 190,
+          "costUsd": 0.01574
+        }
+      },
+      {
+        "name": "nested-optional",
+        "status": "success",
+        "code": 0,
+        "usage": {
+          "inputTokens": 10,
+          "outputTokens": 343,
+          "costUsd": 0.016559
+        }
+      },
+      {
+        "name": "nullable-optional",
+        "status": "success",
+        "code": 0,
+        "usage": {
+          "inputTokens": 10,
+          "outputTokens": 113,
+          "costUsd": 0.015331000000000001
+        }
+      },
+      {
+        "name": "string-record",
+        "status": "inconclusive",
+        "code": 1,
+        "reason": "Reached maximum budget ($0.02)",
+        "usage": {
+          "inputTokens": 10,
+          "outputTokens": 360,
+          "costUsd": 0.0227054
+        }
+      },
+      {
+        "name": "enum-record",
+        "status": "success",
+        "code": 0,
+        "usage": {
+          "inputTokens": 10,
+          "outputTokens": 312,
+          "costUsd": 0.01637
+        }
+      },
+      {
+        "name": "loose-object",
+        "status": "success",
+        "code": 0,
+        "usage": {
+          "inputTokens": 10,
+          "outputTokens": 112,
+          "costUsd": 0.01533
+        }
+      },
+      {
+        "name": "discriminated-union",
+        "status": "schema-rejected",
+        "code": 1,
+        "reason": "API Error: 400 tools.0.custom.input_schema.type: Field required",
+        "usage": {
+          "inputTokens": 0,
+          "outputTokens": 0,
+          "costUsd": 0
+        }
+      },
+      {
+        "name": "array-root",
+        "status": "schema-rejected",
+        "code": 1,
+        "reason": "API Error: 400 tools.0.custom.input_schema.type: Input should be 'object'",
+        "usage": {
+          "inputTokens": 0,
+          "outputTokens": 0,
+          "costUsd": 0
+        }
+      },
+      {
+        "name": "string-root",
+        "status": "schema-rejected",
+        "code": 1,
+        "reason": "API Error: 400 tools.0.custom.input_schema.type: Input should be 'object'",
+        "usage": {
+          "inputTokens": 0,
+          "outputTokens": 0,
+          "costUsd": 0
+        }
+      },
+      {
+        "name": "tuple",
+        "status": "success",
+        "code": 0,
+        "usage": {
+          "inputTokens": 10,
+          "outputTokens": 142,
+          "costUsd": 0.015564
+        }
+      },
+      {
+        "name": "nullable",
+        "status": "success",
+        "code": 0,
+        "usage": {
+          "inputTokens": 10,
+          "outputTokens": 131,
+          "costUsd": 0.015433
+        }
+      },
+      {
+        "name": "default",
+        "status": "success",
+        "code": 0,
+        "usage": {
+          "inputTokens": 10,
+          "outputTokens": 211,
+          "costUsd": 0.015837
+        }
+      },
+      {
+        "name": "union",
+        "status": "success",
+        "code": 0,
+        "usage": {
+          "inputTokens": 10,
+          "outputTokens": 175,
+          "costUsd": 0.015781
+        }
+      },
+      {
+        "name": "min-length",
+        "status": "inconclusive",
+        "code": 1,
+        "reason": "Reached maximum budget ($0.02)",
+        "usage": {
+          "inputTokens": 10,
+          "outputTokens": 386,
+          "costUsd": 0.0205287
+        }
+      },
+      {
+        "name": "wrapped-array",
+        "status": "inconclusive",
+        "code": 1,
+        "reason": "Reached maximum budget ($0.02)",
+        "usage": {
+          "inputTokens": 10,
+          "outputTokens": 487,
+          "costUsd": 0.0211812
+        }
+      },
+      {
+        "name": "string-record",
+        "status": "inconclusive",
+        "code": 1,
+        "reason": "Reached maximum number of turns (3)",
+        "usage": {
+          "inputTokens": 28,
+          "outputTokens": 1801,
+          "costUsd": 0.0280206
+        }
+      },
+      {
+        "name": "min-length",
+        "status": "success",
+        "code": 0,
+        "usage": {
+          "inputTokens": 10,
+          "outputTokens": 392,
+          "costUsd": 0.016744000000000002
+        }
+      },
+      {
+        "name": "wrapped-array",
+        "status": "success",
+        "code": 0,
+        "usage": {
+          "inputTokens": 20,
+          "outputTokens": 659,
+          "costUsd": 0.019692200000000003
+        }
+      },
+      {
+        "name": "string-record",
+        "status": "inconclusive",
+        "code": 1,
+        "reason": "Reached maximum number of turns (3)",
+        "usage": {
+          "inputTokens": 26,
+          "outputTokens": 932,
+          "costUsd": 0.0223225
+        }
+      }
+    ],
+    "reportedCostUsd": 0.2931396
+  }
+}

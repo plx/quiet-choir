@@ -137,6 +137,9 @@ describe('TypeScriptExecutor', () => {
     expect(result.diagnostics).toContainEqual(expect.objectContaining({ code: 2307 }));
   });
 
+  // Runs two full TypeScript programs sequentially (semantic.ts, then syntax.ts); on the slower
+  // Node 22.13 CI runner that pushed past the default 5000ms test timeout even though each
+  // individual compile is unremarkable, so this test gets a longer explicit timeout.
   it('normalizes semantic and syntax diagnostics with one-based locations', async () => {
     const root = await createFixture({
       'semantic.ts': "const count: number = 'wrong';\n",
@@ -163,7 +166,7 @@ describe('TypeScriptExecutor', () => {
         line: 1,
       }),
     );
-  });
+  }, 15000);
 
   it('preserves related diagnostic locations as plain data', async () => {
     const root = await createFixture({

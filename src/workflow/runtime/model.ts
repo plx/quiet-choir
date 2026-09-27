@@ -30,6 +30,8 @@ export interface ClaudeOptions extends AgentOptions {
 
 /** Codex-specific controls; sandbox defaults to read-only and approvals to never. */
 export interface CodexOptions extends AgentOptions {
+  /** Structured-output encoding; compat translates common Zod shapes, strict requires a native Codex schema. Defaults to compat. */
+  readonly structuredOutput?: 'strict' | 'compat';
   /** Filesystem sandbox for model-generated commands. */
   readonly sandbox?: 'read-only' | 'workspace-write';
   /** Harness reasoning effort. */

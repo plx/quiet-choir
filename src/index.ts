@@ -33,4 +33,6 @@ export type { WorkflowEvent, WorkflowRun, RunOptions } from './workflow/runtime/
 export { readRun } from './workflow/runtime/store.js';
 export type { RunRecord, StepRecord, FailedAttempt } from './workflow/runtime/store.js';
 export { CliHarness } from './harnesses/cli.js';
+export { checkCodexSchema } from './harnesses/codex-schema.js';
+export type { SchemaIssue } from './harnesses/codex-schema.js';
 export type { CliHarnessOptions } from './harnesses/cli.js';
