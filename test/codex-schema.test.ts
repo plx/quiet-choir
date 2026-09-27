@@ -166,6 +166,48 @@ it('keeps partial enum-record keys optional while full enum records stay require
   expect(() => fullPlan.decode('{"a":{"n":1},"b":null}')).toThrow();
 });
 
+it('rejects a union of a record and an array whose wire encodings collide, in either order', () => {
+  const record = z.record(z.string(), z.number());
+  const pairs = z.array(z.object({ key: z.string(), value: z.number() }));
+  for (const schema of [z.union([record, pairs]), z.union([pairs, record])]) {
+    expect(() => prepareCodexSchema(jsonSchema(schema), 'compat')).toThrow(
+      /Codex rejects this output schema \(structuredOutput: "compat"\):\n {2}\$ \(record-array-union\): .*wrap the variants in z\.object with a discriminator/u,
+    );
+  }
+  // Nested unions, $ref-shared branches, and any array alternative (all of which accept `[]`) collide too.
+  const nested = z.object({ data: z.union([z.string(), z.union([z.array(z.string()), record])]) });
+  expect(() => prepareCodexSchema(jsonSchema(nested), 'compat')).toThrow(
+    '$.data (record-array-union)',
+  );
+  const shared = {
+    type: 'object',
+    properties: { data: { anyOf: [{ $ref: '#/definitions/r' }, { $ref: '#/definitions/a' }] } },
+    required: ['data'],
+    additionalProperties: false,
+    definitions: {
+      r: { type: 'object', propertyNames: { type: 'string' }, additionalProperties: {} },
+      a: { type: 'array', items: {} },
+    },
+  };
+  expect(() => prepareCodexSchema(shared, 'compat')).toThrow('$.data (record-array-union)');
+});
+
+it('decodes a union of two records by first match on the shared entries encoding', () => {
+  const schema = z.object({
+    data: z.union([z.record(z.string(), z.number()), z.record(z.string(), z.string())]),
+  });
+  const plan = prepareCodexSchema(jsonSchema(schema), 'compat');
+  for (const [wire, data] of [
+    ['[{"key":"a","value":1}]', { a: 1 }],
+    ['[{"key":"a","value":"x"}]', { a: 'x' }],
+    ['[]', {}],
+  ] as const) {
+    const decoded: unknown = JSON.parse(plan.decode(`{"data":${wire}}`));
+    expect(decoded).toEqual({ data });
+    expect(schema.safeParse(decoded).success).toBe(true);
+  }
+});
+
 it('supports shared and recursive local schema references', () => {
   const schema = {
     type: 'object',

@@ -51,7 +51,8 @@ remove the file after the call. The default `structuredOutput: 'compat'` encodes
 - Arrays, primitives, and unions at the root are wrapped in `{ value }` and unwrapped afterward.
 - String-keyed records use arrays of `{ key, value }`; enum-keyed records (`z.record`) require every
   key, and enum-keyed partial records (`z.partialRecord`) send every key nullable and drop nulls on
-  decode.
+  decode. A union that mixes a string-keyed record with an array fails before launch because both
+  encode as arrays; wrap the variants in discriminated `z.object`s instead.
 - Discriminated unions use `anyOf`; loose objects are closed on the wire (no extra keys requested).
 - Tuples fail before launch in both modes; use a named object or a homogeneous array.
 

@@ -100,8 +100,8 @@ to the harness and validates the returned JSON locally. Codex defaults to
 wrapped, records use key/value entries (enum-keyed records require all keys), discriminated unions
 use `anyOf`, and loose objects are closed. The adapter reverses these encodings before the original
 Zod validation; nullable optionals retain null, while other optional nulls become absent properties.
-Unknown keys are not requested for loose objects. Tuples are rejected locally; use named object
-properties.
+Unknown keys are not requested for loose objects. Tuples, and unions mixing a string-keyed record
+with an array, are rejected locally; use named object properties or discriminated objects.
 
 Choose `structuredOutput: 'strict'` to send a native Codex schema: use an object root, make every
 property required (use `.nullable()` for missing values), and avoid records, loose objects,

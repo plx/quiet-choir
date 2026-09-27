@@ -180,6 +180,17 @@ function reject(issues: readonly SchemaIssue[], mode: 'strict' | 'compat'): void
   );
 }
 
+/** Whether compat sends this object schema as an array of `{ key, value }` entries. */
+function isEntriesRecord(node: Schema): boolean {
+  const names = object(node['propertyNames']);
+  return (
+    node['type'] === 'object' &&
+    names !== undefined &&
+    object(node['additionalProperties']) !== undefined &&
+    !Array.isArray(names['enum'])
+  );
+}
+
 /** Prepare a checked wire schema and its inverse compatibility transform. @internal */
 export function prepareCodexSchema(schema: JsonValue, mode: 'strict' | 'compat'): CodexSchemaPlan {
   if (mode === 'strict') {
@@ -207,7 +218,28 @@ export function prepareCodexSchema(schema: JsonValue, mode: 'strict' | 'compat')
     }
     return validator.safeParse(value).success;
   }
-  function compile(value: JsonValue): Plan {
+  // Wire shapes a union alternative can take that collide under the record encoding: a string-keyed
+  // record becomes an array of `{ key, value }` entries, which a genuine array alternative can
+  // also satisfy (at least `[]`), so first-match decoding would pick the wrong variant.
+  function arrayKinds(value: JsonValue, seen = new Set<Schema>()): Set<'record' | 'array'> {
+    const kinds = new Set<'record' | 'array'>();
+    const node = object(value);
+    if (!node || seen.has(node)) return kinds;
+    seen.add(node);
+    if (typeof node['$ref'] === 'string') return arrayKinds(resolveRef(schema, node['$ref']), seen);
+    const alternatives = node['oneOf'] ?? node['anyOf'];
+    if (Array.isArray(alternatives)) {
+      for (const alternative of alternatives)
+        for (const kind of arrayKinds(alternative, seen)) kinds.add(kind);
+    } else if (isEntriesRecord(node)) kinds.add('record');
+    else if (
+      node['type'] === 'array' ||
+      (Array.isArray(node['type']) && node['type'].includes('array'))
+    )
+      kinds.add('array');
+    return kinds;
+  }
+  function compile(value: JsonValue, path = '$'): Plan {
     const node = object(value);
     if (!node) {
       if (value === false)
@@ -226,7 +258,7 @@ export function prepareCodexSchema(schema: JsonValue, mode: 'strict' | 'compat')
       if (!id) {
         id = `schema${String(references.size)}`;
         references.set(target, id);
-        definitions[id] = compile(target).wire;
+        definitions[id] = compile(target, path).wire;
       }
       plan.wire['$ref'] = `#/definitions/${id}`;
       plan.decode = (value) => compile(target).decode(value);
@@ -238,7 +270,22 @@ export function prepareCodexSchema(schema: JsonValue, mode: 'strict' | 'compat')
     delete plan.wire['$schema'];
     const alternatives = node['oneOf'] ?? node['anyOf'];
     if (Array.isArray(alternatives)) {
-      const branches = alternatives.map(compile);
+      const kinds = arrayKinds(node);
+      if (kinds.has('record') && kinds.has('array'))
+        reject(
+          [
+            {
+              path,
+              rule: 'record-array-union',
+              fix: 'A record and an array in one union share the { key, value } array wire encoding, so the declared variant cannot be recovered; wrap the variants in z.object with a discriminator (e.g. { kind: "record", ... } | { kind: "list", ... }) or use a fixed shape.',
+            },
+          ],
+          'compat',
+        );
+      const key = node['oneOf'] === undefined ? 'anyOf' : 'oneOf';
+      const branches = alternatives.map((alternative, index) =>
+        compile(alternative, `${path}.${key}[${String(index)}]`),
+      );
       delete plan.wire['oneOf'];
       plan.wire['anyOf'] = branches.map((branch) => branch.wire);
       plan.decode = (value) => {
@@ -249,8 +296,8 @@ export function prepareCodexSchema(schema: JsonValue, mode: 'strict' | 'compat')
     } else if (node['type'] === 'object') {
       const names = object(node['propertyNames']);
       const extra = object(node['additionalProperties']);
-      if (names && extra && !Array.isArray(names['enum'])) {
-        const item = compile(extra);
+      if (extra && isEntriesRecord(node)) {
+        const item = compile(extra, `${path}.additionalProperties`);
         for (const key of Object.keys(plan.wire)) Reflect.deleteProperty(plan.wire, key);
         for (const key of ['title', 'description', '$comment']) {
           if (node[key] !== undefined) plan.wire[key] = node[key];
@@ -290,7 +337,7 @@ export function prepareCodexSchema(schema: JsonValue, mode: 'strict' | 'compat')
         const required = Array.isArray(node['required']) ? node['required'] : [];
         const children = Object.entries(properties).map(([key, child]) => ({
           key,
-          plan: compile(child),
+          plan: compile(child, propertyPath(path, key)),
           optional: !required.includes(key),
         }));
         plan.wire['properties'] = Object.fromEntries(
@@ -323,7 +370,7 @@ export function prepareCodexSchema(schema: JsonValue, mode: 'strict' | 'compat')
         };
       }
     } else if (node['type'] === 'array' && node['items'] !== undefined) {
-      const item = compile(node['items']);
+      const item = compile(node['items'], `${path}.items`);
       plan.wire['items'] = item.wire;
       plan.decode = (value) => {
         if (!Array.isArray(value)) throw new Error('Codex array output must be an array.');
