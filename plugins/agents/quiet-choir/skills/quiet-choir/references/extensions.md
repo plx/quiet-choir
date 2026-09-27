@@ -8,9 +8,18 @@ file for you. It resolves with a typed completed run record and throws on failur
 execution failures are saved before it throws; earlier loading/compatibility errors need not create
 or alter a run.
 
-Supply `runId` and input matching the schema. Unlike the CLI's default `{}`, omitted embedded input
-is undefined for a new run; on resume it uses the saved input. Optional dependencies are `harness`,
-`cwd`, `stateDir`, `signal`, `fingerprint`, and `onEvent`. Local-only workflows need no harness.
+Supply these execution options as needed:
+
+- `runId`: required; reuse it only with `resume: true`.
+- `input`: must match the schema; omit on resume to reuse saved input. New embedded runs receive
+  undefined when omitted, whereas the CLI defaults to `{}`.
+- `resume`: set true to continue; otherwise an existing run gives `Run X already exists`.
+- `cwd`: defaults to `process.cwd()` and must match the original run on resume.
+- `stateDir`: resolves against `cwd`, defaulting to `.quiet-choir/runs`; use an absolute path and
+  retain it for inspection/resume.
+- `harness`, `signal`, `fingerprint`, and `onEvent`: integration, cancellation, code compatibility,
+  and observer dependencies. Local-only workflows need no harness.
+
 `readRun({ runId, cwd, stateDir })` shares execution's path resolution and storage default;
 `resolveStateDir({ cwd, stateDir })` returns the absolute directory.
 
@@ -21,7 +30,14 @@ and JSON path; invalid options name the field and value. Correcting an option be
 recorded permits an embedded resume when the other compatibility checks still match. CLI source
 edits still change the code fingerprint.
 
+This complete embedding example uses a new temporary state directory each time, so it can run twice
+without colliding with its previous run:
+
 ```ts
+import { mkdtemp } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
 import { defineWorkflow, runWorkflow, z, type Harness } from 'quiet-choir';
 
 const workflow = defineWorkflow({
@@ -51,6 +67,7 @@ const fixtureHarness: Harness = {
 
 const run = await runWorkflow(workflow, {
   runId: 'adapter-example',
+  stateDir: await mkdtemp(join(tmpdir(), 'qc-example-')),
   input: {},
   harness: fixtureHarness,
   fingerprint: 'adapter-example-v1',
@@ -74,12 +91,13 @@ JSON value; the runtime parses it, validates it, and checkpoints the result.
 
 `CliHarness` owns the documented 120-second timeout, tool, turn, budget, and sandbox defaults. The
 core does not fill them in. Custom implementations must supply their own defaults and enforce
-deadlines as well as cancellation.
+deadlines and settle on abort; otherwise draining can hang while the run holds its lock.
 
 The adapter owns one fresh invocation, not retries, run locks, or checkpoint storage. Missing usage
-measurements and native IDs should be null. Do not treat a process's zero exit status as sufficient
-if its protocol reports failure. Exercise adapters with fake executables and protocol fixtures
-before making real calls.
+measurements and native IDs must be `null`, never `undefined`. An omitted usage field fails the step
+after the call returns. Do not treat a process's zero exit status as sufficient if its protocol
+reports failure. Exercise adapters with fake executables and protocol fixtures before making real
+calls.
 
 The provider union and `ctx.claude`/`ctx.codex` clients are currently fixed. A custom `Harness` can
 replace their transport/integration; adding `ctx.someOtherProvider` requires an explicit core API
@@ -92,10 +110,11 @@ multi-step helpers. Call them at the workflow level and derive stable child IDs 
 `ctx.step` for individual local effects. Do not wrap a multi-step helper in another durable step,
 and do not run effects at module import time.
 
-For source changes in a checkout, `src/index.ts` is the deliberate public boundary. Runtime policy
-lives behind the `Harness` contract; adapters depend on it, not the reverse. CLI executors consume
-plain-data plans/results outside oclif. The workflow compiler embeds TypeScript 6's stable API,
-while the repository build uses TypeScript 7; these are separate roles.
+For source changes in a checkout, `src/index.ts` is the deliberate public boundary. The core owns
+replay, validation, retries, locks, and checkpoints and reaches adapters only through `Harness`;
+adapters depend on that contract. CLI executors consume plain-data plans/results outside oclif. The
+workflow compiler embeds TypeScript 6's stable API, while the repository build uses TypeScript 7;
+these are separate roles.
 
 ## Agent plugins versus runtime extensions
 

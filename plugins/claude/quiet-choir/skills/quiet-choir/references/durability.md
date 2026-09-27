@@ -31,17 +31,23 @@ behavior. Bump the workflow version when such changes alter semantics, then star
 Embedded callers must supply their own `fingerprint` to add code-change detection. Do not edit
 checkpoints or relax fingerprints to force incompatible code through resume.
 
-Saved values must survive lossless JSON serialization. Completed results are revalidated on replay;
-plain JSON is also required for local-step dependencies. See [authoring](workflow-authoring.md) for
-schemas and data restrictions.
+The skipped-step check runs only after the body finishes. A divergent resume can perform and pay for
+remaining effects before failing at that check; later resumes still fail until the original
+compatible path is restored. Saved values must survive lossless JSON serialization. Completed
+results are revalidated on replay; plain JSON is also required for local-step dependencies. See
+[authoring](workflow-authoring.md) for schemas and data restrictions.
 
 ## At-least-once effects
 
-There is a crash window between external success and saving the result. Resuming can repeat the
-external action, including an agent call that already changed files. Use the local step callback's
-stable `idempotencyKey` with systems that support deduplication; it is not automatically sent to the
-Claude/Codex CLIs. Workspace edits and harness conversation state are not transactional. Do not
-assume that retrying an error is harmless or that a new run deduplicates an old run's work.
+Effects can succeed without being saved after a crash or hard kill. Cancellation by Ctrl-C, SIGTERM,
+a failing `ctx.map` sibling, or an uncaught failure can do this too: an action that finishes after
+cancellation is recorded `failed`, its result is discarded, and it repeats on resume. Agent calls
+stopped by cancellation or `timeoutMs` may already have edited files. A storage-triggered abort is
+different: the runner preserves successful results for a later save, as described below. Use the
+local step callback's stable `idempotencyKey` with systems that support deduplication; it is not
+automatically sent to the Claude/Codex CLIs. Workspace edits and harness conversation state are not
+transactional. Do not assume that retrying an error is harmless or that a new run deduplicates an
+old run's work.
 
 Local steps retry only when opted in; agent calls have no automatic retries. An explicit resume
 retries unfinished work. `ctx.sleep` saves a wall-clock deadline and waits only its remaining
@@ -56,18 +62,22 @@ duration after resume; it neither schedules background work nor wakes a stopped 
 3. Resume with the same ID and storage. If semantics need to change, start a new run and account for
    previous side effects instead of trying to migrate the checkpoint.
 
-The checkout includes a local failure/recovery demonstration:
+From the checkout root, the local failure/recovery demonstration uses a fresh absolute state path:
 
 ```sh
+qc_state_dir="$(mktemp -d)"
 npm run cli -- workflow execute examples/local.workflow.ts \
-  --run-id recovery --input '{"failOnce":true}'
+  --run-id recovery --state-dir "$qc_state_dir" --input '{"failOnce":true}'
 # Expected exit 1: the word steps succeeded, the summary failed.
-npm run cli -- workflow inspect recovery --json
-npm run cli -- workflow execute examples/local.workflow.ts --run-id recovery --resume
+npm run --silent cli -- workflow inspect recovery --state-dir "$qc_state_dir" --json
+npm run cli -- workflow execute examples/local.workflow.ts \
+  --run-id recovery --state-dir "$qc_state_dir" --resume
 ```
 
 Omit `--input` on resume to reuse the saved value. Repeat `--state-dir PATH` if the original run
-used alternate storage. Completed word steps replay; the summary executes on its next attempt.
+used alternate storage, and launch from the same directory. The CLI has no `--cwd` flag; npm
+launches from the checkout, as described in [setup](setup-and-cli.md). Completed word steps replay;
+the summary executes on its next attempt.
 
 ## Storage, ownership, and cancellation
 
@@ -82,11 +92,19 @@ data.
 
 Cancellation cooperatively aborts and drains active work before releasing the lock. Local callbacks
 must honor their signal or draining can hang. A mapper failure cancels the whole run and stops
-scheduling new items. Hard termination bypasses graceful cleanup and can leave children running.
+scheduling new items. One Ctrl-C or SIGTERM terminates harness processes, drains active work, and
+exits 130. A second Ctrl-C kills the runner mid-drain and can leave its lock and a `running` record.
+SIGKILL, SIGHUP (closed terminal or dropped SSH), or a crash can leave detached harness children
+running and editing. Before resuming, check `pgrep -fl 'claude --print|codex exec'` and identify any
+children belonging to the interrupted run. SIGHUP handling and stronger orphan cleanup are deferred
+to [#48](https://github.com/plx/quiet-choir/issues/48).
 
-Checkpoints use restrictive creation modes but contain plaintext input/output and error messages.
-Keep the state directory out of version control. There is no migration engine, distributed lease,
-background scheduler, approval inbox, durable event bus, or global spending ledger in this version.
+Checkpoints contain plaintext workflow input/output, every completed step's full validated result
+(including agent responses and files a local step read), and errors. Checkpoint files are created
+0600; state/lock directories are created 0700. These modes do not repair pre-existing directory
+permissions. `.quiet-choir/` is gitignored only in this repository; exclude your chosen state
+directory in other projects too. There is no migration engine, distributed lease, background
+scheduler, approval inbox, durable event bus, or global spending ledger in this version.
 
 ## When checkpointing fails
 
