@@ -153,20 +153,32 @@ export interface CodexSchemaPlan {
   readonly decode: (text: string) => string;
 }
 
-function reject(issues: readonly SchemaIssue[]): void {
-  if (issues.length)
-    throw new Error(
-      `Codex strict mode rejects this output schema:\n${issues.map((issue) => `  ${issue.path} (${issue.rule}): ${issue.fix}`).join('\n')}`,
-    );
+function reject(issues: readonly SchemaIssue[], mode: 'strict' | 'compat'): void {
+  if (!issues.length) return;
+  // In compat mode, `structuredOutput: "compat"` is already in effect, so hints that suggest
+  // switching to it are misleading; strip them and keep the rest of each fix.
+  const fixes =
+    mode === 'compat'
+      ? issues.map((issue) => ({
+          ...issue,
+          fix: issue.fix.replace(/,?\s*or use structuredOutput: "compat"[^.]*\./u, '.'),
+        }))
+      : issues;
+  throw new Error(
+    `Codex rejects this output schema (structuredOutput: "${mode}"):\n${fixes.map((issue) => `  ${issue.path} (${issue.rule}): ${issue.fix}`).join('\n')}`,
+  );
 }
 
 /** Prepare a checked wire schema and its inverse compatibility transform. @internal */
 export function prepareCodexSchema(schema: JsonValue, mode: 'strict' | 'compat'): CodexSchemaPlan {
   if (mode === 'strict') {
-    reject(checkCodexSchema(schema));
+    reject(checkCodexSchema(schema), 'strict');
     return { schema, decode: (text) => text };
   }
-  reject(checkCodexSchema(schema).filter((issue) => issue.rule === 'tuple'));
+  reject(
+    checkCodexSchema(schema).filter((issue) => issue.rule === 'tuple'),
+    'compat',
+  );
   const definitions: Schema = {};
   const references = new Map<Schema, string>();
   const plans = new Map<Schema, Plan>();
@@ -324,7 +336,7 @@ export function prepareCodexSchema(schema: JsonValue, mode: 'strict' | 'compat')
       }
     : { ...root.wire };
   if (Object.keys(definitions).length > 0) wire['definitions'] = definitions;
-  reject(checkCodexSchema(wire));
+  reject(checkCodexSchema(wire), 'compat');
   return {
     schema: wire,
     decode(text) {

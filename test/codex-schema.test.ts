@@ -88,7 +88,7 @@ it.each(schemaMatrix.filter((entry) => entry.rules.length > 0))(
         },
         new AbortController().signal,
       ),
-    ).rejects.toThrow('Codex strict mode rejects this output schema:');
+    ).rejects.toThrow('Codex rejects this output schema (structuredOutput: "strict"):');
     await expect(stat(marker)).rejects.toMatchObject({ code: 'ENOENT' });
   },
 );
@@ -279,6 +279,39 @@ it('rejects boolean root schemas instead of skipping the root check', () => {
     required: ['value'],
     additionalProperties: false,
   });
+});
+
+it('labels rejections with the active structuredOutput mode and drops compat-only hints', () => {
+  const tupleSchema = jsonSchema(z.tuple([z.string()]));
+  expect(() => prepareCodexSchema(tupleSchema, 'strict')).toThrow(
+    'Codex rejects this output schema (structuredOutput: "strict"):',
+  );
+  expect(() => prepareCodexSchema(tupleSchema, 'compat')).toThrow(
+    'Codex rejects this output schema (structuredOutput: "compat"):',
+  );
+  // A type array like `["object", "null"]` still bypasses compat's object transform (tracked
+  // separately), so its optional property survives to the final wire check. That makes it a
+  // convenient way to exercise a non-tuple rejection surfacing from compat mode.
+  const nullableObjectSchema = {
+    type: 'object',
+    properties: {
+      nested: { type: ['object', 'null'], properties: { name: { type: 'string' } } },
+    },
+    required: ['nested'],
+    additionalProperties: false,
+  };
+  let message = '';
+  try {
+    prepareCodexSchema(nullableObjectSchema, 'compat');
+    expect.fail('expected prepareCodexSchema to throw');
+  } catch (error) {
+    message = (error as Error).message;
+  }
+  expect(message).toContain('Codex rejects this output schema (structuredOutput: "compat"):');
+  expect(message).toContain(
+    '$.nested.name (optional): Make this property required and .nullable().',
+  );
+  expect(message).not.toContain('or use structuredOutput');
 });
 
 it.each(['discriminated-union', 'array-root', 'string-root'])(
