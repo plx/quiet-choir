@@ -1,7 +1,7 @@
 // Direct port of hesreallyhim/ultracode-workflows; MIT, see ../LICENSE.
 // Source snapshot: 9b5404d11b885b28380d3eb17471ef7b17601b5e.
 import { defineWorkflow, z, type WorkflowContext } from 'quiet-choir';
-import { createPort, executionInput, normalize } from './support.js';
+import { callOptions, createPort, executionInput, normalize } from './support.js';
 
 export const meta = {
   name: 'deep-code-review',
@@ -114,7 +114,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
 
     const scope = await ctx.claude
       .object(port.id('agent-1', 'scope'), {
-        ...args.$claude,
+        ...callOptions(args.$claude),
         prompt: `You are scoping a code review. Target: ${target}.
    Resolve this to a concrete git diff, read it, and report: the exact diff command,
    the list of changed files, a 2-4 sentence summary of what the change does, and
@@ -145,7 +145,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
 
     const wanted =
       args && args.dimensions
-        ? ALL_DIMENSIONS.filter((d) => args.dimensions.includes(d.key))
+        ? ALL_DIMENSIONS.filter((d) => args.dimensions?.includes(d.key))
         : ALL_DIMENSIONS;
 
     const reviews = await port.parallel(
@@ -154,7 +154,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
         (dim) => () =>
           ctx.claude
             .object(port.id('agent-2', `review:${dim.key}`), {
-              ...args.$claude,
+              ...callOptions(args.$claude),
               prompt: `You are the ${dim.key} reviewer for a code change.
      Reproduce the diff with: ${scope.diffCommand}
      Change summary: ${scope.summary}
@@ -176,7 +176,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
     // this mechanical. Same file within ~5 lines = same underlying issue; keep the
     // higher-severity copy.
     const SEV_RANK = { critical: 0, high: 1, medium: 2, low: 3 };
-    const byKey = new Map();
+    const byKey = new Map<string, z.infer<typeof FINDINGS_SCHEMA>['findings'][number]>();
     for (const review of reviews.filter(Boolean)) {
       for (const f of review.findings) {
         const key = `${f.file}:${Math.floor((f.line || 0) / 5)}`;
@@ -213,7 +213,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
         (f) => () =>
           ctx.claude
             .object(port.id('agent-3', `verify:${f.file.split('/').pop()}`), {
-              ...args.$claude,
+              ...callOptions(args.$claude),
               prompt: `A code reviewer claims this defect exists. Your job is to REFUTE it.
 
      Claim: ${f.title} (${f.severity})
@@ -255,7 +255,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
         ? `Reviewed ${scope.files.length} files across ${wanted.length} dimensions. ${deduped.length} candidate findings were all refuted under adversarial verification.`
         : await ctx.claude
             .text(port.id('agent-4', 'report'), {
-              ...args.$claude,
+              ...callOptions(args.$claude),
               prompt: `Write a code-review report in markdown for this change: ${scope.summary}
        Confirmed findings (already adversarially verified — do not re-litigate):
        ${JSON.stringify(survivors, null, 2)}

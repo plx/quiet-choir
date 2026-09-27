@@ -1,7 +1,7 @@
 // Direct port of hesreallyhim/ultracode-workflows; MIT, see ../LICENSE.
 // Source snapshot: 9b5404d11b885b28380d3eb17471ef7b17601b5e.
 import { defineWorkflow, z, type WorkflowContext } from 'quiet-choir';
-import { createPort, executionInput, normalize } from './support.js';
+import { callOptions, createPort, executionInput, normalize } from './support.js';
 
 export const meta = {
   name: 'feedback-synthesis',
@@ -118,7 +118,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
 
     const manifest = await ctx.claude
       .object(port.id('agent-1', 'inventory'), {
-        ...args.$claude,
+        ...callOptions(args.$claude),
         prompt: `Inventory this feedback corpus: ${args.source}
    ${focus ? `Focus filter (count only matching items): ${focus}` : ''}
    Locate the data, count the items, describe the per-item format, and partition
@@ -151,7 +151,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
 
     const vocab = await ctx.claude
       .object(port.id('agent-2', 'calibrate'), {
-        ...args.$claude,
+        ...callOptions(args.$claude),
         prompt: `Build the theme vocabulary for tagging this feedback corpus.
    Corpus: ${args.source} (${manifest.totalItems} items; format: ${manifest.format})
    ${focus ? `Focus: ${focus}` : ''}
@@ -180,7 +180,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
           (shard, i) => () =>
             ctx.claude
               .object(port.id('agent-3', `tag:shard${i + 1}`), {
-                ...args.$claude,
+                ...callOptions(args.$claude),
                 prompt: `Tag every feedback item in your shard against a FIXED theme vocabulary.
      Shard: ${shard.ref} (~${shard.approxItems} items; format: ${manifest.format})
      ${focus ? `Skip items not matching: ${focus} (do not count skipped as read)` : ''}
@@ -242,7 +242,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
           (t) => () =>
             ctx.claude
               .object(port.id('agent-4', `dive:${t.theme}`), {
-                ...args.$claude,
+                ...callOptions(args.$claude),
                 prompt: `Deep-dive the feedback theme "${t.theme}" (${t.definition}).
      Corpus: ${args.source}. This theme drew ${t.count} items (${t.severe} severe).
      Starter quotes from taggers: ${JSON.stringify(t.quotes.slice(0, 8))}
@@ -260,7 +260,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
 
     const report = await ctx.claude
       .text(port.id('agent-5', 'report'), {
-        ...args.$claude,
+        ...callOptions(args.$claude),
         prompt: `Write the feedback-synthesis report in markdown.
    Coverage: ${coverage}${focus ? ` (focus: ${focus})` : ''}
    Full ranking (severity-weighted): ${JSON.stringify(

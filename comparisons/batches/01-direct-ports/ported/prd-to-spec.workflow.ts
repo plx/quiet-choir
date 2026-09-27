@@ -1,7 +1,7 @@
 // Direct port of hesreallyhim/ultracode-workflows; MIT, see ../LICENSE.
 // Source snapshot: 9b5404d11b885b28380d3eb17471ef7b17601b5e.
 import { defineWorkflow, z, type WorkflowContext } from 'quiet-choir';
-import { createPort, executionInput, normalize } from './support.js';
+import { callOptions, createPort, executionInput, normalize } from './support.js';
 import { runChild } from './children.js';
 import design_tournament from './design-tournament.workflow.js';
 
@@ -110,7 +110,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
       ? null
       : await ctx.claude
           .object(port.id('agent-1', 'ground'), {
-            ...args.$claude,
+            ...callOptions(args.$claude),
             prompt: `Ground an upcoming technical spec in reality. Codebase: ${args.codebase || 'the current repository'}.
    Read ${prdRef} for what is being planned, then map: the existing architecture
    (one paragraph), the conventions new code must respect, the integration
@@ -166,7 +166,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
           (l) => () =>
             ctx.claude
               .object(port.id('agent-2', `lens:${l.key}`), {
-                ...args.$claude,
+                ...callOptions(args.$claude),
                 prompt: `Draft your slice of a technical spec.
      Read ${prdRef}
      ${groundCtx}
@@ -199,13 +199,8 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
     const STAKES = { 'load-bearing': 0, moderate: 1, reversible: 2 };
     contested.sort((a, b) => STAKES[a.stakes] - STAKES[b.stakes]);
     let tournament = null;
-    if (
-      args &&
-      args.decideArchitecture &&
-      contested.length > 0 &&
-      contested[0].stakes === 'load-bearing'
-    ) {
-      const top = contested[0];
+    const top = contested[0];
+    if (args && args.decideArchitecture && top?.stakes === 'load-bearing') {
       port.log(`Running design-tournament on: ${top.decision}`);
       tournament = await runChild(ctx, port.id('child-1'), design_tournament, {
         ...{
@@ -223,7 +218,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
 
     let spec = await ctx.claude
       .text(port.id('agent-3', 'merge'), {
-        ...args.$claude,
+        ...callOptions(args.$claude),
         prompt: `Merge these lens drafts into one coherent technical spec.
    Read ${prdRef}
    ${groundCtx}
@@ -253,7 +248,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
       () =>
         ctx.claude
           .object(port.id('agent-4', 'verify:implementability'), {
-            ...args.$claude,
+            ...callOptions(args.$claude),
             prompt: `Implementability audit. Read this spec as a mid-level engineer assigned to
      build it, section by section: could you implement WITHOUT asking a single
      question? Every place you would have to ask — a missing shape, an
@@ -267,7 +262,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
       () =>
         ctx.claude
           .object(port.id('agent-5', 'verify:fidelity'), {
-            ...args.$claude,
+            ...callOptions(args.$claude),
             prompt: `Fidelity audit, both directions. Read ${prdRef} and this spec.
      Direction 1: every PRD requirement (must AND should) maps to spec sections
      that actually satisfy its substance — flag missing or diluted coverage.
@@ -285,7 +280,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
       port.log(`${gaps.length} verification gaps — one repair round`);
       const repaired = await ctx.claude
         .text(port.id('agent-6', 'repair'), {
-          ...args.$claude,
+          ...callOptions(args.$claude),
           prompt: `Repair this spec. Gaps from two independent audits: ${JSON.stringify(gaps, null, 2)}
      Spec:\n---\n${spec}\n---
      Fix each gap in place; where a fix needs the product owner, add it to Open
@@ -300,7 +295,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
     if (args && args.out) {
       await ctx.claude
         .text(port.id('agent-7', 'write'), {
-          ...args.$claude,
+          ...callOptions(args.$claude),
           prompt: `Write this spec to ${args.out} and return the path:\n${spec}`,
 
           // Original phase: 'Verify'.
@@ -314,11 +309,10 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
     return {
       spec,
       decisions: contested.map((c) => c.decision),
-      contested: tournament
-        ? { settledByTournament: contested[0].decision, winner: tournament.winner }
-        : null,
+      contested:
+        tournament && top ? { settledByTournament: top.decision, winner: tournament.winner } : null,
       verification: `${gaps.length} gaps found across implementability + fidelity audits${gaps.length ? ', repaired in one round' : ''}`,
-      openQuestions: oq
+      openQuestions: oq?.[1]
         ? oq[1]
             .split('\n')
             .map((l) => l.replace(/^[-*\d.\s]+/, '').trim())

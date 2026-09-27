@@ -1,0 +1,686 @@
+{
+  "method": "Matched six intents with deterministic schema-valid replies; Batch 01 receives global Read/Grep/Glob/Write/Edit/Bash, Batch 02 uses named least-privilege profiles. Counts are fixture path observations, not quality or billing savings. Formatted entrypoint lines exclude shared helpers and typed children. Strict errors are verified separately by tsc.",
+  "sharedFormattedLines": {
+    "01-direct-ports": { "children.ts": 14, "sdlc-support.ts": 66, "support.ts": 142 },
+    "02-idiomatic-ports": {
+      "lifecycle-stages.ts": 107,
+      "mutation-worker.ts": 44,
+      "support.ts": 130
+    }
+  },
+  "rows": [
+    {
+      "workflow": "release-notes",
+      "batches": {
+        "1": {
+          "formattedLines": 270,
+          "agentCalls": 5,
+          "writeToolCalls": 5,
+          "strictErrors": 0,
+          "faults": {
+            "F1": {
+              "initialStatus": "failed",
+              "finalStatus": "completed",
+              "callsPaidAgain": 1,
+              "completedCallsPaidAgain": 0,
+              "filesystemAfterFault": { "targetPristine": true, "status": "" },
+              "filesystem": { "targetPristine": true, "status": "" },
+              "outputAdmitsDegradation": false
+            },
+            "F2": {
+              "initialStatus": "failed",
+              "finalStatus": "completed",
+              "callsPaidAgain": 1,
+              "completedCallsPaidAgain": 0,
+              "filesystemAfterFault": { "targetPristine": true, "status": "" },
+              "filesystem": { "targetPristine": true, "status": "" },
+              "outputAdmitsDegradation": false
+            },
+            "F3": {
+              "initialStatus": "SIGKILL",
+              "finalStatus": "completed",
+              "callsPaidAgain": 1,
+              "completedCallsPaidAgain": 0,
+              "filesystemAfterKill": { "targetPristine": true, "status": "?? agent-written.txt" },
+              "filesystem": { "targetPristine": true, "status": "?? agent-written.txt" },
+              "outputAdmitsDegradation": false,
+              "boundary": "before harness response",
+              "writeLocation": "source-checkout",
+              "evidence": "Inert writer leaves partial bytes before kill, then returns its schema-valid success reply on retry. This measures lack of code reconciliation, not actual model behavior."
+            },
+            "F4": {
+              "initialStatus": "failed",
+              "finalStatus": "completed",
+              "callsPaidAgain": 0,
+              "completedCallsPaidAgain": 0,
+              "filesystem": { "targetPristine": true, "status": "" },
+              "outputAdmitsDegradation": false,
+              "evidence": "Actual one-statement wrapper fix; source fingerprint refused until acceptCodeChange. Embedded API, not a CLI edit."
+            },
+            "F5": {
+              "finalStatus": "not-applicable",
+              "callsPaidAgain": 0,
+              "filesystem": { "targetPristine": true, "status": "" },
+              "outputAdmitsDegradation": null,
+              "reason": "This port has no human question effect"
+            }
+          }
+        },
+        "2": {
+          "formattedLines": 109,
+          "agentCalls": 3,
+          "writeToolCalls": 0,
+          "strictErrors": 0,
+          "faults": {
+            "F1": {
+              "initialStatus": "failed",
+              "finalStatus": "completed",
+              "callsPaidAgain": 1,
+              "completedCallsPaidAgain": 0,
+              "filesystemAfterFault": { "targetPristine": true, "status": "" },
+              "filesystem": { "targetPristine": true, "status": "?? RELEASE_NOTES.md" },
+              "outputAdmitsDegradation": false
+            },
+            "F2": {
+              "initialStatus": "failed",
+              "finalStatus": "completed",
+              "callsPaidAgain": 1,
+              "completedCallsPaidAgain": 0,
+              "filesystemAfterFault": { "targetPristine": true, "status": "" },
+              "filesystem": { "targetPristine": true, "status": "?? RELEASE_NOTES.md" },
+              "outputAdmitsDegradation": false
+            },
+            "F3": {
+              "initialStatus": "SIGKILL",
+              "finalStatus": "completed",
+              "callsPaidAgain": 0,
+              "completedCallsPaidAgain": 0,
+              "filesystemAfterKill": { "targetPristine": true, "status": "?? RELEASE_NOTES.md" },
+              "filesystem": { "targetPristine": true, "status": "?? RELEASE_NOTES.md" },
+              "outputAdmitsDegradation": false,
+              "boundary": "after bytes, before terminal checkpoint append",
+              "writeLocation": "source-checkout",
+              "evidence": "Real filesystem write and actual SIGKILL before terminal checkpoint; resume with identity-checked orphan cleanup."
+            },
+            "F4": {
+              "initialStatus": "failed",
+              "finalStatus": "completed",
+              "callsPaidAgain": 0,
+              "completedCallsPaidAgain": 0,
+              "filesystem": { "targetPristine": true, "status": "?? RELEASE_NOTES.md" },
+              "outputAdmitsDegradation": false,
+              "evidence": "Actual one-statement wrapper fix; source fingerprint refused until acceptCodeChange. Embedded API, not a CLI edit."
+            },
+            "F5": {
+              "finalStatus": "not-applicable",
+              "callsPaidAgain": 0,
+              "filesystem": { "targetPristine": true, "status": "?? RELEASE_NOTES.md" },
+              "outputAdmitsDegradation": null,
+              "reason": "This port has no human question effect"
+            }
+          }
+        }
+      }
+    },
+    {
+      "workflow": "project-bootstrap",
+      "batches": {
+        "1": {
+          "formattedLines": 290,
+          "agentCalls": 4,
+          "writeToolCalls": 4,
+          "strictErrors": 0,
+          "faults": {
+            "F1": {
+              "initialStatus": "failed",
+              "finalStatus": "completed",
+              "callsPaidAgain": 1,
+              "completedCallsPaidAgain": 0,
+              "filesystemAfterFault": { "targetPristine": true, "status": "" },
+              "filesystem": { "targetPristine": true, "status": "" },
+              "outputAdmitsDegradation": false
+            },
+            "F2": {
+              "initialStatus": "failed",
+              "finalStatus": "completed",
+              "callsPaidAgain": 1,
+              "completedCallsPaidAgain": 0,
+              "filesystemAfterFault": { "targetPristine": true, "status": "" },
+              "filesystem": { "targetPristine": true, "status": "" },
+              "outputAdmitsDegradation": false
+            },
+            "F3": {
+              "initialStatus": "SIGKILL",
+              "finalStatus": "completed",
+              "callsPaidAgain": 1,
+              "completedCallsPaidAgain": 0,
+              "filesystemAfterKill": { "targetPristine": true, "status": "?? agent-written.txt" },
+              "filesystem": { "targetPristine": true, "status": "?? agent-written.txt" },
+              "outputAdmitsDegradation": false,
+              "boundary": "before harness response",
+              "writeLocation": "source-checkout",
+              "evidence": "Inert writer leaves partial bytes before kill, then returns its schema-valid success reply on retry. This measures lack of code reconciliation, not actual model behavior."
+            },
+            "F4": {
+              "initialStatus": "failed",
+              "finalStatus": "completed",
+              "callsPaidAgain": 0,
+              "completedCallsPaidAgain": 0,
+              "filesystem": { "targetPristine": true, "status": "" },
+              "outputAdmitsDegradation": false,
+              "evidence": "Actual one-statement wrapper fix; source fingerprint refused until acceptCodeChange. Embedded API, not a CLI edit."
+            },
+            "F5": {
+              "initialStatus": "suspended",
+              "finalStatus": "completed",
+              "suspensions": 1,
+              "callsPaidAgain": 0,
+              "completedCallsPaidAgain": 0,
+              "filesystem": { "targetPristine": true, "status": "" },
+              "outputAdmitsDegradation": false,
+              "evidence": "Real inbox answers and same-run replay in the success case"
+            }
+          }
+        },
+        "2": {
+          "formattedLines": 145,
+          "agentCalls": 4,
+          "writeToolCalls": 2,
+          "strictErrors": 0,
+          "faults": {
+            "F1": {
+              "initialStatus": "failed",
+              "finalStatus": "completed",
+              "callsPaidAgain": 1,
+              "completedCallsPaidAgain": 0,
+              "filesystemAfterFault": { "targetPristine": true, "status": "" },
+              "filesystem": { "targetPristine": true, "status": "" },
+              "outputAdmitsDegradation": false
+            },
+            "F2": {
+              "initialStatus": "failed",
+              "finalStatus": "completed",
+              "callsPaidAgain": 1,
+              "completedCallsPaidAgain": 0,
+              "filesystemAfterFault": { "targetPristine": true, "status": "" },
+              "filesystem": { "targetPristine": true, "status": "" },
+              "outputAdmitsDegradation": false
+            },
+            "F3": {
+              "initialStatus": "SIGKILL",
+              "finalStatus": "completed",
+              "callsPaidAgain": 1,
+              "completedCallsPaidAgain": 0,
+              "filesystemAfterKill": { "targetPristine": true, "status": "" },
+              "filesystem": { "targetPristine": true, "status": "" },
+              "outputAdmitsDegradation": false,
+              "boundary": "before harness response",
+              "writeLocation": "isolated-checkout",
+              "evidence": "Real filesystem write and actual SIGKILL before terminal checkpoint; resume with identity-checked orphan cleanup."
+            },
+            "F4": {
+              "initialStatus": "failed",
+              "finalStatus": "completed",
+              "callsPaidAgain": 0,
+              "completedCallsPaidAgain": 0,
+              "filesystem": { "targetPristine": true, "status": "" },
+              "outputAdmitsDegradation": false,
+              "evidence": "Actual one-statement wrapper fix; source fingerprint refused until acceptCodeChange. Embedded API, not a CLI edit."
+            },
+            "F5": {
+              "initialStatus": "suspended",
+              "finalStatus": "completed",
+              "suspensions": 1,
+              "callsPaidAgain": 0,
+              "completedCallsPaidAgain": 0,
+              "filesystem": { "targetPristine": true, "status": "" },
+              "outputAdmitsDegradation": false,
+              "evidence": "Real inbox answers and same-run replay in the success case"
+            }
+          }
+        }
+      }
+    },
+    {
+      "workflow": "test-gap-filler",
+      "batches": {
+        "1": {
+          "formattedLines": 318,
+          "agentCalls": 5,
+          "writeToolCalls": 5,
+          "strictErrors": 0,
+          "faults": {
+            "F1": {
+              "initialStatus": "failed",
+              "finalStatus": "completed",
+              "callsPaidAgain": 1,
+              "completedCallsPaidAgain": 0,
+              "filesystemAfterFault": { "targetPristine": true, "status": "" },
+              "filesystem": { "targetPristine": true, "status": "" },
+              "outputAdmitsDegradation": false
+            },
+            "F2": {
+              "initialStatus": "failed",
+              "finalStatus": "completed",
+              "callsPaidAgain": 1,
+              "completedCallsPaidAgain": 0,
+              "filesystemAfterFault": { "targetPristine": true, "status": "" },
+              "filesystem": { "targetPristine": true, "status": "" },
+              "outputAdmitsDegradation": false
+            },
+            "F3": {
+              "initialStatus": "SIGKILL",
+              "finalStatus": "completed",
+              "callsPaidAgain": 1,
+              "completedCallsPaidAgain": 0,
+              "filesystemAfterKill": { "targetPristine": false, "status": "M target.mjs" },
+              "filesystem": { "targetPristine": false, "status": "M target.mjs" },
+              "outputAdmitsDegradation": false,
+              "boundary": "before harness response",
+              "writeLocation": "source-checkout",
+              "evidence": "Inert writer leaves partial bytes before kill, then returns its schema-valid success reply on retry. This measures lack of code reconciliation, not actual model behavior."
+            },
+            "F4": {
+              "initialStatus": "failed",
+              "finalStatus": "completed",
+              "callsPaidAgain": 0,
+              "completedCallsPaidAgain": 0,
+              "filesystem": { "targetPristine": true, "status": "" },
+              "outputAdmitsDegradation": false,
+              "evidence": "Actual one-statement wrapper fix; source fingerprint refused until acceptCodeChange. Embedded API, not a CLI edit."
+            },
+            "F5": {
+              "finalStatus": "not-applicable",
+              "callsPaidAgain": 0,
+              "filesystem": { "targetPristine": true, "status": "" },
+              "outputAdmitsDegradation": null,
+              "reason": "This port has no human question effect"
+            }
+          }
+        },
+        "2": {
+          "formattedLines": 140,
+          "agentCalls": 4,
+          "writeToolCalls": 0,
+          "strictErrors": 0,
+          "faults": {
+            "F1": {
+              "initialStatus": "failed",
+              "finalStatus": "completed",
+              "callsPaidAgain": 1,
+              "completedCallsPaidAgain": 0,
+              "filesystemAfterFault": { "targetPristine": true, "status": "" },
+              "filesystem": { "targetPristine": true, "status": "?? target.test.mjs" },
+              "outputAdmitsDegradation": false
+            },
+            "F2": {
+              "initialStatus": "failed",
+              "finalStatus": "completed",
+              "callsPaidAgain": 1,
+              "completedCallsPaidAgain": 0,
+              "filesystemAfterFault": { "targetPristine": true, "status": "" },
+              "filesystem": { "targetPristine": true, "status": "?? target.test.mjs" },
+              "outputAdmitsDegradation": false
+            },
+            "F3": {
+              "initialStatus": "SIGKILL",
+              "finalStatus": "completed",
+              "callsPaidAgain": 0,
+              "completedCallsPaidAgain": 0,
+              "filesystemAfterKill": {
+                "targetPristine": false,
+                "status": "M target.mjs\n?? target.test.mjs"
+              },
+              "filesystem": { "targetPristine": true, "status": "?? target.test.mjs" },
+              "outputAdmitsDegradation": false,
+              "boundary": "test running with mutated target",
+              "writeLocation": "source-checkout",
+              "evidence": "Real filesystem write and actual SIGKILL before terminal checkpoint; resume with identity-checked orphan cleanup."
+            },
+            "F4": {
+              "initialStatus": "failed",
+              "finalStatus": "completed",
+              "callsPaidAgain": 0,
+              "completedCallsPaidAgain": 0,
+              "filesystem": { "targetPristine": true, "status": "?? target.test.mjs" },
+              "outputAdmitsDegradation": false,
+              "evidence": "Actual one-statement wrapper fix; source fingerprint refused until acceptCodeChange. Embedded API, not a CLI edit."
+            },
+            "F5": {
+              "finalStatus": "not-applicable",
+              "callsPaidAgain": 0,
+              "filesystem": { "targetPristine": true, "status": "?? target.test.mjs" },
+              "outputAdmitsDegradation": null,
+              "reason": "This port has no human question effect"
+            }
+          }
+        }
+      }
+    },
+    {
+      "workflow": "incident-investigation",
+      "batches": {
+        "1": {
+          "formattedLines": 336,
+          "agentCalls": 7,
+          "writeToolCalls": 7,
+          "strictErrors": 0,
+          "faults": {
+            "F1": {
+              "initialStatus": "failed",
+              "finalStatus": "completed",
+              "callsPaidAgain": 1,
+              "completedCallsPaidAgain": 0,
+              "filesystemAfterFault": { "targetPristine": true, "status": "" },
+              "filesystem": { "targetPristine": true, "status": "" },
+              "outputAdmitsDegradation": false
+            },
+            "F2": {
+              "initialStatus": "failed",
+              "finalStatus": "completed",
+              "callsPaidAgain": 1,
+              "completedCallsPaidAgain": 0,
+              "filesystemAfterFault": { "targetPristine": true, "status": "" },
+              "filesystem": { "targetPristine": true, "status": "" },
+              "outputAdmitsDegradation": false
+            },
+            "F3": {
+              "finalStatus": "not-applicable",
+              "callsPaidAgain": 0,
+              "filesystem": { "targetPristine": true, "status": "" },
+              "outputAdmitsDegradation": null,
+              "reason": "Read-only intent: no prescribed write effect to kill"
+            },
+            "F4": {
+              "initialStatus": "failed",
+              "finalStatus": "completed",
+              "callsPaidAgain": 0,
+              "completedCallsPaidAgain": 0,
+              "filesystem": { "targetPristine": true, "status": "" },
+              "outputAdmitsDegradation": false,
+              "evidence": "Actual one-statement wrapper fix; source fingerprint refused until acceptCodeChange. Embedded API, not a CLI edit."
+            },
+            "F5": {
+              "finalStatus": "not-applicable",
+              "callsPaidAgain": 0,
+              "filesystem": { "targetPristine": true, "status": "" },
+              "outputAdmitsDegradation": null,
+              "reason": "This port has no human question effect"
+            }
+          }
+        },
+        "2": {
+          "formattedLines": 81,
+          "agentCalls": 6,
+          "writeToolCalls": 0,
+          "strictErrors": 0,
+          "faults": {
+            "F1": {
+              "initialStatus": "failed",
+              "finalStatus": "completed",
+              "callsPaidAgain": 1,
+              "completedCallsPaidAgain": 0,
+              "filesystemAfterFault": { "targetPristine": true, "status": "" },
+              "filesystem": { "targetPristine": true, "status": "" },
+              "outputAdmitsDegradation": false
+            },
+            "F2": {
+              "initialStatus": "failed",
+              "finalStatus": "completed",
+              "callsPaidAgain": 1,
+              "completedCallsPaidAgain": 0,
+              "filesystemAfterFault": { "targetPristine": true, "status": "" },
+              "filesystem": { "targetPristine": true, "status": "" },
+              "outputAdmitsDegradation": false
+            },
+            "F3": {
+              "finalStatus": "not-applicable",
+              "callsPaidAgain": 0,
+              "filesystem": { "targetPristine": true, "status": "" },
+              "outputAdmitsDegradation": null,
+              "reason": "Read-only intent: no prescribed write effect to kill"
+            },
+            "F4": {
+              "initialStatus": "failed",
+              "finalStatus": "completed",
+              "callsPaidAgain": 0,
+              "completedCallsPaidAgain": 0,
+              "filesystem": { "targetPristine": true, "status": "" },
+              "outputAdmitsDegradation": false,
+              "evidence": "Actual one-statement wrapper fix; source fingerprint refused until acceptCodeChange. Embedded API, not a CLI edit."
+            },
+            "F5": {
+              "finalStatus": "not-applicable",
+              "callsPaidAgain": 0,
+              "filesystem": { "targetPristine": true, "status": "" },
+              "outputAdmitsDegradation": null,
+              "reason": "This port has no human question effect"
+            }
+          }
+        }
+      }
+    },
+    {
+      "workflow": "sdlc-orchestrator",
+      "batches": {
+        "1": {
+          "formattedLines": 225,
+          "agentCalls": 31,
+          "writeToolCalls": 31,
+          "strictErrors": 0,
+          "faults": {
+            "F1": {
+              "initialStatus": "failed",
+              "finalStatus": "completed",
+              "callsPaidAgain": 1,
+              "completedCallsPaidAgain": 0,
+              "filesystemAfterFault": { "targetPristine": true, "status": "" },
+              "filesystem": { "targetPristine": true, "status": "" },
+              "outputAdmitsDegradation": false
+            },
+            "F2": {
+              "initialStatus": "failed",
+              "finalStatus": "completed",
+              "callsPaidAgain": 1,
+              "completedCallsPaidAgain": 0,
+              "filesystemAfterFault": { "targetPristine": true, "status": "" },
+              "filesystem": { "targetPristine": true, "status": "" },
+              "outputAdmitsDegradation": false
+            },
+            "F3": {
+              "initialStatus": "SIGKILL",
+              "finalStatus": "completed",
+              "callsPaidAgain": 1,
+              "completedCallsPaidAgain": 0,
+              "filesystemAfterKill": { "targetPristine": true, "status": "?? agent-written.txt" },
+              "filesystem": { "targetPristine": true, "status": "?? agent-written.txt" },
+              "outputAdmitsDegradation": false,
+              "boundary": "before harness response",
+              "writeLocation": "source-checkout",
+              "evidence": "Inert writer leaves partial bytes before kill, then returns its schema-valid success reply on retry. This measures lack of code reconciliation, not actual model behavior."
+            },
+            "F4": {
+              "initialStatus": "failed",
+              "finalStatus": "completed",
+              "callsPaidAgain": 0,
+              "completedCallsPaidAgain": 0,
+              "filesystem": { "targetPristine": true, "status": "" },
+              "outputAdmitsDegradation": false,
+              "evidence": "Actual one-statement wrapper fix; source fingerprint refused until acceptCodeChange. Embedded API, not a CLI edit."
+            },
+            "F5": {
+              "initialStatus": "suspended",
+              "finalStatus": "completed",
+              "suspensions": 2,
+              "callsPaidAgain": 0,
+              "completedCallsPaidAgain": 0,
+              "filesystem": { "targetPristine": true, "status": "" },
+              "outputAdmitsDegradation": false,
+              "evidence": "Real inbox answers and same-run replay in the success case"
+            }
+          }
+        },
+        "2": {
+          "formattedLines": 172,
+          "agentCalls": 5,
+          "writeToolCalls": 0,
+          "strictErrors": 0,
+          "faults": {
+            "F1": {
+              "initialStatus": "failed",
+              "finalStatus": "completed",
+              "callsPaidAgain": 1,
+              "completedCallsPaidAgain": 0,
+              "filesystemAfterFault": { "targetPristine": true, "status": "" },
+              "filesystem": { "targetPristine": true, "status": "" },
+              "outputAdmitsDegradation": false
+            },
+            "F2": {
+              "initialStatus": "failed",
+              "finalStatus": "completed",
+              "callsPaidAgain": 1,
+              "completedCallsPaidAgain": 0,
+              "filesystemAfterFault": { "targetPristine": true, "status": "" },
+              "filesystem": { "targetPristine": true, "status": "" },
+              "outputAdmitsDegradation": false
+            },
+            "F3": {
+              "initialStatus": "SIGKILL",
+              "finalStatus": "completed",
+              "callsPaidAgain": 0,
+              "completedCallsPaidAgain": 0,
+              "filesystemAfterKill": { "targetPristine": true, "status": "" },
+              "filesystem": { "targetPristine": true, "status": "" },
+              "outputAdmitsDegradation": false,
+              "boundary": "after bytes, before terminal checkpoint append",
+              "writeLocation": "isolated-checkout",
+              "evidence": "Real filesystem write and actual SIGKILL before terminal checkpoint; resume with identity-checked orphan cleanup."
+            },
+            "F4": {
+              "initialStatus": "failed",
+              "finalStatus": "completed",
+              "callsPaidAgain": 0,
+              "completedCallsPaidAgain": 0,
+              "filesystem": { "targetPristine": true, "status": "" },
+              "outputAdmitsDegradation": false,
+              "evidence": "Actual one-statement wrapper fix; source fingerprint refused until acceptCodeChange. Embedded API, not a CLI edit."
+            },
+            "F5": {
+              "initialStatus": "suspended",
+              "finalStatus": "completed",
+              "suspensions": 2,
+              "callsPaidAgain": 0,
+              "completedCallsPaidAgain": 0,
+              "filesystem": { "targetPristine": true, "status": "" },
+              "outputAdmitsDegradation": false,
+              "evidence": "Real inbox answers and same-run replay in the success case"
+            }
+          }
+        }
+      }
+    },
+    {
+      "workflow": "bug-hunt",
+      "batches": {
+        "1": {
+          "formattedLines": 214,
+          "agentCalls": 15,
+          "writeToolCalls": 15,
+          "strictErrors": 0,
+          "faults": {
+            "F1": {
+              "initialStatus": "failed",
+              "finalStatus": "completed",
+              "callsPaidAgain": 1,
+              "completedCallsPaidAgain": 0,
+              "filesystemAfterFault": { "targetPristine": true, "status": "" },
+              "filesystem": { "targetPristine": true, "status": "" },
+              "outputAdmitsDegradation": false
+            },
+            "F2": {
+              "initialStatus": "failed",
+              "finalStatus": "completed",
+              "callsPaidAgain": 1,
+              "completedCallsPaidAgain": 0,
+              "filesystemAfterFault": { "targetPristine": true, "status": "" },
+              "filesystem": { "targetPristine": true, "status": "" },
+              "outputAdmitsDegradation": false
+            },
+            "F3": {
+              "finalStatus": "not-applicable",
+              "callsPaidAgain": 0,
+              "filesystem": { "targetPristine": true, "status": "" },
+              "outputAdmitsDegradation": null,
+              "reason": "Read-only intent: no prescribed write effect to kill"
+            },
+            "F4": {
+              "initialStatus": "failed",
+              "finalStatus": "completed",
+              "callsPaidAgain": 0,
+              "completedCallsPaidAgain": 0,
+              "filesystem": { "targetPristine": true, "status": "" },
+              "outputAdmitsDegradation": false,
+              "evidence": "Actual one-statement wrapper fix; source fingerprint refused until acceptCodeChange. Embedded API, not a CLI edit."
+            },
+            "F5": {
+              "finalStatus": "not-applicable",
+              "callsPaidAgain": 0,
+              "filesystem": { "targetPristine": true, "status": "" },
+              "outputAdmitsDegradation": null,
+              "reason": "This port has no human question effect"
+            }
+          }
+        },
+        "2": {
+          "formattedLines": 156,
+          "agentCalls": 9,
+          "writeToolCalls": 0,
+          "strictErrors": 0,
+          "faults": {
+            "F1": {
+              "initialStatus": "completed",
+              "finalStatus": "completed",
+              "callsPaidAgain": 0,
+              "completedCallsPaidAgain": 0,
+              "filesystemAfterFault": { "targetPristine": true, "status": "" },
+              "filesystem": { "targetPristine": true, "status": "" },
+              "outputAdmitsDegradation": true
+            },
+            "F2": {
+              "initialStatus": "completed",
+              "finalStatus": "completed",
+              "callsPaidAgain": 0,
+              "completedCallsPaidAgain": 0,
+              "filesystemAfterFault": { "targetPristine": true, "status": "" },
+              "filesystem": { "targetPristine": true, "status": "" },
+              "outputAdmitsDegradation": true
+            },
+            "F3": {
+              "finalStatus": "not-applicable",
+              "callsPaidAgain": 0,
+              "filesystem": { "targetPristine": true, "status": "" },
+              "outputAdmitsDegradation": null,
+              "reason": "Read-only intent: no prescribed write effect to kill"
+            },
+            "F4": {
+              "initialStatus": "failed",
+              "finalStatus": "completed",
+              "callsPaidAgain": 0,
+              "completedCallsPaidAgain": 0,
+              "filesystem": { "targetPristine": true, "status": "" },
+              "outputAdmitsDegradation": false,
+              "evidence": "Actual one-statement wrapper fix; source fingerprint refused until acceptCodeChange. Embedded API, not a CLI edit."
+            },
+            "F5": {
+              "finalStatus": "not-applicable",
+              "callsPaidAgain": 0,
+              "filesystem": { "targetPristine": true, "status": "" },
+              "outputAdmitsDegradation": null,
+              "reason": "This port has no human question effect"
+            }
+          }
+        }
+      }
+    }
+  ]
+}

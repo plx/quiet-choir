@@ -1,7 +1,7 @@
 // Direct port of hesreallyhim/ultracode-workflows; MIT, see ../LICENSE.
 // Source snapshot: 9b5404d11b885b28380d3eb17471ef7b17601b5e.
 import { defineWorkflow, z, type WorkflowContext } from 'quiet-choir';
-import { createPort, executionInput, normalize } from './support.js';
+import { callOptions, createPort, executionInput, normalize } from './support.js';
 
 export const meta = {
   name: 'codebase-atlas',
@@ -83,7 +83,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
 
     const survey = await ctx.claude
       .object(port.id('agent-1', 'survey'), {
-        ...args.$claude,
+        ...callOptions(args.$claude),
         prompt: `Survey this repository and partition it into subsystems for a team of readers.
    Look at directory structure, build config, and entry points — skim, don't
    deep-read. A subsystem is a coherent unit someone could study alone (an API
@@ -130,7 +130,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
           (sub) => () =>
             ctx.claude
               .object(port.id('agent-2', `read:${sub.name}`), {
-                ...args.$claude,
+                ...callOptions(args.$claude),
                 prompt: `Deep-read the "${sub.name}" subsystem of this repository.
      Its paths: ${sub.paths.join(', ')}. Hint: ${sub.hint || 'none'}.
      Project context: ${survey.projectSummary}
@@ -158,7 +158,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
 
     await ctx.claude
       .text(port.id('agent-3', 'write-atlas'), {
-        ...args.$claude,
+        ...callOptions(args.$claude),
         prompt: `Write an onboarding atlas for this repository to the file ${outPath}
    (create parent directories if needed).
 
@@ -186,7 +186,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
 
     const critique = await ctx.claude
       .object(port.id('agent-4', 'critic'), {
-        ...args.$claude,
+        ...callOptions(args.$claude),
         prompt: `Read ${outPath} and audit it for completeness against the actual repository.
    What would a new engineer still be missing? Check: subsystems present in the
    code but absent from the atlas, dependency edges that are wrong, entry points
@@ -208,7 +208,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
             (gap, i) => () =>
               ctx.claude
                 .text(port.id('agent-5', `repair:${i}`), {
-                  ...args.$claude,
+                  ...callOptions(args.$claude),
                   prompt: `Repair task for the atlas at ${outPath}: ${gap.repairAction}
        Context — the gap: ${gap.description}
        Research the answer in the repository and return the corrected/additional
@@ -223,7 +223,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
 
       await ctx.claude
         .text(port.id('agent-6', 'merge-repairs'), {
-          ...args.$claude,
+          ...callOptions(args.$claude),
           prompt: `Merge these repair patches into the atlas at ${outPath}, keeping its structure
      and voice. Patches: ${JSON.stringify(patches)}. Rewrite the file in place and
      return the path.`,

@@ -1,7 +1,7 @@
 // Direct port of hesreallyhim/ultracode-workflows; MIT, see ../LICENSE.
 // Source snapshot: 9b5404d11b885b28380d3eb17471ef7b17601b5e.
 import { defineWorkflow, z, type WorkflowContext } from 'quiet-choir';
-import { createPort, executionInput, normalize } from './support.js';
+import { callOptions, createPort, executionInput, normalize } from './support.js';
 
 export const meta = {
   name: 'release-notes',
@@ -102,7 +102,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
 
     const manifest = await ctx.claude
       .object(port.id('agent-1', 'collect'), {
-        ...args.$claude,
+        ...callOptions(args.$claude),
         prompt: `Resolve the git range ${args.since}..${until} in this repository.
    Report: the exact range, total commit count, ALL short shas oldest-first
    (merge commits excluded if the repo squash-merges; included otherwise —
@@ -143,7 +143,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
           (shas, i) => () =>
             ctx.claude
               .object(port.id('agent-2', `summarize:${i + 1}/${slices.length}`), {
-                ...args.$claude,
+                ...callOptions(args.$claude),
                 prompt: `Summarize these ${shas.length} commits for release notes. Shas (oldest first):
      ${shas.join(' ')}
      For each commit read the DIFF (git show), not just the message — messages
@@ -176,7 +176,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
 
     let notes = await ctx.claude
       .text(port.id('agent-3', 'draft'), {
-        ...args.$claude,
+        ...callOptions(args.$claude),
         prompt: `Draft release notes for the audience: ${audience}.
    Version context: ${manifest.versionHint || 'unknown — omit the version header'}
    Range: ${manifest.range}
@@ -199,7 +199,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
 
     const check = await ctx.claude
       .object(port.id('agent-4', 'fact-check'), {
-        ...args.$claude,
+        ...callOptions(args.$claude),
         prompt: `Fact-check these release notes against the actual git range ${manifest.range}.
    NOTES:\n---\n${notes}\n---
    Direction 1 — every claim in the notes must be supported by a commit in the
@@ -218,7 +218,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
       port.log(`Fact-check found ${check.problems.length} problems — one repair round`);
       notes = await ctx.claude
         .text(port.id('agent-5', 'repair'), {
-          ...args.$claude,
+          ...callOptions(args.$claude),
           prompt: `Repair these release notes. Problems from fact-check: ${JSON.stringify(check.problems, null, 2)}
      NOTES:\n---\n${notes}\n---
      Apply each problem's fix, verifying against the repo (git show) where the
@@ -232,7 +232,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
     if (args && args.out) {
       await ctx.claude
         .text(port.id('agent-6', 'write'), {
-          ...args.$claude,
+          ...callOptions(args.$claude),
           prompt: `Add these release notes to ${args.out}. If the file exists and is a
      changelog, prepend the new entry after any title heading, preserving the
      existing format conventions; otherwise create it. Notes:\n${notes}

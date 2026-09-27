@@ -1,7 +1,7 @@
 // Direct port of hesreallyhim/ultracode-workflows; MIT, see ../LICENSE.
 // Source snapshot: 9b5404d11b885b28380d3eb17471ef7b17601b5e.
 import { defineWorkflow, z, type WorkflowContext } from 'quiet-choir';
-import { createPort, executionInput, normalize } from './support.js';
+import { callOptions, createPort, executionInput, normalize } from './support.js';
 
 export const meta = {
   name: 'acceptance-qa-deep',
@@ -97,7 +97,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
 
     const decomp = await ctx.claude
       .object(port.id('agent-1', 'decompose'), {
-        ...args.$claude,
+        ...callOptions(args.$claude),
         prompt: `Decompose ${criteriaRef} into verifiable checks.
    ${args.ticket ? `Fuller ticket context: ${args.ticket}` : ''}
    For each acceptance criterion, break it into binary sub-checks a QA engineer
@@ -144,7 +144,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
       (c) =>
         ctx.claude
           .object(port.id('agent-2', `check:${c.criterion.slice(0, 30)}`), {
-            ...args.$claude,
+            ...callOptions(args.$claude),
             prompt: `Verify this acceptance criterion against the ACTUAL delivered work (${target}).
      Criterion: ${c.criterion}
      Sub-checks: ${JSON.stringify(c.checks)}
@@ -164,7 +164,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
         if (!r || !r.verdict || r.verdict.status !== 'pass') return { ...r, spirit: undefined };
         return ctx.claude
           .object(port.id('agent-3', `spirit:${r.criterion.criterion.slice(0, 25)}`), {
-            ...args.$claude,
+            ...callOptions(args.$claude),
             prompt: `A criterion was marked PASS. Check whether it passes in SPIRIT or only in
        letter. Criterion: ${r.criterion.criterion}
        Claimed-passing evidence: ${r.verdict.evidence}
@@ -216,7 +216,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
 
     const summary = await ctx.claude
       .text(port.id('agent-4', 'summary'), {
-        ...args.$claude,
+        ...callOptions(args.$claude),
         prompt: `Write a one-paragraph QA verdict for stakeholders.
    Overall: ${verdict}. Criteria results: ${JSON.stringify(graded, null, 2)}
    Lead with the verdict and why. If not-done, the must-fixes are the failing

@@ -3,61 +3,47 @@
 [Open the privately published site](https://quiet-choir-workflow-lab.penguinamino.chatgpt.site)
 (existing access required), or build the local reader below.
 
-Versioned before/after comparisons of Claude Code JavaScript workflows and direct Quiet Choir
-TypeScript ports. Batch 01 contains all 26 workflows from
+Versioned comparisons of the same pinned Claude Code JavaScript workflows and Quiet Choir TypeScript
+ports. Batch 01 contains all 26 workflows from
 [ultracode-workflows at 9b5404d](https://github.com/hesreallyhim/ultracode-workflows/tree/9b5404d11b885b28380d3eb17471ef7b17601b5e/plugins/ultracode-workflows/workflows).
+Batch 02 rewrites six of them around code-owned effects, named profiles, isolated writers, settled
+panels and inline children. Both batches preserve the original source bytes and license.
 
-Batch 01 is the active regression suite for the current built runtime, not a frozen set of ports.
-Its upstream originals remain immutable. The initial ports targeted `a6a7b82`; `apiSnapshot` now
-records the runtime API at `11718fa`, including typed harness registries, generic agent records,
-public adapter/helper subpaths and local usage reporting. Built-in shorthands and frozen preceding
-fingerprints remain supported; the verifier reads request.harness. Inline child frames, bounded
-profile delegation and definition discovery retain their contracts. The comparison ports retain
-their scoped child helpers until #65; the reusable cookbook now uses `ctx.workflow`. It builds on
-durable `ask`/`approve`, the completed/suspended result union, and lock-free answer delivery, on top
-of direct-output agent values, schema-only callback inference, omission of undefined object members,
-persisted phases/logs, executions, timing, usage, request diagnostics, and saved-failure wrappers
-with original causes. Runtime-owned worktree isolation and explicit integration keep ordinary agent
-results in their existing shape, and isolated calls add captured worktree metadata. Usage summaries
-retain unknown measurements and count replay once; budget policy stays outside identity. Runtime
-usage validation preserves the preceding agent fingerprints. Journal storage (injectable
-`RunStore`/`FileRunStore` and external project state) preserves replay contract 6 in storage format
-7, and inspection applies the snapshot and journal through `readRun`; earlier isolation/diagnostics
-upgrades retain their compatibility boundaries. Shared helpers forward to `ctx.phase` and `ctx.log`,
-and the shared legacy context forwards `worktree`/`merge` alongside durable commands, files, waits,
-`ask`/`approve`, and `value` overloads; broad port normalization/cast/catchall cleanup remains #65.
-Returned values keep schema field order. The active suite has 61 unchanged differential checks,
-which preserve original prompts, effort settings, and outputs, six durable-question contracts for
-bootstrap/SDLC, and one interrupted-pipeline recovery check. Those two ports intentionally replace
-new-run approval round trips with one-run questions; their notes describe the differences from the
-immutable originals. Native calls retain run/step/attempt identity, durable child registration,
-admission caps, and harness provenance. Bug-hunt uses scoped IDs; other ports retain supported
-legacy overloads. Historical ports explicitly retain raw input capabilities with
-`strictProfiles: false`. The model-file hash belongs to that commit; regression tests use the
-current built checkout, including `readRun({ runId, stateDir })` in the recovery verifier.
+**Batch 02 is the active primitive regression suite and the reader default.** Batch 01 is retained
+as its historical comparison baseline. This transition also makes all 26 Batch 01 ports compile
+under the root settings: all seven former compiler relaxations are gone. Its shared `callOptions`
+helper omits undefined option fields, and typed composition/indexing fixes replace local casts. The
+initial audit counted 273 errors; the pre-#65 audit against the expanded API counted 396; there are
+now zero. Those historical counts describe different snapshots.
 
-The site is a reader, not an execution console. Every original is preserved byte for byte, with its
-MIT license. Every port uses `ctx.claude` explicitly. The comparison layer adds no runtime APIs.
+Batch 01 retains its loose final JSON schemas and source-style orchestration. It has 70 fixtures: 61
+differential cases, six durable-question contracts, two intentional inherited-crash corrections, and
+one interrupted pipeline. The added cases reproduce the originals' missing
+`dependency-upgrade.failures` and empty `api-migration.files` TypeErrors, then verify the corrected
+port behavior. Per-workflow notes disclose additional defensive guards and missing-credibility
+ordering; the original snapshots are never edited to manufacture equality. Its shared helpers
+forward to `ctx.phase` and `ctx.log`, and its legacy context forwards `worktree`/`merge` alongside
+durable commands, files, waits, `ask`/`approve` and `value` overloads; the recovery verifier
+inspects saved runs through `readRun({ runId, stateDir })`.
 
-Choose a batch and workflow, then use **Source comparison** to compare the implementations, **Port
-notes** to review preserved behavior and intentional differences, and **Shared support** to inspect
-the helpers and compiler settings used by that batch. Copy buttons copy the full source for either
-side.
+Batch 02 has real input/output schemas and root-strict types. Its
+[notes](batches/02-idiomatic-ports/notes.json),
+[verification](batches/02-idiomatic-ports/verification.json) and
+[paired metrics](batches/02-idiomatic-ports/metrics.json) distinguish measured orchestration from
+unmeasured model quality. Both sides use inert harness replies. Temporary Git repositories, command
+exit codes, file writes and SIGKILLs are real. F1–F5 record final status, repeated calls, filesystem
+state and whether the final output admits degradation. F4 changes one wrapper statement and uses
+explicit source acceptance through the embedding API. F5 uses actual inbox answers, plus a Batch 02
+SDLC CLI exit-75 check. Read-only workflows mark write-effect crashes not applicable.
 
-## Repository layout
+The main count is Prettier-formatted entrypoint lines, excluding shared helpers/children; shared
+code is visible in the reader. Agent-call counts are fixture-path observations, **not measured cost
+or quality savings**. Batch 01 receives its historical global read/write/command tool input; Batch
+02 uses per-role privileges. The focused test-gap port takes an operator-selected target and test
+command, and the lifecycle children are compact rewrites. These interface/scope differences are
+explicit in the notes and limit direct comparisons of call counts.
 
-| Path                           | Role                                                                       |
-| ------------------------------ | -------------------------------------------------------------------------- |
-| `batches/index.json`           | Ordered list of batch directory IDs; the first is the default              |
-| `batches/<id>/`                | Original snapshots, ports, metadata, attribution, and verification results |
-| `scripts/verify-ports.mjs`     | Batch 01's deterministic differential fixtures and recovery check          |
-| `scripts/build-site.mjs`       | Packages every registered batch and the static reader                      |
-| `site/`                        | Authored HTML, CSS, JavaScript, and the durable Sites identity             |
-| `../.context/comparison-site/` | Generated publishing checkout; ignored by this repository                  |
-
-## Check and preview
-
-From the repository root:
+## Build and verify locally
 
 ```sh
 npm ci
@@ -67,63 +53,40 @@ node comparisons/scripts/build-site.mjs
 python3 -m http.server 4173 --directory .context/comparison-site/dist
 ```
 
-Open http://localhost:4173. Workflow, batch, and selected view are preserved in the URL hash, so a
-comparison can be bookmarked directly, for example
-`#batch=01-direct-ports&workflow=bug-hunt&view=notes`. View IDs are `source`, `notes`, and
-`support`. Serve the generated directory over HTTP; opening `index.html` as a local file cannot
-reliably load its comparison data.
+Open `http://localhost:4173`. The builder checks pinned source hashes and required metadata, embeds
+both batches and copies the static reader. It does not execute ports, upload or deploy anything.
+`comparisons:check` compiles both batches under root settings, verifies the Batch 01 baseline and
+runs the Batch 02 paired fault suite in read-only `--check` mode after the package build. It is part
+of `npm run check` and the CI quality job. The fixture suite needs local Git and process identity
+inspection; it uses no native model CLI, credentials, network or paid inference.
 
-The builder validates original-source hashes and requires a summary note for each catalog entry. It
-embeds source text, notes, catalog metadata, and shared support in `dist/data.json`, then copies the
-reader assets. It does not typecheck or execute ports. `npm run comparisons:check` typechecks the
-active batch and runs its fixtures in read-only `--check` mode. It is part of `npm run check` and
-the CI quality job, after the build, because ports import the built package by name.
+Regenerate reports only for an intentional change, then review their diffs:
 
-The verification script compares outputs and prompt/reply sets against the actual original
-JavaScript under deterministic, inert harness fixtures. It also tests the six explicit
-bootstrap/SDLC question contracts, completed-run reuse, and interrupted pipeline recovery through
-the real runtime. It never launches Claude, executes agent commands, or changes a target repository.
-`verification.json` records the cases. Fixtures are not live integration evidence and do not prove
-every branch or the quality of an agent's work. The verifier's `--check` mode fails if the report is
-missing or differs, without rewriting it. To update expected results intentionally, run
-`node --import tsx comparisons/scripts/verify-ports.mjs`, then review and commit
-`verification.json`. Its batch path, scenario inputs, reply generation, and recovery case are
-specific to Batch 01, not a generic batch runner.
-
-Batch 01 deliberately retains all seven migration relaxations in its own tsconfig:
-
-- `noImplicitAny: false`
-- `strictNullChecks: false`
-- `exactOptionalPropertyTypes: false`
-- `noUncheckedIndexedAccess: false`
-- `noPropertyAccessFromIndexSignature: false`
-- `noUnusedLocals: false`
-- `noUnusedParameters: false`
-
-Inputs and agent results have concrete Zod schemas. Final results check JSON compatibility rather
-than a full domain shape; their TypeScript annotations are inferred from the bodies. The main
-library retains its strict settings. Making the ports repo-strict is tracked in
-[#65](https://github.com/plx/quiet-choir/issues/65): the initial audit found 273 diagnostics,
-including 116 option-spread mismatches and inherited null/index crash paths. Fix the shared options
-idiom first, then enable `strictNullChecks` and `noUncheckedIndexedAccess`; this landing does not
-silently change the originals' behavior or hide those gaps.
+```sh
+node --import tsx comparisons/scripts/verify-ports.mjs
+node --import tsx comparisons/scripts/verify-idiomatic-ports.mjs
+```
 
 ## Regression and snapshot policy
 
-An API change that breaks an active port must update that port and its verification report in the
-same PR. Refresh `apiSnapshot.revision` and the matching API-file SHA-256 when the port's target API
-changes. Use a durable commit containing that API, reachable from the default branch after landing;
-do not leave metadata pointing only at a disposable, pre-squash head. The snapshot above identifies
-the API adopted by the active ports. The hash is provenance for one file, not a claim that the
-entire running implementation is unchanged.
+A PR changing a primitive exercised by Batch 02 must update the matching port, port notes and fault
+row in the **same PR**, even when the API still compiles. The mapping is:
 
-Keep Batch 01 gated while it is the active suite for runtime changes such as
-[#44](https://github.com/plx/quiet-choir/issues/44),
-[#45](https://github.com/plx/quiet-choir/issues/45), and
-[#52](https://github.com/plx/quiet-choir/issues/52). When a later batch supersedes it, move
-`comparisons:check` and its verifier to the newest batch in that PR. Older batches become historical
-snapshots: reproduce them with their recorded runtime commit and matching batch revision, not by
-rebuilding a newer runtime and assuming the results describe the old API.
+| Primitive                                                       | Acceptance port                |
+| --------------------------------------------------------------- | ------------------------------ |
+| Commands/files, schema-first values (#58, #52)                  | release-notes, test-gap-filler |
+| Questions, isolated integration, roles (#55, #59, #45)          | project-bootstrap              |
+| Codex structured output and restricted reads (#35, #60)         | incident-investigation         |
+| Inline children, scoped IDs and stage decisions (#63, #44, #55) | sdlc-orchestrator              |
+| Settled maps, admission limits and usage gates (#42, #47, #62)  | bug-hunt                       |
+| Accepted-code replay (#41)                                      | Every F4 row                   |
+
+Refresh `apiSnapshot.revision` and the API-file SHA-256 when the target API changes. Use a durable
+commit containing that API, reachable from the default branch after landing; replace a disposable
+pre-squash reference after landing if necessary. The hash identifies one API file, not the entire
+runtime. Reproduce an older report using its recorded runtime **and matching batch revision**. Batch
+01 stays compiled and checked as the paired baseline; future primitive acceptance belongs to
+Batch 02. Further intentional API/idiom comparisons belong in a new numbered batch.
 
 ## Run a port
 
@@ -133,34 +96,35 @@ invoking any agents:
 
 ```sh
 npm run cli -- workflow validate \
-  comparisons/batches/01-direct-ports/ported/bug-hunt.workflow.ts
+  comparisons/batches/02-idiomatic-ports/ported/bug-hunt.workflow.ts
 ```
 
-Execute through the existing `workflow execute` command when desired. Supply the original workflow
-arguments as JSON plus an optional `$claude` object. It accepts `model`, `tools`, `allowedTools`,
-`maxTurns`, `maxBudgetUsd`, and `timeoutMs`. The batch defaults to 40 turns, $5, and ten minutes
-**per agent call**; built-in tools stay disabled unless explicitly enabled. These historical ports
-set `strictProfiles: false` to preserve their input API. Tools now imply allowedTools unless
-narrowed; elevated raw tools need class grants (`--grant write`, `--grant exec`, or `--grant all`).
-Limits can also be raised with `--profile '*.maxTurns=60'` without changing saved input. New
-workflows should declare named roles; see [agent profiles](../docs/agent-profiles.md).
-Tool-dependent workflows require suitable configuration. No workflow-level budget is implied.
+For Batch 02, validate first, provide the described required input and grant only roles that write.
+A bootstrap launch needs `--grant writer`; its plan approval is a separate durable question. The
+source repository must have committed history and a clean checkout for isolated publication. Run
+state and worktree caches should remain outside the source checkout. Ordinary commands execute with
+the operator's privileges; the plan displays agent-proposed argv commands before approval.
 
-The shared support files are displayed on the site as part of each comparison. They are local
-adapters, not proposed additions to the runtime API. They provide stable scoped IDs, bounded
-per-group mapper fan-out, pipelining, and child composition for the legacy ports. A core run-wide
-agent limit now independently caps native calls across these nested groups; configure it with
-`--max-agents` and `--provider-limit`. The bug-hunt port now uses runtime named maps and lexical
-contexts with explicit leaves, without `createPort`. Agent failures stop new map scheduling, drain
-started mappers without cancellation, and reject the run. Shared phase/log helpers now persist
-observations and echo replays through ctx.phase/ctx.log; inspect/list/watch expose saved progress.
-All 68 per-call effort settings use typed controls. Reported per-attempt usage is visible in
-dashboards; the original shared token-ledger API remains unavailable. Per-workflow notes describe
-these differences and source behaviors deliberately retained.
+For a bounded read-only hunt:
 
-An SDLC human checkpoint is returned data. To supply new answers, start a **new run ID** with that
-returned state and the answers as input. Use `--resume` only to retry an interrupted run with
-unchanged input.
+```sh
+npm run cli -- workflow execute \
+  comparisons/batches/02-idiomatic-ports/ported/bug-hunt.workflow.ts \
+  --run-id hunt --input '{"scope":"src/","maxRounds":2}' \
+  --max-agents 3 --max-run-cost-usd 5 --max-run-agent-attempts 30
+```
+
+Cost gates use available reported usage, including failures; unknown costs remain unknown and
+already admitted work may overshoot. Resume a budget-stopped run with a higher cap. A suspended
+approval/stage gate exits 75: inspect `workflow pending`, answer its exact step with
+`workflow answer ... --by human:<name>`, then resume the **same run ID**. Bootstrap reuses the saved
+plan; SDLC passes a redo answer only to the requesting stage and its new round.
+
+Batch 01 preserves its optional `$claude` input (`model`, `tools`, `allowedTools`, `maxTurns`,
+`maxBudgetUsd`, `timeoutMs`) and `strictProfiles: false`. Tools are disabled by default; tools imply
+allowedTools unless narrowed, and elevated raw tools require write/exec/all launch grants. Its 68
+original per-call effort choices are supported. Use named roles for new workflows. The local support
+files shown in the reader are batch helpers, not additions to the runtime API.
 
 ## Add a batch
 

@@ -2,7 +2,7 @@
 // Source snapshot: 9b5404d11b885b28380d3eb17471ef7b17601b5e.
 // #55 replaces returned state and external conductor handoffs with one durable run.
 import { defineWorkflow, z, type JsonValue, type WorkflowContext } from 'quiet-choir';
-import { executionInput, normalize } from './support.js';
+import { callOptions, executionInput, normalize } from './support.js';
 import { runNamedChild, withStageAnswer } from './sdlc-support.js';
 
 export const meta = {
@@ -58,7 +58,7 @@ const replySchema = z.object({
 async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
   ctx.phase('Intake');
   const intake = await ctx.claude.value('intake', {
-    ...args.$claude,
+    ...callOptions(args.$claude),
     schema: intakeSchema,
     effort: 'high',
     prompt: `Assess the entry point for driving this goal through the software lifecycle, then tailor the stage plan.
@@ -70,7 +70,12 @@ Set greenfield, hasUI and hasFeedbackSource only when applicable.`,
   const planned = [...new Set(intake.plan.length ? intake.plan : stageKey.options)];
   const plan = planned.slice(Math.max(0, planned.indexOf(intake.entryStage)));
   if (args.plan)
-    return normalize({ status: 'plan', goal: args.goal, stagePlan: plan, flags: intake.flags });
+    return normalize({
+      status: 'plan',
+      goal: args.goal,
+      stagePlan: plan,
+      flags: z.json().parse(intake.flags),
+    });
   const paths: Record<string, string> = {};
   const answers: Partial<Record<StageKey, string>> = {};
   const artifacts: Partial<Record<StageKey, JsonValue>> = {};
@@ -84,59 +89,62 @@ Set greenfield, hasUI and hasFeedbackSource only when applicable.`,
       workflow: 'requirements-to-prd',
       produces: 'prd',
       args: () => ({
-        input: args.inputs.requirements || args.goal,
+        input: args.inputs['requirements'] || args.goal,
         product: args.goal,
         answers: answers.requirements,
-        out: paths.prd || 'docs/prd.md',
+        out: paths['prd'] || 'docs/prd.md',
       }),
     },
     spec: {
       workflow: 'prd-to-spec',
       produces: 'spec',
       args: () => ({
-        prd: paths.prd || 'docs/prd.md',
+        prd: paths['prd'] || 'docs/prd.md',
         decideArchitecture: true,
-        out: paths.spec || 'docs/spec.md',
+        out: paths['spec'] || 'docs/spec.md',
       }),
     },
     roadmap: {
       workflow: 'roadmap-plan',
       produces: 'roadmap',
       args: () => ({
-        spec: paths.spec || 'docs/spec.md',
+        spec: paths['spec'] || 'docs/spec.md',
         priorities: answers.roadmap,
-        out: paths.roadmap || 'docs/roadmap.md',
+        out: paths['roadmap'] || 'docs/roadmap.md',
       }),
     },
     backlog: {
       workflow: 'prd-decompose',
       produces: 'backlog',
       args: () => ({
-        prd: paths.spec || 'docs/spec.md',
+        prd: paths['spec'] || 'docs/spec.md',
         codebase: '.',
-        out: paths.backlog || 'docs/backlog.md',
+        out: paths['backlog'] || 'docs/backlog.md',
       }),
     },
     bootstrap: {
       workflow: 'project-bootstrap',
-      args: () => ({ spec: paths.spec || 'docs/spec.md' }),
+      args: () => ({ spec: paths['spec'] || 'docs/spec.md' }),
     },
     implement: {
       workflow: 'feature-factory',
-      args: () => ({ prd: paths.spec || 'docs/spec.md', codebase: '.' }),
+      args: () => ({ prd: paths['spec'] || 'docs/spec.md', codebase: '.' }),
     },
     qa: {
       workflow: 'acceptance-qa-batch',
-      args: () => ({ tickets: paths.backlog || 'docs/backlog.md', scope: '.' }),
+      args: () => ({ tickets: paths['backlog'] || 'docs/backlog.md', scope: '.' }),
     },
     'release-gate': { workflow: 'release-gate', args: () => ({ policy: answers['release-gate'] }) },
     'release-notes': {
       workflow: 'release-notes',
-      args: () => ({ since: args.inputs.since || 'the previous release tag', out: 'CHANGELOG.md' }),
+      args: () => ({
+        since: args.inputs['since'] || 'the previous release tag',
+        out: 'CHANGELOG.md',
+      }),
     },
     feedback: {
       workflow: 'feedback-synthesis',
-      args: () => ({ source: args.inputs.feedback || 'the project feedback corpus' }),
+      args: () => ({ source: args.inputs['feedback'] || 'the project feedback corpus' }),
     },
   };
   ctx.phase('Drive');
@@ -158,11 +166,11 @@ Set greenfield, hasUI and hasFeedbackSource only when applicable.`,
         { ...stageArgs, $claude: args.$claude },
       );
       artifacts[key] = result;
-      if (stage.produces && typeof stageArgs.out === 'string')
-        paths[stage.produces] = stageArgs.out;
-      if (key === 'release-gate') gateWentGo = result.decision !== 'no-go';
+      if (stage.produces && typeof stageArgs['out'] === 'string')
+        paths[stage.produces] = stageArgs['out'];
+      if (key === 'release-gate') gateWentGo = result['decision'] !== 'no-go';
       const gate = await scoped.claude.value('gate', {
-        ...args.$claude,
+        ...callOptions(args.$claude),
         schema: gateSchema,
         effort: 'high',
         prompt: `A lifecycle stage just finished. Decide whether the human must weigh in before the next stage runs.

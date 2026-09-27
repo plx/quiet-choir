@@ -141,3 +141,20 @@ Meaningful dependency changes still require explicit workflow version/dependency
 without loading workflow source. `--refs` additionally deletes recorded pins only if their values
 still match. It does not delete user branches or run Git garbage collection. Removing pins can make
 future recovery or integration impossible after Git collects otherwise unreachable objects.
+
+### Interrupted worktree registration
+
+Git registration commands are serialized per repository (common Git directory) across runs in one
+process, while isolated agent work remains concurrent. This keeps sibling creation from observing
+partially written Git metadata. A hard kill can still interrupt Git while it writes a new worktree's
+`commondir` file. An empty file prevents later Git worktree commands, including Git's own repair
+command. On the next live use after ownership/orphan recovery, quiet-choir repairs this specific
+empty-file state only for a saved `planned` cache. It requires both the checkout's `.git` pointer
+and the registration's `gitdir` backlink to match the run-owned path and recorded repository, then
+conditionally replaces the empty file and records an inspection warning. The failed per-call
+checkout is still not reused.
+
+This is not arbitrary repository repair: changed owners, redirected metadata, nonempty corruption
+and unrelated worktrees are not rewritten. Other interrupted Git states may still require manual
+repair. The Workflow Lab SIGKILL matrix exercises the writer boundary; deterministic runtime tests
+cover this registration window and a mismatched-owner refusal.

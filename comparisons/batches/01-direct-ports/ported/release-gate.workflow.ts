@@ -1,7 +1,7 @@
 // Direct port of hesreallyhim/ultracode-workflows; MIT, see ../LICENSE.
 // Source snapshot: 9b5404d11b885b28380d3eb17471ef7b17601b5e.
 import { defineWorkflow, z, type WorkflowContext } from 'quiet-choir';
-import { createPort, executionInput, normalize } from './support.js';
+import { callOptions, createPort, executionInput, normalize } from './support.js';
 
 export const meta = {
   name: 'release-gate',
@@ -106,7 +106,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
           (d) => () =>
             ctx.claude
               .object(port.id('agent-1', `assess:${d.key}`), {
-                ...args.$claude,
+                ...callOptions(args.$claude),
                 prompt: `Release-readiness check. Dimension: ${d.key}.
      ${d.prompt}
      House policy: ${policy}
@@ -140,7 +140,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
           (b) => () =>
             ctx.claude
               .object(port.id('agent-2', `confirm:${b.dimension}`), {
-                ...args.$claude,
+                ...callOptions(args.$claude),
                 prompt: `A release-gate dimension flagged a BLOCKER. Confirm whether it truly should
      stop the release. Dimension: ${b.dimension}. Evidence: ${b.evidence}
      Findings: ${JSON.stringify(b.findings)}
@@ -181,7 +181,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
 
     const decision = await ctx.claude
       .object(port.id('agent-3', 'gatekeeper'), {
-        ...args.$claude,
+        ...callOptions(args.$claude),
         prompt: `Render the release go/no-go decision and rationale.
    Confirmed blockers: ${JSON.stringify(
      realBlockers.map((b) => ({ dimension: b.dimension, evidence: b.evidence })),

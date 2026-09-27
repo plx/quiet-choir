@@ -1,0 +1,639 @@
+{
+  "method": "Real engine and temporary Git/process fixtures; inert agent replies; no live model calls",
+  "results": [
+    {
+      "workflow": "release-notes",
+      "fixture": "success-and-completed-replay",
+      "status": "passed",
+      "agentCalls": 3,
+      "completedCallsPaidAgain": 0,
+      "suspensions": 0
+    },
+    {
+      "workflow": "project-bootstrap",
+      "fixture": "success-and-completed-replay",
+      "status": "passed",
+      "agentCalls": 4,
+      "completedCallsPaidAgain": 0,
+      "suspensions": 1
+    },
+    {
+      "workflow": "test-gap-filler",
+      "fixture": "success-and-completed-replay",
+      "status": "passed",
+      "agentCalls": 4,
+      "completedCallsPaidAgain": 0,
+      "suspensions": 0
+    },
+    {
+      "workflow": "incident-investigation",
+      "fixture": "success-and-completed-replay",
+      "status": "passed",
+      "agentCalls": 6,
+      "completedCallsPaidAgain": 0,
+      "suspensions": 0
+    },
+    {
+      "workflow": "sdlc-orchestrator",
+      "fixture": "success-and-completed-replay",
+      "status": "passed",
+      "agentCalls": 5,
+      "completedCallsPaidAgain": 0,
+      "suspensions": 2
+    },
+    {
+      "workflow": "bug-hunt",
+      "fixture": "success-and-completed-replay",
+      "status": "passed",
+      "agentCalls": 9,
+      "completedCallsPaidAgain": 0,
+      "suspensions": 0
+    },
+    {
+      "workflow": "release-notes",
+      "fixture": "missing-coverage",
+      "status": "passed",
+      "finalStatus": "completed",
+      "outputStatus": "needs-review",
+      "agentCalls": 3,
+      "completedCallsPaidAgain": 0
+    },
+    {
+      "workflow": "test-gap-filler",
+      "fixture": "no-gaps",
+      "status": "passed",
+      "finalStatus": "completed",
+      "outputStatus": "no-gaps",
+      "agentCalls": 2,
+      "completedCallsPaidAgain": 0
+    },
+    {
+      "workflow": "project-bootstrap",
+      "fixture": "red-verify",
+      "status": "passed",
+      "finalStatus": "completed",
+      "outputStatus": "verification-failed",
+      "agentCalls": 4,
+      "completedCallsPaidAgain": 0
+    },
+    {
+      "workflow": "incident-investigation",
+      "fixture": "dirty",
+      "status": "passed",
+      "finalStatus": "failed",
+      "agentCalls": 3
+    },
+    {
+      "workflow": "bug-hunt",
+      "fixture": "failed-skeptic",
+      "status": "passed",
+      "finalStatus": "completed",
+      "outputStatus": "degraded",
+      "agentCalls": 9,
+      "completedCallsPaidAgain": 0
+    },
+    {
+      "workflow": "bug-hunt",
+      "fixture": "failed-finders",
+      "status": "passed",
+      "finalStatus": "completed",
+      "outputStatus": "degraded",
+      "agentCalls": 6,
+      "completedCallsPaidAgain": 0
+    },
+    {
+      "workflow": "bug-hunt",
+      "fixture": "call-cap",
+      "status": "passed",
+      "finalStatus": "completed",
+      "outputStatus": "call-limit",
+      "agentCalls": 3,
+      "completedCallsPaidAgain": 0
+    },
+    {
+      "workflow": "sdlc-orchestrator",
+      "fixture": "redo",
+      "status": "passed",
+      "finalStatus": "completed",
+      "outputStatus": "complete",
+      "agentCalls": 7,
+      "completedCallsPaidAgain": 0
+    },
+    {
+      "workflow": "sdlc-orchestrator",
+      "fixture": "full-lifecycle",
+      "status": "passed",
+      "finalStatus": "completed",
+      "outputStatus": "complete",
+      "agentCalls": 19,
+      "completedCallsPaidAgain": 0
+    },
+    {
+      "workflow": "bug-hunt",
+      "fixture": "reported-spend-gate-and-higher-cap-resume",
+      "status": "passed",
+      "admittedBeforeStop": 3,
+      "completedCallsPaidAgain": 0
+    },
+    {
+      "workflow": "test-gap-filler",
+      "fixture": "unknown-external-edit-refused-then-operator-restores",
+      "status": "passed",
+      "completedCallsPaidAgain": 0
+    },
+    { "workflow": "release-notes", "fixture": "cli-validate", "status": "passed" },
+    { "workflow": "project-bootstrap", "fixture": "cli-validate", "status": "passed" },
+    { "workflow": "test-gap-filler", "fixture": "cli-validate", "status": "passed" },
+    { "workflow": "incident-investigation", "fixture": "cli-validate", "status": "passed" },
+    { "workflow": "sdlc-orchestrator", "fixture": "cli-validate", "status": "passed" },
+    { "workflow": "bug-hunt", "fixture": "cli-validate", "status": "passed" },
+    {
+      "workflow": "sdlc-orchestrator",
+      "fixture": "cli-exit-75-answer-resume",
+      "status": "passed",
+      "waitingExit": 75,
+      "runIds": 1,
+      "suspensions": 2
+    },
+    {
+      "workflow": "release-notes",
+      "batch": 1,
+      "fixture": "F1",
+      "status": "passed",
+      "finalStatus": "completed",
+      "callsPaidAgain": 1
+    },
+    {
+      "workflow": "release-notes",
+      "batch": 1,
+      "fixture": "F2",
+      "status": "passed",
+      "finalStatus": "completed",
+      "callsPaidAgain": 1
+    },
+    {
+      "workflow": "release-notes",
+      "batch": 1,
+      "fixture": "F3",
+      "status": "passed",
+      "finalStatus": "completed",
+      "callsPaidAgain": 1
+    },
+    {
+      "workflow": "release-notes",
+      "batch": 1,
+      "fixture": "F4",
+      "status": "passed",
+      "finalStatus": "completed",
+      "callsPaidAgain": 0
+    },
+    {
+      "workflow": "release-notes",
+      "batch": 1,
+      "fixture": "F5",
+      "status": "not-applicable",
+      "finalStatus": "not-applicable",
+      "callsPaidAgain": 0
+    },
+    {
+      "workflow": "release-notes",
+      "batch": 2,
+      "fixture": "F1",
+      "status": "passed",
+      "finalStatus": "completed",
+      "callsPaidAgain": 1
+    },
+    {
+      "workflow": "release-notes",
+      "batch": 2,
+      "fixture": "F2",
+      "status": "passed",
+      "finalStatus": "completed",
+      "callsPaidAgain": 1
+    },
+    {
+      "workflow": "release-notes",
+      "batch": 2,
+      "fixture": "F3",
+      "status": "passed",
+      "finalStatus": "completed",
+      "callsPaidAgain": 0
+    },
+    {
+      "workflow": "release-notes",
+      "batch": 2,
+      "fixture": "F4",
+      "status": "passed",
+      "finalStatus": "completed",
+      "callsPaidAgain": 0
+    },
+    {
+      "workflow": "release-notes",
+      "batch": 2,
+      "fixture": "F5",
+      "status": "not-applicable",
+      "finalStatus": "not-applicable",
+      "callsPaidAgain": 0
+    },
+    {
+      "workflow": "project-bootstrap",
+      "batch": 1,
+      "fixture": "F1",
+      "status": "passed",
+      "finalStatus": "completed",
+      "callsPaidAgain": 1
+    },
+    {
+      "workflow": "project-bootstrap",
+      "batch": 1,
+      "fixture": "F2",
+      "status": "passed",
+      "finalStatus": "completed",
+      "callsPaidAgain": 1
+    },
+    {
+      "workflow": "project-bootstrap",
+      "batch": 1,
+      "fixture": "F3",
+      "status": "passed",
+      "finalStatus": "completed",
+      "callsPaidAgain": 1
+    },
+    {
+      "workflow": "project-bootstrap",
+      "batch": 1,
+      "fixture": "F4",
+      "status": "passed",
+      "finalStatus": "completed",
+      "callsPaidAgain": 0
+    },
+    {
+      "workflow": "project-bootstrap",
+      "batch": 1,
+      "fixture": "F5",
+      "status": "passed",
+      "finalStatus": "completed",
+      "callsPaidAgain": 0
+    },
+    {
+      "workflow": "project-bootstrap",
+      "batch": 2,
+      "fixture": "F1",
+      "status": "passed",
+      "finalStatus": "completed",
+      "callsPaidAgain": 1
+    },
+    {
+      "workflow": "project-bootstrap",
+      "batch": 2,
+      "fixture": "F2",
+      "status": "passed",
+      "finalStatus": "completed",
+      "callsPaidAgain": 1
+    },
+    {
+      "workflow": "project-bootstrap",
+      "batch": 2,
+      "fixture": "F3",
+      "status": "passed",
+      "finalStatus": "completed",
+      "callsPaidAgain": 1
+    },
+    {
+      "workflow": "project-bootstrap",
+      "batch": 2,
+      "fixture": "F4",
+      "status": "passed",
+      "finalStatus": "completed",
+      "callsPaidAgain": 0
+    },
+    {
+      "workflow": "project-bootstrap",
+      "batch": 2,
+      "fixture": "F5",
+      "status": "passed",
+      "finalStatus": "completed",
+      "callsPaidAgain": 0
+    },
+    {
+      "workflow": "test-gap-filler",
+      "batch": 1,
+      "fixture": "F1",
+      "status": "passed",
+      "finalStatus": "completed",
+      "callsPaidAgain": 1
+    },
+    {
+      "workflow": "test-gap-filler",
+      "batch": 1,
+      "fixture": "F2",
+      "status": "passed",
+      "finalStatus": "completed",
+      "callsPaidAgain": 1
+    },
+    {
+      "workflow": "test-gap-filler",
+      "batch": 1,
+      "fixture": "F3",
+      "status": "passed",
+      "finalStatus": "completed",
+      "callsPaidAgain": 1
+    },
+    {
+      "workflow": "test-gap-filler",
+      "batch": 1,
+      "fixture": "F4",
+      "status": "passed",
+      "finalStatus": "completed",
+      "callsPaidAgain": 0
+    },
+    {
+      "workflow": "test-gap-filler",
+      "batch": 1,
+      "fixture": "F5",
+      "status": "not-applicable",
+      "finalStatus": "not-applicable",
+      "callsPaidAgain": 0
+    },
+    {
+      "workflow": "test-gap-filler",
+      "batch": 2,
+      "fixture": "F1",
+      "status": "passed",
+      "finalStatus": "completed",
+      "callsPaidAgain": 1
+    },
+    {
+      "workflow": "test-gap-filler",
+      "batch": 2,
+      "fixture": "F2",
+      "status": "passed",
+      "finalStatus": "completed",
+      "callsPaidAgain": 1
+    },
+    {
+      "workflow": "test-gap-filler",
+      "batch": 2,
+      "fixture": "F3",
+      "status": "passed",
+      "finalStatus": "completed",
+      "callsPaidAgain": 0
+    },
+    {
+      "workflow": "test-gap-filler",
+      "batch": 2,
+      "fixture": "F4",
+      "status": "passed",
+      "finalStatus": "completed",
+      "callsPaidAgain": 0
+    },
+    {
+      "workflow": "test-gap-filler",
+      "batch": 2,
+      "fixture": "F5",
+      "status": "not-applicable",
+      "finalStatus": "not-applicable",
+      "callsPaidAgain": 0
+    },
+    {
+      "workflow": "incident-investigation",
+      "batch": 1,
+      "fixture": "F1",
+      "status": "passed",
+      "finalStatus": "completed",
+      "callsPaidAgain": 1
+    },
+    {
+      "workflow": "incident-investigation",
+      "batch": 1,
+      "fixture": "F2",
+      "status": "passed",
+      "finalStatus": "completed",
+      "callsPaidAgain": 1
+    },
+    {
+      "workflow": "incident-investigation",
+      "batch": 1,
+      "fixture": "F3",
+      "status": "not-applicable",
+      "finalStatus": "not-applicable",
+      "callsPaidAgain": 0
+    },
+    {
+      "workflow": "incident-investigation",
+      "batch": 1,
+      "fixture": "F4",
+      "status": "passed",
+      "finalStatus": "completed",
+      "callsPaidAgain": 0
+    },
+    {
+      "workflow": "incident-investigation",
+      "batch": 1,
+      "fixture": "F5",
+      "status": "not-applicable",
+      "finalStatus": "not-applicable",
+      "callsPaidAgain": 0
+    },
+    {
+      "workflow": "incident-investigation",
+      "batch": 2,
+      "fixture": "F1",
+      "status": "passed",
+      "finalStatus": "completed",
+      "callsPaidAgain": 1
+    },
+    {
+      "workflow": "incident-investigation",
+      "batch": 2,
+      "fixture": "F2",
+      "status": "passed",
+      "finalStatus": "completed",
+      "callsPaidAgain": 1
+    },
+    {
+      "workflow": "incident-investigation",
+      "batch": 2,
+      "fixture": "F3",
+      "status": "not-applicable",
+      "finalStatus": "not-applicable",
+      "callsPaidAgain": 0
+    },
+    {
+      "workflow": "incident-investigation",
+      "batch": 2,
+      "fixture": "F4",
+      "status": "passed",
+      "finalStatus": "completed",
+      "callsPaidAgain": 0
+    },
+    {
+      "workflow": "incident-investigation",
+      "batch": 2,
+      "fixture": "F5",
+      "status": "not-applicable",
+      "finalStatus": "not-applicable",
+      "callsPaidAgain": 0
+    },
+    {
+      "workflow": "sdlc-orchestrator",
+      "batch": 1,
+      "fixture": "F1",
+      "status": "passed",
+      "finalStatus": "completed",
+      "callsPaidAgain": 1
+    },
+    {
+      "workflow": "sdlc-orchestrator",
+      "batch": 1,
+      "fixture": "F2",
+      "status": "passed",
+      "finalStatus": "completed",
+      "callsPaidAgain": 1
+    },
+    {
+      "workflow": "sdlc-orchestrator",
+      "batch": 1,
+      "fixture": "F3",
+      "status": "passed",
+      "finalStatus": "completed",
+      "callsPaidAgain": 1
+    },
+    {
+      "workflow": "sdlc-orchestrator",
+      "batch": 1,
+      "fixture": "F4",
+      "status": "passed",
+      "finalStatus": "completed",
+      "callsPaidAgain": 0
+    },
+    {
+      "workflow": "sdlc-orchestrator",
+      "batch": 1,
+      "fixture": "F5",
+      "status": "passed",
+      "finalStatus": "completed",
+      "callsPaidAgain": 0
+    },
+    {
+      "workflow": "sdlc-orchestrator",
+      "batch": 2,
+      "fixture": "F1",
+      "status": "passed",
+      "finalStatus": "completed",
+      "callsPaidAgain": 1
+    },
+    {
+      "workflow": "sdlc-orchestrator",
+      "batch": 2,
+      "fixture": "F2",
+      "status": "passed",
+      "finalStatus": "completed",
+      "callsPaidAgain": 1
+    },
+    {
+      "workflow": "sdlc-orchestrator",
+      "batch": 2,
+      "fixture": "F3",
+      "status": "passed",
+      "finalStatus": "completed",
+      "callsPaidAgain": 0
+    },
+    {
+      "workflow": "sdlc-orchestrator",
+      "batch": 2,
+      "fixture": "F4",
+      "status": "passed",
+      "finalStatus": "completed",
+      "callsPaidAgain": 0
+    },
+    {
+      "workflow": "sdlc-orchestrator",
+      "batch": 2,
+      "fixture": "F5",
+      "status": "passed",
+      "finalStatus": "completed",
+      "callsPaidAgain": 0
+    },
+    {
+      "workflow": "bug-hunt",
+      "batch": 1,
+      "fixture": "F1",
+      "status": "passed",
+      "finalStatus": "completed",
+      "callsPaidAgain": 1
+    },
+    {
+      "workflow": "bug-hunt",
+      "batch": 1,
+      "fixture": "F2",
+      "status": "passed",
+      "finalStatus": "completed",
+      "callsPaidAgain": 1
+    },
+    {
+      "workflow": "bug-hunt",
+      "batch": 1,
+      "fixture": "F3",
+      "status": "not-applicable",
+      "finalStatus": "not-applicable",
+      "callsPaidAgain": 0
+    },
+    {
+      "workflow": "bug-hunt",
+      "batch": 1,
+      "fixture": "F4",
+      "status": "passed",
+      "finalStatus": "completed",
+      "callsPaidAgain": 0
+    },
+    {
+      "workflow": "bug-hunt",
+      "batch": 1,
+      "fixture": "F5",
+      "status": "not-applicable",
+      "finalStatus": "not-applicable",
+      "callsPaidAgain": 0
+    },
+    {
+      "workflow": "bug-hunt",
+      "batch": 2,
+      "fixture": "F1",
+      "status": "passed",
+      "finalStatus": "completed",
+      "callsPaidAgain": 0
+    },
+    {
+      "workflow": "bug-hunt",
+      "batch": 2,
+      "fixture": "F2",
+      "status": "passed",
+      "finalStatus": "completed",
+      "callsPaidAgain": 0
+    },
+    {
+      "workflow": "bug-hunt",
+      "batch": 2,
+      "fixture": "F3",
+      "status": "not-applicable",
+      "finalStatus": "not-applicable",
+      "callsPaidAgain": 0
+    },
+    {
+      "workflow": "bug-hunt",
+      "batch": 2,
+      "fixture": "F4",
+      "status": "passed",
+      "finalStatus": "completed",
+      "callsPaidAgain": 0
+    },
+    {
+      "workflow": "bug-hunt",
+      "batch": 2,
+      "fixture": "F5",
+      "status": "not-applicable",
+      "finalStatus": "not-applicable",
+      "callsPaidAgain": 0
+    }
+  ]
+}

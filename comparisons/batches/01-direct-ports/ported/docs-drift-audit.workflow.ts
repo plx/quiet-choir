@@ -1,7 +1,7 @@
 // Direct port of hesreallyhim/ultracode-workflows; MIT, see ../LICENSE.
 // Source snapshot: 9b5404d11b885b28380d3eb17471ef7b17601b5e.
 import { defineWorkflow, z, type WorkflowContext } from 'quiet-choir';
-import { createPort, executionInput, normalize } from './support.js';
+import { callOptions, createPort, executionInput, normalize } from './support.js';
 
 export const meta = {
   name: 'docs-drift-audit',
@@ -85,7 +85,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
 
     const inventory = await ctx.claude
       .object(port.id('agent-1', 'inventory'), {
-        ...args.$claude,
+        ...callOptions(args.$claude),
         prompt: `Inventory the documentation in ${(args && args.paths) || 'this repository: README files, docs/, *.md anywhere, plus doc-comments-as-docs like a CLI --help template if present'}.
    For each doc file: its audience and a priority (high = wrong claims actively
    hurt readers, e.g. install instructions; low = design notes). Skip generated
@@ -123,7 +123,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
       (doc) =>
         ctx.claude
           .object(port.id('agent-2', `extract:${doc.path.split('/').pop()}`), {
-            ...args.$claude,
+            ...callOptions(args.$claude),
             prompt: `Read ${doc.path} (audience: ${doc.audience}) and decompose it into atomic,
      CHECKABLE claims about this repository. A claim is checkable if a person
      with the repo could verify it true/false: commands and flags that should
@@ -144,7 +144,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
         if (!extracted || extracted.claims.length === 0) return { doc: doc.path, results: [] };
         return ctx.claude
           .object(port.id('agent-3', `check:${doc.path.split('/').pop()}`), {
-            ...args.$claude,
+            ...callOptions(args.$claude),
             prompt: `Verify these documentation claims against the ACTUAL code of this repo.
        Doc: ${doc.path}
        Claims: ${JSON.stringify(extracted.claims, null, 2)}
@@ -167,7 +167,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
         if (!fix || drifted.length === 0) return { ...checked, fixed: 0 };
         return ctx.claude
           .text(port.id('agent-4', `fix:${doc.path.split('/').pop()}`), {
-            ...args.$claude,
+            ...callOptions(args.$claude),
             prompt: `Update ${doc.path} to match reality. Drifted claims with verified reality
        and suggested replacement text: ${JSON.stringify(drifted, null, 2)}
        Edit the file in place. Keep the doc's voice and structure; change only

@@ -1,7 +1,7 @@
 // Direct port of hesreallyhim/ultracode-workflows; MIT, see ../LICENSE.
 // Source snapshot: 9b5404d11b885b28380d3eb17471ef7b17601b5e.
 import { defineWorkflow, z, type WorkflowContext } from 'quiet-choir';
-import { createPort, executionInput, normalize } from './support.js';
+import { callOptions, createPort, executionInput, normalize } from './support.js';
 
 export const meta = {
   name: 'research-synthesis',
@@ -144,7 +144,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
         (m) => () =>
           ctx.claude
             .object(port.id('agent-1', `sweep:${m.key}`), {
-              ...args.$claude,
+              ...callOptions(args.$claude),
               prompt: `Research question: ${question}
      ${context ? `Context: ${context}` : ''}
      Your modality: ${m.charter}
@@ -172,7 +172,11 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
     // Rank: primary sources first, then secondary; anecdotal reads last and only
     // at deep depth. Mechanical rule, so it lives in code.
     const CRED = { primary: 0, secondary: 1, anecdotal: 2 };
-    leads.sort((a, b) => CRED[a.credibility] - CRED[b.credibility]);
+    leads.sort(
+      (a, b) =>
+        (a.credibility === undefined ? 3 : CRED[a.credibility]) -
+        (b.credibility === undefined ? 3 : CRED[b.credibility]),
+    );
     const toRead = leads.slice(0, READS);
     port.log(
       `${leads.length} unique leads; deep-reading top ${toRead.length} (${leads.length - toRead.length} deferred)`,
@@ -196,10 +200,10 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
 
     port.phase('Deep-read');
 
-    const readLead = (l) =>
+    const readLead = (l: z.infer<typeof LEADS_SCHEMA>['leads'][number]) =>
       ctx.claude
         .object(port.id('agent-2', `read:${l.ref.slice(0, 40)}`), {
-          ...args.$claude,
+          ...callOptions(args.$claude),
           prompt: `Deep-read this source for the research question: ${question}
    Source: ${l.ref} (${l.kind}; expected: ${l.promise})
    Load web tools via ToolSearch if the ref is remote. Extract every finding
@@ -231,10 +235,10 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
 
     port.phase('Synthesize');
 
-    const synthesize = (extraReadings = []) =>
+    const synthesize = (extraReadings: z.infer<typeof READING_SCHEMA>[] = []) =>
       ctx.claude
         .text(port.id('agent-3', 'synthesize'), {
-          ...args.$claude,
+          ...callOptions(args.$claude),
           prompt: `Synthesize an evidence-based answer.
    Question: ${question}
    ${context ? `Context (the answer must fit this reality): ${context}` : ''}
@@ -267,7 +271,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
 
     const critique = await ctx.claude
       .object(port.id('agent-4', 'critic'), {
-        ...args.$claude,
+        ...callOptions(args.$claude),
         prompt: `Critique this research answer for completeness and evidential honesty.
    Question: ${question}
    Answer:\n---\n${answer}\n---
@@ -282,7 +286,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
       })
       .then((result) => result.output);
 
-    let gaps = [];
+    let gaps: string[] = [];
     if (critique && !critique.adequate && critique.gaps.length > 0) {
       gaps = critique.gaps.map((g) => g.gap);
       const hunts = critique.gaps.slice(0, 3);
@@ -294,7 +298,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
             (g, i) => () =>
               ctx.claude
                 .object(port.id('agent-5', `hunt:${i + 1}`), {
-                  ...args.$claude,
+                  ...callOptions(args.$claude),
                   prompt: `Targeted research hunt for a gap in an answer to: ${question}
        Gap: ${g.gap}
        Instruction: ${g.huntInstruction}

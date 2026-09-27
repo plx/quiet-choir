@@ -1,7 +1,7 @@
 // Direct port of hesreallyhim/ultracode-workflows; MIT, see ../LICENSE.
 // Source snapshot: 9b5404d11b885b28380d3eb17471ef7b17601b5e.
 import { defineWorkflow, z, type WorkflowContext } from 'quiet-choir';
-import { createPort, executionInput, normalize } from './support.js';
+import { callOptions, createPort, executionInput, normalize } from './support.js';
 
 export const meta = {
   name: 'dead-code-sweep',
@@ -81,7 +81,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
         (m) => () =>
           ctx.claude
             .object(port.id('agent-1', `sweep:${m.key}`), {
-              ...args.$claude,
+              ...callOptions(args.$claude),
               prompt: m.prompt,
               schema: CANDIDATES_SCHEMA,
             })
@@ -134,7 +134,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
         (c) => () =>
           ctx.claude
             .object(port.id('agent-2', `check:${c.identifier.slice(0, 30)}`), {
-              ...args.$claude,
+              ...callOptions(args.$claude),
               prompt: `A sweep flagged this as dead code. Try to prove it is ALIVE.
      Candidate: ${c.kind} "${c.identifier}" in ${c.file}
      Sweep's evidence: ${c.evidence}
@@ -186,7 +186,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
 
     await ctx.claude
       .text(port.id('agent-3', 'remove'), {
-        ...args.$claude,
+        ...callOptions(args.$claude),
         prompt: `Delete this confirmed-dead code. Work through the list in order; after each
    deletion, clean up newly-orphaned imports/exports it leaves behind.
    ${JSON.stringify(
@@ -200,7 +200,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
 
     const verification = await ctx.claude
       .text(port.id('agent-4', 'verify'), {
-        ...args.$claude,
+        ...callOptions(args.$claude),
         prompt: `Dead code was just deleted. Run the repository's build/typecheck and test
    suite (find the commands). Report pass/fail and any failure that implicates a
    deletion. Do NOT fix failures by re-adding code — report them.`,

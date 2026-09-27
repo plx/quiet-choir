@@ -1,7 +1,7 @@
 // Direct port of hesreallyhim/ultracode-workflows; MIT, see ../LICENSE.
 // Source snapshot: 9b5404d11b885b28380d3eb17471ef7b17601b5e.
 import { defineWorkflow, z, type WorkflowContext } from 'quiet-choir';
-import { createPort, executionInput, normalize } from './support.js';
+import { callOptions, createPort, executionInput, normalize } from './support.js';
 
 export const meta = {
   name: 'incident-investigation',
@@ -133,7 +133,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
         (c) => () =>
           ctx.claude
             .object(port.id('agent-1', `evidence:${c.key}`), {
-              ...args.$claude,
+              ...callOptions(args.$claude),
               prompt: `Incident under investigation: ${incident}
      ${READ_ONLY}
      ${c.prompt}
@@ -175,7 +175,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
 
     const hypo = await ctx.claude
       .object(port.id('agent-2', 'hypothesize'), {
-        ...args.$claude,
+        ...callOptions(args.$claude),
         prompt: `Generate competing root-cause hypotheses for this incident.
    Incident: ${incident}
    Evidence (facts only, from four independent collectors):
@@ -224,7 +224,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
           (h) => () =>
             ctx.claude
               .object(port.id('agent-3', `falsify:${h.id}`), {
-                ...args.$claude,
+                ...callOptions(args.$claude),
                 prompt: `Your single job: FALSIFY hypothesis ${h.id}.
      ${READ_ONLY}
      Incident: ${incident}
@@ -277,7 +277,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
 
     const report = await ctx.claude
       .text(port.id('agent-4', 'report'), {
-        ...args.$claude,
+        ...callOptions(args.$claude),
         prompt: `Write the incident-investigation report in markdown.
    Incident: ${incident}
    Evidence pool (cite facts by source): ${JSON.stringify(evidence, null, 2)}
@@ -313,7 +313,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
       .then((result) => result.output);
 
     return {
-      rootCause: survivors.length === 1 ? survivors[0].hypothesis.story : null,
+      rootCause: survivors.length === 1 ? (survivors[0]?.hypothesis.story ?? null) : null,
       confidence,
       timeline: 'see report',
       survivors: survivors.map((s) => ({ id: s.hypothesis.id, story: s.hypothesis.story })),

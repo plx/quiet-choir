@@ -1,7 +1,7 @@
 // Direct port of hesreallyhim/ultracode-workflows; MIT, see ../LICENSE.
 // Source snapshot: 9b5404d11b885b28380d3eb17471ef7b17601b5e.
 import { defineWorkflow, z, type WorkflowContext } from 'quiet-choir';
-import { createPort, executionInput, normalize } from './support.js';
+import { callOptions, createPort, executionInput, normalize } from './support.js';
 
 export const meta = {
   name: 'api-migration',
@@ -89,7 +89,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
 
     const discovery = await ctx.claude
       .object(port.id('agent-1', 'discover'), {
-        ...args.$claude,
+        ...callOptions(args.$claude),
         prompt: `Find every call site that must change for this migration:
    FROM: ${args.from}
    TO:   ${args.to}
@@ -140,12 +140,14 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
 
       const results = await port.parallel(
         'parallel-1',
-        wave.map(
-          (group) => () =>
-            ctx.claude
-              .object(port.id('agent-2', `migrate:${group.files[0].split('/').pop()}`), {
-                ...args.$claude,
-                prompt: `Migrate these files from the old API to the new one. Edit files in place.
+        wave.map((group) => () => {
+          const firstFile = group.files[0];
+          if (firstFile === undefined)
+            throw new Error('Migration group has no files; its writer was not started.');
+          return ctx.claude
+            .object(port.id('agent-2', `migrate:${firstFile.split('/').pop()}`), {
+              ...callOptions(args.$claude),
+              prompt: `Migrate these files from the old API to the new one. Edit files in place.
        FROM: ${args.from}
        TO:   ${args.to}
        ${args.notes ? `Migration notes: ${args.notes}` : ''}
@@ -157,12 +159,12 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
        dedicated verifier does that globally afterwards. If a site cannot be
        migrated mechanically, leave it working on the old API, mark status
        "partial", and list it in blockers with the reason.`,
-                schema: TRANSFORM_SCHEMA,
-                // Original phase: 'Transform' — no matching ClaudeOptions control.
-              })
-              .then((result) => result.output)
-              .then((r) => ({ group, result: r })),
-        ),
+              schema: TRANSFORM_SCHEMA,
+              // Original phase: 'Transform' — no matching ClaudeOptions control.
+            })
+            .then((result) => result.output)
+            .then((r) => ({ group, result: r }));
+        }),
       );
 
       for (const r of results.filter(Boolean)) {
@@ -192,7 +194,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
 
     port.phase('Verify');
 
-    const verifyPrompt = (attempt) =>
+    const verifyPrompt = (attempt: number) =>
       `Verify the ${args.from} -> ${args.to} migration (attempt ${attempt}).
    ${discovery.buildCommand ? `Build/typecheck: ${discovery.buildCommand}` : 'Find and run the build/typecheck command if one exists.'}
    ${discovery.testCommand ? `Tests: ${discovery.testCommand}` : 'Find and run the test suite if one exists.'}
@@ -201,7 +203,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
 
     let verification = await ctx.claude
       .object(port.id('agent-3', 'verify'), {
-        ...args.$claude,
+        ...callOptions(args.$claude),
         prompt: verifyPrompt(1),
         schema: VERIFY_SCHEMA,
       })
@@ -222,7 +224,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
           (f, i) => () =>
             ctx.claude
               .text(port.id('agent-4', `repair:${i}`), {
-                ...args.$claude,
+                ...callOptions(args.$claude),
                 prompt: `Fix this failure cluster from the ${args.from} -> ${args.to} migration:
        ${f.description}
        Files involved: ${(f.files || []).join(', ') || 'identify from the failure'}
@@ -235,7 +237,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
       );
       verification = await ctx.claude
         .object(port.id('agent-5', 're-verify'), {
-          ...args.$claude,
+          ...callOptions(args.$claude),
           prompt: verifyPrompt(2),
           schema: VERIFY_SCHEMA,
           // Original phase: 'Verify' — no matching ClaudeOptions control.

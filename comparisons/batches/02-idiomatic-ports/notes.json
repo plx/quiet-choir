@@ -1,0 +1,62 @@
+{
+  "release-notes": {
+    "summary": "Compute the exact commit manifest, summarize disjoint slices, draft and fact-check notes, then publish exact bytes in code.",
+    "preserved": "Git-range release notes, disjoint summarization, drafting and bounded fact-check/revision remain.",
+    "changes": [
+      "Primitives #58 and #52: git rev-list and code-owned writes replace collector/writer agents; coverage is a set comparison against pinned SHAs, not a model verdict.",
+      "The response vocabulary is derived from each actual slice. Duplicate/omitted summaries cannot manufacture coverage. Existing output files are protected by exclusive creation.",
+      "The default creates an exclusive file; publication:commit writes through a managed worktree and publishes a commit, keeping composed lifecycle stages on a clean checkout."
+    ],
+    "evaluation": "Fixture Git supplies the manifest; all agent roles are read-only. Needs-review reports missing commits or remaining fact-check concerns. Coverage proves commit representation, not factual accuracy. F3 kills after file publication but before its checkpoint; replay reuses completed calls and recognizes desired bytes."
+  },
+  "project-bootstrap": {
+    "summary": "Detect existing setup, approve one checkpointed plan, apply disjoint concerns in separate worktrees, and integrate only after code-owned verification.",
+    "preserved": "Detect, plan, human approval, per-concern setup and verification retain their order and purpose.",
+    "changes": [
+      "Primitives #55/#58/#59/#45: canonical plan hashing survives checkpoint key ordering; setters receive the complete approved plan.",
+      "Each setter has explicit file ownership and a fresh worktree. Only setters receive Write/Edit. Code runs the approved argv commands and records their exit codes.",
+      "Successful verification publishes integrated snapshots to the checkout; failed verification retains the isolated candidate and returns verification-failed. No automatic repair edits bypass approval.",
+      "The crash matrix exposed an empty Git commondir left during a sibling setter’s worktree creation. The runtime now repairs only that planned registration on resume after checking both ownership links; mismatched owners are refused and the interrupted writer still receives a fresh attempt directory."
+    ],
+    "evaluation": "Fixtures compare the approved subject to setter prompts, require identical approved/applied digests, inspect independent worktrees and reject a real exit 7. Commands are approved operator-privileged programs; argv is not a security sandbox. Worktrees isolate repository edits, not external side effects."
+  },
+  "test-gap-filler": {
+    "summary": "Find and rank high-risk test gaps in an operator-selected source file, then propose tests and mutants; code owns guarded writes, command verdicts and interrupted-attempt restoration.",
+    "preserved": "Coverage/risk discovery, ranking by blast radius, new tests, mutation checking and serial ownership of a source target remain. Code runs the selected tests and reports surviving mutants.",
+    "changes": [
+      "Primitives #58/#43: the agent proposes text only. A managed exec owns each mutation attempt, including restoration before retry after an interruption.",
+      "The interface makes the source file, behavior, new test path and test argv required. Read-only finders inspect existing tests/coverage artifacts; the ranking schema is constrained to discovered gap keys. Repository-wide file selection and running a coverage-report generator remain caller responsibilities.",
+      "Only pristine or this effect’s exact mutant can be reconciled. Unknown edits fail without overwriting them. The original requirement to restore in a prompt is replaced with an executable contract."
+    ],
+    "evaluation": "F3 actually kills the owner while a child test is running against mutated bytes, then resumes with recorded orphan cleanup and verifies byte-identical pristine content. A baseline failure is explicit; surviving mutants yield gaps-remain. Test effectiveness beyond the fixture and edits by unrelated concurrent writers are not established."
+  },
+  "incident-investigation": {
+    "summary": "Pin the Git window in code, collect evidence with read-only Codex roles, challenge hypotheses and report uncertainty.",
+    "preserved": "Parallel evidence lenses, hypotheses, skeptical challenges and an evidence-based incident conclusion remain.",
+    "changes": [
+      "Primitives #45/#35/#60/#58: Codex collectors inherit sandbox read-only from a strict named role; Git history is a command result.",
+      "Code requires a clean repository before collection, immediately after collectors and after the report. No agent receives a writer role."
+    ],
+    "evaluation": "The dirty-collector fixture deliberately violates adapter read-only intent and must fail at the code status assertion. This verifies the defense in the workflow; native sandbox enforcement is covered by the separate harness tests. Ignored files, external writes and transient changes restored before status are outside this check."
+  },
+  "sdlc-orchestrator": {
+    "summary": "Tailor a lifecycle and run its typed stages inline under one run ID, with durable human review and bounded redo.",
+    "preserved": "Tailored stages, artifacts passed forward and stage-bound human choices drive the lifecycle. Bootstrap still requires its own plan approval.",
+    "changes": [
+      "Primitives #55/#63/#44: typed ctx.workflow children replace handoffs and manual returned-state round trips. Only the requesting stage receives a redo answer.",
+      "Compact document children draft/review and commit artifacts through code-owned worktrees; implementation uses an isolated writer and code verification; QA/release gates use real command exits. The rewritten children are intentionally smaller than the native specialist conductors.",
+      "The release gate must pass before release notes. Every stage has a human gate; prior attempt results remain in the output and the latest result determines unresolved status."
+    ],
+    "evaluation": "Fixtures check one run ID, recorded frames after redo, answer placement and CLI exit 75 followed by inbox answer/resume. A separate ten-stage fixture covers every stage, including approved bootstrap, implementation, QA, release publication and subsequent feedback on a clean checkout. The paired count uses only the requirements/spec path. No content-quality equivalence or exhaustive stage combinations are claimed."
+  },
+  "bug-hunt": {
+    "summary": "Rotate read-only finder panels, deduplicate candidates, settle independent skeptics and preserve undecided outcomes.",
+    "preserved": "Multiple lenses, round convergence, a fixed majority and independent challenges remain.",
+    "changes": [
+      "Primitives #42/#47/#62: settled maps persist panel failures and replay them without another call. Failed finders never make a dry round. Missing skeptics remain in the majority arithmetic.",
+      "Explicit failed/skipped/undecided counts prevent silent degradation. A logical-call admission cap bounds work; the launcher’s sticky reported-cost/attempt gates count available failed-call usage too.",
+      "The idiomatic port deduplicates same-round candidates before paying skeptics. Batch 01 intentionally preserves the original same-round duplicates; the paired success fixtures give all three first-round finders the same bug on both sides."
+    ],
+    "evaluation": "Fixtures inject a failing skeptic to force undecided, make all finders fail without dry convergence, and stop/resume at a reported-cost threshold. Fixture cost is simulated usage, not billing. No cost is inferred for unknown measurements; concurrent admissions can overshoot a cost threshold."
+  }
+}

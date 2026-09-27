@@ -1,0 +1,25 @@
+{
+  "id": "02-idiomatic-ports",
+  "number": "02",
+  "label": "02 · Idiomatic ports",
+  "description": "Six strict workflows: code owns Git, tests and writes; named profiles, durable decisions and isolated edits make recovery measurable.",
+  "revision": "9b5404d11b885b28380d3eb17471ef7b17601b5e",
+  "sourceUrl": "https://github.com/hesreallyhim/ultracode-workflows/tree/9b5404d11b885b28380d3eb17471ef7b17601b5e/plugins/ultracode-workflows/workflows",
+  "sourceFileBase": "https://github.com/hesreallyhim/ultracode-workflows/blob/9b5404d11b885b28380d3eb17471ef7b17601b5e/plugins/ultracode-workflows/workflows/",
+  "validation": "Root-strict TypeScript and CLI validation, paired inert-harness fixtures, real temporary Git/test commands, actual SIGKILL recovery, and recorded F1–F5 metrics. No live agents; results measure orchestration contracts, not model quality.",
+  "commonChanges": [
+    "Each entrypoint has required described inputs, bounded numeric controls and a domain output schema. Shared reader/writer profiles replace global $claude spreads. Call counts are measured fixture paths, not estimated savings.",
+    "Git revisions, manifests, test exit codes, hashes and publications are code-owned named effects. All source snapshots are the same immutable upstream files as Batch 01.",
+    "Bootstrap approves one canonical plan digest before isolated setters. SDLC uses typed inline children and stage-local durable questions. Answers and completed work replay in the same run.",
+    "Bug-hunt settles panels and counts failed or skipped members. The logical-call cap complements the runtime reported-cost/attempt admission gates; unknown costs and in-flight overshoot remain visible limitations.",
+    "The mutation worker reconciles only pristine bytes or its own exact interrupted mutant before retrying, then restores after an ordinary test exit. Unknown external edits are refused; no general filesystem rollback or exactly-once claim is made.",
+    "The rewrites keep the workflow purpose and source names while changing mechanics and some interfaces. Test-gap-filler discovers and ranks gaps within an operator-selected source file and command; SDLC uses compact typed document/implementation/verification children. These are not claims of equivalent model quality or identical agent work."
+  ],
+  "apiSnapshot": {
+    "package": "quiet-choir 0.0.0",
+    "sha256": "3abe43741b657ca189f6908340c3b11efdcfc00a81f17163100ed57b6f7a887c",
+    "file": "src/workflow/runtime/model.ts",
+    "description": "Runtime API inherited from quiet-choir implementation 11718fa8a52549e5fb2bbd3568a267e5d83767f1 (typed harness registry, inline children, durable commands/files, worktrees, questions, settled maps and usage gates). The #65 follow-up changes ports/fixtures and narrowly repairs owned interrupted worktree registrations; this runtime model file is unchanged. Both batches compile under the root strict settings; Batch 01 has 70 baseline fixtures and Batch 02 owns active primitive acceptance with a paired F1–F5 matrix. This model-file hash is provenance for that file, not the entire runtime; tests use the built checkout. Storage format 7 retains replay contract 6.",
+    "revision": "edf080ecdc51299a65d2f4e6bbf3ab98abd9d55e"
+  }
+}

@@ -1,4 +1,4 @@
-import { type WorkflowContext, type JsonValue } from 'quiet-choir';
+import { z, type WorkflowContext, type JsonValue } from 'quiet-choir';
 import requirements from './requirements-to-prd.workflow.js';
 import roadmap from './roadmap-plan.workflow.js';
 import backlog from './prd-decompose.workflow.js';
@@ -18,20 +18,20 @@ export async function runNamedChild(
   input: unknown,
 ): Promise<Record<string, JsonValue>> {
   const registry = {
-    'requirements-to-prd': requirements,
-    'prd-to-spec': spec,
-    'feature-factory': implementation,
-    'roadmap-plan': roadmap,
-    'prd-decompose': backlog,
-    'project-bootstrap': bootstrap,
-    'acceptance-qa-batch': qa,
-    'release-gate': gate,
-    'release-notes': notes,
-    'feedback-synthesis': feedback,
+    'requirements-to-prd': () => runChild(ctx, id, requirements, input),
+    'prd-to-spec': () => runChild(ctx, id, spec, input),
+    'feature-factory': () => runChild(ctx, id, implementation, input),
+    'roadmap-plan': () => runChild(ctx, id, roadmap, input),
+    'prd-decompose': () => runChild(ctx, id, backlog, input),
+    'project-bootstrap': () => runChild(ctx, id, bootstrap, input),
+    'acceptance-qa-batch': () => runChild(ctx, id, qa, input),
+    'release-gate': () => runChild(ctx, id, gate, input),
+    'release-notes': () => runChild(ctx, id, notes, input),
+    'feedback-synthesis': () => runChild(ctx, id, feedback, input),
   };
-  const child = registry[name];
+  const child = Object.entries(registry).find(([key]) => key === name)?.[1];
   if (!child) throw new Error(`Unknown SDLC workflow: ${name}`);
-  return (await runChild(ctx, id, child, input)) as Record<string, JsonValue>;
+  return z.record(z.string(), z.json()).parse(await child());
 }
 
 // Preserve every client overload while adding the same stage-bound data to each prompt.

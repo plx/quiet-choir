@@ -1,5 +1,5 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
-import { z, type WorkflowContext } from 'quiet-choir';
+import { z, type WorkflowContext, type ClaudeOptions } from 'quiet-choir';
 
 // Explicit execution controls; source workflows inherited the interactive session.
 // Legacy strictProfiles:false ports expose $claude.tools; tools imply allowedTools unless narrowed.
@@ -17,6 +17,24 @@ export const executionInput = {
     .default({ maxTurns: 40, maxBudgetUsd: 5, timeoutMs: 600_000 }),
 };
 
+// Zod optional fields may be explicitly undefined. Omit them at the native options boundary
+// so every legacy call shares one exact-optional construction rule instead of local assertions.
+export function callOptions(
+  value: z.output<(typeof executionInput)['$claude']>,
+): Pick<
+  ClaudeOptions,
+  'model' | 'tools' | 'allowedTools' | 'maxTurns' | 'maxBudgetUsd' | 'timeoutMs'
+> {
+  return {
+    maxTurns: value.maxTurns,
+    maxBudgetUsd: value.maxBudgetUsd,
+    timeoutMs: value.timeoutMs,
+    ...(value.model === undefined ? {} : { model: value.model }),
+    ...(value.tools === undefined ? {} : { tools: value.tools }),
+    ...(value.allowedTools === undefined ? {} : { allowedTools: value.allowedTools }),
+  };
+}
+
 // The source harness serializes JavaScript results. Match that boundary by omitting
 // undefined object members (and converting undefined array members to null).
 export function normalize<T>(value: T): T {
@@ -32,13 +50,13 @@ export function scopedContext(ctx: WorkflowContext, prefix: string): WorkflowCon
     ...ctx,
     claude: {
       value: prefixed(ctx.claude.value),
-      text: (id, options) => ctx.claude.text(`${prefix}/${id}`, options),
-      object: (id, options) => ctx.claude.object(`${prefix}/${id}`, options),
+      text: prefixed(ctx.claude.text),
+      object: prefixed(ctx.claude.object),
     },
     codex: {
       value: prefixed(ctx.codex.value),
-      text: (id, options) => ctx.codex.text(`${prefix}/${id}`, options),
-      object: (id, options) => ctx.codex.object(`${prefix}/${id}`, options),
+      text: prefixed(ctx.codex.text),
+      object: prefixed(ctx.codex.object),
     },
     exec: Object.assign(prefixed(ctx.exec), { json: prefixed(ctx.exec.json) }),
     readFile: prefixed(ctx.readFile),
@@ -51,13 +69,13 @@ export function scopedContext(ctx: WorkflowContext, prefix: string): WorkflowCon
     sleepUntil: prefixed(ctx.sleepUntil),
     ask: prefixed(ctx.ask),
     approve: prefixed(ctx.approve),
-    step: (id, definition) => ctx.step(`${prefix}/${id}`, definition),
+    step: prefixed(ctx.step),
     sleep: (id, ms) => ctx.sleep(`${prefix}/${id}`, ms),
   };
 }
 
 type Scope = { path: string; counts: Map<string, number> };
-type Stage<T, U, V> = (previous: T, original: U, index: number) => V | Promise<V>;
+type Stage<T, U, V> = (previous: T, original: U, index: number) => V;
 
 // Local composition helpers, not additions to quiet-choir's public API.
 // Each concurrent item owns its ID counter. Completion order cannot change IDs.
@@ -87,15 +105,15 @@ export function createPort(ctx: WorkflowContext) {
     site: string,
     items: readonly A[],
     first: Stage<A, A, B>,
-    second: Stage<B, A, C>,
-  ): Promise<C[]>;
+    second: Stage<Awaited<B>, A, C>,
+  ): Promise<Awaited<C>[]>;
   function pipeline<A, B, C, D>(
     site: string,
     items: readonly A[],
     first: Stage<A, A, B>,
-    second: Stage<B, A, C>,
-    third: Stage<C, A, D>,
-  ): Promise<D[]>;
+    second: Stage<Awaited<B>, A, C>,
+    third: Stage<Awaited<C>, A, D>,
+  ): Promise<Awaited<D>[]>;
   async function pipeline(
     site: string,
     items: readonly unknown[],

@@ -1,7 +1,7 @@
 // Direct port of hesreallyhim/ultracode-workflows; MIT, see ../LICENSE.
 // Source snapshot: 9b5404d11b885b28380d3eb17471ef7b17601b5e.
 import { defineWorkflow, z, type WorkflowContext } from 'quiet-choir';
-import { createPort, executionInput, normalize } from './support.js';
+import { callOptions, createPort, executionInput, normalize } from './support.js';
 
 export const meta = {
   name: 'acceptance-qa-batch',
@@ -96,7 +96,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
 
     const ingested = await ctx.claude
       .object(port.id('agent-1', 'ingest'), {
-        ...args.$claude,
+        ...callOptions(args.$claude),
         prompt: `Parse ${ticketsRef} into structured tickets with their acceptance criteria.
    Skip tickets with no checkable criteria (note them). Then inspect ${scope}
    and report runContext: exactly how an agent can exercise this project —
@@ -129,7 +129,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
       (t) =>
         ctx.claude
           .object(port.id('agent-2', `demo:${t.id}`), {
-            ...args.$claude,
+            ...callOptions(args.$claude),
             prompt: `Demonstrate that ticket ${t.id} ("${t.title}") meets its acceptance criteria,
      against the real implementation in ${scope}.
      Criteria: ${JSON.stringify(t.acceptanceCriteria)}
@@ -154,7 +154,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
         if (!allShown) return { ...r, breakResult: { breaks: [] } }; // already failing; no point attacking
         return ctx.claude
           .object(port.id('agent-3', `break:${r.ticket.id}`), {
-            ...args.$claude,
+            ...callOptions(args.$claude),
             prompt: `Ticket ${r.ticket.id} ("${r.ticket.title}") passed its acceptance criteria.
        Now try to BREAK the feature. Exercise its edges in ${scope}: malformed and
        boundary inputs, permission and auth gaps, concurrency, empty/huge data,

@@ -1,7 +1,7 @@
 // Direct port of hesreallyhim/ultracode-workflows; MIT, see ../LICENSE.
 // Source snapshot: 9b5404d11b885b28380d3eb17471ef7b17601b5e.
 import { defineWorkflow, z, type WorkflowContext } from 'quiet-choir';
-import { executionInput, normalize } from './support.js';
+import { callOptions, executionInput, normalize } from './support.js';
 
 export const meta = {
   name: 'bug-hunt',
@@ -67,7 +67,10 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
     const majority = Math.floor(votes / 2) + 1;
     const LENSES_PER_ROUND = 3;
 
-    type Bug = z.infer<typeof BUGS_SCHEMA>['bugs'][number];
+    type Bug = Pick<
+      z.infer<typeof BUGS_SCHEMA>['bugs'][number],
+      'title' | 'file' | 'line' | 'severity' | 'evidence' | 'failureScenario'
+    >;
     const seen = new Set<string>(); // every candidate ever surfaced (confirmed OR refuted)
     const confirmed: (Bug & { votes: string })[] = [];
     let refutedCount = 0;
@@ -104,7 +107,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
           async (lens) =>
             (
               await roundContext.claude.object('bugs', {
-                ...args.$claude,
+                ...callOptions(args.$claude),
                 prompt: `Hunt for real bugs in ${scope}. Your lens this round: ${lens}.
        Round ${round + 1} of a multi-round hunt — prefer places a first-pass
        reviewer would skim past. Report only defects that produce wrong behavior
@@ -164,7 +167,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
             async (v) =>
               (
                 await roundContext.claude.object('verdict', {
-                  ...args.$claude,
+                  ...callOptions(args.$claude),
                   prompt: `Skeptic ${v + 1}/${votes}: try to REFUTE this bug claim by reading the code.
          Claim: ${b.title} (${b.severity}) at ${b.file}${b.line ? ':' + b.line : ''}
          Evidence: ${b.evidence}
