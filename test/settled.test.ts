@@ -451,6 +451,21 @@ it.each([
   },
 );
 
+it('rejects a missing harness instead of settling it as a failed outcome', async () => {
+  const settled: unknown[] = [];
+  const definition = workflow(async (ctx) => {
+    const first = await ctx.claude.text('x', { prompt: 'p', onError: 'return' });
+    settled.push(first);
+    return first.ok ? first.value.output : 'failed';
+  });
+  await expect(runWorkflow(definition, options())).rejects.toThrow('No harness adapter configured');
+  expect((await readRun(options())).steps['x']?.status).toBe('failed');
+  const harness: Harness = { invoke: () => Promise.resolve(reply) };
+  const result = await runWorkflow(definition, { ...options(), harness, resume: true });
+  expect(settled.at(-1)).toMatchObject({ ok: true });
+  expect(result.output).toBe('ok');
+});
+
 it('rejects invalid local modes and retry filters before callbacks run', async () => {
   const action = vi.fn(() => null);
   for (const extra of [{ onError: 'ignore' }, { retry: { maxAttempts: 2, on: ['bogus'] } }]) {
