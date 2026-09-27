@@ -107,7 +107,8 @@ describe('typecheck plan analysis', () => {
   );
 });
 
-describe('TypeScriptExecutor', () => {
+// Compiler integration tests share CI CPUs with the loader suites under coverage.
+describe('TypeScriptExecutor', { timeout: 20_000 }, () => {
   it('checks Node workflows with strict defaults and returns plain data', async () => {
     const root = await createFixture({
       'workflow.ts': [

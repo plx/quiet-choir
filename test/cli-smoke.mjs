@@ -15,6 +15,7 @@ const expectedCommands = [
   'configuration:get',
   'configuration:set',
   'info:version',
+  'workflow:check-resume',
   'workflow:execute',
   'workflow:inspect',
   'workflow:typecheck',
