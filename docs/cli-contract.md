@@ -17,6 +17,13 @@ untouched. See [run observability](observability.md) for polling, stale detectio
 usage. Non-watching inspect exits 0 for any readable checkpoint status, including `failed`,
 `cancelled`, and `running`.
 
+`execute --dry-run --json` returns a `workflow.rehearsal` document with `ok:true`, calls, replays,
+provider counts, nominal Claude ceiling, warnings, and its in-memory run record. Failures retain the
+usual error document and exits, adding `rehearsal` and `error.stack`. Temporary state has already
+been removed on normal exit; dry-run never overwrites the requested/default state directory.
+`workflow fixtures ID --json` returns version-1 fixture JSON from a completed run. See
+[workflow rehearsal](rehearsal.md).
+
 Failures have these fields:
 
 | Field                         | Meaning                                                                                                                 |

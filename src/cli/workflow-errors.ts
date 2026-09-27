@@ -48,6 +48,7 @@ export function workflowErrorDocument(failure: WorkflowFailure): object {
       message: failure.message,
       stepId: failure.stepId,
       details: failure.details,
+      ...(failure.stack === undefined ? {} : { stack: failure.stack }),
     },
     runId: failure.runId,
     stateDir: failure.stateDir,
@@ -57,6 +58,7 @@ export function workflowErrorDocument(failure: WorkflowFailure): object {
       .map(([id, step]) => ({ id, kind: step.kind, attempts: step.attempts, error: step.error })),
     diagnostics: failure.diagnostics,
     run: failure.run,
+    ...(failure.rehearsal === undefined ? {} : { rehearsal: failure.rehearsal }),
   };
 }
 

@@ -91,13 +91,22 @@ and `killGraceMs` (default 3000 ms between SIGTERM and SIGKILL). Those adapter s
 automatically added to the workflow fingerprint; account for semantic changes in your version or
 caller-supplied fingerprint.
 
+For CLI rehearsals, use `--harness fixture:./fixtures.json` or `--dry-run`; no embedding wrapper is
+needed. The public `FixtureHarness` accepts the same ordered fixture rules. `CliHarness.plan()`
+accepts `HarnessRequestInput` and returns pure argv/private-file data without spawning or writing.
+Adapter kinds are persisted outside identity; switching them on resume/fork needs
+`allowHarnessChange: true`. Use explicit distinct `kind` names for custom modes. See
+[rehearsal](rehearsal.md) for the loop, synthesis limits, and repository-only fake native CLIs.
+
 ## Implement an integration
 
 Implement `Harness.invoke(request, invocation): Promise<HarnessResponse>`. The request carries a
 `provider` discriminator (`claude` or `codex`), its typed `options`, an absolute `cwd`, and
-`outputSchema` (JSON Schema or null for text). Honor cancellation, reject process/protocol failures,
-and return `{ text, sessionId, usage }`. For structured calls, `text` must contain the serialized
-JSON value; the runtime parses it, validates it, and checkpoints the result.
+`outputSchema` (JSON Schema or null for text), and `call: {runId, stepId, attempt, idempotencyKey}`.
+The call identity is attached after fingerprinting; attempts accumulate across resume, while
+`idempotencyKey` stays `runId/stepId`. Honor cancellation, reject process/protocol failures, and
+return `{ text, sessionId, usage }`. For structured calls, `text` must contain the serialized JSON
+value; the runtime parses it, validates it, and checkpoints the result.
 
 `HarnessInvocation` supplies `signal`, `runId`, fully qualified `stepId`, `attempt`, and
 `trackProcess({ pid, pgid, binary, cwd, startedAt, osStartTime })`. Register immediately after

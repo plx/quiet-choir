@@ -1,0 +1,9 @@
+{
+  "provider": "codex",
+  "version": "0.157.1",
+  "code": 0,
+  "signal": null,
+  "structured": false,
+  "stdout": "{\"type\":\"thread.started\",\"thread_id\":\"00000000-0000-4000-8000-000000000000\"}\n{\"type\":\"turn.started\"}\n{\"type\":\"item.completed\",\"item\":{\"id\":\"item_0\",\"type\":\"agent_message\",\"text\":\"hello from captured codex\"}}\n{\"type\":\"turn.completed\",\"usage\":{\"input_tokens\":10,\"cached_input_tokens\":0,\"cache_write_input_tokens\":0,\"output_tokens\":3,\"reasoning_output_tokens\":0}}\n",
+  "stderr": ""
+}

@@ -48,7 +48,15 @@ assume stderr carries the error. Replace session/UUID/tool IDs and local paths b
 captures, and review all bytes for credentials or private prompt content. Reported fake-API costs
 are CLI calculations over fixture token counts, not actual spending.
 
-The opt-in schema contract matrix uses the pinned Zod-generated fixtures in
+The opt-in zero-cost native-envelope job is `npm run test:contract` after `npm run build`. It
+launches installed CLIs with fake keys, isolated configuration and local fake Messages/Responses
+APIs. `npm run test:contract -- --refresh` rewrites sanitized captures;
+`--cases=<comma-separated names>` selects cases. Review captures before committing.
+`test/bin/fake-claude.mjs` and `test/bin/fake-codex.mjs` replay them in ordinary adapter tests
+without native CLIs, credentials, or network. See [rehearsal](docs/rehearsal.md) for scenario
+routing and argv logging.
+
+The separate opt-in schema contract matrix uses the pinned Zod-generated fixtures in
 `test/fixtures/codex-schema-matrix.json`. Run `npm run build` first, then:
 
 ```sh

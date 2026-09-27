@@ -89,6 +89,7 @@ import type {
   CodexOptions,
   Harness,
   HarnessRequest,
+  HarnessRequestInput,
   JsonValue,
   StepContext,
   StepDefinition,
@@ -200,6 +201,23 @@ export interface RunOptions extends WorkflowCodeOptions {
   readonly resume?: boolean;
   /** Harness integration. Local-only workflows do not need this dependency. */
   readonly harness?: Harness;
+  /** Explicitly accept replaying outputs recorded under a different harness kind, including forks. */
+  readonly allowHarnessChange?: boolean;
+  /** Live rehearsal hooks. Requires a harness whose kind is dry-run; local callbacks otherwise run normally. */
+  readonly rehearsal?: {
+    /** Replace selected local callbacks; undefined means execute the original callback. */
+    readonly localStep?: (
+      stepId: string,
+      schema: JsonValue,
+    ) =>
+      | {
+          /** Replacement output, still parsed by the original local-step schema. */
+          readonly output: JsonValue;
+        }
+      | undefined;
+    /** Observe original schemas for diagnostics unavailable in JSON Schema. */
+    readonly onSchema?: (stepId: string, schema: z.ZodType) => void;
+  };
   /** Cancellation signal, forwarded to all active effects. */
   readonly signal?: AbortSignal;
   /** Create a new run, reusing completed effects from an immutable source snapshot. */
@@ -261,6 +279,11 @@ export async function runWorkflow<TInput, TOutput>(
   if (!isValidRunId(options.runId)) throw new Error(runIdMessage);
   if (!definition.name.trim() || !definition.version.trim())
     throw new Error('Workflow name and version must be nonempty.');
+  const harnessKind = options.harness?.kind ?? (options.harness ? 'custom' : 'none');
+  if (typeof harnessKind !== 'string' || !harnessKind.trim() || harnessKind.length > 100)
+    throw new Error('Harness kind must be a nonempty string of at most 100 characters.');
+  if (options.rehearsal !== undefined && harnessKind !== 'dry-run')
+    throw new Error('Rehearsal hooks require a dry-run harness.');
   const limiter = resolveAgentLimiter(options.agentLimit);
   const capabilities = capabilityManifest(definition);
   const incomingProfiles = validateProfileOverrides(options.profileOverrides ?? [], capabilities);
@@ -285,7 +308,10 @@ export async function runWorkflow<TInput, TOutput>(
       options.killGraceMs > 2_147_483_647)
   )
     throw new Error('killGraceMs must be an integer from 1 to 2147483647.');
-  const release = await lockRun(stateDir, options.runId, options).catch(async (cause: unknown) => {
+  const release = await lockRun(stateDir, options.runId, {
+    ...options,
+    probeOwner: options.rehearsal === undefined,
+  }).catch(async (cause: unknown) => {
     if (cause instanceof RunRefusedError || options.signal?.aborted) throw cause;
     if (errorCode(cause) !== undefined)
       throw await checkpointError(
@@ -342,6 +368,18 @@ export async function runWorkflow<TInput, TOutput>(
       );
     let forkSource =
       fork && forkStateDir ? await loadFork(fork.runId, forkStateDir, definition.name) : undefined;
+    function requireHarnessChange(source: RunRecord | undefined): void {
+      // Unlabelled legacy records remain resumable: their historical adapter cannot be inferred.
+      if (source?.harness && source.harness.kind !== harnessKind && !options.allowHarnessChange)
+        throw new RunRefusedError(
+          'run.incompatible',
+          options.runId,
+          `Run ${source.id} used harness ${source.harness.kind}; ${harnessKind} requires --allow-harness-change to reuse its outputs.`,
+          { previousKind: source.harness.kind, requestedKind: harnessKind },
+        );
+    }
+    requireHarnessChange(existing);
+    requireHarnessChange(forkSource);
     function parseInput(raw: unknown): TInput {
       try {
         return definition.input.parse(raw);
@@ -456,6 +494,16 @@ export async function runWorkflow<TInput, TOutput>(
       steps: {},
       createdAt: now,
       updatedAt: now,
+    };
+    const priorHarness = record.harness ?? forkSource?.harness;
+    record.harness = {
+      kind: harnessKind,
+      previousKinds: [
+        ...new Set([
+          ...(priorHarness?.previousKinds ?? []),
+          ...(priorHarness && priorHarness.kind !== harnessKind ? [priorHarness.kind] : []),
+        ]),
+      ],
     };
     if (options.acceptCodeChange && compatibility && compatibility.changed.length > 0) {
       (record.codeChanges ??= []).push({
@@ -586,8 +634,10 @@ export async function runWorkflow<TInput, TOutput>(
               origins.find(error).stepId === null &&
               !(error instanceof CancelledError) &&
               !(error instanceof CheckpointError)
-            )
+            ) {
               origins.markFatal(error);
+              if (typeof id === 'string') origins.remember(error, id);
+            }
             throw error;
           }
         },
@@ -1000,7 +1050,7 @@ export async function runWorkflow<TInput, TOutput>(
         const id = names.qualify(leaf);
         const phase = observations.phase;
         return launch(id, async () => {
-          let request: HarnessRequest;
+          let request: HarnessRequestInput;
           let schema: z.ZodType<T>;
           let execution: AttemptPolicy;
           let profile: ResolvedProfile;
@@ -1018,6 +1068,7 @@ export async function runWorkflow<TInput, TOutput>(
             );
             profile = resolvedProfile.profile;
             schema = outputSchema();
+            options.rehearsal?.onSchema?.(id, schema);
             execution = resolvePolicy(
               id,
               provider,
@@ -1061,7 +1112,7 @@ export async function runWorkflow<TInput, TOutput>(
               options: resolvedProfile.options,
               cwd: resolve(cwd, data.options.cwd ?? '.'),
               outputSchema: structured ? schemaJson(schema) : null,
-            }) as unknown as HarnessRequest;
+            }) as unknown as HarnessRequestInput;
           } catch (cause) {
             throw new Error(`Step ${id}: ${message(cause)}`, { cause });
           }
@@ -1125,6 +1176,15 @@ export async function runWorkflow<TInput, TOutput>(
                 throw new ConfigurationError(
                   `No harness adapter configured for ${provider}. Supply RunOptions.harness.`,
                 );
+              const liveRequest: HarnessRequest = {
+                ...request,
+                call: {
+                  runId: options.runId,
+                  stepId: id,
+                  attempt: context.attempt,
+                  idempotencyKey: context.idempotencyKey,
+                },
+              };
               const invocation: HarnessInvocation = {
                 signal: context.signal,
                 runId: options.runId,
@@ -1155,7 +1215,7 @@ export async function runWorkflow<TInput, TOutput>(
                 if (!discovery) {
                   discovery = (async () => {
                     // Installation discovery is shared by the run, not owned by the first map subtree.
-                    const metadata = await options.harness?.metadata?.(request, {
+                    const metadata = await options.harness?.metadata?.(liveRequest, {
                       ...invocation,
                       signal: discoverySignal,
                     });
@@ -1188,7 +1248,7 @@ export async function runWorkflow<TInput, TOutput>(
                   context.signal.throwIfAborted();
                   emitAdmission('agent.admitted', id, step, provider, permit.waitedMs);
                   context.signal.throwIfAborted();
-                  response = await options.harness.invoke(request, invocation);
+                  response = await options.harness.invoke(liveRequest, invocation);
                 } finally {
                   permit.release();
                 }
@@ -1378,7 +1438,13 @@ export async function runWorkflow<TInput, TOutput>(
               policy,
               matchedPolicy,
             ),
-            step.run,
+            options.rehearsal === undefined
+              ? step.run
+              : (context) => {
+                  options.rehearsal?.onSchema?.(id, step.schema);
+                  const stub = options.rehearsal?.localStep?.(id, schemaJson(step.schema));
+                  return stub === undefined ? step.run(context) : step.schema.parse(stub.output);
+                },
             null,
             undefined,
             step,
@@ -1404,7 +1470,9 @@ export async function runWorkflow<TInput, TOutput>(
             z.null(),
             resolvePolicy(id, 'sleep', {}, {}, [], matchedPolicy),
             async (context, step) => {
-              await waitUntil(step.wakeAt ?? Date.now(), context.signal);
+              context.signal.throwIfAborted();
+              if (options.rehearsal === undefined)
+                await waitUntil(step.wakeAt ?? Date.now(), context.signal);
               return null;
             },
             Date.now() + milliseconds,

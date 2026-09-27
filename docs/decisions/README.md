@@ -34,3 +34,5 @@ part of the documentation.
 - [0014: Preserve saved state through the CLI error boundary](0014-scriptable-cli-errors.md)
 
 - [0015: Observe runs without changing effect identity](0015-observe-runs-without-changing-effect-identity.md)
+
+- [0016: Rehearse workflows through fixture harnesses and a pure native planner](0016-workflow-rehearsal.md)

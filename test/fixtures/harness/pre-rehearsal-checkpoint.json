@@ -1,0 +1,354 @@
+{
+  "allowModelOverride": false,
+  "capabilities": {
+    "defaultProfile": "text",
+    "defaults": {
+      "access": "read",
+      "claude": {
+        "allowedTools": [],
+        "tools": []
+      },
+      "claudeAccess": "none",
+      "codex": {
+        "sandbox": "read-only"
+      },
+      "codexAccess": "read",
+      "expectsToolUse": true,
+      "maxBudgetUsd": 0.5,
+      "maxTurns": 10,
+      "name": "text",
+      "onPermissionDenied": "warn",
+      "timeoutMs": 300000
+    },
+    "profiles": {
+      "edit": {
+        "access": "write",
+        "claude": {
+          "allowedTools": ["Read", "Grep", "Glob", "Edit", "Write"],
+          "tools": ["Read", "Grep", "Glob", "Edit", "Write"]
+        },
+        "claudeAccess": "write",
+        "codex": {
+          "sandbox": "workspace-write"
+        },
+        "codexAccess": "write",
+        "expectsToolUse": true,
+        "maxBudgetUsd": 5,
+        "maxTurns": 40,
+        "name": "edit",
+        "onPermissionDenied": "warn",
+        "timeoutMs": 1800000
+      },
+      "readonly": {
+        "access": "read",
+        "claude": {
+          "allowedTools": ["Read", "Grep", "Glob"],
+          "tools": ["Read", "Grep", "Glob"]
+        },
+        "claudeAccess": "read",
+        "codex": {
+          "sandbox": "read-only"
+        },
+        "codexAccess": "read",
+        "expectsToolUse": true,
+        "maxBudgetUsd": 2,
+        "maxTurns": 25,
+        "name": "readonly",
+        "onPermissionDenied": "warn",
+        "timeoutMs": 900000
+      },
+      "text": {
+        "access": "read",
+        "claude": {
+          "allowedTools": [],
+          "tools": []
+        },
+        "claudeAccess": "none",
+        "codex": {
+          "sandbox": "read-only"
+        },
+        "codexAccess": "read",
+        "expectsToolUse": true,
+        "maxBudgetUsd": 0.5,
+        "maxTurns": 10,
+        "name": "text",
+        "onPermissionDenied": "warn",
+        "timeoutMs": 300000
+      }
+    },
+    "requiredGrants": [],
+    "strictProfiles": true
+  },
+  "createdAt": "2026-09-27T02:46:14.060Z",
+  "cwd": "/",
+  "error": "old failure",
+  "errorStack": "Error: old failure\n    at Object.invoke (/fixture/capture.mts:12:42)\n    at <anonymous> (/fixture/src/workflow/runtime/runner.ts:1109:52)\n    at async effect (/fixture/src/workflow/runtime/runner.ts:819:26)\n    at async <anonymous> (/fixture/src/workflow/runtime/runner.ts:545:20)",
+  "eventCounts": {},
+  "events": [
+    {
+      "at": "2026-09-27T02:46:14.061Z",
+      "data": null,
+      "execution": 1,
+      "message": null,
+      "phase": null,
+      "stepId": null,
+      "total": null,
+      "type": "run.started"
+    },
+    {
+      "at": "2026-09-27T02:46:14.122Z",
+      "data": null,
+      "execution": 1,
+      "message": "old failure",
+      "phase": null,
+      "stepId": "second",
+      "total": null,
+      "type": "run.failed"
+    }
+  ],
+  "executions": [
+    {
+      "endedAt": "2026-09-27T02:46:14.122Z",
+      "error": "old failure",
+      "errorStack": "Error: old failure\n    at Object.invoke (/fixture/capture.mts:12:42)\n    at <anonymous> (/fixture/src/workflow/runtime/runner.ts:1109:52)\n    at async effect (/fixture/src/workflow/runtime/runner.ts:819:26)\n    at async <anonymous> (/fixture/src/workflow/runtime/runner.ts:545:20)",
+      "n": 1,
+      "outcome": "failed",
+      "pid": 41899,
+      "startedAt": "2026-09-27T02:46:14.061Z"
+    }
+  ],
+  "formatVersion": 6,
+  "grantedProfiles": {},
+  "grants": [],
+  "id": "legacy",
+  "input": null,
+  "maps": {},
+  "output": null,
+  "phase": null,
+  "policy": [],
+  "policyWarnings": [],
+  "profileOverrides": [],
+  "replayWarnings": [],
+  "rootCause": {
+    "error": "old failure",
+    "stepId": "second"
+  },
+  "status": "failed",
+  "steps": {
+    "first": {
+      "attemptHistory": [
+        {
+          "attempt": 1,
+          "durationMs": 13,
+          "error": null,
+          "errorStack": null,
+          "execution": 1,
+          "fingerprint": "fb1167c8715f893ecaaf9c73699690c608dc0fe08d87abd764f7a543cfd71d6d",
+          "finishedAt": "2026-09-27T02:46:14.089Z",
+          "policy": {
+            "maxBudgetUsd": 0.5,
+            "maxTurns": 10,
+            "retry": {
+              "delayMs": 100,
+              "maxAttempts": 1
+            },
+            "timeoutMs": 300000
+          },
+          "profile": "text",
+          "reasoningEffort": null,
+          "request": {
+            "cwd": "/",
+            "limits": {
+              "killGraceMs": null,
+              "maxBudgetUsd": 0.5,
+              "maxTurns": 10,
+              "sandbox": null,
+              "timeoutMs": 300000
+            },
+            "model": null,
+            "profile": "text",
+            "promptPreview": "first",
+            "promptSha256": "a7937b64b8caa58f03721bb6bacf5c78cb235febe0e70b1b84cd99541461a08e",
+            "provider": "claude",
+            "structured": false,
+            "tools": []
+          },
+          "requested": {
+            "effort": "inherited",
+            "model": "inherited"
+          },
+          "requestedModel": null,
+          "sources": {
+            "maxBudgetUsd": "profile:text",
+            "maxTurns": "profile:text",
+            "retry.delayMs": "runtime",
+            "retry.maxAttempts": "runtime",
+            "timeoutMs": "profile:text"
+          },
+          "startedAt": "2026-09-27T02:46:14.076Z",
+          "status": "completed",
+          "usage": {
+            "costUsd": null,
+            "inputTokens": null,
+            "outputTokens": null
+          }
+        }
+      ],
+      "attempts": 1,
+      "durationMs": 13,
+      "error": null,
+      "errorStack": null,
+      "fingerprint": "fb1167c8715f893ecaaf9c73699690c608dc0fe08d87abd764f7a543cfd71d6d",
+      "finishedAt": "2026-09-27T02:46:14.089Z",
+      "identity": {
+        "cwd": "df7e940f72aa93cbcb6d70cc35124b0767c7a0e353043c7c24b660ea9be7b952",
+        "kind": "389432cbf83f3d1b64029a75864ec96f8fd06451b4c99d7b28385d395d480bfa",
+        "model": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+        "onError": "a8ae35eaddff8b9970e3075d77d711798ddfa511a5391581aef83e1a8ebbf64f",
+        "prompt": "de5f2cbf4c10a0d146f2a671aac363e8640fefc469ad42ac25364f19e4bc194f",
+        "reasoningEffort": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+        "schema": "367293222408ef1e376489f1e60e1e82c854eb185410f0f6ea1b22a6d72ca502"
+      },
+      "kind": "claude",
+      "output": {
+        "output": "saved first",
+        "sessionId": null,
+        "usage": {
+          "costUsd": null,
+          "inputTokens": null,
+          "outputTokens": null
+        }
+      },
+      "phase": null,
+      "request": {
+        "cwd": "/",
+        "limits": {
+          "killGraceMs": null,
+          "maxBudgetUsd": 0.5,
+          "maxTurns": 10,
+          "sandbox": null,
+          "timeoutMs": 300000
+        },
+        "model": null,
+        "profile": "text",
+        "promptPreview": "first",
+        "promptSha256": "a7937b64b8caa58f03721bb6bacf5c78cb235febe0e70b1b84cd99541461a08e",
+        "provider": "claude",
+        "structured": false,
+        "tools": []
+      },
+      "seq": 1,
+      "startedAt": "2026-09-27T02:46:14.076Z",
+      "status": "completed",
+      "wakeAt": null
+    },
+    "second": {
+      "attemptHistory": [
+        {
+          "attempt": 1,
+          "durationMs": 11,
+          "error": "old failure",
+          "errorKind": "unknown",
+          "errorStack": "Error: old failure\n    at Object.invoke (/fixture/capture.mts:12:42)\n    at <anonymous> (/fixture/src/workflow/runtime/runner.ts:1109:52)\n    at async effect (/fixture/src/workflow/runtime/runner.ts:819:26)\n    at async <anonymous> (/fixture/src/workflow/runtime/runner.ts:545:20)",
+          "execution": 1,
+          "fingerprint": "b2193a647f2bdf2632b0ea599fc64fb715b8102ac178772cc45d79b4b3efb0a0",
+          "finishedAt": "2026-09-27T02:46:14.111Z",
+          "policy": {
+            "retry": {
+              "delayMs": 100,
+              "maxAttempts": 1
+            },
+            "timeoutMs": 300000
+          },
+          "profile": "text",
+          "reasoningEffort": null,
+          "request": {
+            "cwd": "/",
+            "limits": {
+              "killGraceMs": null,
+              "maxBudgetUsd": null,
+              "maxTurns": null,
+              "sandbox": "read-only",
+              "timeoutMs": 300000
+            },
+            "model": null,
+            "profile": "text",
+            "promptPreview": "second",
+            "promptSha256": "16367aacb67a4a017c8da8ab95682ccb390863780f7114dda0a0e0c55644c7c4",
+            "provider": "codex",
+            "structured": false,
+            "tools": null
+          },
+          "requested": {
+            "effort": "inherited",
+            "model": "inherited"
+          },
+          "requestedModel": null,
+          "sources": {
+            "retry.delayMs": "runtime",
+            "retry.maxAttempts": "runtime",
+            "timeoutMs": "profile:text"
+          },
+          "startedAt": "2026-09-27T02:46:14.100Z",
+          "status": "failed",
+          "usage": null
+        }
+      ],
+      "attempts": 1,
+      "durationMs": 11,
+      "error": "old failure",
+      "errorStack": "Error: old failure\n    at Object.invoke (/fixture/capture.mts:12:42)\n    at <anonymous> (/fixture/src/workflow/runtime/runner.ts:1109:52)\n    at async effect (/fixture/src/workflow/runtime/runner.ts:819:26)\n    at async <anonymous> (/fixture/src/workflow/runtime/runner.ts:545:20)",
+      "fingerprint": "b2193a647f2bdf2632b0ea599fc64fb715b8102ac178772cc45d79b4b3efb0a0",
+      "finishedAt": "2026-09-27T02:46:14.111Z",
+      "identity": {
+        "cwd": "df7e940f72aa93cbcb6d70cc35124b0767c7a0e353043c7c24b660ea9be7b952",
+        "kind": "08f6b585592467d20717e8abd8dd02b9fb430ba65eb4b745c373ce3001ef5dae",
+        "model": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+        "onError": "a8ae35eaddff8b9970e3075d77d711798ddfa511a5391581aef83e1a8ebbf64f",
+        "prompt": "38e452b56a63d9b5f397354cbd207b0e548ef8e4f49729a6f6dd8d6a9a57ab23",
+        "reasoningEffort": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+        "schema": "367293222408ef1e376489f1e60e1e82c854eb185410f0f6ea1b22a6d72ca502"
+      },
+      "kind": "codex",
+      "output": null,
+      "phase": null,
+      "request": {
+        "cwd": "/",
+        "limits": {
+          "killGraceMs": null,
+          "maxBudgetUsd": null,
+          "maxTurns": null,
+          "sandbox": "read-only",
+          "timeoutMs": 300000
+        },
+        "model": null,
+        "profile": "text",
+        "promptPreview": "second",
+        "promptSha256": "16367aacb67a4a017c8da8ab95682ccb390863780f7114dda0a0e0c55644c7c4",
+        "provider": "codex",
+        "structured": false,
+        "tools": null
+      },
+      "seq": 2,
+      "startedAt": "2026-09-27T02:46:14.100Z",
+      "status": "failed",
+      "wakeAt": null
+    }
+  },
+  "updatedAt": "2026-09-27T02:46:14.122Z",
+  "workflow": {
+    "fingerprint": "49b987085175ed55da7ca2a111c3015bbea8c7ad54cd3bb4bbb2d72a3af99680",
+    "identity": {
+      "code": "rehearsal-compatibility",
+      "engine": {
+        "formatVersion": 6,
+        "version": "0.0.0"
+      },
+      "files": {},
+      "inputSchema": "199490fad0bd9dd1925ebbce2ed02f949ef0396fcbabcd41baa5ffa3b1ea49b2",
+      "outputSchema": "42c50030e717f64ef6435e786fcb4b3dc38968555e23764a7902b7e5032bc966"
+    },
+    "name": "pre-rehearsal",
+    "version": "1"
+  }
+}

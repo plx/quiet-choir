@@ -13,7 +13,7 @@ import {
   parseCodex as classifyCodex,
   type ProtocolOutcome,
 } from '../src/harnesses/protocol.js';
-import type { HarnessRequest, HarnessResponse } from '../src/workflow/runtime/model.js';
+import type { HarnessRequestInput, HarnessResponse } from '../src/workflow/runtime/model.js';
 
 // Existing success/malformed-shape checks exercise the classified parser result.
 function response(outcome: ProtocolOutcome): HarnessResponse {
@@ -55,7 +55,7 @@ async function fixture(script: string): Promise<{ directory: string; binary: str
   return { directory, binary };
 }
 
-function request(provider: 'claude' | 'codex', cwd = process.cwd()): HarnessRequest {
+function request(provider: 'claude' | 'codex', cwd = process.cwd()): HarnessRequestInput {
   return { provider, options: { prompt: 'hello' }, cwd, outputSchema: null };
 }
 

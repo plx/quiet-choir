@@ -164,6 +164,13 @@ export interface MapRecord {
 
 /** Local checkpoint format. The format is intentionally versioned independently of workflows. */
 export interface RunRecord {
+  /** Harness provenance, absent in checkpoints created before rehearsal support. */
+  harness?: {
+    /** Adapter kind used by the latest body execution. */
+    kind: string;
+    /** Earlier kinds whose outputs were explicitly accepted for reuse. */
+    previousKinds: string[];
+  };
   /** Workflow-body execution history, introduced in format 6. */
   executions?: ExecutionRecord[];
   /** Recent lifecycle, phase, and log payloads; capped at 500 entries. */
@@ -460,6 +467,12 @@ const recordSchema = z
           ),
         }),
       )
+      .optional(),
+    harness: z
+      .object({
+        kind: z.string().min(1).max(100),
+        previousKinds: z.array(z.string().min(1).max(100)),
+      })
       .optional(),
     harnesses: z
       .object({
@@ -780,6 +793,8 @@ export async function lockRun(
     readonly killGraceMs?: number;
     readonly signal?: AbortSignal;
     readonly processSupervisor?: ProcessSupervisor;
+    /** Private temporary rehearsals cannot own native children and skip the OS discovery process. */
+    readonly probeOwner?: boolean;
   } = {},
 ): Promise<RunLock> {
   const lockPath = `${pathFor(stateDir, runId)}.lock`;
@@ -788,7 +803,8 @@ export async function lockRun(
     pid: process.pid,
     host: hostname(),
     token: randomUUID(),
-    osStartTime: processIdentity(process.pid)?.start ?? null,
+    osStartTime:
+      options.probeOwner === false ? null : (processIdentity(process.pid)?.start ?? null),
   };
   const supervisor = options.processSupervisor ?? new ProcessSupervisor();
   for (let attempt = 0; attempt < 3; attempt++) {

@@ -143,7 +143,7 @@ it('completes the captured reconnect turn, persists warnings, and replays withou
   expect(checkpoint.steps['agent']?.output).not.toHaveProperty('warnings');
   fail = false;
   const result = await runWorkflow(workflow, { ...options, resume: true });
-  expect(result.output).toBe('hello from fake codex');
+  expect(result.output).toBe('hello from captured codex');
   expect(result.steps['agent']?.warnings).toEqual(checkpoint.steps['agent']?.warnings);
   expect(await readFile(calls, 'utf8')).toBe('call\n');
 });

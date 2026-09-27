@@ -77,7 +77,7 @@ export class WorkflowRunError extends Error {
     super(
       stepId === null
         ? detail
-        : `Step ${stepId} (${run.steps[stepId]?.kind ?? 'unknown'}) failed: ${detail}`,
+        : `Step ${stepId.length > 80 ? `${stepId.slice(0, 80)}…` : stepId} (${run.steps[stepId]?.kind ?? 'unknown'}) failed: ${detail}`,
       { cause },
     );
     this.name = 'WorkflowRunError';

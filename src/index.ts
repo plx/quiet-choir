@@ -28,6 +28,8 @@ export type {
   ClaudeOptions,
   CodexOptions,
   HarnessRequest,
+  HarnessRequestInput,
+  HarnessCall,
   HarnessInvocation,
   HarnessProcess,
   AgentUsage,
@@ -60,7 +62,8 @@ export type {
 export { CliHarness } from './harnesses/cli.js';
 export { checkCodexSchema } from './harnesses/codex-schema.js';
 export type { SchemaIssue } from './harnesses/codex-schema.js';
-export type { CliHarnessOptions } from './harnesses/cli.js';
+export type { CliPlanArtifact, CliArgumentPlan } from './harnesses/invocation.js';
+export type { CliHarnessOptions, CliHarnessPlan } from './harnesses/cli.js';
 
 export { claudeOptionsSchema, codexOptionsSchema } from './workflow/runtime/options.js';
 
@@ -135,3 +138,7 @@ export type {
   RunEvent,
   UsageSummary,
 } from './workflow/runtime/observability-model.js';
+
+export { FixtureHarness, parseHarnessFixtures } from './harnesses/fixture.js';
+export type { FixtureCall, HarnessFixtures } from './harnesses/fixture.js';
+export { synthesizeOutput } from './harnesses/synthesize.js';

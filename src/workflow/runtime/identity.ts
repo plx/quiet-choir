@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { digest, jsonValue } from './json.js';
-import type { HarnessRequest, JsonValue } from './model.js';
+import type { HarnessRequestInput, JsonValue } from './model.js';
 
 /** Component hashes explain drift without persisting prompts or dependencies. */
 export type StepIdentity = Readonly<Record<string, string>>;
@@ -11,7 +11,7 @@ export function stepIdentity(components: Record<string, JsonValue>): StepIdentit
 }
 
 /** Explicit request identity before any authorized execution overrides. @internal */
-export function agentIdentity(request: HarnessRequest, schema: JsonValue): StepIdentity {
+export function agentIdentity(request: HarnessRequestInput, schema: JsonValue): StepIdentity {
   const options = { ...request.options };
   if (request.provider === 'codex' && request.imageAttachments !== undefined)
     Object.assign(options, { images: request.imageAttachments.map((image) => image.sha256) });

@@ -3,7 +3,7 @@ import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { ProcessSupervisor } from '../processes/supervisor.js';
-import type { HarnessMetadata, HarnessRequest } from '../workflow/runtime/model.js';
+import type { HarnessMetadata, HarnessRequestInput } from '../workflow/runtime/model.js';
 import {
   effortValues,
   codexEffortValues,
@@ -255,7 +255,7 @@ export async function probeHarnessContracts(options: DoctorOptions = {}): Promis
           await writeFile(join(probeHome, 'quiet-choir-probe.config.toml'), '', { mode: 0o600 });
         }
         const invalidModel = `claude-quiet-choir-nonexistent-${randomUUID()}`;
-        const request: HarnessRequest =
+        const request: HarnessRequestInput =
           provider === 'claude'
             ? {
                 provider,

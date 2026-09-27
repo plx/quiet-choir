@@ -1,3 +1,6 @@
+import type { HarnessFixtures } from '../../harnesses/fixture.js';
+import type { RehearsalReport } from './rehearsal.js';
+import type { HarnessSelection } from './harness-selection.js';
 import type { WorkflowFailure } from './failure.js';
 import type { InspectionStatus, RunSummary } from './inspection.js';
 import type { AgentLimits } from '../runtime/agent-limiter.js';
@@ -19,6 +22,10 @@ export interface ValidateWorkflowPlan extends ExecutionPlan {
 /** Plain-data instructions for starting or resuming a workflow. */
 export interface ExecuteWorkflowPlan extends ExecutionPlan {
   readonly kind: 'workflow.execute';
+  readonly harness?: HarnessSelection;
+  readonly dryRun?: boolean;
+  readonly stubSteps?: readonly string[];
+  readonly allowHarnessChange?: boolean;
   readonly agentLimits?: AgentLimits;
   readonly killOrphans?: boolean;
   readonly killGraceMs?: number;
@@ -55,6 +62,13 @@ export interface InspectWorkflowPlan extends ExecutionPlan {
   readonly stateDir: string;
 }
 
+/** Export completed run outputs as portable fixture rules. */
+export interface ExportFixturesPlan extends ExecutionPlan {
+  readonly kind: 'workflow.fixtures';
+  readonly runId: string;
+  readonly stateDir: string;
+}
+
 /** Read-only monitoring, with live output supplied to the executor separately. */
 export interface WatchWorkflowPlan extends ExecutionPlan {
   readonly kind: 'workflow.watch';
@@ -74,6 +88,11 @@ export interface ListWorkflowsPlan extends ExecutionPlan {
 export type WorkflowCommandResult = ExecutionResult &
   (
     | WorkflowFailure
+    | {
+        readonly kind: 'workflow.fixtures.result';
+        readonly ok: true;
+        readonly fixtures: HarnessFixtures;
+      }
     | {
         readonly kind: 'workflow.list.result';
         readonly ok: true;
@@ -104,5 +123,6 @@ export type WorkflowCommandResult = ExecutionResult &
         readonly run: WorkflowRun<JsonValue>;
         readonly ownership?: RunOwnership;
         readonly summary?: RunSummary;
+        readonly rehearsal?: RehearsalReport;
       }
   );

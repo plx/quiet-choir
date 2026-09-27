@@ -2,6 +2,16 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- Add CLI fixture selection, config JSON/@file, fixture export, and `--dry-run` with temporary
+  checkpoints, resume previews, named local-step stubs, immediate durable sleeps, and call reports.
+  Local callbacks still run for real. See [workflow rehearsal](docs/rehearsal.md).
+- `HarnessRequest.call` now carries durable run/step/attempt/idempotency metadata outside effect
+  fingerprints. Use `HarnessRequestInput` for pure `CliHarness.plan()`/direct adapter inputs. Export
+  `FixtureHarness`, fixture types/parser, and deterministic schema sampling from the root.
+- New records save harness provenance; changing kinds on resume/fork requires `allowHarnessChange` /
+  `--allow-harness-change`. Unlabelled format-6 checkpoints remain resumable.
+- Ship repository-only real-envelope fake CLIs and an opt-in, zero-cost `test:contract` capture job.
+
 - Persist step/attempt timing, resolved request summaries, usage, stacks, and body executions.
   `ctx.phase` and `ctx.log` provide scoped, replay-marked observations without effect identities.
   Retain 500 event payloads plus compact replay counts. Debug events include time and run ID.

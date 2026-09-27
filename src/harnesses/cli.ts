@@ -1,7 +1,7 @@
 import { isAbsolute } from 'node:path';
 import type {
   Harness,
-  HarnessRequest,
+  HarnessRequestInput,
   HarnessResponse,
   HarnessMetadata,
   HarnessInvocation,
@@ -10,7 +10,8 @@ import type { ExecutionPolicy } from '../workflow/runtime/policy.js';
 import { HarnessError } from '../workflow/runtime/harness-error.js';
 import { ConfigurationError } from '../workflow/runtime/configuration-error.js';
 import { runProcess } from './process.js';
-import { prepareInvocation } from './invocation.js';
+import { invocationRequest, materializeInvocation, planInvocation } from './invocation.js';
+import type { CliArgumentPlan } from './invocation.js';
 import { parseClaude, parseCodex } from './protocol.js';
 
 const defaultTimeoutMs = 300_000;
@@ -29,6 +30,22 @@ export interface CliHarnessOptions {
   readonly killGraceMs?: number;
 }
 
+/** Pure, serializable process plan; planning never probes binaries or creates files. */
+export interface CliHarnessPlan extends CliArgumentPlan {
+  /** Selected executable. */
+  readonly binary: string;
+  /** Absolute working directory. */
+  readonly cwd: string;
+  /** Prompt sent through stdin. */
+  readonly stdin: string;
+  /** Resolved per-call deadline in milliseconds. */
+  readonly timeoutMs: number;
+  /** Combined stdout/stderr byte limit. */
+  readonly maxOutputBytes: number;
+  /** Grace period before forced termination. */
+  readonly killGraceMs: number;
+}
+
 function positive(value: number, name: string): number {
   if (!Number.isSafeInteger(value) || value < 1)
     throw new Error(`${name} must be a positive safe integer.`);
@@ -43,6 +60,8 @@ function timerDuration(value: number, name: string): number {
 
 /** Invoke installed Claude Code and Codex CLIs with subscription authentication and bounded processes. */
 export class CliHarness implements Harness {
+  /** Native CLI execution provenance. */
+  public readonly kind = 'cli';
   private readonly options: CliHarnessOptions;
   private readonly maxOutputBytes: number;
   private readonly killGraceMs: number;
@@ -55,7 +74,7 @@ export class CliHarness implements Harness {
   }
 
   /** Adapter-owned defaults exposed to the runtime for accurate per-attempt policy records. */
-  public policyDefaults(provider: HarnessRequest['provider']): ExecutionPolicy {
+  public policyDefaults(provider: HarnessRequestInput['provider']): ExecutionPolicy {
     return {
       timeoutMs: defaultTimeoutMs,
       maxOutputBytes: this.maxOutputBytes,
@@ -70,9 +89,29 @@ export class CliHarness implements Harness {
     };
   }
 
+  /** Validate and describe the exact invocation without filesystem writes or child processes. */
+  public plan(request: HarnessRequestInput): CliHarnessPlan {
+    // Validation before launch rejects as configuration, never as a settled effect failure;
+    // planInvocation applies the same rule to option and output-schema validation.
+    if (!isAbsolute(request.cwd))
+      throw new ConfigurationError('Harness cwd must be an absolute path.');
+    return {
+      ...planInvocation(request),
+      binary:
+        request.provider === 'claude'
+          ? (this.options.claudeBinary ?? 'claude')
+          : (this.options.codexBinary ?? 'codex'),
+      cwd: request.cwd,
+      stdin: request.options.prompt,
+      timeoutMs: request.options.timeoutMs ?? defaultTimeoutMs,
+      maxOutputBytes: this.maxOutputBytes,
+      killGraceMs: this.killGraceMs,
+    };
+  }
+
   /** Read the selected executable version without inference; failures become diagnostics. */
   public async metadata(
-    request: HarnessRequest,
+    request: HarnessRequestInput,
     context: HarnessInvocation,
   ): Promise<HarnessMetadata> {
     const { signal } = context;
@@ -117,33 +156,35 @@ export class CliHarness implements Harness {
 
   /** Execute a fresh headless session, rejecting cancellation, limits, and protocol failures. */
   public async invoke(
-    request: HarnessRequest,
+    request: HarnessRequestInput,
     context: HarnessInvocation,
   ): Promise<HarnessResponse> {
     const { signal } = context;
     signal.throwIfAborted();
-    // Validation before launch rejects as configuration, never as a settled effect failure;
-    // prepareInvocation applies the same rule to option and output-schema validation.
+    // Reject a relative cwd as configuration before any image is snapshotted against it.
     if (!isAbsolute(request.cwd))
       throw new ConfigurationError('Harness cwd must be an absolute path.');
-    const timeoutMs = request.options.timeoutMs ?? defaultTimeoutMs;
-    const binary =
-      request.provider === 'claude'
-        ? (this.options.claudeBinary ?? 'claude')
-        : (this.options.codexBinary ?? 'codex');
-    const invocation = await prepareInvocation(request, signal);
+    const input = await invocationRequest(request, signal);
+    const plan = this.plan(input);
+    const invocation = await materializeInvocation(plan, input);
     try {
       const result = await runProcess({
-        binary,
+        binary: plan.binary,
         args: invocation.args,
-        cwd: request.cwd,
-        input: request.options.prompt,
-        timeoutMs,
-        maxOutputBytes: this.maxOutputBytes,
-        killGraceMs: this.killGraceMs,
+        cwd: plan.cwd,
+        input: plan.stdin,
+        timeoutMs: plan.timeoutMs,
+        maxOutputBytes: plan.maxOutputBytes,
+        killGraceMs: plan.killGraceMs,
         signal,
         trackProcess: (child) => context.trackProcess(child),
-        ...(request.options.env === undefined ? {} : { env: request.options.env }),
+        env: {
+          ...request.options.env,
+          QUIET_CHOIR_RUN_ID: context.runId,
+          QUIET_CHOIR_STEP_ID: context.stepId,
+          QUIET_CHOIR_ATTEMPT: String(context.attempt),
+          QUIET_CHOIR_IDEMPOTENCY_KEY: `${context.runId}/${context.stepId}`,
+        },
       });
       const outcome =
         request.provider === 'claude'

@@ -22,15 +22,16 @@ workflow workspace.
 
 ## Reference contents
 
-| Reference                                              | Read when                                                                                      |
-| ------------------------------------------------------ | ---------------------------------------------------------------------------------------------- |
-| [Setup and CLI](references/setup-and-cli.md)           | Locating the runtime, running a first workflow, choosing commands and flags                    |
-| [Workflow authoring](references/workflow-authoring.md) | Defining schemas, composing steps, branching, mapping, and retrying local effects              |
-| [Claude Code calls](references/claude.md)              | Choosing tools, budgets, turns, structured output, or diagnosing Claude failures               |
-| [Codex calls](references/codex.md)                     | Choosing sandbox and reasoning settings, or diagnosing Codex protocol failures                 |
-| [Durability and resumption](references/durability.md)  | Designing repeatable effects, resuming after failure, or investigating compatibility and locks |
-| [Progress inspection](references/inspection.md)        | Reading checkpoints, observing live progress, or interpreting usage and errors                 |
-| [Embedding and extensions](references/extensions.md)   | Implementing a harness, reusable workflow helpers, or agent plugin documentation               |
+| Reference                                              | Read when                                                                                            |
+| ------------------------------------------------------ | ---------------------------------------------------------------------------------------------------- |
+| [Setup and CLI](references/setup-and-cli.md)           | Locating the runtime, running a first workflow, choosing commands and flags                          |
+| [Rehearsal](references/rehearsal.md)                   | Testing a path with fixtures/dry-run before paid calls, previewing resume, and native protocol fakes |
+| [Workflow authoring](references/workflow-authoring.md) | Defining schemas, composing steps, branching, mapping, and retrying local effects                    |
+| [Claude Code calls](references/claude.md)              | Choosing tools, budgets, turns, structured output, or diagnosing Claude failures                     |
+| [Codex calls](references/codex.md)                     | Choosing sandbox and reasoning settings, or diagnosing Codex protocol failures                       |
+| [Durability and resumption](references/durability.md)  | Designing repeatable effects, resuming after failure, or investigating compatibility and locks       |
+| [Progress inspection](references/inspection.md)        | Reading checkpoints, observing live progress, or interpreting usage and errors                       |
+| [Embedding and extensions](references/extensions.md)   | Implementing a harness, reusable workflow helpers, or agent plugin documentation                     |
 
 ## Essential constraints
 
@@ -43,8 +44,11 @@ workflow workspace.
   quiet-choir checkout; for another project, change there and invoke
   `node /absolute/path/to/quiet-choir/bin/run.js`. There is no `--cwd` flag. See
   [setup](references/setup-and-cli.md).
-- External actions may repeat after a crash or cancellation. Only `ctx.step` callbacks receive an
-  `idempotencyKey` (`runId/stepId`); pass it to systems that support deduplication. Agent calls have
-  no such key and can repeat file edits. Checkpoints cannot undo workspace mutations.
+- Rehearse before you pay: use `--dry-run --json`, inspect the reached calls and warnings, then
+  launch native execution. Local callbacks run for real unless matched by `--stub-steps`; temporary
+  checkpoints do not undo their effects. See [rehearsal](references/rehearsal.md).
+- External actions may repeat after a crash or cancellation. Local callbacks and
+  `HarnessRequest.call` receive `idempotencyKey` (`runId/stepId`); pass it to systems that support
+  deduplication. Native CLIs do not deduplicate edits with it. Checkpoints cannot undo mutations.
 - Harness calls inherit CLI authentication/configuration. The workflow itself is trusted executable
   code; harness permission flags do not sandbox it.

@@ -54,6 +54,27 @@ when run in a subdirectory. For work in another project, change to that project 
 where the package is already installed. An agent option's absolute `cwd` is accepted without
 confinement and must name an existing directory.
 
+## Rehearse before you pay
+
+```sh
+npm run --silent cli -- workflow execute examples/duet.workflow.ts \
+  --input '{"topic":"durable agent workflows"}' --dry-run --json
+```
+
+Dry-run synthesizes agent responses, validates the same native argv/schema plans, skips durable
+sleeps, and removes its temporary checkpoints. **Local callbacks and imported code run for real**;
+use `--stub-steps 'publish/**'` to synthesize selected local effects. Inspect full prompts, resolved
+limits, per-provider counts, the nominal Claude ceiling, and warnings before a native run. Only the
+rehearsed path is covered; minimal arrays can understate fan-out.
+
+Use `--harness fixture:./fixtures.json` for named fixture responses, or combine it with `--dry-run`
+for temporary execution and synthesis of missing calls. `workflow fixtures RUN_ID --json` exports
+successful agent outputs from a completed run. `--dry-run --resume --run-id RUN_ID` previews the
+remaining work on a copy of real state. Changing a recorded harness kind for actual resume/fork
+requires `--allow-harness-change`. Configure CLI paths/limits with `--harness-config` JSON or @file.
+See [workflow rehearsal](docs/rehearsal.md) for fixture format, report fields, and free native
+protocol tests.
+
 ## Author a workflow
 
 Workflows default-export `defineWorkflow(...)`. Input, final output, and structured agent responses
@@ -137,10 +158,10 @@ Callbacks receive `{ signal, attempt, idempotencyKey }`. Opt into retries only f
 effects, with `retry: { maxAttempts: 3, delayMs: 100 }`; delays double up to 30 seconds. Agent
 effects also accept explicit retry policies; the default is one attempt. A later explicit resume
 retries unfinished effects, including failed agent calls. `ctx.runId` and `ctx.signal` expose run
-identity and cancellation. Only local callbacks receive `idempotencyKey`; agent calls have none and
-can repeat edits. Step dependencies, prompts, and identity options are stored as component hashes,
-alongside the full validated result. Resolved policy, requested model/effort, and provenance are
-recorded per attempt.
+identity and cancellation. Local callbacks and `HarnessRequest.call` receive a stable
+`idempotencyKey`; native CLIs do not deduplicate edits with it, so agent work can repeat. Step
+dependencies, prompts, and identity options are stored as component hashes, alongside the full
+validated result. Resolved policy, requested model/effort, and provenance are recorded per attempt.
 
 For embedding, call `runWorkflow(definition, { runId, input, harness: new CliHarness() })`. Its
 output is typed from the workflow schema. Supply `signal`, `stateDir`, `cwd`, `onEvent`, and a code

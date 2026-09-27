@@ -189,7 +189,7 @@ describe('durable TypeScript workflows', () => {
       .mockResolvedValueOnce({ ...response, text: 'not json' })
       .mockResolvedValueOnce({ ...response, text: '{"answer":"bad"}' })
       .mockResolvedValue(response);
-    const resume = { ...options, resume: true, harness: { invoke } };
+    const resume = { ...options, resume: true, allowHarnessChange: true, harness: { invoke } };
     await expect(runWorkflow(definition, resume)).rejects.toThrow();
     await expect(runWorkflow(definition, resume)).rejects.toThrow();
     expect(

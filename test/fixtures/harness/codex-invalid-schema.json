@@ -1,0 +1,14 @@
+{
+  "provider": "codex",
+  "version": "0.157.1",
+  "code": 1,
+  "signal": null,
+  "structured": true,
+  "stdout": "{\"type\":\"thread.started\",\"thread_id\":\"00000000-0000-4000-8000-000000000000\"}\n{\"type\":\"turn.started\"}\n{\"type\":\"error\",\"message\":\"{\\\"error\\\":{\\\"type\\\":\\\"invalid_request_error\\\",\\\"code\\\":\\\"invalid_json_schema\\\",\\\"param\\\":\\\"text.format.schema\\\",\\\"message\\\":\\\"Invalid schema for response_format 'output': required must include every property (fake).\\\"}}\"}\n{\"type\":\"turn.failed\",\"error\":{\"message\":\"{\\\"error\\\":{\\\"type\\\":\\\"invalid_request_error\\\",\\\"code\\\":\\\"invalid_json_schema\\\",\\\"param\\\":\\\"text.format.schema\\\",\\\"message\\\":\\\"Invalid schema for response_format 'output': required must include every property (fake).\\\"}}\"}}\n",
+  "stderr": "",
+  "expected": {
+    "reason": "Invalid schema for response_format",
+    "terminalReason": null,
+    "apiStatus": null
+  }
+}

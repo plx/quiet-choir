@@ -3,11 +3,17 @@ import { testInvocation } from './harness-invocation.js';
 import { chmod, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { CliHarness, HarnessError, defineWorkflow, readRun, runWorkflow, z } from '../src/index.js';
-import type { AgentClient, ClaudeOptions, CodexOptions, HarnessRequest } from '../src/index.js';
+import type {
+  AgentClient,
+  ClaudeOptions,
+  CodexOptions,
+  HarnessRequestInput,
+} from '../src/index.js';
 import { parseCodex } from '../src/harnesses/protocol.js';
 
 const directories: string[] = [];
@@ -56,11 +62,12 @@ async function binaryFor(
   return { directory, binary };
 }
 
-function request(provider: 'claude' | 'codex'): HarnessRequest {
+function request(provider: 'claude' | 'codex'): HarnessRequestInput {
   return { provider, options: { prompt: 'fixture' }, outputSchema: null, cwd: process.cwd() };
 }
 
 afterEach(async () => {
+  vi.unstubAllEnvs();
   await Promise.all(
     directories.splice(0).map(async (directory) => rm(directory, { recursive: true, force: true })),
   );
@@ -70,7 +77,10 @@ describe('captured exit-1 failures', () => {
   it.each(captures)(
     'persists diagnostics and attempt usage from $name ($version)',
     async (capture) => {
-      const { directory, binary } = await binaryFor(capture.stdout, capture.stderr, capture.code);
+      const directory = await mkdtemp(join(tmpdir(), 'quiet-choir-captured-cli-'));
+      directories.push(directory);
+      const binary = fileURLToPath(new URL(`./bin/fake-${capture.provider}.mjs`, import.meta.url));
+      vi.stubEnv('QUIET_CHOIR_FAKE_SCENARIO', capture.name.replace(/\.json$/u, ''));
       const harness = new CliHarness({ claudeBinary: binary, codexBinary: binary });
       const definition = defineWorkflow({
         name: 'failure-capture',
@@ -139,6 +149,7 @@ describe('captured exit-1 failures', () => {
       const completed = await runWorkflow(definition, {
         ...options,
         resume: true,
+        allowHarnessChange: true,
         harness: {
           invoke() {
             return Promise.resolve({
