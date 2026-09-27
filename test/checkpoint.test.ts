@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { chmod, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -327,6 +327,71 @@ it('warns about a removed lock while returning the actual persisted completion',
   expect(result.output).toBe('done');
   expect(result.warnings).toHaveLength(1);
   expect((await readRun(stateDir, 'run')).output).toBe('done');
+});
+
+const asRoot = process.getuid?.() === 0;
+const ownerPath = (): string => join(stateDir, 'run.json.lock', 'owner.json');
+function stepThen(effect: () => Promise<void>): WorkflowDefinition<null, string> {
+  return workflow(async (ctx) => {
+    await ctx.step('tamper', {
+      input: null,
+      schema: z.null(),
+      async run() {
+        await effect();
+        return null;
+      },
+    });
+    return 'done';
+  });
+}
+
+it('keeps release fatal when only the lock ownership metadata disappears', async () => {
+  await expect(
+    runWorkflow(
+      stepThen(() => rm(ownerPath())),
+      options(),
+    ),
+  ).rejects.toMatchObject({
+    name: 'CheckpointError',
+    operation: 'release',
+    message: expect.stringContaining('lock ownership could not be verified') as unknown,
+  });
+  expect((await readRun(stateDir, 'run')).status).toBe('completed');
+});
+
+it.skipIf(asRoot)('keeps release fatal when lock ownership metadata is unreadable', async () => {
+  try {
+    await expect(
+      runWorkflow(
+        stepThen(() => chmod(ownerPath(), 0o000)),
+        options(),
+      ),
+    ).rejects.toMatchObject({
+      name: 'CheckpointError',
+      operation: 'release',
+      message: expect.stringContaining('lock ownership could not be verified') as unknown,
+      cause: { cause: { code: 'EACCES' } },
+    });
+    expect((await readRun(stateDir, 'run')).status).toBe('completed');
+  } finally {
+    await chmod(ownerPath(), 0o600);
+  }
+});
+
+it.skipIf(asRoot)('warns when lock removal fails after ownership was verified', async () => {
+  const lockPath = join(stateDir, 'run.json.lock');
+  try {
+    const result = await runWorkflow(
+      stepThen(() => chmod(lockPath, 0o500)),
+      options(),
+    );
+    expect(result.output).toBe('done');
+    expect(result.warnings).toHaveLength(1);
+    expect(result.warnings?.[0]).toContain('EACCES');
+    expect((await readRun(stateDir, 'run')).status).toBe('completed');
+  } finally {
+    await chmod(lockPath, 0o700);
+  }
 });
 
 it('checks cancellation after a queued start save recovers, before launching its action', async () => {

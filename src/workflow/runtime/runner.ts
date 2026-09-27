@@ -515,6 +515,7 @@ export async function runWorkflow<TInput, TOutput>(
       cause,
       `Could not release run ${options.runId} lock`,
     );
+    // lockRun keeps an errno only for a vanished lock or removal after ownership was verified.
     if (outcome.ok && (errorCode(cause) === 'EACCES' || errorCode(cause) === 'ENOENT')) {
       return { ...outcome.run, warnings: [error.message] };
     }
