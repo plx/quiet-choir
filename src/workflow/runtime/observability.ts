@@ -112,9 +112,19 @@ export class RunObservations {
     if (type !== 'run.started') {
       this.execution.endedAt = new Date().toISOString();
       this.execution.outcome =
-        type === 'run.completed' ? 'completed' : type === 'run.cancelled' ? 'cancelled' : 'failed';
+        type === 'run.completed'
+          ? 'completed'
+          : type === 'run.cancelled'
+            ? 'cancelled'
+            : type === 'run.suspended'
+              ? 'suspended'
+              : 'failed';
       this.execution.error =
-        type === 'run.completed' ? null : error instanceof Error ? error.message : String(error);
+        type === 'run.completed' || type === 'run.suspended'
+          ? null
+          : error instanceof Error
+            ? error.message
+            : String(error);
       this.execution.errorStack = errorStack(error);
       this.#record.errorStack = this.execution.errorStack;
     }

@@ -1,3 +1,5 @@
+import { questionRecordSchema, workflowLaunchSchema } from './question-schema.js';
+import type { QuestionRecord, WorkflowLaunch } from './question-model.js';
 import { MAX_RUN_EVENTS } from './observability.js';
 import type {
   ExecutionRecord,
@@ -91,6 +93,8 @@ export interface FailedAttempt {
 
 /** Persisted state of one effect. */
 export interface StepRecord {
+  /** Durable external question data; present only on ask effects. */
+  question?: QuestionRecord;
   /** Observational phase at the latest live attempt, or null. */
   phase?: string | null;
   /** Start of the latest attempt, including admission waiting. */
@@ -105,11 +109,19 @@ export interface StepRecord {
   errorStack?: string | null;
 
   /** Effect category; included in replay compatibility checks. */
-  kind: 'step' | 'claude' | 'codex' | 'sleep';
+  kind: 'step' | 'claude' | 'codex' | 'sleep' | 'ask';
   /** Hash of semantic components, including error mode. */
   fingerprint: string;
   /** Last saved lifecycle state. */
-  status: 'running' | 'completed' | 'failed' | 'cancelled' | 'settled-failed' | 'superseded';
+  status:
+    | 'running'
+    | 'completed'
+    | 'failed'
+    | 'cancelled'
+    | 'settled-failed'
+    | 'superseded'
+    | 'waiting'
+    | 'withdrawn';
   /** Effect that cancelled this scope, or null for an interrupt/mapper-body failure. */
   cancelledBy?: string | null;
   /** Terminal failure returned to the workflow by onError: return. */
@@ -164,6 +176,8 @@ export interface MapRecord {
 
 /** Local checkpoint format. The format is intentionally versioned independently of workflows. */
 export interface RunRecord {
+  /** Source launch metadata for resume by ID; absent for older and embedded runs. */
+  launch?: WorkflowLaunch;
   /** Harness provenance, absent in checkpoints created before rehearsal support. */
   harness?: {
     /** Adapter kind used by the latest body execution. */
@@ -216,7 +230,7 @@ export interface RunRecord {
   /** Validated final output, or null before completion. */
   output: JsonValue;
   /** Run lifecycle status. */
-  status: 'running' | 'completed' | 'failed' | 'cancelled';
+  status: 'running' | 'completed' | 'failed' | 'cancelled' | 'suspended';
   /** Last workflow error, if any. */
   error: string | null;
   /** First failure responsible for this invocation, or null after success; present from format 5. */
@@ -298,13 +312,23 @@ const timingFields = {
   request: requestSummarySchema.nullable().optional(),
 };
 const stepSchema = z.object({
+  question: questionRecordSchema.optional(),
   ...timingFields,
   phase: z.string().nullable().optional(),
-  kind: z.enum(['step', 'claude', 'codex', 'sleep']),
+  kind: z.enum(['step', 'claude', 'codex', 'sleep', 'ask']),
   seq: z.number().int().positive().optional(),
   reusedFrom: reusedStepSchema.optional(),
   fingerprint: z.string(),
-  status: z.enum(['running', 'completed', 'failed', 'cancelled', 'settled-failed', 'superseded']),
+  status: z.enum([
+    'running',
+    'completed',
+    'failed',
+    'cancelled',
+    'settled-failed',
+    'superseded',
+    'waiting',
+    'withdrawn',
+  ]),
   cancelledBy: z.string().nullable().optional(),
   settledError: stepErrorSchema.optional(),
   identity: z.record(z.string(), z.string()).optional(),
@@ -377,6 +401,7 @@ const stepsSchema = z.custom<Record<string, StepRecord>>(
 );
 const recordSchema = z
   .object({
+    launch: workflowLaunchSchema.optional(),
     formatVersion: z.union([
       z.literal(1),
       z.literal(2),
@@ -392,7 +417,7 @@ const recordSchema = z
           pid: z.number().int().positive(),
           startedAt: z.iso.datetime(),
           endedAt: z.iso.datetime().nullable(),
-          outcome: z.enum(['running', 'completed', 'failed', 'cancelled']),
+          outcome: z.enum(['running', 'completed', 'failed', 'cancelled', 'suspended']),
           error: z.string().nullable(),
           errorStack: z.string().nullable(),
         }),
@@ -408,6 +433,7 @@ const recordSchema = z
             'run.completed',
             'run.failed',
             'run.cancelled',
+            'run.suspended',
             'phase',
             'log',
           ]),
@@ -438,7 +464,7 @@ const recordSchema = z
     cwd: z.string(),
     input: jsonSchema,
     output: jsonSchema,
-    status: z.enum(['running', 'completed', 'failed', 'cancelled']),
+    status: z.enum(['running', 'completed', 'failed', 'cancelled', 'suspended']),
     error: z.string().nullable(),
     steps: stepsSchema,
     rootCause: z.object({ stepId: z.string().nullable(), error: z.string() }).nullable().optional(),
@@ -532,6 +558,17 @@ const recordSchema = z
     updatedAt: z.iso.datetime(),
   })
   .superRefine((record, context) => {
+    if (
+      record.formatVersion < 6 &&
+      (record.status === 'suspended' ||
+        Object.values(record.steps).some(
+          (step) =>
+            step.kind === 'ask' ||
+            step.question !== undefined ||
+            ['waiting', 'withdrawn'].includes(step.status),
+        ))
+    )
+      context.addIssue({ code: 'custom', message: 'Questions require format 6 or newer' });
     if (record.formatVersion === 1) return;
     if (record.formatVersion >= 6) {
       if (
@@ -601,6 +638,18 @@ const recordSchema = z
       });
     const sequences = new Set<number>();
     for (const [id, step] of Object.entries(record.steps)) {
+      if (
+        (step.kind === 'ask') !== (step.question !== undefined) ||
+        (['waiting', 'withdrawn'].includes(step.status) && step.kind !== 'ask') ||
+        (step.kind === 'ask' &&
+          !['waiting', 'withdrawn', 'completed', 'superseded'].includes(step.status)) ||
+        (step.question && (step.status === 'completed') !== (step.question.resolution !== null))
+      )
+        context.addIssue({
+          code: 'custom',
+          path: ['steps', id],
+          message: 'Invalid question state',
+        });
       if (
         step.status === 'settled-failed' &&
         (record.formatVersion < 4 ||

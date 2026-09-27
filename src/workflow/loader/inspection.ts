@@ -146,6 +146,8 @@ export function summarizeRun(
     cancelled: 0,
     'settled-failed': 0,
     superseded: 0,
+    waiting: 0,
+    withdrawn: 0,
   };
   for (const [, step] of entries) counts[step.status]++;
   const current = entries.filter(
@@ -191,7 +193,7 @@ export function summarizeRun(
     counts,
     steps: entries
       .filter(([, step]) =>
-        ['running', 'failed', 'cancelled', 'settled-failed'].includes(step.status),
+        ['running', 'failed', 'cancelled', 'settled-failed', 'waiting'].includes(step.status),
       )
       .map(([id, step]) => ({
         id,

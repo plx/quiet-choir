@@ -28,6 +28,7 @@ tests' fake responses prove replay behavior, not the quality of a model's review
 | Freeze a failure before selecting a fallback              | [Latch an outcome](#latch-an-outcome)                        |
 | Retry a small extraction without repeating expensive work | [Work, then extract](#work-then-extract)                     |
 | Test before native calls                                  | [Rehearse for free](#rehearse-for-free)                      |
+| Keep a human decision attached to its saved plan          | [Human review](#human-review)                                |
 | Recognize tempting but unsafe code                        | [Traps](#traps)                                              |
 
 ## Cross-harness fan-out/fan-in
@@ -517,6 +518,47 @@ implemented [#51](https://github.com/plx/quiet-choir/issues/51). Native contract
 repository fake APIs/CLIs; failing shims must exit nonzero (normally 1). Use `.mjs`/ESM shims or an
 explicit CommonJS package for `require`, rather than an extensionless `require` shim under
 `"type":"module"`. See [rehearsal](rehearsal.md) for the complete loop.
+
+## Human review
+
+**Rule:** create a plan once, bind approval to its revision and content, and continue the same run.
+The `ask`/`approve` effect saves the question and suspends only after active siblings finish. The
+[operator loop](operating-runs.md#answer-a-suspended-run) delivers a schema-valid human answer and
+resumes without changing input. This replaces returning a plan and starting another run with
+`apply:true`, which could regenerate a different plan. No application or file edits happen in this
+small recipe; an applying workflow must use the same saved `plan` after the approval branch.
+
+<!-- skills-check: example pattern-human-review -->
+
+```ts
+import { defineWorkflow, z } from '../../src/index.js';
+
+export default defineWorkflow({
+  name: 'human-review',
+  version: '1',
+  input: z.object({ task: z.string(), revision: z.string() }),
+  output: z.object({ approved: z.boolean(), plan: z.string() }),
+  async run(ctx, input) {
+    const plan = await ctx.codex.value('plan', {
+      prompt: `Propose a short plan for ${input.task}; do not edit files.`,
+    });
+    const decision = await ctx.approve(ctx.id('approve', input.revision), {
+      prompt: 'Accept this plan?',
+      title: 'Plan review',
+      details: Buffer.from(plan).subarray(0, 16_000).toString('utf8'),
+      subject: { revision: input.revision, plan },
+      audience: 'human',
+    });
+    return { approved: decision.approved, plan };
+  },
+});
+```
+
+**Cost:** one read-only planning call, one human decision, and zero repeated calls on compatible
+resume. The fixture suspends, supplies an answer, fails the workflow tail, and proves that both plan
+and decision replay. Await context operations: raw timers or detached I/O are invisible to
+quiescence. Suspension does not enter `catch` or execute body `finally` blocks. An abandoned
+question becomes `withdrawn` when the body completes; normal failures retain waiting questions.
 
 ## Traps
 

@@ -9,12 +9,13 @@ diagnostic, not as durable proof of ownership. `nohup` handles terminal hangup a
 SIGINT/SIGTERM still cancel. Use one pair of files per run/attempt so a recovery does not overwrite
 failure evidence. A machine reboot still stops local processes; there is no scheduler.
 
-`--json` writes one success or failure document to stdout; logs and workflow console output go to
-stderr. A failure document has `ok:false`, `exitCode`, `error:{code,message,stepId,details}`,
-`runId`, `stateDir`, `diagnostics`, and the last readable `run` (possibly null). Typecheck
-diagnostics are top-level, not inside `error`. A process killed before it can report may leave an
-empty file. An initial missing record can mean loading is still underway or a pre-record failure;
-inspect the log, result document, and observed runner before deciding which.
+`--json` writes one completion, suspension, or failure document to stdout; logs and workflow console
+output go to stderr. A failure document has `ok:false`, `exitCode`,
+`error:{code,message,stepId,details}`, `runId`, `stateDir`, `diagnostics`, and the last readable
+`run` (possibly null). Typecheck diagnostics are top-level, not inside `error`. A process killed
+before it can report may leave an empty file. An initial missing record can mean loading is still
+underway or a pre-record failure; inspect the log, result document, and observed runner before
+deciding which.
 
 ## Poll the saved state
 
@@ -39,23 +40,76 @@ node "$QC_CHECKOUT/bin/run.js" workflow inspect first --state-dir "$QC_RUNS" --j
 ```
 
 Plain inspect exits 0 when it reads a record, including failed/cancelled/running records. Branch on
-`.status`, or use `--watch`: final completed exits 0, failed 1, cancelled 130, stale 3. JSON watch
-emits JSONL on changes; it is not a lossless event stream. Interrupting a watcher stops observation,
-not the workflow. List/summary derive `stale` from ownership; full-record `.status` remains the last
-saved status. Use [triage](inspection.md#classify-and-act) to interpret it.
+`.status`, or use `--watch`: final completed exits 0, failed 1, suspended 75, cancelled 130,
+stale 3. JSON watch emits JSONL on changes; it is not a lossless event stream. Interrupting a
+watcher stops observation, not the workflow. List/summary derive `stale` from ownership; full-record
+`.status` remains the last saved status. Use [triage](inspection.md#classify-and-act) to interpret
+it.
 
-| CLI exit | Meaning                                                                                             |
-| -------- | --------------------------------------------------------------------------------------------------- |
-| 0        | Command succeeded; ordinary inspect only guarantees a readable record                               |
-| 1        | Workflow execution failed                                                                           |
-| 2        | Usage/input error: flags, missing entrypoint, run ID, input JSON/schema                             |
-| 3        | Run refusal: existing/missing/unreadable/locked run, incompatible resume, changed input, or orphans |
-| 4        | Workflow typecheck, import, or definition failure                                                   |
-| 74       | Checkpoint/storage failure                                                                          |
-| 130      | Workflow interruption (SIGINT/SIGTERM/SIGHUP), or interrupted watch                                 |
+| CLI exit | Meaning                                                                                                                                     |
+| -------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| 0        | Command succeeded; ordinary inspect only guarantees a readable record                                                                       |
+| 1        | Workflow execution failed                                                                                                                   |
+| 2        | Invalid answer (`answer.invalid`), or usage/input error: flags, missing entrypoint, run ID, input JSON/schema                               |
+| 3        | Answer conflict (`answer.conflict`), or run refusal: existing/missing/unreadable/locked run, incompatible resume, changed input, or orphans |
+| 4        | Workflow typecheck, import, or definition failure                                                                                           |
+| 75       | Saved suspension; deliver answers and resume the same run                                                                                   |
+| 74       | Checkpoint/storage failure                                                                                                                  |
+| 130      | Workflow interruption (SIGINT/SIGTERM/SIGHUP), or interrupted watch                                                                         |
 
 Use stable `error.code` for automation. Put flags after the command
 (`workflow execute FILE --json`).
+
+## Answer a suspended run
+
+For a real run, exit 75 is a saved external wait, not a failure. A `--dry-run` suspension includes a
+`rehearsal` report and null answer/resume commands because temporary state was removed; start a real
+run before requesting the human decision. Started sibling work has finished and the owner has
+released the lock. Read the result's `pending` entries or list them without loading source:
+
+```sh
+node "$QC_CHECKOUT/bin/run.js" workflow pending --state-dir "$QC_RUNS" --json
+```
+
+Check `codeChanged` before asking the human to review possibly stale context. `true` means saved
+source bytes changed; `null` means paths were not recorded. Resolve code compatibility with
+`check-resume FILE --run-id RUN` first when needed. Intentional `--accept-code-change` still cannot
+change a question's fingerprint or reuse approval for a different subject.
+
+For `audience: human`, present the question and details to the human through the host's question UI.
+Do not choose an answer yourself or invent `human:` attribution. In a Claude Code host exposing
+`AskUserQuestion`, map `prompt` to `question`, `title` (or a short label of at most 12 characters)
+to `header`, and choices to labeled options with their descriptions. Keep the exact choice values
+for the later JSON answer. For `approve`, offer Approve/Decline and encode the response as
+`{"approved":true}` or `{"approved":false,"comment":"..."}`. Use the equivalent available question
+tool in another host. Display markdown details as context; do not execute answer text.
+
+The host may allow a free-text answer even when choices are present. It must still satisfy the saved
+schema. If an enum answer is outside its values, ask for a valid decision; never silently coerce it.
+`agent`/`any` allow the calling agent to answer within its existing task authorization. Audience and
+`by` are guardrails, not authentication; filesystem permissions are the trust boundary.
+
+```sh
+node "$QC_CHECKOUT/bin/run.js" workflow answer first approve/rev-1 \
+  --state-dir "$QC_RUNS" --json '{"approved":true}' --by 'human:Pat'
+node "$QC_CHECKOUT/bin/run.js" workflow resume first --state-dir "$QC_RUNS" --json
+```
+
+The `answer --json VALUE` flag takes JSON data and also requests JSON output. Prefer the supplied
+`answerCommand`/`resumeCommand` argument vectors, substituting the actual answer rather than
+building an interpolated shell command. Quote shell examples literally; answer text is untrusted
+data. Launch resume in the background with separate result/log files just as in the golden path.
+Resume by ID uses stored entrypoint/cwd/tsconfig; older or embedded records without these paths
+still need `execute FILE --resume --run-id RUN` or their embedding application. Repeat on exit 75;
+exit 0 means completion. `answer --resume` combines delivery with resume.
+
+An early invalid answer exits 2 and writes nothing. A duplicate or closed question exits 3.
+Successful delivery means queued; the owner validates again with real Zod refinements. Rejected
+files are quarantined and explanations appear in `pending.rejections`; submit a corrected answer. If
+`answer --resume` fails during loading or execution, keep the queued answer and retry `resume`, not
+`answer`. A delivery arriving while sibling work is active can continue the run without a
+suspension. See [question durability](durability.md#durable-questions) and the
+[human-review recipe](patterns.md#human-review).
 
 ## Stalls and orphan recovery
 

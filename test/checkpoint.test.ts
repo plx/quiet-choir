@@ -11,6 +11,7 @@ import {
   readRun,
   RunRefusedError,
   runWorkflow,
+  writeAnswer,
   z,
 } from '../src/index.js';
 import type { WorkflowDefinition } from '../src/index.js';
@@ -52,6 +53,50 @@ beforeEach(async () => {
 });
 afterEach(async () => {
   await rm(stateDir, { recursive: true, force: true });
+});
+
+it('does not claim a suspended transition that failed to persist', async () => {
+  vi.mocked(store.writeRun).mockImplementation((directory, record) =>
+    record.status === 'suspended'
+      ? Promise.reject(ioError('ENOSPC'))
+      : actualStore.writeRun(directory, record),
+  );
+  await expect(
+    runWorkflow(
+      workflow((ctx) => ctx.ask('question', { prompt: 'Answer?', schema: z.string() })),
+      options(),
+    ),
+  ).rejects.toThrow('ENOSPC');
+  const saved = await readRun(options());
+  expect(saved.status).toBe('failed');
+  expect(saved.steps['question']?.status).toBe('waiting');
+  expect(saved.events?.some((event) => event.type === 'run.suspended')).toBe(false);
+  expect((await store.inspectRunOwnership(options())).locked).toBe(false);
+});
+
+it('recovers an accepted answer through a later failure save without requesting it again', async () => {
+  const definition = workflow((ctx) =>
+    ctx.ask('question', { prompt: 'Answer?', schema: z.string() }),
+  );
+  expect((await runWorkflow(definition, options())).status).toBe('suspended');
+  await writeAnswer({ ...options(), stepId: 'question', value: 'saved' });
+  let unavailable = true;
+  vi.mocked(store.writeRun).mockImplementation((directory, record) => {
+    if (
+      unavailable &&
+      record.status === 'running' &&
+      record.steps['question']?.status === 'completed'
+    ) {
+      return Promise.reject(ioError('ENOSPC'));
+    }
+    return actualStore.writeRun(directory, record);
+  });
+  await expect(runWorkflow(definition, { ...options(), resume: true })).rejects.toThrow('ENOSPC');
+  unavailable = false;
+  expect((await readRun(options())).steps['question']?.status).toBe('completed');
+  const resumed = await runWorkflow(definition, { ...options(), resume: true });
+  expect(resumed.output).toBe('saved');
+  expect(resumed.steps['question']?.attempts).toBe(1);
 });
 
 it('retries transient completion writes without retrying the successful action', async () => {

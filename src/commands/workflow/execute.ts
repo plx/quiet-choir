@@ -257,6 +257,10 @@ export default class WorkflowExecute extends WorkflowCommand {
           `Rehearsal: ${String(result.rehearsal.calls.length)} calls; nominal Claude ceiling $${String(result.rehearsal.nominalClaudeCeilingUsd)}; ${String(result.rehearsal.replays.length)} replayed effects.`,
         );
       for (const warning of result.run.warnings ?? []) this.logToStderr(`Warning: ${warning}`);
+      if (result.run.status === 'suspended') {
+        this.suspended(result.run, result.rehearsal);
+        return;
+      }
       this.outputSavedCompletion(
         result.rehearsal === undefined
           ? result.run

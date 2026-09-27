@@ -1,5 +1,5 @@
 {
-  "method": "Deterministic differential fixtures plus interrupted durable resume; no live agents",
+  "method": "Deterministic differential fixtures, six intentional durable-question port contracts, and interrupted resume; no live agents",
   "results": [
     {
       "workflow": "acceptance-qa-batch",
@@ -114,13 +114,6 @@
       "steps": 9
     },
     {
-      "workflow": "project-bootstrap",
-      "fixture": "empty",
-      "status": "passed",
-      "agentCalls": 2,
-      "steps": 2
-    },
-    {
       "workflow": "refactor-campaign",
       "fixture": "empty",
       "status": "passed",
@@ -157,13 +150,6 @@
     },
     {
       "workflow": "roadmap-plan",
-      "fixture": "empty",
-      "status": "passed",
-      "agentCalls": 1,
-      "steps": 1
-    },
-    {
-      "workflow": "sdlc-orchestrator",
       "fixture": "empty",
       "status": "passed",
       "agentCalls": 1,
@@ -296,13 +282,6 @@
       "steps": 18
     },
     {
-      "workflow": "project-bootstrap",
-      "fixture": "populated",
-      "status": "passed",
-      "agentCalls": 2,
-      "steps": 2
-    },
-    {
       "workflow": "refactor-campaign",
       "fixture": "populated",
       "status": "passed",
@@ -343,13 +322,6 @@
       "status": "passed",
       "agentCalls": 7,
       "steps": 7
-    },
-    {
-      "workflow": "sdlc-orchestrator",
-      "fixture": "populated",
-      "status": "passed",
-      "agentCalls": 1,
-      "steps": 1
     },
     {
       "workflow": "security-audit",
@@ -429,13 +401,6 @@
       "steps": 19
     },
     {
-      "workflow": "project-bootstrap",
-      "fixture": "repair",
-      "status": "passed",
-      "agentCalls": 6,
-      "steps": 6
-    },
-    {
       "workflow": "refactor-campaign",
       "fixture": "repair",
       "status": "passed",
@@ -464,11 +429,52 @@
       "steps": 9
     },
     {
-      "workflow": "sdlc-orchestrator",
-      "fixture": "repair",
+      "workflow": "project-bootstrap",
+      "fixture": "durable-decline",
       "status": "passed",
-      "agentCalls": 66,
-      "steps": 66
+      "contract": "saved-plan-approval",
+      "agentCalls": 2,
+      "steps": 3
+    },
+    {
+      "workflow": "project-bootstrap",
+      "fixture": "durable-approve",
+      "status": "passed",
+      "contract": "saved-plan-approval",
+      "agentCalls": 4,
+      "steps": 5
+    },
+    {
+      "workflow": "project-bootstrap",
+      "fixture": "durable-repair",
+      "status": "passed",
+      "contract": "saved-plan-approval",
+      "agentCalls": 7,
+      "steps": 7
+    },
+    {
+      "workflow": "sdlc-orchestrator",
+      "fixture": "durable-plan",
+      "status": "passed",
+      "contract": "one-run-stage-decisions",
+      "agentCalls": 1,
+      "steps": 1
+    },
+    {
+      "workflow": "sdlc-orchestrator",
+      "fixture": "durable-inline",
+      "status": "passed",
+      "contract": "one-run-stage-decisions",
+      "agentCalls": 41,
+      "steps": 41
+    },
+    {
+      "workflow": "sdlc-orchestrator",
+      "fixture": "durable-redo",
+      "status": "passed",
+      "contract": "one-run-stage-decisions",
+      "agentCalls": 41,
+      "steps": 42
     },
     {
       "workflow": "acceptance-qa-batch",

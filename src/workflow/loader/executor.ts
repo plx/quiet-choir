@@ -31,7 +31,8 @@ import { resolveStateDir } from '../runtime/paths.js';
 import { CheckpointError } from '../runtime/checkpoint.js';
 import { readRun } from '../runtime/store.js';
 import { TypeScriptExecutor } from '../typecheck/typescript-executor.js';
-import { fingerprintSources } from './source.js';
+import { fingerprintSources, workflowLaunch } from './source.js';
+import { AnswerError, listPending, writeAnswer } from '../runtime/inbox.js';
 import { canonicalCwd, compareResume, workflowSnapshot } from '../runtime/compatibility.js';
 import type {
   ExecuteWorkflowPlan,
@@ -42,6 +43,9 @@ import type {
   ListWorkflowsPlan,
   ValidateWorkflowPlan,
   WorkflowCommandResult,
+  ResumeWorkflowPlan,
+  AnswerWorkflowPlan,
+  PendingWorkflowsPlan,
 } from './model.js';
 
 /** Explicit live dependencies, kept outside serializable command plans. */
@@ -90,7 +94,10 @@ export class WorkflowExecutor implements Executor<
   | InspectWorkflowPlan
   | CheckResumePlan
   | WatchWorkflowPlan
-  | ListWorkflowsPlan,
+  | ListWorkflowsPlan
+  | ResumeWorkflowPlan
+  | AnswerWorkflowPlan
+  | PendingWorkflowsPlan,
   WorkflowCommandResult
 > {
   readonly #options: WorkflowExecutorOptions;
@@ -107,7 +114,10 @@ export class WorkflowExecutor implements Executor<
       | InspectWorkflowPlan
       | CheckResumePlan
       | WatchWorkflowPlan
-      | ListWorkflowsPlan,
+      | ListWorkflowsPlan
+      | ResumeWorkflowPlan
+      | AnswerWorkflowPlan
+      | PendingWorkflowsPlan,
   ): Promise<WorkflowCommandResult> {
     let unregister: (() => void) | undefined;
     let rehearsal: RehearsalHarness | undefined;
@@ -126,6 +136,50 @@ export class WorkflowExecutor implements Executor<
         return workflowFailure('usage.run_id', runIdMessage, context);
       if (plan.kind === 'workflow.execute' && plan.forkFrom && !isValidRunId(plan.forkFrom.runId))
         return workflowFailure('usage.run_id', runIdMessage, context);
+      if (plan.kind === 'workflow.resume') {
+        const run = await readRequiredRun({ runId: plan.runId, stateDir: plan.stateDir });
+        if (!run.launch)
+          throw new RunRefusedError(
+            'run.incompatible',
+            run.id,
+            'This run has no stored entrypoint. Resume with workflow execute FILE --resume --run-id RUN, or the original embedding application.',
+          );
+        return await this.execute({
+          ...plan,
+          kind: 'workflow.execute',
+          cwd: run.cwd,
+          resume: true,
+          typecheck: {
+            kind: 'workflow.typecheck',
+            entrypoint: run.launch.entrypoint,
+            configuration:
+              run.launch.tsconfig === null
+                ? { kind: 'defaults', profile: 'node22-es2023-strict' }
+                : { kind: 'tsconfig', path: run.launch.tsconfig },
+          },
+        });
+      }
+      if (plan.kind === 'workflow.pending') {
+        stage = 'run.unreadable';
+        return {
+          kind: 'workflow.pending.result',
+          ok: true,
+          pending: await listPending({ stateDir: plan.stateDir }),
+        };
+      }
+      if (plan.kind === 'workflow.answer') {
+        stage = 'workflow.storage';
+        await readRequiredRun({ runId: plan.runId, stateDir: plan.stateDir });
+        const delivery = await writeAnswer(plan);
+        if (plan.resume)
+          return await this.execute({
+            kind: 'workflow.resume',
+            runId: plan.runId,
+            stateDir: plan.stateDir,
+            ...(plan.harness === undefined ? {} : { harness: plan.harness }),
+          });
+        return { kind: 'workflow.answer.result', ok: true, delivery };
+      }
       if (plan.kind === 'workflow.fixtures') {
         stage = 'run.unreadable';
         const run = await readRequiredRun({ runId: plan.runId, stateDir: plan.stateDir });
@@ -259,6 +313,7 @@ export class WorkflowExecutor implements Executor<
       stage = 'usage.flag';
       const run = await runWorkflow(definition, {
         runId: plan.runId,
+        launch: await workflowLaunch(plan.typecheck, source),
         stateDir: previewState?.stateDir ?? plan.stateDir,
         cwd: plan.cwd,
         ...(rehearsal === undefined ? {} : { rehearsal: rehearsal.hooks }),
@@ -301,7 +356,14 @@ export class WorkflowExecutor implements Executor<
       return {
         kind: 'workflow.run.result',
         ok: true,
-        run,
+        run:
+          rehearsal && run.status === 'suspended'
+            ? {
+                ...run,
+                resumeCommand: null,
+                pending: run.pending.map((question) => ({ ...question, answerCommand: null })),
+              }
+            : run,
         ...(rehearsal === undefined ? {} : { rehearsal: rehearsal.report(run) }),
       };
     } catch (error: unknown) {
@@ -314,18 +376,23 @@ export class WorkflowExecutor implements Executor<
       const message = error instanceof Error ? error.message : String(error);
       // A failed save outranks an interrupt: the cancellation state may not be on disk. A saved
       // checkpoint outranks the ambient signal: the runner saves `cancelled` only when the abort
-      // caused the failure, so a `failed` run stays a failure even if a signal also arrived.
+      // caused the failure, so a `failed` run stays a failure even if a signal also arrived. An
+      // answer rejection is a definitive refusal, not an interrupted execution.
       const code = hasCheckpointError(error)
         ? 'workflow.storage'
-        : error instanceof WorkflowRunError
-          ? error.run.status === 'cancelled'
-            ? 'workflow.interrupted'
-            : 'workflow.failed'
-          : this.#options.signal?.aborted
-            ? 'workflow.interrupted'
-            : error instanceof RunRefusedError || error instanceof WorkflowInputError
-              ? error.code
-              : stage;
+        : error instanceof AnswerError
+          ? error.reason === 'invalid'
+            ? 'answer.invalid'
+            : 'answer.conflict'
+          : error instanceof WorkflowRunError
+            ? error.run.status === 'cancelled'
+              ? 'workflow.interrupted'
+              : 'workflow.failed'
+            : this.#options.signal?.aborted
+              ? 'workflow.interrupted'
+              : error instanceof RunRefusedError || error instanceof WorkflowInputError
+                ? error.code
+                : stage;
       return workflowFailure(
         code,
         run?.recoveryHint && !message.includes('re-finalize')

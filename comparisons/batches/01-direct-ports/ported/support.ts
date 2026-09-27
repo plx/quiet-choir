@@ -40,6 +40,8 @@ export function scopedContext(ctx: WorkflowContext, prefix: string): WorkflowCon
       text: (id, options) => ctx.codex.text(`${prefix}/${id}`, options),
       object: (id, options) => ctx.codex.object(`${prefix}/${id}`, options),
     },
+    ask: prefixed(ctx.ask),
+    approve: prefixed(ctx.approve),
     step: (id, definition) => ctx.step(`${prefix}/${id}`, definition),
     sleep: (id, ms) => ctx.sleep(`${prefix}/${id}`, ms),
   };

@@ -58,7 +58,7 @@ export interface ExecutionRecord {
   /** ISO settlement time, or null when the owner did not persist a final outcome. */
   endedAt: string | null;
   /** Recorded outcome; historical running entries can indicate a crashed owner. */
-  outcome: 'running' | 'completed' | 'failed' | 'cancelled';
+  outcome: 'running' | 'completed' | 'failed' | 'cancelled' | 'suspended';
   /** Failure message retained even after a later successful resume. */
   error: string | null;
   /** Failure stack/cause chain, when available. */
@@ -72,7 +72,14 @@ export interface RunEvent {
   /** Body execution that first recorded this entry. */
   readonly execution: number;
   /** Notification category. */
-  readonly type: 'run.started' | 'run.completed' | 'run.failed' | 'run.cancelled' | 'phase' | 'log';
+  readonly type:
+    | 'run.started'
+    | 'run.completed'
+    | 'run.failed'
+    | 'run.cancelled'
+    | 'run.suspended'
+    | 'phase'
+    | 'log';
   /** Phase at the call site. */
   readonly phase: string | null;
   /** Expected phase step count, when known. */

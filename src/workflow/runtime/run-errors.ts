@@ -3,6 +3,8 @@ import type { RunRecord } from './store.js';
 
 /** Stable machine-readable workflow command failures; numeric exits belong to the CLI. */
 export type CliErrorCode =
+  | 'answer.invalid'
+  | 'answer.conflict'
   | 'usage.flag'
   | 'usage.file_not_found'
   | 'usage.entrypoint'

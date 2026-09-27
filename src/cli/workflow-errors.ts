@@ -1,8 +1,10 @@
 import type { CliErrorCode } from '../workflow/runtime/run-errors.js';
 import type { WorkflowFailure } from '../workflow/loader/failure.js';
 
-/** The single numeric exit policy for workflow commands. Exit 75 is reserved for suspension. @internal */
+/** The single numeric exit policy for workflow commands. Exit 75 reports suspension outside this failure table. @internal */
 export const workflowExitCodes = {
+  'answer.invalid': 2,
+  'answer.conflict': 3,
   'usage.flag': 2,
   'usage.file_not_found': 2,
   'usage.entrypoint': 2,
@@ -65,5 +67,7 @@ export function workflowErrorDocument(failure: WorkflowFailure): object {
 /** Detect the output request even when parsing the rest of argv fails. @internal */
 export function requestedJson(argv: readonly string[]): boolean {
   const beforeSeparator = argv.indexOf('--');
-  return argv.slice(0, beforeSeparator === -1 ? undefined : beforeSeparator).includes('--json');
+  return argv
+    .slice(0, beforeSeparator === -1 ? undefined : beforeSeparator)
+    .some((arg) => arg === '--json' || arg.startsWith('--json='));
 }

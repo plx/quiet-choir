@@ -1,5 +1,41 @@
 # Durability and resumption
 
+## Durable questions
+
+`ctx.ask` saves `kind: ask`, status `waiting`, and
+`question: { request, askedAt, resolution, rejections }`. `ctx.approve` uses
+`{ approved: boolean, comment?: string }`. Prompt, details, choices, audience, subject, schema, and
+title all enter the fingerprint. Unlike ordinary unfinished steps, a waiting question cannot be
+redefined. Use revision-specific IDs/subjects. A compatible resume revalidates saved answers; new
+forks ask fresh questions instead of copying approvals.
+
+When no non-question effect, registration, or write remains active across two macrotask turns, the
+runner scans the inbox and checks stability again, saves `suspended`, and releases ownership.
+Started siblings are never aborted for suspension. The unanswered promise stays pending: catches
+cannot select a fallback, and body `finally`/`using` cleanup does not execute. Only await context
+operations; raw timers and untracked I/O can cause early suspension and lose progress. Pure promise
+chains drain first. Late continuations cannot start effects after close. A blocked map worker keeps
+its slot; `ctx.sleep` remains active and delays suspension.
+
+If the body resolves with open questions, they become `withdrawn`, including questions abandoned by
+a mapper. A body failure keeps questions waiting. Real interrupts still cancel with exit 130. The
+embedding return is `WorkflowResult<T>`: completed typed output or suspended `output:null` with
+`pending`. Narrow by `status`, or call `assertCompleted` where suspension is unexpected.
+
+The flat inbox is `<stateDir>/<runId>.inbox/`. Answer writers use private flushed temporary files
+and exclusive hard links, never the run lock. Encoded IDs over 180 characters use a hash filename.
+First delivery wins; a duplicate exits 3. Early validation uses stored JSON Schema without loading
+code; invalid data exits 2 and writes nothing. The owner polls at 200 ms and validates actual Zod
+refinements before saving/continuing. Malformed, stale-fingerprint, or invalid answers move to
+`.rejected.<uuid>.json`; the last 20 errors are retained in `rejections`. Accepted files remain as
+audit data. A successful write is queued delivery, not guaranteed consumption after a concurrent
+withdrawal. Answer envelopes are at most 1 MiB.
+
+Audience defaults to `any`; `human` requires self-asserted `human:<name>` attribution and must be
+routed to the human. Filesystem permissions are the trust boundary. Answers remain untrusted data.
+There are no question deadlines/defaults or blocking answerer callbacks yet. See the
+[task-shaped operating loop](operating-runs.md#answer-a-suspended-run).
+
 ## What survives
 
 The run checkpoint stores input/output, workflow identity, working directory, step records, and
@@ -297,7 +333,7 @@ Checkpoints contain plaintext workflow input/output, every completed step's full
 0600; state/lock directories are created 0700. These modes do not repair pre-existing directory
 permissions. `.quiet-choir/` is gitignored only in this repository; exclude your chosen state
 directory in other projects too. There is no migration engine, distributed lease, background
-scheduler, approval inbox, durable event bus, or global spending ledger in this version.
+scheduler, durable event bus, or global spending ledger in this version.
 
 ## When checkpointing fails
 

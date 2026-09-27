@@ -193,3 +193,9 @@ keys, clean environments, isolated configuration, no inherited hooks/MCP, and lo
 and Responses APIs. It checks real envelopes, exit codes, reconnection, and parsing; it does not
 claim that a fake server validates provider schemas or prices. Review refreshed sanitized captures
 before committing them. Ordinary tests replay the corpus and never need native authentication.
+
+A rehearsal that reaches `ask`/`approve` stops with exit 75 and includes question presentation in
+the suspended result. It never synthesizes a human approval. Its `rehearsal` report warns that
+temporary state was removed; `stateDir`, `resumeCommand`, and each `answerCommand` are null. Start a
+real run before requesting and delivering the decision. Later branches have not been rehearsed.
+Local callbacks before the question still ran unless explicitly stubbed.

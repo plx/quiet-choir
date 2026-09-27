@@ -13,6 +13,7 @@ function duration(ms: number): string {
 /** A snapshot's terminal state, distinct from non-watching inspect's successful read. @internal */
 export const watchExitCodes = {
   completed: 0,
+  suspended: 75,
   failed: 1,
   cancelled: 130,
   stale: 3,
@@ -111,7 +112,7 @@ export function formatRunList(runs: readonly RunSummary[]): string {
     'ID  WORKFLOW  STATUS  STEPS  USAGE  UPDATED  OWNER',
     ...runs.map(
       (run) =>
-        `${run.id}  ${run.workflow.name}@${run.workflow.version}  ${run.status}  ${String(run.counts.completed)}/${String(run.counts.total)} completed, ${String(run.counts.running)} running, ${String(run.counts.failed)} failed, ${String(run.counts.cancelled)} cancelled, ${String(run.counts['settled-failed'])} settled-failed, ${String(run.counts.superseded)} superseded  ${cost(run)}  ${run.updatedAt}  ${owner(run)}`,
+        `${run.id}  ${run.workflow.name}@${run.workflow.version}  ${run.status}  ${String(run.counts.completed)}/${String(run.counts.total)} completed, ${String(run.counts.running)} running, ${String(run.counts.failed)} failed, ${String(run.counts.cancelled)} cancelled, ${String(run.counts['settled-failed'])} settled-failed, ${String(run.counts.superseded)} superseded, ${String(run.counts.waiting)} waiting, ${String(run.counts.withdrawn)} withdrawn  ${cost(run)}  ${run.updatedAt}  ${owner(run)}`,
     ),
   ].join('\n');
 }

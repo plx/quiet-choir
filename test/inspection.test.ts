@@ -101,6 +101,8 @@ it('shows all status counts, first-use order, phase progress, limits, root cause
     cancelled: 0,
     running: 0,
     superseded: 0,
+    waiting: 0,
+    withdrawn: 0,
   });
   expect(summary.phase).toEqual({ title: 'verify', total: 3, completed: 1, running: 0 });
   expect(summary.steps.map((step) => step.id)).toEqual(['b-settled', 'a-root']);

@@ -1,4 +1,5 @@
-// Direct port of hesreallyhim/ultracode-workflows; MIT, see ../LICENSE.
+// Adapted from hesreallyhim/ultracode-workflows; MIT, see ../LICENSE.
+// #55 replaces apply-as-new-input with approval of this run's saved plan.
 // Source snapshot: 9b5404d11b885b28380d3eb17471ef7b17601b5e.
 import { defineWorkflow, z, type WorkflowContext } from 'quiet-choir';
 import { createPort, executionInput, normalize } from './support.js';
@@ -6,7 +7,7 @@ import { createPort, executionInput, normalize } from './support.js';
 export const meta = {
   name: 'project-bootstrap',
   description:
-    'Detect or choose the stack, set up toolchain/lint/tests/CI/containers in parallel, then prove the pipeline runs green — idempotent, report-only by default',
+    'Detect or choose the stack, set up toolchain/lint/tests/CI/containers in parallel, then prove the pipeline runs green — idempotent, human approval before setup',
   whenToUse:
     "Standing up a new project's dev environment and CI from a spec, or retrofitting tooling onto a repo that lacks it",
   phases: [
@@ -18,7 +19,6 @@ export const meta = {
 };
 export const input = z.object({
   ...executionInput,
-  apply: z.boolean().optional(),
   spec: z.string().optional(),
   stack: z.string().optional(),
   concerns: z.array(z.string()).optional(),
@@ -88,8 +88,6 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
       })
       .catchall(z.json());
 
-    const apply = Boolean(args && args.apply);
-
     // ---------------------------------------------------------------------------
     // Phase 1: Detect — idempotency starts here. Read what exists so setup
     // augments rather than overwrites.
@@ -158,7 +156,16 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
         followups: ['Planning failed.'],
       };
 
-    if (!apply) {
+    const approval = await ctx.approve('approve-plan', {
+      prompt: 'Apply this bootstrap plan?',
+      title: 'Bootstrap',
+      details: Buffer.from(JSON.stringify(plan, null, 2))
+        .subarray(0, 16_000)
+        .toString('utf8'),
+      subject: normalize({ stack: detect.stack, plan }),
+      audience: 'human',
+    });
+    if (!approval.approved) {
       return {
         stack: detect.stack,
         concerns: plan.concerns.map((c) => ({
@@ -166,9 +173,9 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
           action: c.action,
           files: c.files,
         })),
-        verification: `Plan only (apply:false). Would run: ${plan.verifyCommands.join(' && ')}`,
+        verification: `Plan declined. Would run: ${plan.verifyCommands.join(' && ')}`,
         applied: false,
-        followups: ['Re-run with apply:true to write files and prove the pipeline.'],
+        followups: [approval.comment || 'The reviewed plan was declined; no setup calls ran.'],
       };
     }
 
@@ -276,7 +283,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
 export default defineWorkflow({
   strictProfiles: false, // Historical port input API; elevated raw tools still require class grants.
   name: meta.name,
-  version: 'ultracode-direct-01',
+  version: 'ultracode-durable-questions-01',
   input,
   output: z.json() as unknown as z.ZodType<Awaited<ReturnType<typeof run>>>,
   run,

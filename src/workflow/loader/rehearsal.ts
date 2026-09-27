@@ -157,6 +157,10 @@ export class RehearsalHarness extends FixtureHarness {
           );
       }
     }
+    if (record?.status === 'suspended')
+      this.warnings.add(
+        'Rehearsal stopped at an unanswered question. Temporary state is removed; answer/resume commands are unavailable. Start a real run to request and persist the decision.',
+      );
     // A fully completed resume short-circuits before body events; all saved effects replay as a unit.
     const replayed =
       this.calls.length === 0 && this.replays.length === 0 && record?.status === 'completed'

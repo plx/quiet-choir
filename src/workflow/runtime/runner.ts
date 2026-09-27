@@ -1,3 +1,8 @@
+import { RunActivity } from './activity.js';
+import { RunQuestions } from './questions.js';
+import { pendingQuestions } from './inbox.js';
+import { approvalSchema, workflowLaunchSchema } from './question-schema.js';
+import type { AskOptions, PendingQuestion, WorkflowLaunch } from './question-model.js';
 import { RunObservations, errorStack, requestSummary } from './observability.js';
 import type { PhaseInfo, PhaseOptions, RequestSummary, RunEvent } from './observability-model.js';
 import {
@@ -153,6 +158,7 @@ export type WorkflowEvent = {
       /** Step transition or live admission notification. */
       readonly type:
         | 'step.started'
+        | 'step.waiting'
         | 'step.completed'
         | 'step.replayed'
         | 'step.failed'
@@ -175,14 +181,43 @@ export type WorkflowEvent = {
 
 /** A completed run with its output type inferred from the workflow definition. */
 export type WorkflowRun<TOutput> = RunRecord & {
+  /** Successful, durably committed completion. */
+  readonly status: 'completed';
   /** Final validated output, inferred from the workflow schema. */
   readonly output: TOutput;
   /** Policy warnings plus invocation-only cleanup warnings, returned after a persisted completion. */
   readonly warnings?: readonly string[];
 };
 
+/** A run released its ownership while waiting for external answers. */
+export type SuspendedRun = RunRecord & {
+  /** Durable external wait, not a workflow failure. */
+  readonly status: 'suspended';
+  /** A suspended run has no workflow output. */
+  readonly output: null;
+  /** Self-describing question presentation and answer commands. */
+  readonly pending: readonly PendingQuestion[];
+  /** Resume argument vector, or null for embedded runs without a stored entrypoint. */
+  readonly resumeCommand: readonly string[] | null;
+  /** Invocation and replay diagnostics. */
+  readonly warnings?: readonly string[];
+};
+
+/** The runner either completes or releases ownership for an external wait. */
+export type WorkflowResult<TOutput> = WorkflowRun<TOutput> | SuspendedRun;
+
+/** Narrow a result where suspension is unexpected; never call this inside a workflow body. */
+export function assertCompleted<T>(result: WorkflowResult<T>): asserts result is WorkflowRun<T> {
+  if (result.status !== 'completed')
+    throw new Error(
+      `Run ${result.id} is suspended with ${String(result.pending.length)} pending questions.`,
+    );
+}
+
 /** Explicit dependencies and execution policy for a workflow run. */
 export interface RunOptions extends WorkflowCodeOptions {
+  /** Optional entrypoint metadata supplied by the CLI or embedder for resume by ID. */
+  readonly launch?: WorkflowLaunch;
   /** Stop identity-confirmed children of a dead/released owner before acquiring its lock. */
   readonly killOrphans?: boolean;
   /** Orphan recovery TERM grace, defaults to 3000ms; configure live calls on CliHarness separately. */
@@ -281,10 +316,11 @@ function cancellationError(signal: AbortSignal, cause: unknown): CancelledError 
 export async function runWorkflow<TInput, TOutput>(
   definition: WorkflowDefinition<TInput, TOutput>,
   options: RunOptions,
-): Promise<WorkflowRun<TOutput>> {
+): Promise<WorkflowResult<TOutput>> {
   if (!isValidRunId(options.runId)) throw new Error(runIdMessage);
   if (!definition.name.trim() || !definition.version.trim())
     throw new Error('Workflow name and version must be nonempty.');
+  if (options.launch) workflowLaunchSchema.parse(options.launch);
   const harnessKind = options.harness?.kind ?? (options.harness ? 'custom' : 'none');
   if (typeof harnessKind !== 'string' || !harnessKind.trim() || harnessKind.length > 100)
     throw new Error('Harness kind must be a nonempty string of at most 100 characters.');
@@ -341,7 +377,7 @@ export async function runWorkflow<TInput, TOutput>(
   const { signal } = controller;
   const checkpointProblems: CheckpointError[] = [];
   let savedFailure: RunRecord | undefined;
-  async function executeOwned(): Promise<WorkflowRun<TOutput>> {
+  async function executeOwned(): Promise<WorkflowResult<TOutput>> {
     let existing: RunRecord | undefined;
     try {
       existing = await readRun({ stateDir, runId: options.runId });
@@ -486,6 +522,7 @@ export async function runWorkflow<TInput, TOutput>(
       }
       return {
         ...existing,
+        status: 'completed',
         output: output as TOutput & JsonValue,
         ...(existing.policyWarnings?.length ||
         existing.replayWarnings?.length ||
@@ -516,6 +553,7 @@ export async function runWorkflow<TInput, TOutput>(
       createdAt: now,
       updatedAt: now,
     };
+    if (options.launch) record.launch = structuredClone(options.launch);
     const priorHarness = record.harness ?? forkSource?.harness;
     record.harness = {
       kind: harnessKind,
@@ -595,8 +633,10 @@ export async function runWorkflow<TInput, TOutput>(
             ],
       );
     };
+    const activity = new RunActivity();
     let writeQueue = Promise.resolve();
     function save(context = `Could not save run ${record.id}`): Promise<void> {
+      const finish = activity.begin();
       const write = writeQueue
         .catch(() => {
           /* A failed write must not poison later snapshots. */
@@ -623,7 +663,7 @@ export async function runWorkflow<TInput, TOutput>(
           }
         });
       writeQueue = write;
-      return write;
+      return write.finally(finish);
     }
     async function trySave(): Promise<boolean> {
       try {
@@ -644,11 +684,20 @@ export async function runWorkflow<TInput, TOutput>(
       id: string,
       work: () => T | PromiseLike<T>,
       effectOperation = true,
+      waiting = false,
     ): Promise<T> {
+      const finish =
+        effectOperation && !waiting
+          ? activity.begin()
+          : () => {
+              activity.touch();
+            };
+      activity.touch();
       return operations.launch(
         id,
         async () => {
           try {
+            if (closed) throw new Error('Workflow is closed; await all workflow operations.');
             if (effectOperation) validateStepId(id, names.describe(id));
             return await work();
           } catch (error) {
@@ -662,9 +711,12 @@ export async function runWorkflow<TInput, TOutput>(
               if (typeof id === 'string') origins.remember(error, id);
             }
             throw error;
+          } finally {
+            finish();
           }
         },
         scopes.owners,
+        waiting ? () => !questions.waiting(id) : undefined,
       );
     }
     const inEffect = new AsyncLocalStorage<boolean>();
@@ -713,6 +765,37 @@ export async function runWorkflow<TInput, TOutput>(
         /* Custom diagnostics must not leak or invalidate an invocation slot. */
       }
     };
+
+    async function beforeLive(id: string, step: StepRecord): Promise<void> {
+      if (strictHealedDivergence) {
+        controller.abort(strictHealedDivergence);
+        throw strictHealedDivergence;
+      }
+      if (!divergenceReported) {
+        const skipped = previousTerminal
+          .filter((previous) => previous.seq < (step.seq ?? 0) && !used.has(previous.id))
+          .map((previous) => previous.id);
+        const skippedMaps = previousTerminalMaps
+          .filter((previous) => previous.seq < (step.seq ?? 0) && !visitedMaps.has(previous.id))
+          .map((previous) => previous.id);
+        if (skipped.length || skippedMaps.length) {
+          divergenceReported = true;
+          const unvisited = [
+            ...(skipped.length ? [`earlier terminal steps (${skipped.join(', ')})`] : []),
+            ...(skippedMaps.length
+              ? [`earlier committed settled maps (${skippedMaps.join(', ')})`]
+              : []),
+          ].join(' and ');
+          const warning = `Replay divergence before live step ${id}: ${unvisited} have not been visited. Order is a concurrency heuristic; restore the replay path or fork a new run.`;
+          replayWarnings.push(warning);
+          const failure = options.strictReplay ? new Error(warning) : undefined;
+          if (failure) controller.abort(failure);
+          await save();
+          emit('replay.divergence', id, step, { message: warning, skippedStepIds: skipped });
+          if (failure) throw failure;
+        }
+      }
+    }
 
     async function effect<T, TMode extends ErrorMode = 'throw'>(
       id: string,
@@ -787,6 +870,10 @@ export async function runWorkflow<TInput, TOutput>(
       const prior = Object.hasOwn(record.steps, id) ? record.steps[id] : undefined;
       const redefined =
         prior !== undefined && (prior.kind !== kind || prior.fingerprint !== stepFingerprint);
+      if (redefined && prior.kind === 'ask')
+        throw new Error(
+          `Step ${id}: a question cannot be redefined as another effect; use a new ID.`,
+        );
       if (redefined && isTerminalStep(prior)) {
         const changed = [
           ...new Set([...Object.keys(prior.identity ?? {}), ...Object.keys(identity)]),
@@ -858,30 +945,7 @@ export async function runWorkflow<TInput, TOutput>(
         request: observedRequest,
         errorStack: null,
       };
-      if (!divergenceReported) {
-        const skipped = previousTerminal
-          .filter((previous) => previous.seq < (step.seq ?? 0) && !used.has(previous.id))
-          .map((previous) => previous.id);
-        const skippedMaps = previousTerminalMaps
-          .filter((previous) => previous.seq < (step.seq ?? 0) && !visitedMaps.has(previous.id))
-          .map((previous) => previous.id);
-        if (skipped.length || skippedMaps.length) {
-          divergenceReported = true;
-          const unvisited = [
-            ...(skipped.length ? [`earlier terminal steps (${skipped.join(', ')})`] : []),
-            ...(skippedMaps.length
-              ? [`earlier committed settled maps (${skippedMaps.join(', ')})`]
-              : []),
-          ].join(' and ');
-          const warning = `Replay divergence before live step ${id}: ${unvisited} have not been visited. Order is a concurrency heuristic; restore the replay path or fork a new run.`;
-          replayWarnings.push(warning);
-          const failure = options.strictReplay ? new Error(warning) : undefined;
-          if (failure) controller.abort(failure);
-          await save();
-          emit('replay.divergence', id, step, { message: warning, skippedStepIds: skipped });
-          if (failure) throw failure;
-        }
-      }
+      await beforeLive(id, step);
       if (redefined) {
         (step.redefinitions ??= []).push({
           fingerprint: step.fingerprint,
@@ -1486,7 +1550,47 @@ export async function runWorkflow<TInput, TOutput>(
         observations.setPhase(title, bodyOrOptions);
       });
     }
+    const questions = new RunQuestions({
+      record,
+      stateDir,
+      activity,
+      save,
+      emit,
+      beforeLive,
+      nextSeq: () => nextSeq++,
+      fail: (error) => {
+        origins.markFatal(error);
+        controller.abort(error);
+      },
+    });
+    const ask = <T>(leaf: string, options: AskOptions<T>): Promise<T> => {
+      const id = names.qualify(leaf);
+      return launch(
+        id,
+        async () => {
+          if (inEffect.getStore())
+            throw new Error(
+              'Nested durable steps are unsupported; compose questions in the workflow body.',
+            );
+          if (used.has(id)) throw duplicateStepId(id, names.describe(id));
+          used.add(id);
+          scopes.step(id);
+          const registered = await questions.register(
+            id,
+            options,
+            observations.phase?.title ?? null,
+            scopes.signal,
+          );
+          operations.changed();
+          return registered.answer;
+        },
+        true,
+        true,
+      );
+    };
     const context: WorkflowContext = {
+      ask,
+      approve: (id, options) => ask(id, { ...options, schema: approvalSchema }),
       phase,
       log(message, data) {
         observe(() => {
@@ -1587,11 +1691,73 @@ export async function runWorkflow<TInput, TOutput>(
     const started = observations.lifecycle('run.started');
     await save();
     notify({ ...started, message: 'Run started.', attempt: 0, runId: record.id });
+    const quiet = activity.quiet(
+      () => questions.pending,
+      () => questions.scan(),
+    );
     try {
       signal.throwIfAborted();
-      const output = await observations.run(() => definition.run(context, bodyInput));
-      await operations.drain();
+      let bodyOutput: { value: TOutput } | undefined;
+      // This promise always has a rejection handler, even when suspension abandons the body.
+      const body = Promise.resolve().then(() =>
+        observations.run(() => definition.run(context, bodyInput)),
+      );
+      const completedBody = body.then(async (value) => {
+        bodyOutput = { value };
+        await operations.drain();
+        return { kind: 'completed' as const, value };
+      });
+      const result = await Promise.race([
+        completedBody,
+        quiet.then(() => ({ kind: 'quiet' as const })),
+      ]);
+      if (result.kind === 'quiet') {
+        closed = true;
+        operations.assertObserved();
+        if (bodyOutput === undefined) {
+          observationsClosed = true;
+          await questions.close();
+          await observations.flush();
+          // No effect remains to await discovery, so any unsettled request is abandoned.
+          await drainDiscovery();
+          signal.throwIfAborted();
+          record.status = 'suspended';
+          record.output = null;
+          warnUnmatched();
+          const priorEvents = [...(record.events ?? [])];
+          const suspended = observations.lifecycle('run.suspended');
+          try {
+            await save();
+          } catch (error) {
+            record.events = priorEvents;
+            throw error;
+          }
+          notify({
+            ...suspended,
+            message: 'Run suspended for external answers.',
+            attempt: 0,
+            runId: record.id,
+          });
+          return {
+            ...structuredClone(record),
+            status: 'suspended',
+            output: null,
+            pending: await pendingQuestions(record, stateDir),
+            resumeCommand: record.launch
+              ? ['quiet-choir', 'workflow', 'resume', record.id, '--state-dir', stateDir]
+              : null,
+          };
+        }
+      }
+      const output = result.kind === 'completed' ? result.value : bodyOutput?.value;
+      closed = true;
       observationsClosed = true;
+      questions.withdraw();
+      await questions.close();
+      await activity.quiet(
+        () => true,
+        () => Promise.resolve(),
+      );
       await observations.flush();
       operations.assertObserved();
       closed = true;
@@ -1615,7 +1781,8 @@ export async function runWorkflow<TInput, TOutput>(
           `Replay skipped recorded steps (${missing.join(', ')}); workflow control flow changed.${healed.size ? ` Healed steps: ${[...healed].join(', ')}.` : ''}`,
         );
       const superseded = Object.entries(record.steps).filter(
-        ([id, step]) => !used.has(id) && step.status !== 'superseded',
+        ([id, step]) =>
+          !used.has(id) && step.status !== 'superseded' && step.status !== 'withdrawn',
       );
       for (const [, step] of superseded) step.status = 'superseded';
       warnUnmatched();
@@ -1634,6 +1801,7 @@ export async function runWorkflow<TInput, TOutput>(
       for (const [id, step] of superseded) emit('step.superseded', id, step);
       return {
         ...structuredClone(record),
+        status: 'completed',
         ...(record.policyWarnings.length ||
         record.replayWarnings.length ||
         record.harnessWarnings?.length
@@ -1663,8 +1831,9 @@ export async function runWorkflow<TInput, TOutput>(
         : origins.root(error);
       // Body failures stop new launches but preserve in-flight work. Only explicit cancellation
       // or checkpoint failure aborts a scope; draining here does not send a signal.
-      await operations.drain();
+      await Promise.race([operations.drain(), quiet.catch(() => operations.drain())]);
       await drainDiscovery();
+      await questions.close();
       observationsClosed = true;
       await observations.flush().catch(() => undefined);
       // A callback's own AbortError is a failure; only scope cancellation cancels the run.
@@ -1683,9 +1852,12 @@ export async function runWorkflow<TInput, TOutput>(
         notify({ ...failed, message: record.error, attempt: 0, runId: record.id });
       }
       throw error;
+    } finally {
+      activity.close();
+      await questions.close();
     }
   }
-  let outcome: { ok: true; run: WorkflowRun<TOutput> } | { ok: false; error: unknown };
+  let outcome: { ok: true; run: WorkflowResult<TOutput> } | { ok: false; error: unknown };
   try {
     outcome = { ok: true, run: await executeOwned() };
   } catch (error) {

@@ -131,6 +131,8 @@ consumer imports `quiet-choir` as above.
 | `ctx.codex.text` / `ctx.codex.object`                         | Equivalent Codex APIs with Codex-specific options                             |
 | `ctx.step(id, { input, schema, run, retry? })`                | Checkpoint a local effect; explicit dependencies detect replay drift          |
 | `ctx.map(id, items, { concurrency, key?, onError? }, mapper)` | Bounded fan-out; each item prefixes explicit leaf IDs with its map ID and key |
+| `ctx.ask(id, { prompt, schema, ... })`                        | Durable external answer; suspends after active work drains                    |
+| `ctx.approve(id, options)`                                    | Durable `{ approved, comment? }` decision for a specific subject              |
 | `ctx.sleep(id, milliseconds)`                                 | Persist a wake time and wait only the remaining time after resume             |
 
 `value()` writes the same durable records and identities as `object()`/`text()`, returning only the
@@ -372,6 +374,15 @@ effects and returns the saved outcome, so an ordinary mapper-body failure cannot
 downstream fingerprint. Incomplete items execute again. Forks start fresh map journals and use the
 normal per-step reuse rules.
 
+## Durable questions
+
+Use `ctx.ask` or `ctx.approve` to keep human decisions attached to the plan and run that requested
+them. Active siblings finish before suspension; the CLI saves `suspended`, releases ownership, and
+exits 75. `workflow pending --json` and `workflow answer RUN STEP --json VALUE` need no workflow
+import. `workflow resume RUN` uses its stored entrypoint. Embedded callers narrow
+`WorkflowResult<T>` by `status`, or use `assertCompleted` where suspension is unexpected. See
+[question contracts, inbox protocol, and operating examples](docs/questions.md).
+
 ## Durability contract
 
 - The workflow body replays from the beginning. Keep orchestration deterministic; put file reads,
@@ -386,10 +397,11 @@ normal per-step reuse rules.
 - Terminal outcomes are reused by ID and semantic component hashes (kind, input/prompt, schema,
   onError, model/effort, capabilities, resolved cwd, and local callback source/version). Errors name
   changed components. Timeout, turn, budget, and retry policy do not affect identity. Unfinished
-  identities may change with history retained; unvisited unfinished records become `superseded`.
-  Every terminal step must still be visited. An early `replay.divergence` event warns before live
-  work when earlier terminal steps or committed settled maps remain unvisited; `--strict-replay`
-  aborts there. The final skipped-step and skipped-map checks still apply.
+  identities may change with history retained, except question identities are always pinned;
+  unvisited unfinished records become `superseded`. Every terminal step must still be visited. An
+  early `replay.divergence` event warns before live work when earlier terminal steps or committed
+  settled maps remain unvisited; `--strict-replay` aborts there. The final skipped-step and
+  skipped-map checks still apply.
 - The CLI hashes raw bytes of local compiler-discovered dependencies and the nearest tsconfig under
   real, project-relative paths. Engine `src/`/`dist/` files are excluded (except an explicit
   entrypoint); package/format versions are recorded separately. Inputs, workflow name/version,
@@ -428,12 +440,12 @@ normal per-step reuse rules.
   work. Unknown identities remain for inspection. See
   [process lifecycle](docs/process-lifecycle.md).
 
-This spike has no background scheduler, distributed workers, execution migration, human-approval
-inbox, durable event delivery, global spending ledger, or automatic worktree isolation. Sleep waits
-in the current process. Checkpoints contain plaintext workflow input/output, every completed step's
-full validated result (including agent responses and files a step read), and errors. Files are
-created 0600 and state/lock directories 0700; existing directory permissions are not repaired.
-`.quiet-choir/` is gitignored only in this repository; exclude chosen storage in other projects too.
+This spike has no background scheduler, distributed workers, execution migration, durable event
+delivery, global spending ledger, or automatic worktree isolation. Sleep waits in the current
+process. Checkpoints contain plaintext workflow input/output, every completed step's full validated
+result (including agent responses and files a step read), and errors. Files are created 0600 and
+state/lock directories 0700; existing directory permissions are not repaired. `.quiet-choir/` is
+gitignored only in this repository; exclude chosen storage in other projects too.
 
 ## Harness defaults and limits
 
@@ -535,16 +547,16 @@ Inherited `--log-level trace|debug|info|warn|error|fatal|silent` and `-v, --verb
 command name and are mutually exclusive. Configuration commands remain explicit stubs (exit 2);
 layered project/user settings are deferred.
 
-| Exit | Meaning                                                                                                                                                                                                                        |
-| ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| 0    | Success. Inspect accepts any readable status; check `.status`. After a first signal, only a saved execute completion exits 0.                                                                                                  |
-| 1    | `workflow.failed`: execution failed and the failure checkpoint was saved. Fix and resume. A saved `failed` run reports this even when a signal arrived.                                                                        |
-| 2    | `usage.*`: invalid flags, misplaced flags, omitted/nonexistent/unsupported FILE, invalid run ID, invalid input JSON/file/schema, or resume without an ID. No execution checkpoint is written.                                  |
-| 3    | `run.*`: existing/missing/locked/unreadable run, incompatible resume, changed input, or surviving/unverified child processes (`run.orphans`). No workflow body runs.                                                           |
-| 4    | `load.*`: typecheck, import, or workflow-definition failure. No execution checkpoint is written.                                                                                                                               |
-| 74   | `workflow.storage`: saving, process registration, or releasing ownership failed. Inspect the reported saved state; it can still be `running`, `completed`, or absent.                                                          |
-| 75   | Reserved for suspended execution; not emitted yet.                                                                                                                                                                             |
-| 130  | `workflow.interrupted`: SIGINT/SIGTERM/SIGHUP. Graceful cancellation saves `cancelled` when possible. A second signal kills tracked groups immediately and reports the last readable checkpoint, which may still be `running`. |
+| Exit | Meaning                                                                                                                                                                                                                                |
+| ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 0    | Success. Inspect accepts any readable status; check `.status`. After a first signal, only a saved execute/resume completion exits 0.                                                                                                   |
+| 1    | `workflow.failed`: execution failed and the failure checkpoint was saved. Fix and resume. A saved `failed` run reports this even when a signal arrived.                                                                                |
+| 2    | `answer.invalid` for invalid answers, or `usage.*`: invalid flags, misplaced flags, omitted/nonexistent/unsupported FILE, invalid run ID, invalid input JSON/file/schema, or resume without an ID. No execution checkpoint is written. |
+| 3    | `answer.conflict` for duplicate/closed questions, or `run.*`: existing/missing/locked/unreadable run, incompatible resume, changed input, or surviving/unverified child processes (`run.orphans`). No workflow body runs.              |
+| 4    | `load.*`: typecheck, import, or workflow-definition failure. No execution checkpoint is written.                                                                                                                                       |
+| 74   | `workflow.storage`: saving, process registration, or releasing ownership failed. Inspect the reported saved state; it can still be `running`, `completed`, or absent.                                                                  |
+| 75   | Saved suspension: `workflow.run.suspended` with pending questions and answer/resume commands. A saved suspension stands even when a signal arrived.                                                                                    |
+| 130  | `workflow.interrupted`: SIGINT/SIGTERM/SIGHUP. Graceful cancellation saves `cancelled` when possible. A second signal kills tracked groups immediately and reports the last readable checkpoint, which may still be `running`.         |
 
 `npm run check` includes formatting, lint, strict typechecking, tests with coverage gates, build,
 compiled CLI smoke tests, TypeDoc validation, and package checks. No automated test calls a paid

@@ -154,6 +154,31 @@ export abstract class WorkflowCommand extends BaseCommand {
     }
   }
 
+  protected suspended(
+    run: RunRecord & { readonly pending?: unknown; readonly resumeCommand?: unknown },
+    rehearsal?: unknown,
+  ): void {
+    // Like a saved completion, a saved suspension stands even when a signal arrived afterward.
+    this.outputSavedCompletion(
+      {
+        kind: 'workflow.run.suspended',
+        ok: true,
+        exitCode: 75,
+        runId: run.id,
+        stateDir: rehearsal === undefined ? this.failureContext.stateDir : null,
+        pending: run.pending ?? [],
+        resumeCommand: run.resumeCommand ?? null,
+        run,
+        ...(rehearsal === undefined ? {} : { rehearsal }),
+      },
+      rehearsal === undefined
+        ? `Run ${run.id} suspended. Use workflow pending to review its questions, then workflow answer and workflow resume.`
+        : `Rehearsal ${run.id} reached a question. Temporary state was removed; start a real run to request the decision.`,
+    );
+    // Oclif's exit() throws through catch(), which would misclassify suspension as a usage error.
+    process.exitCode = 75;
+  }
+
   protected forceInterrupted(): void {
     if (!requestedJson(this.argv)) return;
     const { runId, stateDir } = this.failureContext;

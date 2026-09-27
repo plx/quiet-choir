@@ -4,12 +4,14 @@
 
 The public entry point exports `defineWorkflow`, `z`, `runWorkflow`, `readRun`, `CliHarness`, and
 their public types. `runWorkflow` validates the definition's data but does not typecheck/import a
-file for you. It resolves with a typed completed run record and throws on failure. Recorded
-execution failures with a successful final save throw `WorkflowRunError` with the saved `run`, root
-`stepId`, and original rejection in `cause`. Callers matching `HarnessError`, `FanOutError`, or
-their own error type should inspect that cause. Storage failures can leave an older record.
-`RunRefusedError` exposes stable `run.*` codes, and `WorkflowInputError` retains schema issues and
-the validator cause. Earlier loading/compatibility errors need not create or alter a run.
+file for you. It resolves with `WorkflowResult<T>`: a completed typed run or a suspended run with
+`pending` and `output:null`; narrow `status` before reading output fields. It throws on failure.
+Recorded execution failures with a successful final save throw `WorkflowRunError` with the saved
+`run`, root `stepId`, and original rejection in `cause`. Callers matching `HarnessError`,
+`FanOutError`, or their own error type should inspect that cause. Storage failures can leave an
+older record. `RunRefusedError` exposes stable `run.*` codes, and `WorkflowInputError` retains
+schema issues and the validator cause. Earlier loading/compatibility errors need not create or alter
+a run.
 
 Supply these execution options as needed:
 
@@ -30,6 +32,11 @@ Supply these execution options as needed:
   and observer dependencies. `source: { hash, files }` can replace the opaque `fingerprint` for
   detailed code diagnostics; do not supply both. Local-only workflows need no harness.
 
+`writeAnswer({ stateDir, runId, stepId, value, by? })` delivers through the lock-free inbox;
+`listPending({ stateDir })` reads waiting questions without importing code. Optional `launch`
+metadata (absolute entrypoint/tsconfig and source hashes) enables CLI resume by ID; embedded runs
+without it return `resumeCommand:null`. Resume those through the same embedding application.
+
 `readRun({ runId, cwd, stateDir })` shares execution's path resolution and storage default;
 `resolveStateDir({ cwd, stateDir })` returns the absolute directory.
 
@@ -48,7 +55,7 @@ import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { defineWorkflow, runWorkflow, z, type Harness } from 'quiet-choir';
+import { assertCompleted, defineWorkflow, runWorkflow, z, type Harness } from 'quiet-choir';
 
 const workflow = defineWorkflow({
   name: 'adapter-example',
@@ -82,6 +89,7 @@ const run = await runWorkflow(workflow, {
   harness: fixtureHarness,
   fingerprint: 'adapter-example-v1',
 });
+assertCompleted(run);
 console.log(run.output.label);
 ```
 
