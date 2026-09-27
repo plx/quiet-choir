@@ -52,7 +52,7 @@ export type EffectResult<T, TMode extends ErrorMode> = TMode extends 'return' ? 
 
 /** Options shared by headless agent calls. */
 export interface AgentOptions {
-  /** Persist a terminal outcome for branching; cancellation and infrastructure failures still reject. */
+  /** Persist a terminal outcome for branching; cancellation, configuration (e.g. missing harness), and checkpoint-write failures still reject. */
   readonly onError?: ErrorMode;
   /** Instructions sent over stdin, never interpolated into a shell command. */
   readonly prompt: string;

@@ -120,9 +120,11 @@ authoring errors and checkpoint failures also reject instead of becoming fallbac
 For best-effort fan-out, use `onError: 'return'` inside `ctx.map`, then branch on each `ok` value.
 For transient retries, use one step ID with `retry` rather than a loop of throwing `ask/0`, `ask/1`
 calls. `retry.on` limits retries to listed error kinds; omit it to retry all effect failures except
-cancellation/infrastructure failures, or use `[]` to retry none. It is execution policy and can be
-changed on resume. Each attempt retains its error and category. Every agent retry starts a fresh
-session; previous filesystem edits remain.
+cancellation, configuration, and checkpoint-write failures, or use `[]` to retry none. Harness
+process failures such as a missing CLI (`process`), `authentication`, and `permission` are ordinary
+effect failures: they are settled under `onError: 'return'`, and `retry.on` should exclude them. It
+is execution policy and can be changed on resume. Each attempt retains its error and category. Every
+agent retry starts a fresh session; previous filesystem edits remain.
 
 Kinds include `timeout`, `rate-limit`, `schema`, `authentication`, `permission`, `turn-limit`,
 `budget-limit`, `output-limit`, `process`, `protocol`, `cancelled`, and `unknown`. Classification
