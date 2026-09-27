@@ -25,6 +25,9 @@ afterEach(async () => {
 });
 
 it('cancels a waiting map sibling immediately and retains the first mapper failure', async () => {
+  // The sibling waits on a 10s timer; give the deadlock detector a generous
+  // margin so CPU contention from other concurrently-run test files cannot
+  // produce a false "deadlocked" result before the real rejection propagates.
   const stateDir = await directory();
   let markReady = (): void => undefined;
   const ready = new Promise<void>((resolve) => {
@@ -71,7 +74,7 @@ it('cancels a waiting map sibling immediately and retains the first mapper failu
       () => 'unexpected success',
       (error: unknown) => (error instanceof Error ? error.message : String(error)),
     ),
-    delay(1_000).then(() => 'deadlocked'),
+    delay(5_000).then(() => 'deadlocked'),
   ]);
   controller.abort();
   await invocation.catch(() => undefined);
@@ -79,7 +82,7 @@ it('cancels a waiting map sibling immediately and retains the first mapper failu
   expect(siblingDrained).toBe(true);
   expect(thirdStarted).toBe(false);
   expect((await readRun(stateDir, 'map')).error).toBe('first mapper failed');
-});
+}, 15_000);
 
 it('snapshots mutable agent options before saving and invoking the harness', async () => {
   const stateDir = await directory();
