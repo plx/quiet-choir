@@ -295,7 +295,13 @@ it('records a signal-driven failure as cancelled even when the effect rejects wi
       run: async ({ signal }) => {
         started();
         await new Promise<void>((_resolve, reject) => {
-          signal.addEventListener('abort', () => { reject(new Error('stopped')); }, { once: true });
+          signal.addEventListener(
+            'abort',
+            () => {
+              reject(new Error('stopped'));
+            },
+            { once: true },
+          );
         });
         return 'never';
       },
