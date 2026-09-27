@@ -4,7 +4,15 @@
  * @packageDocumentation
  */
 export { z } from 'zod';
+export type {
+  AgentDiagnostics,
+  AgentProgress,
+  AgentTranscript,
+  AgentTranscriptWriter,
+  TranscriptMode,
+} from './workflow/runtime/agent-stream-model.js';
 export { defineWorkflow } from './workflow/runtime/model.js';
+export { deriveAgentSessionId } from './workflow/runtime/agent-session.js';
 export { HarnessError } from './workflow/runtime/harness-error.js';
 export type {
   HarnessExit,

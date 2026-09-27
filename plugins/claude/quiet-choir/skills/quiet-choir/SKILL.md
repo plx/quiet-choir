@@ -102,22 +102,23 @@ ceiling. quiet-choir's remaining run-wide spend/token controls are tracked in
 
 ## Choose the next task
 
-| Task                                                                       | Reference                                                    |
-| -------------------------------------------------------------------------- | ------------------------------------------------------------ |
-| Locate/build the runtime, import it into another project, choose CLI flags | [Setup and CLI](references/setup-and-cli.md)                 |
-| Launch in the background, poll, diagnose stalls, recover orphaned children | [Operating a run](references/operating-runs.md)              |
-| Locate a run, classify its state, act on exact errors                      | [Inspection and triage](references/inspection.md)            |
-| Park for readiness, a deadline, or an external signal                      | [Durable waits and tick](references/waits.md)                |
-| Write loops, fan-out, failure handling, or waits                           | [Verified patterns and traps](references/patterns.md)        |
-| Isolate overlapping writers, share a checkout, integrate pinned changes    | [Worktrees](references/worktrees.md)                         |
-| Run durable commands, publish text, or guard a mutation                    | [Commands and files](references/commands-files.md)           |
-| Define schemas, compose steps, branch, map, and retry                      | [Workflow authoring](references/workflow-authoring.md)       |
-| Control native configuration, environment, and checkout trust              | [Harness isolation](references/harness-isolation.md)         |
-| Select profiles, shared call options, identity, usage, or process limits   | [Agent calls](references/agent-calls.md)                     |
-| Select provider-specific controls or diagnose native protocol failures     | [Claude](references/claude.md), [Codex](references/codex.md) |
-| Rehearse with fixtures/dry-run before paying                               | [Rehearsal](references/rehearsal.md)                         |
-| Resume after failure, accept code edits, fork completed work               | [Durability and resumption](references/durability.md)        |
-| Embed the engine, log responses, implement a harness                       | [Embedding and extensions](references/extensions.md)         |
+| Task                                                                          | Reference                                                    |
+| ----------------------------------------------------------------------------- | ------------------------------------------------------------ |
+| Locate/build the runtime, import it into another project, choose CLI flags    | [Setup and CLI](references/setup-and-cli.md)                 |
+| Launch in the background, poll, diagnose stalls, recover orphaned children    | [Operating a run](references/operating-runs.md)              |
+| Locate a run, classify its state, act on exact errors                         | [Inspection and triage](references/inspection.md)            |
+| Park for readiness, a deadline, or an external signal                         | [Durable waits and tick](references/waits.md)                |
+| Write loops, fan-out, failure handling, or waits                              | [Verified patterns and traps](references/patterns.md)        |
+| Isolate overlapping writers, share a checkout, integrate pinned changes       | [Worktrees](references/worktrees.md)                         |
+| Run durable commands, publish text, or guard a mutation                       | [Commands and files](references/commands-files.md)           |
+| Define schemas, compose steps, branch, map, and retry                         | [Workflow authoring](references/workflow-authoring.md)       |
+| Control native configuration, environment, and checkout trust                 | [Harness isolation](references/harness-isolation.md)         |
+| Select profiles, shared call options, identity, usage, or process limits      | [Agent calls](references/agent-calls.md)                     |
+| Observe native activity, inspect transcripts, retain failed response evidence | [Agent streaming](references/agent-streaming.md)             |
+| Select provider-specific controls or diagnose native protocol failures        | [Claude](references/claude.md), [Codex](references/codex.md) |
+| Rehearse with fixtures/dry-run before paying                                  | [Rehearsal](references/rehearsal.md)                         |
+| Resume after failure, accept code edits, fork completed work                  | [Durability and resumption](references/durability.md)        |
+| Embed the engine, log responses, implement a harness                          | [Embedding and extensions](references/extensions.md)         |
 
 For exit 75, use the
 [suspended-run answer loop](references/operating-runs.md#answer-a-suspended-run) or

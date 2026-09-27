@@ -2,6 +2,13 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- Stream Claude/Codex output incrementally, save early native IDs, and expose `--progress` live
+  activity. Keep capped private transcripts and failed response/validation evidence per attempt,
+  with CLI-settable policy limits and retention. Add extensible result diagnostics and per-call
+  Claude permission-denial policy. **Agent result fingerprints change once:** in-flight runs with
+  older completed agent calls require a new run or fork invalidation. See
+  [streaming and attempt evidence](docs/agent-streaming.md).
+
 - Default agent configuration to `restricted`, with explicit inherited roles and independent Git
   `worktree` selection. Scrub host-session environment, support fingerprinted `env.set`/`env.unset`,
   and retain only names/digests in environment diagnostics. Existing agent fingerprints can become

@@ -420,6 +420,8 @@ it('reports adapter defaults and preserves custom-harness unknowns', async () =>
     maxTurns: 10,
     maxBudgetUsd: 0.5,
     maxOutputBytes: 8 * 1024 * 1024,
+    maxRetainedBytes: 8 * 1024 * 1024,
+    maxStreamBytes: 1024 ** 3,
     killGraceMs: 3000,
     binary: 'claude',
   });
@@ -429,7 +431,14 @@ it('reports adapter defaults and preserves custom-harness unknowns', async () =>
       killGraceMs: 99,
       maxOutputBytes: 100,
     }).policyDefaults('codex'),
-  ).toEqual({ timeoutMs: 300_000, maxOutputBytes: 100, killGraceMs: 99, binary: '/fixture/codex' });
+  ).toEqual({
+    timeoutMs: 300_000,
+    maxOutputBytes: 100,
+    maxRetainedBytes: 100,
+    maxStreamBytes: 1024 ** 3,
+    killGraceMs: 99,
+    binary: '/fixture/codex',
+  });
   const result = await runWorkflow(
     workflow(async (ctx) => (await ctx.codex.text('ask', { prompt: 'x' })).output),
     { ...options(), harness: { invoke: () => Promise.resolve(reply) } },

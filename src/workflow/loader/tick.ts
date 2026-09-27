@@ -66,6 +66,7 @@ function claimedStore(
   let claimed = false;
   let released: Promise<void> | undefined;
   const release = (): Promise<void> => (released ??= owned.release());
+  const transcript = owned.transcript?.bind(owned);
   return {
     release,
     store: {
@@ -82,6 +83,8 @@ function claimedStore(
           compact: () => owned.compact(),
           artifacts: (stepId, attempt) => owned.artifacts(stepId, attempt),
           trackProcess: (invocation, child) => owned.trackProcess(invocation, child),
+          // Agent attempts need the transcript port unless the saved policy turns transcripts off.
+          ...(transcript === undefined ? {} : { transcript }),
           release,
         });
       },

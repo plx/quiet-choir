@@ -119,3 +119,9 @@ Host environment values never enter semantic identity; explicit edits do. Persis
 names/digests in request diagnostics and capability manifests, keeping the private resolved profile
 for live execution. Original format-one migration must not invent a completed agent’s isolation
 mode. See [ADR 0023](../../../docs/decisions/0023-restricted-harness-configuration.md).
+
+Persist predicted Claude UUIDs and first observed native IDs per attempt. Own private transcripts
+and retain raw response/validation evidence before local validation. Transcript/session write errors
+remain infrastructure failures; on-failure cleanup happens only after durable success. Agent
+progress is not journaled. Keep extensible diagnostic keys and resource caps outside identity; see
+[ADR 0024](../../../docs/decisions/0024-stream-attempt-evidence.md).

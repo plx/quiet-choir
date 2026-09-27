@@ -62,7 +62,9 @@ need explicit `config` or an inherited role. Authentication still uses `CODEX_HO
 boundary.
 
 Calls use `--ephemeral`, so the native thread ID is correlation metadata and no local session
-transcript is persisted.
+transcript is persisted by Codex. quiet-choir separately retains capped private attempt transcripts
+and saves `thread.started` IDs immediately; see
+[streaming and attempt evidence](agent-streaming.md).
 
 ## Structured output and protocol
 
@@ -95,12 +97,12 @@ The adapter reads Codex JSONL: `thread.started` supplies the thread ID, `item.co
 both final events and no `turn.failed` completes the step. Top-level `error` events (including
 reconnect notices and notices after completion) are warnings when the turn succeeds. Inspect
 `steps.<id>.warnings` in the saved run; the adapter retains the last 32 notices, each bounded to
-2048 characters. They do not change the result shape or replay fingerprint. `turn.failed` always
-fails with its own reason. Without `turn.completed`, the last non-reconnect error is the reason, or
-the error explains the interrupted turn; bounded earlier notices are appended. Nonzero exits,
-missing final text, and malformed protocol output also fail. Agent stdout is parsed after the
-process finishes; there is no token/tool event stream exposed through quiet-choir's progress
-observer.
+2048 characters. They appear in loose result diagnostics without changing replay identity as keys
+are added. `turn.failed` always fails with its own reason. Without `turn.completed`, the last
+non-reconnect error is the reason, or the error explains the interrupted turn; bounded earlier
+notices are appended. Nonzero exits, missing final text, and malformed protocol output also fail.
+Agent stdout is parsed incrementally. `agent.progress` delivers bounded, lossy tool/status summaries
+and `--progress` prints them to stderr; these are not individual token events.
 
 Usage reports top-level `input_tokens` and `output_tokens` when available. The interpretation of
 Codex inputs as including cached input is inferred from OpenAI semantics, not verified by a live
@@ -117,4 +119,6 @@ resume compatible runs.
 
 For limit changes, retry policy, output caps, cancellation, and orphan recovery, use
 [agent calls](agent-calls.md) and [operating a run](operating-runs.md). A noisy editing call can hit
-the combined output cap after making file changes. Use `skipGitRepoCheck` only for work outside Git.
+the independent stream or retained-result cap after making file changes. Oversized recognized
+command-output events can be skipped without discarding a later valid answer. Use `skipGitRepoCheck`
+only for work outside Git.

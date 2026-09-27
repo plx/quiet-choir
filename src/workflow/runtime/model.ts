@@ -1,4 +1,5 @@
 import type { AgentEnvironment, HostEnvironmentSummary } from './agent-environment-model.js';
+import type { AgentDiagnostics, AgentProgress, TranscriptMode } from './agent-stream-model.js';
 import type { AgentIsolation, AgentWorktree } from './agent-isolation.js';
 import type { MergeOptions, MergeResult } from './worktree-model.js';
 import type { WorktreeChange, WorktreeHandle, WorktreeCreateOptions } from './worktree-model.js';
@@ -136,6 +137,8 @@ export interface AgentOptions {
 
 /** Claude-specific controls. CliHarness denies unapproved tools by default. */
 export interface ClaudeOptions extends AgentOptions {
+  /** Warn about denied tools, or fail the call; overrides the selected profile policy. */
+  readonly onPermissionDenied?: 'warn' | 'fail';
   /** Explicit plugin directories; native code is trusted and paths enter semantic identity. */
   readonly plugins?: readonly string[];
   /** Explicit deny rules such as Bash(git push:*). */
@@ -253,6 +256,8 @@ export interface AgentUsage {
 
 /** Normalized response from a headless harness. */
 export interface HarnessResponse {
+  /** Bounded native metadata, including warnings and transcript information when available. */
+  readonly diagnostics?: AgentDiagnostics;
   /** Final text, or serialized structured output. */
   readonly text: string;
   /** Native session/thread identifier for diagnostics; not a workflow resume token. */
@@ -285,6 +290,18 @@ export interface HarnessProcess {
 
 /** Runtime ownership and cancellation for a single harness attempt. */
 export interface HarnessInvocation {
+  /** Predetermined native session ID, when the provider accepts one. Never semantic identity. */
+  readonly sessionId?: string | null;
+  /** Runtime-owned transcript path, or null when disabled. Write through onOutput. */
+  readonly transcriptPath?: string | null;
+  /** Resolved resource policy, outside the request fingerprint. */
+  readonly policy?: ExecutionPolicy;
+  /** Persist the first observed native ID before consuming further output. */
+  readonly onSession?: (sessionId: string) => Promise<void>;
+  /** Deliver a lossy bounded activity observation; observer exceptions cannot fail the call. */
+  readonly onProgress?: (event: AgentProgress) => void;
+  /** Tee raw bytes with backpressure; a rejected write must terminate the child. */
+  readonly onOutput?: (stream: 'stdout' | 'stderr', chunk: Uint8Array) => Promise<void>;
   /** Captured scope signal; installation discovery instead receives the run's shared discovery signal. */
   readonly signal: AbortSignal;
   /** Owning durable run. */
@@ -318,6 +335,8 @@ export interface Harness {
 
 /** Typed and validated agent output, saved together with harness metadata. */
 export interface AgentResult<T> {
+  /** Extensible native diagnostics; absent from legacy or custom results. */
+  readonly diagnostics?: AgentDiagnostics;
   /** Captured change for isolated calls; absent for ordinary and legacy results. */
   readonly worktree?: WorktreeChange;
   /** Validated output, inferred from the schema for object calls. */
@@ -557,6 +576,14 @@ export function defineWorkflow<TInput, TOutput, TProfile extends string = never>
 
 /** Execution limits reported by an adapter or resolved for an attempt. Never step identity. */
 export interface ExecutionPolicy {
+  /** Retained parser state and single-line cap; defaults to 8 MiB for CliHarness. */
+  readonly maxRetainedBytes?: number;
+  /** Combined raw stdout/stderr safety cap; defaults to 1 GiB for CliHarness. */
+  readonly maxStreamBytes?: number;
+  /** Per-attempt transcript file cap, including its truncation marker; defaults to 64 MiB. */
+  readonly maxTranscriptBytes?: number;
+  /** Transcript retention; defaults to on. */
+  readonly transcripts?: TranscriptMode;
   /** Wall-clock deadline enforced by the harness. */
   readonly timeoutMs?: number;
   /** Claude turn limit. */
@@ -565,7 +592,7 @@ export interface ExecutionPolicy {
   readonly maxBudgetUsd?: number;
   /** Runtime retry policy; repeated effects remain at least once. */
   readonly retry?: RetryPolicy;
-  /** Adapter's combined stdout/stderr cap. */
+  /** Legacy alias for agent maxRetainedBytes; command capture keeps its per-stream meaning. */
   readonly maxOutputBytes?: number;
   /** Adapter's termination grace period. */
   readonly killGraceMs?: number;
@@ -575,11 +602,19 @@ export interface ExecutionPolicy {
 
 /** A run-level policy rule. Later matching rules win, field by field. */
 export interface PolicyOverride {
+  /** Agent parser state and single-line cap, independent of the whole trace. */
+  readonly maxRetainedBytes?: number;
+  /** Agent raw stdout/stderr safety cap. */
+  readonly maxStreamBytes?: number;
+  /** Agent transcript file cap, including its truncation marker. */
+  readonly maxTranscriptBytes?: number;
+  /** Agent transcript retention. */
+  readonly transcripts?: TranscriptMode;
   /** Step-ID glob: * stays within a segment; ** crosses slashes. Omission matches all IDs. */
   readonly match?: string;
   /** Limit the rule to an effect category. Sleep does not accept policy overrides. */
   readonly kind?: 'claude' | 'codex' | 'step' | 'exec';
-  /** Output cap: per stream for exec, combined for native agents. */
+  /** Output cap: per stream for exec; legacy maxRetainedBytes alias for agents. */
   readonly maxOutputBytes?: number;
   /** Harness wall-clock deadline in milliseconds. */
   readonly timeoutMs?: number;

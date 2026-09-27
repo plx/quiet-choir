@@ -48,7 +48,10 @@ export interface CliArgumentPlan {
 }
 
 /** Build and validate argv without filesystem access or processes. @internal */
-export function planInvocation(request: HarnessRequestInput): CliArgumentPlan {
+export function planInvocation(
+  request: HarnessRequestInput,
+  sessionId?: string | null,
+): CliArgumentPlan {
   const isolation = validate(() => {
     validateAgentOptions(request.provider, request.options);
     return resolveIsolation(request.options).isolation;
@@ -76,7 +79,8 @@ export function planInvocation(request: HarnessRequestInput): CliArgumentPlan {
     args.push(
       '--print',
       '--output-format',
-      'json',
+      'stream-json',
+      '--verbose',
       '--permission-mode',
       options.permissionMode ?? 'dontAsk',
       '--tools',
@@ -87,6 +91,11 @@ export function planInvocation(request: HarnessRequestInput): CliArgumentPlan {
       String(options.maxBudgetUsd ?? 0.5),
       '--no-session-persistence',
     );
+    if (sessionId != null) {
+      if (!/^[\da-f]{8}-(?:[\da-f]{4}-){3}[\da-f]{12}$/iu.test(sessionId))
+        throw new ConfigurationError('Claude sessionId must be a UUID.');
+      args.push('--session-id', sessionId);
+    }
     if (isolation === 'restricted') args.push('--restricted', '--strict-mcp-config');
     if (allowed.length) args.push('--allowedTools', allowed.join(','));
     if (options.disallowedTools?.length)

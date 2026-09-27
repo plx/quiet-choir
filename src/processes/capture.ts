@@ -27,9 +27,9 @@ export class OutputCapture {
   #tailLength = 0;
   #bytes = 0;
 
-  public constructor(limit: number) {
+  public constructor(limit: number, tailOnly = false) {
     this.#limit = limit;
-    this.#headLimit = Math.ceil(limit / 2);
+    this.#headLimit = tailOnly ? 0 : Math.ceil(limit / 2);
   }
 
   public append(chunk: Buffer): void {

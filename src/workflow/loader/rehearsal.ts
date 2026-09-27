@@ -132,7 +132,7 @@ export class RehearsalHarness extends FixtureHarness {
     };
     this.calls.push(call);
     try {
-      const planned = this.cli.plan(request);
+      const planned = this.cli.plan(request, invocation);
       call.plan = {
         ...planned,
         artifacts: planned.artifacts.map((artifact) => ({

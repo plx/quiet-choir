@@ -50,3 +50,5 @@ part of the documentation.
 - [0022: Runtime-owned worktree isolation](0022-runtime-owned-worktree-isolation.md)
 
 - [0023: Resolve restricted harness configuration before identity](0023-restricted-harness-configuration.md)
+
+- [0024: Stream native output through runtime-owned attempt evidence](0024-stream-attempt-evidence.md)

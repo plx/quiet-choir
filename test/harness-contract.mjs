@@ -10,6 +10,8 @@ import { parseClaude, parseCodex } from '../dist/harnesses/protocol.js';
 import { fakeApi } from './contracts/local-api.mjs';
 
 const refresh = process.argv.includes('--refresh');
+const stream = process.argv.includes('--stream');
+const requestedSessionId = '5697cc90-cb47-5a1f-8896-cbf83255e506';
 const selected = process.argv
   .find((arg) => arg.startsWith('--cases='))
   ?.slice(8)
@@ -25,8 +27,10 @@ const scenarios = [
   'codex-reconnect-success',
 ];
 assert(
-  process.argv.slice(2).every((arg) => arg === '--refresh' || arg.startsWith('--cases=')),
-  'Use --refresh and/or --cases=<comma-separated scenario names>.',
+  process.argv
+    .slice(2)
+    .every((arg) => ['--refresh', '--stream'].includes(arg) || arg.startsWith('--cases=')),
+  'Use --refresh, --stream and/or --cases=<comma-separated scenario names>.',
 );
 assert(
   !selected || selected.every((name) => scenarios.includes(name)),
@@ -158,13 +162,37 @@ try {
               model: 'gpt-5.5',
             },
     };
-    const plan = new CliHarness().plan(request);
+    const plan = new CliHarness().plan(
+      request,
+      stream && provider === 'claude' ? { sessionId: requestedSessionId } : undefined,
+    );
     const invocation = await materializeInvocation(plan, request);
+    if (!stream && provider === 'claude') {
+      // Keep the historical envelope fixtures alongside the current streaming contract.
+      invocation.args[invocation.args.indexOf('--output-format') + 1] = 'json';
+      invocation.args.splice(invocation.args.indexOf('--verbose'), 1);
+    }
     try {
       const versionResult = await execute(provider, ['--version'], '', cwd, environment);
       const version = /\b\d+\.\d+\.\d+\b/u.exec(versionResult.stdout)?.[0];
       assert(version, 'Missing CLI version');
       const result = await execute(provider, invocation.args, plan.stdin, cwd, environment);
+      if (stream && provider === 'claude') {
+        const events = result.stdout
+          .split('\n')
+          .filter((line) => line.trim())
+          .map((line) => JSON.parse(line));
+        const init = events.find((event) => event.type === 'system' && event.subtype === 'init');
+        const terminal = events.findLast((event) => event.type === 'result');
+        assert.equal(
+          init?.session_id,
+          requestedSessionId,
+          'Requested session ID must work with --no-session-persistence.',
+        );
+        assert.equal(terminal?.session_id, requestedSessionId);
+        if (name === 'claude-structured-success')
+          assert.deepEqual(terminal.structured_output, { answer: 'captured answer' });
+      }
       const parsed =
         provider === 'claude' ? parseClaude(result.stdout, structured) : parseCodex(result.stdout);
       const success = name.endsWith('-success');
@@ -190,6 +218,9 @@ try {
         code: result.code,
         signal: result.signal,
         structured,
+        ...(stream
+          ? { stream: true, ...(provider === 'claude' ? { requestedSessionAccepted: true } : {}) }
+          : {}),
         stdout: sanitize(result.stdout),
         stderr: sanitize(result.stderr),
         ...(success
@@ -207,7 +238,12 @@ try {
               },
             }),
       };
-      const path = new URL(`./fixtures/harness/${name}.json`, import.meta.url);
+      const captureDirectory = new URL(
+        `./fixtures/${stream ? 'harness-stream' : 'harness'}/`,
+        import.meta.url,
+      );
+      if (refresh) await mkdir(captureDirectory, { recursive: true });
+      const path = new URL(`${name}.json`, captureDirectory);
       if (refresh) await writeFile(path, JSON.stringify(capture, null, 2) + '\n');
       else {
         const previous = JSON.parse(await readFile(path, 'utf8'));

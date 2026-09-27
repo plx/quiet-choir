@@ -53,6 +53,7 @@ retains typechecking, code/schema checks, grants, and step identity validation.
         owner.json
         processes/<pgid>.json
       inbox/                         # exclusive answer deliveries
+      attempts/<sha256-full-step-id>/<attempt>.<provider>.jsonl
       artifacts/<encoded-id>--<hash>/<attempt>/
       worktrees/                     # reserved; no automatic checkout creation
 ```
@@ -60,9 +61,10 @@ retains typechecking, code/schema checks, grants, and step identity validation.
 Artifact directories are allocated on demand. Their component uses at most 100 encoded ID characters
 and a full SHA-256 of the exact ID, distinguishing case variants on case-insensitive filesystems and
 fitting the 255-byte component limit. Artifact writers must create diagnostic files with mode 0600;
-their bytes need not be fsynced and are never replay inputs. This revision provides the location,
-not transcript capture. Opt-in [worktree isolation](worktrees.md) uses its own recorded cache root
-and pinned Git refs; the default root stays outside the checkout.
+their bytes need not be fsynced and are never replay inputs. Native transcripts use the separate
+`attempts/` layout, caps, and retention described in [agent streaming](agent-streaming.md). Opt-in
+[worktree isolation](worktrees.md) uses its own recorded cache root and pinned Git refs; the default
+root stays outside the checkout.
 
 Run records, journals, owners, and answers use 0600; new directories use 0700. Existing permissions
 are not repaired. State includes plaintext input, outputs, prompts/previews, and answers. Moving it
@@ -128,10 +130,12 @@ runtime to resume them. Backups and markers are retained for inspection, not aut
 ## Storage implementations and verification
 
 `RunOptions.store` accepts a `RunStore`; the default is `FileRunStore`. Its owned handle exposes
-read, coalesced append, compact, artifact-directory allocation, process registration, and release.
-The core can run local effects against an in-memory implementation. A file store publishes its
-absolute `stateDir`; an additional `RunOptions.stateDir` must agree. Durable questions currently
-require that filesystem inbox protocol; a store without it refuses questions explicitly.
+read, coalesced append, compact, artifact-directory allocation, optional transcript creation,
+process registration, and release. `OwnedRunStore.transcript` returns an `AgentTranscriptWriter`;
+custom stores without this port must set agent policy `transcripts: 'off'`. The core can run local
+effects against an in-memory implementation. A file store publishes its absolute `stateDir`; an
+additional `RunOptions.stateDir` must agree. Durable questions currently require that filesystem
+inbox protocol; a store without it refuses questions explicitly.
 
 Run `npm run build && npm run test:storage-benchmark` for the real-filesystem acceptance benchmark.
 The unit suite checks the 500 × 5 KiB write-amplification bound and shared-commit visibility; the
@@ -144,3 +148,6 @@ A local macOS run on Node 24.20.0 (2026-09-27) measured 200 trivial steps at 1,5
 concurrency 1 and 168 ms with concurrency 16: **9.38× faster**, with 215 versus 26 flushes. The 500
 × 5 KiB run at concurrency 8 took 811 ms, writing 7,176,506 bytes for 3,237,347 bytes of final state
 (**2.22×** amplification). These are measured examples, not latency guarantees.
+
+Agent attempts now own capped private [transcripts](agent-streaming.md) outside checkpoint payloads.
+The attempt receipt is saved before invocation; output chunks do not trigger checkpoint writes.

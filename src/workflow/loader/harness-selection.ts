@@ -15,6 +15,8 @@ const configSchema = z
     claudeBinary: z.string().min(1).optional(),
     codexBinary: z.string().min(1).optional(),
     maxOutputBytes: z.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional(),
+    maxRetainedBytes: z.number().int().positive().max(2_147_483_647).optional(),
+    maxStreamBytes: z.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional(),
     killGraceMs: z.number().int().positive().max(2_147_483_647).optional(),
     scrubEnv: z
       .union([z.literal(false), z.array(z.string().regex(/^[a-zA-Z_][a-zA-Z0-9_]*$/u))])

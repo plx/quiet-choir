@@ -141,11 +141,12 @@ node "$QC_CHECKOUT/bin/run.js" workflow execute workflow.ts \
 node "$QC_CHECKOUT/bin/run.js" workflow execute workflow.ts --dry-run --harness-config @harness.json --json
 ```
 
-Allowed keys are `claudeBinary`, `codexBinary`, `maxOutputBytes`, and `killGraceMs`; other keys and
-invalid limits fail before workflow import. Relative file/binary paths resolve against the launch
-cwd. Bare executable names use PATH. Explicit `--kill-grace-ms` overrides the config field.
-`--harness-config` also configures the dry-run planner; ordinary fixture execution gets its data
-from the fixture file. `module:` loading is deferred to #64.
+Allowed keys are `claudeBinary`, `codexBinary`, `maxRetainedBytes`, `maxStreamBytes`, legacy
+`maxOutputBytes`, `scrubEnv`, and `killGraceMs`; other keys and invalid limits fail before workflow
+import. Relative file/binary paths resolve against the launch cwd. Bare executable names use PATH.
+Explicit `--kill-grace-ms` overrides the config field. `--harness-config` also configures the
+dry-run planner; ordinary fixture execution gets its data from the fixture file. `module:` loading
+is deferred to #64.
 
 ## Embedding and native protocol tests
 

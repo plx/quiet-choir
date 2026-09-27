@@ -489,18 +489,22 @@ and requires an operator grant. Declare roles on `defineWorkflow`, select with `
 `--grant role` at launch. Raw call-site tools/sandbox are rejected under default `strictProfiles`.
 `tools` implies `allowedTools` unless explicitly narrowed. Claude defaults to `dontAsk`; allowed
 rules add to applicable native permissions. Codex uses approval policy `never`. Restricted Claude
-calls suppress inherited hooks/MCP; explicit opt-ins and managed policy still apply. The combined
-output cap is 8 MiB; Codex has no per-call USD cap here. Model selection is explicit or uses the
-selected configuration mode’s native defaults. Both providers accept
+calls suppress inherited hooks/MCP; explicit opt-ins and managed policy still apply. Retained
+protocol data is capped at 8 MiB; Codex has no per-call USD cap here. Model selection is explicit or
+uses the selected configuration mode’s native defaults. Both providers accept
 `effort: 'low' | 'medium' | 'high' | 'xhigh' | 'max'`; Codex `reasoningEffort` additionally accepts
 `none` and `minimal`. Set one effort field, never both. Omission uses the selected mode’s native
 defaults. [Harness controls](docs/harness-controls.md) describes role prompts, agents, MCP, native
 profiles/config, directories, image attachments and the fingerprinted `extraArgs`/`env` escape
 hatch. `configuration doctor --json` verifies installed CLI contracts with zero-inference rejection
 probes and reports inherited Codex defaults. Run metadata captures native CLI versions on first live
-use; a resume version change warns without invalidating completed work. The byte cap counts the
-whole stdout/stderr stream, including command output; CLI runs cannot raise it, while embedders can
-set `CliHarnessOptions.maxOutputBytes`. A call may hit the cap after editing files.
+use; a resume version change warns without invalidating completed work. Native output is parsed
+incrementally: `--progress` prints bounded activity to stderr and early session IDs are saved while
+the child runs. Independent CLI-settable caps bound retained protocol data, raw streams (1 GiB), and
+private per-attempt transcripts (64 MiB). Use `--transcripts on-failure` or `off` to change
+retention. Failed attempts preserve available response/usage/schema evidence. See
+[agent streaming](docs/agent-streaming.md) for flags, transcript decoding, and upgrade
+compatibility. A stopped call may already have edited files.
 
 Prompts go over stdin without a shell after durable process registration. Every exit reaps the owned
 process group on macOS/Linux; Windows cleanup reaches the immediate child only. Output drains for at
