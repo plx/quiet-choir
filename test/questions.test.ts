@@ -119,27 +119,44 @@ it('drains ten thousand microtask hops before deciding quiescence', async () => 
 
 it('closes leftover raw-timer continuations without an unhandled rejection or late effect', async () => {
   let ran = false;
+  let release!: () => void;
+  let continued!: () => void;
+  const afterSuspension = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const continuation = new Promise<void>((resolve) => {
+    continued = resolve;
+  });
   const result = await runWorkflow(
     workflow(async (ctx) =>
       Promise.all([
         ctx.ask('gate', question),
         (async () => {
-          await delay(80);
-          return ctx.step('too-late', {
-            input: null,
-            schema: z.boolean(),
-            run: () => {
-              ran = true;
-              return true;
-            },
-          });
+          // A fixed short timer can expire before suspension on a busy runner. Trigger the raw
+          // timer only after ownership is released so this tests the closed continuation guard.
+          await afterSuspension;
+          await delay(0);
+          try {
+            return await ctx.step('too-late', {
+              input: null,
+              schema: z.boolean(),
+              run: () => {
+                ran = true;
+                return true;
+              },
+            });
+          } finally {
+            continued();
+          }
         })(),
       ]),
     ),
     options(),
   );
   expect(result.status).toBe('suspended');
-  await delay(120);
+  release();
+  await continuation;
+  await delay(0);
   expect(ran).toBe(false);
   expect((await readRun(options())).steps['too-late']).toBeUndefined();
 });
