@@ -71,9 +71,9 @@ launching a process. `workflow validate` does not execute the body and cannot in
 call-site schemas. Codex enforces strict wire schemas; raw `.optional()` properties were rejected
 before inference in the captured 0.157.1 probes. The default compat encoding handles `.optional()`
 and the other shapes above; use strict mode only with native Codex schemas. An explicit mode is
-fingerprinted like other call options; keep it stable on resume. Claude requires an
-object root and receives the original JSON Schema. Other Codex restrictions and compatibility
-transforms do not apply to it.
+fingerprinted like other call options; keep it stable on resume. Claude requires an object root and
+receives the original JSON Schema. Other Codex restrictions and compatibility transforms do not
+apply to it.
 
 The adapter reads Codex JSONL: `thread.started` supplies the thread ID, `item.completed` with
 `agent_message` supplies final text, and `turn.completed` is required for success. Exit zero plus
