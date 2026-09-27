@@ -50,3 +50,11 @@ never acquire in a mapper, local effect, sleep, replay path, retry backoff, or c
 Queued cancellation follows the captured scope. Release in finally before processing responses.
 Admission events are live diagnostics, not durable transitions. See
 [ADR 0012](../../../docs/decisions/0012-agent-admission.md).
+
+HarnessInvocation owns durable child registration under the run lock and carries run/step/attempt
+identity. Register before task input; registration failure aborts scheduling as infrastructure,
+never retry/settled data. Preserve successful results while retaining uncertain cleanup records.
+Inspect and recover recorded children before deleting a dead/released owner's lock. Never signal
+unverified recovery identities or a known reused PID. Signal handlers remain a CLI/embedder concern;
+live supervision stays outside serializable plans. See
+[ADR 0013](../../../docs/decisions/0013-process-ownership.md).

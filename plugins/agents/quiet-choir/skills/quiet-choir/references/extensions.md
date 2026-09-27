@@ -62,7 +62,7 @@ const workflow = defineWorkflow({
 });
 
 const fixtureHarness: Harness = {
-  async invoke(_request, signal) {
+  async invoke(_request, { signal }) {
     signal.throwIfAborted();
     return {
       text: JSON.stringify({ label: 'fixture' }),
@@ -84,17 +84,28 @@ console.log(run.output.label);
 
 This fake harness performs no paid calls. Use `new CliHarness()` for real installed CLIs. Its
 options are `claudeBinary`, `codexBinary`, `maxOutputBytes` (default 8 MiB combined stdout/stderr),
-and `killGraceMs` (default 250 ms between SIGTERM and SIGKILL). Those adapter settings are not
+and `killGraceMs` (default 3000 ms between SIGTERM and SIGKILL). Those adapter settings are not
 automatically added to the workflow fingerprint; account for semantic changes in your version or
 caller-supplied fingerprint.
 
 ## Implement an integration
 
-Implement `Harness.invoke(request, signal): Promise<HarnessResponse>`. The request carries a
+Implement `Harness.invoke(request, invocation): Promise<HarnessResponse>`. The request carries a
 `provider` discriminator (`claude` or `codex`), its typed `options`, an absolute `cwd`, and
 `outputSchema` (JSON Schema or null for text). Honor cancellation, reject process/protocol failures,
 and return `{ text, sessionId, usage }`. For structured calls, `text` must contain the serialized
 JSON value; the runtime parses it, validates it, and checkpoints the result.
+
+`HarnessInvocation` supplies `signal`, `runId`, fully qualified `stepId`, `attempt`, and
+`trackProcess({ pid, pgid, binary, cwd, startedAt, osStartTime })`. Register immediately after
+spawn, await registration before sending task input, then await the returned `release()` after
+confirming reaping. OS start time must identify process birth, not a current timestamp; use null if
+unavailable. `pgid` equals the detached leader PID on POSIX and is null on Windows. Optional
+`metadata(request, invocation)` receives the same port with the run's shared discovery signal, which
+also aborts once no effect awaits the result. Registry failures abort as
+`CheckpointError.operation: 'process'`; they cannot become retry or settled data. Embedders may pass
+a `ProcessSupervisor` to `runWorkflow` and call its `forceKill()` from their own second-signal
+handler. CLI signal handlers are not installed by the core. See [durability](durability.md).
 
 The core resolves profile limits (text: five minutes, 10 Claude turns, $0.50) and tool/sandbox
 defaults. Optional `Harness.policyDefaults(provider)` reports adapter-owned execution limits

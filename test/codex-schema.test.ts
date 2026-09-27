@@ -1,3 +1,4 @@
+import { testInvocation } from './harness-invocation.js';
 import { chmod, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -86,7 +87,7 @@ it.each(schemaMatrix.filter((entry) => entry.rules.length > 0))(
           options: { prompt: 'fixture', structuredOutput: 'strict' },
           outputSchema: jsonSchema(schema),
         },
-        new AbortController().signal,
+        testInvocation(new AbortController().signal),
       ),
     ).rejects.toThrow('Codex rejects this output schema (structuredOutput: "strict"):');
     await expect(stat(marker)).rejects.toMatchObject({ code: 'ENOENT' });
@@ -277,7 +278,7 @@ it('preserves original validation and refuses tuples in compatibility mode befor
         options: { prompt: 'fixture' },
         outputSchema: jsonSchema(z.tuple([z.string()])),
       },
-      new AbortController().signal,
+      testInvocation(new AbortController().signal),
     ),
   ).rejects.toThrow('(tuple)');
   await expect(stat(marker)).rejects.toMatchObject({ code: 'ENOENT' });
@@ -426,7 +427,7 @@ it.each(['discriminated-union', 'array-root', 'string-root'])(
           options: { prompt: 'fixture' },
           outputSchema: jsonSchema(entry.schema),
         },
-        new AbortController().signal,
+        testInvocation(new AbortController().signal),
       ),
     ).rejects.toThrow('Claude structured output requires an object root at $');
     await expect(stat(marker)).rejects.toMatchObject({ code: 'ENOENT' });
@@ -451,7 +452,7 @@ it.each(
       options: { prompt: 'fixture' },
       outputSchema: jsonSchema(schema),
     },
-    new AbortController().signal,
+    testInvocation(new AbortController().signal),
   );
   expect(JSON.parse(await readFile(schemaPath, 'utf8'))).toEqual(jsonSchema(schema));
   expect(schema.safeParse(JSON.parse(response.text)).success).toBe(true);

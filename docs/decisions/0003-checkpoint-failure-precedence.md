@@ -41,3 +41,7 @@ require operator attention, and the last saved record can remain `running` with 
 reported checkpoint failure may have been superseded by a later save; inspect persisted state before
 resuming. Successful runs with cleanup warnings may still need manual lock repair. This preserves
 the local single-writer boundary without promising transactional external effects.
+
+ADR 0013 adds `process` registry persistence failures and retains child ownership when cleanup
+cannot be confirmed. Saved completions then return warnings while the released-owner lock remains
+inspectable; changed or unknown run ownership is still fatal.

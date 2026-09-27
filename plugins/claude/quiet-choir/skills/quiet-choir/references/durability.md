@@ -245,12 +245,16 @@ after accounting for previous effects. There is no automatic migration.
 
 The target is a local POSIX filesystem. Checkpoints are flushed to temporary files, atomically
 renamed, then their directory entry is flushed. A per-run directory lock has `owner.json` containing
-a PID, hostname, and token. Dead same-host owners can be recovered; live owners and foreign-host
-owners are refused. Incomplete ownership metadata or an abandoned `recovery` directory requires
-inspection and manual cleanup only after confirming there is no active owner. Do not delete a lock
-merely because a run looks stalled. After acquiring ownership, the runner removes only that run's
-abandoned `<runId>.json.<uuid>.tmp` files; it preserves other runs' files and unrelated temporary
-data.
+a PID, hostname, birth identity and token. Dead/released same-host owners can be recovered only
+after checking child records in `processes/<pgid>.json` (PID on Windows). Live and foreign-host
+owners are refused. Confirmed live or unverified children cause exit 3 before replacement work.
+Inspect first; `--resume --kill-orphans` stops only identity-confirmed groups and verifies they are
+gone. Reused PIDs are never signaled; missing identity, malformed records and leaderless surviving
+groups remain for separate inspection. Incomplete ownership metadata or an abandoned `recovery`
+directory requires inspection and manual cleanup only after confirming there is no active owner. Do
+not delete a lock merely because a run looks stalled. After acquiring ownership, the runner removes
+only that run's abandoned `<runId>.json.<uuid>.tmp` files; it preserves other runs' files and
+unrelated temporary data.
 
 Map failures default to `drain`: stop scheduling and let active mappers checkpoint without an abort
 signal before rejecting with `FanOutError`. Body rejections, including `Promise.all`, close the
@@ -259,14 +263,32 @@ with "Workflow is closed", including an active mapper's next step or a map start
 still-running branch. Catch inside branches or use `Promise.allSettled` to let siblings finish.
 Explicit map `abort` cancels only that subtree; `ctx.signal` reads the current scope. Caught map
 failures leave the parent scope usable. Local callbacks must eventually settle or draining can hang.
-Run interruption cancels every scope. One Ctrl-C or SIGTERM terminates harness processes, drains
-active work, saves run status `cancelled`, and exits 130. Interrupted steps record `cancelledBy`;
-inspect `rootCause` to identify the initiating failure instead of reading cancellation messages as
-independent root failures. A second Ctrl-C kills the runner mid-drain and can leave its lock and a
-`running` record. SIGKILL, SIGHUP (closed terminal or dropped SSH), or a crash can leave detached
-harness children running and editing. Before resuming, check `pgrep -fl 'claude --print|codex exec'`
-and identify any children belonging to the interrupted run. SIGHUP handling and stronger orphan
-cleanup are deferred to [#48](https://github.com/plx/quiet-choir/issues/48).
+Run interruption cancels every scope. One Ctrl-C, SIGTERM or SIGHUP terminates owned harness groups,
+drains active work, saves run status `cancelled`, and exits 130. stderr prints “Send again to
+force.” Interrupted steps record `cancelledBy`; inspect `rootCause` to identify the initiating
+failure instead of reading cancellation messages as independent root failures. A second signal
+synchronously SIGKILLs every tracked group, then exits 130 without awaiting writes; the lock and an
+older `running` record can remain. EIO/EPIPE from a closed terminal do not interrupt cleanup.
+
+SIGKILL or a crash cannot run handlers. Use `workflow inspect ID --state-dir PATH --json` to see
+`ownership.owner` liveness and `ownership.processes` with binary, PID/group, step, attempt and
+state. To stop confirmed survivors before retrying:
+
+```sh
+node "$QC_CHECKOUT/bin/run.js" workflow execute review.workflow.ts \
+  --run-id review-1 --state-dir "$qc_state_dir" --resume --kill-orphans --kill-grace-ms 5000
+```
+
+The default TERM grace is 3000ms, configurable with `--kill-grace-ms` (not sticky). Every leader
+exit, including success, reaps its group and drains pipes for at most two seconds. A 500ms backstop
+after KILL settles even if another group holds stdout. Valid results survive cleanup warnings;
+unreaped records retain a released-owner lock for recovery. Windows tracks/reaps immediate children.
+
+A crash between spawn and durable registration can still leave an unrecorded child. Descendants that
+create another group/session escape ownership. OS birth checks have platform resolution and a
+check-to-signal race (macOS ps start time has second resolution); they are not atomic process
+handles. Unconfirmed records are retained and never authorize recovery signals. Investigate those
+processes separately; do not delete a lock because its checkpoint is old. No cleanup undoes edits.
 
 Checkpoints contain plaintext workflow input/output, every completed step's full validated result
 (including agent responses and files a local step read), and errors. Checkpoint files are created
@@ -286,13 +308,14 @@ repeat the external action under the normal at-least-once contract.
 
 A stale `running` checkpoint with `error: null` can mean storage failed, not only a crash or a long
 call. Check the execution error as well as the saved record. Exported `CheckpointError` identifies
-`save` versus `release`; combined errors preserve the workflow error first. If the state directory
-was removed, the runner names it and does not recreate it or silently reacquire ownership.
+`save`, `release`, or `process` registry persistence; combined errors preserve the workflow error
+first. If the state directory was removed, the runner names it and does not recreate it or silently
+reacquire ownership.
 
 After a persisted completion, lock release produces an invocation warning and preserves the
-successful result only when the lock directory is already gone or its removal fails with
-`EACCES`/`ENOENT` after the ownership token was verified. The CLI prints the warning on stderr;
-embedded and JSON results expose `warnings`. These warnings are not checkpointed. Lost ownership,
-and missing or unreadable `owner.json` in a remaining lock directory, still fail, because another
-writer may have replaced the checkpoint. Inspect and repair any retained lock before running again;
-do not repeat the effects merely to retry cleanup.
+successful result when the lock directory is already gone, its removal fails with `EACCES`/`ENOENT`
+after the ownership token was verified, or retained child records keep a released-owner lock. The
+CLI prints the warning on stderr; embedded and JSON results expose `warnings`. These warnings are
+not checkpointed. Lost ownership, and missing or unreadable `owner.json` in a remaining lock
+directory, still fail, because another writer may have replaced the checkpoint. Inspect and repair
+any retained lock before running again; do not repeat the effects merely to retry cleanup.

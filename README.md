@@ -370,11 +370,13 @@ normal per-step reuse rules.
 - Map and body failures drain started work without signalling cancellation by default. Explicit map
   `abort` affects only that subtree; `ctx.signal` reads the current scope. Run cancellation
   cooperatively aborts every scope and drains before releasing ownership. Local callbacks must
-  eventually settle; a callback that ignores cancellation can delay exit indefinitely. One Ctrl-C or
-  SIGTERM cancels, drains, and exits 130. A second Ctrl-C kills the runner mid-drain and can leave a
-  lock and `running` record. SIGKILL, SIGHUP (closed terminal or dropped SSH), or a crash can leave
-  detached harness children running and editing. Before resuming, check
-  `pgrep -fl 'claude --print|codex exec'` for children belonging to the interrupted run.
+  eventually settle; a callback that ignores cancellation can delay graceful exit indefinitely.
+  SIGINT, SIGTERM and SIGHUP request cancellation, drain, and exit 130. A second signal sends
+  SIGKILL to every tracked group before exiting 130; it can leave an older checkpoint and lock.
+  After SIGKILL or a crash, inspect owner/child liveness. Resume refuses recorded live or unverified
+  children (exit 3); `--resume --kill-orphans` stops identity-confirmed groups before replacement
+  work. Unknown identities remain for inspection. See
+  [process lifecycle](docs/process-lifecycle.md).
 
 This spike has no background scheduler, distributed workers, execution migration, human-approval
 inbox, durable event delivery, global spending ledger, or automatic worktree isolation. Sleep waits
@@ -404,12 +406,14 @@ use; a resume version change warns without invalidating completed work. The byte
 whole stdout/stderr stream, including command output; CLI runs cannot raise it, while embedders can
 set `CliHarnessOptions.maxOutputBytes`. A call may hit the cap after editing files.
 
-Prompts go over stdin without a shell. Timeouts and cancellation terminate process groups on
-macOS/Linux; Windows cleanup reaches the immediate child only. These flags do not sandbox the
-workflow's own TypeScript or isolate inherited hooks, MCP servers, and harness configuration. Use
-trusted workflow files and a working directory/configuration suitable for the task. Claude's `cwd`
-selects project `.claude/` settings and hooks; `claude -p` skips the trust dialog, so hooks can run
-in never-trusted directories.
+Prompts go over stdin without a shell after durable process registration. Every exit reaps the owned
+process group on macOS/Linux; Windows cleanup reaches the immediate child only. Output drains for at
+most two seconds after leader exit, independently of inherited pipes. Cleanup uses a three-second
+TERM grace (`--kill-grace-ms`) before KILL and a 500ms settlement backstop. These flags do not
+sandbox the workflow's own TypeScript or isolate inherited hooks, MCP servers, and harness
+configuration. Use trusted workflow files and a working directory/configuration suitable for the
+task. Claude's `cwd` selects project `.claude/` settings and hooks; `claude -p` skips the trust
+dialog, so hooks can run in never-trusted directories.
 
 Saved harness errors include reasons recovered from stdout on both zero and nonzero normal exits,
 with bounded stderr and exit metadata. A bare exit error means no usable protocol reason was found;
@@ -457,7 +461,8 @@ layered project/user settings are deferred.
 | 0    | Success, including inspection of `failed`/`running` records (check `.status`). Misplaced flags between `workflow` and its command can print help and exit 0.                                              |
 | 1    | Type/import/workflow errors, nonexistent FILE path, invalid run ID, run ownership/existence errors, or incompatible resume/input. Invalid IDs are checked after module import. Read stderr for the cause. |
 | 2    | Flag/input-JSON errors, omitted FILE argument, resume without a run ID, non-TypeScript/declaration entrypoints, or configuration stubs.                                                                   |
-| 130  | SIGINT/SIGTERM during execution; cancellation drains and saves `cancelled` when storage is available.                                                                                                     |
+| 3    | Recorded live or unverified harness children prevent abandoned-lock recovery; inspect and use `--resume --kill-orphans` for confirmed identities.                                                         |
+| 130  | SIGINT/SIGTERM/SIGHUP during execution; first signal drains and saves `cancelled` when storage is available; second signal force-kills tracked groups and may leave an older record.                      |
 
 `npm run check` includes formatting, lint, strict typechecking, tests with coverage gates, build,
 compiled CLI smoke tests, TypeDoc validation, and package checks. No automated test calls a paid

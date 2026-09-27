@@ -1,3 +1,6 @@
+import type { ProcessSupervisor } from '../../processes/supervisor.js';
+import { OrphanProcessesError } from './process-registry.js';
+import type { HarnessInvocation } from './model.js';
 import {
   resolveAgentLimiter,
   type AgentLimiter,
@@ -142,6 +145,12 @@ export type WorkflowRun<TOutput> = RunRecord & {
 
 /** Explicit dependencies and execution policy for a workflow run. */
 export interface RunOptions extends WorkflowCodeOptions {
+  /** Stop identity-confirmed children of a dead/released owner before acquiring its lock. */
+  readonly killOrphans?: boolean;
+  /** Orphan recovery TERM grace, defaults to 3000ms; configure live calls on CliHarness separately. */
+  readonly killGraceMs?: number;
+  /** Optional live ownership controller for an embedder's second-signal handler. */
+  readonly processSupervisor?: ProcessSupervisor;
   /** Run-wide live invocation cap, limits, or shared limiter. Omission uses defaultAgentLimits(). Not sticky or part of identity. */
   readonly agentLimit?: number | AgentLimits | AgentLimiter;
   /** Sticky named limit rules, appended on resume; policyReset clears them as well. */
@@ -237,7 +246,14 @@ export async function runWorkflow<TInput, TOutput>(
   const stateDir = resolveStateDir(options);
   const snapshot = workflowSnapshot(definition, options);
   const { fingerprint } = snapshot;
-  const release = await lockRun(stateDir, options.runId);
+  if (
+    options.killGraceMs !== undefined &&
+    (!Number.isSafeInteger(options.killGraceMs) ||
+      options.killGraceMs < 1 ||
+      options.killGraceMs > 2_147_483_647)
+  )
+    throw new Error('killGraceMs must be an integer from 1 to 2147483647.');
+  const release = await lockRun(stateDir, options.runId, options);
   const controller = new AbortController();
   const abort = (): void => {
     controller.abort(new CancelledError(null, options.signal?.reason));
@@ -754,8 +770,9 @@ export async function runWorkflow<TInput, TOutput>(
           step.output = jsonValue(output);
         } catch (cause) {
           // Only an aborted scope signal is a scope cancellation. A callback's own AbortError
-          // keeps its message and fails the step, but is still never retried or settled.
-          const scoped = signal.aborted;
+          // keeps its message and fails the step, but is still never retried or settled. This
+          // run's own storage failure (e.g. process registration) aborts the run but stays a failure.
+          const scoped = signal.aborted && !checkpointProblems.includes(cause as CheckpointError);
           const error = scoped ? cancellationError(signal, cause) : cause;
           origins.remember(error, id);
           const outcome = stepError(error, step.attempts);
@@ -983,12 +1000,40 @@ export async function runWorkflow<TInput, TOutput>(
                 throw new ConfigurationError(
                   `No harness adapter configured for ${provider}. Supply RunOptions.harness.`,
                 );
+              const invocation: HarnessInvocation = {
+                signal: context.signal,
+                runId: options.runId,
+                stepId: id,
+                attempt: context.attempt,
+                trackProcess: async (child) => {
+                  try {
+                    return await release.trackProcess(
+                      { runId: options.runId, stepId: id, attempt: context.attempt },
+                      child,
+                    );
+                  } catch (cause) {
+                    const error = await checkpointError(
+                      'process',
+                      stateDir,
+                      options.runId,
+                      cause,
+                      `Could not record harness process for ${id}`,
+                    );
+                    checkpointProblems.push(error);
+                    controller.abort(error);
+                    throw error;
+                  }
+                },
+              };
               if (options.harness.metadata) {
                 let discovery = metadataRequests.get(provider);
                 if (!discovery) {
                   discovery = (async () => {
                     // Installation discovery is shared by the run, not owned by the first map subtree.
-                    const metadata = await options.harness?.metadata?.(request, discoverySignal);
+                    const metadata = await options.harness?.metadata?.(request, {
+                      ...invocation,
+                      signal: discoverySignal,
+                    });
                     if (!metadata) return;
                     const old = record.harnesses?.[provider];
                     const warnings = [...(metadata.warnings ?? [])];
@@ -1018,7 +1063,7 @@ export async function runWorkflow<TInput, TOutput>(
                   context.signal.throwIfAborted();
                   emitAdmission('agent.admitted', id, step, provider, permit.waitedMs);
                   context.signal.throwIfAborted();
-                  response = await options.harness.invoke(request, context.signal);
+                  response = await options.harness.invoke(request, invocation);
                 } finally {
                   permit.release();
                 }
@@ -1301,7 +1346,12 @@ export async function runWorkflow<TInput, TOutput>(
       `Could not release run ${options.runId} lock`,
     );
     // lockRun keeps an errno only for a vanished lock or removal after ownership was verified.
-    if (outcome.ok && (errorCode(cause) === 'EACCES' || errorCode(cause) === 'ENOENT')) {
+    if (
+      outcome.ok &&
+      (cause instanceof OrphanProcessesError ||
+        errorCode(cause) === 'EACCES' ||
+        errorCode(cause) === 'ENOENT')
+    ) {
       return { ...outcome.run, warnings: [...(outcome.run.warnings ?? []), error.message] };
     }
     // Unknown ownership and ownership changes remain fatal even after a successful save.

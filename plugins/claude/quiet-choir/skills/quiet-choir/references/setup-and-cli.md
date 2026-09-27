@@ -80,13 +80,16 @@ check setup without paid calls.
   still requires equal validated input.
 - Resume with `--resume --run-id ID`, the same launch directory and `--state-dir`, and unchanged
   sources, name, version, and schemas. Reusing an ID without `--resume` fails.
+- `--kill-grace-ms N` sets the TERM-to-KILL grace for calls and orphan recovery (default 3000).
+  Repeat it on resume; it is not sticky. `--resume --kill-orphans` stops identity-confirmed children
+  of a dead/released owner before replacement effects. Unverified identities refuse recovery.
 - `--state-dir PATH` on execute/inspect/check-resume selects storage. Its default is
   `.quiet-choir/runs` under the CLI launch directory. Use an absolute path and repeat it for
   inspection/resume.
 - `--json` on execute/inspect/validate writes one JSON line to stdout only on success: the run
-  record for execute/inspect, or `{kind, ok, entrypoint, workflow}` for validate. It is unsupported
-  by typecheck. Failed `execute --json` emits no result JSON; read stderr, then inspect the run if a
-  checkpoint exists.
+  record for execute (plus current `ownership` for inspect), or `{kind, ok, entrypoint, workflow}`
+  for validate. It is unsupported by typecheck. Failed `execute --json` emits no result JSON; read
+  stderr, then inspect the run if a checkpoint exists.
 - Use `npm run --silent cli -- … --json` to suppress npm's banner when piping. Module-level
   `console.log` output precedes the JSON; workflow code must keep stdout clean too.
 - Validate's `workflow.fingerprint` is the same full source/schema/engine fingerprint stored by
@@ -102,7 +105,8 @@ Put flags after the command name, for example `workflow inspect first --json`.
 | 0    | Success. `inspect` also exits 0 for `failed` and `running` records: check `.status`. Misplaced flags between `workflow` and its command can print help and exit 0.                                                                                                   |
 | 1    | Type errors, nonexistent FILE path, invalid run ID, existing/missing/locked run, incompatible resume, changed input, or workflow/step failure. Read stderr to distinguish them. An invalid run ID is checked after module import, so top-level code has already run. |
 | 2    | Flag parse errors, invalid `--input` JSON, omitted FILE argument, `--resume` without `--run-id`, non-TypeScript or `.d.ts` entrypoints, or configuration stubs.                                                                                                      |
-| 130  | SIGINT/SIGTERM during execution. The runner aborts, drains, and saves `cancelled` before exiting when storage is available; a storage failure can leave an older record.                                                                                             |
+| 3    | Recorded live or unverified harness children prevent abandoned-lock recovery. Inspect, then use `--resume --kill-orphans` for confirmed identities.                                                                                                                  |
+| 130  | SIGINT/SIGTERM/SIGHUP during execution. The runner aborts, drains, and saves `cancelled` before exiting when storage is available; a storage failure or second signal can leave an older record. A second signal first SIGKILLs tracked groups.                      |
 
 `configuration doctor --json` runs five checks for each installed harness: tested version range,
 exact adapter argv with a zero-inference 404/400 rejection, hidden flags, enum drift and inherited
@@ -150,3 +154,6 @@ repeat provider rules and the last value wins. Omitted total uses min(8, max(1, 
 workflow loading. Repeat desired limits on resume; they are not sticky and do not change
 completed-step identity. `--log-level debug` includes admission counts and wait time. `ctx.map`
 still bounds local mapper concurrency independently.
+
+Doctor probes also drain on first SIGINT/SIGTERM/SIGHUP and force-kill on a second signal. They have
+in-memory process ownership only, since there is no workflow run to resume.

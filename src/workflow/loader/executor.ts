@@ -1,4 +1,6 @@
 import { defaultAgentLimits, validateAgentLimits } from '../runtime/agent-limiter.js';
+import type { ProcessSupervisor } from '../../processes/supervisor.js';
+import { OrphanProcessesError } from '../runtime/process-registry.js';
 import { capabilityManifest } from '../runtime/profiles.js';
 import { randomUUID } from 'node:crypto';
 import { readdir } from 'node:fs/promises';
@@ -13,7 +15,7 @@ import type { Harness, WorkflowDefinition } from '../runtime/model.js';
 import { runWorkflow } from '../runtime/runner.js';
 import { resolveStateDir } from '../runtime/paths.js';
 import { errorCode } from '../runtime/checkpoint.js';
-import { readRun } from '../runtime/store.js';
+import { readRun, inspectRunOwnership } from '../runtime/store.js';
 import { TypeScriptExecutor } from '../typecheck/typescript-executor.js';
 import { fingerprintSources } from './source.js';
 import { checkResume, workflowSnapshot } from '../runtime/compatibility.js';
@@ -30,6 +32,7 @@ export interface WorkflowExecutorOptions {
   readonly logger: ExecutionLogger;
   readonly harness?: Harness;
   readonly signal?: AbortSignal;
+  readonly processSupervisor?: ProcessSupervisor;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -84,6 +87,7 @@ export class WorkflowExecutor implements Executor<
             kind: 'workflow.run.result',
             ok: true,
             run: await readRun({ stateDir, runId: plan.runId }),
+            ownership: await inspectRunOwnership({ stateDir, runId: plan.runId }),
           };
         } catch (cause) {
           if (errorCode(cause) !== 'ENOENT') throw cause;
@@ -181,6 +185,11 @@ export class WorkflowExecutor implements Executor<
         stateDir: plan.stateDir,
         cwd: plan.cwd,
         resume: plan.resume,
+        ...(plan.killOrphans === undefined ? {} : { killOrphans: plan.killOrphans }),
+        ...(plan.killGraceMs === undefined ? {} : { killGraceMs: plan.killGraceMs }),
+        ...(this.#options.processSupervisor === undefined
+          ? {}
+          : { processSupervisor: this.#options.processSupervisor }),
         ...(agentLimits === undefined ? {} : { agentLimit: agentLimits }),
         ...(plan.policy === undefined ? {} : { policy: plan.policy }),
         ...(plan.profileOverrides === undefined ? {} : { profileOverrides: plan.profileOverrides }),
@@ -219,6 +228,7 @@ export class WorkflowExecutor implements Executor<
             ? `${message} ${checkpoint.recoveryHint}`
             : message,
         diagnostics: [],
+        ...(error instanceof OrphanProcessesError ? { exitCode: 3, code: error.code } : {}),
       };
     } finally {
       unregister?.();

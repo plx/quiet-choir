@@ -142,15 +142,18 @@ configuration. Explicit MCP controls are available; hermetic isolation remains d
 [#60](https://github.com/plx/quiet-choir/issues/60).
 
 The default 8 MiB limit counts combined stdout/stderr; embedding callers can override it through
-`CliHarnessOptions`. CLI executions cannot raise it. Timeout/cancellation terminates process groups
-on macOS/Linux; Windows cleanup reaches the immediate child only. A stopped call may already have
+`CliHarnessOptions`. CLI executions cannot raise it. Every leader exit reaps owned process groups on
+macOS/Linux; Windows cleanup reaches the immediate child only. A stopped call may already have
 edited files.
 
-One Ctrl-C or SIGTERM requests cancellation, terminates harness processes, drains work, and
-exits 130. A second Ctrl-C kills the runner mid-drain and can leave its lock and a `running`
-checkpoint. SIGKILL, SIGHUP (closed terminal or dropped SSH), or a crash can leave detached harness
-children running and editing. Before resuming, check `pgrep -fl 'claude --print|codex exec'` and
-identify any children belonging to the interrupted run. See [durability](durability.md).
+One Ctrl-C, SIGTERM or SIGHUP cancels, reaps owned groups, drains and exits 130. A second signal
+synchronously SIGKILLs tracked groups and exits 130; the lock and an older checkpoint may remain.
+SIGKILL or a crash can leave children running and editing. Inspect owner/process liveness before
+retrying. Resume refuses live or unverified recorded children (exit 3); use
+`--resume --kill-orphans` to stop identity-confirmed survivors first. The default TERM grace is
+3000ms, configurable with `--kill-grace-ms`. Unknown identities are retained and never signaled;
+escaped groups and the spawn-to-record crash gap still need separate investigation. See
+[durability](durability.md) for recovery and platform limits.
 
 Structured-output success paths for both adapters completed live with claude 2.1.283 and codex-cli
 0.157.1. That is evidence for those versions and captures, not a guarantee for other versions or the

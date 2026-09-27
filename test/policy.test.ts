@@ -420,7 +420,7 @@ it('reports adapter defaults and preserves custom-harness unknowns', async () =>
     maxTurns: 10,
     maxBudgetUsd: 0.5,
     maxOutputBytes: 8 * 1024 * 1024,
-    killGraceMs: 250,
+    killGraceMs: 3000,
     binary: 'claude',
   });
   expect(

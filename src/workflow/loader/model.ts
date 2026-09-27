@@ -1,4 +1,5 @@
 import type { AgentLimits } from '../runtime/agent-limiter.js';
+import type { RunOwnership } from '../runtime/store.js';
 import type { CapabilityManifest, ProfileOverride } from '../runtime/profiles-model.js';
 import type { ExecutionPlan, ExecutionResult } from '../../application/execution.js';
 import type { JsonValue } from '../runtime/model.js';
@@ -17,6 +18,8 @@ export interface ValidateWorkflowPlan extends ExecutionPlan {
 export interface ExecuteWorkflowPlan extends ExecutionPlan {
   readonly kind: 'workflow.execute';
   readonly agentLimits?: AgentLimits;
+  readonly killOrphans?: boolean;
+  readonly killGraceMs?: number;
   readonly typecheck: TypecheckPlan;
   readonly runId: string;
   readonly stateDir: string;
@@ -57,6 +60,8 @@ export type WorkflowCommandResult = ExecutionResult &
         readonly kind: 'workflow.error';
         readonly ok: false;
         readonly message: string;
+        readonly exitCode?: number;
+        readonly code?: string;
         readonly diagnostics: readonly TypecheckDiagnostic[];
       }
     | {
@@ -80,5 +85,6 @@ export type WorkflowCommandResult = ExecutionResult &
         readonly kind: 'workflow.run.result';
         readonly ok: true;
         readonly run: WorkflowRun<JsonValue>;
+        readonly ownership?: RunOwnership;
       }
   );

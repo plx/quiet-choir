@@ -1,5 +1,14 @@
 import { codexEffortValues } from './agent-controls.js';
-import type { HarnessMetadata } from './model.js';
+import type { HarnessMetadata, HarnessInvocation, HarnessProcess } from './model.js';
+import { pidState, processIdentity } from '../../processes/identity.js';
+import { ProcessSupervisor } from '../../processes/supervisor.js';
+import {
+  inspectProcesses,
+  recoverProcesses,
+  trackProcess,
+  OrphanProcessesError,
+  type HarnessProcessInspection,
+} from './process-registry.js';
 import { profileOverrideSchema, grantsSchema, capabilityManifestSchema } from './profiles.js';
 import type { CapabilityManifest, ProfileOverride } from './profiles-model.js';
 import { randomUUID } from 'node:crypto';
@@ -499,14 +508,79 @@ const ownerSchema = z.object({
   pid: z.number().int().positive(),
   host: z.string(),
   token: z.string(),
+  osStartTime: z.string().nullable().optional(),
+  released: z.boolean().optional(),
 });
 
-function isDead(pid: number): boolean {
+function ownerState(
+  owner: z.infer<typeof ownerSchema>,
+): 'alive' | 'dead' | 'unknown' | 'remote' | 'released' {
+  if (owner.host !== hostname()) return 'remote';
+  if (owner.released) return 'released';
+  const state = pidState(owner.pid);
+  if (state !== 'alive') return state;
+  const identity = processIdentity(owner.pid);
+  if (
+    identity?.zombie ||
+    (owner.osStartTime && identity?.start && owner.osStartTime !== identity.start)
+  )
+    return 'dead';
+  return 'alive';
+}
+
+/** Ephemeral ownership diagnostics; never included in replay identity or the saved checkpoint. */
+export interface RunOwnership {
+  /** Whether a lock currently exists. */
+  readonly locked: boolean;
+  /** Local owner metadata and liveness, or null for an absent/incomplete lock. */
+  readonly owner: {
+    /** Writer's recorded process ID. */
+    readonly pid: number;
+    /** Host on which the writer acquired ownership. */
+    readonly host: string;
+    /** Current local liveness or a state that prevents ordinary automatic reclamation. */
+    readonly state: 'alive' | 'dead' | 'unknown' | 'remote' | 'released';
+  } | null;
+  /** Child/group records, including unverifiable entries. */
+  readonly processes: readonly HarnessProcessInspection[];
+  /** Read-only inspection failures; never permission to remove the lock. */
+  readonly warning?: string;
+}
+
+/** Read owner and child liveness without importing workflow code or changing any files. */
+export async function inspectRunOwnership(options: ReadRunOptions): Promise<RunOwnership> {
+  const lockPath = `${pathFor(resolveStateDir(options), options.runId)}.lock`;
   try {
-    process.kill(pid, 0);
-    return false;
+    const owner = ownerSchema.parse(
+      JSON.parse(await readFile(join(lockPath, 'owner.json'), 'utf8')),
+    );
+    const state = ownerState(owner);
+    const processes = await inspectProcesses(lockPath, options.runId, owner.token);
+    return {
+      locked: true,
+      owner: { pid: owner.pid, host: owner.host, state },
+      processes:
+        state === 'remote'
+          ? processes.map((entry) => ({
+              ...entry,
+              state: 'unknown',
+              detail: 'Remote owner: local PID observations cannot identify its children.',
+            }))
+          : processes,
+    };
   } catch (error) {
-    return error instanceof Error && 'code' in error && error.code === 'ESRCH';
+    try {
+      await readdir(lockPath);
+    } catch (cause) {
+      if (cause instanceof Error && 'code' in cause && cause.code === 'ENOENT')
+        return { locked: false, owner: null, processes: [] };
+    }
+    return {
+      locked: true,
+      owner: null,
+      processes: [],
+      warning: error instanceof Error ? error.message : String(error),
+    };
   }
 }
 
@@ -523,11 +597,34 @@ async function lockGone(lockPath: string): Promise<boolean> {
   }
 }
 
+interface RunLock {
+  (): Promise<void>;
+  trackProcess(
+    invocation: Pick<HarnessInvocation, 'runId' | 'stepId' | 'attempt'>,
+    process: HarnessProcess,
+  ): ReturnType<HarnessInvocation['trackProcess']>;
+}
+
 /** Acquire a single local writer, recovering a dead local owner conservatively. @internal */
-export async function lockRun(stateDir: string, runId: string): Promise<() => Promise<void>> {
+export async function lockRun(
+  stateDir: string,
+  runId: string,
+  options: {
+    readonly killOrphans?: boolean;
+    readonly killGraceMs?: number;
+    readonly signal?: AbortSignal;
+    readonly processSupervisor?: ProcessSupervisor;
+  } = {},
+): Promise<RunLock> {
   const lockPath = `${pathFor(stateDir, runId)}.lock`;
   await mkdir(resolve(stateDir), { recursive: true, mode: 0o700 });
-  const owner = { pid: process.pid, host: hostname(), token: randomUUID() };
+  const owner = {
+    pid: process.pid,
+    host: hostname(),
+    token: randomUUID(),
+    osStartTime: processIdentity(process.pid)?.start ?? null,
+  };
+  const supervisor = options.processSupervisor ?? new ProcessSupervisor();
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
       await mkdir(lockPath, { mode: 0o700 });
@@ -544,7 +641,7 @@ export async function lockRun(stateDir: string, runId: string): Promise<() => Pr
           { cause },
         );
       }
-      if (previous.host !== hostname() || !isDead(previous.pid))
+      if (!['dead', 'released'].includes(ownerState(previous)))
         throw new Error(
           `Run ${runId} is locked by PID ${String(previous.pid)} on ${previous.host}.`,
           { cause: error },
@@ -559,16 +656,30 @@ export async function lockRun(stateDir: string, runId: string): Promise<() => Pr
           { cause },
         );
       }
-      const current = ownerSchema.parse(
-        JSON.parse(await readFile(join(lockPath, 'owner.json'), 'utf8')),
-      );
-      if (current.token !== previous.token || !isDead(current.pid)) {
-        await rm(recovery, { recursive: true, force: true });
-        throw new Error(`Run ${runId} lock ownership changed during recovery; retry.`, {
-          cause: error,
+      let removed = false;
+      try {
+        const current = ownerSchema.parse(
+          JSON.parse(await readFile(join(lockPath, 'owner.json'), 'utf8')),
+        );
+        if (
+          current.token !== previous.token ||
+          !['dead', 'released'].includes(ownerState(current))
+        ) {
+          throw new Error(`Run ${runId} lock ownership changed during recovery; retry.`, {
+            cause: error,
+          });
+        }
+        await recoverProcesses(lockPath, runId, current.token, {
+          killGraceMs: options.killGraceMs ?? 3000,
+          processSupervisor: supervisor,
+          ...(options.killOrphans === undefined ? {} : { killOrphans: options.killOrphans }),
+          ...(options.signal === undefined ? {} : { signal: options.signal }),
         });
+        await rm(lockPath, { recursive: true });
+        removed = true;
+      } finally {
+        if (!removed) await rm(recovery, { recursive: true, force: true });
       }
-      await rm(lockPath, { recursive: true });
       continue;
     }
     try {
@@ -591,7 +702,7 @@ export async function lockRun(stateDir: string, runId: string): Promise<() => Pr
       await rm(lockPath, { recursive: true, force: true });
       throw error;
     }
-    return async () => {
+    const release = async (): Promise<void> => {
       let current;
       try {
         current = ownerSchema.parse(
@@ -606,8 +717,24 @@ export async function lockRun(stateDir: string, runId: string): Promise<() => Pr
         });
       }
       if (current.token !== owner.token) throw new Error(`Run ${runId} lock ownership was lost.`);
+      const processes = await inspectProcesses(lockPath, runId, owner.token);
+      if (processes.some((entry) => entry.state === 'alive' || entry.state === 'unknown')) {
+        // The workflow no longer owns work, but its child records must survive even in a long-lived embedder.
+        const temp = join(lockPath, `owner.${randomUUID()}.tmp`);
+        await using file = await open(temp, 'wx', 0o600);
+        await file.writeFile(JSON.stringify({ ...owner, released: true }));
+        await file.sync();
+        await rename(temp, join(lockPath, 'owner.json'));
+        throw new OrphanProcessesError(runId, processes);
+      }
       await rm(lockPath, { recursive: true });
     };
+    return Object.assign(release, {
+      trackProcess: (
+        invocation: Pick<HarnessInvocation, 'runId' | 'stepId' | 'attempt'>,
+        child: HarnessProcess,
+      ) => trackProcess(lockPath, owner.token, supervisor, invocation, child),
+    });
   }
   throw new Error(`Could not acquire run ${runId}; retry after competing writers finish.`);
 }

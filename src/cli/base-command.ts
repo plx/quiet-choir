@@ -1,4 +1,5 @@
 import { Command, Flags, type Interfaces } from '@oclif/core';
+import { terminalError, tolerateClosedTerminal } from './signals.js';
 
 import {
   LOG_LEVELS,
@@ -31,10 +32,15 @@ export abstract class BaseCommand extends Command {
   };
 
   protected createExecutionLogger(flags: GlobalFlags): ExecutionLogger {
+    tolerateClosedTerminal();
     const threshold = flags.verbose ? 'trace' : flags['log-level'];
 
     return new ThresholdLogger(threshold, (line) => {
-      this.logToStderr(line);
+      try {
+        this.logToStderr(line);
+      } catch (error) {
+        if (!terminalError(error)) throw error;
+      }
     });
   }
 }

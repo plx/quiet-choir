@@ -9,3 +9,8 @@ Process exit zero alone is not success: Claude must report a successful terminal
 report a completed turn and final agent message. Keep protocol parsing separate from process
 ownership, output limits, and cancellation. Existing tests use protocol fixtures and fake
 executables; they do not require paid agent calls.
+
+Register spawned groups through HarnessInvocation before writing task input, including version
+probes. Reap the group on every exit; bound inherited-pipe draining and post-KILL settlement. Record
+cleanup warnings must not discard a valid protocol result. Keep records when reaping is uncertain;
+OS identity mismatch must never authorize signaling a reused PID.

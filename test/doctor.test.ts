@@ -1,3 +1,4 @@
+import { testInvocation } from './harness-invocation.js';
 import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
@@ -43,7 +44,7 @@ const fs = require('node:fs');
 const a=process.argv.slice(2), mode=${JSON.stringify(mode)}, provider=${JSON.stringify(provider)};
 fs.appendFileSync(${JSON.stringify(join(directory, 'calls'))},JSON.stringify({provider,args:a})+'\\n');
 if(mode==='hang') {setInterval(()=>{},1000);return;}
-if(a.includes('--version')) {console.log(mode==='version'?'9.9.9':${JSON.stringify(testedHarnessVersions[provider].minimum)});process.exit(0);}
+if(a.includes('--version')) {if(mode==='cleanup')require('node:child_process').spawn('/bin/sleep',['30'],{stdio:'ignore'}).unref();console.log(mode==='version'?'9.9.9':${JSON.stringify(testedHarnessVersions[provider].minimum)});process.exit(0);}
 if(a.includes('--help')) {console.log(${JSON.stringify(provider === 'claude' ? claudeHelp : codexHelp)}.replace(mode==='enums'?'xhigh':'not-found', 'ultra'));process.exit(0);}
 if(a.includes('abc')) {console.error(mode==='hidden'?'unknown option --max-turns':"argument 'abc' is invalid. must be a number");process.exit(1);}
 if(a.some(v=>v.includes('quiet-choir-missing-'))) {console.error('System prompt file not found');process.exit(1);}
@@ -208,6 +209,7 @@ it('bounds missing executables, timeouts, invalid deadlines, and cancellation', 
   });
   expect(timeout.ok).toBe(false);
   await expect(probeHarnessContracts({ timeoutMs: 0 })).rejects.toThrow('positive bounded');
+  await expect(probeHarnessContracts({ killGraceMs: 0 })).rejects.toThrow('positive bounded');
   await expect(
     probeHarnessContracts({ signal: AbortSignal.abort(new Error('stop')) }),
   ).rejects.toThrow('stop');
@@ -253,17 +255,19 @@ it('exports version discovery with nonfatal diagnostics and cancellation', async
     outputSchema: null,
   };
   const harness = new CliHarness({ codexBinary: await binary('codex') });
-  expect(await harness.metadata(request, new AbortController().signal)).toMatchObject({
+  expect(
+    await harness.metadata(request, testInvocation(new AbortController().signal)),
+  ).toMatchObject({
     version: '0.157.1',
   });
   const missing = await new CliHarness({ codexBinary: join(directory, 'missing') }).metadata(
     request,
-    new AbortController().signal,
+    testInvocation(new AbortController().signal),
   );
   expect(missing.version).toBeNull();
   expect(missing.warnings?.[0]).toContain('failed');
   await expect(
-    harness.metadata(request, AbortSignal.abort(new Error('cancelled'))),
+    harness.metadata(request, testInvocation(AbortSignal.abort(new Error('cancelled')))),
   ).rejects.toThrow('cancelled');
 });
 it.each(['ok', 'warning'])(
@@ -287,5 +291,17 @@ it.each(['ok', 'warning'])(
     expect(report.checks).toHaveLength(5);
     if (mode === 'ok') expect(error).toBeUndefined();
     else expect(error).toMatchObject({ oclif: { exit: 1 } });
+  },
+);
+
+it.skipIf(process.platform === 'win32')(
+  'rejects native process cleanup warnings during contract discovery',
+  async () => {
+    const report = await probeHarnessContracts({
+      harness: 'claude',
+      claudeBinary: await binary('claude', 'cleanup'),
+    });
+    expect(report.ok).toBe(false);
+    expect(report.checks[0]?.message).toContain('process warnings');
   },
 );

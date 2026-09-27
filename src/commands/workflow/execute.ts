@@ -1,4 +1,6 @@
 import { parseAgentLimits } from '../../workflow/loader/agent-limits.js';
+import { ProcessSupervisor } from '../../processes/supervisor.js';
+import { tolerateClosedTerminal, executionSignals } from '../../cli/signals.js';
 import type { AgentLimits } from '../../workflow/runtime/agent-limiter.js';
 import { parseProfileOverride } from '../../workflow/runtime/profiles.js';
 import type { ProfileOverride } from '../../workflow/runtime/profiles-model.js';
@@ -20,6 +22,8 @@ interface WorkflowExecuteArgs {
 }
 
 interface WorkflowExecuteFlags {
+  readonly 'kill-orphans': boolean | undefined;
+  readonly 'kill-grace-ms': string | undefined;
   readonly 'max-agents': string | undefined;
   readonly 'provider-limit': string[] | undefined;
   profile: string[] | undefined;
@@ -50,6 +54,14 @@ export default class WorkflowExecute extends BaseCommand {
   };
 
   public static override readonly flags: Interfaces.FlagInput<WorkflowExecuteFlags> = {
+    'kill-orphans': Flags.boolean({
+      description: 'Before resume, stop identity-confirmed processes left by a dead owner',
+      dependsOn: ['resume'],
+    }),
+    'kill-grace-ms': Flags.string({
+      description:
+        'SIGTERM grace before SIGKILL for calls and orphan recovery, in milliseconds (default 3000)',
+    }),
     'max-agents': Flags.string({
       description: 'Max concurrent live agents across the run; default min(8, max(1, CPUs - 2))',
     }),
@@ -123,9 +135,17 @@ export default class WorkflowExecute extends BaseCommand {
       this.error('--resume requires --run-id.', { exit: 2 });
     }
     let agentLimits: AgentLimits;
+    let killGraceMs: number;
     let policy: PolicyOverride[];
     let profileOverrides: ProfileOverride[];
     try {
+      killGraceMs = flags['kill-grace-ms'] === undefined ? 3000 : Number(flags['kill-grace-ms']);
+      if (
+        !/^[1-9][0-9]*$/u.test(String(flags['kill-grace-ms'] ?? 3000)) ||
+        !Number.isSafeInteger(killGraceMs) ||
+        killGraceMs > 2_147_483_647
+      )
+        throw new Error('--kill-grace-ms must be an integer from 1 to 2147483647.');
       agentLimits = parseAgentLimits(flags['max-agents'], flags['provider-limit'] ?? []);
       profileOverrides = (flags.profile ?? []).map(parseProfileOverride);
       policy = validatePolicy(
@@ -150,22 +170,24 @@ export default class WorkflowExecute extends BaseCommand {
       input = {};
     }
     const runId = flags['run-id'] ?? randomUUID();
+    tolerateClosedTerminal();
     this.logToStderr(`Run ID: ${runId}`);
-    const controller = new AbortController();
-    const cancel = (): void => {
-      controller.abort(new Error('Workflow interrupted.'));
-    };
-    process.once('SIGINT', cancel);
-    process.once('SIGTERM', cancel);
+    const processSupervisor = new ProcessSupervisor();
+    const controller = executionSignals(processSupervisor, (message) => {
+      this.logToStderr(message);
+    });
     try {
       const executor = new WorkflowExecutor({
         logger: this.createExecutionLogger(flags),
-        harness: new CliHarness(),
+        harness: new CliHarness({ killGraceMs }),
+        processSupervisor,
         signal: controller.signal,
       });
       const result = await executor.execute({
         kind: 'workflow.execute',
         agentLimits,
+        killGraceMs,
+        ...(flags['kill-orphans'] === undefined ? {} : { killOrphans: flags['kill-orphans'] }),
         typecheck: analysis.plan,
         runId,
         stateDir: resolve(flags['state-dir']),
@@ -200,7 +222,9 @@ export default class WorkflowExecute extends BaseCommand {
         for (const diagnostic of result.diagnostics) {
           this.logToStderr(formatTypecheckDiagnostic(diagnostic, process.cwd()));
         }
-        this.error(result.message, { exit: controller.signal.aborted ? 130 : 1 });
+        this.error(result.message, {
+          exit: controller.signal.aborted ? 130 : (result.exitCode ?? 1),
+        });
       }
       if (result.kind === 'workflow.run.result') {
         for (const warning of result.run.warnings ?? []) this.logToStderr(`Warning: ${warning}`);
@@ -211,8 +235,7 @@ export default class WorkflowExecute extends BaseCommand {
         );
       }
     } finally {
-      process.removeListener('SIGINT', cancel);
-      process.removeListener('SIGTERM', cancel);
+      controller.dispose();
     }
   }
 }

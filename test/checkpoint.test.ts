@@ -31,8 +31,10 @@ function options(): { runId: string; stateDir: string; input: null } {
 }
 function failRelease(error: Error): void {
   vi.mocked(store.lockRun).mockImplementation(async (...args) => {
-    await actualStore.lockRun(...args);
-    return () => Promise.reject(error);
+    const release = await actualStore.lockRun(...args);
+    return Object.assign(() => Promise.reject(error), {
+      trackProcess: release.trackProcess.bind(release),
+    });
   });
 }
 

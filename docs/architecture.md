@@ -10,6 +10,7 @@ definitions to a particular agent harness.
 - `src/application/` contains framework-independent execution contracts and small executors.
 - `src/workflow/` contains workflow-specific plans, results, analysis, and executors.
 - `src/workflow/runtime/` defines the typed workflow API and local checkpoint/replay engine.
+- `src/processes/` provides shared OS process identity and synchronous live ownership helpers.
 - `src/cli/` adapts oclif concerns such as inherited flags, logging, and presentation.
 - `src/commands/` contains thin, filesystem-discovered oclif command adapters.
 - `bin/` contains development and compiled CLI launchers.
@@ -77,6 +78,13 @@ changes in external dependencies or services. See
 [ADR 0008](decisions/0008-scoped-fan-out.md) for cancellation scopes and durable map items,
 [ADR 0009](decisions/0009-scoped-step-ids.md) for stable scoped IDs, and
 [research notes](research.md) for the comparison to Claude's dynamic workflows.
+
+HarnessInvocation carries run/step/attempt identity, the captured cancellation signal and a
+process-registration port. The runtime persists child/group ownership inside the run lock; adapters
+report spawns and release records only after reaping. Dead-owner recovery checks those records
+before replacement work, and read-only inspection reports liveness separately from checkpoints. The
+CLI owns INT/TERM/HUP handling and injects a live ProcessSupervisor outside the plain-data plan. See
+[ADR 0013](decisions/0013-process-ownership.md) and [process lifecycle](process-lifecycle.md).
 
 ## CLI execution boundary
 

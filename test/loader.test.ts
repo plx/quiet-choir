@@ -205,7 +205,10 @@ export const invalid: number = 'wrong';`);
       runId: 'loader-test',
       stateDir: join(root, 'state'),
     });
-    expect(inspected).toEqual(executed);
+    expect(inspected).toEqual({
+      ...executed,
+      ownership: { locked: false, owner: null, processes: [] },
+    });
     const resumed = await runner.execute({ ...executionPlan, resume: true });
     expect(resumed).toMatchObject({ ok: true, run: { output: 42 } });
     expect(log).toHaveBeenCalledWith('debug', expect.stringContaining('step.completed double'));

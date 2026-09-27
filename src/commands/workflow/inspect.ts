@@ -5,6 +5,14 @@ import { Args, Flags, type Interfaces } from '@oclif/core';
 import { BaseCommand } from '../../cli/base-command.js';
 import { WorkflowExecutor } from '../../workflow/loader/executor.js';
 
+import type { RunOwnership } from '../../workflow/runtime/store.js';
+
+function ownershipText(ownership: RunOwnership | undefined): string {
+  if (!ownership?.locked) return 'Owner: no lock\n';
+  const owner = ownership.owner;
+  return `Owner: ${owner ? `pid ${String(owner.pid)} on ${owner.host} ${owner.state}${owner.state === 'dead' || owner.state === 'released' ? ': stale lock' : ''}` : 'unknown'}\n${ownership.warning ? `Warning: ${ownership.warning}\n` : ''}${ownership.processes.map((entry) => (entry.process ? `Process: ${entry.process.binary} pid ${String(entry.process.pid)} group ${String(entry.process.pgid)} step ${entry.process.stepId} attempt ${String(entry.process.attempt)} ${entry.state}\n` : `Process: ${entry.file} ${entry.state}: ${entry.detail ?? ''}\n`)).join('')}`;
+}
+
 interface WorkflowInspectArgs {
   readonly runId: string;
 }
@@ -44,8 +52,8 @@ export default class WorkflowInspect extends BaseCommand {
     if (result.kind === 'workflow.run.result') {
       this.log(
         flags.json
-          ? JSON.stringify(result.run)
-          : `Run ${result.run.id}: ${result.run.status}\nWorkflow: ${result.run.workflow.name}@${result.run.workflow.version}\nSteps: ${String(Object.keys(result.run.steps).length)}\n${Object.entries(
+          ? JSON.stringify({ ...result.run, ownership: result.ownership })
+          : `Run ${result.run.id}: ${result.run.status}\n${ownershipText(result.ownership)}Workflow: ${result.run.workflow.name}@${result.run.workflow.version}\nSteps: ${String(Object.keys(result.run.steps).length)}\n${Object.entries(
               result.run.harnesses ?? {},
             )
               .map(
