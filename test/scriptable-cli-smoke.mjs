@@ -236,7 +236,14 @@ export default defineWorkflow({ name:'json', version:'1',
     const id = mode + '-' + signal;
     const child = spawn(
       process.execPath,
-      [bin, 'workflow', ...execute('--run-id', id, '--input', JSON.stringify({ mode })), '--json'],
+      [
+        bin,
+        'workflow',
+        ...execute('--run-id', id, '--input', JSON.stringify({ mode })),
+        '--wait-mode',
+        'block',
+        '--json',
+      ],
       { cwd: project, stdio: ['ignore', 'pipe', 'pipe'] },
     );
     children.add(child);
@@ -253,7 +260,7 @@ export default defineWorkflow({ name:'json', version:'1',
     await until(
       () =>
         existsSync(join(state, id, 'run.json')) &&
-        saved(id).steps.wait?.status === 'running' &&
+        saved(id).steps.wait?.status === (mode === 'stuck' ? 'running' : 'waiting') &&
         (mode !== 'stuck' || stderr.includes('stuck started')),
       `No active wait: ${stderr}`,
     );

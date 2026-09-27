@@ -167,3 +167,21 @@ export type { WriteAnswerOptions, AnswerDelivery } from './workflow/runtime/inbo
 
 export { FileRunStore } from './workflow/runtime/run-store.js';
 export type { RunStore, OwnedRunStore, RunStoreOpenOptions } from './workflow/runtime/run-store.js';
+
+export type {
+  WorkflowClock,
+  SignalSource,
+  PollInterval,
+  PollSource,
+  WaitSources,
+  WaitOutcome,
+  SignalOutcome,
+  PollOutcome,
+  DeadlineOutcome,
+  PollOptions,
+  PollRequest,
+  WaitRequest,
+  WaitRecord,
+  PendingWait,
+  PendingOperation,
+} from './workflow/runtime/wait-model.js';

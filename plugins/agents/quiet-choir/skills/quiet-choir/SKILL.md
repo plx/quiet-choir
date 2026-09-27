@@ -83,6 +83,7 @@ ownership to decide whether to wait, recover, or inspect a failure.
 | Locate/build the runtime, import it into another project, choose CLI flags | [Setup and CLI](references/setup-and-cli.md)                 |
 | Launch in the background, poll, diagnose stalls, recover orphaned children | [Operating a run](references/operating-runs.md)              |
 | Locate a run, classify its state, act on exact errors                      | [Inspection and triage](references/inspection.md)            |
+| Park for readiness, a deadline, or an external signal                      | [Durable waits and tick](references/waits.md)                |
 | Write loops, fan-out, failure handling, or waits                           | [Verified patterns and traps](references/patterns.md)        |
 | Define schemas, compose steps, branch, map, and retry                      | [Workflow authoring](references/workflow-authoring.md)       |
 | Select profiles, shared call options, identity, usage, or process limits   | [Agent calls](references/agent-calls.md)                     |
@@ -92,8 +93,9 @@ ownership to decide whether to wait, recover, or inspect a failure.
 | Embed the engine, log responses, implement a harness                       | [Embedding and extensions](references/extensions.md)         |
 
 For exit 75, use the
-[suspended-run answer loop](references/operating-runs.md#answer-a-suspended-run). Route human
-questions to the human; resume the same run after delivery.
+[suspended-run answer loop](references/operating-runs.md#answer-a-suspended-run) or
+[tick for due timers/polls](references/waits.md). Route human questions to the human; resume the
+same run after delivery.
 
 ## Keep the execution contract
 

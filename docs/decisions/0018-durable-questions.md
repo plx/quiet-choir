@@ -50,8 +50,9 @@ prior run's approval is not copied as authority for a new run.
 
 Started siblings finish and checkpoint before suspension, preventing paid reruns caused solely by a
 human wait. Resume replays plans and accepted answers before continuing under the same run ID.
-Blocked mappers retain slots. Existing `sleep` remains active; general waits belong to #57.
-Embedders must narrow the result union. CLI answer success reports delivery, not consumption, and
-can race with withdrawal. Filesystem permissions remain the trust boundary and effects remain at
-least once. Deadlines/defaults, blocking answerers, special SIGINT suspension, and a no-import
-resume fast path remain later work.
+Blocked mappers retain slots. This was the initial signal-only boundary.
+[ADR 0020](0020-durable-waits-and-tick.md) now generalizes it to suspendable polls/deadlines/sleeps,
+preserving the same quiescence contract. Embedders must narrow the result union. CLI answer success
+reports delivery, not consumption, and can race with withdrawal. Filesystem permissions remain the
+trust boundary and effects remain at least once. Deadlines/defaults, blocking answerers, special
+SIGINT suspension, and a no-import resume fast path remain later work.

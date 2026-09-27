@@ -15,7 +15,7 @@ import { readRun, listRunIds, type RunRecord } from './store.js';
 import { isValidRunId, runIdMessage } from './run-errors.js';
 import { answerEnvelopeSchema, validateAnswerAuthor } from './question-schema.js';
 import type { JsonValue } from './model.js';
-import type { PendingQuestion } from './question-model.js';
+import type { PendingOperation } from './wait-model.js';
 
 /** A rejected delivery: invalid input is exit 2, a closed/already answered question is exit 3. */
 export class AnswerError extends Error {
@@ -99,7 +99,7 @@ export async function writeAnswer(options: WriteAnswerOptions): Promise<AnswerDe
   const stateDir = resolveStateDir(options);
   const run = await readRun({ ...options, stateDir });
   const step = Object.hasOwn(run.steps, options.stepId) ? run.steps[options.stepId] : undefined;
-  if (step?.kind !== 'ask' || step.status !== 'waiting' || !step.question)
+  if (!step || !['ask', 'wait'].includes(step.kind) || step.status !== 'waiting' || !step.question)
     throw new AnswerError(
       'conflict',
       `Question ${options.stepId} is not waiting in run ${run.id}.`,
@@ -192,47 +192,68 @@ export async function questionCodeChanged(run: RunRecord): Promise<boolean | nul
   return false;
 }
 
-/** Render waiting questions from one already-read checkpoint. @internal */
-export async function pendingQuestions(
+/** Render parked operations from a checkpoint without loading workflow code. @internal */
+export async function pendingOperations(
   run: RunRecord,
   stateDir: string,
-): Promise<PendingQuestion[]> {
+): Promise<PendingOperation[]> {
   const codeChanged = await questionCodeChanged(run);
-  return Object.entries(run.steps).flatMap(([stepId, step]) =>
-    step.kind === 'ask' && step.status === 'waiting' && step.question
+  const pending: PendingOperation[] = [];
+  for (const [stepId, step] of Object.entries(run.steps)) {
+    if (step.status !== 'waiting') continue;
+    const answerCommand = step.question
       ? [
-          {
-            ...structuredClone(step.question.request),
-            runId: run.id,
-            stepId,
-            questionFingerprint: step.fingerprint,
-            askedAt: step.question.askedAt,
-            rejections: structuredClone(step.question.rejections),
-            codeChanged,
-            answerCommand: [
-              'quiet-choir',
-              'workflow',
-              'answer',
-              run.id,
-              stepId,
-              '--state-dir',
-              stateDir,
-              '--json',
-              '<ANSWER_JSON>',
-            ],
-          },
+          'quiet-choir',
+          'workflow',
+          'answer',
+          run.id,
+          stepId,
+          '--state-dir',
+          stateDir,
+          '--json',
+          '<ANSWER_JSON>',
         ]
-      : [],
-  );
+      : null;
+    if (step.kind === 'wait' && step.wait) {
+      pending.push({
+        kind: 'wait',
+        runId: run.id,
+        stepId,
+        openedAt: step.wait.openedAt,
+        deadline: step.wait.deadline,
+        nextCheckAt: step.wait.nextCheckAt,
+        checks: step.wait.checks,
+        note: structuredClone(step.wait.note),
+        signal: step.question ? structuredClone(step.question.request) : null,
+        rejections: structuredClone(step.question?.rejections ?? []),
+        codeChanged,
+        answerCommand,
+      });
+    } else if (step.kind === 'ask' && step.question) {
+      pending.push({
+        ...structuredClone(step.question.request),
+        runId: run.id,
+        stepId,
+        questionFingerprint: step.fingerprint,
+        askedAt: step.question.askedAt,
+        rejections: structuredClone(step.question.rejections),
+        codeChanged,
+        answerCommand,
+      });
+    }
+  }
+  return pending;
 }
 
-/** List every waiting question by reading checkpoints and source bytes only; never imports code. */
-export async function listPending(options: StateDirectoryOptions = {}): Promise<PendingQuestion[]> {
+/** List parked questions, polls, and deadlines by reading state only; never imports code. */
+export async function listPending(
+  options: StateDirectoryOptions = {},
+): Promise<PendingOperation[]> {
   const stateDir = resolveStateDir(options);
-  const pending: PendingQuestion[] = [];
+  const pending: PendingOperation[] = [];
   for (const runId of await listRunIds(stateDir)) {
     const run = await readRun({ stateDir, runId });
-    pending.push(...(await pendingQuestions(run, stateDir)));
+    pending.push(...(await pendingOperations(run, stateDir)));
   }
   return pending;
 }

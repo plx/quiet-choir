@@ -38,9 +38,9 @@ transforms that cannot be exported are rejected.
 ## Suspend and resume
 
 An unanswered question saves an `ask` step with status `waiting`. Agent calls, local steps,
-checkpoint writes, and sleeps already in flight continue. Once there is no active effect or
-registration, the runner checks stability across two macrotask turns, scans the inbox, and checks
-again before suspending. Pure promise continuations drain first. A waiting mapper retains its
+checkpoint writes, and active observations already in flight continue. Once there is no active
+effect or registration, the runner checks stability across two macrotask turns, scans the inbox, and
+checks again before suspending. Pure promise continuations drain first. A waiting mapper retains its
 concurrency slot, so later items may not have started yet.
 
 Suspension abandons the workflow continuation; it never rejects `ask`. `try/catch` cannot turn a
@@ -48,8 +48,8 @@ suspension into a fallback result, and map failure policies do not abort sibling
 and `using` cleanup do not run as part of suspension. Put owned work and necessary cleanup inside
 durable effects. Await only context operations for asynchronous workflow work: a raw timer or
 detached task is invisible and can cause early suspension. Late continuations cannot launch effects
-after the run closes. `ctx.sleep` still keeps the process active; suspendable general waits are
-separate work.
+after the run closes. `ctx.sleep` now shares the wait coordinator: long sleeps park, while waits due
+within 1000 ms stay live. See [durable waits](waits.md).
 
 If the body resolves while questions remain open, they become `withdrawn`; drains do not hang on
 abandoned questions. A body failure retains waiting questions and follows the ordinary failure path
@@ -128,8 +128,9 @@ on `status` before reading output fields. `assertCompleted(result)` is a conveni
 whose workflow cannot suspend. Failures still throw `WorkflowRunError` when saved.
 
 `writeAnswer({ stateDir, runId, stepId, value, by? })` delivers an answer;
-`listPending({ stateDir })` lists all waiting questions. Optional `RunOptions.launch` contains
-absolute `entrypoint`, nullable absolute `tsconfig`, and optional absolute-path-to-SHA-256
-`sources`. Without launch metadata a suspended embedded run has `resumeCommand: null`; resume
-through the embedding application. The core never imports these paths. There is no daemon, blocking
-answerer, question deadline/default, or authentication service.
+`listPending({ stateDir })` lists all waiting questions and general waits. Optional
+`RunOptions.launch` contains absolute `entrypoint`, nullable absolute `tsconfig`, and optional
+absolute-path-to-SHA-256 `sources`. Without launch metadata a suspended embedded run has
+`resumeCommand: null`; resume through the embedding application. The core never imports these paths.
+There is no daemon, blocking answerer or authentication service. For a signal with a deadline, use
+`ctx.wait`; see [waits](waits.md).

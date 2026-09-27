@@ -74,6 +74,9 @@ jobs:
       - name: Test journal storage CLI
         run: node test/storage-cli-smoke.mjs
 
+      - name: Test durable waits and tick CLI
+        run: node test/waits-cli-smoke.mjs
+
       - name: Check Workflow Lab comparisons
         run: npm run comparisons:check
 

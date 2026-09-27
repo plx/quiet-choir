@@ -25,6 +25,7 @@ export interface RunSummary {
   readonly workflow: { readonly name: string; readonly version: string };
   readonly status: InspectionStatus;
   readonly recordedStatus: RunRecord['status'];
+  readonly nextWakeAt: number | null;
   readonly execution: number | null;
   readonly startedAt: string;
   readonly updatedAt: string;
@@ -177,6 +178,7 @@ export function summarizeRun(
     workflow: { name: run.workflow.name, version: run.workflow.version },
     status: stale(run, ownership) ? 'stale' : run.status,
     recordedStatus: run.status,
+    nextWakeAt: run.nextWakeAt ?? null,
     execution: execution?.n ?? null,
     startedAt,
     updatedAt: run.updatedAt,

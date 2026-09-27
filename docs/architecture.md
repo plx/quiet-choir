@@ -159,3 +159,13 @@ writer lock. Storage format 7 preserves replay contract 6 and existing step iden
 state lives under a canonical-project XDG root; the CLI discovers projects and stored launch paths
 without importing workflows. Migration retains original bytes and coordinates both lock layouts. See
 [storage](storage.md) and [ADR 0019](decisions/0019-journal-storage-and-project-state.md).
+
+## External readiness and ticking
+
+The wait coordinator unifies question inbox consumption, read-only poll observations, and pinned
+deadlines. It owns parked promises separately from active work, preserving quiescent suspension and
+sibling draining. New sleeps use wait records; old sleep records retain their replay bridge.
+Plain-data `workflow tick` checks readiness/source bytes, acquires the ordinary writer before
+imports, and injects that owned store into the loader/runtime. Operator hooks run outside durable
+effects and drain after ownership release. See [waits](waits.md) and
+[ADR 0020](decisions/0020-durable-waits-and-tick.md).

@@ -65,3 +65,6 @@ try/catch code must opt in when failures steer later work; generic JavaScript ra
 settled failure can let a run complete successfully and is not automatically retried even when retry
 policy increases. Per-attempt diagnostics remain available independently of terminal outcome. The
 upcoming map settle mode (#43) can build on the same terminal failure representation.
+
+[ADR 0020](0020-durable-waits-and-tick.md) adds one recorded winner among signal/poll/deadline
+sources. Races among arbitrary durable effects remain unsupported.

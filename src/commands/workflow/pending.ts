@@ -13,9 +13,9 @@ export default class WorkflowPending extends WorkflowCommand {
       description:
         'Runs container; defaults to environment, legacy run discovery, then project XDG state',
     }),
-    json: Flags.boolean({ description: 'Print waiting questions as JSON' }),
+    json: Flags.boolean({ description: 'Print parked questions, polls, and deadlines as JSON' }),
   };
-  public static override readonly summary = 'List waiting questions without loading workflow code';
+  public static override readonly summary = 'List parked waits without loading workflow code';
   public async run(): Promise<void> {
     const { flags } = await this.parse(WorkflowPending);
     const stateDir = resolveStateDir(
@@ -38,11 +38,12 @@ export default class WorkflowPending extends WorkflowCommand {
       this.output(
         result,
         result.pending
-          .map(
-            (q) =>
-              `${q.runId} ${q.stepId} [${q.audience}] ${q.prompt}${q.codeChanged ? ' (source changed; check resume before requesting a decision)' : ''}${q.rejections.length ? `\n  Last rejection: ${q.rejections.at(-1)?.error ?? ''}` : ''}`,
+          .map((q) =>
+            'kind' in q
+              ? `${q.runId} ${q.stepId} [wait] checks=${String(q.checks)} nextCheckAt=${String(q.nextCheckAt)} deadline=${String(q.deadline)}${q.signal ? ` ${q.signal.prompt}` : ''}${q.note === null ? '' : `\n  ${JSON.stringify(q.note)}`}`
+              : `${q.runId} ${q.stepId} [${q.audience}] ${q.prompt}${q.codeChanged ? ' (source changed; check resume before requesting a decision)' : ''}${q.rejections.length ? `\n  Last rejection: ${q.rejections.at(-1)?.error ?? ''}` : ''}`,
           )
-          .join('\n') || 'No pending questions.',
+          .join('\n') || 'No pending waits.',
       );
   }
 }

@@ -1,4 +1,5 @@
 import { realpath } from 'node:fs/promises';
+import { WorkflowNotifications } from './notifications.js';
 import { fixturesFromRun } from './fixtures.js';
 import { CliHarness } from '../../harnesses/cli.js';
 import { FixtureHarness } from '../../harnesses/fixture.js';
@@ -31,6 +32,8 @@ import { runWorkflow } from '../runtime/runner.js';
 import { resolveStateDir } from '../runtime/paths.js';
 import { CheckpointError } from '../runtime/checkpoint.js';
 import { readRun } from '../runtime/store.js';
+import type { RunStore } from '../runtime/run-store.js';
+import type { WorkflowClock } from '../runtime/wait-model.js';
 import { TypeScriptExecutor } from '../typecheck/typescript-executor.js';
 import { fingerprintSources, workflowLaunch } from './source.js';
 import { AnswerError, listPending, writeAnswer } from '../runtime/inbox.js';
@@ -56,6 +59,9 @@ export interface WorkflowExecutorOptions {
   readonly signal?: AbortSignal;
   readonly processSupervisor?: ProcessSupervisor;
   readonly onInspection?: (value: RunInspection) => void;
+  /** Live storage ownership injection, used by tick to claim before importing source. */
+  readonly store?: RunStore;
+  readonly clock?: WorkflowClock;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -122,6 +128,7 @@ export class WorkflowExecutor implements Executor<
   ): Promise<WorkflowCommandResult> {
     let unregister: (() => void) | undefined;
     let rehearsal: RehearsalHarness | undefined;
+    let notifications: WorkflowNotifications | undefined;
     let previewState: Awaited<ReturnType<typeof rehearsalState>> | undefined;
     let harness = this.#options.harness;
     let stage: CliErrorCode = 'load.typecheck';
@@ -331,11 +338,25 @@ export class WorkflowExecutor implements Executor<
         return { kind: 'workflow.check-resume.result', ok: true, check };
       }
       stage = 'usage.flag';
+      if (!plan.dryRun && plan.notifyCommand?.trim())
+        notifications = new WorkflowNotifications({
+          command: plan.notifyCommand,
+          cwd: plan.cwd,
+          stateDir: plan.stateDir,
+          logger: this.#options.logger,
+          ...(this.#options.signal === undefined ? {} : { signal: this.#options.signal }),
+          ...(this.#options.processSupervisor === undefined
+            ? {}
+            : { processSupervisor: this.#options.processSupervisor }),
+        });
       const run = await runWorkflow(definition, {
         runId: plan.runId,
         launch: await workflowLaunch(plan.typecheck, source),
         stateDir: previewState?.stateDir ?? plan.stateDir,
         cwd: plan.cwd,
+        ...(plan.waitMode === undefined ? {} : { waitMode: plan.waitMode }),
+        ...(this.#options.store === undefined ? {} : { store: this.#options.store }),
+        ...(this.#options.clock === undefined ? {} : { clock: this.#options.clock }),
         ...(rehearsal === undefined ? {} : { rehearsal: rehearsal.hooks }),
         allowHarnessChange: rehearsal !== undefined || (plan.allowHarnessChange ?? false),
         resume: plan.resume,
@@ -363,6 +384,7 @@ export class WorkflowExecutor implements Executor<
         ...(plan.strictReplay === undefined ? {} : { strictReplay: plan.strictReplay }),
         onEvent: (event) => {
           rehearsal?.observe(event);
+          notifications?.observe(event);
           const observational = event.type === 'phase' || event.type === 'log';
           const detail =
             event.message ??
@@ -435,6 +457,7 @@ export class WorkflowExecutor implements Executor<
         },
       );
     } finally {
+      await notifications?.flush();
       unregister?.();
       await previewState?.dispose();
     }

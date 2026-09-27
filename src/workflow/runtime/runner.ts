@@ -2,9 +2,20 @@ import { prepareLegacyReplay } from './legacy.js';
 import { RunActivity } from './activity.js';
 import { FileRunStore, type RunStore } from './run-store.js';
 import { RunQuestions } from './questions.js';
-import { pendingQuestions } from './inbox.js';
+import { clockNow, systemClock } from './clock.js';
+import type {
+  WorkflowClock,
+  PendingOperation,
+  WaitSources,
+  WaitOutcome,
+  PollOptions,
+  PollOutcome,
+  SignalOutcome,
+  DeadlineOutcome,
+} from './wait-model.js';
+import { pendingOperations } from './inbox.js';
 import { approvalSchema, workflowLaunchSchema } from './question-schema.js';
-import type { AskOptions, PendingQuestion, WorkflowLaunch } from './question-model.js';
+import type { AskOptions, WorkflowLaunch } from './question-model.js';
 import { RunObservations, errorStack, requestSummary } from './observability.js';
 import type { PhaseInfo, PhaseOptions, RequestSummary, RunEvent } from './observability-model.js';
 import {
@@ -47,7 +58,6 @@ import { engineInfo, oldFormatMessage } from './engine.js';
 import { loadFork, pinnedFork, reuseCandidate, validateFork } from './fork.js';
 import type { ForkOptions, ResumeCheck } from './replay-model.js';
 import { schemaJson } from './schema.js';
-import { setTimeout as delay } from 'node:timers/promises';
 
 import { z } from 'zod';
 
@@ -153,6 +163,7 @@ export type WorkflowEvent = {
       readonly type:
         | 'step.started'
         | 'step.waiting'
+        | 'wait.opened'
         | 'step.completed'
         | 'step.replayed'
         | 'step.failed'
@@ -190,7 +201,7 @@ export type SuspendedRun = RunRecord & {
   /** A suspended run has no workflow output. */
   readonly output: null;
   /** Self-describing question presentation and answer commands. */
-  readonly pending: readonly PendingQuestion[];
+  readonly pending: readonly PendingOperation[];
   /** Resume argument vector, or null for embedded runs without a stored entrypoint. */
   readonly resumeCommand: readonly string[] | null;
   /** Invocation and replay diagnostics. */
@@ -204,12 +215,16 @@ export type WorkflowResult<TOutput> = WorkflowRun<TOutput> | SuspendedRun;
 export function assertCompleted<T>(result: WorkflowResult<T>): asserts result is WorkflowRun<T> {
   if (result.status !== 'completed')
     throw new Error(
-      `Run ${result.id} is suspended with ${String(result.pending.length)} pending questions.`,
+      `Run ${result.id} is suspended with ${String(result.pending.length)} pending waits.`,
     );
 }
 
 /** Explicit dependencies and execution policy for a workflow run. */
 export interface RunOptions extends WorkflowCodeOptions {
+  /** Wall clock and cancellable timer used by now, waits, and legacy sleeps. */
+  readonly clock?: WorkflowClock;
+  /** Suspend when quiescent by default; block keeps waits in this process. Waits due within one second stay live. */
+  readonly waitMode?: 'suspend' | 'block';
   /** Optional storage implementation; defaults to private local journal files. */
   readonly store?: RunStore;
   /** Optional entrypoint metadata supplied by the CLI or embedder for resume by ID. */
@@ -277,12 +292,16 @@ function message(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-async function waitUntil(timestamp: number, signal: AbortSignal): Promise<void> {
+async function waitUntil(
+  timestamp: number,
+  signal: AbortSignal,
+  clock: WorkflowClock = systemClock,
+): Promise<void> {
   signal.throwIfAborted();
-  let remaining = timestamp - Date.now();
+  let remaining = timestamp - clockNow(clock);
   while (remaining > 0) {
-    await delay(Math.min(remaining, 2_147_483_647), undefined, { signal });
-    remaining = timestamp - Date.now();
+    await clock.sleep(Math.min(remaining, 2_147_483_647), signal);
+    remaining = timestamp - clockNow(clock);
   }
 }
 
@@ -339,6 +358,12 @@ export async function runWorkflow<TInput, TOutput>(
     throw new Error('acceptCodeChange requires resume.');
   const fork = options.forkFrom === undefined ? undefined : validateFork(options.forkFrom);
   const cwd = await canonicalCwd(options.cwd);
+  const clock = options.clock ?? systemClock;
+  if (typeof clock.now !== 'function' || typeof clock.sleep !== 'function')
+    throw new Error('Workflow clock requires now and sleep methods.');
+  clockNow(clock);
+  if (options.waitMode !== undefined && !['suspend', 'block'].includes(options.waitMode))
+    throw new Error('waitMode must be suspend or block.');
   const stateDir = options.store?.stateDir ?? resolveStateDir(options);
   if (
     options.store?.stateDir !== undefined &&
@@ -721,7 +746,7 @@ export async function runWorkflow<TInput, TOutput>(
         waiting ? () => !questions.waiting(id) : undefined,
       );
     }
-    const inEffect = new AsyncLocalStorage<boolean>();
+    const inEffect = new AsyncLocalStorage<true | 'poll'>();
     let closed = false;
     let observationsClosed = false;
     const notify = (event: WorkflowEvent): void => {
@@ -1093,7 +1118,11 @@ export async function runWorkflow<TInput, TOutput>(
           if (await trySave()) emit(scoped ? 'step.cancelled' : 'step.failed', id, step);
           if (!retry || signal.reason instanceof CheckpointError) throw error;
           try {
-            await waitUntil(Date.now() + Math.min(30_000, delayMs * 2 ** (attempt - 1)), signal);
+            await waitUntil(
+              clockNow(clock) + Math.min(30_000, delayMs * 2 ** (attempt - 1)),
+              signal,
+              clock,
+            );
           } catch (cause) {
             if (signal.reason instanceof CheckpointError) throw error;
             if (errorKind(cause) !== 'cancelled') throw cause;
@@ -1513,7 +1542,7 @@ export async function runWorkflow<TInput, TOutput>(
 
     const map = createMap({
       isClosed: () => closed,
-      isInEffect: () => inEffect.getStore() === true,
+      isInEffect: () => inEffect.getStore() !== undefined,
       launch,
       scopes,
       names,
@@ -1554,6 +1583,8 @@ export async function runWorkflow<TInput, TOutput>(
     // Observation guards are authoring errors: settled maps must never journal them as item data.
     function observe<T>(action: () => T): T {
       try {
+        if (inEffect.getStore() === 'poll')
+          throw new Error('Poll observers cannot call context operations.');
         if (observationsClosed)
           throw new Error('Workflow is closed; await all workflow operations.');
         return action();
@@ -1585,8 +1616,24 @@ export async function runWorkflow<TInput, TOutput>(
       record,
       stateDir,
       activity,
+      clock,
+      waitMode: options.waitMode ?? 'suspend',
+      skipTimers: options.rehearsal !== undefined,
+      observe: (source, context) => inEffect.run('poll', () => source.observe(context)),
       save,
-      emit,
+      emit: (type, id, step) => {
+        emit(
+          type,
+          id,
+          step,
+          type === 'wait.opened'
+            ? {
+                data: jsonValue({ question: step.question?.request ?? null }),
+                at: new Date(clockNow(clock)).toISOString(),
+              }
+            : {},
+        );
+      },
       beforeLive,
       nextSeq: () => nextSeq++,
       fail: (error) => {
@@ -1624,7 +1671,66 @@ export async function runWorkflow<TInput, TOutput>(
         true,
       );
     };
+    function waitOperation<T>(
+      leaf: string,
+      sources: WaitSources,
+      project: (outcome: SignalOutcome<JsonValue> | PollOutcome<JsonValue> | DeadlineOutcome) => T,
+      validate?: () => void,
+    ): Promise<T> {
+      const id = names.qualify(leaf);
+      return launch(
+        id,
+        async () => {
+          if (inEffect.getStore())
+            throw new Error(
+              'Nested durable operations are unsupported inside a local effect or poll observer.',
+            );
+          validate?.();
+          if (sources.signal && !supportsInbox)
+            throw new Error('Signal waits require a RunStore with the filesystem inbox protocol.');
+          if (used.has(id)) throw duplicateStepId(id, names.describe(id));
+          used.add(id);
+          scopes.step(id);
+          const registered = await questions.wait(
+            id,
+            sources,
+            observations.phase?.title ?? null,
+            scopes.signal,
+          );
+          operations.changed();
+          return project(await registered.answer);
+        },
+        true,
+        true,
+      );
+    }
     const context: WorkflowContext = {
+      now: (id) =>
+        context.step(id, {
+          input: null,
+          schema: z.number().int().nonnegative(),
+          run: () => clockNow(clock),
+        }),
+      wait: <const S extends WaitSources>(id: string, sources: S) =>
+        waitOperation(id, sources, (outcome) => outcome as WaitOutcome<S>),
+      sleepUntil: (id, deadline) => waitOperation(id, { deadline }, () => null),
+      poll: <T, N extends JsonValue = JsonValue>(id: string, settings: PollOptions<T, N>) =>
+        waitOperation(
+          id,
+          {
+            poll: settings,
+            ...(settings.timeoutMs === undefined ? {} : { timeoutMs: settings.timeoutMs }),
+            ...(settings.deadline === undefined ? {} : { deadline: settings.deadline }),
+          },
+          (outcome) => outcome as PollOutcome<T> | DeadlineOutcome,
+          () => {
+            if (
+              settings.timeoutMs === undefined &&
+              (settings as { deadline?: number }).deadline === undefined
+            )
+              throw new Error('Poll requires timeoutMs or deadline.');
+          },
+        ),
       ask,
       approve: (id, options) => ask(id, { ...options, schema: approvalSchema }),
       phase,
@@ -1693,11 +1799,21 @@ export async function runWorkflow<TInput, TOutput>(
       },
       sleep: (leaf, milliseconds) => {
         const id = names.qualify(leaf);
+        if (record.steps[id]?.kind !== 'sleep')
+          return waitOperation(
+            leaf,
+            { timeoutMs: milliseconds },
+            () => null,
+            () => {
+              if (!Number.isFinite(milliseconds) || milliseconds < 0)
+                throw new Error(`Step ${id}: Sleep duration must be finite and nonnegative.`);
+            },
+          );
         return launch(id, () => {
           if (
             !Number.isFinite(milliseconds) ||
             milliseconds < 0 ||
-            milliseconds > Number.MAX_SAFE_INTEGER - Date.now()
+            milliseconds > Number.MAX_SAFE_INTEGER - clockNow(clock)
           )
             throw new Error(
               `Step ${id}: Sleep duration must be a finite nonnegative safe duration (got ${String(milliseconds)}).`,
@@ -1711,10 +1827,10 @@ export async function runWorkflow<TInput, TOutput>(
             async (context, step) => {
               context.signal.throwIfAborted();
               if (options.rehearsal === undefined)
-                await waitUntil(step.wakeAt ?? Date.now(), context.signal);
+                await waitUntil(step.wakeAt ?? clockNow(clock), context.signal, clock);
               return null;
             },
-            Date.now() + milliseconds,
+            clockNow(clock) + milliseconds,
           );
         });
       },
@@ -1728,7 +1844,7 @@ export async function runWorkflow<TInput, TOutput>(
     await save();
     notify({ ...started, message: 'Run started.', attempt: 0, runId: record.id });
     const quiet = activity.quiet(
-      () => questions.pending,
+      () => questions.shouldSuspend,
       () => questions.scan(),
     );
     try {
@@ -1770,7 +1886,7 @@ export async function runWorkflow<TInput, TOutput>(
           }
           notify({
             ...suspended,
-            message: 'Run suspended for external answers.',
+            message: 'Run suspended for external conditions.',
             attempt: 0,
             runId: record.id,
           });
@@ -1778,7 +1894,7 @@ export async function runWorkflow<TInput, TOutput>(
             ...structuredClone(record),
             status: 'suspended',
             output: null,
-            pending: await pendingQuestions(record, stateDir),
+            pending: await pendingOperations(record, stateDir),
             resumeCommand: record.launch
               ? ['quiet-choir', 'workflow', 'resume', record.id, '--state-dir', stateDir]
               : null,
@@ -1867,6 +1983,7 @@ export async function runWorkflow<TInput, TOutput>(
         : origins.root(error);
       // Body failures stop new launches but preserve in-flight work. Only explicit cancellation
       // or checkpoint failure aborts a scope; draining here does not send a signal.
+      questions.drain();
       await Promise.race([operations.drain(), quiet.catch(() => operations.drain())]);
       await drainDiscovery();
       await questions.close();

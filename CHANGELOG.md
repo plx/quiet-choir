@@ -2,6 +2,11 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- Add recorded `ctx.now`, one-record signal/poll/deadline waits, `sleepUntil`, and bounded `poll`.
+  Long sleeps suspend after active work drains; `--wait-mode block` retains live waiting.
+  `workflow tick` resumes due stored entrypoints under the normal lock, with bounded watch and
+  best-effort notification hooks. Existing sleep records replay. See [waits](docs/waits.md).
+
 - **Storage revision:** new runs use format 7, per-run directories, coalesced append-only journals,
   and project-specific XDG state outside the working tree by default. Preserve observable outcomes
   before promise settlement, compact by status/size, and recover torn tails under ownership.

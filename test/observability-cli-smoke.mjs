@@ -77,7 +77,7 @@ export default defineWorkflow({ name:'observe-cli', version:'1', input:z.object(
   async run(ctx, input) {
     ctx.phase('verify', { total:2 }); ctx.log('begin', { mode:input.mode });
     await ctx.step('z-first', { input:null, schema:z.string(), run:()=> 'first' });
-    if (input.mode === 'wait') await ctx.sleep('wait', 60_000);
+    if (input.mode === 'wait') await ctx.step('wait',{input:null,schema:z.null(),run:async({signal})=>{await new Promise((resolve,reject)=>{const timer=setTimeout(resolve,60000);signal.addEventListener('abort',()=>{clearTimeout(timer);reject(signal.reason);},{once:true});});return null;}});
     return ctx.step('a-result', { input:input.mode, schema:z.string(), run:()=> {
       if (input.mode === 'fail' && !existsSync(${JSON.stringify(repaired)})) throw new Error('root diagnostic');
       return 'done';

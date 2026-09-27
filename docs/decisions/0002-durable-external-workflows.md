@@ -51,6 +51,12 @@ external actions. A local lock and atomic files are not a distributed coordinati
 no service, scheduler, migration system, or claim of recovery from disk loss. Durable sleep is a
 saved deadline, not a scheduled job that runs without a process.
 
+[ADR 0020](0020-durable-waits-and-tick.md) extends this behavior: long waits suspend after active
+siblings drain, while waits due within 1000 ms stay live and block mode is available.
+`workflow tick` resumes due runs from stored launch metadata; cron or launchd must invoke it to wake
+stopped runs. `ctx.now` provides a recorded clock anchor, and `sleepUntil` accepts an explicit fixed
+deadline.
+
 A lock with missing/corrupt ownership metadata, an owner on another host, or an interrupted recovery
 claim is retained for manual inspection. ADR 0013 extends reclamation with owner birth identity,
 released-owner markers and durable child records: live or unknown children prevent replacement work.

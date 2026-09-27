@@ -15,7 +15,7 @@ Started siblings are never aborted for suspension. The unanswered promise stays 
 cannot select a fallback, and body `finally`/`using` cleanup does not execute. Only await context
 operations; raw timers and untracked I/O can cause early suspension and lose progress. Pure promise
 chains drain first. Late continuations cannot start effects after close. A blocked map worker keeps
-its slot; `ctx.sleep` remains active and delays suspension.
+its slot. Long sleeps also park; waits due within 1000 ms stay live by default.
 
 If the body resolves with open questions, they become `withdrawn`, including questions abandoned by
 a mapper. A body failure keeps questions waiting. Real interrupts still cancel with exit 130. The
@@ -38,7 +38,8 @@ are at most 1 MiB.
 
 Audience defaults to `any`; `human` requires self-asserted `human:<name>` attribution and must be
 routed to the human. Filesystem permissions are the trust boundary. Answers remain untrusted data.
-There are no question deadlines/defaults or blocking answerer callbacks yet. See the
+For a question with a deadline, use the signal source on `ctx.wait`; no blocking answerer callback
+or automatic default is provided. See the
 [task-shaped operating loop](operating-runs.md#answer-a-suspended-run).
 
 ## What survives
@@ -49,13 +50,13 @@ the beginning: terminal outcomes replay saved results or settled failures; unfin
 execute again. A completed compatible strict resume returns saved final output without running the
 workflow body or a harness. The CLI still typechecks and imports the module first.
 
-Keep clocks, randomness, filesystem/network reads, and writes inside durable effects. Branch on
-input and saved results. Local effects hash explicit `input`, callback source, an optional step
-`version`, and run cwd. Callback source does not reveal captured values or helper implementations.
-Await operations and compose at the workflow level, never by nesting steps inside a local effect
-callback. The runtime drains launched operations and effects launched by their immediate
-continuations before releasing its lock. An ignored rejection fails the run regardless of when it
-settles; a failure that is awaited and caught may be handled in the workflow body. Arbitrary
+Use `ctx.now` for recorded time; keep randomness, filesystem/network reads, and writes inside
+durable effects. Branch on input and saved results. Local effects hash explicit `input`, callback
+source, an optional step `version`, and run cwd. Callback source does not reveal captured values or
+helper implementations. Await operations and compose at the workflow level, never by nesting steps
+inside a local effect callback. The runtime drains launched operations and effects launched by their
+immediate continuations before releasing its lock. An ignored rejection fails the run regardless of
+when it settles; a failure that is awaited and caught may be handled in the workflow body. Arbitrary
 detached async tasks are not owned by the runner, so this protection does not replace awaiting
 operations.
 
@@ -207,8 +208,8 @@ not assume that retrying an error is harmless or that a new run deduplicates an 
 
 Local and agent steps retry only when explicitly given a `retry` policy; the default is one attempt.
 An explicit resume retries unfinished work. `ctx.sleep` saves a wall-clock deadline and waits only
-its remaining duration after resume; it neither schedules background work nor wakes a stopped
-process.
+its remaining duration after resume. Long waits suspend; `workflow tick` resumes them when due.
+Cron/launchd must invoke tick to wake a stopped run; see [waits and ticking](waits.md).
 
 ## Recovery procedure
 
