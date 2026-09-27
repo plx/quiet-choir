@@ -149,10 +149,12 @@ async function waitUntil(timestamp: number, signal: AbortSignal): Promise<void> 
   }
 }
 
+/** Describe the boundary that aborted `signal`; callers must only pass an aborted signal. */
 function cancellationError(signal: AbortSignal, cause: unknown): CancelledError {
   if (signal.reason instanceof CancelledError)
     return new CancelledError(signal.reason.cancelledBy, cause, signal.reason.scope);
-  return cause instanceof CancelledError ? cause : new CancelledError(null, cause, 'map');
+  // Only the run controller aborts with another reason: a checkpoint failure or strict replay.
+  return new CancelledError(null, cause, 'run');
 }
 
 /** Run or resume a workflow with local, at-least-once durable effects. Throws after saving failures. */

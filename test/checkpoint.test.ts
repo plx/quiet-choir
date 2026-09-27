@@ -472,6 +472,49 @@ it('preserves a successful sibling result after storage-triggered cancellation',
   });
 });
 
+it('labels a sibling cancelled by a checkpoint failure as a workflow cancellation', async () => {
+  let failures = 0;
+  vi.mocked(store.writeRun).mockImplementation((directory, record) => {
+    if (record.steps['second']?.status === 'completed' && failures++ < 3)
+      return Promise.reject(ioError('EIO'));
+    return actualStore.writeRun(directory, record);
+  });
+  await expect(
+    runWorkflow(
+      workflow(async (ctx) => {
+        await Promise.all([
+          ctx.step('first', {
+            input: null,
+            schema: z.string(),
+            run({ signal }) {
+              return new Promise<string>((_resolve, reject) => {
+                signal.addEventListener(
+                  'abort',
+                  () => {
+                    reject(new DOMException('stopped', 'AbortError'));
+                  },
+                  { once: true },
+                );
+              });
+            },
+          }),
+          ctx.step('second', { input: null, schema: z.string(), run: () => 'done' }),
+        ]);
+        return 'done';
+      }),
+      options(),
+    ),
+  ).rejects.toBeInstanceOf(CheckpointError);
+  const saved = await readRun({ stateDir, runId: 'run' });
+  // The run controller, not a map, aborted this scope.
+  expect(saved.steps['first']).toMatchObject({
+    status: 'cancelled',
+    error: 'Workflow cancelled.',
+    cancelledBy: null,
+  });
+  expect(saved.status).toBe('failed');
+});
+
 it('does not return a settled outcome when its checkpoint cannot be committed', async () => {
   const original = new Error('domain failure before settlement');
   const action = vi.fn(() => {
