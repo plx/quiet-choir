@@ -69,10 +69,9 @@ prompt. With `structuredOutput: 'strict'`, use an object root, required properti
 tuples. Exported `checkCodexSchema(schema)` returns incompatible JSON paths and fixes without
 launching a process. `workflow validate` does not execute the body and cannot inspect these
 call-site schemas. Codex enforces strict wire schemas; raw `.optional()` properties were rejected
-before inference in the captured 0.157.1 probes. Issue
-[#35](https://github.com/plx/quiet-choir/issues/35) added the default compat encoding and local
-strict-mode diagnostics, so the old blanket warning against `.optional()` no longer applies. An
-explicit mode is fingerprinted like other call options; keep it stable on resume. Claude requires an
+before inference in the captured 0.157.1 probes. The default compat encoding handles `.optional()`
+and the other shapes above; use strict mode only with native Codex schemas. An explicit mode is
+fingerprinted like other call options; keep it stable on resume. Claude requires an
 object root and receives the original JSON Schema. Other Codex restrictions and compatibility
 transforms do not apply to it.
 
@@ -86,9 +85,7 @@ fails with its own reason. Without `turn.completed`, the last non-reconnect erro
 the error explains the interrupted turn; bounded earlier notices are appended. Nonzero exits,
 missing final text, and malformed protocol output also fail. Agent stdout is parsed after the
 process finishes; there is no token/tool event stream exposed through quiet-choir's progress
-observer. This reflects the stdout diagnostics and recoverable-error fixes in
-[#33](https://github.com/plx/quiet-choir/issues/33)/#34; the earlier exit-code-only and
-fatal-on-any-error guidance is obsolete.
+observer.
 
 Usage reports top-level `input_tokens` and `output_tokens` when available. The interpretation of
 Codex inputs as including cached input is inferred from OpenAI semantics, not verified by a live

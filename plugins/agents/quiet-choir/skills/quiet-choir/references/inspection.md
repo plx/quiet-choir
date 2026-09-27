@@ -87,10 +87,8 @@ input count excludes cache reads/writes and does not sum per-model usage; Codex'
 interpretation is inferred, not verified by a live cache comparison. See [Claude](claude.md) and
 [Codex](codex.md) before comparing counts.
 
-The async-observer and relative-`readRun` warnings in the original review were fixed in
-[#37](https://github.com/plx/quiet-choir/issues/37): both synchronous throws and observer promise
-rejections are handled, and inspection/execution now share path resolution. Keep these guarantees
-distinct from unowned async work created by a workflow.
+Both synchronous observer throws and observer promise rejections are handled, and `readRun` shares
+execution's path resolution. Neither guarantee covers unowned async work that a workflow creates.
 
 ## Checkpoint and cleanup diagnostics
 

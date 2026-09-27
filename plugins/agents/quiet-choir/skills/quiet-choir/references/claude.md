@@ -56,8 +56,7 @@ reasons, subtype, terminal reason, and API status when available, plus the exit 
 stderr. Auth, API, turn-limit, and budget failures normally exit 1. Exit zero cannot override a
 reported failure. A bare exit error means no usable protocol reason was recovered: check
 `claude auth status`, the schema, and the same invocation's flags when reproducing manually. This is
-the current behavior after issue [#33](https://github.com/plx/quiet-choir/issues/33), replacing the
-earlier exit-code-only warning.
+the current behavior after issue [#33](https://github.com/plx/quiet-choir/issues/33).
 
 `usage.costUsd` is Claude's `total_cost_usd`; in the recorded 2.1.283 call it matched per-model cost
 totals. `inputTokens` is the top-level `usage.input_tokens`, excluding cache reads/writes and not
