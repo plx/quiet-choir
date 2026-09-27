@@ -54,9 +54,15 @@ development command discovery.
 Entrypoints must be TypeScript source (`.ts`, `.tsx`, `.mts`, `.cts`), not declaration files. The
 nearest `tsconfig.json` in or above the workflow directory applies and is fingerprinted. Under the
 checkout this is the repo's strict config: an unused variable can block execution. Without a config,
-strict Node defaults apply. `validate`, `check-resume`, and `execute` run module top-level code on
-import, even for completed resumes. `validate` cannot check step schemas/options constructed inside
-`run`.
+built-in defaults enable `strict`, `noUncheckedIndexedAccess`, `forceConsistentCasingInFileNames`,
+`allowImportingTsExtensions`, `resolveJsonModule`, `skipLibCheck`, and `noEmit`, with
+`noCheck: false`, NodeNext module/resolution, preserved JSX, ES2023 target/lib, and bundled Node
+types. They do not turn on `exactOptionalPropertyTypes`. `workflow typecheck` prints the effective
+compiler flags; JSON contains `compilerOptions` (under `error.details` on failure). Stricter
+defaults can block an unchanged in-flight resume before its body runs; fix the source and use
+explicit code-change recovery. A project's own options still apply when a tsconfig exists.
+`validate`, `check-resume`, and `execute` run module top-level code on import, even for completed
+resumes. `validate` cannot check step schemas/options constructed inside `run`.
 
 From the checkout, using a fresh absolute state directory:
 

@@ -100,44 +100,54 @@ describe('durable harness call identity', () => {
     expect(after.steps['scope/call']?.identity).not.toHaveProperty('call');
   });
 
-  it('resumes a format-6 checkpoint captured from the parent commit before call metadata existed', async () => {
-    const options = {
-      ...(await setup()),
-      runId: 'legacy',
-      cwd: '/',
-      fingerprint: 'rehearsal-compatibility',
-      resume: true,
-    };
-    await writeFile(
-      join(options.stateDir, 'legacy.json'),
-      await readFile(new URL('./fixtures/harness/pre-rehearsal-checkpoint.json', import.meta.url)),
-    );
-    const invoke = vi.fn((input: HarnessRequest) => {
-      expect(input.call).toEqual({
+  it.each([false, true])(
+    'resumes a captured pre-metadata format-6 checkpoint (value=%s)',
+    async (direct) => {
+      const options = {
+        ...(await setup()),
         runId: 'legacy',
-        stepId: 'second',
-        attempt: 2,
-        idempotencyKey: 'legacy/second',
+        cwd: '/',
+        fingerprint: 'rehearsal-compatibility',
+        resume: true,
+      };
+      await writeFile(
+        join(options.stateDir, 'legacy.json'),
+        await readFile(
+          new URL('./fixtures/harness/pre-rehearsal-checkpoint.json', import.meta.url),
+        ),
+      );
+      const invoke = vi.fn((input: HarnessRequest) => {
+        expect(input.call).toEqual({
+          runId: 'legacy',
+          stepId: 'second',
+          attempt: 2,
+          idempotencyKey: 'legacy/second',
+        });
+        return Promise.resolve(response);
       });
-      return Promise.resolve(response);
-    });
-    const definition = defineWorkflow({
-      name: 'pre-rehearsal',
-      version: '1',
-      input: z.null(),
-      output: z.string(),
-      async run(ctx) {
-        const first = await ctx.claude.text('first', { prompt: 'first' });
-        return first.output + (await ctx.codex.text('second', { prompt: 'second' })).output;
-      },
-    });
-    const before = await readRun(options);
-    const result = await runWorkflow(definition, { ...options, harness: { invoke } });
-    expect(result.output).toBe('saved firstok');
-    expect(invoke).toHaveBeenCalledTimes(1);
-    expect(result.steps['first']?.fingerprint).toBe(before.steps['first']?.fingerprint);
-    expect(result.steps['second']?.fingerprint).toBe(before.steps['second']?.fingerprint);
-  });
+      const definition = defineWorkflow({
+        name: 'pre-rehearsal',
+        version: '1',
+        input: z.null(),
+        output: z.string(),
+        async run(ctx) {
+          const first = direct
+            ? await ctx.claude.value('first', { prompt: 'first' })
+            : (await ctx.claude.text('first', { prompt: 'first' })).output;
+          const second = direct
+            ? await ctx.codex.value('second', { prompt: 'second' })
+            : (await ctx.codex.text('second', { prompt: 'second' })).output;
+          return first + second;
+        },
+      });
+      const before = await readRun(options);
+      const result = await runWorkflow(definition, { ...options, harness: { invoke } });
+      expect(result.output).toBe('saved firstok');
+      expect(invoke).toHaveBeenCalledTimes(1);
+      expect(result.steps['first']?.fingerprint).toBe(before.steps['first']?.fingerprint);
+      expect(result.steps['second']?.fingerprint).toBe(before.steps['second']?.fingerprint);
+    },
+  );
 });
 
 describe('fixture routing and export', () => {
@@ -193,7 +203,7 @@ describe('fixture routing and export', () => {
     ).toThrow();
     expect(() =>
       parseHarnessFixtures({ version: 1, calls: [{ step: 'x', output: undefined }] }),
-    ).toThrow('lossless JSON');
+    ).toThrow('Exactly one');
     const harness = new FixtureHarness({ version: 1, calls: [{ step: 'nil', output: null }] });
     await expect(harness.invoke(request('unknown'), testInvocation())).rejects.toThrow(
       'step unknown (claude, attempt 1)',
@@ -498,11 +508,11 @@ describe('rehearsal execution and isolation', () => {
       id: 'late',
       run: (ctx: WorkflowContext) =>
         ctx.step('late', {
-          input: { value: undefined } as unknown as null,
+          input: { value: [undefined] } as unknown as null,
           schema: z.null(),
           run: () => null,
         }),
-      message: 'lossless JSON',
+      message: 'undefined array element',
     },
     {
       name: 'class',

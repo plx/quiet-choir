@@ -393,7 +393,7 @@ it('validates observations and owns unawaited scoped failures without suppressin
           ctx.log('bad', undefined);
         }).not.toThrow();
         expect(() => {
-          ctx.log('bad', { invalid: undefined } as never);
+          ctx.log('bad', { invalid: Infinity });
         }).toThrow('lossless JSON');
         void ctx.phase('unobserved', () => Promise.reject(new Error('phase failed')));
         return Promise.resolve(null);
@@ -425,7 +425,7 @@ it.each([
   ],
   [
     'a cyclic log payload',
-    'lossless JSON',
+    'cycles cannot be checkpointed',
     (ctx: WorkflowContext) => {
       ctx.log('m', cyclic as never);
     },

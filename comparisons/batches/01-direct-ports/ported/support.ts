@@ -24,13 +24,19 @@ export function normalize<T>(value: T): T {
 }
 
 export function scopedContext(ctx: WorkflowContext, prefix: string): WorkflowContext {
+  function prefixed<T extends (id: string, ...args: never[]) => unknown>(method: T): T {
+    // Forward every overload unchanged, adding only the legacy explicit prefix.
+    return ((id: string, ...args: never[]) => method(`${prefix}/${id}`, ...args)) as T;
+  }
   return {
     ...ctx,
     claude: {
+      value: prefixed(ctx.claude.value),
       text: (id, options) => ctx.claude.text(`${prefix}/${id}`, options),
       object: (id, options) => ctx.claude.object(`${prefix}/${id}`, options),
     },
     codex: {
+      value: prefixed(ctx.codex.value),
       text: (id, options) => ctx.codex.text(`${prefix}/${id}`, options),
       object: (id, options) => ctx.codex.object(`${prefix}/${id}`, options),
     },

@@ -33,12 +33,28 @@ describe('lossless checkpoint JSON', () => {
     expect(jsonValue(Object.create(null))).toEqual({});
   });
 
-  it.each([undefined, NaN, Infinity, -Infinity, -0, 1n, Symbol('value'), () => 1])(
+  it.each([NaN, Infinity, -Infinity, -0, 1n, Symbol('value'), () => 1])(
     'rejects values JSON would lose or alter: %s',
     (value) => {
       expect(() => jsonValue({ value })).toThrow(/lossless JSON/);
     },
   );
+
+  it('omits undefined members recursively, preserves null, and never fills array holes', () => {
+    expect(jsonValue({ omitted: undefined, nested: { omitted: undefined, keep: null } })).toEqual({
+      nested: { keep: null },
+    });
+    expect(digest({ omitted: undefined, keep: 1 })).toBe(digest({ keep: 1 }));
+    expect(() => jsonValue(undefined)).toThrow('at $: undefined');
+    expect(() =>
+      jsonValue({ findings: ['one', 'two', undefined] }, 'Step "triage/3" output'),
+    ).toThrow(
+      'Step "triage/3" output is not JSON at $.findings[2]: undefined array element. Use null (with .nullable()) or filter it out.',
+    );
+    expect(() => jsonValue({ 'odd key': { bad: Infinity } }, 'Workflow input')).toThrow(
+      'Workflow input is not JSON at $["odd key"].bad',
+    );
+  });
 
   it('rejects cycles while accepting repeated references', () => {
     const object: Record<string, unknown> = {};
@@ -88,7 +104,8 @@ describe('lossless checkpoint JSON', () => {
     });
     class SpecialArray extends Array<number> {}
 
-    for (const invalid of [sparse, augmented, symbol, hidden, new SpecialArray(1)]) {
+    expect(() => jsonValue(sparse)).toThrow(/at \$\[0\]: array hole/);
+    for (const invalid of [augmented, symbol, hidden, new SpecialArray(1)]) {
       expect(() => jsonValue(invalid)).toThrow(/arrays cannot be checkpointed/);
     }
     expect(() => jsonValue(getter)).toThrow(/getters/);

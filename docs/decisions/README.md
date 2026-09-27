@@ -36,3 +36,5 @@ part of the documentation.
 - [0015: Observe runs without changing effect identity](0015-observe-runs-without-changing-effect-identity.md)
 
 - [0016: Rehearse workflows through fixture harnesses and a pure native planner](0016-workflow-rehearsal.md)
+
+- [0017: Infer from schemas and normalize values at durable boundaries](0017-schema-first-values.md)

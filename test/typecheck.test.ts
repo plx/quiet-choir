@@ -122,9 +122,48 @@ describe('TypeScriptExecutor', { timeout: 20_000 }, () => {
 
     expect(result.ok).toBe(true);
     expect(result.configPath).toBeNull();
+    expect(result.compilerOptions).toMatchObject({
+      strict: true,
+      noUncheckedIndexedAccess: true,
+      target: 'ES2023',
+      module: 'NodeNext',
+      noEmit: true,
+      noCheck: false,
+    });
+    expect(result.compilerOptions).not.toHaveProperty('exactOptionalPropertyTypes');
     expect(result.diagnostics).toEqual([]);
     expect(result.compilerVersion).toMatch(/^6\./);
     expect(JSON.parse(JSON.stringify(result))).toEqual(result);
+  });
+
+  it('catches unchecked array access by default but honors explicit project policy', async () => {
+    const root = await createFixture({
+      'workflow.ts': 'export const first = ([] as string[])[0].split(".");',
+    });
+    const defaults = await executeEntrypoint(root);
+    expect(defaults.ok).toBe(false);
+    expect(defaults.diagnostics).toContainEqual(expect.objectContaining({ code: 2532 }));
+    await writeFile(
+      join(root, 'tsconfig.json'),
+      JSON.stringify({ compilerOptions: { strict: true, noUncheckedIndexedAccess: false } }),
+    );
+    const configured = await executeEntrypoint(root);
+    expect(configured.ok).toBe(true);
+    expect(configured.compilerOptions).toMatchObject({
+      strict: true,
+      noUncheckedIndexedAccess: false,
+      noEmit: true,
+      noCheck: false,
+    });
+  });
+
+  it('checks schema-only inference and agent value overloads with the packaged TypeScript 6 compiler', async () => {
+    const fixture = join(process.cwd(), 'test/fixtures/schema-first-types.ts');
+    const analysis = analyzeTypecheckEntrypoint(fixture, process.cwd());
+    if (!analysis.ok) throw new Error(analysis.error.message);
+    const result = await new TypeScriptExecutor(silentLogger).execute(analysis.plan);
+    expect(result.diagnostics).toEqual([]);
+    expect(result.ok).toBe(true);
   });
 
   it('targets the minimum supported Node declarations in the default profile', async () => {

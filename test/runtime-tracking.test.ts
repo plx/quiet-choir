@@ -355,7 +355,7 @@ it('omits top-level undefined options and supplies resolved profile defaults', a
 
 it.each([
   ['agent', 'Step ask:', '$.options.tools[1]'],
-  ['dependency', 'Step local:', '$.dependencies.items[0]["a.b"]'],
+  ['dependency', 'Step local:', '$.items[0]["a.b"][0]'],
 ] as const)('names the step and JSON path for invalid %s data', async (kind, prefix, path) => {
   const stateDir = await directory();
   const run = runWorkflow(
@@ -368,14 +368,14 @@ it.each([
       else
         await ctx.step('local', {
           ...local,
-          input: { items: [{ 'a.b': undefined }] } as unknown as JsonValue,
+          input: { items: [{ 'a.b': [undefined] }] } as unknown as JsonValue,
         });
       return 'ok';
     }),
     { stateDir, runId: kind, input: null },
   );
   await expect(run).rejects.toThrow(prefix);
-  await expect(run).rejects.toThrow(`undefined at ${path}`);
+  await expect(run).rejects.toThrow(`at ${path}: undefined array element`);
 });
 
 it.each([

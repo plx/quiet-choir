@@ -396,7 +396,8 @@ it('clears stale output before re-finalizing, so a failed re-finalization report
   const before = await readRun(options());
   expect(before.status).toBe('completed');
   expect(before.output).toBe('done');
-  const broken = { ...definition, output: z.literal('other') };
+  // A deliberately mismatched output schema; schema-first inference would otherwise reject it.
+  const broken = { ...definition, output: z.literal('other') } as unknown as typeof definition;
   await expect(
     runWorkflow(broken, {
       ...options(),

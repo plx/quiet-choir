@@ -35,10 +35,10 @@ Supply these execution options as needed:
 
 The core validates explicit agent options before recording a step, using exported
 `claudeOptionsSchema` and `codexOptionsSchema`. These schemas are also used by `CliHarness` and add
-no defaults. Top-level undefined option values are omitted. Invalid remaining data names the step
-and JSON path; invalid options name the field and value. Correcting an option before its step was
-recorded permits an embedded resume when the other compatibility checks still match. CLI source
-edits change the code fingerprint and require explicit acceptance or a new run/fork.
+no defaults. Undefined object members are omitted recursively. Invalid remaining data names the
+boundary, step and JSON path; invalid options name the field and value. Correcting an option before
+its step was recorded permits an embedded resume when the other compatibility checks still match.
+CLI source edits change the code fingerprint and require explicit acceptance or a new run/fork.
 
 This complete embedding example uses a new temporary state directory each time, so it can run twice
 without colliding with its previous run:

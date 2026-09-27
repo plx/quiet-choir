@@ -2,6 +2,19 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- Add `ctx.claude.value` / `ctx.codex.value`: schema-inferred output or plain text, with the same
+  durable identities/records as `object`/`text` and normal `onError` behavior. New agent completion
+  events carry detached usage/session metadata; replay does not report spend again.
+- Omit undefined object members at checkpoint boundaries, including saved input passed to the body.
+  Undefined array elements/holes still fail with boundary, step, and JSON path. Export `JsonInput`
+  for dependency objects; persisted `JsonValue` stays strict JSON.
+- **Type checking change:** schemas alone infer callback output contracts through whole-callback
+  `NoInfer`. Wider returns now fail to compile; zero-parameter literal callbacks may need
+  `as const`. Built-in CLI defaults add `noUncheckedIndexedAccess`, without
+  `exactOptionalPropertyTypes`. An unchanged in-flight resume can now fail typechecking before
+  running; use explicit code-change recovery after fixing the source. Typecheck human/JSON output
+  lists effective compiler options.
+
 - Add CLI fixture selection, config JSON/@file, fixture export, and `--dry-run` with temporary
   checkpoints, resume previews, named local-step stubs, immediate durable sleeps, and call reports.
   Local callbacks still run for real. See [workflow rehearsal](docs/rehearsal.md).

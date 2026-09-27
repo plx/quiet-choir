@@ -85,12 +85,14 @@ import type {
   Settled,
   AgentOptions,
   AgentResult,
+  AgentUsage,
   ClaudeOptions,
   CodexOptions,
   Harness,
   HarnessRequest,
   HarnessRequestInput,
   JsonValue,
+  JsonInput,
   StepContext,
   StepDefinition,
   WorkflowContext,
@@ -110,6 +112,10 @@ export { ConfigurationError } from './configuration-error.js';
 
 /** Unawaited notifications: step transitions follow persistence; admission events are live. */
 export type WorkflowEvent = {
+  /** Harness usage on newly committed successful agent steps; absent on replay. */
+  readonly usage?: AgentUsage;
+  /** Native session on newly committed successful agent steps; absent on replay. */
+  readonly sessionId?: string | null;
   /** ISO notification time. */
   readonly at: string;
   /** Body execution number within the run. */
@@ -449,9 +455,11 @@ export async function runWorkflow<TInput, TOutput>(
       options.input === undefined
         ? parseInput(existing ? existing.input : forkSource?.input)
         : (suppliedInput as TInput);
-    const savedInput = jsonValue(input);
+    const savedInput = jsonValue(input, 'Workflow input');
     if (existing?.status === 'completed' && !options.acceptCodeChange) {
-      const output = definition.output.parse(existing.output);
+      const output = jsonValue(definition.output.parse(existing.output), 'Workflow output', {
+        canonical: false,
+      });
       if (
         incomingPolicy.length ||
         incomingProfiles.length ||
@@ -706,7 +714,7 @@ export async function runWorkflow<TInput, TOutput>(
     async function effect<T, TMode extends ErrorMode = 'throw'>(
       id: string,
       kind: StepRecord['kind'],
-      dependencies: JsonValue,
+      dependencies: JsonInput,
       schema: z.ZodType<T>,
       execution: AttemptPolicy,
       action: (context: StepContext, step: StepRecord, attempt: AttemptRecord) => Promise<T> | T,
@@ -723,7 +731,11 @@ export async function runWorkflow<TInput, TOutput>(
       const replay = (step: StepRecord): EffectResult<T, TMode> =>
         step.status === 'settled-failed'
           ? ({ ok: false, error: structuredClone(step.settledError) } as EffectResult<T, TMode>)
-          : value(schema.parse(structuredClone(step.output)));
+          : value(
+              jsonValue(schema.parse(structuredClone(step.output)), `Step "${id}" output`, {
+                canonical: false,
+              }) as T,
+            );
       if (closed) throw new Error('Workflow is closed; await all workflow operations.');
       if (inEffect.getStore())
         throw new Error(
@@ -738,7 +750,7 @@ export async function runWorkflow<TInput, TOutput>(
       let identity: StepIdentity;
       let stepFingerprint: string;
       try {
-        jsonValue({ dependencies });
+        const savedDependencies = jsonValue(dependencies, `Step "${id}" dependencies`);
         if (onError !== undefined && onError !== 'throw' && onError !== 'return')
           throw new Error('onError must be throw or return.');
         if (
@@ -755,7 +767,7 @@ export async function runWorkflow<TInput, TOutput>(
           stepIdentity({
             kind,
             onError: onError ?? 'throw',
-            input: dependencies,
+            input: savedDependencies,
             schema: schemaJson(schema),
             ...(local
               ? {
@@ -939,7 +951,7 @@ export async function runWorkflow<TInput, TOutput>(
           // A resolved, valid result is durable work even if cancellation arrived meanwhile.
           // The scope still rejects its next launch.
           const output = schema.parse(result);
-          step.output = jsonValue(output);
+          step.output = jsonValue(output, `Step "${id}" output`);
         } catch (cause) {
           // Only an aborted scope signal is a scope cancellation. A callback's own AbortError
           // keeps its message and fails the step, but is still never retried or settled. This
@@ -1019,7 +1031,21 @@ export async function runWorkflow<TInput, TOutput>(
         await save(
           `Step ${id} completed but its checkpoint write failed; resume may repeat it unless a later save recovers the result`,
         );
-        emit('step.completed', id, step);
+        const metadata =
+          kind === 'claude' || kind === 'codex'
+            ? (step.output as unknown as AgentResult<unknown>)
+            : undefined;
+        emit(
+          'step.completed',
+          id,
+          step,
+          metadata === undefined
+            ? {}
+            : {
+                usage: metadata.usage,
+                sessionId: metadata.sessionId,
+              },
+        );
         if (wasFailed && !healed.has(id)) {
           const later = priorSequence
             .filter((other) => other.seq > (step.seq ?? 0))
@@ -1037,7 +1063,11 @@ export async function runWorkflow<TInput, TOutput>(
             });
           }
         }
-        return value(schema.parse(structuredClone(step.output)));
+        return value(
+          jsonValue(schema.parse(structuredClone(step.output)), `Step "${id}" output`, {
+            canonical: false,
+          }) as T,
+        );
       }
     }
 
@@ -1053,12 +1083,13 @@ export async function runWorkflow<TInput, TOutput>(
     function client<TOptions extends AgentOptions>(
       provider: 'claude' | 'codex',
     ): AgentClient<TOptions> {
-      function invoke<T, TMode extends ErrorMode = 'throw'>(
+      function invoke<T, TMode extends ErrorMode, TResult>(
         leaf: string,
         agentOptions: TOptions & { readonly onError?: TMode },
         outputSchema: () => z.ZodType<T>,
         structured: boolean,
-      ): Promise<EffectResult<AgentResult<T>, TMode>> {
+        select: (result: EffectResult<AgentResult<T>, TMode>) => TResult,
+      ): Promise<TResult> {
         const id = names.qualify(leaf);
         const phase = observations.phase;
         return launch(id, async () => {
@@ -1067,7 +1098,10 @@ export async function runWorkflow<TInput, TOutput>(
           let execution: AttemptPolicy;
           let profile: ResolvedProfile;
           try {
-            const data = jsonValue({ options: optionData(agentOptions, structured) }) as {
+            const data = jsonValue(
+              { options: optionData(agentOptions, structured) },
+              `Step "${id}" agent request`,
+            ) as {
               options: TOptions & JsonValue;
             };
             validateAgentOptions(provider, data.options, false);
@@ -1119,12 +1153,15 @@ export async function runWorkflow<TInput, TOutput>(
                     data.options.effort === undefined ? `profile:${profile.name}` : 'call-site',
                 },
               };
-            request = jsonValue({
-              provider,
-              options: resolvedProfile.options,
-              cwd: resolve(cwd, data.options.cwd ?? '.'),
-              outputSchema: structured ? schemaJson(schema) : null,
-            }) as unknown as HarnessRequestInput;
+            request = jsonValue(
+              {
+                provider,
+                options: resolvedProfile.options,
+                cwd: resolve(cwd, data.options.cwd ?? '.'),
+                outputSchema: structured ? schemaJson(schema) : null,
+              },
+              `Step "${id}" agent request`,
+            ) as unknown as HarnessRequestInput;
           } catch (cause) {
             throw new Error(`Step ${id}: ${message(cause)}`, { cause });
           }
@@ -1177,10 +1214,10 @@ export async function runWorkflow<TInput, TOutput>(
           if (provider === 'codex' && execution.reasoningEffort !== null) delete applied.effort;
           request = { ...request, options: applied };
           validateAgentOptions(provider, request.options);
-          return effect(
+          const result = await effect(
             id,
             provider,
-            jsonValue(request),
+            jsonValue(request, `Step "${id}" agent request`),
             resultSchema,
             execution,
             async (context, step, attempt) => {
@@ -1307,6 +1344,7 @@ export async function runWorkflow<TInput, TOutput>(
             requestSummary(request, execution),
             phase,
           );
+          return select(result);
         });
       }
       function object<T>(
@@ -1321,11 +1359,57 @@ export async function runWorkflow<TInput, TOutput>(
         id: string,
         agentOptions: TOptions & { readonly schema: z.ZodType<T> },
       ): Promise<AgentResult<T> | Settled<AgentResult<T>>> {
-        return invoke<T, ErrorMode>(id, agentOptions, () => agentOptions.schema, true);
+        return invoke(
+          id,
+          agentOptions,
+          () => agentOptions.schema,
+          true,
+          (result) => result,
+        );
+      }
+      function value<T>(
+        id: string,
+        agentOptions: TOptions & { readonly schema: z.ZodType<T>; readonly onError: 'return' },
+      ): Promise<Settled<T>>;
+      function value<T, TMode extends ErrorMode = 'throw'>(
+        id: string,
+        agentOptions: TOptions & { readonly schema: z.ZodType<T>; readonly onError?: TMode },
+      ): Promise<EffectResult<T, TMode>>;
+      function value<TMode extends ErrorMode = 'throw'>(
+        id: string,
+        agentOptions: TOptions & { readonly schema?: never; readonly onError?: TMode },
+      ): Promise<EffectResult<string, TMode>>;
+      function value<T>(
+        id: string,
+        agentOptions: TOptions & { readonly schema?: z.ZodType<T> },
+      ): Promise<T | string | Settled<T | string>> {
+        const onError = agentOptions.onError;
+        return invoke<T | string, ErrorMode, T | string | Settled<T | string>>(
+          id,
+          agentOptions,
+          // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing -- Explicit null is an invalid schema, not text mode.
+          () => (agentOptions.schema === undefined ? z.string() : agentOptions.schema),
+          agentOptions.schema !== undefined,
+          (result) => {
+            if (onError === 'return') {
+              const settled = result as Settled<AgentResult<T | string>>;
+              return settled.ok ? { ok: true, value: settled.value.output } : settled;
+            }
+            return (result as AgentResult<T | string>).output;
+          },
+        );
       }
       return {
-        text: (id, agentOptions) => invoke(id, agentOptions, () => z.string(), false),
+        text: (id, agentOptions) =>
+          invoke(
+            id,
+            agentOptions,
+            () => z.string(),
+            false,
+            (result) => result,
+          ),
         object,
+        value,
       };
     }
 
@@ -1502,7 +1586,15 @@ export async function runWorkflow<TInput, TOutput>(
     notify({ ...started, message: 'Run started.', attempt: 0, runId: record.id });
     try {
       signal.throwIfAborted();
-      const output = await observations.run(() => definition.run(context, input));
+      const output = await observations.run(() =>
+        definition.run(
+          context,
+          // Restore schema field order from saved data without reintroducing undefined members.
+          jsonValue(definition.input.parse(structuredClone(savedInput)), 'Workflow input', {
+            canonical: false,
+          }) as TInput,
+        ),
+      );
       await operations.drain();
       observationsClosed = true;
       await observations.flush();
@@ -1532,7 +1624,7 @@ export async function runWorkflow<TInput, TOutput>(
       );
       for (const [, step] of superseded) step.status = 'superseded';
       warnUnmatched();
-      record.output = jsonValue(definition.output.parse(output));
+      record.output = jsonValue(definition.output.parse(output), 'Workflow output');
       record.status = 'completed';
       const priorEvents = [...(record.events ?? [])];
       const completed = observations.lifecycle('run.completed');
@@ -1558,7 +1650,11 @@ export async function runWorkflow<TInput, TOutput>(
               ],
             }
           : {}),
-        output: definition.output.parse(structuredClone(record.output)) as TOutput & JsonValue,
+        output: jsonValue(
+          definition.output.parse(structuredClone(record.output)),
+          'Workflow output',
+          { canonical: false },
+        ) as TOutput & JsonValue,
       };
     } catch (caught) {
       closed = true;
