@@ -156,13 +156,24 @@ export interface CodexSchemaPlan {
 function reject(issues: readonly SchemaIssue[], mode: 'strict' | 'compat'): void {
   if (!issues.length) return;
   // In compat mode, `structuredOutput: "compat"` is already in effect, so hints that suggest
-  // switching to it are misleading; strip them and keep the rest of each fix.
+  // switching to it are misleading; strip them and keep the rest of each fix. An issue found
+  // inside an `allOf` branch is a Zod intersection Codex could not merge into one object (e.g.
+  // object & record); compat cannot adapt each branch of an unmerged intersection separately
+  // without producing an unsatisfiable wire schema, so that one gets an intersection-specific fix
+  // instead of the generic (and here misleading) per-shape hint.
   const fixes =
     mode === 'compat'
-      ? issues.map((issue) => ({
-          ...issue,
-          fix: issue.fix.replace(/,?\s*or use structuredOutput: "compat"[^.]*\./u, '.'),
-        }))
+      ? issues.map((issue) =>
+          issue.path.includes('.allOf[')
+            ? {
+                ...issue,
+                fix: 'structuredOutput: "compat" cannot adapt shapes inside z.intersection (allOf); merge the parts into a single z.object (e.g. .extend()) or use a fixed shape.',
+              }
+            : {
+                ...issue,
+                fix: issue.fix.replace(/,?\s*or (?:use )?structuredOutput: "compat"[^.]*\./u, '.'),
+              },
+        )
       : issues;
   throw new Error(
     `Codex rejects this output schema (structuredOutput: "${mode}"):\n${fixes.map((issue) => `  ${issue.path} (${issue.rule}): ${issue.fix}`).join('\n')}`,

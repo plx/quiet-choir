@@ -314,6 +314,37 @@ it('labels rejections with the active structuredOutput mode and drops compat-onl
   expect(message).not.toContain('or use structuredOutput');
 });
 
+it('adapts an object-with-object intersection with an optional field in compat mode', () => {
+  // z.toJSONSchema flattens an intersection of two object schemas into one closed object (Zod 4.5.4),
+  // even when a branch has an optional property, so this never reaches the `allOf` compiler path.
+  const schema = z.intersection(
+    z.object({ a: z.string().optional() }),
+    z.object({ b: z.number() }),
+  );
+  const plan = prepareCodexSchema(jsonSchema(schema), 'compat');
+  expect(JSON.parse(plan.decode('{"a":null,"b":1}'))).toEqual({ b: 1 });
+  expect(JSON.parse(plan.decode('{"a":"x","b":1}'))).toEqual({ a: 'x', b: 1 });
+});
+
+it('rejects an object-and-record intersection in compat mode with an intersection-specific fix', () => {
+  // z.toJSONSchema cannot merge an object branch with a record branch, so this survives as `allOf`.
+  // Adapting each branch separately would close the object (dropping the record's extra keys) or
+  // turn the record into an array (breaking the object branch), so compat must reject it outright.
+  const schema = z.intersection(z.object({ a: z.string() }), z.record(z.string(), z.number()));
+  let message = '';
+  try {
+    prepareCodexSchema(jsonSchema(schema), 'compat');
+    expect.fail('expected prepareCodexSchema to throw');
+  } catch (error) {
+    message = (error as Error).message;
+  }
+  expect(message).toContain('Codex rejects this output schema (structuredOutput: "compat"):');
+  expect(message).toContain(
+    '(record): structuredOutput: "compat" cannot adapt shapes inside z.intersection (allOf)',
+  );
+  expect(message).not.toContain('structuredOutput: "compat" for records');
+});
+
 it.each(['discriminated-union', 'array-root', 'string-root'])(
   'rejects the observed Claude %s root before spawning',
   async (name) => {
