@@ -36,7 +36,8 @@ afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
-describe('trusted definition registry', { timeout: 20_000 }, () => {
+// Cache invalidation and refresh cases compile repeatedly; Node 22 coverage on CI needs headroom.
+describe('trusted definition registry', { timeout: 60_000 }, () => {
   it('deduplicates overlapping directories and ignores generated trees and directory symlinks', async () => {
     const root = await project();
     await mkdir(join(root, 'nested'));

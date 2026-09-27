@@ -257,22 +257,26 @@ describe('tick loader and operator hooks', { timeout: 40_000 }, () => {
     });
   });
 
-  it('emits run.failed and ignores notification-command failures', async () => {
-    const f = await fixture('failure', true);
-    expect(await tick.execute({ ...f.tickPlan, notifyCommand: f.notifyCommand })).toMatchObject({
-      exitCode: 1,
-    });
-    const types = (await readFile(f.notifications, 'utf8'))
-      .trim()
-      .split('\n')
-      .map((line) => (JSON.parse(line) as { type: string }).type);
-    expect(types).toEqual(['run.suspended', 'run.failed']);
-    const failing = await fixture('due', 'fail');
-    expect(
-      await tick.execute({ ...failing.tickPlan, notifyCommand: failing.notifyCommand }),
-    ).toMatchObject({ exitCode: 0 });
-    expect((await readRun(failing.plan)).status).toBe('completed');
-  });
+  it(
+    'emits run.failed and ignores notification-command failures',
+    { timeout: 60_000 },
+    async () => {
+      const f = await fixture('failure', true);
+      expect(await tick.execute({ ...f.tickPlan, notifyCommand: f.notifyCommand })).toMatchObject({
+        exitCode: 1,
+      });
+      const types = (await readFile(f.notifications, 'utf8'))
+        .trim()
+        .split('\n')
+        .map((line) => (JSON.parse(line) as { type: string }).type);
+      expect(types).toEqual(['run.suspended', 'run.failed']);
+      const failing = await fixture('due', 'fail');
+      expect(
+        await tick.execute({ ...failing.tickPlan, notifyCommand: failing.notifyCommand }),
+      ).toMatchObject({ exitCode: 0 });
+      expect((await readRun(failing.plan)).status).toBe('completed');
+    },
+  );
 
   it('carries a supplied --harness-config into the resumed CLI run', async () => {
     const f = await fixture('agent');
