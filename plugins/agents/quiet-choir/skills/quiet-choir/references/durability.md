@@ -62,11 +62,11 @@ heuristic; explicit settled outcomes prevent the branch from changing in the fir
 
 ## Choose a recovery path
 
-| Path                            | What stays fixed and what can change                                                                                               |
-| ------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
-| `--resume`                      | Same run, source/schema identity, name/version, engine, cwd, and validated input; unfinished work retries                          |
-| `--resume --accept-code-change` | Explicitly waive only source/run-schema changes; keep name/version, engine, cwd, input, completed-step identity, and replay checks |
-| `--fork-from OLD`               | New run, same workflow name; source/version/input may change, terminal outcomes are copied only when their identity matches        |
+| Path                            | What stays fixed and what can change                                                                                              |
+| ------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| `--resume`                      | Same run, source/schema identity, name/version, engine, cwd, and validated input; unfinished work retries                         |
+| `--resume --accept-code-change` | Explicitly waive only source/run-schema changes; keep name/version, engine, cwd, input, terminal-step identity, and replay checks |
+| `--fork-from OLD`               | New run, same workflow name; source/version/input may change, terminal outcomes are copied only when their identity matches       |
 
 Forks default to `--reuse prefix`: consume source steps in first-use `seq` order, stopping reuse at
 the first missing, changed, unfinished, skipped, or invalidated effect. All later effects run live.
@@ -151,7 +151,7 @@ process.
 1. Inspect the run in its original state directory; identify failed/running effects and any external
    actions that may already have happened. Stop orphaned harness children after a hard kill.
 2. Repair transient dependencies (for example credentials or a service outage). Retain the original
-   source, run schemas, input, working directory, version, and completed-step identity. Execution
+   source, run schemas, input, working directory, version, and terminal-step identity. Execution
    limits can change through policy overrides without changing the source.
 3. Choose strict resume, explicit code acceptance, or a fork using the table above. A change to a
    completed effect's identity requires a new run/fork. Use `check-resume` before choosing a path.
