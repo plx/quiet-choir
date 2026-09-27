@@ -21,16 +21,16 @@ defaults come from the core's implicit `text` profile; custom harnesses must enf
 | `reasoningEffort`  | `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`; conflicts with `effort`                                                       |
 | `skipGitRepoCheck` | Set true to permit execution outside a Git repo; omitted by default                                                                       |
 
-| Additional option | Meaning                                                                                 |
-| ----------------- | --------------------------------------------------------------------------------------- |
-| `effort`          | Shared `low`, `medium`, `high`, `xhigh`, `max`; set this or reasoningEffort, never both |
-| `networkAccess`   | Explicit boolean under workspace-write; requires that sandbox even when false           |
-| `harnessProfile`  | Native Codex profile (`--profile`); `profile` still selects a quiet-choir role          |
-| `config`          | JSON values rendered as TOML per dotted key; rejects null and aliases of owned controls |
-| `images`          | Paths resolved against effect cwd; contents fingerprinted and snapshotted before launch |
-| `addDirs`         | Additional **writable** directories, resolved against effect cwd                        |
-| `extraArgs`       | Fingerprinted `--flag` or `--flag=value`; owned flags/aliases and subcommands rejected  |
-| `env`             | Fingerprinted overlay; keep rotating secrets in the parent environment                  |
+| Additional option | Meaning                                                                                                                              |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `effort`          | Shared `low`, `medium`, `high`, `xhigh`, `max`; set this or reasoningEffort, never both                                              |
+| `networkAccess`   | Explicit boolean under workspace-write; requires that sandbox even when false                                                        |
+| `harnessProfile`  | Native Codex profile (`--profile`); `profile` still selects a quiet-choir role                                                       |
+| `config`          | JSON values rendered as TOML per dotted key; rejects null and aliases of owned controls                                              |
+| `images`          | Paths resolved against effect cwd; contents fingerprinted and snapshotted before launch; must stay readable on resume for re-hashing |
+| `addDirs`         | Additional **writable** directories, resolved against effect cwd                                                                     |
+| `extraArgs`       | Fingerprinted `--flag` or `--flag=value`; owned flags/aliases and subcommands rejected                                               |
+| `env`             | Fingerprinted overlay; keep rotating secrets in the parent environment                                                               |
 
 Effort omission inherits native configuration, potentially an expensive level. Model-specific
 support remains native CLI behavior. Capability controls belong in profiles under strict mode.

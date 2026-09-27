@@ -81,6 +81,8 @@ replay; changing its contents cannot. `extraArgs` fingerprints literal strings o
 inside an escape arg does not fingerprint its target. Native profile/config dependencies and the
 parent environment are likewise external to identity; explicit `config` values are fingerprinted.
 Custom harnesses must honor `HarnessRequest.imageAttachments` rather than reopening source paths.
+Attached images must still be readable when a run resumes, because their bytes are re-hashed for
+step identity; a missing or unreadable image fails that step and names it by id.
 
 ## Configuration doctor
 

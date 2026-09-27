@@ -462,6 +462,22 @@ it('uses image contents for replay and supplies immutable bytes to custom harnes
   ).rejects.toThrow('option.images changed');
 });
 
+it('names the step id when an attached image cannot be read for snapshotting', async () => {
+  const missing = join(directory, 'missing.png');
+  const invoke = vi.fn<Harness['invoke']>().mockResolvedValue(reply);
+  const definition = defineWorkflow({
+    ...base,
+    async run(ctx) {
+      const result = await ctx.codex.text('missing-image', { prompt: 'x', images: [missing] });
+      return result.output;
+    },
+  });
+  await expect(runWorkflow(definition, { ...setup(), harness: { invoke } })).rejects.toThrow(
+    'Step missing-image: image snapshot failed:',
+  );
+  expect(invoke).not.toHaveBeenCalled();
+});
+
 it('captures first-use versions, warns on resumed drift, and records inherited/requested effort', async () => {
   let version = '1';
   const metadata = vi

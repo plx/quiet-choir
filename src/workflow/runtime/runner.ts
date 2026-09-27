@@ -859,10 +859,14 @@ export async function runWorkflow<TInput, TOutput>(
             throw new Error(`Step ${id}: ${message(cause)}`, { cause });
           }
           if (request.provider === 'codex' && request.options.images !== undefined)
-            request = {
-              ...request,
-              imageAttachments: await snapshotImages(request.options.images, request.cwd),
-            };
+            try {
+              request = {
+                ...request,
+                imageAttachments: await snapshotImages(request.options.images, request.cwd),
+              };
+            } catch (cause) {
+              throw new Error(`Step ${id}: image snapshot failed: ${message(cause)}`, { cause });
+            }
           execution = {
             ...execution,
             requested: {
