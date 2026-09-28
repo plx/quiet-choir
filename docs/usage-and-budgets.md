@@ -47,10 +47,12 @@ share one attempt, so model-group attempt counts are not additive. Model attribu
 when evidence is missing; `(unknown)` is an explicit bucket.
 
 Older records fall back to saved step results and failed-attempt metadata and are flagged
-`undercounted` when detailed history is absent. Old token counts retain their historical semantics;
-`legacyTokenAttempts` warns against treating them as normalized session totals. Uncheckpointed work
-cannot be recovered from counters. These summaries do not apply price cards, reconcile subagents, or
-expose replay-sensitive `ctx.usage()` observations.
+`undercounted` when detailed history is absent. Such an attempt keeps the kind it ran under: each
+redefinition records the earlier kind and attempt count. When an older redefinition lacks them, the
+attempt is left out of provider totals but still counted in `legacyAttempts`. Old token counts
+retain their historical semantics; `legacyTokenAttempts` warns against treating them as normalized
+session totals. Uncheckpointed work cannot be recovered from counters. These summaries do not apply
+price cards, reconcile subagents, or expose replay-sensitive `ctx.usage()` observations.
 
 Usage validation is separate from the frozen three-field usage schema used in agent identity. This
 change preserves fingerprints from the preceding runtime. Earlier isolation and diagnostics upgrades

@@ -105,6 +105,10 @@ export interface StepRedefinition {
   readonly identity: StepIdentity;
   /** ISO time when the new identity was adopted. */
   readonly redefinedAt: string;
+  /** Previous effect kind, so earlier attempts keep their provider; absent from older runtimes. */
+  readonly kind?: StepRecord['kind'];
+  /** Attempts started under the previous identity; absent from older runtimes. */
+  readonly attempts?: number;
 }
 
 /** Usage recovered from one failed harness attempt, retained across resumes. */
@@ -384,6 +388,19 @@ const timingFields = {
   errorStack: z.string().nullable().optional(),
   request: requestSummarySchema.nullable().optional(),
 };
+const stepKindSchema = z.enum([
+  'step',
+  'claude',
+  'codex',
+  'sleep',
+  'ask',
+  'wait',
+  'exec',
+  'read-file',
+  'write-file',
+  'worktree',
+  'merge',
+]);
 const stepSchema = z.object({
   merge: mergePreparationSchema.optional(),
   worktree: worktreeStepSchema.optional(),
@@ -393,19 +410,7 @@ const stepSchema = z.object({
   wait: waitRecordSchema.optional(),
   ...timingFields,
   phase: z.string().nullable().optional(),
-  kind: z.enum([
-    'step',
-    'claude',
-    'codex',
-    'sleep',
-    'ask',
-    'wait',
-    'exec',
-    'read-file',
-    'write-file',
-    'worktree',
-    'merge',
-  ]),
+  kind: stepKindSchema,
   seq: z.number().int().positive().optional(),
   reusedFrom: reusedStepSchema.optional(),
   fingerprint: z.string(),
@@ -428,6 +433,8 @@ const stepSchema = z.object({
         fingerprint: z.string(),
         identity: z.record(z.string(), z.string()),
         redefinedAt: z.iso.datetime(),
+        kind: stepKindSchema.optional(),
+        attempts: z.number().int().nonnegative().optional(),
       }),
     )
     .optional(),

@@ -9,10 +9,14 @@ import {
   summarizeUsage,
   z,
   type AgentUsage,
+  type RunRecord,
+  type StepRecord,
 } from '../src/index.js';
 import { parseClaude, parseCodex } from '../src/harnesses/protocol.js';
 import { claudeUsage, codexUsage } from '../src/harnesses/usage.js';
 import { normalizeUsage } from '../src/workflow/runtime/usage.js';
+
+type StepKind = StepRecord['kind'];
 
 const directories: string[] = [];
 async function directory() {
@@ -292,4 +296,86 @@ it('counts a rejected response and its successful retry once, and excludes fork-
   });
   expect(summarizeUsage(fork)).toMatchObject({ attempts: 0, costUsd: 0, unknownUsageAttempts: 0 });
   expect(calls).toBe(2);
+});
+
+it('classifies legacy attempts by the kind they ran under across redefinitions', async () => {
+  const stateDir = await directory();
+  const agent = defineWorkflow({
+    name: 'usage-redefined',
+    version: '1',
+    input: z.null(),
+    output: z.null(),
+    async run(ctx) {
+      await ctx.claude.text('effect', { prompt: 'x' });
+      return null;
+    },
+  });
+  const localWorkflow = defineWorkflow({
+    ...agent,
+    async run(ctx) {
+      await ctx.step('effect', {
+        input: null,
+        schema: z.null(),
+        run: () => {
+          throw new Error('local failed');
+        },
+      });
+      return null;
+    },
+  });
+  const options = {
+    stateDir,
+    runId: 'redefined',
+    fingerprint: 'usage-redefined',
+    harness: { invoke: () => Promise.reject(new Error('agent failed')) },
+  };
+  await expect(runWorkflow(agent, { ...options, input: null })).rejects.toThrow('agent failed');
+  await expect(runWorkflow(localWorkflow, { ...options, resume: true })).rejects.toThrow(
+    'local failed',
+  );
+  const saved = await readRun(options);
+  expect(saved.steps['effect']).toMatchObject({
+    kind: 'step',
+    attempts: 2,
+    redefinitions: [{ kind: 'claude', attempts: 1 }],
+  });
+  expect(summarizeUsage(saved)).toMatchObject({ attempts: 1, legacyAttempts: 0 });
+
+  // A migrated format-one attempt has no history entry; it keeps the kind it ran under.
+  const legacy = (run: RunRecord, kinds: [StepKind, StepKind]): RunRecord => {
+    const copy = structuredClone(run);
+    const step = copy.steps['effect'];
+    const redefinition = step?.redefinitions?.[0];
+    if (!step?.attemptHistory || !redefinition) throw new Error('missing fixture');
+    step.redefinitions = [{ ...redefinition, kind: kinds[0] }];
+    step.kind = kinds[1];
+    step.legacyAttempts = 1;
+    step.attemptHistory = step.attemptHistory.filter((attempt) => attempt.attempt !== 1);
+    return copy;
+  };
+  expect(summarizeUsage(legacy(saved, ['claude', 'step']))).toMatchObject({
+    attempts: 1,
+    byHarness: { claude: { attempts: 1, outcomes: { failed: 1 } } },
+    legacyAttempts: 1,
+    undercounted: true,
+  });
+  // The reverse direction never charges a legacy local attempt as agent work.
+  expect(summarizeUsage(legacy(saved, ['step', 'claude']))).toMatchObject({
+    attempts: 0,
+    legacyAttempts: 0,
+    undercounted: false,
+  });
+
+  // A redefinition from an older runtime cannot say what ran before it: never charged, but flagged.
+  const ambiguous = legacy(saved, ['claude', 'step']);
+  const step = ambiguous.steps['effect'];
+  const redefinition = step?.redefinitions?.[0];
+  if (!step || !redefinition) throw new Error('missing fixture');
+  const { fingerprint, identity, redefinedAt } = redefinition;
+  step.redefinitions = [{ fingerprint, identity, redefinedAt }];
+  expect(summarizeUsage(ambiguous)).toMatchObject({
+    attempts: 0,
+    legacyAttempts: 1,
+    undercounted: true,
+  });
 });

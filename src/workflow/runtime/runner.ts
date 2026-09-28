@@ -1,5 +1,6 @@
 import { RunBudget, runBudgetSchema } from './run-budget.js';
 import { agentUsageSchema, normalizeUsage, usageIdentitySchema } from './usage.js';
+import { legacyAttemptKind } from './usage-summary.js';
 import { mergeOptionsSchema, mergeResultSchema } from './worktree-schema.js';
 import { randomUUID } from 'node:crypto';
 import { deriveAgentSessionId } from './agent-session.js';
@@ -716,16 +717,19 @@ export async function runWorkflow<TInput, TOutput>(
     record.runBudget = runBudget;
     delete record.budgetStop;
     for (const step of Object.values(record.steps))
-      for (const attempt of step.attemptHistory ?? [])
+      for (const attempt of step.attemptHistory ?? []) {
+        // Legacy entries follow the kind they ran under; an ambiguous one is left untouched.
+        const legacyKind =
+          attempt.request === undefined ? legacyAttemptKind(step, attempt.attempt) : undefined;
         if (
           attempt.status === 'running' &&
-          (attempt.request ||
-            (attempt.request === undefined && (step.kind === 'claude' || step.kind === 'codex')))
+          (attempt.request || legacyKind === 'claude' || legacyKind === 'codex')
         ) {
           attempt.status = 'interrupted';
           attempt.error ??=
             'Agent attempt ended without a durable outcome; usage may be incomplete.';
         }
+      }
     const budget = new RunBudget(record, runBudget);
     const sessionSalt = (record.sessionSalt ??= randomUUID());
     if (options.launch) record.launch = structuredClone(options.launch);
@@ -1204,6 +1208,8 @@ export async function runWorkflow<TInput, TOutput>(
                 fingerprint: step.fingerprint,
                 identity: step.identity ?? {},
                 redefinedAt: new Date().toISOString(),
+                kind: step.kind,
+                attempts: step.attempts,
               });
               step.kind = kind;
               step.fingerprint = stepFingerprint;

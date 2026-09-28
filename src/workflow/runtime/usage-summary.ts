@@ -18,20 +18,38 @@ function legacyUsage(step: StepRecord, attempt: number): AgentUsage | null {
   return usage == null ? null : normalizeUsage(usage);
 }
 
-function entries(run: RunRecord): Entry[] {
+/**
+ * Kind under which a legacy attempt (no recorded request) ran, following redefinitions instead of
+ * the latest kind. Undefined means ambiguous: an older runtime did not record the earlier kind or
+ * how many attempts preceded the redefinition. @internal
+ */
+export function legacyAttemptKind(
+  step: StepRecord,
+  attempt: number,
+): StepRecord['kind'] | undefined {
+  for (const redefinition of step.redefinitions ?? []) {
+    if (redefinition.attempts === undefined) return undefined;
+    if (redefinition.attempts >= attempt) return redefinition.kind;
+  }
+  return step.kind;
+}
+
+function entries(run: RunRecord): { values: Entry[]; ambiguous: number } {
   const values: Entry[] = [];
+  let ambiguous = 0;
   for (const step of Object.values(run.steps)) {
     if (step.reusedFrom) continue;
     const history = new Map(step.attemptHistory?.map((attempt) => [attempt.attempt, attempt]));
     for (let n = 1; n <= step.attempts; n++) {
       const attempt = history.get(n);
-      const provider =
-        attempt?.request?.provider ??
-        (attempt?.request === null
-          ? undefined
-          : ['claude', 'codex'].includes(step.kind)
-            ? step.kind
-            : undefined);
+      let provider: string | undefined;
+      if (attempt?.request) provider = attempt.request.provider;
+      else if (attempt?.request === undefined) {
+        const kind = legacyAttemptKind(step, n);
+        // Possibly paid work of unknown provider: never charged, but reported as undercounting.
+        if (kind === undefined) ambiguous++;
+        else if (kind === 'claude' || kind === 'codex') provider = kind;
+      }
       if (!provider) continue;
       values.push({
         provider,
@@ -52,7 +70,7 @@ function entries(run: RunRecord): Entry[] {
       });
     }
   }
-  return values;
+  return { values, ambiguous };
 }
 
 const categories = ['uncachedInput', 'cacheRead', 'cacheWrite', 'output', 'reasoning'] as const;
@@ -99,7 +117,7 @@ function totals(values: readonly Entry[]): UsageTotals {
  * Fork-reused results are excluded. Unknown measurements remain explicit and legacy fallback warns.
  */
 export function summarizeUsage(run: RunRecord): UsageSummary {
-  const all = entries(run);
+  const { values: all, ambiguous } = entries(run);
   const harnesses = new Map<string, Entry[]>();
   const models = new Map<string, Entry[]>();
   const add = (map: Map<string, Entry[]>, key: string, entry: Entry): void => {
@@ -130,7 +148,7 @@ export function summarizeUsage(run: RunRecord): UsageSummary {
       add(models, effective?.length === 1 ? (effective[0] ?? '(unknown)') : '(unknown)', entry);
     }
   }
-  const legacyAttempts = all.filter((entry) => entry.legacy).length;
+  const legacyAttempts = all.filter((entry) => entry.legacy).length + ambiguous;
   const legacyTokenAttempts = all.filter(
     ({ usage }) =>
       usage && !usage.tokens && (usage.inputTokens !== null || usage.outputTokens !== null),

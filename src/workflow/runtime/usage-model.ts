@@ -51,7 +51,7 @@ export interface UsageSummary extends UsageTotals {
   readonly byHarness: Readonly<Record<string, UsageTotals>>;
   /** Effective-model groups; the '(unknown)' bucket is never inferred from a requested alias. */
   readonly byModel: Readonly<Record<string, UsageTotals>>;
-  /** Attempts reconstructed from older step counters instead of detailed history. */
+  /** Attempts reconstructed from older step counters, including any whose provider is unknown. */
   readonly legacyAttempts: number;
   /** Attempts with old token semantics, which cannot be safely reinterpreted. */
   readonly legacyTokenAttempts: number;
