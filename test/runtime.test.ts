@@ -15,6 +15,7 @@ import {
   type Harness,
   type WorkflowContext,
 } from '../src/index.js';
+import { writeRun } from '../src/workflow/runtime/store.js';
 
 const directories: string[] = [];
 async function setup(): Promise<{ stateDir: string; runId: string; input: object }> {
@@ -229,7 +230,7 @@ describe('durable TypeScript workflows', () => {
     ).rejects.toThrow("Harness kind 'none' is reserved");
   });
 
-  it('still requires authorization to leave a none run that earlier reused other outputs', async () => {
+  it('an adapter-less resume keeps the recorded harness kind, so leaving it still requires authorization', async () => {
     const options = await setup();
     let pause = true;
     const definition = workflow(async (ctx) => {
@@ -262,6 +263,42 @@ describe('durable TypeScript workflows', () => {
       harness: cli,
       allowHarnessChange: true,
     });
+    expect(result.harness).toEqual({ kind: 'cli', previousKinds: ['fixture'] });
+    expect(invoke).toHaveBeenCalledTimes(1);
+  });
+
+  it('requires authorization to leave a none run whose history names another harness', async () => {
+    const options = await setup();
+    let pause = true;
+    const definition = workflow(async (ctx) => {
+      const agent = await ctx.codex.object('ask', {
+        prompt: 'x',
+        schema: z.object({ answer: z.number() }),
+      });
+      if (pause) throw new Error('pause');
+      return agent.output.answer;
+    });
+    const invoke = vi.fn<Harness['invoke']>().mockResolvedValue(response);
+    await expect(
+      runWorkflow(definition, { ...options, harness: { kind: 'fixture', invoke } }),
+    ).rejects.toThrow('pause');
+    // A 'none' label with earlier kinds still holds outputs another harness produced.
+    const saved = await readRun(options);
+    saved.harness = { kind: 'none', previousKinds: ['fixture'] };
+    await writeRun(options.stateDir, saved);
+    expect((await readRun(options)).harness).toEqual({ kind: 'none', previousKinds: ['fixture'] });
+    pause = false;
+    const cli = { kind: 'cli', invoke };
+    await expect(
+      runWorkflow(definition, { ...options, resume: true, harness: cli }),
+    ).rejects.toThrow('--allow-harness-change');
+    const result = await runWorkflow(definition, {
+      ...options,
+      resume: true,
+      harness: cli,
+      allowHarnessChange: true,
+    });
+    expect(result.output).toBe(42);
     expect(result.harness).toEqual({ kind: 'cli', previousKinds: ['fixture'] });
     expect(invoke).toHaveBeenCalledTimes(1);
   });
