@@ -26,7 +26,7 @@
     "package": "quiet-choir 0.0.0",
     "sha256": "f1c298088bd85971bd5751a7206ffd69fbb51005912c05020b7f7958b788a381",
     "file": "src/workflow/runtime/model.ts",
-    "description": "Validated against quiet-choir implementation 6ce8b4a7e7071c38175cb83a838c164b38b05233: typed harness registry, inline children, durable commands/files, worktrees, questions, settled maps and usage gates, plus the #65 recovery for owned interrupted worktree registrations. Both batches compile under the root strict settings; Batch 01 has 70 baseline fixtures and Batch 02 owns active primitive acceptance with a paired F1–F5 matrix. This model-file hash is provenance for that file, not the entire runtime; tests use the built checkout. Storage format 7 retains replay contract 6.",
-    "revision": "6ce8b4a7e7071c38175cb83a838c164b38b05233"
+    "description": "Validated against quiet-choir implementation 658940303d92c53f1db43b896856a4f78d92b7fa: typed harness registry, inline children, durable commands/files, worktrees, questions, settled maps and usage gates, plus the #65 recovery for owned interrupted worktree registrations. Both batches compile under the root strict settings; Batch 01 has 70 baseline fixtures and Batch 02 owns active primitive acceptance with a paired F1–F5 matrix. This model-file hash is provenance for that file, not the entire runtime; tests use the built checkout. Storage format 7 retains replay contract 6.",
+    "revision": "658940303d92c53f1db43b896856a4f78d92b7fa"
   }
 }
