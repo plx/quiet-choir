@@ -1028,8 +1028,20 @@ export async function runWorkflow<TInput, TOutput>(
       return { permit, finish: budget.enter() };
     }
 
+    // Attribute a step record to the currently active child frame, so summarizeChildren() and
+    // frame-scoped events agree with the frame code runs under today, even for a step whose
+    // identity/output were recorded under a different frame (a root scope refactored into a
+    // child, or the reverse). Returns whether the persisted frame changed.
+    function attributeFrame(step: StepRecord): boolean {
+      const frame = children.frame;
+      if ((step.frame ?? null) === frame) return false;
+      if (frame !== null) step.frame = frame;
+      else delete step.frame;
+      return true;
+    }
+
     async function beforeLive(id: string, step: StepRecord): Promise<void> {
-      if (children.frame !== null) step.frame = children.frame;
+      attributeFrame(step);
       if (strictHealedDivergence) {
         controller.abort(strictHealedDivergence);
         throw strictHealedDivergence;
@@ -1199,6 +1211,7 @@ export async function runWorkflow<TInput, TOutput>(
       }
       if (prior && isTerminalStep(prior)) {
         const output = replay(prior);
+        if (attributeFrame(prior)) await save();
         emit('step.replayed', id, prior);
         return output;
       }
@@ -1233,6 +1246,7 @@ export async function runWorkflow<TInput, TOutput>(
               at: new Date().toISOString(),
             },
           };
+          attributeFrame(copied);
           Object.defineProperty(record.steps, id, {
             value: copied,
             enumerable: true,

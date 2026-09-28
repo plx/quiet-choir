@@ -14,6 +14,7 @@ import {
 } from '../src/index.js';
 import { describeWorkflow } from '../src/workflow/runtime/definition.js';
 import { workflowSnapshot } from '../src/workflow/runtime/compatibility.js';
+import { inspectRun } from '../src/workflow/loader/inspection.js';
 
 const directories: string[] = [];
 async function directory() {
@@ -115,6 +116,45 @@ it('runs typed and named three-level composition with scoped effects, frames, ph
     phases: [{ title: 'Review' }],
     inputSchema: { required: ['topic'], properties: { topic: { description: 'Design topic' } } },
   });
+});
+
+it('attributes a replayed step to a same-ID child frame after a refactor from a root scope', async () => {
+  const stateDir = await directory();
+  const options = { stateDir, runId: 'reframe' };
+  const initial = defineWorkflow({
+    name: 'reframe-root',
+    ...base,
+    output: z.string(),
+    async run(ctx) {
+      return ctx.scope('review', () =>
+        ctx.step('x', { input: null, schema: z.string(), run: () => 'ok' }),
+      );
+    },
+  });
+  await runWorkflow(initial, { ...options, input: null });
+  expect((await readRun(options)).steps['review/x']?.frame).toBeUndefined();
+
+  const child = defineWorkflow({
+    name: 'reframe-child',
+    ...base,
+    output: z.string(),
+    async run(ctx) {
+      return ctx.step('x', { input: null, schema: z.string(), run: () => 'ok' });
+    },
+  });
+  const changed: WorkflowDefinition<null, string> = {
+    ...initial,
+    async run(ctx) {
+      return ctx.workflow('review', child, null);
+    },
+  };
+  await runWorkflow(changed, { ...options, resume: true, acceptCodeChange: true });
+  const after = await readRun(options);
+  expect(after.steps['review/x']?.frame).toBe('review');
+  const { summary } = await inspectRun(options);
+  const reviewChild = summary.children.find((entry) => entry.id === 'review');
+  expect(reviewChild).toMatchObject({ steps: 1 });
+  expect(reviewChild?.usage).toEqual(summary.usage);
 });
 
 it('rejects changed child versions even on completed embedded-run resume and checks empty frames', async () => {
