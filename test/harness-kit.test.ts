@@ -84,6 +84,54 @@ for (const harness of ['claude', 'codex'] as const)
     });
   });
 
+it('rejects an adapter whose abort scenario fails before cancellation', async () => {
+  const request = {
+    harness: 'eager',
+    revision: 1,
+    runId: 'conformance',
+    stepId: 'abort',
+    attempt: 1,
+    idempotencyKey: 'conformance/abort',
+    call: {
+      runId: 'conformance',
+      stepId: 'abort',
+      attempt: 1,
+      idempotencyKey: 'conformance/abort',
+    },
+    options: { prompt: 'hello' },
+    cwd: tmpdir(),
+    outputSchema: null,
+  };
+  let aborted: boolean | undefined;
+  await expect(
+    assertHarnessConformance({
+      text: 'hello',
+      failureReason: 'fake native failure',
+      structured: { ok: true },
+      fixture: (scenario) =>
+        Promise.resolve({
+          request,
+          adapter: {
+            invoke(_request, signal) {
+              if (scenario === 'protocol-error' || scenario === 'nonzero-stdout')
+                return Promise.reject(new Error('fake native failure'));
+              if (scenario === 'abort') {
+                aborted = signal.aborted;
+                // Correct in every other scenario; only this one rejects without observing abort.
+                return Promise.reject(new Error('missing executable'));
+              }
+              return Promise.resolve({
+                text: scenario === 'structured' ? '{"ok":true}' : 'hello',
+                sessionId: null,
+              });
+            },
+          },
+        }),
+    }),
+  ).rejects.toThrow('Adapter rejected before cancellation');
+  expect(aborted).toBe(false);
+});
+
 it('adds a third harness entirely through the public package contracts and fake CLI on PATH', async () => {
   const binary = await createFakeBinary(
     'third-agent',

@@ -55,7 +55,7 @@ export async function assertHarnessConformance<O extends AgentOptions>(
         const result = await Promise.race([
           invoked.then(
             () => 'resolved',
-            () => 'aborted',
+            () => (controller.signal.aborted ? 'aborted' : 'rejected-before-abort'),
           ),
           new Promise<string>((resolve) => {
             deadline = setTimeout(() => {
@@ -63,6 +63,11 @@ export async function assertHarnessConformance<O extends AgentOptions>(
             }, options.abortDeadlineMs ?? 2000);
           }),
         ]);
+        assert.notEqual(
+          result,
+          'rejected-before-abort',
+          'Adapter rejected before cancellation; the abort fixture must stay running until aborted.',
+        );
         assert.equal(result, 'aborted', 'Adapter must reject and promptly release work on abort.');
       } else if (scenario === 'protocol-error' || scenario === 'nonzero-stdout') {
         await assert.rejects(
