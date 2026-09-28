@@ -1,7 +1,7 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { createHash } from 'node:crypto';
 import { digest, jsonValue } from './json.js';
-import type { JsonValue, HarnessRequest } from './model.js';
+import type { JsonValue, HarnessRequestInput } from './model.js';
 import type { AttemptPolicy } from './policy.js';
 import type { RunRecord } from './store.js';
 import type {
@@ -28,7 +28,10 @@ export function errorStack(error: unknown): string | null {
 }
 
 /** Summarize the request after profile, policy, and harness defaults are resolved. @internal */
-export function requestSummary(request: HarnessRequest, execution: AttemptPolicy): RequestSummary {
+export function requestSummary(
+  request: HarnessRequestInput,
+  execution: AttemptPolicy,
+): RequestSummary {
   const options = request.options;
   return {
     provider: request.provider,

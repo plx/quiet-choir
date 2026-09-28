@@ -164,8 +164,8 @@ export interface CodexOptions extends AgentOptions {
   readonly skipGitRepoCheck?: boolean;
 }
 
-/** Plain-data request passed from the engine to a harness adapter. */
-export type HarnessRequest = (
+/** Plain-data inputs for planning a harness invocation, before durable call identity is attached. */
+export type HarnessRequestInput = (
   | {
       /** Claude Code integration. */
       readonly provider: 'claude';
@@ -185,6 +185,24 @@ export type HarnessRequest = (
   readonly outputSchema: JsonValue | null;
   /** Runtime image bytes corresponding to options.images; immutable for this invocation. */
   readonly imageAttachments?: readonly ImageAttachment[];
+};
+
+/** Durable identity of one attempt, attached after semantic fingerprinting. */
+export interface HarnessCall {
+  /** Owning run ID. */
+  readonly runId: string;
+  /** Fully qualified step ID. */
+  readonly stepId: string;
+  /** One-based cumulative attempt, including attempts before resume. */
+  readonly attempt: number;
+  /** Stable across retries and resumes: `${runId}/${stepId}`. */
+  readonly idempotencyKey: string;
+}
+
+/** Plain-data request passed from the engine to a harness adapter. */
+export type HarnessRequest = HarnessRequestInput & {
+  /** Observational identity; never included in effect fingerprints. */
+  readonly call: HarnessCall;
 };
 
 /** Usage reported by the harness, with null for unavailable measurements. */
@@ -248,6 +266,8 @@ export interface HarnessInvocation {
 
 /** Replaceable integration port, also useful for deterministic tests. */
 export interface Harness {
+  /** Checkpoint provenance; changing a recorded kind requires explicit authorization. Defaults to custom. */
+  readonly kind?: string;
   /**
    * Discover the native binary/version on first live use in each run invocation. Discovery is
    * shared by the run: `invocation.signal` aborts on interruption or once no effect still awaits

@@ -24,3 +24,25 @@ API. The first SSE stream dropped; the CLI reconnected and exited 0 after comple
 It contains a completed Codex step followed by a workflow-body failure, uses the synthetic cwd
 `/fixture`, and originally proved warning support preserved fingerprints. Since checkpoint format 2,
 it verifies version 1 inspection and explicit resume refusal without mutating the original bytes.
+
+## Rehearsal corpus refresh
+
+`npm run test:contract -- --refresh` refreshed the text/structured success captures for both
+providers, `claude-turn-limit`, `claude-api-error`, `codex-invalid-schema`, and
+`codex-reconnect-success` with Claude 2.1.283 and Codex 0.157.1. Each call used isolated native
+configuration, fake keys, and the repository's local fake Messages/Responses server. The Codex
+invalid-schema case exercises a real CLI receiving an API rejection; a fake server does not prove
+provider schema acceptance. The Claude turn-limit case loops on invalid StructuredOutput tool data
+without exposing filesystem tools. Earlier historical failure captures above remain intact except
+for the explicitly refreshed turn-limit/reconnect files.
+
+`test/bin/fake-claude.mjs` and `test/bin/fake-codex.mjs` replay these files with their recorded exit
+codes. They are repository tooling rather than an installed package subpath. Scenario routing and
+argv logging are described in [workflow rehearsal](../../../docs/rehearsal.md).
+
+`pre-rehearsal-checkpoint.json` was generated using parent commit
+`ab4f6831033c487498a2ca282c906a18cc58906b`, before `HarnessRequest.call` or harness-kind provenance.
+It has canonical cwd `/`, opaque fingerprint `rehearsal-compatibility`, a completed Claude text step
+and a failed Codex text step. It independently verifies format-6 semantic replay compatibility and
+cumulative attempt metadata. Local stack paths are sanitized to `/fixture`; it contains only
+synthetic fixture data and is not an envelope.

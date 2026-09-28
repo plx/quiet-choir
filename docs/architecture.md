@@ -117,6 +117,15 @@ dependency. The repository itself builds with the native TypeScript 7 compiler; 
 programmatic API is explicitly unstable. Keeping the compiler behind the executor boundary allows a
 later native implementation without changing the command contract.
 
+## Rehearsal
+
+The CLI executor selects native or fixture adapters through plain-data plans. Dry-run uses the
+native pure argument planner, fixture/synthesized outputs, and temporary checkpoint storage; resume
+copies source record data without acquiring its owner lock. Core rehearsal hooks preserve local
+identity while optionally replacing callbacks and skipping durable sleeps. Call metadata and
+harness-kind provenance live outside semantic fingerprints. See [workflow rehearsal](rehearsal.md)
+and [ADR 0016](decisions/0016-workflow-rehearsal.md).
+
 ## Deferred configuration discovery
 
 Oclif's `Config` represents framework and installation metadata and provides standard user data

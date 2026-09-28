@@ -1,3 +1,7 @@
+import { fixturesFromRun } from './fixtures.js';
+import { CliHarness } from '../../harnesses/cli.js';
+import { FixtureHarness } from '../../harnesses/fixture.js';
+import { RehearsalHarness, rehearsalState } from './rehearsal.js';
 import { jsonValue } from '../runtime/json.js';
 import { inspectRun, listRuns, watchRun, type RunInspection } from './inspection.js';
 import { workflowFailure } from './failure.js';
@@ -31,6 +35,7 @@ import { fingerprintSources } from './source.js';
 import { canonicalCwd, compareResume, workflowSnapshot } from '../runtime/compatibility.js';
 import type {
   ExecuteWorkflowPlan,
+  ExportFixturesPlan,
   CheckResumePlan,
   InspectWorkflowPlan,
   WatchWorkflowPlan,
@@ -79,6 +84,7 @@ function workflowDefinition(module: unknown): WorkflowDefinition<unknown, unknow
 
 /** Type-check, import, and optionally run trusted workflow code behind a plain-data boundary. */
 export class WorkflowExecutor implements Executor<
+  | ExportFixturesPlan
   | ValidateWorkflowPlan
   | ExecuteWorkflowPlan
   | InspectWorkflowPlan
@@ -95,6 +101,7 @@ export class WorkflowExecutor implements Executor<
 
   public async execute(
     plan:
+      | ExportFixturesPlan
       | ValidateWorkflowPlan
       | ExecuteWorkflowPlan
       | InspectWorkflowPlan
@@ -103,6 +110,9 @@ export class WorkflowExecutor implements Executor<
       | ListWorkflowsPlan,
   ): Promise<WorkflowCommandResult> {
     let unregister: (() => void) | undefined;
+    let rehearsal: RehearsalHarness | undefined;
+    let previewState: Awaited<ReturnType<typeof rehearsalState>> | undefined;
+    let harness = this.#options.harness;
     let stage: CliErrorCode = 'load.typecheck';
     const context =
       'runId' in plan
@@ -116,6 +126,11 @@ export class WorkflowExecutor implements Executor<
         return workflowFailure('usage.run_id', runIdMessage, context);
       if (plan.kind === 'workflow.execute' && plan.forkFrom && !isValidRunId(plan.forkFrom.runId))
         return workflowFailure('usage.run_id', runIdMessage, context);
+      if (plan.kind === 'workflow.fixtures') {
+        stage = 'run.unreadable';
+        const run = await readRequiredRun({ runId: plan.runId, stateDir: plan.stateDir });
+        return { kind: 'workflow.fixtures.result', ok: true, fixtures: fixturesFromRun(run) };
+      }
       if (plan.kind === 'workflow.list') {
         stage = 'run.unreadable';
         return { kind: 'workflow.list.result', ok: true, ...(await listRuns(plan)) };
@@ -135,6 +150,25 @@ export class WorkflowExecutor implements Executor<
           ok: true,
           ...inspection,
         };
+      }
+      stage = 'usage.flag';
+      if (plan.kind === 'workflow.execute') {
+        if ((plan.stubSteps?.length ?? 0) > 0 && !plan.dryRun)
+          throw new Error('--stub-steps requires --dry-run.');
+        if (plan.dryRun) {
+          rehearsal = new RehearsalHarness(
+            plan.harness ?? { kind: 'cli', config: {} },
+            plan.stubSteps,
+          );
+          harness = rehearsal;
+          previewState = await rehearsalState(plan.runId, plan.stateDir, plan.resume);
+          context.stateDir = previewState.stateDir;
+        } else if (plan.harness) {
+          if (plan.harness.kind === 'fixture') {
+            if (!plan.harness.fixtures) throw new Error('Fixture selection requires fixture data.');
+            harness = new FixtureHarness(plan.harness.fixtures);
+          } else harness = new CliHarness(plan.harness.config);
+        }
       }
       stage = 'usage.flag';
       const agentLimits =
@@ -225,8 +259,10 @@ export class WorkflowExecutor implements Executor<
       stage = 'usage.flag';
       const run = await runWorkflow(definition, {
         runId: plan.runId,
-        stateDir: plan.stateDir,
+        stateDir: previewState?.stateDir ?? plan.stateDir,
         cwd: plan.cwd,
+        ...(rehearsal === undefined ? {} : { rehearsal: rehearsal.hooks }),
+        allowHarnessChange: rehearsal !== undefined || (plan.allowHarnessChange ?? false),
         resume: plan.resume,
         ...(plan.killOrphans === undefined ? {} : { killOrphans: plan.killOrphans }),
         ...(plan.killGraceMs === undefined ? {} : { killGraceMs: plan.killGraceMs }),
@@ -242,13 +278,16 @@ export class WorkflowExecutor implements Executor<
           ? {}
           : { allowModelOverride: plan.allowModelOverride }),
         ...(plan.input === undefined ? {} : { input: plan.input }),
-        ...(this.#options.harness === undefined ? {} : { harness: this.#options.harness }),
+        ...(harness === undefined ? {} : { harness }),
         ...(this.#options.signal === undefined ? {} : { signal: this.#options.signal }),
         source,
-        ...(plan.forkFrom === undefined ? {} : { forkFrom: plan.forkFrom }),
+        ...(plan.forkFrom === undefined
+          ? {}
+          : { forkFrom: { ...plan.forkFrom, stateDir: plan.forkFrom.stateDir ?? plan.stateDir } }),
         ...(plan.acceptCodeChange === undefined ? {} : { acceptCodeChange: plan.acceptCodeChange }),
         ...(plan.strictReplay === undefined ? {} : { strictReplay: plan.strictReplay }),
         onEvent: (event) => {
+          rehearsal?.observe(event);
           const observational = event.type === 'phase' || event.type === 'log';
           const detail =
             event.message ??
@@ -259,7 +298,12 @@ export class WorkflowExecutor implements Executor<
           );
         },
       });
-      return { kind: 'workflow.run.result', ok: true, run };
+      return {
+        kind: 'workflow.run.result',
+        ok: true,
+        run,
+        ...(rehearsal === undefined ? {} : { rehearsal: rehearsal.report(run) }),
+      };
     } catch (error: unknown) {
       const run =
         error instanceof WorkflowRunError
@@ -290,6 +334,12 @@ export class WorkflowExecutor implements Executor<
         {
           ...context,
           run,
+          ...(rehearsal === undefined
+            ? {}
+            : {
+                rehearsal: rehearsal.report(run),
+                stack: error instanceof Error ? (error.stack ?? error.message) : String(error),
+              }),
           stepId: error instanceof WorkflowRunError ? error.stepId : null,
           details:
             error instanceof RunRefusedError || error instanceof WorkflowInputError
@@ -299,6 +349,7 @@ export class WorkflowExecutor implements Executor<
       );
     } finally {
       unregister?.();
+      await previewState?.dispose();
     }
   }
 }

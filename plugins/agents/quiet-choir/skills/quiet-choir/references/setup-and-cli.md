@@ -48,6 +48,7 @@ development command discovery.
 | `workflow validate FILE`                 | Typechecks and imports, checks the default export and input/output schema conversion; does not call `run` |
 | `workflow execute FILE`                  | Typechecks, imports, and executes or resumes                                                              |
 | `workflow check-resume FILE --run-id ID` | Typechecks/imports and compares run gates without a writer lock or workflow-body execution                |
+| `workflow fixtures RUN_ID`               | Export completed agent outputs as reusable fixture JSON without importing source                          |
 | `workflow inspect RUN_ID`                | Reads the saved run without importing workflow code or acquiring a writer lock                            |
 
 Entrypoints must be TypeScript source (`.ts`, `.tsx`, `.mts`, `.cts`), not declaration files. The
@@ -67,8 +68,12 @@ npm run cli -- workflow execute examples/duet.workflow.ts \
   --input '{"topic":"durable agent workflows"}' --log-level debug
 ```
 
-The execute command makes real harness calls and needs authentication. Use the local example to
-check setup without paid calls.
+This execute command makes real harness calls and needs authentication. Rehearse first by adding
+`--dry-run --json`; inspect its reached calls, limits, and warnings before paying.
+`--harness fixture:./fixtures.json` selects saved responses, and `--dry-run --resume --run-id ID`
+previews the rest of a real run on temporary state. Local callbacks run unless matched by
+`--stub-steps`. Changing the harness kind for actual resume/fork requires `--allow-harness-change`.
+See [rehearsal](rehearsal.md) for the complete loop and JSON report contract.
 
 ## Run identity and output
 

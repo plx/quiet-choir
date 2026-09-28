@@ -158,10 +158,11 @@ Effects can succeed without being saved after a crash or hard kill. A resolved a
 validates is persisted as `completed` even after a signal abort; resume replays it. An action that
 rejects in an aborted scope is `cancelled` and can repeat on resume. Agent calls stopped by
 cancellation or `timeoutMs` may already have edited files. Persistent storage failure can still
-prevent any outcome from committing, as described below. Use the local step callback's stable
-`idempotencyKey` with systems that support deduplication; it is not automatically sent to the
-Claude/Codex CLIs. Workspace edits and harness conversation state are not transactional. Do not
-assume that retrying an error is harmless or that a new run deduplicates an old run's work.
+prevent any outcome from committing, as described below. Use the local step callback's or
+`HarnessRequest.call`'s stable `idempotencyKey` with systems that support deduplication. Native
+attempts receive it as the `QUIET_CHOIR_IDEMPOTENCY_KEY` environment variable, which does not make
+the CLI deduplicate work. Workspace edits and harness conversation state are not transactional. Do
+not assume that retrying an error is harmless or that a new run deduplicates an old run's work.
 
 Local and agent steps retry only when explicitly given a `retry` policy; the default is one attempt.
 An explicit resume retries unfinished work. `ctx.sleep` saves a wall-clock deadline and waits only

@@ -428,7 +428,7 @@ it('keeps error mode in identity and preserves terminal failures during forks', 
   await expect(
     runWorkflow(
       workflow(() => Promise.resolve('skip')),
-      { ...options(), resume: true },
+      { ...options(), resume: true, allowHarnessChange: true },
     ),
   ).rejects.toThrow('Replay skipped recorded steps (ask)');
 });

@@ -199,6 +199,69 @@ describe('durable TypeScript workflows', () => {
     expect(invoke).toHaveBeenCalledTimes(3);
   });
 
+  it('lets any harness resume a harness-less run without recording a harness change', async () => {
+    const options = await setup();
+    const local = vi.fn(() => 1);
+    const definition = workflow(async (ctx) => {
+      const first = await ctx.step('local', { input: null, schema: z.number(), run: local });
+      const agent = await ctx.codex.object('ask', {
+        prompt: 'x',
+        schema: z.object({ answer: z.number() }),
+      });
+      return first + agent.output.answer;
+    });
+    await expect(runWorkflow(definition, options)).rejects.toThrow('No harness');
+    expect((await readRun(options)).harness).toEqual({ kind: 'none', previousKinds: [] });
+    const invoke = vi.fn<Harness['invoke']>().mockResolvedValue(response);
+    const result = await runWorkflow(definition, {
+      ...options,
+      resume: true,
+      harness: { kind: 'cli', invoke },
+    });
+    expect(result.output).toBe(43);
+    expect(local).toHaveBeenCalledTimes(1);
+    expect(result.harness).toEqual({ kind: 'cli', previousKinds: [] });
+    expect((await readRun(options)).harness).toEqual({ kind: 'cli', previousKinds: [] });
+    await expect(
+      runWorkflow(definition, { ...options, runId: 'impostor', harness: { kind: 'none', invoke } }),
+    ).rejects.toThrow("Harness kind 'none' is reserved");
+  });
+
+  it('still requires authorization to leave a none run that earlier reused other outputs', async () => {
+    const options = await setup();
+    let pause = true;
+    const definition = workflow(async (ctx) => {
+      const agent = await ctx.codex.object('ask', {
+        prompt: 'x',
+        schema: z.object({ answer: z.number() }),
+      });
+      if (pause) throw new Error('pause');
+      return agent.output.answer;
+    });
+    const invoke = vi.fn<Harness['invoke']>().mockResolvedValue(response);
+    const fixture = { kind: 'fixture', invoke };
+    await expect(runWorkflow(definition, { ...options, harness: fixture })).rejects.toThrow(
+      'pause',
+    );
+    await expect(
+      runWorkflow(definition, { ...options, resume: true, allowHarnessChange: true }),
+    ).rejects.toThrow('pause');
+    expect((await readRun(options)).harness).toEqual({ kind: 'none', previousKinds: ['fixture'] });
+    pause = false;
+    const cli = { kind: 'cli', invoke };
+    await expect(
+      runWorkflow(definition, { ...options, resume: true, harness: cli }),
+    ).rejects.toThrow('--allow-harness-change');
+    const result = await runWorkflow(definition, {
+      ...options,
+      resume: true,
+      harness: cli,
+      allowHarnessChange: true,
+    });
+    expect(result.harness).toEqual({ kind: 'cli', previousKinds: ['fixture'] });
+    expect(invoke).toHaveBeenCalledTimes(1);
+  });
+
   it('detects changed step input/schema/kind, duplicate IDs and skipped recorded work', async () => {
     const options = await setup();
     let input = 1;

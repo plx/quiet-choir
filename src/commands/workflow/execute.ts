@@ -10,7 +10,10 @@ import { Args, Flags, type Interfaces } from '@oclif/core';
 
 import { WorkflowCommand } from '../../cli/workflow-command.js';
 import { formatTypecheckDiagnostic } from '../../cli/presentation.js';
-import { CliHarness } from '../../harnesses/cli.js';
+import {
+  readHarnessSelection,
+  type HarnessSelection,
+} from '../../workflow/loader/harness-selection.js';
 import { WorkflowExecutor } from '../../workflow/loader/executor.js';
 import type { JsonValue } from '../../workflow/runtime/model.js';
 import { validatePolicy, type PolicyOverride } from '../../workflow/runtime/policy.js';
@@ -20,6 +23,11 @@ interface WorkflowExecuteArgs {
 }
 
 interface WorkflowExecuteFlags {
+  readonly harness: string;
+  readonly 'harness-config': string | undefined;
+  readonly 'dry-run': boolean | undefined;
+  readonly 'stub-steps': string[] | undefined;
+  readonly 'allow-harness-change': boolean | undefined;
   readonly 'kill-orphans': boolean | undefined;
   readonly 'kill-grace-ms': string | undefined;
   readonly 'max-agents': string | undefined;
@@ -51,6 +59,22 @@ export default class WorkflowExecute extends WorkflowCommand {
   };
 
   public static override readonly flags: Interfaces.FlagInput<WorkflowExecuteFlags> = {
+    harness: Flags.string({ description: 'cli or fixture:<JSON file>', default: 'cli' }),
+    'harness-config': Flags.string({
+      description: 'CliHarness configuration JSON or @file; paths resolve against cwd',
+    }),
+    'dry-run': Flags.boolean({
+      description:
+        'Rehearse with synthesized/fixture agent outputs and temporary checkpoints; local callbacks run for real',
+    }),
+    'stub-steps': Flags.string({
+      description: 'Synthesize selected local steps by ID glob; repeatable',
+      multiple: true,
+      dependsOn: ['dry-run'],
+    }),
+    'allow-harness-change': Flags.boolean({
+      description: 'Accept replaying outputs from a different recorded harness kind',
+    }),
     'kill-orphans': Flags.boolean({
       description: 'Before resume, stop identity-confirmed processes left by a dead owner',
       dependsOn: ['resume'],
@@ -141,6 +165,7 @@ export default class WorkflowExecute extends WorkflowCommand {
     let killGraceMs: number;
     let policy: PolicyOverride[];
     let profileOverrides: ProfileOverride[];
+    let harness: HarnessSelection;
     try {
       killGraceMs = flags['kill-grace-ms'] === undefined ? 3000 : Number(flags['kill-grace-ms']);
       if (
@@ -149,6 +174,17 @@ export default class WorkflowExecute extends WorkflowCommand {
         killGraceMs > 2_147_483_647
       )
         throw new Error('--kill-grace-ms must be an integer from 1 to 2147483647.');
+      harness = await readHarnessSelection(
+        flags.harness,
+        flags['harness-config'],
+        process.cwd(),
+        flags['kill-grace-ms'] === undefined ? undefined : killGraceMs,
+      );
+      killGraceMs = harness.config.killGraceMs ?? killGraceMs;
+      if (harness.kind === 'fixture' && flags['harness-config'] !== undefined && !flags['dry-run'])
+        throw new Error(
+          '--harness-config configures CLI execution or the --dry-run planner; fixture execution takes its configuration from the fixture file.',
+        );
       agentLimits = parseAgentLimits(flags['max-agents'], flags['provider-limit'] ?? []);
       profileOverrides = (flags.profile ?? []).map(parseProfileOverride);
       policy = validatePolicy(
@@ -165,12 +201,15 @@ export default class WorkflowExecute extends WorkflowCommand {
     this.logToStderr(`Run ID: ${runId}`);
     const executor = new WorkflowExecutor({
       logger: this.createExecutionLogger(flags),
-      harness: new CliHarness({ killGraceMs }),
       processSupervisor: this.processSupervisor,
       signal: this.signal,
     });
     const result = await executor.execute({
       kind: 'workflow.execute',
+      harness,
+      dryRun: flags['dry-run'] ?? false,
+      stubSteps: flags['stub-steps'] ?? [],
+      allowHarnessChange: flags['allow-harness-change'] ?? false,
       agentLimits,
       killGraceMs,
       ...(flags['kill-orphans'] === undefined ? {} : { killOrphans: flags['kill-orphans'] }),
@@ -211,9 +250,17 @@ export default class WorkflowExecute extends WorkflowCommand {
       this.failResult(result);
     }
     if (result.kind === 'workflow.run.result') {
+      for (const warning of result.rehearsal?.warnings ?? [])
+        this.logToStderr(`Warning: ${warning}`);
+      if (result.rehearsal)
+        this.logToStderr(
+          `Rehearsal: ${String(result.rehearsal.calls.length)} calls; nominal Claude ceiling $${String(result.rehearsal.nominalClaudeCeilingUsd)}; ${String(result.rehearsal.replays.length)} replayed effects.`,
+        );
       for (const warning of result.run.warnings ?? []) this.logToStderr(`Warning: ${warning}`);
       this.outputSavedCompletion(
-        result.run,
+        result.rehearsal === undefined
+          ? result.run
+          : { ...result.rehearsal, ok: true, run: result.run },
         `Run ${result.run.id} ${result.run.status}.\n${JSON.stringify(result.run.output, null, 2)}`,
       );
     }

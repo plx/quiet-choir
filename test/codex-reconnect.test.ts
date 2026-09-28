@@ -143,7 +143,7 @@ it('completes the captured reconnect turn, persists warnings, and replays withou
   expect(checkpoint.steps['agent']?.output).not.toHaveProperty('warnings');
   fail = false;
   const result = await runWorkflow(workflow, { ...options, resume: true });
-  expect(result.output).toBe('hello from fake codex');
+  expect(result.output).toBe('hello from captured codex');
   expect(result.steps['agent']?.warnings).toEqual(checkpoint.steps['agent']?.warnings);
   expect(await readFile(calls, 'utf8')).toBe('call\n');
 });
@@ -234,9 +234,10 @@ it('clears stale warnings when a resumed attempt fails before the harness respon
   const resumed = await readRun({ stateDir, runId: 'stale-warnings' });
   expect(resumed.steps['agent']?.warnings).toBeUndefined();
 
-  await expect(runWorkflow(workflow, { ...options, resume: true })).rejects.toThrow(
-    'No harness adapter configured',
-  );
+  // Dropping the adapter is still a harness change; opt in to reach the missing-adapter check.
+  await expect(
+    runWorkflow(workflow, { ...options, resume: true, allowHarnessChange: true }),
+  ).rejects.toThrow('No harness adapter configured');
   const resumedWithoutHarness = await readRun({ stateDir, runId: 'stale-warnings' });
   expect(resumedWithoutHarness.steps['agent']?.warnings).toBeUndefined();
 });
