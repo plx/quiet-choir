@@ -321,6 +321,75 @@ it('rejects nested context operations in poll observers before their actions run
   expect(calls).toBe(0);
 });
 
+it('rejects ctx.log and ctx.phase called from inside a poll observer', async () => {
+  const withLog = defineWorkflow({
+    name: 'poll-log',
+    version: '1',
+    input: z.null(),
+    output: z.unknown(),
+    run: (ctx) =>
+      ctx.poll('bad', {
+        input: null,
+        schema: z.null(),
+        every: 30_000,
+        timeoutMs: 60_000,
+        observe: () => {
+          ctx.log('observed');
+          return Promise.resolve({ done: true, value: null });
+        },
+      }),
+  });
+  await expect(runWorkflow(withLog, { stateDir, runId: 'poll-log', input: null })).rejects.toThrow(
+    'Poll observers cannot call context operations.',
+  );
+
+  const withPhase = defineWorkflow({
+    name: 'poll-phase',
+    version: '1',
+    input: z.null(),
+    output: z.unknown(),
+    run: (ctx) =>
+      ctx.poll('bad', {
+        input: null,
+        schema: z.null(),
+        every: 30_000,
+        timeoutMs: 60_000,
+        observe: () => {
+          ctx.phase('observed');
+          return Promise.resolve({ done: true, value: null });
+        },
+      }),
+  });
+  await expect(
+    runWorkflow(withPhase, { stateDir, runId: 'poll-phase', input: null }),
+  ).rejects.toThrow('Poll observers cannot call context operations.');
+});
+
+it('fails the whole run rather than settle a poll observer context-operation violation', async () => {
+  const definition = defineWorkflow({
+    name: 'poll-log-settled-map',
+    version: '1',
+    input: z.null(),
+    output: z.unknown(),
+    run: (ctx) =>
+      ctx.map('items', [0], { concurrency: 1, onError: 'settle' }, () =>
+        ctx.poll('bad', {
+          input: null,
+          schema: z.null(),
+          every: 30_000,
+          timeoutMs: 60_000,
+          observe: () => {
+            ctx.log('observed');
+            return Promise.resolve({ done: true, value: null });
+          },
+        }),
+      ),
+  });
+  await expect(
+    runWorkflow(definition, { stateDir, runId: 'poll-log-settled-map', input: null }),
+  ).rejects.toThrow('Poll observers cannot call context operations.');
+});
+
 it('owns missing poll time bounds even when a JavaScript caller drops the rejected promise', async () => {
   const definition = defineWorkflow({
     name: 'invalid-poll',
