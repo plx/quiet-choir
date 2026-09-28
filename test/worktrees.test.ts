@@ -170,6 +170,62 @@ it('maps monorepo cwd, warns about dirty source files, and snapshots only commit
   expect(run.steps['edit']?.worktree?.files).toEqual([{ path: 'packages/a/new', status: 'added' }]);
 });
 
+it('never overlaps worktree administration for concurrent isolated calls', async () => {
+  let active = 0,
+    overlap = 0;
+  const administration = ({ command }: Parameters<ProcessRunner['run']>[0]) =>
+    Array.isArray(command) &&
+    command.includes('worktree') &&
+    ['add', 'list', 'remove'].some((verb) => command.includes(verb));
+  const runner: ProcessRunner = {
+    async run(request, invocation) {
+      if (!administration(request)) return processRunner.run(request, invocation);
+      if (++active > 1) overlap++;
+      try {
+        // Widen the window so unserialized adds would reliably overlap.
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        return await processRunner.run(request, invocation);
+      } finally {
+        active--;
+      }
+    },
+  };
+  const harness: Harness = {
+    invoke: async (request) => {
+      await writeFile(join(request.cwd, `${request.call.stepId.replaceAll('/', '-')}.txt`), 'x');
+      return response;
+    },
+  };
+  const definition = defineWorkflow({
+    version: '1',
+    name: 'parallel',
+    input: z.null(),
+    output: z.number(),
+    async run(ctx) {
+      const changes = await ctx.map(
+        'items',
+        ['a', 'b', 'c'],
+        { concurrency: 3 },
+        async (item) =>
+          (await ctx.codex.text('edit', { prompt: item, isolation: 'worktree' })).worktree,
+      );
+      const merged = await ctx.merge(
+        'integrate',
+        changes.flatMap((change) => (change ? [change] : [])),
+      );
+      return merged.conflicts.length;
+    },
+  });
+  const result = await runWorkflow(definition, {
+    ...options('parallel'),
+    processRunner: runner,
+    input: null,
+    harness,
+  });
+  expect(result.output).toBe(0);
+  expect(overlap).toBe(0);
+});
+
 it('serializes shared effects, resets failed attempts, retains ignored dependencies, and rebuilds missing caches', async () => {
   let handle: WorktreeHandle | undefined;
   let fail = true,

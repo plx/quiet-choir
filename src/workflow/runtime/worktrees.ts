@@ -63,6 +63,26 @@ class HandleLocks {
   }
 }
 
+/**
+ * Git reads every registered worktree's metadata while adding or listing one, so a concurrent add can
+ * expose another's half-written admin directory ("failed to read .../commondir"). Serialize these
+ * administrative commands per repository across all runs in this process.
+ */
+const administration = new HandleLocks();
+
+async function administer<T>(
+  repo: string,
+  signal: AbortSignal,
+  work: () => Promise<T>,
+): Promise<T> {
+  const release = await administration.acquire(repo, signal);
+  try {
+    return await work();
+  } finally {
+    release();
+  }
+}
+
 /** A live attempt owns the handle through result validation, capture, and durable save. @internal */
 export interface WorktreeLease {
   readonly cwd: string;
@@ -274,10 +294,8 @@ export class RunWorktrees {
     if (!stat) {
       await mkdir(dirname(path), { recursive: true, mode: 0o700 });
       // --force allows re-creating exactly this missing, registered worktree; never global prune.
-      await git.run(
-        ledger.repo,
-        ['worktree', 'add', '--force', '--detach', path, base],
-        invocation,
+      await administer(ledger.repo, invocation.signal, () =>
+        git.run(ledger.repo, ['worktree', 'add', '--force', '--detach', path, base], invocation),
       );
     } else {
       const top = await realpath(
@@ -523,6 +541,7 @@ export class RunWorktrees {
         ledger,
         save: this.save,
         ref: (key) => this.ref(ledger, key),
+        administer: (work) => administer(ledger.repo, invocation.signal, work),
         pin: (ref, commit) => this.pin(ledger, ref, commit, invocation),
         commit: (tree, parents, message, date) =>
           this.commit(ledger, tree, parents, message, date, invocation),
@@ -584,11 +603,10 @@ export class RunWorktrees {
           attempt: cache.attempt,
           idempotencyKey: `${this.record.id}/${cache.stepId}`,
         });
-        const registered = await this.driver().run(
-          ledger.repo,
-          ['worktree', 'list', '--porcelain', '-z'],
-          invocation,
-          { timeoutMs: 10_000 },
+        const registered = await administer(ledger.repo, invocation.signal, () =>
+          this.driver().run(ledger.repo, ['worktree', 'list', '--porcelain', '-z'], invocation, {
+            timeoutMs: 10_000,
+          }),
         );
         if (!registered.stdout.split('\0').includes(`worktree ${cache.path}`)) {
           const exists = await lstat(cache.path).catch((error: unknown) => {
@@ -603,11 +621,15 @@ export class RunWorktrees {
           cache.state = 'removed';
           continue;
         }
-        await this.driver().run(
-          ledger.repo,
-          ['worktree', 'remove', '--force', cache.path],
-          invocation,
-          { timeoutMs: 10_000 },
+        await administer(ledger.repo, invocation.signal, () =>
+          this.driver().run(
+            ledger.repo,
+            ['worktree', 'remove', '--force', cache.path],
+            invocation,
+            {
+              timeoutMs: 10_000,
+            },
+          ),
         );
         cache.state = 'removed';
       } catch (error) {

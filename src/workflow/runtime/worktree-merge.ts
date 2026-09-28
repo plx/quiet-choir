@@ -11,6 +11,8 @@ export interface MergeRuntime {
   save(): Promise<void>;
   pin(ref: string, commit: string): Promise<void>;
   ref(key: string): string;
+  /** Run a command that enumerates worktrees without racing another worktree add. */
+  administer<T>(work: () => Promise<T>): Promise<T>;
   commit(tree: string, parents: readonly string[], message: string, date: string): Promise<string>;
 }
 
@@ -32,10 +34,8 @@ async function branchFree(
   ref: string,
   invocation: HarnessInvocation,
 ): Promise<void> {
-  const listed = await runtime.git.run(
-    runtime.ledger.repo,
-    ['worktree', 'list', '--porcelain', '-z'],
-    invocation,
+  const listed = await runtime.administer(() =>
+    runtime.git.run(runtime.ledger.repo, ['worktree', 'list', '--porcelain', '-z'], invocation),
   );
   if (listed.stdout.split('\0').includes(`branch ${ref}`))
     throw new Error(
