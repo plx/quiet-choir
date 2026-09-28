@@ -551,8 +551,10 @@ it('captures first-use versions, warns on resumed drift, and records inherited/r
     .mockResolvedValue(reply);
   const definition = defineWorkflow({
     ...base,
+    profiles: { careful: { extends: 'readonly', claude: { effort: 'low' } } },
     async run(ctx) {
       await ctx.claude.text('one', { prompt: 'x', effort: 'high' });
+      await ctx.claude.text('three', { prompt: 'z', profile: 'careful' });
       return (await ctx.claude.text('two', { prompt: 'y' })).output;
     },
   });
@@ -571,10 +573,16 @@ it('captures first-use versions, warns on resumed drift, and records inherited/r
     model: 'inherited',
     effort: 'high',
   });
+  expect(result.steps['one']?.attemptHistory?.[1]?.sources['effort']).toBe('call-site');
+  expect(result.steps['three']?.attemptHistory?.[0]).toMatchObject({
+    requested: { model: 'inherited', effort: 'low' },
+    sources: { effort: 'profile:careful' },
+  });
   expect(result.steps['two']?.attemptHistory?.[0]?.requested).toEqual({
     model: 'inherited',
     effort: 'inherited',
   });
+  expect(result.steps['two']?.attemptHistory?.[0]?.sources).not.toHaveProperty('effort');
   expect((await readRun(setup())).harnesses?.claude).toEqual({ binary: 'fake', version: '2' });
   await runWorkflow(definition, { ...setup(), harness: { metadata, invoke }, resume: true });
   expect(metadata).toHaveBeenCalledTimes(2);

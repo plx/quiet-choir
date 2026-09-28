@@ -849,6 +849,16 @@ export async function runWorkflow<TInput, TOutput>(
                 reasoningEffort: profileEffort,
                 sources: { ...execution.sources, reasoningEffort: `profile:${profile.name}` },
               };
+            // The shared effort is requested only when no reasoningEffort replaces it.
+            if (execution.reasoningEffort === null && resolvedProfile.options.effort !== undefined)
+              execution = {
+                ...execution,
+                sources: {
+                  ...execution.sources,
+                  effort:
+                    data.options.effort === undefined ? `profile:${profile.name}` : 'call-site',
+                },
+              };
             request = jsonValue({
               provider,
               options: resolvedProfile.options,
