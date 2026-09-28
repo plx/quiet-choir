@@ -85,7 +85,7 @@ export abstract class WorkflowCommand extends BaseCommand {
     const exit = workflowExitCodes[failure.code];
     if (requestedJson(this.argv)) {
       this.logToStderr(failure.message);
-      this.output(workflowErrorDocument(failure), failure.message);
+      this.#render(workflowErrorDocument(failure), failure.message);
       this.exit(exit);
     }
     if (cause instanceof WorkflowCommandError && cause.humanExitOnly) {
@@ -122,7 +122,21 @@ export abstract class WorkflowCommand extends BaseCommand {
     return analysis.plan;
   }
 
+  /** Success output. A first signal replaces Node's default termination, so report it instead. */
   protected output(json: unknown, human: string): void {
+    if (this.signal.aborted)
+      throw new WorkflowCommandError(
+        workflowFailure('workflow.interrupted', 'Workflow interrupted.', this.failureContext),
+      );
+    this.#render(json, human);
+  }
+
+  /** A saved completion stands even when a signal arrived after the runner's last cancellation check. */
+  protected outputSavedCompletion(json: unknown, human: string): void {
+    this.#render(json, human);
+  }
+
+  #render(json: unknown, human: string): void {
     if (!requestedJson(this.argv)) {
       this.log(human);
       return;

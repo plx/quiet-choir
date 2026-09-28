@@ -49,7 +49,9 @@ save never masquerades as exit 1, and a storage failure during an interrupt keep
 than 130 because the cancellation checkpoint may not have been saved. A run whose saved status is
 `failed` reports `workflow.failed` (exit 1) even when a signal arrived, because the runner saves
 `cancelled` only when the interrupt caused the failure. Saved completion with a known cleanup
-warning still succeeds under the [process ownership contract](process-lifecycle.md).
+warning still succeeds under the [process ownership contract](process-lifecycle.md), as does a
+completion saved before a late signal. Inspect, validate, typecheck, and check-resume report
+`workflow.interrupted` after a first signal even when their work finishes.
 
 `check-resume` incompatibility uses exit 3 with the full comparison in `error.details`. Its
 compatible success retains `check`. A missing run includes `details.stateDir`, sorted

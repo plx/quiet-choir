@@ -212,7 +212,7 @@ export default class WorkflowExecute extends WorkflowCommand {
     }
     if (result.kind === 'workflow.run.result') {
       for (const warning of result.run.warnings ?? []) this.logToStderr(`Warning: ${warning}`);
-      this.output(
+      this.outputSavedCompletion(
         result.run,
         `Run ${result.run.id} ${result.run.status}.\n${JSON.stringify(result.run.output, null, 2)}`,
       );

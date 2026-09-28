@@ -18,6 +18,7 @@ import WorkflowCheckResume from '../src/commands/workflow/check-resume.js';
 import { WorkflowExecutor } from '../src/workflow/loader/executor.js';
 import type { RunRecord } from '../src/workflow/runtime/store.js';
 import WorkflowTypecheck from '../src/commands/workflow/typecheck.js';
+import { TypeScriptExecutor } from '../src/workflow/typecheck/typescript-executor.js';
 import WorkflowValidate from '../src/commands/workflow/validate.js';
 
 const projectRoot = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -154,6 +155,38 @@ describe('implemented command adapters', () => {
       oclif: { exit: 2 },
     });
   });
+
+  it.each([false, true])(
+    'reports a first signal during a successful type check as interrupted (JSON=%s)',
+    async (json) => {
+      const root = await mkdtemp(join(tmpdir(), 'quiet-choir-cli-'));
+      temporaryDirectories.push(root);
+      const entrypoint = join(root, 'workflow.ts');
+      await writeFile(entrypoint, 'export const value: number = 1;\n', 'utf8');
+      const check = TypeScriptExecutor.prototype.execute.bind(
+        new TypeScriptExecutor({ log: () => undefined }),
+      );
+      vi.spyOn(TypeScriptExecutor.prototype, 'execute').mockImplementation((plan) => {
+        process.emit('SIGINT');
+        return check(plan);
+      });
+
+      const output = await captureCommand(WorkflowTypecheck, [
+        entrypoint,
+        ...(json ? ['--json'] : []),
+      ]);
+
+      expect(output.error).toMatchObject({ oclif: { exit: 130 } });
+      expect(output.stdout).not.toContain('Type check passed');
+      if (json)
+        expect(JSON.parse(output.stdout)).toMatchObject({
+          kind: 'workflow.error',
+          ok: false,
+          exitCode: 130,
+          error: { code: 'workflow.interrupted' },
+        });
+    },
+  );
 
   it('uses oclif file validation for missing entrypoints', async () => {
     const output = await captureCommand(WorkflowTypecheck, ['/definitely/missing/workflow.ts']);
@@ -372,6 +405,46 @@ describe('workflow lifecycle command adapters', () => {
       run: { status: 'failed' },
     });
   });
+
+  it('keeps a saved completion successful when a signal arrives after the last check', async () => {
+    const file = await workflowFile();
+    vi.spyOn(WorkflowExecutor.prototype, 'execute').mockImplementation(() => {
+      process.emit('SIGINT');
+      return Promise.resolve({ kind: 'workflow.run.result', ok: true, run: runRecord });
+    });
+    const output = await captureCommand(WorkflowExecute, [file, '--run-id', 'test-run', '--json']);
+    expect(output.error).toBeUndefined();
+    expect(JSON.parse(output.stdout)).toMatchObject({ id: 'test-run', status: 'completed' });
+  });
+
+  it.each([false, true])(
+    'reports a first signal during a successful inspect as interrupted (JSON=%s)',
+    async (json) => {
+      const stateDir = await mkdtemp(join(tmpdir(), 'quiet-choir-cli-'));
+      temporaryDirectories.push(stateDir);
+      await writeFile(join(stateDir, 'test-run.json'), JSON.stringify(runRecord));
+      vi.spyOn(WorkflowExecutor.prototype, 'execute').mockImplementation(() => {
+        process.emit('SIGINT');
+        return Promise.resolve({ kind: 'workflow.run.result', ok: true, run: runRecord });
+      });
+      const output = await captureCommand(WorkflowInspect, [
+        'test-run',
+        '--state-dir',
+        stateDir,
+        ...(json ? ['--json'] : []),
+      ]);
+      expect(output.error).toMatchObject({ oclif: { exit: 130 } });
+      expect(output.stdout).not.toContain('Steps: 0');
+      if (json)
+        expect(JSON.parse(output.stdout)).toMatchObject({
+          exitCode: 130,
+          error: { code: 'workflow.interrupted', message: 'Workflow interrupted.' },
+          runId: 'test-run',
+          stateDir,
+          status: 'completed',
+        });
+    },
+  );
 
   it.each([false, true])('inspects a run without a source file (JSON=%s)', async (json) => {
     const execute = vi.spyOn(WorkflowExecutor.prototype, 'execute').mockResolvedValue({
