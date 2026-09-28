@@ -74,10 +74,12 @@ descriptive, not an execution constraint. A scoped phase's returned promise is o
 workflow operations: await it to handle failures.
 
 Phase/log calls are observations, not durable effects: no IDs, fingerprints, skipped-step checks, or
-fallback decisions. Log data must be lossless JSON. The runner owns their asynchronous writes,
-coalesces synchronous bursts into a snapshot, drains writes before releasing the lock, and treats
-storage failure as infrastructure failure. They are echoed to stderr at info level and delivered
-through `onEvent` after a successful save.
+fallback decisions. Log data must be lossless JSON. Invalid phase/log calls are authoring errors
+that fail the run even inside a settled map, so the item reruns on resume; a scoped phase body's own
+errors remain ordinary failures. The runner owns their asynchronous writes, coalesces synchronous
+bursts into a snapshot, drains writes before releasing the lock, and treats storage failure as
+infrastructure failure. They are echoed to stderr at info level and delivered through `onEvent`
+after a successful save.
 
 On resume, the kth identical phase/log entry is a replay if an earlier execution recorded a kth
 entry with the same type, message, data, and phase metadata. It is echoed with `(replay)` and

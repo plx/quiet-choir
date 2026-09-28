@@ -110,9 +110,10 @@ or performs recovery.
 using AsyncLocalStorage; map workers and bound contexts inherit it. Steps capture the phase at
 invocation, before asynchronous request preparation. `total` is descriptive. The dashboard counts
 completed/running steps with the same label; distinct phase labels give distinct counters.
-`ctx.log(message, data?)` accepts lossless JSON. These calls have no IDs, fingerprints, or
-skipped-step checks. Their writes are owned and drained by the runtime (synchronous bursts share a
-snapshot), and they echo to stderr at info level.
+`ctx.log(message, data?)` accepts lossless JSON. Invalid phase/log calls are authoring errors, never
+settled-map item outcomes; a scoped phase body's own errors settle normally. These calls have no
+IDs, fingerprints, or skipped-step checks. Their writes are owned and drained by the runtime
+(synchronous bursts share a snapshot), and they echo to stderr at info level.
 
 The kth identical phase/log observation from an earlier execution echoes with `(replay)` and
 `replayed:true` without appending a duplicate. Signatures include type, message, data, and phase

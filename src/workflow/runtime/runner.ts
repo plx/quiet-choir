@@ -1297,6 +1297,17 @@ export async function runWorkflow<TInput, TOutput>(
         throw error;
       }
     }
+    // Observation guards are authoring errors: settled maps must never journal them as item data.
+    function observe<T>(action: () => T): T {
+      try {
+        if (observationsClosed)
+          throw new Error('Workflow is closed; await all workflow operations.');
+        return action();
+      } catch (error) {
+        origins.markFatal(error);
+        throw error;
+      }
+    }
     function phase(title: string, options?: PhaseOptions): void;
     function phase<T>(title: string, body: () => Promise<T>, options?: PhaseOptions): Promise<T>;
     function phase<T>(
@@ -1304,22 +1315,24 @@ export async function runWorkflow<TInput, TOutput>(
       bodyOrOptions?: PhaseOptions | (() => Promise<T>),
       options?: PhaseOptions,
     ): void | Promise<T> {
-      if (observationsClosed || (closed && typeof bodyOrOptions === 'function'))
-        throw new Error('Workflow is closed; await all workflow operations.');
-      if (typeof bodyOrOptions === 'function')
-        return launch(
-          `phase: ${title}`,
-          () => observations.scoped(title, bodyOrOptions, options),
-          false,
-        );
-      observations.setPhase(title, bodyOrOptions);
+      if (typeof bodyOrOptions === 'function') {
+        // Validate before launch; errors from the body itself stay ordinary item failures.
+        const info = observe(() => {
+          if (closed) throw new Error('Workflow is closed; await all workflow operations.');
+          return observations.checkPhase(title, options);
+        });
+        return launch(`phase: ${title}`, () => observations.scoped(info, bodyOrOptions), false);
+      }
+      observe(() => {
+        observations.setPhase(title, bodyOrOptions);
+      });
     }
     const context: WorkflowContext = {
       phase,
       log(message, data) {
-        if (observationsClosed)
-          throw new Error('Workflow is closed; await all workflow operations.');
-        observations.log(message, data);
+        observe(() => {
+          observations.log(message, data);
+        });
       },
       runId: record.id,
       get signal() {

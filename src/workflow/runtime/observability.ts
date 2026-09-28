@@ -130,23 +130,29 @@ export class RunObservations {
   }
 
   public setPhase(title: string, options?: PhaseOptions): void {
-    const phase = this.#phaseInfo(title, options);
+    const phase = this.checkPhase(title, options);
     (this.#storage.getStore() ?? this.#root).phase = phase;
     this.#updatePhase();
     this.#event('phase', title, null);
   }
 
-  public async scoped<T>(
-    title: string,
-    body: () => Promise<T>,
-    options?: PhaseOptions,
-  ): Promise<T> {
-    const frame: PhaseFrame = { phase: this.#phaseInfo(title, options) };
+  /** Validates a phase before any body launches, so only authoring errors are reported. */
+  public checkPhase(title: string, options?: PhaseOptions): PhaseInfo {
+    if (typeof title !== 'string' || !title.trim())
+      throw new Error('Phase title must be nonempty.');
+    const total = options?.total ?? null;
+    if (total !== null && (!Number.isSafeInteger(total) || total < 0))
+      throw new Error('Phase total must be a nonnegative safe integer.');
+    return { title, total };
+  }
+
+  public async scoped<T>(phase: PhaseInfo, body: () => Promise<T>): Promise<T> {
+    const frame: PhaseFrame = { phase };
     this.#active.add(frame);
     this.#updatePhase();
     try {
       return await this.#storage.run(frame, () => {
-        this.#event('phase', title, null);
+        this.#event('phase', phase.title, null);
         return body();
       });
     } finally {
@@ -164,15 +170,6 @@ export class RunObservations {
   public async flush(): Promise<void> {
     while (this.#pending.size) await Promise.all(this.#pending);
     if (this.#error !== undefined) throw this.#error;
-  }
-
-  #phaseInfo(title: string, options?: PhaseOptions): PhaseInfo {
-    if (typeof title !== 'string' || !title.trim())
-      throw new Error('Phase title must be nonempty.');
-    const total = options?.total ?? null;
-    if (total !== null && (!Number.isSafeInteger(total) || total < 0))
-      throw new Error('Phase total must be a nonnegative safe integer.');
-    return { title, total };
   }
 
   #updatePhase(): void {

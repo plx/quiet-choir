@@ -406,6 +406,101 @@ it('validates observations and owns unawaited scoped failures without suppressin
   );
 });
 
+const cyclic: Record<string, unknown> = {};
+cyclic['self'] = cyclic;
+it.each([
+  [
+    'a function log payload',
+    'lossless JSON',
+    (ctx: WorkflowContext) => {
+      ctx.log('m', (() => 1) as never);
+    },
+  ],
+  [
+    'a BigInt log payload',
+    'lossless JSON',
+    (ctx: WorkflowContext) => {
+      ctx.log('m', 1n as never);
+    },
+  ],
+  [
+    'a cyclic log payload',
+    'lossless JSON',
+    (ctx: WorkflowContext) => {
+      ctx.log('m', cyclic as never);
+    },
+  ],
+  [
+    'a non-string log message',
+    'must be a string',
+    (ctx: WorkflowContext) => {
+      ctx.log(1 as never, null);
+    },
+  ],
+  [
+    'an empty phase title',
+    'nonempty',
+    (ctx: WorkflowContext) => {
+      ctx.phase('');
+    },
+  ],
+  [
+    'a negative phase total',
+    'nonnegative',
+    (ctx: WorkflowContext) => {
+      ctx.phase('p', { total: -1 });
+    },
+  ],
+  [
+    'an invalid scoped phase title',
+    'nonempty',
+    (ctx: WorkflowContext) => ctx.phase(' ', () => Promise.resolve(null)),
+  ],
+  [
+    'an invalid scoped phase total',
+    'nonnegative',
+    (ctx: WorkflowContext) => ctx.phase('p', () => Promise.resolve(null), { total: 1.5 }),
+  ],
+] as const)(
+  'rejects %s in a settled map instead of journaling it, then reruns the item',
+  async (_, message, observe) => {
+    let broken = true;
+    const mapper = vi.fn(async (ctx: WorkflowContext, n: number) => {
+      if (broken) await observe(ctx);
+      ctx.log('ok', n);
+      return n;
+    });
+    const definition = workflow((ctx) =>
+      ctx.map('items', [0], { concurrency: 1, onError: 'settle' }, (n) => mapper(ctx, n)),
+    );
+    await expect(runWorkflow(definition, options())).rejects.toThrow(message);
+    const failed = await readRun(options());
+    expect(failed.status).toBe('failed');
+    expect(failed.maps?.['items']?.items[0]).toMatchObject({ status: 'running', outcome: null });
+    broken = false;
+    const resumed = await runWorkflow(definition, { ...options(), resume: true });
+    expect(resumed.output).toEqual([{ ok: true, value: 0 }]);
+    expect(mapper).toHaveBeenCalledTimes(2);
+  },
+);
+
+it('still settles an error thrown by a valid phase body as an item failure', async () => {
+  const body = vi.fn(() => Promise.reject(new Error('body failed')));
+  const definition = workflow((ctx) =>
+    ctx.map('items', [0], { concurrency: 1, onError: 'settle' }, () =>
+      ctx.phase('work', body, { total: 1 }),
+    ),
+  );
+  const result = await runWorkflow(definition, options());
+  expect(result.output).toEqual([
+    { ok: false, error: { message: 'body failed', kind: 'unknown', attempts: 1, stepId: null } },
+  ]);
+  expect((await readRun(options())).maps?.['items']?.items[0]?.status).toBe('completed');
+  const resumed = await runWorkflow(definition, { ...options(), resume: true });
+  expect(resumed.output).toEqual(result.output);
+  expect(body).toHaveBeenCalledTimes(1);
+});
+
 it('keeps primitive failures and format-six required metadata readable without inventing stacks', async () => {
   await expect(
     runWorkflow(
