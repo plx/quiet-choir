@@ -208,13 +208,23 @@ export class RunWorktrees {
     invocation: HarnessInvocation,
   ): Promise<string> {
     const revision = base === undefined ? 'HEAD' : typeof base === 'string' ? base : base.commit;
-    return commitId(
-      await this.driver().text(
-        ledger.repo,
-        ['rev-parse', '--verify', '--end-of-options', `${revision}^{commit}`],
-        invocation,
-      ),
-    );
+    try {
+      return commitId(
+        await this.driver().text(
+          ledger.repo,
+          ['rev-parse', '--verify', '--end-of-options', `${revision}^{commit}`],
+          invocation,
+        ),
+      );
+    } catch (cause) {
+      if (cause instanceof CheckpointError || invocation.signal.aborted) throw cause;
+      throw new ConfigurationError(
+        base === undefined
+          ? `Worktree isolation cannot resolve base ${revision} to a commit; the repository has no committed HEAD.`
+          : `Worktree isolation cannot resolve base ${revision} to a commit.`,
+        { cause },
+      );
+    }
   }
 
   private ref(ledger: WorktreeLedger, key: string): string {

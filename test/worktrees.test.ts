@@ -433,6 +433,64 @@ it('keeps a missing repository a configuration failure that settled maps cannot 
   expect(invoke).toHaveBeenCalledTimes(1);
 });
 
+it('treats an unresolvable isolation base as a configuration failure that settled maps cannot journal or retry', async () => {
+  const invoke = vi.fn<Harness['invoke']>(() => Promise.resolve(response));
+  const harness: Harness = { invoke };
+  const definition = defineWorkflow({
+    version: '1',
+    name: 'missing-base',
+    input: z.null(),
+    output: z.boolean(),
+    async run(ctx) {
+      const [result] = await ctx.map(
+        'items',
+        ['only'],
+        { concurrency: 1, onError: 'settle' },
+        async () =>
+          ctx.claude.text('edit', {
+            prompt: 'edit',
+            isolation: { kind: 'worktree', base: 'no-such-branch' },
+            onError: 'return',
+            retry: { maxAttempts: 3, delayMs: 0 },
+          }),
+      );
+      if (!result?.ok || !result.value.ok) throw new Error('isolated call did not complete');
+      return result.value.value.worktree?.commit !== undefined;
+    },
+  });
+  await expect(
+    runWorkflow(definition, { ...options('missing-base'), input: null, harness }),
+  ).rejects.toThrow('cannot resolve base no-such-branch to a commit');
+  const failed = await readRun({ stateDir, runId: 'missing-base' });
+  const steps = Object.values(failed.steps);
+  expect(steps).toHaveLength(1);
+  expect(steps[0]?.status).toBe('failed');
+  expect(steps[0]?.attempts).toBe(1);
+  expect(failed.maps?.['items']?.items[0]).toMatchObject({ status: 'running', outcome: null });
+  expect(invoke).not.toHaveBeenCalled();
+});
+
+it('names a missing committed HEAD when no isolation base is given', async () => {
+  const empty = join(directory, 'empty');
+  await mkdir(empty);
+  await git.text(empty, ['init', '-q'], invocation);
+  const invoke = vi.fn<Harness['invoke']>(() => Promise.resolve(response));
+  const harness: Harness = { invoke };
+  const definition = defineWorkflow({
+    version: '1',
+    name: 'no-head',
+    input: z.null(),
+    output: z.string(),
+    async run(ctx) {
+      return (await ctx.claude.text('edit', { prompt: 'edit', isolation: 'worktree' })).output;
+    },
+  });
+  await expect(
+    runWorkflow(definition, { ...options('no-head'), cwd: empty, input: null, harness }),
+  ).rejects.toThrow('cannot resolve base HEAD to a commit; the repository has no committed HEAD');
+  expect(invoke).not.toHaveBeenCalled();
+});
+
 it('rejects a cache root symlinked into the checkout before creating directories or invoking agents', async () => {
   const linked = join(directory, 'linked');
   await symlink(repo, linked, 'dir');
