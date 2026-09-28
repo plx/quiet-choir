@@ -8,13 +8,18 @@ import {
   type WorkflowContext,
 } from '../../src/index.js';
 
+/** Marks compile-only bindings as used without the `void` operator. */
+function keep(...values: unknown[]): unknown[] {
+  return values;
+}
+
 export const literal = defineWorkflow({
   name: 'literal',
   version: '1',
   input: z.object({}),
   output: z.object({ verdict: z.enum(['pass', 'fail']) }),
   async run(ctx, input) {
-    void [ctx, input];
+    keep(ctx, input);
     return { verdict: 'pass' };
   },
 });
@@ -75,5 +80,5 @@ export async function types(ctx: WorkflowContext, mode: ErrorMode): Promise<void
     prompt: 'p',
     onError: mode,
   });
-  void [step, object, text, settled, dynamic, settledText, dynamicText];
+  keep(step, object, text, settled, dynamic, settledText, dynamicText);
 }
