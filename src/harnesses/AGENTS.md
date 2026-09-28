@@ -13,7 +13,8 @@ ownership, output limits, and cancellation. Existing tests use protocol fixtures
 executables; they do not require paid agent calls.
 
 Register spawned groups through HarnessInvocation before writing task input, including version
-probes. Reap the group on every exit; bound inherited-pipe draining and post-KILL settlement. Record
+probes. Reap the group on every exit; bound inherited-pipe draining and post-KILL settlement. Stream
+consumer settlement is bounded too; a consumer that never settles keeps the ownership record. Record
 cleanup warnings must not discard a valid protocol result. Keep records when reaping is uncertain;
 OS identity mismatch must never authorize signaling a reused PID.
 

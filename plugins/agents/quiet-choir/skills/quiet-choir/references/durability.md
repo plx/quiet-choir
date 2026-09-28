@@ -365,8 +365,9 @@ node "$QC_CHECKOUT/bin/run.js" workflow execute review.workflow.ts \
 
 The default TERM grace is 3000ms, configurable with `--kill-grace-ms` (not sticky). Every leader
 exit, including success, reaps its group and drains pipes for at most two seconds. A 500ms backstop
-after KILL settles even if another group holds stdout. Valid results survive cleanup warnings;
-unreaped records retain a released-owner lock for recovery. Windows tracks/reaps immediate children.
+after KILL settles even if another group holds stdout. An output consumer that never settles fails
+the call and keeps its record. Valid results survive cleanup warnings; unreaped records retain a
+released-owner lock for recovery. Windows tracks/reaps immediate children.
 
 A crash between spawn and durable registration can still leave an unrecorded child. Descendants that
 create another group/session escape ownership. OS birth checks have platform resolution and a

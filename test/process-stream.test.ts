@@ -2,7 +2,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
-import { afterEach, beforeEach, expect, it } from 'vitest';
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { runProcess, type ProcessRequest } from '../src/processes/run.js';
 
 let directory: string;
@@ -117,4 +117,31 @@ it('delivers the first event while a producer is still running, before cancellat
     }),
   ).rejects.toMatchObject({ code: 'ABORT_ERR' });
   expect(first).toBe('session\n');
+});
+
+it('bounds a stalled stream consumer after exit and keeps the ownership record', async () => {
+  const config = await request(
+    `process.stdin.resume();process.stdin.on('end',()=>{process.stdout.write('event\\n');});`,
+  );
+  const release = vi.fn(() => Promise.resolve());
+  const started = performance.now();
+  const error: unknown = await runProcess({
+    ...config,
+    drainMs: 100,
+    backstopMs: 100,
+    trackProcess: () => Promise.resolve({ release }),
+    stream: {
+      maxBytes: 1024,
+      stdout: () => new Promise<void>(() => undefined),
+      stderr: () => undefined,
+    },
+  }).catch((error: unknown) => error);
+  // Pipe drain, then the delivery deadline, then the settlement backstop.
+  expect(performance.now() - started).toBeLessThan(2000);
+  expect(error).toMatchObject({
+    code: 'QUIET_CHOIR_CONSUMER_STALLED',
+    message: expect.stringContaining('output consumer did not settle') as unknown,
+  });
+  expect(error).toHaveProperty('message', expect.stringContaining('ownership record was retained'));
+  expect(release).not.toHaveBeenCalled();
 });

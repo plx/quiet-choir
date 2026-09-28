@@ -89,6 +89,7 @@ export function runProcess(request: ProcessRequest): Promise<ProcessResult> {
     let escalation: NodeJS.Timeout | undefined;
     let backstop: NodeJS.Timeout | undefined;
     let drain: NodeJS.Timeout | undefined;
+    let delivery: NodeJS.Timeout | undefined;
     let poll: NodeJS.Timeout | undefined;
     let cleaning = false;
     const descriptor: HarnessProcess | undefined =
@@ -132,6 +133,7 @@ export function runProcess(request: ProcessRequest): Promise<ProcessResult> {
       clearTimeout(escalation);
       clearTimeout(backstop);
       clearTimeout(drain);
+      clearTimeout(delivery);
       clearInterval(poll);
       subscription[Symbol.dispose]();
       child.stdin.destroy();
@@ -140,14 +142,30 @@ export function runProcess(request: ProcessRequest): Promise<ProcessResult> {
       child.unref();
       void (async () => {
         // Backpressure bounds queued chunks, including Node's exit-time pipe flush.
-        // Durable session/transcript callbacks finish before ownership is released.
-        await Promise.all(deliveries);
+        // Durable session/transcript callbacks finish before ownership is released; a consumer
+        // that never settles leaves that unconfirmed, so the ownership record is kept.
+        const backstopMs = request.backstopMs ?? 500;
+        let timer: NodeJS.Timeout | undefined;
+        const delivered = await Promise.race([
+          Promise.all(deliveries).then(() => true),
+          new Promise<false>((resolve) => {
+            timer = setTimeout(resolve, backstopMs, false);
+          }),
+        ]);
+        clearTimeout(timer);
+        if (!delivered) {
+          failure ??= Object.assign(
+            new Error(`${request.binary} output consumer did not settle after the process ended.`),
+            { code: 'QUIET_CHOIR_CONSUMER_STALLED' },
+          );
+          warn(`Output consumer did not settle within ${String(backstopMs)}ms of process cleanup.`);
+        }
         try {
           const lease = await registration?.catch((error: unknown) => {
             failure ??= error instanceof Error ? error : new Error(String(error));
             return undefined;
           });
-          if (lease && reaped) await lease.release();
+          if (lease && reaped && delivered) await lease.release();
           else if (lease)
             warn(
               'Process cleanup could not be confirmed; its ownership record was retained for inspect and recovery.',
@@ -178,7 +196,10 @@ export function runProcess(request: ProcessRequest): Promise<ProcessResult> {
       })();
     };
     const maybeFinish = (): void => {
-      if (exited && reaped && pipesEnded === 2 && deliveries.size === 0) finish();
+      if (settled || !exited || !reaped || pipesEnded !== 2) return;
+      if (deliveries.size === 0) finish();
+      // Settled consumers call back here; a stalled one is bounded by this deadline and finish().
+      else delivery ??= setTimeout(finish, request.drainMs ?? 2000);
     };
     const beginCleanup = (): void => {
       if (cleaning || settled) return;
