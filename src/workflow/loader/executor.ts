@@ -372,7 +372,10 @@ export class WorkflowExecutor implements Executor<
         ...Object.keys(plan.harness?.configurations ?? {}),
       ])
         if (!declaredNames.has(name))
-          throw new Error(`Configuration selects undeclared harness ${name}.`);
+          this.#options.logger.log(
+            'warn',
+            `Harness ${name} is not declared in the static workflow tree; this setting only applies if a child invoked dynamically (via ctx.workflow) declares it.`,
+          );
       const run = await runWorkflow(definition, {
         ...(Object.keys(adapters).length ? { adapters } : {}),
         ...(plan.harness?.configurations === undefined
