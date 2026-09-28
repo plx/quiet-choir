@@ -6,6 +6,7 @@ import { FileRunStore, type OwnedRunStore, type RunStore } from '../runtime/run-
 import { inspectRunOwnership, type RunRecord } from '../runtime/store.js';
 import { readRequiredRun } from '../runtime/read-required-run.js';
 import { isValidRunId, runIdMessage, RunRefusedError } from '../runtime/run-errors.js';
+import { clockNow, systemClock } from '../runtime/clock.js';
 import { WorkflowExecutor, type WorkflowExecutorOptions } from './executor.js';
 import { workflowFailure, type WorkflowFailure } from './failure.js';
 import type { HarnessSelection } from './harness-selection.js';
@@ -37,9 +38,9 @@ export interface TickWorkflowsResult extends ExecutionResult {
   readonly exitCode: 0 | 75 | 1;
 }
 
-async function due(run: RunRecord, stateDir: string): Promise<boolean> {
+async function due(run: RunRecord, stateDir: string, now: number): Promise<boolean> {
   if (run.status !== 'suspended') return false;
-  if (run.nextWakeAt != null && run.nextWakeAt <= Date.now()) return true;
+  if (run.nextWakeAt != null && run.nextWakeAt <= now) return true;
   for (const [id, step] of Object.entries(run.steps)) {
     if (step.status !== 'waiting' || !step.question) continue;
     for (const path of answerCandidates(stateDir, run.id, id)) {
@@ -155,6 +156,7 @@ export class TickWorkflowExecutor implements Executor<
         ? timer.signal
         : AbortSignal.any([timer.signal, this.options.signal]);
     const store = new FileRunStore(plan.stateDir);
+    const clock = this.options.clock ?? systemClock;
     const completed = new Set<string>();
     const suspended = new Map<string, number | null>();
     const failed = new Map<string, string>();
@@ -180,7 +182,7 @@ export class TickWorkflowExecutor implements Executor<
           try {
             let run = await readRequiredRun({ stateDir: plan.stateDir, runId: id });
             observe(run);
-            if (!(await due(run, plan.stateDir))) {
+            if (!(await due(run, plan.stateDir, clockNow(clock)))) {
               if (run.status === 'suspended') skipped.set(id, 'not due');
               continue;
             }
@@ -209,7 +211,7 @@ export class TickWorkflowExecutor implements Executor<
             if (!latest) throw new Error(`Run ${id} disappeared after acquiring ownership.`);
             run = latest;
             observe(run);
-            if (!(await due(run, plan.stateDir))) {
+            if (!(await due(run, plan.stateDir, clockNow(clock)))) {
               skipped.set(id, 'no longer due');
               continue;
             }
@@ -255,10 +257,13 @@ export class TickWorkflowExecutor implements Executor<
             (completed.has(plan.runId) || failed.has(plan.runId) || incompatible.has(plan.runId)))
         )
           break;
+        const now = clockNow(clock);
         const next = [...suspended]
           .filter(([id]) => !incompatible.has(id) && !failed.has(id))
-          .flatMap(([, at]) => (at === null || at <= Date.now() ? [] : [at]));
-        await waitForChange(plan.stateDir, Math.min(deadline, ...next) - Date.now(), signal);
+          .flatMap(([, at]) => (at === null || at <= now ? [] : [at]));
+        const untilDeadline = deadline - Date.now();
+        const untilNext = next.length > 0 ? Math.min(...next) - now : Infinity;
+        await waitForChange(plan.stateDir, Math.min(untilDeadline, untilNext), signal);
       }
       if (this.options.signal?.aborted)
         return workflowFailure('workflow.interrupted', 'Tick interrupted.', context);

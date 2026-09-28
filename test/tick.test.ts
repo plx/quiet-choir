@@ -284,4 +284,33 @@ describe('tick loader and operator hooks', { timeout: 20_000 }, () => {
     const capture = JSON.parse(await readFile(f.agentLog, 'utf8')) as Record<string, unknown>;
     expect(capture).toMatchObject({ provider: 'claude', scenario: 'claude-text-success' });
   });
+
+  it('uses the injected clock, not the system clock, to judge readiness', async () => {
+    const futureByRealClock = await fixture('future');
+    const futureClock: WorkflowClock = {
+      now: () => Date.now() + 120_000,
+      sleep: (ms, signal) => pastClock.sleep(ms, signal),
+    };
+    expect(
+      await new TickWorkflowExecutor({ logger, clock: futureClock }).execute(
+        futureByRealClock.tickPlan,
+      ),
+    ).toMatchObject({ ok: true, resumed: 1, completed: ['run'], exitCode: 0 });
+
+    const dueByRealClock = await fixture('due');
+    const farPastClock: WorkflowClock = {
+      now: () => Date.now() - 200_000,
+      sleep: (ms, signal) => pastClock.sleep(ms, signal),
+    };
+    expect(
+      await new TickWorkflowExecutor({ logger, clock: farPastClock }).execute(
+        dueByRealClock.tickPlan,
+      ),
+    ).toMatchObject({
+      ok: true,
+      resumed: 0,
+      skipped: [{ runId: 'run', reason: 'not due' }],
+      exitCode: 75,
+    });
+  });
 });
