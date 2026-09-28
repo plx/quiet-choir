@@ -1433,9 +1433,13 @@ it.each(['owned', 'different-owner'] as const)(
       'planned',
     ]);
     if (ownership === 'different-owner') {
-      await expect(runWorkflow(workflow, { ...settings, resume: true })).rejects.toThrow(
-        'different checkout owner',
-      );
+      const rejection: unknown = await runWorkflow(workflow, {
+        ...settings,
+        resume: true,
+      }).catch((error: unknown) => error);
+      expect(rejection).toBeInstanceOf(Error);
+      expect((rejection as Error).cause).toBeInstanceOf(ConfigurationError);
+      expect((rejection as Error).message).toContain('different checkout owner');
       expect(await readFile(join(metadata, 'commondir'), 'utf8')).toBe('');
       expect(invoke).not.toHaveBeenCalled();
       return;
@@ -1453,6 +1457,106 @@ it.each(['owned', 'different-owner'] as const)(
   },
   20_000,
 );
+
+it('keeps a resumed different-owner worktree registration a configuration failure that a retried, settled map cannot journal', async () => {
+  // First interrupt and corrupt the planned registration exactly as the plain-call case does,
+  // then resume with the *same* step wrapped in a retry policy under an onError: 'settle' map.
+  // Recovery runs in `ledger()` before the harness ever launches, so it must still surface as a
+  // fatal ConfigurationError: never retried by the call's own policy, never journaled as the
+  // map item's settled outcome.
+  let metadata = '',
+    interrupted = false;
+  const breakingRunner: ProcessRunner = {
+    async run(request, invocation) {
+      const result = await processRunner.run(request, invocation);
+      if (
+        !interrupted &&
+        Array.isArray(request.command) &&
+        request.command.includes('worktree') &&
+        request.command.includes('add')
+      ) {
+        interrupted = true;
+        const path = z.string().parse(request.command.at(-2));
+        metadata = resolve(
+          path,
+          (await readFile(join(path, '.git'), 'utf8')).replace(/^gitdir: /u, '').trimEnd(),
+        );
+        await writeFile(join(metadata, 'commondir'), '');
+        await writeFile(join(metadata, 'gitdir'), join(directory, 'someone-else', '.git') + '\n');
+        throw new Error('fixture interrupted registration');
+      }
+      return result;
+    },
+  };
+  const invoke = vi.fn<Harness['invoke']>(async (request) => {
+    await writeFile(join(request.cwd, 'file.txt'), 'resumed edit\n');
+    return response;
+  });
+  const setup = defineWorkflow({
+    name: 'planned-registration-settle',
+    version: '1',
+    input: z.null(),
+    output: z.string(),
+    async run(ctx) {
+      const result = await ctx.codex.text('edit', { prompt: 'edit', isolation: 'worktree' });
+      assert(result.worktree?.commit);
+      return result.worktree.commit;
+    },
+  });
+  const settled = defineWorkflow({
+    name: 'planned-registration-settle',
+    version: '1',
+    input: z.null(),
+    output: z.string(),
+    async run(ctx) {
+      const [result] = await ctx.map(
+        'items',
+        ['only'],
+        { concurrency: 1, onError: 'settle' },
+        async () =>
+          ctx.codex.text('edit', {
+            prompt: 'edit',
+            isolation: 'worktree',
+            onError: 'return',
+            retry: { maxAttempts: 3, delayMs: 0 },
+          }),
+      );
+      if (!result?.ok || !result.value.ok) throw new Error('isolated call did not complete');
+      assert(result.value.value.worktree?.commit);
+      return result.value.value.worktree.commit;
+    },
+  });
+  const settings = {
+    ...options('planned-registration-settle'),
+    harness: { invoke },
+    worktrees: { root, keep: 'all' as const },
+  };
+  await expect(
+    runWorkflow(setup, { ...settings, input: null, processRunner: breakingRunner }),
+  ).rejects.toThrow('fixture interrupted registration');
+  expect(invoke).not.toHaveBeenCalled();
+  const failed = await readRun(settings);
+  expect(Object.values(failed.worktrees?.caches ?? {}).map((cache) => cache.state)).toEqual([
+    'planned',
+  ]);
+
+  const rejection: unknown = await runWorkflow(settled, { ...settings, resume: true }).catch(
+    (error: unknown) => error,
+  );
+  expect(rejection).toBeInstanceOf(Error);
+  expect((rejection as Error).cause).toBeInstanceOf(ConfigurationError);
+  expect((rejection as Error).message).toContain('different checkout owner');
+  expect(await readFile(join(metadata, 'commondir'), 'utf8')).toBe('');
+  expect(invoke).not.toHaveBeenCalled();
+  const resumedFailed = await readRun(settings);
+  const step = resumedFailed.steps['items/0/edit'];
+  expect(step?.status).toBe('failed');
+  expect(step?.attempts).toBe(1);
+  expect(resumedFailed.maps?.['items']?.items[0]).toMatchObject({
+    status: 'running',
+    outcome: null,
+  });
+}, 20_000);
 
 it('serializes sibling Git registrations while retaining concurrent isolated effects', async () => {
   let active = 0,

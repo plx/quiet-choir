@@ -156,5 +156,7 @@ checkout is still not reused.
 
 This is not arbitrary repository repair: changed owners, redirected metadata, nonempty corruption
 and unrelated worktrees are not rewritten. Other interrupted Git states may still require manual
-repair. The Workflow Lab SIGKILL matrix exercises the writer boundary; deterministic runtime tests
-cover this registration window and a mismatched-owner refusal.
+repair. Every such refusal throws `ConfigurationError`, since it is validation that fails before the
+harness launches: it is never retried or settled, and the step stays resumable once an operator
+corrects the underlying registration. The Workflow Lab SIGKILL matrix exercises the writer boundary;
+deterministic runtime tests cover this registration window and a mismatched-owner refusal.
