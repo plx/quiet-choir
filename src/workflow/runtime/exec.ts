@@ -4,6 +4,7 @@ import type { z } from 'zod';
 import { canonicalCwd } from './compatibility.js';
 import { digest } from './json.js';
 import { commandSchema, execOptionsSchema, execResultSchema } from './exec-schema.js';
+import { ConfigurationError } from './configuration-error.js';
 import { ExecError } from './exec-error.js';
 import type {
   Command,
@@ -53,7 +54,7 @@ export async function executeCommand<T>(
   schema: z.ZodType<T> | null,
 ): Promise<T | z.infer<typeof execResultSchema>> {
   if (!runner)
-    throw new Error(
+    throw new ConfigurationError(
       'No process adapter configured. Supply RunOptions.processRunner (for example, NodeProcessRunner).',
     );
   const result = execResultSchema.parse(await runner.run(request, invocation));

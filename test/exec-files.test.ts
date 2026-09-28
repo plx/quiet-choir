@@ -20,6 +20,8 @@ import {
   z,
   NodeProcessRunner,
   ExecError,
+  ConfigurationError,
+  WorkflowRunError,
   guardFile,
   type WorkflowContext,
   type ProcessRunner,
@@ -296,12 +298,14 @@ it('flags an explicit shell and its diagnostics in inspect without counting it a
 });
 
 it('requires an adapter only for live work and does not hide ignored structured failures', async () => {
-  await expect(
-    runWorkflow(
-      definition((ctx) => ctx.exec('one', ['fake'])),
-      setup(),
-    ),
-  ).rejects.toThrow('No process adapter');
+  const missingAdapter: unknown = await runWorkflow(
+    definition((ctx) => ctx.exec('one', ['fake'])),
+    setup(),
+  ).catch((error: unknown) => error);
+  expect(missingAdapter).toBeInstanceOf(WorkflowRunError);
+  if (!(missingAdapter instanceof WorkflowRunError)) throw missingAdapter;
+  expect(missingAdapter.cause).toBeInstanceOf(ConfigurationError);
+  expect((missingAdapter.cause as Error).message).toContain('No process adapter');
   const run = vi.fn<ProcessRunner['run']>(() => Promise.resolve({ ...reply, stdout: 'not json' }));
   await expect(
     runWorkflow(
@@ -313,6 +317,23 @@ it('requires an adapter only for live work and does not hide ignored structured 
     ),
   ).rejects.toThrow();
   expect((await readRun({ ...setup(), runId: 'ignored' })).steps['ignored']?.status).toBe('failed');
+});
+
+it('treats a missing process adapter as fatal inside a settled map instead of settling fallback data', async () => {
+  // Mirrors the settled-map hazard from the review thread: ctx.exec must reject the whole run
+  // instead of letting the map journal a fallback item and complete.
+  const mapError: unknown = await runWorkflow(
+    definition((ctx) =>
+      ctx.map('items', [0], { concurrency: 1, onError: 'settle' }, () => ctx.exec('cmd', ['fake'])),
+    ),
+    { ...setup(), runId: 'settled-map' },
+  ).catch((error: unknown) => error);
+  expect(mapError).toBeInstanceOf(WorkflowRunError);
+  if (!(mapError instanceof WorkflowRunError)) throw mapError;
+  expect(mapError.cause).toBeInstanceOf(ConfigurationError);
+  expect(
+    (await readRun({ ...setup(), runId: 'settled-map' })).maps?.['items']?.items[0]?.status,
+  ).toBe('running');
 });
 
 it('rejects nested commands and reserved environment keys before spawning', async () => {
