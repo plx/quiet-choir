@@ -107,6 +107,7 @@ ceiling. quiet-choir's remaining run-wide spend/token controls are tracked in
 | Locate/build the runtime, import it into another project, choose CLI flags | [Setup and CLI](references/setup-and-cli.md)                 |
 | Launch in the background, poll, diagnose stalls, recover orphaned children | [Operating a run](references/operating-runs.md)              |
 | Locate a run, classify its state, act on exact errors                      | [Inspection and triage](references/inspection.md)            |
+| Write loops, fan-out, failure handling, or waits                           | [Verified patterns and traps](references/patterns.md)        |
 | Define schemas, compose steps, branch, map, and retry                      | [Workflow authoring](references/workflow-authoring.md)       |
 | Select profiles, shared call options, identity, usage, or process limits   | [Agent calls](references/agent-calls.md)                     |
 | Select provider-specific controls or diagnose native protocol failures     | [Claude](references/claude.md), [Codex](references/codex.md) |

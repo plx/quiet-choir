@@ -214,3 +214,21 @@ test('inline link destinations honor balanced and escaped parentheses', async ()
     await rm(root, { recursive: true, force: true });
   }
 });
+test('rejects stale cookbook code even when both distributed copies agree', async () => {
+  await fixture(async (root) => {
+    for (const pkg of packages) {
+      const file = join(root, pkg, 'skills/quiet-choir/references/patterns.md');
+      await writeFile(
+        file,
+        (await readFile(file, 'utf8')).replace(
+          "name: 'cross-harness'",
+          "name: 'stale-documentation'",
+        ),
+      );
+    }
+    await assert.rejects(
+      checkSkills(root, { compile: false }),
+      /pattern example pattern-cross-harness differs from/u,
+    );
+  });
+});

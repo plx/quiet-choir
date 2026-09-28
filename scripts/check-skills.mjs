@@ -137,14 +137,41 @@ export function sourceExample(code, runtime = join(repository, 'src/index.js')) 
     code = code.slice(0, edit.start) + edit.text + code.slice(edit.end);
   return code;
 }
+async function patternSources() {
+  const directory = join(repository, 'examples/patterns');
+  const entries = z
+    .array(
+      z
+        .object({
+          id: z.string().regex(/^pattern-[a-z0-9-]+$/u),
+          file: z.string().regex(/^[a-z0-9-]+(?:\.workflow)?\.ts$|^[a-z0-9-]+\.fixtures\.json$/u),
+          kind: z.enum(['workflow', 'support', 'fixture']),
+        })
+        .strict(),
+    )
+    .parse(await json(join(directory, 'recipes.json')));
+  const sources = new Map();
+  for (const entry of entries) {
+    requireThat(!sources.has(entry.id), `duplicate pattern example ${entry.id}`);
+    const file = join(directory, entry.file);
+    const code = (await readFile(file, 'utf8')).trimEnd();
+    if (entry.kind === 'workflow')
+      requireThat(
+        entry.file.endsWith('.workflow.ts') && code.split('\n').length <= 30,
+        `${file}: recipes must be complete workflows of at most 30 lines`,
+      );
+    sources.set(entry.id, { ...entry, file, code });
+  }
+  return sources;
+}
 export async function compileExamples(examples) {
   await mkdir(join(repository, '.context'), { recursive: true });
   const temporary = await mkdtemp(join(repository, '.context/skill-examples-'));
   try {
     const locations = new Map();
     for (const [index, example] of examples.entries()) {
-      const file = join(temporary, `${index}.mts`);
-      await writeFile(file, sourceExample(example.code));
+      const file = example.sourceFile ?? join(temporary, `${index}.mts`);
+      if (!example.sourceFile) await writeFile(file, sourceExample(example.code));
       locations.set(file, example);
     }
     const configFile = ts.readConfigFile(join(repository, 'tsconfig.json'), ts.sys.readFile);
@@ -194,6 +221,7 @@ export async function checkSkills(root = repository, { compile = true } = {}) {
     .parse(await json(join(root, 'plugins/skill-differences.json')));
   const rules = new Set(allowlist.map(({ file, region }) => `${file}:${region}`));
   requireThat(rules.size === allowlist.length, 'duplicate difference allowlist rule');
+  const sources = await patternSources();
   const trees = [],
     examples = [];
   let links = 0,
@@ -203,7 +231,8 @@ export async function checkSkills(root = repository, { compile = true } = {}) {
       skillRoot = join(packageRoot, skillPath);
     await files(packageRoot);
     const tree = new Map(),
-      seen = new Set();
+      seen = new Set(),
+      patternsSeen = new Set();
     for (const file of await files(skillRoot)) {
       const absolute = join(skillRoot, file);
       requireThat(inside(skillRoot, absolute), `invalid skill file ${file}`);
@@ -216,14 +245,36 @@ export async function checkSkills(root = repository, { compile = true } = {}) {
       links += await checkLinks(absolute, text, packageRoot);
       tree.set(file, normalizeDifferences(text, file, rules, seen));
       for (const fence of fences(text, absolute)) {
+        const source = sources.get(fence.id);
+        if (fence.id?.startsWith('pattern-'))
+          requireThat(source, `${absolute}: unknown pattern example ${fence.id}`);
+        if (source) {
+          requireThat(
+            !patternsSeen.has(fence.id),
+            `${absolute}: duplicate pattern example ${fence.id}`,
+          );
+          patternsSeen.add(fence.id);
+          requireThat(
+            fence.code === source.code,
+            `${absolute}:${fence.line}: pattern example ${fence.id} differs from ${source.file}`,
+          );
+          requireThat(
+            source.kind === 'fixture'
+              ? fence.language === 'json'
+              : ['ts', 'typescript'].includes(fence.language),
+            `${absolute}: incorrect pattern example language`,
+          );
+        }
         if (!['ts', 'typescript'].includes(fence.language)) continue;
         if (fence.fragment) {
           fragments++;
           continue;
         }
-        examples.push({ ...fence, file: absolute });
+        examples.push({ ...fence, file: absolute, ...(source ? { sourceFile: source.file } : {}) });
       }
     }
+    for (const id of sources.keys())
+      requireThat(patternsSeen.has(id), `${pkg}: missing pattern example ${id}`);
     for (const rule of rules)
       requireThat(seen.has(rule), `${pkg}: unused difference allowlist rule ${rule}`);
     trees.push(tree);
