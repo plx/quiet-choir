@@ -1,3 +1,4 @@
+import type { ClaudeOptions } from '../runtime/model.js';
 import type { Command, ProcessRunner } from '../runtime/exec-model.js';
 import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -22,7 +23,7 @@ import type { HarnessSelection } from './harness-selection.js';
 /** One attempted live call in rehearsal order, including planner/fixture failures. @internal */
 export interface RehearsalCall {
   readonly stepId: string;
-  readonly provider: 'claude' | 'codex';
+  readonly harness: string;
   readonly attempt: number;
   readonly cwd: string;
   readonly prompt: string;
@@ -49,6 +50,8 @@ export interface RehearsalReport {
     structured: boolean;
   }[];
   readonly replays: readonly { stepId: string; kind: string }[];
+  readonly harnessCounts: Readonly<Record<string, number>>;
+  /** Compatibility counts for the two original native clients. */
   readonly providerCounts: { claude: number; codex: number };
   readonly nominalClaudeCeilingUsd: number;
   readonly stubbedSteps: readonly string[];
@@ -103,12 +106,21 @@ export class RehearsalHarness extends FixtureHarness {
     selection: HarnessSelection,
     private readonly stubPatterns: readonly string[] = [],
   ) {
-    super({ version: 1, calls: selection.fixtures?.calls ?? [], unmatched: 'synthesize' });
+    super({
+      version: 1,
+      calls: [
+        ...Object.entries(selection.named ?? {}).flatMap(([harness, fixtures]) =>
+          fixtures.calls.map((call) => ({ ...call, harness })),
+        ),
+        ...(selection.fixtures?.calls ?? []),
+      ],
+      unmatched: 'synthesize',
+    });
     this.cli = new CliHarness(selection.config);
     for (const match of stubPatterns) policyOverrideSchema.parse({ match });
   }
-  public policyDefaults(provider: HarnessRequest['provider']): ExecutionPolicy {
-    return this.cli.policyDefaults(provider);
+  public policyDefaults(harness: HarnessRequest['harness']): ExecutionPolicy {
+    return harness === 'claude' || harness === 'codex' ? this.cli.policyDefaults(harness) : {};
   }
   public override async invoke(
     request: HarnessRequest,
@@ -118,7 +130,7 @@ export class RehearsalHarness extends FixtureHarness {
     const match = this.match(request);
     const call: RehearsalCall = {
       stepId: request.call.stepId,
-      provider: request.provider,
+      harness: request.harness,
       attempt: request.call.attempt,
       cwd: request.cwd,
       prompt: request.options.prompt,
@@ -132,6 +144,12 @@ export class RehearsalHarness extends FixtureHarness {
     };
     this.calls.push(call);
     try {
+      if (request.harness !== 'claude' && request.harness !== 'codex') {
+        call.wouldPay = true;
+        call.limits = invocation.policy ?? {};
+        this.warnings.add(`Harness ${request.harness} is synthesized without a native argv plan.`);
+        return await super.invoke(request, invocation);
+      }
       const planned = this.cli.plan(request, invocation);
       call.plan = {
         ...planned,
@@ -143,12 +161,12 @@ export class RehearsalHarness extends FixtureHarness {
       };
       call.wouldPay = true;
       call.limits = {
-        ...this.cli.policyDefaults(request.provider),
+        ...this.cli.policyDefaults(request.harness),
         timeoutMs: call.plan.timeoutMs,
-        ...(request.provider === 'claude'
+        ...(request.harness === 'claude'
           ? {
-              maxTurns: request.options.maxTurns ?? 10,
-              maxBudgetUsd: request.options.maxBudgetUsd ?? 0.5,
+              maxTurns: (request.options as ClaudeOptions).maxTurns ?? 10,
+              maxBudgetUsd: (request.options as ClaudeOptions).maxBudgetUsd ?? 0.5,
             }
           : {}),
       };
@@ -221,14 +239,19 @@ export class RehearsalHarness extends FixtureHarness {
       calls: this.calls,
       commands: this.commands,
       replays: replayed,
+      harnessCounts: Object.fromEntries(
+        [...new Set(this.calls.map((call) => call.harness))].map((name) => [
+          name,
+          this.calls.filter((call) => call.harness === name).length,
+        ]),
+      ),
       providerCounts: {
-        claude: this.calls.filter((call) => call.provider === 'claude').length,
-        codex: this.calls.filter((call) => call.provider === 'codex').length,
+        claude: this.calls.filter((call) => call.harness === 'claude').length,
+        codex: this.calls.filter((call) => call.harness === 'codex').length,
       },
       nominalClaudeCeilingUsd: this.calls.reduce(
         (sum, call) =>
-          sum +
-          (call.provider === 'claude' && call.wouldPay ? (call.limits?.maxBudgetUsd ?? 0) : 0),
+          sum + (call.harness === 'claude' && call.wouldPay ? (call.limits?.maxBudgetUsd ?? 0) : 0),
         0,
       ),
       stubbedSteps: [...this.stubbedSteps],

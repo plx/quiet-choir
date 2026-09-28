@@ -96,7 +96,8 @@ it('snapshots mutable agent options before saving and invoking the harness', asy
   const harness: Harness = {
     invoke: (request) => {
       observed.push(request.options.prompt);
-      if (request.provider === 'claude') observed.push(...(request.options.tools ?? []));
+      if (request.harness === 'claude')
+        observed.push(...((request.options as { readonly tools?: readonly string[] }).tools ?? []));
       return Promise.resolve({
         text: request.options.prompt,
         sessionId: null,

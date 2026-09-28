@@ -159,7 +159,7 @@ it('accepts missing custom usage and preserves extra measurements through the re
         Promise.resolve({
           text: 'ok',
           sessionId: null,
-          ...(request.provider === 'claude'
+          ...(request.harness === 'claude'
             ? { usage: { costUsd: 0.02, future: { requests: 3 } } }
             : {}),
         }),
@@ -337,7 +337,7 @@ it('classifies legacy attempts by the kind they ran under across redefinitions',
   expect(saved.steps['effect']).toMatchObject({
     kind: 'step',
     attempts: 2,
-    redefinitions: [{ kind: 'claude', attempts: 1 }],
+    redefinitions: [{ kind: 'agent', attempts: 1 }],
   });
   expect(summarizeUsage(saved)).toMatchObject({ attempts: 1, legacyAttempts: 0 });
 

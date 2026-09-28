@@ -37,19 +37,19 @@ immediately. Rehearsal preserves capability/profile validation and still require
   "calls": [
     { "step": "triage", "output": { "severity": "high", "files": ["a.ts"] } },
     { "step": "review/2", "attempt": 1, "error": "simulated failure" },
-    { "step": "review/*", "provider": "codex", "output": { "findings": [] } },
+    { "step": "review/*", "harness": "codex", "output": { "findings": [] } },
     { "step": "summary", "text": "Looks fine.", "usage": { "costUsd": 0.01 } }
   ],
   "unmatched": "error"
 }
 ```
 
-Rules use first-match order, with optional provider and cumulative attempt filters. Exactly one of
+Rules use first-match order, with optional harness and cumulative attempt filters. Exactly one of
 `output`, `text`, and `error` is required. `text` is the raw adapter response; structured calls
 parse it as JSON. `output` is serialized for structured calls, while a string output on a text call
 stays plain text. Missing usage fields become null. Results still pass normal parsing, Zod
 validation, and checkpointing; stale fixtures fail at their named step. Missing rules fail with the
-step, provider, and attempt unless `unmatched` is `synthesize`. Unmatched calls and synthesis gaps
+step, harness, and attempt unless `unmatched` is `synthesize`. Unmatched calls and synthesis gaps
 reject as configuration errors and are never settled or retried, while a rule's `error` simulates a
 settleable invocation failure.
 
@@ -66,7 +66,7 @@ node "$QC_CHECKOUT/bin/run.js" workflow execute edited.workflow.ts \
   --dry-run --harness fixture:./fixtures.json --json
 ```
 
-Export skips local/sleep effects and settled failures; successful agent outputs retain provider and
+Export skips local/sleep effects and settled failures; successful agent outputs retain harness and
 usage but do not pin an attempt number. It does not modify the source checkpoint.
 
 ## Synthesis and report
@@ -86,15 +86,16 @@ represent their code; transforms and non-JSON schema types still fail at their c
 Successful `--dry-run --json` output is `{kind:"workflow.rehearsal", ok:true, ...report, run}`. The
 report contains:
 
-- `calls`: attempted live calls in invocation order, with full step ID, cumulative attempt,
-  provider, cwd, prompt, original schema, output source (`fixture` or `synthesized`), fixture index,
-  process plan, resolved limits, and planning/fixture error when present.
+- `calls`: attempted live calls in invocation order, with full step ID, cumulative attempt, harness,
+  cwd, prompt, original schema, output source (`fixture` or `synthesized`), fixture index, process
+  plan, resolved limits, and planning/fixture error when present.
 - `plan`: binary, argv, stdin, cwd, process limits, and private-file placeholders. File contents are
   omitted from the report. The same pure `CliHarness.plan()` validates real invocations, including
   Codex strict-schema checks, before materializing private files.
 - `replays`: reused effect IDs/kinds. Their full original prompts were never saved, so they do not
   appear as new live calls. A completed-run preview lists all reused terminal effects.
-- `providerCounts`, `nominalClaudeCeilingUsd`, `stubbedSteps`, `skippedSleeps`, and `warnings`.
+- `harnessCounts` (`providerCounts` retains built-in compatibility counts),
+  `nominalClaudeCeilingUsd`, `stubbedSteps`, `skippedSleeps`, and `warnings`.
 
 The nominal Claude ceiling adds per-attempt `maxBudgetUsd` for valid native plans along the
 rehearsed path. `wouldPay` is false when planning itself fails before a native invocation could
@@ -146,7 +147,9 @@ Allowed keys are `claudeBinary`, `codexBinary`, `maxRetainedBytes`, `maxStreamBy
 import. Relative file/binary paths resolve against the launch cwd. Bare executable names use PATH.
 Explicit `--kill-grace-ms` overrides the config field. `--harness-config` also configures the
 dry-run planner; ordinary fixture execution gets its data from the fixture file. `module:` loading
-is deferred to #64.
+is unsupported: register packages with `defineWorkflow({ harnesses })`. Use repeated
+`--harness name=fixture:FILE` to override individual registrations. Per-package configuration
+belongs under `harnesses.<name>` in the same JSON config.
 
 ## Embedding and native protocol tests
 
@@ -179,8 +182,8 @@ capture basename, or `QUIET_CHOIR_FAKE_ROUTES` to a JSON file such as:
 }
 ```
 
-Routes are first-match, support an optional provider, and use a regular expression for `prompt`.
-Defaults are the provider's text/structured success captures. `QUIET_CHOIR_FAKE_LOG` appends JSONL
+Routes are first-match, support an optional harness, and use a regular expression for `prompt`.
+Defaults are the harness's text/structured success captures. `QUIET_CHOIR_FAKE_LOG` appends JSONL
 with argv, cwd, stdin, schema, call identity, scenario, and CLI version. Use shell environment
 variables or declared profile environments, respecting strict-profile rules. Logs contain complete
 prompts and schema data. These tools need a repository checkout; there is no `quiet-choir/testing`

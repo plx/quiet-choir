@@ -64,8 +64,8 @@ export function formatRunSummary(run: RunSummary, verbose = false): string {
         .join(', ') || 'none'
     }`,
   ];
-  for (const [provider, value] of Object.entries(run.harnesses)) {
-    lines.push(`Harness ${provider}: ${value.binary}@${value.version ?? 'unknown'}`);
+  for (const [harness, value] of Object.entries(run.harnesses)) {
+    lines.push(`Harness ${harness}: ${value.binary}@${value.version ?? 'unknown'}`);
     if (value.environment)
       lines.push(
         `  Host variables: ${value.environment.variables.join(', ') || 'none'}; scrubbed: ${value.environment.scrubbed.join(', ') || 'none'}`,
@@ -109,8 +109,14 @@ export function formatRunSummary(run: RunSummary, verbose = false): string {
           .filter((value) => value !== null)
           .join(', ')
       : '';
+    const label =
+      typeof step.meta?.['integration'] === 'string'
+        ? [step.meta['integration'], step.meta['op']]
+            .filter((part) => typeof part === 'string')
+            .join('.')
+        : step.kind;
     lines.push(
-      `${step.status} ${step.id}  ${request ? `${request.provider} ${request.model ?? '(native model)'}` : step.kind}${step.elapsedMs === null ? '' : `  ${duration(step.elapsedMs)} elapsed`}${limits ? `; ${limits}` : ''}${step.rootCause ? ' [root cause]' : ''}${step.error ? `  ${step.error}` : ''}`,
+      `${step.status} ${step.id}  ${request ? `${request.harness} ${request.model ?? '(native model)'}` : label}${step.elapsedMs === null ? '' : `  ${duration(step.elapsedMs)} elapsed`}${limits ? `; ${limits}` : ''}${step.rootCause ? ' [root cause]' : ''}${step.error ? `  ${step.error}` : ''}`,
     );
   }
   if (run.rootCause)
@@ -141,6 +147,10 @@ export function formatRunSummary(run: RunSummary, verbose = false): string {
   for (const [name, group] of Object.entries(usage.byHarness))
     lines.push(
       `  Harness ${name}: ${String(group.attempts)} attempts, ${group.costUsd === null ? 'unknown cost' : `$${group.costUsd.toFixed(4)} reported`}, ${String(group.unknownCostAttempts)} unknown cost`,
+    );
+  for (const [name, group] of Object.entries(usage.byIntegration))
+    lines.push(
+      `  Integration ${name}: ${String(group.attempts)} attempts, ${metric(group.costUsd)} reported USD`,
     );
   for (const [name, group] of Object.entries(usage.byModel))
     lines.push(

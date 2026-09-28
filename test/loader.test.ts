@@ -211,6 +211,67 @@ export const invalid: number = 'wrong';`);
     expect(log).toHaveBeenCalledWith('debug', expect.stringContaining('step.completed double'));
   });
 
+  it('warns instead of throwing when a configuration selects a harness declared only by a dynamically invoked child', async () => {
+    const { file, root } = await fixture(`import { z } from 'zod';
+import { defineWorkflow } from ${JSON.stringify(join(projectRoot, 'src/workflow/runtime/model.js'))};
+import { defineHarness } from ${JSON.stringify(join(projectRoot, 'src/harnesses/definition.js'))};
+
+const third = defineHarness({
+  name: 'third',
+  revision: 1,
+  options: z.object({ prompt: z.string() }),
+  capabilities: { structuredOutput: 'none' },
+  access: () => 'none',
+  createAdapter: (config) => {
+    const parsed = z.object({ token: z.string() }).parse(config);
+    return { invoke: async () => ({ text: parsed.token, sessionId: null }) };
+  },
+});
+
+const child = defineWorkflow({
+  name: 'child',
+  version: '1',
+  harnesses: [third],
+  input: z.null(),
+  output: z.string(),
+  async run(ctx) {
+    return ctx.agent('third').value('probe', { prompt: 'hi' });
+  },
+});
+
+export default defineWorkflow({
+  name: 'dynamic-root',
+  version: '1',
+  input: z.null(),
+  output: z.string(),
+  async run(ctx) {
+    return ctx.workflow('child', child, null);
+  },
+});`);
+    const log = vi.fn();
+    const runner = new WorkflowExecutor({ logger: { log } });
+    const executed = await runner.execute({
+      ...plan(file),
+      kind: 'workflow.execute',
+      runId: 'dynamic-child-config',
+      stateDir: join(root, 'state'),
+      cwd: root,
+      resume: false,
+      input: null,
+      harness: {
+        kind: 'cli',
+        config: {},
+        configurations: { third: { token: 'expected-token' } },
+      },
+    });
+    expect(executed).toMatchObject({
+      kind: 'workflow.run.result',
+      ok: true,
+      run: { status: 'completed', output: 'expected-token' },
+    });
+    expect(log).toHaveBeenCalledWith('warn', expect.stringContaining('third'));
+  });
+
   it('rejects invalid inputs and reports missing run metadata', async () => {
     const { file, root } = await fixture(validSource);
     const executed = await executor().execute({

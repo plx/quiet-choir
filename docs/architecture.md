@@ -5,8 +5,8 @@ definitions to a particular agent harness.
 
 ## Current layout
 
-- `src/index.ts` is the only public package entry point. Public exports should be deliberate and
-  documented there.
+- `src/index.ts` is the main public package entry point; `quiet-choir/harness-kit` and
+  `quiet-choir/decision` are deliberate adapter/helper subpaths. Public exports need API comments.
 - `src/application/` contains framework-independent execution contracts and small executors.
 - `src/workflow/` contains workflow-specific plans, results, analysis, and executors.
 - `src/workflow/runtime/` defines the typed workflow API and local checkpoint/replay engine.
@@ -32,18 +32,18 @@ Record consequential design choices as short architecture decision records under
 
 Workflow definitions combine ordinary TypeScript control flow with durable operations on a supplied
 context. Zod schemas alone infer callback types and validate workflow inputs/outputs, local step
-results, and structured agent responses. Dedicated Claude and Codex clients submit plain-data
-requests through the replaceable `Harness` interface; the runtime owns step identity, replay, and
-validation independently of the CLI processes that perform agent work. Direct-output `value()` calls
-use the same tracked effect and checkpoint as `object()`/`text()`. Undefined object members are
-omitted at durable boundaries; array holes and undefined elements remain errors. Fresh bodies and
-replayed results receive normalized checkpoint copies. See
-[ADR 0017](decisions/0017-schema-first-values.md). Core-owned option schemas validate explicit
-requests before recording an effect; adapters reuse the same validators and apply their own
-defaults. Optional `Harness.policyDefaults` reports execution limits without effects. The core
-resolves named profiles above adapter defaults, call-site policy, and sticky run overrides before
-invoking the adapter, and records per-attempt limits and provenance. `runWorkflow` and `readRun`
-share working-directory and storage resolution.
+results, and structured agent responses. Typed registered clients and the Claude/Codex shorthands
+submit plain-data requests through named `HarnessAdapter` implementations or the compatibility
+`Harness` port; the runtime owns step identity, replay, and validation independently of the CLI
+processes that perform agent work. Direct-output `value()` calls use the same tracked effect and
+checkpoint as `object()`/`text()`. Undefined object members are omitted at durable boundaries; array
+holes and undefined elements remain errors. Fresh bodies and replayed results receive normalized
+checkpoint copies. See [ADR 0017](decisions/0017-schema-first-values.md). Registered strict option
+schemas validate explicit requests before recording an effect; adapters reuse the same validators
+and apply their own defaults. Optional `Harness.policyDefaults` reports execution limits without
+effects. The core resolves named profiles above adapter defaults, call-site policy, and sticky run
+overrides before invoking the adapter, and records per-attempt limits and provenance. `runWorkflow`
+and `readRun` share working-directory and storage resolution.
 
 Plain-data profile declarations publish a capability manifest without running the body. Strict
 profiles prohibit call-site capability replacements by default. The core preflights write/exec
@@ -204,3 +204,13 @@ effects checkpoint inputs and publication intent before updating refs or a reque
 The source-free clean executor acquires ordinary run ownership and removes only recorded caches and
 pins. See [ADR 0022](decisions/0022-runtime-owned-worktree-isolation.md) and
 [worktrees](worktrees.md).
+
+## Integration boundary
+
+The workflow module declares package harnesses explicitly. Core execution resolves the registry,
+profiles and named adapters without loading native implementations. The two implicit built-in
+contracts retain their revision-one identities. Adapter implementation modules use the public
+harness kit; ordinary service integrations use helpers over public context methods. See
+[ADR 0027](decisions/0027-typed-harness-registry-and-integration-helpers.md) for lookup precedence,
+record migration, package revision policy and the deliberate departure from new service-specific
+context properties.

@@ -56,7 +56,7 @@ async function fixture(script: string): Promise<{ directory: string; binary: str
 }
 
 function request(provider: 'claude' | 'codex', cwd = process.cwd()): HarnessRequestInput {
-  return { provider, options: { prompt: 'hello' }, cwd, outputSchema: null };
+  return { harness: provider, options: { prompt: 'hello' }, cwd, outputSchema: null };
 }
 
 afterEach(async () => {
@@ -225,7 +225,7 @@ describe('headless CLI adapter', () => {
       const schema = { type: 'object', properties: { answer: { type: 'number' } } };
       const result = await new CliHarness({ claudeBinary: binary }).invoke(
         {
-          provider: 'claude',
+          harness: 'claude',
           cwd: directory,
           outputSchema: schema,
           options: {
@@ -293,7 +293,7 @@ describe('headless CLI adapter', () => {
     const schema = { type: 'object', properties: {}, required: [], additionalProperties: false };
     await new CliHarness({ codexBinary: binary }).invoke(
       {
-        provider: 'codex',
+        harness: 'codex',
         cwd: directory,
         outputSchema: schema,
         options: {
@@ -462,7 +462,7 @@ describe('headless CLI adapter', () => {
     await expect(
       new CliHarness().invoke(
         {
-          provider: 'claude',
+          harness: 'claude',
           cwd: process.cwd(),
           outputSchema: null,
           options: { prompt: '', maxTurns: 0 },
@@ -473,7 +473,7 @@ describe('headless CLI adapter', () => {
     await expect(
       new CliHarness().invoke(
         {
-          provider: 'claude',
+          harness: 'claude',
           cwd: process.cwd(),
           outputSchema: null,
           options: { prompt: '', maxBudgetUsd: 0 },

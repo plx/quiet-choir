@@ -246,6 +246,7 @@ describe('workflow lifecycle command adapters', () => {
       ok: true,
       entrypoint: file,
       workflow: {
+        harnesses: [],
         name: 'test',
         version: '1',
         fingerprint: 'hash',

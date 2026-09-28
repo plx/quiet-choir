@@ -16,7 +16,7 @@ export function profileLimitError(
     limit === undefined ? (field === 'maxTurns' ? 60 : 5) : limit * 2,
   );
   const annotated = new HarnessError({
-    provider: error.provider,
+    harness: error.harness,
     kind: error.kind,
     exit: error.exit,
     failure: error.failure,

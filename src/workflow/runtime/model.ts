@@ -1,3 +1,17 @@
+import type { AgentRequest } from './harness-model.js';
+import type {
+  HarnessDeclaration,
+  HarnessMap,
+  BuiltInHarnesses,
+  WorkflowHarnesses,
+  RegisteredAgentClient,
+  OptionsOf,
+  CapabilitiesOf,
+} from './harness-model.js';
+import type { ClaudeOptions } from '../../harnesses/builtins/claude-options.js';
+import type { CodexOptions } from '../../harnesses/builtins/codex-options.js';
+export type { ClaudeOptions } from '../../harnesses/builtins/claude-options.js';
+export type { CodexOptions } from '../../harnesses/builtins/codex-options.js';
 import type { AgentEnvironment, HostEnvironmentSummary } from './agent-environment-model.js';
 import type { AgentDiagnostics, AgentProgress, TranscriptMode } from './agent-stream-model.js';
 import type { AgentIsolation, AgentWorktree } from './agent-isolation.js';
@@ -110,112 +124,42 @@ export interface ImageAttachment {
 /** Options shared by headless agent calls. */
 export interface AgentOptions {
   /** Native configuration loading, default restricted; also accepts the original worktree shorthand. */
-  readonly isolation?: AgentIsolation;
+  readonly isolation?: AgentIsolation | undefined;
   /** Select a managed checkout independently from native configuration loading. */
-  readonly worktree?: AgentWorktree;
-  /** Shared reasoning effort; cannot accompany Codex reasoningEffort. */
-  readonly effort?: Effort;
+  readonly worktree?: AgentWorktree | undefined;
   /** Additional tool directories; Codex treats these as writable roots. */
-  readonly addDirs?: readonly string[];
+  readonly addDirs?: readonly string[] | undefined;
   /** Fingerprinted escape hatch; use --flag=value for values, never reserved/typed flags. */
-  readonly extraArgs?: readonly string[];
+  readonly extraArgs?: readonly string[] | undefined;
   /** Fingerprinted set/unset edits after host scrubbing; flat set-only overlays remain supported. */
-  readonly env?: AgentEnvironment;
+  readonly env?: AgentEnvironment | undefined;
   /** Declared role or built-in preset; omission uses workflow defaults. */
-  readonly profile?: string;
+  readonly profile?: string | undefined;
   /** Persist a terminal outcome for branching; cancellation, configuration (e.g. missing harness), and checkpoint-write failures still reject. */
-  readonly onError?: ErrorMode;
+  readonly onError?: ErrorMode | undefined;
   /** Instructions sent over stdin, never interpolated into a shell command. */
   readonly prompt: string;
   /** Model name or harness alias; omission uses the harness default. */
-  readonly model?: string;
+  readonly model?: string | undefined;
   /** Working directory, relative to the workflow run's working directory. */
-  readonly cwd?: string;
+  readonly cwd?: string | undefined;
   /** Wall-clock deadline in milliseconds; implicit text profile: 300,000. Custom harnesses must enforce it. */
-  readonly timeoutMs?: number;
+  readonly timeoutMs?: number | undefined;
   /** Explicit runtime retries for calls safe to repeat; not part of replay identity. */
-  readonly retry?: RetryPolicy;
-}
-
-/** Claude-specific controls. CliHarness denies unapproved tools by default. */
-export interface ClaudeOptions extends AgentOptions {
-  /** Warn about denied tools, or fail the call; overrides the selected profile policy. */
-  readonly onPermissionDenied?: 'warn' | 'fail';
-  /** Explicit plugin directories; native code is trusted and paths enter semantic identity. */
-  readonly plugins?: readonly string[];
-  /** Explicit deny rules such as Bash(git push:*). */
-  readonly disallowedTools?: readonly string[];
-  /** Permission mode; bypass and interactive modes remain unsupported. */
-  readonly permissionMode?: 'dontAsk' | 'acceptEdits' | 'plan';
-  /** Replace the system prompt via a private temporary file. */
-  readonly systemPrompt?: string;
-  /** Append stable role instructions via a private temporary file. */
-  readonly appendSystemPrompt?: string;
-  /** Select a native agent definition. */
-  readonly agent?: string;
-  /** Native subagent definitions, passed through a private JSON file. */
-  readonly agents?: Readonly<
-    Record<
-      string,
-      {
-        /** When the native agent should be used. */
-        readonly description: string;
-        /** Agent role instructions. */
-        readonly prompt: string;
-        /** Additional native subagent fields; bypass modes are rejected. */
-        readonly [key: string]: JsonValue;
-      }
-    >
-  >;
-  /** Explicit MCP servers, written to a private configuration file. */
-  readonly mcpServers?: Readonly<Record<string, JsonValue>>;
-  /** Ignore other MCP configuration sources. */
-  readonly strictMcpConfig?: boolean;
-  /** Extra native settings; typed model/agent/permission controls cannot be duplicated here. */
-  readonly settings?: Readonly<Record<string, JsonValue>>;
-  /** Fallback model or ordered models; semantic identity, not a policy override. */
-  readonly fallbackModel?: string | readonly string[];
-  /** Built-in tools to expose; use a workflow profile under default strictProfiles. Default: none. */
-  readonly tools?: readonly string[];
-  /** Narrower tool permissions; omission pre-approves the exposed tools. */
-  readonly allowedTools?: readonly string[];
-  /** Maximum agent turns; implicit text profile: 10. */
-  readonly maxTurns?: number;
-  /** Per-call USD limit enforced by Claude; implicit text profile: 0.50. */
-  readonly maxBudgetUsd?: number;
-}
-
-/** Codex-specific controls. CliHarness defaults to read-only sandbox and never approving. */
-export interface CodexOptions extends AgentOptions {
-  /** Network access for workspace-write; requires that sandbox explicitly. */
-  readonly networkAccess?: boolean;
-  /** Native Codex configuration profile; profile itself selects the quiet-choir role. */
-  readonly harnessProfile?: string;
-  /** Dotted native config keys with JSON-to-TOML values; owned settings and null are rejected. */
-  readonly config?: Readonly<Record<string, JsonValue>>;
-  /** Local images; the runtime fingerprints and snapshots file contents, not paths. */
-  readonly images?: readonly string[];
-  /** Structured-output encoding; compat translates common Zod shapes, strict requires a native Codex schema. CliHarness default: compat; the core supplies no default. */
-  readonly structuredOutput?: 'strict' | 'compat';
-  /** Filesystem sandbox; declare in a workflow profile under default strictProfiles. Default: read-only. */
-  readonly sandbox?: 'read-only' | 'workspace-write';
-  /** Harness reasoning effort. */
-  readonly reasoningEffort?: 'none' | 'minimal' | Effort;
-  /** Allow use outside a Git repository. */
-  readonly skipGitRepoCheck?: boolean;
+  readonly retry?: RetryPolicy | undefined;
 }
 
 /** Plain-data inputs for planning a harness invocation, before durable call identity is attached. */
-export type HarnessRequestInput = (
+export type BuiltinHarnessRequestInput = (
   | {
       /** Claude Code integration. */
-      readonly provider: 'claude';
+      readonly harness: 'claude';
       /** Claude-specific invocation options. */
       readonly options: ClaudeOptions;
     }
   | {
       /** Codex integration. */
-      readonly provider: 'codex';
+      readonly harness: 'codex';
       /** Codex-specific invocation options. */
       readonly options: CodexOptions;
     }
@@ -227,6 +171,22 @@ export type HarnessRequestInput = (
   /** Runtime image bytes corresponding to options.images; immutable for this invocation. */
   readonly imageAttachments?: readonly ImageAttachment[];
 };
+
+/** Plain-data agent options before durable attempt identity is attached. */
+export interface HarnessRequestInput<O extends AgentOptions = AgentOptions> {
+  /** Registered harness identity, separate from any model-provider option. */
+  readonly harness: string;
+  /** Definition revision; pure planners may omit it for built-in revision one. */
+  readonly revision?: number;
+  /** Validated options from the corresponding registration. */
+  readonly options: O;
+  /** Absolute execution directory. */
+  readonly cwd: string;
+  /** Structured response schema, or null for text. */
+  readonly outputSchema: JsonValue | null;
+  /** Immutable image bytes for adapters supporting image inputs. */
+  readonly imageAttachments?: readonly ImageAttachment[];
+}
 
 /** Durable identity of one attempt, attached after semantic fingerprinting. */
 export interface HarnessCall {
@@ -240,11 +200,8 @@ export interface HarnessCall {
   readonly idempotencyKey: string;
 }
 
-/** Plain-data request passed from the engine to a harness adapter. */
-export type HarnessRequest = HarnessRequestInput & {
-  /** Observational identity; never included in effect fingerprints. */
-  readonly call: HarnessCall;
-};
+/** Compatibility name for the generic request delivered to every harness. */
+export type HarnessRequest = AgentRequest;
 
 /** Usage reported by the harness, with null for unavailable measurements. */
 export interface AgentUsage {
@@ -309,7 +266,7 @@ export interface HarnessProcess {
 
 /** Runtime ownership and cancellation for a single harness attempt. */
 export interface HarnessInvocation {
-  /** Predetermined native session ID, when the provider accepts one. Never semantic identity. */
+  /** Predetermined native session ID, when the harness accepts one. Never semantic identity. */
   readonly sessionId?: string | null;
   /** Runtime-owned transcript path, or null when disabled. Write through onOutput. */
   readonly transcriptPath?: string | null;
@@ -347,7 +304,7 @@ export interface Harness {
    */
   metadata?(request: HarnessRequest, invocation: HarnessInvocation): Promise<HarnessMetadata>;
   /** Report effective adapter limits for attempt records. Omit unknown defaults; never perform effects here. */
-  policyDefaults?(provider: HarnessRequest['provider']): ExecutionPolicy;
+  policyDefaults?(harness: HarnessRequest['harness']): ExecutionPolicy;
   /** Invoke one fresh session; enforce your own limits, settle on abort, and reject process/protocol failure. */
   invoke(request: HarnessRequest, invocation: HarnessInvocation): Promise<HarnessResponse>;
 }
@@ -376,17 +333,17 @@ export interface AgentClient<TOptions extends AgentOptions> {
   /** Return structured output with an inferred or dynamic error mode. */
   value<T, TMode extends ErrorMode = 'throw'>(
     id: string,
-    options: TOptions & { readonly schema: z.ZodType<T>; readonly onError?: TMode },
+    options: TOptions & { readonly schema: z.ZodType<T>; readonly onError?: TMode | undefined },
   ): Promise<EffectResult<T, TMode>>;
   /** Without a schema, return only text; onError: return produces Settled<string>. */
   value<TMode extends ErrorMode = 'throw'>(
     id: string,
-    options: TOptions & { readonly schema?: never; readonly onError?: TMode },
+    options: TOptions & { readonly schema?: never; readonly onError?: TMode | undefined },
   ): Promise<EffectResult<string, TMode>>;
   /** Invoke the harness for a plain text response. */
   text<TMode extends ErrorMode = 'throw'>(
     id: string,
-    options: TOptions & { readonly onError?: TMode },
+    options: TOptions & { readonly onError?: TMode | undefined },
   ): Promise<EffectResult<AgentResult<string>, TMode>>;
   /** Request structured output and validate it locally before checkpointing. */
   object<T>(
@@ -396,7 +353,7 @@ export interface AgentClient<TOptions extends AgentOptions> {
   /** Request structured output with an inferred or dynamic error mode. */
   object<T, TMode extends ErrorMode = 'throw'>(
     id: string,
-    options: TOptions & { readonly schema: z.ZodType<T>; readonly onError?: TMode },
+    options: TOptions & { readonly schema: z.ZodType<T>; readonly onError?: TMode | undefined },
   ): Promise<EffectResult<AgentResult<T>, TMode>>;
 }
 
@@ -412,6 +369,8 @@ export interface RetryPolicy {
 
 /** Context supplied to a local effect. */
 export interface StepContext {
+  /** Replace this local attempt's cumulative reported usage; saved with its outcome, including failure. */
+  readonly reportUsage: (usage: AgentUsage) => void;
   /** Actual execution directory; mapped into an isolated checkout when selected. */
   readonly cwd: string;
   /** Cooperative cancellation signal; effects should pass it to cancellable operations. */
@@ -424,10 +383,12 @@ export interface StepContext {
 
 /** A local durable effect. Keep nondeterminism and side effects inside its callback. */
 export interface StepDefinition<T> {
+  /** JSON labels for inspection, excluded from semantic identity; never put credentials here. */
+  readonly meta?: Readonly<Record<string, JsonValue>>;
   /** Serialize on this handle and snapshot its tree after a validated result. */
   readonly worktree?: WorktreeHandle;
   /** Persist and return final failures as Settled<T>; cancellation still rejects. */
-  readonly onError?: ErrorMode;
+  readonly onError?: ErrorMode | undefined;
   /** Explicit revision for captured values, helpers, or environment not visible in callback source. */
   readonly version?: string;
   /** Explicit JSON dependencies, checked for drift on replay after omitting undefined object members. */
@@ -441,11 +402,18 @@ export interface StepDefinition<T> {
 }
 
 /** Durable operations available to ordinary TypeScript workflow code. */
-export interface WorkflowContext<TProfile extends string = string> {
+export interface WorkflowContext<
+  TProfile extends string = string,
+  R extends HarnessMap = BuiltInHarnesses,
+> {
+  /** Select one explicitly registered harness; capabilities determine structured-output availability. */
+  agent<K extends keyof R & string>(
+    name: K,
+  ): RegisteredAgentClient<OptionsOf<R[K]>, CapabilitiesOf<R[K]>>;
   /** Run a typed child inline with validated I/O, recorded identity, and a scoped effect namespace. */
-  workflow<I, O, P extends string>(
+  workflow<I, O, P extends string, H extends readonly HarnessDeclaration[]>(
     id: string,
-    child: WorkflowDefinition<I, O, P>,
+    child: WorkflowDefinition<I, O, P, H>,
     input: NoInfer<I>,
     options?: ChildOptions,
   ): Promise<O>;
@@ -507,19 +475,19 @@ export interface WorkflowContext<TProfile extends string = string> {
   /** Prefix every effect launched in the callback; nested scopes compose without counters. */
   scope<T>(prefix: string, run: () => Promise<T>): Promise<T>;
   /** Bind a lexical prefix to a reusable context; descendants retain their nested scope prefixes. */
-  within(prefix: string): WorkflowContext<TProfile>;
+  within(prefix: string): WorkflowContext<TProfile, R>;
   /** Claude-specific headless API. */
   readonly claude: AgentClient<
     Omit<ClaudeOptions, 'profile'> & {
       /** Built-in preset or one of this workflow's declared role names. */
-      readonly profile?: BuiltinProfile | TProfile;
+      readonly profile?: BuiltinProfile | TProfile | undefined;
     }
   >;
   /** Codex-specific headless API. */
   readonly codex: AgentClient<
     Omit<CodexOptions, 'profile'> & {
       /** Built-in preset or one of this workflow's declared role names. */
-      readonly profile?: BuiltinProfile | TProfile;
+      readonly profile?: BuiltinProfile | TProfile | undefined;
     }
   >;
   /** Save a JSON result and reuse it on resume when its inputs match. */
@@ -530,7 +498,7 @@ export interface WorkflowContext<TProfile extends string = string> {
   /** Save a JSON result with an inferred or dynamic error mode. */
   step<T, TMode extends ErrorMode = 'throw'>(
     id: string,
-    definition: StepDefinition<T> & { readonly onError?: TMode },
+    definition: StepDefinition<T> & { readonly onError?: TMode | undefined },
   ): Promise<EffectResult<T, TMode>>;
   /** Pin a relative timeout once; long waits suspend after active work drains. */
   sleep(id: string, milliseconds: number): Promise<null>;
@@ -576,7 +544,14 @@ export interface WorkflowContext<TProfile extends string = string> {
 }
 
 /** Definition of a typed workflow; plain JavaScript controls branching, loops, and composition. */
-export interface WorkflowDefinition<TInput, TOutput, TProfile extends string = string> {
+export interface WorkflowDefinition<
+  TInput,
+  TOutput,
+  TProfile extends string = string,
+  H extends readonly HarnessDeclaration[] = readonly HarnessDeclaration[],
+> {
+  /** Explicit agent registrations; Claude and Codex remain implicitly available. */
+  readonly harnesses?: H;
   /** Human purpose, outside runtime replay identity. */
   readonly description?: string;
   /** Guidance for choosing this workflow, outside runtime replay identity. */
@@ -601,14 +576,22 @@ export interface WorkflowDefinition<TInput, TOutput, TProfile extends string = s
   readonly output: z.ZodType<TOutput>;
   /** Workflow body. It replays from the beginning when resuming. */
   readonly run: NoInfer<
-    (context: WorkflowContext<NoInfer<TProfile>>, input: TInput) => Promise<TOutput>
+    (
+      context: WorkflowContext<NoInfer<TProfile>, WorkflowHarnesses<NoInfer<H>>>,
+      input: TInput,
+    ) => Promise<TOutput>
   >;
 }
 
 /** Define a workflow with input/output types inferred from its runtime schemas. */
-export function defineWorkflow<TInput, TOutput, TProfile extends string = never>(
-  definition: WorkflowDefinition<TInput, TOutput, TProfile>,
-): WorkflowDefinition<TInput, TOutput, TProfile> {
+export function defineWorkflow<
+  TInput,
+  TOutput,
+  TProfile extends string = never,
+  const H extends readonly HarnessDeclaration[] = readonly [],
+>(
+  definition: WorkflowDefinition<TInput, TOutput, TProfile, H>,
+): WorkflowDefinition<TInput, TOutput, TProfile, H> {
   if (!definition.name.trim() || !definition.version.trim()) {
     throw new Error('Workflow name and version must be nonempty.');
   }
@@ -654,7 +637,7 @@ export interface PolicyOverride {
   /** Step-ID glob: * stays within a segment; ** crosses slashes. Omission matches all IDs. */
   readonly match?: string;
   /** Limit the rule to an effect category. Sleep does not accept policy overrides. */
-  readonly kind?: 'claude' | 'codex' | 'step' | 'exec';
+  readonly kind?: string;
   /** Output cap: per stream for exec; legacy maxRetainedBytes alias for agents. */
   readonly maxOutputBytes?: number;
   /** Harness wall-clock deadline in milliseconds. */

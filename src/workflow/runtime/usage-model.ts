@@ -47,7 +47,11 @@ export interface UsageTotals {
 
 /** Computed run-wide usage, never a separately persisted ledger or replay-sensitive effect. */
 export interface UsageSummary extends UsageTotals {
-  /** Groups by the provider on each attempt, including earlier redefined effects. */
+  /** Local helper attempts with explicit usage reports, excluded from agent attempt counts. */
+  readonly integrationUsage: UsageTotals;
+  /** Reported local usage by StepDefinition.meta.integration (or local when unlabelled). */
+  readonly byIntegration: Readonly<Record<string, UsageTotals>>;
+  /** Groups by the harness on each attempt, including earlier redefined effects. */
   readonly byHarness: Readonly<Record<string, UsageTotals>>;
   /** Effective-model groups; the '(unknown)' bucket is never inferred from a requested alias. */
   readonly byModel: Readonly<Record<string, UsageTotals>>;

@@ -5,7 +5,7 @@ import { agentIsolationSchema, agentWorktreeSchema } from './agent-isolation.js'
 
 /** Shared validated effort levels. @internal */
 export const effortValues = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
-/** Codex's additional provider-specific levels. @internal */
+/** Codex's additional harness-specific levels. @internal */
 export const codexEffortValues = ['none', 'minimal', ...effortValues] as const;
 /** Deliberately excludes interactive and bypass modes. @internal */
 export const permissionModeValues = ['dontAsk', 'acceptEdits', 'plan'] as const;
@@ -147,21 +147,21 @@ const aliases: Record<'claude' | 'codex', Record<string, string>> = {
 };
 const normalize = (value: string): string => value.replace(/[-_]/gu, '').toLowerCase();
 /** Reject protocol/typed-flag shadowing, including aliases, equals forms, and short clusters. @internal */
-export function validateExtraArgs(provider: 'claude' | 'codex', args: readonly string[]): void {
+export function validateExtraArgs(harness: 'claude' | 'codex', args: readonly string[]): void {
   for (const arg of args) {
     const flag = arg.split('=')[0] ?? '';
     let owner: string | undefined;
     if (flag.startsWith('--')) {
-      owner = Object.entries(owners[provider]).find(
+      owner = Object.entries(owners[harness]).find(
         ([name]) => normalize(name) === normalize(flag.slice(2)),
       )?.[1];
       if (normalize(flag).includes('dangerously'))
         owner = 'permission controls (bypass is unsupported)';
     } else if (flag.startsWith('-')) {
       for (const char of flag.slice(1)) {
-        const name = aliases[provider][char];
+        const name = aliases[harness][char];
         if (name !== undefined) {
-          owner = owners[provider][name];
+          owner = owners[harness][name];
           break;
         }
       }

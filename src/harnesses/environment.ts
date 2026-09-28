@@ -1,8 +1,5 @@
-import { environmentEdits } from '../workflow/runtime/agent-environment.js';
-import type {
-  AgentEnvironment,
-  HostEnvironmentSummary,
-} from '../workflow/runtime/agent-environment-model.js';
+import { environmentEdits } from '../harness-kit.js';
+import type { AgentEnvironment, HostEnvironmentSummary } from '../harness-kit.js';
 
 /** Additional host names to scrub, or false to explicitly retain host-session context. */
 export type ScrubEnvironment = false | readonly string[];

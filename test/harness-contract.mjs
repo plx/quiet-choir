@@ -144,7 +144,7 @@ try {
       name === 'claude-turn-limit' ||
       name === 'codex-invalid-schema';
     const request = {
-      provider,
+      harness: provider,
       cwd,
       outputSchema: structured ? schema : null,
       options:

@@ -1,4 +1,4 @@
-import type { ClaudeOptions, CodexOptions } from './model.js';
+import type { ClaudeOptions, CodexOptions, JsonValue } from './model.js';
 import type { HarnessIsolation } from './agent-isolation.js';
 import type { EnvironmentSummary } from './agent-environment-model.js';
 /** Named presets supplied by the runtime. */
@@ -17,9 +17,11 @@ export interface ProfileLimits {
   readonly maxBudgetUsd?: number;
 }
 
-/** A shared role with provider-specific semantics and common resource limits. */
+/** A shared role with harness-specific semantics and common resource limits. */
 export interface AgentProfile extends ProfileLimits {
-  /** Configuration policy for both providers; provider-specific settings can override it. */
+  /** Options for explicitly registered harnesses; prompt and per-call control fields stay at the call site. */
+  readonly harnesses?: Readonly<Record<string, Readonly<Record<string, JsonValue>>>>;
+  /** Configuration policy for both providers; harness-specific settings can override it. */
   readonly isolation?: HarnessIsolation;
   /** Built-in or declared parent; inheritance cycles are definition errors. */
   readonly extends?: string;
@@ -84,6 +86,10 @@ export interface ResolvedProfile extends Omit<
   AgentProfile,
   'extends' | 'access' | 'claude' | 'codex'
 > {
+  /** Inferred access for each declared additional harness. */
+  readonly harnessAccess?: Readonly<Record<string, AccessClass>>;
+  /** Profile-owned generic capability controls, used for grant pinning and child delegation. */
+  readonly harnessCapabilities?: Readonly<Record<string, Readonly<Record<string, JsonValue>>>>;
   /** Safe environment diagnostics retained when serializable manifests omit explicit values. */
   readonly environment?: {
     /** Claude environment edit names and digest. */
@@ -93,7 +99,7 @@ export interface ResolvedProfile extends Omit<
   };
   /** Name used for selection and diagnostics, outside step identity. */
   readonly name: string;
-  /** Maximum provider access, checked against an optional declaration. */
+  /** Maximum harness access, checked against an optional declaration. */
   readonly access: AccessClass;
   /** Claude tools classification. */
   readonly claudeAccess: AccessClass;

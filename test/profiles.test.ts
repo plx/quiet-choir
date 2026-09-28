@@ -347,7 +347,7 @@ it('uses sticky limits for unfinished calls and resets them to profile values', 
   invoke.mockResolvedValue(reply);
   const result = await runWorkflow(definition, { ...options, resume: true, policyReset: true });
   expect(
-    invoke.mock.calls.map(([request]) => (request.options as { maxTurns: number }).maxTurns),
+    invoke.mock.calls.map(([request]) => (request.options as { maxTurns?: number }).maxTurns),
   ).toEqual([40, 40, 10]);
   expect(result.profileOverrides).toEqual([]);
   const updated = await runWorkflow(definition, {
@@ -365,7 +365,7 @@ it.each(['turn-limit', 'budget-limit'] as const)(
   'reports %s with configured cap, role, reported turns/spend and a usable flag',
   async (kind) => {
     const error = new HarnessError({
-      provider: 'claude',
+      harness: 'claude',
       kind,
       exit: { code: 1, signal: null },
       stderr: '',
@@ -549,7 +549,7 @@ it('checks raw Codex sandbox calls, unknown runtime names, and fresh fork grants
 
 it('preserves adapter error objects and explains a step-policy cap that wins over a profile', async () => {
   const error = new HarnessError({
-    provider: 'claude',
+    harness: 'claude',
     kind: 'turn-limit',
     exit: { code: 1, signal: null },
     failure: null,
@@ -577,7 +577,7 @@ it('preserves adapter error objects and explains a step-policy cap that wins ove
 
 it('keeps denial diagnostics on successful envelopes with process failure', async () => {
   const error = new HarnessError({
-    provider: 'claude',
+    harness: 'claude',
     kind: 'process',
     exit: { code: 7, signal: null },
     failure: null,

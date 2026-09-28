@@ -298,8 +298,8 @@ it('maps declared profile grants, caps child limits and refuses direct or nested
     harness: {
       invoke: (request) => {
         calls++;
-        expect(request.provider).toBe('claude');
-        if (request.provider === 'claude') expect(request.options.maxTurns).toBe(3);
+        expect(request.harness).toBe('claude');
+        if (request.harness === 'claude') expect(request.options).toMatchObject({ maxTurns: 3 });
         expect(request.options.model).toBe('parent-model');
         return Promise.resolve({ text: 'ok', sessionId: null });
       },

@@ -141,6 +141,8 @@ it.each(['claude', 'codex'] as const)(
     expect(invoke).toHaveBeenCalledTimes(2);
     expect(runGit).not.toHaveBeenCalled();
   },
+  // Multiple real Git/process-ownership round trips can exceed the default under CI coverage.
+  20_000,
 );
 
 it('maps monorepo cwd, warns about dirty source files, and snapshots only committed baseline plus edits', async () => {

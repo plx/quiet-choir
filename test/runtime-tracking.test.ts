@@ -327,7 +327,7 @@ it('omits top-level undefined options and supplies resolved profile defaults', a
         prompt: 'p',
         model: undefined,
         timeoutMs: undefined,
-      } as unknown as ClaudeOptions);
+      });
       const structured = await ctx.codex.object('codex', {
         prompt: 'p',
         model: undefined,
@@ -341,7 +341,7 @@ it('omits top-level undefined options and supplies resolved profile defaults', a
   expect(harness.invoke).toHaveBeenCalledTimes(2);
   for (const call of vi.mocked(harness.invoke).mock.calls)
     expect(call[0].options).toEqual(
-      call[0].provider === 'claude'
+      call[0].harness === 'claude'
         ? {
             prompt: 'p',
             isolation: 'restricted',
@@ -437,7 +437,7 @@ it('rejects a CliHarness.invoke request with an unknown option key', async () =>
   await expect(
     new CliHarness().invoke(
       {
-        provider: 'claude',
+        harness: 'claude',
         cwd: process.cwd(),
         outputSchema: null,
         options: { prompt: 'p', maxTurn: 5 } as unknown as ClaudeOptions,

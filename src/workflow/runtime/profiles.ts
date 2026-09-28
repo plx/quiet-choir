@@ -1,7 +1,8 @@
+import type { HarnessDeclaration } from './harness-model.js';
 import { commonControlFields, claudeControlFields, codexControlFields } from './agent-controls.js';
 import { validateAgentOptions } from './options.js';
 import { z } from 'zod';
-import type { ClaudeOptions, CodexOptions } from './model.js';
+import type { AgentOptions, ClaudeOptions, CodexOptions, JsonValue } from './model.js';
 import type {
   AccessClass,
   AgentDefaults,
@@ -27,6 +28,9 @@ const profileControlFields = {
   worktree: z.never().optional(),
 };
 const fields = {
+  harnesses: z
+    .record(z.string().regex(/^[a-z][a-z0-9-]{0,31}$/u), z.record(z.string(), z.json()))
+    .optional(),
   isolation: harnessIsolationSchema.optional(),
   ...limits,
   description: z.string().optional(),
@@ -131,6 +135,18 @@ function merge(base: AgentProfile, layer: AgentProfile): AgentProfile {
   return {
     ...base,
     ...layer,
+    ...(base.harnesses || layer.harnesses
+      ? {
+          harnesses: Object.fromEntries(
+            [
+              ...new Set([
+                ...Object.keys(base.harnesses ?? {}),
+                ...Object.keys(layer.harnesses ?? {}),
+              ]),
+            ].map((name) => [name, { ...base.harnesses?.[name], ...layer.harnesses?.[name] }]),
+          ),
+        }
+      : {}),
     claude,
     codex: { ...base.codex, ...shared, ...isolationParts(layer.codex ?? {}) },
   };
@@ -141,6 +157,7 @@ export function resolveCapabilities(definition: {
   readonly defaults?: AgentDefaults;
   readonly profiles?: Readonly<Record<string, AgentProfile>>;
   readonly strictProfiles?: boolean;
+  readonly harnesses?: readonly HarnessDeclaration[];
 }): CapabilityManifest {
   const config = z
     .strictObject({
@@ -162,6 +179,7 @@ export function resolveCapabilities(definition: {
     strictProfiles?: boolean;
   };
   const declared = config.profiles ?? {};
+  const registrations = new Map((definition.harnesses ?? []).map((item) => [item.name, item]));
   for (const name of Object.keys(declared)) {
     if (
       Object.hasOwn(builtins, name) ||
@@ -207,7 +225,44 @@ export function resolveCapabilities(definition: {
     const codexAccess = controlAccess('codex', { ...data.codex, sandbox });
     validateAgentOptions('claude', { ...data.claude, tools, allowedTools, prompt: '' });
     validateAgentOptions('codex', { ...data.codex, sandbox, prompt: '' });
-    const access = rank[claudeAccess] > rank[codexAccess] ? claudeAccess : codexAccess;
+    let access = rank[claudeAccess] > rank[codexAccess] ? claudeAccess : codexAccess;
+    for (const registered of Object.keys(data.harnesses ?? {}))
+      if (!registrations.has(registered))
+        throw new Error(`Profile ${name} configures undeclared harness ${registered}.`);
+    const harnesses: Record<string, Record<string, JsonValue>> = {};
+    const harnessAccess: Record<string, AccessClass> = {};
+    const harnessCapabilities: Record<string, Record<string, JsonValue>> = {};
+    for (const [registered, declaration] of registrations) {
+      const supplied = data.harnesses?.[registered] ?? {};
+      for (const field of [
+        'prompt',
+        'profile',
+        'cwd',
+        'onError',
+        'retry',
+        'worktree',
+        'timeoutMs',
+        'maxTurns',
+        'maxBudgetUsd',
+      ])
+        if (Object.hasOwn(supplied, field))
+          throw new Error(
+            `Profile ${name} cannot set harness ${registered}.${field}; use profile limits or call options.`,
+          );
+      if (!(declaration.options instanceof z.ZodObject))
+        throw new Error(`Harness ${registered} options must be a Zod object schema.`);
+      harnesses[registered] = partialOptions(declaration.options).parse(supplied) as Record<
+        string,
+        JsonValue
+      >;
+      const contract = registeredCapabilities(declaration, {
+        ...harnesses[registered],
+        prompt: '',
+      });
+      harnessAccess[registered] = contract.access;
+      harnessCapabilities[registered] = contract.controls;
+      if (rank[contract.access] > rank[access]) access = contract.access;
+    }
     // A parent's assertion describes the parent, not every descendant that replaces tools.
     const ownAssertion = declared[name]?.access ?? (layers.length ? undefined : assertion);
     if (ownAssertion !== undefined && ownAssertion !== access)
@@ -220,6 +275,7 @@ export function resolveCapabilities(definition: {
       access,
       claudeAccess,
       codexAccess,
+      ...(registrations.size ? { harnesses, harnessAccess, harnessCapabilities } : {}),
       expectsToolUse: data.expectsToolUse ?? access !== 'none',
       onPermissionDenied: data.onPermissionDenied ?? 'warn',
       environment: {
@@ -251,6 +307,7 @@ export function capabilityManifest(definition: {
   readonly defaults?: AgentDefaults;
   readonly profiles?: Readonly<Record<string, AgentProfile>>;
   readonly strictProfiles?: boolean;
+  readonly harnesses?: readonly HarnessDeclaration[];
 }): CapabilityManifest {
   return publicCapabilityManifest(resolveCapabilities(definition));
 }
@@ -290,10 +347,13 @@ export function profileGrantDigest(profile: ResolvedProfile): string {
     allowedTools: profile.claude.allowedTools,
     sandbox: profile.codex.sandbox,
     ...capabilityExtras(profile.claude, profile.codex),
+    ...(profile.harnessCapabilities
+      ? { harnessCapabilities: profile.harnessCapabilities, harnessAccess: profile.harnessAccess }
+      : {}),
   });
 }
 
-/** Check a profile/provider capability against persisted operator grants. @internal */
+/** Check a profile/harness capability against persisted operator grants. @internal */
 export function requireGrant(
   profile: ResolvedProfile,
   grants: readonly string[],
@@ -316,15 +376,36 @@ export function requireGrant(
 /** Resolve a call's role and semantics; raw capability calls still need class grants. @internal */
 export function resolveProfileCall(
   manifest: CapabilityManifest,
-  provider: 'claude' | 'codex',
-  call: ClaudeOptions | CodexOptions,
+  harness: string,
+  call: AgentOptions,
   grants: readonly string[],
   pins: Readonly<Record<string, string>>,
+  definition?: HarnessDeclaration,
 ): { profile: ResolvedProfile; options: ClaudeOptions | CodexOptions } {
   const name = call.profile ?? manifest.defaultProfile;
   const profile = manifest.profiles[name];
   if (!Object.hasOwn(manifest.profiles, name) || !profile)
     throw new Error(`Unknown profile: ${name}.`);
+  if (harness !== 'claude' && harness !== 'codex') {
+    if (!definition) throw new Error(`Missing harness definition ${harness}.`);
+    const raw = (definition.capabilityKeys ?? []).filter((key) => Object.hasOwn(call, key));
+    if (manifest.strictProfiles && raw.length)
+      throw new Error(
+        `strictProfiles forbids call-site ${raw.join(', ')} for harness ${harness}; declare a named profile.`,
+      );
+    const merged = { ...profile.harnesses?.[harness], ...call };
+    // Profile selection is runtime-only unless the adapter schema explicitly accepts it.
+    Reflect.deleteProperty(merged, 'profile');
+    const options = definition.options.parse(merged);
+    const { access } = registeredCapabilities(definition, options);
+    requireGrant(
+      profile,
+      raw.length ? grants.filter((grant) => !Object.hasOwn(manifest.profiles, grant)) : grants,
+      pins,
+      access,
+    );
+    return { profile, options };
+  }
   const raw = capabilityFields.filter(
     (key) => Object.hasOwn(call, key) && (key !== 'isolation' || call.isolation === 'inherit'),
   );
@@ -332,8 +413,8 @@ export function resolveProfileCall(
     throw new Error(`strictProfiles forbids call-site ${raw.join(', ')}; declare a named profile.`);
   const overrides = isolationParts(call);
   Reflect.deleteProperty(overrides, 'profile');
-  const resolved = { ...profile[provider], ...overrides };
-  if (provider === 'claude') {
+  const resolved = { ...profile[harness], ...overrides };
+  if (harness === 'claude') {
     const claude = resolved as ClaudeOptions;
     const tools = claude.tools ?? [];
     const allowedTools =
@@ -355,12 +436,14 @@ export function resolveProfileCall(
       controlAccess('codex', resolved),
     );
   }
-  validateAgentOptions(provider, resolved);
+  validateAgentOptions(harness, resolved);
   return { profile, options: resolved };
 }
 
 const resolvedProfileSchema = z.strictObject({
   ...fields,
+  harnessAccess: z.record(z.string(), z.enum(['none', 'read', 'write', 'exec'])).optional(),
+  harnessCapabilities: z.record(z.string(), z.record(z.string(), z.json())).optional(),
   name: nameSchema,
   environment: z
     .object({ claude: environmentSummarySchema, codex: environmentSummarySchema })
@@ -388,6 +471,11 @@ export function publicCapabilityManifest(manifest: CapabilityManifest): Capabili
   for (const profile of [result.defaults, ...Object.values(result.profiles)]) {
     Reflect.deleteProperty(profile.claude, 'env');
     Reflect.deleteProperty(profile.codex, 'env');
+    for (const controls of Object.values(profile.harnesses ?? {}))
+      Reflect.deleteProperty(controls, 'env');
+    for (const controls of Object.values(profile.harnessCapabilities ?? {}))
+      if (Object.hasOwn(controls, 'env'))
+        Object.assign(controls, { env: { sha256: digest(controls['env']) } });
   }
   return result;
 }
@@ -422,21 +510,21 @@ function capabilityExtras(
         ['claude', claude],
         ['codex', codex],
       ] as const
-    ).flatMap(([provider, controls]) =>
+    ).flatMap(([harness, controls]) =>
       Object.entries(controls)
         .filter(
           ([key]) =>
             capabilityFields.some((field) => field === key) &&
             !['tools', 'allowedTools', 'sandbox'].includes(key),
         )
-        .map(([key, value]) => [`${provider}.${key}`, value]),
+        .map(([key, value]) => [`${harness}.${key}`, value]),
     ),
   );
   return extras;
 }
 /** Classify configuration/escape hatches conservatively without interpreting native plugins. @internal */
 export function controlAccess(
-  provider: 'claude' | 'codex',
+  harness: 'claude' | 'codex',
   value: Partial<ClaudeOptions & CodexOptions>,
 ): AccessClass {
   if (
@@ -453,11 +541,38 @@ export function controlAccess(
     value.networkAccess === true
   )
     return 'exec';
-  if (provider === 'codex')
+  if (harness === 'codex')
     return value.sandbox === 'workspace-write' || (value.addDirs?.length ?? 0) > 0
       ? 'write'
       : 'read';
   const tools = toolAccess(value.tools ?? []);
   if (tools === 'none' && (value.addDirs?.length ?? 0) > 0) return 'read';
   return tools;
+}
+
+/** Field-wise partial view; object-level refinements apply only to a complete merged call. */
+function partialOptions(options: z.ZodObject): z.ZodObject {
+  return z.strictObject(options.shape).partial();
+}
+
+/** Conservatively classify package-defined capabilities, without applying adapter defaults. @internal */
+export function registeredCapabilities(
+  definition: HarnessDeclaration,
+  options: unknown,
+): { access: AccessClass; controls: Record<string, JsonValue> } {
+  const parsed =
+    definition.options instanceof z.ZodObject
+      ? partialOptions(definition.options).safeParse(options)
+      : definition.options.safeParse(options);
+  const access =
+    parsed.success && definition.access ? definition.access(parsed.data as never) : 'exec';
+  if (!Object.hasOwn(rank, access))
+    throw new Error(`Harness ${definition.name} returned an invalid access class.`);
+  const value = options as Record<string, unknown>;
+  const controls = Object.fromEntries(
+    (definition.capabilityKeys ?? [])
+      .filter((key) => Object.hasOwn(value, key))
+      .map((key) => [key, jsonValue(value[key])]),
+  );
+  return { access, controls };
 }

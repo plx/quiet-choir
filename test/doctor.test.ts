@@ -43,7 +43,7 @@ async function binary(provider: 'claude' | 'codex', mode = 'ok'): Promise<string
     `#!${process.execPath}
 const fs = require('node:fs');
 const a=process.argv.slice(2), mode=${JSON.stringify(mode)}, provider=${JSON.stringify(provider)};
-fs.appendFileSync(${JSON.stringify(join(directory, 'calls'))},JSON.stringify({provider,args:a})+'\\n');
+fs.appendFileSync(${JSON.stringify(join(directory, 'calls'))},JSON.stringify({harness:provider,args:a})+'\\n');
 if(mode==='hang') {setInterval(()=>{},1000);return;}
 if(a.includes('--version')) {if(mode==='cleanup')require('node:child_process').spawn('/bin/sleep',['30'],{stdio:'ignore'}).unref();console.log(mode==='version'?'9.9.9':${JSON.stringify(testedHarnessVersions[provider].minimum)});process.exit(0);}
 if(a.includes('--help')) {console.log(${JSON.stringify(provider === 'claude' ? claudeHelp : codexHelp)}.replace(mode==='enums'?'xhigh':'not-found', 'ultra'));process.exit(0);}
@@ -93,12 +93,12 @@ it('runs five checks per harness using full adapter argv and proves zero inferen
   const calls = (await readFile(join(directory, 'calls'), 'utf8'))
     .trim()
     .split('\n')
-    .map((line) => JSON.parse(line) as { provider: string; args: string[] });
+    .map((line) => JSON.parse(line) as { harness: string; args: string[] });
   const claude = calls.find(
-    (call) => call.provider === 'claude' && call.args.includes('--json-schema'),
+    (call) => call.harness === 'claude' && call.args.includes('--json-schema'),
   )?.args;
   const codex = calls.find(
-    (call) => call.provider === 'codex' && call.args.includes('--output-schema'),
+    (call) => call.harness === 'codex' && call.args.includes('--output-schema'),
   )?.args;
   expect(claude).toEqual(
     expect.arrayContaining([
@@ -194,7 +194,7 @@ it('retains an earlier cost failure across a later zero-cost provider', async ()
   });
   expect(report.zeroInference).toBe(false);
   expect(
-    report.checks.find((check) => check.provider === 'codex' && check.check === 'argv')?.ok,
+    report.checks.find((check) => check.harness === 'codex' && check.check === 'argv')?.ok,
   ).toBe(true);
 });
 it('bounds missing executables, timeouts, invalid deadlines, and cancellation', async () => {
@@ -254,7 +254,7 @@ it('reads TOML strings, comments, native profiles, and legacy profile precedence
 });
 it('exports version discovery with nonfatal diagnostics and cancellation', async () => {
   const request = {
-    provider: 'codex' as const,
+    harness: 'codex' as const,
     cwd: directory,
     options: { prompt: '' },
     outputSchema: null,

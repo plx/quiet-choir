@@ -3,6 +3,22 @@
  *
  * @packageDocumentation
  */
+export { defineHarness } from './harnesses/definition.js';
+export type {
+  AgentRequest,
+  HarnessAdapter,
+  HarnessCapabilities,
+  NativeHarnessCapabilities,
+  HarnessProbe,
+  HarnessDefinition,
+  HarnessDeclaration,
+  HarnessMap,
+  BuiltInHarnesses,
+  WorkflowHarnesses,
+  OptionsOf,
+  CapabilitiesOf,
+  RegisteredAgentClient,
+} from './workflow/runtime/harness-model.js';
 export { RunBudgetExceededError } from './workflow/runtime/run-budget.js';
 export type { RunBudgetPolicy, RunBudgetStop } from './workflow/runtime/run-budget.js';
 export { summarizeUsage } from './workflow/runtime/usage-summary.js';
@@ -50,6 +66,7 @@ export type {
   CodexOptions,
   HarnessRequest,
   HarnessRequestInput,
+  BuiltinHarnessRequestInput,
   HarnessCall,
   HarnessInvocation,
   HarnessProcess,
@@ -259,3 +276,10 @@ export type {
   WorktreeLedger,
   MergePreparation,
 } from './workflow/runtime/worktree-schema.js';
+
+export type {
+  HarnessAdapters,
+  HarnessConfigurations,
+} from './workflow/runtime/harness-registry.js';
+export { ClaudeAdapter, CodexAdapter } from './harnesses/builtins/adapters.js';
+export type { BuiltinAdapterOptions } from './harnesses/builtins/adapters.js';

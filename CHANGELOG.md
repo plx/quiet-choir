@@ -2,6 +2,13 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- Register package harnesses with typed `ctx.agent` clients, strict option schemas and capability
+  gates. Requests now name `harness` and include direct attempt identity; agent records carry a
+  registration revision. Preserve preceding built-in fingerprints and normalize old names on read.
+  Add per-harness CLI configuration/fixtures, workflow-aware doctor and the public harness kit.
+- Keep service integrations as helpers over ordinary effects. Add inspection metadata and local
+  attempt usage reporting, with a transport-injected decision helper as the reference pattern.
+
 - Add inline `ctx.workflow` frames with validated I/O, child identity checks, delegated profiles,
   configurable depth and inspectable usage trees. Child waits suspend the shared run; settled maps
   require declared children so their identities can be checked without rerunning committed mappers.

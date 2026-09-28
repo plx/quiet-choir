@@ -2,7 +2,7 @@ import { defineWorkflow, z } from '../../src/index.js';
 
 const Reviewer = z.object({
   id: z.string(),
-  provider: z.enum(['claude', 'codex']),
+  harness: z.enum(['claude', 'codex']),
   lens: z.string(),
 });
 const Verdict = z.object({ approved: z.boolean(), reason: z.string() });
@@ -14,9 +14,7 @@ export default defineWorkflow({
   async run(ctx, input) {
     return ctx.map('panel', input.reviewers, { concurrency: 2, key: (r) => ctx.id(r.id) }, (r) => {
       const options = { prompt: `${r.lens}: ${input.topic}`, schema: Verdict };
-      return r.provider === 'claude'
-        ? ctx.claude.value('verdict', options)
-        : ctx.codex.value('verdict', options);
+      return ctx.agent(r.harness).value('verdict', options);
     });
   },
 });

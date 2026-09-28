@@ -16,6 +16,21 @@ import { workflowLaunch } from './source.js';
 
 const metadata: z.ZodType<WorkflowDescription> = z.lazy(() =>
   z.object({
+    harnesses: z.array(
+      z.object({
+        name: z.string(),
+        revision: z.number().int().positive(),
+        options: z.json(),
+        capabilities: z.object({
+          structuredOutput: z.enum(['native', 'prompted', 'none']),
+          effort: z.array(z.string()).optional(),
+          sandbox: z.boolean().optional(),
+          sessionResume: z.boolean().optional(),
+        }),
+        factory: z.boolean(),
+        probe: z.boolean(),
+      }),
+    ),
     name: z.string().min(1),
     version: z.string().min(1),
     description: z.string().nullable(),
@@ -48,7 +63,7 @@ const validation = z.object({
   ),
 });
 const cache = z.object({
-  version: z.literal(1),
+  version: z.literal(2),
   engine: z.string(),
   plan: z.json(),
   sources: z.record(z.string(), z.string()),
@@ -173,7 +188,7 @@ export async function listDefinitions(
         const sources = await cacheSources(plan, result);
         await mkdir(root, { recursive: true, mode: 0o700 });
         const temporary = `${path}.${randomUUID()}.tmp`;
-        await writeFile(temporary, JSON.stringify({ version: 1, engine, plan, sources, result }), {
+        await writeFile(temporary, JSON.stringify({ version: 2, engine, plan, sources, result }), {
           mode: 0o600,
           flag: 'wx',
         });

@@ -95,6 +95,9 @@ jobs:
       - name: Test child workflow and registry CLI
         run: node test/children-cli-smoke.mjs
 
+      - name: Test typed harness registry and integration helper CLI
+        run: node test/harness-registry-cli-smoke.mjs
+
       - name: Check Workflow Lab comparisons
         run: npm run comparisons:check
 

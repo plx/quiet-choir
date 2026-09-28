@@ -4,6 +4,7 @@ import type { WorkflowDeclaration } from '../src/workflow/runtime/child-model.js
 import { delegateCapabilities } from '../src/workflow/runtime/child-profiles.js';
 import { profileGrantDigest, resolveCapabilities } from '../src/workflow/runtime/profiles.js';
 import type { AgentProfile } from '../src/workflow/runtime/profiles-model.js';
+import type { ClaudeOptions } from '../src/workflow/runtime/model.js';
 
 function declaration(
   name: string,
@@ -82,10 +83,16 @@ it('keeps a failing parent denial policy for omitted child policies and refuses 
   // A Claude-only failing policy passes to omitted built-ins at the Claude level.
   expect(inherited.manifest.profiles['text']?.claude.onPermissionDenied).toBe('fail');
   expect(() => {
-    inherited.check('scout', 'claude', { prompt: 'x', onPermissionDenied: 'warn' });
+    inherited.check('scout', 'claude', {
+      prompt: 'x',
+      onPermissionDenied: 'warn',
+    } as ClaudeOptions);
   }).toThrow('exceeds parent profile scout: onPermissionDenied');
   expect(() => {
-    inherited.check('scout', 'claude', { prompt: 'x', onPermissionDenied: 'fail' });
+    inherited.check('scout', 'claude', {
+      prompt: 'x',
+      onPermissionDenied: 'fail',
+    } as ClaudeOptions);
   }).not.toThrow();
   expect(() => {
     inherited.check('text', 'claude', { prompt: 'x' });

@@ -56,3 +56,5 @@ part of the documentation.
 - [0025: Attempt usage and run admission budgets](0025-attempt-usage-and-run-budgets.md)
 
 - [0026: Inline children and definition registry](0026-inline-children-and-definition-registry.md)
+
+- [0027: Typed harness registry and integration helpers](0027-typed-harness-registry-and-integration-helpers.md)

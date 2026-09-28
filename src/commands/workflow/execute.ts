@@ -37,7 +37,7 @@ interface WorkflowExecuteFlags {
   readonly 'max-transcript-bytes': string | undefined;
   readonly 'notify-command': string | undefined;
   readonly 'wait-mode': 'suspend' | 'block' | undefined;
-  readonly harness: string;
+  readonly harness: string[];
   readonly 'harness-config': string | undefined;
   readonly 'dry-run': boolean | undefined;
   readonly 'stub-steps': string[] | undefined;
@@ -45,7 +45,7 @@ interface WorkflowExecuteFlags {
   readonly 'kill-orphans': boolean | undefined;
   readonly 'kill-grace-ms': string | undefined;
   readonly 'max-agents': string | undefined;
-  readonly 'provider-limit': string[] | undefined;
+  readonly 'harness-limit': string[] | undefined;
   profile: string[] | undefined;
   grant: string[] | undefined;
   readonly input: string | undefined;
@@ -105,9 +105,15 @@ export default class WorkflowExecute extends WorkflowCommand {
     'wait-mode': Flags.option({ options: ['suspend', 'block'] as const })({
       description: 'Suspend long waits (default) or keep waiting in this process',
     }),
-    harness: Flags.string({ description: 'cli or fixture:<JSON file>', default: 'cli' }),
+    harness: Flags.string({
+      description: 'cli, fixture:<file>, or name=fixture:<file>; repeatable',
+      multiple: true,
+      default: ['cli'],
+    }),
     'harness-config': Flags.string({
-      description: 'CliHarness configuration JSON or @file; paths resolve against cwd',
+      env: 'QUIET_CHOIR_HARNESS_CONFIG',
+      description:
+        'Adapter configuration JSON or @file (harnesses.<name> for packages); paths resolve against cwd',
     }),
     'dry-run': Flags.boolean({
       description:
@@ -132,8 +138,9 @@ export default class WorkflowExecute extends WorkflowCommand {
     'max-agents': Flags.string({
       description: 'Max concurrent live agents across the run; default min(8, max(1, CPUs - 2))',
     }),
-    'provider-limit': Flags.string({
-      description: 'Additional provider ceiling, e.g. codex=1; repeatable, later rules win',
+    'harness-limit': Flags.string({
+      aliases: ['provider-limit'],
+      description: 'Additional harness ceiling, e.g. codex=1; repeatable, later rules win',
       multiple: true,
     }),
     'fork-from': Flags.string({
@@ -233,7 +240,7 @@ export default class WorkflowExecute extends WorkflowCommand {
         throw new Error(
           '--harness-config configures CLI execution or the --dry-run planner; fixture execution takes its configuration from the fixture file.',
         );
-      agentLimits = parseAgentLimits(flags['max-agents'], flags['provider-limit'] ?? []);
+      agentLimits = parseAgentLimits(flags['max-agents'], flags['harness-limit'] ?? []);
       profileOverrides = (flags.profile ?? []).map(parseProfileOverride);
       policy = validatePolicy(
         (flags.policy ?? []).map((value) => JSON.parse(value) as unknown),

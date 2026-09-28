@@ -52,7 +52,11 @@ export const policyOverrideSchema = z
       .max(512)
       .regex(/^[a-zA-Z0-9_./:*-]+$/u)
       .optional(),
-    kind: z.enum(['claude', 'codex', 'step', 'exec']).optional(),
+    kind: z
+      .string()
+      .regex(/^[a-z][a-z0-9-]{0,31}$/u)
+      .refine((name) => name !== 'sleep', 'Sleep does not accept execution overrides.')
+      .optional(),
     maxOutputBytes: positive.max(2_147_483_647).optional(),
     ...streaming,
     ...limits,
@@ -115,14 +119,17 @@ export function matchesStepGlob(pattern: string, id: string): boolean {
 /** Resolve policy without importing any adapter into the core. @internal */
 export function resolvePolicy(
   id: string,
-  kind: 'claude' | 'codex' | 'step' | 'sleep' | 'exec',
-  callSite: Omit<PolicyOverride, 'match' | 'kind'>,
+  kind: string,
+  callSite: {
+    readonly [K in keyof Omit<PolicyOverride, 'match' | 'kind'>]?: PolicyOverride[K] | undefined;
+  },
   defaults: ExecutionPolicy,
   overrides: readonly PolicyOverride[],
   matched: Set<number>,
   profile?: ResolvedProfile,
   profileOverrides: readonly ProfileOverride[] = [],
 ): AttemptPolicy {
+  const agent = !['step', 'sleep', 'exec'].includes(kind);
   validateStepId(id);
   executionPolicySchema.parse(defaults);
   if (callSite.retry !== undefined && !retryPolicySchema.safeParse(callSite.retry).success)
@@ -136,7 +143,7 @@ export function resolvePolicy(
     'retry.maxAttempts': 'runtime',
     'retry.delayMs': 'runtime',
   };
-  if (kind === 'claude' || kind === 'codex') {
+  if (agent) {
     Object.assign(policy, { transcripts: 'on', maxTranscriptBytes: 64 * 1024 * 1024 });
     sources['transcripts'] = 'runtime';
     sources['maxTranscriptBytes'] = 'runtime';
@@ -144,7 +151,7 @@ export function resolvePolicy(
   let requestedModel: string | null = null;
   let reasoningEffort: CodexOptions['reasoningEffort'] | null = null;
   const applicable = new Set<string>(['retry']);
-  if (kind === 'claude' || kind === 'codex') {
+  if (agent) {
     for (const key of [
       'timeoutMs',
       'model',
@@ -154,19 +161,21 @@ export function resolvePolicy(
       ...Object.keys(streaming),
     ])
       applicable.add(key);
-    for (const key of kind === 'claude' ? ['maxTurns', 'maxBudgetUsd'] : ['reasoningEffort'])
+    for (const key of kind === 'codex' ? ['reasoningEffort'] : ['maxTurns', 'maxBudgetUsd'])
       applicable.add(key);
   }
   if (kind === 'exec') {
     applicable.add('timeoutMs');
     applicable.add('maxOutputBytes');
   }
-  const apply = (values: ExecutionPolicy & PolicyOverride, source: string): void => {
-    if (
-      (kind === 'claude' || kind === 'codex') &&
-      values.maxOutputBytes !== undefined &&
-      values.maxRetainedBytes === undefined
-    ) {
+  const apply = (
+    values: {
+      readonly [K in keyof (ExecutionPolicy & PolicyOverride)]?:
+        (ExecutionPolicy & PolicyOverride)[K] | undefined;
+    },
+    source: string,
+  ): void => {
+    if (agent && values.maxOutputBytes !== undefined && values.maxRetainedBytes === undefined) {
       Object.assign(policy, { maxRetainedBytes: values.maxOutputBytes });
       sources['maxRetainedBytes'] = source;
     }
@@ -214,7 +223,7 @@ export function resolvePolicy(
         apply(rule, `override:${String(index)}`);
       }
     });
-  if ((kind === 'claude' || kind === 'codex') && policy.maxRetainedBytes !== undefined) {
+  if (agent && policy.maxRetainedBytes !== undefined) {
     Object.assign(policy, { maxOutputBytes: policy.maxRetainedBytes });
     sources['maxOutputBytes'] = sources['maxRetainedBytes'] ?? 'harness';
   }

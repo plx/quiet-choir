@@ -425,7 +425,7 @@ it('keeps the first observed session ID when a failing attempt reports a later o
       async invoke(_request, invocation) {
         await invocation.onSession?.('first');
         throw new HarnessError({
-          provider: 'codex',
+          harness: 'codex',
           kind: 'protocol',
           exit: { code: 1, signal: null },
           failure: null,
@@ -705,7 +705,7 @@ it.each([{ maxRetainedBytes: 64 }, { maxStreamBytes: 64 }] satisfies PolicyOverr
     );
     await expect(
       new CliHarness({ codexBinary: agent, killGraceMs: 20 }).invoke(
-        { provider: 'codex', options: { prompt: 'respond' }, cwd: directory, outputSchema: null },
+        { harness: 'codex', options: { prompt: 'respond' }, cwd: directory, outputSchema: null },
         { ...testInvocation(), policy },
       ),
     ).rejects.toMatchObject({ code: 'QUIET_CHOIR_OUTPUT_LIMIT' });

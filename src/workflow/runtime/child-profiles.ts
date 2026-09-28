@@ -1,5 +1,6 @@
+import type { HarnessDeclaration } from './harness-model.js';
 import type { ChildOptions, WorkflowDeclaration } from './child-model.js';
-import type { ClaudeOptions, CodexOptions, ExecutionPolicy } from './model.js';
+import type { AgentOptions, ExecutionPolicy } from './model.js';
 import type {
   AgentProfile,
   CapabilityManifest,
@@ -8,7 +9,12 @@ import type {
   ResolvedProfile,
 } from './profiles-model.js';
 import { digest } from './json.js';
-import { profileGrantDigest, requireGrant, resolveCapabilities } from './profiles.js';
+import {
+  profileGrantDigest,
+  requireGrant,
+  resolveCapabilities,
+  registeredCapabilities,
+} from './profiles.js';
 
 /** A live child capability boundary; private environment values never enter frame records. @internal */
 export interface ChildCapabilities {
@@ -18,8 +24,9 @@ export interface ChildCapabilities {
   readonly overrides: readonly ProfileOverride[];
   readonly check: (
     name: string,
-    provider: 'claude' | 'codex',
-    call: ClaudeOptions | CodexOptions,
+    harness: string,
+    call: AgentOptions,
+    definition?: HarnessDeclaration,
   ) => void;
   readonly limits: <T extends ExecutionPolicy>(name: string, policy: T) => T;
 }
@@ -76,6 +83,13 @@ function subset(child: ResolvedProfile, parent: ResolvedProfile, label: string):
       `Child profile ${label} exceeds parent profile ${parent.name}: ${field}. Delegate a sufficient parent role explicitly.`,
     );
   };
+  const rank = { none: 0, read: 1, write: 2, exec: 3 };
+  for (const [name, access] of Object.entries(child.harnessAccess ?? {})) {
+    if (rank[access] > rank[parent.harnessAccess?.[name] ?? 'none']) reject(`${name}.access`);
+    const wanted = child.harnessCapabilities?.[name] ?? {};
+    const allowed = parent.harnessCapabilities?.[name] ?? {};
+    if (digest(wanted) !== digest(allowed)) reject(`${name}.capabilities`);
+  }
   if (!child.claude.tools.every((tool) => parent.claude.tools.includes(tool))) reject('tools');
   if (
     !child.claude.allowedTools.every((rule) =>
@@ -85,13 +99,13 @@ function subset(child: ResolvedProfile, parent: ResolvedProfile, label: string):
     reject('allowedTools');
   if (child.codex.sandbox === 'workspace-write' && parent.codex.sandbox !== 'workspace-write')
     reject('sandbox');
-  for (const provider of ['claude', 'codex'] as const) {
-    const wanted = child[provider];
-    const allowed = parent[provider];
+  for (const harness of ['claude', 'codex'] as const) {
+    const wanted = child[harness];
+    const allowed = parent[harness];
     if (wanted.isolation === 'inherit' && allowed.isolation !== 'inherit')
-      reject(`${provider}.isolation`);
+      reject(`${harness}.isolation`);
     if (!(wanted.addDirs ?? []).every((path) => allowed.addDirs?.includes(path)))
-      reject(`${provider}.addDirs`);
+      reject(`${harness}.addDirs`);
     // Native configuration is opaque: only exactly delegated escape hatches can cross the boundary.
     for (const field of [
       'plugins',
@@ -109,7 +123,7 @@ function subset(child: ResolvedProfile, parent: ResolvedProfile, label: string):
       const childValue = (wanted as unknown as Record<string, unknown>)[field];
       const parentValue = (allowed as unknown as Record<string, unknown>)[field];
       if (childValue !== undefined && digest(childValue) !== digest(parentValue ?? null))
-        reject(`${provider}.${field}`);
+        reject(`${harness}.${field}`);
     }
   }
   if (
@@ -210,6 +224,24 @@ export function delegateCapabilities(
     const clamped = clampLimits(role, ceiling);
     const inherited: ResolvedProfile = {
       ...clamped,
+      ...(clamped.harnesses === undefined
+        ? {}
+        : {
+            harnesses: Object.fromEntries(
+              Object.entries(clamped.harnesses).map(([harness, controls]) => {
+                const model = ceiling.harnesses?.[harness]?.['model'];
+                return [
+                  harness,
+                  {
+                    ...controls,
+                    ...(controls['model'] === undefined && typeof model === 'string'
+                      ? { model }
+                      : {}),
+                  },
+                ];
+              }),
+            ),
+          }),
       claude: {
         ...clamped.claude,
         ...(role.claude.model === undefined && ceiling.claude.model !== undefined
@@ -243,10 +275,20 @@ export function delegateCapabilities(
     grants,
     pins,
     overrides,
-    check(name, provider, call) {
+    check(name, harness, call, definition) {
       const role = manifest.profiles[name];
       if (!role) throw new Error(`Unknown child profile ${name}.`);
-      checkProfile(name, { ...role, [provider]: { ...role[provider], ...call } });
+      if (harness === 'claude' || harness === 'codex') {
+        checkProfile(name, { ...role, [harness]: { ...role[harness], ...call } });
+      } else {
+        if (!definition) throw new Error(`Missing harness definition ${harness}.`);
+        const { access, controls } = registeredCapabilities(definition, call);
+        checkProfile(name, {
+          ...role,
+          harnessAccess: { ...role.harnessAccess, [harness]: access },
+          harnessCapabilities: { ...role.harnessCapabilities, [harness]: controls },
+        });
+      }
     },
     limits(name, policy) {
       return clampLimits(policy, bound(name));

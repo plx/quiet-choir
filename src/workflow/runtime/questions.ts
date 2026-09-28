@@ -415,6 +415,11 @@ export class RunQuestions {
     const poll = waiter.sources.poll;
     if (poll && (expired || progress.nextCheckAt === null || now >= progress.nextCheckAt)) {
       const context: StepContext = {
+        reportUsage: () => {
+          throw new Error(
+            'Usage reporting is only available inside an active local step callback.',
+          );
+        },
         cwd: this.#deps.record.cwd,
         signal: waiter.signal,
         idempotencyKey: `${this.#deps.record.id}/${id}`,

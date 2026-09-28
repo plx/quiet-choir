@@ -85,7 +85,7 @@ export interface HarnessErrorDetails {
   /** Explicit adapter category when protocol metadata alone is insufficient. */
   readonly kind?: ErrorKind;
   /** Adapter that performed the invocation. */
-  readonly provider: 'claude' | 'codex';
+  readonly harness: string;
   /** Observed process termination. */
   readonly exit: HarnessExit;
   /** Parsed protocol failure, or null for an invalid/missing protocol or exit-only failure. */
@@ -117,7 +117,7 @@ export class HarnessError extends Error {
   /** Structured failure category for settled outcomes and selective retries. */
   public readonly kind: ErrorKind;
   /** Adapter that performed the invocation. */
-  public readonly provider: 'claude' | 'codex';
+  public readonly harness: string;
   /** Observed process termination. */
   public readonly exit: HarnessExit;
   /** Parsed terminal failure, when available. */
@@ -153,7 +153,7 @@ export class HarnessError extends Error {
               .join(': ');
           })();
     super(
-      `${details.provider} ${reason} [exit ${exit}]${stderrTail ? `; stderr: ${stderrTail}` : ''}${stdoutTail ? `; stdout tail: ${stdoutTail}` : ''}`,
+      `${details.harness} ${reason} [exit ${exit}]${stderrTail ? `; stderr: ${stderrTail}` : ''}${stdoutTail ? `; stdout tail: ${stdoutTail}` : ''}`,
     );
     this.name = 'HarnessError';
     this.diagnostics = details.diagnostics ?? {};
@@ -163,7 +163,7 @@ export class HarnessError extends Error {
     this.turns = failure?.turns ?? details.turns ?? null;
     this.permissionDenials = failure?.permissionDenials ?? details.permissionDenials ?? null;
     this.kind = details.kind ?? protocolErrorKind(failure);
-    this.provider = details.provider;
+    this.harness = details.harness;
     this.exit = { ...details.exit };
     this.failure = failure;
     this.stderrTail = stderrTail;

@@ -79,9 +79,10 @@ export class RunBudget {
 
   public check(stepId: string): RunBudgetExceededError | undefined {
     if (this.#error) return this.#error;
+    const usage = summarizeUsage(this.#record);
     const values: RunBudgetPolicy = {
       maxRunAgentAttempts: this.#attempts,
-      maxRunCostUsd: summarizeUsage(this.#record).costUsd ?? 0,
+      maxRunCostUsd: (usage.costUsd ?? 0) + (usage.integrationUsage.costUsd ?? 0),
     };
     for (const metric of ['maxRunAgentAttempts', 'maxRunCostUsd'] as const) {
       const limit = this.#policy[metric];

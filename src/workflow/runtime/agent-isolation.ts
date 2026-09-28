@@ -18,7 +18,10 @@ export const agentWorktreeSchema = z.union([z.literal(true), worktreeIsolationSc
 
 /** Separate the legacy checkout shorthand before combining profile/call layers. @internal */
 export function isolationParts<
-  T extends { readonly isolation?: AgentIsolation; readonly worktree?: AgentWorktree },
+  T extends {
+    readonly isolation?: AgentIsolation | undefined;
+    readonly worktree?: AgentWorktree | undefined;
+  },
 >(
   options: T,
 ): Omit<T, 'isolation' | 'worktree'> & { isolation?: HarnessIsolation; worktree?: AgentWorktree } {
@@ -34,7 +37,10 @@ export function isolationParts<
 
 /** Resolve the configuration default before fingerprinting or planning. @internal */
 export function resolveIsolation<
-  T extends { readonly isolation?: AgentIsolation; readonly worktree?: AgentWorktree },
+  T extends {
+    readonly isolation?: AgentIsolation | undefined;
+    readonly worktree?: AgentWorktree | undefined;
+  },
 >(
   options: T,
 ): Omit<T, 'isolation' | 'worktree'> & { isolation: HarnessIsolation; worktree?: AgentWorktree } {

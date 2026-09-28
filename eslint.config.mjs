@@ -56,5 +56,22 @@ export default defineConfig(
     files: ['comparisons/site/*.js'],
     languageOptions: { globals: globals.browser },
   },
+  {
+    files: ['src/integrations/**/*.ts'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          patterns: [
+            {
+              group: ['../**', './**', '!../index.js'],
+              message:
+                'Integration helpers must use the public quiet-choir entry point, not runtime internals.',
+            },
+          ],
+        },
+      ],
+    },
+  },
   prettier,
 );

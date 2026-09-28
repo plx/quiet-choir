@@ -1,6 +1,6 @@
-import type { AgentUsage, JsonValue } from '../workflow/runtime/model.js';
-import type { ModelUsage, TokenCounts } from '../workflow/runtime/usage-model.js';
-import { knownSum, measurement, normalizeUsage, usageObject } from '../workflow/runtime/usage.js';
+import type { AgentUsage, JsonValue } from '../harness-kit.js';
+import type { ModelUsage, TokenCounts } from '../harness-kit.js';
+import { knownSum, measurement, normalizeUsage, usageObject } from '../harness-kit.js';
 
 /** Claude's top-level usage is not a session total; use modelUsage for token totals. @internal */
 export function claudeUsage(data: Record<string, unknown>, requested: string | null): AgentUsage {

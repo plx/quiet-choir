@@ -10,7 +10,6 @@ import {
 import type { ClaudeOptions, CodexOptions } from './model.js';
 import { z } from 'zod';
 
-import type { HarnessRequest } from './model.js';
 import { retryPolicySchema } from './policy.js';
 import { environmentEdits } from './agent-environment.js';
 import { resolveIsolation } from './agent-isolation.js';
@@ -48,11 +47,11 @@ export const codexOptionsSchema: z.ZodType = z.strictObject({
 
 /** Shared validation used before checkpoint creation and before direct adapter invocations. @internal */
 export function validateAgentOptions(
-  provider: HarnessRequest['provider'],
+  harness: 'claude' | 'codex',
   options: unknown,
   resolved = true,
 ): void {
-  const result = (provider === 'claude' ? claudeOptionsSchema : codexOptionsSchema).safeParse(
+  const result = (harness === 'claude' ? claudeOptionsSchema : codexOptionsSchema).safeParse(
     options,
   );
   if (!result.success) {
@@ -71,13 +70,13 @@ export function validateAgentOptions(
             : String(value);
       return `${path}: ${issue.message} (got ${rendered})`;
     });
-    throw new Error(`Invalid ${provider} options: ${details.join('; ')}`);
+    throw new Error(`Invalid ${harness} options: ${details.join('; ')}`);
   }
   const controls = options as ClaudeOptions & CodexOptions;
   environmentEdits(controls.env);
   const isolation = resolveIsolation(controls).isolation;
-  validateExtraArgs(provider, controls.extraArgs ?? []);
-  if (provider === 'codex') {
+  validateExtraArgs(harness, controls.extraArgs ?? []);
+  if (harness === 'codex') {
     if (controls.effort !== undefined && controls.reasoningEffort !== undefined)
       throw new Error('Set effort or reasoningEffort, never both.');
     if (

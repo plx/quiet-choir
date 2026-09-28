@@ -1,3 +1,4 @@
+import { readHarnessSelection } from '../../workflow/loader/harness-selection.js';
 import { Flags, type Interfaces } from '@oclif/core';
 import { DoctorExecutor } from '../../application/doctor.js';
 import { BaseCommand } from '../../cli/base-command.js';
@@ -5,8 +6,10 @@ import { executionSignals, tolerateClosedTerminal } from '../../cli/signals.js';
 import { ProcessSupervisor } from '../../processes/supervisor.js';
 
 interface DoctorFlags {
+  readonly workflow: string | undefined;
+  readonly 'harness-config': string | undefined;
   readonly json: boolean | undefined;
-  readonly harness: 'all' | 'claude' | 'codex';
+  readonly harness: string;
   readonly 'claude-binary': string | undefined;
   readonly 'codex-binary': string | undefined;
   readonly 'codex-home': string | undefined;
@@ -17,10 +20,17 @@ export default class ConfigurationDoctor extends BaseCommand {
   public static override readonly summary =
     'Probe harness versions, flags, enums and inherited defaults without inference';
   public static override readonly flags: Interfaces.FlagInput<DoctorFlags> = {
+    workflow: Flags.file({
+      description: 'Type-check a trusted workflow and list/probe its declared harness registry',
+    }),
+    'harness-config': Flags.string({
+      description: 'Adapter JSON or @file; harnesses.<name> configures package probes',
+      env: 'QUIET_CHOIR_HARNESS_CONFIG',
+    }),
     json: Flags.boolean({ default: false, description: 'Print a structured contract report' }),
-    harness: Flags.option({ options: ['all', 'claude', 'codex'] as const })({
+    harness: Flags.string({
       default: 'all',
-      description: 'Harness to diagnose',
+      description: 'Registered harness to diagnose, or all (custom names require --workflow)',
     }),
     'claude-binary': Flags.string({ description: 'Claude executable override' }),
     'codex-binary': Flags.string({ description: 'Codex executable override' }),
@@ -45,6 +55,16 @@ export default class ConfigurationDoctor extends BaseCommand {
         supervisor,
       ).execute({
         kind: 'configuration.doctor',
+        ...(flags.workflow === undefined ? {} : { workflow: flags.workflow }),
+        ...(flags['harness-config'] === undefined
+          ? {}
+          : {
+              configuration: await readHarnessSelection(
+                'cli',
+                flags['harness-config'],
+                process.cwd(),
+              ),
+            }),
         cwd: process.cwd(),
         harness: flags.harness,
         ...(flags['claude-binary'] === undefined ? {} : { claudeBinary: flags['claude-binary'] }),
@@ -58,7 +78,7 @@ export default class ConfigurationDoctor extends BaseCommand {
           : result.checks
               .map(
                 (check) =>
-                  `${check.ok ? 'PASS' : 'FAIL'} ${check.provider} ${check.check}: ${check.message}`,
+                  `${check.ok ? 'PASS' : 'FAIL'} ${check.harness} ${check.check}: ${check.message}`,
               )
               .join('\n'),
       );

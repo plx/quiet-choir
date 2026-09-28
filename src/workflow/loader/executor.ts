@@ -1,3 +1,5 @@
+import type { WorkflowDeclaration } from '../runtime/child-model.js';
+import { importWorkflow, WorkflowDefinitionError } from './import.js';
 import { cleanWorktrees } from '../runtime/worktree-clean.js';
 import type { CleanWorkflowPlan, ListDefinitionsPlan, ExecuteNamedWorkflowPlan } from './model.js';
 import { NodeProcessRunner } from '../../processes/runner.js';
@@ -5,7 +7,7 @@ import type { ProcessRunner } from '../runtime/exec-model.js';
 import { realpath } from 'node:fs/promises';
 import { WorkflowNotifications } from './notifications.js';
 import { fixturesFromRun } from './fixtures.js';
-import { CliHarness } from '../../harnesses/cli.js';
+import { selectedAdapters } from './harness-selection.js';
 import { FixtureHarness } from '../../harnesses/fixture.js';
 import { RehearsalHarness, rehearsalState } from './rehearsal.js';
 import { jsonValue } from '../runtime/json.js';
@@ -22,17 +24,12 @@ import {
 } from '../runtime/run-errors.js';
 import { defaultAgentLimits, validateAgentLimits } from '../runtime/agent-limiter.js';
 import type { ProcessSupervisor } from '../../processes/supervisor.js';
-import { checkedDefinition, describeWorkflow } from '../runtime/definition.js';
+import { describeWorkflow } from '../runtime/definition.js';
 import { listDefinitions } from './registry.js';
 import { analyzeTypecheckEntrypoint } from '../typecheck/plan.js';
-import { randomUUID } from 'node:crypto';
-
-import { tsImport } from 'tsx/esm/api';
-import { register as registerCommonJs } from 'tsx/cjs/api';
-import ts from 'typescript';
 
 import type { ExecutionLogger, Executor } from '../../application/execution.js';
-import type { Harness, WorkflowDefinition } from '../runtime/model.js';
+import type { Harness } from '../runtime/model.js';
 import { runWorkflow } from '../runtime/runner.js';
 import { resolveStateDir } from '../runtime/paths.js';
 import { CheckpointError } from '../runtime/checkpoint.js';
@@ -68,19 +65,6 @@ export interface WorkflowExecutorOptions {
   /** Live storage ownership injection, used by tick to claim before importing source. */
   readonly store?: RunStore;
   readonly clock?: WorkflowClock;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-function workflowDefinition(module: unknown): WorkflowDefinition<unknown, unknown> {
-  const definition: unknown = isRecord(module) ? module['default'] : undefined;
-  if (!isRecord(definition))
-    throw new Error(
-      'Workflow must default-export a defineWorkflow({ name, version, input, output, run }) definition.',
-    );
-  return checkedDefinition(definition) as unknown as WorkflowDefinition<unknown, unknown>;
 }
 
 /** Type-check, import, and optionally run trusted workflow code behind a plain-data boundary. */
@@ -268,7 +252,7 @@ export class WorkflowExecutor implements Executor<
           if (plan.harness.kind === 'fixture') {
             if (!plan.harness.fixtures) throw new Error('Fixture selection requires fixture data.');
             harness = new FixtureHarness(plan.harness.fixtures);
-          } else harness = new CliHarness(plan.harness.config);
+          }
         }
       }
       stage = 'usage.flag';
@@ -279,7 +263,7 @@ export class WorkflowExecutor implements Executor<
       if (agentLimits)
         this.#options.logger.log(
           'info',
-          `Agent limits: total=${String(agentLimits.total)}; per-provider=${JSON.stringify(agentLimits.perProvider ?? {})}`,
+          `Agent limits: total=${String(agentLimits.total)}; per-harness=${JSON.stringify(agentLimits.perProvider ?? {})}`,
         );
       if (plan.kind === 'workflow.execute' && plan.resume) {
         const saved = await readRequiredRun({ runId: plan.runId, stateDir: plan.stateDir });
@@ -314,26 +298,11 @@ export class WorkflowExecutor implements Executor<
         'debug',
         `Importing trusted workflow module ${plan.typecheck.entrypoint}`,
       );
-      const format = ts.getImpliedNodeFormatForFile(plan.typecheck.entrypoint, undefined, ts.sys, {
-        module: ts.ModuleKind.NodeNext,
-        moduleResolution: ts.ModuleResolutionKind.NodeNext,
-      });
-      let module: unknown;
-      if (format === ts.ModuleKind.CommonJS) {
-        const registered = registerCommonJs({ namespace: randomUUID() });
-        unregister = registered.unregister;
-        module = registered.require(plan.typecheck.entrypoint, import.meta.url);
-      } else {
-        module = await tsImport(plan.typecheck.entrypoint, {
-          parentURL: import.meta.url,
-          ...(plan.typecheck.configuration.kind === 'tsconfig'
-            ? { tsconfig: plan.typecheck.configuration.path }
-            : {}),
-        });
-      }
+      const imported = await importWorkflow(plan.typecheck);
+      unregister = imported.dispose;
       this.#options.signal?.throwIfAborted();
       stage = 'load.definition';
-      const definition = workflowDefinition(module);
+      const definition = imported.definition;
       if (
         plan.kind === 'workflow.execute' &&
         plan.registryName !== undefined &&
@@ -387,7 +356,31 @@ export class WorkflowExecutor implements Executor<
             ? {}
             : { processSupervisor: this.#options.processSupervisor }),
         });
+      const adapters = plan.dryRun ? {} : selectedAdapters(plan.harness, harness);
+      const declaredNames = new Set<string>(['claude', 'codex']);
+      const pendingDeclarations = [definition as unknown as WorkflowDeclaration];
+      const visitedDeclarations = new Set<object>();
+      while (pendingDeclarations.length) {
+        const declared = pendingDeclarations.pop();
+        if (!declared || visitedDeclarations.has(declared)) continue;
+        visitedDeclarations.add(declared);
+        for (const item of declared.harnesses ?? []) declaredNames.add(item.name);
+        pendingDeclarations.push(...(declared.children ?? []));
+      }
+      for (const name of [
+        ...Object.keys(plan.harness?.named ?? {}),
+        ...Object.keys(plan.harness?.configurations ?? {}),
+      ])
+        if (!declaredNames.has(name))
+          this.#options.logger.log(
+            'warn',
+            `Harness ${name} is not declared in the static workflow tree; this setting only applies if a child invoked dynamically (via ctx.workflow) declares it.`,
+          );
       const run = await runWorkflow(definition, {
+        ...(Object.keys(adapters).length ? { adapters } : {}),
+        ...(plan.harness?.configurations === undefined
+          ? {}
+          : { harnessConfigurations: plan.harness.configurations }),
         runId: plan.runId,
         launch: await workflowLaunch(plan.typecheck, source),
         stateDir: previewState?.stateDir ?? plan.stateDir,
@@ -443,7 +436,7 @@ export class WorkflowExecutor implements Executor<
             );
           const detail =
             event.message ??
-            `${event.stepId ?? ''} (attempt ${String(event.attempt)})${event.provider === undefined ? '' : ` provider=${event.provider}`}${agentProgress ? ` ${event.progress?.summary ?? event.outcome ?? 'started'}${event.sessionId ? ` session=${event.sessionId}` : ''}` : event.waitedMs === undefined ? '' : ` waitedMs=${String(event.waitedMs)} inFlight=${JSON.stringify(event.inFlight)} queued=${String(event.queued)}`}`;
+            `${event.stepId ?? ''} (attempt ${String(event.attempt)})${event.harness === undefined ? '' : ` harness=${event.harness}`}${agentProgress ? ` ${event.progress?.summary ?? event.outcome ?? 'started'}${event.sessionId ? ` session=${event.sessionId}` : ''}` : event.waitedMs === undefined ? '' : ` waitedMs=${String(event.waitedMs)} inFlight=${JSON.stringify(event.inFlight)} queued=${String(event.queued)}`}`;
           this.#options.logger.log(
             observational || (plan.progress && agentProgress)
               ? 'info'
@@ -493,7 +486,9 @@ export class WorkflowExecutor implements Executor<
               ? 'workflow.interrupted'
               : error instanceof RunRefusedError || error instanceof WorkflowInputError
                 ? error.code
-                : stage;
+                : error instanceof WorkflowDefinitionError
+                  ? 'load.definition'
+                  : stage;
       return workflowFailure(
         code,
         run?.recoveryHint && !message.includes('re-finalize')
