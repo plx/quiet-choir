@@ -1458,6 +1458,65 @@ it.each(['owned', 'different-owner'] as const)(
   20_000,
 );
 
+it('throws ConfigurationError when a resumed worktree registration is missing its metadata directory', async () => {
+  let interrupted = false;
+  const breakingRunner: ProcessRunner = {
+    async run(request, invocation) {
+      const result = await processRunner.run(request, invocation);
+      if (
+        !interrupted &&
+        Array.isArray(request.command) &&
+        request.command.includes('worktree') &&
+        request.command.includes('add')
+      ) {
+        interrupted = true;
+        const path = z.string().parse(request.command.at(-2));
+        const metadata = resolve(
+          path,
+          (await readFile(join(path, '.git'), 'utf8')).replace(/^gitdir: /u, '').trimEnd(),
+        );
+        // The checkout's `.git` pointer survives while Git's own metadata directory was only
+        // partially created (or removed) before the interruption.
+        await rm(metadata, { recursive: true, force: true });
+        throw new Error('fixture interrupted registration');
+      }
+      return result;
+    },
+  };
+  const invoke = vi.fn<Harness['invoke']>(async (request) => {
+    await writeFile(join(request.cwd, 'file.txt'), 'resumed edit\n');
+    return response;
+  });
+  const workflow = defineWorkflow({
+    name: 'planned-registration-missing-metadata',
+    version: '1',
+    input: z.null(),
+    output: z.string(),
+    async run(ctx) {
+      const result = await ctx.codex.text('edit', { prompt: 'edit', isolation: 'worktree' });
+      assert(result.worktree?.commit);
+      return result.worktree.commit;
+    },
+  });
+  const settings = {
+    ...options('planned-registration-missing-metadata'),
+    harness: { invoke },
+    worktrees: { root, keep: 'all' as const },
+  };
+  await expect(
+    runWorkflow(workflow, { ...settings, input: null, processRunner: breakingRunner }),
+  ).rejects.toThrow('fixture interrupted registration');
+  expect(invoke).not.toHaveBeenCalled();
+  const rejection: unknown = await runWorkflow(workflow, {
+    ...settings,
+    resume: true,
+  }).catch((error: unknown) => error);
+  expect(rejection).toBeInstanceOf(Error);
+  expect((rejection as Error).cause).toBeInstanceOf(ConfigurationError);
+  expect((rejection as Error).message).toContain('metadata is missing');
+  expect(invoke).not.toHaveBeenCalled();
+}, 20_000);
+
 it('keeps a resumed different-owner worktree registration a configuration failure that a retried, settled map cannot journal', async () => {
   // First interrupt and corrupt the planned registration exactly as the plain-call case does,
   // then resume with the *same* step wrapped in a retry policy under an onError: 'settle' map.

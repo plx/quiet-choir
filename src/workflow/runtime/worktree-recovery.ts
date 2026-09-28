@@ -13,6 +13,30 @@ async function regularText(path: string, signal: AbortSignal): Promise<string | 
   }
 }
 
+// A removed or only partially created metadata directory is validation, not a filesystem crash:
+// surface it the same way as every other pre-launch registration check.
+const missingMetadataCodes = new Set(['ENOENT', 'ENOTDIR', 'ELOOP']);
+
+async function metadataLstat(path: string): ReturnType<typeof lstat> {
+  try {
+    return await lstat(path);
+  } catch (error) {
+    if (error instanceof Error && 'code' in error && missingMetadataCodes.has(error.code as string))
+      throw new ConfigurationError('Interrupted worktree metadata is missing.', { cause: error });
+    throw error;
+  }
+}
+
+async function metadataRealpath(path: string): ReturnType<typeof realpath> {
+  try {
+    return await realpath(path);
+  } catch (error) {
+    if (error instanceof Error && 'code' in error && missingMetadataCodes.has(error.code as string))
+      throw new ConfigurationError('Interrupted worktree metadata is missing.', { cause: error });
+    throw error;
+  }
+}
+
 /** Reconcile one narrow Git add interruption, only after prior process ownership is recovered. @internal */
 export async function repairWorktreeRegistrations(
   ledger: WorktreeLedger,
@@ -33,12 +57,12 @@ export async function repairWorktreeRegistrations(
     if (!match?.[1])
       throw new ConfigurationError('Interrupted worktree has an invalid Git pointer.');
     const metadata = resolve(cache.path, match[1]);
-    const info = await lstat(metadata);
+    const info = await metadataLstat(metadata);
     if (
       !info.isDirectory() ||
       info.isSymbolicLink() ||
       dirname(metadata) !== join(common, 'worktrees') ||
-      (await realpath(metadata)) !== metadata
+      (await metadataRealpath(metadata)) !== metadata
     )
       throw new ConfigurationError(
         'Interrupted worktree metadata escaped its recorded repository.',
