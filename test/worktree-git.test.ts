@@ -102,6 +102,8 @@ it('parses rename/copy/type-change paths without splitting whitespace', () => {
 it('clears inherited Git repository/index redirects and keeps fixed operation policy', async () => {
   vi.stubEnv('GIT_DIR', '/unexpected/repository');
   vi.stubEnv('GIT_INDEX_FILE', '/unexpected/index');
+  // Git for Windows honors any casing; the filter must not rely on uppercase names.
+  vi.stubEnv('Git_Dir', '/unexpected/mixed-case');
   const run = vi.fn<ProcessRunner['run']>(() =>
     Promise.resolve({
       code: 0,
@@ -122,6 +124,7 @@ it('clears inherited Git repository/index redirects and keeps fixed operation po
   });
   expect(request?.env).not.toHaveProperty('GIT_DIR');
   expect(request?.env).not.toHaveProperty('GIT_INDEX_FILE');
+  expect(request?.env).not.toHaveProperty('Git_Dir');
   expect(request?.command).toContain('core.fsmonitor=false');
 });
 

@@ -18,11 +18,12 @@ export class WorktreeGit {
       readonly timeoutMs?: number;
     } = {},
   ): Promise<ExecResult> {
-    // Caller environment must not redirect repository/index ownership away from -C cwd.
+    // Caller environment must not redirect repository/index ownership away from -C cwd. Windows
+    // names are case-insensitive, so strip every casing on all platforms.
     const env = Object.fromEntries(
       Object.entries(process.env).filter(
         (entry): entry is [string, string] =>
-          entry[1] !== undefined && !entry[0].startsWith('GIT_'),
+          entry[1] !== undefined && !entry[0].toUpperCase().startsWith('GIT_'),
       ),
     );
     const result = execResultSchema.parse(
