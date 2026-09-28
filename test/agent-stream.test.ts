@@ -198,11 +198,12 @@ it.each(['rejected', 'resolved'] as const)(
     const definition = defineWorkflow({
       ...base,
       async run(ctx) {
-        return ctx.codex.value('stalled', {
+        await ctx.codex.value('stalled', {
           prompt: 'answer',
           retry: { maxAttempts: 3, delayMs: 0 },
           onError: 'return',
         });
+        return 'must not reach fallback';
       },
     });
     let calls = 0;
