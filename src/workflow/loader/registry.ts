@@ -3,6 +3,7 @@ import { mkdir, readFile, readdir, realpath, rename, writeFile } from 'node:fs/p
 import { dirname, join, resolve } from 'node:path';
 import { homedir } from 'node:os';
 import { randomUUID } from 'node:crypto';
+import ts from 'typescript';
 import { z } from 'zod';
 import type { WorkflowDescription } from '../runtime/child-model.js';
 import { capabilityManifestSchema } from '../runtime/profiles.js';
@@ -87,6 +88,19 @@ async function cacheSources(
   const sources = {
     ...(await workflowLaunch(plan, { hash: identity.code, files: identity.files })).sources,
   };
+  if (plan.configuration.kind === 'tsconfig') {
+    const configPath = plan.configuration.path;
+    const sourceFile = ts.readJsonConfigFile(configPath, (path) => ts.sys.readFile(path));
+    ts.parseJsonSourceFileConfigFileContent(
+      sourceFile,
+      ts.sys,
+      dirname(configPath),
+      undefined,
+      configPath,
+    );
+    for (const extended of sourceFile.extendedSourceFiles ?? [])
+      sources[resolve(extended)] = hash(await readFile(extended));
+  }
   let directory = dirname(plan.entrypoint);
   for (;;) {
     let found = false;

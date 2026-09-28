@@ -83,6 +83,39 @@ describe('trusted definition registry', { timeout: 60_000 }, () => {
     expect(await readFile(marker, 'utf8')).toBe('xxxx');
   });
 
+  it('invalidates the cache when an extended tsconfig base changes', async () => {
+    const root = await project();
+    const marker = join(root, 'imported');
+    const baseConfig = (strict: boolean) =>
+      JSON.stringify({
+        compilerOptions: {
+          module: 'nodenext',
+          moduleResolution: 'nodenext',
+          target: 'es2023',
+          types: ['node'],
+          strict,
+        },
+      });
+    await writeFile(join(root, 'base.tsconfig.json'), baseConfig(false));
+    await writeFile(
+      join(root, 'tsconfig.json'),
+      JSON.stringify({ extends: './base.tsconfig.json' }),
+    );
+    await writeFile(
+      join(root, 'extends.workflow.ts'),
+      `import {appendFileSync} from 'node:fs'; appendFileSync(${JSON.stringify(marker)},'x'); ${source('extends')}`,
+    );
+    const engine = executor();
+    const plan = { kind: 'workflow.list-defs' as const, directories: [root] };
+    expect(await engine.execute(plan)).toMatchObject({ ok: true });
+    expect(await readFile(marker, 'utf8')).toBe('x');
+    expect(await engine.execute(plan)).toMatchObject({ ok: true });
+    expect(await readFile(marker, 'utf8')).toBe('x');
+    await writeFile(join(root, 'base.tsconfig.json'), baseConfig(true));
+    expect(await engine.execute(plan)).toMatchObject({ ok: true });
+    expect(await readFile(marker, 'utf8')).toBe('xx');
+  });
+
   it('reports duplicate names and compiler failures without invoking workflow bodies', async () => {
     const root = await project();
     await writeFile(
