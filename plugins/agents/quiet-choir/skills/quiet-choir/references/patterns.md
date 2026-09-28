@@ -286,7 +286,8 @@ export default defineWorkflow({
           schema: z.string(),
           run: ({ signal }) => ensureWorktree({ ...setup, signal }),
         });
-        await ensureWorktree({ ...setup, signal: ctx.signal });
+        const current = await ensureWorktree({ ...setup, signal: ctx.signal });
+        if (current !== cwd) throw new Error(`Worktree moved from ${cwd} to ${current}`);
         return ctx.codex.value('edit', { profile: 'editor', cwd, prompt: `Implement: ${item}` });
       },
     );
@@ -297,9 +298,9 @@ export default defineWorkflow({
 **Cost:** one worktree/branch and one editing call per item, plus retries. Created branches,
 worktrees, and file edits remain after cancellation; no cleanup/reset is automatic. A partial Git
 operation may require inspection before retry. The unjournaled ownership check runs on every
-execution, so a resume after the edit completed also refuses a changed worktree. **Superseded
-when:** [#59](https://github.com/plx/quiet-choir/issues/59) provides supported worktree
-coordination.
+execution, so a resume after the edit completed also refuses a changed worktree or a root that now
+resolves elsewhere. **Superseded when:** [#59](https://github.com/plx/quiet-choir/issues/59)
+provides supported worktree coordination.
 
 ## Polling and deadlines
 

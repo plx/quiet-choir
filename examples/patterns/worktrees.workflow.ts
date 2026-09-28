@@ -21,7 +21,8 @@ export default defineWorkflow({
           schema: z.string(),
           run: ({ signal }) => ensureWorktree({ ...setup, signal }),
         });
-        await ensureWorktree({ ...setup, signal: ctx.signal });
+        const current = await ensureWorktree({ ...setup, signal: ctx.signal });
+        if (current !== cwd) throw new Error(`Worktree moved from ${cwd} to ${current}`);
         return ctx.codex.value('edit', { profile: 'editor', cwd, prompt: `Implement: ${item}` });
       },
     );

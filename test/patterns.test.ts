@@ -1,5 +1,15 @@
 import { execFile } from 'node:child_process';
-import { mkdtemp, mkdir, readFile, realpath, rename, rm, writeFile } from 'node:fs/promises';
+import {
+  mkdtemp,
+  mkdir,
+  readFile,
+  realpath,
+  rename,
+  rm,
+  symlink,
+  unlink,
+  writeFile,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -307,6 +317,32 @@ it('worktree recipe revalidates ownership before a resumed edit', async () => {
   await execute('git', ['switch', '-c', 'unrelated-branch'], { cwd: target });
   await expect(runWorkflow(worktrees, { ...setup, resume: true })).rejects.toThrow(
     'Worktree registration changed',
+  );
+  expect(harness.calls).toHaveLength(edits);
+});
+
+it('worktree recipe rejects a resume whose root now resolves to a different worktree', async () => {
+  const repo = await initRepo();
+  const realRoot = join(root, 'real-root'),
+    otherRoot = join(root, 'other-root');
+  await mkdir(realRoot, { recursive: true });
+  await mkdir(otherRoot, { recursive: true });
+  const worktreeRoot = join(root, 'worktrees-link');
+  await symlink(realRoot, worktreeRoot);
+  const harness = new Fake(() => {
+    throw new Error('Editor unavailable');
+  });
+  const setup = { ...options(), cwd: repo, grants: ['editor'], harness };
+  await expect(
+    runWorkflow(worktrees, { ...setup, input: { repo, root: worktreeRoot, items: ['first'] } }),
+  ).rejects.toThrow('Editor unavailable');
+  const edits = harness.count('items/first/edit');
+  expect(edits).toBeGreaterThan(0);
+  expect((await readRun(setup)).steps['items/first/worktree']?.status).toBe('completed');
+  await unlink(worktreeRoot);
+  await symlink(otherRoot, worktreeRoot);
+  await expect(runWorkflow(worktrees, { ...setup, resume: true })).rejects.toThrow(
+    'Worktree moved from',
   );
   expect(harness.calls).toHaveLength(edits);
 });
