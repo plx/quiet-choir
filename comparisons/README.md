@@ -43,6 +43,22 @@ or quality savings**. Batch 01 receives its historical global read/write/command
 command, and the lifecycle children are compact rewrites. These interface/scope differences are
 explicit in the notes and limit direct comparisons of call counts.
 
+## Repository layout
+
+| Path                                 | Role                                                             |
+| ------------------------------------ | ---------------------------------------------------------------- |
+| `batches/index.json`                 | Ordered batch directory IDs; the first is the reader default     |
+| `batches/<id>/`                      | Originals, ports, metadata, attribution and verification results |
+| `scripts/verify-ports.mjs`           | Batch 01 differential baseline plus the strict/question checks   |
+| `scripts/verify-idiomatic-ports.mjs` | Batch 02 paired fixtures and the F1–F5 matrix                   |
+| `scripts/build-site.mjs`             | Packages every registered batch and the static reader            |
+| `site/`                              | Authored HTML, CSS, JavaScript, and the durable Sites identity   |
+| `../.context/comparison-site/`       | Generated publishing checkout; ignored by this repository        |
+
+The strict/question checks live in `verify-strict-ports.mjs` and `verify-question-ports.mjs`, with
+the shared reply generator in `fixture-sample.mjs`. The Batch 02 verifier uses
+`verify-idiomatic-faults.mjs`, `idiomatic-fixtures.mjs` and `idiomatic-kill-worker.mjs`.
+
 ## Build and verify locally
 
 ```sh
@@ -128,8 +144,8 @@ files shown in the reader are batch helpers, not additions to the runtime API.
 
 ## Add a batch
 
-1. Create a new directory under `comparisons/batches/`, such as `02-revised-api`; leave previous
-   batches and their IDs intact. Use Batch 01's file shapes as the template. For an API comparison,
+1. Create a new directory under `comparisons/batches/`, such as `03-revised-api`; leave previous
+   batches and their IDs intact. Use Batch 02's file shapes as the template. For an API comparison,
    keep the upstream originals fixed so differences isolate the Quiet Choir changes.
 2. Store the pinned upstream `.js` files in `originals/`, preserve `LICENSE`, and record each file's
    SHA-256 in `source-hashes.json`, keyed by filename including `.js`. Do not format the originals.
@@ -147,8 +163,10 @@ files shown in the reader are batch helpers, not additions to the runtime API.
    `evaluation`. Explain semantic differences, unsupported features, and fixture limits explicitly.
 7. Typecheck with `npx tsc -p comparisons/batches/<id>/tsconfig.json` after building Quiet Choir.
    Adapt or add a verifier for the new batch's scenarios and API, run it, and save its
-   `verification.json`. Merely running the existing verifier still checks only Batch 01. Update
-   `batch.json.validation` from the actual results.
+   `verification.json` (and, for paired measurements, an optional `metrics.json`). The existing
+   verifiers check only their own batches: `verify-ports.mjs` covers Batch 01 and
+   `verify-idiomatic-ports.mjs` covers Batch 02. Update `batch.json.validation` from the actual
+   results.
 8. Add the directory ID to `batches/index.json`; put it first if it should be the default. Rebuild
    and preview Source comparison, Port notes, and Shared support for the new batch and an existing
    bookmark. New batches using the same source and data contract need no UI code changes.
