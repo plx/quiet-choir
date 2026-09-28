@@ -142,6 +142,7 @@ it('passes every Codex control, preserves TOML values, snapshots images, and sep
     model: 'model',
     sandbox: 'workspace-write',
     networkAccess: true,
+    isolation: 'inherit',
     harnessProfile: 'native',
     config: {
       'features.test': true,
@@ -403,7 +404,7 @@ const semanticOptions: [HarnessRequest['provider'], object][] = [
   ['codex', { effort: 'xhigh' }],
   ['codex', { reasoningEffort: 'none' }],
   ['codex', { networkAccess: true }],
-  ['codex', { harnessProfile: 'native' }],
+  ['codex', { isolation: 'inherit', harnessProfile: 'native' }],
   ['codex', { config: { 'features.test': true } }],
   ['codex', { addDirs: ['more'] }],
   ['codex', { extraArgs: ['--strict-config'] }],
@@ -602,7 +603,10 @@ it('captures first-use versions, warns on resumed drift, and records inherited/r
 it('includes native controls in profile manifests, grants, and strict call-site checks', async () => {
   const manifest = capabilityManifest({
     profiles: {
-      builder: { extends: 'edit', codex: { harnessProfile: 'native', effort: 'max' } },
+      builder: {
+        extends: 'edit',
+        codex: { isolation: 'inherit', harnessProfile: 'native', effort: 'max' },
+      },
       reader: { extends: 'readonly', claude: { appendSystemPrompt: 'role', effort: 'low' } },
     },
   });
@@ -612,7 +616,9 @@ it('includes native controls in profile manifests, grants, and strict call-site 
   const definition = defineWorkflow({
     ...base,
     strictProfiles: true,
-    profiles: { builder: { extends: 'edit', codex: { harnessProfile: 'native' } } },
+    profiles: {
+      builder: { extends: 'edit', codex: { isolation: 'inherit', harnessProfile: 'native' } },
+    },
     async run(ctx) {
       return (await ctx.codex.text('ask', { prompt: 'x', profile: 'builder' })).output;
     },

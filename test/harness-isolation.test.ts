@@ -158,6 +158,17 @@ it('keeps checkout placement out of profiles while accepting provider configurat
   ).toBe('inherit');
 });
 
+it('rejects a Codex harnessProfile under restricted isolation but accepts it under inherit', () => {
+  expect(() => capabilityManifest({ profiles: { p: { codex: { harnessProfile: 'p' } } } })).toThrow(
+    'harnessProfile',
+  );
+  expect(
+    capabilityManifest({
+      profiles: { p: { codex: { isolation: 'inherit', harnessProfile: 'p' } } },
+    }).profiles['p']?.codex.harnessProfile,
+  ).toBe('p');
+});
+
 it('pins the resolved mode and explicit environment identity while keeping checkpoint diagnostics free of values', async () => {
   let mode: HarnessIsolation | undefined,
     fail = true;

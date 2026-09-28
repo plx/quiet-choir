@@ -86,6 +86,14 @@ export function validateAgentOptions(
       (resolved || controls.sandbox !== undefined)
     )
       throw new Error('networkAccess requires sandbox workspace-write.');
+    if (
+      (resolved || controls.isolation === 'restricted') &&
+      isolation === 'restricted' &&
+      controls.harnessProfile !== undefined
+    )
+      throw new Error(
+        'harnessProfile selects a Codex user-config profile, which restricted isolation skips; select inherit or use config.',
+      );
     validateConfig(controls.config ?? {});
   } else {
     if (
