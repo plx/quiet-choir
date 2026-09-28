@@ -452,6 +452,35 @@ function stepThen(effect: () => Promise<void>): WorkflowDefinition<null, string>
   });
 }
 
+it('warns when both locks of a migrated run vanish before release', async () => {
+  let fail = true;
+  const definition = workflow(async (ctx) => {
+    if (fail) throw new Error('tail');
+    return ctx.step('remove-locks', {
+      input: null,
+      schema: z.string(),
+      async run() {
+        await rm(join(stateDir, 'run', 'lock'), { recursive: true });
+        await rm(join(stateDir, 'run.json.lock'), { recursive: true });
+        return 'done';
+      },
+    });
+  });
+  await expect(runWorkflow(definition, options())).rejects.toThrow('tail');
+  const record = await readRun(options());
+  record.formatVersion = 6;
+  delete record.seq;
+  delete record.engine;
+  await rm(join(stateDir, 'run'), { recursive: true });
+  await store.writeRun(stateDir, record);
+  fail = false;
+  const result = await runWorkflow(definition, { ...options(), resume: true });
+  expect(result.output).toBe('done');
+  expect(result.warnings).toEqual([expect.stringContaining('Could not release run run lock')]);
+  expect(result.warnings?.[0]).toContain('ENOENT');
+  expect((await readRun(options())).formatVersion).toBe(7);
+});
+
 it('keeps release fatal when only the lock ownership metadata disappears', async () => {
   await expect(
     runWorkflow(

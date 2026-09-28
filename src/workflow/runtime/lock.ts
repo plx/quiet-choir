@@ -175,6 +175,13 @@ export async function lockRun(
       errors.push(error);
     }
     if (errors.length === 1) throw errors[0];
+    // Both locks vanished (or both failed removal after verified ownership): keep the shared errno
+    // so callers treat it like the single-lock case. Mixed or unverified failures stay aggregate.
+    if (
+      errors.length > 1 &&
+      ['ENOENT', 'EACCES'].some((code) => errors.every((error) => isErrno(error, code)))
+    )
+      throw errors[0];
     if (errors.length > 1)
       throw new AggregateError(errors, 'Could not release current and legacy ownership.', {
         cause: errors[0],
