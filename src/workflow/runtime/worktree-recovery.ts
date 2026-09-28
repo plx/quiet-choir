@@ -112,9 +112,14 @@ export async function repairWorktreeRegistrations(
       );
     const path = join(metadata, 'commondir');
     const content = await regularText(path, signal);
-    // An empty commondir makes even unrelated `git worktree add` calls fail. Git repair
-    // cannot read it either. Both exact links above prove this planned registration's owner.
-    if (content !== '') continue;
+    // Both exact links above prove this planned registration's owner; only its commondir is
+    // still unverified. Git itself only ever leaves it at the expected value or, if interrupted
+    // mid-write, empty (which makes even unrelated `git worktree add` calls fail, and which Git's
+    // own repair cannot read either) — that empty case alone is repaired. Anything else, missing
+    // or corrupt, is registration data this recovery cannot trust.
+    if (content?.trimEnd() === '../..') continue;
+    if (content !== '')
+      throw new ConfigurationError('Interrupted worktree registration has an invalid commondir.');
     const expected = await registrationFile(path, signal);
     if (expected?.content !== '')
       throw new ConfigurationError('Interrupted worktree registration changed.');

@@ -1462,6 +1462,84 @@ it.each(['owned', 'different-owner'] as const)(
 
 it.each([
   {
+    label: 'a missing commondir',
+    corrupt: (metadata: string) => rm(join(metadata, 'commondir'), { force: true }),
+    unchanged: async (metadata: string) => {
+      await expect(readFile(join(metadata, 'commondir'), 'utf8')).rejects.toThrow();
+    },
+  },
+  {
+    label: "a 'junk' commondir",
+    corrupt: (metadata: string) => writeFile(join(metadata, 'commondir'), 'junk'),
+    unchanged: async (metadata: string) => {
+      expect(await readFile(join(metadata, 'commondir'), 'utf8')).toBe('junk');
+    },
+  },
+])(
+  'rejects a resumed worktree registration with $label as an invalid commondir',
+  async ({ corrupt, unchanged }) => {
+    let metadata = '',
+      interrupted = false;
+    const breakingRunner: ProcessRunner = {
+      async run(request, invocation) {
+        const result = await processRunner.run(request, invocation);
+        if (
+          !interrupted &&
+          Array.isArray(request.command) &&
+          request.command.includes('worktree') &&
+          request.command.includes('add')
+        ) {
+          interrupted = true;
+          const path = z.string().parse(request.command.at(-2));
+          metadata = resolve(
+            path,
+            (await readFile(join(path, '.git'), 'utf8')).replace(/^gitdir: /u, '').trimEnd(),
+          );
+          await corrupt(metadata);
+          throw new Error('fixture interrupted registration');
+        }
+        return result;
+      },
+    };
+    const invoke = vi.fn<Harness['invoke']>(async (request) => {
+      await writeFile(join(request.cwd, 'file.txt'), 'resumed edit\n');
+      return response;
+    });
+    const workflow = defineWorkflow({
+      name: 'planned-registration-invalid-commondir',
+      version: '1',
+      input: z.null(),
+      output: z.string(),
+      async run(ctx) {
+        const result = await ctx.codex.text('edit', { prompt: 'edit', isolation: 'worktree' });
+        assert(result.worktree?.commit);
+        return result.worktree.commit;
+      },
+    });
+    const settings = {
+      ...options('planned-registration-invalid-commondir'),
+      harness: { invoke },
+      worktrees: { root, keep: 'all' as const },
+    };
+    await expect(
+      runWorkflow(workflow, { ...settings, input: null, processRunner: breakingRunner }),
+    ).rejects.toThrow('fixture interrupted registration');
+    expect(invoke).not.toHaveBeenCalled();
+    const rejection: unknown = await runWorkflow(workflow, {
+      ...settings,
+      resume: true,
+    }).catch((error: unknown) => error);
+    expect(rejection).toBeInstanceOf(Error);
+    expect((rejection as Error).cause).toBeInstanceOf(ConfigurationError);
+    expect((rejection as Error).message).toContain('invalid commondir');
+    await unchanged(metadata);
+    expect(invoke).not.toHaveBeenCalled();
+  },
+  20_000,
+);
+
+it.each([
+  {
     label: 'a symlinked commondir',
     corrupt: async (metadata: string) => {
       const elsewhere = join(dirname(metadata), 'elsewhere-commondir');
