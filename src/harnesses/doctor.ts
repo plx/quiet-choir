@@ -305,6 +305,10 @@ export async function probeHarnessContracts(options: DoctorOptions = {}): Promis
                   sandbox: 'workspace-write',
                   effort: 'low',
                   model: inheritedModel ?? 'gpt-5',
+                  // harnessProfile selects a config.toml profile, so probing it needs the
+                  // inherited role restricted mode would otherwise skip; CODEX_HOME still
+                  // points at the private probeHome copy, never the caller's real home.
+                  isolation: 'inherit',
                   harnessProfile: 'quiet-choir-probe',
                   skipGitRepoCheck: true,
                   networkAccess: false,

@@ -121,11 +121,12 @@ it('runs five checks per harness using full adapter argv and proves zero inferen
       '--profile',
       'quiet-choir-probe',
       '--strict-config',
-      '--ignore-user-config',
-      '--ignore-rules',
       'sandbox_workspace_write.network_access=false',
     ]),
   );
+  // The profile probe needs the inherited role restricted isolation would skip.
+  expect(codex).not.toContain('--ignore-user-config');
+  expect(codex).not.toContain('--ignore-rules');
   expect(codex?.slice(-2)).toEqual(['--', '-']);
   for (const provider of ['claude', 'codex']) {
     const files = JSON.parse(await readFile(join(directory, `${provider}-paths`), 'utf8')) as {
