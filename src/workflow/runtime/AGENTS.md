@@ -122,7 +122,8 @@ mode. See [ADR 0023](../../../docs/decisions/0023-restricted-harness-configurati
 
 Persist predicted Claude UUIDs and first observed native IDs per attempt. Own private transcripts
 and retain raw response/validation evidence before local validation. Transcript/session write errors
-remain infrastructure failures; on-failure cleanup happens only after durable success. Bound
-transcript close/discard: a close that never settles is an infrastructure failure, a stalled discard
-only a warning. Agent progress is not journaled. Keep extensible diagnostic keys and resource caps
-outside identity; see [ADR 0024](../../../docs/decisions/0024-stream-attempt-evidence.md).
+remain infrastructure failures; on-failure cleanup happens only after durable success and flushes
+the deletion to the containing directory before marking the receipt unretained. Bound transcript
+close/discard: a close that never settles is an infrastructure failure, a stalled discard only a
+warning. Agent progress is not journaled. Keep extensible diagnostic keys and resource caps outside
+identity; see [ADR 0024](../../../docs/decisions/0024-stream-attempt-evidence.md).

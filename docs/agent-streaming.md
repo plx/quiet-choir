@@ -67,9 +67,10 @@ bounded to 2 seconds after the invocation ends: a close that never settles (for 
 stalled write) is an infrastructure failure, so the run fails instead of holding its ownership.
 
 `on-failure` retains protocol, process, cancellation, and local validation failures. It removes a
-successful transcript only after the validated outcome commits. A cleanup failure, including a
-discard that does not settle within that bound, preserves the completed outcome and reports a
-warning; it never reruns paid work. `off` creates no transcript.
+successful transcript only after the validated outcome commits, flushing the deletion to the
+containing directory before the receipt is marked unretained. A cleanup failure, including a discard
+that does not settle within that bound, preserves the completed outcome and reports a warning; it
+never reruns paid work. `off` creates no transcript.
 
 ## Diagnostics, failures, and compatibility
 

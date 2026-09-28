@@ -30,7 +30,8 @@ when they occur inside native output delivery.
 Store a random run salt and derive Claude attempt UUIDs before spawn. Append evidence to the
 existing attemptHistory rather than introducing a competing attempt log. Keep native persistence
 disabled and make no conversation-resume claim. Preserve failed response evidence before local
-JSON/Zod validation, and delete on-failure transcripts only after durable success.
+JSON/Zod validation, and delete on-failure transcripts only after durable success, flushing the
+deletion to the containing directory before marking the receipt unretained.
 
 Expose caps and retention through execution policy, outside identity. Extensible diagnostics use a
 loose JSON result schema. Permission-denial fail/warn selection is semantic because it changes
