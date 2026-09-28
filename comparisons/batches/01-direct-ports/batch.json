@@ -20,7 +20,7 @@
     "package": "quiet-choir 0.0.0",
     "sha256": "06d7064bd1e8360b704e49c86d0c61809384764e08b94435c3d10f85618b35e1",
     "file": "src/workflow/runtime/model.ts",
-    "description": "Runtime API used by the active ports at quiet-choir commit 73e27b7f4529e519f02cddd34128770488f81a09. Saved workflow failures now expose WorkflowRunError with original cause and saved state; port behavior and the process-ownership HarnessInvocation model are unchanged. Native calls retain run/step/attempt identity, durable process registration, bounded cleanup and orphan recovery. Nested helpers retain admission caps and all 68 effort settings. This unchanged hash identifies the model file; regression tests use the current built checkout.",
+    "description": "Runtime API used by the active ports at quiet-choir commit 73e27b7f4529e519f02cddd34128770488f81a09. Saved workflow failures now expose WorkflowRunError with original cause and saved state; port behavior and the process-ownership HarnessInvocation model are unchanged. Native calls retain run/step/attempt identity, durable process registration, bounded cleanup and orphan recovery. Nested helpers retain admission caps and all 68 effort settings. Historical ports keep strictProfiles:false with class grants for elevated raw capabilities. This unchanged hash identifies the model file; regression tests use the current built checkout.",
     "revision": "73e27b7f4529e519f02cddd34128770488f81a09"
   }
 }
