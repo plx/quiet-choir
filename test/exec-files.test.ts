@@ -1,4 +1,5 @@
 import {
+  chmod,
   mkdtemp,
   readFile,
   readdir,
@@ -589,6 +590,37 @@ it.each(['restore', 'error'] as const)(
         runWorkflow(workflow, { ...setup(), resume: true, processRunner: native }),
       ).rejects.toThrow('changed and was restored');
     expect(calls).toBe(1);
+  },
+);
+
+it.each(['restore', 'error'] as const)(
+  'guardFile restores a chmod-only permission change (%s)',
+  async (onChange) => {
+    const workflow = definition(async (ctx) => {
+      await ctx.exec('init', ['git', 'init', '-q']);
+      await ctx.writeFile('original', 'file', 'same bytes');
+      await chmod(join(cwd, 'file'), 0o644);
+      return guardFile(
+        ctx,
+        'guard',
+        'file',
+        async () => {
+          await chmod(join(cwd, 'file'), 0o755);
+          return 'done';
+        },
+        { onChange },
+      );
+    });
+    if (onChange === 'error')
+      await expect(runWorkflow(workflow, { ...setup(), processRunner: native })).rejects.toThrow(
+        'Guarded file changed and was restored',
+      );
+    else
+      expect((await runWorkflow(workflow, { ...setup(), processRunner: native })).output).toBe(
+        'done',
+      );
+    expect((await stat(join(cwd, 'file'))).mode & 0o777).toBe(0o644);
+    expect(await readFile(join(cwd, 'file'), 'utf8')).toBe('same bytes');
   },
 );
 

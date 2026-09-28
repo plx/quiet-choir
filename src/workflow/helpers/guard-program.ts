@@ -40,7 +40,9 @@ try {
     process.stdout.write(JSON.stringify({ path, blob, mode: before.mode }));
   } else {
     if (!/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(expected)) throw new Error('Invalid baseline blob.');
-    const changed = before === null || hash(before.content) !== expected;
+    const permissions = /^[0-9]+$/.test(savedMode ?? '') ? Number(savedMode) : NaN;
+    if (!Number.isSafeInteger(permissions) || permissions > 0o777) throw new Error('Invalid baseline mode.');
+    const changed = before === null || hash(before.content) !== expected || before.mode !== permissions;
     if (changed) {
       const size = Number(git(['cat-file', '-s', expected]).toString('utf8').trim());
       if (!Number.isSafeInteger(size) || size < 0 || size > limit) throw new Error('Baseline blob exceeds maxBytes.');
@@ -48,8 +50,8 @@ try {
       new TextDecoder('utf-8', { fatal: true }).decode(content);
       const temporary = resolve(parent, '.quiet-choir-guard-' + randomUUID());
       try {
-        const file = await open(temporary, 'wx', Number(savedMode));
-        try { await file.chmod(Number(savedMode)); await file.writeFile(content); await file.sync(); } finally { await file.close(); }
+        const file = await open(temporary, 'wx', permissions);
+        try { await file.chmod(permissions); await file.writeFile(content); await file.sync(); } finally { await file.close(); }
         const latest = await lstat(path).catch((error) => { if (error.code === 'ENOENT') return null; throw error; });
         if (latest && !latest.isFile()) throw new Error('Guard target is no longer a regular file.');
         await rename(temporary, path);
