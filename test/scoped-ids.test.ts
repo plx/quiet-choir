@@ -182,7 +182,7 @@ it.each([
   expect((await readRun(options())).steps).toEqual({});
 });
 
-it('resumes a real format-5 legacy-map checkpoint captured before scoped IDs', async () => {
+it('inspects the real format-5 legacy-map checkpoint but refuses execution across the format epoch', async () => {
   // Captured with the #43 runtime (2db8a34), before scoped IDs changed the API.
   await writeFile(
     join(stateDir, 'legacy-map.json'),
@@ -204,17 +204,31 @@ it('resumes a real format-5 legacy-map checkpoint captured before scoped IDs', a
             .output,
       ),
   });
-  const result = await runWorkflow(definition, {
-    stateDir,
-    runId: 'legacy-map',
-    cwd: '/',
-    fingerprint: 'legacy-map-v5',
-    resume: true,
-    harness: { invoke },
-  });
-  expect(result.output).toEqual(['item-0', 'item-1']);
-  expect(Object.keys(result.steps)).toEqual(['legacy/0', 'legacy/1']);
+  const saved = await readRun({ stateDir, runId: 'legacy-map' });
+  await expect(
+    runWorkflow(definition, {
+      stateDir,
+      runId: 'legacy-map',
+      cwd: '/',
+      fingerprint: 'legacy-map-v5',
+      resume: true,
+      harness: { invoke },
+    }),
+  ).rejects.toThrow('format version 5');
+  expect(saved.steps['legacy/0']?.output).toMatchObject({ output: 'item-0' });
+  expect(Object.keys(saved.steps)).toEqual(['legacy/0', 'legacy/1']);
   expect(invoke).not.toHaveBeenCalled();
+  // Semantic identities are unchanged even though the execution epoch now requires format 6.
+  const fresh = await runWorkflow(definition, {
+    stateDir,
+    runId: 'fresh',
+    cwd: '/',
+    input: null,
+    harness,
+  });
+  for (const id of Object.keys(saved.steps))
+    expect(fresh.steps[id]?.fingerprint).toBe(saved.steps[id]?.fingerprint);
+  expect(await readRun({ stateDir, runId: 'legacy-map' })).toEqual(saved);
 });
 
 it('creates deterministic bounded segments from arbitrary text while leaving clean parts unchanged', async () => {

@@ -100,14 +100,16 @@ check setup without paid calls.
 - Validate's `workflow.fingerprint` is the same full source/schema/engine fingerprint stored by
   execution. Per-file hashes use real, project-relative paths and exclude engine implementation
   files.
-- `--log-level debug` includes step events on stderr. Levels range from `trace` to `silent`;
-  `-v`/`--verbose` is an alternative and cannot be combined with `--log-level`.
+- `--log-level debug` includes timestamped run/step/admission events on stderr. Phase/log
+  observations echo at info level, marked `(replay)` when already recorded. `-v` also prints saved
+  failure stacks. Levels range from `trace` to `silent`; `-v`/`--verbose` is an alternative and
+  cannot be combined with `--log-level`.
 
 Put flags after the command name, for example `workflow inspect first --json`.
 
 | Exit | Meaning                                                                                                                                                                                                                                                                    |
 | ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 0    | Success. Inspect accepts any readable status; check `.status`. After a first signal, only a saved execute completion exits 0.                                                                                                                                              |
+| 0    | Success. Non-watching inspect accepts any readable status; check `.status`. After a first signal, only a saved execute completion exits 0.                                                                                                                                 |
 | 1    | `workflow.failed`: execution failed and the failure checkpoint was saved. Fix and resume. A saved `failed` run reports this even when a signal arrived.                                                                                                                    |
 | 2    | `usage.*`: invalid flags, misplaced flags, omitted/nonexistent/unsupported FILE, invalid run ID, invalid input JSON/file/schema, or resume without an ID. No execution checkpoint is written.                                                                              |
 | 3    | `run.*`: existing/missing/locked/unreadable run, incompatible resume, changed input, or surviving/unverified child processes (`run.orphans`). No workflow body runs.                                                                                                       |
@@ -166,3 +168,10 @@ still bounds local mapper concurrency independently.
 
 Doctor probes also drain on first SIGINT/SIGTERM/SIGHUP and force-kill on a second signal. They have
 in-memory process ownership only, since there is no workflow run to resume.
+
+For read-only monitoring, `workflow inspect ID` shows a dashboard, `--json --summary` gives its
+compact data, and `--watch --interval 2s` waits for a terminal/stale state. Watch JSON is JSONL per
+change, with final exits completed 0, failed 1, cancelled 130, stale 3.
+`workflow list --status stale --json` finds abandoned runs without importing source. See
+[inspection](inspection.md) for status filters, unknown owners, warnings, partial usage, and
+retention.

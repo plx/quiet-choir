@@ -53,6 +53,9 @@ jobs:
       - name: Test scriptable workflow CLI
         run: node test/scriptable-cli-smoke.mjs
 
+      - name: Test workflow observability CLI
+        run: node test/observability-cli-smoke.mjs
+
       - name: Check Workflow Lab comparisons
         run: npm run comparisons:check
 

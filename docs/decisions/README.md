@@ -32,3 +32,5 @@ part of the documentation.
 - [0013: Bound process cleanup and retain child ownership across runner death](0013-process-ownership.md)
 
 - [0014: Preserve saved state through the CLI error boundary](0014-scriptable-cli-errors.md)
+
+- [0015: Observe runs without changing effect identity](0015-observe-runs-without-changing-effect-identity.md)

@@ -9,7 +9,7 @@
   "validation": "All 26 ports typecheck under the batch’s migration settings. 67 deterministic scenarios matched original prompts, effort and outputs; an interrupted pipeline also resumed from checkpoints (68 checks total). No live Claude agents were run; fixtures do not establish agent quality or exhaustive equivalence.",
   "commonChanges": [
     "agent(prompt, options) becomes an explicit ctx.claude.object or ctx.claude.text call with a durable ID, followed by result.output. JSON Schemas become Zod schemas; their field descriptions and optional properties are retained.",
-    "Phase titles remain as metadata and stderr messages. Quiet Choir has no native phase timeline. All 68 original per-call effort settings use the shared effort control and are checked alongside prompts and outputs.",
+    "Shared phase/log helpers now use ctx.phase and ctx.log: observations persist with replay-marked stderr output, separate from effect identity. Inspect/list/watch expose saved progress. All 68 original per-call effort settings use the shared effort control and are checked alongside prompts and outputs.",
     "Legacy fan-out helpers use ctx.map with eight concurrent items per group and isolated ID scopes. Bug-hunt uses runtime named maps and ctx.within with semantic leaf IDs instead of the counter allocator. Pipelines still advance each item independently. The runtime independently caps live agents across these nested groups at min(8, max(1, available CPUs - 2)) by default; --max-agents and --provider-limit configure that shared ceiling.",
     "Quiet Choir propagates agent failures and drains started mappers without cancellation by default; the original harness returns null and continues. These ports stop scheduling after a failure and can be explicitly resumed. Completed effects replay by ID, not by an unchanged prefix of agent calls.",
     "Native harness calls record child groups before task input and reap them on every leader exit. Inherited pipes drain for a bounded period; --kill-grace-ms sets the TERM grace. Resume refuses recorded live or unverified orphans, and --resume --kill-orphans stops identity-confirmed survivors before replacement calls. First INT/TERM/HUP drains; a second signal force-kills tracked groups. Escaped sessions and a spawn-to-record gap remain.",
@@ -18,9 +18,9 @@
   ],
   "apiSnapshot": {
     "package": "quiet-choir 0.0.0",
-    "sha256": "06d7064bd1e8360b704e49c86d0c61809384764e08b94435c3d10f85618b35e1",
+    "sha256": "63ba150da54c35564e4985dad19a60ef431018e0924ad5cf406cdf2779d9bb46",
     "file": "src/workflow/runtime/model.ts",
-    "description": "Runtime API used by the active ports at quiet-choir commit 73e27b7f4529e519f02cddd34128770488f81a09. Saved workflow failures now expose WorkflowRunError with original cause and saved state; port behavior and the process-ownership HarnessInvocation model are unchanged. Native calls retain run/step/attempt identity, durable process registration, bounded cleanup and orphan recovery. Nested helpers retain admission caps and all 68 effort settings. Historical ports keep strictProfiles:false with class grants for elevated raw capabilities. This unchanged hash identifies the model file; regression tests use the current built checkout.",
-    "revision": "73e27b7f4529e519f02cddd34128770488f81a09"
+    "description": "Runtime API used by the active ports at quiet-choir commit 1d39571214a0e6ac8d6638414c8b4bab12a95851. Shared helpers now use ctx.phase and ctx.log for persisted, replay-marked observations. Format 6 records executions, resolved requests, attempt timing/usage/stacks, and bounded events; inspect/list/watch expose progress without imports. Saved workflow failures expose WorkflowRunError with original cause and saved state. Semantic effect identities, original prompts, all 68 effort settings, and fixture outputs remain unchanged. Native calls retain run/step/attempt identity, durable process registration, bounded cleanup and orphan recovery. Historical ports keep strictProfiles:false with class grants for elevated raw capabilities. This hash identifies the model file; regression tests use the current built checkout.",
+    "revision": "1d39571214a0e6ac8d6638414c8b4bab12a95851"
   }
 }

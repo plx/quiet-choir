@@ -1,3 +1,4 @@
+import type { PhaseOptions } from './observability-model.js';
 import type { z } from 'zod';
 import type { AgentDefaults, AgentProfile, BuiltinProfile } from './profiles-model.js';
 import type { MapStepError } from './fan-out.js';
@@ -326,6 +327,12 @@ export interface StepDefinition<T> {
 
 /** Durable operations available to ordinary TypeScript workflow code. */
 export interface WorkflowContext<TProfile extends string = string> {
+  /** Record a phase until the next phase call in this scope; never affects replay identity. */
+  phase(title: string, options?: PhaseOptions): void;
+  /** Attribute steps/logs in this callback to an isolated phase, including concurrent workers. */
+  phase<T>(title: string, body: () => Promise<T>, options?: PhaseOptions): Promise<T>;
+  /** Persist an observational message/data and emit it; matching prior occurrences replay once. */
+  log(message: string, data?: JsonValue): void;
   /** Stable identifier for this execution and all resumes. */
   readonly runId: string;
   /** Current cancellation scope signal; nested maps inherit the run signal. */

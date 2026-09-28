@@ -237,10 +237,10 @@ timestamps, and outcome. Sources are `runtime`, `harness`, `call-site`, or `over
 zero-based saved rule index). Custom harness defaults are recorded only when the adapter reports
 them. `running` means settlement was not checkpointed, not proof that the process still lives.
 
-New checkpoints use format version 5. Versions 1, 2, 3, and 4 remain inspectable, but cannot resume
-or be fork sources here: they lack the current callback/order/source/outcome contract. Refusal
-leaves their checkpoint data unchanged. Use the original runtime to resume them, or start a new run
-after accounting for previous effects. There is no automatic migration.
+New checkpoints use format version 6. Versions 1–5 remain inspectable, but cannot resume or be fork
+sources here: they lack the current callback/order/source/outcome contract. Refusal leaves their
+checkpoint data unchanged. Use the original runtime to resume them, or start a new run after
+accounting for previous effects. There is no automatic migration.
 
 ## Storage, ownership, and cancellation
 

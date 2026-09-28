@@ -178,7 +178,7 @@ budget. `readonly` and `edit` supply larger limits. Custom harnesses receive tho
 must enforce them, and can report adapter-specific defaults through `policyDefaults(provider)`. See
 [agent profiles and launch grants](docs/agent-profiles.md) for declarations, `--profile` recovery,
 and strict capability checks. `inspect --json` exposes saved rules and each step's `attemptHistory`,
-including resolved policy and its sources. New checkpoints use version 5. Versions 1, 2, 3, and 4
+including resolved policy and its sources. New checkpoints use version 6. Versions 1, 2, 3, 4, and 5
 remain inspectable but cannot resume or supply fork reuse with this runtime; retain the original
 runtime or choose a new run ID. See
 [the policy decision](docs/decisions/0005-step-identity-and-policy.md).
@@ -250,9 +250,10 @@ still apply. Full IDs retain the 200-character limit; shorten nesting/labels if 
 Errors show bounded full ID, scope, leaf, offending character/index, and the allowed pattern.
 
 The deprecated `ctx.map(items, concurrency, mapper, options?)` form adds no item prefix. Existing
-unscoped IDs and format-5 checkpoints remain compatible. Its settled form still requires an explicit
-`options.id` for the journal. Adopting named maps or scopes changes IDs: use a new run, optionally a
-deliberate fork; code acceptance does not rename saved steps.
+unscoped IDs and semantic fingerprints remain unchanged. Format-5 records remain inspectable; the
+current execution epoch requires format 6. Its settled form still requires an explicit `options.id`
+for the journal. Adopting named maps or scopes changes IDs: use a new run, optionally a deliberate
+fork; code acceptance does not rename saved steps.
 
 ## Failure handling
 
@@ -425,6 +426,22 @@ Claude's input count is the top-level field, excluding cache reads/writes and no
 comparison. Do not compare those input counts directly. Codex cost is null; Claude cost uses
 `total_cost_usd`.
 
+## Progress and monitoring
+
+Use `ctx.phase('verify', { total: 27 })` and `ctx.log('Checked inputs', { count: 12 })` for
+persisted observations. `await ctx.phase('verify', async () => { /* work */ }, { total: 27 })`
+isolates a concurrent phase. These calls have no effect IDs or fingerprints; repeated entries echo
+with `(replay)` on resume. Steps retain phase, timing, resolved request summaries, stacks, and
+per-attempt usage. Records also retain body executions and the most recent 500 lifecycle/phase/log
+entries.
+
+`workflow inspect ID` shows progress, first-use-ordered active/failed steps, root cause, usage, and
+owner liveness. Add `--json --summary` for the same compact data, `-v` for saved stacks, or
+`--watch --interval 2s` to wait for completion. Watch emits JSONL per change in JSON mode and exits
+0/1/130/3 for completed/failed/cancelled/stale. `workflow list --status stale --json` finds
+abandoned runs without importing their source. Read [run observability](docs/observability.md) for
+replay, retention, partial usage, prompt-preview privacy, and watch semantics.
+
 ## CLI and development
 
 ```sh
@@ -445,6 +462,7 @@ code**. `typecheck` performs no imports or effects. `inspect` reads a saved run 
 workflow code. A missing run reports the absolute storage directory and available run IDs. Use
 `--state-dir PATH` for alternate storage. With `--json`, validate, execute, inspect, typecheck, and
 check-resume emit exactly one JSON document on stdout, including argument and execution errors.
+`inspect --watch --json` is the JSONL exception; `--summary` selects its compact dashboard data.
 Success keeps the existing result shape: a run record for execute/inspect (plus current `ownership`
 for inspect), metadata for validate, a compiler result for typecheck, and `{kind, ok, check}` for a
 compatible check-resume. Workflow `console.log` and `process.stdout.write` output during import and

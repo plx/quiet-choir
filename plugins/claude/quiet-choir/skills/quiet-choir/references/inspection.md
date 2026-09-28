@@ -15,31 +15,32 @@ called in a subdirectory. Its launch directory is the base for relative paths, t
 `cwd`, and agent calls; resume must use the original directory. There is no CLI `--cwd` flag.
 
 Inspection does not import the workflow or take the writer lock. Each read sees a persisted
-checkpoint plus current OS ownership observations, not the live JavaScript stack. There is no watch
-command; repeat inspection if needed. For embedding, `await readRun({ runId, cwd, stateDir })`
-returns the validated checkpoint alone; `inspectRunOwnership({ runId, cwd, stateDir })` returns the
-separate current ownership view. Like `runWorkflow`, it defaults to `<cwd>/.quiet-choir/runs` and
-resolves relative `stateDir` paths against `cwd` (default: `process.cwd()`).
-`resolveStateDir({ cwd, stateDir })` returns the absolute directory. A missing CLI inspection names
-that directory and lists the run IDs present; embedded `readRun` retains the filesystem error's
-`code: 'ENOENT'`.
+checkpoint plus current OS ownership observations, not the live JavaScript stack. Text is a
+dashboard; `--json --summary` returns the same compact progress, status counts, ordered
+active/problem steps, resolved limits, root cause, reported usage, and recent logs. `-v` shows saved
+stacks. For embedding, `await readRun({ runId, cwd, stateDir })` returns the validated checkpoint
+alone; `inspectRunOwnership({ runId, cwd, stateDir })` returns the separate current ownership view.
+Like `runWorkflow`, it defaults to `<cwd>/.quiet-choir/runs` and resolves relative `stateDir` paths
+against `cwd` (default: `process.cwd()`). `resolveStateDir({ cwd, stateDir })` returns the absolute
+directory. A missing CLI inspection names that directory and lists the run IDs present; embedded
+`readRun` retains the filesystem error's `code: 'ENOENT'`.
 
 Checkpoints are `<stateDir>/<runId>.json`, with a sibling `<runId>.json.lock/` while owned. The lock
 also survives a hard kill, so it does not prove a live owner. A same-host resume checks durable
 child records before recovering a dead/released owner. Live or unverified children refuse execution
 (exit 3); explicit `--resume --kill-orphans` stops only birth-identity-confirmed survivors. A reused
-PID is not signaled. Text inspection names the owner PID and state (`dead: stale lock` when
-appropriate), then child binary, PID/group, step, attempt and state. JSON adds
-`ownership: { locked, owner, processes, warning? }`; this field is not saved in the checkpoint.
+PID is not signaled. Text inspection names the owner PID and state (with `stale` run status for a
+missing lock or dead/released owner), then child binary, PID/group, step, attempt and state. JSON
+adds `ownership: { locked, owner, processes, warning? }`; this field is not saved in the checkpoint.
 Missing identities and malformed records are reported, never permission to kill. Foreign-host or
 incomplete ownership needs inspection. Prefer `inspect` or `readRun` to validate data. `inspect`
-exits 0 even for `failed` or `running` records; check `status`. A JSON inspection result has these
-useful fields:
+without `--watch` exits 0 even for `failed`, `cancelled`, or `running` records; check `status`. A
+JSON inspection result has these useful fields:
 
 | Field                                     | Interpretation                                                     |
 | ----------------------------------------- | ------------------------------------------------------------------ |
 | `id`, `workflow.name`, `workflow.version` | Run and workflow identities                                        |
-| `status`                                  | Last saved `running`, `completed`, or `failed` state               |
+| `status`                                  | Last saved `running`, `completed`, `failed`, or `cancelled` state  |
 | `error`                                   | Last run failure message, or null                                  |
 | `cwd`, `input`                            | Original execution directory and validated input                   |
 | `createdAt`, `updatedAt`                  | Creation and last checkpoint timestamps; not heartbeats            |
@@ -57,10 +58,13 @@ answer is at `steps[stepId].output.output`.
 Current records include run `policy`, `allowModelOverride`, and `policyWarnings`. Each step has
 component `identity` hashes and `attemptHistory`: each attempt records its fingerprint, resolved
 `policy`, value `sources`, `requestedModel`, `reasoningEffort`, `startedAt`, `finishedAt`, `status`,
-and `error`. A `running` attempt has no saved settlement. Redefined unfinished steps retain old
-hashes and change times in `redefinitions`; unvisited unfinished steps become `superseded` after a
-successful body replay. Existing terminal outcomes still must be visited. Versions 1, 2, 3, and 4
-can be inspected, but this format-5 runtime refuses their resumption or fork reuse.
+and `error`. Format 6 adds execution number, monotonic duration, reported usage, request summary,
+and stack to each attempt. Steps retain the latest phase/timing/request/stack; existing cancellation
+status and `attemptHistory` are used, with no duplicate boolean or history array. A `running`
+attempt has no saved settlement. Redefined unfinished steps retain old hashes and change times in
+`redefinitions`; unvisited unfinished steps become `superseded` after a successful body replay.
+Existing terminal outcomes still must be visited. Versions 1–5 can be inspected, but this format-6
+runtime refuses their resumption or fork reuse.
 
 `workflow.identity` holds code/schema/file hashes and engine metadata. `forkedFrom` identifies a
 source snapshot, reuse mode, invalidation globs, intentional differences, and progress; each copied
@@ -77,6 +81,53 @@ Failed `attemptHistory` entries retain `errorKind`. A run may complete with sett
 `step.settled` follows a committed outcome; `replay.divergence` can include `healedStepId` and later
 `skippedStepIds`.
 
+## Watching and listing
+
+```sh
+npm run --silent cli -- workflow inspect recovery --state-dir "$qc_state_dir" --watch --interval 2s
+npm run --silent cli -- workflow inspect recovery --state-dir "$qc_state_dir" --watch --json --summary
+npm run --silent cli -- workflow list --state-dir "$qc_state_dir" --status stale --json
+```
+
+Watch polls every 2s by default (`ms`, `s`, or `m` suffix, 1ms–2147483647ms). Text redraws on
+changes in a terminal; JSON is JSONL, one document per checkpoint/ownership change, without
+elapsed-time-only lines. It exits with a final snapshot: completed 0, failed 1, cancelled 130,
+stale 3. Unknown/remote ownership is not assumed dead. Missing/unreadable checkpoints use ordinary
+workflow error JSON. Interrupting the watcher adds an error document and exits 130 without stopping
+the observed workflow. Watch may miss intermediate writes and is not a lossless event stream. Normal
+inspect still exits 0.
+
+List sorts newest `updatedAt` first and supports running/failed/completed/cancelled/stale filters.
+Unreadable files are skipped with stderr warnings. JSON is
+`{kind:'workflow.list.result', ok:true, stateDir, runs, warnings}`, with summary objects in `runs`.
+A missing directory produces an empty list. Neither command imports source, takes the writer lock,
+or performs recovery.
+
+## Phases and logs
+
+`ctx.phase(title, { total })` sets the phase until the next phase in that context.
+`await ctx.phase(title, async () => { /* work */ }, { total })` isolates concurrent scoped phases
+using AsyncLocalStorage; map workers and bound contexts inherit it. Steps capture the phase at
+invocation, before asynchronous request preparation. `total` is descriptive. The dashboard counts
+completed/running steps with the same label; distinct phase labels give distinct counters.
+`ctx.log(message, data?)` accepts lossless JSON. Invalid phase/log calls are authoring errors, never
+settled-map item outcomes; a scoped phase body's own errors settle normally. These calls have no
+IDs, fingerprints, or skipped-step checks. Their writes are owned and drained by the runtime
+(synchronous bursts share a snapshot), and they echo to stderr at info level.
+
+The kth identical phase/log observation from an earlier execution echoes with `(replay)` and
+`replayed:true` without appending a duplicate. Signatures include type, message, data, and phase
+metadata, independent of concurrent ordering. Only the latest 500 lifecycle/phase/log payloads are
+retained; compact occurrence counts survive eviction. Counts and attempt histories can still grow;
+whole-file checkpoint writes make high-volume logging expensive. This is not a transcript.
+
+Run `executions` retain body execution numbers, PID, start/end, outcome, error, and stack; completed
+resume fast-path reads add no execution. A crashed execution remains `running` if it never saved a
+final outcome. `request` records provider/model/profile, effective limits, tools, cwd, structured
+output, prompt SHA-256 and a 200-code-unit preview. Null model means inherited native configuration.
+Checkpoint previews, logs, and stacks can contain sensitive data. Attempt elapsed time includes
+admission/start-write waiting; per-call timeout begins only when admitted.
+
 ## Interpreting apparent stalls
 
 `running` is a persisted state, not proof of a live process. A crash or checkpoint-write failure can
@@ -88,12 +139,15 @@ children; timestamps alone do not justify removing a lock.
 A failed run can have completed sibling effects. Those effects replay on a compatible resume; an
 uncheckpointed external action may repeat. Failed steps contain error messages, not full transcripts
 or guaranteed partial output. Run-level failures (for example final schema validation) need not
-imply any step failed. Start from `rootCause: { stepId, error }`, also shown by human inspection. A
-map's initiating step stays `failed`; an interrupted sibling is `cancelled`, with a distinct
-cancellation message and `cancelledBy` set to the initiating step ID (null for a mapper-body failure
-or run interrupt). First Ctrl-C/SIGTERM/SIGHUP records run status `cancelled` and root cause
-`{ stepId: null, error: 'Workflow interrupted.' }`. Completed or handled failures leave `rootCause`
-null when the run completes. Resolved, validated actions still save success after abort.
+imply any step failed. Start from `rootCause: { stepId, error }`, also shown by human inspection.
+Attribution uses error identity/cause chains, not message matching. `WorkflowRunError` names the
+root step/kind and exposes `runId`, `stepId`, saved `run`, and original `cause`; `-v` prints the
+saved stack. A map's initiating step stays `failed`; an interrupted sibling is `cancelled`, with a
+distinct cancellation message and `cancelledBy` set to the initiating step ID (null for a
+mapper-body failure or run interrupt). First Ctrl-C/SIGTERM/SIGHUP records run status `cancelled`
+and root cause `{ stepId: null, error: 'Workflow interrupted.' }`. Completed or handled failures
+leave `rootCause` null when the run completes. Resolved, validated actions still save success after
+abort.
 
 `maps[id]` contains settled-map identity, status, and ordered item journals. Each committed item
 stores `{ ok, value/error }` and its owned step/nested-map IDs. Those outcomes replay as a unit; a
@@ -110,26 +164,32 @@ as a warning before live work; `--strict-replay` stops before the next live effe
 
 ```ts
 onEvent: (event) => {
-  process.stderr.write(`${event.type} ${event.stepId} attempt=${String(event.attempt)}\n`);
+  process.stderr.write(`${event.at} ${event.runId} ${event.type} ${event.stepId ?? ''} attempt=${String(event.attempt)}\n`);
 },
 ```
 
-An event includes `type`, `runId`, `stepId`, and `attempt`. Step notifications reflect persisted
-step state; `step.replayed` refers to the existing completion and does not increment attempts.
-Observer synchronous exceptions and asynchronous rejections are ignored so they cannot invalidate
-execution. Observer promises are not awaited and do not keep the run lock held; synchronous observer
-work still runs inline. Notifications are not durably queued or guaranteed to be delivered.
-`onEvent` is not a token stream, tool trace, or run-lifecycle event API; use the returned record or
-checkpoint for final status.
+An event includes `at`, `execution`, `type`, `runId`, `stepId`, and `attempt`. Debug lines include
+timestamp and run ID. Lifecycle `run.started/completed/failed/cancelled` and phase/log notifications
+use attempt 0; their step ID is null except a run failure can name the root effect. Step
+notifications reflect persisted step state; `step.replayed` refers to the existing completion and
+does not increment attempts. Observer synchronous exceptions and asynchronous rejections are ignored
+so they cannot invalidate execution. Observer promises are not awaited and do not keep the run lock
+held; synchronous observer work still runs inline. Notifications are not durably queued or
+guaranteed to be delivered. `onEvent` includes run lifecycle notifications but is not a token
+stream, tool trace, or durable delivery queue; use the returned record or checkpoint for saved
+status.
 
 Usage values come from the harness and may be null. Codex cost is always null in this adapter.
 Completed agent results store successful-attempt usage; failed protocol attempts can also store
 available `sessionId` and `usage` in `steps[id].failedAttempts` after
-[#33](https://github.com/plx/quiet-choir/issues/33). This still omits some failed/abandoned work and
-is not a complete spending ledger. Replaying saved usage is not a new charge. Claude's top-level
-input count excludes cache reads/writes and does not sum per-model usage; Codex's cache-inclusive
-interpretation is inferred, not verified by a live cache comparison. See [Claude](claude.md) and
-[Codex](codex.md) before comparing counts.
+[#33](https://github.com/plx/quiet-choir/issues/33). New attempt histories also retain successful
+response usage even when response validation fails. Dashboard totals count local agent attempts
+once, excluding copied fork history. Known metrics are summed and `incompleteAttempts` marks partial
+coverage; wholly unknown metrics stay null (zero when there were no agent attempts).
+Unreported/abandoned work remains missing, so this is not a billing ledger. Replaying saved usage is
+not a new charge. Claude's top-level input count excludes cache reads/writes and does not sum
+per-model usage; Codex's cache-inclusive interpretation is inferred, not verified by a live cache
+comparison. See [Claude](claude.md) and [Codex](codex.md) before comparing counts.
 
 Both synchronous observer throws and observer promise rejections are handled, and `readRun` shares
 execution's path resolution. Neither guarantee covers unowned async work that a workflow creates.

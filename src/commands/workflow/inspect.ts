@@ -1,69 +1,76 @@
 import { resolve } from 'node:path';
-
 import { Args, Flags, type Interfaces } from '@oclif/core';
-
 import { WorkflowCommand } from '../../cli/workflow-command.js';
+import { formatRunSummary, parseWatchInterval, watchExitCodes } from '../../cli/inspection-view.js';
 import { WorkflowExecutor } from '../../workflow/loader/executor.js';
-
-import type { RunOwnership } from '../../workflow/runtime/store.js';
-
-function ownershipText(ownership: RunOwnership | undefined): string {
-  if (!ownership?.locked) return 'Owner: no lock\n';
-  const owner = ownership.owner;
-  return `Owner: ${owner ? `pid ${String(owner.pid)} on ${owner.host} ${owner.state}${owner.state === 'dead' || owner.state === 'released' ? ': stale lock' : ''}` : 'unknown'}\n${ownership.warning ? `Warning: ${ownership.warning}\n` : ''}${ownership.processes.map((entry) => (entry.process ? `Process: ${entry.process.binary} pid ${String(entry.process.pid)} group ${String(entry.process.pgid)} step ${entry.process.stepId} attempt ${String(entry.process.attempt)} ${entry.state}\n` : `Process: ${entry.file} ${entry.state}: ${entry.detail ?? ''}\n`)).join('')}`;
-}
+import type { RunInspection } from '../../workflow/loader/inspection.js';
 
 interface WorkflowInspectArgs {
   readonly runId: string;
 }
-
 interface WorkflowInspectFlags {
   readonly 'state-dir': string;
   readonly json: boolean | undefined;
+  readonly summary: boolean | undefined;
+  readonly watch: boolean | undefined;
+  readonly interval: string | undefined;
 }
 
 export default class WorkflowInspect extends WorkflowCommand {
   public static override readonly args: Interfaces.ArgInput<WorkflowInspectArgs> = {
     runId: Args.string({ description: 'Persisted run identifier', required: true }),
   };
-
   public static override readonly flags: Interfaces.FlagInput<WorkflowInspectFlags> = {
     'state-dir': Flags.directory({
       description: 'Local durable run storage',
       default: '.quiet-choir/runs',
     }),
-    json: Flags.boolean({ description: 'Print the complete run record as JSON', default: false }),
+    json: Flags.boolean({
+      description: 'Print the run as JSON (JSONL per change with --watch)',
+      default: false,
+    }),
+    summary: Flags.boolean({
+      description: 'Print the compact dashboard data as JSON',
+      dependsOn: ['json'],
+    }),
+    watch: Flags.boolean({
+      description: 'Wait until completed, failed, cancelled, or stale; exit with that status',
+    }),
+    interval: Flags.string({
+      description: 'Watch polling interval, e.g. 2s or 250ms (default 2s)',
+      dependsOn: ['watch'],
+    }),
   };
-
   public static override readonly summary =
-    'Inspect a persisted workflow run without importing workflow code';
+    'Inspect or watch a workflow without importing its code';
 
   public async run(): Promise<void> {
     const { args, flags } = await this.parse(WorkflowInspect);
     this.runContext(args.runId, flags['state-dir']);
-    const executor = new WorkflowExecutor({ logger: this.createExecutionLogger(flags) });
+    const intervalMs = parseWatchInterval(flags.interval ?? '2s');
+    const render = (value: RunInspection): void => {
+      const human = `${flags.watch && !flags.json && process.stdout.isTTY ? '\u001b[2J\u001b[H' : ''}${formatRunSummary(value.summary, flags.verbose)}`;
+      this.output(
+        flags.summary ? value.summary : { ...value.run, ownership: value.ownership },
+        human,
+      );
+    };
+    const executor = new WorkflowExecutor({
+      logger: this.createExecutionLogger(flags),
+      signal: this.signal,
+      onInspection: render,
+    });
     const result = await executor.execute({
-      kind: 'workflow.inspect',
+      ...(flags.watch
+        ? { kind: 'workflow.watch' as const, intervalMs }
+        : { kind: 'workflow.inspect' as const }),
       runId: args.runId,
       stateDir: resolve(flags['state-dir']),
     });
-    if (!result.ok) {
-      this.failResult(result);
-    }
-    if (result.kind === 'workflow.run.result') {
-      this.output(
-        { ...result.run, ownership: result.ownership },
-        `Run ${result.run.id}: ${result.run.status}\n${ownershipText(result.ownership)}Workflow: ${result.run.workflow.name}@${result.run.workflow.version}\nSteps: ${String(Object.keys(result.run.steps).length)}\n${Object.entries(
-          result.run.harnesses ?? {},
-        )
-          .map(
-            ([provider, value]) =>
-              `Harness ${provider}: ${value.binary}@${value.version ?? 'unknown'}\n`,
-          )
-          .join(
-            '',
-          )}${(result.run.harnessWarnings ?? []).map((warning) => `Warning: ${warning}\n`).join('')}${result.run.rootCause ? `Root cause (${result.run.rootCause.stepId ?? 'workflow'}): ${result.run.rootCause.error}\n` : ''}${result.run.error ?? JSON.stringify(result.run.output, null, 2)}`,
-      );
+    if (!result.ok) this.failResult(result);
+    if (result.kind === 'workflow.run.result' && result.summary && result.ownership) {
+      if (flags.watch) process.exitCode = watchExitCodes[result.summary.status];
+      else render({ run: result.run, summary: result.summary, ownership: result.ownership });
     }
   }
 }

@@ -3,7 +3,7 @@
     "summary": "Ingest a backlog, demonstrate each ticket’s acceptance criteria against the implementation, then send an adversary after tickets that passed. Compute the final pass/fail counts in code.",
     "preserved": "The default eight-ticket cap, deferred count, demonstrate-then-break pipeline, and criterion-breaking severity threshold are unchanged. Tickets move to the breaker independently; there is no batch-wide demonstration barrier.",
     "changes": [
-      "The three named phases are descriptive metadata and stderr output. Each ticket’s demonstration and breaker calls receive separate durable IDs."
+      "The three named phases use persisted ctx.phase observations with replay-marked stderr output. Each ticket’s demonstration and breaker calls receive separate durable IDs."
     ],
     "evaluation": "The original pass-pending-manual branch is unreachable: allShown already requires every criterion to be demonstrated. That logic is retained. A skipped or failed Claude invocation now stops the run instead of producing the original null-tolerant partial result."
   },

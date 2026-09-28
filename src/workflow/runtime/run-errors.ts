@@ -61,6 +61,8 @@ export class WorkflowInputError extends Error {
 
 /** A failed or cancelled workflow whose final failure checkpoint was saved successfully. */
 export class WorkflowRunError extends Error {
+  /** Persisted run identifier. */
+  public readonly runId: string;
   /** Effect responsible for the failure; null for a body failure or run interruption. */
   public readonly stepId: string | null;
 
@@ -70,8 +72,16 @@ export class WorkflowRunError extends Error {
     public readonly run: RunRecord,
     cause: unknown,
   ) {
-    super(cause instanceof Error ? cause.message : String(cause), { cause });
+    const stepId = run.rootCause?.stepId ?? null;
+    const detail = cause instanceof Error ? cause.message : String(cause);
+    super(
+      stepId === null
+        ? detail
+        : `Step ${stepId} (${run.steps[stepId]?.kind ?? 'unknown'}) failed: ${detail}`,
+      { cause },
+    );
     this.name = 'WorkflowRunError';
+    this.runId = run.id;
     this.stepId = run.rootCause?.stepId ?? null;
   }
 }

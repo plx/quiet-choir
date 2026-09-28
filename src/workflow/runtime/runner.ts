@@ -1,3 +1,5 @@
+import { RunObservations, errorStack, requestSummary } from './observability.js';
+import type { PhaseInfo, PhaseOptions, RequestSummary, RunEvent } from './observability-model.js';
 import {
   isValidRunId,
   runIdMessage,
@@ -105,22 +107,20 @@ import {
 
 export { ConfigurationError } from './configuration-error.js';
 
-/** Unawaited workflow notifications: step transitions follow persistence; agent admission events are live. */
-export interface WorkflowEvent {
-  /** Event lifecycle transition. */
-  readonly type:
-    | 'step.started'
-    | 'step.completed'
-    | 'step.replayed'
-    | 'step.failed'
-    | 'step.cancelled'
-    | 'step.settled'
-    | 'step.redefined'
-    | 'step.superseded'
-    | 'step.reused'
-    | 'replay.divergence'
-    | 'agent.queued'
-    | 'agent.admitted';
+/** Unawaited notifications: step transitions follow persistence; admission events are live. */
+export type WorkflowEvent = {
+  /** ISO notification time. */
+  readonly at: string;
+  /** Body execution number within the run. */
+  readonly execution: number;
+  /** Observational phase, when known. */
+  readonly phase?: string | null;
+  /** Expected phase step count. */
+  readonly total?: number | null;
+  /** User-supplied log data. */
+  readonly data?: JsonValue;
+  /** An earlier execution already persisted this occurrence. */
+  readonly replayed?: boolean;
   /** Provider requesting or receiving admission, present on agent events. */
   readonly provider?: string;
   /** Reserved slots by provider, present on agent events. */
@@ -137,11 +137,34 @@ export interface WorkflowEvent {
   readonly healedStepId?: string;
   /** Owning execution. */
   readonly runId: string;
-  /** Named effect. */
-  readonly stepId: string;
   /** Total persisted attempts for this effect. */
   readonly attempt: number;
-}
+} & (
+  | {
+      /** Full durable effect ID. */
+      readonly stepId: string;
+      /** Step transition or live admission notification. */
+      readonly type:
+        | 'step.started'
+        | 'step.completed'
+        | 'step.replayed'
+        | 'step.failed'
+        | 'step.cancelled'
+        | 'step.settled'
+        | 'step.redefined'
+        | 'step.superseded'
+        | 'step.reused'
+        | 'replay.divergence'
+        | 'agent.queued'
+        | 'agent.admitted';
+    }
+  | {
+      /** Root effect for a failed run; otherwise null. */
+      readonly stepId: string | null;
+      /** Run lifecycle, phase, or log notification. */
+      readonly type: RunEvent['type'];
+    }
+);
 
 /** A completed run with its output type inferred from the workflow definition. */
 export type WorkflowRun<TOutput> = RunRecord & {
@@ -420,7 +443,7 @@ export async function runWorkflow<TInput, TOutput>(
     }
     const now = new Date().toISOString();
     const record: RunRecord = existing ?? {
-      formatVersion: 5,
+      formatVersion: 6,
       rootCause: null,
       maps: {},
       id: options.runId,
@@ -573,27 +596,35 @@ export async function runWorkflow<TInput, TOutput>(
     }
     const inEffect = new AsyncLocalStorage<boolean>();
     let closed = false;
-    const emit = (
-      type: WorkflowEvent['type'],
-      id: string,
-      step: StepRecord,
-      details: Omit<WorkflowEvent, 'type' | 'runId' | 'stepId' | 'attempt'> = {},
-    ): void => {
+    let observationsClosed = false;
+    const notify = (event: WorkflowEvent): void => {
       try {
-        void Promise.resolve(
-          options.onEvent?.({
-            type,
-            runId: record.id,
-            stepId: id,
-            attempt: step.attempts,
-            ...details,
-          }),
-        ).catch(() => {
-          /* Observers never own the workflow outcome. */
+        void Promise.resolve(options.onEvent?.(structuredClone(event))).catch(() => {
+          /* Observers do not own outcomes. */
         });
       } catch {
-        /* Observers must not invalidate committed effects. */
+        /* Observers cannot invalidate persisted work. */
       }
+    };
+    const observations = new RunObservations(record, save, (event, replayed) => {
+      notify({ ...event, message: event.message ?? '', attempt: 0, runId: record.id, replayed });
+    });
+    const emit = (
+      type: Exclude<WorkflowEvent['type'], RunEvent['type']>,
+      id: string,
+      step: StepRecord,
+      details: Partial<Omit<WorkflowEvent, 'type' | 'runId' | 'stepId' | 'attempt'>> = {},
+    ): void => {
+      notify({
+        type,
+        at: new Date().toISOString(),
+        execution: observations.execution.n,
+        runId: record.id,
+        stepId: id,
+        attempt: step.attempts,
+        phase: step.phase ?? null,
+        ...details,
+      });
     };
 
     const emitAdmission = (
@@ -616,11 +647,13 @@ export async function runWorkflow<TInput, TOutput>(
       dependencies: JsonValue,
       schema: z.ZodType<T>,
       execution: AttemptPolicy,
-      action: (context: StepContext, step: StepRecord) => Promise<T> | T,
+      action: (context: StepContext, step: StepRecord, attempt: AttemptRecord) => Promise<T> | T,
       wakeAt: number | null,
       requestedIdentity?: StepIdentity,
       local?: StepDefinition<T>,
       onError?: TMode,
+      observedRequest: RequestSummary | null = null,
+      observedPhase: PhaseInfo | null = observations.phase,
     ): Promise<EffectResult<T, TMode>> {
       const signal = scopes.signal;
       const value = (output: T): EffectResult<T, TMode> =>
@@ -741,6 +774,12 @@ export async function runWorkflow<TInput, TOutput>(
         identity,
         seq: nextSeq++,
         attemptHistory: [],
+        phase: observedPhase?.title ?? null,
+        startedAt: null,
+        finishedAt: null,
+        durationMs: null,
+        request: observedRequest,
+        errorStack: null,
       };
       if (!divergenceReported) {
         const skipped = previousTerminal
@@ -797,12 +836,24 @@ export async function runWorkflow<TInput, TOutput>(
         step.status = 'running';
         step.error = null;
         delete step.warnings;
+        step.errorStack = null;
+        step.phase = observedPhase?.title ?? null;
+        step.request = observedRequest;
+        step.startedAt = new Date().toISOString();
+        step.finishedAt = null;
+        step.durationMs = null;
+        const attemptStarted = performance.now();
         delete step.cancelledBy;
         const attemptRecord: AttemptRecord = {
           ...structuredClone(execution),
           attempt: step.attempts,
           fingerprint: stepFingerprint,
-          startedAt: new Date().toISOString(),
+          execution: observations.execution.n,
+          durationMs: null,
+          usage: null,
+          errorStack: null,
+          request: structuredClone(observedRequest),
+          startedAt: step.startedAt,
           finishedAt: null as string | null,
           status: 'running',
           error: null as string | null,
@@ -820,6 +871,7 @@ export async function runWorkflow<TInput, TOutput>(
                 attempt: step.attempts,
               },
               step,
+              attemptRecord,
             ),
           );
           // A resolved, valid result is durable work even if cancellation arrived meanwhile.
@@ -837,11 +889,18 @@ export async function runWorkflow<TInput, TOutput>(
           step.status = scoped ? 'cancelled' : 'failed';
           if (error instanceof CancelledError) step.cancelledBy = error.cancelledBy;
           step.error = outcome.message;
+          step.errorStack = errorStack(error);
+          attemptRecord.errorStack = step.errorStack;
           attemptRecord.errorKind = outcome.kind;
           attemptRecord.status = scoped ? 'cancelled' : 'failed';
-          attemptRecord.finishedAt = new Date().toISOString();
+          step.finishedAt = attemptRecord.finishedAt = new Date().toISOString();
+          step.durationMs = attemptRecord.durationMs = Math.max(
+            0,
+            Math.round(performance.now() - attemptStarted),
+          );
           attemptRecord.error = step.error;
           if (cause instanceof HarnessError) {
+            if (cause.usage !== null) attemptRecord.usage = structuredClone(cause.usage);
             (step.failedAttempts ??= []).push({
               attempt: step.attempts,
               sessionId: cause.sessionId,
@@ -879,6 +938,9 @@ export async function runWorkflow<TInput, TOutput>(
             step.status = 'cancelled';
             step.cancelledBy = cancelled.cancelledBy;
             step.error = cancelled.message;
+            step.errorStack = errorStack(cancelled);
+            step.finishedAt = new Date().toISOString();
+            step.durationMs = Math.max(0, Math.round(performance.now() - attemptStarted));
             // The completed failed attempt remains history; cancellation interrupted its backoff.
             if (await trySave()) emit('step.cancelled', id, step);
             throw cancelled;
@@ -887,7 +949,11 @@ export async function runWorkflow<TInput, TOutput>(
         }
         step.status = 'completed';
         attemptRecord.status = 'completed';
-        attemptRecord.finishedAt = new Date().toISOString();
+        step.finishedAt = attemptRecord.finishedAt = new Date().toISOString();
+        step.durationMs = attemptRecord.durationMs = Math.max(
+          0,
+          Math.round(performance.now() - attemptStarted),
+        );
         await save(
           `Step ${id} completed but its checkpoint write failed; resume may repeat it unless a later save recovers the result`,
         );
@@ -932,6 +998,7 @@ export async function runWorkflow<TInput, TOutput>(
         structured: boolean,
       ): Promise<EffectResult<AgentResult<T>, TMode>> {
         const id = names.qualify(leaf);
+        const phase = observations.phase;
         return launch(id, async () => {
           let request: HarnessRequest;
           let schema: z.ZodType<T>;
@@ -1053,7 +1120,7 @@ export async function runWorkflow<TInput, TOutput>(
             jsonValue(request),
             resultSchema,
             execution,
-            async (context, step) => {
+            async (context, step, attempt) => {
               if (!options.harness)
                 throw new ConfigurationError(
                   `No harness adapter configured for ${provider}. Supply RunOptions.harness.`,
@@ -1136,6 +1203,7 @@ export async function runWorkflow<TInput, TOutput>(
                 }
                 throw error;
               }
+              attempt.usage = structuredClone(response.usage);
               if (response.warnings !== undefined) step.warnings = [...response.warnings];
               if ((response.permissionDenials ?? 0) > 0) {
                 const warning = `Profile ${profile.name}: ${String(response.permissionDenials)} permission denials reported.`;
@@ -1164,6 +1232,8 @@ export async function runWorkflow<TInput, TOutput>(
             identity,
             undefined,
             agentOptions.onError,
+            requestSummary(request, execution),
+            phase,
           );
         });
       }
@@ -1227,7 +1297,43 @@ export async function runWorkflow<TInput, TOutput>(
         throw error;
       }
     }
+    // Observation guards are authoring errors: settled maps must never journal them as item data.
+    function observe<T>(action: () => T): T {
+      try {
+        if (observationsClosed)
+          throw new Error('Workflow is closed; await all workflow operations.');
+        return action();
+      } catch (error) {
+        origins.markFatal(error);
+        throw error;
+      }
+    }
+    function phase(title: string, options?: PhaseOptions): void;
+    function phase<T>(title: string, body: () => Promise<T>, options?: PhaseOptions): Promise<T>;
+    function phase<T>(
+      title: string,
+      bodyOrOptions?: PhaseOptions | (() => Promise<T>),
+      options?: PhaseOptions,
+    ): void | Promise<T> {
+      if (typeof bodyOrOptions === 'function') {
+        // Validate before launch; errors from the body itself stay ordinary item failures.
+        const info = observe(() => {
+          if (closed) throw new Error('Workflow is closed; await all workflow operations.');
+          return observations.checkPhase(title, options);
+        });
+        return launch(`phase: ${title}`, () => observations.scoped(info, bodyOrOptions), false);
+      }
+      observe(() => {
+        observations.setPhase(title, bodyOrOptions);
+      });
+    }
     const context: WorkflowContext = {
+      phase,
+      log(message, data) {
+        observe(() => {
+          observations.log(message, data);
+        });
+      },
       runId: record.id,
       get signal() {
         return scopes.signal;
@@ -1311,11 +1417,15 @@ export async function runWorkflow<TInput, TOutput>(
     record.error = null;
     record.output = null;
     record.rootCause = null;
+    const started = observations.lifecycle('run.started');
     await save();
+    notify({ ...started, message: 'Run started.', attempt: 0, runId: record.id });
     try {
       signal.throwIfAborted();
-      const output = await definition.run(context, input);
+      const output = await observations.run(() => definition.run(context, input));
       await operations.drain();
+      observationsClosed = true;
+      await observations.flush();
       operations.assertObserved();
       closed = true;
       await drainDiscovery();
@@ -1344,7 +1454,16 @@ export async function runWorkflow<TInput, TOutput>(
       warnUnmatched();
       record.output = jsonValue(definition.output.parse(output));
       record.status = 'completed';
-      await save();
+      const priorEvents = [...(record.events ?? [])];
+      const completed = observations.lifecycle('run.completed');
+      try {
+        await save();
+      } catch (error) {
+        // A later failure snapshot must not claim that an uncommitted completion happened.
+        record.events = priorEvents;
+        throw error;
+      }
+      notify({ ...completed, message: 'Run completed.', attempt: 0, runId: record.id });
       for (const [id, step] of superseded) emit('step.superseded', id, step);
       return {
         ...structuredClone(record),
@@ -1375,6 +1494,8 @@ export async function runWorkflow<TInput, TOutput>(
       // or checkpoint failure aborts a scope; draining here does not send a signal.
       await operations.drain();
       await drainDiscovery();
+      observationsClosed = true;
+      await observations.flush().catch(() => undefined);
       // A callback's own AbortError is a failure; only scope cancellation cancels the run.
       record.status = interrupted || error instanceof CancelledError ? 'cancelled' : 'failed';
       record.error = message(error);
@@ -1382,7 +1503,14 @@ export async function runWorkflow<TInput, TOutput>(
         record.recoveryHint =
           'All recorded work has terminal outcomes, including settled map items. Fix the workflow tail/output and use --resume --accept-code-change to re-finalize; unchanged identities reuse their results.';
       warnUnmatched();
-      if (await trySave()) savedFailure = structuredClone(record);
+      const failed = observations.lifecycle(
+        record.status === 'cancelled' ? 'run.cancelled' : 'run.failed',
+        error,
+      );
+      if (await trySave()) {
+        savedFailure = structuredClone(record);
+        notify({ ...failed, message: record.error, attempt: 0, runId: record.id });
+      }
       throw error;
     }
   }

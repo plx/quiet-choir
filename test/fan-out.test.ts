@@ -827,7 +827,7 @@ it('records cancellation during retry backoff without overwriting the failed att
     runWorkflow(definition, {
       ...options(),
       onEvent(event) {
-        events.push(`${event.type}:${event.stepId}`);
+        events.push(`${event.type}:${event.stepId ?? ''}`);
         if (event.type === 'step.failed' && event.stepId === 'backoff') failed.resolve();
       },
     }),

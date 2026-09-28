@@ -65,7 +65,7 @@ the lock. Records are private, written exclusively and fsynced, and include run/
 binary/cwd, spawn time, OS birth identity and the writer token. They contain no argv, input or env.
 Version-discovery children are recorded too, using the triggering effect's identity and the run's
 shared discovery signal, which aborts on interruption or once no effect still awaits discovery. This
-is owner state, separate from the format-5 replay checkpoint.
+is owner state, separate from the versioned replay checkpoint.
 
 A confirmed live child causes `OrphanProcessesError` (`code: 'run.orphans'`, CLI exit **3**) before
 replacement effects run. `--kill-orphans` verifies identities, sends TERM, waits the selected grace,

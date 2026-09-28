@@ -2,6 +2,19 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- Persist step/attempt timing, resolved request summaries, usage, stacks, and body executions.
+  `ctx.phase` and `ctx.log` provide scoped, replay-marked observations without effect identities.
+  Retain 500 event payloads plus compact replay counts. Debug events include time and run ID.
+- `workflow inspect` now shows a dashboard; `--json --summary`, `--watch --interval`, and
+  `workflow list --status` support monitoring without imports. Watch JSON is JSONL and exits
+  0/1/130/3 for completed/failed/cancelled/stale. `-v` prints saved failure stacks.
+- **Breaking:** new checkpoints use format 6. Formats 1–5 remain readable but cannot resume or
+  supply fork reuse. Step semantic fingerprints are unchanged. Existing `attemptHistory` and
+  cancellation status are extended rather than duplicated. Custom contexts must forward phase/log.
+- `WorkflowRunError` now exposes `runId` and names the root step/kind in its message, preserving the
+  original `cause`. Prompt previews and log data are persisted; treat checkpoints as sensitive. See
+  [run observability](docs/observability.md).
+
 - Workflow CLI failures now emit one JSON document with stable error codes, a generated/requested
   run ID, root effect, and the actual saved checkpoint. Typecheck supports `--json`; workflow stdout
   is redirected to stderr in JSON mode. Input accepts inline JSON, `@file`, and `-` for stdin.
@@ -24,7 +37,8 @@
 - **Harness port migration:** `invoke` and optional `metadata` now receive `HarnessInvocation` with
   `signal`, run/step/attempt IDs and `trackProcess`, replacing the bare signal parameter. Registry
   persistence failures use `CheckpointError.operation: 'process'`; they cannot retry or become
-  settled workflow data. Checkpoint format 5 and completed replay remain compatible.
+  settled workflow data. This migration originally retained format 5; the observability epoch above
+  now requires format 6.
 
 - Live agents now share a run-wide concurrency cap, defaulting to min(8, max(1, available CPUs -
   2)). Configure total/provider limits through RunOptions or CLI flags, or share a limiter across
@@ -49,5 +63,5 @@
   turns, $0.50 per call and a five-minute deadline; readonly/edit have larger limits. Custom
   harnesses receive resolved profile options and must enforce them.
 - Default empty tool gates and read-only sandbox use canonical omitted identity components. Legacy
-  implicit format-5 calls still replay; old explicitly spelled default components can require a new
-  run/fork. Completed semantic checks are never bypassed.
+  implicit calls retain their format-5 semantic fingerprints; old explicitly spelled default
+  components can require a new run/fork. Completed semantic checks are never bypassed.

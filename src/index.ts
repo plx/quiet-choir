@@ -126,3 +126,12 @@ export {
   isValidRunId,
 } from './workflow/runtime/run-errors.js';
 export type { CliErrorCode } from './workflow/runtime/run-errors.js';
+
+export type {
+  PhaseOptions,
+  PhaseInfo,
+  RequestSummary,
+  ExecutionRecord,
+  RunEvent,
+  UsageSummary,
+} from './workflow/runtime/observability-model.js';

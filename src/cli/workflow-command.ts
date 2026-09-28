@@ -82,6 +82,9 @@ export abstract class WorkflowCommand extends BaseCommand {
       !(failure.code === 'workflow.failed' && failure.run?.status === 'failed')
     )
       failure = { ...failure, code: 'workflow.interrupted' };
+    if (this.argv.includes('-v') || this.argv.includes('--verbose')) {
+      if (failure.run?.errorStack) this.logToStderr(failure.run.errorStack);
+    }
     const exit = workflowExitCodes[failure.code];
     if (requestedJson(this.argv)) {
       this.logToStderr(failure.message);

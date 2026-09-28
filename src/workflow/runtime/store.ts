@@ -1,3 +1,10 @@
+import { MAX_RUN_EVENTS } from './observability.js';
+import type {
+  ExecutionRecord,
+  PhaseInfo,
+  RequestSummary,
+  RunEvent,
+} from './observability-model.js';
 import { isValidRunId, runIdMessage, RunRefusedError } from './run-errors.js';
 import { codexEffortValues } from './agent-controls.js';
 import type { HarnessMetadata, HarnessInvocation, HarnessProcess } from './model.js';
@@ -35,6 +42,17 @@ import {
 
 /** One started effect attempt, including the policy actually sent to its adapter. */
 export interface AttemptRecord extends AttemptPolicy {
+  /** Body execution that started this attempt; absent in older formats. */
+  readonly execution?: number;
+  /** Monotonic attempt duration after settlement, including admission waiting. */
+  durationMs?: number | null;
+  /** Reported usage, even if response validation failed. */
+  usage?: AgentUsage | null;
+  /** Original attempt stack/cause chain. */
+  errorStack?: string | null;
+  /** Resolved request sent on this attempt. */
+  readonly request?: RequestSummary | null;
+
   /** Total attempt number across resumes. */
   readonly attempt: number;
   /** Identity fingerprint for this version of the effect. */
@@ -73,6 +91,19 @@ export interface FailedAttempt {
 
 /** Persisted state of one effect. */
 export interface StepRecord {
+  /** Observational phase at the latest live attempt, or null. */
+  phase?: string | null;
+  /** Start of the latest attempt, including admission waiting. */
+  startedAt?: string | null;
+  /** Latest settlement time, or null while running. */
+  finishedAt?: string | null;
+  /** Latest monotonic attempt duration; earlier attempts remain in history. */
+  durationMs?: number | null;
+  /** Latest resolved agent request; null for local steps and sleeps. */
+  request?: RequestSummary | null;
+  /** Latest failure stack/cause chain, or null. */
+  errorStack?: string | null;
+
   /** Effect category; included in replay compatibility checks. */
   kind: 'step' | 'claude' | 'codex' | 'sleep';
   /** Hash of semantic components, including error mode. */
@@ -133,6 +164,17 @@ export interface MapRecord {
 
 /** Local checkpoint format. The format is intentionally versioned independently of workflows. */
 export interface RunRecord {
+  /** Workflow-body execution history, introduced in format 6. */
+  executions?: ExecutionRecord[];
+  /** Recent lifecycle, phase, and log payloads; capped at 500 entries. */
+  events?: RunEvent[];
+  /** Maximum occurrence counts by phase/log signature, retained across payload eviction. */
+  eventCounts?: Record<string, number>;
+  /** Most recently entered active phase, or the root phase. */
+  phase?: PhaseInfo | null;
+  /** Latest run failure stack/cause chain, or null. */
+  errorStack?: string | null;
+
   /** Native harness binary/version from latest live use, with nonfatal version drift diagnostics. */
   harnesses?: Partial<Record<'claude' | 'codex', HarnessMetadata>>;
   /** Discovery/version warnings retained across resume. */
@@ -146,7 +188,7 @@ export interface RunRecord {
   /** Capability digests pinning profile-name grants against source edits. */
   grantedProfiles?: Record<string, string>;
   /** Checkpoint format version. */
-  formatVersion: 1 | 2 | 3 | 4 | 5;
+  formatVersion: 1 | 2 | 3 | 4 | 5 | 6;
   /** Stable run identifier. */
   id: string;
   /** Workflow compatibility metadata. */
@@ -219,7 +261,38 @@ const workflowIdentitySchema = z.object({
   outputSchema: z.string(),
   engine: z.object({ version: z.string(), formatVersion: z.number().int().positive() }),
 });
+const requestSummarySchema = z.object({
+  provider: z.enum(['claude', 'codex']),
+  model: z.string().nullable(),
+  profile: z.string().nullable(),
+  limits: z.object({
+    timeoutMs: z.number().positive().nullable(),
+    maxTurns: z.number().int().positive().nullable(),
+    maxBudgetUsd: z.number().nonnegative().nullable(),
+    sandbox: z.string().nullable(),
+    killGraceMs: z.number().positive().nullable(),
+  }),
+  tools: z.array(z.string()).nullable(),
+  cwd: z.string(),
+  structured: z.boolean(),
+  promptSha256: z.string().regex(/^[a-f0-9]{64}$/u),
+  promptPreview: z.string().max(200),
+});
+const usageSchema = z.object({
+  inputTokens: z.number().nonnegative().nullable(),
+  outputTokens: z.number().nonnegative().nullable(),
+  costUsd: z.number().nonnegative().nullable(),
+});
+const timingFields = {
+  startedAt: z.iso.datetime().nullable().optional(),
+  finishedAt: z.iso.datetime().nullable().optional(),
+  durationMs: z.number().nonnegative().nullable().optional(),
+  errorStack: z.string().nullable().optional(),
+  request: requestSummarySchema.nullable().optional(),
+};
 const stepSchema = z.object({
+  ...timingFields,
+  phase: z.string().nullable().optional(),
   kind: z.enum(['step', 'claude', 'codex', 'sleep']),
   seq: z.number().int().positive().optional(),
   reusedFrom: reusedStepSchema.optional(),
@@ -240,6 +313,11 @@ const stepSchema = z.object({
   attemptHistory: z
     .array(
       z.object({
+        execution: z.number().int().positive().optional(),
+        durationMs: z.number().nonnegative().nullable().optional(),
+        usage: usageSchema.nullable().optional(),
+        errorStack: z.string().nullable().optional(),
+        request: requestSummarySchema.nullable().optional(),
         attempt: z.number().int().positive(),
         fingerprint: z.string(),
         startedAt: z.iso.datetime(),
@@ -292,7 +370,57 @@ const stepsSchema = z.custom<Record<string, StepRecord>>(
 );
 const recordSchema = z
   .object({
-    formatVersion: z.union([z.literal(1), z.literal(2), z.literal(3), z.literal(4), z.literal(5)]),
+    formatVersion: z.union([
+      z.literal(1),
+      z.literal(2),
+      z.literal(3),
+      z.literal(4),
+      z.literal(5),
+      z.literal(6),
+    ]),
+    executions: z
+      .array(
+        z.object({
+          n: z.number().int().positive(),
+          pid: z.number().int().positive(),
+          startedAt: z.iso.datetime(),
+          endedAt: z.iso.datetime().nullable(),
+          outcome: z.enum(['running', 'completed', 'failed', 'cancelled']),
+          error: z.string().nullable(),
+          errorStack: z.string().nullable(),
+        }),
+      )
+      .optional(),
+    events: z
+      .array(
+        z.object({
+          at: z.iso.datetime(),
+          execution: z.number().int().positive(),
+          type: z.enum([
+            'run.started',
+            'run.completed',
+            'run.failed',
+            'run.cancelled',
+            'phase',
+            'log',
+          ]),
+          phase: z.string().nullable(),
+          total: z.number().int().nonnegative().nullable(),
+          message: z.string().nullable(),
+          data: jsonSchema,
+          stepId: z.string().nullable(),
+        }),
+      )
+      .max(MAX_RUN_EVENTS)
+      .optional(),
+    eventCounts: z
+      .record(z.string().regex(/^[a-f0-9]{64}$/u), z.number().int().positive())
+      .optional(),
+    phase: z
+      .object({ title: z.string().min(1), total: z.number().int().nonnegative().nullable() })
+      .nullable()
+      .optional(),
+    errorStack: z.string().nullable().optional(),
     id: z.string(),
     workflow: z.object({
       name: z.string(),
@@ -392,6 +520,42 @@ const recordSchema = z
   })
   .superRefine((record, context) => {
     if (record.formatVersion === 1) return;
+    if (record.formatVersion >= 6) {
+      if (
+        !record.executions?.length ||
+        record.events === undefined ||
+        record.eventCounts === undefined ||
+        record.phase === undefined ||
+        record.errorStack === undefined
+      )
+        context.addIssue({
+          code: 'custom',
+          message: 'Checkpoint is missing observability metadata',
+        });
+      for (const [id, step] of Object.entries(record.steps)) {
+        if (
+          step.phase === undefined ||
+          step.startedAt === undefined ||
+          step.finishedAt === undefined ||
+          step.durationMs === undefined ||
+          step.request === undefined ||
+          step.errorStack === undefined ||
+          step.attemptHistory?.some(
+            (attempt) =>
+              attempt.execution === undefined ||
+              attempt.durationMs === undefined ||
+              attempt.usage === undefined ||
+              attempt.errorStack === undefined ||
+              attempt.request === undefined,
+          )
+        )
+          context.addIssue({
+            code: 'custom',
+            path: ['steps', id],
+            message: 'Step is missing observability metadata',
+          });
+      }
+    }
     if (record.formatVersion >= 5) {
       if (record.maps === undefined || record.rootCause === undefined)
         context.addIssue({ code: 'custom', message: 'Checkpoint is missing scope metadata' });

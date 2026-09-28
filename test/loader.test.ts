@@ -201,9 +201,10 @@ export const invalid: number = 'wrong';`);
       runId: 'loader-test',
       stateDir: join(root, 'state'),
     });
-    expect(inspected).toEqual({
+    expect(inspected).toMatchObject({
       ...executed,
       ownership: { locked: false, owner: null, processes: [] },
+      summary: { id: 'loader-test', status: 'completed', counts: { total: 1, completed: 1 } },
     });
     const resumed = await runner.execute({ ...executionPlan, resume: true });
     expect(resumed).toMatchObject({ ok: true, run: { output: 42 } });
