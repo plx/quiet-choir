@@ -309,7 +309,9 @@ it('releases after failures before retry backoff and never acquires for local wo
     async run(ctx) {
       const retry = ctx.claude.text('first', {
         prompt: 'first',
-        retry: { maxAttempts: 2, delayMs: 100 },
+        // Generous margin: the local step, sleep and second agent call below must all observe
+        // and settle before this retry backoff elapses, even on a loaded CI runner.
+        retry: { maxAttempts: 2, delayMs: 1000 },
       });
       await first.promise;
       await ctx.step('local', { input: null, schema: z.number(), run: () => 1 });
