@@ -50,7 +50,7 @@ explicit in the notes and limit direct comparisons of call counts.
 | `batches/index.json`                 | Ordered batch directory IDs; the first is the reader default     |
 | `batches/<id>/`                      | Originals, ports, metadata, attribution and verification results |
 | `scripts/verify-ports.mjs`           | Batch 01 differential baseline plus the strict/question checks   |
-| `scripts/verify-idiomatic-ports.mjs` | Batch 02 paired fixtures and the F1–F5 matrix                   |
+| `scripts/verify-idiomatic-ports.mjs` | Batch 02 paired fixtures and the F1–F5 matrix                    |
 | `scripts/build-site.mjs`             | Packages every registered batch and the static reader            |
 | `site/`                              | Authored HTML, CSS, JavaScript, and the durable Sites identity   |
 | `../.context/comparison-site/`       | Generated publishing checkout; ignored by this repository        |
