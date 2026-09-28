@@ -646,6 +646,28 @@ it.each(['restore', 'error'] as const)(
   },
 );
 
+// Root bypasses file permission checks, so it never sees the EACCES this case exercises.
+it.skipIf(process.getuid?.() === 0)(
+  'guardFile restores a file whose read permission the body removed',
+  async () => {
+    const workflow = definition(async (ctx) => {
+      await ctx.exec('init', ['git', 'init', '-q']);
+      await ctx.writeFile('original', 'file', 'readable baseline');
+      await chmod(join(cwd, 'file'), 0o644);
+      return guardFile(ctx, 'guard', 'file', async () => {
+        await ctx.writeFile('mutate', 'file', 'broken');
+        await chmod(join(cwd, 'file'), 0o000);
+        return 'done';
+      });
+    });
+    expect((await runWorkflow(workflow, { ...setup(), processRunner: native })).output).toBe(
+      'done',
+    );
+    expect((await stat(join(cwd, 'file'))).mode & 0o777).toBe(0o644);
+    expect(await readFile(join(cwd, 'file'), 'utf8')).toBe('readable baseline');
+  },
+);
+
 it('guardFile pins its baseline blob so git gc cannot prune it before restore', async () => {
   const git = (...args: string[]) => execFileSync('git', args, { cwd, encoding: 'utf8' });
   const workflow = definition(async (ctx) => {

@@ -17,7 +17,15 @@ const path = resolve(parent, basename(lexical));
 const read = async () => {
   let handle;
   try { handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK); }
-  catch (error) { if (error.code === 'ENOENT') return null; throw error; }
+  catch (error) {
+    if (error.code === 'ENOENT') return null;
+    // A body may remove read permission; restore still replaces the file by rename from the blob.
+    if (error.code === 'EACCES' && mode === 'restore') {
+      const info = await lstat(path);
+      if (info.isFile()) return { content: null, mode: info.mode & 0o777 };
+    }
+    throw error;
+  }
   try {
     const info = await handle.stat();
     if (!info.isFile() || info.size > limit) throw new Error('Guard requires a regular text file within maxBytes.');
@@ -48,7 +56,7 @@ try {
     const permissions = /^[0-9]+$/.test(savedMode ?? '') ? Number(savedMode) : NaN;
     if (!Number.isSafeInteger(permissions) || permissions > 0o777) throw new Error('Invalid baseline mode.');
     if (!/^refs\/quiet-choir\/guards\/[a-z0-9-]+$/.test(savedRef ?? '')) throw new Error('Invalid baseline ref.');
-    const changed = before === null || hash(before.content) !== expected || before.mode !== permissions;
+    const changed = before === null || before.content === null || hash(before.content) !== expected || before.mode !== permissions;
     if (changed) {
       const size = Number(git(['cat-file', '-s', expected]).toString('utf8').trim());
       if (!Number.isSafeInteger(size) || size < 0 || size > limit) throw new Error('Baseline blob exceeds maxBytes.');
