@@ -51,6 +51,11 @@
     },
     {
       "workflow": "release-notes",
+      "fixture": "committed-artifact-parent-name-begins-with-two-dots",
+      "status": "passed"
+    },
+    {
+      "workflow": "release-notes",
       "fixture": "missing-coverage",
       "status": "passed",
       "finalStatus": "completed",

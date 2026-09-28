@@ -313,6 +313,28 @@ try {
     metrics.push(row);
     console.log(`${name}: paired success, F1, F2, F4 and question fixtures passed`);
   }
+  {
+    // writeCommittedArtifact's containment check must accept a same-repository parent directory
+    // whose name merely begins with '..' (a segment boundary, not a bare prefix match).
+    const env = await setup(),
+      definition = await load(2, 'release-notes'),
+      { harness } = harnessFor(2, 'release-notes', env),
+      out = '..generated/notes.md',
+      opts = runOptions(env, 'batch-2-release-notes-dotted-parent', harness, {
+        since: env.since,
+        out,
+        publication: 'commit',
+      });
+    const { result } = await drive(definition, opts);
+    assert.equal(result.status, 'completed');
+    assert.equal(await readFile(join(env.cwd, out), 'utf8'), `${result.output.notes}\n`);
+    results.push({
+      workflow: 'release-notes',
+      fixture: 'committed-artifact-parent-name-begins-with-two-dots',
+      status: 'passed',
+    });
+    console.log('release-notes: committed artifact parent name beginning with two dots passed');
+  }
   results.push(
     ...(await extraContracts(join(root, 'contracts'))),
     ...(await cliContracts(join(root, 'cli'))),

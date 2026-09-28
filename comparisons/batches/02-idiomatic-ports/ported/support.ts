@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { mkdir, realpath, writeFile } from 'node:fs/promises';
-import { isAbsolute, relative, resolve } from 'node:path';
+import { isAbsolute, relative, resolve, sep } from 'node:path';
 import { z, type AgentProfile, type WorkflowContext, type JsonValue } from 'quiet-choir';
 
 export const profiles = {
@@ -113,8 +113,8 @@ export async function writeCommittedArtifact(ctx: WorkflowContext, out: string, 
           if (!(error instanceof Error && 'code' in error && error.code === 'EEXIST')) throw error;
         }
         const actual = relative(root, await realpath(parent));
-        if (actual.startsWith('..') || isAbsolute(actual))
-          throw new Error('Artifact parent escapes checkout');
+        const escaped = actual === '..' || actual.startsWith('..' + sep);
+        if (escaped || isAbsolute(actual)) throw new Error('Artifact parent escapes checkout');
       }
       await writeFile(resolve(root, out), content, { flag: 'wx' });
       return null;
