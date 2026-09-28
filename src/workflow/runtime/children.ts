@@ -1,7 +1,7 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { z } from 'zod';
 import type { ChildOptions, ChildRecord, WorkflowDeclaration } from './child-model.js';
-import { checkedDefinition } from './definition.js';
+import { checkedDefinition, describeWorkflow } from './definition.js';
 import { delegateCapabilities, type ChildCapabilities } from './child-profiles.js';
 import { digest, jsonValue } from './json.js';
 import { schemaJson } from './schema.js';
@@ -55,6 +55,7 @@ export class RunChildren {
   readonly #deps: Dependencies;
   readonly #storage = new AsyncLocalStorage<Frame>();
   readonly #visited = new Set<string>();
+  readonly #described = new WeakSet<WorkflowDeclaration>();
 
   readonly #previous = new Map<string | null, { id: string; saved: ChildRecord }[]>();
 
@@ -140,6 +141,12 @@ export class RunChildren {
           );
           d.origins.markFatal(error);
           throw error;
+        }
+        // The run validated only the root's declaration tree; a dynamic child's own tree is checked
+        // here so duplicate names cannot make named dispatch and resume select different children.
+        if (!declared && definition.children !== undefined && !this.#described.has(definition)) {
+          describeWorkflow(definition);
+          this.#described.add(definition);
         }
         const chain = [...(parent?.chain ?? [d.definition.name]), definition.name];
         const depth = chain.length - 1;

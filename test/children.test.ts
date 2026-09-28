@@ -436,6 +436,44 @@ it('checks skipped declared descendants when their dynamic parent is rediscovere
   expect(bodies).toBe(1);
 });
 
+it('validates a dynamic child declaration tree before its frame or effects', async () => {
+  const stateDir = await directory();
+  let effects = 0;
+  const leaf = (version: string) =>
+    defineWorkflow({ name: 'leaf', ...base, version, run: () => Promise.resolve(null) });
+  const middle = defineWorkflow({
+    name: 'middle',
+    ...base,
+    children: [leaf('1'), leaf('2')],
+    async run(ctx) {
+      await ctx.step('effect', {
+        input: null,
+        schema: z.null(),
+        run: () => {
+          effects++;
+          return null;
+        },
+      });
+      return ctx.workflow('leaf', 'leaf', null) as Promise<null>;
+    },
+  });
+  const root = defineWorkflow({
+    name: 'root',
+    ...base,
+    async run(ctx) {
+      await expect(ctx.workflow('middle', middle, null)).rejects.toThrow(
+        'Workflow middle declares duplicate child name leaf.',
+      );
+      return null;
+    },
+  });
+  const run = await runWorkflow(root, { stateDir, runId: 'dynamic-duplicates', input: null });
+  expect(run.status).toBe('completed');
+  expect(effects).toBe(0);
+  expect(run.children?.['middle']).toBeUndefined();
+  expect(run.steps['middle/effect']).toBeUndefined();
+});
+
 it('does not let raw read capabilities or nested aliases escape delegated profiles', async () => {
   const stateDir = await directory();
   let calls = 0;

@@ -30,8 +30,9 @@ is detected even if it contained no effects.
 Inside a settled map, every invoked child must appear in its immediate parent's `children`
 declaration. A committed mapper is not invoked again: its saved child ownership is reclaimed, and
 the declared tree permits version/schema checks before replay skips it. Dynamic undeclared children
-remain supported outside settled maps. As with the root, library callers must supply an appropriate
-code fingerprint or bump versions for semantic body/dependency changes; the CLI hashes local source.
+remain supported outside settled maps; their own declaration trees are validated, like the root's,
+before their frames start. As with the root, library callers must supply an appropriate code
+fingerprint or bump versions for semantic body/dependency changes; the CLI hashes local source.
 
 A child failure is catchable, and its frame remains failed even if the parent completes. Completed
 leaf effects survive. An ordinary caught child failure is retried by replaying its body; use settled
