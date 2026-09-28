@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict';
-import { cp, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { cp, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { checkSkills, packages, repository } from '../scripts/check-skills.mjs';
-import { anchors, fences, prose } from '../scripts/skill-markdown.mjs';
+import { anchors, checkLinks, fences, prose } from '../scripts/skill-markdown.mjs';
 
 async function fixture(run) {
   const root = await mkdtemp(join(tmpdir(), 'qc-skill-check-'));
@@ -190,4 +190,27 @@ test('comment and tag stripping is not defeated by nesting', () => {
   // markers as a still-live comment; stripping to a fixed point removes both.
   assert.equal(prose('a<!--<!-- -->b-->c'), 'ab-->c');
   assert.deepEqual([...anchors('# x<scr<script>y</script>z')], ['xyz']);
+});
+test('inline link destinations honor balanced and escaped parentheses', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'qc-skill-links-'));
+  try {
+    const pkg = join(root, 'pkg'),
+      file = join(pkg, 'SKILL.md');
+    await mkdir(join(pkg, 'safe(x)'), { recursive: true });
+    await mkdir(join(pkg, 'dir(1)'), { recursive: true });
+    // Decoy that a destination truncated at its first `)` would resolve to.
+    await writeFile(join(pkg, 'safe(x'), '');
+    await writeFile(join(pkg, 'dir(1)/file.md'), '# Title\n');
+    await writeFile(join(pkg, 'a)b.md'), '');
+    await writeFile(join(root, 'outside.md'), '');
+    const check = (text) => checkLinks(file, `# Skill\n\n${text}\n`, pkg);
+    await assert.rejects(check('[x](safe(x)/../../outside.md)'), /link escapes package/u);
+    assert.equal(await check('[x](dir(1)/file.md#title "Title")'), 1);
+    assert.equal(await check('[x](a\\)b.md)'), 1);
+    await rm(join(pkg, 'a)b.md'));
+    await assert.rejects(check('[x](a\\)b.md)'), /dangling link: a\)b\.md/u);
+    await assert.rejects(check('[x](safe(x/../../outside.md "title")'), /unbalanced parentheses/u);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });

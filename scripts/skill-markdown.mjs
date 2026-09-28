@@ -85,6 +85,40 @@ export function inside(root, file) {
   return path !== '..' && !path.startsWith(`..${sep}`) && !isAbsolute(path);
 }
 
+const escapable = /[!-/:-@[-`{-~]/u;
+
+/**
+ * Read an inline link destination starting just after `](` the way CommonMark does: `<...>` runs to
+ * the first unescaped `>`; a bare destination honors backslash escapes and balanced parentheses, so
+ * `safe(x)/../outside.md` is checked as one path rather than truncated at its first `)`. Returns the
+ * unescaped destination only when the link closes; unbalanced parentheses fail closed.
+ */
+function inlineDestination(body, start, file) {
+  let index = start;
+  while (/[ \t\n]/u.test(body[index] ?? '')) index++;
+  let destination = '';
+  const read = () => {
+    if (body[index] === '\\' && escapable.test(body[index + 1] ?? '')) index++;
+    destination += body[index++];
+  };
+  if (body[index] === '<') {
+    index++;
+    while (index < body.length && body[index] !== '>' && body[index] !== '\n') read();
+    if (body[index++] !== '>') return undefined;
+  } else {
+    let depth = 0;
+    while (index < body.length && !/[\s\p{Cc}]/u.test(body[index])) {
+      if (body[index] === '(') depth++;
+      else if (body[index] === ')' && --depth < 0) break;
+      read();
+    }
+    if (depth > 0)
+      throw new Error(`${file}: unbalanced parentheses in link destination: ${destination}`);
+  }
+  const rest = /^(?:\s+(?:"[^"]*"|'[^']*'|\([^()]*\)))?\s*\)/u.exec(body.slice(index));
+  return rest ? destination : undefined;
+}
+
 /** Verify relative destinations and fragments within the physical installed package. */
 export async function checkLinks(file, text, packageRoot) {
   const body = prose(text, file);
@@ -95,10 +129,10 @@ export async function checkLinks(file, text, packageRoot) {
     definitions.set(key(match[1]), match[2] ?? match[3]);
     destinations.push(match[2] ?? match[3]);
   }
-  for (const match of body.matchAll(
-    /!?\[[^\]]*\]\(\s*(?:<([^>]+)>|([^\s)]+))(?:\s+["'][^]*?["'])?\s*\)/gu,
-  ))
-    destinations.push(match[1] ?? match[2]);
+  for (const match of body.matchAll(/!?\[[^\]]*\]\(/gu)) {
+    const destination = inlineDestination(body, match.index + match[0].length, file);
+    if (destination) destinations.push(destination);
+  }
   for (const match of body.matchAll(/!?\[([^\]]+)\]\[([^\]]*)\]/gu)) {
     const name = key(match[2] || match[1]);
     if (!definitions.has(name)) throw new Error(`${file}: unresolved reference link [${name}]`);
