@@ -1,7 +1,12 @@
 import { StringDecoder } from 'node:string_decoder';
 
 /** Grow `buffer` to hold at least `needed` bytes, doubling up to `cap`, keeping `used` bytes. */
-function grow(buffer: Buffer, used: number, needed: number, cap: number): Buffer {
+function grow(
+  buffer: Buffer<ArrayBuffer>,
+  used: number,
+  needed: number,
+  cap: number,
+): Buffer<ArrayBuffer> {
   if (needed <= buffer.length) return buffer;
   const next = Buffer.alloc(Math.min(cap, Math.max(needed, buffer.length * 2)));
   buffer.copy(next, 0, 0, used);
