@@ -330,7 +330,12 @@ function linkedIssue(R, p) {
     'if .pull_request then "pr" else "issue" end',
   ]);
   if (kind !== 'issue') return null;
-  return { number, keyword, closes: /^(close|fix|resolve)/.test(keyword) };
+  // GitHub closes every referenced issue on merge, but the review covers one: report the rest.
+  const bodyClosing = [
+    ...(p.body ?? '').matchAll(/\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\b:?\s+#(\d+)/gi),
+  ].map((m) => Number(m[1]));
+  const alsoCloses = [...new Set([...closing, ...bodyClosing])].filter((n) => n !== number);
+  return { number, keyword, closes: /^(close|fix|resolve)/.test(keyword), alsoCloses };
 }
 
 // Open PRs stacked above this one (children, grandchildren, …), bottom-up. Reviewers use this to
@@ -452,9 +457,15 @@ function prState(a, P, R) {
   const alerts = openAlerts(R, pr);
   writeJson(join(dir, 'threads.json'), threads);
   writeJson(join(dir, 'alerts.json'), alerts);
+  const threadFor = (n) => threads.find((t) => t.alert === n && !t.isResolved)?.id;
   const alertSection = alerts.length
-    ? `\n# Open code-scanning alerts on this PR (${alerts.length})\n\n${alerts
-        .map((x) => `- #${x.number} ${x.rule} (${x.severity}) ${x.path}:${x.line}: ${x.message}`)
+    ? `\n# Open code-scanning alerts on this PR (${alerts.length})\n\nAn alert without a review thread is decided under the id alert:N.\n\n${alerts
+        .map((x) => {
+          const where = threadFor(x.number)
+            ? `thread ${threadFor(x.number)}`
+            : `id alert:${x.number}`;
+          return `- #${x.number} ${x.rule} (${x.severity}) ${x.path}:${x.line}: ${x.message} [${where}]`;
+        })
         .join('\n')}\n`
     : '';
   writeFileSync(join(dir, 'threads.md'), `${renderThreads(threads)}${alertSection}`);
@@ -842,6 +853,27 @@ async function publish(a, P, R) {
   return result;
 }
 
+function dismissAlert(R, number, path, comment) {
+  const where =
+    path ??
+    ghJson(['api', `repos/${R.repo}/code-scanning/alerts/${number}`]).most_recent_instance?.location
+      ?.path ??
+    '';
+  const testOnly = /(^|\/)(test|tests|__tests__)\/|\.(test|spec)\.[cm]?[jt]s$/.test(where);
+  gh([
+    'api',
+    '-X',
+    'PATCH',
+    `repos/${R.repo}/code-scanning/alerts/${number}`,
+    '-f',
+    'state=dismissed',
+    '-f',
+    `dismissed_reason=${testOnly ? 'used in tests' : 'false positive'}`,
+    '-f',
+    `dismissed_comment=${comment.slice(0, 280)}`,
+  ]);
+}
+
 function reply(a, P, R) {
   const pr = requirePr(a);
   const dir = prDir(P, pr);
@@ -853,6 +885,18 @@ function reply(a, P, R) {
   const results = [];
   for (const item of items) {
     const entry = { threadId: item.threadId, replied: false, resolved: false };
+    const standalone = /^alert:(\d+)$/.exec(item.threadId);
+    if (standalone) {
+      // A code-scanning alert with no review thread: nothing to reply to, only an alert to settle.
+      try {
+        if (item.dismiss) dismissAlert(R, Number(standalone[1]), null, item.body);
+        entry.dismissedAlert = item.dismiss ? Number(standalone[1]) : null;
+      } catch (error) {
+        entry.error = error.message;
+      }
+      results.push(entry);
+      continue;
+    }
     try {
       const posted = ghJson([
         'api',
@@ -868,21 +912,7 @@ function reply(a, P, R) {
       entry.url = posted.data.addPullRequestReviewThreadReply.comment.url;
       const thread = known.find((t) => t.id === item.threadId);
       if (item.dismiss && thread?.alert) {
-        const testOnly = /(^|\/)(test|tests|__tests__)\/|\.(test|spec)\.[cm]?[jt]s$/.test(
-          thread.path,
-        );
-        gh([
-          'api',
-          '-X',
-          'PATCH',
-          `repos/${R.repo}/code-scanning/alerts/${thread.alert}`,
-          '-f',
-          'state=dismissed',
-          '-f',
-          `dismissed_reason=${testOnly ? 'used in tests' : 'false positive'}`,
-          '-f',
-          `dismissed_comment=${item.body.slice(0, 280)}`,
-        ]);
+        dismissAlert(R, thread.alert, thread.path, item.body);
         entry.dismissedAlert = thread.alert;
       }
       if (item.resolve ?? (thread?.isCodex || thread?.isBot) ?? false) {

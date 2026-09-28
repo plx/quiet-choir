@@ -395,6 +395,11 @@ log(
 
 if (PR.state !== 'OPEN') return finish('skipped', { notes: [`PR is ${PR.state}`] });
 if (PR.isDraft) return blocked('prepare', 'PR is a draft');
+if (ISSUE?.alsoCloses?.length) {
+  // GitHub would close all of them on merge, but the review judges the PR against one issue.
+  const all = [ISSUE.number, ...ISSUE.alsoCloses].map((n) => `#${n}`).join(', ');
+  return blocked('prepare', `PR closes several issues (${all}); split it or land it by hand`);
+}
 if (SYNC.status === 'blocked') return blocked('rebase', SYNC.reason);
 if (SYNC.status === 'error')
   return blocked('rebase', `rebase failed without conflicts; see ${SYNC.log}`);
@@ -477,7 +482,7 @@ Read issue.md, body.md, and own.stat, then own.diff (skim generated or vendored 
    - action: fix (in this PR) | defer (valid, but beyond this issue's scope; becomes a follow-up issue) | reject | none (obsolete)
    - A thread can diagnose a real problem and still suggest the wrong fix: plan the fix you actually want.
    - reply: 1–3 sentences to post on the thread (fix: what will change; reject: why not; defer: why it is out of scope). The workflow appends the fixing commit or follow-up issue number.
-   Use the thread ids exactly as they appear in threads.md. Threads by github-advanced-security are CodeQL code-scanning alerts: fix real problems (prefer a cheap safer pattern when one exists), and reject only genuine false positives or test-only patterns, with a justification; the workflow dismisses a rejected alert.
+   Use the thread ids exactly as they appear in threads.md (an open code-scanning alert with no review thread appears there as alert:N; decide it under that id). Threads by github-advanced-security are CodeQL code-scanning alerts: fix real problems (prefer a cheap safer pattern when one exists), and reject only genuine false positives or test-only patterns, with a justification; the workflow dismisses a rejected alert.
 2. Your own review. Alignment: does the PR deliver what the issue asks? Walk its acceptance criteria; note gaps and scope creep. Quality: correctness, durability and replay hazards, missing tests for new behavior, documentation or skill text that no longer matches the code, awkward public API. Report only findings worth acting on: no style nits the linters don't enforce, no restating what the code does.
    For each finding give severity (blocker | major | minor); disposition — fix (within the issue's scope and intent), follow-up (worthwhile but outside it), or note (record only); complexity — mechanical (a competent engineer would implement your plan the same way; goes to a mid-tier model) or subtle (needs careful reasoning about runtime semantics, concurrency, or durability; goes to a stronger model); and a concrete plan. A fix may complete or correct what the issue asked for; anything else is a follow-up.
 3. issueDisposition: close when merging completes the issue; keep-open when the PR or issue explicitly leaves work for after the merge (list what remains); none when there is no linked issue.
@@ -793,6 +798,17 @@ async function fixRoundOf(threads, work) {
     async () => (work.followup.length && publishing ? fileFollowups(work.followup) : null),
   ]);
   if (work.fix.length && !fixed) return { error: 'implementer returned nothing' };
+  // An omitted item is not a fixed item: own findings and check repairs have no thread to resurface.
+  const reported = new Set((fixed?.items ?? []).map((i) => i.key));
+  const unreported = work.fix.filter((i) => !reported.has(i.key)).map((i) => i.key);
+  if (unreported.length) return { error: `implementer did not report: ${unreported.join(', ')}` };
+  if (work.followup.length && publishing) {
+    const filedKeys = new Set((filed?.issues ?? []).map((i) => i.key));
+    const unfiled = work.followup.filter((i) => !filedKeys.has(i.key)).map((i) => i.key);
+    if (!filed || unfiled.length) {
+      return { error: `follow-up filing incomplete: ${unfiled.join(', ') || 'no result'}` };
+    }
+  }
   const unfixed = (fixed?.items ?? []).filter((i) => i.status === 'not-fixed');
   if (unfixed.length)
     return { error: `could not fix: ${unfixed.map((i) => `${i.key} (${i.summary})`).join('; ')}` };
@@ -937,7 +953,7 @@ Read ${DIR}/threads.md (every unresolved thread; it was just refreshed) and the 
 Decisions already made on this PR, for consistency (don't reopen them unless a new thread shows they were wrong):
 ${settled || '- none'}
 
-For each unresolved thread: verdict (valid | partly-valid | invalid | obsolete), action (fix | defer | reject | none), severity, complexity (mechanical | subtle), plan, and a 1–3 sentence reply to post (the workflow appends the fixing commit or follow-up issue). A fix must stay within this PR's issue scope; otherwise defer${PR.laterInStack ? ', or reject with "addressed by #N" when a later PR in stack.md covers it' : ''}. This is Codex round ${codexRequests}; re-reviews stop after round ${A.maxCodexRounds} unless a round keeps finding real major problems (hard cap ${A.codexRoundsHardCap}), so be decisive and rate severity honestly. Use the thread ids exactly as in threads.md. Plans cover code and docs only, never GitHub actions.
+For each unresolved thread: verdict (valid | partly-valid | invalid | obsolete), action (fix | defer | reject | none), severity, complexity (mechanical | subtle), plan, and a 1–3 sentence reply to post (the workflow appends the fixing commit or follow-up issue). A fix must stay within this PR's issue scope; otherwise defer${PR.laterInStack ? ', or reject with "addressed by #N" when a later PR in stack.md covers it' : ''}. This is Codex round ${codexRequests}; re-reviews stop after round ${A.maxCodexRounds} unless a round keeps finding real major problems (hard cap ${A.codexRoundsHardCap}), so be decisive and rate severity honestly. Use the thread ids exactly as in threads.md, including alert:N for code-scanning alerts that have no review thread. Plans cover code and docs only, never GitHub actions.
 Threads by github-advanced-security are CodeQL code-scanning alerts (threads.md also lists every open alert on the PR). Fix real problems, and prefer a cheap safer pattern over arguing when one exists (for example, pass values to generated scripts through argv or env instead of interpolating them into code). Reject only a genuine false positive or test-only pattern, with a short justification; the workflow dismisses the alert using your reply.${standing}`,
       { ...TIER.reviewer, label: `triage r${record.rounds}`, phase: 'Review', schema: TRIAGE },
     );
