@@ -82,13 +82,14 @@ async function manifests(root) {
       requireThat(entry.source.source === 'local', `${catalog}: expected local source`);
   }
 }
+const differenceMarkerLike = /skills-difference/iu;
 function normalizeDifferences(text, file, rules, seen) {
   const used = new Set();
   const normalized = text.replace(
     /<!-- skills-difference: ([a-z0-9-]+) -->\n([^]*?)<!-- \/skills-difference: \1 -->/gu,
     (_match, id, body) => {
       requireThat(
-        !body.includes('skills-difference:'),
+        !differenceMarkerLike.test(body),
         `${file}: nested or malformed difference marker in region ${id}`,
       );
       const key = `${file}:${id}`;
@@ -99,7 +100,7 @@ function normalizeDifferences(text, file, rules, seen) {
       return `<!-- approved difference: ${id} -->`;
     },
   );
-  requireThat(!normalized.includes('skills-difference:'), `${file}: malformed difference marker`);
+  requireThat(!differenceMarkerLike.test(normalized), `${file}: malformed difference marker`);
   return normalized;
 }
 /** Replace import specifiers only; prompt strings and executable code stay intact. */
