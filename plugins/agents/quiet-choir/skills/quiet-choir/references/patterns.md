@@ -254,7 +254,7 @@ was superseded by implemented [#44](https://github.com/plx/quiet-choir/issues/44
 
 **Rule:** parallel editing calls need distinct directories. Copy the
 [worktree helper](worktree-helper.md) to `worktree-helper.ts` beside this workflow. It creates a
-branch/path from the run ID and item, reuses only a matching registered worktree, and refuses
+branch/path from the root, run ID, and item, reuses only a matching registered worktree, and refuses
 changed ownership or an unrelated path. Supply absolute `repo` and `root`, keep `root` outside the
 target worktree, use unique run IDs for that root, and launch with `--grant editor` when edits are
 authorized. The durable step creates the worktree and records its path; every execution then

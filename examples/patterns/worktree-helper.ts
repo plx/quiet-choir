@@ -22,7 +22,7 @@ export async function ensureWorktree(options: {
   await mkdir(options.root, { recursive: true, mode: 0o700 });
   const root = await realpath(options.root);
   const key = createHash('sha256')
-    .update(JSON.stringify([options.runId, options.item]))
+    .update(JSON.stringify([root, options.runId, options.item]))
     .digest('hex');
   const branch = `quiet-choir-${key}`;
   const target = join(root, branch);

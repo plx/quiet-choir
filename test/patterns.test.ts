@@ -311,6 +311,23 @@ it('worktree recipe revalidates ownership before a resumed edit', async () => {
   expect(harness.calls).toHaveLength(edits);
 });
 
+it('worktree helper gives the same run and item distinct branches under different roots', async () => {
+  const repo = await initRepo();
+  const signal = new AbortController().signal;
+  const paths = [];
+  for (const worktreeRoot of [join(root, 'roots/a'), join(root, 'roots/b')])
+    paths.push(
+      await ensureWorktree({ repo, root: worktreeRoot, runId: 'pattern', item: 'first', signal }),
+    );
+  const branches = await Promise.all(
+    paths.map(async (cwd) =>
+      (await execute('git', ['branch', '--show-current'], { cwd })).stdout.trim(),
+    ),
+  );
+  expect(new Set(branches).size).toBe(2);
+  expect(branches.every((branch) => branch.startsWith('quiet-choir-'))).toBe(true);
+});
+
 it('polling resumes after cancellation with its original deadline and times out as data', async () => {
   const file = join(root, 'checks.txt');
   await writeFile(file, 'pending');
