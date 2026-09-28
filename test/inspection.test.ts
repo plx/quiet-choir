@@ -11,6 +11,13 @@ import {
   parseWatchInterval,
   watchExitCodes,
 } from '../src/cli/inspection-view.js';
+import * as store from '../src/workflow/runtime/store.js';
+
+vi.mock('../src/workflow/runtime/store.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof store>();
+  return { ...actual, inspectRunOwnership: vi.fn(actual.inspectRunOwnership) };
+});
+const actualStore = await vi.importActual<typeof store>('../src/workflow/runtime/store.js');
 
 let stateDir: string;
 const unlocked: RunOwnership = { locked: false, owner: null, processes: [] };
@@ -41,6 +48,7 @@ async function lock(runId: string, pid = process.pid, host = hostname()) {
 }
 beforeEach(async () => {
   stateDir = await mkdtemp(join(tmpdir(), 'choir-inspection-'));
+  vi.mocked(store.inspectRunOwnership).mockImplementation(actualStore.inspectRunOwnership);
 });
 afterEach(async () => {
   await rm(stateDir, { recursive: true, force: true });
@@ -128,6 +136,43 @@ it('derives stale only from proven owner loss, preserving unknown and remote own
   ).toBe('running');
   run.status = 'completed';
   expect(summarizeRun(run, unlocked).status).toBe('completed');
+});
+
+it('adopts a checkpoint that completed between the record read and the ownership read, instead of reporting stale', async () => {
+  // Simulates the race from the review thread: the owner commits its terminal checkpoint and
+  // releases the lock while inspectRun is between reading the checkpoint and reading ownership.
+  // The first ownership read still observes "no lock" (that part of the race already happened),
+  // but by the time it returns, the checkpoint on disk is already the terminal one; inspectRun
+  // must re-read and adopt it rather than trust the now-stale in-memory snapshot.
+  const completeCheckpoint = async (id: string) => {
+    const run = record(id);
+    run.status = 'completed';
+    run.updatedAt = '2026-01-01T00:00:05.000Z';
+    await save(run);
+  };
+
+  await save(record('race'));
+  vi.mocked(store.inspectRunOwnership).mockImplementationOnce(async () => {
+    await completeCheckpoint('race');
+    return { locked: false, owner: null, processes: [] };
+  });
+  const inspection = await inspectRun({ stateDir, runId: 'race' });
+  expect(inspection.summary.status).toBe('completed');
+  expect(inspection.summary.recordedStatus).toBe('completed');
+  expect(store.inspectRunOwnership).toHaveBeenCalledTimes(2);
+
+  await save(record('race-watch'));
+  vi.mocked(store.inspectRunOwnership).mockImplementationOnce(async () => {
+    await completeCheckpoint('race-watch');
+    return { locked: false, owner: null, processes: [] };
+  });
+  const changes: string[] = [];
+  const final = await watchRun({ stateDir, runId: 'race-watch', intervalMs: 5 }, (snapshot) => {
+    changes.push(snapshot.summary.status);
+  });
+  expect(final.summary.status).toBe('completed');
+  expect(changes).toEqual(['completed']);
+  expect(watchExitCodes.completed).toBe(0);
 });
 
 it('lists newest first, filters stale/cancelled, skips unreadable files, and never changes records', async () => {

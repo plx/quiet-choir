@@ -224,13 +224,23 @@ export function summarizeRun(
   };
 }
 
-/** Read liveness after the record, then re-read on apparent owner loss to avoid a completion race. @internal */
+/**
+ * Read liveness after the record, then re-read on apparent owner loss to avoid a completion race.
+ * A stale verdict only stands when the checkpoint is provably the same before and after the
+ * ownership read; otherwise retry, bounded, against the fresh pair. @internal
+ */
 export async function inspectRun(options: ReadRunOptions): Promise<RunInspection> {
   let run = await readRequiredRun(options);
   let ownership = await inspectRunOwnership(options);
-  if (stale(run, ownership)) {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    if (!stale(run, ownership)) return { run, ownership, summary: summarizeRun(run, ownership) };
+    const before = digest(run);
     run = await readRequiredRun(options);
-    if (run.status === 'running') ownership = await inspectRunOwnership(options);
+    if (run.status !== 'running' || digest(run) !== before) {
+      ownership = await inspectRunOwnership(options);
+      continue;
+    }
+    break;
   }
   return { run, ownership, summary: summarizeRun(run, ownership) };
 }
