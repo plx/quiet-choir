@@ -100,7 +100,7 @@ it('passes every Claude control literally and stores large/structured values in 
   };
   expect(result.input).toBe(controls.prompt);
   expect(result.env).toBe('literal $SECRET');
-  expect(result.parent).toBe(controls.env?.['PATH']);
+  expect(controls.env).toHaveProperty('PATH', result.parent);
   expect(result.args).toEqual(
     expect.arrayContaining([
       '--effort',
@@ -142,6 +142,7 @@ it('passes every Codex control, preserves TOML values, snapshots images, and sep
     model: 'model',
     sandbox: 'workspace-write',
     networkAccess: true,
+    isolation: 'inherit',
     harnessProfile: 'native',
     config: {
       'features.test': true,
@@ -254,6 +255,11 @@ const reserved = {
     'agents',
     'mcp-config',
     'strict-mcp-config',
+    'restricted',
+    'bare',
+    'safe-mode',
+    'setting-sources',
+    'plugin-dir',
     'settings',
     'fallback-model',
     'max-turns',
@@ -278,6 +284,8 @@ const reserved = {
     'image',
     'add-dir',
     'skip-git-repo-check',
+    'ignore-user-config',
+    'ignore-rules',
     'ask-for-approval',
     'full-auto',
   ],
@@ -386,6 +394,9 @@ const semanticOptions: [HarnessRequest['provider'], object][] = [
   ['claude', { mcpServers: { s: { command: 'node' } } }],
   ['claude', { strictMcpConfig: true }],
   ['claude', { settings: { hooks: {} } }],
+  ['claude', { plugins: ['review-plugin'] }],
+  ['claude', { env: { unset: ['REMOVE'] } }],
+  ['claude', { isolation: 'inherit' }],
   ['claude', { fallbackModel: ['other'] }],
   ['claude', { addDirs: ['more'] }],
   ['claude', { extraArgs: ['--no-chrome'] }],
@@ -393,7 +404,7 @@ const semanticOptions: [HarnessRequest['provider'], object][] = [
   ['codex', { effort: 'xhigh' }],
   ['codex', { reasoningEffort: 'none' }],
   ['codex', { networkAccess: true }],
-  ['codex', { harnessProfile: 'native' }],
+  ['codex', { isolation: 'inherit', harnessProfile: 'native' }],
   ['codex', { config: { 'features.test': true } }],
   ['codex', { addDirs: ['more'] }],
   ['codex', { extraArgs: ['--strict-config'] }],
@@ -592,7 +603,10 @@ it('captures first-use versions, warns on resumed drift, and records inherited/r
 it('includes native controls in profile manifests, grants, and strict call-site checks', async () => {
   const manifest = capabilityManifest({
     profiles: {
-      builder: { extends: 'edit', codex: { harnessProfile: 'native', effort: 'max' } },
+      builder: {
+        extends: 'edit',
+        codex: { isolation: 'inherit', harnessProfile: 'native', effort: 'max' },
+      },
       reader: { extends: 'readonly', claude: { appendSystemPrompt: 'role', effort: 'low' } },
     },
   });
@@ -602,7 +616,9 @@ it('includes native controls in profile manifests, grants, and strict call-site 
   const definition = defineWorkflow({
     ...base,
     strictProfiles: true,
-    profiles: { builder: { extends: 'edit', codex: { harnessProfile: 'native' } } },
+    profiles: {
+      builder: { extends: 'edit', codex: { isolation: 'inherit', harnessProfile: 'native' } },
+    },
     async run(ctx) {
       return (await ctx.codex.text('ask', { prompt: 'x', profile: 'builder' })).output;
     },

@@ -1,4 +1,6 @@
 import { mergePreparationSchema, type MergePreparation } from './worktree-schema.js';
+import { environmentSummarySchema, hostEnvironmentSummarySchema } from './agent-environment.js';
+import { harnessIsolationSchema } from './agent-isolation.js';
 import {
   worktreeStepSchema,
   worktreeLedgerSchema,
@@ -329,6 +331,8 @@ const workflowIdentitySchema = z.object({
   engine: z.object({ version: z.string(), formatVersion: z.number().int().positive() }),
 });
 const requestSummarySchema = z.object({
+  isolation: harnessIsolationSchema.optional(),
+  environment: environmentSummarySchema.optional(),
   provider: z.enum(['claude', 'codex']),
   model: z.string().nullable(),
   profile: z.string().nullable(),
@@ -577,6 +581,7 @@ const recordFieldsSchema = z.object({
     .object({
       claude: z
         .object({
+          environment: hostEnvironmentSummarySchema.optional(),
           binary: z.string(),
           version: z.string().nullable(),
           warnings: z.array(z.string()).optional(),
@@ -584,6 +589,7 @@ const recordFieldsSchema = z.object({
         .optional(),
       codex: z
         .object({
+          environment: hostEnvironmentSummarySchema.optional(),
           binary: z.string(),
           version: z.string().nullable(),
           warnings: z.array(z.string()).optional(),

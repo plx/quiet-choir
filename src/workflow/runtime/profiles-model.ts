@@ -1,4 +1,6 @@
 import type { ClaudeOptions, CodexOptions } from './model.js';
+import type { HarnessIsolation } from './agent-isolation.js';
+import type { EnvironmentSummary } from './agent-environment-model.js';
 /** Named presets supplied by the runtime. */
 export type BuiltinProfile = 'text' | 'readonly' | 'edit';
 
@@ -17,6 +19,8 @@ export interface ProfileLimits {
 
 /** A shared role with provider-specific semantics and common resource limits. */
 export interface AgentProfile extends ProfileLimits {
+  /** Configuration policy for both providers; provider-specific settings can override it. */
+  readonly isolation?: HarnessIsolation;
   /** Built-in or declared parent; inheritance cycles are definition errors. */
   readonly extends?: string;
   /** Human-readable purpose, included in validate's manifest. */
@@ -27,11 +31,21 @@ export interface AgentProfile extends ProfileLimits {
   readonly expectsToolUse?: boolean;
   /** Warn by default, or fail on reported permission denials. */
   readonly onPermissionDenied?: 'warn' | 'fail';
-  /** Claude model, tool gates, role prompts and native controls. */
+  /** Claude model, tool gates, role prompts, configuration mode and native controls. */
   readonly claude?: Omit<
     ClaudeOptions,
-    'profile' | 'prompt' | 'cwd' | 'onError' | 'retry' | 'isolation' | keyof ProfileLimits
-  >;
+    | 'profile'
+    | 'prompt'
+    | 'cwd'
+    | 'onError'
+    | 'retry'
+    | 'isolation'
+    | 'worktree'
+    | keyof ProfileLimits
+  > & {
+    /** Overrides the profile-wide configuration mode; checkout placement stays per call. */
+    readonly isolation?: HarnessIsolation;
+  };
   /** Codex model, sandbox, effort and native controls. */
   readonly codex?: Omit<
     CodexOptions,
@@ -42,8 +56,12 @@ export interface AgentProfile extends ProfileLimits {
     | 'retry'
     | 'images'
     | 'isolation'
+    | 'worktree'
     | keyof ProfileLimits
-  >;
+  > & {
+    /** Overrides the profile-wide configuration mode; checkout placement stays per call. */
+    readonly isolation?: HarnessIsolation;
+  };
 }
 
 /** Workflow-wide defaults applied after the selected built-in preset. */
@@ -66,6 +84,13 @@ export interface ResolvedProfile extends Omit<
   AgentProfile,
   'extends' | 'access' | 'claude' | 'codex'
 > {
+  /** Safe environment diagnostics retained when serializable manifests omit explicit values. */
+  readonly environment?: {
+    /** Claude environment edit names and digest. */
+    readonly claude: EnvironmentSummary;
+    /** Codex environment edit names and digest. */
+    readonly codex: EnvironmentSummary;
+  };
   /** Name used for selection and diagnostics, outside step identity. */
   readonly name: string;
   /** Maximum provider access, checked against an optional declaration. */

@@ -11,6 +11,8 @@ import type {
   ResolvedProfile,
 } from './profiles-model.js';
 import { digest, jsonValue } from './json.js';
+import { harnessIsolationSchema, isolationParts, resolveIsolation } from './agent-isolation.js';
+import { environmentSummary, environmentSummarySchema } from './agent-environment.js';
 
 const nameSchema = z.string().regex(/^[a-zA-Z][a-zA-Z0-9_-]{0,63}$/u);
 const limits = {
@@ -18,7 +20,14 @@ const limits = {
   maxTurns: z.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional(),
   maxBudgetUsd: z.number().positive().optional(),
 };
+// Profiles select configuration mode only; checkout placement (worktree) is a per-call decision.
+const profileControlFields = {
+  ...commonControlFields,
+  isolation: harnessIsolationSchema.optional(),
+  worktree: z.never().optional(),
+};
 const fields = {
+  isolation: harnessIsolationSchema.optional(),
   ...limits,
   description: z.string().optional(),
   access: z.enum(['none', 'read', 'write', 'exec']).optional(),
@@ -26,7 +35,7 @@ const fields = {
   onPermissionDenied: z.enum(['warn', 'fail']).optional(),
   claude: z
     .strictObject({
-      ...commonControlFields,
+      ...profileControlFields,
       ...claudeControlFields,
       model: z.string().min(1).optional(),
       tools: z.array(z.string().regex(/^[a-zA-Z][a-zA-Z0-9_*.-]*$/u)).optional(),
@@ -35,7 +44,7 @@ const fields = {
     .optional(),
   codex: z
     .strictObject({
-      ...commonControlFields,
+      ...profileControlFields,
       ...codexControlFields,
       images: z.never().optional(),
       model: z.string().min(1).optional(),
@@ -114,15 +123,21 @@ export function checkAllowedTools(tools: readonly string[], allowed: readonly st
 }
 
 function merge(base: AgentProfile, layer: AgentProfile): AgentProfile {
-  const claude = { ...base.claude, ...layer.claude };
+  const shared = layer.isolation === undefined ? {} : { isolation: layer.isolation };
+  const claude = { ...base.claude, ...shared, ...isolationParts(layer.claude ?? {}) };
   // An explicit new exposure list invalidates inherited permissions; infer from the new list.
   if (layer.claude?.tools !== undefined && layer.claude.allowedTools === undefined)
     delete claude.allowedTools;
-  return { ...base, ...layer, claude, codex: { ...base.codex, ...layer.codex } };
+  return {
+    ...base,
+    ...layer,
+    claude,
+    codex: { ...base.codex, ...shared, ...isolationParts(layer.codex ?? {}) },
+  };
 }
 
-/** Resolve and validate capability declarations without executing the workflow body. */
-export function capabilityManifest(definition: {
+/** Resolve live capabilities, retaining private environment values only for execution. @internal */
+export function resolveCapabilities(definition: {
   readonly defaults?: AgentDefaults;
   readonly profiles?: Readonly<Record<string, AgentProfile>>;
   readonly strictProfiles?: boolean;
@@ -182,11 +197,13 @@ export function capabilityManifest(definition: {
     const data = { ...combined };
     delete data.extends;
     delete data.access;
-    const tools = data.claude?.tools ?? [];
-    const allowedTools = data.claude?.allowedTools ?? tools;
+    data.claude = resolveIsolation(data.claude ?? {});
+    data.codex = resolveIsolation(data.codex ?? {});
+    const tools = data.claude.tools ?? [];
+    const allowedTools = data.claude.allowedTools ?? tools;
     checkAllowedTools(tools, allowedTools);
     const claudeAccess = controlAccess('claude', { ...data.claude, tools });
-    const sandbox = data.codex?.sandbox ?? 'read-only';
+    const sandbox = data.codex.sandbox ?? 'read-only';
     const codexAccess = controlAccess('codex', { ...data.codex, sandbox });
     validateAgentOptions('claude', { ...data.claude, tools, allowedTools, prompt: '' });
     validateAgentOptions('codex', { ...data.codex, sandbox, prompt: '' });
@@ -205,6 +222,10 @@ export function capabilityManifest(definition: {
       codexAccess,
       expectsToolUse: data.expectsToolUse ?? access !== 'none',
       onPermissionDenied: data.onPermissionDenied ?? 'warn',
+      environment: {
+        claude: environmentSummary(data.claude.env),
+        codex: environmentSummary(data.codex.env),
+      },
       claude: { ...data.claude, tools: [...tools], allowedTools: [...allowedTools] },
       codex: { ...data.codex, sandbox },
     };
@@ -223,6 +244,15 @@ export function capabilityManifest(definition: {
       return role !== undefined && rank[role.access] >= rank.write;
     }),
   };
+}
+
+/** Validate capability declarations and expose a manifest with environment names and digests only. */
+export function capabilityManifest(definition: {
+  readonly defaults?: AgentDefaults;
+  readonly profiles?: Readonly<Record<string, AgentProfile>>;
+  readonly strictProfiles?: boolean;
+}): CapabilityManifest {
+  return publicCapabilityManifest(resolveCapabilities(definition));
 }
 
 /** Validate launch rules and reject misspelled names before effects. @internal */
@@ -295,11 +325,13 @@ export function resolveProfileCall(
   const profile = manifest.profiles[name];
   if (!Object.hasOwn(manifest.profiles, name) || !profile)
     throw new Error(`Unknown profile: ${name}.`);
-  const raw = capabilityFields.filter((key) => Object.hasOwn(call, key));
+  const raw = capabilityFields.filter(
+    (key) => Object.hasOwn(call, key) && (key !== 'isolation' || call.isolation === 'inherit'),
+  );
   if (manifest.strictProfiles && raw.length)
     throw new Error(`strictProfiles forbids call-site ${raw.join(', ')}; declare a named profile.`);
-  const overrides = { ...call };
-  delete overrides.profile;
+  const overrides = isolationParts(call);
+  Reflect.deleteProperty(overrides, 'profile');
   const resolved = { ...profile[provider], ...overrides };
   if (provider === 'claude') {
     const claude = resolved as ClaudeOptions;
@@ -330,6 +362,9 @@ export function resolveProfileCall(
 const resolvedProfileSchema = z.strictObject({
   ...fields,
   name: nameSchema,
+  environment: z
+    .object({ claude: environmentSummarySchema, codex: environmentSummarySchema })
+    .optional(),
   access: z.enum(['none', 'read', 'write', 'exec']),
   claudeAccess: z.enum(['none', 'read', 'write', 'exec']),
   codexAccess: z.enum(['read', 'write', 'exec']),
@@ -347,7 +382,19 @@ export const capabilityManifestSchema = z.strictObject({
   requiredGrants: z.array(nameSchema),
 });
 
+/** Snapshot for checkpoints and CLI diagnostics; live execution retains its private environment edits. @internal */
+export function publicCapabilityManifest(manifest: CapabilityManifest): CapabilityManifest {
+  const result = structuredClone(manifest);
+  for (const profile of [result.defaults, ...Object.values(result.profiles)]) {
+    Reflect.deleteProperty(profile.claude, 'env');
+    Reflect.deleteProperty(profile.codex, 'env');
+  }
+  return result;
+}
+
 const capabilityFields = [
+  'isolation',
+  'plugins',
   'tools',
   'allowedTools',
   'sandbox',
@@ -393,6 +440,8 @@ export function controlAccess(
   value: Partial<ClaudeOptions & CodexOptions>,
 ): AccessClass {
   if (
+    value.isolation === 'inherit' ||
+    (value.plugins?.length ?? 0) > 0 ||
     value.agent !== undefined ||
     value.agents !== undefined ||
     value.mcpServers !== undefined ||

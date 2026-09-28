@@ -22,7 +22,8 @@ afterEach(async () => {
   await rm(directory, { recursive: true, force: true });
 });
 const projectRoot = dirname(dirname(fileURLToPath(import.meta.url)));
-const codexHelp = '--json --output-schema --ephemeral --config --image --profile --add-dir';
+const codexHelp =
+  '--json --output-schema --ephemeral --config --image --profile --add-dir --ignore-user-config --ignore-rules';
 const claudeHelp =
   '--effort <level> effort (choices: "low", "medium", "high", "xhigh", "max")\n  --permission-mode <mode> permissions (choices: "acceptEdits", "auto", "bypassPermissions", "manual", "dontAsk", "plan")';
 async function binary(provider: 'claude' | 'codex', mode = 'ok'): Promise<string> {
@@ -105,6 +106,7 @@ it('runs five checks per harness using full adapter argv and proves zero inferen
       '--effort',
       '--agent',
       '--agents',
+      '--restricted',
       '--strict-mcp-config',
       '--settings',
       '--fallback-model',
@@ -122,6 +124,9 @@ it('runs five checks per harness using full adapter argv and proves zero inferen
       'sandbox_workspace_write.network_access=false',
     ]),
   );
+  // The profile probe needs the inherited role restricted isolation would skip.
+  expect(codex).not.toContain('--ignore-user-config');
+  expect(codex).not.toContain('--ignore-rules');
   expect(codex?.slice(-2)).toEqual(['--', '-']);
   for (const provider of ['claude', 'codex']) {
     const files = JSON.parse(await readFile(join(directory, `${provider}-paths`), 'utf8')) as {

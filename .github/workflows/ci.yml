@@ -83,6 +83,9 @@ jobs:
       - name: Test worktree isolation and cleanup CLI
         run: node test/worktrees-cli-smoke.mjs
 
+      - name: Test restricted harness CLI
+        run: node test/harness-isolation-cli-smoke.mjs
+
       - name: Check Workflow Lab comparisons
         run: npm run comparisons:check
 

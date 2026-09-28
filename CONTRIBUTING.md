@@ -64,6 +64,11 @@ APIs. `npm run test:contract -- --refresh` rewrites sanitized captures;
 without native CLIs, credentials, or network. See [rehearsal](docs/rehearsal.md) for scenario
 routing and argv logging.
 
+`npm run test:contract:isolation` additionally verifies restricted configuration, untrusted project
+hooks, explicit opt-ins, and file-tool boundaries against local fake APIs. It also uses fresh homes
+and dummy keys, and performs no upstream inference. See
+[harness isolation](docs/harness-isolation.md).
+
 The separate opt-in schema contract matrix uses the pinned Zod-generated fixtures in
 `test/fixtures/codex-schema-matrix.json`. Run `npm run build` first, then:
 

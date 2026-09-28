@@ -1,4 +1,6 @@
 import { isolationIdentity } from './worktree-identity.js';
+import { resolveIsolation } from './agent-isolation.js';
+import { environmentEdits } from './agent-environment.js';
 import { createHash } from 'node:crypto';
 import { digest, jsonValue } from './json.js';
 import type { HarnessRequestInput, JsonValue } from './model.js';
@@ -13,9 +15,12 @@ export function stepIdentity(components: Record<string, JsonValue>): StepIdentit
 
 /** Explicit request identity before any authorized execution overrides. @internal */
 export function agentIdentity(request: HarnessRequestInput, schema: JsonValue): StepIdentity {
-  const options = { ...request.options };
-  if (options.isolation !== undefined)
-    Object.assign(options, { isolation: isolationIdentity(options.isolation) });
+  const options = resolveIsolation(request.options);
+  if (options.worktree !== undefined)
+    Object.assign(options, {
+      worktree: isolationIdentity(options.worktree === true ? 'worktree' : options.worktree),
+    });
+  if (options.env !== undefined) Object.assign(options, { env: environmentEdits(options.env) });
   if (request.provider === 'codex' && request.imageAttachments !== undefined)
     Object.assign(options, { images: request.imageAttachments.map((image) => image.sha256) });
   const capabilities = Object.fromEntries(

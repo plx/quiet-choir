@@ -13,6 +13,11 @@ import { runProcess } from './process.js';
 import { invocationRequest, materializeInvocation, planInvocation } from './invocation.js';
 import type { CliArgumentPlan } from './invocation.js';
 import { parseClaude, parseCodex } from './protocol.js';
+import {
+  childEnvironment,
+  validateScrubEnvironment,
+  type ScrubEnvironment,
+} from './environment.js';
 
 const defaultTimeoutMs = 300_000;
 const defaultMaxTurns = 10;
@@ -20,6 +25,8 @@ const defaultMaxBudgetUsd = 0.5;
 
 /** Executable overrides and resource limits for headless harness processes. */
 export interface CliHarnessOptions {
+  /** Extend the default host-session scrub list, or explicitly disable it with false. */
+  readonly scrubEnv?: ScrubEnvironment;
   /** Claude executable, resolved through PATH by default. */
   readonly claudeBinary?: string;
   /** Codex executable, resolved through PATH by default. */
@@ -68,7 +75,13 @@ export class CliHarness implements Harness {
 
   /** Configure executable paths or retain the CLIs found on PATH. */
   public constructor(options: CliHarnessOptions = {}) {
-    this.options = { ...options };
+    validateScrubEnvironment(options.scrubEnv);
+    this.options = {
+      ...options,
+      ...(options.scrubEnv !== undefined && options.scrubEnv !== false
+        ? { scrubEnv: [...options.scrubEnv] }
+        : {}),
+    };
     this.maxOutputBytes = positive(options.maxOutputBytes ?? 8 * 1024 * 1024, 'maxOutputBytes');
     this.killGraceMs = timerDuration(options.killGraceMs ?? 3000, 'killGraceMs');
   }
@@ -119,6 +132,7 @@ export class CliHarness implements Harness {
       request.provider === 'claude'
         ? (this.options.claudeBinary ?? 'claude')
         : (this.options.codexBinary ?? 'codex');
+    const environment = childEnvironment(request.options.env, this.options.scrubEnv);
     try {
       const result = await runProcess({
         binary,
@@ -130,7 +144,8 @@ export class CliHarness implements Harness {
         killGraceMs: this.killGraceMs,
         signal,
         trackProcess: (child) => context.trackProcess(child),
-        ...(request.options.env === undefined ? {} : { env: request.options.env }),
+        env: environment.env,
+        inheritEnv: false,
       });
       const version =
         result.code === 0
@@ -141,12 +156,18 @@ export class CliHarness implements Harness {
         warnings.push(
           `${binary} version discovery: ${result.stderr.trim().slice(-1024) || 'unrecognized version output'}`,
         );
-      return { binary, version: version ?? null, ...(warnings.length ? { warnings } : {}) };
+      return {
+        binary,
+        version: version ?? null,
+        environment: environment.summary,
+        ...(warnings.length ? { warnings } : {}),
+      };
     } catch (error) {
       signal.throwIfAborted();
       return {
         binary,
         version: null,
+        environment: environment.summary,
         warnings: [
           `${binary} version discovery failed: ${error instanceof Error ? error.message : String(error)}`,
         ],
@@ -179,12 +200,13 @@ export class CliHarness implements Harness {
         signal,
         trackProcess: (child) => context.trackProcess(child),
         env: {
-          ...request.options.env,
+          ...childEnvironment(request.options.env, this.options.scrubEnv).env,
           QUIET_CHOIR_RUN_ID: context.runId,
           QUIET_CHOIR_STEP_ID: context.stepId,
           QUIET_CHOIR_ATTEMPT: String(context.attempt),
           QUIET_CHOIR_IDEMPOTENCY_KEY: `${context.runId}/${context.stepId}`,
         },
+        inheritEnv: false,
       });
       const outcome =
         request.provider === 'claude'

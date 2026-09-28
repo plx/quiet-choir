@@ -48,3 +48,5 @@ part of the documentation.
 - [0021: Keep deterministic commands and file effects in the durable core contract](0021-durable-commands-and-files.md)
 
 - [0022: Runtime-owned worktree isolation](0022-runtime-owned-worktree-isolation.md)
+
+- [0023: Resolve restricted harness configuration before identity](0023-restricted-harness-configuration.md)

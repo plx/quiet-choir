@@ -119,9 +119,10 @@ npm run cli -- workflow execute examples/duet.workflow.ts \
 ```
 
 Install and sign in to `claude` and `codex` separately. The adapters invoke the installed CLIs and
-inherit their authentication and configuration; no separate provider API key is required. The source
-examples import `../src/index.js` so they work directly in this private repository. An installed
-consumer imports `quiet-choir` as above.
+retain native authentication; restricted configuration loading is the default. No separate provider
+API key is required. See [harness isolation](docs/harness-isolation.md). The source examples import
+`../src/index.js` so they work directly in this private repository. An installed consumer imports
+`quiet-choir` as above.
 
 ## Operations
 
@@ -487,12 +488,13 @@ implicit `text` profile is tool-less for Claude, read-only for Codex, and limite
 and requires an operator grant. Declare roles on `defineWorkflow`, select with `profile`, and use
 `--grant role` at launch. Raw call-site tools/sandbox are rejected under default `strictProfiles`.
 `tools` implies `allowedTools` unless explicitly narrowed. Claude defaults to `dontAsk`; allowed
-rules add to inherited settings permissions. Codex uses approval policy `never`. MCP tools and hooks
-can still load from configuration. The combined output cap is 8 MiB; Codex has no per-call USD cap
-here. Model selection is explicit or inherited from the installed harness. Both providers accept
+rules add to applicable native permissions. Codex uses approval policy `never`. Restricted Claude
+calls suppress inherited hooks/MCP; explicit opt-ins and managed policy still apply. The combined
+output cap is 8 MiB; Codex has no per-call USD cap here. Model selection is explicit or uses the
+selected configuration mode’s native defaults. Both providers accept
 `effort: 'low' | 'medium' | 'high' | 'xhigh' | 'max'`; Codex `reasoningEffort` additionally accepts
-`none` and `minimal`. Set one effort field, never both. Omission inherits native configuration.
-[Harness controls](docs/harness-controls.md) describes role prompts, agents, MCP, native
+`none` and `minimal`. Set one effort field, never both. Omission uses the selected mode’s native
+defaults. [Harness controls](docs/harness-controls.md) describes role prompts, agents, MCP, native
 profiles/config, directories, image attachments and the fingerprinted `extraArgs`/`env` escape
 hatch. `configuration doctor --json` verifies installed CLI contracts with zero-inference rejection
 probes and reports inherited Codex defaults. Run metadata captures native CLI versions on first live
@@ -504,10 +506,12 @@ Prompts go over stdin without a shell after durable process registration. Every 
 process group on macOS/Linux; Windows cleanup reaches the immediate child only. Output drains for at
 most two seconds after leader exit, independently of inherited pipes. Cleanup uses a three-second
 TERM grace (`--kill-grace-ms`) before KILL and a 500ms settlement backstop. These flags do not
-sandbox the workflow's own TypeScript or isolate inherited hooks, MCP servers, and harness
-configuration. Use trusted workflow files and a working directory/configuration suitable for the
-task. Claude's `cwd` selects project `.claude/` settings and hooks; `claude -p` skips the trust
-dialog, so hooks can run in never-trusted directories.
+sandbox the workflow's own TypeScript. Configuration mode defaults to `restricted` and enters
+identity before invocation. An explicit `inherit` role can load project settings/hooks selected by
+`cwd`; headless Claude skips the trust dialog, so never use inherited calls on untrusted checkouts.
+Host-session variables are scrubbed in both modes; `env.set`/`env.unset` apply afterward. Saved
+environment diagnostics contain names and digests, never values. See the
+[provider boundaries and verified risks](docs/harness-isolation.md).
 
 Saved harness errors include reasons recovered from stdout on both zero and nonzero normal exits,
 with bounded stderr and exit metadata. A bare exit error means no usable protocol reason was found;

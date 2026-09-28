@@ -1,5 +1,7 @@
 import { z } from 'zod';
 import type { JsonValue } from './model.js';
+import { agentEnvironmentSchema } from './agent-environment.js';
+import { agentIsolationSchema, agentWorktreeSchema } from './agent-isolation.js';
 
 /** Shared validated effort levels. @internal */
 export const effortValues = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
@@ -11,18 +13,16 @@ const strings = z.array(z.string().min(1));
 const data = z.record(z.string(), z.json());
 /** Shared optional controls, reused by call and profile validators. @internal */
 export const commonControlFields = {
+  isolation: agentIsolationSchema.optional(),
+  worktree: agentWorktreeSchema.optional(),
   effort: z.enum(effortValues).optional(),
   addDirs: strings.optional(),
   extraArgs: strings.optional(),
-  env: z
-    .record(
-      z.string().regex(/^[a-zA-Z_][a-zA-Z0-9_]*$/u),
-      z.string().refine((value) => !value.includes('\0')),
-    )
-    .optional(),
+  env: agentEnvironmentSchema.optional(),
 };
 /** Claude-only semantic fields. @internal */
 export const claudeControlFields = {
+  plugins: strings.optional(),
   disallowedTools: strings.optional(),
   permissionMode: z.enum(permissionModeValues).optional(),
   systemPrompt: z.string().optional(),
@@ -71,6 +71,11 @@ const owners: Record<'claude' | 'codex', Record<string, string>> = {
     agents: 'agents',
     'mcp-config': 'mcpServers',
     'strict-mcp-config': 'strictMcpConfig',
+    restricted: 'isolation',
+    bare: 'isolation',
+    'safe-mode': 'isolation',
+    'setting-sources': 'isolation',
+    'plugin-dir': 'plugins',
     settings: 'settings',
     'fallback-model': 'fallbackModel',
     'max-turns': 'maxTurns',
@@ -102,6 +107,8 @@ const owners: Record<'claude' | 'codex', Record<string, string>> = {
   codex: {
     ...commonOwners,
     profile: 'harnessProfile',
+    'ignore-user-config': 'isolation',
+    'ignore-rules': 'isolation',
     config: 'config',
     image: 'images',
     sandbox: 'sandbox',
@@ -215,6 +222,7 @@ export function validateClaudeSettings(settings: Readonly<Record<string, JsonVal
     'agents',
     'mcpServers',
     'permissions',
+    'env',
   ])
     if (Object.hasOwn(settings, key))
       throw new Error(`Claude settings ${key} is owned by typed agent/permission/model options.`);

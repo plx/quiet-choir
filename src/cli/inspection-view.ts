@@ -64,8 +64,13 @@ export function formatRunSummary(run: RunSummary, verbose = false): string {
         .join(', ') || 'none'
     }`,
   ];
-  for (const [provider, value] of Object.entries(run.harnesses))
+  for (const [provider, value] of Object.entries(run.harnesses)) {
     lines.push(`Harness ${provider}: ${value.binary}@${value.version ?? 'unknown'}`);
+    if (value.environment)
+      lines.push(
+        `  Host variables: ${value.environment.variables.join(', ') || 'none'}; scrubbed: ${value.environment.scrubbed.join(', ') || 'none'}`,
+      );
+  }
   for (const step of run.steps) {
     const request = step.request;
     if (step.worktree) {
@@ -99,6 +104,7 @@ export function formatRunSummary(run: RunSummary, verbose = false): string {
             ? null
             : `$${String(request.limits.maxBudgetUsd)} budget`,
           request.limits.sandbox,
+          request.isolation ? `${request.isolation} configuration` : null,
         ]
           .filter((value) => value !== null)
           .join(', ')

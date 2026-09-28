@@ -148,7 +148,7 @@ it('completes the captured reconnect turn, persists warnings, and replays withou
   expect(await readFile(calls, 'utf8')).toBe('call\n');
 });
 
-it('migrates the original version-one agent checkpoint without invoking its harness', async () => {
+it('refuses the original version-one agent checkpoint without a pinned isolation mode', async () => {
   const stateDir = await directory();
   await writeFile(
     join(stateDir, 'legacy.json'),
@@ -172,11 +172,11 @@ it('migrates the original version-one agent checkpoint without invoking its harn
       resume: true,
       harness: {
         invoke() {
-          throw new Error('must replay without invoking');
+          throw new Error('must reject before invoking');
         },
       },
     }),
-  ).resolves.toMatchObject({ formatVersion: 7, status: 'completed' });
+  ).rejects.toThrow('no pinned isolation mode');
   expect(await readFile(join(stateDir, 'legacy.json.v1'), 'utf8')).toBe(before);
   const saved = await readRun({ stateDir, runId: 'legacy' });
   expect(saved.steps['agent']?.attempts).toBe(1);

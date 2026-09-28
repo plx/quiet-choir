@@ -222,6 +222,19 @@ export type {
 } from './workflow/runtime/worktree-model.js';
 
 export type {
+  HarnessIsolation,
+  AgentIsolation,
+  AgentWorktree,
+} from './workflow/runtime/agent-isolation.js';
+export type {
+  AgentEnvironment,
+  EnvironmentEdits,
+  EnvironmentSummary,
+  HostEnvironmentSummary,
+} from './workflow/runtime/agent-environment-model.js';
+export type { ScrubEnvironment } from './harnesses/environment.js';
+
+export type {
   WorktreeStep,
   WorktreeLedger,
   MergePreparation,

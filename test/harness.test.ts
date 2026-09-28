@@ -203,6 +203,8 @@ describe('headless CLI adapter', () => {
         '--max-budget-usd',
         '0.5',
         '--no-session-persistence',
+        '--restricted',
+        '--strict-mcp-config',
       ],
     });
     await expect(stat(join(directory, 'injected'))).rejects.toMatchObject({ code: 'ENOENT' });
@@ -269,6 +271,8 @@ describe('headless CLI adapter', () => {
       '--ephemeral',
       '--color',
       'never',
+      '--ignore-user-config',
+      '--ignore-rules',
       '--',
       '-',
     ]);

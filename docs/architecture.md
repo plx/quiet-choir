@@ -52,6 +52,13 @@ are pinned to tools/permissions/sandbox and saved for resume. Profile names and 
 resolved semantic controls remain identity. See
 [ADR 0010](decisions/0010-agent-profiles-and-grants.md).
 
+The core resolves configuration isolation before agent identity, defaulting to `restricted`.
+Adapters enforce native flags and scrub host-session environment before explicit set/unset edits.
+Managed checkout selection remains above adapters. Environment values stay in live requests; public
+manifests and checkpoint diagnostics retain only names and hashes. Inherited host names are
+diagnostic, not semantic identity. See
+[ADR 0023](decisions/0023-restricted-harness-configuration.md).
+
 Each local run has a directory containing a JSON snapshot, append-only journal, and exclusive owner
 lock. Terminal named outcomes (successes or explicitly settled failures) are reused when their
 identities match; unfinished steps execute again. A resumed workflow function starts from the

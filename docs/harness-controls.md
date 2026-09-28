@@ -3,17 +3,17 @@
 Both providers accept `effort: 'low' | 'medium' | 'high' | 'xhigh' | 'max'`. Claude maps this to
 `--effort`; Codex maps it to `model_reasoning_effort`. Codex also accepts
 `reasoningEffort: 'none' | 'minimal' | Effort`. Set one effort field, never both, including across
-profile defaults and call options. Omission inherits native configuration. Accepted enum values do
-not guarantee support for every model. Each attempt records `requested.model` and
-`requested.effort`, using `"inherited"` for omissions.
+profile defaults and call options. Omission uses native defaults under the selected configuration
+mode. Accepted enum values do not guarantee support for every model. Each attempt records
+`requested.model` and `requested.effort`, using `"inherited"` for omissions.
 
 ## Typed controls
 
-| Provider | Controls                                                                                                                                                                                      |
-| -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Both     | `effort`, `addDirs`, `extraArgs`, `env`, alongside existing prompt/model/cwd/deadline                                                                                                         |
-| Claude   | `disallowedTools`, `permissionMode` (`dontAsk`, `acceptEdits`, `plan`), `systemPrompt`, `appendSystemPrompt`, `agent`, `agents`, `mcpServers`, `strictMcpConfig`, `settings`, `fallbackModel` |
-| Codex    | `reasoningEffort`, `networkAccess`, `harnessProfile`, `config`, `images`                                                                                                                      |
+| Provider | Controls                                                                                                                                                                                                 |
+| -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Both     | `isolation`, `worktree`, `effort`, `addDirs`, `extraArgs`, `env`, alongside existing prompt/model/cwd/deadline                                                                                           |
+| Claude   | `disallowedTools`, `permissionMode` (`dontAsk`, `acceptEdits`, `plan`), `systemPrompt`, `appendSystemPrompt`, `agent`, `agents`, `mcpServers`, `strictMcpConfig`, `settings`, `plugins`, `fallbackModel` |
+| Codex    | `reasoningEffort`, `networkAccess`, `harnessProfile`, `config`, `images`                                                                                                                                 |
 
 `profile` always selects a quiet-choir role. `harnessProfile` selects Codex's native configuration
 profile (`--profile`). Native profile names contain letters, numbers, underscores or hyphens and
@@ -69,10 +69,11 @@ arrays, booleans, numbers and strings work; `null` does not. Owned config keys (
 child tables) are rejected: approval policy, sandbox, model, effort, writable roots, network access
 and native profile selection belong to typed controls.
 
-`env` overlays the inherited process environment. It is fingerprinted: keep rotating secrets in the
-parent environment, since changing an explicit overlay makes completed steps incompatible. The
-native process still inherits user/project configuration, authentication, hooks and MCP. These
-controls do not make execution hermetic or confine workflow JavaScript.
+`env` accepts `{ set, unset }` edits after host-session scrubbing; the original flat set-only
+overlay also works. Explicit edits are fingerprinted, while saved diagnostics retain only names and
+a digest. Keep rotating secrets in the parent environment. Configuration defaults to `restricted`;
+`inherit` is an explicit exec-capability opt-out. See [harness isolation](harness-isolation.md) for
+provider boundaries, native authentication, protected writes, and verified opt-ins.
 
 All new semantic controls participate in completed-step identity. Images use **file contents**, not
 paths: the runtime snapshots bytes before fingerprinting and passes those exact bytes to the

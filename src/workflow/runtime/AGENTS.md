@@ -41,10 +41,11 @@ Names are captured at invocation, before policy resolution or asynchronous work.
 prefixes compose explicit leaves; never allocate IDs from completion-order counters. Keep naming
 separate from cancellation ownership. Bound views preserve nested prefixes only inside their own
 binding, and never snapshot the current signal. Named-map keys are all validated before work starts;
-settled identity hashes original mapper source and resolved keys. Legacy unscoped IDs/fingerprints
-remain semantically compatible with format-5 identities; storage format 7 preserves replay
-contract 6. Flat format 6 migrates automatically; original format 1 verifies legacy identities
-during migration. Formats 2–5 stay read-only. See
+settled identity hashes original mapper source and resolved keys. Unscoped IDs retain their
+spelling; storage format 7 preserves replay contract 6. Agent identity now pins configuration
+isolation, so pre-isolation completed agent calls cannot be reused merely by accepting source
+changes. Flat format 6 migrates automatically; original format 1 verifies legacy identities during
+migration. Formats 2–5 stay read-only. See
 [ADR 0009](../../../docs/decisions/0009-scoped-step-ids.md).
 
 Agent admission is run-wide (or shared explicitly across runs). Only Harness.invoke holds a slot;
@@ -112,3 +113,9 @@ abort still gets captured. Forks may reuse immutable changes, never another run�
 Git merge computations leave checkouts alone; only an explicit clean checkout target may update its
 tree. Cleanup touches only ledger-owned caches/refs, and failed cleanup cannot repeat valid work.
 See [ADR 0022](../../../docs/decisions/0022-runtime-owned-worktree-isolation.md).
+
+Resolve restricted/inherit mode before agent identity and preserve it through checkout preparation.
+Host environment values never enter semantic identity; explicit edits do. Persist only environment
+names/digests in request diagnostics and capability manifests, keeping the private resolved profile
+for live execution. Original format-one migration must not invent a completed agent’s isolation
+mode. See [ADR 0023](../../../docs/decisions/0023-restricted-harness-configuration.md).

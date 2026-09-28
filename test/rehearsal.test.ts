@@ -101,7 +101,7 @@ describe('durable harness call identity', () => {
   });
 
   it.each([false, true])(
-    'resumes a captured pre-metadata format-6 checkpoint (value=%s)',
+    'refuses unpinned isolation in a captured pre-metadata format-6 checkpoint (value=%s)',
     async (direct) => {
       const options = {
         ...(await setup()),
@@ -141,11 +141,13 @@ describe('durable harness call identity', () => {
         },
       });
       const before = await readRun(options);
-      const result = await runWorkflow(definition, { ...options, harness: { invoke } });
-      expect(result.output).toBe('saved firstok');
-      expect(invoke).toHaveBeenCalledTimes(1);
-      expect(result.steps['first']?.fingerprint).toBe(before.steps['first']?.fingerprint);
-      expect(result.steps['second']?.fingerprint).toBe(before.steps['second']?.fingerprint);
+      await expect(runWorkflow(definition, { ...options, harness: { invoke } })).rejects.toThrow(
+        'option.isolation changed',
+      );
+      expect(invoke).not.toHaveBeenCalled();
+      const after = await readRun(options);
+      expect(after.steps['first']?.fingerprint).toBe(before.steps['first']?.fingerprint);
+      expect(after.steps['second']?.fingerprint).toBe(before.steps['second']?.fingerprint);
     },
   );
 });
@@ -693,7 +695,7 @@ describe('pure native argument planning', () => {
                 systemPrompt: 'system',
                 mcpServers: {},
                 strictMcpConfig: true,
-                settings: { env: { TEST: 'value' } },
+                settings: { alwaysThinkingEnabled: false },
                 extraArgs: ['--test-placeholder=<quiet-choir>/system.txt'],
               },
             }

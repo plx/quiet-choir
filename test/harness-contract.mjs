@@ -150,9 +150,13 @@ try {
               mcpServers: {},
               strictMcpConfig: true,
               settings: { disableAllHooks: true },
-              extraArgs: ['--setting-sources='],
             }
-          : { prompt: 'Local contract fixture only.', skipGitRepoCheck: true, model: 'gpt-5.5' },
+          : {
+              prompt: 'Local contract fixture only.',
+              isolation: 'inherit',
+              skipGitRepoCheck: true,
+              model: 'gpt-5.5',
+            },
     };
     const plan = new CliHarness().plan(request);
     const invocation = await materializeInvocation(plan, request);

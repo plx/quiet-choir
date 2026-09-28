@@ -1,4 +1,3 @@
-import { worktreeIsolationSchema } from './worktree-schema.js';
 import {
   commonControlFields,
   claudeControlFields,
@@ -13,11 +12,12 @@ import { z } from 'zod';
 
 import type { HarnessRequest } from './model.js';
 import { retryPolicySchema } from './policy.js';
+import { environmentEdits } from './agent-environment.js';
+import { resolveIsolation } from './agent-isolation.js';
 
 const positiveInteger = z.number().int().positive().max(Number.MAX_SAFE_INTEGER);
 const shared = {
   ...commonControlFields,
-  isolation: worktreeIsolationSchema.optional(),
   prompt: z.string(),
   profile: z.string().min(1).optional(),
   onError: z.enum(['throw', 'return']).optional(),
@@ -63,12 +63,19 @@ export function validateAgentOptions(
       let value: unknown = options;
       for (const key of issue.path)
         value = value !== null && typeof value === 'object' ? Reflect.get(value, key) : undefined;
-      const rendered = typeof value === 'string' ? JSON.stringify(value) : String(value);
+      const rendered =
+        issue.path[0] === 'env'
+          ? '<redacted>'
+          : typeof value === 'string'
+            ? JSON.stringify(value)
+            : String(value);
       return `${path}: ${issue.message} (got ${rendered})`;
     });
     throw new Error(`Invalid ${provider} options: ${details.join('; ')}`);
   }
   const controls = options as ClaudeOptions & CodexOptions;
+  environmentEdits(controls.env);
+  const isolation = resolveIsolation(controls).isolation;
   validateExtraArgs(provider, controls.extraArgs ?? []);
   if (provider === 'codex') {
     if (controls.effort !== undefined && controls.reasoningEffort !== undefined)
@@ -79,8 +86,24 @@ export function validateAgentOptions(
       (resolved || controls.sandbox !== undefined)
     )
       throw new Error('networkAccess requires sandbox workspace-write.');
+    if (
+      (resolved || controls.isolation === 'restricted') &&
+      isolation === 'restricted' &&
+      controls.harnessProfile !== undefined
+    )
+      throw new Error(
+        'harnessProfile selects a Codex user-config profile, which restricted isolation skips; select inherit or use config.',
+      );
     validateConfig(controls.config ?? {});
   } else {
+    if (
+      (resolved || controls.isolation === 'restricted') &&
+      isolation === 'restricted' &&
+      controls.strictMcpConfig === false
+    )
+      throw new Error(
+        'restricted isolation requires strictMcpConfig; select inherit to load other MCP sources.',
+      );
     validateClaudeSettings(controls.settings ?? {});
     rejectBypass(controls.agents ?? {});
     rejectBypass(controls.settings ?? {});

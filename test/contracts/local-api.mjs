@@ -8,7 +8,7 @@ function json(response, status, value) {
 function event(response, value) {
   response.write(`event: ${value.type}\ndata: ${JSON.stringify(value)}\n\n`);
 }
-function anthropic(response, body, scenario) {
+function anthropic(response, body, scenario, requestedTool) {
   const usage = {
     input_tokens: 7,
     output_tokens: 3,
@@ -21,14 +21,20 @@ function anthropic(response, body, scenario) {
     Array.isArray(last?.content) && last.content.some((block) => block.type === 'tool_result');
   const loop = scenario === 'claude-turn-limit';
   const tool =
-    (loop || scenario === 'claude-structured-success') &&
-    structured &&
-    (!receivedToolResult || loop);
+    requestedTool ||
+    ((loop || scenario === 'claude-structured-success') &&
+      structured &&
+      (!receivedToolResult || loop));
   const block = tool
-    ? { type: 'tool_use', id: 'toolu_fixture', name: structured.name, input: {} }
+    ? {
+        type: 'tool_use',
+        id: 'toolu_fixture',
+        name: requestedTool?.name ?? structured.name,
+        input: {},
+      }
     : { type: 'text', text: '' };
   const text = scenario === 'claude-structured-success' ? 'done' : 'hello from captured claude';
-  const input = loop ? { answer: 42 } : { answer: 'captured answer' };
+  const input = requestedTool?.input ?? (loop ? { answer: 42 } : { answer: 'captured answer' });
   response.writeHead(200, { 'content-type': 'text/event-stream', 'request-id': 'req_fixture' });
   event(response, {
     type: 'message_start',
@@ -101,8 +107,9 @@ function responses(response, scenario, count) {
   response.end();
 }
 
-export async function fakeApi(scenario) {
+export async function fakeApi(scenario, options = {}) {
   let count = 0;
+  let claudeCalls = 0;
   const requests = [];
   const server = createServer(async (request, response) => {
     try {
@@ -111,6 +118,7 @@ export async function fakeApi(scenario) {
       const body = JSON.parse(text || '{}');
       // Record only shape diagnostics, never headers or credential values.
       requests.push({ url: request.url, model: body.model ?? null, stream: body.stream ?? null });
+      options.onRequest?.({ url: request.url, body });
       if (request.url.includes('count_tokens')) return json(response, 200, { input_tokens: 7 });
       if (request.url.startsWith('/v1/messages')) {
         if (scenario === 'claude-api-error')
@@ -129,7 +137,7 @@ export async function fakeApi(scenario) {
             stop_sequence: null,
             usage: { input_tokens: 7, output_tokens: 3 },
           });
-        anthropic(response, body, scenario);
+        anthropic(response, body, scenario, claudeCalls++ === 0 ? options.tool : undefined);
       } else if (request.url.includes('/responses')) {
         if (scenario === 'codex-invalid-schema')
           return json(response, 400, {

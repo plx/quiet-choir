@@ -253,6 +253,7 @@ it.each(['sleep', 'agent', 'map'] as const)('tracks ignored %s precheck failures
         if (kind === 'agent')
           void ctx.claude.text('invalid-agent', {
             prompt: 'p',
+            isolation: 'restricted',
             tools: ['Read', undefined],
           } as unknown as ClaudeOptions);
         if (kind === 'map') void ctx.map([], 0, () => Promise.resolve(null));
@@ -343,13 +344,14 @@ it('omits top-level undefined options and supplies resolved profile defaults', a
       call[0].provider === 'claude'
         ? {
             prompt: 'p',
+            isolation: 'restricted',
             tools: [],
             allowedTools: [],
             timeoutMs: 300_000,
             maxTurns: 10,
             maxBudgetUsd: 0.5,
           }
-        : { prompt: 'p', sandbox: 'read-only', timeoutMs: 300_000 },
+        : { prompt: 'p', isolation: 'restricted', sandbox: 'read-only', timeoutMs: 300_000 },
     );
   expect(claudeOptionsSchema.parse({ prompt: 'p' })).toEqual({ prompt: 'p' });
   expect(codexOptionsSchema.parse({ prompt: 'p' })).toEqual({ prompt: 'p' });

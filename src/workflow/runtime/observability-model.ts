@@ -1,4 +1,6 @@
 import type { AgentUsage, JsonValue } from './model.js';
+import type { EnvironmentSummary } from './agent-environment-model.js';
+import type { HarnessIsolation } from './agent-isolation.js';
 
 /** Optional progress denominator for an observational phase. */
 export interface PhaseOptions {
@@ -16,6 +18,10 @@ export interface PhaseInfo {
 
 /** Resolved agent request diagnostics, independent from its identity fingerprint. */
 export interface RequestSummary {
+  /** Resolved native configuration mode; absent in older checkpoints. */
+  readonly isolation?: HarnessIsolation;
+  /** Explicit environment names and digest, never values. */
+  readonly environment?: EnvironmentSummary;
   /** Selected harness. */
   readonly provider: 'claude' | 'codex';
   /** Explicit resolved model; null means inherited native configuration. */

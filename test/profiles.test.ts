@@ -97,6 +97,7 @@ it('merges preset, defaults, ancestors, role, call, named launch rules, and step
     policy: [{ match: 'read', maxBudgetUsd: 4 }],
   });
   expect(invoke.mock.calls[0]?.[0].options).toEqual({
+    isolation: 'restricted',
     prompt: 'x',
     model: 'sonnet',
     tools: ['Read', 'Grep', 'Glob'],

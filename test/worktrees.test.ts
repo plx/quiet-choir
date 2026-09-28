@@ -86,7 +86,8 @@ it.each(['claude', 'codex'] as const)(
     const directories: string[] = [];
     let fail = true;
     const invoke = vi.fn<Harness['invoke']>(async (request) => {
-      expect(request.options).not.toHaveProperty('isolation');
+      expect(request.options).toHaveProperty('isolation', 'restricted');
+      expect(request.options).not.toHaveProperty('worktree');
       directories.push(request.cwd);
       const record = await readRun({ stateDir, runId: 'fresh' });
       expect(record.steps['edit']?.worktree?.base).toBe(base);
@@ -424,6 +425,42 @@ it('does not advance a shared baseline when capture fails before effect completi
   ]);
   const resumed = await runWorkflow(workflow, { ...options('capture-boundary'), resume: true });
   expect(await command('show', `${String(resumed.output)}:file.txt`)).toBe('base\nonce');
+  expect(await readFile(join(repo, 'file.txt'), 'utf8')).toBe('base\n');
+});
+
+it('composes inherited configuration with both legacy and explicit checkout selection', async () => {
+  const received: string[] = [];
+  const harness: Harness = {
+    invoke: async (request) => {
+      expect(request.options.isolation).toBe('inherit');
+      expect(request.options).not.toHaveProperty('worktree');
+      expect(request.cwd).not.toBe(repo);
+      received.push(request.cwd);
+      await appendFile(join(request.cwd, 'file.txt'), 'isolated\n');
+      return response;
+    },
+  };
+  const workflow = defineWorkflow({
+    name: 'composed-isolation',
+    version: '1',
+    input: z.null(),
+    output: z.null(),
+    defaults: { isolation: 'inherit' },
+    async run(ctx) {
+      const first = await ctx.claude.text('shorthand', { prompt: '', isolation: 'worktree' });
+      const second = await ctx.codex.text('explicit', { prompt: '', worktree: true });
+      expect(first.worktree?.commit).toBeTruthy();
+      expect(second.worktree?.commit).toBeTruthy();
+      return null;
+    },
+  });
+  await runWorkflow(workflow, {
+    ...options('composed-isolation'),
+    grants: ['all'],
+    harness,
+    input: null,
+  });
+  expect(new Set(received).size).toBe(2);
   expect(await readFile(join(repo, 'file.txt'), 'utf8')).toBe('base\n');
 });
 
