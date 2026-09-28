@@ -17,6 +17,7 @@ usage, retries, identity, and process recovery.
 | `agent`, `agents`                    | Native agent name and definitions with required description/prompt          |
 | `mcpServers`, `strictMcpConfig`      | Server-name mapping and exclusive explicit MCP configuration                |
 | `settings`                           | JSON native settings; typed model/agent/permission/MCP aliases are rejected |
+| `onPermissionDenied`                 | `warn` (default) or `fail`; per-call selection overrides the profile        |
 | `fallbackModel`                      | Model string or nonempty array, passed as a comma-separated chain           |
 
 Agents, MCP and settings also use 0600 temporary files, removed in finally. Capability controls
@@ -25,10 +26,13 @@ conservatively need exec grants. Role prompts and effort may be supplied per cal
 records requested model/effort or `"inherited"`. All these semantic values, including fallback
 models, must match for completed replay. Escape-arg paths fingerprint the path string only.
 
-The adapter defaults to `claude --print --output-format json --permission-mode dontAsk` and
+The adapter defaults to
+`claude --print --output-format stream-json --verbose --permission-mode dontAsk` and
 `--no-session-persistence`. Each effect starts fresh; `sessionId` is for correlation only. The
-no-persistence flag disables the local session transcript. Pass relevant earlier output explicitly
-in later prompts.
+no-persistence flag disables Claude's own session transcript. quiet-choir separately retains capped
+private attempt transcripts by default. The requested UUID is derived from the saved run salt, step
+ID and attempt; the observed ID is saved on first sight. Pass earlier output explicitly in later
+prompts. See [streaming and attempt evidence](agent-streaming.md).
 
 Declare roles on `defineWorkflow` and choose them per call:
 
@@ -54,7 +58,9 @@ const result = await ctx.claude.object('review', {
 Object calls require an object-root schema and pass its JSON Schema through `--json-schema`.
 Successful terminal `result` envelopes have `subtype: success` and no `is_error: true`. Text calls
 read `result`; object calls require `structured_output`. The runtime parses and validates output
-against the original Zod schema.
+against the original Zod schema. Native events are consumed as they arrive, including events after
+`result`; `--progress` displays bounded activity before exit. `onPermissionDenied: 'fail'` rejects
+reported denials and lists the denied tools. The default warns and preserves the evidence.
 
 The adapter parses stdout on both zero and nonzero normal exits. Saved errors retain reported
 reasons, subtype, terminal reason, and API status when available, plus the exit code and bounded

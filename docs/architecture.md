@@ -59,6 +59,11 @@ manifests and checkpoint diagnostics retain only names and hashes. Inherited hos
 diagnostic, not semantic identity. See
 [ADR 0023](decisions/0023-restricted-harness-configuration.md).
 
+Native output is parsed incrementally by adapters. The runtime owns private bounded transcripts,
+early session saves, and per-attempt evidence; resource caps stay in policy. Progress events remain
+lossy observations, while output/session callbacks apply backpressure and drain before process
+ownership releases. See [ADR 0024](decisions/0024-stream-attempt-evidence.md).
+
 Each local run has a directory containing a JSON snapshot, append-only journal, and exclusive owner
 lock. Terminal named outcomes (successes or explicitly settled failures) are reused when their
 identities match; unfinished steps execute again. A resumed workflow function starts from the

@@ -87,7 +87,15 @@ function apiError(value: unknown, depth = 0): { reason: string; status: number |
 /** Classify Claude's terminal envelope. Real agent failures normally accompany exit 1. */
 export function parseClaude(stdout: string, structured: boolean): ProtocolOutcome {
   return classify(() => {
-    const data = parse(stdout, 'Claude');
+    let data: Record<string, unknown>;
+    try {
+      data = parse(stdout, 'Claude');
+    } catch {
+      const state = new ClaudeProtocol(structured);
+      for (const line of stdout.split(/\r?\n/u).filter((line) => line.trim()))
+        state.feed(parse(line, 'Claude'));
+      return state.finish();
+    }
     if (data['type'] !== 'result') throw new Error('Claude did not return a terminal result.');
     const turns = number(data['num_turns']);
     const metadata = {
@@ -124,80 +132,161 @@ export function parseClaude(stdout: string, structured: boolean): ProtocolOutcom
   });
 }
 
-/** Classify all Codex JSONL events, including terminal failures emitted before exit 1. */
-export function parseCodex(stdout: string): ProtocolOutcome {
-  return classify(() => {
-    let text: string | undefined;
-    let sessionId: string | null = null;
-    let completed = false;
-    let tokens: AgentUsage | null = null;
-    let failed: ReturnType<typeof apiError> | undefined;
-    let lastError: ReturnType<typeof apiError> | undefined;
-    const notices: string[] = [];
-    for (const line of stdout.split(/\r?\n/u).filter((line) => line.trim())) {
-      const data = parse(line, 'Codex');
-      if (typeof data['type'] !== 'string') throw new Error('Codex event is missing its type.');
-      switch (data['type']) {
-        case 'thread.started':
-          if (typeof data['thread_id'] === 'string') sessionId = data['thread_id'];
-          break;
-        case 'item.completed': {
-          const item = record(data['item']);
-          if (item?.['type'] === 'agent_message') {
-            if (typeof item['text'] !== 'string')
-              throw new Error('Codex agent_message is missing final text.');
-            text = item['text'];
-          }
-          break;
+/** Incremental Claude terminal state; startup and post-result events are accepted. @internal */
+export class ClaudeProtocol {
+  readonly #structured: boolean;
+  #outcome: ProtocolOutcome | undefined;
+  #sessionId: string | null = null;
+  #usage: AgentUsage | null = null;
+  #text: string | null = null;
+
+  public constructor(structured: boolean) {
+    this.#structured = structured;
+  }
+  public get sessionId(): string | null {
+    return this.#sessionId;
+  }
+  public get usage(): AgentUsage | null {
+    return this.#usage;
+  }
+  public get text(): string | null {
+    return this.#outcome?.kind === 'success' ? this.#outcome.response.text : this.#text;
+  }
+  public get retainedBytes(): number {
+    return Buffer.byteLength(
+      JSON.stringify({
+        outcome: this.#outcome,
+        sessionId: this.#sessionId,
+        usage: this.#usage,
+        text: this.#text,
+      }),
+    );
+  }
+  public feed(data: Record<string, unknown>): void {
+    if (typeof data['type'] !== 'string') throw new Error('Claude event is missing its type.');
+    this.#sessionId ??= string(data['session_id']);
+    if (data['type'] !== 'result') return;
+    this.#usage = usage(data['usage'], data['total_cost_usd']);
+    this.#outcome = parseClaude(JSON.stringify(data), this.#structured);
+    this.#text = this.#outcome.kind === 'success' ? null : string(data['result']);
+  }
+  public finish(): ProtocolOutcome {
+    return (
+      this.#outcome ?? { kind: 'unparseable', reason: 'Claude did not return a terminal result.' }
+    );
+  }
+}
+
+/** Incremental Codex protocol state; command output and unknown events are never retained. @internal */
+export class CodexProtocol {
+  #text: string | undefined;
+  #sessionId: string | null = null;
+  #completed = false;
+  #tokens: AgentUsage | null = null;
+  #failed: ReturnType<typeof apiError> | undefined;
+  #lastError: ReturnType<typeof apiError> | undefined;
+  readonly #notices: string[] = [];
+
+  public get sessionId(): string | null {
+    return this.#sessionId;
+  }
+  public get usage(): AgentUsage | null {
+    return this.#tokens;
+  }
+  public get text(): string | null {
+    return this.#text ?? null;
+  }
+  public get retainedBytes(): number {
+    return Buffer.byteLength(
+      JSON.stringify({
+        text: this.#text,
+        sessionId: this.#sessionId,
+        tokens: this.#tokens,
+        failed: this.#failed,
+        lastError: this.#lastError,
+        notices: this.#notices,
+      }),
+    );
+  }
+
+  public feed(data: Record<string, unknown>): void {
+    if (typeof data['type'] !== 'string') throw new Error('Codex event is missing its type.');
+    switch (data['type']) {
+      case 'thread.started':
+        if (typeof data['thread_id'] === 'string') this.#sessionId ??= data['thread_id'];
+        break;
+      case 'item.completed': {
+        const item = record(data['item']);
+        if (item?.['type'] === 'agent_message') {
+          if (typeof item['text'] !== 'string')
+            throw new Error('Codex agent_message is missing final text.');
+          this.#text = item['text'];
         }
-        case 'turn.completed':
-          completed = true;
-          tokens = usage(data['usage']);
-          break;
-        case 'turn.failed':
-          failed = apiError(data['error'] ?? 'agent failure');
-          if (data['usage'] !== undefined) tokens = usage(data['usage']);
-          break;
-        case 'error': {
-          const error = apiError(data['message'] ?? data['error'] ?? 'agent failure');
-          notices.push(error.reason);
-          if (notices.length > 32) notices.shift();
-          if (!error.reason.startsWith('Reconnecting...')) lastError = error;
-          break;
-        }
+        break;
+      }
+      case 'turn.completed':
+        this.#completed = true;
+        this.#tokens = usage(data['usage']);
+        break;
+      case 'turn.failed':
+        this.#failed = apiError(data['error'] ?? 'agent failure');
+        if (data['usage'] !== undefined) this.#tokens = usage(data['usage']);
+        break;
+      case 'error': {
+        const error = apiError(data['message'] ?? data['error'] ?? 'agent failure');
+        this.#notices.push(error.reason);
+        if (this.#notices.length > 32) this.#notices.shift();
+        if (!error.reason.startsWith('Reconnecting...')) this.#lastError = error;
+        break;
       }
     }
-    if (failed !== undefined || (!completed && notices.length > 0)) {
-      const error = failed ?? lastError;
-      const history = notices
-        .filter((notice) => notice !== error?.reason)
-        .join('; ')
-        .slice(-4096);
+  }
+
+  public finish(): ProtocolOutcome {
+    return classify(() => {
+      if (this.#failed !== undefined || (!this.#completed && this.#notices.length > 0)) {
+        const error = this.#failed ?? this.#lastError;
+        const history = this.#notices
+          .filter((notice) => notice !== error?.reason)
+          .join('; ')
+          .slice(-4096);
+        return {
+          kind: 'failure',
+          failure: {
+            reason: `${error?.reason ?? 'Codex output ended without turn.completed; the call may have been interrupted.'}${history ? `; notices: ${history}` : ''}`,
+            subtype: this.#failed === undefined ? 'error' : 'turn.failed',
+            terminalReason: null,
+            apiStatus: error?.status ?? null,
+            sessionId: this.#sessionId,
+            usage: this.#tokens,
+          },
+        };
+      }
+      if (!this.#completed)
+        throw new Error(
+          'Codex output ended without turn.completed; the call may have been interrupted.',
+        );
+      if (this.#text === undefined)
+        throw new Error('Codex completed without a final agent_message.');
       return {
-        kind: 'failure',
-        failure: {
-          reason: `${error?.reason ?? 'Codex output ended without turn.completed; the call may have been interrupted.'}${history ? `; notices: ${history}` : ''}`,
-          subtype: failed === undefined ? 'error' : 'turn.failed',
-          terminalReason: null,
-          apiStatus: error?.status ?? null,
-          sessionId,
-          usage: tokens,
+        kind: 'success',
+        response: {
+          text: this.#text,
+          sessionId: this.#sessionId,
+          usage: this.#tokens ?? usage(undefined),
+          ...(this.#notices.length ? { warnings: [...this.#notices] } : {}),
         },
       };
-    }
-    if (!completed)
-      throw new Error(
-        'Codex output ended without turn.completed; the call may have been interrupted.',
-      );
-    if (text === undefined) throw new Error('Codex completed without a final agent_message.');
-    return {
-      kind: 'success',
-      response: {
-        text,
-        sessionId,
-        usage: tokens ?? usage(undefined),
-        ...(notices.length > 0 ? { warnings: notices } : {}),
-      },
-    };
+    });
+  }
+}
+
+/** Classify buffered Codex JSONL through the same incremental protocol state. */
+export function parseCodex(stdout: string): ProtocolOutcome {
+  return classify(() => {
+    const state = new CodexProtocol();
+    for (const line of stdout.split(/\r?\n/u).filter((line) => line.trim()))
+      state.feed(parse(line, 'Codex'));
+    return state.finish();
   });
 }

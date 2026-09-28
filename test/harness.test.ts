@@ -193,7 +193,8 @@ describe('headless CLI adapter', () => {
       args: [
         '--print',
         '--output-format',
-        'json',
+        'stream-json',
+        '--verbose',
         '--permission-mode',
         'dontAsk',
         '--tools',
@@ -377,11 +378,11 @@ describe('headless CLI adapter', () => {
       "process.stdout.write('x'.repeat(40)); process.stderr.write('x'.repeat(40)); setInterval(() => {}, 1000)",
     );
     await expect(
-      new CliHarness({ claudeBinary: binary, maxOutputBytes: 64 }).invoke(
+      new CliHarness({ claudeBinary: binary, maxStreamBytes: 64 }).invoke(
         request('claude'),
         testInvocation(signal),
       ),
-    ).rejects.toThrow('64-byte output limit');
+    ).rejects.toThrow('maxStreamBytes (64 bytes)');
   });
 
   it('kills a process that ignores SIGTERM after its deadline', async () => {

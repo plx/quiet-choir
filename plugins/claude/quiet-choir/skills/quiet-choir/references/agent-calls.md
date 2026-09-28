@@ -2,9 +2,10 @@
 
 Use `ctx.claude` or `ctx.codex` from any agent host. `value(id, options)` returns just the answer:
 text without `schema`, or a locally validated value with `schema`. `text` and `object` return
-`{ output, sessionId, usage }`. All three checkpoint the same full result and effect identity. Use
-`onError: 'return'` for a durable `Settled` outcome; cancellation, checkpoint, and pre-launch
-configuration failures still reject. See [failure handling](workflow-authoring.md#failure-handling).
+`{ output, sessionId, usage, diagnostics }`. All three checkpoint the same full result and effect
+identity. Use `onError: 'return'` for a durable `Settled` outcome; cancellation, checkpoint, and
+pre-launch configuration failures still reject. See
+[failure handling](workflow-authoring.md#failure-handling).
 
 ## Shared options and enforcement
 
@@ -88,10 +89,13 @@ spending ledger, and per-call limits do not impose a run-wide spend cap.
 
 ## Process lifecycle
 
-`CliHarness` caps combined stdout/stderr at 8 MiB, including Codex command-output JSONL. Embedders
-can set `maxOutputBytes`; the CLI cannot raise it. The per-call timeout starts on agent admission,
-not while queued. `--max-agents` and `--provider-limit` share slots across nested maps; each map's
-mapper concurrency remains a separate local limit.
+`CliHarness` independently caps retained protocol state/lines at 8 MiB, combined raw output at 1
+GiB, and private attempt transcripts at 64 MiB. CLI flags `--max-retained-bytes`,
+`--max-stream-bytes`, `--max-transcript-bytes`, and `--transcripts` are sticky execution policy.
+`maxOutputBytes` is now a legacy alias for agent retention, not the whole trace. See
+[streaming and attempt evidence](agent-streaming.md). The per-call timeout starts on agent
+admission, not while queued. `--max-agents` and `--provider-limit` share slots across nested maps;
+each map's mapper concurrency remains a separate local limit.
 
 Every leader exit reaps owned process groups on macOS/Linux; Windows cleanup reaches the immediate
 child only. First SIGINT/SIGTERM/SIGHUP cancels, drains, and exits 130. A second signal force-kills

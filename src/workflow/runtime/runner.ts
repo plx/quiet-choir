@@ -1,4 +1,12 @@
 import { mergeOptionsSchema, mergeResultSchema } from './worktree-schema.js';
+import { randomUUID } from 'node:crypto';
+import { deriveAgentSessionId } from './agent-session.js';
+import { agentDiagnosticsSchema } from './agent-stream-schema.js';
+import type {
+  AgentDiagnostics,
+  AgentProgress,
+  AgentTranscriptWriter,
+} from './agent-stream-model.js';
 import { RunWorktrees, type WorktreeLease } from './worktrees.js';
 import { isolationIdentity } from './worktree-identity.js';
 import {
@@ -105,7 +113,7 @@ import {
 } from './policy.js';
 import { OperationTracker } from './tracking.js';
 import { optionData, validateAgentOptions } from './options.js';
-import { HarnessError } from './harness-error.js';
+import { HarnessError, boundedResponse, harnessEvidence } from './harness-error.js';
 import { CancelledError, FailureOrigins } from './fan-out.js';
 import { createMap } from './map.js';
 import { ExecutionScopes } from './scopes.js';
@@ -146,9 +154,19 @@ export { ConfigurationError } from './configuration-error.js';
 
 /** Unawaited notifications: step transitions follow persistence; admission events are live. */
 export type WorkflowEvent = {
-  /** Harness usage on newly committed successful agent steps; absent on replay. */
+  /** Bounded native activity for live agent.progress events. */
+  readonly progress?: AgentProgress;
+  /** Native model, or null when unknown. */
+  readonly model?: string | null;
+  /** Native CLI version, or null when unknown. */
+  readonly cliVersion?: string | null;
+  /** Attempt outcome after local output validation. */
+  readonly outcome?: 'completed' | 'failed' | 'cancelled';
+  /** Extensible bounded native evidence on agent.finished. */
+  readonly diagnostics?: AgentDiagnostics;
+  /** Reported usage on step.completed and live agent.finished; do not sum across event types. */
   readonly usage?: AgentUsage;
-  /** Native session on newly committed successful agent steps; absent on replay. */
+  /** Observed native session, or predicted Claude ID on early live notifications; absent on replay. */
   readonly sessionId?: string | null;
   /** ISO notification time. */
   readonly at: string;
@@ -199,7 +217,10 @@ export type WorkflowEvent = {
         | 'step.reused'
         | 'replay.divergence'
         | 'agent.queued'
-        | 'agent.admitted';
+        | 'agent.admitted'
+        | 'agent.started'
+        | 'agent.progress'
+        | 'agent.finished';
     }
   | {
       /** Root effect for a failed run; otherwise null. */
@@ -348,12 +369,61 @@ function untilAborted<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
   });
 }
 
+/** Transcript close/discard deadline once the invocation settled; matches the process drain scale. */
+const transcriptSettleMs = 2000;
+
+/**
+ * Bound a transcript close/discard so a writer stalled behind a never-settling write cannot hold
+ * run ownership forever. On timeout, rejects with code `QUIET_CHOIR_TRANSCRIPT_STALLED`.
+ */
+function boundedTranscript(
+  writer: AgentTranscriptWriter,
+  action: 'close' | 'discard',
+): Promise<void> {
+  const pending = Promise.resolve().then(() => writer[action]());
+  // A close that settles after the deadline must not surface later as an unhandled rejection.
+  pending.catch(() => undefined);
+  let timer: NodeJS.Timeout | undefined;
+  const deadline = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => {
+      reject(
+        Object.assign(
+          new Error(
+            `Transcript ${action} did not settle within ${String(transcriptSettleMs)}ms of the invocation ending.`,
+          ),
+          { code: 'QUIET_CHOIR_TRANSCRIPT_STALLED' },
+        ),
+      );
+    }, transcriptSettleMs);
+  });
+  return Promise.race([pending, deadline]).finally(() => {
+    clearTimeout(timer);
+  });
+}
+
 /** Describe the boundary that aborted `signal`; callers must only pass an aborted signal. */
 function cancellationError(signal: AbortSignal, cause: unknown): CancelledError {
   if (signal.reason instanceof CancelledError)
     return new CancelledError(signal.reason.cancelledBy, cause, signal.reason.scope);
   // Only the run controller aborts with another reason: a checkpoint failure or strict replay.
   return new CancelledError(null, cause, 'run');
+}
+
+/**
+ * Resolve the first observed session ID and never let a later one overwrite it; returns a value
+ * the caller assigns back, always a string or explicit null (never left undefined) once anything
+ * is observed. A later, differing ID is not discarded: it is recorded as a diagnostic so the
+ * evidence survives.
+ */
+function preserveFirstSessionId(
+  record: { sessionId?: string | null; diagnostics?: AgentDiagnostics },
+  observed: string | null | undefined,
+): string | null {
+  const current = record.sessionId;
+  if (current === undefined) return observed ?? null;
+  if (observed != null && current != null && observed !== current)
+    record.diagnostics = { ...record.diagnostics, finalSessionId: observed };
+  return current;
 }
 
 /** Run or resume a workflow with local, at-least-once durable effects. Throws after saving failures. */
@@ -622,6 +692,7 @@ export async function runWorkflow<TInput, TOutput>(
       createdAt: now,
       updatedAt: now,
     };
+    const sessionSalt = (record.sessionSalt ??= randomUUID());
     if (options.launch) record.launch = structuredClone(options.launch);
     const priorHarness = record.harness ?? forkSource?.harness;
     record.harness = {
@@ -873,6 +944,7 @@ export async function runWorkflow<TInput, TOutput>(
         step: StepRecord,
         attempt: AttemptRecord,
         releaseAfterSave: (release: () => void) => void,
+        transcript: AgentTranscriptWriter | undefined,
       ) => Promise<T> | T,
       wakeAt: number | null,
       requestedIdentity?: StepIdentity,
@@ -1115,9 +1187,38 @@ export async function runWorkflow<TInput, TOutput>(
           status: 'running',
           error: null as string | null,
         };
+        const agent = kind === 'claude' || kind === 'codex';
+        if (kind === 'claude')
+          attemptRecord.requestedSessionId = deriveAgentSessionId(sessionSalt, id, step.attempts);
         (step.attemptHistory ??= []).push(attemptRecord);
-        await save(undefined, kind === 'sleep');
+        await save(undefined, kind === 'sleep' || agent);
         let lease: WorktreeLease | undefined;
+        let transcript: AgentTranscriptWriter | undefined;
+        // Close once: a stalled close already waited its full deadline on the success path.
+        let transcriptClosed = false;
+        const transcriptFailure = async (cause: unknown): Promise<never> => {
+          const failure =
+            cause instanceof CheckpointError
+              ? cause
+              : await checkpointError(
+                  'save',
+                  stateDir,
+                  record.id,
+                  cause,
+                  `Could not write transcript for step ${id}`,
+                );
+          if (!checkpointProblems.includes(failure)) checkpointProblems.push(failure);
+          controller.abort(failure);
+          throw failure;
+        };
+        const recordTranscript = (): void => {
+          if (!transcript) return;
+          attemptRecord.transcript = transcript.snapshot();
+          attemptRecord.diagnostics = {
+            ...attemptRecord.diagnostics,
+            transcript: jsonValue(attemptRecord.transcript),
+          };
+        };
         const releases: (() => void)[] = [];
         try {
           try {
@@ -1140,6 +1241,24 @@ export async function runWorkflow<TInput, TOutput>(
                   attemptRecord,
                 );
               signal.throwIfAborted();
+              if (agent && execution.policy.transcripts !== 'off') {
+                try {
+                  if (!storage.transcript)
+                    throw new Error(
+                      'RunStore must implement transcript storage or use policy transcripts: "off".',
+                    );
+                  transcript = await storage.transcript(
+                    id,
+                    step.attempts,
+                    kind,
+                    execution.policy.maxTranscriptBytes ?? 64 * 1024 * 1024,
+                  );
+                  recordTranscript();
+                  await save();
+                } catch (error) {
+                  return transcriptFailure(error);
+                }
+              }
               return action(
                 lease ? { ...context, cwd: lease.cwd } : context,
                 step,
@@ -1147,8 +1266,14 @@ export async function runWorkflow<TInput, TOutput>(
                 (release) => {
                   releases.push(release);
                 },
+                transcript,
               );
             });
+            if (transcript) {
+              transcriptClosed = true;
+              await boundedTranscript(transcript, 'close').catch(transcriptFailure);
+              recordTranscript();
+            }
             // A resolved, valid result is durable work even if cancellation arrived meanwhile.
             // The scope still rejects its next launch.
             const output = schema.parse(result);
@@ -1165,7 +1290,18 @@ export async function runWorkflow<TInput, TOutput>(
                   `Step "${id}" output`,
                 );
             }
-          } catch (cause) {
+          } catch (caught) {
+            let cause: unknown = caught;
+            if (transcript) {
+              if (!transcriptClosed)
+                try {
+                  await boundedTranscript(transcript, 'close').catch(transcriptFailure);
+                } catch (failure) {
+                  // A storage failure cannot become a retry or a settled fallback.
+                  cause = failure;
+                }
+              recordTranscript();
+            }
             lease?.failed();
             // Only an aborted scope signal is a scope cancellation. A callback's own AbortError
             // keeps its message and fails the step, but is still never retried or settled. This
@@ -1191,12 +1327,29 @@ export async function runWorkflow<TInput, TOutput>(
               step.execError = structuredClone(cause.diagnostics);
               attemptRecord.execError = structuredClone(cause.diagnostics);
             }
-            if (cause instanceof HarnessError) {
-              if (cause.usage !== null) attemptRecord.usage = structuredClone(cause.usage);
+            const evidence = harnessEvidence(cause);
+            if (agent && cause instanceof z.ZodError)
+              attemptRecord.validationIssues = jsonValue(cause.issues) as JsonValue[];
+            if (evidence) {
+              if (evidence.usage !== null) attemptRecord.usage = structuredClone(evidence.usage);
+              attemptRecord.diagnostics = { ...attemptRecord.diagnostics, ...evidence.diagnostics };
+              attemptRecord.sessionId = preserveFirstSessionId(attemptRecord, evidence.sessionId);
+              attemptRecord.response = evidence.rawText;
+              attemptRecord.responseTruncated = evidence.responseTruncated;
+              recordTranscript();
+            }
+            if (agent) {
               (step.failedAttempts ??= []).push({
                 attempt: step.attempts,
-                sessionId: cause.sessionId,
-                usage: cause.usage,
+                sessionId: attemptRecord.sessionId ?? null,
+                usage: attemptRecord.usage ?? null,
+              });
+              emit('agent.finished', id, step, {
+                provider: kind,
+                outcome: scoped ? 'cancelled' : 'failed',
+                sessionId: attemptRecord.sessionId ?? attemptRecord.requestedSessionId ?? null,
+                ...(attemptRecord.usage ? { usage: attemptRecord.usage } : {}),
+                diagnostics: attemptRecord.diagnostics ?? {},
               });
             }
             // Only this run's own storage failures are fatal; a domain error reusing the class is not.
@@ -1245,6 +1398,10 @@ export async function runWorkflow<TInput, TOutput>(
           }
           step.status = 'completed';
           attemptRecord.status = 'completed';
+          if (agent) {
+            delete attemptRecord.response;
+            delete attemptRecord.responseTruncated;
+          }
           lease?.completed();
           step.finishedAt = attemptRecord.finishedAt = new Date().toISOString();
           step.durationMs = attemptRecord.durationMs = Math.max(
@@ -1254,10 +1411,38 @@ export async function runWorkflow<TInput, TOutput>(
           await save(
             `Step ${id} completed but its checkpoint write failed; resume may repeat it unless a later save recovers the result`,
           );
+          if (transcript && execution.policy.transcripts === 'on-failure') {
+            try {
+              await boundedTranscript(transcript, 'discard');
+              recordTranscript();
+              if (
+                step.output !== null &&
+                typeof step.output === 'object' &&
+                !Array.isArray(step.output)
+              )
+                step.output['diagnostics'] = jsonValue(attemptRecord.diagnostics);
+            } catch (error) {
+              // The attempt's action may have set warnings since the reset above; TS cannot see it.
+              const warnings = step.warnings as readonly string[] | undefined;
+              step.warnings = [
+                ...(warnings ?? []),
+                `Could not remove successful transcript: ${message(error)}`,
+              ];
+            }
+            await save();
+          }
           const metadata =
             kind === 'claude' || kind === 'codex'
               ? (step.output as unknown as AgentResult<unknown>)
               : undefined;
+          if (metadata)
+            emit('agent.finished', id, step, {
+              provider: kind,
+              outcome: 'completed',
+              sessionId: metadata.sessionId,
+              usage: metadata.usage,
+              diagnostics: metadata.diagnostics ?? {},
+            });
           emit(
             'step.completed',
             id,
@@ -1519,6 +1704,7 @@ export async function runWorkflow<TInput, TOutput>(
             },
           };
           const baseResultSchema = z.object({
+            diagnostics: agentDiagnosticsSchema,
             output: schema,
             sessionId: z.string().nullable(),
             usage: z.object({
@@ -1534,7 +1720,12 @@ export async function runWorkflow<TInput, TOutput>(
               ? baseResultSchema
               : baseResultSchema.extend({ worktree: worktreeChangeSchema });
           const identity = agentIdentity(request, schemaJson(resultSchema));
-          if (profile.onPermissionDenied === 'fail')
+          const onPermissionDenied =
+            provider === 'claude'
+              ? ((request.options as ClaudeOptions).onPermissionDenied ??
+                profile.onPermissionDenied)
+              : profile.onPermissionDenied;
+          if (onPermissionDenied === 'fail')
             Object.assign(identity, { onPermissionDenied: digest('fail') });
           const applied = { ...request.options };
           delete applied.retry;
@@ -1559,7 +1750,7 @@ export async function runWorkflow<TInput, TOutput>(
             jsonValue(request, `Step "${id}" agent request`),
             resultSchema,
             execution,
-            async (context, step, attempt) => {
+            async (context, step, attempt, _release, transcript) => {
               if (!options.harness)
                 throw new ConfigurationError(
                   `No harness adapter configured for ${provider}. Supply RunOptions.harness.`,
@@ -1574,14 +1765,14 @@ export async function runWorkflow<TInput, TOutput>(
                   idempotencyKey: context.idempotencyKey,
                 },
               };
-              const invocation = processInvocation(id, context);
+              const processContext = processInvocation(id, context);
               if (options.harness.metadata) {
                 let discovery = metadataRequests.get(provider);
                 if (!discovery) {
                   discovery = (async () => {
                     // Installation discovery is shared by the run, not owned by the first map subtree.
                     const metadata = await options.harness?.metadata?.(liveRequest, {
-                      ...invocation,
+                      ...processContext,
                       signal: discoverySignal,
                     });
                     if (!metadata) return;
@@ -1612,6 +1803,48 @@ export async function runWorkflow<TInput, TOutput>(
                 await untilAborted(discovery, context.signal);
                 context.signal.throwIfAborted();
               }
+              const invocation: HarnessInvocation = {
+                ...processContext,
+                policy: execution.policy,
+                sessionId: attempt.requestedSessionId ?? null,
+                transcriptPath: attempt.transcript?.path ?? null,
+                onSession: async (sessionId) => {
+                  if (attempt.sessionId != null) return;
+                  attempt.sessionId = sessionId;
+                  await save();
+                },
+                onProgress: (progress) => {
+                  if (progress.model || progress.cliVersion)
+                    attempt.diagnostics = {
+                      ...attempt.diagnostics,
+                      ...(progress.model ? { model: progress.model } : {}),
+                      ...(progress.cliVersion ? { cliVersion: progress.cliVersion } : {}),
+                    };
+                  emit('agent.progress', id, step, {
+                    provider,
+                    progress,
+                    sessionId: attempt.sessionId ?? attempt.requestedSessionId ?? null,
+                  });
+                },
+                onOutput: async (stream, chunk) => {
+                  if (!transcript) return;
+                  try {
+                    await transcript.write(stream, chunk);
+                    attempt.transcript = transcript.snapshot();
+                  } catch (cause) {
+                    const failure = await checkpointError(
+                      'save',
+                      stateDir,
+                      record.id,
+                      cause,
+                      `Could not write transcript for step ${id}`,
+                    );
+                    if (!checkpointProblems.includes(failure)) checkpointProblems.push(failure);
+                    controller.abort(failure);
+                    throw failure;
+                  }
+                },
+              };
               let response;
               try {
                 const admission = limiter.acquire(provider, context.signal);
@@ -1621,11 +1854,25 @@ export async function runWorkflow<TInput, TOutput>(
                   context.signal.throwIfAborted();
                   emitAdmission('agent.admitted', id, step, provider, permit.waitedMs);
                   context.signal.throwIfAborted();
+                  emit('agent.started', id, step, {
+                    provider,
+                    sessionId: attempt.requestedSessionId ?? null,
+                    model: request.options.model ?? null,
+                    cliVersion: record.harnesses?.[provider]?.version ?? null,
+                  });
                   response = await options.harness.invoke(liveRequest, invocation);
                 } finally {
                   permit.release();
                 }
               } catch (error) {
+                const evidence = harnessEvidence(error);
+                if (evidence) {
+                  attempt.usage = evidence.usage;
+                  attempt.diagnostics = { ...attempt.diagnostics, ...evidence.diagnostics };
+                  attempt.sessionId = preserveFirstSessionId(attempt, evidence.sessionId);
+                  attempt.response = evidence.rawText;
+                  attempt.responseTruncated = evidence.responseTruncated;
+                }
                 if (error instanceof HarnessError) {
                   const denials = error.permissionDenials ?? 0;
                   if (denials > 0)
@@ -1637,11 +1884,29 @@ export async function runWorkflow<TInput, TOutput>(
                 throw error;
               }
               attempt.usage = structuredClone(response.usage);
+              attempt.sessionId = preserveFirstSessionId(attempt, response.sessionId);
+              const evidence = boundedResponse(response.text);
+              attempt.response = evidence.rawText;
+              attempt.responseTruncated = evidence.responseTruncated;
+              attempt.diagnostics = agentDiagnosticsSchema.parse({
+                ...attempt.diagnostics,
+                ...(response.turns === undefined ? {} : { turns: response.turns }),
+                ...(response.permissionDenials === undefined
+                  ? {}
+                  : { permissionDenials: response.permissionDenials }),
+                ...(response.warnings === undefined ? {} : { warnings: [...response.warnings] }),
+                ...response.diagnostics,
+                ...(transcript ? { transcript: transcript.snapshot() } : {}),
+              });
               if (response.warnings !== undefined) step.warnings = [...response.warnings];
               if ((response.permissionDenials ?? 0) > 0) {
-                const warning = `Profile ${profile.name}: ${String(response.permissionDenials)} permission denials reported.`;
+                const tools = response.diagnostics?.['deniedTools'];
+                const deniedNames = Array.isArray(tools)
+                  ? tools.filter((tool) => typeof tool === 'string').join(', ')
+                  : '';
+                const warning = `Profile ${profile.name}: ${String(response.permissionDenials)} permission denials reported${deniedNames ? ` (${deniedNames})` : ''}.`;
                 step.warnings = [...(step.warnings ?? []), warning];
-                if (profile.onPermissionDenied === 'fail')
+                if (onPermissionDenied === 'fail')
                   throw new HarnessError({
                     provider,
                     kind: 'permission',
@@ -1652,12 +1917,23 @@ export async function runWorkflow<TInput, TOutput>(
                     stdout: '',
                     usage: response.usage,
                     sessionId: response.sessionId,
+                    diagnostics: attempt.diagnostics,
+                    rawText: response.text,
                   });
               }
-              const raw: unknown = structured ? JSON.parse(response.text) : response.text;
+              let output: T;
+              try {
+                const raw: unknown = structured ? JSON.parse(response.text) : response.text;
+                output = schema.parse(raw);
+              } catch (error) {
+                if (error instanceof z.ZodError)
+                  attempt.validationIssues = jsonValue(error.issues) as JsonValue[];
+                throw error;
+              }
               return {
-                output: schema.parse(raw),
-                sessionId: response.sessionId,
+                output,
+                diagnostics: attempt.diagnostics,
+                sessionId: attempt.sessionId,
                 usage: response.usage,
                 ...(step.worktree
                   ? { worktree: { base: step.worktree.base, commit: null, ref: null, files: [] } }

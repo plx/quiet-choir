@@ -1,4 +1,46 @@
 import type { AgentUsage, ErrorKind } from './model.js';
+import type { AgentDiagnostics } from './agent-stream-model.js';
+
+/** Evidence attached without replacing cancellation or infrastructure error identity. @internal */
+export interface HarnessEvidence {
+  readonly sessionId: string | null;
+  readonly usage: AgentUsage | null;
+  readonly diagnostics: AgentDiagnostics;
+  readonly rawText: string | null;
+  readonly responseTruncated: boolean;
+}
+const evidence = new WeakMap<object, HarnessEvidence>();
+
+/** Bound failed response evidence to 256 KiB, including UTF-8 boundaries. @internal */
+export function boundedResponse(text: string | null): {
+  rawText: string | null;
+  responseTruncated: boolean;
+} {
+  if (text === null) return { rawText: null, responseTruncated: false };
+  const bytes = Buffer.from(text);
+  if (bytes.length <= 262_144) return { rawText: text, responseTruncated: false };
+  let end = 262_144;
+  while (end > 0 && (bytes.readUInt8(end) & 0xc0) === 0x80) end--;
+  return { rawText: bytes.subarray(0, end).toString('utf8'), responseTruncated: true };
+}
+
+/** Preserve evidence even when the original error must propagate unchanged. @internal */
+export function attachHarnessEvidence(error: unknown, value: HarnessEvidence): void {
+  if (typeof error === 'object' && error !== null) evidence.set(error, value);
+}
+
+/** Read adapter evidence without inferring error handling from cause chains. @internal */
+export function harnessEvidence(error: unknown): HarnessEvidence | undefined {
+  if (error instanceof HarnessError)
+    return {
+      sessionId: error.sessionId,
+      usage: error.usage,
+      diagnostics: error.diagnostics,
+      rawText: error.rawText,
+      responseTruncated: error.responseTruncated,
+    };
+  return typeof error === 'object' && error !== null ? evidence.get(error) : undefined;
+}
 
 /** Terminal failure reported by a harness protocol, independent of process exit status. */
 export interface ProtocolFailure {
@@ -30,6 +72,12 @@ export interface HarnessExit {
 
 /** Diagnostics supplied by an adapter when an invocation fails. */
 export interface HarnessErrorDetails {
+  /** Extensible bounded native diagnostics. */
+  readonly diagnostics?: AgentDiagnostics;
+  /** Rejected response, retained up to 256 KiB. */
+  readonly rawText?: string | null;
+  /** Preserve truncation when forwarding already bounded response evidence. */
+  readonly responseTruncated?: boolean;
   /** Reported turns from an otherwise successful envelope followed by a process failure. */
   readonly turns?: number;
   /** Reported denial count from an otherwise successful envelope followed by a process failure. */
@@ -56,6 +104,12 @@ export interface HarnessErrorDetails {
 
 /** A failed harness invocation with bounded diagnostics and recoverable usage metadata. */
 export class HarnessError extends Error {
+  /** Extensible bounded native diagnostics. */
+  public readonly diagnostics: AgentDiagnostics;
+  /** Rejected response, retained up to 256 KiB. */
+  public readonly rawText: string | null;
+  /** Whether the rejected response exceeded its 256 KiB evidence budget. */
+  public readonly responseTruncated: boolean;
   /** Reported turns, or null when unavailable. */
   public readonly turns: number | null;
   /** Reported denied requests, or null when unavailable. */
@@ -102,6 +156,10 @@ export class HarnessError extends Error {
       `${details.provider} ${reason} [exit ${exit}]${stderrTail ? `; stderr: ${stderrTail}` : ''}${stdoutTail ? `; stdout tail: ${stdoutTail}` : ''}`,
     );
     this.name = 'HarnessError';
+    this.diagnostics = details.diagnostics ?? {};
+    const response = boundedResponse(details.rawText ?? null);
+    this.rawText = response.rawText;
+    this.responseTruncated = details.responseTruncated === true || response.responseTruncated;
     this.turns = failure?.turns ?? details.turns ?? null;
     this.permissionDenials = failure?.permissionDenials ?? details.permissionDenials ?? null;
     this.kind = details.kind ?? protocolErrorKind(failure);

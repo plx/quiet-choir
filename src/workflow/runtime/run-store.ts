@@ -1,4 +1,6 @@
 import { existsSync } from 'node:fs';
+import { AttemptTranscript } from './agent-transcript.js';
+import type { AgentTranscriptWriter } from './agent-stream-model.js';
 import { createHash } from 'node:crypto';
 import { mkdir, readFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
@@ -29,6 +31,13 @@ export interface RunStoreOpenOptions {
 
 /** One exclusive writer, with all queued writes drained before release. */
 export interface OwnedRunStore {
+  /** Allocate capped private attempt evidence; agents require this port unless transcripts are off. */
+  transcript?(
+    stepId: string,
+    attempt: number,
+    provider: 'claude' | 'codex',
+    maxBytes: number,
+  ): Promise<AgentTranscriptWriter>;
   /** Read existing state under this writer's ownership; absence is undefined. */
   read(): Promise<RunRecord | undefined>;
   /** Persist a batch including this record's current changes; coalesces concurrent callers. */
@@ -173,6 +182,24 @@ class FileOwnedRun implements OwnedRunStore {
     const compact = this.#queue.then(() => this.writer.compact());
     this.#queue = compact;
     return compact;
+  }
+  public async transcript(
+    stepId: string,
+    attempt: number,
+    provider: 'claude' | 'codex',
+    maxBytes: number,
+  ): Promise<AgentTranscriptWriter> {
+    if (this.#closed) throw new Error('Run storage is closed.');
+    validateStepId(stepId);
+    if (!Number.isSafeInteger(attempt) || attempt < 1)
+      throw new Error('Transcript attempt must be a positive safe integer.');
+    return AttemptTranscript.create(
+      runDirectory(this.stateDir, this.runId),
+      stepId,
+      attempt,
+      provider,
+      maxBytes,
+    );
   }
   public async artifacts(stepId: string, attempt: number): Promise<string> {
     if (this.#closed) throw new Error('Run storage is closed.');

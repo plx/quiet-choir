@@ -23,9 +23,11 @@ escaped descendant holds them. It is skipped when a leader exited without failur
 already reaped; the two-second drain alone then bounds settlement. A deadline therefore initiates a
 bounded sequence of `timeoutMs + killGraceMs + 500ms`; this is subject to event-loop scheduling and
 OS/filesystem calls, not a real-time guarantee. Normal completion may also wait for the
-drain/cleanup periods. Cleanup that cannot be confirmed retains its process record. A saved
-successful result is not retried because record cleanup failed: the returned run contains a warning
-and the lock remains inspectable.
+drain/cleanup periods. A streaming consumer, such as a session or transcript callback, gets the
+two-second delivery window and then a 500ms settlement bound after its pipes close; if it still has
+not settled, the call fails and keeps its process record. Cleanup that cannot be confirmed retains
+its process record. A saved successful result is not retried because record cleanup failed: the
+returned run contains a warning and the lock remains inspectable.
 
 ## Interrupts
 

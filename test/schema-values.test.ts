@@ -103,7 +103,14 @@ it.each(['claude', 'codex'] as const)(
         kind: provider,
         identity: before.steps[id]?.identity,
         fingerprint: before.steps[id]?.fingerprint,
-        output: before.steps[id]?.output,
+        output: {
+          output: (before.steps[id]?.output as { output: unknown }).output,
+          sessionId: reply.sessionId,
+          usage,
+          diagnostics: {
+            transcript: { path: expect.stringContaining('/direct/attempts/') as unknown },
+          },
+        },
       });
     }
   },

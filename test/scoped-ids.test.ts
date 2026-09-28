@@ -229,6 +229,7 @@ it('inspects the real format-5 legacy-map checkpoint but refuses execution acros
   for (const id of Object.keys(saved.steps))
     expect(fresh.steps[id]?.identity).toEqual({
       ...saved.steps[id]?.identity,
+      schema: expect.any(String) as unknown,
       'option.isolation': expect.any(String) as unknown,
     });
   expect(await readRun({ stateDir, runId: 'legacy-map' })).toEqual(saved);

@@ -23,6 +23,11 @@ interface WorkflowExecuteArgs {
 }
 
 interface WorkflowExecuteFlags {
+  readonly progress: boolean | undefined;
+  readonly transcripts: 'on' | 'on-failure' | 'off' | undefined;
+  readonly 'max-retained-bytes': string | undefined;
+  readonly 'max-stream-bytes': string | undefined;
+  readonly 'max-transcript-bytes': string | undefined;
   readonly 'notify-command': string | undefined;
   readonly 'wait-mode': 'suspend' | 'block' | undefined;
   readonly harness: string;
@@ -60,6 +65,20 @@ export default class WorkflowExecute extends WorkflowCommand {
   };
 
   public static override readonly flags: Interfaces.FlagInput<WorkflowExecuteFlags> = {
+    progress: Flags.boolean({ description: 'Print bounded live agent activity to stderr' }),
+    transcripts: Flags.option({ options: ['on', 'on-failure', 'off'] as const })({
+      description: 'Agent transcript retention; default on, saved across resumes',
+    }),
+    'max-retained-bytes': Flags.string({
+      description: 'Agent parser state and single-line cap; default 8 MiB, saved across resumes',
+    }),
+    'max-stream-bytes': Flags.string({
+      description: 'Agent raw stdout/stderr safety cap; default 1 GiB, saved across resumes',
+    }),
+    'max-transcript-bytes': Flags.string({
+      description:
+        'Agent transcript file cap; default 64 MiB, minimum 128 bytes, saved across resumes',
+    }),
     'notify-command': Flags.string({
       description: 'Best-effort sh -c hook receiving event JSON on stdin',
       env: 'QUIET_CHOIR_NOTIFY_COMMAND',
@@ -200,6 +219,19 @@ export default class WorkflowExecute extends WorkflowCommand {
         (flags.policy ?? []).map((value) => JSON.parse(value) as unknown),
         flags['allow-model-override'] ?? false,
       );
+      const streamPolicy: Record<string, unknown> = {};
+      for (const [flag, key] of [
+        ['max-retained-bytes', 'maxRetainedBytes'],
+        ['max-stream-bytes', 'maxStreamBytes'],
+        ['max-transcript-bytes', 'maxTranscriptBytes'],
+      ] as const) {
+        const value = flags[flag];
+        if (value === undefined) continue;
+        if (!/^[1-9][0-9]*$/u.test(value)) throw new Error(`--${flag} must be a positive integer.`);
+        streamPolicy[key] = Number(value);
+      }
+      if (flags.transcripts !== undefined) streamPolicy['transcripts'] = flags.transcripts;
+      if (Object.keys(streamPolicy).length) policy.push(...validatePolicy([streamPolicy], false));
     } catch (error) {
       this.fail('usage.flag', error instanceof Error ? error.message : 'Invalid --policy JSON.');
     }
@@ -225,6 +257,7 @@ export default class WorkflowExecute extends WorkflowCommand {
     });
     const result = await executor.execute({
       ...launch,
+      ...(flags.progress === undefined ? {} : { progress: flags.progress }),
       ...(flags['notify-command'] === undefined ? {} : { notifyCommand: flags['notify-command'] }),
       ...(flags['wait-mode'] === undefined ? {} : { waitMode: flags['wait-mode'] }),
       harness,

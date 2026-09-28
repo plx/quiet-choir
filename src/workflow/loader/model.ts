@@ -25,6 +25,7 @@ export interface ValidateWorkflowPlan extends ExecutionPlan {
 
 /** Plain-data instructions for starting or resuming a workflow. */
 export interface ExecuteWorkflowPlan extends ExecutionPlan {
+  readonly progress?: boolean;
   readonly kind: 'workflow.execute';
   readonly harness?: HarnessSelection;
   readonly dryRun?: boolean;

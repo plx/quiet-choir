@@ -1,4 +1,6 @@
 import { mergePreparationSchema, type MergePreparation } from './worktree-schema.js';
+import type { AgentDiagnostics, AgentTranscript } from './agent-stream-model.js';
+import { agentDiagnosticsSchema, agentTranscriptSchema } from './agent-stream-schema.js';
 import { environmentSummarySchema, hostEnvironmentSummarySchema } from './agent-environment.js';
 import { harnessIsolationSchema } from './agent-isolation.js';
 import {
@@ -46,6 +48,20 @@ import {
 
 /** One started effect attempt, including the policy actually sent to its adapter. */
 export interface AttemptRecord extends AttemptPolicy {
+  /** Observed native session ID, saved at first sight. */
+  sessionId?: string | null;
+  /** Predetermined Claude UUID, saved before spawning. */
+  requestedSessionId?: string;
+  /** Extensible bounded native metadata and warnings. */
+  diagnostics?: AgentDiagnostics;
+  /** Private transcript receipt, present even while the agent is running. */
+  transcript?: AgentTranscript;
+  /** Rejected native response, bounded to 256 KiB. */
+  response?: string | null;
+  /** Whether response exceeded its evidence budget. */
+  responseTruncated?: boolean;
+  /** Local Zod validation issues, when output was rejected. */
+  validationIssues?: JsonValue[];
   /** Isolation base, cache path, and captured snapshot for this attempt. */
   worktree?: WorktreeStep;
   /** Command attempted, without environment values or stdin. */
@@ -209,6 +225,8 @@ export interface MapRecord {
 
 /** Local checkpoint format. The format is intentionally versioned independently of workflows. */
 export interface RunRecord {
+  /** Random UUID namespace used to derive Claude attempt session IDs. */
+  sessionSalt?: string;
   /** Runtime-owned worktree caches, handles, and durable pins. */
   worktrees?: WorktreeLedger;
   /** Nonfatal isolation and cache cleanup diagnostics. */
@@ -413,6 +431,13 @@ const stepSchema = z.object({
   attemptHistory: z
     .array(
       z.object({
+        sessionId: z.string().nullable().optional(),
+        requestedSessionId: z.uuid().optional(),
+        diagnostics: agentDiagnosticsSchema.optional(),
+        transcript: agentTranscriptSchema.optional(),
+        response: z.string().nullable().optional(),
+        responseTruncated: z.boolean().optional(),
+        validationIssues: z.array(jsonSchema).optional(),
         worktree: worktreeStepSchema.optional(),
         execution: z.number().int().positive().optional(),
         exec: execSummarySchema.optional(),
@@ -487,6 +512,7 @@ const recordFieldsSchema = z.object({
     z.literal(6),
     z.literal(7),
   ]),
+  sessionSalt: z.uuid().optional(),
   executions: z
     .array(
       z.object({

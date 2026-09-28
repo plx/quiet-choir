@@ -714,6 +714,8 @@ it.each(['rebase', 'merge', 'squash'] as const)(
     });
     expect(replay.output).toEqual(completed.output);
   },
+  // Three real worktrees, conflict integration and replay include durable filesystem I/O.
+  15_000,
 );
 
 it('merges the latest shared handle into an unoccupied branch without touching HEAD', async () => {

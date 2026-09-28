@@ -205,6 +205,24 @@ it.each(['', 'not-json'.repeat(1000)])(
   },
 );
 
+it.each([
+  { stdout: '{"type":"thread.started","thread_id":"t-1"}\n', sawProtocol: true },
+  { stdout: '\n\n', sawProtocol: false },
+])('reserves "no protocol output" for silent stdout ($stdout)', async ({ stdout, sawProtocol }) => {
+  const { binary } = await binaryFor(stdout, '', 9);
+  const error: unknown = await new CliHarness({ codexBinary: binary })
+    .invoke(request('codex'), testInvocation(signal))
+    .catch((error: unknown) => error);
+  expect(error).toBeInstanceOf(HarnessError);
+  if (!(error instanceof HarnessError)) throw new Error('Expected HarnessError');
+  expect(error.message).toContain('exit code 9');
+  if (sawProtocol) {
+    expect(error.message).not.toContain('no protocol output');
+    // Early session evidence survives the failed turn.
+    expect(error.sessionId).toBe('t-1');
+  } else expect(error.message).toContain('no protocol output');
+});
+
 it.each([0, 1])('fails a protocol error on exit %s without quoting plain text', async (code) => {
   const { binary } = await binaryFor(
     '{"type":"result","subtype":"success","is_error":true,"result":"auth expired"}',

@@ -9,11 +9,11 @@ mode. Accepted enum values do not guarantee support for every model. Each attemp
 
 ## Typed controls
 
-| Provider | Controls                                                                                                                                                                                                 |
-| -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Both     | `isolation`, `worktree`, `effort`, `addDirs`, `extraArgs`, `env`, alongside existing prompt/model/cwd/deadline                                                                                           |
-| Claude   | `disallowedTools`, `permissionMode` (`dontAsk`, `acceptEdits`, `plan`), `systemPrompt`, `appendSystemPrompt`, `agent`, `agents`, `mcpServers`, `strictMcpConfig`, `settings`, `plugins`, `fallbackModel` |
-| Codex    | `reasoningEffort`, `networkAccess`, `harnessProfile`, `config`, `images`                                                                                                                                 |
+| Provider | Controls                                                                                                                                                                                                                       |
+| -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Both     | `isolation`, `worktree`, `effort`, `addDirs`, `extraArgs`, `env`, alongside existing prompt/model/cwd/deadline                                                                                                                 |
+| Claude   | `disallowedTools`, `permissionMode` (`dontAsk`, `acceptEdits`, `plan`), `systemPrompt`, `appendSystemPrompt`, `agent`, `agents`, `mcpServers`, `strictMcpConfig`, `settings`, `plugins`, `fallbackModel`, `onPermissionDenied` |
+| Codex    | `reasoningEffort`, `networkAccess`, `harnessProfile`, `config`, `images`                                                                                                                                                       |
 
 `profile` always selects a quiet-choir role. `harnessProfile` selects Codex's native configuration
 profile (`--profile`). Native profile names contain letters, numbers, underscores or hyphens and
@@ -127,3 +127,6 @@ and awaits it before releasing ownership when no effect still needs the result. 
 
 Doctor probes use the same first/second SIGINT, SIGTERM and SIGHUP cleanup as workflow execution,
 but have only in-memory ownership because no resumable workflow run exists.
+
+Native calls now stream bounded progress and retain private attempt evidence; see
+[streaming controls](agent-streaming.md) for CLI caps, retention, and permission-denial behavior.

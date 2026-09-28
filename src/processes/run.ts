@@ -6,6 +6,15 @@ import type { HarnessInvocation, HarnessProcess } from '../workflow/runtime/mode
 
 /** Resource limits and command details for a single headless invocation. */
 export interface ProcessRequest {
+  /** Incremental protocol capture, with backpressure and no buffered stdout. */
+  readonly stream?: {
+    /** Combined stdout/stderr safety limit, independent of retained parser data. */
+    readonly maxBytes: number;
+    /** Consume a stdout chunk before reading another from that stream. */
+    readonly stdout: (chunk: Uint8Array) => void | Promise<void>;
+    /** Consume a stderr chunk; the result also retains its final 64 KiB. */
+    readonly stderr: (chunk: Uint8Array) => void | Promise<void>;
+  };
   /** Executable path or command on PATH. */
   readonly binary: string;
   /** Overlay on the inherited process environment. */
@@ -60,8 +69,13 @@ export function runProcess(request: ProcessRequest): Promise<ProcessResult> {
       shell: false,
       stdio: ['pipe', 'pipe', 'pipe'],
     });
-    const stdout = new OutputCapture(request.maxOutputBytes);
-    const stderr = new OutputCapture(request.maxOutputBytes);
+    const stdout = new OutputCapture(request.stream ? 0 : request.maxOutputBytes);
+    const stderr = new OutputCapture(
+      request.stream ? 65_536 : request.maxOutputBytes,
+      !!request.stream,
+    );
+    const deliveries = new Set<Promise<void>>();
+    const pipeDeliveries = new Map<typeof child.stdout, Promise<void>>();
     const warnings: string[] = [];
     let bytes = 0;
     let failure: Error | undefined;
@@ -75,6 +89,7 @@ export function runProcess(request: ProcessRequest): Promise<ProcessResult> {
     let escalation: NodeJS.Timeout | undefined;
     let backstop: NodeJS.Timeout | undefined;
     let drain: NodeJS.Timeout | undefined;
+    let delivery: NodeJS.Timeout | undefined;
     let poll: NodeJS.Timeout | undefined;
     let cleaning = false;
     const descriptor: HarnessProcess | undefined =
@@ -118,6 +133,7 @@ export function runProcess(request: ProcessRequest): Promise<ProcessResult> {
       clearTimeout(escalation);
       clearTimeout(backstop);
       clearTimeout(drain);
+      clearTimeout(delivery);
       clearInterval(poll);
       subscription[Symbol.dispose]();
       child.stdin.destroy();
@@ -125,12 +141,31 @@ export function runProcess(request: ProcessRequest): Promise<ProcessResult> {
       child.stderr.destroy();
       child.unref();
       void (async () => {
+        // Backpressure bounds queued chunks, including Node's exit-time pipe flush.
+        // Durable session/transcript callbacks finish before ownership is released; a consumer
+        // that never settles leaves that unconfirmed, so the ownership record is kept.
+        const backstopMs = request.backstopMs ?? 500;
+        let timer: NodeJS.Timeout | undefined;
+        const delivered = await Promise.race([
+          Promise.all(deliveries).then(() => true),
+          new Promise<false>((resolve) => {
+            timer = setTimeout(resolve, backstopMs, false);
+          }),
+        ]);
+        clearTimeout(timer);
+        if (!delivered) {
+          failure ??= Object.assign(
+            new Error(`${request.binary} output consumer did not settle after the process ended.`),
+            { code: 'QUIET_CHOIR_CONSUMER_STALLED' },
+          );
+          warn(`Output consumer did not settle within ${String(backstopMs)}ms of process cleanup.`);
+        }
         try {
           const lease = await registration?.catch((error: unknown) => {
             failure ??= error instanceof Error ? error : new Error(String(error));
             return undefined;
           });
-          if (lease && reaped) await lease.release();
+          if (lease && reaped && delivered) await lease.release();
           else if (lease)
             warn(
               'Process cleanup could not be confirmed; its ownership record was retained for inspect and recovery.',
@@ -147,7 +182,7 @@ export function runProcess(request: ProcessRequest): Promise<ProcessResult> {
           stdout: stdout.text(),
           stderr: stderr.text(),
           warnings,
-          truncated: stdout.truncated || stderr.truncated || pipesTruncated,
+          truncated: (!request.stream && (stdout.truncated || stderr.truncated)) || pipesTruncated,
           durationMs: Math.max(0, Math.round(performance.now() - started)),
         };
         if (failure) {
@@ -161,7 +196,10 @@ export function runProcess(request: ProcessRequest): Promise<ProcessResult> {
       })();
     };
     const maybeFinish = (): void => {
-      if (exited && reaped && pipesEnded === 2) finish();
+      if (settled || !exited || !reaped || pipesEnded !== 2) return;
+      if (deliveries.size === 0) finish();
+      // Settled consumers call back here; a stalled one is bounded by this deadline and finish().
+      else delivery ??= setTimeout(finish, request.drainMs ?? 2000);
     };
     const beginCleanup = (): void => {
       if (cleaning || settled) return;
@@ -223,9 +261,10 @@ export function runProcess(request: ProcessRequest): Promise<ProcessResult> {
     const subscription = addAbortListener(request.signal, abort);
     const collect = (capture: OutputCapture, chunk: Buffer): void => {
       bytes += chunk.length;
-      capture.append(chunk);
-      const exceeded =
-        request.capture === 'truncate'
+      if (!request.stream || capture === stderr) capture.append(chunk);
+      const exceeded = request.stream
+        ? bytes > request.stream.maxBytes
+        : request.capture === 'truncate'
           ? false
           : request.capture === 'error'
             ? capture.truncated
@@ -234,17 +273,47 @@ export function runProcess(request: ProcessRequest): Promise<ProcessResult> {
         stop(
           Object.assign(
             new Error(
-              `${request.binary} exceeded its ${String(request.maxOutputBytes)}-byte output limit.`,
+              request.stream
+                ? `${request.binary} exceeded maxStreamBytes (${String(request.stream.maxBytes)} bytes).`
+                : `${request.binary} exceeded its ${String(request.maxOutputBytes)}-byte output limit.`,
             ),
             { code: 'QUIET_CHOIR_OUTPUT_LIMIT' },
           ),
         );
     };
+    const deliver = (
+      pipe: typeof child.stdout,
+      consume: (chunk: Uint8Array) => void | Promise<void>,
+      chunk: Buffer,
+    ): void => {
+      if (settled || failure) return;
+      pipe.pause();
+      const pending = (pipeDeliveries.get(pipe) ?? Promise.resolve())
+        .then(() => {
+          if (!failure) return consume(chunk);
+        })
+        .catch((error: unknown) => {
+          failure ??= error instanceof Error ? error : new Error(String(error));
+          if (!settled) beginCleanup();
+        })
+        .finally(() => {
+          deliveries.delete(pending);
+          if (pipeDeliveries.get(pipe) === pending) {
+            pipeDeliveries.delete(pipe);
+            if (!settled) pipe.resume();
+          }
+          maybeFinish();
+        });
+      pipeDeliveries.set(pipe, pending);
+      deliveries.add(pending);
+    };
     child.stdout.on('data', (chunk: Buffer) => {
       collect(stdout, chunk);
+      if (request.stream) deliver(child.stdout, request.stream.stdout, chunk);
     });
     child.stderr.on('data', (chunk: Buffer) => {
       collect(stderr, chunk);
+      if (request.stream) deliver(child.stderr, request.stream.stderr, chunk);
     });
     for (const stream of [child.stdout, child.stderr]) {
       stream.once('end', () => {

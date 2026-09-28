@@ -98,10 +98,10 @@ console.log(run.output.label);
 ```
 
 This fake harness performs no paid calls. Use `new CliHarness()` for real installed CLIs. Its
-options are `claudeBinary`, `codexBinary`, `maxOutputBytes` (default 8 MiB combined stdout/stderr),
-and `killGraceMs` (default 3000 ms between SIGTERM and SIGKILL). Those adapter settings are not
-automatically added to the workflow fingerprint; account for semantic changes in your version or
-caller-supplied fingerprint.
+options are `claudeBinary`, `codexBinary`, `maxRetainedBytes` (default 8 MiB), `maxStreamBytes`
+(default 1 GiB), legacy `maxOutputBytes` (retention alias), and `killGraceMs` (default 3000 ms
+between SIGTERM and SIGKILL). Those adapter settings are not automatically added to the workflow
+fingerprint; account for semantic changes in your version or caller-supplied fingerprint.
 
 For CLI rehearsals, use `--harness fixture:./fixtures.json` or `--dry-run`; no embedding wrapper is
 needed. The public `FixtureHarness` accepts the same ordered fixture rules. `CliHarness.plan()`
@@ -154,8 +154,9 @@ export function loggingHarness(logFile: string, inner: Harness = new CliHarness(
 ```
 
 Only returned responses are logged here. A thrown protocol/process failure instead exposes
-`HarnessError` diagnostics; neither this file nor `onEvent` is a streaming native transcript.
-Repeated attempts append repeated records. The caller chooses retention and access permissions.
+`HarnessError` diagnostics; this wrapper is a separate response log. Runtime-owned raw transcripts
+and lossy `onEvent` progress are described in [streaming](agent-streaming.md). Repeated attempts
+append repeated records. The caller chooses retention and access permissions.
 
 ## Resume if present, otherwise start
 
@@ -222,10 +223,18 @@ Implement `Harness.invoke(request, invocation): Promise<HarnessResponse>`. The r
 `outputSchema` (JSON Schema or null for text), and `call: {runId, stepId, attempt, idempotencyKey}`.
 The call identity is attached after fingerprinting; attempts accumulate across resume, while
 `idempotencyKey` stays `runId/stepId`. Honor cancellation, reject process/protocol failures, and
-return `{ text, sessionId, usage }`. For structured calls, `text` must contain the serialized JSON
-value; the runtime parses it, validates it, and checkpoints the result.
+return `{ text, sessionId, usage, diagnostics? }`. For structured calls, `text` must contain the
+serialized JSON value; the runtime parses it, validates it, and checkpoints the result.
 
-`HarnessInvocation` supplies `signal`, `runId`, fully qualified `stepId`, `attempt`, and
+`HarnessInvocation` also optionally supplies resolved `policy`, requested `sessionId`,
+`transcriptPath`, `onSession`, `onOutput`, and `onProgress`. Await `onSession(id)` at first sight
+and `onOutput(stream, bytes)` for raw chunks; failures must stop the call as infrastructure errors.
+Use `onOutput` for runtime-owned transcript caps/retention instead of writing directly to the path.
+Send bounded lossy progress summaries, tolerate observer failures, and keep the full trace out of
+memory. Metadata/version probes should not feed attempt transcripts. See
+[streaming and evidence](agent-streaming.md).
+
+The invocation supplies `signal`, `runId`, fully qualified `stepId`, `attempt`, and
 `trackProcess({ pid, pgid, binary, cwd, startedAt, osStartTime })`. Register immediately after
 spawn, await registration before sending task input, then await the returned `release()` after
 confirming reaping. OS start time must identify process birth, not a current timestamp; use null if

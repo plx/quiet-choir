@@ -314,17 +314,18 @@ Each `<stateDir>/<runId>/` contains `run.json`, `journal.jsonl`, `lock/`, and on
 to a separate project-state container outside the checkout, with recorded per-run ownership and
 pinned Git refs. Artifact directory components are bounded and distinguish exact IDs even on
 case-insensitive filesystems. Artifact writers must use 0600; diagnostic bytes need not be synced
-and are never replay inputs. This revision allocates locations, not transcripts.
+and are never replay inputs. Native attempt transcripts now live under
+`attempts/<sha256-full-step-id>/`; see [streaming and retention](agent-streaming.md).
 
 Concurrent saves share journal appends and flushes. Completions, failures, questions, run status,
-and sleep wake deadlines are durable before their promises/events become observable. Ordinary starts
-are appended unsynced: process crashes retain them, but power loss can undercount attempts. Failed
-writes retry without rerunning successful actions in that process. Compaction flushes and atomically
-renames a snapshot, flushes its directory, then truncates the journal. It runs on status changes or
-roughly 4 MiB of journal data. Read with `readRun` or `inspect`, which apply entries newer than root
-`seq` and retry compaction races; `cat run.json` alone can be stale. Readers ignore a torn final
-line, which the next owner truncates. Complete corruption, sequence gaps, and missing journals
-refuse.
+and sleep wake deadlines are durable before their promises/events become observable. Agent starts
+(including predicted session IDs) are durable. Other ordinary starts are appended unsynced: process
+crashes retain them, but power loss can undercount attempts. Failed writes retry without rerunning
+successful actions in that process. Compaction flushes and atomically renames a snapshot, flushes
+its directory, then truncates the journal. It runs on status changes or roughly 4 MiB of journal
+data. Read with `readRun` or `inspect`, which apply entries newer than root `seq` and retry
+compaction races; `cat run.json` alone can be stale. Readers ignore a torn final line, which the
+next owner truncates. Complete corruption, sequence gaps, and missing journals refuse.
 
 A per-run `lock/` has `owner.json` containing a PID, hostname, birth identity and token.
 Dead/released same-host owners can be recovered only after checking child records in
@@ -364,8 +365,9 @@ node "$QC_CHECKOUT/bin/run.js" workflow execute review.workflow.ts \
 
 The default TERM grace is 3000ms, configurable with `--kill-grace-ms` (not sticky). Every leader
 exit, including success, reaps its group and drains pipes for at most two seconds. A 500ms backstop
-after KILL settles even if another group holds stdout. Valid results survive cleanup warnings;
-unreaped records retain a released-owner lock for recovery. Windows tracks/reaps immediate children.
+after KILL settles even if another group holds stdout. An output consumer that never settles fails
+the call and keeps its record. Valid results survive cleanup warnings; unreaped records retain a
+released-owner lock for recovery. Windows tracks/reaps immediate children.
 
 A crash between spawn and durable registration can still leave an unrecorded child. Descendants that
 create another group/session escape ownership. OS birth checks have platform resolution and a

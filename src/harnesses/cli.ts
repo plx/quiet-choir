@@ -7,12 +7,17 @@ import type {
   HarnessInvocation,
 } from '../workflow/runtime/model.js';
 import type { ExecutionPolicy } from '../workflow/runtime/policy.js';
-import { HarnessError } from '../workflow/runtime/harness-error.js';
+import {
+  attachHarnessEvidence,
+  boundedResponse,
+  HarnessError,
+} from '../workflow/runtime/harness-error.js';
 import { ConfigurationError } from '../workflow/runtime/configuration-error.js';
 import { runProcess } from './process.js';
+import type { ProcessResult } from './process.js';
 import { invocationRequest, materializeInvocation, planInvocation } from './invocation.js';
 import type { CliArgumentPlan } from './invocation.js';
-import { parseClaude, parseCodex } from './protocol.js';
+import { HarnessStream } from './stream.js';
 import {
   childEnvironment,
   validateScrubEnvironment,
@@ -31,8 +36,12 @@ export interface CliHarnessOptions {
   readonly claudeBinary?: string;
   /** Codex executable, resolved through PATH by default. */
   readonly codexBinary?: string;
-  /** Combined stdout/stderr limit per process; defaults to 8 MiB. */
+  /** Legacy alias for maxRetainedBytes. */
   readonly maxOutputBytes?: number;
+  /** Retained parser state and single-line limit; defaults to 8 MiB. */
+  readonly maxRetainedBytes?: number;
+  /** Combined raw stdout/stderr safety cap; defaults to 1 GiB. */
+  readonly maxStreamBytes?: number;
   /** Milliseconds to wait after SIGTERM before SIGKILL; defaults to 3000. */
   readonly killGraceMs?: number;
 }
@@ -47,8 +56,12 @@ export interface CliHarnessPlan extends CliArgumentPlan {
   readonly stdin: string;
   /** Resolved per-call deadline in milliseconds. */
   readonly timeoutMs: number;
-  /** Combined stdout/stderr byte limit. */
+  /** Legacy alias for maxRetainedBytes. */
   readonly maxOutputBytes: number;
+  /** Retained parser state and single-line byte limit. */
+  readonly maxRetainedBytes: number;
+  /** Combined raw stdout/stderr safety cap. */
+  readonly maxStreamBytes: number;
   /** Grace period before forced termination. */
   readonly killGraceMs: number;
 }
@@ -71,6 +84,7 @@ export class CliHarness implements Harness {
   public readonly kind = 'cli';
   private readonly options: CliHarnessOptions;
   private readonly maxOutputBytes: number;
+  private readonly maxStreamBytes: number;
   private readonly killGraceMs: number;
 
   /** Configure executable paths or retain the CLIs found on PATH. */
@@ -82,7 +96,14 @@ export class CliHarness implements Harness {
         ? { scrubEnv: [...options.scrubEnv] }
         : {}),
     };
-    this.maxOutputBytes = positive(options.maxOutputBytes ?? 8 * 1024 * 1024, 'maxOutputBytes');
+    if (options.maxOutputBytes !== undefined) positive(options.maxOutputBytes, 'maxOutputBytes');
+    this.maxOutputBytes = positive(
+      options.maxRetainedBytes ?? options.maxOutputBytes ?? 8 * 1024 * 1024,
+      'maxRetainedBytes',
+    );
+    if (this.maxOutputBytes > 2_147_483_647)
+      throw new Error('maxRetainedBytes must not exceed 2147483647.');
+    this.maxStreamBytes = positive(options.maxStreamBytes ?? 1024 ** 3, 'maxStreamBytes');
     this.killGraceMs = timerDuration(options.killGraceMs ?? 3000, 'killGraceMs');
   }
 
@@ -91,6 +112,8 @@ export class CliHarness implements Harness {
     return {
       timeoutMs: defaultTimeoutMs,
       maxOutputBytes: this.maxOutputBytes,
+      maxRetainedBytes: this.maxOutputBytes,
+      maxStreamBytes: this.maxStreamBytes,
       killGraceMs: this.killGraceMs,
       binary:
         provider === 'claude'
@@ -103,13 +126,16 @@ export class CliHarness implements Harness {
   }
 
   /** Validate and describe the exact invocation without filesystem writes or child processes. */
-  public plan(request: HarnessRequestInput): CliHarnessPlan {
+  public plan(
+    request: HarnessRequestInput,
+    context?: Pick<HarnessInvocation, 'sessionId' | 'policy'>,
+  ): CliHarnessPlan {
     // Validation before launch rejects as configuration, never as a settled effect failure;
     // planInvocation applies the same rule to option and output-schema validation.
     if (!isAbsolute(request.cwd))
       throw new ConfigurationError('Harness cwd must be an absolute path.');
     return {
-      ...planInvocation(request),
+      ...planInvocation(request, context?.sessionId),
       binary:
         request.provider === 'claude'
           ? (this.options.claudeBinary ?? 'claude')
@@ -117,7 +143,14 @@ export class CliHarness implements Harness {
       cwd: request.cwd,
       stdin: request.options.prompt,
       timeoutMs: request.options.timeoutMs ?? defaultTimeoutMs,
-      maxOutputBytes: this.maxOutputBytes,
+      maxOutputBytes:
+        context?.policy?.maxRetainedBytes ?? context?.policy?.maxOutputBytes ?? this.maxOutputBytes,
+      maxRetainedBytes:
+        context?.policy?.maxRetainedBytes ?? context?.policy?.maxOutputBytes ?? this.maxOutputBytes,
+      maxStreamBytes: positive(
+        context?.policy?.maxStreamBytes ?? this.maxStreamBytes,
+        'maxStreamBytes',
+      ),
       killGraceMs: this.killGraceMs,
     };
   }
@@ -186,8 +219,15 @@ export class CliHarness implements Harness {
     if (!isAbsolute(request.cwd))
       throw new ConfigurationError('Harness cwd must be an absolute path.');
     const input = await invocationRequest(request, signal);
-    const plan = this.plan(input);
+    const plan = this.plan(input, context);
+    const stream = new HarnessStream(
+      request.provider,
+      request.outputSchema !== null,
+      plan.maxRetainedBytes,
+      context,
+    );
     const invocation = await materializeInvocation(plan, input);
+    let processResult: ProcessResult | undefined;
     try {
       const result = await runProcess({
         binary: plan.binary,
@@ -196,6 +236,11 @@ export class CliHarness implements Harness {
         input: plan.stdin,
         timeoutMs: plan.timeoutMs,
         maxOutputBytes: plan.maxOutputBytes,
+        stream: {
+          maxBytes: plan.maxStreamBytes,
+          stdout: (chunk) => stream.stdout(chunk),
+          stderr: (chunk) => stream.stderr(chunk),
+        },
         killGraceMs: plan.killGraceMs,
         signal,
         trackProcess: (child) => context.trackProcess(child),
@@ -208,13 +253,14 @@ export class CliHarness implements Harness {
         },
         inheritEnv: false,
       });
-      const outcome =
-        request.provider === 'claude'
-          ? parseClaude(result.stdout, request.outputSchema !== null)
-          : parseCodex(result.stdout);
+      processResult = result;
+      const outcome = await stream.finish();
+      const diagnostics = stream.diagnostics(result.stderr, result.warnings);
       if (result.code === 0 && result.signal === null && outcome.kind === 'success')
         return {
           ...outcome.response,
+          sessionId: outcome.response.sessionId ?? stream.protocol.sessionId,
+          diagnostics,
           text: invocation.decode(outcome.response.text),
           ...((outcome.response.warnings?.length ?? 0) + result.warnings.length
             ? { warnings: [...(outcome.response.warnings ?? []), ...result.warnings] }
@@ -226,12 +272,16 @@ export class CliHarness implements Harness {
         failure: outcome.kind === 'failure' ? outcome.failure : null,
         reason:
           outcome.kind === 'unparseable'
-            ? result.stdout.trim() === '' && (result.code !== 0 || result.signal !== null)
+            ? !stream.sawStdout && (result.code !== 0 || result.signal !== null)
               ? `exited with ${result.signal ?? `code ${String(result.code)}`} (no protocol output)`
               : outcome.reason
             : 'process failed after a successful protocol result',
         stderr: result.stderr,
-        stdout: result.stdout,
+        stdout: stream.stdoutTail,
+        diagnostics,
+        rawText: stream.protocol.text,
+        sessionId: stream.protocol.sessionId,
+        ...(stream.protocol.usage === null ? {} : { usage: stream.protocol.usage }),
         ...(outcome.kind === 'success'
           ? {
               kind: 'process',
@@ -246,6 +296,32 @@ export class CliHarness implements Harness {
       });
       if (result.warnings.length) failure.message += ` Cleanup: ${result.warnings.join(' ')}`;
       throw failure;
+    } catch (error) {
+      const captured =
+        processResult ??
+        (error instanceof Error && 'processResult' in error
+          ? (error.processResult as ProcessResult)
+          : undefined);
+      if (error instanceof Error && 'code' in error && error.code === 'QUIET_CHOIR_PROTOCOL')
+        throw new HarnessError({
+          provider: request.provider,
+          exit: { code: captured?.code ?? null, signal: captured?.signal ?? null },
+          failure: null,
+          reason: error.message,
+          stderr: captured?.stderr ?? '',
+          stdout: stream.stdoutTail,
+          sessionId: stream.protocol.sessionId,
+          ...(stream.protocol.usage === null ? {} : { usage: stream.protocol.usage }),
+          diagnostics: stream.diagnostics(captured?.stderr ?? '', captured?.warnings),
+          rawText: stream.protocol.text,
+        });
+      attachHarnessEvidence(error, {
+        sessionId: stream.protocol.sessionId,
+        usage: stream.protocol.usage,
+        diagnostics: stream.diagnostics(captured?.stderr ?? '', captured?.warnings),
+        ...boundedResponse(stream.protocol.text),
+      });
+      throw error;
     } finally {
       await invocation.dispose();
     }

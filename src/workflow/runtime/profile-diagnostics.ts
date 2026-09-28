@@ -25,6 +25,9 @@ export function profileLimitError(
     stdout: error.stdoutTail,
     ...(error.usage === null ? {} : { usage: error.usage }),
     sessionId: error.sessionId,
+    diagnostics: error.diagnostics,
+    rawText: error.rawText,
+    responseTruncated: error.responseTruncated,
     ...(error.turns === null ? {} : { turns: error.turns }),
     ...(error.permissionDenials === null ? {} : { permissionDenials: error.permissionDenials }),
   });

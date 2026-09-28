@@ -29,9 +29,16 @@ const limits = {
   retry: retryPolicySchema.optional(),
 };
 const effort = z.enum(codexEffortValues);
+const streaming = {
+  maxRetainedBytes: positive.max(2_147_483_647).optional(),
+  maxStreamBytes: positive.optional(),
+  maxTranscriptBytes: positive.min(128).optional(),
+  transcripts: z.enum(['on', 'on-failure', 'off']).optional(),
+};
 /** Checkpoint and adapter policy validator. @internal */
 export const executionPolicySchema = z.strictObject({
   ...limits,
+  ...streaming,
   maxOutputBytes: positive.optional(),
   killGraceMs: duration.optional(),
   binary: z.string().min(1).optional(),
@@ -47,6 +54,7 @@ export const policyOverrideSchema = z
       .optional(),
     kind: z.enum(['claude', 'codex', 'step', 'exec']).optional(),
     maxOutputBytes: positive.max(2_147_483_647).optional(),
+    ...streaming,
     ...limits,
     model: z.string().min(1).optional(),
     reasoningEffort: effort.optional(),
@@ -62,6 +70,7 @@ export const policyOverrideSchema = z
             : rule.kind === 'claude'
               ? ['reasoningEffort']
               : [];
+    if (rule.kind === 'step' || rule.kind === 'exec') invalid.push(...Object.keys(streaming));
     for (const key of invalid) {
       if (Reflect.get(rule, key) !== undefined)
         context.addIssue({
@@ -127,11 +136,23 @@ export function resolvePolicy(
     'retry.maxAttempts': 'runtime',
     'retry.delayMs': 'runtime',
   };
+  if (kind === 'claude' || kind === 'codex') {
+    Object.assign(policy, { transcripts: 'on', maxTranscriptBytes: 64 * 1024 * 1024 });
+    sources['transcripts'] = 'runtime';
+    sources['maxTranscriptBytes'] = 'runtime';
+  }
   let requestedModel: string | null = null;
   let reasoningEffort: CodexOptions['reasoningEffort'] | null = null;
   const applicable = new Set<string>(['retry']);
   if (kind === 'claude' || kind === 'codex') {
-    for (const key of ['timeoutMs', 'model', 'maxOutputBytes', 'killGraceMs', 'binary'])
+    for (const key of [
+      'timeoutMs',
+      'model',
+      'maxOutputBytes',
+      'killGraceMs',
+      'binary',
+      ...Object.keys(streaming),
+    ])
       applicable.add(key);
     for (const key of kind === 'claude' ? ['maxTurns', 'maxBudgetUsd'] : ['reasoningEffort'])
       applicable.add(key);
@@ -141,6 +162,14 @@ export function resolvePolicy(
     applicable.add('maxOutputBytes');
   }
   const apply = (values: ExecutionPolicy & PolicyOverride, source: string): void => {
+    if (
+      (kind === 'claude' || kind === 'codex') &&
+      values.maxOutputBytes !== undefined &&
+      values.maxRetainedBytes === undefined
+    ) {
+      Object.assign(policy, { maxRetainedBytes: values.maxOutputBytes });
+      sources['maxRetainedBytes'] = source;
+    }
     for (const [key, value] of Object.entries(values) as [string, unknown][]) {
       if (value === undefined || !applicable.has(key)) continue;
       if (key === 'retry') {
@@ -156,7 +185,13 @@ export function resolvePolicy(
         if (key === 'model') requestedModel = value as string;
         else if (key === 'reasoningEffort')
           reasoningEffort = value as CodexOptions['reasoningEffort'];
-        else Object.assign(policy, { [key]: value });
+        else {
+          Object.assign(policy, { [key]: value });
+          if (key === 'maxRetainedBytes') {
+            Object.assign(policy, { maxOutputBytes: value });
+            sources['maxOutputBytes'] = source;
+          }
+        }
         sources[key] = source;
       }
     }
@@ -179,6 +214,10 @@ export function resolvePolicy(
         apply(rule, `override:${String(index)}`);
       }
     });
+  if ((kind === 'claude' || kind === 'codex') && policy.maxRetainedBytes !== undefined) {
+    Object.assign(policy, { maxOutputBytes: policy.maxRetainedBytes });
+    sources['maxOutputBytes'] = sources['maxRetainedBytes'] ?? 'harness';
+  }
   return {
     policy,
     sources,

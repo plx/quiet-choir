@@ -133,8 +133,8 @@ Checkpoint keys, events, and policy matches use the full scope/map/item/leaf ID.
 
 Each step records `kind` (`step`, `claude`, `codex`, `sleep`, `ask`), `status`, total `attempts`,
 `fingerprint`, `output`, `error`, and `wakeAt` (epoch milliseconds for sleep, otherwise null). For
-completed agent steps, `output` is the full `{ output, sessionId, usage }` wrapper: the model's
-answer is at `steps[stepId].output.output`.
+completed agent steps, `output` is the full `{ output, sessionId, usage, diagnostics }` wrapper: the
+model's answer is at `steps[stepId].output.output`.
 
 An ask step stores `question.request`, `askedAt`, `resolution`, and bounded `rejections`; its
 statuses are waiting/completed/withdrawn. Its one registration has no adapter attempt-history
@@ -144,14 +144,17 @@ Current records include run `policy`, `allowModelOverride`, and `policyWarnings`
 component `identity` hashes and `attemptHistory`: each attempt records its fingerprint, resolved
 `policy`, value `sources`, `requestedModel`, `reasoningEffort`, `startedAt`, `finishedAt`, `status`,
 and `error`. Format 6 adds execution number, monotonic duration, reported usage, request summary,
-and stack to each attempt. Steps retain the latest phase/timing/request/stack; existing cancellation
-status and `attemptHistory` are used, with no duplicate boolean or history array. A `running`
-attempt has no saved settlement. Redefined unfinished steps retain old hashes and change times in
-`redefinitions`; unvisited unfinished steps become `superseded` after a successful body replay.
-Existing terminal outcomes still must be visited. Storage format 7 retains replay contract 6. Flat
-format 6 migrates automatically; original format 1 migrates by verifying its old step identities and
-must migrate before fork reuse. Formats 2–5 remain inspection-only in this runtime. See
-[legacy migration](durability.md#legacy-records).
+and stack to each attempt. Agent attempts additionally retain early `sessionId`, Claude
+`requestedSessionId`, loose `diagnostics`, and a private `transcript` receipt. Failed responses are
+bounded to 256 KiB with `responseTruncated`; local Zod failures retain `validationIssues`. Later
+success preserves these earlier entries. Steps retain the latest phase/timing/request/stack;
+existing cancellation status and `attemptHistory` are used, with no duplicate boolean or history
+array. A `running` attempt has no saved settlement. Redefined unfinished steps retain old hashes and
+change times in `redefinitions`; unvisited unfinished steps become `superseded` after a successful
+body replay. Existing terminal outcomes still must be visited. Storage format 7 retains replay
+contract 6. Flat format 6 migrates automatically; original format 1 migrates by verifying its old
+step identities and must migrate before fork reuse. Formats 2–5 remain inspection-only in this
+runtime. See [legacy migration](durability.md#legacy-records).
 
 `workflow.identity` holds code/schema/file hashes and engine metadata. `forkedFrom` identifies a
 source snapshot, reuse mode, invalidation globs, intentional differences, and progress; each copied
@@ -225,17 +228,18 @@ before deciding a run is abandoned. Follow [recovery](durability.md) for locks a
 children; timestamps alone do not justify removing a lock.
 
 A failed run can have completed sibling effects. Those effects replay on a compatible resume; an
-uncheckpointed external action may repeat. Failed steps contain error messages, not full transcripts
-or guaranteed partial output. Run-level failures (for example final schema validation) need not
-imply any step failed. Start from `rootCause: { stepId, error }`, also shown by human inspection.
-Attribution uses error identity/cause chains, not message matching. `WorkflowRunError` names the
-root step/kind and exposes `runId`, `stepId`, saved `run`, and original `cause`; `-v` prints the
-saved stack. A map's initiating step stays `failed`; an interrupted sibling is `cancelled`, with a
-distinct cancellation message and `cancelledBy` set to the initiating step ID (null for a
-mapper-body failure or run interrupt). First Ctrl-C/SIGTERM/SIGHUP records run status `cancelled`
-and root cause `{ stepId: null, error: 'Workflow interrupted.' }`. Completed or handled failures
-leave `rootCause` null when the run completes. Resolved, validated actions still save success after
-abort.
+uncheckpointed external action may repeat. Failed agent attempts retain available
+session/usage/response/validation evidence and private transcript receipts. A capped transcript can
+be incomplete, and abandoned output is not guaranteed. Run-level failures (for example final schema
+validation) need not imply any step failed. Start from `rootCause: { stepId, error }`, also shown by
+human inspection. Attribution uses error identity/cause chains, not message matching.
+`WorkflowRunError` names the root step/kind and exposes `runId`, `stepId`, saved `run`, and original
+`cause`; `-v` prints the saved stack. A map's initiating step stays `failed`; an interrupted sibling
+is `cancelled`, with a distinct cancellation message and `cancelledBy` set to the initiating step ID
+(null for a mapper-body failure or run interrupt). First Ctrl-C/SIGTERM/SIGHUP records run status
+`cancelled` and root cause `{ stepId: null, error: 'Workflow interrupted.' }`. Completed or handled
+failures leave `rootCause` null when the run completes. Resolved, validated actions still save
+success after abort.
 
 `maps[id]` contains settled-map identity, status, and ordered item journals. Each committed item
 stores `{ ok, value/error }` and its owned step/nested-map IDs. Those outcomes replay as a unit; a
@@ -266,9 +270,10 @@ Step notifications reflect persisted step state; `step.replayed` refers to the e
 and does not increment attempts. Observer synchronous exceptions and asynchronous rejections are
 ignored so they cannot invalidate execution. Observer promises are not awaited and do not keep the
 run lock held; synchronous observer work still runs inline. Notifications are not durably queued or
-guaranteed to be delivered. `onEvent` includes run lifecycle notifications but is not a token
-stream, tool trace, or durable delivery queue; use the returned record or checkpoint for saved
-status.
+guaranteed to be delivered. `agent.started`, `agent.progress`, and `agent.finished` add bounded
+native activity and final attempt diagnostics. Use `workflow execute --progress` for stderr activity
+while preserving JSON stdout. These are lossy summaries, not token delivery or a durable queue; use
+[attempt records and transcripts](agent-streaming.md) for retained evidence.
 
 Usage values come from the harness and may be null. Codex cost is always null in this adapter.
 Completed agent results store successful-attempt usage; failed protocol attempts can also store

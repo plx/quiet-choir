@@ -408,11 +408,25 @@ export class WorkflowExecutor implements Executor<
           rehearsal?.observe(event);
           notifications?.observe(event);
           const observational = event.type === 'phase' || event.type === 'log';
+          const agentProgress =
+            event.type === 'agent.started' ||
+            event.type === 'agent.progress' ||
+            event.type === 'agent.finished';
+          const denials = event.diagnostics?.['permissionDenials'];
+          if (event.type === 'agent.finished' && typeof denials === 'number' && denials > 0)
+            this.#options.logger.log(
+              'warn',
+              `${event.stepId}: ${String(denials)} permission denials${Array.isArray(event.diagnostics?.['deniedTools']) ? ` (${event.diagnostics['deniedTools'].filter((tool) => typeof tool === 'string').join(', ')})` : ''}.`,
+            );
           const detail =
             event.message ??
-            `${event.stepId ?? ''} (attempt ${String(event.attempt)})${event.provider === undefined ? '' : ` provider=${event.provider} waitedMs=${String(event.waitedMs)} inFlight=${JSON.stringify(event.inFlight)} queued=${String(event.queued)}`}`;
+            `${event.stepId ?? ''} (attempt ${String(event.attempt)})${event.provider === undefined ? '' : ` provider=${event.provider}`}${agentProgress ? ` ${event.progress?.summary ?? event.outcome ?? 'started'}${event.sessionId ? ` session=${event.sessionId}` : ''}` : event.waitedMs === undefined ? '' : ` waitedMs=${String(event.waitedMs)} inFlight=${JSON.stringify(event.inFlight)} queued=${String(event.queued)}`}`;
           this.#options.logger.log(
-            observational ? 'info' : event.type === 'replay.divergence' ? 'warn' : 'debug',
+            observational || (plan.progress && agentProgress)
+              ? 'info'
+              : event.type === 'replay.divergence'
+                ? 'warn'
+                : 'debug',
             `${event.at} ${event.runId} ${event.type} ${detail}${event.data == null ? '' : ` ${JSON.stringify(event.data)}`}${event.replayed ? ' (replay)' : ''}`,
           );
         },

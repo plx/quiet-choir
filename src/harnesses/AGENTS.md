@@ -13,6 +13,12 @@ ownership, output limits, and cancellation. Existing tests use protocol fixtures
 executables; they do not require paid agent calls.
 
 Register spawned groups through HarnessInvocation before writing task input, including version
-probes. Reap the group on every exit; bound inherited-pipe draining and post-KILL settlement. Record
+probes. Reap the group on every exit; bound inherited-pipe draining and post-KILL settlement. Stream
+consumer settlement is bounded too; a consumer that never settles keeps the ownership record. Record
 cleanup warnings must not discard a valid protocol result. Keep records when reaping is uncertain;
 OS identity mismatch must never authorize signaling a reused PID.
+
+Parse Claude stream-json and Codex JSONL incrementally. Bound retained protocol state separately
+from total stream bytes; skip oversized lines only with a recognized nonessential native header.
+Await early session and raw-output callbacks before consuming more data; keep progress lossy.
+Transcript files and retention belong to the runtime, never the native adapter.

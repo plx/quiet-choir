@@ -22,6 +22,7 @@ export const commonControlFields = {
 };
 /** Claude-only semantic fields. @internal */
 export const claudeControlFields = {
+  onPermissionDenied: z.enum(['warn', 'fail']).optional(),
   plugins: strings.optional(),
   disallowedTools: strings.optional(),
   permissionMode: z.enum(permissionModeValues).optional(),
