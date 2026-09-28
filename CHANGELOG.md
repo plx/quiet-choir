@@ -2,6 +2,11 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- Reorganize both distributed skills around cross-project setup, background operation, inspection,
+  recovery, shared agent controls, and embedding recipes. The Claude package compares native
+  Workflow with the implemented runtime. `skills:check` validates manifests, links, intentional
+  differences, and complete TypeScript examples; CI runs the documented recipes with fake harnesses.
+
 - Add `ctx.claude.value` / `ctx.codex.value`: schema-inferred output or plain text, with the same
   durable identities/records as `object`/`text` and normal `onError` behavior. New agent completion
   events carry detached usage/session metadata; replay does not report spend again.

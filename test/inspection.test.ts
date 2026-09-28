@@ -232,7 +232,8 @@ it('stops on owner loss even when checkpoint bytes do not change, but interrupti
     changed.push(snapshot.summary.status);
   });
   await delay(20);
-  await rm(join(stateDir, 'run.json.lock'), { recursive: true });
+  // Lose the owner atomically: a recursive rm briefly exposes an owner-less lock, a real change.
+  await rename(join(stateDir, 'run.json.lock'), join(stateDir, 'released.lock'));
   expect((await watching).summary.status).toBe('stale');
   expect(changed).toEqual(['running', 'stale']);
   await lock('run', process.pid, 'remote-host');

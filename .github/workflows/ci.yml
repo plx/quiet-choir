@@ -44,8 +44,14 @@ jobs:
       - name: Type-check
         run: npm run typecheck
 
+      - name: Validate distributed skills
+        run: npm run skills:check
+
       - name: Build
         run: npm run build
+
+      - name: Test documented skill recipes
+        run: node test/skills-cli-smoke.mjs
 
       - name: Test compiled process recovery CLI
         run: node test/process-lifecycle-cli-smoke.mjs

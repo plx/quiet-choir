@@ -1,57 +1,129 @@
 ---
 name: quiet-choir
 description: >-
-  Reference for quiet-choir TypeScript agent workflows. Use when authoring, running, inspecting,
-  resuming, or extending quiet-choir workflows, or choosing its Claude Code and Codex call options.
-  Covers this local engine, not generic orchestration or Claude's native workflow system.
+  Author, run, monitor, and recover quiet-choir TypeScript workflows, including cross-project
+  execution, Claude/Codex options, checkpoint inspection, and custom harness integration. Use for
+  this local durable workflow engine; in Claude, also compare it with native Workflow.
 ---
 
 # quiet-choir
 
-quiet-choir runs ordinary TypeScript control flow around durable, named local effects and fresh
-Claude Code/Codex sessions. Zod schemas validate inputs and results; local JSON checkpoints let an
-interrupted run replay its body and reuse completed effects. `ctx.step`, `ctx.claude`, `ctx.codex`,
-`ctx.map`, and `ctx.sleep` are the durable-operation API; `ctx.runId` and `ctx.signal` expose run
-identity and cancellation. The CLI typechecks, validates, executes, and inspects runs. This is a
-private 0.0.0 prototype with at-least-once effects, not a distributed service.
+## Run a first workflow against a project
 
-Use this as a reference: load the topics needed for the task, rather than every file. Installing
-this skill supplies documentation, not the runtime or harness binaries. Locate the user's
-quiet-choir checkout or installed dependency before running commands; the plugin cache is not the
-workflow workspace.
+The **directory you launch the CLI from is the run's working directory** and the default working
+directory for agent calls. Relative workflow, state, and call paths resolve from it. Resume from
+that same directory. `npm run cli` changes to the runtime checkout; use the absolute launcher below
+for another project. Workflow paths are realpath-normalized, so equivalent path spellings work.
 
-In Claude Code, invoke `/quiet-choir:quiet-choir` or load this skill when a quiet-choir task arises.
-The current Claude conversation is separate from every workflow-created harness session.
+Installing this skill supplies documentation, not the runtime or harness binaries. Locate the user's
+quiet-choir checkout; the plugin cache is not a workflow workspace. For initial build and imports,
+see [setup](references/setup-and-cli.md#run-against-another-project).
 
-## Reference contents
+Set `QC_CHECKOUT`, `QC_TARGET`, `QC_WORKFLOW`, and `QC_RUNS` to absolute paths: a built runtime
+checkout, the target project, a trusted workflow file, and a state directory **outside the target
+worktree**. Start with the local-only workflow below, which accepts `{}` and makes no paid calls.
+Use a fresh run ID for another independent run; retain these paths for inspection and recovery. The
+redirected result and log can hold plaintext workflow output. `umask 077` affects only new paths, so
+the recipe also tightens an existing `$QC_RUNS` and recreates the output files, keeping them
+owner-only like the 0600 checkpoints.
 
-| Reference                                              | Read when                                                                                            |
-| ------------------------------------------------------ | ---------------------------------------------------------------------------------------------------- |
-| [Setup and CLI](references/setup-and-cli.md)           | Locating the runtime, running a first workflow, choosing commands and flags                          |
-| [Rehearsal](references/rehearsal.md)                   | Testing a path with fixtures/dry-run before paid calls, previewing resume, and native protocol fakes |
-| [Workflow authoring](references/workflow-authoring.md) | Defining schemas, composing steps, branching, mapping, and retrying local effects                    |
-| [Claude Code calls](references/claude.md)              | Choosing tools, budgets, turns, structured output, or diagnosing Claude failures                     |
-| [Codex calls](references/codex.md)                     | Choosing sandbox and reasoning settings, or diagnosing Codex protocol failures                       |
-| [Durability and resumption](references/durability.md)  | Designing repeatable effects, resuming after failure, or investigating compatibility and locks       |
-| [Progress inspection](references/inspection.md)        | Reading checkpoints, observing live progress, or interpreting usage and errors                       |
-| [Embedding and extensions](references/extensions.md)   | Implementing a harness, reusable workflow helpers, or agent plugin documentation                     |
+<!-- skills-check: example golden-path -->
 
-## Essential constraints
+```sh
+umask 077
+mkdir -m 700 -p "$QC_RUNS"
+chmod 700 "$QC_RUNS" || exit 1
+cd "$QC_TARGET" || exit 1
+node "$QC_CHECKOUT/bin/run.js" workflow validate "$QC_WORKFLOW" --json || exit 1
+rm -f "$QC_RUNS/first.result.json" "$QC_RUNS/first.log" || exit 1
+nohup node "$QC_CHECKOUT/bin/run.js" workflow execute "$QC_WORKFLOW" \
+  --run-id first --state-dir "$QC_RUNS" --input '{}' --json \
+  >"$QC_RUNS/first.result.json" 2>"$QC_RUNS/first.log" < /dev/null &
+qc_runner_pid=$!
+printf 'Runner PID: %s; log: %s/first.log\n' "$qc_runner_pid" "$QC_RUNS"
+node "$QC_CHECKOUT/bin/run.js" workflow inspect first --state-dir "$QC_RUNS" --json --summary \
+  || printf 'Record may still be loading; inspect again and read first.log.\n' >&2
+```
 
-- Keep orchestration deterministic and await durable operations. Put nondeterminism and side effects
-  inside steps; do not nest durable operations inside a step callback.
-- Use stable, unique step IDs. Resume with `--resume`, the same run ID, `--state-dir`, and launch
-  directory, and unchanged sources, name, version, and schemas. Omit `--input` to reuse saved input.
-  Native harness session IDs cannot resume a workflow.
-- The launch directory becomes the run and agent working directory. `npm run cli --` runs from the
-  quiet-choir checkout; for another project, change there and invoke
-  `node /absolute/path/to/quiet-choir/bin/run.js`. There is no `--cwd` flag. See
-  [setup](references/setup-and-cli.md).
-- Rehearse before you pay: use `--dry-run --json`, inspect the reached calls and warnings, then
-  launch native execution. Local callbacks run for real unless matched by `--stub-steps`; temporary
-  checkpoints do not undo their effects. See [rehearsal](references/rehearsal.md).
-- External actions may repeat after a crash or cancellation. Local callbacks and
-  `HarnessRequest.call` receive `idempotencyKey` (`runId/stepId`); pass it to systems that support
-  deduplication. Native CLIs do not deduplicate edits with it. Checkpoints cannot undo mutations.
-- Harness calls inherit CLI authentication/configuration. The workflow itself is trusted executable
-  code; harness permission flags do not sandbox it.
+Save this as `first.workflow.mts` outside the target worktree; replace its import with the absolute
+checkout path. Import `z` from the runtime too; the target need not install Zod.
+
+<!-- skills-check: example first-workflow -->
+
+```ts
+import { defineWorkflow, z } from '/absolute/path/to/quiet-choir/dist/index.js';
+
+export default defineWorkflow({
+  name: 'first',
+  version: '1',
+  input: z.object({}),
+  output: z.object({ message: z.string() }),
+  async run(ctx) {
+    return ctx.step('greeting', {
+      input: {},
+      schema: z.object({ message: z.string() }),
+      run: () => ({ message: 'Hello from a durable local step.' }),
+    });
+  },
+});
+```
+
+Read [operating a run](references/operating-runs.md) next: startup can precede the first checkpoint;
+inspection's exit 0 means it read a record, not that the workflow completed. Use saved `status` and
+ownership to decide whether to wait, recover, or inspect a failure.
+
+<!-- skills-difference: claude-host -->
+
+## quiet-choir, native Workflow, or inline?
+
+In Claude Code, invoke `/quiet-choir:quiet-choir`. Every workflow-created harness session is
+separate from the current conversation.
+
+Choose quiet-choir for checkpoints in a directory you control, recovery from another shell, Claude
+and Codex in one workflow, real Node I/O in durable steps, and Zod/compiler checks before agent
+calls. Choose inline work for a few calls that will not need durable recovery.
+
+Claude's [native Workflow](https://code.claude.com/docs/en/workflows) has integrated launch and
+session-local management ([setup comparison #53](https://github.com/plx/quiet-choir/issues/53)) and
+the `/workflows` progress surface ([progress #50](https://github.com/plx/quiet-choir/issues/50)).
+Its scripts cannot directly access files, run shell commands, or use `import()`. Saved results can
+be reopened by resuming their Claude session; a fresh session does not recover that journal. Native
+replay reuses an unchanged call prefix; failed/stopped agents become `null`. quiet-choir now has
+[code acceptance/forks #41](https://github.com/plx/quiet-choir/issues/41),
+[settled fan-out #43](https://github.com/plx/quiet-choir/issues/43), a CLI dashboard/watch, and
+[shared agent limits #47](https://github.com/plx/quiet-choir/issues/47).
+
+Native Workflow limits total agent calls to 1,000 and parallel/pipeline lists to 4,096; its
+concurrency is configurable. Its documented token-size warning is advisory, not a hard token
+ceiling. quiet-choir's remaining run-wide spend/token controls are tracked in
+[#62](https://github.com/plx/quiet-choir/issues/62); current limits are per call.
+
+<!-- /skills-difference: claude-host -->
+
+## Choose the next task
+
+| Task                                                                       | Reference                                                    |
+| -------------------------------------------------------------------------- | ------------------------------------------------------------ |
+| Locate/build the runtime, import it into another project, choose CLI flags | [Setup and CLI](references/setup-and-cli.md)                 |
+| Launch in the background, poll, diagnose stalls, recover orphaned children | [Operating a run](references/operating-runs.md)              |
+| Locate a run, classify its state, act on exact errors                      | [Inspection and triage](references/inspection.md)            |
+| Define schemas, compose steps, branch, map, and retry                      | [Workflow authoring](references/workflow-authoring.md)       |
+| Select profiles, shared call options, identity, usage, or process limits   | [Agent calls](references/agent-calls.md)                     |
+| Select provider-specific controls or diagnose native protocol failures     | [Claude](references/claude.md), [Codex](references/codex.md) |
+| Rehearse with fixtures/dry-run before paying                               | [Rehearsal](references/rehearsal.md)                         |
+| Resume after failure, accept code edits, fork completed work               | [Durability and resumption](references/durability.md)        |
+| Embed the engine, log responses, implement a harness                       | [Embedding and extensions](references/extensions.md)         |
+
+## Keep the execution contract
+
+- Await durable operations and keep orchestration deterministic. Put nondeterminism and effects in
+  `ctx.step`; do not nest durable calls inside its callback. Use stable, unique IDs and scopes.
+- Resume with the same run ID, launch directory, state directory, name, version, and input. Omit
+  `--input` to reuse saved input. Source/schema edits need explicit acceptance or a fork; native
+  session IDs cannot resume the workflow.
+- Rehearse agent work with `--dry-run --json`. Local callbacks/imports still run unless a step is
+  explicitly stubbed. Native calls inherit installed CLI authentication and permissions.
+- Effects are at least once. Pass `idempotencyKey` to systems that support deduplication; native
+  CLIs do not deduplicate edits with it. Checkpoints cannot undo mutations.
+- This private 0.0.0 engine executes trusted TypeScript locally. Harness permission flags do not
+  sandbox workflow code; there is no service, scheduler, or automatic worktree isolation.

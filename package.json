@@ -47,7 +47,7 @@
   },
   "scripts": {
     "build": "rimraf dist && tsc --project tsconfig.build.json",
-    "check": "npm run format:check && npm run lint && npm run typecheck && npm run test:coverage && npm run build && npm run comparisons:check && npm run test:cli && npm run docs:check && npm run package:check",
+    "check": "npm run format:check && npm run lint && npm run typecheck && npm run skills:check && npm run test:coverage && npm run build && npm run comparisons:check && npm run test:cli && npm run docs:check && npm run package:check",
     "ci": "npm run check",
     "clean": "rimraf coverage dist docs/api oclif.manifest.json",
     "cli": "node ./bin/run.js",
@@ -64,12 +64,13 @@
     "postpack": "rimraf oclif.manifest.json",
     "prepack": "npm run build && npm run manifest",
     "test": "vitest run",
-    "test:cli": "node ./test/cli-smoke.mjs && node ./test/policy-cli-smoke.mjs && node ./test/replay-cli-smoke.mjs && node ./test/settled-cli-smoke.mjs && node ./test/fan-out-cli-smoke.mjs && node ./test/scoped-ids-cli-smoke.mjs && node ./test/profiles-cli-smoke.mjs && node ./test/agent-limits-cli-smoke.mjs && node ./test/process-lifecycle-cli-smoke.mjs && node ./test/scriptable-cli-smoke.mjs && node ./test/observability-cli-smoke.mjs && node ./test/rehearsal-cli-smoke.mjs && node ./test/schema-values-cli-smoke.mjs",
+    "test:cli": "node ./test/cli-smoke.mjs && node ./test/policy-cli-smoke.mjs && node ./test/replay-cli-smoke.mjs && node ./test/settled-cli-smoke.mjs && node ./test/fan-out-cli-smoke.mjs && node ./test/scoped-ids-cli-smoke.mjs && node ./test/profiles-cli-smoke.mjs && node ./test/agent-limits-cli-smoke.mjs && node ./test/process-lifecycle-cli-smoke.mjs && node ./test/scriptable-cli-smoke.mjs && node ./test/observability-cli-smoke.mjs && node ./test/rehearsal-cli-smoke.mjs && node ./test/schema-values-cli-smoke.mjs && node ./test/skills-cli-smoke.mjs",
     "test:coverage": "vitest run --coverage",
     "test:watch": "vitest",
     "typecheck": "tsc --project tsconfig.json",
     "comparisons:check": "tsc -p comparisons/batches/01-direct-ports/tsconfig.json && node --import tsx comparisons/scripts/verify-ports.mjs --check",
-    "test:contract": "node ./test/harness-contract.mjs"
+    "test:contract": "node ./test/harness-contract.mjs",
+    "skills:check": "node scripts/check-skills.mjs && node --test test/skills-check.test.mjs"
   },
   "devDependencies": {
     "@arethetypeswrong/cli": "0.18.5",
@@ -85,7 +86,8 @@
     "rimraf": "6.1.3",
     "typedoc": "0.28.20",
     "typescript-eslint": "8.70.1",
-    "vitest": "4.1.10"
+    "vitest": "4.1.10",
+    "yaml": "2.9.0"
   },
   "dependencies": {
     "@oclif/core": "4.13.3",

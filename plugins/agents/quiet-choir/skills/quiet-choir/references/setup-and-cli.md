@@ -2,11 +2,11 @@
 
 ## Locate the runtime
 
-The skill bundle contains documentation only. quiet-choir is a private, unpublished package. Use an
-existing checkout of `https://github.com/plx/quiet-choir`, or clone it into the user's chosen
-location. Do not assume `npm install quiet-choir` or `npx quiet-choir` can fetch it from a registry.
-A consumer that installed a local checkout or tarball can use its `quiet-choir` executable and
-import from `quiet-choir`.
+quiet-choir is a private, unpublished package. Use an existing checkout of
+`https://github.com/plx/quiet-choir`, or clone it into the user's chosen location. Do not assume
+`npm install quiet-choir` or `npx quiet-choir` can fetch it from a registry. A consumer that
+installed a local checkout or tarball can use its `quiet-choir` executable and import from
+`quiet-choir`.
 
 Use Node.js 24.x (recommended), 22.x from 22.13, or 26.x, with npm 10.9+. Node 23.x and 25.x are
 unsupported. From a fresh checkout:
@@ -40,6 +40,40 @@ project directory. `npm run cli` runs `dist/`, so rebuild after changing `src/`.
 loads `dist/commands`: this checkout's tsconfig has no `rootDir`/`outDir` mapping for oclif's
 development command discovery.
 
+## Run against another project
+
+Choose an import mode before writing the workflow:
+
+| Mode                    | Import and launch                                                                                                                                         | Effect on the target                                                                     |
+| ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| No install              | Import `{ defineWorkflow, z }` from `/absolute/path/to/quiet-choir/dist/index.js`; launch `node /absolute/path/to/quiet-choir/bin/run.js` from the target | No dependency or manifest changes                                                        |
+| Local linked dependency | From the target, run `npm install /absolute/path/to/quiet-choir`; import `{ defineWorkflow, z }` from `quiet-choir`; use `npx --no-install quiet-choir`   | Changes target `package.json` and lockfile; use when those dependency edits are intended |
+
+Build the checkout first (`npm ci && npm run build` there). Import `z` from the same runtime as
+`defineWorkflow`; a separate `import ... from 'zod'` fails if the target does not depend on Zod. The
+[first workflow](../SKILL.md#run-a-first-workflow-against-a-project) is a complete no-install
+example. Put the workflow outside the worktree when it should leave no source changes.
+
+Control the nearest `tsconfig.json` and package module type. A workflow inside either project
+inherits that project's compiler options. With NodeNext, `.ts` without a nearby `"type": "module"`
+is CommonJS; use `.mts` for an independent ESM workflow, especially for embedding scripts with
+top-level await. An adjacent minimal `tsconfig.json` can isolate a workflow from unrelated project
+compiler settings. Inspect the effective settings with `workflow typecheck`.
+
+CLI fingerprints cover compiler-reached source files and the selected tsconfig, using real paths and
+canonical project-relative names. They exclude `node_modules` and quiet-choir's own `src/` and
+`dist/` (unless one is itself the entrypoint). Rebuilding the runtime's `dist/*.d.ts` therefore does
+not by itself change a workflow's source fingerprint. Other imported helpers outside `node_modules`
+are included; even comments change their hashes. Keep the runtime version fixed while recovering a
+run: source hashing does not prove unchanged dependency behavior, and engine compatibility is a
+separate gate. Use [code recovery](durability.md#choose-a-recovery-path) for intentional workflow
+edits.
+
+The current default state directory is `<launch-directory>/.quiet-choir/runs`; it is not necessarily
+ignored in another repository. Set an absolute external `--state-dir` and reuse it for execute,
+inspect, list, and resume. Checkpoints contain plaintext inputs, prompts/previews, outputs, errors,
+and logs; keep the state directory private and out of version control.
+
 ## Choose the command
 
 | Command after `npm run cli --`           | Behavior                                                                                                  |
@@ -49,6 +83,7 @@ development command discovery.
 | `workflow execute FILE`                  | Typechecks, imports, and executes or resumes                                                              |
 | `workflow check-resume FILE --run-id ID` | Typechecks/imports and compares run gates without a writer lock or workflow-body execution                |
 | `workflow fixtures RUN_ID`               | Export completed agent outputs as reusable fixture JSON without importing source                          |
+| `workflow list`                          | Lists run summaries with status filters without importing source                                          |
 | `workflow inspect RUN_ID`                | Reads the saved run without importing workflow code or acquiring a writer lock                            |
 
 Entrypoints must be TypeScript source (`.ts`, `.tsx`, `.mts`, `.cts`), not declaration files. The
