@@ -456,6 +456,9 @@ export async function runWorkflow<TInput, TOutput>(
         ? parseInput(existing ? existing.input : forkSource?.input)
         : (suppliedInput as TInput);
     const savedInput = jsonValue(input, 'Workflow input');
+    // The body gets a noncanonical JSON copy of the once-parsed input: schema field order without
+    // undefined members, and no second pass through non-idempotent schema overwrites.
+    const bodyInput = jsonValue(input, 'Workflow input', { canonical: false }) as TInput;
     if (existing?.status === 'completed' && !options.acceptCodeChange) {
       const output = jsonValue(definition.output.parse(existing.output), 'Workflow output', {
         canonical: false,
@@ -1586,15 +1589,7 @@ export async function runWorkflow<TInput, TOutput>(
     notify({ ...started, message: 'Run started.', attempt: 0, runId: record.id });
     try {
       signal.throwIfAborted();
-      const output = await observations.run(() =>
-        definition.run(
-          context,
-          // Restore schema field order from saved data without reintroducing undefined members.
-          jsonValue(definition.input.parse(structuredClone(savedInput)), 'Workflow input', {
-            canonical: false,
-          }) as TInput,
-        ),
-      );
+      const output = await observations.run(() => definition.run(context, bodyInput));
       await operations.drain();
       observationsClosed = true;
       await observations.flush();

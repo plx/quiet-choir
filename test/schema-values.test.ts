@@ -345,6 +345,26 @@ it('preserves schema field order in returned values and serialized downstream pr
   expect(invoke).toHaveBeenCalledTimes(3);
 });
 
+it('passes the body the once-parsed input when the schema overwrite is not idempotent', async () => {
+  const options = await setup();
+  const seen: number[] = [];
+  const definition = defineWorkflow({
+    name: 'overwrite-input',
+    version: '1',
+    input: z.object({ n: z.number().overwrite((n) => n + 1) }),
+    output: z.number(),
+    run(_ctx, input) {
+      seen.push(input.n);
+      return Promise.resolve(input.n);
+    },
+  });
+  const result = await runWorkflow(definition, { ...options, input: { n: 1 } });
+  expect(seen).toEqual([2]);
+  expect(result.output).toBe(2);
+  expect(result.input).toEqual({ n: 2 });
+  expect((await readRun(options)).input).toEqual({ n: 2 });
+});
+
 it('rejects an explicitly invalid value schema before invoking the harness', async () => {
   const options = await setup();
   const invoke = vi.fn<Harness['invoke']>(() =>
