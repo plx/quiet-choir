@@ -19,6 +19,7 @@ import { join, dirname } from 'node:path';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 import {
+  ConfigurationError,
   defineWorkflow,
   NodeProcessRunner,
   readRun,
@@ -458,9 +459,14 @@ it('treats an unresolvable isolation base as a configuration failure that settle
       return result.value.value.worktree?.commit !== undefined;
     },
   });
-  await expect(
-    runWorkflow(definition, { ...options('missing-base'), input: null, harness }),
-  ).rejects.toThrow('cannot resolve base no-such-branch to a commit');
+  const missing: unknown = await runWorkflow(definition, {
+    ...options('missing-base'),
+    input: null,
+    harness,
+  }).catch((error: unknown) => error);
+  expect(missing).toBeInstanceOf(Error);
+  expect((missing as Error).cause).toBeInstanceOf(ConfigurationError);
+  expect((missing as Error).message).toContain('cannot resolve base no-such-branch to a commit');
   const failed = await readRun({ stateDir, runId: 'missing-base' });
   const steps = Object.values(failed.steps);
   expect(steps).toHaveLength(1);
@@ -485,9 +491,17 @@ it('names a missing committed HEAD when no isolation base is given', async () =>
       return (await ctx.claude.text('edit', { prompt: 'edit', isolation: 'worktree' })).output;
     },
   });
-  await expect(
-    runWorkflow(definition, { ...options('no-head'), cwd: empty, input: null, harness }),
-  ).rejects.toThrow('cannot resolve base HEAD to a commit; the repository has no committed HEAD');
+  const headless: unknown = await runWorkflow(definition, {
+    ...options('no-head'),
+    cwd: empty,
+    input: null,
+    harness,
+  }).catch((error: unknown) => error);
+  expect(headless).toBeInstanceOf(Error);
+  expect((headless as Error).cause).toBeInstanceOf(ConfigurationError);
+  expect((headless as Error).message).toContain(
+    'cannot resolve base HEAD to a commit; the repository has no committed HEAD',
+  );
   expect(invoke).not.toHaveBeenCalled();
 });
 
