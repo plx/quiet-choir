@@ -62,11 +62,14 @@ nonessential activity, such as Codex command output. Required final messages and
 oversized headers fail with `maxRetainedBytes` in the error. The separate stderr tail is 64 KiB. No
 whole trace is buffered in memory. Async session and transcript callbacks apply pipe backpressure
 and finish before child ownership is released. Transcript write failures are infrastructure errors;
-they cannot become retryable failures or settled fallback values.
+they cannot become retryable failures or settled fallback values. Transcript close and discard are
+bounded to 2 seconds after the invocation ends: a close that never settles (for example, behind a
+stalled write) is an infrastructure failure, so the run fails instead of holding its ownership.
 
 `on-failure` retains protocol, process, cancellation, and local validation failures. It removes a
-successful transcript only after the validated outcome commits. A cleanup failure preserves the
-completed outcome and reports a warning; it never reruns paid work. `off` creates no transcript.
+successful transcript only after the validated outcome commits. A cleanup failure, including a
+discard that does not settle within that bound, preserves the completed outcome and reports a
+warning; it never reruns paid work. `off` creates no transcript.
 
 ## Diagnostics, failures, and compatibility
 

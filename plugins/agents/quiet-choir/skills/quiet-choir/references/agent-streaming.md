@@ -52,7 +52,8 @@ separately. Transcript truncation does not fail a valid answer.
 `on-failure` removes a transcript only after local validation and durable success; failed, cancelled
 and schema-rejected attempts keep it. Cleanup failure warns without repeating successful work. `off`
 creates no file. A transcript/session write failure is infrastructure, never a retry or a settled
-fallback.
+fallback. Transcript close/discard is bounded to 2 seconds: a close that never settles is
+infrastructure too, while a stalled discard only warns.
 
 ## Failed attempts and diagnostics
 

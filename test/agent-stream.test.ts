@@ -163,6 +163,104 @@ it('delegates transcript ownership to the injected store and preserves an early-
   });
 });
 
+/** A store whose transcript write never settles and whose close/discard wait behind it. */
+function stalledTranscriptStore(stall: 'close' | 'discard'): RunStore {
+  const fileStore = new FileRunStore(directory);
+  let pending: Promise<void> = Promise.resolve();
+  const transcript: AgentTranscriptWriter = {
+    snapshot: () => ({ path: 'memory:stalled', bytes: 0, truncated: false, retained: true }),
+    write: () => (pending = new Promise<void>(() => undefined)),
+    close: () => (stall === 'close' ? pending : Promise.resolve()),
+    discard: () => new Promise<void>(() => undefined),
+  };
+  return {
+    stateDir: directory,
+    read: fileStore.read.bind(fileStore),
+    list: fileStore.list.bind(fileStore),
+    async open(id, options) {
+      const owned = await fileStore.open(id, options);
+      return {
+        read: owned.read.bind(owned),
+        append: owned.append.bind(owned),
+        compact: owned.compact.bind(owned),
+        artifacts: owned.artifacts.bind(owned),
+        trackProcess: owned.trackProcess.bind(owned),
+        release: owned.release.bind(owned),
+        transcript: () => Promise.resolve(transcript),
+      };
+    },
+  };
+}
+
+it.each(['rejected', 'resolved'] as const)(
+  'bounds transcript close behind a stalled write after the invocation %s',
+  async (settled) => {
+    const definition = defineWorkflow({
+      ...base,
+      async run(ctx) {
+        return ctx.codex.value('stalled', {
+          prompt: 'answer',
+          retry: { maxAttempts: 3, delayMs: 0 },
+          onError: 'return',
+        });
+      },
+    });
+    let calls = 0;
+    const started = performance.now();
+    const error: unknown = await runWorkflow(definition, {
+      ...setup(),
+      store: stalledTranscriptStore('close'),
+      harness: {
+        invoke(_request, invocation) {
+          calls++;
+          // The process runner's backstop abandons a stalled consumer; model that here.
+          void invocation.onOutput?.('stdout', Buffer.from('stuck'));
+          return settled === 'resolved'
+            ? Promise.resolve({ text: 'ok', sessionId: 'stalled', usage })
+            : Promise.reject(
+                Object.assign(new Error('output consumer did not settle'), {
+                  code: 'QUIET_CHOIR_CONSUMER_STALLED',
+                }),
+              );
+        },
+      },
+    }).catch((cause: unknown) => cause);
+    expect(performance.now() - started).toBeLessThan(4500);
+    expect(error).toBeInstanceOf(WorkflowRunError);
+    if (!(error instanceof WorkflowRunError)) throw error;
+    expect(error.cause).toBeInstanceOf(CheckpointError);
+    expect(calls).toBe(1);
+    const run = await readRun(setup());
+    expect(run.status).toBe('failed');
+    const attempt = required(run.steps['stalled']?.attemptHistory?.[0]);
+    expect(attempt.status).toBe('failed');
+    expect(attempt.error).toContain('Could not write transcript for step stalled');
+    expect(attempt.error).toContain('Transcript close did not settle within 2000ms');
+    expect(attempt.transcript).toMatchObject({ path: 'memory:stalled', retained: true });
+  },
+  10_000,
+);
+
+it('bounds a stalled on-failure discard after the committed success', async () => {
+  const definition = defineWorkflow({
+    ...base,
+    async run(ctx) {
+      return ctx.codex.value('discard', { prompt: 'answer' });
+    },
+  });
+  const run = await runWorkflow(definition, {
+    ...setup(),
+    store: stalledTranscriptStore('discard'),
+    policy: [{ transcripts: 'on-failure' }],
+    harness: { invoke: () => Promise.resolve({ text: 'ok', sessionId: 'discard', usage }) },
+  });
+  expect(run.status).toBe('completed');
+  expect(run.steps['discard']?.warnings).toEqual([
+    'Could not remove successful transcript: Transcript discard did not settle within 2000ms of the invocation ending.',
+  ]);
+  expect(run.steps['discard']?.attemptHistory?.[0]?.transcript?.retained).toBe(true);
+}, 10_000);
+
 it('supports memory-only agent runs with transcripts off and refuses unsupported default capture', async () => {
   const records = new Map<string, RunRecord>();
   const store: RunStore = {

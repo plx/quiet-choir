@@ -369,6 +369,38 @@ function untilAborted<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
   });
 }
 
+/** Transcript close/discard deadline once the invocation settled; matches the process drain scale. */
+const transcriptSettleMs = 2000;
+
+/**
+ * Bound a transcript close/discard so a writer stalled behind a never-settling write cannot hold
+ * run ownership forever. On timeout, rejects with code `QUIET_CHOIR_TRANSCRIPT_STALLED`.
+ */
+function boundedTranscript(
+  writer: AgentTranscriptWriter,
+  action: 'close' | 'discard',
+): Promise<void> {
+  const pending = Promise.resolve().then(() => writer[action]());
+  // A close that settles after the deadline must not surface later as an unhandled rejection.
+  pending.catch(() => undefined);
+  let timer: NodeJS.Timeout | undefined;
+  const deadline = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => {
+      reject(
+        Object.assign(
+          new Error(
+            `Transcript ${action} did not settle within ${String(transcriptSettleMs)}ms of the invocation ending.`,
+          ),
+          { code: 'QUIET_CHOIR_TRANSCRIPT_STALLED' },
+        ),
+      );
+    }, transcriptSettleMs);
+  });
+  return Promise.race([pending, deadline]).finally(() => {
+    clearTimeout(timer);
+  });
+}
+
 /** Describe the boundary that aborted `signal`; callers must only pass an aborted signal. */
 function cancellationError(signal: AbortSignal, cause: unknown): CancelledError {
   if (signal.reason instanceof CancelledError)
@@ -1145,6 +1177,8 @@ export async function runWorkflow<TInput, TOutput>(
         await save(undefined, kind === 'sleep' || agent);
         let lease: WorktreeLease | undefined;
         let transcript: AgentTranscriptWriter | undefined;
+        // Close once: a stalled close already waited its full deadline on the success path.
+        let transcriptClosed = false;
         const transcriptFailure = async (cause: unknown): Promise<never> => {
           const failure =
             cause instanceof CheckpointError
@@ -1219,7 +1253,8 @@ export async function runWorkflow<TInput, TOutput>(
               );
             });
             if (transcript) {
-              await transcript.close().catch(transcriptFailure);
+              transcriptClosed = true;
+              await boundedTranscript(transcript, 'close').catch(transcriptFailure);
               recordTranscript();
             }
             // A resolved, valid result is durable work even if cancellation arrived meanwhile.
@@ -1241,12 +1276,13 @@ export async function runWorkflow<TInput, TOutput>(
           } catch (caught) {
             let cause: unknown = caught;
             if (transcript) {
-              try {
-                await transcript.close().catch(transcriptFailure);
-              } catch (failure) {
-                // A storage failure cannot become a retry or a settled fallback.
-                cause = failure;
-              }
+              if (!transcriptClosed)
+                try {
+                  await boundedTranscript(transcript, 'close').catch(transcriptFailure);
+                } catch (failure) {
+                  // A storage failure cannot become a retry or a settled fallback.
+                  cause = failure;
+                }
               recordTranscript();
             }
             lease?.failed();
@@ -1360,7 +1396,7 @@ export async function runWorkflow<TInput, TOutput>(
           );
           if (transcript && execution.policy.transcripts === 'on-failure') {
             try {
-              await transcript.discard();
+              await boundedTranscript(transcript, 'discard');
               recordTranscript();
               if (
                 step.output !== null &&
