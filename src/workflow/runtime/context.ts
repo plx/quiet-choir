@@ -26,10 +26,12 @@ export function bindContext(
     // eslint-disable-next-line @typescript-eslint/no-deprecated -- Forward every overload, including compatibility calls.
     map: bind(context.map.bind(context)),
     claude: {
+      value: bind(context.claude.value.bind(context.claude)),
       text: bind(context.claude.text.bind(context.claude)),
       object: bind(context.claude.object.bind(context.claude)),
     },
     codex: {
+      value: bind(context.codex.value.bind(context.codex)),
       text: bind(context.codex.text.bind(context.codex)),
       object: bind(context.codex.object.bind(context.codex)),
     },

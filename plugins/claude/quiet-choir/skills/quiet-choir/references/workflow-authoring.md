@@ -2,12 +2,11 @@
 
 ## Define a workflow
 
-Default-export `defineWorkflow({ name, version, input, output, run })`. Schemas infer TypeScript
-types and validate data at runtime. Callback return types also participate in inference: a wider
-return such as `T | undefined` can typecheck and then fail runtime validation, after all paid calls
-for a workflow's final output. Use an explicit `Promise<z.infer<typeof Output>>` return annotation
-and `ctx.step<string>(…)` when you need the compiler to reject wider returns. This example can be
-saved under `examples/` in a checkout:
+Default-export `defineWorkflow({ name, version, input, output, run })`. Schemas alone infer
+TypeScript input/output types and validate data at runtime. Callback return types cannot widen a
+workflow or step's schema contract. Never cast the output schema: write the actual shape, or use
+`z.json()` without a cast. Zero-parameter callbacks returning literals may need `as const`,
+especially async local steps. This example can be saved under `examples/` in a checkout:
 
 ```ts
 import { defineWorkflow, z } from '../src/index.js';
@@ -19,11 +18,11 @@ export default defineWorkflow({
   output: z.object({ labels: z.array(z.string()) }),
   async run(ctx, input) {
     const labels = await ctx.map('labels', input.topics, { concurrency: 2 }, async (topic) => {
-      const result = await ctx.claude.object('label', {
+      const result = await ctx.claude.value('label', {
         prompt: `Suggest a short label for this topic: ${topic}`,
         schema: z.object({ label: z.string() }),
       });
-      return result.output.label;
+      return result.label;
     });
     return { labels };
   },
@@ -43,6 +42,7 @@ version requires a new run ID (a fork can reuse compatible steps). See [durabili
 | Operation                                                          | Return and composition                                                                              |
 | ------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------- |
 | `ctx.step(id, { input, schema, run, retry?, version?, onError? })` | Validated result; stores that result and hashes of input, schema, callback source, version, and cwd |
+| `ctx.claude.value(id, { schema?, ...options })` / Codex equivalent | Schema-inferred output; plain string without a schema                                               |
 | `ctx.claude.text(id, options)` / `ctx.codex.text(id, options)`     | `{ output: string, sessionId, usage }`                                                              |
 | `ctx.claude.object(id, { schema, ...options })` / Codex equivalent | Same wrapper with schema-inferred `output`                                                          |
 | `ctx.map(id, items, { concurrency, key?, onError? }, mapper)`      | Ordered fan-out with per-item prefixes and optional outcome journal                                 |
@@ -64,7 +64,7 @@ Pass the signal to cancellable I/O and the key to external systems that support 
 For example, inside a workflow that imports `readFile` from `node:fs/promises`:
 
 ```ts
-const contents = await ctx.step<string>('read-source', {
+const contents = await ctx.step('read-source', {
   input: { path: input.path },
   schema: z.string(),
   run: ({ signal }) => readFile(input.path, { encoding: 'utf8', signal }),
@@ -153,33 +153,33 @@ completed step can receive different input. The runner cannot infer that a JavaS
 durable decision. Use `onError: 'return'` whenever failure selects later workflow work:
 
 ```ts
-const primary = await ctx.claude.text('draft', {
+const primary = await ctx.claude.value('draft', {
   prompt: 'Write a draft.',
   onError: 'return',
   retry: { maxAttempts: 3, delayMs: 100, on: ['rate-limit', 'timeout'] },
 });
 const draft = primary.ok
-  ? primary.value.output
-  : (await ctx.codex.text('fallback', { prompt: 'Write the fallback draft.' })).output;
+  ? primary.value
+  : await ctx.codex.value('fallback', { prompt: 'Write the fallback draft.' });
 ```
 
-`text`, `object`, and `ctx.step` return `Settled<T>` in this mode: `{ ok: true, value }` or
+`value`, `text`, `object`, and `ctx.step` return `Settled<T>` in this mode: `{ ok: true, value }` or
 `{ ok: false, error: { message, kind, attempts } }`. The success value retains its normal type;
-agent values include `output`, `sessionId`, and `usage`. The final failure, after applicable
-retries, is saved as `settled-failed`. Replay returns that exact failure without another callback or
-harness call. `onError` is semantic identity: changing it on a terminal step requires a new
-run/fork. Cancellation (including an explicit map abort) always rejects and stays retryable;
-authoring errors, configuration errors (a missing harness, or an adapter's pre-launch
-`ConfigurationError` such as a Claude schema without an object root), and checkpoint failures also
-reject instead of becoming fallback data.
+`text`/`object` values include `output`, `sessionId`, and `usage`, while `value` returns only
+output. The final failure, after applicable retries, is saved as `settled-failed`. Replay returns
+that exact failure without another callback or harness call. `onError` is semantic identity:
+changing it on a terminal step requires a new run/fork. Cancellation (including an explicit map
+abort) always rejects and stays retryable; authoring errors, configuration errors (a missing
+harness, or an adapter's pre-launch `ConfigurationError` such as a Claude schema without an object
+root), and checkpoint failures also reject instead of becoming fallback data.
 
 For best-effort fan-out, use a named map with `onError: 'settle'`:
 
 ```ts
 const results = await ctx.map('reviewers', topics, { concurrency: 3, onError: 'settle' }, (topic) =>
-  ctx.claude.text('review', { prompt: topic }),
+  ctx.claude.value('review', { prompt: topic }),
 );
-const votes = results.flatMap((result) => (result.ok ? [result.value.output] : []));
+const votes = results.flatMap((result) => (result.ok ? [result.value] : []));
 ```
 
 A settled map runs all items and journals the ordered `Settled<U, MapStepError>[]`. Errors contain
@@ -236,14 +236,28 @@ engine validates structured output locally even after the harness accepts its sc
 For a native Codex object schema, use a `z.object` root with required properties and `.nullable()`
 for missing values. The default compat mode can encode `.optional()` and other shapes as described
 below. Claude requires an object root but does not share Codex's required-property restriction.
-Top-level undefined agent options are omitted at runtime (for example `model: input.model`), though
-`exactOptionalPropertyTypes` still rejects explicit undefined in TypeScript; omit the property in
-strict code. Undefined values nested in options or in checkpoint data remain errors.
+Undefined object members are omitted recursively at workflow input, step dependencies, agent
+requests, step output, and final output. Fresh bodies receive the checkpointed input; results on
+fresh execution and replay have the same omitted members. For example `{ note: input.note }` is safe
+when `note` is optional. `JsonInput` permits these dependency objects; saved `JsonValue` remains
+JSON. A project enabling `exactOptionalPropertyTypes` can still reject explicitly undefined agent
+options; omit those fields when using that project policy.
 
-Persisted values must round-trip losslessly as JSON: no `undefined`, bigint, functions, symbols,
-NaN/infinity, negative zero, sparse arrays, cycles, accessors, or class instances. Use plain
-objects, arrays, strings, finite numbers, booleans, and null; encode dates as strings. This applies
-to workflow input/output and local-step dependencies/results, not just agent responses.
+Undefined array elements and holes remain errors, naming the boundary, step ID when applicable, and
+JSON path (for example `Step "triage/3" output is not JSON at $.findings[2]`). Use `null` with
+`.nullable()`, or filter the item out. Root undefined, bigint, functions, symbols, NaN/infinity,
+negative zero, cycles, accessors, and class instances remain errors. Encode dates as strings.
+
+Use `z.object` by default. It strips unknown keys during local parsing and emits
+`additionalProperties: false`. Use `z.looseObject` only when code must retain unknown keys; Codex
+compat closes those objects on the wire, and strict mode rejects them. Never use
+`.catchall(z.json())` to imitate permissive JSON schemas. Never cast the output schema: declare the
+shape, or use uncast `z.json()` if any JSON is the intended contract.
+
+`value()` uses exactly the same step kind, fingerprint, and full stored result as `object()` or
+`text()`. Newly committed agent `step.completed` events include `usage` and `sessionId`, so
+accounting does not require a wrapped return value. Replay/reuse events omit them; observers receive
+a detached copy and cannot mutate the checkpoint.
 
 ## Codex structured schema compatibility
 

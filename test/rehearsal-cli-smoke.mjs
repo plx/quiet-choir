@@ -82,7 +82,7 @@ export default defineWorkflow({name:'rehearsal-cli',version:'1',input:z.object({
     if(input.mode==='transform') await ctx.codex.object('late',{prompt:'late',schema:z.string().transform(value=>value.length)});
     if(input.mode==='id') await ctx.claude.text('bad id',{prompt:'late'});
     if(input.mode==='duplicate') await ctx.claude.text('s/a',{prompt:'first'});
-    if(input.mode==='lossless') await ctx.step('late',{input:{missing:undefined} as unknown as null,schema:z.null(),run:()=>null});
+    if(input.mode==='lossless') await ctx.step('late',{input:{missing:[undefined]} as unknown as null,schema:z.null(),run:()=>null});
     if(input.mode==='class') await ctx.step('late',{input:new Date() as unknown as null,schema:z.null(),run:()=>null});
     return 'unreachable';
   }
@@ -122,7 +122,7 @@ export default defineWorkflow({name:'rehearsal-cli',version:'1',input:z.object({
     ['transform', 'late', /Transforms cannot/u],
     ['id', 'bad id', /Invalid step ID/u],
     ['duplicate', 's/a', /Duplicate step ID/u],
-    ['lossless', 'late', /lossless JSON/u],
+    ['lossless', 'late', /undefined array element/u],
     ['class', 'late', /plain JSON objects/u],
   ]) {
     const failed = run([...execute(`late-${mode}`, mode), '--dry-run'], null);

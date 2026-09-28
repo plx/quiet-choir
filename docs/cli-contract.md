@@ -99,3 +99,9 @@ not invent a saved run.
 cause. `WorkflowInputError` has `usage.input_schema`, validation issues, and the validator cause.
 `isValidRunId` and `CliErrorCode` are exported for callers. `readRun` retains its low-level ENOENT
 contract. See [the changelog](../CHANGELOG.md) for the prototype API break.
+
+`workflow typecheck` lists effective compiler flags in human output. JSON success includes
+`compilerOptions`; a typecheck failure includes it in `error.details`, alongside compiler version
+and config path. Built-in defaults add `noUncheckedIndexedAccess` to strict Node/ES2023 checking;
+`exactOptionalPropertyTypes` is enabled only by a project config. Resume also typechecks, so an
+unchanged in-flight run can be blocked by these stricter defaults before import or effects.

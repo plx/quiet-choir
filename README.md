@@ -78,10 +78,10 @@ protocol tests.
 ## Author a workflow
 
 Workflows default-export `defineWorkflow(...)`. Input, final output, and structured agent responses
-use [Zod](https://zod.dev/) schemas for TypeScript inference and runtime validation. Callback return
-types also affect inference: a wider `T | undefined` can typecheck, then fail final validation after
-paid calls. An explicit `Promise<z.infer<typeof Output>>` return annotation or `ctx.step<string>(…)`
-can catch that mistake earlier.
+use [Zod](https://zod.dev/) schemas for TypeScript inference and runtime validation. Schemas alone
+infer input/output types; callbacks cannot widen their contracts. Never cast the output schema:
+write the actual shape, or use `z.json()` without a cast. Zero-parameter callbacks returning enum
+literals may need `as const` (especially async local steps).
 
 ```ts
 import { defineWorkflow, z } from 'quiet-choir';
@@ -92,16 +92,16 @@ export default defineWorkflow({
   input: z.object({ topic: z.string() }),
   output: z.object({ label: z.string(), accepted: z.boolean() }),
   async run(ctx, input) {
-    const proposal = await ctx.claude.object('propose', {
+    const proposal = await ctx.claude.value('propose', {
       prompt: `Suggest a short label for: ${input.topic}`,
       model: 'haiku',
       schema: z.object({ label: z.string() }),
     });
-    const review = await ctx.codex.object('review', {
-      prompt: `Is this label clear? ${proposal.output.label}`,
+    const review = await ctx.codex.value('review', {
+      prompt: `Is this label clear? ${proposal.label}`,
       schema: z.object({ accepted: z.boolean() }),
     });
-    return { label: proposal.output.label, accepted: review.output.accepted };
+    return { label: proposal.label, accepted: review.accepted };
   },
 });
 ```
@@ -124,6 +124,8 @@ consumer imports `quiet-choir` as above.
 
 | API                                                           | Behavior                                                                      |
 | ------------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| `ctx.claude.value(id, { schema?, ...options })`               | Schema-inferred output, or plain text without a schema                        |
+| `ctx.codex.value`                                             | Equivalent Codex direct-output API                                            |
 | `ctx.claude.text(id, options)`                                | Durable Claude text result                                                    |
 | `ctx.claude.object(id, { schema, ...options })`               | Durable, validated Claude structured result                                   |
 | `ctx.codex.text` / `ctx.codex.object`                         | Equivalent Codex APIs with Codex-specific options                             |
@@ -131,16 +133,22 @@ consumer imports `quiet-choir` as above.
 | `ctx.map(id, items, { concurrency, key?, onError? }, mapper)` | Bounded fan-out; each item prefixes explicit leaf IDs with its map ID and key |
 | `ctx.sleep(id, milliseconds)`                                 | Persist a wake time and wait only the remaining time after resume             |
 
-Agent results contain `output`, native `sessionId`, and reported token/cost `usage`. Native session
-IDs are for correlation only: `CliHarness` uses Claude `--no-session-persistence` and Codex
-`--ephemeral`, so these calls have no persisted local session transcript. Each effect starts fresh.
-`object` sends JSON Schema to the harness and validates the returned JSON locally. Codex defaults to
-`structuredOutput: 'compat'`: optional properties become nullable on the wire, non-object roots are
-wrapped, records use key/value entries (enum-keyed records require all keys), discriminated unions
-use `anyOf`, and loose objects are closed. The adapter reverses these encodings before the original
-Zod validation; nullable optionals retain null, while other optional nulls become absent properties.
-Unknown keys are not requested for loose objects. Tuples, and unions mixing a string-keyed record
-with an array, are rejected locally; use named object properties or discriminated objects.
+`value()` writes the same durable records and identities as `object()`/`text()`, returning only the
+output. With `onError: 'return'`, it returns `Settled<T>` or `Settled<string>`. Successful new agent
+`step.completed` events include `usage` and `sessionId`; replay/reuse events do not report usage
+again. Observers receive a detached copy.
+
+`object()` and `text()` results contain `output`, native `sessionId`, and reported token/cost
+`usage`. Native session IDs are for correlation only: `CliHarness` uses Claude
+`--no-session-persistence` and Codex `--ephemeral`, so these calls have no persisted local session
+transcript. Each effect starts fresh. `object` and schema-bearing `value` send JSON Schema to the
+harness and validate the returned JSON locally. Codex defaults to `structuredOutput: 'compat'`:
+optional properties become nullable on the wire, non-object roots are wrapped, records use key/value
+entries (enum-keyed records require all keys), discriminated unions use `anyOf`, and loose objects
+are closed. The adapter reverses these encodings before the original Zod validation; nullable
+optionals retain null, while other optional nulls become absent properties. Unknown keys are not
+requested for loose objects. Tuples, and unions mixing a string-keyed record with an array, are
+rejected locally; use named object properties or discriminated objects.
 
 Choose `structuredOutput: 'strict'` to send a native Codex schema: use an object root, make every
 property required (use `.nullable()` for missing values), and avoid records, loose objects,
@@ -152,6 +160,24 @@ schemas cannot be converted to JSON Schema. `z.date()`, `z.void()`, `z.undefined
 input/output. Use `z.null()` and return `null` for side-effect-only steps. Claude receives the
 original schema and also requires an object root; other Codex restrictions and wire transforms do
 not apply to it.
+
+Use `z.object` by default: local parsing strips unknown keys, and generated schemas close the object
+with `additionalProperties: false`. Use `z.looseObject` only when code must retain unknown keys;
+Codex compat closes these objects on the wire, and strict mode rejects them. Never add
+`.catchall(z.json())` to imitate permissive JSON schemas.
+
+Checkpoint normalization drops `undefined` object members recursively at workflow input, local step
+dependencies, agent requests, step outputs, and final output. Fresh bodies receive the saved input
+copy; fresh/replayed results omit the same members. `JsonInput` permits omitted dependency members;
+saved `JsonValue` remains strict JSON. Undefined array elements and holes are errors with an exact
+path; use `null` with `.nullable()`, or filter them out. Root undefined, bigint, functions, symbols,
+special numbers (including negative zero), cycles, getters, and class instances still fail.
+
+Without a project tsconfig, CLI typechecking uses strict Node/ES2023 defaults with
+`noUncheckedIndexedAccess`; it does not enable `exactOptionalPropertyTypes`. `workflow typecheck`
+prints effective compiler flags and includes `compilerOptions` in JSON (under `error.details` on
+failure). An unchanged in-flight run can now fail the pre-execution typecheck on resume; fix the
+code and use the explicit code-change recovery path described below.
 
 A local effect might use `ctx.step('read', { input: { path }, schema: z.string(), run: ... })`.
 Callbacks receive `{ signal, attempt, idempotencyKey }`. Opt into retries only for repeatable
@@ -174,9 +200,10 @@ throws and rejected promises are ignored.
 
 Explicit agent options are validated before recording the step, using the exported
 `claudeOptionsSchema` and `codexOptionsSchema` also used by `CliHarness`. Top-level undefined option
-values are omitted. Other invalid JSON names the step and offending JSON path. Embedded callers can
-correct an invalid option and resume when no step was recorded; CLI source edits still change the
-workflow fingerprint. Call-site validation runs during execution, not during `workflow validate`.
+values and nested undefined object members are omitted. Other invalid JSON names the boundary, step
+(when applicable), and offending JSON path. Embedded callers can correct an invalid option and
+resume when no step was recorded; CLI source edits still change the workflow fingerprint. Call-site
+validation runs during execution, not during `workflow validate`.
 
 To recover a timeout without editing CLI workflow source, resume with a sticky policy override:
 

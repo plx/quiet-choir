@@ -1,3 +1,5 @@
+import type { JsonValue } from '../runtime/model.js';
+
 import type { ExecutionPlan, ExecutionResult } from '../../application/execution.js';
 
 /** Supported TypeScript workflow source suffixes. */
@@ -45,6 +47,8 @@ export interface TypecheckDiagnostic extends TypecheckDiagnosticDetails {
 /** Plain-data result of type-checking a workflow. */
 export interface TypecheckResult extends ExecutionResult {
   readonly compilerVersion: string;
+  /** Effective compiler options, with named enum values and no live compiler objects. */
+  readonly compilerOptions: Readonly<Record<string, JsonValue>>;
   readonly configPath: string | null;
   readonly diagnostics: readonly TypecheckDiagnostic[];
   readonly entrypoint: string;

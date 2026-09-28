@@ -30,6 +30,11 @@ export default class WorkflowTypecheck extends WorkflowCommand {
     const executor = new TypeScriptExecutor(this.createExecutionLogger(flags));
     const result = await executor.execute(typecheck);
 
+    const activeFlags = Object.entries(result.compilerOptions)
+      .map(([name, value]) => `--${name} ${JSON.stringify(value)}`)
+      .join(' ');
+    const flagsMessage = `Compiler flags: ${activeFlags || '(configuration could not be read)'}`;
+
     for (const diagnostic of result.diagnostics) {
       this.logToStderr(formatTypecheckDiagnostic(diagnostic, process.cwd()));
 
@@ -39,6 +44,7 @@ export default class WorkflowTypecheck extends WorkflowCommand {
     }
 
     if (!result.ok) {
+      this.logToStderr(flagsMessage);
       const errorCount = result.diagnostics.filter(
         (diagnostic) => diagnostic.category === 'error',
       ).length;
@@ -46,7 +52,14 @@ export default class WorkflowTypecheck extends WorkflowCommand {
         workflowFailure(
           'load.typecheck',
           `Type check failed with ${String(errorCount)} error${errorCount === 1 ? '' : 's'}.`,
-          { diagnostics: result.diagnostics },
+          {
+            diagnostics: result.diagnostics,
+            details: {
+              compilerVersion: result.compilerVersion,
+              configPath: result.configPath,
+              compilerOptions: result.compilerOptions,
+            },
+          },
         ),
         true,
       );
@@ -55,7 +68,7 @@ export default class WorkflowTypecheck extends WorkflowCommand {
     const configuration = result.configPath ?? 'built-in Node ES2023 defaults';
     this.output(
       result,
-      `Type check passed for ${result.entrypoint} (TypeScript ${result.compilerVersion}; ${configuration}).`,
+      `Type check passed for ${result.entrypoint} (TypeScript ${result.compilerVersion}; ${configuration}).\n${flagsMessage}`,
     );
   }
 }

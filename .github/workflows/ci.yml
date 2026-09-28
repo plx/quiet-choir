@@ -59,6 +59,9 @@ jobs:
       - name: Test workflow rehearsal CLI
         run: node test/rehearsal-cli-smoke.mjs
 
+      - name: Test schema-first workflow values CLI
+        run: node test/schema-values-cli-smoke.mjs
+
       - name: Check Workflow Lab comparisons
         run: npm run comparisons:check
 

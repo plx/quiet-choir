@@ -3,6 +3,9 @@ import { dirname, relative, resolve, sep } from 'node:path';
 
 import ts from 'typescript';
 
+import { jsonValue } from '../runtime/json.js';
+import type { JsonValue } from '../runtime/model.js';
+
 import type { ExecutionLogger, Executor } from '../../application/execution.js';
 import type {
   TypecheckDiagnostic,
@@ -74,13 +77,39 @@ function isDeclarationFile(filePath: string): boolean {
   );
 }
 
+function compilerOptions(options: ts.CompilerOptions): Readonly<Record<string, JsonValue>> {
+  const enums: Record<string, Readonly<Record<number, string>>> = {
+    target: ts.ScriptTarget,
+    module: ts.ModuleKind,
+    moduleResolution: ts.ModuleResolutionKind,
+    jsx: ts.JsxEmit,
+    newLine: ts.NewLineKind,
+    moduleDetection: ts.ModuleDetectionKind,
+  };
+  return Object.fromEntries(
+    Object.entries(options)
+      .filter(
+        ([key, value]) => key !== 'configFile' && key !== 'configFilePath' && value !== undefined,
+      )
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([key, value]) => [
+        key,
+        typeof value === 'number' && enums[key]?.[value] !== undefined
+          ? enums[key][value]
+          : jsonValue(value),
+      ]),
+  );
+}
+
 interface CompilerAnalysis {
+  readonly compilerOptions: Readonly<Record<string, JsonValue>>;
   readonly diagnostics: readonly ts.Diagnostic[];
   readonly sourceFiles: readonly string[];
 }
 
 function analyzeProgram(program: ts.Program): CompilerAnalysis {
   return {
+    compilerOptions: compilerOptions(program.getCompilerOptions()),
     diagnostics: ts.getPreEmitDiagnostics(program),
     sourceFiles: program
       .getSourceFiles()
@@ -95,7 +124,7 @@ function configuredDiagnostics(entrypoint: string, configPath: string): Compiler
   const readResult = ts.readConfigFile(configPath, (filePath) => ts.sys.readFile(filePath));
 
   if (readResult.error !== undefined) {
-    return { diagnostics: [readResult.error], sourceFiles: [] };
+    return { compilerOptions: {}, diagnostics: [readResult.error], sourceFiles: [] };
   }
 
   const rawConfig = isRecord(readResult.config) ? readResult.config : {};
@@ -152,6 +181,7 @@ function defaultDiagnostics(plan: TypecheckPlan): CompilerAnalysis {
       moduleResolution: ts.ModuleResolutionKind.NodeNext,
       noCheck: false,
       noEmit: true,
+      noUncheckedIndexedAccess: true,
       resolveJsonModule: true,
       skipLibCheck: true,
       strict: true,
@@ -190,6 +220,7 @@ export class TypeScriptExecutor implements Executor<TypecheckPlan, TypecheckResu
 
     return Promise.resolve({
       compilerVersion: ts.version,
+      compilerOptions: analysis.compilerOptions,
       configPath: plan.configuration.kind === 'tsconfig' ? plan.configuration.path : null,
       diagnostics,
       entrypoint: plan.entrypoint,

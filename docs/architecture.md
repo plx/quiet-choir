@@ -31,11 +31,15 @@ Record consequential design choices as short architecture decision records under
 ## Workflow execution
 
 Workflow definitions combine ordinary TypeScript control flow with durable operations on a supplied
-context. Zod schemas infer and validate workflow inputs/outputs, local step results, and structured
-agent responses. Dedicated Claude and Codex clients submit plain-data requests through the
-replaceable `Harness` interface; the runtime owns step identity, replay, and validation
-independently of the CLI processes that perform agent work. Core-owned option schemas validate
-explicit requests before recording an effect; adapters reuse the same validators and apply their own
+context. Zod schemas alone infer callback types and validate workflow inputs/outputs, local step
+results, and structured agent responses. Dedicated Claude and Codex clients submit plain-data
+requests through the replaceable `Harness` interface; the runtime owns step identity, replay, and
+validation independently of the CLI processes that perform agent work. Direct-output `value()` calls
+use the same tracked effect and checkpoint as `object()`/`text()`. Undefined object members are
+omitted at durable boundaries; array holes and undefined elements remain errors. Fresh bodies and
+replayed results receive normalized checkpoint copies. See
+[ADR 0017](decisions/0017-schema-first-values.md). Core-owned option schemas validate explicit
+requests before recording an effect; adapters reuse the same validators and apply their own
 defaults. Optional `Harness.policyDefaults` reports execution limits without effects. The core
 resolves named profiles above adapter defaults, call-site policy, and sticky run overrides before
 invoking the adapter, and records per-attempt limits and provenance. `runWorkflow` and `readRun`

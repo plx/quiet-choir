@@ -7,6 +7,15 @@ import type { MapStepError } from './fan-out.js';
 export type JsonValue =
   null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
 
+/** JSON dependencies before persistence; undefined object members are omitted, never array elements. */
+export type JsonInput =
+  | null
+  | boolean
+  | number
+  | string
+  | readonly JsonInput[]
+  | { readonly [key: string]: JsonInput | undefined };
+
 /** Stable categories used by settled outcomes and selective retry. */
 export type ErrorKind =
   | 'timeout'
@@ -292,6 +301,21 @@ export interface AgentResult<T> {
 
 /** Dedicated typed API for a harness, with durable calls keyed by unique step IDs. */
 export interface AgentClient<TOptions extends AgentOptions> {
+  /** Return only the structured output; checkpoint the same result and metadata as object(). */
+  value<T>(
+    id: string,
+    options: TOptions & { readonly schema: z.ZodType<T>; readonly onError: 'return' },
+  ): Promise<Settled<T>>;
+  /** Return structured output with an inferred or dynamic error mode. */
+  value<T, TMode extends ErrorMode = 'throw'>(
+    id: string,
+    options: TOptions & { readonly schema: z.ZodType<T>; readonly onError?: TMode },
+  ): Promise<EffectResult<T, TMode>>;
+  /** Without a schema, return only text; onError: return produces Settled<string>. */
+  value<TMode extends ErrorMode = 'throw'>(
+    id: string,
+    options: TOptions & { readonly schema?: never; readonly onError?: TMode },
+  ): Promise<EffectResult<string, TMode>>;
   /** Invoke the harness for a plain text response. */
   text<TMode extends ErrorMode = 'throw'>(
     id: string,
@@ -335,14 +359,14 @@ export interface StepDefinition<T> {
   readonly onError?: ErrorMode;
   /** Explicit revision for captured values, helpers, or environment not visible in callback source. */
   readonly version?: string;
-  /** Explicit JSON-serializable dependencies, checked for drift on replay. */
-  readonly input: JsonValue;
+  /** Explicit JSON dependencies, checked for drift on replay after omitting undefined object members. */
+  readonly input: JsonInput;
   /** Runtime validator for the result, also applied on replay. */
   readonly schema: z.ZodType<T>;
   /** Optional retry policy; there are no automatic retries by default. */
   readonly retry?: RetryPolicy;
   /** Perform the effect. Do not nest workflow steps inside this callback. */
-  readonly run: (context: StepContext) => Promise<T> | T;
+  readonly run: NoInfer<(context: StepContext) => Promise<T> | T>;
 }
 
 /** Durable operations available to ordinary TypeScript workflow code. */
@@ -447,7 +471,9 @@ export interface WorkflowDefinition<TInput, TOutput, TProfile extends string = s
   /** Output validator and source of the inferred output type. */
   readonly output: z.ZodType<TOutput>;
   /** Workflow body. It replays from the beginning when resuming. */
-  readonly run: (context: WorkflowContext<NoInfer<TProfile>>, input: TInput) => Promise<TOutput>;
+  readonly run: NoInfer<
+    (context: WorkflowContext<NoInfer<TProfile>>, input: TInput) => Promise<TOutput>
+  >;
 }
 
 /** Define a workflow with input/output types inferred from its runtime schemas. */
