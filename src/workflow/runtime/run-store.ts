@@ -1,6 +1,6 @@
 import { existsSync } from 'node:fs';
 import { createHash } from 'node:crypto';
-import { mkdir } from 'node:fs/promises';
+import { mkdir, readFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { setImmediate } from 'node:timers/promises';
 import type { ProcessSupervisor } from '../../processes/supervisor.js';
@@ -104,15 +104,27 @@ class FileOwnedRun implements OwnedRunStore {
       return await readRun({ stateDir: this.stateDir, runId: this.runId });
     } catch (error) {
       if (
-        error instanceof Error &&
-        'code' in error &&
-        error.code === 'ENOENT' &&
-        !existsSync(legacyRunPath(this.stateDir, this.runId)) &&
-        !existsSync(join(runDirectory(this.stateDir, this.runId), 'run.json')) &&
-        !existsSync(join(runDirectory(this.stateDir, this.runId), 'journal.jsonl'))
+        !(error instanceof Error && 'code' in error && error.code === 'ENOENT') ||
+        existsSync(legacyRunPath(this.stateDir, this.runId)) ||
+        existsSync(join(runDirectory(this.stateDir, this.runId), 'run.json'))
       )
-        return undefined;
-      throw error;
+        throw error;
+      // A journal can exist with no run.json only before the first snapshot is published, so an
+      // empty or torn (never newline-terminated) journal is an uninitialized run, not corruption.
+      const journal = await readFile(
+        join(runDirectory(this.stateDir, this.runId), 'journal.jsonl'),
+        'utf8',
+      ).catch((journalError: unknown) => {
+        if (
+          journalError instanceof Error &&
+          'code' in journalError &&
+          journalError.code === 'ENOENT'
+        )
+          return '';
+        throw journalError;
+      });
+      if (journal.includes('\n')) throw error;
+      return undefined;
     }
   }
   public append(

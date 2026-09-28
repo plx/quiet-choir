@@ -260,6 +260,32 @@ it('refuses a missing journal instead of silently falling back to a stale migrat
   await expect(readRun(options)).rejects.toMatchObject({ code: 'ENOENT' });
 });
 
+it.each(['empty', 'torn'])(
+  'starts fresh over a %s journal orphaned before the first directory snapshot',
+  async (shape) => {
+    const definition = defineWorkflow({
+      name: 'orphan',
+      version: '1',
+      input: z.null(),
+      output: z.number(),
+      run: (ctx) => ctx.step('count', { input: null, schema: z.number(), run: () => 1 }),
+    });
+    const options = { stateDir, runId: 'orphan', input: null };
+    const first = await runWorkflow(definition, options);
+    expect(first.output).toBe(1);
+    // compact() truncates the journal on completion, so this reproduces the pre-snapshot crash
+    // window directly: run.json is gone and only an empty or torn journal remains.
+    await fs.rm(join(stateDir, 'orphan', 'run.json'));
+    await fs.writeFile(
+      join(stateDir, 'orphan', 'journal.jsonl'),
+      shape === 'torn' ? '{"seq":1,"at":' : '',
+    );
+    const resumed = await runWorkflow(definition, options);
+    expect(resumed.status).toBe('completed');
+    expect(resumed.output).toBe(1);
+  },
+);
+
 it.each([3, 11, 29])(
   'keeps every resolved fan-out result after SIGKILL near completion %s',
   async (stopAfter) => {
