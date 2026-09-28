@@ -81,11 +81,15 @@ it('keeps a failing parent denial policy for omitted child policies and refuses 
   expect(inherited.manifest.profiles['scout']?.onPermissionDenied).toBe('fail');
   // A Claude-only failing policy passes to omitted built-ins at the Claude level.
   expect(inherited.manifest.profiles['text']?.claude.onPermissionDenied).toBe('fail');
-  expect(() => { inherited.check('scout', 'claude', { prompt: 'x', onPermissionDenied: 'warn' }); },
-  ).toThrow('exceeds parent profile scout: onPermissionDenied');
-  expect(() => { inherited.check('scout', 'claude', { prompt: 'x', onPermissionDenied: 'fail' }); },
-  ).not.toThrow();
-  expect(() => { inherited.check('text', 'claude', { prompt: 'x' }); }).not.toThrow();
+  expect(() => {
+    inherited.check('scout', 'claude', { prompt: 'x', onPermissionDenied: 'warn' });
+  }).toThrow('exceeds parent profile scout: onPermissionDenied');
+  expect(() => {
+    inherited.check('scout', 'claude', { prompt: 'x', onPermissionDenied: 'fail' });
+  }).not.toThrow();
+  expect(() => {
+    inherited.check('text', 'claude', { prompt: 'x' });
+  }).not.toThrow();
 
   expect(() =>
     delegateCapabilities(
