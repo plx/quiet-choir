@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtemp, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { chmod, mkdtemp, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -57,6 +57,13 @@ try {
       QC_WORKFLOW: workflow,
       QC_RUNS: state,
     };
+    // A reused, previously exposed state directory and outputs must end up owner-only too.
+    await mkdir(state);
+    await chmod(state, 0o755);
+    for (const name of ['first.result.json', 'first.log']) {
+      await writeFile(join(state, name), 'stale');
+      await chmod(join(state, name), 0o644);
+    }
     const launch = command('sh', ['-c', await example(skillRoot, 'SKILL.md', 'golden-path')], {
       cwd: directory,
       env,

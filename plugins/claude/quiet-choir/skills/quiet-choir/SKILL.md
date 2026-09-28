@@ -23,16 +23,19 @@ Set `QC_CHECKOUT`, `QC_TARGET`, `QC_WORKFLOW`, and `QC_RUNS` to absolute paths: 
 checkout, the target project, a trusted workflow file, and a state directory **outside the target
 worktree**. Start with the local-only workflow below, which accepts `{}` and makes no paid calls.
 Use a fresh run ID for another independent run; retain these paths for inspection and recovery. The
-redirected result and log can hold plaintext workflow output, so `umask 077` and a private
-`$QC_RUNS` keep them owner-only, matching the 0600 checkpoints.
+redirected result and log can hold plaintext workflow output. `umask 077` affects only new paths, so
+the recipe also tightens an existing `$QC_RUNS` and recreates the output files, keeping them
+owner-only like the 0600 checkpoints.
 
 <!-- skills-check: example golden-path -->
 
 ```sh
 umask 077
 mkdir -m 700 -p "$QC_RUNS"
+chmod 700 "$QC_RUNS" || exit 1
 cd "$QC_TARGET" || exit 1
 node "$QC_CHECKOUT/bin/run.js" workflow validate "$QC_WORKFLOW" --json || exit 1
+rm -f "$QC_RUNS/first.result.json" "$QC_RUNS/first.log" || exit 1
 nohup node "$QC_CHECKOUT/bin/run.js" workflow execute "$QC_WORKFLOW" \
   --run-id first --state-dir "$QC_RUNS" --input '{}' --json \
   >"$QC_RUNS/first.result.json" 2>"$QC_RUNS/first.log" < /dev/null &
