@@ -81,7 +81,8 @@ prevents queued requests from slipping past a newly reached threshold. Without r
 invocation-only admission behavior remains unchanged. Queueing alone creates no budgeted attempt;
 cancelling a queued first attempt leaves no record, and cancelling a queued retry marks the step
 cancelled while keeping its failed attempts. An admitted preparation failure does count as an
-attempt even if it never reaches native inference.
+attempt even if it never reaches native inference. A budgeted attempt still times from the admission
+request, so its `durationMs` and `startedAt` cover any queue wait the same as an unbudgeted attempt.
 
 A refusal creates no step/attempt record and saves a run-level `budgetStop`. It cancels queued
 admissions, lets all admitted agent attempts finish, then rejects with `RunBudgetExceededError`. The

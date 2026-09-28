@@ -1199,6 +1199,10 @@ export async function runWorkflow<TInput, TOutput>(
       const agent = kind === 'claude' || kind === 'codex';
       for (let attempt = 1; ; attempt++) {
         signal.throwIfAborted();
+        // Captured before budget admission: a saturated limiter's queue wait is part of the
+        // attempt's and step's persisted timing, not just the work after admission clears.
+        const attemptStartedAt = new Date().toISOString();
+        const attemptStarted = performance.now();
         let admitted: Awaited<ReturnType<typeof budgetAdmission>> | undefined;
         try {
           admitted =
@@ -1265,10 +1269,9 @@ export async function runWorkflow<TInput, TOutput>(
           if (observedExec) step.exec = structuredClone(observedExec);
           else delete step.exec;
           delete step.execError;
-          step.startedAt = new Date().toISOString();
+          step.startedAt = attemptStartedAt;
           step.finishedAt = null;
           step.durationMs = null;
-          const attemptStarted = performance.now();
           delete step.cancelledBy;
           const attemptRecord: AttemptRecord = {
             ...structuredClone(execution),

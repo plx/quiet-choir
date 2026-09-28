@@ -318,6 +318,46 @@ it('cancels a budgeted retry queued for admission instead of leaving the step fa
   expect(saved.steps['blocker']).toMatchObject({ status: 'cancelled', attempts: 1 });
 });
 
+it('times a budgeted attempt from the admission request, covering queue wait', async () => {
+  const stateDir = await directory();
+  const holdMs = 150;
+  const prompts: string[] = [];
+  const definition = defineWorkflow({
+    ...base,
+    async run(ctx) {
+      await Promise.all(['first', 'second'].map((id) => ctx.claude.text(id, { prompt: id })));
+      return null;
+    },
+  });
+  const result = await runWorkflow(definition, {
+    stateDir,
+    runId: 'timed',
+    input: null,
+    agentLimit: 1,
+    maxRunAgentAttempts: 10,
+    harness: {
+      async invoke(request) {
+        prompts.push(request.options.prompt);
+        // `first` holds the sole permit; `second` must queue behind it and only then run,
+        // resolving almost instantly once admitted.
+        if (request.options.prompt === 'first') {
+          await new Promise((resolve) => setTimeout(resolve, holdMs));
+        }
+        return { text: 'ok', sessionId: null };
+      },
+    },
+  });
+  expect(result.status).toBe('completed');
+  expect(prompts).toEqual(['first', 'second']);
+  const saved = await readRun({ stateDir, runId: 'timed' });
+  const secondAttempt = saved.steps['second']?.attemptHistory?.[0];
+  // `second`'s own native call is instant; its recorded duration and startedAt must still cover
+  // the time it spent queued for the limiter slot `first` held, since timing starts at the
+  // admission request rather than once the permit is granted.
+  expect(secondAttempt?.durationMs ?? 0).toBeGreaterThanOrEqual(holdMs - 20);
+  expect(saved.steps['second']?.durationMs ?? 0).toBeGreaterThanOrEqual(holdMs - 20);
+});
+
 it('allows local work and replays with a zero cap and validates policy before creating a run', async () => {
   const stateDir = await directory();
   const definition = defineWorkflow({
