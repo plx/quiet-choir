@@ -251,7 +251,7 @@ export function resolveCapabilities(definition: {
           );
       if (!(declaration.options instanceof z.ZodObject))
         throw new Error(`Harness ${registered} options must be a Zod object schema.`);
-      harnesses[registered] = declaration.options.partial().strict().parse(supplied) as Record<
+      harnesses[registered] = partialOptions(declaration.options).parse(supplied) as Record<
         string,
         JsonValue
       >;
@@ -550,6 +550,11 @@ export function controlAccess(
   return tools;
 }
 
+/** Field-wise partial view; object-level refinements apply only to a complete merged call. */
+function partialOptions(options: z.ZodObject): z.ZodObject {
+  return z.strictObject(options.shape).partial();
+}
+
 /** Conservatively classify package-defined capabilities, without applying adapter defaults. @internal */
 export function registeredCapabilities(
   definition: HarnessDeclaration,
@@ -557,7 +562,7 @@ export function registeredCapabilities(
 ): { access: AccessClass; controls: Record<string, JsonValue> } {
   const parsed =
     definition.options instanceof z.ZodObject
-      ? definition.options.partial().safeParse(options)
+      ? partialOptions(definition.options).safeParse(options)
       : definition.options.safeParse(options);
   const access =
     parsed.success && definition.access ? definition.access(parsed.data as never) : 'exec';

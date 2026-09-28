@@ -270,9 +270,10 @@ making real calls.
 Register a third harness with
 `defineHarness({ name, revision, options, capabilities, createAdapter })` and
 `defineWorkflow({ harnesses: [definition], ... })`. The strict Zod object schema owns its option
-names; `ctx.agent(name)` infers options and removes structured methods when
-`structuredOutput: 'none'`. Claude/Codex shorthands remain available. A model-service option may be
-called `provider`; the request's harness name identifies the adapter instead.
+names, and its object-level refinements check each complete call after profile merging (profile
+entries are checked field by field); `ctx.agent(name)` infers options and removes structured methods
+when `structuredOutput: 'none'`. Claude/Codex shorthands remain available. A model-service option
+may be called `provider`; the request's harness name identifies the adapter instead.
 
 `HarnessAdapter.invoke(request, signal, invocation?)` performs one attempt. Runtime calls supply the
 optional ownership context. Lookup is `RunOptions.adapters[name]`, then the legacy catch-all

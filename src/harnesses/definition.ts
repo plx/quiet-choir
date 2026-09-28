@@ -60,7 +60,15 @@ export function defineHarness<
     timeoutMs: z.number().int().positive().max(2_147_483_647).optional(),
     worktree: agentWorktreeSchema.optional(),
   };
-  const options = z.object({ ...runtimeOptions, ...definition.options.shape }).strict();
+  // Extend the author's schema, so object-level refinements survive; author fields keep precedence.
+  const declared: Record<string, unknown> = definition.options.shape;
+  const options = definition.options
+    .safeExtend(
+      Object.fromEntries(
+        Object.entries(runtimeOptions).filter(([key]) => !Object.hasOwn(declared, key)),
+      ),
+    )
+    .strict();
   const shape: Record<string, unknown> = options.shape;
   if (Object.hasOwn(shape, 'schema'))
     throw new Error(

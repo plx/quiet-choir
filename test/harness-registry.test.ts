@@ -366,3 +366,55 @@ it('discovers each frame registration even when a child uses another revision of
   });
   expect(record.harnessWarnings?.join(' ')).toContain('third@1 to third@2');
 });
+
+it('keeps object-level option refinements when adding runtime fields', async () => {
+  const ranged = defineHarness({
+    ...third,
+    name: 'ranged',
+    options: z
+      .object({ prompt: z.string(), min: z.number(), max: z.number().optional() })
+      .refine((value) => value.max === undefined || value.min <= value.max, {
+        message: 'min must not exceed max',
+      }),
+    policy: [],
+  });
+  expect(ranged.options.safeParse({ prompt: 'x', min: 2, max: 1 }).success).toBe(false);
+  expect(ranged.options.safeParse({ prompt: 'x', min: 1, max: 2, cwd: '.' }).success).toBe(true);
+  let calls = 0;
+  const adapter = {
+    invoke: async () => {
+      calls++;
+      return response('ranged');
+    },
+  };
+  const call = (options: { min: number; max?: number; profile?: string }) =>
+    defineWorkflow({
+      ...base,
+      harnesses: [ranged],
+      profiles: { bounded: { harnesses: { ranged: { max: 2 } } } },
+      async run(ctx) {
+        return ctx.agent('ranged').value('answer', { prompt: 'x', ...options });
+      },
+    });
+  // Directly supplied options, then a profile default that only conflicts once merged.
+  for (const options of [
+    { min: 3, max: 2 },
+    { min: 3, profile: 'bounded' },
+  ]) {
+    const rejected = await setup();
+    await expect(
+      runWorkflow(call(options), { ...rejected, adapters: { ranged: adapter } }),
+    ).rejects.toThrow('min must not exceed max');
+    expect((await readRun(rejected)).steps).toEqual({});
+  }
+  expect(calls).toBe(0);
+  expect(
+    (
+      await runWorkflow(call({ min: 1, profile: 'bounded' }), {
+        ...(await setup()),
+        adapters: { ranged: adapter },
+      })
+    ).output,
+  ).toBe('ranged');
+  expect(calls).toBe(1);
+});
