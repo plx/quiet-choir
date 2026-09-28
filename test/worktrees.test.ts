@@ -15,7 +15,7 @@ import {
   writeFile,
 } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join, dirname } from 'node:path';
+import { join, dirname, resolve } from 'node:path';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 import {
@@ -26,10 +26,12 @@ import {
   runWorkflow,
   type Harness,
   type WorktreeHandle,
+  type WorktreeLedger,
   type ProcessRunner,
 } from '../src/index.js';
 import { WorktreeGit } from '../src/worktrees/git.js';
 import { RunWorktrees } from '../src/workflow/runtime/worktrees.js';
+import { repairWorktreeRegistrations } from '../src/workflow/runtime/worktree-recovery.js';
 import { testInvocation } from './harness-invocation.js';
 
 // Every test drives dozens of real Git processes and fsynced checkpoints; under a loaded parallel
@@ -1371,4 +1373,482 @@ it('cancels queued shared work without starting its callback and commits a valid
   expect(secondCalls).toBe(0);
   expect(record.steps['first']?.status).toBe('completed');
   expect(record.steps['second']?.status).toBe('cancelled');
+});
+
+it.each(['owned', 'different-owner'] as const)(
+  'reconciles only an owned planned worktree with an interrupted empty commondir (%s)',
+  async (ownership) => {
+    let metadata = '',
+      interrupted = false;
+    const breakingRunner: ProcessRunner = {
+      async run(request, invocation) {
+        const result = await processRunner.run(request, invocation);
+        if (
+          !interrupted &&
+          Array.isArray(request.command) &&
+          request.command.includes('worktree') &&
+          request.command.includes('add')
+        ) {
+          interrupted = true;
+          const path = z.string().parse(request.command.at(-2));
+          metadata = resolve(
+            path,
+            (await readFile(join(path, '.git'), 'utf8')).replace(/^gitdir: /u, '').trimEnd(),
+          );
+          await writeFile(join(metadata, 'commondir'), '');
+          if (ownership === 'different-owner')
+            await writeFile(
+              join(metadata, 'gitdir'),
+              join(directory, 'someone-else', '.git') + '\n',
+            );
+          throw new Error('fixture interrupted registration');
+        }
+        return result;
+      },
+    };
+    const invoke = vi.fn<Harness['invoke']>(async (request) => {
+      await writeFile(join(request.cwd, 'file.txt'), 'resumed edit\n');
+      return response;
+    });
+    const workflow = defineWorkflow({
+      name: 'planned-registration',
+      version: '1',
+      input: z.null(),
+      output: z.string(),
+      async run(ctx) {
+        const result = await ctx.codex.text('edit', { prompt: 'edit', isolation: 'worktree' });
+        assert(result.worktree?.commit);
+        return result.worktree.commit;
+      },
+    });
+    const settings = {
+      ...options('planned-registration'),
+      harness: { invoke },
+      worktrees: { root, keep: 'all' as const },
+    };
+    await expect(
+      runWorkflow(workflow, { ...settings, input: null, processRunner: breakingRunner }),
+    ).rejects.toThrow('fixture interrupted registration');
+    expect(invoke).not.toHaveBeenCalled();
+    const failed = await readRun(settings);
+    expect(Object.values(failed.worktrees?.caches ?? {}).map((cache) => cache.state)).toEqual([
+      'planned',
+    ]);
+    if (ownership === 'different-owner') {
+      const rejection: unknown = await runWorkflow(workflow, {
+        ...settings,
+        resume: true,
+      }).catch((error: unknown) => error);
+      expect(rejection).toBeInstanceOf(Error);
+      expect((rejection as Error).cause).toBeInstanceOf(ConfigurationError);
+      expect((rejection as Error).message).toContain('different checkout owner');
+      expect(await readFile(join(metadata, 'commondir'), 'utf8')).toBe('');
+      expect(invoke).not.toHaveBeenCalled();
+      return;
+    }
+    const resumed = await runWorkflow(workflow, { ...settings, resume: true });
+    expect(await readFile(join(metadata, 'commondir'), 'utf8')).toBe('../..\n');
+    expect(resumed.worktreeWarnings).toContainEqual(
+      expect.stringContaining('Repaired interrupted Git worktree registration'),
+    );
+    expect(invoke).toHaveBeenCalledTimes(1);
+    expect(resumed.steps['edit']?.worktree?.path).not.toBe(failed.steps['edit']?.worktree?.path);
+    expect(await command('show', `${String(resumed.output)}:file.txt`)).toBe('resumed edit');
+    await runWorkflow(workflow, { ...settings, resume: true });
+    expect(invoke).toHaveBeenCalledTimes(1);
+  },
+  20_000,
+);
+
+it.each([
+  {
+    label: 'a missing commondir',
+    corrupt: (metadata: string) => rm(join(metadata, 'commondir'), { force: true }),
+    unchanged: async (metadata: string) => {
+      await expect(readFile(join(metadata, 'commondir'), 'utf8')).rejects.toThrow();
+    },
+  },
+  {
+    label: "a 'junk' commondir",
+    corrupt: (metadata: string) => writeFile(join(metadata, 'commondir'), 'junk'),
+    unchanged: async (metadata: string) => {
+      expect(await readFile(join(metadata, 'commondir'), 'utf8')).toBe('junk');
+    },
+  },
+])(
+  'rejects a resumed worktree registration with $label as an invalid commondir',
+  async ({ corrupt, unchanged }) => {
+    let metadata = '',
+      interrupted = false;
+    const breakingRunner: ProcessRunner = {
+      async run(request, invocation) {
+        const result = await processRunner.run(request, invocation);
+        if (
+          !interrupted &&
+          Array.isArray(request.command) &&
+          request.command.includes('worktree') &&
+          request.command.includes('add')
+        ) {
+          interrupted = true;
+          const path = z.string().parse(request.command.at(-2));
+          metadata = resolve(
+            path,
+            (await readFile(join(path, '.git'), 'utf8')).replace(/^gitdir: /u, '').trimEnd(),
+          );
+          await corrupt(metadata);
+          throw new Error('fixture interrupted registration');
+        }
+        return result;
+      },
+    };
+    const invoke = vi.fn<Harness['invoke']>(async (request) => {
+      await writeFile(join(request.cwd, 'file.txt'), 'resumed edit\n');
+      return response;
+    });
+    const workflow = defineWorkflow({
+      name: 'planned-registration-invalid-commondir',
+      version: '1',
+      input: z.null(),
+      output: z.string(),
+      async run(ctx) {
+        const result = await ctx.codex.text('edit', { prompt: 'edit', isolation: 'worktree' });
+        assert(result.worktree?.commit);
+        return result.worktree.commit;
+      },
+    });
+    const settings = {
+      ...options('planned-registration-invalid-commondir'),
+      harness: { invoke },
+      worktrees: { root, keep: 'all' as const },
+    };
+    await expect(
+      runWorkflow(workflow, { ...settings, input: null, processRunner: breakingRunner }),
+    ).rejects.toThrow('fixture interrupted registration');
+    expect(invoke).not.toHaveBeenCalled();
+    const rejection: unknown = await runWorkflow(workflow, {
+      ...settings,
+      resume: true,
+    }).catch((error: unknown) => error);
+    expect(rejection).toBeInstanceOf(Error);
+    expect((rejection as Error).cause).toBeInstanceOf(ConfigurationError);
+    expect((rejection as Error).message).toContain('invalid commondir');
+    await unchanged(metadata);
+    expect(invoke).not.toHaveBeenCalled();
+  },
+  20_000,
+);
+
+it.each([
+  {
+    label: 'a symlinked commondir',
+    corrupt: async (metadata: string) => {
+      const elsewhere = join(dirname(metadata), 'elsewhere-commondir');
+      await writeFile(elsewhere, '../..\n');
+      await rm(join(metadata, 'commondir'), { force: true });
+      await symlink(elsewhere, join(metadata, 'commondir'));
+    },
+  },
+  {
+    label: 'an oversized gitdir backlink',
+    corrupt: (metadata: string) => writeFile(join(metadata, 'gitdir'), '../..\n'.repeat(1000)),
+  },
+  {
+    label: 'a non-UTF-8 gitdir backlink',
+    corrupt: (metadata: string) =>
+      writeFile(join(metadata, 'gitdir'), Buffer.from([0xff, 0xfe, 0xfd])),
+  },
+])(
+  'rejects a resumed worktree registration with $label as malformed',
+  async ({ corrupt }) => {
+    let interrupted = false;
+    const breakingRunner: ProcessRunner = {
+      async run(request, invocation) {
+        const result = await processRunner.run(request, invocation);
+        if (
+          !interrupted &&
+          Array.isArray(request.command) &&
+          request.command.includes('worktree') &&
+          request.command.includes('add')
+        ) {
+          interrupted = true;
+          const path = z.string().parse(request.command.at(-2));
+          const metadata = resolve(
+            path,
+            (await readFile(join(path, '.git'), 'utf8')).replace(/^gitdir: /u, '').trimEnd(),
+          );
+          await corrupt(metadata);
+          throw new Error('fixture interrupted registration');
+        }
+        return result;
+      },
+    };
+    const invoke = vi.fn<Harness['invoke']>(async (request) => {
+      await writeFile(join(request.cwd, 'file.txt'), 'resumed edit\n');
+      return response;
+    });
+    const workflow = defineWorkflow({
+      name: 'planned-registration-malformed',
+      version: '1',
+      input: z.null(),
+      output: z.string(),
+      async run(ctx) {
+        const result = await ctx.codex.text('edit', { prompt: 'edit', isolation: 'worktree' });
+        assert(result.worktree?.commit);
+        return result.worktree.commit;
+      },
+    });
+    const settings = {
+      ...options('planned-registration-malformed'),
+      harness: { invoke },
+      worktrees: { root, keep: 'all' as const },
+    };
+    await expect(
+      runWorkflow(workflow, { ...settings, input: null, processRunner: breakingRunner }),
+    ).rejects.toThrow('fixture interrupted registration');
+    expect(invoke).not.toHaveBeenCalled();
+    const rejection: unknown = await runWorkflow(workflow, {
+      ...settings,
+      resume: true,
+    }).catch((error: unknown) => error);
+    expect(rejection).toBeInstanceOf(Error);
+    expect((rejection as Error).cause).toBeInstanceOf(ConfigurationError);
+    expect((rejection as Error).message).toContain('malformed');
+    expect(invoke).not.toHaveBeenCalled();
+  },
+  20_000,
+);
+
+it('surfaces an aborted signal from worktree registration recovery as cancellation, not a configuration error', async () => {
+  // Exercising this precisely through a full interrupted `git worktree add` plus a real-time
+  // abort would race the recovery's own fs reads. Driving the exported recovery function
+  // directly against a synthetic, already-planned registration lets the abort be deterministic.
+  const cachePath = join(root, 'owned-run-ns', 'leaf');
+  const common = join(directory, 'common-repo');
+  const metadata = join(common, 'worktrees', 'leaf');
+  await mkdir(cachePath, { recursive: true });
+  await mkdir(metadata, { recursive: true });
+  await writeFile(join(cachePath, '.git'), `gitdir: ${metadata}\n`);
+  await writeFile(join(metadata, 'gitdir'), `${join(cachePath, '.git')}\n`);
+  await writeFile(join(metadata, 'commondir'), '');
+  const ledger: WorktreeLedger = {
+    namespace: 'ns',
+    repo: repo,
+    root,
+    caches: {
+      leaf: { path: cachePath, stepId: 'leaf', attempt: 1, state: 'planned', outcome: 'running' },
+    },
+    handles: {},
+    refs: {},
+  };
+  const controller = new AbortController();
+  controller.abort(new Error('recovery cancelled'));
+  const rejection: unknown = await repairWorktreeRegistrations(
+    ledger,
+    'owned-run',
+    common,
+    controller.signal,
+  ).catch((error: unknown) => error);
+  expect(rejection).toBeInstanceOf(Error);
+  expect((rejection as Error).message).toBe('recovery cancelled');
+  expect(rejection).not.toBeInstanceOf(ConfigurationError);
+});
+
+it('throws ConfigurationError when a resumed worktree registration is missing its metadata directory', async () => {
+  let interrupted = false;
+  const breakingRunner: ProcessRunner = {
+    async run(request, invocation) {
+      const result = await processRunner.run(request, invocation);
+      if (
+        !interrupted &&
+        Array.isArray(request.command) &&
+        request.command.includes('worktree') &&
+        request.command.includes('add')
+      ) {
+        interrupted = true;
+        const path = z.string().parse(request.command.at(-2));
+        const metadata = resolve(
+          path,
+          (await readFile(join(path, '.git'), 'utf8')).replace(/^gitdir: /u, '').trimEnd(),
+        );
+        // The checkout's `.git` pointer survives while Git's own metadata directory was only
+        // partially created (or removed) before the interruption.
+        await rm(metadata, { recursive: true, force: true });
+        throw new Error('fixture interrupted registration');
+      }
+      return result;
+    },
+  };
+  const invoke = vi.fn<Harness['invoke']>(async (request) => {
+    await writeFile(join(request.cwd, 'file.txt'), 'resumed edit\n');
+    return response;
+  });
+  const workflow = defineWorkflow({
+    name: 'planned-registration-missing-metadata',
+    version: '1',
+    input: z.null(),
+    output: z.string(),
+    async run(ctx) {
+      const result = await ctx.codex.text('edit', { prompt: 'edit', isolation: 'worktree' });
+      assert(result.worktree?.commit);
+      return result.worktree.commit;
+    },
+  });
+  const settings = {
+    ...options('planned-registration-missing-metadata'),
+    harness: { invoke },
+    worktrees: { root, keep: 'all' as const },
+  };
+  await expect(
+    runWorkflow(workflow, { ...settings, input: null, processRunner: breakingRunner }),
+  ).rejects.toThrow('fixture interrupted registration');
+  expect(invoke).not.toHaveBeenCalled();
+  const rejection: unknown = await runWorkflow(workflow, {
+    ...settings,
+    resume: true,
+  }).catch((error: unknown) => error);
+  expect(rejection).toBeInstanceOf(Error);
+  expect((rejection as Error).cause).toBeInstanceOf(ConfigurationError);
+  expect((rejection as Error).message).toContain('metadata is missing');
+  expect(invoke).not.toHaveBeenCalled();
+}, 20_000);
+
+it('keeps a resumed different-owner worktree registration a configuration failure that a retried, settled map cannot journal', async () => {
+  // First interrupt and corrupt the planned registration exactly as the plain-call case does,
+  // then resume with the *same* step wrapped in a retry policy under an onError: 'settle' map.
+  // Recovery runs in `ledger()` before the harness ever launches, so it must still surface as a
+  // fatal ConfigurationError: never retried by the call's own policy, never journaled as the
+  // map item's settled outcome.
+  let metadata = '',
+    interrupted = false;
+  const breakingRunner: ProcessRunner = {
+    async run(request, invocation) {
+      const result = await processRunner.run(request, invocation);
+      if (
+        !interrupted &&
+        Array.isArray(request.command) &&
+        request.command.includes('worktree') &&
+        request.command.includes('add')
+      ) {
+        interrupted = true;
+        const path = z.string().parse(request.command.at(-2));
+        metadata = resolve(
+          path,
+          (await readFile(join(path, '.git'), 'utf8')).replace(/^gitdir: /u, '').trimEnd(),
+        );
+        await writeFile(join(metadata, 'commondir'), '');
+        await writeFile(join(metadata, 'gitdir'), join(directory, 'someone-else', '.git') + '\n');
+        throw new Error('fixture interrupted registration');
+      }
+      return result;
+    },
+  };
+  const invoke = vi.fn<Harness['invoke']>(async (request) => {
+    await writeFile(join(request.cwd, 'file.txt'), 'resumed edit\n');
+    return response;
+  });
+  const setup = defineWorkflow({
+    name: 'planned-registration-settle',
+    version: '1',
+    input: z.null(),
+    output: z.string(),
+    async run(ctx) {
+      const result = await ctx.codex.text('edit', { prompt: 'edit', isolation: 'worktree' });
+      assert(result.worktree?.commit);
+      return result.worktree.commit;
+    },
+  });
+  const settled = defineWorkflow({
+    name: 'planned-registration-settle',
+    version: '1',
+    input: z.null(),
+    output: z.string(),
+    async run(ctx) {
+      const [result] = await ctx.map(
+        'items',
+        ['only'],
+        { concurrency: 1, onError: 'settle' },
+        async () =>
+          ctx.codex.text('edit', {
+            prompt: 'edit',
+            isolation: 'worktree',
+            onError: 'return',
+            retry: { maxAttempts: 3, delayMs: 0 },
+          }),
+      );
+      if (!result?.ok || !result.value.ok) throw new Error('isolated call did not complete');
+      assert(result.value.value.worktree?.commit);
+      return result.value.value.worktree.commit;
+    },
+  });
+  const settings = {
+    ...options('planned-registration-settle'),
+    harness: { invoke },
+    worktrees: { root, keep: 'all' as const },
+  };
+  await expect(
+    runWorkflow(setup, { ...settings, input: null, processRunner: breakingRunner }),
+  ).rejects.toThrow('fixture interrupted registration');
+  expect(invoke).not.toHaveBeenCalled();
+  const failed = await readRun(settings);
+  expect(Object.values(failed.worktrees?.caches ?? {}).map((cache) => cache.state)).toEqual([
+    'planned',
+  ]);
+
+  const rejection: unknown = await runWorkflow(settled, { ...settings, resume: true }).catch(
+    (error: unknown) => error,
+  );
+  expect(rejection).toBeInstanceOf(Error);
+  expect((rejection as Error).cause).toBeInstanceOf(ConfigurationError);
+  expect((rejection as Error).message).toContain('different checkout owner');
+  expect(await readFile(join(metadata, 'commondir'), 'utf8')).toBe('');
+  expect(invoke).not.toHaveBeenCalled();
+  const resumedFailed = await readRun(settings);
+  const step = resumedFailed.steps['items/0/edit'];
+  expect(step?.status).toBe('failed');
+  expect(step?.attempts).toBe(1);
+  expect(resumedFailed.maps?.['items']?.items[0]).toMatchObject({
+    status: 'running',
+    outcome: null,
+  });
+}, 20_000);
+
+it('serializes sibling Git registrations while retaining concurrent isolated effects', async () => {
+  let active = 0,
+    maximum = 0;
+  const observing: ProcessRunner = {
+    async run(request, invocation) {
+      const adding =
+        Array.isArray(request.command) &&
+        request.command.includes('worktree') &&
+        request.command.includes('add');
+      if (!adding) return processRunner.run(request, invocation);
+      maximum = Math.max(maximum, ++active);
+      try {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        return await processRunner.run(request, invocation);
+      } finally {
+        active--;
+      }
+    },
+  };
+  const workflow = defineWorkflow({
+    name: 'concurrent-registration',
+    version: '1',
+    input: z.null(),
+    output: z.array(z.string()),
+    run: (ctx) =>
+      ctx.map('items', ['a', 'b'], { concurrency: 2 }, (item) =>
+        ctx.codex.value('edit', { prompt: item, isolation: 'worktree' }),
+      ),
+  });
+  const invoke = vi.fn<Harness['invoke']>(() => Promise.resolve(response));
+  const result = await runWorkflow(workflow, {
+    ...options('concurrent-registration'),
+    input: null,
+    processRunner: observing,
+    harness: { invoke },
+  });
+  expect(result.output).toEqual(['done', 'done']);
+  expect(invoke).toHaveBeenCalledTimes(2);
+  expect(maximum).toBe(1);
 });

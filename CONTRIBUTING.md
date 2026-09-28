@@ -13,9 +13,12 @@ output, API documentation, and the packed module/type-resolution contract. `skil
 the two distributed skill packages and compiles their complete examples; `test:cli` also executes
 the documented golden path and embedding recipes with temporary projects and fake harnesses. See
 [skill maintenance](docs/plugins.md#packaging-and-maintenance). After the build, `comparisons:check`
-also typechecks the active Workflow Lab batch and verifies its saved fixture report without
-rewriting it. An API change that breaks a port must update the port, report, and API snapshot in the
-same PR; see [the batch policy](comparisons/README.md#regression-and-snapshot-policy).
+also typechecks both Workflow Lab batches, preserves the Batch 01 differential baseline and verifies
+the active Batch 02 fault matrix without rewriting reports. A primitive PR must update its matching
+Batch 02 port, notes and fault row in the same PR, even if it still compiles; refresh API provenance
+when the target API changes. The six ports are release-notes, project-bootstrap, test-gap-filler,
+incident-investigation, sdlc-orchestrator and bug-hunt; see
+[the batch policy](comparisons/README.md#regression-and-snapshot-policy).
 
 Cookbook changes must update `examples/patterns/` and the corresponding named fences in both
 physical skill copies. `skills:check` enforces source equality and the 30-line workflow limit;

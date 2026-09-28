@@ -20,6 +20,7 @@ import { digest } from './json.js';
 import { CheckpointError } from './checkpoint.js';
 import { ConfigurationError } from './configuration-error.js';
 import { filePath } from './files.js';
+import { repairWorktreeRegistrations } from './worktree-recovery.js';
 
 function within(root: string, path: string): boolean {
   const part = relative(root, path);
@@ -97,6 +98,7 @@ export interface WorktreeLease {
 export class RunWorktrees {
   private initialization: Promise<WorktreeLedger> | undefined;
   private adminKeyPromise: Promise<string> | undefined;
+  private recovery: Promise<void> | undefined;
   private readonly locks = new HandleLocks();
   private readonly git: WorktreeGit | undefined;
 
@@ -151,7 +153,28 @@ export class RunWorktrees {
   }
 
   public async ledger(invocation: HarnessInvocation): Promise<WorktreeLedger> {
-    if (this.record.worktrees) return this.record.worktrees;
+    if (this.record.worktrees) {
+      const ledger = this.record.worktrees;
+      this.recovery ??= (async () => {
+        if (!Object.values(ledger.caches).some((cache) => cache.state === 'planned')) return;
+        const signal = this.runSignal ?? invocation.signal;
+        const common = await this.adminKey(ledger, { ...invocation, signal });
+        // Hold the repository's administration lock so no concurrent `worktree add` in this
+        // process enumerates the registration while its commondir is being repaired.
+        const repaired = await administer(common, signal, () =>
+          repairWorktreeRegistrations(ledger, this.record.id, common, signal),
+        );
+        for (const path of repaired)
+          this.warn(`Repaired interrupted Git worktree registration: ${path}`);
+        if (repaired.length) await this.save();
+      })().catch((error: unknown) => {
+        // Memoize only success, matching initialization, so a transient failure can retry.
+        this.recovery = undefined;
+        throw error;
+      });
+      await this.recovery;
+      return ledger;
+    }
     this.initialization ??= (async () => {
       const git = this.driver();
       const sharedInvocation = { ...invocation, signal: this.runSignal ?? invocation.signal };
@@ -212,6 +235,7 @@ export class RunWorktrees {
         refs: {},
       };
       this.record.worktrees = ledger;
+      this.recovery = Promise.resolve(); // No preceding attempt exists in a new ledger.
       await this.save();
       return ledger;
     })().catch((error: unknown) => {
@@ -338,6 +362,8 @@ export class RunWorktrees {
       await mkdir(dirname(path), { recursive: true, mode: 0o700 });
       const key = await this.adminKey(ledger, invocation);
       // --force allows re-creating exactly this missing, registered worktree; never global prune.
+      // Git enumerates other registrations while adding one. The per-repository administration lock
+      // keeps sibling creation from observing an empty commondir; agent work stays concurrent.
       await administer(key, invocation.signal, () =>
         git.run(ledger.repo, ['worktree', 'add', '--force', '--detach', path, base], invocation),
       );

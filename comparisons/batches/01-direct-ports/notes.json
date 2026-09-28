@@ -19,7 +19,8 @@
     "summary": "Discover call sites, partition them into disjoint file groups, transform them in bounded waves, and verify the repository. If verification fails, try one repair pass over up to three failure clusters.",
     "preserved": "Disjoint file ownership, the batchSize wave boundary, early exit when every group in a wave is blocked, and the single verify→repair→verify cycle are unchanged.",
     "changes": [
-      "The wave still contains batchSize groups, but the local fan-out helper runs at most eight items at once. Larger waves queue within that boundary."
+      "The wave still contains batchSize groups, but the local fan-out helper runs at most eight items at once. Larger waves queue within that boundary.",
+      "#65 intentional strictness correction: an empty files group throws an authored diagnostic before that group’s writer. Other groups may already run concurrently; this is not global preflight. The regression also reproduces the original files[0].split TypeError."
     ],
     "evaluation": "The no-worktree approach depends on discovery actually producing disjoint paths; neither implementation proves that claim. Migration and repair are write operations. Unattempted waves after an early abort are not automatically retried within the same completed run."
   },
@@ -27,7 +28,7 @@
     "summary": "Rotate through bug-finding lenses, deduplicate candidates across rounds, and convene independent skeptic panels. Keep majority-upheld findings and stop after two dry rounds or the configured round cap.",
     "preserved": "Lens rotation, the seen set covering both confirmed and refuted findings, majority arithmetic, severity ordering, and the dry-round/maxRounds stopping rules are retained.",
     "changes": [
-      "The original 60,000-token remaining-budget exit is unavailable: Quiet Choir has no shared token ledger. The port keeps the convergence and round-cap exits.",
+      "The original budget.remaining() token-target interface is unavailable. This baseline retains convergence and round-cap exits; the launcher can impose sticky reported-cost and attempt admission gates, and Batch 02 exercises those gates explicitly.",
       "Named maps and ctx.within replace createPort counters. Round, finding key, skeptic index, and explicit verdict leaf compose each ID. Same-round duplicate candidates retain their original behavior through occurrence keys computed before concurrency; adopting these IDs requires a new run or explicit fork."
     ],
     "evaluation": "The retained per-call USD cap is not a replacement for a whole-workflow budget. Distinct scopes keep skeptic IDs unique even when findings share a filename and panel labels repeat."
@@ -60,7 +61,8 @@
     "summary": "Research the target dependency while analyzing local usage, combine the evidence into an upgrade plan, apply it, and run a bounded verification-and-repair loop.",
     "preserved": "Research and impact analysis meet at the same barrier. The reconsider-risk exit, single initial applier, three-cluster repair cap, maximum repair rounds, and final status calculation are retained.",
     "changes": [
-      "The paired analysis results retain their distinct schema types. Each loop invocation gets a new durable ID even where its human-readable label repeats."
+      "The paired analysis results retain their distinct schema types. Each loop invocation gets a new durable ID even where its human-readable label repeats.",
+      "#65 intentional strictness correction: optional failures defaults to an empty list. A failed verifier without clusters reports unstable and explicit missing-cluster evidence; replay does not repeat the prior apply. The extra regression also reproduces the original failures.slice TypeError."
     ],
     "evaluation": "There is no report-only apply flag in the original. The final repair is not followed by an extra verification beyond the existing loop; a last-round repair may leave the result reporting the prior verification state. That behavior is preserved for this batch."
   },
@@ -68,7 +70,8 @@
     "summary": "Generate four designs from deliberately different philosophies, anonymize them for independent judges, score the fixed rubric in code, and synthesize the winner with useful ideas from the runners-up.",
     "preserved": "All four proposer identities, A/B/C/D anonymization, judge independence, score arithmetic, winner selection, graft prompts, and the six-point dissent threshold are unchanged.",
     "changes": [
-      "Proposals and scores use inferred Zod response types; the final design stays free text. The requested high effort is passed through ClaudeOptions and verified against the original calls."
+      "Proposals and scores use inferred Zod response types; the final design stays free text. The requested high effort is passed through ClaudeOptions and verified against the original calls.",
+      "#65 strict indexing uses explicit missing-winner/proposal errors and checked tally lookups instead of undefined dereferences; the normal fixture outcomes and prompts are unchanged."
     ],
     "evaluation": "Scores remain agent judgments; typed numeric fields do not enforce the prompt’s 1–10 range. The original schemas do not validate that every judge scored every proposal, and this direct port does not add that behavior."
   },
@@ -124,7 +127,8 @@
     "summary": "Ground a PRD in the codebase, draft a specification through five lenses, optionally run a design tournament for a load-bearing decision, then check implementability and product fidelity.",
     "preserved": "Greenfield handling, lens aggregation, contested-decision ordering, the optional tournament condition, two independent verifiers, one repair, and optional file output remain intact.",
     "changes": [
-      "The design tournament is an ordinary imported child with namespaced steps. The original optional composition remains optional; no extra design round is introduced."
+      "The design tournament is an ordinary imported child with namespaced steps. The original optional composition remains optional; no extra design round is introduced.",
+      "#65 strict indexing guards an absent top choice and regex captures before using them; normal fixture outcomes are unchanged."
     ],
     "evaluation": "Quiet Choir does not enforce the original one-level nesting limit. The port nevertheless keeps the same orchestration shape. Open questions are still extracted from the final markdown with the original heuristic."
   },
@@ -141,7 +145,8 @@
     "summary": "Find measurable refactoring targets, rank payoff against risk, write characterization tests, then optionally refactor behind a green test net and verify that behavior stayed the same.",
     "preserved": "Survey/rank ordering, the target cap, the green-net gate, net→refactor→verify pipeline, and the refactored/net-only/skipped result groups are retained.",
     "changes": [
-      "Intermediate results explicitly model absent refactors. Status literals are annotated for TypeScript; their serialized values and decision rules are unchanged."
+      "Intermediate results explicitly model absent refactors. Status literals are annotated for TypeScript; their serialized values and decision rules are unchanged.",
+      "#65 removes an unreachable missing-result branch: failed agent calls already throw. No new failure tolerance is implied."
     ],
     "evaluation": "apply:false still creates characterization tests; it is not a write-free dry run. Targets run concurrently without automatic workspace isolation, so overlapping file ownership remains an original assumption to scrutinize."
   },
@@ -173,7 +178,8 @@
     "summary": "Find leads through four research modalities, deduplicate and prioritize them, read the strongest sources deeply, synthesize a cited answer, and run one critic-driven supplementary round if needed.",
     "preserved": "Credibility ranking, quick/standard/deep read caps, useful-reading filter, per-claim citation prompts, three-gap supplementary cap, and final confidence heuristic are retained.",
     "changes": [
-      "Repeated synthesis calls receive separate durable IDs. The optional extra-readings argument is given an empty-array default for TypeScript, preserving its original fallback behavior."
+      "Repeated synthesis calls receive separate durable IDs. The optional extra-readings argument is given an empty-array default for TypeScript, preserving its original fallback behavior.",
+      "#65 intentionally ranks missing credibility after known credibility instead of relying on a NaN comparator; helper parameters now have explicit types."
     ],
     "evaluation": "Research needs suitable web or repository-reading tools. Source quality and citations still require substantive review; schema validation proves their shape, not their truth."
   },
@@ -181,7 +187,8 @@
     "summary": "Decompose a specification into capabilities and dependencies, propose three sequencing strategies, choose one, stress-test its assumptions, and produce a milestone roadmap.",
     "preserved": "The dependency/risk fields, three strategy philosophies, winner fallback, stress critic, milestone gates, and final document remain unchanged.",
     "changes": [
-      "All stages are explicit Claude calls with typed response boundaries. The final roadmap remains free text; no scheduler or project-management system is introduced."
+      "All stages are explicit Claude calls with typed response boundaries. The final roadmap remains free text; no scheduler or project-management system is introduced.",
+      "#65 strict indexing rejects a missing tournament winner explicitly instead of dereferencing undefined."
     ],
     "evaluation": "The dependency graph is agent-authored and critiqued, not independently solved or cycle-checked by the runtime. The output is a plan artifact, not an executable delivery schedule."
   },
@@ -191,9 +198,10 @@
     "changes": [
       "Caller-supplied state, answers, completed handoffs, and the checkpoint-return cursor are removed. Ordinary loops replay completed effects and question answers under stable stage/round IDs.",
       "Specification and implementation conductors run inline through a ten-entry child registry. Redo answers are stored under the requesting stage key and included in every repeated stage prompt, instead of the original unused next key.",
-      "A human reply selects continue, redo, or stop; bootstrap child approvals use the same parent run inbox. No shared spending ledger is added."
+      "A human reply selects continue, redo, or stop; bootstrap child approvals use the same parent run inbox. No shared spending ledger is added.",
+      "#65 uses checked registry lookup, typed child closures and JSON validation for optional flags instead of an unsafe record cast; all six durable-question fixtures retain their behavior."
     ],
-    "evaluation": "Six question-contract fixtures replace differential equality for these two intentional #55 migrations. SDLC fixtures prove plan-only behavior, nested inline conductors, stage-specific redo answers, and completed-run reuse; originals remain immutable. Other ports retain their historical schemas/normalization until #65."
+    "evaluation": "Six question-contract fixtures replace differential equality for these two intentional #55 migrations. SDLC fixtures prove plan-only behavior, nested inline conductors, stage-specific redo answers, and completed-run reuse; originals remain immutable. This historical baseline retains source-style schemas/normalization; Batch 02 demonstrates domain output schemas and typed child frames."
   },
   "security-audit": {
     "summary": "Map the attack surface, audit through six specialist lenses, send each lens’s findings directly to severity-sized skeptic panels, and report only majority-upheld vulnerabilities.",

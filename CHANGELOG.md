@@ -2,6 +2,17 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- Add Workflow Lab Batch 02: six idiomatic ports with domain schemas, named roles, code-owned
+  commands/writes, approved isolated setup, recoverable mutation tests, inline lifecycle children
+  and settled bug panels. Record paired fixture metrics and actual SIGKILL recovery; keep model
+  quality and billing claims outside those measurements.
+- Recover an interrupted Git worktree registration with an empty `commondir` only when both
+  ownership links match a saved planned cache. Refuse different owners, preserve fresh retry
+  directories and record a repair warning. The Workflow Lab SIGKILL matrix exposed this window.
+- Remove all Batch 01 TypeScript relaxations, fix its shared option construction, and regress two
+  inherited null/index crash paths. Make Batch 02 the active primitive acceptance suite and reader
+  default, retaining Batch 01 as its checked baseline and preserving all upstream snapshots.
+
 - Register package harnesses with typed `ctx.agent` clients, strict option schemas and capability
   gates. Requests now name `harness` and include direct attempt identity; agent records carry a
   registration revision. Preserve preceding built-in fingerprints and normalize old names on read.

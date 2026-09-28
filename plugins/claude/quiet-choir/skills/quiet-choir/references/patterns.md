@@ -702,3 +702,31 @@ or support more cases; the table describes the current runtime, not the old fail
 For a tail-only code fix, first inspect what completed, then use explicit code acceptance or a fork.
 A new ID alone repays agent calls; it does not imply salvage. Never treat paid effects as rolled
 back because a checkpoint or schema validation failed.
+
+## Workflow Lab acceptance recipes
+
+[Batch 02](https://github.com/plx/quiet-choir/tree/main/comparisons/batches/02-idiomatic-ports)
+expands these small recipes into six strict workflows using the same pinned upstream originals as
+Batch 01. Its ports, notes, generated verification and paired F1–F5 matrix are maintained together.
+The verifier uses inert agent replies with real temporary Git repositories, commands and SIGKILLs.
+It measures replay and filesystem contracts, not agent quality or real billing savings.
+
+| Port                     | Recipe demonstrated                                                                          | Fixture evidence                                                                                     |
+| ------------------------ | -------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| `release-notes`          | Pin a Git manifest, constrain per-slice vocabularies, compute coverage and write exact bytes | Manifest equals Git; all calls are read-only; interrupted publication reuses completed calls         |
+| `project-bootstrap`      | Approve a canonical saved plan, isolate writers, verify with command exits                   | Setter prompts match the approved plan; digests match; exit 7 prevents checkout publication          |
+| `test-gap-filler`        | Keep a durable pristine snapshot and reconcile an interrupted mutation before retry          | Actual SIGKILL during a test, identity-checked orphan cleanup, byte-identical restoration            |
+| `incident-investigation` | Use a Codex reader profile and independently check repository status                         | A deliberately dirty collector fails the run                                                         |
+| `sdlc-orchestrator`      | Compose typed children and bind human redo answers to one stage                              | One run ID, saved child frames, stage-local answer, CLI exit 75 and inbox resume                     |
+| `bug-hunt`               | Settle panels, retain missing votes and apply sticky admission gates                         | Failed skeptics stay undecided without another call; failed finders are never dry; higher-cap resume |
+
+A plan digest must use canonical JSON: checkpoint transport may reorder object keys. Hashing plain
+`JSON.stringify` output can change a reviewed plan's digest on replay even when its data is equal.
+The mutation worker heals only pristine bytes or its own exact mutant; it refuses unknown external
+edits. A `finally` block alone cannot recover from SIGKILL, and `guardFile` does not promise
+restore-before-retry. Code and subprocesses still run with operator privileges.
+
+When changing one of these primitives, update the corresponding Batch 02 port and fault row in the
+same PR. The focused mutation port requires the caller to select a target and command; the compact
+lifecycle children differ from the original specialist conductors. Their smaller call counts are not
+evidence of equivalent work or model quality. See the per-port notes before copying a pattern.

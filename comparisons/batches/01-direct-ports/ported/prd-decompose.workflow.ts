@@ -1,7 +1,7 @@
 // Direct port of hesreallyhim/ultracode-workflows; MIT, see ../LICENSE.
 // Source snapshot: 9b5404d11b885b28380d3eb17471ef7b17601b5e.
 import { defineWorkflow, z, type WorkflowContext } from 'quiet-choir';
-import { createPort, executionInput, normalize } from './support.js';
+import { callOptions, createPort, executionInput, normalize } from './support.js';
 
 export const meta = {
   name: 'prd-decompose',
@@ -147,7 +147,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
         (l) => () =>
           ctx.claude
             .object(port.id('agent-1', `lens:${l.key}`), {
-              ...args.$claude,
+              ...callOptions(args.$claude),
               prompt: `Read ${prdRef}.
      ${codebase ? `Codebase context (reference real modules in items): ${codebase}` : ''}
      Your lens: ${l.charter}
@@ -193,7 +193,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
 
     const backlog = await ctx.claude
       .object(port.id('agent-2', 'merge'), {
-        ...args.$claude,
+        ...callOptions(args.$claude),
         prompt: `Merge these work items from five specialized readings of one PRD into a
    deduplicated backlog. Items describing the same work in different words
    become ONE ticket (union the acceptance criteria, keep all prdAnchors).
@@ -228,7 +228,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
 
     const coverage = await ctx.claude
       .object(port.id('agent-3', 'coverage-critic'), {
-        ...args.$claude,
+        ...callOptions(args.$claude),
         prompt: `Audit backlog coverage BACKWARDS. Read ${prdRef} section by section; for each
    requirement, commitment, or implied behavior, find the ticket(s) covering it
    in this backlog: ${JSON.stringify(
@@ -255,7 +255,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
       port.log(`Critic found ${coverage.gaps.length} coverage gaps — one repair round`);
       const repaired = await ctx.claude
         .object(port.id('agent-4', 'repair'), {
-          ...args.$claude,
+          ...callOptions(args.$claude),
           prompt: `Repair this backlog. For each gap: add a ticket (next free Tn id) or amend
      the under-specified/wrong ticket's ACs. Keep everything else unchanged.
      Backlog: ${JSON.stringify(backlog, null, 2)}
@@ -271,7 +271,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
     if (args && args.out) {
       await ctx.claude
         .text(port.id('agent-5', 'write-doc'), {
-          ...args.$claude,
+          ...callOptions(args.$claude),
           prompt: `Write this backlog as a clean markdown document to ${args.out}: a summary
      table (id, title, lane, estimate, dependsOn), then each ticket with
      description and acceptance criteria, then sequencing, then open questions.

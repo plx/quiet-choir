@@ -411,6 +411,7 @@ code {
 .notes {
   padding: 25px 0;
   max-width: 1000px;
+  overflow-wrap: anywhere;
 }
 .note-block {
   display: grid;

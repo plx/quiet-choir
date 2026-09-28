@@ -1,7 +1,7 @@
 // Direct port of hesreallyhim/ultracode-workflows; MIT, see ../LICENSE.
 // Source snapshot: 9b5404d11b885b28380d3eb17471ef7b17601b5e.
 import { defineWorkflow, z, type WorkflowContext } from 'quiet-choir';
-import { createPort, executionInput, normalize } from './support.js';
+import { callOptions, createPort, executionInput, normalize } from './support.js';
 
 export const meta = {
   name: 'test-gap-filler',
@@ -89,7 +89,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
       () =>
         ctx.claude
           .object(port.id('agent-1', 'gaps:tooling'), {
-            ...args.$claude,
+            ...callOptions(args.$claude),
             prompt: `Find untested code in ${scope} using the repo's own tooling. If a coverage
      tool is configured (nyc/istanbul, coverage.py, go cover, tarpaulin...), run
      it and read the report. If not, approximate: list source files/functions
@@ -102,7 +102,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
       () =>
         ctx.claude
           .object(port.id('agent-2', 'gaps:risk'), {
-            ...args.$claude,
+            ...callOptions(args.$claude),
             prompt: `Find the SCARIEST untested code in ${scope} by reading, not by tooling.
      Look for: error/rollback paths, money/data-integrity logic, parsing of
      external input, concurrency, and anything with a comment like "careful" or
@@ -152,7 +152,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
 
     const ranking = await ctx.claude
       .object(port.id('agent-3', 'rank'), {
-        ...args.$claude,
+        ...callOptions(args.$claude),
         prompt: `Rank these test gaps by blast radius: if this code silently broke, how bad
    and how invisible would the damage be? Corroborated gaps (found by both a
    coverage tool and a risk reader) get a boost. Pick the top ${count} and give
@@ -195,11 +195,13 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
     // why no worktree is needed: the shards cannot touch the same path.
     // --------------------------------------------------------------------------
 
-    const byFile = new Map();
+    type Gap = (typeof chosen)[number];
+    const byFile = new Map<string, Gap[]>();
     for (const gap of chosen) {
       const key = gap.file || '(unknown file)';
-      if (!byFile.has(key)) byFile.set(key, []);
-      byFile.get(key).push(gap);
+      const group = byFile.get(key) ?? [];
+      group.push(gap);
+      byFile.set(key, group);
     }
     const shards = [...byFile.values()];
     if (shards.length < chosen.length) {
@@ -231,10 +233,10 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
       .filter(Boolean)
       .flat();
 
-    function writeTestsFor(gap) {
+    function writeTestsFor(gap: Gap) {
       return ctx.claude
         .object(port.id('agent-4', `write:${gap.target.slice(0, 25)}`), {
-          ...args.$claude,
+          ...callOptions(args.$claude),
           prompt: `Write tests for "${gap.target}" in ${gap.file}.
      Why it matters: ${gap.reason}
      Required cases (failure paths first): ${gap.testPlan}
@@ -259,11 +261,11 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
         .then((result) => result.output);
     }
 
-    function verifyTestsFor(gap, fill) {
+    function verifyTestsFor(gap: Gap, fill: z.infer<typeof FILL_SCHEMA>) {
       if (!fill || fill.status !== 'green') return Promise.resolve(fill);
       return ctx.claude
         .object(port.id('agent-5', `check:${gap.target.slice(0, 25)}`), {
-          ...args.$claude,
+          ...callOptions(args.$claude),
           prompt: `Independently verify new tests in ${fill.testFile} for "${gap.target}" (${gap.file}).
      ${testCommand ? `Test command: ${testCommand}` : ''}
      1. Run them — confirm green.
@@ -294,7 +296,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
       filled: filled.map((f) => ({
         testFile: f.testFile,
         cases: f.casesCovered,
-        verified: Boolean(f.verified),
+        verified: Boolean('verified' in f && f.verified),
       })),
       failed: failedFills.map((f) => ({
         testFile: f.testFile,

@@ -77,7 +77,7 @@ function renderRoute() {
   const notes = workflow.notes;
   $('#content').innerHTML =
     `<div class="breadcrumb"><span>WORKFLOW LAB</span><span>/</span><span>${escape(batch.label.toUpperCase())}</span><span>/</span><span>${escape(workflow.name)}</span></div>
-    <div class="heading-row"><div><h1>${escape(title(workflow.name))}</h1><p class="summary">${escape(notes?.summary ?? workflow.description)}</p></div><span class="badge">CLAUDE → CLAUDE</span></div>
+    <div class="heading-row"><div><h1>${escape(title(workflow.name))}</h1><p class="summary">${escape(notes?.summary ?? workflow.description)}</p></div><span class="badge">CLAUDE → QUIET CHOIR</span></div>
     <div class="phases" aria-label="Original workflow phases">${(workflow.phases ?? []).map((p, i) => `<span class="phase" title="${escape(p.detail)}"><span class="phase-number">${String(i + 1).padStart(2, '0')}</span>${escape(p.title)}</span>`).join('')}</div>
     <div class="review-strip"><strong>Port note:</strong> ${escape(notes?.changes?.[0] ?? 'Direct port. Preserve prompts and control flow; make the API differences explicit.')}</div>
     <div class="tabbar" role="tablist" aria-label="Comparison view">${[
@@ -136,11 +136,17 @@ function sourceView() {
     )
     .join(
       '',
-    )}</div><div class="source-footer">Original source is preserved verbatim. The port calls <code>ctx.claude</code> explicitly. Read <a href="#${new URLSearchParams({ batch: batch.id, workflow: workflow.name, view: 'notes' })}">port notes</a> for equivalence limits. ${escape(batch.validation)}</div>`;
+    )}</div><div class="source-footer">Original source is preserved verbatim. The port uses named Quiet Choir effects explicitly. Read <a href="#${new URLSearchParams({ batch: batch.id, workflow: workflow.name, view: 'notes' })}">port notes</a> for equivalence limits. ${escape(batch.validation)}</div>`;
 }
 function notesView() {
   const n = workflow.notes ?? {};
-  return `<div class="notes">${block('What it does', n.summary ?? workflow.description)}${block('What stays the same', n.preserved ?? 'The original prompts, branching, and aggregation are retained.')}<div class="note-block"><h2>What changes</h2><ul>${(n.changes ?? []).map((x) => `<li>${escape(x)}</li>`).join('')}</ul></div><details class="shared-notes"><summary>Translation choices shared by all ${batch.workflows.length} ports</summary><ul>${batch.commonChanges.map((x) => `<li>${escape(x)}</li>`).join('')}</ul></details>${block('Evaluation notes', n.evaluation ?? 'Review the explicit differences before treating the two implementations as interchangeable.')}${block('Verification', batch.validation)}${block('Target API', `${batch.apiSnapshot.package} · ${batch.apiSnapshot.description} API SHA-256: ${batch.apiSnapshot.sha256}`)}<div class="note-block"><h2>Source & attribution</h2><p><a href="${escape(batch.sourceFileBase + workflow.name + '.js')}" target="_blank" rel="noreferrer">View the pinned original on GitHub ↗</a><br>Original workflows © 2026 Really Him, MIT. Ports retain this license. Snapshot: <code>${escape(batch.revision)}</code>.</p></div></div>`;
+  return `<div class="notes">${block('What it does', n.summary ?? workflow.description)}${block('What stays the same', n.preserved ?? 'The original prompts, branching, and aggregation are retained.')}<div class="note-block"><h2>What changes</h2><ul>${(n.changes ?? []).map((x) => `<li>${escape(x)}</li>`).join('')}</ul></div><details class="shared-notes"><summary>Translation choices shared by all ${batch.workflows.length} ports</summary><ul>${batch.commonChanges.map((x) => `<li>${escape(x)}</li>`).join('')}</ul></details>${block('Evaluation notes', n.evaluation ?? 'Review the explicit differences before treating the two implementations as interchangeable.')}${block('Verification', batch.validation)}<p class="report-links">${Object.entries(
+    batch.reports ?? {},
+  )
+    .map(([name, path]) => `<a href="${escape(path)}">Open ${escape(name)} JSON ↗</a>`)
+    .join(
+      ' · ',
+    )}</p>${block('Target API', `${batch.apiSnapshot.package} · ${batch.apiSnapshot.description} API SHA-256: ${batch.apiSnapshot.sha256}`)}<div class="note-block"><h2>Source & attribution</h2><p><a href="${escape(batch.sourceFileBase + workflow.name + '.js')}" target="_blank" rel="noreferrer">View the pinned original on GitHub ↗</a><br>Original workflows © 2026 Really Him, MIT. Ports retain this license. Snapshot: <code>${escape(batch.revision)}</code>.</p></div></div>`;
 }
 function block(label, text) {
   return `<div class="note-block"><h2>${escape(label)}</h2><p>${escape(text)}</p></div>`;

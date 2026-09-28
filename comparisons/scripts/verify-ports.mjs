@@ -9,6 +9,8 @@ import { pathToFileURL, fileURLToPath } from 'node:url';
 import ts from 'typescript';
 import { runWorkflow, readRun } from 'quiet-choir';
 import { verifyQuestionPorts } from './verify-question-ports.mjs';
+import { sample } from './fixture-sample.mjs';
+import { verifyStrictPorts } from './verify-strict-ports.mjs';
 const args = process.argv.slice(2);
 if (args.length > 1 || args.some((arg) => arg !== '--check'))
   throw new Error('Usage: node --import tsx comparisons/scripts/verify-ports.mjs [--check]');
@@ -41,53 +43,7 @@ const inputs = {
   'roadmap-plan': { spec: 'spec.md' },
   'sdlc-orchestrator': { goal: 'Build a queue', plan: true },
 };
-function sample(schema, mode, key = '', depth = 0) {
-  if (schema.enum) {
-    const preferred = [
-      ...(mode === 'repair' ? ['blocker', 'survives'] : []),
-      'pass',
-      'demonstrated',
-      'green',
-      'flaky',
-      'refactored',
-      'done',
-      'high',
-      'go',
-      'feature',
-      'foundation',
-    ];
-    return preferred.find((x) => schema.enum.includes(x)) ?? schema.enum[0];
-  }
-  if (schema.type === 'object')
-    return Object.fromEntries(
-      Object.entries(schema.properties ?? {})
-        .filter(([name]) => mode !== 'empty' || (schema.required ?? []).includes(name))
-        .map(([name, s]) => [name, sample(s, mode, name, depth + 1)]),
-    );
-  if (schema.type === 'array')
-    return mode !== 'empty' && depth < 8 ? [sample(schema.items, mode, key, depth + 1)] : [];
-  if (schema.type === 'boolean')
-    return ![
-      'refuted',
-      'done',
-      'allPassed',
-      'allGreen',
-      'clean',
-      'fixed',
-      ...(mode === 'repair'
-        ? ['passed', 'green', 'covered', 'complete', 'adequate', 'isFoundation']
-        : []),
-    ].includes(key);
-  if (schema.type === 'number' || schema.type === 'integer') return key === 'failures' ? 0 : 1;
-  if (schema.type === 'null') return null;
-  if (schema.type === 'string') {
-    if (['file', 'path', 'location', 'testFile', 'netFile'].includes(key)) return 'src/sample.ts';
-    if (['proposal', 'letter'].includes(key)) return 'A';
-    if (key === 'plan') return 'spec';
-    return 'sample';
-  }
-  throw new Error(`Unsupported fixture schema: ${JSON.stringify(schema)}`);
-}
+
 for (const file of files) {
   const name = file.slice(0, -3),
     text = await readFile(`${base}/originals/${file}`, 'utf8');
@@ -267,6 +223,7 @@ try {
   results.push(...questionResults);
   for (const result of questionResults)
     console.log(`PASS ${result.workflow} / ${result.fixture} (${result.agentCalls} calls)`);
+  results.push(...(await verifyStrictPorts({ definitions, sources, sample, stateDir })));
   // A mid-pipeline interruption must reuse prior results, keep per-item IDs stable
   // under changed completion order, and retry only unfinished calls.
   const definition = definitions.get('acceptance-qa-batch');
@@ -337,7 +294,7 @@ try {
     JSON.stringify(
       {
         method:
-          'Deterministic differential fixtures, six intentional durable-question port contracts, and interrupted resume; no live agents',
+          'Deterministic differential fixtures, six durable-question contracts, two inherited-crash corrections, and interrupted resume; no live agents',
         results,
       },
       null,

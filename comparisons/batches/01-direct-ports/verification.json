@@ -1,5 +1,5 @@
 {
-  "method": "Deterministic differential fixtures, six intentional durable-question port contracts, and interrupted resume; no live agents",
+  "method": "Deterministic differential fixtures, six durable-question contracts, two inherited-crash corrections, and interrupted resume; no live agents",
   "results": [
     {
       "workflow": "acceptance-qa-batch",
@@ -475,6 +475,24 @@
       "contract": "one-run-stage-decisions",
       "agentCalls": 41,
       "steps": 42
+    },
+    {
+      "workflow": "dependency-upgrade",
+      "fixture": "missing-verification-clusters",
+      "status": "intentional-strictness-correction",
+      "sourceFailure": "TypeError",
+      "finalStatus": "completed",
+      "agentCalls": 5,
+      "repeatedCompletedCalls": 0
+    },
+    {
+      "workflow": "api-migration",
+      "fixture": "empty-migration-group",
+      "status": "intentional-strictness-correction",
+      "sourceFailure": "TypeError",
+      "finalStatus": "failed",
+      "agentCalls": 1,
+      "repeatedCompletedCalls": 0
     },
     {
       "workflow": "acceptance-qa-batch",

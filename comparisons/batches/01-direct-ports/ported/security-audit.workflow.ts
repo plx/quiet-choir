@@ -1,7 +1,7 @@
 // Direct port of hesreallyhim/ultracode-workflows; MIT, see ../LICENSE.
 // Source snapshot: 9b5404d11b885b28380d3eb17471ef7b17601b5e.
 import { defineWorkflow, z, type WorkflowContext } from 'quiet-choir';
-import { createPort, executionInput, normalize } from './support.js';
+import { callOptions, createPort, executionInput, normalize } from './support.js';
 
 export const meta = {
   name: 'security-audit',
@@ -114,7 +114,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
 
     const surface = await ctx.claude
       .object(port.id('agent-1', 'recon'), {
-        ...args.$claude,
+        ...callOptions(args.$claude),
         prompt: `Map the attack surface of ${scope} for a defensive security audit.
    Find: (1) every entry point where external data enters, (2) trust boundaries
    and what each protects, (3) everywhere secrets are read/stored/transmitted,
@@ -139,7 +139,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
     // --------------------------------------------------------------------------
 
     const lenses =
-      args && args.lenses ? ALL_LENSES.filter((l) => args.lenses.includes(l.key)) : ALL_LENSES;
+      args && args.lenses ? ALL_LENSES.filter((l) => args.lenses?.includes(l.key)) : ALL_LENSES;
 
     const PANEL_SIZE = { critical: 3, high: 3, medium: 1, low: 1 };
 
@@ -151,7 +151,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
       (l) =>
         ctx.claude
           .object(port.id('agent-2', `sweep:${l.key}`), {
-            ...args.$claude,
+            ...callOptions(args.$claude),
             prompt: `Defensive security audit of ${scope}. Your specialty: ${l.charter}.
 
      Attack-surface map from recon:
@@ -185,7 +185,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
                   (_, v) => () =>
                     ctx.claude
                       .object(port.id('agent-3', `refute:${l.key}:${v}`), {
-                        ...args.$claude,
+                        ...callOptions(args.$claude),
                         prompt: `Skeptic ${v + 1}/${n}: REFUTE this security finding by reading the code.
          Claim: ${f.title} (${f.severity}) at ${f.file}${f.line ? ':' + f.line : ''}
          Evidence: ${f.evidence}
@@ -235,7 +235,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
         ? `Audited ${scope} across ${lenses.length} lenses over a mapped surface of ${surface.entryPoints.length} entry points. ${judged.length} candidate findings; none survived refutation.`
         : await ctx.claude
             .text(port.id('agent-4', 'report'), {
-              ...args.$claude,
+              ...callOptions(args.$claude),
               prompt: `Write a security-audit report in markdown.
        Surface summary: ${surface.summary}
        Confirmed findings (already refutation-tested): ${JSON.stringify(confirmed, null, 2)}

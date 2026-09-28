@@ -1,7 +1,7 @@
 // Direct port of hesreallyhim/ultracode-workflows; MIT, see ../LICENSE.
 // Source snapshot: 9b5404d11b885b28380d3eb17471ef7b17601b5e.
 import { defineWorkflow, z, type WorkflowContext } from 'quiet-choir';
-import { createPort, executionInput, normalize } from './support.js';
+import { callOptions, createPort, executionInput, normalize } from './support.js';
 
 export const meta = {
   name: 'flaky-test-hunt',
@@ -92,7 +92,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
       () =>
         ctx.claude
           .object(port.id('agent-1', 'sweep:git-history'), {
-            ...args.$claude,
+            ...callOptions(args.$claude),
             prompt: `Find flaky-test SUSPECTS in ${scope} via git history: log/blame for commits
      mentioning flaky/flake/retry/deflake/skip/quarantine/"fix test", tests whose
      files churn without behavior changes, and skip/only markers added then
@@ -104,7 +104,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
       () =>
         ctx.claude
           .object(port.id('agent-2', 'sweep:smells'), {
-            ...args.$claude,
+            ...callOptions(args.$claude),
             prompt: `Find flaky-test SUSPECTS in ${scope} by grepping test code for flake smells:
      sleeps/arbitrary waits, real-clock time or "now" comparisons, unseeded
      randomness, real network/filesystem/ports, order-dependent shared fixtures,
@@ -117,7 +117,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
       () =>
         ctx.claude
           .object(port.id('agent-3', 'sweep:ci-artifacts'), {
-            ...args.$claude,
+            ...callOptions(args.$claude),
             prompt: `Find flaky-test SUSPECTS from CI/test artifacts in this repo, if any exist:
      CI config with retry settings, junit/report XML, .github workflow logs
      checked into the repo, quarantine lists, test-results directories. If no
@@ -178,7 +178,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
       (sus) =>
         ctx.claude
           .object(port.id('agent-4', `stress:${sus.test.slice(0, 30)}`), {
-            ...args.$claude,
+            ...callOptions(args.$claude),
             prompt: `Stress-run this test ${runs} times and report the empirical flake rate.
      Test: ${sus.test}  File: ${sus.file}
      Single-test command shape: ${testCommand}
@@ -199,7 +199,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
         if (!r || !r.stress || r.stress.verdict !== 'flaky') return { ...r, diagnosis: undefined };
         return ctx.claude
           .object(port.id('agent-5', `diagnose:${r.suspect.test.slice(0, 25)}`), {
-            ...args.$claude,
+            ...callOptions(args.$claude),
             prompt: `Diagnose WHY this test is flaky. It failed ${r.stress.failures}/${r.stress.runs} stress runs.
        Test: ${r.suspect.test}  File: ${r.suspect.file}
        Sweep evidence: ${r.suspect.evidence}

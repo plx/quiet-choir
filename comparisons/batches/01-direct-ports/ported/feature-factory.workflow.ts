@@ -1,7 +1,7 @@
 // Direct port of hesreallyhim/ultracode-workflows; MIT, see ../LICENSE.
 // Source snapshot: 9b5404d11b885b28380d3eb17471ef7b17601b5e.
 import { defineWorkflow, z, type WorkflowContext } from 'quiet-choir';
-import { createPort, executionInput, normalize } from './support.js';
+import { callOptions, createPort, executionInput, normalize } from './support.js';
 import { runChild } from './children.js';
 import prd_decompose from './prd-decompose.workflow.js';
 import deep_code_review from './deep-code-review.workflow.js';
@@ -118,7 +118,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
 
     const plan = await ctx.claude
       .object(port.id('agent-1', 'plan'), {
-        ...args.$claude,
+        ...callOptions(args.$claude),
         prompt: `Group this backlog into at most ${maxModules} implementation modules for
    parallel builders working in ONE shared checkout.
    Tickets: ${JSON.stringify(backlog.tickets, null, 2)}
@@ -157,10 +157,10 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
     port.phase('Implement');
 
     const ticketById = new Map(backlog.tickets.map((t) => [t.id, t]));
-    const buildModule = (m) =>
+    const buildModule = (m: (typeof plan.modules)[number]) =>
       ctx.claude
         .object(port.id('agent-2', `build:${m.name}`), {
-          ...args.$claude,
+          ...callOptions(args.$claude),
           prompt: `Implement the "${m.name}" module. You own ONLY these file areas: ${m.fileAreas.join(', ')}
    — do not touch files outside them (another builder owns those).
    Tickets, in order: ${JSON.stringify(m.ticketIds.map((id) => ticketById.get(id)).filter(Boolean), null, 2)}
@@ -243,7 +243,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
         (r) => () =>
           ctx.claude
             .text(port.id('agent-3', `repair:${r.module.name}`), {
-              ...args.$claude,
+              ...callOptions(args.$claude),
               prompt: `Fix these confirmed code-review findings in the "${r.module.name}" module
      (file areas: ${r.module.fileAreas.join(', ')} — stay inside them).
      Findings (already adversarially verified — do not re-litigate, fix):
@@ -258,7 +258,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
 
     const verification = await ctx.claude
       .object(port.id('agent-4', 'verify'), {
-        ...args.$claude,
+        ...callOptions(args.$claude),
         prompt: `Global verification: run this repository's build/typecheck and full test
    suite (find the commands). The changes implement: ${JSON.stringify(plan.modules.map((m) => m.name))}.
    Report pass/fail with failures clustered by root cause. Do not fix anything.`,

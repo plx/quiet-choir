@@ -44,7 +44,20 @@ for (const id of ids) {
     .sort())
     support[file] = await readFile(`${dir}/ported/${file}`, 'utf8');
   support['tsconfig.json'] = await readFile(`${dir}/tsconfig.json`, 'utf8');
-  batches.push({ ...batch, workflows, support });
+  const reports = {};
+  await mkdir(`${target}/dist/reports`, { recursive: true });
+  for (const name of ['verification', 'metrics']) {
+    try {
+      const contents = await readFile(`${dir}/${name}.json`, 'utf8');
+      JSON.parse(contents);
+      const path = `reports/${id}-${name}.json`;
+      await writeFile(`${target}/dist/${path}`, contents);
+      reports[name] = path;
+    } catch (error) {
+      if (name !== 'metrics' || error.code !== 'ENOENT') throw error;
+    }
+  }
+  batches.push({ ...batch, workflows, support, reports });
 }
 for (const file of ['index.html', 'style.css', 'app.js'])
   await copyFile(`${root}/site/${file}`, `${target}/dist/${file}`);

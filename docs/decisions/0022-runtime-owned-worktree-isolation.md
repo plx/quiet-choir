@@ -51,3 +51,14 @@ grants.
 The protocol relies on [merge-tree](https://git-scm.com/docs/git-merge-tree/2.38.0),
 [commit-tree](https://git-scm.com/docs/git-commit-tree), and
 [update-ref](https://git-scm.com/docs/git-update-ref). See [the operational guide](../worktrees.md).
+
+## Follow-up from Workflow Lab Batch 02
+
+Sibling Git registrations are serialized per repository without serializing their agent work.
+Concurrent setter SIGKILL tests exposed a Git registration window: a planned checkout can have an
+empty `commondir`, which prevents subsequent worktree creation. Resume reconciles only that narrow
+state after ownership recovery and before live Git worktree operations. Both directions of the
+checkout/registration link must match the ledger-owned path, the metadata directory must remain
+inside the recorded repository, and publication checks the empty-file digest. Completed effects,
+refs and failed per-call cache reuse rules are unchanged. Unowned or otherwise corrupt Git metadata
+is not repaired implicitly.

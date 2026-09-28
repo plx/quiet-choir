@@ -1,7 +1,7 @@
 // Direct port of hesreallyhim/ultracode-workflows; MIT, see ../LICENSE.
 // Source snapshot: 9b5404d11b885b28380d3eb17471ef7b17601b5e.
 import { defineWorkflow, z, type WorkflowContext } from 'quiet-choir';
-import { createPort, executionInput, normalize } from './support.js';
+import { callOptions, createPort, executionInput, normalize } from './support.js';
 
 export const meta = {
   name: 'design-tournament',
@@ -138,7 +138,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
           (p) => () =>
             ctx.claude
               .object(port.id('agent-1', `propose:${p.name}`), {
-                ...args.$claude,
+                ...callOptions(args.$claude),
                 prompt: `${p.identity}
 
      Design a solution for this brief, in character, as your philosophy demands.
@@ -187,7 +187,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
           (_, j) => () =>
             ctx.claude
               .object(port.id('agent-2', `judge:${j + 1}`), {
-                ...args.$claude,
+                ...callOptions(args.$claude),
                 prompt: `You are judge ${j + 1} of ${judgeCount} on an independent design panel.
      BRIEF: ${brief}
      ${context ? `CONTEXT: ${context}` : ''}
@@ -214,7 +214,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
           title: p.proposal.title,
           total: 0,
           votes: 0,
-          bestIdeas: [],
+          bestIdeas: Array<string>(),
         },
       ]),
     );
@@ -231,6 +231,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
       .map((t) => ({ ...t, avg: t.votes ? Math.round((t.total / t.votes) * 10) / 10 : 0 }))
       .sort((a, b) => b.avg - a.avg);
     const winner = scoreboard[0];
+    if (!winner) throw new Error('No design proposal is available to select.');
     port.log(
       `Scoreboard: ${scoreboard.map((s) => `${s.letter}(${s.philosophy})=${s.avg}`).join('  ')}`,
     );
@@ -246,11 +247,12 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
     port.phase('Synthesize');
 
     const winnerProposal = proposals.find((p) => p.letter === winner.letter);
+    if (!winnerProposal) throw new Error('Selected design proposal is missing.');
     const losers = proposals.filter((p) => p.letter !== winner.letter);
 
     const design = await ctx.claude
       .text(port.id('agent-3', 'synthesize'), {
-        ...args.$claude,
+        ...callOptions(args.$claude),
         prompt: `Synthesize the final design document.
    BRIEF: ${brief}
    ${context ? `CONTEXT: ${context}` : ''}
@@ -260,7 +262,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
 
    LOSING proposals' best ideas, as identified by independent judges:
    ${JSON.stringify(
-     losers.map((l) => ({ from: l.proposal.title, ideas: (tally.get(l.letter) || {}).bestIdeas })),
+     losers.map((l) => ({ from: l.proposal.title, ideas: tally.get(l.letter)?.bestIdeas })),
      null,
      2,
    )}
@@ -278,8 +280,8 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
     // Surface dissent: a judge who scored the winner far below the panel mean is
     // signal about a real weakness, not noise to average away.
     const dissent = [];
-    for (let j = 0; j < panels.length; j++) {
-      const s = panels[j].scores.find((x) => x.proposal === winner.letter);
+    for (const [j, panel] of panels.entries()) {
+      const s = panel.scores.find((x) => x.proposal === winner.letter);
       if (s) {
         const judgeTotal = s.fitness + s.simplicity + s.evolvability + s.operability;
         if (judgeTotal <= winner.avg - 6)

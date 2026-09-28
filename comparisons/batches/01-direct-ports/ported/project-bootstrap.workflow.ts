@@ -2,7 +2,7 @@
 // #55 replaces apply-as-new-input with approval of this run's saved plan.
 // Source snapshot: 9b5404d11b885b28380d3eb17471ef7b17601b5e.
 import { defineWorkflow, z, type WorkflowContext } from 'quiet-choir';
-import { createPort, executionInput, normalize } from './support.js';
+import { callOptions, createPort, executionInput, normalize } from './support.js';
 
 export const meta = {
   name: 'project-bootstrap',
@@ -97,7 +97,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
 
     const detect = await ctx.claude
       .object(port.id('agent-1', 'detect'), {
-        ...args.$claude,
+        ...callOptions(args.$claude),
         prompt: `Decide the tech stack and inventory existing tooling for a project bootstrap.
    ${args && args.spec ? `Spec: ${args.spec.includes('\n') ? args.spec : `read ${args.spec}`}` : 'No spec provided — infer intent from any existing code.'}
    ${args && args.stack ? `Stack is specified: ${args.stack} — use it.` : 'Choose an appropriate, conventional stack (favor boring, well-supported choices).'}
@@ -118,7 +118,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
       };
     const wanted =
       args && args.concerns
-        ? detect.relevantConcerns.filter((c) => args.concerns.includes(c))
+        ? detect.relevantConcerns.filter((c) => args.concerns?.includes(c))
         : detect.relevantConcerns;
     port.log(
       `Stack: ${detect.stack}. Concerns: ${wanted.join(', ')}. Existing: ${detect.existing.join(', ') || 'none'}`,
@@ -133,7 +133,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
 
     const plan = await ctx.claude
       .object(port.id('agent-2', 'plan'), {
-        ...args.$claude,
+        ...callOptions(args.$claude),
         prompt: `Plan the bootstrap for a ${detect.stack} project (package manager: ${detect.packageManager || 'detect'}).
    Concerns to set up: ${wanted.join(', ')}
    Already present (augment or skip — never overwrite): ${detect.existing.join(', ') || 'none'}
@@ -196,7 +196,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
           (c) => () =>
             ctx.claude
               .object(port.id('agent-3', `setup:${c.concern}`), {
-                ...args.$claude,
+                ...callOptions(args.$claude),
                 prompt: `Set up the "${c.concern}" concern for a ${detect.stack} project. Action: ${c.action}.
      Files you own (touch ONLY these): ${c.files.join(', ')}
      Detail: ${c.detail || ''}
@@ -223,7 +223,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
 
     let prove = await ctx.claude
       .object(port.id('agent-4', 'prove'), {
-        ...args.$claude,
+        ...callOptions(args.$claude),
         prompt: `Prove the project setup works. Run these commands in order and report each
    one's pass/fail with output: ${JSON.stringify(plan.verifyCommands)}
    Install first if needed. Do not fix failures — report them. "green" is true
@@ -237,7 +237,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
       port.log(`${failed.length} setup checks failed — one repair round`);
       await ctx.claude
         .text(port.id('agent-5', 'repair'), {
-          ...args.$claude,
+          ...callOptions(args.$claude),
           prompt: `Fix the failing project-setup checks (config errors, missing deps, wrong
      paths — NOT by disabling the check): ${JSON.stringify(failed, null, 2)}
      Stack: ${detect.stack}. Edit the relevant config files, then stop.`,
@@ -247,7 +247,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
         .then((result) => result.output);
       prove = await ctx.claude
         .object(port.id('agent-6', 're-prove'), {
-          ...args.$claude,
+          ...callOptions(args.$claude),
           prompt: `Re-run the verification commands and report: ${JSON.stringify(plan.verifyCommands)}`,
           schema: PROVE_SCHEMA,
           // Original phase: 'Prove' — no matching ClaudeOptions control.

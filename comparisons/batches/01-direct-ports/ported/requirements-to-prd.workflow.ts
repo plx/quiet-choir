@@ -1,7 +1,7 @@
 // Direct port of hesreallyhim/ultracode-workflows; MIT, see ../LICENSE.
 // Source snapshot: 9b5404d11b885b28380d3eb17471ef7b17601b5e.
 import { defineWorkflow, z, type WorkflowContext } from 'quiet-choir';
-import { createPort, executionInput, normalize } from './support.js';
+import { callOptions, createPort, executionInput, normalize } from './support.js';
 
 export const meta = {
   name: 'requirements-to-prd',
@@ -117,7 +117,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
           (l) => () =>
             ctx.claude
               .object(port.id('agent-1', `extract:${l.key}`), {
-                ...args.$claude,
+                ...callOptions(args.$claude),
                 prompt: `Read ${material}
      ${product ? `Product context: ${product}` : ''}
      ${answers ? `The product owner has ANSWERED a previous round of questions — treat these answers as first-class stated requirements:\n---\n${answers}\n---` : ''}
@@ -157,7 +157,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
 
     const draft = await ctx.claude
       .text(port.id('agent-2', 'draft'), {
-        ...args.$claude,
+        ...callOptions(args.$claude),
         prompt: `Draft a PRD from these extracted requirements.
    ${product ? `Product context: ${product}` : ''}
    Findings (with confidence tiers): ${JSON.stringify(findings, null, 2)}
@@ -205,7 +205,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
           (c) => () =>
             ctx.claude
               .object(port.id('agent-3', `attack:${c.key}`), {
-                ...args.$claude,
+                ...callOptions(args.$claude),
                 prompt: `Attack this PRD draft. Your charter: ${c.charter}
      Draft:\n---\n${draft}\n---
      Every issue quotes the offending text and gives a concrete fix — a rewrite,
@@ -233,7 +233,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
 
     const revised = await ctx.claude
       .text(port.id('agent-4', 'revise'), {
-        ...args.$claude,
+        ...callOptions(args.$claude),
         prompt: `Revise this PRD to address the critics' issues.
    Draft:\n---\n${draft}\n---
    Issues: ${JSON.stringify(issues, null, 2)}
@@ -251,11 +251,11 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
     const finalPrd = revised || draft;
     // Pull the structured lists back out of the document so the session can
     // surface them without re-reading the PRD (checkpoint pattern).
-    const section = (title) => {
+    const section = (title: string) => {
       const m =
         finalPrd &&
         finalPrd.match(new RegExp(`#+\\s*${title}[^\\n]*\\n([\\s\\S]*?)(?=\\n#+\\s|$)`, 'i'));
-      return m
+      return m?.[1]
         ? m[1]
             .split('\n')
             .map((l) => l.replace(/^[-*\d.\s]+/, '').trim())

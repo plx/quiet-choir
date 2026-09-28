@@ -1,7 +1,7 @@
 // Direct port of hesreallyhim/ultracode-workflows; MIT, see ../LICENSE.
 // Source snapshot: 9b5404d11b885b28380d3eb17471ef7b17601b5e.
 import { defineWorkflow, z, type WorkflowContext } from 'quiet-choir';
-import { createPort, executionInput, normalize } from './support.js';
+import { callOptions, createPort, executionInput, normalize } from './support.js';
 
 export const meta = {
   name: 'dependency-upgrade',
@@ -112,7 +112,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
       () =>
         ctx.claude
           .object(port.id('agent-1', 'research'), {
-            ...args.$claude,
+            ...callOptions(args.$claude),
             prompt: `Research upgrading "${pkg}" to ${targetVersion}. Use web search / fetch tools
      (load them via ToolSearch if needed) to read the official changelog, release
      notes, and migration guide. Determine the installed major version from this
@@ -125,7 +125,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
       () =>
         ctx.claude
           .object(port.id('agent-2', 'impact'), {
-            ...args.$claude,
+            ...callOptions(args.$claude),
             prompt: `Map this repository's usage of the package "${pkg}". Read the lockfile for
      the exact installed version. Find every file importing/requiring it, note
      WHICH of its APIs each file touches and how heavily. Identify wrappers or
@@ -158,7 +158,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
 
     const plan = await ctx.claude
       .object(port.id('agent-3', 'plan'), {
-        ...args.$claude,
+        ...callOptions(args.$claude),
         prompt: `Create an upgrade plan for "${pkg}" ${impact.currentVersion} -> ${research.targetVersion}.
    Breaking changes: ${JSON.stringify(research.breakingChanges, null, 2)}
    Our usage: ${JSON.stringify(impact.usageSites, null, 2)}
@@ -197,7 +197,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
 
     await ctx.claude
       .text(port.id('agent-4', 'apply'), {
-        ...args.$claude,
+        ...callOptions(args.$claude),
         prompt: `Execute this dependency-upgrade plan for "${pkg}" (${impact.currentVersion} -> ${research.targetVersion}).
    Steps: ${JSON.stringify(plan.steps, null, 2)}
    Risk notes: ${plan.riskNotes}
@@ -223,7 +223,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
       rounds++;
       verification = await ctx.claude
         .object(port.id('agent-5', `verify:r${rounds}`), {
-          ...args.$claude,
+          ...callOptions(args.$claude),
           prompt: `Verify the "${pkg}" upgrade (round ${rounds}/${maxFixRounds}). Run the repo's
      build/typecheck and test suite (find the commands). Scrutinize especially:
      ${(plan.testFocus || []).join('; ') || 'all touched areas'}.
@@ -234,16 +234,17 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
         .then((result) => result.output);
       if (!verification || verification.passed) break;
 
-      const clusters = verification.failures.slice(0, 3);
-      if (verification.failures.length > 3)
-        port.log(`Round ${rounds}: fixing top 3 of ${verification.failures.length} clusters`);
+      const failures = verification.failures ?? [];
+      const clusters = failures.slice(0, 3);
+      if (failures.length > 3)
+        port.log(`Round ${rounds}: fixing top 3 of ${failures.length} clusters`);
       await port.parallel(
         'parallel-2',
         clusters.map(
           (f, i) => () =>
             ctx.claude
               .text(port.id('agent-6', `fix:r${rounds}:${i}`), {
-                ...args.$claude,
+                ...callOptions(args.$claude),
                 prompt: `Fix this failure cluster caused by upgrading "${pkg}" to ${research.targetVersion}:
        ${f.description}
        Files: ${(f.files || []).join(', ') || 'identify from the failure'}
@@ -266,7 +267,11 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
       status: green ? 'upgraded' : 'unstable',
       riskNotes: plan.riskNotes,
       rounds,
-      remaining: green ? [] : verification ? verification.failures : ['verifier unavailable'],
+      remaining: green
+        ? []
+        : verification
+          ? (verification.failures ?? ['verifier reported failure without clusters'])
+          : ['verifier unavailable'],
     };
   }
 }

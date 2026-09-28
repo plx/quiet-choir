@@ -1,7 +1,7 @@
 // Direct port of hesreallyhim/ultracode-workflows; MIT, see ../LICENSE.
 // Source snapshot: 9b5404d11b885b28380d3eb17471ef7b17601b5e.
 import { defineWorkflow, z, type WorkflowContext } from 'quiet-choir';
-import { createPort, executionInput, normalize } from './support.js';
+import { callOptions, createPort, executionInput, normalize } from './support.js';
 
 export const meta = {
   name: 'refactor-campaign',
@@ -109,7 +109,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
 
     const survey = await ctx.claude
       .object(port.id('agent-1', 'survey'), {
-        ...args.$claude,
+        ...callOptions(args.$claude),
         prompt: `Find refactoring targets in ${scope}. Goal: ${goal}.
    Choose targets by MEASURABLE pressure — cyclomatic complexity, duplication
    (N near-identical sites), coupling (fan-in/out), method length, primitive
@@ -141,7 +141,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
 
     const ranking = await ctx.claude
       .object(port.id('agent-2', 'rank'), {
-        ...args.$claude,
+        ...callOptions(args.$claude),
         prompt: `Rank these refactoring targets by payoff-vs-risk and name the SPECIFIC
    refactoring for each (a named technique, not "clean up"). Untested code is
    higher risk — weight accordingly. Pick the top ${maxTargets}.
@@ -155,7 +155,6 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
       return { refactored: [], netOnly: [], skipped: [], summary: 'Ranking failed.' };
     }
     const chosen = ranking.ranked.slice(0, maxTargets);
-    const byLoc = new Map(survey.targets.map((t) => [t.location, t]));
     port.log(
       `Refactoring top ${chosen.length} targets${apply ? '' : ' (net + plan only — apply:false)'}`,
     );
@@ -174,7 +173,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
       (t) =>
         ctx.claude
           .object(port.id('agent-3', `net:${t.location.split('/').pop()}`), {
-            ...args.$claude,
+            ...callOptions(args.$claude),
             prompt: `Pin the CURRENT observable behavior of ${t.location} with characterization
      tests — tests that capture what the code does NOW (bugs included; we are
      preserving behavior, not fixing it). These must PASS against the current,
@@ -195,8 +194,6 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
 
       // Stage 2: refactor behind the net — gated. No green net => no refactor.
       (r) => {
-        if (!r) return { ...r, refactor: undefined };
-        const info = byLoc.get(r.target.location) || {};
         if (!r.net || r.net.status !== 'green') {
           return {
             ...r,
@@ -219,7 +216,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
         }
         return ctx.claude
           .object(port.id('agent-4', `refactor:${r.target.location.split('/').pop()}`), {
-            ...args.$claude,
+            ...callOptions(args.$claude),
             prompt: `Apply this refactoring to ${r.target.location}: ${r.ranked ? r.ranked.refactoring : 'the planned refactoring'}.
        Goal: ${goal}. A characterization net pins current behavior — file ${r.net.netFile},
        pinning: ${JSON.stringify(r.net.behaviorsPinned)}.
@@ -240,7 +237,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
         if (!r || !r.refactor || r.refactor.status !== 'refactored') return r;
         return ctx.claude
           .object(port.id('agent-5', `verify:${r.target.location.split('/').pop()}`), {
-            ...args.$claude,
+            ...callOptions(args.$claude),
             prompt: `Independently confirm the refactoring of ${r.target.location} preserved
        behavior: run the characterization net ${r.net.netFile} (${testCommand})
        and confirm green, then read the diff and confirm the changes are

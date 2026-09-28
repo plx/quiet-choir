@@ -1,7 +1,7 @@
 // Direct port of hesreallyhim/ultracode-workflows; MIT, see ../LICENSE.
 // Source snapshot: 9b5404d11b885b28380d3eb17471ef7b17601b5e.
 import { defineWorkflow, z, type WorkflowContext } from 'quiet-choir';
-import { createPort, executionInput, normalize } from './support.js';
+import { callOptions, createPort, executionInput, normalize } from './support.js';
 
 export const meta = {
   name: 'roadmap-plan',
@@ -122,7 +122,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
 
     const decomp = await ctx.claude
       .object(port.id('agent-1', 'decompose'), {
-        ...args.$claude,
+        ...callOptions(args.$claude),
         prompt: `Decompose ${specRef} into capabilities — coherent, independently-plananable
    units bigger than a ticket, smaller than the whole product (an auth system,
    a billing flow, a search feature). For each: a size, its hard dependencies on
@@ -180,7 +180,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
           (s) => () =>
             ctx.claude
               .object(port.id('agent-2', `strategy:${s.key}`), {
-                ...args.$claude,
+                ...callOptions(args.$claude),
                 prompt: `${s.identity}
      Group these capabilities into milestones for horizon: ${horizon}.
      ${priorities ? `Business priorities to weigh: ${priorities}` : ''}
@@ -219,7 +219,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
 
     const pick = await ctx.claude
       .object(port.id('agent-3', 'panel'), {
-        ...args.$claude,
+        ...callOptions(args.$claude),
         prompt: `Pick the best milestone sequencing for this project.
    ${priorities ? `Stated priorities (judge against THESE, not your taste): ${priorities}` : 'No explicit priorities — judge on balanced delivery risk and value.'}
    Horizon: ${horizon}
@@ -236,10 +236,11 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
       .then((result) => result.output);
 
     const winner = strategies.find((s) => s.key === (pick && pick.winner)) || strategies[0];
+    if (!winner) throw new Error('No roadmap strategy is available to select.');
 
     const stress = await ctx.claude
       .object(port.id('agent-4', 'critic'), {
-        ...args.$claude,
+        ...callOptions(args.$claude),
         prompt: `Stress-test this milestone plan before we commit to it.
    Plan: ${JSON.stringify(winner.milestones, null, 2)}
    Capabilities + dependency graph: ${JSON.stringify(decomp.capabilities, null, 2)}
@@ -262,7 +263,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
 
     const roadmap = await ctx.claude
       .text(port.id('agent-5', 'finalize'), {
-        ...args.$claude,
+        ...callOptions(args.$claude),
         prompt: `Produce the committed roadmap in markdown.
    Winning strategy (${winner.key}): ${JSON.stringify(winner.milestones, null, 2)}
    Graft this idea from a runner-up: ${pick ? pick.bestOfLosers : 'none'}
