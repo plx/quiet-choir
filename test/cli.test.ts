@@ -14,6 +14,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import ConfigurationGet from '../src/commands/configuration/get.js';
 import ConfigurationSet from '../src/commands/configuration/set.js';
 import InfoVersion from '../src/commands/info/version.js';
+import WorkflowAnswer from '../src/commands/workflow/answer.js';
 import WorkflowExecute from '../src/commands/workflow/execute.js';
 import WorkflowInspect from '../src/commands/workflow/inspect.js';
 import WorkflowCheckResume from '../src/commands/workflow/check-resume.js';
@@ -417,6 +418,22 @@ describe('workflow lifecycle command adapters', () => {
     const output = await captureCommand(WorkflowExecute, [file, '--run-id', 'test-run', '--json']);
     expect(output.error).toBeUndefined();
     expect(JSON.parse(output.stdout)).toMatchObject({ id: 'test-run', status: 'completed' });
+  });
+
+  it('keeps a durably queued answer successful when a signal arrives after delivery', async () => {
+    const delivery = {
+      runId: 'test-run',
+      stepId: 'approve',
+      path: '/state/test-run.inbox/approve.answer.json',
+      questionFingerprint: 'fp',
+    };
+    vi.spyOn(WorkflowExecutor.prototype, 'execute').mockImplementation(() => {
+      process.emit('SIGINT');
+      return Promise.resolve({ kind: 'workflow.answer.result', ok: true, delivery });
+    });
+    const output = await captureCommand(WorkflowAnswer, ['test-run', 'approve', '--json', 'true']);
+    expect(output.error).toBeUndefined();
+    expect(JSON.parse(output.stdout)).toMatchObject({ kind: 'workflow.answer.result', delivery });
   });
 
   it.each([false, true])(

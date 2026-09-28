@@ -81,7 +81,9 @@ export default class WorkflowAnswer extends WorkflowCommand {
     });
     if (!result.ok) this.failResult(result);
     if (result.kind === 'workflow.answer.result')
-      this.output(result, `Answer queued for ${args.runId}/${args.stepId}.`);
+      // The inbox write already made the delivery durable, so a late signal must not
+      // relabel it as interrupted.
+      this.outputSavedCompletion(result, `Answer queued for ${args.runId}/${args.stepId}.`);
     if (result.kind === 'workflow.run.result') {
       if (result.run.status === 'suspended') {
         this.suspended(result.run);
