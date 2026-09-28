@@ -231,6 +231,69 @@ it('never overlaps worktree administration for concurrent isolated calls', async
   expect(overlap).toBe(0);
 });
 
+it('keys worktree administration by the shared common Git directory across linked checkouts', async () => {
+  const linked = join(directory, 'linked');
+  await command('worktree', 'add', '--detach', linked, 'HEAD');
+  let active = 0,
+    overlap = 0;
+  const administration = ({ command }: Parameters<ProcessRunner['run']>[0]) =>
+    Array.isArray(command) &&
+    command.includes('worktree') &&
+    ['add', 'list', 'remove'].some((verb) => command.includes(verb));
+  const runner: ProcessRunner = {
+    async run(request, invocation) {
+      if (!administration(request)) return processRunner.run(request, invocation);
+      if (++active > 1) overlap++;
+      try {
+        // Widen the window so unserialized adds across the two checkouts would reliably overlap.
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        return await processRunner.run(request, invocation);
+      } finally {
+        active--;
+      }
+    },
+  };
+  const harness: Harness = {
+    invoke: async (request) => {
+      await writeFile(join(request.cwd, `${request.call.stepId.replaceAll('/', '-')}.txt`), 'x');
+      return response;
+    },
+  };
+  function definition() {
+    return defineWorkflow({
+      version: '1',
+      name: 'linked-admin',
+      input: z.null(),
+      output: z.null(),
+      async run(ctx) {
+        await ctx.codex.text('edit', { prompt: 'edit', isolation: 'worktree' });
+        return null;
+      },
+    });
+  }
+  await Promise.all([
+    runWorkflow(definition(), {
+      runId: 'main-checkout',
+      cwd: repo,
+      stateDir,
+      processRunner: runner,
+      worktrees: { root: join(directory, 'caches-main') },
+      input: null,
+      harness,
+    }),
+    runWorkflow(definition(), {
+      runId: 'linked-checkout',
+      cwd: linked,
+      stateDir,
+      processRunner: runner,
+      worktrees: { root: join(directory, 'caches-linked') },
+      input: null,
+      harness,
+    }),
+  ]);
+  expect(overlap).toBe(0);
+});
+
 it('serializes shared effects, resets failed attempts, retains ignored dependencies, and rebuilds missing caches', async () => {
   let handle: WorktreeHandle | undefined;
   let fail = true,

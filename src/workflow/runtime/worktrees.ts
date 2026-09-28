@@ -66,16 +66,17 @@ class HandleLocks {
 /**
  * Git reads every registered worktree's metadata while adding or listing one, so a concurrent add can
  * expose another's half-written admin directory ("failed to read .../commondir"). Serialize these
- * administrative commands per repository across all runs in this process.
+ * administrative commands per common Git directory across all runs in this process, so linked
+ * checkouts of one repository share a single lock.
  */
 const administration = new HandleLocks();
 
 async function administer<T>(
-  repo: string,
+  commonGitDir: string,
   signal: AbortSignal,
   work: () => Promise<T>,
 ): Promise<T> {
-  const release = await administration.acquire(repo, signal);
+  const release = await administration.acquire(commonGitDir, signal);
   try {
     return await work();
   } finally {
@@ -95,6 +96,7 @@ export interface WorktreeLease {
 /** Runtime-owned Git lifecycle above all harness adapters. @internal */
 export class RunWorktrees {
   private initialization: Promise<WorktreeLedger> | undefined;
+  private adminKeyPromise: Promise<string> | undefined;
   private readonly locks = new HandleLocks();
   private readonly git: WorktreeGit | undefined;
 
@@ -124,6 +126,28 @@ export class RunWorktrees {
         'Worktree isolation requires RunOptions.processRunner (for example, NodeProcessRunner).',
       );
     return this.git;
+  }
+
+  /**
+   * The canonical common Git directory that every linked worktree of `ledger.repo` shares, used to
+   * key the process-wide `administration` lock so concurrent runs rooted at different linked
+   * checkouts of one repository still serialize their `worktree add/list/remove` commands. Resolved
+   * lazily (not stored on the ledger) so a resumed run needs no schema change; memoized per instance
+   * and cleared on failure so a transient Git error does not stick.
+   */
+  private adminKey(ledger: WorktreeLedger, invocation: HarnessInvocation): Promise<string> {
+    this.adminKeyPromise ??= (async () =>
+      realpath(
+        await this.driver().text(
+          ledger.repo,
+          ['rev-parse', '--path-format=absolute', '--git-common-dir'],
+          invocation,
+        ),
+      ))().catch((error: unknown) => {
+      this.adminKeyPromise = undefined;
+      throw error;
+    });
+    return this.adminKeyPromise;
   }
 
   public async ledger(invocation: HarnessInvocation): Promise<WorktreeLedger> {
@@ -312,8 +336,9 @@ export class RunWorktrees {
       throw new Error('Worktree cache path must be a real directory.');
     if (!stat) {
       await mkdir(dirname(path), { recursive: true, mode: 0o700 });
+      const key = await this.adminKey(ledger, invocation);
       // --force allows re-creating exactly this missing, registered worktree; never global prune.
-      await administer(ledger.repo, invocation.signal, () =>
+      await administer(key, invocation.signal, () =>
         git.run(ledger.repo, ['worktree', 'add', '--force', '--detach', path, base], invocation),
       );
     } else {
@@ -327,13 +352,7 @@ export class RunWorktrees {
           invocation,
         ),
       );
-      const expected = await realpath(
-        await git.text(
-          ledger.repo,
-          ['rev-parse', '--path-format=absolute', '--git-common-dir'],
-          invocation,
-        ),
-      );
+      const expected = await this.adminKey(ledger, invocation);
       if (top !== path || common !== expected)
         throw new Error('Worktree cache no longer belongs to the recorded repository.');
       await git.run(path, ['reset', '--hard', base], invocation);
@@ -554,13 +573,14 @@ export class RunWorktrees {
           files: [],
         };
       });
+    const commonGitDir = await this.adminKey(ledger, invocation);
     return await integrate(
       {
         git: this.driver(),
         ledger,
         save: this.save,
         ref: (key) => this.ref(ledger, key),
-        administer: (work) => administer(ledger.repo, invocation.signal, work),
+        administer: (work) => administer(commonGitDir, invocation.signal, work),
         pin: (ref, commit) => this.pin(ledger, ref, commit, invocation),
         commit: (tree, parents, message, date) =>
           this.commit(ledger, tree, parents, message, date, invocation),
@@ -622,7 +642,8 @@ export class RunWorktrees {
           attempt: cache.attempt,
           idempotencyKey: `${this.record.id}/${cache.stepId}`,
         });
-        const registered = await administer(ledger.repo, invocation.signal, () =>
+        const key = await this.adminKey(ledger, invocation);
+        const registered = await administer(key, invocation.signal, () =>
           this.driver().run(ledger.repo, ['worktree', 'list', '--porcelain', '-z'], invocation, {
             timeoutMs: 10_000,
           }),
@@ -640,7 +661,7 @@ export class RunWorktrees {
           cache.state = 'removed';
           continue;
         }
-        await administer(ledger.repo, invocation.signal, () =>
+        await administer(key, invocation.signal, () =>
           this.driver().run(
             ledger.repo,
             ['worktree', 'remove', '--force', cache.path],
