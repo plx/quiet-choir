@@ -560,3 +560,50 @@ it('keeps one exclusive inbox for a flat run before and after migration', async 
     'revise',
   ]);
 });
+
+it('publishes the format-6 filename in a migrated run so both writer versions share one link', async () => {
+  const long = `a${'/a'.repeat(95)}`;
+  const definition = workflow(async (ctx) => [
+    await ctx.ask('first', question),
+    await ctx.ask('review/second', question),
+    await ctx.ask(long, question),
+  ]);
+  expect((await runWorkflow(definition, options())).status).toBe('suspended');
+  const record = await readRun(options());
+  record.formatVersion = 6;
+  delete record.seq;
+  delete record.engine;
+  await rm(join(stateDir, 'questions'), { recursive: true });
+  await writeRun(stateDir, record);
+  const inbox = join(stateDir, 'questions.inbox');
+  const first = await writeAnswer({ ...options(), stepId: 'first', value: 'ship' });
+  expect(first.path).toBe(join(inbox, 'first.answer.json'));
+  expect((await runWorkflow(definition, { ...options(), resume: true })).status).toBe('suspended');
+  expect((await readRun(options())).formatVersion).toBe(7);
+  // A pre-upgrade writer links `<encoded>.answer.json` into the same flat inbox.
+  const legacy = join(inbox, 'review%2Fsecond.answer.json');
+  expect(answerPath(stateDir, 'questions', 'review/second')).toBe(legacy);
+  const envelope = JSON.stringify({
+    value: 'revise',
+    by: 'agent:legacy',
+    at: new Date().toISOString(),
+    questionFingerprint: (await readRun(options())).steps['review/second']?.fingerprint,
+  });
+  await writeFile(legacy, envelope);
+  await expect(
+    writeAnswer({ ...options(), stepId: 'review/second', value: 'ship' }),
+  ).rejects.toMatchObject({ reason: 'conflict' });
+  expect(await readFile(legacy, 'utf8')).toBe(envelope);
+  expect((await readdir(inbox)).filter((name) => name.includes('second'))).toEqual([
+    'review%2Fsecond.answer.json',
+  ]);
+  expect((await runWorkflow(definition, { ...options(), resume: true })).status).toBe('suspended');
+  const hashed = await writeAnswer({ ...options(), stepId: long, value: 'ship' });
+  const digest = createHash('sha256').update(JSON.stringify(long)).digest('hex');
+  expect(hashed.path).toBe(join(inbox, `~sha256-${digest}.answer.json`));
+  expect((await runWorkflow(definition, { ...options(), resume: true })).output).toEqual([
+    'ship',
+    'revise',
+    'ship',
+  ]);
+});

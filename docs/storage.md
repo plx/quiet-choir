@@ -108,8 +108,8 @@ remain in `<runId>.json.v6`. A rejecting format-7 marker stays at the old filena
 binary cannot silently resume stale state. It is written before publishing the new snapshot. A
 pending migration marker can recover its original backup if the first directory snapshot never
 committed; a finished marker never substitutes for a missing current checkpoint. Runs migrated from
-the flat layout keep delivering answers to `<runId>.inbox/`, so writers racing a migration still
-share one exclusive target.
+the flat layout keep delivering answers to `<runId>.inbox/` under the format-6 answer filename, so
+pre-upgrade and current writers racing a migration still share one exclusive final path.
 
 Original format-1 runs also migrate, retaining `<runId>.json.v1`. The first migration replays the
 body to verify the original per-step dependencies, schema, retry settings, and raw agent options,

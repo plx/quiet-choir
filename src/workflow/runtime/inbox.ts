@@ -1,7 +1,7 @@
 import { createStorageDirectory, syncDirectory } from './storage-io.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { link, open, readFile, rm, stat } from 'node:fs/promises';
-import { basename, dirname, join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { z } from 'zod';
 import { jsonValue, digest } from './json.js';
 import { validateStepId } from './identity.js';
@@ -52,19 +52,34 @@ export interface AnswerDelivery {
   readonly questionFingerprint: string;
 }
 
-/** Portable inbox name, retaining readable IDs when they fit the filesystem limit. @internal */
+/** Format-6 answer name, still the final path in a migrated run's flat inbox. */
+function legacyAnswerName(stepId: string): string {
+  const encoded = encodeURIComponent(stepId);
+  return `${encoded.length <= 180 ? encoded : `~sha256-${digest(stepId)}`}.answer.json`;
+}
+
+/** Format-7 answer name: a readable prefix plus a digest that keeps case variants distinct. */
+function currentAnswerName(stepId: string): string {
+  return `${encodeURIComponent(stepId).slice(0, 100)}--${digest(stepId)}.answer.json`;
+}
+
+/**
+ * Portable inbox name, retaining readable IDs when they fit the filesystem limit. A flat
+ * `<runId>.inbox` keeps the format-6 name so pre-upgrade and current writers race on one link.
+ * @internal
+ */
 export function answerPath(stateDir: string, runId: string, stepId: string): string {
   if (!isValidRunId(runId)) throw new Error(runIdMessage);
   validateStepId(stepId);
-  const encoded = encodeURIComponent(stepId);
-  const filename = `${encoded.slice(0, 100)}--${digest(stepId)}`;
-  return join(runInboxPath(stateDir, runId), `${filename}.answer.json`);
+  const inbox = runInboxPath(stateDir, runId);
+  const flat = inbox === `${runDirectory(stateDir, runId)}.inbox`;
+  return join(inbox, flat ? legacyAnswerName(stepId) : currentAnswerName(stepId));
 }
 
 /** Current and pre-migration answer names in both inbox layouts; none is left unconsumed. @internal */
 export function answerCandidates(stateDir: string, runId: string, stepId: string): string[] {
-  const encoded = encodeURIComponent(stepId);
-  const legacy = `${encoded.length <= 180 ? encoded : `~sha256-${digest(stepId)}`}.answer.json`;
+  const legacy = legacyAnswerName(stepId);
+  const current = currentAnswerName(stepId);
   const path = answerPath(stateDir, runId, stepId);
   const inboxes = [
     join(runDirectory(stateDir, runId), 'inbox'),
@@ -73,7 +88,7 @@ export function answerCandidates(stateDir: string, runId: string, stepId: string
   return [
     ...new Set([
       path,
-      ...inboxes.map((inbox) => join(inbox, basename(path))),
+      ...inboxes.map((inbox) => join(inbox, current)),
       ...inboxes.map((inbox) => join(inbox, legacy)),
     ]),
   ];
