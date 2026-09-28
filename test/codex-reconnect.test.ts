@@ -234,9 +234,10 @@ it('clears stale warnings when a resumed attempt fails before the harness respon
   const resumed = await readRun({ stateDir, runId: 'stale-warnings' });
   expect(resumed.steps['agent']?.warnings).toBeUndefined();
 
-  await expect(runWorkflow(workflow, { ...options, resume: true })).rejects.toThrow(
-    'No harness adapter configured',
-  );
+  // Dropping the adapter is still a harness change; opt in to reach the missing-adapter check.
+  await expect(
+    runWorkflow(workflow, { ...options, resume: true, allowHarnessChange: true }),
+  ).rejects.toThrow('No harness adapter configured');
   const resumedWithoutHarness = await readRun({ stateDir, runId: 'stale-warnings' });
   expect(resumedWithoutHarness.steps['agent']?.warnings).toBeUndefined();
 });
