@@ -148,8 +148,49 @@ export default defineWorkflow({name:'sdlc',version:'1',description:'Build from a
   const duplicate = cli(['list-defs', definitions, other, '--json']);
   assert.equal(duplicate.status, 4, duplicate.stderr);
   assert.match(duplicate.stderr, /Duplicate workflow name sdlc/u);
+  writeFileSync(
+    join(definitions, 'team-review.workflow.ts'),
+    `import {defineWorkflow,z} from 'quiet-choir';export default defineWorkflow({name:'team/review',version:'1',input:z.object({topic:z.string()}),output:z.string(),async run(_ctx,input){return input.topic;}});`,
+  );
+  const slashName = ok([
+    'execute',
+    'team/review',
+    '--registry-dir',
+    definitions,
+    '--run-id',
+    'slash-name',
+    '--state-dir',
+    state,
+    '--input',
+    '{"topic":"reviewed"}',
+    '--json',
+  ]);
+  assert.equal(
+    slashName.output,
+    'reviewed',
+    'A registry name containing / must resolve by name with --registry-dir',
+  );
+  writeFileSync(join(directory, 'sdlc'), 'not a workflow file');
+  const cwdCollision = ok([
+    'execute',
+    'sdlc',
+    '--registry-dir',
+    definitions,
+    '--run-id',
+    'cwd-collision',
+    '--state-dir',
+    state,
+    '--input',
+    '{"topic":"resolved-by-name"}',
+    '--json',
+  ]);
+  assert.equal(
+    cwdCollision.output,
+    'resolved-by-name',
+    'A registry name matching a cwd entry must still resolve by name with --registry-dir',
+  );
   console.log(
-    'PASS CLI child trees, schemas, required input, registry cache/dependency invalidation, named execute, depth resume, identity refusal and duplicate names',
+    'PASS CLI child trees, schemas, required input, registry cache/dependency invalidation, named execute, registry-dir name precedence, depth resume, identity refusal and duplicate names',
   );
 } finally {
   rmSync(directory, { recursive: true, force: true });

@@ -79,7 +79,8 @@ export default class WorkflowExecute extends WorkflowCommand {
     }),
     'registry-dir': Flags.string({
       multiple: true,
-      description: 'Trusted directory to search when the workflow argument is a registry name',
+      description:
+        'Trusted directory to search; when given, the workflow argument is always resolved as a registered name, not a file path',
     }),
     ...runBudgetFlags,
     progress: Flags.boolean({ description: 'Print bounded live agent activity to stderr' }),
@@ -256,10 +257,14 @@ export default class WorkflowExecute extends WorkflowCommand {
     }
     if (args.file === undefined && !flags.resume)
       this.fail('usage.flag', 'A workflow file is required unless --resume --run-id is used.');
+    const useRegistry =
+      args.file !== undefined &&
+      ((flags['registry-dir']?.length ?? 0) > 0 ||
+        (!existsSync(args.file) && !/[\\/]|\.(?:ts|tsx|mts|cts)$/iu.test(args.file)));
     const launch =
       args.file === undefined
         ? { kind: 'workflow.resume' as const }
-        : !existsSync(args.file) && !/[\\/]|\.(?:ts|tsx|mts|cts)$/iu.test(args.file)
+        : useRegistry
           ? {
               kind: 'workflow.execute-name' as const,
               name: args.file,

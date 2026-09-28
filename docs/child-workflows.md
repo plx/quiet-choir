@@ -84,6 +84,11 @@ quiet-choir workflow execute reusable-helper --registry-dir ./examples/patterns 
   --input '{"paths":["src/index.ts"]}' --max-child-depth 8
 ```
 
+`execute`'s argument is a file unless it looks like a bare name (no `/` or `\`, no `.ts`/`.tsx`/
+`.mts`/`.cts` extension, and no matching filesystem entry); pass `--registry-dir` to always resolve
+it as a registered name instead, including one that contains `/` or otherwise matches a local path.
+An unrecognized name fails with `Unknown workflow name`.
+
 `list-defs [DIR…]` defaults to the current directory, recursively discovers `*.workflow.ts`, and
 rejects duplicate names. It skips generated/state/dependency directories and does not follow
 directory symlinks. These are trusted imports; module top-level code must have no workflow effects.
