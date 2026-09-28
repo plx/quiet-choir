@@ -719,6 +719,26 @@ describe('head/tail byte capture', () => {
     );
     expect(capture.truncated).toBe(true);
   });
+  it.each([
+    [64, [1]],
+    [65, [3, 7, 1]],
+    [1000, [5, 64, 1, 700, 2, 1500]],
+  ])('keeps head and tail across many chunks past a %i-byte cap', (limit, sizes) => {
+    const capture = new OutputCapture(limit);
+    let reference = '';
+    for (let index = 0; reference.length < limit * 20; index++) {
+      const size = sizes[index % sizes.length] ?? 1;
+      const chunk = Array.from({ length: size }, (_, offset) =>
+        String.fromCharCode(97 + ((reference.length + offset) % 26)),
+      ).join('');
+      reference += chunk;
+      capture.append(Buffer.from(chunk));
+      const head = reference.slice(0, Math.ceil(limit / 2));
+      const tail = reference.length > limit ? reference.slice(-Math.floor(limit / 2)) : '';
+      expect(capture.text()).toBe(reference.length > limit ? head + tail : reference);
+    }
+    expect(capture.truncated).toBe(true);
+  });
   it('preserves intact utf8 and omits partial codepoints at truncation boundaries', () => {
     const intact = new OutputCapture(9);
     intact.append(Buffer.from('a😀b'));
