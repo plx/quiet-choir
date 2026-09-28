@@ -7,6 +7,7 @@ import type {
   HarnessResponse,
   JsonValue,
 } from '../workflow/runtime/model.js';
+import { ConfigurationError } from '../workflow/runtime/configuration-error.js';
 import { jsonValue } from '../workflow/runtime/json.js';
 import { matchesStepGlob } from '../workflow/runtime/policy.js';
 import { synthesizeOutput } from './synthesize.js';
@@ -105,9 +106,10 @@ export class FixtureHarness implements Harness {
     invocation.signal.throwIfAborted();
     const match = this.match(request);
     const fixture = match?.fixture;
+    // A missing fixture is misconfiguration: never settle or retry it (see ConfigurationError).
     if (!fixture && this.fixtures.unmatched !== 'synthesize')
       return Promise.reject(
-        new Error(
+        new ConfigurationError(
           `No fixture matches step ${request.call.stepId} (${request.provider}, attempt ${String(request.call.attempt)}).`,
         ),
       );

@@ -256,6 +256,67 @@ describe('fixture routing and export', () => {
   });
 });
 
+describe('rehearsal configuration failures', () => {
+  const answer = z.object({ answer: z.string() });
+  const settling = workflow(async (ctx) => {
+    const result = await ctx.claude.object('ask', {
+      prompt: 'x',
+      schema: answer,
+      onError: 'return',
+    });
+    return result.ok ? result.value.output.answer : `settled: ${result.error.message}`;
+  });
+
+  it('rejects an unmatched fixture without settling it, so a corrected resume completes', async () => {
+    const options = await setup();
+    const missing = new FixtureHarness({ version: 1, calls: [] });
+    await expect(runWorkflow(settling, { ...options, harness: missing })).rejects.toThrow(
+      'No fixture matches step ask (claude, attempt 1).',
+    );
+    const step = (await readRun(options)).steps['ask'];
+    expect(step?.status).toBe('failed');
+    expect(step?.settledError).toBeUndefined();
+    const fixed = new FixtureHarness({
+      version: 1,
+      calls: [{ step: 'ask', output: { answer: 'ok' } }],
+    });
+    const result = await runWorkflow(settling, { ...options, harness: fixed, resume: true });
+    expect(result.output).toBe('ok');
+    expect(result.steps['ask']?.status).toBe('completed');
+  });
+
+  it('rejects an unsatisfiable dry-run synthesis with its step and pointer instead of settling', async () => {
+    const options = await setup();
+    const harness = new RehearsalHarness({ kind: 'cli', config: {} });
+    const definition = workflow(async (ctx) => {
+      const result = await ctx.claude.object('code', {
+        prompt: 'x',
+        schema: z.object({ code: z.string().regex(/^[0-9]+$/u) }),
+        onError: 'return',
+      });
+      return result.ok ? result.value.output.code : 'settled';
+    });
+    await expect(
+      runWorkflow(definition, { ...options, harness, rehearsal: harness.hooks }),
+    ).rejects.toThrow('Step code at JSON pointer "/code"');
+    const step = (await readRun(options)).steps['code'];
+    expect(step?.status).toBe('failed');
+    expect(step?.settledError).toBeUndefined();
+  });
+
+  it('still settles a declared error fixture as an invocation failure', async () => {
+    const options = await setup();
+    const harness = new FixtureHarness({
+      version: 1,
+      calls: [{ step: 'ask', error: 'simulated' }],
+    });
+    const result = await runWorkflow(settling, { ...options, harness });
+    expect(result.output).toContain('settled: ');
+    expect(result.output).toContain('Step ask: simulated');
+    expect(result.steps['ask']?.status).toBe('settled-failed');
+  });
+});
+
 describe('deterministic synthesis', () => {
   it('fills enums, minimums, nullable values, escaped pointers, bounded arrays, and tuples', () => {
     const schema = z.object({

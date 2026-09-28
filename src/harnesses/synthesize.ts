@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { ConfigurationError } from '../workflow/runtime/configuration-error.js';
 import { jsonValue } from '../workflow/runtime/json.js';
 import type { JsonValue } from '../workflow/runtime/model.js';
 
@@ -10,10 +11,13 @@ function pointer(path: string, key: string | number): string {
   return `${path}/${String(key).replace(/~/gu, '~0').replace(/\//gu, '~1')}`;
 }
 
-/** Deterministic JSON Schema samples. Unsupported or unsatisfied constraints require an explicit fixture. */
+/**
+ * Deterministic JSON Schema samples. Unsupported or unsatisfied constraints require an explicit
+ * fixture and reject as a {@link ConfigurationError}, so a synthesis gap is never settled or retried.
+ */
 export function synthesizeOutput(schema: JsonValue, stepId: string): JsonValue {
   const fail = (path: string, reason: string): never => {
-    throw new Error(
+    throw new ConfigurationError(
       `Step ${stepId} at JSON pointer ${JSON.stringify(path)}: ${reason}. Supply a fixture output for this step.`,
     );
   };
@@ -88,7 +92,7 @@ export function synthesizeOutput(schema: JsonValue, stepId: string): JsonValue {
       }
       throw firstError instanceof Error
         ? firstError
-        : new Error(`Step ${stepId}: empty union; supply a fixture.`);
+        : new ConfigurationError(`Step ${stepId}: empty union; supply a fixture.`);
     }
     if (Array.isArray(node['allOf'])) {
       const values = node['allOf'].map((entry) => visit(entry, path, depth + 1));

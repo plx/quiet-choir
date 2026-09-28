@@ -45,7 +45,9 @@ Rules use first-match order, with optional provider and cumulative attempt filte
 parse it as JSON. `output` is serialized for structured calls, while a string output on a text call
 stays plain text. Missing usage fields become null. Results still pass normal parsing, Zod
 validation, and checkpointing; stale fixtures fail at their named step. Missing rules fail with the
-step, provider, and attempt unless `unmatched` is `synthesize`.
+step, provider, and attempt unless `unmatched` is `synthesize`. Unmatched calls and synthesis gaps
+reject as configuration errors and are never settled or retried, while a rule's `error` simulates a
+settleable invocation failure.
 
 Fixture execution writes ordinary durable records. Use `--dry-run --harness fixture:./fixtures.json`
 for temporary state, immediate sleeps, and synthesis of unmatched calls regardless of the file's
