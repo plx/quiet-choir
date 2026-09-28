@@ -22,12 +22,15 @@ see [setup](references/setup-and-cli.md#run-against-another-project).
 Set `QC_CHECKOUT`, `QC_TARGET`, `QC_WORKFLOW`, and `QC_RUNS` to absolute paths: a built runtime
 checkout, the target project, a trusted workflow file, and a state directory **outside the target
 worktree**. Start with the local-only workflow below, which accepts `{}` and makes no paid calls.
-Use a fresh run ID for another independent run; retain these paths for inspection and recovery.
+Use a fresh run ID for another independent run; retain these paths for inspection and recovery. The
+redirected result and log can hold plaintext workflow output, so `umask 077` and a private
+`$QC_RUNS` keep them owner-only, matching the 0600 checkpoints.
 
 <!-- skills-check: example golden-path -->
 
 ```sh
-mkdir -p "$QC_RUNS"
+umask 077
+mkdir -m 700 -p "$QC_RUNS"
 cd "$QC_TARGET" || exit 1
 node "$QC_CHECKOUT/bin/run.js" workflow validate "$QC_WORKFLOW" --json || exit 1
 nohup node "$QC_CHECKOUT/bin/run.js" workflow execute "$QC_WORKFLOW" \

@@ -61,6 +61,9 @@ try {
       cwd: directory,
       env,
     });
+    assert.equal((await stat(state)).mode & 0o777, 0o700);
+    assert.equal((await stat(join(state, 'first.result.json'))).mode & 0o777, 0o600);
+    assert.equal((await stat(join(state, 'first.log'))).mode & 0o777, 0o600);
     let saved;
     for (let tries = 0; tries < 300; tries++) {
       try {
