@@ -278,6 +278,37 @@ describe('workflow lifecycle command adapters', () => {
     expect(output.stdout).toContain(json ? '"output":42' : 'Run test-run completed.');
   });
 
+  it('passes positive agent limits as plain execution policy and rejects malformed values before execution', async () => {
+    const file = await workflowFile();
+    const execute = vi
+      .spyOn(WorkflowExecutor.prototype, 'execute')
+      .mockResolvedValue({ kind: 'workflow.run.result', ok: true, run: runRecord });
+    const valid = await captureCommand(WorkflowExecute, [
+      file,
+      '--max-agents',
+      '5',
+      '--provider-limit',
+      'codex=1',
+      '--provider-limit',
+      'claude=2',
+    ]);
+    expect(valid.error).toBeUndefined();
+    expect(execute).toHaveBeenCalledWith(
+      expect.objectContaining({ agentLimits: { total: 5, perProvider: { codex: 1, claude: 2 } } }),
+    );
+    execute.mockClear();
+    for (const args of [
+      ['--max-agents', '0'],
+      ['--max-agents', '1.5'],
+      ['--provider-limit', 'codex=0'],
+      ['--provider-limit', 'codex=9007199254740992'],
+    ]) {
+      const invalid = await captureCommand(WorkflowExecute, [file, ...args]);
+      expect(invalid.error).toMatchObject({ oclif: { exit: 2 } });
+    }
+    expect(execute).not.toHaveBeenCalled();
+  });
+
   it.each([false, true])(
     'prints cleanup warnings to stderr without failing the completed run (JSON=%s)',
     async (json) => {

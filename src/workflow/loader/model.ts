@@ -1,3 +1,4 @@
+import type { AgentLimits } from '../runtime/agent-limiter.js';
 import type { CapabilityManifest, ProfileOverride } from '../runtime/profiles-model.js';
 import type { ExecutionPlan, ExecutionResult } from '../../application/execution.js';
 import type { JsonValue } from '../runtime/model.js';
@@ -15,6 +16,7 @@ export interface ValidateWorkflowPlan extends ExecutionPlan {
 /** Plain-data instructions for starting or resuming a workflow. */
 export interface ExecuteWorkflowPlan extends ExecutionPlan {
   readonly kind: 'workflow.execute';
+  readonly agentLimits?: AgentLimits;
   readonly typecheck: TypecheckPlan;
   readonly runId: string;
   readonly stateDir: string;

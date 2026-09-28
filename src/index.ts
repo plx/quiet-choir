@@ -100,3 +100,11 @@ export { probeHarnessContracts, testedHarnessVersions } from './harnesses/doctor
 export type { DoctorOptions, DoctorReport, DoctorCheck } from './harnesses/doctor.js';
 export { readInheritedCodexConfig } from './harnesses/doctor-config.js';
 export type { InheritedCodexConfig } from './harnesses/doctor-config.js';
+
+export { createAgentLimiter, defaultAgentLimits } from './workflow/runtime/agent-limiter.js';
+export type {
+  AgentLimits,
+  AgentPermit,
+  AgentLimiter,
+  AgentLimiterSnapshot,
+} from './workflow/runtime/agent-limiter.js';

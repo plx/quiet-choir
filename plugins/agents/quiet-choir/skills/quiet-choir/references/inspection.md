@@ -106,13 +106,13 @@ onEvent: (event) => {
 },
 ```
 
-An event includes `type`, `runId`, `stepId`, and `attempt`. Notifications reflect persisted step
-state; `step.replayed` refers to the existing completion and does not increment attempts. Observer
-synchronous exceptions and asynchronous rejections are ignored so they cannot invalidate execution.
-Observer promises are not awaited and do not keep the run lock held; synchronous observer work still
-runs inline. Notifications are not durably queued or guaranteed to be delivered. `onEvent` is not a
-token stream, tool trace, or run-lifecycle event API; use the returned record or checkpoint for
-final status.
+An event includes `type`, `runId`, `stepId`, and `attempt`. Step notifications reflect persisted
+step state; `step.replayed` refers to the existing completion and does not increment attempts.
+Observer synchronous exceptions and asynchronous rejections are ignored so they cannot invalidate
+execution. Observer promises are not awaited and do not keep the run lock held; synchronous observer
+work still runs inline. Notifications are not durably queued or guaranteed to be delivered.
+`onEvent` is not a token stream, tool trace, or run-lifecycle event API; use the returned record or
+checkpoint for final status.
 
 Usage values come from the harness and may be null. Codex cost is always null in this adapter.
 Completed agent results store successful-attempt usage; failed protocol attempts can also store
@@ -143,3 +143,10 @@ ownership is released. Repair permissions or inspect the lock before another run
 or missing or unreadable ownership metadata in a remaining lock, remains an error. A removed state
 directory is named explicitly and is not silently recreated. See [durability](durability.md) for
 recovery precautions.
+
+`agent.queued` and `agent.admitted` are live admission notifications, not checkpoint transitions.
+They include `provider`, `inFlight` reserved-slot counts, `queued` waiter count, and `waitedMs`
+(zero when requesting admission, actual monotonic wait when admitted). An immediate admission can
+report queued=0. With an explicitly shared limiter, counts cover all sharing runs. A queued step is
+already persisted as running; checkpoints do not distinguish waiting from native execution. Use
+`limiter.snapshot()` for embedded live monitoring. Observer failures never own a slot.

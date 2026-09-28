@@ -2,6 +2,11 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- Live agents now share a run-wide concurrency cap, defaulting to min(8, max(1, available CPUs -
+  2)). Configure total/provider limits through RunOptions or CLI flags, or share a limiter across
+  runs. Queueing is cancellable, visible through admission events, and outside per-call deadlines.
+  See [agent concurrency](docs/agent-concurrency.md).
+
 - Both harnesses accept shared effort and typed native controls, private role/config files,
   content-snapshotted images and fingerprinted, denylisted args/env/config. Capability controls
   compose with profiles and grants. See [harness controls](docs/harness-controls.md).

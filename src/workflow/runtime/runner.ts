@@ -1,3 +1,9 @@
+import {
+  resolveAgentLimiter,
+  type AgentLimiter,
+  type AgentLimits,
+  type AgentLimiterSnapshot,
+} from './agent-limiter.js';
 import { snapshotImages } from './images.js';
 import { profileLimitError } from './profile-diagnostics.js';
 import {
@@ -88,7 +94,7 @@ import {
 
 export { ConfigurationError } from './configuration-error.js';
 
-/** A lightweight notification emitted after the associated checkpoint is persisted. */
+/** Unawaited workflow notifications: step transitions follow persistence; agent admission events are live. */
 export interface WorkflowEvent {
   /** Event lifecycle transition. */
   readonly type:
@@ -101,7 +107,17 @@ export interface WorkflowEvent {
     | 'step.redefined'
     | 'step.superseded'
     | 'step.reused'
-    | 'replay.divergence';
+    | 'replay.divergence'
+    | 'agent.queued'
+    | 'agent.admitted';
+  /** Provider requesting or receiving admission, present on agent events. */
+  readonly provider?: string;
+  /** Reserved slots by provider, present on agent events. */
+  readonly inFlight?: AgentLimiterSnapshot['inFlight'];
+  /** Waiting requests at this notification; immediate admission can report zero. */
+  readonly queued?: number;
+  /** Zero at the request notification; monotonic queue duration on admission. */
+  readonly waitedMs?: number;
   /** Replay divergence diagnosis, when relevant. */
   readonly message?: string;
   /** Terminal or later recorded steps not yet visited before a live effect. */
@@ -126,6 +142,8 @@ export type WorkflowRun<TOutput> = RunRecord & {
 
 /** Explicit dependencies and execution policy for a workflow run. */
 export interface RunOptions extends WorkflowCodeOptions {
+  /** Run-wide live invocation cap, limits, or shared limiter. Omission uses defaultAgentLimits(). Not sticky or part of identity. */
+  readonly agentLimit?: number | AgentLimits | AgentLimiter;
   /** Sticky named limit rules, appended on resume; policyReset clears them as well. */
   readonly profileOverrides?: readonly ProfileOverride[];
   /** Authorize elevated profiles by name, access class (write/exec), or all; saved across resumes. */
@@ -202,6 +220,7 @@ export async function runWorkflow<TInput, TOutput>(
 ): Promise<WorkflowRun<TOutput>> {
   if (!definition.name.trim() || !definition.version.trim())
     throw new Error('Workflow name and version must be nonempty.');
+  const limiter = resolveAgentLimiter(options.agentLimit);
   const capabilities = capabilityManifest(definition);
   const incomingProfiles = validateProfileOverrides(options.profileOverrides ?? [], capabilities);
   const incomingGrants = grantsSchema.parse(jsonValue(options.grants ?? []));
@@ -484,7 +503,7 @@ export async function runWorkflow<TInput, TOutput>(
       type: WorkflowEvent['type'],
       id: string,
       step: StepRecord,
-      details: { message?: string; skippedStepIds?: readonly string[]; healedStepId?: string } = {},
+      details: Omit<WorkflowEvent, 'type' | 'runId' | 'stepId' | 'attempt'> = {},
     ): void => {
       try {
         void Promise.resolve(
@@ -500,6 +519,20 @@ export async function runWorkflow<TInput, TOutput>(
         });
       } catch {
         /* Observers must not invalidate committed effects. */
+      }
+    };
+
+    const emitAdmission = (
+      type: 'agent.queued' | 'agent.admitted',
+      id: string,
+      step: StepRecord,
+      provider: string,
+      waitedMs: number,
+    ): void => {
+      try {
+        emit(type, id, step, { provider, waitedMs, ...limiter.snapshot() });
+      } catch {
+        /* Custom diagnostics must not leak or invalidate an invocation slot. */
       }
     };
 
@@ -978,7 +1011,17 @@ export async function runWorkflow<TInput, TOutput>(
               }
               let response;
               try {
-                response = await options.harness.invoke(request, context.signal);
+                const admission = limiter.acquire(provider, context.signal);
+                emitAdmission('agent.queued', id, step, provider, 0);
+                const permit = await admission;
+                try {
+                  context.signal.throwIfAborted();
+                  emitAdmission('agent.admitted', id, step, provider, permit.waitedMs);
+                  context.signal.throwIfAborted();
+                  response = await options.harness.invoke(request, context.signal);
+                } finally {
+                  permit.release();
+                }
               } catch (error) {
                 if (error instanceof HarnessError) {
                   const denials = error.permissionDenials ?? 0;

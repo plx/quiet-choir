@@ -9,9 +9,9 @@ TypeScript ports. Batch 01 contains all 26 workflows from
 
 Batch 01 is the active regression suite for the current built runtime, not a frozen set of ports.
 Its upstream originals remain immutable. The initial ports targeted `a6a7b82`; `apiSnapshot` now
-records the harness-control API at `11471b2` used by all 68 effort settings. Historical ports
-explicitly retain raw input capabilities with `strictProfiles: false`. The recorded model-file hash
-belongs to that commit; regression tests use the current built checkout, including
+records the agent-admission API at `6aa8668` used by the nested ports and their 68 effort settings.
+Historical ports explicitly retain raw input capabilities with `strictProfiles: false`. The recorded
+model-file hash belongs to that commit; regression tests use the current built checkout, including
 `readRun({ runId, stateDir })` in the recovery verifier.
 
 The site is a reader, not an execution console. Every original is preserved byte for byte, with its
@@ -125,12 +125,13 @@ Tool-dependent workflows require suitable configuration. No workflow-level budge
 
 The shared support files are displayed on the site as part of each comparison. They are local
 adapters, not proposed additions to the runtime API. They provide stable scoped IDs, bounded
-per-group fan-out, pipelining, and child composition for the legacy ports. The bug-hunt port now
-uses runtime named maps and lexical contexts with explicit leaves, without `createPort`. Agent
-failures stop new map scheduling, drain started mappers without cancellation, and reject the run.
-Phases are metadata/stderr only. All 68 per-call effort settings now use typed controls; the shared
-token ledger remains unavailable. Per-workflow notes describe these differences and source behaviors
-deliberately retained.
+per-group mapper fan-out, pipelining, and child composition for the legacy ports. A core run-wide
+agent limit now independently caps native calls across these nested groups; configure it with
+`--max-agents` and `--provider-limit`. The bug-hunt port now uses runtime named maps and lexical
+contexts with explicit leaves, without `createPort`. Agent failures stop new map scheduling, drain
+started mappers without cancellation, and reject the run. Phases are metadata/stderr only. All 68
+per-call effort settings now use typed controls; the shared token ledger remains unavailable.
+Per-workflow notes describe these differences and source behaviors deliberately retained.
 
 An SDLC human checkpoint is returned data. To supply new answers, start a **new run ID** with that
 returned state and the answers as input. Use `--resume` only to retry an interrupted run with

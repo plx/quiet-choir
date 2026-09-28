@@ -44,3 +44,9 @@ binding, and never snapshot the current signal. Named-map keys are all validated
 settled identity hashes original mapper source and resolved keys. Legacy unscoped IDs/fingerprints
 must remain compatible with format 5. See
 [ADR 0009](../../../docs/decisions/0009-scoped-step-ids.md).
+
+Agent admission is run-wide (or shared explicitly across runs). Only Harness.invoke holds a slot;
+never acquire in a mapper, local effect, sleep, replay path, retry backoff, or checkpoint write.
+Queued cancellation follows the captured scope. Release in finally before processing responses.
+Admission events are live diagnostics, not durable transitions. See
+[ADR 0012](../../../docs/decisions/0012-agent-admission.md).

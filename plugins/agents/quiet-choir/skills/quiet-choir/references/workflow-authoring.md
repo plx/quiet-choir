@@ -127,6 +127,23 @@ limits are policy, so changing them does not invalidate a saved step. Run-level 
 override call-site fields and persist across resumes; see [durability](durability.md). Completed
 identity changes remain errors; unfinished identity changes are recorded as redefinitions.
 
+## Agent concurrency
+
+`ctx.map` concurrency bounds only that map's mapper bodies. Nested maps can multiply active mappers.
+A separate shared limit caps live agent invocations across the whole run, including `Promise.all`
+and child helper functions using the same context. Default: min(8, max(1, available CPUs - 2)). Use
+`--max-agents 5 --provider-limit codex=1` on execute, or
+`RunOptions.agentLimit: { total: 5, perProvider: { codex: 1 } }`. Limits are fresh invocation
+policy, not sticky or part of identity, so they can change on resume. Provider limits do not block
+other eligible providers; requests are FIFO among eligible waiters.
+
+Only the live harness call holds a permit. Local steps, sleeps, mappers, replay, checkpoint writes
+and retry backoff do not. Queue time does not consume the agent's timeoutMs. Queued calls cancel
+with their map/run scope and never reach the harness; admitted calls hold capacity until settled.
+Use one `createAgentLimiter(limits)` object as `agentLimit` for several runs to share a cap; passing
+the same number/data creates independent pools. Separate CLI processes are not coordinated. This is
+a concurrency ceiling, not a dollar budget.
+
 ## Failure handling
 
 A caught throwing call remains retryable on resume. If it heals, a fallback can disappear or a later

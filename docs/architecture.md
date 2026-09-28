@@ -50,11 +50,19 @@ resolved semantic controls remain identity. See
 Each local run has a JSON checkpoint and an exclusive owner lock. Terminal named outcomes (successes
 or explicitly settled failures) are reused when their identities match; unfinished steps execute
 again. A resumed workflow function starts from the beginning, so everything outside a durable
-operation must be deterministic and free of side effects. `ctx.map` provides bounded concurrency,
-scoped cancellation, and drain-by-default failure handling. Explicitly named settled maps also
-journal entire item outcomes and owned records; resume skips committed mappers. Ordinary throwing
-maps have no collection journal. Named maps prefix items by validated key or index; scope/within
-compose explicit leaves through a separate prefix context, independent of cancellation ownership.
+operation must be deterministic and free of side effects. `ctx.map` provides locally bounded mapper
+concurrency, scoped cancellation, and drain-by-default failure handling. Explicitly named settled
+maps also journal entire item outcomes and owned records; resume skips committed mappers. Ordinary
+throwing maps have no collection journal. Named maps prefix items by validated key or index;
+scope/within compose explicit leaves through a separate prefix context, independent of cancellation
+ownership. A core-owned limiter independently caps live harness invocations across all maps and
+composed helper workflows. The default is min(8, max(1, available CPUs - 2)); data limits configure
+each run, and a shared limiter object can cap multiple runs. Eligible FIFO admission skips providers
+at their own ceilings. Only `Harness.invoke` holds a slot, released before response validation or
+checkpoint writes. Queueing is cancellable and outside per-call deadlines. Admission events are live
+status, not persisted transitions; queued attempts remain `running`. See
+[ADR 0012](decisions/0012-agent-admission.md) and [agent concurrency](agent-concurrency.md).
+
 `ctx.sleep` records a durable wake deadline. The CLI checks canonical, project-relative source
 hashes alongside explicit version and engine metadata. Strict resume remains the default. Explicit
 code acceptance keeps step checks, and new-run forks copy matching terminal outcomes with provenance

@@ -74,8 +74,9 @@ afterEach(async () => {
   await rm(root, { recursive: true, force: true });
 });
 
-// Each case type-checks fixtures that import the whole engine source several times; on shared CI
-// runners the heaviest case has run for 27-31s, so 30s timed out intermittently.
+// Each case type-checks fixtures that import the whole engine source several times (up to four full
+// compiler passes). On shared CI runners the heaviest case has run for 27-31s, and coverage on Node
+// 22 adds more; this is a correctness suite, not a compiler latency benchmark.
 describe('source-aware loader recovery', { timeout: 90_000 }, () => {
   it('normalizes symlink spellings, excludes engine sources, and validates the exact stored fingerprint', async () => {
     const alias = join(root, 'alias');

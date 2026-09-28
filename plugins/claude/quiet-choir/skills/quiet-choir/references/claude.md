@@ -95,7 +95,8 @@ Use `strictProfiles: false` only to migrate legacy raw capability calls; elevate
 class/all grants, and the manifest no longer bounds those call-site replacements.
 
 Keep permissions appropriate to the task. quiet-choir exposes no permission-bypass mode. Limits
-apply per call, not across the workflow; bounded concurrency does not impose a total spending cap.
+apply per call, not across the workflow; the run-wide agent admission cap does not impose a total
+spending cap.
 
 ## Structured output and errors
 
