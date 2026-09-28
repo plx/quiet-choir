@@ -5,7 +5,14 @@ import { join } from 'node:path';
 
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 
-import { CheckpointError, defineWorkflow, readRun, runWorkflow, z } from '../src/index.js';
+import {
+  CheckpointError,
+  defineWorkflow,
+  readRun,
+  RunRefusedError,
+  runWorkflow,
+  z,
+} from '../src/index.js';
 import type { WorkflowDefinition } from '../src/index.js';
 import * as store from '../src/workflow/runtime/store.js';
 
@@ -193,6 +200,24 @@ it('does not replace a workflow-body error with a failed run save', async () => 
   expect(error.cause).toBe(original);
   expect(error.message).toMatch(/^body failed/u);
   expect(error.errors[1]).toBeInstanceOf(CheckpointError);
+});
+
+it('classifies a lock setup I/O failure as a checkpoint error but keeps contention refusals distinct', async () => {
+  vi.mocked(store.lockRun).mockRejectedValueOnce(ioError('ENOSPC'));
+  const body = vi.fn(() => Promise.resolve('done'));
+  await expect(runWorkflow(workflow(body), options())).rejects.toMatchObject({
+    name: 'CheckpointError',
+    operation: 'lock',
+    message: expect.stringContaining('Could not acquire run run lock') as unknown,
+    cause: { code: 'ENOSPC' },
+  });
+  expect(body).not.toHaveBeenCalled();
+  const refusal = new RunRefusedError('run.locked', 'run', 'Run run is locked by PID 1.', {
+    pid: 1,
+  });
+  vi.mocked(store.lockRun).mockRejectedValueOnce(refusal);
+  await expect(runWorkflow(workflow(body), options())).rejects.toBe(refusal);
+  expect(body).not.toHaveBeenCalled();
 });
 
 it('does not start the body when its initial checkpoint cannot be saved', async () => {

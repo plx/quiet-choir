@@ -48,3 +48,8 @@ inspectable; changed or unknown run ownership is still fatal.
 
 ADR 0014 wraps successfully saved failures in `WorkflowRunError`; the prior rejection/aggregate
 remains its cause. CLI storage failures use exit 74 and report the actual saved state.
+
+ADR 0014 also adds a `lock` operation: an errno failure while creating the state directory or
+writing/syncing `owner.json` during lock acquisition becomes a `CheckpointError` rather than
+`run.unreadable`, so a storage outage during setup reports the same exit 74 as other checkpoint
+failures. `RunRefusedError` contention (`run.locked`) and an aborted signal are unaffected.

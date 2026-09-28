@@ -262,8 +262,16 @@ export async function runWorkflow<TInput, TOutput>(
       options.killGraceMs > 2_147_483_647)
   )
     throw new Error('killGraceMs must be an integer from 1 to 2147483647.');
-  const release = await lockRun(stateDir, options.runId, options).catch((cause: unknown) => {
+  const release = await lockRun(stateDir, options.runId, options).catch(async (cause: unknown) => {
     if (cause instanceof RunRefusedError || options.signal?.aborted) throw cause;
+    if (errorCode(cause) !== undefined)
+      throw await checkpointError(
+        'lock',
+        stateDir,
+        options.runId,
+        cause,
+        `Could not acquire run ${options.runId} lock`,
+      );
     throw unreadableRunError({ stateDir, runId: options.runId }, cause);
   });
   const controller = new AbortController();

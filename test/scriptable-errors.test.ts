@@ -31,7 +31,7 @@ import {
 
 vi.mock('../src/workflow/runtime/store.js', async (importOriginal) => {
   const actual = await importOriginal<typeof store>();
-  return { ...actual, writeRun: vi.fn(actual.writeRun) };
+  return { ...actual, writeRun: vi.fn(actual.writeRun), lockRun: vi.fn(actual.lockRun) };
 });
 const actualStore = await vi.importActual<typeof store>('../src/workflow/runtime/store.js');
 const projectRoot = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -40,6 +40,7 @@ let stateDir: string;
 beforeEach(async () => {
   stateDir = await mkdtemp(join(tmpdir(), 'choir-errors-'));
   vi.mocked(store.writeRun).mockImplementation(actualStore.writeRun);
+  vi.mocked(store.lockRun).mockImplementation(actualStore.lockRun);
 });
 afterEach(async () => {
   await rm(stateDir, { recursive: true, force: true });
@@ -250,6 +251,45 @@ it('renders explicit empty context for pre-run failures and reserves exit 1 for 
   ]);
   expect(workflowExitCodes['workflow.storage']).toBe(74);
 });
+
+it(
+  'classifies a lock setup I/O failure through the executor as workflow.storage/74',
+  { timeout: 20_000 },
+  async () => {
+    const root = join(stateDir, 'workflow-lock');
+    await mkdir(root);
+    await writeFile(join(root, 'package.json'), '{"type":"module"}');
+    await symlink(join(projectRoot, 'node_modules'), join(root, 'node_modules'));
+    const file = join(root, 'workflow.ts');
+    await writeFile(
+      file,
+      `import { z } from 'zod';
+import { defineWorkflow } from ${JSON.stringify(join(projectRoot, 'src/workflow/runtime/model.js'))};
+export default defineWorkflow({
+  name: 'lock-storage', version: '1', input: z.null(), output: z.string(),
+  run: () => Promise.resolve('done'),
+});`,
+    );
+    const analysis = analyzeTypecheckEntrypoint(file, projectRoot);
+    if (!analysis.ok) throw new Error(analysis.error.message);
+    vi.mocked(lockRun).mockRejectedValueOnce(
+      Object.assign(new Error('injected EACCES'), { code: 'EACCES' }),
+    );
+    const result = await new WorkflowExecutor({ logger: { log: vi.fn() } }).execute({
+      kind: 'workflow.execute',
+      typecheck: analysis.plan,
+      runId: 'lock-storage',
+      stateDir: join(stateDir, 'state'),
+      cwd: root,
+      resume: false,
+      input: null,
+    });
+    if (result.ok) throw new Error('expected a failure');
+    expect(result.code).toBe('workflow.storage');
+    expect(workflowExitCodes[result.code]).toBe(74);
+    expect(result.message).toContain('injected EACCES');
+  },
+);
 
 // Real compiler passes can exceed five seconds under coverage on shared CI runners.
 it(
