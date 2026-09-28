@@ -7,6 +7,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { afterEach, describe, expect, expectTypeOf, it, vi } from 'vitest';
 
 import {
+  assertCompleted,
   defineWorkflow,
   readRun,
   runWorkflow,
@@ -57,6 +58,7 @@ describe('durable TypeScript workflows', () => {
     await expect(runWorkflow(definition, options)).rejects.toThrow();
     expect(run).not.toHaveBeenCalled();
     const result = await runWorkflow(definition, { ...options, input: { count: 5 } });
+    assertCompleted(result);
     expectTypeOf(result.output.doubled).toEqualTypeOf<number>();
     expect(result.output).toEqual({ doubled: 10 });
     defineWorkflow({

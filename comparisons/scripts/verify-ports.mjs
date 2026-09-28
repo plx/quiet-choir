@@ -8,6 +8,7 @@ import { join } from 'node:path';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 import ts from 'typescript';
 import { runWorkflow, readRun } from 'quiet-choir';
+import { verifyQuestionPorts } from './verify-question-ports.mjs';
 const args = process.argv.slice(2);
 if (args.length > 1 || args.some((arg) => arg !== '--check'))
   throw new Error('Usage: node --import tsx comparisons/scripts/verify-ports.mjs [--check]');
@@ -120,6 +121,7 @@ let failed = 0;
 try {
   for (const mode of ['empty', 'populated', 'repair'])
     for (const [name, definition] of definitions) {
+      if (['project-bootstrap', 'sdlc-orchestrator'].includes(name)) continue;
       if (
         mode === 'repair' &&
         ![
@@ -145,31 +147,6 @@ try {
         ...(inputs[name] ?? {}),
         ...(mode === 'repair' ? { apply: true, fix: true, out: 'fixture-output.md' } : {}),
       };
-      if (mode === 'repair' && name === 'sdlc-orchestrator') {
-        delete input.plan;
-        input.autoApprove = true;
-        input.state = {
-          goal: 'Build a queue',
-          flags: { greenfield: true, hasFeedbackSource: true },
-          inputs: {},
-          answers: {},
-          paths: {},
-          plan: [
-            'requirements',
-            'roadmap',
-            'backlog',
-            'bootstrap',
-            'qa',
-            'release-gate',
-            'release-notes',
-            'feedback',
-            'spec',
-          ],
-          cursor: 0,
-          artifacts: {},
-          log: [],
-        };
-      }
       const originalCalls = [],
         portedCalls = [];
       const respond = (prompt, schema, calls, effort) => {
@@ -286,6 +263,10 @@ try {
         actualError(e.message);
       }
     }
+  const questionResults = await verifyQuestionPorts({ definitions, sample, stateDir });
+  results.push(...questionResults);
+  for (const result of questionResults)
+    console.log(`PASS ${result.workflow} / ${result.fixture} (${result.agentCalls} calls)`);
   // A mid-pipeline interruption must reuse prior results, keep per-item IDs stable
   // under changed completion order, and retry only unfinished calls.
   const definition = definitions.get('acceptance-qa-batch');
@@ -356,7 +337,7 @@ try {
     JSON.stringify(
       {
         method:
-          'Deterministic differential fixtures plus interrupted durable resume; no live agents',
+          'Deterministic differential fixtures, six intentional durable-question port contracts, and interrupted resume; no live agents',
         results,
       },
       null,

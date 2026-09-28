@@ -39,16 +39,18 @@ version requires a new run ID (a fork can reuse compatible steps). See [durabili
 
 ## Durable operations
 
-| Operation                                                          | Return and composition                                                                              |
-| ------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------- |
-| `ctx.step(id, { input, schema, run, retry?, version?, onError? })` | Validated result; stores that result and hashes of input, schema, callback source, version, and cwd |
-| `ctx.claude.value(id, { schema?, ...options })` / Codex equivalent | Schema-inferred output; plain string without a schema                                               |
-| `ctx.claude.text(id, options)` / `ctx.codex.text(id, options)`     | `{ output: string, sessionId, usage }`                                                              |
-| `ctx.claude.object(id, { schema, ...options })` / Codex equivalent | Same wrapper with schema-inferred `output`                                                          |
-| `ctx.map(id, items, { concurrency, key?, onError? }, mapper)`      | Ordered fan-out with per-item prefixes and optional outcome journal                                 |
-| `ctx.sleep(id, milliseconds)`                                      | `null`; persists the wake deadline, then waits in this process                                      |
-| `ctx.runId`                                                        | Stable run identifier                                                                               |
-| `ctx.signal`                                                       | Current scope signal; inherits run and parent-map cancellation                                      |
+| Operation                                                                          | Return and composition                                                                              |
+| ---------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| `ctx.step(id, { input, schema, run, retry?, version?, onError? })`                 | Validated result; stores that result and hashes of input, schema, callback source, version, and cwd |
+| `ctx.claude.value(id, { schema?, ...options })` / Codex equivalent                 | Schema-inferred output; plain string without a schema                                               |
+| `ctx.claude.text(id, options)` / `ctx.codex.text(id, options)`                     | `{ output: string, sessionId, usage }`                                                              |
+| `ctx.claude.object(id, { schema, ...options })` / Codex equivalent                 | Same wrapper with schema-inferred `output`                                                          |
+| `ctx.map(id, items, { concurrency, key?, onError? }, mapper)`                      | Ordered fan-out with per-item prefixes and optional outcome journal                                 |
+| `ctx.ask(id, { prompt, schema, details?, choices?, audience?, subject?, title? })` | Durable schema-validated external answer; a quiescent run suspends                                  |
+| `ctx.approve(id, options)`                                                         | `{ approved: boolean, comment?: string }`; fixed-schema question                                    |
+| `ctx.sleep(id, milliseconds)`                                                      | `null`; persists the wake deadline, then waits in this process                                      |
+| `ctx.runId`                                                                        | Stable run identifier                                                                               |
+| `ctx.signal`                                                                       | Current scope signal; inherits run and parent-map cancellation                                      |
 
 Call-site task prompts and identity options are stored as component hashes. Resolved execution
 policy and requested model/effort are stored in plaintext per attempt. Profile declarations are
@@ -78,6 +80,11 @@ starting a new run is how to request a fresh read. Declare dependencies in `inpu
 callback closure. Callback source is hashed, but captured values and external helper bodies are not
 inspected. Use `version` for those dependencies or invalidate the step in a fork. A new run with
 `forkFrom` may reuse matching work; see [recovery](durability.md#choose-a-recovery-path).
+
+Questions use one-line prompts (1024 characters), optional short titles (12 characters), markdown
+details (16 KiB UTF-8), and at most four schema-valid suggested choices. Presentation and subject
+are fingerprinted. Read [question durability](durability.md#durable-questions) and the
+[human-review recipe](patterns.md#human-review) before adding a human checkpoint.
 
 ## Composition and retry
 

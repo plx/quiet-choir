@@ -65,3 +65,13 @@ names/cancellation and capture it before asynchronous request preparation. Retai
 replay counts after payload eviction; never claim a completion that failed to commit. Read-only
 stale status is derived from ownership, not written into a checkpoint. See
 [ADR 0015](../../../docs/decisions/0015-observe-runs-without-changing-effect-identity.md).
+
+Questions pin their full identity even while waiting. Registration, non-question effects, and
+checkpoint writes count as active; a promise blocked on an external answer does not. Suspend only
+after stable quiescence and a final inbox scan. Never reject questions to signal suspension or abort
+siblings for a human wait. Close leftover continuations, stop polling, drain writes, save
+suspension, and release ownership. Body completion withdraws open questions; real failure retains
+waiting questions. Keep abandoned promises excluded from error-path drains after close. Only the
+owner ingests inbox files with the actual Zod schema; lock-free writers validate early from stored
+JSON Schema and publish exclusively. See
+[ADR 0018](../../../docs/decisions/0018-durable-questions.md).

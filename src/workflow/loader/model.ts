@@ -9,7 +9,10 @@ import type { CapabilityManifest, ProfileOverride } from '../runtime/profiles-mo
 import type { ExecutionPlan, ExecutionResult } from '../../application/execution.js';
 import type { JsonValue } from '../runtime/model.js';
 import type { PolicyOverride } from '../runtime/policy.js';
-import type { WorkflowRun } from '../runtime/runner.js';
+import type { SuspendedRun } from '../runtime/runner.js';
+import type { RunRecord } from '../runtime/store.js';
+import type { PendingQuestion } from '../runtime/question-model.js';
+import type { AnswerDelivery } from '../runtime/inbox.js';
 import type { ForkOptions, ResumeCheck, WorkflowIdentity } from '../runtime/replay-model.js';
 import type { TypecheckPlan } from '../typecheck/model.js';
 
@@ -43,6 +46,32 @@ export interface ExecuteWorkflowPlan extends ExecutionPlan {
   readonly forkFrom?: ForkOptions;
   readonly acceptCodeChange?: boolean;
   readonly strictReplay?: boolean;
+}
+
+/** Resume using a checkpoint's stored entrypoint, compiler configuration, and working directory. */
+export interface ResumeWorkflowPlan extends Omit<
+  ExecuteWorkflowPlan,
+  'kind' | 'typecheck' | 'cwd' | 'resume' | 'input'
+> {
+  readonly kind: 'workflow.resume';
+}
+
+/** Deliver an answer without importing workflow code or acquiring its writer lock. */
+export interface AnswerWorkflowPlan extends ExecutionPlan {
+  readonly kind: 'workflow.answer';
+  readonly runId: string;
+  readonly stateDir: string;
+  readonly stepId: string;
+  readonly value: JsonValue;
+  readonly by?: string;
+  readonly resume?: boolean;
+  readonly harness?: HarnessSelection;
+}
+
+/** Read every waiting question without importing workflow code. */
+export interface PendingWorkflowsPlan extends ExecutionPlan {
+  readonly kind: 'workflow.pending';
+  readonly stateDir: string;
 }
 
 /** Read-only run-level compatibility inspection after checking/importing trusted source. */
@@ -89,6 +118,16 @@ export type WorkflowCommandResult = ExecutionResult &
   (
     | WorkflowFailure
     | {
+        readonly kind: 'workflow.pending.result';
+        readonly ok: true;
+        readonly pending: readonly PendingQuestion[];
+      }
+    | {
+        readonly kind: 'workflow.answer.result';
+        readonly ok: true;
+        readonly delivery: AnswerDelivery;
+      }
+    | {
         readonly kind: 'workflow.fixtures.result';
         readonly ok: true;
         readonly fixtures: HarnessFixtures;
@@ -120,7 +159,8 @@ export type WorkflowCommandResult = ExecutionResult &
     | {
         readonly kind: 'workflow.run.result';
         readonly ok: true;
-        readonly run: WorkflowRun<JsonValue>;
+        readonly run: RunRecord &
+          Partial<Pick<SuspendedRun, 'pending' | 'resumeCommand' | 'warnings'>>;
         readonly ownership?: RunOwnership;
         readonly summary?: RunSummary;
         readonly rehearsal?: RehearsalReport;

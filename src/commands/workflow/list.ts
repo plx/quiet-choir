@@ -18,7 +18,7 @@ export default class WorkflowList extends WorkflowCommand {
       default: '.quiet-choir/runs',
     }),
     status: Flags.option({
-      options: ['running', 'failed', 'completed', 'cancelled', 'stale'] as const,
+      options: ['running', 'failed', 'completed', 'cancelled', 'stale', 'suspended'] as const,
     })({ description: 'Filter by observed status' }),
     json: Flags.boolean({
       description: 'Print runs and unreadable-checkpoint warnings as JSON',

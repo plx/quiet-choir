@@ -129,12 +129,13 @@
     "evaluation": "Quiet Choir does not enforce the original one-level nesting limit. The port nevertheless keeps the same orchestration shape. Open questions are still extracted from the final markdown with the original heuristic."
   },
   "project-bootstrap": {
-    "summary": "Detect the stack and existing setup, plan relevant project concerns, optionally set up missing pieces, and prove the result with executable checks and one repair round.",
-    "preserved": "Detection before planning, concern filtering, skip-present handling, plan-only default, parallel setup of active concerns, and prove→repair→prove sequencing are unchanged.",
+    "summary": "Detect and save a bootstrap plan, request durable human approval, then apply that exact plan and prove the result.",
+    "preserved": "Detection before planning, concern filtering, skip-present handling, parallel setup, and prove → repair → prove sequencing remain.",
     "changes": [
-      "apply continues to control setup. The port makes the headless Claude tool and permission configuration explicit rather than inheriting an interactive session’s setup."
+      "The apply input/new-run round trip is replaced by ctx.approve. The saved plan is the approval subject and is replayed before setup. A declined answer returns without setup calls.",
+      "The first invocation now suspends after planning. Answer and resume the same run ID; do not start a second apply run."
     ],
-    "evaluation": "A plan can be compared without authorizing writes. Running apply:true requires appropriate tools. Concurrent setup still assumes the planner assigns concerns that can coexist in the shared workspace."
+    "evaluation": "Fixture contracts cover decline, approval, interrupted setup/resume, exact reviewed-plan reuse, and completed-run reuse. Explicit tool grants are still required for writes; approval is not a replacement for harness capability enforcement. Shared-tree file ownership remains the planner’s responsibility."
   },
   "refactor-campaign": {
     "summary": "Find measurable refactoring targets, rank payoff against risk, write characterization tests, then optionally refactor behind a green test net and verify that behavior stayed the same.",
@@ -185,13 +186,14 @@
     "evaluation": "The dependency graph is agent-authored and critiqued, not independently solved or cycle-checked by the runtime. The output is a plan artifact, not an executable delivery schedule."
   },
   "sdlc-orchestrator": {
-    "summary": "Drive a feature through a tailored lifecycle plan. Run leaf workflows in sequence, return checkpoints for human decisions, and hand off specification and implementation conductors as separate top-level invocations.",
-    "preserved": "Plan-only mode, caller-supplied state, completed handoffs, stage applicability, autoApprove rules, gate checkpoints, and the original spec/implementation handoffs are retained.",
+    "summary": "Drive a tailored lifecycle in one durable run, compose specification and implementation inline, and save stage-bound human decisions.",
+    "preserved": "Intake, ordered stage applicability, plan-only mode, and pass/concerns/blocked gates remain. autoApprove skips concerns only, never blocked gates.",
     "changes": [
-      "A static registry maps the eight leaf names to their TypeScript ports. The low-token pause is unavailable. Human checkpoints remain returned data rather than a native approval mechanism.",
-      "Continuing with answers or completed handoffs requires a new Quiet Choir run ID with the returned state as input. --resume retries an interrupted run with unchanged input; it cannot accept edited answers."
+      "Caller-supplied state, answers, completed handoffs, and the checkpoint-return cursor are removed. Ordinary loops replay completed effects and question answers under stable stage/round IDs.",
+      "Specification and implementation conductors run inline through a ten-entry child registry. Redo answers are stored under the requesting stage key and included in every repeated stage prompt, instead of the original unused next key.",
+      "A human reply selects continue, redo, or stop; bootstrap child approvals use the same parent run inbox. No shared spending ledger is added."
     ],
-    "evaluation": "The original checkpoint message reads stage.plan even though stages do not define it; its fallback to next is preserved. The original also advances the cursor before returning a blocked gate. Treat these as source behavior to evaluate, not newly added approval guarantees."
+    "evaluation": "Six question-contract fixtures replace differential equality for these two intentional #55 migrations. SDLC fixtures prove plan-only behavior, nested inline conductors, stage-specific redo answers, and completed-run reuse; originals remain immutable. Other ports retain their historical schemas/normalization until #65."
   },
   "security-audit": {
     "summary": "Map the attack surface, audit through six specialist lenses, send each lens’s findings directly to severity-sized skeptic panels, and report only majority-upheld vulnerabilities.",

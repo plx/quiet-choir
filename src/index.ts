@@ -46,8 +46,14 @@ export type {
 } from './workflow/runtime/model.js';
 export { CheckpointError } from './workflow/runtime/checkpoint.js';
 export { ConfigurationError } from './workflow/runtime/configuration-error.js';
-export { runWorkflow } from './workflow/runtime/runner.js';
-export type { WorkflowEvent, WorkflowRun, RunOptions } from './workflow/runtime/runner.js';
+export { runWorkflow, assertCompleted } from './workflow/runtime/runner.js';
+export type {
+  WorkflowEvent,
+  WorkflowRun,
+  WorkflowResult,
+  SuspendedRun,
+  RunOptions,
+} from './workflow/runtime/runner.js';
 export { readRun, inspectRunOwnership } from './workflow/runtime/store.js';
 export type {
   RunRecord,
@@ -143,3 +149,18 @@ export type {
 export { FixtureHarness, parseHarnessFixtures } from './harnesses/fixture.js';
 export type { FixtureCall, HarnessFixtures } from './harnesses/fixture.js';
 export { synthesizeOutput } from './harnesses/synthesize.js';
+
+export type {
+  AskOptions,
+  ApproveOptions,
+  Approval,
+  QuestionChoice,
+  QuestionRequest,
+  QuestionRecord,
+  QuestionResolution,
+  QuestionRejection,
+  PendingQuestion,
+  WorkflowLaunch,
+} from './workflow/runtime/question-model.js';
+export { writeAnswer, listPending, AnswerError } from './workflow/runtime/inbox.js';
+export type { WriteAnswerOptions, AnswerDelivery } from './workflow/runtime/inbox.js';

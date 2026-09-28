@@ -21,6 +21,8 @@ export function bindContext(
     within: bind(context.within.bind(context)),
     phase: bind(context.phase.bind(context)),
     log: bind(context.log.bind(context)),
+    ask: bind(context.ask.bind(context)),
+    approve: bind(context.approve.bind(context)),
     step: bind(context.step.bind(context)),
     sleep: bind(context.sleep.bind(context)),
     // eslint-disable-next-line @typescript-eslint/no-deprecated -- Forward every overload, including compatibility calls.

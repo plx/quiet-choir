@@ -36,10 +36,15 @@ and log. Ordinary inspect exits 0 for any readable status. Timestamps are not he
 | Derived `stale`, absent/dead/released owner          | Inspect children; plain resume recovers safe ownership automatically.                                                                   |
 | Live/unverified children, remote or incomplete owner | Follow [ownership recovery](operating-runs.md#stalls-and-orphan-recovery); do not infer permission to kill from PID or age alone.       |
 
-Run-level `.status` saves running/completed/failed/cancelled. Summary/list/watch can derive `stale`
-from ownership without rewriting that saved status. A failed run may have reusable completed
-siblings; a run-level output validation error may have no failed step. Start from `rootCause`. See
-[code recovery](durability.md#choose-a-recovery-path) before editing and resuming.
+Run-level `.status` saves running/completed/failed/cancelled/suspended. Summary/list/watch can
+derive `stale` from ownership without rewriting that saved status. A failed run may have reusable
+completed siblings; a run-level output validation error may have no failed step. Start from
+`rootCause`. See [code recovery](durability.md#choose-a-recovery-path) before editing and resuming.
+
+A `suspended` run has released ownership for external answers. Read `workflow pending --json`,
+review source drift and question context, then
+[answer and resume](operating-runs.md#answer-a-suspended-run). Waiting questions are not stalled
+agent calls.
 
 ## Match a symptom to its next action
 
@@ -109,23 +114,27 @@ incomplete ownership needs inspection. Prefer `inspect` or `readRun` to validate
 without `--watch` exits 0 even for `failed`, `cancelled`, or `running` records; check `status`. A
 JSON inspection result has these useful fields:
 
-| Field                                     | Interpretation                                                     |
-| ----------------------------------------- | ------------------------------------------------------------------ |
-| `id`, `workflow.name`, `workflow.version` | Run and workflow identities                                        |
-| `status`                                  | Last saved `running`, `completed`, `failed`, or `cancelled` state  |
-| `error`                                   | Last run failure message, or null                                  |
-| `cwd`, `input`                            | Original execution directory and validated input                   |
-| `createdAt`, `updatedAt`                  | Creation and last checkpoint timestamps; not heartbeats            |
-| `steps`                                   | Object keyed by durable step ID; absent IDs have not been recorded |
-| `output`                                  | Final workflow result; use only when the run is completed          |
+| Field                                     | Interpretation                                                                 |
+| ----------------------------------------- | ------------------------------------------------------------------------------ |
+| `id`, `workflow.name`, `workflow.version` | Run and workflow identities                                                    |
+| `status`                                  | Last saved `running`, `completed`, `failed`, `cancelled`, or `suspended` state |
+| `error`                                   | Last run failure message, or null                                              |
+| `cwd`, `input`                            | Original execution directory and validated input                               |
+| `createdAt`, `updatedAt`                  | Creation and last checkpoint timestamps; not heartbeats                        |
+| `steps`                                   | Object keyed by durable step ID; absent IDs have not been recorded             |
+| `output`                                  | Final workflow result; use only when the run is completed                      |
 
 Checkpoint keys, events, and policy matches use the full scope/map/item/leaf ID. Local
 `idempotencyKey` is `runId/fullId`; ID helpers do not hide or truncate checkpoint keys.
 
-Each step records `kind` (`step`, `claude`, `codex`, `sleep`), `status`, total `attempts`,
+Each step records `kind` (`step`, `claude`, `codex`, `sleep`, `ask`), `status`, total `attempts`,
 `fingerprint`, `output`, `error`, and `wakeAt` (epoch milliseconds for sleep, otherwise null). For
 completed agent steps, `output` is the full `{ output, sessionId, usage }` wrapper: the model's
 answer is at `steps[stepId].output.output`.
+
+An ask step stores `question.request`, `askedAt`, `resolution`, and bounded `rejections`; its
+statuses are waiting/completed/withdrawn. Its one registration has no adapter attempt-history
+entries. Waiting questions are visible in summary/list counts and `workflow pending`.
 
 Current records include run `policy`, `allowModelOverride`, and `policyWarnings`. Each step has
 component `identity` hashes and `attemptHistory`: each attempt records its fingerprint, resolved
@@ -229,10 +238,11 @@ journals retry only uncommitted mappers. Forks create new journals.
 ## Live events
 
 Run with `--log-level debug` to log `step.started`, `step.completed`, `step.replayed`, and
-`step.failed`, `step.cancelled`, `step.settled`, `step.redefined`, `step.superseded`, and
-`step.reused` events to stderr. `runWorkflow` also accepts an `onEvent(event)` callback returning
-`void | Promise<void>`. `replay.divergence` adds a message and `skippedStepIds`, and the CLI logs it
-as a warning before live work; `--strict-replay` stops before the next live effect:
+`step.waiting`, `step.failed`, `step.cancelled`, `step.settled`, `step.redefined`,
+`step.superseded`, and `step.reused` events to stderr. `runWorkflow` also accepts an
+`onEvent(event)` callback returning `void | Promise<void>`. `replay.divergence` adds a message and
+`skippedStepIds`, and the CLI logs it as a warning before live work; `--strict-replay` stops before
+the next live effect:
 
 <!-- skills-check: fragment; reason: onEvent property inside runWorkflow options. -->
 
@@ -243,12 +253,12 @@ onEvent: (event) => {
 ```
 
 An event includes `at`, `execution`, `type`, `runId`, `stepId`, and `attempt`. Debug lines include
-timestamp and run ID. Lifecycle `run.started/completed/failed/cancelled` and phase/log notifications
-use attempt 0; their step ID is null except a run failure can name the root effect. Step
-notifications reflect persisted step state; `step.replayed` refers to the existing completion and
-does not increment attempts. Observer synchronous exceptions and asynchronous rejections are ignored
-so they cannot invalidate execution. Observer promises are not awaited and do not keep the run lock
-held; synchronous observer work still runs inline. Notifications are not durably queued or
+timestamp and run ID. Lifecycle `run.started/completed/failed/cancelled/suspended` and phase/log
+notifications use attempt 0; their step ID is null except a run failure can name the root effect.
+Step notifications reflect persisted step state; `step.replayed` refers to the existing completion
+and does not increment attempts. Observer synchronous exceptions and asynchronous rejections are
+ignored so they cannot invalidate execution. Observer promises are not awaited and do not keep the
+run lock held; synchronous observer work still runs inline. Notifications are not durably queued or
 guaranteed to be delivered. `onEvent` includes run lifecycle notifications but is not a token
 stream, tool trace, or durable delivery queue; use the returned record or checkpoint for saved
 status.

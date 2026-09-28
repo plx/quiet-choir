@@ -2,6 +2,13 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- Add durable `ctx.ask`/`ctx.approve`, quiescent suspension, and an atomic lock-free answer inbox
+  with early JSON Schema and authoritative Zod validation. Started sibling work finishes before
+  suspension. `runWorkflow` now returns a completed/suspended union; narrow by `status` or use
+  `assertCompleted`. CLI `pending`, `answer`, and stored-entrypoint `resume RUN` support exit 75.
+  Bootstrap and SDLC ports keep human decisions in one run, preserving the approved plan and binding
+  redo answers to their requesting stage. See [durable questions](docs/questions.md).
+
 - Add twelve runnable, failure/resume-tested workflow patterns and a current traps table to both
   authoring skills. `skills:check` keeps their complete fences, worktree helper, and rehearsal
   fixture identical to `examples/patterns/`; every workflow recipe is at most 30 lines.

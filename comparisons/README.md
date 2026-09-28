@@ -9,12 +9,16 @@ TypeScript ports. Batch 01 contains all 26 workflows from
 
 Batch 01 is the active regression suite for the current built runtime, not a frozen set of ports.
 Its upstream originals remain immutable. The initial ports targeted `a6a7b82`; `apiSnapshot` now
-records the runtime API at `9291be9`, including direct-output agent values, schema-only callback
-inference, and omission of undefined object members, on top of persisted phases/logs, executions,
-timing, usage, request diagnostics, and saved-failure wrappers with original causes. Shared helpers
-forward to `ctx.phase` and `ctx.log`, and the shared legacy context forwards the new `value`
+records the runtime API at `f7fa0af`, including durable `ask`/`approve`, the completed/suspended
+result union, and lock-free answer delivery, on top of direct-output agent values, schema-only
+callback inference, omission of undefined object members, persisted phases/logs, executions, timing,
+usage, request diagnostics, and saved-failure wrappers with original causes. Shared helpers forward
+to `ctx.phase` and `ctx.log`, and the shared legacy context forwards `ask`/`approve` and `value`
 overloads; broad port normalization/cast/catchall cleanup remains #65. Returned values keep schema
-field order, so all 68 fixture checks preserve original prompts, effort settings, and outputs.
+field order. The active suite has 61 unchanged differential checks, which preserve original prompts,
+effort settings, and outputs, six durable-question contracts for bootstrap/SDLC, and one
+interrupted-pipeline recovery check. Those two ports intentionally replace new-run approval round
+trips with one-run questions; their notes describe the differences from the immutable originals.
 Native calls retain run/step/attempt identity, durable child registration, admission caps, and
 harness provenance. Bug-hunt uses scoped IDs; other ports retain supported legacy overloads.
 Historical ports explicitly retain raw input capabilities with `strictProfiles: false`. The
@@ -65,14 +69,15 @@ active batch and runs its fixtures in read-only `--check` mode. It is part of `n
 the CI quality job, after the build, because ports import the built package by name.
 
 The verification script compares outputs and prompt/reply sets against the actual original
-JavaScript under deterministic, inert harness fixtures. It also tests completed-run reuse and
-interrupted pipeline recovery through the real runtime. It never launches Claude, executes agent
-commands, or changes a target repository. `verification.json` records the cases. Fixtures are not
-live integration evidence and do not prove every branch or the quality of an agent's work. The
-verifier's `--check` mode fails if the report is missing or differs, without rewriting it. To update
-expected results intentionally, run `node --import tsx comparisons/scripts/verify-ports.mjs`, then
-review and commit `verification.json`. Its batch path, scenario inputs, reply generation, and
-recovery case are specific to Batch 01, not a generic batch runner.
+JavaScript under deterministic, inert harness fixtures. It also tests the six explicit
+bootstrap/SDLC question contracts, completed-run reuse, and interrupted pipeline recovery through
+the real runtime. It never launches Claude, executes agent commands, or changes a target repository.
+`verification.json` records the cases. Fixtures are not live integration evidence and do not prove
+every branch or the quality of an agent's work. The verifier's `--check` mode fails if the report is
+missing or differs, without rewriting it. To update expected results intentionally, run
+`node --import tsx comparisons/scripts/verify-ports.mjs`, then review and commit
+`verification.json`. Its batch path, scenario inputs, reply generation, and recovery case are
+specific to Batch 01, not a generic batch runner.
 
 Batch 01 deliberately retains all seven migration relaxations in its own tsconfig:
 

@@ -115,6 +115,10 @@ ceiling. quiet-choir's remaining run-wide spend/token controls are tracked in
 | Resume after failure, accept code edits, fork completed work               | [Durability and resumption](references/durability.md)        |
 | Embed the engine, log responses, implement a harness                       | [Embedding and extensions](references/extensions.md)         |
 
+For exit 75, use the
+[suspended-run answer loop](references/operating-runs.md#answer-a-suspended-run). Route human
+questions to the human; resume the same run after delivery.
+
 ## Keep the execution contract
 
 - Await durable operations and keep orchestration deterministic. Put nondeterminism and effects in

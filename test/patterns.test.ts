@@ -16,6 +16,8 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { promisify } from 'node:util';
 import { afterEach, beforeEach, expect, it } from 'vitest';
 import {
+  assertCompleted,
+  writeAnswer,
   FixtureHarness,
   parseHarnessFixtures,
   readRun,
@@ -39,7 +41,33 @@ import salvage from '../examples/patterns/salvage.workflow.js';
 import latch from '../examples/patterns/latch.workflow.js';
 import extraction from '../examples/patterns/work-then-extract.workflow.js';
 import rehearse from '../examples/patterns/rehearse.workflow.js';
+import humanReview from '../examples/patterns/human-review.workflow.js';
 import { ensureWorktree } from '../examples/patterns/worktree-helper.js';
+
+it('replays a human-reviewed plan and its answer after a tail failure', async () => {
+  const harness = new Fake(() => 'The saved plan');
+  const workflow = tailFailure(humanReview);
+  const setup = { ...options(), harness };
+  const waiting = await runWorkflow(workflow, {
+    ...setup,
+    input: { task: 'Review retries', revision: 'r1' },
+  });
+  expect(waiting.status).toBe('suspended');
+  await writeAnswer({
+    ...setup,
+    stepId: 'approve/r1',
+    value: { approved: true },
+    by: 'human:fixture',
+  });
+  await expect(runWorkflow(workflow, { ...setup, resume: true })).rejects.toThrow(
+    'Injected tail failure',
+  );
+  const result = await runWorkflow(workflow, { ...setup, resume: true });
+  assertCompleted(result);
+  expect(result.output).toEqual({ approved: true, plan: 'The saved plan' });
+  expect(harness.calls).toHaveLength(1);
+  expect(result.steps['approve/r1']?.attempts).toBe(1);
+});
 
 let root: string;
 const execute = promisify(execFile);
@@ -138,6 +166,7 @@ it('cross-harness fan-in drains a slow sibling and resumes only the failed revie
   );
   expect((await readRun(options())).steps['panel/slow/verdict']?.status).toBe('completed');
   const result = await runWorkflow(cross, { ...options(), resume: true, harness });
+  assertCompleted(result);
   expect(result.output.map((value) => value.reason)).toEqual([
     'needs revision',
     'slow saved review',
@@ -199,6 +228,7 @@ it('per-item pipeline resumes the failed stage and reuses sibling stages', async
   ).rejects.toThrow('Temporary implementation failure');
   const result = await runWorkflow(pipeline, { ...options(), resume: true, harness });
   expect(result.output).toHaveLength(2);
+  assertCompleted(result);
   expect(result.output.every((entry) => entry.approved)).toBe(true);
   expect(harness.count('fix/0/plan')).toBe(1);
   expect(harness.count('fix/0/implement')).toBe(2);
@@ -277,6 +307,7 @@ it('worktree recipe keeps edits across failure/resume and helper refuses changed
   expect(harness.calls).toHaveLength(2);
   expect(new Set(result.output).size).toBe(2);
   expect((await execute('git', ['status', '--porcelain'], { cwd: repo })).stdout).toBe('');
+  assertCompleted(result);
   const first = result.output[0];
   expect(first).toBeDefined();
   if (!first) throw new Error('Missing worktree result');

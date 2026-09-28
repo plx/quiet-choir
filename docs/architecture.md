@@ -136,3 +136,15 @@ Oclif's `Config` represents framework and installation metadata and provides sta
 directories. It does not recursively discover or merge application settings from `.quiet-choir`
 directories. Project, local, and user configuration precedence is therefore deliberately outside
 this spike rather than being conflated with oclif configuration.
+
+## External questions
+
+Question registration and inbox consumption live in the runtime, behind `ask`/`approve` and the
+public `writeAnswer`/`listPending` helpers. `activity.ts` counts live effects/registrations/writes;
+`tracking.ts` still owns failures and container operations, but drains exclude externally waiting
+questions. Stable quiescence returns a suspended result without rejecting body promises or
+cancelling siblings. The owner alone writes checkpoints; answer writers use exclusive inbox links.
+CLI commands translate answer/pending/resume arguments into plain plans for `WorkflowExecutor`.
+Stored launch paths enable resume by ID and code-free drift hints; core execution never imports
+those paths. See [ADR 0018](decisions/0018-durable-questions.md) and
+[question semantics](questions.md).

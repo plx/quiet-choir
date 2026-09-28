@@ -38,3 +38,5 @@ part of the documentation.
 - [0016: Rehearse workflows through fixture harnesses and a pure native planner](0016-workflow-rehearsal.md)
 
 - [0017: Infer from schemas and normalize values at durable boundaries](0017-schema-first-values.md)
+
+- [0018: Suspend at quiescence for external question answers](0018-durable-questions.md)

@@ -116,6 +116,11 @@ previews the rest of a real run on temporary state. Local callbacks run unless m
 `--stub-steps`. Changing the harness kind for actual resume/fork requires `--allow-harness-change`.
 See [rehearsal](rehearsal.md) for the complete loop and JSON report contract.
 
+`workflow pending --json` and `workflow answer RUN STEP --json VALUE` read stored question contracts
+without importing workflow code. `workflow resume RUN --json` loads its saved entrypoint and
+compiler configuration. See the
+[suspension operating loop](operating-runs.md#answer-a-suspended-run).
+
 ## Run identity and output
 
 - `--run-id ID` selects the run. New runs otherwise generate a UUID, printed to stderr and included
@@ -155,13 +160,13 @@ Put flags after the command name, for example `workflow inspect first --json`.
 
 | Exit | Meaning                                                                                                                                                                                                                                                                    |
 | ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 0    | Success. Non-watching inspect accepts any readable status; check `.status`. After a first signal, only a saved execute completion exits 0.                                                                                                                                 |
+| 0    | Success. Non-watching inspect accepts any readable status; check `.status`. After a first signal, only a saved execute/resume completion or a delivered `workflow answer` exits 0.                                                                                         |
 | 1    | `workflow.failed`: execution failed and the failure checkpoint was saved. Fix and resume. A saved `failed` run reports this even when a signal arrived.                                                                                                                    |
-| 2    | `usage.*`: invalid flags, misplaced flags, omitted/nonexistent/unsupported FILE, invalid run ID, invalid input JSON/file/schema, or resume without an ID. No execution checkpoint is written.                                                                              |
-| 3    | `run.*`: existing/missing/locked/unreadable run, incompatible resume, changed input, or surviving/unverified child processes (`run.orphans`). No workflow body runs.                                                                                                       |
+| 2    | `answer.invalid` for invalid answers, or `usage.*`: invalid flags, misplaced flags, omitted/nonexistent/unsupported FILE, invalid run ID, invalid input JSON/file/schema, or resume without an ID. No execution checkpoint is written.                                     |
+| 3    | `answer.conflict` for duplicate/closed questions, or `run.*`: existing/missing/locked/unreadable run, incompatible resume, changed input, or surviving/unverified child processes (`run.orphans`). No workflow body runs.                                                  |
 | 4    | `load.*`: typecheck, import, or workflow-definition failure. No execution checkpoint is written.                                                                                                                                                                           |
 | 74   | `workflow.storage`: saving, process registration, or releasing ownership failed. Inspect the reported saved state; it can still be `running`, `completed`, or absent.                                                                                                      |
-| 75   | Reserved for suspended execution; not emitted yet.                                                                                                                                                                                                                         |
+| 75   | Saved suspension with pending questions; answer and resume the same run. A saved suspension stands even when a signal arrived.                                                                                                                                             |
 | 130  | `workflow.interrupted`: SIGINT/SIGTERM/SIGHUP. Graceful cancellation saves `cancelled` when possible; if that save fails, the exit is 74 instead. A second signal kills tracked groups immediately and reports the last readable checkpoint, which may still be `running`. |
 
 `configuration doctor --json` runs five checks for each installed harness: tested version range,

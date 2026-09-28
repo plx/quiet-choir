@@ -1,3 +1,4 @@
+import type { AskOptions, ApproveOptions, Approval } from './question-model.js';
 import type { PhaseOptions } from './observability-model.js';
 import type { z } from 'zod';
 import type { AgentDefaults, AgentProfile, BuiltinProfile } from './profiles-model.js';
@@ -371,6 +372,10 @@ export interface StepDefinition<T> {
 
 /** Durable operations available to ordinary TypeScript workflow code. */
 export interface WorkflowContext<TProfile extends string = string> {
+  /** Await an external, schema-validated answer; quiescent runs suspend without rejecting. */
+  ask<T>(id: string, options: AskOptions<T>): Promise<T>;
+  /** Await approval of the fingerprinted subject. Human routing is a guardrail, not authentication. */
+  approve(id: string, options: ApproveOptions): Promise<Approval>;
   /** Record a phase until the next phase call in this scope; never affects replay identity. */
   phase(title: string, options?: PhaseOptions): void;
   /** Attribute steps/logs in this callback to an isolated phase, including concurrent workers. */

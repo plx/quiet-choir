@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { readFile, realpath, stat } from 'node:fs/promises';
-import { dirname, join, relative, sep } from 'node:path';
+import { dirname, join, relative, resolve, sep } from 'node:path';
+import type { WorkflowLaunch } from '../runtime/question-model.js';
 import { fileURLToPath } from 'node:url';
 
 import { digest } from '../runtime/json.js';
@@ -54,4 +55,22 @@ export async function fingerprintSources(
     });
   }
   return { hash: digest(files), files };
+}
+
+/** Persist launch paths separately from semantic identity so pending can check bytes without imports. @internal */
+export async function workflowLaunch(
+  plan: TypecheckPlan,
+  source: SourceFingerprint,
+): Promise<WorkflowLaunch> {
+  const entrypoint = await realpath(plan.entrypoint);
+  const tsconfig =
+    plan.configuration.kind === 'tsconfig' ? await realpath(plan.configuration.path) : null;
+  const root = await projectRoot(entrypoint, tsconfig ?? undefined);
+  return {
+    entrypoint,
+    tsconfig,
+    sources: Object.fromEntries(
+      Object.entries(source.files).map(([path, hash]) => [resolve(root, path), hash]),
+    ),
+  };
 }
