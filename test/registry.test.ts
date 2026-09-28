@@ -83,6 +83,28 @@ describe('trusted definition registry', { timeout: 60_000 }, () => {
     expect(await readFile(marker, 'utf8')).toBe('xxxx');
   });
 
+  it('keeps scanning past a leaf package.json to fingerprint a workspace root lockfile', async () => {
+    const root = await project();
+    await writeFile(join(root, 'package-lock.json'), '{"lockfileVersion":3}');
+    const leaf = join(root, 'packages', 'leaf');
+    await mkdir(leaf, { recursive: true });
+    await writeFile(join(leaf, 'package.json'), '{"type":"module"}');
+    const marker = join(root, 'imported');
+    await writeFile(
+      join(leaf, 'cached.workflow.ts'),
+      `import {appendFileSync} from 'node:fs'; appendFileSync(${JSON.stringify(marker)},'x'); ${source('cached')}`,
+    );
+    const engine = executor();
+    const plan = { kind: 'workflow.list-defs' as const, directories: [leaf] };
+    expect(await engine.execute(plan)).toMatchObject({ ok: true });
+    expect(await readFile(marker, 'utf8')).toBe('x');
+    expect(await engine.execute(plan)).toMatchObject({ ok: true });
+    expect(await readFile(marker, 'utf8')).toBe('x');
+    await writeFile(join(root, 'package-lock.json'), '{"lockfileVersion":3,"changed":true}');
+    expect(await engine.execute(plan)).toMatchObject({ ok: true });
+    expect(await readFile(marker, 'utf8')).toBe('xx');
+  });
+
   it('invalidates the cache when an extended tsconfig base changes', async () => {
     const root = await project();
     const marker = join(root, 'imported');

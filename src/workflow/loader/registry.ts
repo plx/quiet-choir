@@ -101,25 +101,22 @@ async function cacheSources(
     for (const extended of sourceFile.extendedSourceFiles ?? [])
       sources[resolve(extended)] = hash(await readFile(extended));
   }
+  const lockfiles = ['package-lock.json', 'npm-shrinkwrap.json', 'pnpm-lock.yaml', 'yarn.lock'];
   let directory = dirname(plan.entrypoint);
   for (;;) {
-    let found = false;
-    for (const file of [
-      'package.json',
-      'package-lock.json',
-      'npm-shrinkwrap.json',
-      'pnpm-lock.yaml',
-      'yarn.lock',
-    ]) {
+    let controllingRoot = false;
+    for (const file of ['package.json', ...lockfiles]) {
       const path = join(directory, file);
       try {
         sources[path] = hash(await readFile(path));
-        found = true;
+        if (lockfiles.includes(file)) controllingRoot = true;
       } catch (error) {
         if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;
       }
     }
-    if (found || dirname(directory) === directory) break;
+    // Keep climbing past a leaf package.json: a monorepo workspace root's lockfile, further up,
+    // still controls dependency versions and must invalidate the cache when it changes.
+    if (controllingRoot || dirname(directory) === directory) break;
     directory = dirname(directory);
   }
   return sources;
