@@ -25,6 +25,8 @@ async function readImage(path: string, signal: AbortSignal | undefined): Promise
 /**
  * Capture exactly the bytes fingerprinted; adapters must not reopen mutable source images.
  * Non-regular sources (FIFOs, devices, directories) are rejected, and `signal` cancels the read.
+ * One failed read cancels its siblings, and every read settles (closing its handle) before the
+ * snapshot rejects with that first failure.
  * @internal
  */
 export async function snapshotImages(
@@ -33,13 +35,37 @@ export async function snapshotImages(
   signal?: AbortSignal,
 ): Promise<ImageAttachment[]> {
   signal?.throwIfAborted();
-  return Promise.all(
+  const siblings = new AbortController();
+  const linked =
+    signal === undefined ? siblings.signal : AbortSignal.any([signal, siblings.signal]);
+  let failure: { readonly error: unknown } | undefined;
+  const results = await Promise.allSettled(
     paths.map(async (path) => {
-      const bytes = await readImage(resolve(cwd, path), signal);
-      return {
-        sha256: createHash('sha256').update(bytes).digest('hex'),
-        base64: bytes.toString('base64'),
-      };
+      try {
+        const bytes = await readImage(resolve(cwd, path), linked);
+        return {
+          sha256: createHash('sha256').update(bytes).digest('hex'),
+          base64: bytes.toString('base64'),
+        };
+      } catch (error) {
+        // Only a failure seen before any abort is real; later rejections are the siblings stopping.
+        if (!linked.aborted) {
+          failure = { error };
+          siblings.abort(error);
+        }
+        throw error;
+      }
     }),
   );
+  const attachments: ImageAttachment[] = [];
+  for (const result of results) {
+    if (result.status === 'fulfilled') {
+      attachments.push(result.value);
+      continue;
+    }
+    // Caller cancellation keeps its own reason so the runner reports it as cancellation.
+    signal?.throwIfAborted();
+    throw failure === undefined ? result.reason : failure.error;
+  }
+  return attachments;
 }
