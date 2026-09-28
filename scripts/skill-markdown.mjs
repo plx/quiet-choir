@@ -42,11 +42,25 @@ export function fences(text, file = 'Markdown') {
   return result;
 }
 
+/**
+ * Apply a stripping regex to a fixed point so that characters exposed by one pass (e.g. the
+ * `<!--` left behind by removing an inner `<!-<!---->->` comment) cannot survive as a still-live
+ * sequence; a single non-recursive pass is an incomplete sanitization.
+ */
+function stripToFixedPoint(text, pattern) {
+  let previous;
+  do {
+    previous = text;
+    text = text.replace(pattern, '');
+  } while (text !== previous);
+  return text;
+}
+
 export function prose(text, file) {
   const lines = text.split('\n');
   for (const fence of fences(text, file))
     for (let index = fence.start; index <= fence.end; index++) lines[index] = '';
-  return lines.join('\n').replace(/<!--[^]*?-->/gu, '');
+  return stripToFixedPoint(lines.join('\n'), /<!--[^]*?-->/gu);
 }
 
 /** GitHub-style anchors for the headings used by the distributed references. */
@@ -54,9 +68,7 @@ export function anchors(text) {
   const result = new Set();
   const body = prose(text);
   for (const match of body.matchAll(/^ {0,3}#{1,6}[ \t]+(.+?)[ \t]*#*[ \t]*$/gmu)) {
-    const base = match[1]
-      .toLowerCase()
-      .replace(/<[^>]*>/gu, '')
+    const base = stripToFixedPoint(match[1].toLowerCase(), /<[^>]*>/gu)
       .replace(/[^\p{L}\p{N}_ -]/gu, '')
       .replace(/ /gu, '-');
     let slug = base;

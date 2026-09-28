@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { checkSkills, packages, repository } from '../scripts/check-skills.mjs';
-import { anchors, fences } from '../scripts/skill-markdown.mjs';
+import { anchors, fences, prose } from '../scripts/skill-markdown.mjs';
 
 async function fixture(run) {
   const root = await mkdtemp(join(tmpdir(), 'qc-skill-check-'));
@@ -150,4 +150,10 @@ test('Markdown parser handles longer fences, language aliases, and duplicate hea
   assert.equal(fences(text)[0].language, 'typescript');
   assert.equal(fences(text)[0].code, 'const text = "```";');
   assert.throws(() => fences('```ts\nunfinished'), /unclosed code fence/u);
+});
+test('comment and tag stripping is not defeated by nesting', () => {
+  // A single non-recursive pass would remove only the inner `<!-- -->` and leave the outer
+  // markers as a still-live comment; stripping to a fixed point removes both.
+  assert.equal(prose('a<!--<!-- -->b-->c'), 'ab-->c');
+  assert.deepEqual([...anchors('# x<scr<script>y</script>z')], ['xyz']);
 });
