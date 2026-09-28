@@ -45,7 +45,8 @@ export const policyOverrideSchema = z
       .max(512)
       .regex(/^[a-zA-Z0-9_./:*-]+$/u)
       .optional(),
-    kind: z.enum(['claude', 'codex', 'step']).optional(),
+    kind: z.enum(['claude', 'codex', 'step', 'exec']).optional(),
+    maxOutputBytes: positive.max(2_147_483_647).optional(),
     ...limits,
     model: z.string().min(1).optional(),
     reasoningEffort: effort.optional(),
@@ -53,12 +54,14 @@ export const policyOverrideSchema = z
   .superRefine((rule, context) => {
     const invalid =
       rule.kind === 'step'
-        ? ['timeoutMs', 'maxTurns', 'maxBudgetUsd', 'model', 'reasoningEffort']
-        : rule.kind === 'codex'
-          ? ['maxTurns', 'maxBudgetUsd']
-          : rule.kind === 'claude'
-            ? ['reasoningEffort']
-            : [];
+        ? ['timeoutMs', 'maxTurns', 'maxBudgetUsd', 'model', 'reasoningEffort', 'maxOutputBytes']
+        : rule.kind === 'exec'
+          ? ['maxTurns', 'maxBudgetUsd', 'model', 'reasoningEffort']
+          : rule.kind === 'codex'
+            ? ['maxTurns', 'maxBudgetUsd']
+            : rule.kind === 'claude'
+              ? ['reasoningEffort']
+              : [];
     for (const key of invalid) {
       if (Reflect.get(rule, key) !== undefined)
         context.addIssue({
@@ -103,7 +106,7 @@ export function matchesStepGlob(pattern: string, id: string): boolean {
 /** Resolve policy without importing any adapter into the core. @internal */
 export function resolvePolicy(
   id: string,
-  kind: 'claude' | 'codex' | 'step' | 'sleep',
+  kind: 'claude' | 'codex' | 'step' | 'sleep' | 'exec',
   callSite: Omit<PolicyOverride, 'match' | 'kind'>,
   defaults: ExecutionPolicy,
   overrides: readonly PolicyOverride[],
@@ -133,6 +136,10 @@ export function resolvePolicy(
     for (const key of kind === 'claude' ? ['maxTurns', 'maxBudgetUsd'] : ['reasoningEffort'])
       applicable.add(key);
   }
+  if (kind === 'exec') {
+    applicable.add('timeoutMs');
+    applicable.add('maxOutputBytes');
+  }
   const apply = (values: ExecutionPolicy & PolicyOverride, source: string): void => {
     for (const [key, value] of Object.entries(values) as [string, unknown][]) {
       if (value === undefined || !applicable.has(key)) continue;
@@ -154,7 +161,7 @@ export function resolvePolicy(
       }
     }
   };
-  apply(defaults, 'harness');
+  apply(defaults, kind === 'exec' ? 'runtime' : 'harness');
   if (profile) apply(profile, `profile:${profile.name}`);
   apply(callSite, 'call-site');
   if (profile)

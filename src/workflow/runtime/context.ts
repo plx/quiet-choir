@@ -13,6 +13,10 @@ export function bindContext(
   }
   return {
     runId: context.runId,
+    cwd: context.cwd,
+    writeFile: bind(context.writeFile.bind(context)),
+    readFile: bind(context.readFile.bind(context)),
+    exec: Object.assign(bind(context.exec), { json: bind(context.exec.json.bind(context.exec)) }),
     get signal() {
       return context.signal;
     },

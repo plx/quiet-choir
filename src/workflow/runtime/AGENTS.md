@@ -24,10 +24,10 @@ these relationships, including on failure paths. The durability rationale is in
 
 A settled failure is a terminal branch decision, just like a completed result: identity and path
 checks must preserve it on replay and fork reuse. Cancellation, configuration, and checkpoint-write
-failures never become fallback values. Configuration failures are a missing harness or a
-`ConfigurationError` thrown by a harness adapter for validation that fails before launch. Retry
-filtering remains policy; retain every attempt's diagnostics. Do not infer handling from JavaScript
-error identity/cause chains. See
+failures never become fallback values. Configuration failures are a missing harness or process
+adapter, plus a `ConfigurationError` thrown by an adapter for validation that fails before launch.
+Retry filtering remains policy; retain every attempt's diagnostics. Do not infer handling from
+JavaScript error identity/cause chains. See
 [ADR 0007](../../../docs/decisions/0007-durable-failure-outcomes.md).
 
 Settled maps require explicit journal IDs. Each committed item owns its leaf and nested-map IDs;
@@ -96,3 +96,11 @@ park under the same quiescence contract as questions. Error draining stops new c
 aborting active siblings. Tick must claim the ordinary writer before importing source and transfer
 that ownership to the runtime. See
 [ADR 0020](../../../docs/decisions/0020-durable-waits-and-tick.md).
+
+Exec depends on ProcessRunner, never a native spawn import. It shares durable registration with
+agents but never their admission slots, grants, or usage. Keep command/cwd/env/input/exit contract
+in identity and limits/retry in policy. Plain capture is bounded head/tail; structured output must
+reject truncation. File receipts contain hashes, not write content; reads remain memoized snapshots.
+Conditional rename is optimistic, not protection from unrelated writers. Guard bodies have terminal
+journaled outcomes so an already replayed restore cannot be followed by a rerun mutation. See
+[ADR 0021](../../../docs/decisions/0021-durable-commands-and-files.md).

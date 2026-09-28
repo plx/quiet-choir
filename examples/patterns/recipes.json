@@ -73,5 +73,25 @@
     "id": "pattern-rehearse-fixtures",
     "file": "rehearse.fixtures.json",
     "kind": "fixture"
+  },
+  {
+    "id": "pattern-command-verdict",
+    "file": "command-verdict.workflow.ts",
+    "kind": "workflow"
+  },
+  {
+    "id": "pattern-file-update",
+    "file": "file-update.workflow.ts",
+    "kind": "workflow"
+  },
+  {
+    "id": "pattern-guard-mutation",
+    "file": "guard-mutation.workflow.ts",
+    "kind": "workflow"
+  },
+  {
+    "id": "pattern-github-snapshot",
+    "file": "github-snapshot.workflow.ts",
+    "kind": "workflow"
   }
 ]

@@ -169,3 +169,8 @@ Plain-data `workflow tick` checks readiness/source bytes, acquires the ordinary 
 imports, and injects that owned store into the loader/runtime. Operator hooks run outside durable
 effects and drain after ownership release. See [waits](waits.md) and
 [ADR 0020](decisions/0020-durable-waits-and-tick.md).
+
+Durable commands depend on `ProcessRunner`, injected by the CLI as `NodeProcessRunner`. The shared
+`processes/run.ts` handles native child ownership and capture; core orchestration never spawns. Exec
+does not consume agent admission or inherit agent grants. File effects own atomic publication and
+bounded snapshots. See [ADR 0021](decisions/0021-durable-commands-and-files.md).

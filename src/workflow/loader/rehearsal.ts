@@ -1,3 +1,4 @@
+import type { Command, ProcessRunner } from '../runtime/exec-model.js';
 import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -41,6 +42,12 @@ export interface RehearsalCall {
 export interface RehearsalReport {
   readonly kind: 'workflow.rehearsal';
   readonly calls: readonly RehearsalCall[];
+  readonly commands: readonly {
+    stepId: string;
+    command: Command;
+    cwd: string;
+    structured: boolean;
+  }[];
   readonly replays: readonly { stepId: string; kind: string }[];
   readonly providerCounts: { claude: number; codex: number };
   readonly nominalClaudeCeilingUsd: number;
@@ -54,11 +61,42 @@ export class RehearsalHarness extends FixtureHarness {
   public override readonly kind = 'dry-run';
   private readonly cli: CliHarness;
   private readonly calls: RehearsalCall[] = [];
+  private readonly commands: {
+    stepId: string;
+    command: Command;
+    cwd: string;
+    structured: boolean;
+  }[] = [];
+  public readonly processRunner: ProcessRunner = {
+    run: (request, invocation) => {
+      invocation.signal.throwIfAborted();
+      this.commands.push({
+        stepId: invocation.stepId,
+        command: request.command,
+        cwd: request.cwd,
+        structured: request.schema !== null,
+      });
+      this.warnings.add(
+        'Commands are synthesized without spawning. Empty plain stdout and synthesized JSON can select a different branch from real execution.',
+      );
+      return Promise.resolve({
+        code: 0,
+        signal: null,
+        stdout:
+          request.schema === null
+            ? ''
+            : JSON.stringify(synthesizeOutput(request.schema, invocation.stepId)),
+        stderr: '',
+        truncated: false,
+        durationMs: 0,
+      });
+    },
+  };
   private readonly replays: string[] = [];
   private readonly stubbedSteps = new Set<string>();
   private readonly skippedSleeps = new Set<string>();
   private readonly warnings = new Set<string>([
-    'Local callbacks and workflow top-level code run for real. Temporary checkpoints do not roll back filesystem or external effects; use --stub-steps for selected local effects.',
+    'Local callbacks, file effects, and workflow top-level code run for real. Temporary checkpoints do not roll back filesystem or external effects; use --stub-steps for selected local effects.',
     'The nominal Claude ceiling covers only attempted calls on the rehearsed path. One-item synthesized arrays can understate fan-out; Codex calls are counted, not priced. CLI budget limits can overshoot on a final turn.',
   ]);
   public constructor(
@@ -166,7 +204,10 @@ export class RehearsalHarness extends FixtureHarness {
       );
     // A fully completed resume short-circuits before body events; all saved effects replay as a unit.
     const replayed =
-      this.calls.length === 0 && this.replays.length === 0 && record?.status === 'completed'
+      this.calls.length === 0 &&
+      this.commands.length === 0 &&
+      this.replays.length === 0 &&
+      record?.status === 'completed'
         ? Object.entries(record.steps)
             .filter(([, step]) => step.status === 'completed' || step.status === 'settled-failed')
             .sort((a, b) => (a[1].seq ?? 0) - (b[1].seq ?? 0))
@@ -178,6 +219,7 @@ export class RehearsalHarness extends FixtureHarness {
     return structuredClone({
       kind: 'workflow.rehearsal',
       calls: this.calls,
+      commands: this.commands,
       replays: replayed,
       providerCounts: {
         claude: this.calls.filter((call) => call.provider === 'claude').length,

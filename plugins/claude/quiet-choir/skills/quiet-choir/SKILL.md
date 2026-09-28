@@ -109,6 +109,7 @@ ceiling. quiet-choir's remaining run-wide spend/token controls are tracked in
 | Locate a run, classify its state, act on exact errors                      | [Inspection and triage](references/inspection.md)            |
 | Park for readiness, a deadline, or an external signal                      | [Durable waits and tick](references/waits.md)                |
 | Write loops, fan-out, failure handling, or waits                           | [Verified patterns and traps](references/patterns.md)        |
+| Run durable commands, publish text, or guard a mutation                    | [Commands and files](references/commands-files.md)           |
 | Define schemas, compose steps, branch, map, and retry                      | [Workflow authoring](references/workflow-authoring.md)       |
 | Select profiles, shared call options, identity, usage, or process limits   | [Agent calls](references/agent-calls.md)                     |
 | Select provider-specific controls or diagnose native protocol failures     | [Claude](references/claude.md), [Codex](references/codex.md) |
@@ -128,8 +129,9 @@ same run after delivery.
 - Resume with the same run ID, launch directory, state directory, name, version, and input. Omit
   `--input` to reuse saved input. Source/schema edits need explicit acceptance or a fork; native
   session IDs cannot resume the workflow.
-- Rehearse agent work with `--dry-run --json`. Local callbacks/imports still run unless a step is
-  explicitly stubbed. Native calls inherit installed CLI authentication and permissions.
+- Rehearse agent work with `--dry-run --json`. Commands are synthesized; files/local
+  callbacks/imports still run unless a step is explicitly stubbed. Native calls inherit installed
+  CLI authentication and permissions.
 - Effects are at least once. Pass `idempotencyKey` to systems that support deduplication; native
   CLIs do not deduplicate edits with it. Checkpoints cannot undo mutations.
 - This private 0.0.0 engine executes trusted TypeScript locally. Harness permission flags do not

@@ -564,6 +564,116 @@ and decision replay. Await context operations: raw timers or detached I/O are in
 quiescence. Suspension does not enter `catch` or execute body `finally` blocks. An abandoned
 question becomes `withdrawn` when the body completes; normal failures retain waiting questions.
 
+## Commands and test verdicts
+
+Run a trusted argv directly and branch on its actual exit code. Nonzero becomes durable data with
+`okExitCodes: 'any'`; timeout/cancellation still fail. These commands have operator privileges.
+Agent-proposed commands need approval bound to their saved plan before this call.
+
+<!-- skills-check: example pattern-command-verdict -->
+
+```ts
+import { defineWorkflow, z } from '../../src/index.js';
+
+export default defineWorkflow({
+  name: 'command-verdict',
+  version: '1',
+  input: z.object({ argv: z.tuple([z.string().min(1)], z.string()) }),
+  output: z.object({ green: z.boolean(), code: z.number().nullable() }),
+  async run(ctx, input) {
+    const result = await ctx.exec('prove', input.argv, { okExitCodes: 'any' });
+    return { green: result.code === 0, code: result.code };
+  },
+});
+```
+
+## File snapshots and publication
+
+Snapshot existing text, change it in code, and publish with an optimistic baseline guard. The write
+receipt stores hashes, not content. Replaying the snapshot uses saved bytes. Concurrent unrelated
+writers still need isolation/coordination.
+
+<!-- skills-check: example pattern-file-update -->
+
+```ts
+import { defineWorkflow, z } from '../../src/index.js';
+
+export default defineWorkflow({
+  name: 'file-update',
+  version: '1',
+  input: z.object({ file: z.string(), prefix: z.string() }),
+  output: z.object({ path: z.string(), sha256: z.string() }),
+  async run(ctx, input) {
+    const before = await ctx.readFile('snapshot', input.file);
+    return ctx.writeFile('publish', input.file, input.prefix + before.content, {
+      ifMatch: before.sha256,
+    });
+  },
+});
+```
+
+## Hash guard for mutation
+
+Preserve a regular UTF-8 file in a Git repository, including uncommitted CRLF bytes. Code restores
+after one journaled body outcome. The body success or ordinary failure is terminal for this guard
+ID; resume can retry a failed restore without rerunning it. Hard kill/cancellation is not rollback
+or restore-before-body-retry. The caller supplies a trusted command; no agent calls are needed.
+
+<!-- skills-check: example pattern-guard-mutation -->
+
+```ts
+import { defineWorkflow, guardFile, z } from '../../src/index.js';
+
+export default defineWorkflow({
+  name: 'guard-mutation',
+  version: '1',
+  input: z.object({ file: z.string(), argv: z.tuple([z.string().min(1)], z.string()) }),
+  output: z.number().nullable(),
+  async run(ctx, input) {
+    return guardFile(
+      ctx,
+      'mutation',
+      input.file,
+      async () => {
+        const result = await ctx.exec('test', input.argv, { okExitCodes: 'any' });
+        return result.code;
+      },
+      { version: JSON.stringify(input.argv) },
+    );
+  },
+});
+```
+
+## GitHub snapshots through gh
+
+Use the installed `gh` authentication and an instance-qualified `HOST/OWNER/REPO`. Completed
+snapshots replay; changing state needs fresh IDs or a read-only poll observer. This is a read
+example, not a GitHub write authorization. Environment credentials remain inherited; do not put
+tokens in argv.
+
+<!-- skills-check: example pattern-github-snapshot -->
+
+```ts
+import { defineWorkflow, z } from '../../src/index.js';
+
+export default defineWorkflow({
+  name: 'github-snapshot',
+  version: '1',
+  input: z.object({ repo: z.string(), pr: z.int().positive() }),
+  output: z.object({ headRefOid: z.string(), state: z.string() }),
+  async run(ctx, input) {
+    return ctx.exec.json(
+      'pr-snapshot',
+      ['gh', 'pr', 'view', String(input.pr), '-R', input.repo, '--json', 'headRefOid,state'],
+      { schema: z.object({ headRefOid: z.string(), state: z.string() }) },
+    );
+  },
+});
+```
+
+Full [command/file contracts](commands-files.md) cover caps, identity, process ownership, and
+rehearsal.
+
 ## Traps
 
 The original prototype made several of these fail only during replay. Current guards and APIs catch

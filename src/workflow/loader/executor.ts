@@ -1,3 +1,5 @@
+import { NodeProcessRunner } from '../../processes/runner.js';
+import type { ProcessRunner } from '../runtime/exec-model.js';
 import { realpath } from 'node:fs/promises';
 import { WorkflowNotifications } from './notifications.js';
 import { fixturesFromRun } from './fixtures.js';
@@ -56,6 +58,7 @@ import type {
 export interface WorkflowExecutorOptions {
   readonly logger: ExecutionLogger;
   readonly harness?: Harness;
+  readonly processRunner?: ProcessRunner;
   readonly signal?: AbortSignal;
   readonly processSupervisor?: ProcessSupervisor;
   readonly onInspection?: (value: RunInspection) => void;
@@ -354,6 +357,8 @@ export class WorkflowExecutor implements Executor<
         launch: await workflowLaunch(plan.typecheck, source),
         stateDir: previewState?.stateDir ?? plan.stateDir,
         cwd: plan.cwd,
+        processRunner:
+          rehearsal?.processRunner ?? this.#options.processRunner ?? new NodeProcessRunner(),
         ...(plan.waitMode === undefined ? {} : { waitMode: plan.waitMode }),
         ...(this.#options.store === undefined ? {} : { store: this.#options.store }),
         ...(this.#options.clock === undefined ? {} : { clock: this.#options.clock }),

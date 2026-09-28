@@ -1,3 +1,5 @@
+import type { ExecSummary, ExecDiagnostics } from './exec-model.js';
+import { execSummarySchema, execDiagnosticsSchema } from './exec-schema.js';
 import { z } from 'zod';
 import { questionRecordSchema, workflowLaunchSchema } from './question-schema.js';
 import { waitRecordSchema } from './wait-schema.js';
@@ -35,6 +37,10 @@ import {
 
 /** One started effect attempt, including the policy actually sent to its adapter. */
 export interface AttemptRecord extends AttemptPolicy {
+  /** Command attempted, without environment values or stdin. */
+  readonly exec?: ExecSummary;
+  /** Bounded command failure diagnostics. */
+  execError?: ExecDiagnostics;
   /** Body execution that started this attempt; absent in older formats. */
   readonly execution?: number;
   /** Monotonic attempt duration after settlement, including admission waiting. */
@@ -84,6 +90,10 @@ export interface FailedAttempt {
 
 /** Persisted state of one effect. */
 export interface StepRecord {
+  /** Latest command description; shell execution is explicit. */
+  exec?: ExecSummary;
+  /** Latest command failure diagnostics. */
+  execError?: ExecDiagnostics;
   /** Bounded timing and observation progress for a durable wait. */
   wait?: WaitRecord;
   /** An original format-one identity awaiting verification by replay. */
@@ -106,7 +116,8 @@ export interface StepRecord {
   errorStack?: string | null;
 
   /** Effect category; included in replay compatibility checks. */
-  kind: 'step' | 'claude' | 'codex' | 'sleep' | 'ask' | 'wait';
+  kind:
+    'step' | 'claude' | 'codex' | 'sleep' | 'ask' | 'wait' | 'exec' | 'read-file' | 'write-file';
   /** Hash of semantic components, including error mode. */
   fingerprint: string;
   /** Last saved lifecycle state. */
@@ -313,6 +324,8 @@ const usageSchema = z.object({
   costUsd: z.number().nonnegative().nullable(),
 });
 const timingFields = {
+  exec: execSummarySchema.optional(),
+  execError: execDiagnosticsSchema.optional(),
   startedAt: z.iso.datetime().nullable().optional(),
   finishedAt: z.iso.datetime().nullable().optional(),
   durationMs: z.number().nonnegative().nullable().optional(),
@@ -326,7 +339,17 @@ const stepSchema = z.object({
   wait: waitRecordSchema.optional(),
   ...timingFields,
   phase: z.string().nullable().optional(),
-  kind: z.enum(['step', 'claude', 'codex', 'sleep', 'ask', 'wait']),
+  kind: z.enum([
+    'step',
+    'claude',
+    'codex',
+    'sleep',
+    'ask',
+    'wait',
+    'exec',
+    'read-file',
+    'write-file',
+  ]),
   seq: z.number().int().positive().optional(),
   reusedFrom: reusedStepSchema.optional(),
   fingerprint: z.string(),
@@ -356,6 +379,8 @@ const stepSchema = z.object({
     .array(
       z.object({
         execution: z.number().int().positive().optional(),
+        exec: execSummarySchema.optional(),
+        execError: execDiagnosticsSchema.optional(),
         durationMs: z.number().nonnegative().nullable().optional(),
         usage: usageSchema.nullable().optional(),
         errorStack: z.string().nullable().optional(),

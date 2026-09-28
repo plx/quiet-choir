@@ -185,3 +185,26 @@ export type {
   PendingWait,
   PendingOperation,
 } from './workflow/runtime/wait-model.js';
+
+export { NodeProcessRunner } from './processes/runner.js';
+export { ExecError } from './workflow/runtime/exec-error.js';
+export type {
+  Command,
+  ExecOptions,
+  ExecResult,
+  ExecFunction,
+  ProcessRunRequest,
+  ProcessRunner,
+  ExecSummary,
+  ExecDiagnostics,
+} from './workflow/runtime/exec-model.js';
+
+export type {
+  ReadFileOptions,
+  ReadFileResult,
+  WriteFileOptions,
+  WriteFileResult,
+} from './workflow/runtime/file-model.js';
+
+export { guardFile } from './workflow/helpers/guard-file.js';
+export type { GuardFileOptions } from './workflow/helpers/guard-file.js';

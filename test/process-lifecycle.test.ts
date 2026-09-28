@@ -73,7 +73,7 @@ describe.skipIf(process.platform === 'win32')('bounded POSIX process ownership',
     const pid = Number(result.stdout.trim());
     expect(pid).toBeGreaterThan(1);
     expect(processIdentity(pid)?.zombie ?? groupState({ pid, pgid: null }) === 'dead').toBe(true);
-    expect(result.warnings).toContain('Reaping leftover harness process group after leader exit.');
+    expect(result.warnings).toContain('Reaping leftover process group after leader exit.');
   });
 
   it('reaps same-group children even when their pipes were redirected away', async () => {
