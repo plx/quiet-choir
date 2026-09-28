@@ -542,7 +542,8 @@ available. Operator adapters override the compatibility catch-all, which overrid
 completed replay constructs no adapter. Package revisions make changed option semantics explicit.
 
 The CLI accepts `--harness-config '{"harnesses":{"third":{"binary":"third-cli"}}}'` (or `@file` /
-`QUIET_CHOIR_HARNESS_CONFIG`) and repeated `--harness third=fixture:FILE` overrides.
+`QUIET_CHOIR_HARNESS_CONFIG`) and repeated `--harness third=fixture:FILE` overrides. Relative
+`harnesses.claude.binary` and `harnesses.codex.binary` paths resolve against the command cwd.
 `configuration doctor --workflow FILE` lists trusted registrations and runs optional zero-inference
 probes. `quiet-choir/harness-kit` supplies process ownership, fake binaries and the adapter
 conformance suite. Additional service operations use one ordinary effect per helper call; the

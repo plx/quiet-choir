@@ -68,11 +68,29 @@ export async function readHarnessSelection(
             ? await readFile(resolve(cwd, configSource.slice(1)), 'utf8')
             : configSource,
         );
-  const { harnesses: configurations, ...legacy } = configSchema
+  const { harnesses: parsed, ...legacy } = configSchema
     .extend({
       harnesses: z.record(z.string().regex(/^[a-z][a-z0-9-]{0,31}$/u), z.json()).optional(),
     })
     .parse(raw);
+  // Built-in binary paths follow the legacy fields: resolve against the command cwd now, because
+  // agent processes may run in options.cwd or a runtime worktree. Package configs stay opaque.
+  const configurations =
+    parsed === undefined
+      ? undefined
+      : Object.fromEntries(
+          Object.entries(parsed).map(([name, value]) => [
+            name,
+            (name === 'claude' || name === 'codex') &&
+            typeof value === 'object' &&
+            value !== null &&
+            !Array.isArray(value) &&
+            typeof value['binary'] === 'string' &&
+            value['binary'].includes('/')
+              ? { ...value, binary: resolve(cwd, value['binary']) }
+              : value,
+          ]),
+        );
   const config = legacy as CliHarnessOptions;
   const additions = {
     ...(configurations === undefined ? {} : { configurations }),

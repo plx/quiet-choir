@@ -69,6 +69,23 @@ it('parses named fixture overrides and per-package JSON configuration before imp
   ).toThrow();
 });
 
+it('resolves relative nested built-in binaries against the command cwd', async () => {
+  const cwd = await directory();
+  const selection = await readHarnessSelection(
+    'cli',
+    '{"harnesses":{"codex":{"binary":"./bin/codex"},"claude":{"binary":"claude-next"},"third":{"binary":"./bin/third"}}}',
+    cwd,
+  );
+  expect(selection.configurations).toEqual({
+    codex: { binary: join(cwd, 'bin', 'codex') },
+    claude: { binary: 'claude-next' },
+    third: { binary: './bin/third' },
+  });
+  const adapters = selectedAdapters(selection);
+  expect(adapters['codex']?.policyDefaults?.().binary).toBe(join(cwd, 'bin', 'codex'));
+  expect(adapters['claude']?.policyDefaults?.().binary).toBe('claude-next');
+});
+
 it('publishes registry schemas and capabilities without constructing adapters or running workflow bodies', () => {
   const third = defineHarness({
     name: 'third',
