@@ -197,7 +197,9 @@ it.each([
     expect(peak).toBe(cap);
     expect(active).toBe(0);
   },
-  15_000,
+  // The 144-leaf case serializes several fsynced checkpoint writes per step (about 5s locally);
+  // coverage and parallel suites stretch that past 15s. A deadlock still fails this budget.
+  60_000,
 );
 
 it('shares one limiter across two simultaneously executing runs', async () => {
