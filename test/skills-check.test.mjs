@@ -96,6 +96,22 @@ for (const [label, text, expected] of [
       await assert.rejects(checkSkills(root, { compile: false }), expected);
     });
   });
+test('rejects difference markers nested inside an approved region', async () => {
+  await fixture(async (root) => {
+    const file = skill(root, 1);
+    const text = await readFile(file, 'utf8');
+    const marker = '<!-- /skills-difference: claude-host -->';
+    assert.ok(text.includes(marker));
+    await writeFile(
+      file,
+      text.replace(
+        marker,
+        `<!-- skills-difference: unknown -->\nHidden\n<!-- /skills-difference: unknown -->\n${marker}`,
+      ),
+    );
+    await assert.rejects(checkSkills(root, { compile: false }), /malformed difference marker/u);
+  });
+});
 test('frontmatter YAML is validated, including duplicate fields', async () => {
   await fixture(async (root) => {
     const file = skill(root);

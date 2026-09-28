@@ -86,7 +86,11 @@ function normalizeDifferences(text, file, rules, seen) {
   const used = new Set();
   const normalized = text.replace(
     /<!-- skills-difference: ([a-z0-9-]+) -->\n([^]*?)<!-- \/skills-difference: \1 -->/gu,
-    (_match, id) => {
+    (_match, id, body) => {
+      requireThat(
+        !body.includes('skills-difference:'),
+        `${file}: nested or malformed difference marker in region ${id}`,
+      );
       const key = `${file}:${id}`;
       requireThat(rules.has(key), `${file}: unlisted difference region ${id}`);
       requireThat(!used.has(id), `${file}: duplicate difference region ${id}`);
