@@ -65,6 +65,60 @@ it('records one ordinary effect per fake-transport helper call and retains separ
   expect(keys).toEqual(['helper/route']);
 });
 
+it('gives every transport attempt a copy of the fingerprinted decision snapshot', async () => {
+  const seen: unknown[] = [];
+  const options = await setup();
+  const definition = defineWorkflow({
+    ...base,
+    async run(ctx) {
+      const question = {
+        state: { ready: true, items: ['a'] },
+        question: 'What next?',
+        answers: ['fix', 'skip'] as const,
+      };
+      const pending = decision(ctx, async (asked) => {
+        seen.push(structuredClone(asked));
+        if (seen.length === 1) {
+          // A transport that mutates its argument must not change the retried request.
+          Object.assign(asked, { question: 'Mutated by transport' });
+          (asked.state as { items: string[] }).items.push('transport');
+          throw new Error('transient');
+        }
+        return { output: { answer: 'fix', probabilities: { fix: 1, skip: 0 } } };
+      }).choose('route', question);
+      // Caller mutations after choose() returns must not reach the transport.
+      Object.assign(question, { question: 'Mutated by caller' });
+      question.state.items.push('caller');
+      return (await pending).answer;
+    },
+  });
+  const result = await runWorkflow(definition, {
+    ...options,
+    policy: [{ match: 'route', retry: { maxAttempts: 2, delayMs: 0 } }],
+  });
+  expect(result.output).toBe('fix');
+  const original = {
+    state: { ready: true, items: ['a'] },
+    question: 'What next?',
+    answers: ['fix', 'skip'],
+  };
+  expect(seen).toEqual([original, original]);
+  const unmutated = await runWorkflow(
+    defineWorkflow({
+      ...base,
+      async run(ctx) {
+        const answer = await decision(ctx, async () => ({
+          output: { answer: 'fix', probabilities: { fix: 1, skip: 0 } },
+        })).choose('route', { ...original, answers: ['fix', 'skip'] });
+        return answer.answer;
+      },
+    }),
+    await setup(),
+  );
+  // The durable identity is the original question, not either mutated form.
+  expect(result.steps['route']?.fingerprint).toBe(unmutated.steps['route']?.fingerprint);
+});
+
 it('retains helper usage on local validation failure and includes cost when gating new agents', async () => {
   const options = await setup();
   const bad = defineWorkflow({

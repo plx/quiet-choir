@@ -328,8 +328,9 @@ services that support deduplication. Never put credentials in inputs or metadata
 
 `quiet-choir/decision` exports `decision(ctx, transport).choose(id, question)` as a reference with
 an injected transport and a validated answer/probability distribution. It is not a JEV SDK adapter.
-The callback's `reportUsage(usage)` replaces cumulative usage for that attempt and saves it with its
-outcome, including local validation failure. Reports after the callback returns reject. Inspect
-separates `integrationUsage`/`byIntegration` from agent totals; helpers do not consume agent attempt
-slots, while reported cost contributes to the next agent's cost gate. Replay makes no transport
-call.
+It snapshots the question when `choose` is called and gives every attempt a fresh copy of that
+recorded input, so later caller or transport mutations never reach the service. The callback's
+`reportUsage(usage)` replaces cumulative usage for that attempt and saves it with its outcome,
+including local validation failure. Reports after the callback returns reject. Inspect separates
+`integrationUsage`/`byIntegration` from agent totals; helpers do not consume agent attempt slots,
+while reported cost contributes to the next agent's cost gate. Replay makes no transport call.

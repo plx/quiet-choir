@@ -47,21 +47,23 @@ export function decision(
 } {
   return {
     choose(id, question) {
+      // One synchronous snapshot is both the fingerprinted input and every attempt's transport input.
+      const snapshot = {
+        state: structuredClone(question.state),
+        question: question.question,
+        answers: [...question.answers] as const,
+      };
       const schema = z.object({
-        answer: z.enum(question.answers),
-        probabilities: z.record(z.enum(question.answers), z.number().min(0).max(1)),
+        answer: z.enum(snapshot.answers),
+        probabilities: z.record(z.enum(snapshot.answers), z.number().min(0).max(1)),
       });
       return ctx.step(id, {
         version: 'decision/1',
-        input: {
-          state: question.state,
-          question: question.question,
-          answers: [...question.answers],
-        },
+        input: { ...snapshot, answers: [...snapshot.answers] },
         schema,
         meta: { integration: 'decision', op: 'choose' },
         async run({ signal, idempotencyKey, reportUsage }) {
-          const response = await transport(question, { signal, idempotencyKey });
+          const response = await transport(structuredClone(snapshot), { signal, idempotencyKey });
           if (response.usage !== undefined) reportUsage(response.usage);
           return schema.parse(response.output);
         },
