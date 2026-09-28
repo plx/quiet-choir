@@ -1,7 +1,8 @@
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { afterEach, beforeEach, expect, it } from 'vitest';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import {
   defineWorkflow,
   isValidRunId,
@@ -12,9 +13,12 @@ import {
   WorkflowRunError,
   z,
 } from '../src/index.js';
+import * as store from '../src/workflow/runtime/store.js';
 import { lockRun } from '../src/workflow/runtime/store.js';
 import { readRequiredRun } from '../src/workflow/runtime/read-required-run.js';
 import { workflowFailure } from '../src/workflow/loader/failure.js';
+import { WorkflowExecutor } from '../src/workflow/loader/executor.js';
+import { analyzeTypecheckEntrypoint } from '../src/workflow/typecheck/plan.js';
 import { readWorkflowInput } from '../src/cli/input.js';
 import { jsonErrorPosition } from '../src/cli/json-position.js';
 import { workflowArgvFailure } from '../src/cli/launch.js';
@@ -25,9 +29,17 @@ import {
   WorkflowCommandError,
 } from '../src/cli/workflow-errors.js';
 
+vi.mock('../src/workflow/runtime/store.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof store>();
+  return { ...actual, writeRun: vi.fn(actual.writeRun) };
+});
+const actualStore = await vi.importActual<typeof store>('../src/workflow/runtime/store.js');
+const projectRoot = dirname(dirname(fileURLToPath(import.meta.url)));
+
 let stateDir: string;
 beforeEach(async () => {
   stateDir = await mkdtemp(join(tmpdir(), 'choir-errors-'));
+  vi.mocked(store.writeRun).mockImplementation(actualStore.writeRun);
 });
 afterEach(async () => {
   await rm(stateDir, { recursive: true, force: true });
@@ -238,3 +250,65 @@ it('renders explicit empty context for pre-run failures and reserves exit 1 for 
   ]);
   expect(workflowExitCodes['workflow.storage']).toBe(74);
 });
+
+// Real compiler passes can exceed five seconds under coverage on shared CI runners.
+it(
+  'keeps a failed cancellation save as a storage failure when an interrupt also occurs',
+  { timeout: 20_000 },
+  async () => {
+    const root = join(stateDir, 'workflow');
+    await mkdir(root);
+    await writeFile(join(root, 'package.json'), '{"type":"module"}');
+    await symlink(join(projectRoot, 'node_modules'), join(root, 'node_modules'));
+    const file = join(root, 'workflow.ts');
+    await writeFile(
+      file,
+      `import { z } from 'zod';
+import { defineWorkflow } from ${JSON.stringify(join(projectRoot, 'src/workflow/runtime/model.js'))};
+export default defineWorkflow({
+  name: 'interrupted-storage', version: '1', input: z.null(), output: z.string(),
+  run: (ctx) => ctx.step('wait', {
+    input: null,
+    schema: z.string(),
+    run: ({ signal }) => new Promise<string>((_, reject) => {
+      const stop = () => { reject(signal.reason as Error); };
+      if (signal.aborted) stop();
+      else signal.addEventListener('abort', stop, { once: true });
+    }),
+  }),
+});`,
+    );
+    const analysis = analyzeTypecheckEntrypoint(file, projectRoot);
+    if (!analysis.ok) throw new Error(analysis.error.message);
+    const controller = new AbortController();
+    const result = await new WorkflowExecutor({
+      signal: controller.signal,
+      logger: {
+        log(_level, message) {
+          if (!message.startsWith('step.started wait')) return;
+          // Every save after the interrupt, including the cancellation snapshot, fails.
+          vi.mocked(store.writeRun).mockRejectedValue(
+            Object.assign(new Error('injected ENOSPC'), { code: 'ENOSPC' }),
+          );
+          controller.abort();
+        },
+      },
+    }).execute({
+      kind: 'workflow.execute',
+      typecheck: analysis.plan,
+      runId: 'interrupted',
+      stateDir: join(stateDir, 'state'),
+      cwd: root,
+      resume: false,
+      input: null,
+    });
+    expect(controller.signal.aborted).toBe(true);
+    expect(result).toMatchObject({ ok: false, code: 'workflow.storage' });
+    if (result.ok) throw new Error('expected a failure');
+    expect(workflowExitCodes[result.code]).toBe(74);
+    expect(result.message).toContain('injected ENOSPC');
+    expect(
+      (await readRun({ runId: 'interrupted', stateDir: join(stateDir, 'state') })).status,
+    ).toBe('running');
+  },
+);

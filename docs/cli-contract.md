@@ -45,8 +45,9 @@ An ordinary interrupt drains owned work and saves `cancelled` when storage permi
 kills tracked groups and writes the last readable checkpoint synchronously before exit 130;
 `error.details.forced` is true and `status` may still be `running`. SIGKILL, process crashes, and a
 closed output pipe cannot deliver a JSON document. Storage failures use exit 74 so that a failed
-save never masquerades as exit 1. Saved completion with a known cleanup warning still succeeds under
-the [process ownership contract](process-lifecycle.md).
+save never masquerades as exit 1, and a storage failure during an interrupt keeps exit 74 rather
+than 130 because the cancellation checkpoint may not have been saved. Saved completion with a known
+cleanup warning still succeeds under the [process ownership contract](process-lifecycle.md).
 
 `check-resume` incompatibility uses exit 3 with the full comparison in `error.details`. Its
 compatible success retains `check`. A missing run includes `details.stateDir`, sorted

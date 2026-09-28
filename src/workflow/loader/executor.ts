@@ -235,10 +235,11 @@ export class WorkflowExecutor implements Executor<
             ? await readRun({ runId: context.runId, stateDir: context.stateDir }).catch(() => null)
             : null;
       const message = error instanceof Error ? error.message : String(error);
-      const code = this.#options.signal?.aborted
-        ? 'workflow.interrupted'
-        : hasCheckpointError(error)
-          ? 'workflow.storage'
+      // A failed save outranks an interrupt: the cancellation state may not be on disk.
+      const code = hasCheckpointError(error)
+        ? 'workflow.storage'
+        : this.#options.signal?.aborted
+          ? 'workflow.interrupted'
           : error instanceof WorkflowRunError
             ? error.run.status === 'cancelled'
               ? 'workflow.interrupted'

@@ -74,7 +74,9 @@ export abstract class WorkflowCommand extends BaseCommand {
       );
       failure = { ...failure, run };
     }
-    if (this.signal.aborted) failure = { ...failure, code: 'workflow.interrupted' };
+    // Storage failures keep exit 74 so automation repairs storage before resuming.
+    if (this.signal.aborted && failure.code !== 'workflow.storage')
+      failure = { ...failure, code: 'workflow.interrupted' };
     const exit = workflowExitCodes[failure.code];
     if (requestedJson(this.argv)) {
       this.logToStderr(failure.message);
