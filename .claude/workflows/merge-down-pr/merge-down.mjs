@@ -325,13 +325,20 @@ function linkedIssue(R, p) {
   let keyword = number ? 'closes' : null;
   // Stacked PRs have no closingIssuesReferences yet: a closing keyword anywhere in the body beats
   // an earlier "Refs #N", which only names context.
-  for (const pattern of [
-    /\b(close[sd]?|fix(?:e[sd])?|resolve[sd]?)\b:?\s+#(\d+)/i,
-    /\b(refs?)\b:?\s+#(\d+)/i,
-  ]) {
+  // References may be bare (#42) or repository-qualified (owner/repo#42); only this repository's
+  // issues can be reviewed here, so other repositories count as extra closing references.
+  const ref = String.raw`(?:([\w.-]+\/[\w.-]+))?#(\d+)`;
+  const own = (m) => !m[2] || m[2].toLowerCase() === R.repo.toLowerCase();
+  const closingPattern = new RegExp(
+    String.raw`\b(close[sd]?|fix(?:e[sd])?|resolve[sd]?)\b:?\s+${ref}`,
+    'gi',
+  );
+  const refsPattern = new RegExp(String.raw`\b(refs?)\b:?\s+${ref}`, 'gi');
+  const bodyMatches = (pattern) => [...(p.body ?? '').matchAll(pattern)];
+  for (const pattern of [closingPattern, refsPattern]) {
     if (number) break;
-    const m = pattern.exec(p.body ?? '');
-    if (m) [keyword, number] = [m[1].toLowerCase(), Number(m[2])];
+    const m = bodyMatches(pattern).find(own);
+    if (m) [keyword, number] = [m[1].toLowerCase(), Number(m[3])];
   }
   if (!number) {
     const m = /^[^/]+\/(\d+)-/.exec(p.headRefName);
@@ -346,9 +353,9 @@ function linkedIssue(R, p) {
   ]);
   if (kind !== 'issue') return null;
   // GitHub closes every referenced issue on merge, but the review covers one: report the rest.
-  const bodyClosing = [
-    ...(p.body ?? '').matchAll(/\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\b:?\s+#(\d+)/gi),
-  ].map((m) => Number(m[1]));
+  const bodyClosing = bodyMatches(closingPattern).map((m) =>
+    own(m) ? Number(m[3]) : `${m[2]}#${m[3]}`,
+  );
   const alsoCloses = [...new Set([...closing, ...bodyClosing])].filter((n) => n !== number);
   return { number, keyword, closes: /^(close|fix|resolve)/.test(keyword), alsoCloses };
 }
@@ -691,6 +698,23 @@ function sync(a, P, R) {
       const fp = git(W, ['merge-base', 'HEAD', `origin/${p.baseRefName}`]);
       [result.forkPoint, result.forkSource] = [fp, 'base-branch'];
     } else {
+      // A stacked PR whose parent branch is gone has no trustworthy fork point: the merge-base
+      // with the default branch predates the parent's commits, so the rebase would replay them.
+      const stacked =
+        p.baseRefName !== R.def ||
+        ghPaged(`repos/${R.repo}/issues/${pr}/timeline`).some((e) =>
+          ['base_ref_changed', 'automatic_base_change_succeeded'].includes(e.event),
+        );
+      if (stacked) {
+        return {
+          ...result,
+          status: 'blocked',
+          reason:
+            `PR was stacked on another branch, and no fork point was recorded before that branch ` +
+            `was rewritten or deleted. Record refs/merge-down/fork-point/${pr} (the parent's head as ` +
+            `this PR saw it) and re-run, or rebase it by hand.`,
+        };
+      }
       [result.forkPoint, result.forkSource] = [
         git(W, ['merge-base', 'HEAD', target]),
         'merge-base',

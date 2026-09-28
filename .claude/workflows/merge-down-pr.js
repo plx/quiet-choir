@@ -809,8 +809,9 @@ async function fixRoundOf(threads, work) {
       return { error: `follow-up filing incomplete: ${unfiled.join(', ') || 'no result'}` };
     }
   }
-  // "partly" is unfinished: the thread would be called addressed and resolved regardless.
-  const unfixed = (fixed?.items ?? []).filter((i) => i.status !== 'fixed');
+  // "partly" is unfinished, and "fixed" needs the commit that did it: otherwise the thread would
+  // be called addressed and resolved without any change behind it.
+  const unfixed = (fixed?.items ?? []).filter((i) => i.status !== 'fixed' || !i.commit?.trim());
   if (unfixed.length)
     return { error: `could not fix: ${unfixed.map((i) => `${i.key} (${i.summary})`).join('; ')}` };
   if (fixed && !fixed.checkPassed)
