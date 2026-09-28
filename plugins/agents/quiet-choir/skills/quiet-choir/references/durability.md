@@ -91,12 +91,13 @@ node "$QC_CHECKOUT/bin/run.js" workflow execute review.workflow.ts \
 ```
 
 `check-resume` acquires no writer lock, never calls the workflow body or harness, and does not write
-the checkpoint. It still typechecks/imports trusted module top-level code. Its JSON `check` reports
-`compatible`, changed/unchanged components, file differences, whether code acceptance is possible,
-and whether a failed run has only terminal outcomes. Exit 0 means the run-level gates pass; exit 1
-means incompatibility or a load/read failure. Add `--accept-code-change` to check that mode. It does
-not predict dynamically constructed steps, step compatibility, or replay order, and a concurrent
-writer can change state after the check.
+the checkpoint. It still typechecks/imports trusted module top-level code. Its JSON `check` (or
+`error.details` for incompatibility) reports `compatible`, changed/unchanged components, file
+differences, whether code acceptance is possible, and whether a failed run has only terminal
+outcomes. Exit 0 means the run-level gates pass; exit 3 means incompatibility or a read refusal;
+exit 4 means a loading failure. Add `--accept-code-change` to check that mode. It does not predict
+dynamically constructed steps, step compatibility, or replay order, and a concurrent writer can
+change state after the check.
 
 A fork never modifies its source checkpoint. `--fork-state-dir` selects alternate source storage;
 omitting `--input` inherits source input, while explicit input is validated for the new run. Forks

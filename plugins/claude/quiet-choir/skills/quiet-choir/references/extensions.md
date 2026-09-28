@@ -5,8 +5,11 @@
 The public entry point exports `defineWorkflow`, `z`, `runWorkflow`, `readRun`, `CliHarness`, and
 their public types. `runWorkflow` validates the definition's data but does not typecheck/import a
 file for you. It resolves with a typed completed run record and throws on failure. Recorded
-execution failures are saved before it throws; earlier loading/compatibility errors need not create
-or alter a run.
+execution failures with a successful final save throw `WorkflowRunError` with the saved `run`, root
+`stepId`, and original rejection in `cause`. Callers matching `HarnessError`, `FanOutError`, or
+their own error type should inspect that cause. Storage failures can leave an older record.
+`RunRefusedError` exposes stable `run.*` codes, and `WorkflowInputError` retains schema issues and
+the validator cause. Earlier loading/compatibility errors need not create or alter a run.
 
 Supply these execution options as needed:
 

@@ -139,8 +139,10 @@ describe('source-aware loader recovery', { timeout: 90_000 }, () => {
         cwd: root,
       });
       expect(report).toMatchObject({
-        kind: 'workflow.check-resume.result',
-        check: { compatible: false, files: ['helper.ts'], canAcceptCodeChange: true },
+        kind: 'workflow.error',
+        code: 'run.incompatible',
+        details: { compatible: false, files: ['helper.ts'], canAcceptCodeChange: true },
+        run: JSON.parse(bytes) as unknown,
       });
       expect(await readFile(join(stateDir, 'source.json'), 'utf8')).toBe(bytes);
     } finally {

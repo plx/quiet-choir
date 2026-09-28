@@ -23,6 +23,7 @@ export function executionSignals(
   supervisor: ProcessSupervisor,
   log: (message: string) => void,
   label = 'Workflow',
+  onForce?: () => void,
 ): {
   readonly signal: AbortSignal;
   dispose(): void;
@@ -31,7 +32,11 @@ export function executionSignals(
   const cancel = (): void => {
     if (controller.signal.aborted) {
       supervisor.forceKill();
-      process.exit(130);
+      try {
+        onForce?.();
+      } finally {
+        process.exit(130);
+      }
     }
     controller.abort(new Error(`${label} interrupted.`));
     try {

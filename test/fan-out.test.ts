@@ -1,3 +1,4 @@
+import { WorkflowRunError } from '../src/index.js';
 /* eslint-disable @typescript-eslint/no-deprecated -- Exercise the supported legacy map/replay contract. */
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -102,8 +103,11 @@ it('drains by default, stops scheduling promptly, and replays finished siblings 
       if (event.type === 'step.failed') failed.resolve();
     },
   }).catch((error: unknown) => error);
-  expect(error).toBeInstanceOf(FanOutError);
-  expect(error).toMatchObject({
+  expect(error).toBeInstanceOf(WorkflowRunError);
+  if (!(error instanceof WorkflowRunError)) throw error;
+  expect(error.stepId).toBe('item/0');
+  expect(error.cause).toBeInstanceOf(FanOutError);
+  expect(error.cause).toMatchObject({
     policy: 'drain',
     failures: [{ index: 0, stepId: 'item/0' }],
     unscheduled: [2, 3],

@@ -72,12 +72,13 @@ check setup without paid calls.
 
 ## Run identity and output
 
-- `--run-id ID` selects the run. New runs otherwise generate a UUID, printed only to stderr. Supply
-  an ID in scripts. IDs allow 1–128 letters, numbers, underscores, or hyphens and must start with a
-  letter or number.
-- `--input JSON` supplies inline input. New CLI runs default to `{}`; omit it on resume to reuse the
-  saved input. Forks also inherit source input by default; explicit fork input may differ. Resume
-  still requires equal validated input.
+- `--run-id ID` selects the run. New runs otherwise generate a UUID, printed to stderr and included
+  in JSON success/failure output. IDs are validated before typecheck or import. IDs allow 1–128
+  letters, numbers, underscores, or hyphens and must start with a letter or number.
+- `--input JSON`, `--input @path/to/input.json`, or `--input -` supplies inline, file, or stdin
+  input. JSON errors name the source and zero-based character position. New CLI runs default to
+  `{}`; omit it on resume to reuse the saved input. Forks also inherit source input by default;
+  explicit fork input may differ. Resume still requires equal validated input.
 - Resume with `--resume --run-id ID`, the same launch directory and `--state-dir`, and unchanged
   sources, name, version, and schemas. Reusing an ID without `--resume` fails.
 - `--kill-grace-ms N` sets the TERM-to-KILL grace for calls and orphan recovery (default 3000).
@@ -86,12 +87,16 @@ check setup without paid calls.
 - `--state-dir PATH` on execute/inspect/check-resume selects storage. Its default is
   `.quiet-choir/runs` under the CLI launch directory. Use an absolute path and repeat it for
   inspection/resume.
-- `--json` on execute/inspect/validate writes one JSON line to stdout only on success: the run
-  record for execute (plus current `ownership` for inspect), or `{kind, ok, entrypoint, workflow}`
-  for validate. It is unsupported by typecheck. Failed `execute --json` emits no result JSON; read
-  stderr, then inspect the run if a checkpoint exists.
-- Use `npm run --silent cli -- … --json` to suppress npm's banner when piping. Module-level
-  `console.log` output precedes the JSON; workflow code must keep stdout clean too.
+- `--json` on execute/inspect/validate/typecheck/check-resume writes exactly one JSON line to
+  stdout, including failures and argument errors. Execute returns its run record; inspect adds
+  current `ownership`; validate returns `{kind, ok, entrypoint, workflow}`; typecheck returns its
+  compiler result. Failures use
+  `{kind:"workflow.error",ok:false,exitCode,error:{code,message,stepId,details}, runId,stateDir,status,failedSteps,diagnostics,run}`.
+  `run` is the actual saved record or null. `error.stepId` identifies the root effect; body failures
+  and interrupts use null. Generated IDs are included, so no follow-up inspect is needed to recover
+  the ID or failed record.
+- Use `npm run --silent cli -- … --json` to suppress npm's banner when piping. Workflow console and
+  `process.stdout.write` output during import/execution is redirected to stderr along with logs.
 - Validate's `workflow.fingerprint` is the same full source/schema/engine fingerprint stored by
   execution. Per-file hashes use real, project-relative paths and exclude engine implementation
   files.
@@ -100,13 +105,16 @@ check setup without paid calls.
 
 Put flags after the command name, for example `workflow inspect first --json`.
 
-| Exit | Meaning                                                                                                                                                                                                                                                              |
-| ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 0    | Success. `inspect` also exits 0 for `failed` and `running` records: check `.status`. Misplaced flags between `workflow` and its command can print help and exit 0.                                                                                                   |
-| 1    | Type errors, nonexistent FILE path, invalid run ID, existing/missing/locked run, incompatible resume, changed input, or workflow/step failure. Read stderr to distinguish them. An invalid run ID is checked after module import, so top-level code has already run. |
-| 2    | Flag parse errors, invalid `--input` JSON, omitted FILE argument, `--resume` without `--run-id`, non-TypeScript or `.d.ts` entrypoints, or configuration stubs.                                                                                                      |
-| 3    | Recorded live or unverified harness children prevent abandoned-lock recovery. Inspect, then use `--resume --kill-orphans` for confirmed identities.                                                                                                                  |
-| 130  | SIGINT/SIGTERM/SIGHUP during execution. The runner aborts, drains, and saves `cancelled` before exiting when storage is available; a storage failure or second signal can leave an older record. A second signal first SIGKILLs tracked groups.                      |
+| Exit | Meaning                                                                                                                                                                                                                                                                    |
+| ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 0    | Success. Inspect accepts any readable status; check `.status`. After a first signal, only a saved execute completion exits 0.                                                                                                                                              |
+| 1    | `workflow.failed`: execution failed and the failure checkpoint was saved. Fix and resume. A saved `failed` run reports this even when a signal arrived.                                                                                                                    |
+| 2    | `usage.*`: invalid flags, misplaced flags, omitted/nonexistent/unsupported FILE, invalid run ID, invalid input JSON/file/schema, or resume without an ID. No execution checkpoint is written.                                                                              |
+| 3    | `run.*`: existing/missing/locked/unreadable run, incompatible resume, changed input, or surviving/unverified child processes (`run.orphans`). No workflow body runs.                                                                                                       |
+| 4    | `load.*`: typecheck, import, or workflow-definition failure. No execution checkpoint is written.                                                                                                                                                                           |
+| 74   | `workflow.storage`: saving, process registration, or releasing ownership failed. Inspect the reported saved state; it can still be `running`, `completed`, or absent.                                                                                                      |
+| 75   | Reserved for suspended execution; not emitted yet.                                                                                                                                                                                                                         |
+| 130  | `workflow.interrupted`: SIGINT/SIGTERM/SIGHUP. Graceful cancellation saves `cancelled` when possible; if that save fails, the exit is 74 instead. A second signal kills tracked groups immediately and reports the last readable checkpoint, which may still be `running`. |
 
 `configuration doctor --json` runs five checks for each installed harness: tested version range,
 exact adapter argv with a zero-inference 404/400 rejection, hidden flags, enum drift and inherited
@@ -140,8 +148,9 @@ cannot be combined with `--resume`. `--accept-code-change` requires `--resume` a
 source/schema changes while retaining step checks. `--strict-replay` stops at the early ordering
 warning before live work. See [durability](durability.md#choose-a-recovery-path).
 
-`check-resume --json` emits `{kind, ok, check}` for a compatibility report, including incompatible
-reports (exit 1). A loading/reading error emits `{kind, ok:false, message, diagnostics}`. This is a
+`check-resume --json` emits `{kind, ok, check}` for a compatible report (exit 0). Incompatibility
+uses `workflow.error` with `error.code:"run.incompatible"` and the comparison in `error.details`
+(exit 3). Loading failures use `load.*` (exit 4); reading failures use `run.*` (exit 3). This is a
 run-level check, not a preview of future steps. Its `--accept-code-change` flag checks the explicit
 acceptance mode without saving that acceptance.
 

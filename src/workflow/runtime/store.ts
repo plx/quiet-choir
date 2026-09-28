@@ -1,3 +1,4 @@
+import { isValidRunId, runIdMessage, RunRefusedError } from './run-errors.js';
 import { codexEffortValues } from './agent-controls.js';
 import type { HarnessMetadata, HarnessInvocation, HarnessProcess } from './model.js';
 import { pidState, processIdentity } from '../../processes/identity.js';
@@ -453,11 +454,7 @@ const recordSchema = z
   });
 
 function pathFor(stateDir: string, runId: string): string {
-  if (!/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$/.test(runId)) {
-    throw new Error(
-      'Run ID must be 1–128 letters, numbers, underscores, or hyphens, starting with a letter or number.',
-    );
-  }
+  if (!isValidRunId(runId)) throw new Error(runIdMessage);
   return join(resolve(stateDir), `${runId}.json`);
 }
 
@@ -471,7 +468,12 @@ export interface ReadRunOptions extends StateDirectoryOptions {
 export async function readRun(options: ReadRunOptions): Promise<RunRecord> {
   const { runId } = options;
   const stateDir = resolveStateDir(options);
-  const raw = jsonValue(JSON.parse(await readFile(pathFor(stateDir, runId), 'utf8')));
+  return parseRunRecord(await readFile(pathFor(stateDir, runId), 'utf8'), runId);
+}
+
+/** Validate bytes from an atomic checkpoint read, including synchronous interrupt reporting. @internal */
+export function parseRunRecord(text: string, runId: string): RunRecord {
+  const raw = jsonValue(JSON.parse(text));
   const record = recordSchema.parse(raw);
   if (record.id !== runId) throw new Error('Checkpoint run ID does not match its filename.');
   return record as RunRecord;
@@ -636,14 +638,20 @@ export async function lockRun(
           JSON.parse(await readFile(join(lockPath, 'owner.json'), 'utf8')),
         );
       } catch (cause) {
-        throw new Error(
+        throw new RunRefusedError(
+          'run.locked',
+          runId,
           `Run ${runId} is locked with incomplete ownership metadata; inspect ${lockPath} before removing an abandoned lock.`,
+          { lockPath },
           { cause },
         );
       }
       if (!['dead', 'released'].includes(ownerState(previous)))
-        throw new Error(
+        throw new RunRefusedError(
+          'run.locked',
+          runId,
           `Run ${runId} is locked by PID ${String(previous.pid)} on ${previous.host}.`,
+          { pid: previous.pid, host: previous.host, lockPath },
           { cause: error },
         );
       // Only one contender may remove a dead owner's lock. Recheck ownership after winning recovery.
@@ -651,8 +659,11 @@ export async function lockRun(
       try {
         await mkdir(recovery);
       } catch (cause) {
-        throw new Error(
+        throw new RunRefusedError(
+          'run.locked',
+          runId,
           `Run ${runId} lock recovery is in progress; retry or inspect ${lockPath}.`,
+          { lockPath },
           { cause },
         );
       }
@@ -665,9 +676,15 @@ export async function lockRun(
           current.token !== previous.token ||
           !['dead', 'released'].includes(ownerState(current))
         ) {
-          throw new Error(`Run ${runId} lock ownership changed during recovery; retry.`, {
-            cause: error,
-          });
+          throw new RunRefusedError(
+            'run.locked',
+            runId,
+            `Run ${runId} lock ownership changed during recovery; retry.`,
+            { lockPath },
+            {
+              cause: error,
+            },
+          );
         }
         await recoverProcesses(lockPath, runId, current.token, {
           killGraceMs: options.killGraceMs ?? 3000,
@@ -736,7 +753,12 @@ export async function lockRun(
       ) => trackProcess(lockPath, owner.token, supervisor, invocation, child),
     });
   }
-  throw new Error(`Could not acquire run ${runId}; retry after competing writers finish.`);
+  throw new RunRefusedError(
+    'run.locked',
+    runId,
+    `Could not acquire run ${runId}; retry after competing writers finish.`,
+    { lockPath },
+  );
 }
 
 /** An outcome already observed by the workflow that must be preserved on replay. @internal */

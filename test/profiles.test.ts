@@ -1,3 +1,4 @@
+import { WorkflowRunError } from '../src/index.js';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -582,9 +583,13 @@ it('keeps denial diagnostics on successful envelopes with process failure', asyn
       return (await ctx.claude.text('ask', { prompt: 'x' })).output;
     },
   });
-  await expect(
-    runWorkflow(definition, { ...setup(), harness: { invoke: () => Promise.reject(error) } }),
-  ).rejects.toBe(error);
+  const failed: unknown = await runWorkflow(definition, {
+    ...setup(),
+    harness: { invoke: () => Promise.reject(error) },
+  }).catch((cause: unknown) => cause);
+  expect(failed).toBeInstanceOf(WorkflowRunError);
+  if (!(failed instanceof WorkflowRunError)) throw failed;
+  expect(failed.cause).toBe(error);
   const saved = await readRun(setup());
   expect(saved.steps['ask']?.warnings).toEqual(['Profile text: 2 permission denials reported.']);
   expect(saved.steps['ask']?.failedAttempts?.[0]?.usage?.costUsd).toBe(0.31);

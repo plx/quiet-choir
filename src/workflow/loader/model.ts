@@ -1,3 +1,4 @@
+import type { WorkflowFailure } from './failure.js';
 import type { AgentLimits } from '../runtime/agent-limiter.js';
 import type { RunOwnership } from '../runtime/store.js';
 import type { CapabilityManifest, ProfileOverride } from '../runtime/profiles-model.js';
@@ -6,7 +7,7 @@ import type { JsonValue } from '../runtime/model.js';
 import type { PolicyOverride } from '../runtime/policy.js';
 import type { WorkflowRun } from '../runtime/runner.js';
 import type { ForkOptions, ResumeCheck, WorkflowIdentity } from '../runtime/replay-model.js';
-import type { TypecheckDiagnostic, TypecheckPlan } from '../typecheck/model.js';
+import type { TypecheckPlan } from '../typecheck/model.js';
 
 /** Plain-data instructions for checking and importing a trusted workflow module. */
 export interface ValidateWorkflowPlan extends ExecutionPlan {
@@ -56,14 +57,7 @@ export interface InspectWorkflowPlan extends ExecutionPlan {
 /** The outcome of a workflow command, without live schemas or loaded modules. */
 export type WorkflowCommandResult = ExecutionResult &
   (
-    | {
-        readonly kind: 'workflow.error';
-        readonly ok: false;
-        readonly message: string;
-        readonly exitCode?: number;
-        readonly code?: string;
-        readonly diagnostics: readonly TypecheckDiagnostic[];
-      }
+    | WorkflowFailure
     | {
         readonly kind: 'workflow.validate.result';
         readonly ok: true;

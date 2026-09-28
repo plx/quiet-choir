@@ -1,3 +1,11 @@
+import {
+  isValidRunId,
+  runIdMessage,
+  RunRefusedError,
+  WorkflowInputError,
+  WorkflowRunError,
+} from './run-errors.js';
+import { missingRunError, unreadableRunError } from './read-required-run.js';
 import type { ProcessSupervisor } from '../../processes/supervisor.js';
 import { OrphanProcessesError } from './process-registry.js';
 import type { HarnessInvocation } from './model.js';
@@ -227,6 +235,7 @@ export async function runWorkflow<TInput, TOutput>(
   definition: WorkflowDefinition<TInput, TOutput>,
   options: RunOptions,
 ): Promise<WorkflowRun<TOutput>> {
+  if (!isValidRunId(options.runId)) throw new Error(runIdMessage);
   if (!definition.name.trim() || !definition.version.trim())
     throw new Error('Workflow name and version must be nonempty.');
   const limiter = resolveAgentLimiter(options.agentLimit);
@@ -253,7 +262,18 @@ export async function runWorkflow<TInput, TOutput>(
       options.killGraceMs > 2_147_483_647)
   )
     throw new Error('killGraceMs must be an integer from 1 to 2147483647.');
-  const release = await lockRun(stateDir, options.runId, options);
+  const release = await lockRun(stateDir, options.runId, options).catch(async (cause: unknown) => {
+    if (cause instanceof RunRefusedError || options.signal?.aborted) throw cause;
+    if (errorCode(cause) !== undefined)
+      throw await checkpointError(
+        'lock',
+        stateDir,
+        options.runId,
+        cause,
+        `Could not acquire run ${options.runId} lock`,
+      );
+    throw unreadableRunError({ stateDir, runId: options.runId }, cause);
+  });
   const controller = new AbortController();
   const abort = (): void => {
     controller.abort(new CancelledError(null, options.signal?.reason));
@@ -262,31 +282,74 @@ export async function runWorkflow<TInput, TOutput>(
   if (options.signal?.aborted) abort();
   const { signal } = controller;
   const checkpointProblems: CheckpointError[] = [];
+  let savedFailure: RunRecord | undefined;
   async function executeOwned(): Promise<WorkflowRun<TOutput>> {
     let existing: RunRecord | undefined;
     try {
       existing = await readRun({ stateDir, runId: options.runId });
     } catch (error) {
-      if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;
+      if (errorCode(error) !== 'ENOENT')
+        throw unreadableRunError({ stateDir, runId: options.runId }, error);
     }
     if (existing && !options.resume)
-      throw new Error(`Run ${options.runId} already exists; use resume or choose a new run ID.`);
+      throw new RunRefusedError(
+        'run.exists',
+        options.runId,
+        `Run ${options.runId} already exists; use resume or choose a new run ID.`,
+        { stateDir },
+      );
     if (!existing && options.resume)
-      throw new Error(`Run ${options.runId} does not exist; cannot resume.`);
+      throw await missingRunError({ stateDir, runId: options.runId });
     if (existing && existing.formatVersion !== engineInfo.formatVersion)
-      throw new Error(oldFormatMessage(existing.formatVersion));
+      throw new RunRefusedError(
+        'run.incompatible',
+        options.runId,
+        oldFormatMessage(existing.formatVersion),
+        { formatVersion: existing.formatVersion },
+      );
     const forkStateDir =
       fork === undefined
         ? undefined
         : await canonicalCwd(fork.stateDir === undefined ? stateDir : resolve(cwd, fork.stateDir));
     if (fork?.runId === options.runId && forkStateDir === (await canonicalCwd(stateDir)))
-      throw new Error('A fork must use a different target checkpoint.');
+      throw new RunRefusedError(
+        'run.incompatible',
+        options.runId,
+        'A fork must use a different target checkpoint.',
+      );
     let forkSource =
       fork && forkStateDir ? await loadFork(fork.runId, forkStateDir, definition.name) : undefined;
+    function parseInput(raw: unknown): TInput {
+      try {
+        return definition.input.parse(raw);
+      } catch (cause) {
+        if (!(cause instanceof z.ZodError)) throw cause;
+        let details: JsonValue;
+        try {
+          details = jsonValue(cause.issues);
+        } catch {
+          details = cause.issues.map((issue) => ({
+            code: issue.code,
+            message: issue.message,
+            path: issue.path.map((part) => (typeof part === 'symbol' ? String(part) : part)),
+          }));
+        }
+        throw new WorkflowInputError(details, cause);
+      }
+    }
+    const suppliedInput = options.input === undefined ? undefined : parseInput(options.input);
     let compatibility: ResumeCheck | undefined;
     if (existing) {
       compatibility = compareResume(definition, options, cwd, existing);
-      if (!compatibility.compatible) throw new Error(compatibility.message);
+      if (!compatibility.compatible)
+        throw new RunRefusedError(
+          compatibility.changed.length === 1 && compatibility.changed[0] === 'input'
+            ? 'run.input_changed'
+            : 'run.incompatible',
+          options.runId,
+          compatibility.message,
+          jsonValue(compatibility),
+        );
     }
     const allowModelOverride =
       options.allowModelOverride ??
@@ -311,15 +374,10 @@ export async function runWorkflow<TInput, TOutput>(
       if (role) requireGrant(role, grants, grantedProfiles);
     }
     const matchedPolicy = new Set<number>();
-    const input = definition.input.parse(
+    const input =
       options.input === undefined
-        ? existing
-          ? existing.input
-          : forkSource
-            ? forkSource.input
-            : options.input
-        : options.input,
-    );
+        ? parseInput(existing ? existing.input : forkSource?.input)
+        : (suppliedInput as TInput);
     const savedInput = jsonValue(input);
     if (existing?.status === 'completed' && !options.acceptCodeChange) {
       const output = definition.output.parse(existing.output);
@@ -1324,7 +1382,7 @@ export async function runWorkflow<TInput, TOutput>(
         record.recoveryHint =
           'All recorded work has terminal outcomes, including settled map items. Fix the workflow tail/output and use --resume --accept-code-change to re-finalize; unchanged identities reuse their results.';
       warnUnmatched();
-      await trySave();
+      if (await trySave()) savedFailure = structuredClone(record);
       throw error;
     }
   }
@@ -1358,6 +1416,10 @@ export async function runWorkflow<TInput, TOutput>(
     checkpointProblems.push(error);
     if (outcome.ok) outcome = { ok: false, error };
   }
-  if (!outcome.ok) throw withCheckpointErrors(outcome.error, checkpointProblems);
+  if (!outcome.ok) {
+    const cause = withCheckpointErrors(outcome.error, checkpointProblems);
+    if (savedFailure) throw new WorkflowRunError(savedFailure, cause);
+    throw cause;
+  }
   return outcome.run;
 }

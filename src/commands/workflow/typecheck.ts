@@ -1,38 +1,34 @@
-import { Args, type Interfaces } from '@oclif/core';
+import { workflowFailure } from '../../workflow/loader/failure.js';
+import { Args, Flags, type Interfaces } from '@oclif/core';
 
 import { TypeScriptExecutor } from '../../workflow/typecheck/typescript-executor.js';
-import { analyzeTypecheckEntrypoint } from '../../workflow/typecheck/plan.js';
-import { BaseCommand } from '../../cli/base-command.js';
+import { WorkflowCommand } from '../../cli/workflow-command.js';
 import { formatTypecheckDiagnostic } from '../../cli/presentation.js';
 
 interface WorkflowTypecheckArgs {
   readonly file: string;
 }
 
-export default class WorkflowTypecheck extends BaseCommand {
+export default class WorkflowTypecheck extends WorkflowCommand {
   public static override readonly args: Interfaces.ArgInput<WorkflowTypecheckArgs> = {
-    file: Args.file({
+    file: Args.string({
       description: 'TypeScript workflow entrypoint to check',
-      exists: true,
       required: true,
     }),
+  };
+
+  public static override readonly flags: Interfaces.FlagInput<{ json: boolean | undefined }> = {
+    json: Flags.boolean({ description: 'Print the typecheck result as JSON', default: false }),
   };
 
   public static override readonly summary = 'Type-check a TypeScript workflow';
 
   public async run(): Promise<void> {
     const { args, flags } = await this.parse(WorkflowTypecheck);
-    const analysis = analyzeTypecheckEntrypoint(args.file, process.cwd());
-
-    if (!analysis.ok) {
-      this.error(analysis.error.message, {
-        code: analysis.error.code,
-        exit: 2,
-      });
-    }
+    const typecheck = await this.entrypoint(args.file);
 
     const executor = new TypeScriptExecutor(this.createExecutionLogger(flags));
-    const result = await executor.execute(analysis.plan);
+    const result = await executor.execute(typecheck);
 
     for (const diagnostic of result.diagnostics) {
       this.logToStderr(formatTypecheckDiagnostic(diagnostic, process.cwd()));
@@ -46,14 +42,19 @@ export default class WorkflowTypecheck extends BaseCommand {
       const errorCount = result.diagnostics.filter(
         (diagnostic) => diagnostic.category === 'error',
       ).length;
-      this.logToStderr(
-        `Type check failed with ${String(errorCount)} error${errorCount === 1 ? '' : 's'}.`,
+      this.failResult(
+        workflowFailure(
+          'load.typecheck',
+          `Type check failed with ${String(errorCount)} error${errorCount === 1 ? '' : 's'}.`,
+          { diagnostics: result.diagnostics },
+        ),
+        true,
       );
-      this.exit(1);
     }
 
     const configuration = result.configPath ?? 'built-in Node ES2023 defaults';
-    this.log(
+    this.output(
+      result,
       `Type check passed for ${result.entrypoint} (TypeScript ${result.compilerVersion}; ${configuration}).`,
     );
   }

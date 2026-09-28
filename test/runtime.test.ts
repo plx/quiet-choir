@@ -138,7 +138,7 @@ describe('durable TypeScript workflows', () => {
       'already exists',
     );
     await expect(runWorkflow(definition, { ...resume, runId: 'absent' })).rejects.toThrow(
-      'does not exist',
+      'not found',
     );
   });
 

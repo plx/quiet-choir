@@ -62,7 +62,7 @@ export default defineWorkflow({name:'fallback-cli',version:'1',input:z.object({}
   const args = ['execute', file, '--run-id', 'recovery', '--state-dir', state];
   const first = cli(...args, '--json');
   assert.equal(first.status, 1, first.stderr);
-  assert.equal(first.stdout, '');
+  assert.equal(JSON.parse(first.stdout).error.code, 'workflow.failed');
   const inspected = cli('inspect', 'recovery', '--state-dir', state, '--json');
   assert.equal(inspected.status, 0, inspected.stderr);
   const initial = JSON.parse(inspected.stdout);

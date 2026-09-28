@@ -1,3 +1,4 @@
+import { WorkflowRunError } from '../src/index.js';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { availableParallelism, tmpdir } from 'node:os';
 import type * as Os from 'node:os';
@@ -587,9 +588,14 @@ it('propagates a custom typed admission refusal without invoking the harness', a
       return 1;
     },
   });
-  await expect(
-    runWorkflow(definition, { ...options(), harness: { invoke }, agentLimit: limiter }),
-  ).rejects.toBe(reason);
+  const failed: unknown = await runWorkflow(definition, {
+    ...options(),
+    harness: { invoke },
+    agentLimit: limiter,
+  }).catch((cause: unknown) => cause);
+  expect(failed).toBeInstanceOf(WorkflowRunError);
+  if (!(failed instanceof WorkflowRunError)) throw failed;
+  expect(failed.cause).toBe(reason);
   expect(invoke).not.toHaveBeenCalled();
   expect((await readRun(options())).steps['ask']).toMatchObject({
     status: 'failed',
