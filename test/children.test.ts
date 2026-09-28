@@ -565,3 +565,123 @@ it.each([true, false])(
     );
   },
 );
+
+it('cancels a running child frame when the run is interrupted externally', async () => {
+  const stateDir = await directory();
+  const controller = new AbortController();
+  let started: (() => void) | undefined;
+  const ready = new Promise<void>((resolve) => {
+    started = resolve;
+  });
+  const child = defineWorkflow({
+    name: 'child',
+    ...base,
+    async run(ctx) {
+      return ctx.step('blocked', {
+        input: null,
+        schema: z.null(),
+        run: ({ signal }) =>
+          new Promise<null>((_resolve, reject) => {
+            started?.();
+            signal.addEventListener(
+              'abort',
+              () => {
+                reject(new DOMException('stopped', 'AbortError'));
+              },
+              { once: true },
+            );
+          }),
+      });
+    },
+  });
+  const root = defineWorkflow({
+    name: 'parent',
+    ...base,
+    children: [child],
+    run: (ctx) => ctx.workflow('child', child, null),
+  });
+  const pending = runWorkflow(root, {
+    stateDir,
+    runId: 'interrupt',
+    input: null,
+    signal: controller.signal,
+  });
+  await ready;
+  controller.abort(new Error('stop'));
+  await expect(pending).rejects.toThrow('stop');
+  const saved = await readRun({ stateDir, runId: 'interrupt' });
+  expect(saved.status).toBe('cancelled');
+  expect(saved.children?.['child']?.status).toBe('cancelled');
+});
+
+it('cancels a sibling map item child frame when the map aborts on another item failure', async () => {
+  const stateDir = await directory();
+  let started: (() => void) | undefined;
+  const ready = new Promise<void>((resolve) => {
+    started = resolve;
+  });
+  const child = defineWorkflow({
+    name: 'child',
+    ...base,
+    async run(ctx) {
+      return ctx.step('blocked', {
+        input: null,
+        schema: z.null(),
+        run: ({ signal }) =>
+          new Promise<null>((_resolve, reject) => {
+            started?.();
+            signal.addEventListener(
+              'abort',
+              () => {
+                reject(new DOMException('stopped', 'AbortError'));
+              },
+              { once: true },
+            );
+          }),
+      });
+    },
+  });
+  const root = defineWorkflow({
+    name: 'parent',
+    ...base,
+    children: [child],
+    async run(ctx) {
+      await ctx.map('items', [0, 1], { concurrency: 2, onError: 'abort' }, async (item) => {
+        if (item === 0) {
+          await ready;
+          throw new Error('item failure');
+        }
+        return ctx.workflow('child', child, null);
+      });
+      return null;
+    },
+  });
+  await expect(runWorkflow(root, { stateDir, runId: 'map-cancel', input: null })).rejects.toThrow(
+    'item failure',
+  );
+  const saved = await readRun({ stateDir, runId: 'map-cancel' });
+  expect(saved.children?.['items/1/child']?.status).toBe('cancelled');
+});
+
+it('fails, rather than cancels, a child frame whose body throws its own AbortError', async () => {
+  const stateDir = await directory();
+  const child = defineWorkflow({
+    name: 'child',
+    ...base,
+    run: () => {
+      throw new DOMException('x', 'AbortError');
+    },
+  });
+  const root = defineWorkflow({
+    name: 'parent',
+    ...base,
+    children: [child],
+    async run(ctx) {
+      await expect(ctx.workflow('child', child, null)).rejects.toThrow('x');
+      return null;
+    },
+  });
+  const run = await runWorkflow(root, { stateDir, runId: 'own-abort-error', input: null });
+  expect(run.status).toBe('completed');
+  expect(run.children?.['child']?.status).toBe('failed');
+});
