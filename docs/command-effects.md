@@ -49,7 +49,8 @@ the runtime cannot make external writes exactly once.
 `ctx.cwd` and `StepContext.cwd` expose the canonical run directory. `ctx.readFile(id, path)` records
 a UTF-8 snapshot and its SHA-256. Its default 1 MiB cap can be raised with `maxBytes` on resume; it
 checks the actual read, not only the initial stat size. Replaying the read returns the saved
-snapshot even if the file changed. Use binary-specific local callbacks for binary content.
+snapshot even if the file changed. It rejects content that is not valid UTF-8 rather than saving a
+lossy snapshot; use binary-specific local callbacks for binary content.
 
 `ctx.writeFile(id, path, content, options)` writes exact UTF-8 bytes and records only
 `{ path, sha256, bytes, previousSha256 }`. Content hashes participate in identity; content is not

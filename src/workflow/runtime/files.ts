@@ -103,7 +103,16 @@ export async function snapshotFile(
       chunks.push(buffer.subarray(0, bytesRead));
     }
     const content = Buffer.concat(chunks);
-    return { content: content.toString('utf8'), sha256: fileDigest(content) };
+    let decoded: string;
+    try {
+      decoded = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(content);
+    } catch (error) {
+      if (!(error instanceof TypeError)) throw error;
+      throw new Error('File is not valid UTF-8; use a local callback for binary content.', {
+        cause: error,
+      });
+    }
+    return { content: decoded, sha256: fileDigest(content) };
   } finally {
     await handle.close();
   }

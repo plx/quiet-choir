@@ -490,6 +490,31 @@ it('rejects oversized snapshots, directories, and dangling links; size increases
   ).rejects.toThrow('Dangling');
 });
 
+it('rejects invalid UTF-8 instead of saving a lossy snapshot', async () => {
+  await writeFile(join(cwd, 'binary'), Buffer.from([0xff, 0xfe, 0x00, 0x80]));
+  const workflow = definition((ctx) => ctx.readFile('read', 'binary'));
+  await expect(runWorkflow(workflow, setup())).rejects.toThrow(
+    'File is not valid UTF-8; use a local callback for binary content.',
+  );
+  expect((await readRun(setup())).steps['read']?.status).toBe('failed');
+});
+
+it('round-trips a BOM-prefixed file with the BOM intact and a matching sha256', async () => {
+  const bytes = Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from('hello', 'utf8')]);
+  await writeFile(join(cwd, 'bom.txt'), bytes);
+  const run = await runWorkflow(
+    definition((ctx) => ctx.readFile('read', 'bom.txt')),
+    setup(),
+  );
+  expect(run.output).toEqual({ content: '﻿hello', sha256: fileDigest(bytes) });
+  const written = await runWorkflow(
+    definition((ctx) => ctx.writeFile('write', 'bom-out.txt', '﻿hello', { ifMatch: null })),
+    { ...setup(), runId: 'write' },
+  );
+  expect(written.output).toMatchObject({ sha256: fileDigest(bytes) });
+  expect(await readFile(join(cwd, 'bom-out.txt'))).toEqual(bytes);
+});
+
 it('refuses write content drift and permits retry after an ifMatch conflict', async () => {
   await writeFile(join(cwd, 'file'), 'external');
   const workflow = definition((ctx) =>
