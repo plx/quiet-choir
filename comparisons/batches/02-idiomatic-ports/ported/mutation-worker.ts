@@ -4,14 +4,15 @@ export const mutationWorker = String.raw`
 import { readFileSync, writeFileSync, lstatSync, realpathSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
-import { resolve, relative, isAbsolute } from 'node:path';
+import { resolve, relative, isAbsolute, sep } from 'node:path';
 const input = JSON.parse(readFileSync(0, 'utf8'));
 const hash = (bytes) => createHash('sha256').update(bytes).digest('hex');
 const root = realpathSync(process.cwd());
 const file = resolve(root, input.file);
 const leaf = lstatSync(file);
 const path = relative(root, realpathSync(file));
-if (!leaf.isFile() || leaf.isSymbolicLink() || path.startsWith('..') || isAbsolute(path))
+const escaped = path === '..' || path.startsWith('..' + sep);
+if (!leaf.isFile() || leaf.isSymbolicLink() || escaped || isAbsolute(path))
   throw new Error('Mutation target must be a regular file within cwd');
 const pristine = Buffer.from(input.pristine, 'utf8');
 if (hash(pristine) !== input.sha256) throw new Error('Pristine digest mismatch');

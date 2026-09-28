@@ -4,7 +4,7 @@
     "01-direct-ports": { "children.ts": 14, "sdlc-support.ts": 66, "support.ts": 142 },
     "02-idiomatic-ports": {
       "lifecycle-stages.ts": 107,
-      "mutation-worker.ts": 44,
+      "mutation-worker.ts": 45,
       "support.ts": 130
     }
   },
