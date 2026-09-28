@@ -117,6 +117,28 @@ export function formatRunSummary(run: RunSummary, verbose = false): string {
     lines.push(`Root cause (${run.rootCause.stepId ?? 'workflow'}): ${run.rootCause.error}`);
   else if (run.error) lines.push(`Error: ${run.error}`);
   lines.push(`Usage: ${cost(run)}`);
+  const usage = run.usage;
+  const metric = (value: number | null): string => (value === null ? '?' : String(value));
+  lines.push(
+    `  Attempts: ${String(usage.attempts)}; ${String(usage.unknownUsageAttempts)} unknown usage; ${String(usage.unknownCostAttempts)} unknown cost; ${
+      Object.entries(usage.outcomes)
+        .filter(([, count]) => count > 0)
+        .map(([outcome, count]) => `${String(count)} ${outcome}`)
+        .join(', ') || 'none'
+    }`,
+  );
+  lines.push(
+    `  Token categories: ${metric(usage.tokens.uncachedInput)} uncached, ${metric(usage.tokens.cacheRead)} cache read, ${metric(usage.tokens.cacheWrite)} cache write, ${metric(usage.tokens.output)} output (${metric(usage.tokens.reasoning)} reasoning already included)`,
+  );
+  for (const [name, group] of Object.entries(usage.byHarness))
+    lines.push(
+      `  Harness ${name}: ${String(group.attempts)} attempts, ${group.costUsd === null ? 'unknown cost' : `$${group.costUsd.toFixed(4)} reported`}, ${String(group.unknownCostAttempts)} unknown cost`,
+    );
+  for (const [name, group] of Object.entries(usage.byModel))
+    lines.push(
+      `  Model ${name}: ${metric(group.inputTokens)} in / ${metric(group.outputTokens)} out, ${group.costUsd === null ? 'unknown cost' : `$${group.costUsd.toFixed(4)} reported`}`,
+    );
+  for (const warning of usage.warnings) lines.push(`  ${warning}`);
   for (const event of run.recent)
     lines.push(
       `Recent: ${event.at}${event.phase ? ` [${event.phase}]` : ''} ${event.message ?? event.type}${event.data === null ? '' : ` ${JSON.stringify(event.data)}`}`,

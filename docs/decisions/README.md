@@ -52,3 +52,5 @@ part of the documentation.
 - [0023: Resolve restricted harness configuration before identity](0023-restricted-harness-configuration.md)
 
 - [0024: Stream native output through runtime-owned attempt evidence](0024-stream-attempt-evidence.md)
+
+- [0025: Attempt usage and run admission budgets](0025-attempt-usage-and-run-budgets.md)

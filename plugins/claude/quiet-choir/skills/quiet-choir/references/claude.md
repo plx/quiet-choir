@@ -69,14 +69,12 @@ reported failure. A bare exit error means no usable protocol reason was recovere
 `claude auth status`, the schema, and the same invocation's flags when reproducing manually. This is
 the current behavior after issue [#33](https://github.com/plx/quiet-choir/issues/33).
 
-`usage.costUsd` is Claude's `total_cost_usd`; in the recorded 2.1.283 call it matched per-model cost
-totals. `inputTokens` is the top-level `usage.input_tokens`, excluding cache reads/writes and not
-summing `modelUsage`: one captured call reported 19 versus about 22.6k inputs in the per-model
-uncached/cache totals. Do not compare this field directly with Codex input counts. Unavailable
-measurements are null. Since [#33](https://github.com/plx/quiet-choir/issues/33), failed protocol
-attempts can retain session/usage metadata in `steps[id].failedAttempts`; successful usage remains
-in the completed result. Missing failure metadata and partial calls still make this an incomplete
-spending ledger.
+`usage.costUsd` is Claude's `total_cost_usd`. Token categories and effective models come from
+`modelUsage`, so total input includes uncached input, cache reads and cache writes. The historical
+2.1.283 capture yields 22,605 input tokens, while the top-level block had only 19. Output includes
+thinking. `byModel` and raw `reported` evidence survive alongside per-attempt usage, including
+failures. Missing fields stay null. See [usage and budgets](usage-budgets.md) for totals, legacy
+semantics and run-wide admission gates.
 
 ## Configuration and cancellation
 

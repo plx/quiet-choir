@@ -83,8 +83,9 @@ not copied into diagnostics; raw transcripts can contain them.
 Failed attempts retain session, usage, error/stack/category, diagnostics, and available rejected
 response text (up to 256 KiB, with `responseTruncated`). Local Zod failures also retain
 `validationIssues`. Every retry appends a new attempt; later success preserves earlier evidence.
-`failedAttempts` remains a compatibility usage view. Missing/abandoned usage is still not a billing
-ledger; the usage normalization follow-up is separate.
+`failedAttempts` remains a compatibility usage view. Missing/interrupted usage stays unknown. See
+[usage and budgets](usage-and-budgets.md) for normalized categories, run totals and admission gates;
+these are not a billing ledger.
 
 Claude `onPermissionDenied: 'fail'` rejects a successful envelope that reports denied tools and
 lists their names. The default `warn` records them and prints a CLI warning. A per-call selection

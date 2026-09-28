@@ -376,6 +376,10 @@ export class WorkflowExecutor implements Executor<
         cwd: plan.cwd,
         processRunner:
           rehearsal?.processRunner ?? this.#options.processRunner ?? new NodeProcessRunner(),
+        ...(plan.maxRunCostUsd === undefined ? {} : { maxRunCostUsd: plan.maxRunCostUsd }),
+        ...(plan.maxRunAgentAttempts === undefined
+          ? {}
+          : { maxRunAgentAttempts: plan.maxRunAgentAttempts }),
         ...(plan.waitMode === undefined ? {} : { waitMode: plan.waitMode }),
         ...(this.#options.store === undefined ? {} : { store: this.#options.store }),
         ...(this.#options.clock === undefined ? {} : { clock: this.#options.clock }),

@@ -50,7 +50,9 @@ export default class WorkflowInspect extends WorkflowCommand {
     const render = (value: RunInspection): void => {
       const human = `${flags.watch && !flags.json && process.stdout.isTTY ? '\u001b[2J\u001b[H' : ''}${formatRunSummary(value.summary, flags.verbose)}`;
       this.output(
-        flags.summary ? value.summary : { ...value.run, ownership: value.ownership },
+        flags.summary
+          ? value.summary
+          : { ...value.run, ownership: value.ownership, usageSummary: value.summary.usage },
         human,
       );
     };

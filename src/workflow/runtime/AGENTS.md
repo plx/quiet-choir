@@ -48,8 +48,10 @@ changes. Flat format 6 migrates automatically; original format 1 verifies legacy
 migration. Formats 2–5 stay read-only. See
 [ADR 0009](../../../docs/decisions/0009-scoped-step-ids.md).
 
-Agent admission is run-wide (or shared explicitly across runs). Only Harness.invoke holds a slot;
-never acquire in a mapper, local effect, sleep, replay path, retry backoff, or checkpoint write.
+Agent admission is run-wide (or shared explicitly across runs). Uncapped calls acquire only around
+Harness.invoke. Budgeted calls reserve before durable attempt setup, check the run gate before
+recording an attempt, and release before response validation/outcome saves. Never acquire in a
+mapper, generic local effect, sleep, replay path or retry backoff. See ADR 0025 for this refinement.
 Queued cancellation follows the captured scope. Release in finally before processing responses.
 Admission events are live diagnostics, not durable transitions. See
 [ADR 0012](../../../docs/decisions/0012-agent-admission.md).
@@ -127,3 +129,10 @@ the deletion to the containing directory before marking the receipt unretained. 
 close/discard: a close that never settles is an infrastructure failure, a stalled discard only a
 warning. Agent progress is not journaled. Keep extensible diagnostic keys and resource caps outside
 identity; see [ADR 0024](../../../docs/decisions/0024-stream-attempt-evidence.md).
+
+Usage normalization is runtime validation, separate from the frozen usage identity schema. Preserve
+custom JSON extras and raw provider evidence; unknown measurements are never free work. Sum attempt
+history once, exclude fork reuse, and flag legacy fallback. Budget refusals latch per execution and
+wait for admitted agent outcomes before rejecting; never abort paid siblings or settle the stop as
+workflow data. Resume marks prior running agent attempts interrupted. See
+[ADR 0025](../../../docs/decisions/0025-attempt-usage-and-run-budgets.md).

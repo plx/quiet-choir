@@ -89,6 +89,9 @@ jobs:
       - name: Test streaming harness CLI
         run: node test/agent-stream-cli-smoke.mjs
 
+      - name: Test usage and run budget CLI
+        run: node test/usage-cli-smoke.mjs
+
       - name: Check Workflow Lab comparisons
         run: npm run comparisons:check
 

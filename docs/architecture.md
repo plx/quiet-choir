@@ -75,10 +75,12 @@ items by validated key or index; scope/within compose explicit leaves through a 
 context, independent of cancellation ownership. A core-owned limiter independently caps live harness
 invocations across all maps and composed helper workflows. The default is min(8, max(1, available
 CPUs - 2)); data limits configure each run, and a shared limiter object can cap multiple runs.
-Eligible FIFO admission skips providers at their own ceilings. Only `Harness.invoke` holds a slot,
-released before response validation or checkpoint writes. Queueing is cancellable and outside
-per-call deadlines. Admission events are live status, not persisted transitions; queued attempts
-remain `running`. See [ADR 0012](decisions/0012-agent-admission.md) and
+Eligible FIFO admission skips providers at their own ceilings. Without run-budget caps, only
+`Harness.invoke` holds a slot, released before response validation or outcome checkpoint writes.
+Budgeted calls reserve before durable attempt setup so a reached cost gate can refuse queued work
+without a record. See [ADR 0025](decisions/0025-attempt-usage-and-run-budgets.md). Queueing is
+cancellable and outside per-call deadlines. Admission events are live status, not persisted
+transitions; queued attempts remain `running`. See [ADR 0012](decisions/0012-agent-admission.md) and
 [agent concurrency](agent-concurrency.md).
 
 `ctx.sleep` records a durable wake deadline. The CLI checks canonical, project-relative source

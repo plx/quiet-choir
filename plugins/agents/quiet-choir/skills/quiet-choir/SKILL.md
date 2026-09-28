@@ -91,6 +91,7 @@ ownership to decide whether to wait, recover, or inspect a failure.
 | Control native configuration, environment, and checkout trust                 | [Harness isolation](references/harness-isolation.md)         |
 | Select profiles, shared call options, identity, usage, or process limits      | [Agent calls](references/agent-calls.md)                     |
 | Observe native activity, inspect transcripts, retain failed response evidence | [Agent streaming](references/agent-streaming.md)             |
+| Inspect spend, understand token categories, stop new work at a run cap        | [Usage and budgets](references/usage-budgets.md)             |
 | Select provider-specific controls or diagnose native protocol failures        | [Claude](references/claude.md), [Codex](references/codex.md) |
 | Rehearse with fixtures/dry-run before paying                                  | [Rehearsal](references/rehearsal.md)                         |
 | Resume after failure, accept code edits, fork completed work                  | [Durability and resumption](references/durability.md)        |

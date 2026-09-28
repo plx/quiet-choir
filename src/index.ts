@@ -3,6 +3,11 @@
  *
  * @packageDocumentation
  */
+export { RunBudgetExceededError } from './workflow/runtime/run-budget.js';
+export type { RunBudgetPolicy, RunBudgetStop } from './workflow/runtime/run-budget.js';
+export { summarizeUsage } from './workflow/runtime/usage-summary.js';
+export type { UsageTotals, AgentAttemptOutcome } from './workflow/runtime/usage-model.js';
+export type { TokenCounts, ModelUsage } from './workflow/runtime/usage-model.js';
 export { z } from 'zod';
 export type {
   AgentDiagnostics,

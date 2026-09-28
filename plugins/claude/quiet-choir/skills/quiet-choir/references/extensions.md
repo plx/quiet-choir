@@ -212,7 +212,8 @@ Before using a custom harness, verify this contract with fake responses/processe
 - Enforce resolved `timeoutMs` and every supported provider limit yourself. Core profile resolution
   supplies defaults but does not supervise an arbitrary adapter's internal transport.
 - Use absolute `request.cwd`, not unresolved `request.options.cwd`.
-- Return `sessionId` and every usage field as values or `null`, never undefined.
+- Return `sessionId` as a value or null. Usage may be missing or partial; the runtime normalizes
+  missing measurements to null and preserves JSON-compatible extra fields.
 - Reject process and protocol failures, including reported failure with process exit 0.
 - Perform one attempt only; retries belong to the core.
 - Register children before sending task input, preserve OS birth identity, and release only after
@@ -223,7 +224,7 @@ Implement `Harness.invoke(request, invocation): Promise<HarnessResponse>`. The r
 `outputSchema` (JSON Schema or null for text), and `call: {runId, stepId, attempt, idempotencyKey}`.
 The call identity is attached after fingerprinting; attempts accumulate across resume, while
 `idempotencyKey` stays `runId/stepId`. Honor cancellation, reject process/protocol failures, and
-return `{ text, sessionId, usage, diagnostics? }`. For structured calls, `text` must contain the
+return `{ text, sessionId, usage?, diagnostics? }`. For structured calls, `text` must contain the
 serialized JSON value; the runtime parses it, validates it, and checkpoints the result.
 
 `HarnessInvocation` also optionally supplies resolved `policy`, requested `sessionId`,
@@ -255,13 +256,15 @@ implementations must enforce the supplied limits and settle on abort; otherwise 
 while the run holds its lock. The core owns retries and removes `retry` and `onError` from the
 adapter request.
 
-The adapter owns one fresh invocation, not retries, run locks, or checkpoint storage. Missing usage
-measurements and native IDs must be `null`, never `undefined`. An omitted usage field fails the step
-after the call returns. Do not treat a process's zero exit status as sufficient if its protocol
-reports failure. Throw the exported `ConfigurationError` for validation that fails before launch
-(for example, a schema the provider cannot enforce): it rejects even under `onError: 'return'` and
-is never retried, so a corrected call runs live on resume. Other thrown errors are effect failures.
-Exercise adapters with fake executables and protocol fixtures before making real calls.
+The adapter owns one fresh invocation, not retries, run locks, or checkpoint storage. Native IDs
+must be values or null. Missing usage/measurements become null without failing a valid response;
+extra JSON fields remain in the result and attempt record. See
+[usage and budgets](usage-budgets.md). Do not treat a process's zero exit status as sufficient if
+its protocol reports failure. Throw the exported `ConfigurationError` for validation that fails
+before launch (for example, a schema the provider cannot enforce): it rejects even under
+`onError: 'return'` and is never retried, so a corrected call runs live on resume. Other thrown
+errors are effect failures. Exercise adapters with fake executables and protocol fixtures before
+making real calls.
 
 The provider union and `ctx.claude`/`ctx.codex` clients are currently fixed. A custom `Harness` can
 replace their transport/integration; adding `ctx.someOtherProvider` requires an explicit core API

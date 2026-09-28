@@ -66,10 +66,14 @@ IDs. `agent.queued` means an admission request was made; an immediately reserved
 `agent.admitted`. Counts include reserved invocation slots; with a shared limiter they cover all
 sharing runs. Observer callbacks are unawaited and cannot fail an effect or leak a permit.
 
-These are live notifications, not checkpoint transitions. A queued attempt is already saved as
-`running`; a checkpoint alone cannot distinguish queueing from an active native invocation.
-`limiter.snapshot()` supplies detached live counts for embedded monitoring. No live queue or permits
-are restored after process restart; replay reconstructs the workflow and admits unfinished work.
+These are live notifications, not checkpoint transitions. Without a run budget, a queued attempt is
+already saved as `running`; a checkpoint alone cannot distinguish queueing from invocation. With a
+cost or attempt cap, admission reserves capacity and checks the budget before saving the attempt; a
+refused queued call leaves no record. Budgeted setup (metadata, transcript and checkout preparation)
+holds that reservation through invocation; release still precedes output validation and outcome
+saves. See [usage and budgets](usage-and-budgets.md). `limiter.snapshot()` supplies detached live
+counts for embedded monitoring. No live queue or permits are restored after process restart; replay
+reconstructs the workflow and admits unfinished work.
 
 Custom `AgentLimiter` implementations can enforce additional admission policies by rejecting
 `acquire(provider, signal)`. They must honor cancellation, return an idempotent `release`, and

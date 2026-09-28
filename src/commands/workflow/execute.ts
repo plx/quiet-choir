@@ -1,3 +1,5 @@
+import { parseRunBudget, runBudgetFlags } from '../../cli/run-budget.js';
+import type { RunBudgetPolicy } from '../../workflow/runtime/run-budget.js';
 import { readWorkflowInput } from '../../cli/input.js';
 import { parseAgentLimits } from '../../workflow/loader/agent-limits.js';
 import type { AgentLimits } from '../../workflow/runtime/agent-limiter.js';
@@ -23,6 +25,8 @@ interface WorkflowExecuteArgs {
 }
 
 interface WorkflowExecuteFlags {
+  readonly 'max-run-cost-usd': string | undefined;
+  readonly 'max-run-agent-attempts': string | undefined;
   readonly progress: boolean | undefined;
   readonly transcripts: 'on' | 'on-failure' | 'off' | undefined;
   readonly 'max-retained-bytes': string | undefined;
@@ -65,6 +69,7 @@ export default class WorkflowExecute extends WorkflowCommand {
   };
 
   public static override readonly flags: Interfaces.FlagInput<WorkflowExecuteFlags> = {
+    ...runBudgetFlags,
     progress: Flags.boolean({ description: 'Print bounded live agent activity to stderr' }),
     transcripts: Flags.option({ options: ['on', 'on-failure', 'off'] as const })({
       description: 'Agent transcript retention; default on, saved across resumes',
@@ -189,12 +194,14 @@ export default class WorkflowExecute extends WorkflowCommand {
     if (flags['fork-from'] !== undefined) this.validateRunId(flags['fork-from']);
     if (flags.resume && flags['run-id'] === undefined)
       this.fail('usage.resume_requires_run_id', '--resume requires --run-id.');
+    let runBudget: Partial<RunBudgetPolicy>;
     let agentLimits: AgentLimits;
     let killGraceMs: number;
     let policy: PolicyOverride[];
     let profileOverrides: ProfileOverride[];
     let harness: HarnessSelection;
     try {
+      runBudget = parseRunBudget(flags['max-run-cost-usd'], flags['max-run-agent-attempts']);
       killGraceMs = flags['kill-grace-ms'] === undefined ? 3000 : Number(flags['kill-grace-ms']);
       if (
         !/^[1-9][0-9]*$/u.test(String(flags['kill-grace-ms'] ?? 3000)) ||
@@ -265,6 +272,7 @@ export default class WorkflowExecute extends WorkflowCommand {
       stubSteps: flags['stub-steps'] ?? [],
       allowHarnessChange: flags['allow-harness-change'] ?? false,
       agentLimits,
+      ...runBudget,
       killGraceMs,
       ...(flags['kill-orphans'] === undefined ? {} : { killOrphans: flags['kill-orphans'] }),
       runId,

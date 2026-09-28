@@ -1,3 +1,6 @@
+import { RunBudget, RunBudgetExceededError, runBudgetSchema } from './run-budget.js';
+import { agentUsageSchema, normalizeUsage, usageIdentitySchema } from './usage.js';
+import { legacyAttemptKind } from './usage-summary.js';
 import { mergeOptionsSchema, mergeResultSchema } from './worktree-schema.js';
 import { randomUUID } from 'node:crypto';
 import { deriveAgentSessionId } from './agent-session.js';
@@ -64,6 +67,7 @@ import type { HarnessInvocation } from './model.js';
 import {
   resolveAgentLimiter,
   type AgentLimiter,
+  type AgentPermit,
   type AgentLimits,
   type AgentLimiterSnapshot,
 } from './agent-limiter.js';
@@ -267,6 +271,10 @@ export function assertCompleted<T>(result: WorkflowResult<T>): asserts result is
 
 /** Explicit dependencies and execution policy for a workflow run. */
 export interface RunOptions extends WorkflowCodeOptions {
+  /** Sticky reported-cost threshold for new agent attempts; null clears it. In-flight calls can overshoot. */
+  readonly maxRunCostUsd?: number | null;
+  /** Sticky cap on locally admitted agent attempts across resumes; null clears it. */
+  readonly maxRunAgentAttempts?: number | null;
   /** Runtime-owned checkout cache and dependency provisioning policy. */
   readonly worktrees?: WorktreePolicy;
   /** Process integration for durable exec and worktree Git operations; the core never spawns. */
@@ -443,6 +451,12 @@ export async function runWorkflow<TInput, TOutput>(
     throw new Error("Harness kind 'none' is reserved for runs without a harness adapter.");
   if (options.rehearsal !== undefined && harnessKind !== 'dry-run')
     throw new Error('Rehearsal hooks require a dry-run harness.');
+  const incomingBudget = runBudgetSchema.partial().parse({
+    ...(options.maxRunCostUsd === undefined ? {} : { maxRunCostUsd: options.maxRunCostUsd }),
+    ...(options.maxRunAgentAttempts === undefined
+      ? {}
+      : { maxRunAgentAttempts: options.maxRunAgentAttempts }),
+  });
   const limiter = resolveAgentLimiter(options.agentLimit);
   const capabilities = resolveCapabilities(definition);
   const incomingProfiles = validateProfileOverrides(options.profileOverrides ?? [], capabilities);
@@ -635,6 +649,12 @@ export async function runWorkflow<TInput, TOutput>(
       existing.seq ??= 0;
       existing.engine = { quietChoir: engineInfo.version, node: process.version };
     }
+    const runBudget = runBudgetSchema.parse({
+      maxRunCostUsd: null,
+      maxRunAgentAttempts: null,
+      ...(options.policyReset ? {} : existing?.runBudget),
+      ...incomingBudget,
+    });
     if (existing?.status === 'completed' && !options.acceptCodeChange && !legacyReplay) {
       const output = jsonValue(definition.output.parse(existing.output), 'Workflow output', {
         canonical: false,
@@ -642,12 +662,14 @@ export async function runWorkflow<TInput, TOutput>(
       if (
         migrating ||
         engineChanged ||
+        Object.keys(incomingBudget).length ||
         incomingPolicy.length ||
         incomingProfiles.length ||
         incomingGrants.length ||
         options.policyReset ||
         options.allowModelOverride !== undefined
       ) {
+        existing.runBudget = runBudget;
         existing.profileOverrides = profileOverrides;
         existing.grants = grants;
         existing.grantedProfiles = grantedProfiles;
@@ -692,6 +714,23 @@ export async function runWorkflow<TInput, TOutput>(
       createdAt: now,
       updatedAt: now,
     };
+    record.runBudget = runBudget;
+    delete record.budgetStop;
+    for (const step of Object.values(record.steps))
+      for (const attempt of step.attemptHistory ?? []) {
+        // Legacy entries follow the kind they ran under; an ambiguous one is left untouched.
+        const legacyKind =
+          attempt.request === undefined ? legacyAttemptKind(step, attempt.attempt) : undefined;
+        if (
+          attempt.status === 'running' &&
+          (attempt.request || legacyKind === 'claude' || legacyKind === 'codex')
+        ) {
+          attempt.status = 'interrupted';
+          attempt.error ??=
+            'Agent attempt ended without a durable outcome; usage may be incomplete.';
+        }
+      }
+    const budget = new RunBudget(record, runBudget);
     const sessionSalt = (record.sessionSalt ??= randomUUID());
     if (options.launch) record.launch = structuredClone(options.launch);
     const priorHarness = record.harness ?? forkSource?.harness;
@@ -893,6 +932,34 @@ export async function runWorkflow<TInput, TOutput>(
       }
     };
 
+    async function budgetAdmission(
+      id: string,
+      step: StepRecord,
+      provider: string,
+      signal: AbortSignal,
+    ): Promise<{ permit: AgentPermit; finish: () => void }> {
+      const refuse = (): Promise<never> => {
+        origins.markFatal(budget.error);
+        return budget.refuse();
+      };
+      if (budget.check(id)) return refuse();
+      const admission = limiter.acquire(provider, AbortSignal.any([signal, budget.signal]));
+      emitAdmission('agent.queued', id, step, provider, 0);
+      let permit: AgentPermit;
+      try {
+        permit = await admission;
+      } catch (error) {
+        if (budget.error) return refuse();
+        throw error;
+      }
+      if (budget.check(id)) {
+        permit.release();
+        return refuse();
+      }
+      // Reserve the attempt synchronously before any journal await admits a competing caller.
+      return { permit, finish: budget.enter() };
+    }
+
     async function beforeLive(id: string, step: StepRecord): Promise<void> {
       if (strictHealedDivergence) {
         controller.abort(strictHealedDivergence);
@@ -945,6 +1012,7 @@ export async function runWorkflow<TInput, TOutput>(
         attempt: AttemptRecord,
         releaseAfterSave: (release: () => void) => void,
         transcript: AgentTranscriptWriter | undefined,
+        reservedPermit?: AgentPermit,
       ) => Promise<T> | T,
       wakeAt: number | null,
       requestedIdentity?: StepIdentity,
@@ -1128,357 +1196,402 @@ export async function runWorkflow<TInput, TOutput>(
         errorStack: null,
       };
       await beforeLive(id, step);
-      if (redefined) {
-        (step.redefinitions ??= []).push({
-          fingerprint: step.fingerprint,
-          identity: step.identity ?? {},
-          redefinedAt: new Date().toISOString(),
-        });
-        step.kind = kind;
-        step.fingerprint = stepFingerprint;
-        step.identity = identity;
-        step.wakeAt = wakeAt;
-        step.output = null;
-        step.error = null;
-        step.status = 'running';
-        delete step.settledError;
-        delete step.worktree;
-        delete step.merge;
-      }
-      Object.defineProperty(record.steps, id, {
-        value: step,
-        enumerable: true,
-        configurable: true,
-        writable: true,
-      });
-      if (redefined) {
-        await save();
-        emit('step.redefined', id, step);
-      }
+      const agent = kind === 'claude' || kind === 'codex';
       for (let attempt = 1; ; attempt++) {
         signal.throwIfAborted();
-        step.attempts++;
-        step.status = 'running';
-        step.error = null;
-        delete step.warnings;
-        step.errorStack = null;
-        step.phase = observedPhase?.title ?? null;
-        step.request = observedRequest;
-        if (observedExec) step.exec = structuredClone(observedExec);
-        else delete step.exec;
-        delete step.execError;
-        step.startedAt = new Date().toISOString();
-        step.finishedAt = null;
-        step.durationMs = null;
+        // Captured before budget admission: a saturated limiter's queue wait is part of the
+        // attempt's and step's persisted timing, not just the work after admission clears.
+        const attemptStartedAt = new Date().toISOString();
         const attemptStarted = performance.now();
-        delete step.cancelledBy;
-        const attemptRecord: AttemptRecord = {
-          ...structuredClone(execution),
-          attempt: step.attempts,
-          fingerprint: stepFingerprint,
-          execution: observations.execution.n,
-          durationMs: null,
-          usage: null,
-          errorStack: null,
-          request: structuredClone(observedRequest),
-          ...(observedExec ? { exec: structuredClone(observedExec) } : {}),
-          startedAt: step.startedAt,
-          finishedAt: null as string | null,
-          status: 'running',
-          error: null as string | null,
-        };
-        const agent = kind === 'claude' || kind === 'codex';
-        if (kind === 'claude')
-          attemptRecord.requestedSessionId = deriveAgentSessionId(sessionSalt, id, step.attempts);
-        (step.attemptHistory ??= []).push(attemptRecord);
-        await save(undefined, kind === 'sleep' || agent);
-        let lease: WorktreeLease | undefined;
-        let transcript: AgentTranscriptWriter | undefined;
-        // Close once: a stalled close already waited its full deadline on the success path.
-        let transcriptClosed = false;
-        const transcriptFailure = async (cause: unknown): Promise<never> => {
-          const failure =
-            cause instanceof CheckpointError
-              ? cause
-              : await checkpointError(
-                  'save',
-                  stateDir,
-                  record.id,
-                  cause,
-                  `Could not write transcript for step ${id}`,
-                );
-          if (!checkpointProblems.includes(failure)) checkpointProblems.push(failure);
-          controller.abort(failure);
-          throw failure;
-        };
-        const recordTranscript = (): void => {
-          if (!transcript) return;
-          attemptRecord.transcript = transcript.snapshot();
-          attemptRecord.diagnostics = {
-            ...attemptRecord.diagnostics,
-            transcript: jsonValue(attemptRecord.transcript),
-          };
-        };
-        const releases: (() => void)[] = [];
+        let admitted: Awaited<ReturnType<typeof budgetAdmission>> | undefined;
         try {
+          admitted =
+            agent && budget.enabled ? await budgetAdmission(id, step, kind, signal) : undefined;
+        } catch (cause) {
+          // A queued first attempt leaves no record; a queued retry must not stay 'failed'.
+          if (
+            attempt === 1 ||
+            !signal.aborted ||
+            cause instanceof RunBudgetExceededError ||
+            signal.reason instanceof CheckpointError
+          )
+            throw cause;
+          const cancelled = cancellationError(signal, cause);
+          origins.remember(cancelled, id);
+          step.status = 'cancelled';
+          step.cancelledBy = cancelled.cancelledBy;
+          step.error = cancelled.message;
+          step.errorStack = errorStack(cancelled);
+          step.finishedAt = new Date().toISOString();
+          if (await trySave()) emit('step.cancelled', id, step);
+          throw cancelled;
+        }
+        try {
+          if (attempt === 1) {
+            if (redefined) {
+              (step.redefinitions ??= []).push({
+                fingerprint: step.fingerprint,
+                identity: step.identity ?? {},
+                redefinedAt: new Date().toISOString(),
+                kind: step.kind,
+                attempts: step.attempts,
+              });
+              step.kind = kind;
+              step.fingerprint = stepFingerprint;
+              step.identity = identity;
+              step.wakeAt = wakeAt;
+              step.output = null;
+              step.error = null;
+              step.status = 'running';
+              delete step.settledError;
+              delete step.worktree;
+              delete step.merge;
+            }
+            Object.defineProperty(record.steps, id, {
+              value: step,
+              enumerable: true,
+              configurable: true,
+              writable: true,
+            });
+            if (redefined) {
+              await save();
+              emit('step.redefined', id, step);
+            }
+          }
+
+          step.attempts++;
+          step.status = 'running';
+          step.error = null;
+          delete step.warnings;
+          step.errorStack = null;
+          step.phase = observedPhase?.title ?? null;
+          step.request = observedRequest;
+          if (observedExec) step.exec = structuredClone(observedExec);
+          else delete step.exec;
+          delete step.execError;
+          step.startedAt = attemptStartedAt;
+          step.finishedAt = null;
+          step.durationMs = null;
+          delete step.cancelledBy;
+          const attemptRecord: AttemptRecord = {
+            ...structuredClone(execution),
+            attempt: step.attempts,
+            fingerprint: stepFingerprint,
+            execution: observations.execution.n,
+            durationMs: null,
+            usage: null,
+            errorStack: null,
+            request: structuredClone(observedRequest),
+            ...(observedExec ? { exec: structuredClone(observedExec) } : {}),
+            startedAt: step.startedAt,
+            finishedAt: null as string | null,
+            status: 'running',
+            error: null as string | null,
+          };
+          if (kind === 'claude')
+            attemptRecord.requestedSessionId = deriveAgentSessionId(sessionSalt, id, step.attempts);
+          (step.attemptHistory ??= []).push(attemptRecord);
+          await save(undefined, kind === 'sleep' || agent);
+          let lease: WorktreeLease | undefined;
+          let transcript: AgentTranscriptWriter | undefined;
+          // Close once: a stalled close already waited its full deadline on the success path.
+          let transcriptClosed = false;
+          const transcriptFailure = async (cause: unknown): Promise<never> => {
+            const failure =
+              cause instanceof CheckpointError
+                ? cause
+                : await checkpointError(
+                    'save',
+                    stateDir,
+                    record.id,
+                    cause,
+                    `Could not write transcript for step ${id}`,
+                  );
+            if (!checkpointProblems.includes(failure)) checkpointProblems.push(failure);
+            controller.abort(failure);
+            throw failure;
+          };
+          const recordTranscript = (): void => {
+            if (!transcript) return;
+            attemptRecord.transcript = transcript.snapshot();
+            attemptRecord.diagnostics = {
+              ...attemptRecord.diagnostics,
+              transcript: jsonValue(attemptRecord.transcript),
+            };
+          };
+          const releases: (() => void)[] = [];
           try {
-            signal.throwIfAborted();
-            emit('step.started', id, step);
-            const result = await inEffect.run(true, async () => {
-              const context: StepContext = {
-                signal,
-                cwd,
-                idempotencyKey: `${record.id}/${id}`,
-                attempt: step.attempts,
-              };
-              if (isolation)
-                lease = await worktrees.prepare(
-                  id,
-                  isolation.value,
-                  isolation.cwd,
-                  context,
+            try {
+              signal.throwIfAborted();
+              emit('step.started', id, step);
+              const result = await inEffect.run(true, async () => {
+                const context: StepContext = {
+                  signal,
+                  cwd,
+                  idempotencyKey: `${record.id}/${id}`,
+                  attempt: step.attempts,
+                };
+                if (isolation)
+                  lease = await worktrees.prepare(
+                    id,
+                    isolation.value,
+                    isolation.cwd,
+                    context,
+                    step,
+                    attemptRecord,
+                  );
+                signal.throwIfAborted();
+                if (agent && execution.policy.transcripts !== 'off') {
+                  try {
+                    if (!storage.transcript)
+                      throw new Error(
+                        'RunStore must implement transcript storage or use policy transcripts: "off".',
+                      );
+                    transcript = await storage.transcript(
+                      id,
+                      step.attempts,
+                      kind,
+                      execution.policy.maxTranscriptBytes ?? 64 * 1024 * 1024,
+                    );
+                    recordTranscript();
+                    await save();
+                  } catch (error) {
+                    return transcriptFailure(error);
+                  }
+                }
+                return action(
+                  lease ? { ...context, cwd: lease.cwd } : context,
                   step,
                   attemptRecord,
+                  (release) => {
+                    releases.push(release);
+                  },
+                  transcript,
+                  admitted?.permit,
                 );
-              signal.throwIfAborted();
-              if (agent && execution.policy.transcripts !== 'off') {
-                try {
-                  if (!storage.transcript)
-                    throw new Error(
-                      'RunStore must implement transcript storage or use policy transcripts: "off".',
-                    );
-                  transcript = await storage.transcript(
-                    id,
-                    step.attempts,
-                    kind,
-                    execution.policy.maxTranscriptBytes ?? 64 * 1024 * 1024,
-                  );
-                  recordTranscript();
-                  await save();
-                } catch (error) {
-                  return transcriptFailure(error);
-                }
+              });
+              if (transcript) {
+                transcriptClosed = true;
+                await boundedTranscript(transcript, 'close').catch(transcriptFailure);
+                recordTranscript();
               }
-              return action(
-                lease ? { ...context, cwd: lease.cwd } : context,
-                step,
-                attemptRecord,
-                (release) => {
-                  releases.push(release);
-                },
-                transcript,
-              );
-            });
-            if (transcript) {
-              transcriptClosed = true;
-              await boundedTranscript(transcript, 'close').catch(transcriptFailure);
-              recordTranscript();
-            }
-            // A resolved, valid result is durable work even if cancellation arrived meanwhile.
-            // The scope still rejects its next launch.
-            const output = schema.parse(result);
-            step.output = jsonValue(output, `Step "${id}" output`);
-            if (lease) {
-              const activeLease = lease;
-              const { base, commit, ref, files } = await inEffect.run(true, () =>
-                activeLease.capture(),
-              );
-              const change = { base, commit, ref, files };
-              if (isolation?.agent)
-                step.output = jsonValue(
-                  schema.parse({ ...output, worktree: change }),
-                  `Step "${id}" output`,
+              // A resolved, valid result is durable work even if cancellation arrived meanwhile.
+              // The scope still rejects its next launch.
+              const output = schema.parse(result);
+              step.output = jsonValue(output, `Step "${id}" output`);
+              if (lease) {
+                const activeLease = lease;
+                const { base, commit, ref, files } = await inEffect.run(true, () =>
+                  activeLease.capture(),
                 );
+                const change = { base, commit, ref, files };
+                if (isolation?.agent)
+                  step.output = jsonValue(
+                    schema.parse({ ...output, worktree: change }),
+                    `Step "${id}" output`,
+                  );
+              }
+            } catch (caught) {
+              let cause: unknown = caught;
+              if (transcript) {
+                if (!transcriptClosed)
+                  try {
+                    await boundedTranscript(transcript, 'close').catch(transcriptFailure);
+                  } catch (failure) {
+                    // A storage failure cannot become a retry or a settled fallback.
+                    cause = failure;
+                  }
+                recordTranscript();
+              }
+              lease?.failed();
+              // Only an aborted scope signal is a scope cancellation. A callback's own AbortError
+              // keeps its message and fails the step, but is still never retried or settled. This
+              // run's own storage failure (e.g. process registration) aborts the run but stays a failure.
+              const scoped =
+                signal.aborted && !checkpointProblems.includes(cause as CheckpointError);
+              const error = scoped ? cancellationError(signal, cause) : cause;
+              origins.remember(error, id);
+              const outcome = stepError(error, step.attempts);
+              step.status = scoped ? 'cancelled' : 'failed';
+              if (error instanceof CancelledError) step.cancelledBy = error.cancelledBy;
+              step.error = outcome.message;
+              step.errorStack = errorStack(error);
+              attemptRecord.errorStack = step.errorStack;
+              attemptRecord.errorKind = outcome.kind;
+              attemptRecord.status = scoped ? 'cancelled' : 'failed';
+              step.finishedAt = attemptRecord.finishedAt = new Date().toISOString();
+              step.durationMs = attemptRecord.durationMs = Math.max(
+                0,
+                Math.round(performance.now() - attemptStarted),
+              );
+              attemptRecord.error = step.error;
+              if (cause instanceof ExecError) {
+                step.execError = structuredClone(cause.diagnostics);
+                attemptRecord.execError = structuredClone(cause.diagnostics);
+              }
+              const evidence = harnessEvidence(cause);
+              if (agent && cause instanceof z.ZodError)
+                attemptRecord.validationIssues = jsonValue(cause.issues) as JsonValue[];
+              if (evidence) {
+                if (evidence.usage !== null)
+                  attemptRecord.usage = normalizeUsage(
+                    evidence.usage,
+                    observedRequest?.model ?? null,
+                  );
+                attemptRecord.diagnostics = {
+                  ...attemptRecord.diagnostics,
+                  ...evidence.diagnostics,
+                };
+                attemptRecord.sessionId = preserveFirstSessionId(attemptRecord, evidence.sessionId);
+                attemptRecord.response = evidence.rawText;
+                attemptRecord.responseTruncated = evidence.responseTruncated;
+                recordTranscript();
+              }
+              if (agent) {
+                (step.failedAttempts ??= []).push({
+                  attempt: step.attempts,
+                  sessionId: attemptRecord.sessionId ?? null,
+                  usage: attemptRecord.usage ?? null,
+                });
+                emit('agent.finished', id, step, {
+                  provider: kind,
+                  outcome: scoped ? 'cancelled' : 'failed',
+                  sessionId: attemptRecord.sessionId ?? attemptRecord.requestedSessionId ?? null,
+                  ...(attemptRecord.usage ? { usage: attemptRecord.usage } : {}),
+                  diagnostics: attemptRecord.diagnostics ?? {},
+                });
+              }
+              // Only this run's own storage failures are fatal; a domain error reusing the class is not.
+              const infrastructure =
+                checkpointProblems.includes(cause as CheckpointError) ||
+                cause instanceof ConfigurationError;
+              // Configuration failures must also never become settled map data.
+              if (cause instanceof ConfigurationError) origins.markFatal(error);
+              const fatal = scoped || errorKind(cause) === 'cancelled' || infrastructure;
+              const retry =
+                !fatal &&
+                attempt < maxAttempts &&
+                (execution.policy.retry.on === undefined ||
+                  execution.policy.retry.on.includes(outcome.kind));
+              if (!fatal && !retry && onError === 'return') {
+                step.status = 'settled-failed';
+                step.settledError = outcome;
+                if (!(await trySave())) throw error;
+                emit('step.settled', id, step);
+                return replay(step);
+              }
+              if (await trySave()) emit(scoped ? 'step.cancelled' : 'step.failed', id, step);
+              if (!retry || signal.reason instanceof CheckpointError) throw error;
+              try {
+                await waitUntil(
+                  clockNow(clock) + Math.min(30_000, delayMs * 2 ** (attempt - 1)),
+                  signal,
+                  clock,
+                );
+              } catch (cause) {
+                if (signal.reason instanceof CheckpointError) throw error;
+                if (errorKind(cause) !== 'cancelled') throw cause;
+                const cancelled = cancellationError(signal, cause);
+                origins.remember(cancelled, id);
+                step.status = 'cancelled';
+                step.cancelledBy = cancelled.cancelledBy;
+                step.error = cancelled.message;
+                step.errorStack = errorStack(cancelled);
+                step.finishedAt = new Date().toISOString();
+                step.durationMs = Math.max(0, Math.round(performance.now() - attemptStarted));
+                // The completed failed attempt remains history; cancellation interrupted its backoff.
+                if (await trySave()) emit('step.cancelled', id, step);
+                throw cancelled;
+              }
+              continue;
             }
-          } catch (caught) {
-            let cause: unknown = caught;
-            if (transcript) {
-              if (!transcriptClosed)
-                try {
-                  await boundedTranscript(transcript, 'close').catch(transcriptFailure);
-                } catch (failure) {
-                  // A storage failure cannot become a retry or a settled fallback.
-                  cause = failure;
-                }
-              recordTranscript();
+            step.status = 'completed';
+            attemptRecord.status = 'completed';
+            if (agent) {
+              delete attemptRecord.response;
+              delete attemptRecord.responseTruncated;
             }
-            lease?.failed();
-            // Only an aborted scope signal is a scope cancellation. A callback's own AbortError
-            // keeps its message and fails the step, but is still never retried or settled. This
-            // run's own storage failure (e.g. process registration) aborts the run but stays a failure.
-            const scoped = signal.aborted && !checkpointProblems.includes(cause as CheckpointError);
-            const error = scoped ? cancellationError(signal, cause) : cause;
-            origins.remember(error, id);
-            const outcome = stepError(error, step.attempts);
-            step.status = scoped ? 'cancelled' : 'failed';
-            if (error instanceof CancelledError) step.cancelledBy = error.cancelledBy;
-            step.error = outcome.message;
-            step.errorStack = errorStack(error);
-            attemptRecord.errorStack = step.errorStack;
-            attemptRecord.errorKind = outcome.kind;
-            attemptRecord.status = scoped ? 'cancelled' : 'failed';
+            lease?.completed();
             step.finishedAt = attemptRecord.finishedAt = new Date().toISOString();
             step.durationMs = attemptRecord.durationMs = Math.max(
               0,
               Math.round(performance.now() - attemptStarted),
             );
-            attemptRecord.error = step.error;
-            if (cause instanceof ExecError) {
-              step.execError = structuredClone(cause.diagnostics);
-              attemptRecord.execError = structuredClone(cause.diagnostics);
+            await save(
+              `Step ${id} completed but its checkpoint write failed; resume may repeat it unless a later save recovers the result`,
+            );
+            if (transcript && execution.policy.transcripts === 'on-failure') {
+              try {
+                await boundedTranscript(transcript, 'discard');
+                recordTranscript();
+                if (
+                  step.output !== null &&
+                  typeof step.output === 'object' &&
+                  !Array.isArray(step.output)
+                )
+                  step.output['diagnostics'] = jsonValue(attemptRecord.diagnostics);
+              } catch (error) {
+                // The attempt's action may have set warnings since the reset above; TS cannot see it.
+                const warnings = step.warnings as readonly string[] | undefined;
+                step.warnings = [
+                  ...(warnings ?? []),
+                  `Could not remove successful transcript: ${message(error)}`,
+                ];
+              }
+              await save();
             }
-            const evidence = harnessEvidence(cause);
-            if (agent && cause instanceof z.ZodError)
-              attemptRecord.validationIssues = jsonValue(cause.issues) as JsonValue[];
-            if (evidence) {
-              if (evidence.usage !== null) attemptRecord.usage = structuredClone(evidence.usage);
-              attemptRecord.diagnostics = { ...attemptRecord.diagnostics, ...evidence.diagnostics };
-              attemptRecord.sessionId = preserveFirstSessionId(attemptRecord, evidence.sessionId);
-              attemptRecord.response = evidence.rawText;
-              attemptRecord.responseTruncated = evidence.responseTruncated;
-              recordTranscript();
-            }
-            if (agent) {
-              (step.failedAttempts ??= []).push({
-                attempt: step.attempts,
-                sessionId: attemptRecord.sessionId ?? null,
-                usage: attemptRecord.usage ?? null,
-              });
+            const metadata =
+              kind === 'claude' || kind === 'codex'
+                ? (step.output as unknown as AgentResult<unknown>)
+                : undefined;
+            if (metadata)
               emit('agent.finished', id, step, {
                 provider: kind,
-                outcome: scoped ? 'cancelled' : 'failed',
-                sessionId: attemptRecord.sessionId ?? attemptRecord.requestedSessionId ?? null,
-                ...(attemptRecord.usage ? { usage: attemptRecord.usage } : {}),
-                diagnostics: attemptRecord.diagnostics ?? {},
+                outcome: 'completed',
+                sessionId: metadata.sessionId,
+                usage: metadata.usage,
+                diagnostics: metadata.diagnostics ?? {},
               });
+            emit(
+              'step.completed',
+              id,
+              step,
+              metadata === undefined
+                ? {}
+                : {
+                    usage: metadata.usage,
+                    sessionId: metadata.sessionId,
+                  },
+            );
+            if (wasFailed && !healed.has(id)) {
+              const later = priorSequence
+                .filter((other) => other.seq > (step.seq ?? 0))
+                .map((other) => other.id);
+              if (later.length) {
+                healed.add(id);
+                const warning = `Healed step ${id} now succeeded; later recorded steps (${later.join(', ')}) may depend on its earlier failure. Use onError: return for durable fallback decisions.`;
+                replayWarnings.push(warning);
+                if (options.strictReplay) strictHealedDivergence = new Error(warning);
+                await save();
+                emit('replay.divergence', id, step, {
+                  message: warning,
+                  healedStepId: id,
+                  skippedStepIds: later,
+                });
+              }
             }
-            // Only this run's own storage failures are fatal; a domain error reusing the class is not.
-            const infrastructure =
-              checkpointProblems.includes(cause as CheckpointError) ||
-              cause instanceof ConfigurationError;
-            // Configuration failures must also never become settled map data.
-            if (cause instanceof ConfigurationError) origins.markFatal(error);
-            const fatal = scoped || errorKind(cause) === 'cancelled' || infrastructure;
-            const retry =
-              !fatal &&
-              attempt < maxAttempts &&
-              (execution.policy.retry.on === undefined ||
-                execution.policy.retry.on.includes(outcome.kind));
-            if (!fatal && !retry && onError === 'return') {
-              step.status = 'settled-failed';
-              step.settledError = outcome;
-              if (!(await trySave())) throw error;
-              emit('step.settled', id, step);
-              return replay(step);
-            }
-            if (await trySave()) emit(scoped ? 'step.cancelled' : 'step.failed', id, step);
-            if (!retry || signal.reason instanceof CheckpointError) throw error;
-            try {
-              await waitUntil(
-                clockNow(clock) + Math.min(30_000, delayMs * 2 ** (attempt - 1)),
-                signal,
-                clock,
-              );
-            } catch (cause) {
-              if (signal.reason instanceof CheckpointError) throw error;
-              if (errorKind(cause) !== 'cancelled') throw cause;
-              const cancelled = cancellationError(signal, cause);
-              origins.remember(cancelled, id);
-              step.status = 'cancelled';
-              step.cancelledBy = cancelled.cancelledBy;
-              step.error = cancelled.message;
-              step.errorStack = errorStack(cancelled);
-              step.finishedAt = new Date().toISOString();
-              step.durationMs = Math.max(0, Math.round(performance.now() - attemptStarted));
-              // The completed failed attempt remains history; cancellation interrupted its backoff.
-              if (await trySave()) emit('step.cancelled', id, step);
-              throw cancelled;
-            }
-            continue;
+            return value(
+              jsonValue(schema.parse(structuredClone(step.output)), `Step "${id}" output`, {
+                canonical: false,
+              }) as T,
+            );
+          } finally {
+            lease?.release();
+            for (const release of releases.reverse()) release();
           }
-          step.status = 'completed';
-          attemptRecord.status = 'completed';
-          if (agent) {
-            delete attemptRecord.response;
-            delete attemptRecord.responseTruncated;
-          }
-          lease?.completed();
-          step.finishedAt = attemptRecord.finishedAt = new Date().toISOString();
-          step.durationMs = attemptRecord.durationMs = Math.max(
-            0,
-            Math.round(performance.now() - attemptStarted),
-          );
-          await save(
-            `Step ${id} completed but its checkpoint write failed; resume may repeat it unless a later save recovers the result`,
-          );
-          if (transcript && execution.policy.transcripts === 'on-failure') {
-            try {
-              await boundedTranscript(transcript, 'discard');
-              recordTranscript();
-              if (
-                step.output !== null &&
-                typeof step.output === 'object' &&
-                !Array.isArray(step.output)
-              )
-                step.output['diagnostics'] = jsonValue(attemptRecord.diagnostics);
-            } catch (error) {
-              // The attempt's action may have set warnings since the reset above; TS cannot see it.
-              const warnings = step.warnings as readonly string[] | undefined;
-              step.warnings = [
-                ...(warnings ?? []),
-                `Could not remove successful transcript: ${message(error)}`,
-              ];
-            }
-            await save();
-          }
-          const metadata =
-            kind === 'claude' || kind === 'codex'
-              ? (step.output as unknown as AgentResult<unknown>)
-              : undefined;
-          if (metadata)
-            emit('agent.finished', id, step, {
-              provider: kind,
-              outcome: 'completed',
-              sessionId: metadata.sessionId,
-              usage: metadata.usage,
-              diagnostics: metadata.diagnostics ?? {},
-            });
-          emit(
-            'step.completed',
-            id,
-            step,
-            metadata === undefined
-              ? {}
-              : {
-                  usage: metadata.usage,
-                  sessionId: metadata.sessionId,
-                },
-          );
-          if (wasFailed && !healed.has(id)) {
-            const later = priorSequence
-              .filter((other) => other.seq > (step.seq ?? 0))
-              .map((other) => other.id);
-            if (later.length) {
-              healed.add(id);
-              const warning = `Healed step ${id} now succeeded; later recorded steps (${later.join(', ')}) may depend on its earlier failure. Use onError: return for durable fallback decisions.`;
-              replayWarnings.push(warning);
-              if (options.strictReplay) strictHealedDivergence = new Error(warning);
-              await save();
-              emit('replay.divergence', id, step, {
-                message: warning,
-                healedStepId: id,
-                skippedStepIds: later,
-              });
-            }
-          }
-          return value(
-            jsonValue(schema.parse(structuredClone(step.output)), `Step "${id}" output`, {
-              canonical: false,
-            }) as T,
-          );
         } finally {
-          lease?.release();
-          for (const release of releases.reverse()) release();
+          admitted?.permit.release();
+          admitted?.finish();
         }
       }
     }
@@ -1707,19 +1820,16 @@ export async function runWorkflow<TInput, TOutput>(
             diagnostics: agentDiagnosticsSchema,
             output: schema,
             sessionId: z.string().nullable(),
-            usage: z.object({
-              inputTokens: z.number().nullable(),
-              outputTokens: z.number().nullable(),
-              costUsd: z.number().nullable(),
-            }),
+            usage: usageIdentitySchema,
           });
           const isolation =
             request.options.worktree === true ? 'worktree' : request.options.worktree;
-          const resultSchema =
+          const identitySchema =
             isolation === undefined
               ? baseResultSchema
               : baseResultSchema.extend({ worktree: worktreeChangeSchema });
-          const identity = agentIdentity(request, schemaJson(resultSchema));
+          const identity = agentIdentity(request, schemaJson(identitySchema));
+          const resultSchema = identitySchema.extend({ usage: agentUsageSchema });
           const onPermissionDenied =
             provider === 'claude'
               ? ((request.options as ClaudeOptions).onPermissionDenied ??
@@ -1750,7 +1860,7 @@ export async function runWorkflow<TInput, TOutput>(
             jsonValue(request, `Step "${id}" agent request`),
             resultSchema,
             execution,
-            async (context, step, attempt, _release, transcript) => {
+            async (context, step, attempt, _release, transcript, reservedPermit) => {
               if (!options.harness)
                 throw new ConfigurationError(
                   `No harness adapter configured for ${provider}. Supply RunOptions.harness.`,
@@ -1847,9 +1957,12 @@ export async function runWorkflow<TInput, TOutput>(
               };
               let response;
               try {
-                const admission = limiter.acquire(provider, context.signal);
-                emitAdmission('agent.queued', id, step, provider, 0);
-                const permit = await admission;
+                let permit = reservedPermit;
+                if (!permit) {
+                  const admission = limiter.acquire(provider, context.signal);
+                  emitAdmission('agent.queued', id, step, provider, 0);
+                  permit = await admission;
+                }
                 try {
                   context.signal.throwIfAborted();
                   emitAdmission('agent.admitted', id, step, provider, permit.waitedMs);
@@ -1867,7 +1980,10 @@ export async function runWorkflow<TInput, TOutput>(
               } catch (error) {
                 const evidence = harnessEvidence(error);
                 if (evidence) {
-                  attempt.usage = evidence.usage;
+                  attempt.usage =
+                    evidence.usage === null
+                      ? null
+                      : normalizeUsage(evidence.usage, request.options.model ?? null);
                   attempt.diagnostics = { ...attempt.diagnostics, ...evidence.diagnostics };
                   attempt.sessionId = preserveFirstSessionId(attempt, evidence.sessionId);
                   attempt.response = evidence.rawText;
@@ -1883,7 +1999,7 @@ export async function runWorkflow<TInput, TOutput>(
                 }
                 throw error;
               }
-              attempt.usage = structuredClone(response.usage);
+              attempt.usage = normalizeUsage(response.usage, request.options.model ?? null);
               attempt.sessionId = preserveFirstSessionId(attempt, response.sessionId);
               const evidence = boundedResponse(response.text);
               attempt.response = evidence.rawText;
@@ -1915,7 +2031,7 @@ export async function runWorkflow<TInput, TOutput>(
                     reason: warning,
                     stderr: '',
                     stdout: '',
-                    usage: response.usage,
+                    usage: attempt.usage,
                     sessionId: response.sessionId,
                     diagnostics: attempt.diagnostics,
                     rawText: response.text,
@@ -1934,7 +2050,7 @@ export async function runWorkflow<TInput, TOutput>(
                 output,
                 diagnostics: attempt.diagnostics,
                 sessionId: attempt.sessionId,
-                usage: response.usage,
+                usage: attempt.usage,
                 ...(step.worktree
                   ? { worktree: { base: step.worktree.base, commit: null, ref: null, files: [] } }
                   : {}),
@@ -2476,6 +2592,7 @@ export async function runWorkflow<TInput, TOutput>(
         completedBody,
         quiet.then(() => ({ kind: 'quiet' as const })),
       ]);
+      if (budget.error) throw budget.error;
       if (result.kind === 'quiet') {
         closed = true;
         operations.assertObserved();

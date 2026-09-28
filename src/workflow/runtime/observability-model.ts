@@ -1,4 +1,4 @@
-import type { AgentUsage, JsonValue } from './model.js';
+import type { JsonValue } from './model.js';
 import type { EnvironmentSummary } from './agent-environment-model.js';
 import type { HarnessIsolation } from './agent-isolation.js';
 
@@ -98,10 +98,4 @@ export interface RunEvent {
   readonly stepId: string | null;
 }
 
-/** Reported usage totals; no pricing estimates or invented measurements. */
-export interface UsageSummary extends AgentUsage {
-  /** Number of locally started agent attempts, excluding fork reuse. */
-  readonly attempts: number;
-  /** Attempts with at least one unavailable usage metric. */
-  readonly incompleteAttempts: number;
-}
+export type { UsageSummary } from './usage-model.js';

@@ -1,5 +1,6 @@
 import { isAbsolute } from 'node:path';
 import type {
+  AgentUsage,
   Harness,
   HarnessRequestInput,
   HarnessResponse,
@@ -212,7 +213,12 @@ export class CliHarness implements Harness {
   public async invoke(
     request: HarnessRequestInput,
     context: HarnessInvocation,
-  ): Promise<HarnessResponse> {
+  ): Promise<
+    HarnessResponse & {
+      /** Native adapters always return normalized usage, including explicit unknown measurements. */
+      readonly usage: AgentUsage;
+    }
+  > {
     const { signal } = context;
     signal.throwIfAborted();
     // Reject a relative cwd as configuration before any image is snapshotted against it.
@@ -225,6 +231,7 @@ export class CliHarness implements Harness {
       request.outputSchema !== null,
       plan.maxRetainedBytes,
       context,
+      request.options.model ?? null,
     );
     const invocation = await materializeInvocation(plan, input);
     let processResult: ProcessResult | undefined;

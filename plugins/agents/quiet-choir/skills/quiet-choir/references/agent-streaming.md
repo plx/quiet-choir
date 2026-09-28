@@ -74,3 +74,6 @@ them and prints a CLI warning. Per-call policy overrides its profile and changes
 In-flight runs with older completed agent calls require a new run or fork invalidation of those
 calls; accepting source changes alone does not bypass this check. Future diagnostic keys do not
 change fingerprints. Existing checkpoints remain readable.
+
+See [usage and budgets](usage-budgets.md) for normalized measurements, interrupted attempt outcomes,
+run totals and gates. Neither progress events nor replayed results should be summed as new spend.

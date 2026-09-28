@@ -95,8 +95,10 @@ replay reuses an unchanged call prefix; failed/stopped agents become `null`. qui
 
 Native Workflow limits total agent calls to 1,000 and parallel/pipeline lists to 4,096; its
 concurrency is configurable. Its documented token-size warning is advisory, not a hard token
-ceiling. quiet-choir's remaining run-wide spend/token controls are tracked in
-[#62](https://github.com/plx/quiet-choir/issues/62); current limits are per call.
+ceiling. quiet-choir now offers sticky run-wide gates on reported cost and agent attempts
+([usage and budgets](references/usage-budgets.md)), checked before new work is admitted; attempts
+with unknown cost are not counted toward the cost gate. The per-call Claude USD limit still applies,
+and there is still no run-wide token ceiling.
 
 <!-- /skills-difference: claude-host -->
 
@@ -115,6 +117,7 @@ ceiling. quiet-choir's remaining run-wide spend/token controls are tracked in
 | Control native configuration, environment, and checkout trust                 | [Harness isolation](references/harness-isolation.md)         |
 | Select profiles, shared call options, identity, usage, or process limits      | [Agent calls](references/agent-calls.md)                     |
 | Observe native activity, inspect transcripts, retain failed response evidence | [Agent streaming](references/agent-streaming.md)             |
+| Inspect spend, understand token categories, stop new work at a run cap        | [Usage and budgets](references/usage-budgets.md)             |
 | Select provider-specific controls or diagnose native protocol failures        | [Claude](references/claude.md), [Codex](references/codex.md) |
 | Rehearse with fixtures/dry-run before paying                                  | [Rehearsal](references/rehearsal.md)                         |
 | Resume after failure, accept code edits, fork completed work                  | [Durability and resumption](references/durability.md)        |

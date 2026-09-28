@@ -1,9 +1,13 @@
 import type { ProtocolFailure } from '../workflow/runtime/harness-error.js';
 import type { AgentUsage, HarnessResponse } from '../workflow/runtime/model.js';
+import { claudeUsage, codexUsage } from './usage.js';
 
 /** Protocol classification, evaluated independently of the process exit code. */
 export type ProtocolOutcome =
-  | { readonly kind: 'success'; readonly response: HarnessResponse }
+  | {
+      readonly kind: 'success';
+      readonly response: HarnessResponse & { readonly usage: AgentUsage };
+    }
   | { readonly kind: 'failure'; readonly failure: ProtocolFailure }
   | { readonly kind: 'unparseable'; readonly reason: string };
 
@@ -43,15 +47,6 @@ function string(value: unknown): string | null {
   return typeof value === 'string' ? value : null;
 }
 
-function usage(value: unknown, cost?: unknown): AgentUsage {
-  const data = record(value);
-  return {
-    inputTokens: number(data?.['input_tokens']),
-    outputTokens: number(data?.['output_tokens']),
-    costUsd: number(cost),
-  };
-}
-
 function message(value: unknown): string {
   const data = record(value);
   const text =
@@ -85,13 +80,17 @@ function apiError(value: unknown, depth = 0): { reason: string; status: number |
 }
 
 /** Classify Claude's terminal envelope. Real agent failures normally accompany exit 1. */
-export function parseClaude(stdout: string, structured: boolean): ProtocolOutcome {
+export function parseClaude(
+  stdout: string,
+  structured: boolean,
+  requested: string | null = null,
+): ProtocolOutcome {
   return classify(() => {
     let data: Record<string, unknown>;
     try {
       data = parse(stdout, 'Claude');
     } catch {
-      const state = new ClaudeProtocol(structured);
+      const state = new ClaudeProtocol(structured, requested);
       for (const line of stdout.split(/\r?\n/u).filter((line) => line.trim()))
         state.feed(parse(line, 'Claude'));
       return state.finish();
@@ -104,7 +103,7 @@ export function parseClaude(stdout: string, structured: boolean): ProtocolOutcom
         ? { permissionDenials: data['permission_denials'].length }
         : {}),
       sessionId: string(data['session_id']),
-      usage: usage(data['usage'], data['total_cost_usd']),
+      usage: claudeUsage(data, requested),
     };
     if (data['is_error'] === true || data['subtype'] !== 'success') {
       return {
@@ -135,13 +134,15 @@ export function parseClaude(stdout: string, structured: boolean): ProtocolOutcom
 /** Incremental Claude terminal state; startup and post-result events are accepted. @internal */
 export class ClaudeProtocol {
   readonly #structured: boolean;
+  readonly #requested: string | null;
   #outcome: ProtocolOutcome | undefined;
   #sessionId: string | null = null;
   #usage: AgentUsage | null = null;
   #text: string | null = null;
 
-  public constructor(structured: boolean) {
+  public constructor(structured: boolean, requested: string | null = null) {
     this.#structured = structured;
+    this.#requested = requested;
   }
   public get sessionId(): string | null {
     return this.#sessionId;
@@ -166,8 +167,8 @@ export class ClaudeProtocol {
     if (typeof data['type'] !== 'string') throw new Error('Claude event is missing its type.');
     this.#sessionId ??= string(data['session_id']);
     if (data['type'] !== 'result') return;
-    this.#usage = usage(data['usage'], data['total_cost_usd']);
-    this.#outcome = parseClaude(JSON.stringify(data), this.#structured);
+    this.#usage = claudeUsage(data, this.#requested);
+    this.#outcome = parseClaude(JSON.stringify(data), this.#structured, this.#requested);
     this.#text = this.#outcome.kind === 'success' ? null : string(data['result']);
   }
   public finish(): ProtocolOutcome {
@@ -179,6 +180,10 @@ export class ClaudeProtocol {
 
 /** Incremental Codex protocol state; command output and unknown events are never retained. @internal */
 export class CodexProtocol {
+  readonly #requested: string | null;
+  public constructor(requested: string | null = null) {
+    this.#requested = requested;
+  }
   #text: string | undefined;
   #sessionId: string | null = null;
   #completed = false;
@@ -226,11 +231,11 @@ export class CodexProtocol {
       }
       case 'turn.completed':
         this.#completed = true;
-        this.#tokens = usage(data['usage']);
+        this.#tokens = codexUsage(data['usage'], this.#requested);
         break;
       case 'turn.failed':
         this.#failed = apiError(data['error'] ?? 'agent failure');
-        if (data['usage'] !== undefined) this.#tokens = usage(data['usage']);
+        if (data['usage'] !== undefined) this.#tokens = codexUsage(data['usage'], this.#requested);
         break;
       case 'error': {
         const error = apiError(data['message'] ?? data['error'] ?? 'agent failure');
@@ -273,7 +278,7 @@ export class CodexProtocol {
         response: {
           text: this.#text,
           sessionId: this.#sessionId,
-          usage: this.#tokens ?? usage(undefined),
+          usage: this.#tokens ?? codexUsage(undefined, this.#requested),
           ...(this.#notices.length ? { warnings: [...this.#notices] } : {}),
         },
       };
@@ -282,9 +287,9 @@ export class CodexProtocol {
 }
 
 /** Classify buffered Codex JSONL through the same incremental protocol state. */
-export function parseCodex(stdout: string): ProtocolOutcome {
+export function parseCodex(stdout: string, requested: string | null = null): ProtocolOutcome {
   return classify(() => {
-    const state = new CodexProtocol();
+    const state = new CodexProtocol(requested);
     for (const line of stdout.split(/\r?\n/u).filter((line) => line.trim()))
       state.feed(parse(line, 'Codex'));
     return state.finish();

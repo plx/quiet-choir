@@ -275,17 +275,19 @@ native activity and final attempt diagnostics. Use `workflow execute --progress`
 while preserving JSON stdout. These are lossy summaries, not token delivery or a durable queue; use
 [attempt records and transcripts](agent-streaming.md) for retained evidence.
 
-Usage values come from the harness and may be null. Codex cost is always null in this adapter.
-Completed agent results store successful-attempt usage; failed protocol attempts can also store
-available `sessionId` and `usage` in `steps[id].failedAttempts` after
-[#33](https://github.com/plx/quiet-choir/issues/33). New attempt histories also retain successful
-response usage even when response validation fails. Dashboard totals count local agent attempts
-once, excluding copied fork history. Known metrics are summed and `incompleteAttempts` marks partial
-coverage; wholly unknown metrics stay null (zero when there were no agent attempts).
-Unreported/abandoned work remains missing, so this is not a billing ledger. Replaying saved usage is
-not a new charge. Claude's top-level input count excludes cache reads/writes and does not sum
-per-model usage; Codex's cache-inclusive interpretation is inferred, not verified by a live cache
-comparison. See [Claude](claude.md) and [Codex](codex.md) before comparing counts.
+Usage is computed by `summarizeUsage(run)`, with one entry per local agent attempt across
+executions. Replays count once; copied fork attempts are excluded. Full JSON inspection adds
+`usageSummary`; compact JSON retains `usage`. Outcomes include interrupted agent attempts after
+resume. Known values are summed, all-unknown stays null and no attempts totals zero.
+`unknownUsageAttempts`, `unknownCostAttempts` and `unknownTokens` identify missing measurements.
+Legacy fallback warns about undercounting and historical token semantics. Harness/model groups show
+where known spend occurred; requested aliases are not assumed effective.
+
+A run stopped by `RunBudgetExceededError` remains failed even if its body caught the refusal.
+`budgetStop` identifies the refused effect and limit; that refusal created no new attempt. Inspect
+known/unknown totals, then resume with a chosen higher `--max-run-cost-usd` or
+`--max-run-agent-attempts`. Omission retains saved caps; `off` clears one. Completed work replays.
+See [usage and budgets](usage-budgets.md) for provider semantics, drain behavior and cost overshoot.
 
 Both synchronous observer throws and observer promise rejections are handled, and `readRun` shares
 execution's path resolution. Neither guarantee covers unowned async work that a workflow creates.

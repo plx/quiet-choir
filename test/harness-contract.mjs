@@ -10,27 +10,32 @@ import { parseClaude, parseCodex } from '../dist/harnesses/protocol.js';
 import { fakeApi } from './contracts/local-api.mjs';
 
 const refresh = process.argv.includes('--refresh');
+const usage = process.argv.includes('--usage');
 const stream = process.argv.includes('--stream');
 const requestedSessionId = '5697cc90-cb47-5a1f-8896-cbf83255e506';
 const selected = process.argv
   .find((arg) => arg.startsWith('--cases='))
   ?.slice(8)
   .split(',');
-const scenarios = [
-  'claude-text-success',
-  'claude-structured-success',
-  'claude-turn-limit',
-  'claude-api-error',
-  'codex-text-success',
-  'codex-structured-success',
-  'codex-invalid-schema',
-  'codex-reconnect-success',
-];
+const scenarios = usage
+  ? ['codex-usage-success']
+  : [
+      'claude-text-success',
+      'claude-structured-success',
+      'claude-turn-limit',
+      'claude-api-error',
+      'codex-text-success',
+      'codex-structured-success',
+      'codex-invalid-schema',
+      'codex-reconnect-success',
+    ];
 assert(
   process.argv
     .slice(2)
-    .every((arg) => ['--refresh', '--stream'].includes(arg) || arg.startsWith('--cases=')),
-  'Use --refresh, --stream and/or --cases=<comma-separated scenario names>.',
+    .every(
+      (arg) => ['--refresh', '--stream', '--usage'].includes(arg) || arg.startsWith('--cases='),
+    ),
+  'Use --refresh, --stream, --usage and/or --cases=<comma-separated scenario names>.',
 );
 assert(
   !selected || selected.every((name) => scenarios.includes(name)),
@@ -210,6 +215,20 @@ try {
       if (name === 'codex-invalid-schema') assert.match(result.stdout, /invalid_json_schema/u);
       if (name === 'codex-reconnect-success')
         assert(parsed.response.warnings.some((warning) => /Reconnecting/u.test(warning)));
+      if (name === 'codex-usage-success') {
+        const terminal = result.stdout
+          .trim()
+          .split('\n')
+          .map((line) => JSON.parse(line))
+          .findLast((entry) => entry.type === 'turn.completed');
+        assert.deepEqual(terminal.usage, {
+          input_tokens: 100,
+          cached_input_tokens: 40,
+          cache_write_input_tokens: 20,
+          output_tokens: 30,
+          reasoning_output_tokens: 12,
+        });
+      }
       if (success && structured)
         assert.deepEqual(JSON.parse(parsed.response.text), { answer: 'captured answer' });
       const capture = {
@@ -239,7 +258,7 @@ try {
             }),
       };
       const captureDirectory = new URL(
-        `./fixtures/${stream ? 'harness-stream' : 'harness'}/`,
+        `./fixtures/${usage ? 'harness-usage' : stream ? 'harness-stream' : 'harness'}/`,
         import.meta.url,
       );
       if (refresh) await mkdir(captureDirectory, { recursive: true });

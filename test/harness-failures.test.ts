@@ -135,14 +135,36 @@ describe('captured exit-1 failures', () => {
         if (capture.provider === 'claude') {
           const raw = z
             .object({
-              usage: z.object({ input_tokens: z.number(), output_tokens: z.number() }),
+              usage: z.json(),
+              modelUsage: z.record(
+                z.string(),
+                z.object({
+                  inputTokens: z.number(),
+                  cacheReadInputTokens: z.number(),
+                  cacheCreationInputTokens: z.number(),
+                  outputTokens: z.number(),
+                }),
+              ),
               total_cost_usd: z.number(),
             })
             .parse(JSON.parse(capture.stdout));
-          expect(error.usage).toEqual({
-            inputTokens: raw.usage.input_tokens,
-            outputTokens: raw.usage.output_tokens,
+          const models = Object.values(raw.modelUsage);
+          expect(error.usage).toMatchObject({
+            inputTokens: models.length
+              ? models.reduce(
+                  (sum, model) =>
+                    sum +
+                    model.inputTokens +
+                    model.cacheReadInputTokens +
+                    model.cacheCreationInputTokens,
+                  0,
+                )
+              : null,
+            outputTokens: models.length
+              ? models.reduce((sum, model) => sum + model.outputTokens, 0)
+              : null,
             costUsd: raw.total_cost_usd,
+            reported: { usage: raw.usage },
           });
         } else expect(error.usage).toBeNull();
       }
@@ -245,7 +267,12 @@ it('retains usage when a success envelope is followed by a nonzero exit', async 
     exit: { code: 1, signal: null },
     failure: null,
     sessionId: 'session',
-    usage: { inputTokens: 4, outputTokens: 2, costUsd: 0.01 },
+    usage: {
+      inputTokens: null,
+      outputTokens: null,
+      costUsd: 0.01,
+      reported: { usage: { input_tokens: 4, output_tokens: 2 } },
+    },
   });
 });
 

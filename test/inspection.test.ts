@@ -107,7 +107,7 @@ it('shows all status counts, first-use order, phase progress, limits, root cause
   expect(summary.phase).toEqual({ title: 'verify', total: 3, completed: 1, running: 0 });
   expect(summary.steps.map((step) => step.id)).toEqual(['b-settled', 'a-root']);
   expect(summary.steps[1]?.rootCause).toBe(true);
-  expect(summary.usage).toEqual({
+  expect(summary.usage).toMatchObject({
     attempts: 2,
     incompleteAttempts: 2,
     inputTokens: 12,
@@ -276,11 +276,13 @@ it('sums legacy usage without double counting failed attempts or imported fork r
   expect(summarizeRun(run, unlocked).usage).toMatchObject({
     attempts: 2,
     incompleteAttempts: 0,
+    undercounted: true,
+    legacyAttempts: 2,
     inputTokens: 6,
     outputTokens: 4,
   });
   expect(summarizeRun(run, unlocked).usage.costUsd).toBeCloseTo(0.3);
-  expect(summarizeRun(record(), unlocked).usage).toEqual({
+  expect(summarizeRun(record(), unlocked).usage).toMatchObject({
     attempts: 0,
     incompleteAttempts: 0,
     inputTokens: 0,
