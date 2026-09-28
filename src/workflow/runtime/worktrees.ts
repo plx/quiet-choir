@@ -114,7 +114,9 @@ export class RunWorktrees {
       const version = await git.text(this.record.cwd, ['--version'], sharedInvocation);
       const match = /git version (\d+)\.(\d+)/u.exec(version);
       if (!match || Number(match[1]) < 2 || (Number(match[1]) === 2 && Number(match[2]) < 38))
-        throw new Error(`Worktree isolation requires Git 2.38 or newer; found ${version}.`);
+        throw new ConfigurationError(
+          `Worktree isolation requires Git 2.38 or newer; found ${version}.`,
+        );
       let repo: string;
       try {
         repo = await realpath(
@@ -122,9 +124,10 @@ export class RunWorktrees {
         );
       } catch (cause) {
         if (cause instanceof CheckpointError || sharedInvocation.signal.aborted) throw cause;
-        throw new Error('Worktree isolation requires a Git working tree with a committed HEAD.', {
-          cause,
-        });
+        throw new ConfigurationError(
+          'Worktree isolation requires a Git working tree with a committed HEAD.',
+          { cause },
+        );
       }
       // Canonicalize the parent before checking containment; a symlink cannot hide a nested cache.
       const requestedRoot = await filePath(
@@ -133,11 +136,11 @@ export class RunWorktrees {
         true,
       );
       if (within(repo, requestedRoot))
-        throw new Error('worktrees.root must be outside the source checkout.');
+        throw new ConfigurationError('worktrees.root must be outside the source checkout.');
       await mkdir(requestedRoot, { recursive: true, mode: 0o700 });
       const root = await realpath(requestedRoot);
       if (within(repo, root))
-        throw new Error('worktrees.root must be outside the source checkout.');
+        throw new ConfigurationError('worktrees.root must be outside the source checkout.');
       const status = await git.text(
         repo,
         ['status', '--porcelain', '--untracked-files=normal'],
@@ -158,7 +161,11 @@ export class RunWorktrees {
       this.record.worktrees = ledger;
       await this.save();
       return ledger;
-    })();
+    })().catch((error: unknown) => {
+      // Memoize only success, so a corrected checkout or policy can initialize on a later call.
+      this.initialization = undefined;
+      throw error;
+    });
     return this.initialization;
   }
 
@@ -231,7 +238,9 @@ export class RunWorktrees {
   ): WorktreeLedger['handles'][string] {
     const saved = Object.hasOwn(ledger.handles, handle.id) ? ledger.handles[handle.id] : undefined;
     if (saved?.handle.path !== handle.path || saved.handle.base !== handle.base)
-      throw new Error('Worktree handle does not belong to this run; create it with ctx.worktree.');
+      throw new ConfigurationError(
+        'Worktree handle does not belong to this run; create it with ctx.worktree.',
+      );
     return saved;
   }
 
@@ -305,7 +314,7 @@ export class RunWorktrees {
   ): Promise<string> {
     const canonical = await realpath(logicalCwd);
     if (!within(ledger.repo, canonical))
-      throw new Error('Isolated cwd must be inside the source repository.');
+      throw new ConfigurationError('Isolated cwd must be inside the source repository.');
     return resolve(path, relative(ledger.repo, canonical));
   }
 

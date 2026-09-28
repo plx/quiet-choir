@@ -987,7 +987,7 @@ export async function runWorkflow<TInput, TOutput>(
         return output;
       }
       if (options.rehearsal && (isolation || kind === 'worktree' || kind === 'merge'))
-        throw new Error(
+        throw new ConfigurationError(
           'Dry-run does not simulate Git worktree effects. Use a fixture harness in a temporary repository to rehearse isolation without paid calls.',
         );
       const wasFailed = prior?.status === 'failed';

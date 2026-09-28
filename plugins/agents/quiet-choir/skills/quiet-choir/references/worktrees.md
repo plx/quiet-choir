@@ -13,7 +13,9 @@ invocation. Rehearse isolation with a fixture harness in a temporary repository;
 local callbacks remain real, while agent responses incur no model calls.
 
 The source directory must belong to a Git working tree with committed history. Dirty source files
-produce a warning: isolated calls start from committed files only.
+produce a warning: isolated calls start from committed files only. Unmet prerequisites (Git version,
+repository, cache root, isolated `cwd`, or a foreign handle) are configuration failures: they are
+never retried or settled as data, so correcting them and resuming runs the call live.
 
 <!-- skills-check: fragment; reason: Inside a workflow with ctx and an editor profile declared and granted. -->
 

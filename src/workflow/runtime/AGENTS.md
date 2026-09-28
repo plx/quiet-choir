@@ -25,9 +25,9 @@ these relationships, including on failure paths. The durability rationale is in
 A settled failure is a terminal branch decision, just like a completed result: identity and path
 checks must preserve it on replay and fork reuse. Cancellation, configuration, and checkpoint-write
 failures never become fallback values. Configuration failures are a missing harness or process
-adapter, plus a `ConfigurationError` thrown by an adapter for validation that fails before launch.
-Retry filtering remains policy; retain every attempt's diagnostics. Do not infer handling from
-JavaScript error identity/cause chains. See
+adapter, plus a `ConfigurationError` thrown by an adapter or worktree isolation for validation that
+fails before launch. Retry filtering remains policy; retain every attempt's diagnostics. Do not
+infer handling from JavaScript error identity/cause chains. See
 [ADR 0007](../../../docs/decisions/0007-durable-failure-outcomes.md).
 
 Settled maps require explicit journal IDs. Each committed item owns its leaf and nested-map IDs;

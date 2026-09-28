@@ -321,6 +321,58 @@ it('fails isolation outside a repository before invoking a harness', async () =>
   expect(invoke).not.toHaveBeenCalled();
 });
 
+it('keeps a missing repository a configuration failure that settled maps cannot journal or retry', async () => {
+  const plain = join(directory, 'plain');
+  await mkdir(plain);
+  const invoke = vi.fn<Harness['invoke']>(() => Promise.resolve(response));
+  const harness: Harness = { invoke };
+  const definition = defineWorkflow({
+    version: '1',
+    name: 'late-repo',
+    input: z.null(),
+    output: z.boolean(),
+    async run(ctx) {
+      const [result] = await ctx.map(
+        'items',
+        ['only'],
+        { concurrency: 1, onError: 'settle' },
+        async () =>
+          ctx.claude.text('edit', {
+            prompt: 'edit',
+            isolation: 'worktree',
+            onError: 'return',
+            retry: { maxAttempts: 3, delayMs: 0 },
+          }),
+      );
+      if (!result?.ok || !result.value.ok) throw new Error('isolated call did not complete');
+      return result.value.value.worktree?.commit !== undefined;
+    },
+  });
+  const setup = { ...options('late-repo'), cwd: plain, harness };
+  await expect(runWorkflow(definition, { ...setup, input: null })).rejects.toThrow(
+    'requires a Git working tree',
+  );
+  const failed = await readRun({ stateDir, runId: 'late-repo' });
+  const steps = Object.values(failed.steps);
+  expect(steps).toHaveLength(1);
+  expect(steps[0]?.status).toBe('failed');
+  expect(steps[0]?.attempts).toBe(1);
+  expect(failed.maps?.['items']?.items[0]).toMatchObject({ status: 'running', outcome: null });
+  expect(invoke).not.toHaveBeenCalled();
+  await git.text(plain, ['init', '-q'], invocation);
+  await writeFile(join(plain, 'file.txt'), 'base\n');
+  await git.text(plain, ['add', '--all'], invocation);
+  await git.text(
+    plain,
+    ['-c', 'user.name=test', '-c', 'user.email=test@localhost', 'commit', '-qm', 'baseline'],
+    invocation,
+  );
+  const result = await runWorkflow(definition, { ...setup, resume: true });
+  expect(result.status).toBe('completed');
+  expect(result.output).toBe(true);
+  expect(invoke).toHaveBeenCalledTimes(1);
+});
+
 it('rejects a cache root symlinked into the checkout before creating directories or invoking agents', async () => {
   const linked = join(directory, 'linked');
   await symlink(repo, linked, 'dir');
