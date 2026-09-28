@@ -59,7 +59,10 @@ the ordinary run lock before loading a due stored entrypoint. Concurrent ticks c
 same run. Changed source reports incompatible without changing the checkpoint: use the explicit
 [recovery path](durability.md#recovery-procedure). Tick does not retry failed runs, accept edits,
 change grants, or kill orphans. Custom/fixture adapters need their embedding application; tick's
-standalone CLI uses saved local/default-CLI provenance, not undisclosed adapter configuration.
+standalone CLI uses saved local/default-CLI provenance, not undisclosed adapter configuration. The
+checkpoint stores only the harness kind, never its CLI configuration: pass `--harness-config` again
+on `tick` (as on `resume`) to reach a run started with custom binaries or limits, since defaults
+apply otherwise.
 
 With --run, exits are 0 completed, 75 pending/locked, 1 failed/incompatible. Without it, run
 failures are data and the batch exits 0 unless the command fails. --max-runs bounds resume attempts

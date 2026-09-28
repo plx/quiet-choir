@@ -100,6 +100,10 @@ adapter. Tick does not infer native configuration files, change grants, accept c
 children. Completed, failed, and not-yet-due runs do not import. A failed run needs an explicit
 resume, not an automatic retry on every cron pass. Batch unreadable-run errors are reported per run.
 
+CLI harness configuration (custom binaries, output limits) is not stored in the checkpoint: tick and
+resume both use `CliHarness` defaults unless `--harness-config` is passed. A cron line for a run
+started with custom binaries or limits must repeat `--harness-config` on every `tick` call.
+
 The result contains a resume-attempt count, completed IDs, suspended `{ runId, nextWakeAt }`
 entries, and failed/skipped/incompatible entries with reasons. Suspended entries can also have a
 skip or incompatibility reason. `--max-runs N` bounds resume attempts across the invocation. With

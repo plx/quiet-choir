@@ -32,7 +32,7 @@ const pastClock: WorkflowClock = {
 };
 
 async function fixture(
-  kind: 'due' | 'future' | 'signal' | 'failure' = 'due',
+  kind: 'due' | 'future' | 'signal' | 'failure' | 'agent' = 'due',
   notify: boolean | 'fail' = false,
 ) {
   const root = await mkdtemp(join(tmpdir(), 'choir-tick-'));
@@ -42,6 +42,7 @@ async function fixture(
   const file = join(root, 'workflow.ts');
   const imports = join(root, 'imports.txt');
   const effects = join(root, 'effects.txt');
+  const agentLog = join(root, 'agent.jsonl');
   const notifications = join(root, 'notifications.jsonl');
   const notifyCommand =
     notify === 'fail' ? 'exit 7' : `cat >> '${notifications.replaceAll("'", "'\"'\"'")}'`;
@@ -53,11 +54,17 @@ import { z } from 'zod';
 import { defineWorkflow } from ${JSON.stringify(join(project, 'src/workflow/runtime/model.js'))};
 appendFileSync(${JSON.stringify(imports)}, 'import\\n');
 export default defineWorkflow({ name: 'tick', version: '1', input: z.null(), output: z.null(),
+  ${kind === 'agent' ? 'strictProfiles: false,' : ''}
   run: async (ctx) => {
     ${
       kind === 'signal'
         ? "await ctx.ask('ready', { prompt: 'Ready?', schema: z.boolean() });"
         : "await ctx.sleep('timer', 60_000);"
+    }
+    ${
+      kind === 'agent'
+        ? `await ctx.claude.text('call', { prompt: 'hi', env: { QUIET_CHOIR_FAKE_LOG: ${JSON.stringify(agentLog)} } });`
+        : ''
     }
     await ctx.step('action', { input: null, schema: z.null(), run: async () => {
       await new Promise(resolve => setTimeout(resolve, 50));
@@ -81,6 +88,9 @@ export default defineWorkflow({ name: 'tick', version: '1', input: z.null(), out
     resume: false,
     input: null,
     ...(notify ? { notifyCommand } : {}),
+    ...(kind === 'agent'
+      ? { harness: { kind: 'cli' as const, config: {} }, grants: ['exec'] }
+      : {}),
   };
   const first = await new WorkflowExecutor({
     logger,
@@ -97,6 +107,7 @@ export default defineWorkflow({ name: 'tick', version: '1', input: z.null(), out
     stateDir,
     imports,
     effects,
+    agentLog,
     notifications,
     notifyCommand,
     plan,
@@ -259,5 +270,18 @@ describe('tick loader and operator hooks', { timeout: 20_000 }, () => {
       await tick.execute({ ...failing.tickPlan, notifyCommand: failing.notifyCommand }),
     ).toMatchObject({ exitCode: 0 });
     expect((await readRun(failing.plan)).status).toBe('completed');
+  });
+
+  it('carries a supplied --harness-config into the resumed CLI run', async () => {
+    const f = await fixture('agent');
+    const claudeBinary = join(project, 'test/bin/fake-claude.mjs');
+    expect(
+      await tick.execute({
+        ...f.tickPlan,
+        harness: { kind: 'cli', config: { claudeBinary } },
+      }),
+    ).toMatchObject({ ok: true, resumed: 1, completed: ['run'], exitCode: 0 });
+    const capture = JSON.parse(await readFile(f.agentLog, 'utf8')) as Record<string, unknown>;
+    expect(capture).toMatchObject({ provider: 'claude', scenario: 'claude-text-success' });
   });
 });

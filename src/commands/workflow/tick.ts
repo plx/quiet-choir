@@ -1,6 +1,10 @@
 import { Flags, type Interfaces } from '@oclif/core';
 import { WorkflowCommand } from '../../cli/workflow-command.js';
 import { TickWorkflowExecutor } from '../../workflow/loader/tick.js';
+import {
+  readHarnessSelection,
+  type HarnessSelection,
+} from '../../workflow/loader/harness-selection.js';
 import { resolveStateDir } from '../../workflow/runtime/paths.js';
 
 interface TickFlags {
@@ -10,6 +14,7 @@ interface TickFlags {
   readonly watch: boolean | undefined;
   readonly timeout: string;
   readonly 'max-runs': number | undefined;
+  readonly 'harness-config': string | undefined;
   readonly json: boolean | undefined;
 }
 
@@ -35,6 +40,10 @@ export default class WorkflowTick extends WorkflowCommand {
       description: 'Maximum resume attempts in this invocation',
       min: 1,
     }),
+    'harness-config': Flags.string({
+      description:
+        'CliHarness configuration JSON or @file for resumed CLI runs; not stored in the checkpoint',
+    }),
     json: Flags.boolean({ description: 'Print one structured tick result' }),
   };
 
@@ -53,6 +62,14 @@ export default class WorkflowTick extends WorkflowCommand {
         'usage.flag',
         '--timeout must be a positive duration such as 540s (at most 2147483647ms).',
       );
+    let harness: HarnessSelection | undefined;
+    if (flags['harness-config'] !== undefined) {
+      try {
+        harness = await readHarnessSelection('cli', flags['harness-config'], process.cwd());
+      } catch (error) {
+        this.fail('usage.flag', error instanceof Error ? error.message : String(error));
+      }
+    }
     const result = await new TickWorkflowExecutor({
       logger: this.createExecutionLogger(flags),
       signal: this.signal,
@@ -63,6 +80,7 @@ export default class WorkflowTick extends WorkflowCommand {
       ...(flags['notify-command'] === undefined ? {} : { notifyCommand: flags['notify-command'] }),
       ...(flags.run === undefined ? {} : { runId: flags.run }),
       ...(flags['max-runs'] === undefined ? {} : { maxRuns: flags['max-runs'] }),
+      ...(harness === undefined ? {} : { harness }),
       watch: flags.watch ?? false,
       timeoutMs,
     });

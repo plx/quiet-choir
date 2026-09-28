@@ -120,4 +120,6 @@ unchanged in-flight run can be blocked by these stricter defaults before import 
 suspended, failed, skipped, and incompatible entries. With --run, exits are 0 completed, 75 pending,
 and 1 failed/incompatible; batch per-run failures remain data with exit 0. Usage/infrastructure
 errors retain the command failure document. --watch is bounded by --timeout (default 540s), with
---max-runs limiting resume attempts. See [waits](waits.md) for due detection and notification hooks.
+--max-runs limiting resume attempts. `--harness-config` supplies CLI harness configuration (JSON or
+`@file`) for resumed CLI runs, since the checkpoint stores only the harness kind, not its config.
+See [waits](waits.md) for due detection and notification hooks.

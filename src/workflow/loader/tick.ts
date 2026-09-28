@@ -8,6 +8,7 @@ import { readRequiredRun } from '../runtime/read-required-run.js';
 import { isValidRunId, runIdMessage, RunRefusedError } from '../runtime/run-errors.js';
 import { WorkflowExecutor, type WorkflowExecutorOptions } from './executor.js';
 import { workflowFailure, type WorkflowFailure } from './failure.js';
+import type { HarnessSelection } from './harness-selection.js';
 
 /** One pass or bounded watch over plain checkpoint readiness. No scheduler is installed. */
 export interface TickWorkflowsPlan extends ExecutionPlan {
@@ -18,6 +19,8 @@ export interface TickWorkflowsPlan extends ExecutionPlan {
   readonly timeoutMs?: number;
   readonly maxRuns?: number;
   readonly notifyCommand?: string;
+  /** CLI harness configuration for resumed runs; the checkpoint stores only harness kind. */
+  readonly harness?: HarnessSelection;
 }
 
 /** Counts executions and reports each run's latest observed outcome in this invocation. */
@@ -225,7 +228,7 @@ export class TickWorkflowExecutor implements Executor<
               waitMode: 'suspend',
               ...(plan.notifyCommand === undefined ? {} : { notifyCommand: plan.notifyCommand }),
               ...(this.options.harness === undefined && run.harness?.kind === 'cli'
-                ? { harness: { kind: 'cli' as const, config: {} } }
+                ? { harness: plan.harness ?? { kind: 'cli' as const, config: {} } }
                 : {}),
             });
             resumed++;
