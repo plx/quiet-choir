@@ -72,9 +72,16 @@ async function childProcess(): Promise<HarnessProcess> {
   };
 }
 async function abandon(): Promise<void> {
-  const path = join(directory, 'run', 'lock', 'owner.json');
-  const owner = JSON.parse(await fs.readFile(path, 'utf8')) as Record<string, unknown>;
-  await fs.writeFile(path, JSON.stringify({ ...owner, pid: 2_000_000_000, osStartTime: null }));
+  // A real crash marks both the legacy guard and the directory lock with the same dead pid, since
+  // one process acquires both; fake death in both so recovery reaches the directory lock's orphan
+  // handling instead of stopping at a guard that still looks alive.
+  for (const path of [
+    join(directory, 'run', 'lock', 'owner.json'),
+    join(directory, 'run.json.lock', 'owner.json'),
+  ]) {
+    const owner = JSON.parse(await fs.readFile(path, 'utf8')) as Record<string, unknown>;
+    await fs.writeFile(path, JSON.stringify({ ...owner, pid: 2_000_000_000, osStartTime: null }));
+  }
 }
 
 describe.skipIf(process.platform === 'win32')('durable harness ownership', () => {

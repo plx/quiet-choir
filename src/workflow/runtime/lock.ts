@@ -1,4 +1,3 @@
-import { existsSync } from 'node:fs';
 import { createStorageDirectory, syncDirectory } from './storage-io.js';
 import { randomUUID } from 'node:crypto';
 import { lstat, mkdir, open, readFile, readdir, rename, rm } from 'node:fs/promises';
@@ -136,7 +135,11 @@ async function lockGone(lockPath: string): Promise<boolean> {
   }
 }
 
-/** Acquire both legacy guard and current ownership, always in the same order. @internal */
+/**
+ * Acquire both the legacy guard and current ownership, always in the same order, for every run —
+ * migrated or not — so a pre-format-7 binary starting the same run ID in the same explicit state
+ * container is excluded even when no legacy record exists yet. @internal
+ */
 export async function lockRun(
   stateDir: string,
   runId: string,
@@ -144,8 +147,6 @@ export async function lockRun(
 ): Promise<RunLock> {
   const legacy = legacyRunPath(stateDir, runId);
   const primary = join(runDirectory(stateDir, runId), 'lock');
-  if (!existsSync(legacy) && !existsSync(`${legacy}.lock`))
-    return acquireLock(stateDir, runId, primary, options);
   const guard = await acquireLock(stateDir, runId, `${legacy}.lock`, options);
   let owner: RunLock;
   try {

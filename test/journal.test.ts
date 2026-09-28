@@ -1,6 +1,6 @@
 import * as fs from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import {
   defineWorkflow,
@@ -508,9 +508,12 @@ it('allocates private case-distinct artifact directories and refuses mutations a
 it('does not let a dead legacy lock bypass a live directory owner', async () => {
   const { lockRun } = await import('../src/workflow/runtime/store.js');
   const { hostname } = await import('node:os');
-  const release = await lockRun(stateDir, 'dual');
+  // Simulate a migrated run mid-crash: a pre-format-7 binary's guard died while a current-format
+  // binary's directory lock is still genuinely live.
   const primary = join(stateDir, 'dual', 'lock', 'owner.json');
-  const before = await fs.readFile(primary, 'utf8');
+  await fs.mkdir(dirname(primary), { recursive: true });
+  const before = JSON.stringify({ pid: process.pid, host: hostname(), token: 'directory-owner' });
+  await fs.writeFile(primary, before);
   await fs.mkdir(join(stateDir, 'dual.json.lock'));
   await fs.writeFile(
     join(stateDir, 'dual.json.lock', 'owner.json'),
@@ -518,7 +521,6 @@ it('does not let a dead legacy lock bypass a live directory owner', async () => 
   );
   await expect(lockRun(stateDir, 'dual')).rejects.toThrow('locked by PID');
   expect(await fs.readFile(primary, 'utf8')).toBe(before);
-  await release();
 });
 
 it.each(['partial-write', 'flush'])(

@@ -182,6 +182,21 @@ describe('local run ownership', () => {
     expect(await fs.readdir(stateDir)).toEqual(['.gitignore', 'run-1']);
   });
 
+  it('acquires the legacy guard for a brand-new run, excluding a pre-format-7 binary, and leaves no lock behind after release', async () => {
+    const legacyLockPath = join(stateDir, 'run-3.json.lock');
+    await fs.mkdir(legacyLockPath);
+    await fs.writeFile(
+      join(legacyLockPath, 'owner.json'),
+      JSON.stringify({ pid: process.pid, host: hostname(), token: 'pre-format-7' }),
+    );
+    await expect(lockRun(stateDir, 'run-3')).rejects.toMatchObject({ code: 'run.locked' });
+    await fs.rm(legacyLockPath, { recursive: true });
+    const release = await lockRun(stateDir, 'run-3');
+    await release();
+    expect(await fs.readdir(stateDir)).toEqual(['.gitignore', 'run-3']);
+    expect(await fs.readdir(join(stateDir, 'run-3'))).toEqual([]);
+  });
+
   it('creates the state directory when acquiring the first run', async () => {
     const nested = join(stateDir, 'new', 'state');
     const release = await lockRun(nested, 'valid_ID-2');

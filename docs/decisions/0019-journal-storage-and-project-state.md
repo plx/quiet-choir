@@ -30,12 +30,14 @@ environment, and existing legacy run locations take precedence. Register default
 versions alongside existing launch and native harness metadata, outside semantic identity. Resume by
 ID uses those launch paths; a different supplied entrypoint is refused before import.
 
-Migrate compatible flat format-6 records under legacy and current locks acquired in that order.
-Retain the exact versioned backup and write a rejecting old-path marker before the new snapshot. A
-pending marker supports interrupted initial migration; a completed marker cannot serve as stale
-fallback state. Native children are owned by the current lock. Original format-1 records use a
-separate original-identity replay bridge; unknown old timing/callback identity is never fabricated.
-Intermediate private formats 2–5 retain read-only support.
+Migrate compatible flat format-6 records under legacy and current locks acquired in that order. The
+legacy guard is taken for every run, not only migrated ones, so a pre-format-7 binary starting the
+same unused run ID in the same explicit state container is excluded; a fresh run publishes no legacy
+marker. Retain the exact versioned backup and write a rejecting old-path marker before the new
+snapshot. A pending marker supports interrupted initial migration; a completed marker cannot serve
+as stale fallback state. Native children are owned by the current lock. Original format-1 records
+use a separate original-identity replay bridge; unknown old timing/callback identity is never
+fabricated. Intermediate private formats 2–5 retain read-only support.
 
 Put owned writes behind `RunStore`/`OwnedRunStore`, with a file implementation and an injectable
 in-memory seam for tests. File inboxes remain the question delivery protocol. Artifact directories
