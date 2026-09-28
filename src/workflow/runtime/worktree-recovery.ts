@@ -2,14 +2,52 @@ import { lstat, realpath } from 'node:fs/promises';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import type { WorktreeLedger } from './worktree-schema.js';
 import { ConfigurationError } from './configuration-error.js';
+import type { ReadFileResult } from './file-model.js';
 import { replaceFile, snapshotFile } from './files.js';
 
-async function regularText(path: string, signal: AbortSignal): Promise<string | undefined> {
-  try {
-    return (await snapshotFile(path, 4096, signal)).content;
-  } catch (error) {
-    if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return undefined;
+// `.git`, `gitdir` and `commondir` are all small control files Git itself writes atomically.
+// A missing file is a normal race with Git's own writer (never linked yet); a non-regular file
+// (symlink, directory, FIFO, …) or a validation failure inside `snapshotFile` (over the byte
+// limit, not valid UTF-8) means something other than Git wrote it and is registration corruption,
+// not a filesystem crash. Cancellation and infrastructure failures (EACCES, EIO, EMFILE, …) are
+// reported as-is so they are never retried or journaled as workflow data.
+async function registrationFile(
+  path: string,
+  signal: AbortSignal,
+): Promise<ReadFileResult | undefined> {
+  const info = await lstat(path).catch((error: unknown) => {
+    if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return null;
     throw error;
+  });
+  if (info === null) return undefined;
+  if (!info.isFile())
+    throw new ConfigurationError('Interrupted worktree registration file is malformed.');
+  try {
+    return await snapshotFile(path, 4096, signal);
+  } catch (error) {
+    if (signal.aborted || (error instanceof Error && 'code' in error)) throw error;
+    throw new ConfigurationError('Interrupted worktree registration file is malformed.', {
+      cause: error,
+    });
+  }
+}
+
+async function regularText(path: string, signal: AbortSignal): Promise<string | undefined> {
+  return (await registrationFile(path, signal))?.content;
+}
+
+/** Publish a repaired control file, keeping a mid-flight change a configuration failure too. */
+async function replaceRegistrationFile(
+  path: string,
+  content: string,
+  expected: ReadFileResult,
+  signal: AbortSignal,
+): Promise<void> {
+  try {
+    await replaceFile(path, content, { ifMatch: expected.sha256 }, signal);
+  } catch (error) {
+    if (signal.aborted || (error instanceof Error && 'code' in error)) throw error;
+    throw new ConfigurationError('Interrupted worktree registration changed.', { cause: error });
   }
 }
 
@@ -77,10 +115,10 @@ export async function repairWorktreeRegistrations(
     // An empty commondir makes even unrelated `git worktree add` calls fail. Git repair
     // cannot read it either. Both exact links above prove this planned registration's owner.
     if (content !== '') continue;
-    const expected = await snapshotFile(path, 4096, signal);
-    if (expected.content !== '')
+    const expected = await registrationFile(path, signal);
+    if (expected?.content !== '')
       throw new ConfigurationError('Interrupted worktree registration changed.');
-    await replaceFile(path, '../..\n', { ifMatch: expected.sha256 }, signal);
+    await replaceRegistrationFile(path, '../..\n', expected, signal);
     repaired.push(cache.path);
   }
   return repaired;

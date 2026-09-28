@@ -26,10 +26,12 @@ import {
   runWorkflow,
   type Harness,
   type WorktreeHandle,
+  type WorktreeLedger,
   type ProcessRunner,
 } from '../src/index.js';
 import { WorktreeGit } from '../src/worktrees/git.js';
 import { RunWorktrees } from '../src/workflow/runtime/worktrees.js';
+import { repairWorktreeRegistrations } from '../src/workflow/runtime/worktree-recovery.js';
 import { testInvocation } from './harness-invocation.js';
 
 // Every test drives dozens of real Git processes and fsynced checkpoints; under a loaded parallel
@@ -1457,6 +1459,121 @@ it.each(['owned', 'different-owner'] as const)(
   },
   20_000,
 );
+
+it.each([
+  {
+    label: 'a symlinked commondir',
+    corrupt: async (metadata: string) => {
+      const elsewhere = join(dirname(metadata), 'elsewhere-commondir');
+      await writeFile(elsewhere, '../..\n');
+      await rm(join(metadata, 'commondir'), { force: true });
+      await symlink(elsewhere, join(metadata, 'commondir'));
+    },
+  },
+  {
+    label: 'an oversized gitdir backlink',
+    corrupt: (metadata: string) => writeFile(join(metadata, 'gitdir'), '../..\n'.repeat(1000)),
+  },
+  {
+    label: 'a non-UTF-8 gitdir backlink',
+    corrupt: (metadata: string) =>
+      writeFile(join(metadata, 'gitdir'), Buffer.from([0xff, 0xfe, 0xfd])),
+  },
+])(
+  'rejects a resumed worktree registration with $label as malformed',
+  async ({ corrupt }) => {
+    let interrupted = false;
+    const breakingRunner: ProcessRunner = {
+      async run(request, invocation) {
+        const result = await processRunner.run(request, invocation);
+        if (
+          !interrupted &&
+          Array.isArray(request.command) &&
+          request.command.includes('worktree') &&
+          request.command.includes('add')
+        ) {
+          interrupted = true;
+          const path = z.string().parse(request.command.at(-2));
+          const metadata = resolve(
+            path,
+            (await readFile(join(path, '.git'), 'utf8')).replace(/^gitdir: /u, '').trimEnd(),
+          );
+          await corrupt(metadata);
+          throw new Error('fixture interrupted registration');
+        }
+        return result;
+      },
+    };
+    const invoke = vi.fn<Harness['invoke']>(async (request) => {
+      await writeFile(join(request.cwd, 'file.txt'), 'resumed edit\n');
+      return response;
+    });
+    const workflow = defineWorkflow({
+      name: 'planned-registration-malformed',
+      version: '1',
+      input: z.null(),
+      output: z.string(),
+      async run(ctx) {
+        const result = await ctx.codex.text('edit', { prompt: 'edit', isolation: 'worktree' });
+        assert(result.worktree?.commit);
+        return result.worktree.commit;
+      },
+    });
+    const settings = {
+      ...options('planned-registration-malformed'),
+      harness: { invoke },
+      worktrees: { root, keep: 'all' as const },
+    };
+    await expect(
+      runWorkflow(workflow, { ...settings, input: null, processRunner: breakingRunner }),
+    ).rejects.toThrow('fixture interrupted registration');
+    expect(invoke).not.toHaveBeenCalled();
+    const rejection: unknown = await runWorkflow(workflow, {
+      ...settings,
+      resume: true,
+    }).catch((error: unknown) => error);
+    expect(rejection).toBeInstanceOf(Error);
+    expect((rejection as Error).cause).toBeInstanceOf(ConfigurationError);
+    expect((rejection as Error).message).toContain('malformed');
+    expect(invoke).not.toHaveBeenCalled();
+  },
+  20_000,
+);
+
+it('surfaces an aborted signal from worktree registration recovery as cancellation, not a configuration error', async () => {
+  // Exercising this precisely through a full interrupted `git worktree add` plus a real-time
+  // abort would race the recovery's own fs reads. Driving the exported recovery function
+  // directly against a synthetic, already-planned registration lets the abort be deterministic.
+  const cachePath = join(root, 'owned-run-ns', 'leaf');
+  const common = join(directory, 'common-repo');
+  const metadata = join(common, 'worktrees', 'leaf');
+  await mkdir(cachePath, { recursive: true });
+  await mkdir(metadata, { recursive: true });
+  await writeFile(join(cachePath, '.git'), `gitdir: ${metadata}\n`);
+  await writeFile(join(metadata, 'gitdir'), `${join(cachePath, '.git')}\n`);
+  await writeFile(join(metadata, 'commondir'), '');
+  const ledger: WorktreeLedger = {
+    namespace: 'ns',
+    repo: repo,
+    root,
+    caches: {
+      leaf: { path: cachePath, stepId: 'leaf', attempt: 1, state: 'planned', outcome: 'running' },
+    },
+    handles: {},
+    refs: {},
+  };
+  const controller = new AbortController();
+  controller.abort(new Error('recovery cancelled'));
+  const rejection: unknown = await repairWorktreeRegistrations(
+    ledger,
+    'owned-run',
+    common,
+    controller.signal,
+  ).catch((error: unknown) => error);
+  expect(rejection).toBeInstanceOf(Error);
+  expect((rejection as Error).message).toBe('recovery cancelled');
+  expect(rejection).not.toBeInstanceOf(ConfigurationError);
+});
 
 it('throws ConfigurationError when a resumed worktree registration is missing its metadata directory', async () => {
   let interrupted = false;
