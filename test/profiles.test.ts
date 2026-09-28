@@ -493,6 +493,16 @@ defineWorkflow({
   },
 });
 
+// Compile-time contract: isolation is a per-call placement decision, not a profile property.
+defineWorkflow({
+  ...base,
+  // @ts-expect-error Profile claude/codex options omit isolation; it belongs on the call itself.
+  profiles: { r: { claude: { isolation: 'worktree' } } },
+  async run(ctx) {
+    return (await ctx.claude.text('ok', { prompt: 'x', profile: 'r' })).output;
+  },
+});
+
 it('checks raw Codex sandbox calls, unknown runtime names, and fresh fork grants', async () => {
   const invoke = vi.fn<Harness['invoke']>().mockResolvedValue(reply);
   const definition = defineWorkflow({
