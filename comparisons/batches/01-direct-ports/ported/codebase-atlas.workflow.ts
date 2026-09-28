@@ -90,7 +90,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
    layer, a persistence layer, a worker fleet, a CLI, a frontend app...). Rank
    each core/supporting/peripheral. Prefer 4-8 subsystems; merge tiny ones.`,
         schema: SURVEY_SCHEMA,
-        // Original effort: 'low' — no matching ClaudeOptions control.
+        effort: 'low',
       })
       .then((result) => result.output);
 
@@ -171,7 +171,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
    3 files a new engineer should read first, with one line each on why.
    Write the file, then return just the absolute path you wrote.`,
 
-        // Original effort: 'low' — no matching ClaudeOptions control.
+        effort: 'low',
       })
       .then((result) => result.output);
 
@@ -194,7 +194,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
    ignores. For each gap give a repairAction a reader agent could execute.
    Skipped-by-budget subsystems (expected, still worth listing): ${skipped.map((s) => s.name).join(', ') || 'none'}.`,
         schema: CRITIQUE_SCHEMA,
-        // Original effort: 'high' — no matching ClaudeOptions control.
+        effort: 'high',
       })
       .then((result) => result.output);
 
@@ -228,7 +228,9 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
      and voice. Patches: ${JSON.stringify(patches)}. Rewrite the file in place and
      return the path.`,
 
-          // Original phase: 'Critique'; effort: 'low' — no matching ClaudeOptions control.
+          // Original phase: 'Critique'.
+
+          effort: 'low',
         })
         .then((result) => result.output);
     }

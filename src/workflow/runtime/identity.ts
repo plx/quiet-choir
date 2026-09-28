@@ -12,7 +12,9 @@ export function stepIdentity(components: Record<string, JsonValue>): StepIdentit
 
 /** Explicit request identity before any authorized execution overrides. @internal */
 export function agentIdentity(request: HarnessRequest, schema: JsonValue): StepIdentity {
-  const options = request.options;
+  const options = { ...request.options };
+  if (request.provider === 'codex' && request.imageAttachments !== undefined)
+    Object.assign(options, { images: request.imageAttachments.map((image) => image.sha256) });
   const capabilities = Object.fromEntries(
     Object.entries(options)
       .filter(

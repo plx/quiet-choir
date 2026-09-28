@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { codexEffortValues } from './agent-controls.js';
 import type { ResolvedProfile, ProfileOverride } from './profiles-model.js';
 import { errorKindSchema } from './step-error.js';
 
@@ -27,7 +28,7 @@ const limits = {
   maxBudgetUsd: z.number().positive().optional(),
   retry: retryPolicySchema.optional(),
 };
-const effort = z.enum(['minimal', 'low', 'medium', 'high']);
+const effort = z.enum(codexEffortValues);
 /** Checkpoint and adapter policy validator. @internal */
 export const executionPolicySchema = z.strictObject({
   ...limits,

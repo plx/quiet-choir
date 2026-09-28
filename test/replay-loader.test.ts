@@ -74,7 +74,9 @@ afterEach(async () => {
   await rm(root, { recursive: true, force: true });
 });
 
-describe('source-aware loader recovery', { timeout: 30_000 }, () => {
+// Each case type-checks fixtures that import the whole engine source several times; on shared CI
+// runners the heaviest case has run for 27-31s, so 30s timed out intermittently.
+describe('source-aware loader recovery', { timeout: 90_000 }, () => {
   it('normalizes symlink spellings, excludes engine sources, and validates the exact stored fingerprint', async () => {
     const alias = join(root, 'alias');
     await symlink(root, alias);

@@ -203,7 +203,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
      user interface — pulls in design work you should flag), hasFeedbackSource
      (a feedback corpus exists to synthesize). Return the pruned, ordered plan.`,
           schema: INTAKE_SCHEMA,
-          // Original effort: 'high' — no matching ClaudeOptions control.
+          effort: 'high',
         })
         .then((result) => result.output);
       if (!intake)
@@ -319,7 +319,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
      decision, unanswered PRD questions, a failed QA verdict). "concerns" for
      non-blocking notes. "pass" if it's safe to proceed.`,
           schema: GATE_SCHEMA,
-          // Original effort: 'high' — no matching ClaudeOptions control.
+          effort: 'high',
         })
         .then((result) => result.output);
       state.log.push(

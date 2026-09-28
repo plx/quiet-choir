@@ -160,7 +160,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
    name specific inputs and expected outcomes, not "test edge cases".
    Gaps: ${JSON.stringify(gaps, null, 2)}`,
         schema: RANKED_SCHEMA,
-        // Original effort: 'high' — no matching ClaudeOptions control.
+        effort: 'high',
       })
       .then((result) => result.output);
 
@@ -276,7 +276,8 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
      RESTORE ${gap.file} BEFORE YOU REPORT, on every path — including when you
      report red. Copy it before you touch it and diff against that copy last.`,
           schema: FILL_SCHEMA,
-          // Original phase: 'Fill'; effort: 'high' — no matching ClaudeOptions control.
+          // Original phase: 'Fill'.
+          effort: 'high',
         })
         .then((result) => result.output)
         .then((v) =>

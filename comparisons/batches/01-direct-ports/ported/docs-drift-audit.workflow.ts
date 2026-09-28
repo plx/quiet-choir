@@ -91,7 +91,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
    hurt readers, e.g. install instructions; low = design notes). Skip generated
    files and changelogs — history doesn't drift.`,
         schema: INVENTORY_SCHEMA,
-        // Original effort: 'low' — no matching ClaudeOptions control.
+        effort: 'low',
       })
       .then((result) => result.output);
 
@@ -132,7 +132,8 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
      Skip pure opinion and marketing ("blazing fast"). Include the doc text
      (quote) for each claim and a checkHint for the verifier.`,
             schema: CLAIMS_SCHEMA,
-            // Original phase: 'Extract'; effort: 'low' — no matching ClaudeOptions control.
+            // Original phase: 'Extract'.
+            effort: 'low',
           })
           .then((result) => result.output),
 
@@ -172,7 +173,9 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
        Edit the file in place. Keep the doc's voice and structure; change only
        what's wrong. Do not add new sections. Return a one-line summary per edit.`,
 
-            // Original phase: 'Fix'; effort: 'low' — no matching ClaudeOptions control.
+            // Original phase: 'Fix'.
+
+            effort: 'low',
           })
           .then((result) => result.output)
           .then(() => ({ ...checked, fixed: drifted.length }));

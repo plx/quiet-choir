@@ -375,12 +375,17 @@ implicit `text` profile is tool-less for Claude, read-only for Codex, and limite
 10 Claude turns and $0.50 per Claude call. `readonly` grants file-reading tools; `edit` adds writing
 and requires an operator grant. Declare roles on `defineWorkflow`, select with `profile`, and use
 `--grant role` at launch. Raw call-site tools/sandbox are rejected under default `strictProfiles`.
-`tools` implies `allowedTools` unless explicitly narrowed. Claude uses `dontAsk`; allowed rules add
-to inherited settings permissions. Codex uses approval policy `never`. MCP tools and hooks can still
-load from configuration. The combined output cap is 8 MiB; Codex has no per-call USD cap here. Model
-selection is explicit or inherited from the installed harness. Codex `reasoningEffort` accepts only
-`minimal|low|medium|high` here. Codex 0.157.1 also recognizes `none`, `xhigh`, and `max`; per-model
-support is unverified. Omission can inherit an expensive configured level. The byte cap counts the
+`tools` implies `allowedTools` unless explicitly narrowed. Claude defaults to `dontAsk`; allowed
+rules add to inherited settings permissions. Codex uses approval policy `never`. MCP tools and hooks
+can still load from configuration. The combined output cap is 8 MiB; Codex has no per-call USD cap
+here. Model selection is explicit or inherited from the installed harness. Both providers accept
+`effort: 'low' | 'medium' | 'high' | 'xhigh' | 'max'`; Codex `reasoningEffort` additionally accepts
+`none` and `minimal`. Set one effort field, never both. Omission inherits native configuration.
+[Harness controls](docs/harness-controls.md) describes role prompts, agents, MCP, native
+profiles/config, directories, image attachments and the fingerprinted `extraArgs`/`env` escape
+hatch. `configuration doctor --json` verifies installed CLI contracts with zero-inference rejection
+probes and reports inherited Codex defaults. Run metadata captures native CLI versions on first live
+use; a resume version change warns without invalidating completed work. The byte cap counts the
 whole stdout/stderr stream, including command output; CLI runs cannot raise it, while embedders can
 set `CliHarnessOptions.maxOutputBytes`. A call may hit the cap after editing files.
 

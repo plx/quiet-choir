@@ -1,3 +1,5 @@
+import { commonControlFields, claudeControlFields, codexControlFields } from './agent-controls.js';
+import { validateAgentOptions } from './options.js';
 import { z } from 'zod';
 import type { ClaudeOptions, CodexOptions } from './model.js';
 import type {
@@ -24,6 +26,8 @@ const fields = {
   onPermissionDenied: z.enum(['warn', 'fail']).optional(),
   claude: z
     .strictObject({
+      ...commonControlFields,
+      ...claudeControlFields,
       model: z.string().min(1).optional(),
       tools: z.array(z.string().regex(/^[a-zA-Z][a-zA-Z0-9_*.-]*$/u)).optional(),
       allowedTools: z.array(z.string().min(1)).optional(),
@@ -31,9 +35,11 @@ const fields = {
     .optional(),
   codex: z
     .strictObject({
+      ...commonControlFields,
+      ...codexControlFields,
+      images: z.never().optional(),
       model: z.string().min(1).optional(),
       sandbox: z.enum(['read-only', 'workspace-write']).optional(),
-      reasoningEffort: z.enum(['minimal', 'low', 'medium', 'high']).optional(),
       skipGitRepoCheck: z.boolean().optional(),
       structuredOutput: z.enum(['strict', 'compat']).optional(),
     })
@@ -179,9 +185,11 @@ export function capabilityManifest(definition: {
     const tools = data.claude?.tools ?? [];
     const allowedTools = data.claude?.allowedTools ?? tools;
     checkAllowedTools(tools, allowedTools);
-    const claudeAccess = toolAccess(tools);
+    const claudeAccess = controlAccess('claude', { ...data.claude, tools });
     const sandbox = data.codex?.sandbox ?? 'read-only';
-    const codexAccess = sandbox === 'workspace-write' ? 'write' : 'read';
+    const codexAccess = controlAccess('codex', { ...data.codex, sandbox });
+    validateAgentOptions('claude', { ...data.claude, tools, allowedTools, prompt: '' });
+    validateAgentOptions('codex', { ...data.codex, sandbox, prompt: '' });
     const access = rank[claudeAccess] > rank[codexAccess] ? claudeAccess : codexAccess;
     // A parent's assertion describes the parent, not every descendant that replaces tools.
     const ownAssertion = declared[name]?.access ?? (layers.length ? undefined : assertion);
@@ -251,6 +259,7 @@ export function profileGrantDigest(profile: ResolvedProfile): string {
     tools: profile.claude.tools,
     allowedTools: profile.claude.allowedTools,
     sandbox: profile.codex.sandbox,
+    ...capabilityExtras(profile.claude, profile.codex),
   });
 }
 
@@ -286,7 +295,7 @@ export function resolveProfileCall(
   const profile = manifest.profiles[name];
   if (!Object.hasOwn(manifest.profiles, name) || !profile)
     throw new Error(`Unknown profile: ${name}.`);
-  const raw = ['tools', 'allowedTools', 'sandbox'].filter((key) => Object.hasOwn(call, key));
+  const raw = capabilityFields.filter((key) => Object.hasOwn(call, key));
   if (manifest.strictProfiles && raw.length)
     throw new Error(`strictProfiles forbids call-site ${raw.join(', ')}; declare a named profile.`);
   const overrides = { ...call };
@@ -299,7 +308,7 @@ export function resolveProfileCall(
       'tools' in call && !('allowedTools' in call) ? tools : (claude.allowedTools ?? tools);
     checkAllowedTools(tools, allowedTools);
     Object.assign(resolved, { allowedTools });
-    const access = toolAccess(tools);
+    const access = controlAccess('claude', { ...claude, tools });
     requireGrant(
       profile,
       raw.length ? grants.filter((grant) => !Object.hasOwn(manifest.profiles, grant)) : grants,
@@ -311,9 +320,10 @@ export function resolveProfileCall(
       profile,
       raw.length ? grants.filter((grant) => !Object.hasOwn(manifest.profiles, grant)) : grants,
       pins,
-      (resolved as CodexOptions).sandbox === 'workspace-write' ? 'write' : 'read',
+      controlAccess('codex', resolved),
     );
   }
+  validateAgentOptions(provider, resolved);
   return { profile, options: resolved };
 }
 
@@ -322,7 +332,7 @@ const resolvedProfileSchema = z.strictObject({
   name: nameSchema,
   access: z.enum(['none', 'read', 'write', 'exec']),
   claudeAccess: z.enum(['none', 'read', 'write', 'exec']),
-  codexAccess: z.enum(['read', 'write']),
+  codexAccess: z.enum(['read', 'write', 'exec']),
   claude: fields.claude
     .unwrap()
     .extend({ tools: z.array(z.string()), allowedTools: z.array(z.string()) }),
@@ -336,3 +346,69 @@ export const capabilityManifestSchema = z.strictObject({
   profiles: z.record(nameSchema, resolvedProfileSchema),
   requiredGrants: z.array(nameSchema),
 });
+
+const capabilityFields = [
+  'tools',
+  'allowedTools',
+  'sandbox',
+  'disallowedTools',
+  'permissionMode',
+  'agent',
+  'agents',
+  'mcpServers',
+  'strictMcpConfig',
+  'settings',
+  'addDirs',
+  'extraArgs',
+  'env',
+  'networkAccess',
+  'harnessProfile',
+  'config',
+] as const;
+function capabilityExtras(
+  claude: NonNullable<AgentProfile['claude']>,
+  codex: NonNullable<AgentProfile['codex']>,
+): Record<string, unknown> {
+  const extras = Object.fromEntries(
+    (
+      [
+        ['claude', claude],
+        ['codex', codex],
+      ] as const
+    ).flatMap(([provider, controls]) =>
+      Object.entries(controls)
+        .filter(
+          ([key]) =>
+            capabilityFields.some((field) => field === key) &&
+            !['tools', 'allowedTools', 'sandbox'].includes(key),
+        )
+        .map(([key, value]) => [`${provider}.${key}`, value]),
+    ),
+  );
+  return extras;
+}
+/** Classify configuration/escape hatches conservatively without interpreting native plugins. @internal */
+export function controlAccess(
+  provider: 'claude' | 'codex',
+  value: Partial<ClaudeOptions & CodexOptions>,
+): AccessClass {
+  if (
+    value.agent !== undefined ||
+    value.agents !== undefined ||
+    value.mcpServers !== undefined ||
+    value.settings !== undefined ||
+    value.harnessProfile !== undefined ||
+    value.config !== undefined ||
+    (value.extraArgs?.length ?? 0) > 0 ||
+    value.env !== undefined ||
+    value.networkAccess === true
+  )
+    return 'exec';
+  if (provider === 'codex')
+    return value.sandbox === 'workspace-write' || (value.addDirs?.length ?? 0) > 0
+      ? 'write'
+      : 'read';
+  const tools = toolAccess(value.tools ?? []);
+  if (tools === 'none' && (value.addDirs?.length ?? 0) > 0) return 'read';
+  return tools;
+}

@@ -109,7 +109,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
    match how this repo actually integrates changes), and the current version
    from tags or the package manifest if determinable. Do not summarize commits.`,
         schema: MANIFEST_SCHEMA,
-        // Original effort: 'low' — no matching ClaudeOptions control.
+        effort: 'low',
       })
       .then((result) => result.output);
 
@@ -153,7 +153,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
      are not release-notes material for most audiences. For breaking changes and
      deprecations, write the migration note from the diff. Report commitsRead.`,
                 schema: CHANGES_SCHEMA,
-                // Original effort: 'low' — no matching ClaudeOptions control.
+                effort: 'low',
               })
               .then((result) => result.output),
         ),
@@ -210,7 +210,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
    schema migrations; flag omissions. Also flag wrong-emphasis (a data-loss fix
    buried under a color tweak).`,
         schema: FACTCHECK_SCHEMA,
-        // Original effort: 'high' — no matching ClaudeOptions control.
+        effort: 'high',
       })
       .then((result) => result.output);
 
@@ -238,7 +238,9 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
      existing format conventions; otherwise create it. Notes:\n${notes}
      Return the path written.`,
 
-          // Original phase: 'Fact-check'; effort: 'low' — no matching ClaudeOptions control.
+          // Original phase: 'Fact-check'.
+
+          effort: 'low',
         })
         .then((result) => result.output);
     }

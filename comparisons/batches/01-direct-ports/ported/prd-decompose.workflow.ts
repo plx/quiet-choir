@@ -203,7 +203,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
    Items: ${JSON.stringify(allItems, null, 2)}
    Carry forward these open questions, deduplicated: ${JSON.stringify(allQuestions)}`,
         schema: BACKLOG_SCHEMA,
-        // Original effort: 'high' — no matching ClaudeOptions control.
+        effort: 'high',
       })
       .then((result) => result.output);
 
@@ -246,7 +246,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
    ticket that contradicts the PRD (wrong). Judge coverage of the requirement's
    SUBSTANCE, not keyword overlap.`,
         schema: COVERAGE_SCHEMA,
-        // Original effort: 'high' — no matching ClaudeOptions control.
+        effort: 'high',
       })
       .then((result) => result.output);
 
@@ -278,7 +278,9 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
      Backlog: ${JSON.stringify(finalBacklog, null, 2)}
      Write the file and return its path.`,
 
-          // Original phase: 'Verify coverage'; effort: 'low' — no matching ClaudeOptions control.
+          // Original phase: 'Verify coverage'.
+
+          effort: 'low',
         })
         .then((result) => result.output);
     }

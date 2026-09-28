@@ -127,7 +127,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
    row/line range, or explicit file list) usable by an agent that has seen
    nothing else. Do not analyze content yet.`,
         schema: MANIFEST_SCHEMA,
-        // Original effort: 'low' — no matching ClaudeOptions control.
+        effort: 'low',
       })
       .then((result) => result.output);
 
@@ -190,7 +190,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
      per theme — the most representative, not the most colorful. Report patterns
      stuck in "other" as emergent. Report exactly how many items you read.`,
                 schema: TAGGED_SCHEMA,
-                // Original effort: 'low' — no matching ClaudeOptions control.
+                effort: 'low',
               })
               .then((result) => result.output),
         ),
@@ -275,7 +275,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
    long-tail themes in one paragraph, emergent patterns worth a theme next
    quarter. Use verbatim quotes; never paraphrase a user into a stronger claim.`,
 
-        // Original effort: 'high' — no matching ClaudeOptions control.
+        effort: 'high',
       })
       .then((result) => result.output);
 

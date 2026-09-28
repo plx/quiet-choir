@@ -2,6 +2,13 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- Both harnesses accept shared effort and typed native controls, private role/config files,
+  content-snapshotted images and fingerprinted, denylisted args/env/config. Capability controls
+  compose with profiles and grants. See [harness controls](docs/harness-controls.md).
+- `configuration doctor` now probes native CLI contracts without inference. Runs record CLI versions
+  and warn on resumed version changes. The Workflow Lab preserves all 68 original effort settings
+  and checks effort alongside prompts and outputs.
+
 - Workflow agent defaults, named profiles, capability manifests, launch grants and sticky
   `--profile` limit overrides are available. See [agent profiles](docs/agent-profiles.md).
 - **Privilege change:** Claude `tools` now implies `allowedTools` when omitted. Existing calls that

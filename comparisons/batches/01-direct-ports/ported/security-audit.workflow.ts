@@ -195,7 +195,8 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
          the "vulnerable" path reachable in production configuration? Default to
          refuted=true if the attack scenario cannot be shown to be reachable.`,
                         schema: VERDICT_SCHEMA,
-                        // Original phase: 'Refute'; effort: 'high' — no matching ClaudeOptions control.
+                        // Original phase: 'Refute'.
+                        effort: 'high',
                       })
                       .then((result) => result.output),
                 ),
@@ -243,7 +244,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
        findings (e.g. "input validation is ad hoc at every boundary"). Return only
        markdown.`,
 
-              // Original effort: 'low' — no matching ClaudeOptions control.
+              effort: 'low',
             })
             .then((result) => result.output);
 

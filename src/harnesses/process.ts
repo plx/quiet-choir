@@ -4,6 +4,8 @@ import { spawn } from 'node:child_process';
 export interface ProcessRequest {
   /** Executable path or command on PATH. */
   readonly binary: string;
+  /** Overlay on the inherited process environment. */
+  readonly env?: Readonly<Record<string, string>>;
   /** Arguments passed directly to the executable without a shell. */
   readonly args: readonly string[];
   /** Working directory for the executable. */
@@ -34,6 +36,7 @@ export function runProcess(request: ProcessRequest): Promise<ProcessResult> {
   return new Promise((resolve, reject) => {
     const child = spawn(request.binary, [...request.args], {
       cwd: request.cwd,
+      ...(request.env === undefined ? {} : { env: { ...process.env, ...request.env } }),
       detached: process.platform !== 'win32',
       shell: false,
       stdio: ['pipe', 'pipe', 'pipe'],

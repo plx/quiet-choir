@@ -152,7 +152,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
      promises and a credibility tier. Do not read anything in depth; 8-12 good
      leads beat 30 mediocre ones.`,
               schema: LEADS_SCHEMA,
-              // Original effort: 'low' — no matching ClaudeOptions control.
+              effort: 'low',
             })
             .then((result) => result.output),
       ),
@@ -208,7 +208,8 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
    Flag anything contradicting common belief. If the source turns out to be
    useless or inaccessible, say useful=false — do not pad.`,
           schema: READING_SCHEMA,
-          // Original phase: 'Deep-read'; effort: 'low' — no matching ClaudeOptions control.
+          // Original phase: 'Deep-read'.
+          effort: 'low',
         })
         .then((result) => result.output);
 
@@ -247,7 +248,9 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
    Structure: direct answer first (one paragraph), then the evidence, then
    caveats and what we could not determine. Return markdown.`,
 
-          // Original phase: 'Synthesize'; effort: 'high' — no matching ClaudeOptions control.
+          // Original phase: 'Synthesize'.
+
+          effort: 'high',
         })
         .then((result) => result.output);
 
@@ -275,7 +278,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
    For each gap write a TARGETED huntInstruction — a specific search or a
    specific document to read, not "do more research".`,
         schema: CRITIQUE_SCHEMA,
-        // Original effort: 'high' — no matching ClaudeOptions control.
+        effort: 'high',
       })
       .then((result) => result.output);
 

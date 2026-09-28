@@ -1,3 +1,4 @@
+import type { ClaudeOptions, CodexOptions } from './model.js';
 /** Named presets supplied by the runtime. */
 export type BuiltinProfile = 'text' | 'readonly' | 'edit';
 
@@ -26,28 +27,16 @@ export interface AgentProfile extends ProfileLimits {
   readonly expectsToolUse?: boolean;
   /** Warn by default, or fail on reported permission denials. */
   readonly onPermissionDenied?: 'warn' | 'fail';
-  /** Claude model and exact exposed/pre-approved tools. */
-  readonly claude?: {
-    /** Model alias or name; omission uses harness configuration. */
-    readonly model?: string;
-    /** Exposed tools; omission inherits. Replacing this also replaces inferred allowedTools. */
-    readonly tools?: readonly string[];
-    /** Narrower permission rules; omission pre-approves the exposed tools. */
-    readonly allowedTools?: readonly string[];
-  };
-  /** Codex model, sandbox and reasoning controls. */
-  readonly codex?: {
-    /** Model alias or name; omission uses harness configuration. */
-    readonly model?: string;
-    /** Filesystem sandbox. */
-    readonly sandbox?: 'read-only' | 'workspace-write';
-    /** Reasoning effort; omission uses harness configuration. */
-    readonly reasoningEffort?: 'minimal' | 'low' | 'medium' | 'high';
-    /** Allow execution outside Git. */
-    readonly skipGitRepoCheck?: boolean;
-    /** Structured schema encoding. */
-    readonly structuredOutput?: 'strict' | 'compat';
-  };
+  /** Claude model, tool gates, role prompts and native controls. */
+  readonly claude?: Omit<
+    ClaudeOptions,
+    'profile' | 'prompt' | 'cwd' | 'onError' | 'retry' | keyof ProfileLimits
+  >;
+  /** Codex model, sandbox, effort and native controls. */
+  readonly codex?: Omit<
+    CodexOptions,
+    'profile' | 'prompt' | 'cwd' | 'onError' | 'retry' | 'images' | keyof ProfileLimits
+  >;
 }
 
 /** Workflow-wide defaults applied after the selected built-in preset. */

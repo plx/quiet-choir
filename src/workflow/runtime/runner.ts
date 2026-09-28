@@ -1,3 +1,4 @@
+import { snapshotImages } from './images.js';
 import { profileLimitError } from './profile-diagnostics.js';
 import {
   capabilityManifest,
@@ -172,6 +173,20 @@ async function waitUntil(timestamp: number, signal: AbortSignal): Promise<void> 
   }
 }
 
+/** Await shared `work`, but stop waiting (without cancelling it) once `signal` aborts. */
+function untilAborted<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
+  signal.throwIfAborted();
+  return new Promise<T>((resolve, reject) => {
+    const abort = (): void => {
+      reject(signal.reason as Error);
+    };
+    signal.addEventListener('abort', abort, { once: true });
+    void work.then(resolve, reject).finally(() => {
+      signal.removeEventListener('abort', abort);
+    });
+  });
+}
+
 /** Describe the boundary that aborted `signal`; callers must only pass an aborted signal. */
 function cancellationError(signal: AbortSignal, cause: unknown): CancelledError {
   if (signal.reason instanceof CancelledError)
@@ -297,8 +312,16 @@ export async function runWorkflow<TInput, TOutput>(
       return {
         ...existing,
         output: output as TOutput & JsonValue,
-        ...(existing.policyWarnings?.length || existing.replayWarnings?.length
-          ? { warnings: [...(existing.policyWarnings ?? []), ...(existing.replayWarnings ?? [])] }
+        ...(existing.policyWarnings?.length ||
+        existing.replayWarnings?.length ||
+        existing.harnessWarnings?.length
+          ? {
+              warnings: [
+                ...(existing.policyWarnings ?? []),
+                ...(existing.replayWarnings ?? []),
+                ...(existing.harnessWarnings ?? []),
+              ],
+            }
           : {}),
       };
     }
@@ -782,6 +805,15 @@ export async function runWorkflow<TInput, TOutput>(
       }
     }
 
+    const metadataRequests = new Map<string, Promise<void>>();
+    // Discovery is run-owned; an aborted scope may abandon its wait, so draining releases the rest.
+    const discoveryController = new AbortController();
+    const discoverySignal = AbortSignal.any([signal, discoveryController.signal]);
+    async function drainDiscovery(): Promise<void> {
+      // Every effect that awaited discovery has settled, so any unsettled request is abandoned.
+      discoveryController.abort(new CancelledError(null, undefined));
+      await Promise.allSettled(metadataRequests.values());
+    }
     function client<TOptions extends AgentOptions>(
       provider: 'claude' | 'codex',
     ): AgentClient<TOptions> {
@@ -792,7 +824,7 @@ export async function runWorkflow<TInput, TOutput>(
         structured: boolean,
       ): Promise<EffectResult<AgentResult<T>, TMode>> {
         const id = names.qualify(leaf);
-        return launch(id, () => {
+        return launch(id, async () => {
           let request: HarnessRequest;
           let schema: z.ZodType<T>;
           let execution: AttemptPolicy;
@@ -801,7 +833,7 @@ export async function runWorkflow<TInput, TOutput>(
             const data = jsonValue({ options: optionData(agentOptions, structured) }) as {
               options: TOptions & JsonValue;
             };
-            validateAgentOptions(provider, data.options);
+            validateAgentOptions(provider, data.options, false);
             const resolvedProfile = resolveProfileCall(
               capabilities,
               provider,
@@ -839,6 +871,16 @@ export async function runWorkflow<TInput, TOutput>(
                 reasoningEffort: profileEffort,
                 sources: { ...execution.sources, reasoningEffort: `profile:${profile.name}` },
               };
+            // The shared effort is requested only when no reasoningEffort replaces it.
+            if (execution.reasoningEffort === null && resolvedProfile.options.effort !== undefined)
+              execution = {
+                ...execution,
+                sources: {
+                  ...execution.sources,
+                  effort:
+                    data.options.effort === undefined ? `profile:${profile.name}` : 'call-site',
+                },
+              };
             request = jsonValue({
               provider,
               options: resolvedProfile.options,
@@ -848,6 +890,27 @@ export async function runWorkflow<TInput, TOutput>(
           } catch (cause) {
             throw new Error(`Step ${id}: ${message(cause)}`, { cause });
           }
+          if (request.provider === 'codex' && request.options.images !== undefined) {
+            // The same scope signal the effect captures below; interruption must release a stalled read.
+            const signal = scopes.signal;
+            try {
+              request = {
+                ...request,
+                imageAttachments: await snapshotImages(request.options.images, request.cwd, signal),
+              };
+            } catch (cause) {
+              // Surface cancellation exactly as the effect's own launch check would.
+              signal.throwIfAborted();
+              throw new Error(`Step ${id}: image snapshot failed: ${message(cause)}`, { cause });
+            }
+          }
+          execution = {
+            ...execution,
+            requested: {
+              model: execution.requestedModel ?? 'inherited',
+              effort: execution.reasoningEffort ?? request.options.effort ?? 'inherited',
+            },
+          };
           const resultSchema = z.object({
             output: schema,
             sessionId: z.string().nullable(),
@@ -873,6 +936,7 @@ export async function runWorkflow<TInput, TOutput>(
               ? {}
               : { reasoningEffort: execution.reasoningEffort }),
           });
+          if (provider === 'codex' && execution.reasoningEffort !== null) delete applied.effort;
           request = { ...request, options: applied };
           validateAgentOptions(provider, request.options);
           return effect(
@@ -886,6 +950,32 @@ export async function runWorkflow<TInput, TOutput>(
                 throw new ConfigurationError(
                   `No harness adapter configured for ${provider}. Supply RunOptions.harness.`,
                 );
+              if (options.harness.metadata) {
+                let discovery = metadataRequests.get(provider);
+                if (!discovery) {
+                  discovery = (async () => {
+                    // Installation discovery is shared by the run, not owned by the first map subtree.
+                    const metadata = await options.harness?.metadata?.(request, discoverySignal);
+                    if (!metadata) return;
+                    const old = record.harnesses?.[provider];
+                    const warnings = [...(metadata.warnings ?? [])];
+                    if (old && (old.version !== metadata.version || old.binary !== metadata.binary))
+                      warnings.push(
+                        `${provider} harness changed from ${old.binary}@${old.version ?? 'unknown'} to ${metadata.binary}@${metadata.version ?? 'unknown'}; completed effects remain reusable.`,
+                      );
+                    (record.harnesses ??= {})[provider] = metadata;
+                    record.harnessWarnings = [
+                      ...new Set([...(record.harnessWarnings ?? []), ...warnings]),
+                    ];
+                    await save();
+                  })();
+                  // Abandoned waits must not leave an unobserved rejection behind.
+                  discovery.catch(() => undefined);
+                  metadataRequests.set(provider, discovery);
+                }
+                await untilAborted(discovery, context.signal);
+                context.signal.throwIfAborted();
+              }
               let response;
               try {
                 response = await options.harness.invoke(request, context.signal);
@@ -1082,6 +1172,7 @@ export async function runWorkflow<TInput, TOutput>(
       await operations.drain();
       operations.assertObserved();
       closed = true;
+      await drainDiscovery();
       signal.throwIfAborted();
       const missingMaps = Object.keys(maps).filter(
         (id) =>
@@ -1111,8 +1202,16 @@ export async function runWorkflow<TInput, TOutput>(
       for (const [id, step] of superseded) emit('step.superseded', id, step);
       return {
         ...structuredClone(record),
-        ...(record.policyWarnings.length || record.replayWarnings.length
-          ? { warnings: [...record.policyWarnings, ...record.replayWarnings] }
+        ...(record.policyWarnings.length ||
+        record.replayWarnings.length ||
+        record.harnessWarnings?.length
+          ? {
+              warnings: [
+                ...record.policyWarnings,
+                ...record.replayWarnings,
+                ...(record.harnessWarnings ?? []),
+              ],
+            }
           : {}),
         output: definition.output.parse(structuredClone(record.output)) as TOutput & JsonValue,
       };
@@ -1129,6 +1228,7 @@ export async function runWorkflow<TInput, TOutput>(
       // Body failures stop new launches but preserve in-flight work. Only explicit cancellation
       // or checkpoint failure aborts a scope; draining here does not send a signal.
       await operations.drain();
+      await drainDiscovery();
       // A callback's own AbortError is a failure; only scope cancellation cancels the run.
       record.status = interrupted || error instanceof CancelledError ? 'cancelled' : 'failed';
       record.error = message(error);

@@ -68,7 +68,7 @@
     "summary": "Generate four designs from deliberately different philosophies, anonymize them for independent judges, score the fixed rubric in code, and synthesize the winner with useful ideas from the runners-up.",
     "preserved": "All four proposer identities, A/B/C/D anonymization, judge independence, score arithmetic, winner selection, graft prompts, and the six-point dissent threshold are unchanged.",
     "changes": [
-      "Proposals and scores use inferred Zod response types; the final design stays free text. The requested high effort is documented but cannot be passed through ClaudeOptions."
+      "Proposals and scores use inferred Zod response types; the final design stays free text. The requested high effort is passed through ClaudeOptions and verified against the original calls."
     ],
     "evaluation": "Scores remain agent judgments; typed numeric fields do not enforce the prompt’s 1–10 range. The original schemas do not validate that every judge scored every proposal, and this direct port does not add that behavior."
   },

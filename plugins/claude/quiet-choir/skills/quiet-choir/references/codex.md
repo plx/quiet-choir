@@ -1,9 +1,9 @@
 # Codex calls
 
 These are quiet-choir's `CodexOptions`. The installed Codex CLI may expose more settings, but this
-adapter accepts only the subset below. Any agent host can author a workflow that invokes
-`ctx.codex`. This plugin does not install Codex; `CliHarness` runs the first `codex` on PATH unless
-an embedding caller overrides the binary.
+adapter provides typed controls and a fingerprinted escape hatch. Any agent host can author a
+workflow that invokes `ctx.codex`. This plugin does not install Codex; `CliHarness` runs the first
+`codex` on PATH unless an embedding caller overrides the binary.
 
 ## Options and result
 
@@ -18,13 +18,28 @@ defaults come from the core's implicit `text` profile; custom harnesses must enf
 | `cwd`              | Resolved against the run's working directory; defaults to it. Absolute paths are accepted and are not confined. The directory must exist. |
 | `timeoutMs`        | Per-call wall-clock limit, default 300,000 (5 minutes)                                                                                    |
 | `sandbox`          | `read-only` (default) or `workspace-write`                                                                                                |
-| `reasoningEffort`  | `minimal`, `low`, `medium`, or `high`; omitted means inherited configuration                                                              |
+| `reasoningEffort`  | `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`; conflicts with `effort`                                                       |
 | `skipGitRepoCheck` | Set true to permit execution outside a Git repo; omitted by default                                                                       |
 
-Codex 0.157.1 also accepts effort names `none`, `xhigh`, and `max`, which this adapter cannot pass
-through `reasoningEffort`; support for particular models is unverified. Omitting the option inherits
-user configuration, which may select an expensive level such as `xhigh`. Expanding the typed surface
-is deferred to [#46](https://github.com/plx/quiet-choir/issues/46).
+| Additional option | Meaning                                                                                                                              |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `effort`          | Shared `low`, `medium`, `high`, `xhigh`, `max`; set this or reasoningEffort, never both                                              |
+| `networkAccess`   | Explicit boolean under workspace-write; requires that sandbox even when false                                                        |
+| `harnessProfile`  | Native Codex profile (`--profile`); `profile` still selects a quiet-choir role                                                       |
+| `config`          | JSON values rendered as TOML per dotted key; rejects null and aliases of owned controls                                              |
+| `images`          | Regular files resolved against effect cwd; contents fingerprinted, snapshotted before launch and re-hashed on resume (keep readable) |
+| `addDirs`         | Additional **writable** directories, resolved against effect cwd                                                                     |
+| `extraArgs`       | Fingerprinted `--flag` or `--flag=value`; owned flags/aliases and subcommands rejected                                               |
+| `env`             | Fingerprinted overlay; keep rotating secrets in the parent environment                                                               |
+
+Effort omission inherits native configuration, potentially an expensive level. Model-specific
+support remains native CLI behavior. Capability controls belong in profiles under strict mode.
+Native profiles/config/escape/env and enabled network access conservatively require exec grants;
+additional writable directories require write access. Explicit config values enter identity;
+external native config files do not. `images` snapshots use 0600 files cleaned on every outcome;
+renaming unchanged bytes can replay, changing bytes cannot. Escape args fingerprint strings only,
+not files at paths embedded in them. Record model/effort selections under each attempt's
+`requested`, with `"inherited"` for omissions.
 
 Declare shared roles on `defineWorkflow`, for example
 `defaults: { codex: { reasoningEffort: 'medium' } }` and
@@ -34,14 +49,14 @@ workspace-write. Codex text has access class read, because read-only is its tigh
 Turn/budget profile limits apply only to Claude; Codex honors timeoutMs.
 
 `workflow validate file.ts --json` publishes resolved roles without running the body. Default
-`strictProfiles: true` prohibits raw call-site sandbox/tools/allowedTools. Every declared/default
-write/exec role needs a launch grant by name or class, saved on resume. Selecting built-in `edit`
-directly requires a grant before that call. Named grants are pinned to tools and sandbox, so changed
-capabilities require a fresh grant. These declarations do not isolate inherited hooks/MCP config or
-workflow JavaScript. See [Claude profiles](claude.md) for shared merge, grant and recovery rules.
-Raise a role deadline without source edits using
-`--resume --run-id r1 --profile skeptic.timeoutMs=1800000`; profile names and limits stay outside
-identity, resolved model/effort/sandbox stay inside.
+`strictProfiles: true` prohibits raw call-site capability controls, including sandbox, dirs, native
+profiles/config, network, escape args and environment. Every declared/default write/exec role needs
+a launch grant by name or class, saved on resume. Selecting built-in `edit` directly requires a
+grant before that call. Named grants are pinned to declared capabilities, so changed capabilities
+require a fresh grant. These declarations do not isolate inherited hooks/MCP config or workflow
+JavaScript. See [Claude profiles](claude.md) for shared merge, grant and recovery rules. Raise a
+role deadline without source edits using `--resume --run-id r1 --profile skeptic.timeoutMs=1800000`;
+profile names and limits stay outside identity, resolved model/effort/sandbox stay inside.
 
 Inside a workflow whose input includes `topic`:
 
@@ -55,7 +70,7 @@ const result = await ctx.codex.object('review', {
 ```
 
 The adapter runs
-`codex exec --json --sandbox read-only --config approval_policy="never" --ephemeral --color never -`
+`codex exec --json --sandbox read-only --config approval_policy="never" --ephemeral --color never -- -`
 by default. It does not expose interactive approvals or an unrestricted sandbox. Declare an
 `edit`-based role with `codex: { sandbox: 'workspace-write' }` for authorized editing tasks and
 launch with `--grant role`; the effect's working directory is not automatically isolated in a

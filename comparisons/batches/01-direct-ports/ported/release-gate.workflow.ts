@@ -113,7 +113,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
      Ground your status in EVIDENCE — run the checks, read the diff, quote
      output. "cannot-check" (honestly) beats a guessed pass.`,
                 schema: DIMENSION_SCHEMA,
-                // Original effort: 'high' — no matching ClaudeOptions control.
+                effort: 'high',
               })
               .then((result) => result.output),
         ),
@@ -150,7 +150,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
      a documented-and-accepted risk is not a blocker. confirmed=true only if
      shipping with this is genuinely wrong.`,
                 schema: CONFIRM_SCHEMA,
-                // Original effort: 'high' — no matching ClaudeOptions control.
+                effort: 'high',
               })
               .then((result) => result.output)
               .then((c) => ({ dimension: b, confirm: c })),
@@ -199,7 +199,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
    OK provided named conditions are met first. Write a rationale a release
    manager can forward. Return decision + conditions + rationale.`,
         schema: DECISION_SCHEMA,
-        // Original effort: 'high' — no matching ClaudeOptions control.
+        effort: 'high',
       })
       .then((result) => result.output);
 

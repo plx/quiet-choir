@@ -131,7 +131,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
    Risk and value are separate axes; the sequencing strategies will trade them
    off differently.`,
         schema: CAPS_SCHEMA,
-        // Original effort: 'high' — no matching ClaudeOptions control.
+        effort: 'high',
       })
       .then((result) => result.output);
 
@@ -191,7 +191,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
      measurable exit gate. Stay in character — express your sequencing
      philosophy, don't hedge to a balanced plan.`,
                 schema: STRATEGY_SCHEMA,
-                // Original effort: 'high' — no matching ClaudeOptions control.
+                effort: 'high',
               })
               .then((result) => result.output)
               .then((r) => ({ key: s.key, ...r })),
@@ -231,7 +231,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
    Score each 1-10 on fit to the priorities, pick a winner, and name the single
    best idea from a losing strategy worth grafting into the winner.`,
         schema: PICK_SCHEMA,
-        // Original effort: 'high' — no matching ClaudeOptions control.
+        effort: 'high',
       })
       .then((result) => result.output);
 
@@ -249,7 +249,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
    actually shippable, and exit gates you can't measure. Name the critical
    path explicitly. Each problem gets a concrete fix.`,
         schema: STRESS_SCHEMA,
-        // Original effort: 'high' — no matching ClaudeOptions control.
+        effort: 'high',
       })
       .then((result) => result.output);
 
@@ -273,7 +273,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
    "risk register" of the high-risk capabilities with which milestone de-risks
    each. ${args.out ? `Write it to ${args.out} as well.` : ''} Return the markdown.`,
 
-        // Original effort: 'high' — no matching ClaudeOptions control.
+        effort: 'high',
       })
       .then((result) => result.output);
 

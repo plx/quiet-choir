@@ -52,8 +52,37 @@ export type ErrorMode = 'throw' | 'return';
 /** Return type selected by an effect's error mode. */
 export type EffectResult<T, TMode extends ErrorMode> = TMode extends 'return' ? Settled<T> : T;
 
+/** Effort levels supported by both harnesses; model support can differ. */
+export type Effort = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+
+/** Native harness installation captured for diagnostics, outside semantic identity. */
+export interface HarnessMetadata {
+  /** Executable selected by the adapter. */
+  readonly binary: string;
+  /** Version string, or null if version discovery failed. */
+  readonly version: string | null;
+  /** Nonfatal discovery diagnostics. */
+  readonly warnings?: readonly string[];
+}
+
+/** An immutable image snapshot; adapters must use these bytes when provided. */
+export interface ImageAttachment {
+  /** SHA-256 of the original file bytes. */
+  readonly sha256: string;
+  /** File bytes encoded as base64; not persisted in the run record. */
+  readonly base64: string;
+}
+
 /** Options shared by headless agent calls. */
 export interface AgentOptions {
+  /** Shared reasoning effort; cannot accompany Codex reasoningEffort. */
+  readonly effort?: Effort;
+  /** Additional tool directories; Codex treats these as writable roots. */
+  readonly addDirs?: readonly string[];
+  /** Fingerprinted escape hatch; use --flag=value for values, never reserved/typed flags. */
+  readonly extraArgs?: readonly string[];
+  /** Fingerprinted environment overlay. Keep rotating secrets in the parent environment. */
+  readonly env?: Readonly<Record<string, string>>;
   /** Declared role or built-in preset; omission uses workflow defaults. */
   readonly profile?: string;
   /** Persist a terminal outcome for branching; cancellation, configuration (e.g. missing harness), and checkpoint-write failures still reject. */
@@ -72,6 +101,38 @@ export interface AgentOptions {
 
 /** Claude-specific controls. CliHarness denies unapproved tools by default. */
 export interface ClaudeOptions extends AgentOptions {
+  /** Explicit deny rules such as Bash(git push:*). */
+  readonly disallowedTools?: readonly string[];
+  /** Permission mode; bypass and interactive modes remain unsupported. */
+  readonly permissionMode?: 'dontAsk' | 'acceptEdits' | 'plan';
+  /** Replace the system prompt via a private temporary file. */
+  readonly systemPrompt?: string;
+  /** Append stable role instructions via a private temporary file. */
+  readonly appendSystemPrompt?: string;
+  /** Select a native agent definition. */
+  readonly agent?: string;
+  /** Native subagent definitions, passed through a private JSON file. */
+  readonly agents?: Readonly<
+    Record<
+      string,
+      {
+        /** When the native agent should be used. */
+        readonly description: string;
+        /** Agent role instructions. */
+        readonly prompt: string;
+        /** Additional native subagent fields; bypass modes are rejected. */
+        readonly [key: string]: JsonValue;
+      }
+    >
+  >;
+  /** Explicit MCP servers, written to a private configuration file. */
+  readonly mcpServers?: Readonly<Record<string, JsonValue>>;
+  /** Ignore other MCP configuration sources. */
+  readonly strictMcpConfig?: boolean;
+  /** Extra native settings; typed model/agent/permission controls cannot be duplicated here. */
+  readonly settings?: Readonly<Record<string, JsonValue>>;
+  /** Fallback model or ordered models; semantic identity, not a policy override. */
+  readonly fallbackModel?: string | readonly string[];
   /** Built-in tools to expose; use a workflow profile under default strictProfiles. Default: none. */
   readonly tools?: readonly string[];
   /** Narrower tool permissions; omission pre-approves the exposed tools. */
@@ -84,12 +145,20 @@ export interface ClaudeOptions extends AgentOptions {
 
 /** Codex-specific controls. CliHarness defaults to read-only sandbox and never approving. */
 export interface CodexOptions extends AgentOptions {
+  /** Network access for workspace-write; requires that sandbox explicitly. */
+  readonly networkAccess?: boolean;
+  /** Native Codex configuration profile; profile itself selects the quiet-choir role. */
+  readonly harnessProfile?: string;
+  /** Dotted native config keys with JSON-to-TOML values; owned settings and null are rejected. */
+  readonly config?: Readonly<Record<string, JsonValue>>;
+  /** Local images; the runtime fingerprints and snapshots file contents, not paths. */
+  readonly images?: readonly string[];
   /** Structured-output encoding; compat translates common Zod shapes, strict requires a native Codex schema. CliHarness default: compat; the core supplies no default. */
   readonly structuredOutput?: 'strict' | 'compat';
   /** Filesystem sandbox; declare in a workflow profile under default strictProfiles. Default: read-only. */
   readonly sandbox?: 'read-only' | 'workspace-write';
   /** Harness reasoning effort. */
-  readonly reasoningEffort?: 'minimal' | 'low' | 'medium' | 'high';
+  readonly reasoningEffort?: 'none' | 'minimal' | Effort;
   /** Allow use outside a Git repository. */
   readonly skipGitRepoCheck?: boolean;
 }
@@ -113,6 +182,8 @@ export type HarnessRequest = (
   readonly cwd: string;
   /** JSON Schema for structured responses, or null for text. */
   readonly outputSchema: JsonValue | null;
+  /** Runtime image bytes corresponding to options.images; immutable for this invocation. */
+  readonly imageAttachments?: readonly ImageAttachment[];
 };
 
 /** Usage reported by the harness, with null for unavailable measurements. */
@@ -143,6 +214,11 @@ export interface HarnessResponse {
 
 /** Replaceable integration port, also useful for deterministic tests. */
 export interface Harness {
+  /**
+   * Discover the native binary/version on first live use in each run invocation. Discovery is
+   * shared by the run: `signal` aborts on interruption or once no effect still awaits the result.
+   */
+  metadata?(request: HarnessRequest, signal: AbortSignal): Promise<HarnessMetadata>;
   /** Report effective adapter limits for attempt records. Omit unknown defaults; never perform effects here. */
   policyDefaults?(provider: HarnessRequest['provider']): ExecutionPolicy;
   /** Invoke one fresh session; enforce your own limits, settle on abort, and reject process/protocol failure. */
@@ -363,6 +439,13 @@ export interface PolicyOverride {
 
 /** Fully resolved runtime retry policy plus adapter-declared limits and their provenance. */
 export interface AttemptPolicy {
+  /** Requested selections, explicitly marking harness-inherited choices. Absent in older records. */
+  readonly requested?: {
+    /** Model name, or inherited. */
+    readonly model: string;
+    /** Effort level, or inherited. */
+    readonly effort: string;
+  };
   /** Resolved role name for agent attempts; outside semantic identity. */
   readonly profile?: string;
   /** Limits used for this attempt; custom adapters may leave unknown defaults absent. */

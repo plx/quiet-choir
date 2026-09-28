@@ -145,7 +145,7 @@ async function run(ctx: WorkflowContext, args: z.infer<typeof input>) {
    would PROVE the finished setup works (install, lint, test, build, and a CI
    config dry-run/validation if applicable).`,
         schema: PLAN_SCHEMA,
-        // Original effort: 'high' — no matching ClaudeOptions control.
+        effort: 'high',
       })
       .then((result) => result.output);
 
