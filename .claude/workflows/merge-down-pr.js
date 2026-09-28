@@ -292,12 +292,17 @@ function parseObject(text) {
 }
 
 let nonceSeq = 0;
-const toolFlags = () => `--pr ${A.pr}${ROOT ? ` --root ${ROOT}` : ''}`;
+// Paths reach Bash inside generated commands: quote anything that is not plainly safe.
+const sh = (value) =>
+  /^[\w@%+=:,./-]+$/.test(String(value))
+    ? String(value)
+    : `'${String(value).replace(/'/g, `'\\''`)}'`;
+const toolFlags = () => `--pr ${A.pr}${ROOT ? ` --root ${sh(ROOT)}` : ''}`;
 
 // One helper invocation. Nonces come from a counter, so they are stable across workflow resume.
 function step(id, sub, flags = '', stdin = null) {
   const nonce = `n${++nonceSeq}`;
-  const base = `node ${TOOL} ${sub} ${toolFlags()} --nonce ${nonce}${flags ? ` ${flags}` : ''}`;
+  const base = `node ${sh(TOOL)} ${sub} ${toolFlags()} --nonce ${nonce}${flags ? ` ${flags}` : ''}`;
   const run = stdin === null ? base : `${base} <<'MERGE_DOWN_EOF'\n${stdin}\nMERGE_DOWN_EOF`;
   return { id, sub, nonce, run };
 }
@@ -343,7 +348,7 @@ async function clerk(label, phaseName, steps, render = RUN_STEPS) {
   for (let i = 1; i <= 2 && missing.length; i++) {
     const rereads = missing.map((s) => ({
       ...s,
-      run: `node ${TOOL} last ${toolFlags()} --cmd ${s.sub}`,
+      run: `node ${sh(TOOL)} last ${toolFlags()} --cmd ${s.sub}`,
     }));
     const again = await relay(`${label} (re-read ${i})`, phaseName, rereads);
     Object.assign(out, again.verified);
@@ -412,7 +417,7 @@ if (A.until === 'prepare') return finish('stopped', { prepared: prep });
 
 const situation =
   () => `Repository ${REPO}, PR #${A.pr} "${PR.title}" (${PR.url})${ISSUE ? `, which implements issue #${ISSUE.number} "${ISSUE.title}"` : ', which has no linked issue'}.
-The PR is checked out, rebased onto ${DEF}, in the dedicated git worktree ${W} (local branch ${SYNC.localBranch}). Work only there: use absolute paths with file tools and \`cd ${W} && …\` or \`git -C ${W} …\` in shell commands. Never touch other checkouts or branches, and never push.
+The PR is checked out, rebased onto ${DEF}, in the dedicated git worktree ${W} (local branch ${SYNC.localBranch}). Work only there: use absolute paths with file tools and \`cd ${sh(W)} && …\` or \`git -C ${sh(W)} …\` in shell commands. Never touch other checkouts or branches, and never push.
 Files describing the PR are in ${DIR}: body.md (description), issue.md (issue and its comments), own.stat / own.diff / commits.txt (the PR's changes against ${DEF}), threads.md (unresolved review threads), stack.md (later PRs stacked on this one)${SYNC.forkPoint ? ', upstream-delta.stat / upstream-delta.patch (what changed beneath the PR since it was written)' : ''}.`;
 
 const standing = A.standingNotes.length
@@ -430,15 +435,15 @@ if (SYNC.status === 'conflict') {
 
 ${situation()}
 
-The PR was written on top of an older base. ${DIR}/upstream-delta.stat and upstream-delta.patch show everything that changed beneath it since — for a stacked PR, mostly review fixes applied to the PR below it before that one merged. The PR's original commits: \`git -C ${W} log --oneline ${SYNC.forkPoint}..${SYNC.origHead}\`.
+The PR was written on top of an older base. ${DIR}/upstream-delta.stat and upstream-delta.patch show everything that changed beneath it since — for a stacked PR, mostly review fixes applied to the PR below it before that one merged. The PR's original commits: \`git -C ${sh(W)} log --oneline ${SYNC.forkPoint}..${SYNC.origHead}\`.
 
 Conflicted files now: ${SYNC.conflictedFiles.join(', ')}
 ${standing}
 
 Resolve so the result keeps both the PR's intent and the upstream changes: a semantic merge, not picking a side. If upstream renamed or reshaped something this PR uses or extends, adapt the PR's code to the new shape, including in files without textual conflicts when you notice them. For package-lock.json, take the new base's version (\`git checkout --ours package-lock.json\`; during a rebase "ours" is the new base), run \`npm install --no-audit --no-fund\` in ${W} to reconcile it with package.json, and stage it.
-Stage your resolutions and continue with \`cd ${W} && GIT_EDITOR=true git rebase --continue\`; repeat for any later conflicting commit. Never skip commits, abort, or push.
-${guidance} A quick \`cd ${W} && npx tsc --noEmit -p tsconfig.json\` can confirm types; the full check suite runs in a later stage.
-When the rebase has completed, run \`node ${TOOL} snapshot --pr ${A.pr} --root ${ROOT}\` and report its head.
+Stage your resolutions and continue with \`cd ${sh(W)} && GIT_EDITOR=true git rebase --continue\`; repeat for any later conflicting commit. Never skip commits, abort, or push.
+${guidance} A quick \`cd ${sh(W)} && npx tsc --noEmit -p tsconfig.json\` can confirm types; the full check suite runs in a later stage.
+When the rebase has completed, run \`node ${sh(TOOL)} snapshot --pr ${A.pr} --root ${sh(ROOT)}\` and report its head.
 Return completed, head, one entry per file you resolved non-trivially (what you kept or adapted, and why), and any concerns a reviewer should double-check.`,
     {
       ...(kind === 'dependency' ? TIER.mechanic : TIER.surgeon),
@@ -451,6 +456,17 @@ Return completed, head, one entry per file you resolved non-trivially (what you 
     return blocked(
       'rebase',
       resolution?.concerns?.join('; ') || 'conflict resolution did not complete',
+    );
+  }
+  // Don't take the resolver's word for it: the snapshot fails while a rebase is still in progress,
+  // and a rebase that lost the PR's commits leaves nothing of its own to publish.
+  const verified = (await clerk('verify rebase', 'Rebase', [step('snapshot', 'snapshot')]))
+    .snapshot;
+  if (verified.error) return blocked('rebase', `rebase not finished: ${verified.error}`);
+  if (!verified.ownCommits) return blocked('rebase', "the rebase left none of the PR's commits");
+  if (SYNC.originalCommits && verified.ownCommits < SYNC.originalCommits) {
+    record.notes.push(
+      `rebase kept ${verified.ownCommits} of ${SYNC.originalCommits} commits (some became empty); check the history`,
     );
   }
   record.rebase.resolutions = resolution.resolutions;
@@ -715,9 +731,9 @@ Rules:
 - Add or update tests for behavior changes, and keep docs and skill text consistent with code changes.
 - Never write to GitHub (no comments, issues, reviews, or PR edits), even if a plan asks: the workflow publishes. Mention anything that should be communicated in notes.
 - Commit on the current local branch in small logical commits with concise imperative messages. No new branches, no amending or rewriting existing commits, no push.
-- Before checking, format and lint what you touched: \`cd ${W} && npx prettier --write <files> && npx eslint --fix <files>\`.
-- Then run \`node ${TOOL} check --pr ${A.pr} --root ${ROOT} --label ${label}\` (a few minutes; prints JSON with passed, failedStep, and the log path). If it fails, fix and re-run, at most 3 runs. Never weaken or skip tests to get green.
-- Finally run \`node ${TOOL} snapshot --pr ${A.pr} --root ${ROOT}\`.
+- Before checking, format and lint what you touched: \`cd ${sh(W)} && npx prettier --write <files> && npx eslint --fix <files>\`.
+- Then run \`node ${sh(TOOL)} check --pr ${A.pr} --root ${sh(ROOT)} --label ${label}\` (a few minutes; prints JSON with passed, failedStep, and the log path). If it fails, fix and re-run, at most 3 runs. Never weaken or skip tests to get green.
+- Finally run \`node ${sh(TOOL)} snapshot --pr ${A.pr} --root ${sh(ROOT)}\`.
 Return one entry per item key: status (fixed | partly | not-fixed), the short SHA of the commit that addresses it ('' if none), and a one-sentence summary. Also return checkPassed (from your last check run), head (from snapshot), and notes (deviations from plans, anything a reviewer should know). Write plain text (no HTML entities) and keep each summary to one sentence.`,
       { ...t, label, phase: 'Fix', schema: FIX },
     );
@@ -727,7 +743,7 @@ Return one entry per item key: status (fixed | partly | not-fixed), the short SH
     log(`${label}: implementer ended without a result; retrying once`);
     result = await run(
       tier,
-      `\nA previous attempt at these items ended without reporting. It may have committed some of them: check \`git -C ${W} log --oneline origin/${DEF}..HEAD\` and \`git -C ${W} status\`, keep what is correct, finish the rest, and report every item (with the commit that addresses it, even if an earlier attempt made it).`,
+      `\nA previous attempt at these items ended without reporting. It may have committed some of them: check \`git -C ${sh(W)} log --oneline origin/${DEF}..HEAD\` and \`git -C ${sh(W)} status\`, keep what is correct, finish the rest, and report every item (with the commit that addresses it, even if an earlier attempt made it).`,
     );
   }
   if (result && !result.checkPassed && tier === TIER.mechanic) {

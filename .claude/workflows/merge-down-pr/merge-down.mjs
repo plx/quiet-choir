@@ -279,7 +279,8 @@ function reviewThreads(R, pr) {
   });
 }
 
-// Open code-scanning alerts on the PR's merge ref (empty when code scanning is unavailable).
+// Open code-scanning alerts on the PR's merge ref. Only a repository without code scanning counts as
+// "no alerts"; any other lookup failure propagates, so landing fails closed.
 function openAlerts(R, pr) {
   try {
     return ghPaged(`repos/${R.repo}/code-scanning/alerts?ref=refs/pull/${pr}/merge&state=open`).map(
@@ -292,8 +293,11 @@ function openAlerts(R, pr) {
         message: x.most_recent_instance?.message?.text ?? '',
       }),
     );
-  } catch {
-    return [];
+  } catch (error) {
+    const unavailable =
+      /no analysis found|code scanning is not enabled|advanced security must be enabled/i;
+    if (unavailable.test(error.message)) return [];
+    throw error;
   }
 }
 
@@ -729,6 +733,7 @@ function sync(a, P, R) {
     writeFileSync(join(dir, 'upstream-delta.stat'), `${deltaStat}\n`);
     result.upstreamDelta = deltaStat.split('\n').at(-1)?.trim() ?? '';
 
+    result.originalCommits = Number(git(W, ['rev-list', '--count', `${result.forkPoint}..HEAD`]));
     const r = run('git', ['-C', W, 'rebase', '--onto', target, result.forkPoint], {
       allowFail: true,
       env: { GIT_EDITOR: 'true' },
@@ -853,8 +858,9 @@ async function publish(a, P, R) {
   if (a['keep-open']) {
     // The issue must survive this merge: neutralize closing keywords that GitHub would act on.
     const issue = Number(a['keep-open']);
+    const qualified = R.repo.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const closing = new RegExp(
-      `\\b(close[sd]?|fix(e[sd])?|resolve[sd]?)\\b(:?\\s+)#${issue}\\b`,
+      `\\b(close[sd]?|fix(e[sd])?|resolve[sd]?)\\b(:?\\s+)(?:${qualified})?#${issue}\\b`,
       'gi',
     );
     if (closing.test(p.body ?? '')) {
