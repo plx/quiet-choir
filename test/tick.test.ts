@@ -119,7 +119,9 @@ afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
-describe('tick loader and operator hooks', { timeout: 20_000 }, () => {
+// Each test spawns real tick-loader child processes against temporary fixtures; on the oldest
+// supported Node version under loaded CI this occasionally clears 20s by a few hundred ms.
+describe('tick loader and operator hooks', { timeout: 40_000 }, () => {
   it('resumes a due timer from its saved entrypoint and skips completed imports', async () => {
     const f = await fixture();
     expect(await tick.execute(f.tickPlan)).toMatchObject({
