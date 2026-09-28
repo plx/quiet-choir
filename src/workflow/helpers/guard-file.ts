@@ -48,7 +48,7 @@ export function guardFile<T>(
       {
         schema: z.object({
           path: z.string(),
-          blob: z.string().regex(/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/u),
+          blob: z.string().min(1),
           mode: z.number().int().nonnegative(),
         }),
       },

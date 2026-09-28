@@ -355,6 +355,27 @@ it('dry-run synthesizes commands and reports them without creating command outpu
   await expect(readFile(join(cwd, 'unsafe'))).rejects.toThrow();
 });
 
+it('dry-run synthesizes a guardFile baseline without spawning a child process', async () => {
+  const rehearsal = new RehearsalHarness({ kind: 'cli', config: {} });
+  const run = await runWorkflow(
+    definition((ctx) =>
+      guardFile(ctx, 'guard', 'guarded.txt', () => Promise.resolve('body result')),
+    ),
+    {
+      ...setup(),
+      harness: rehearsal,
+      rehearsal: rehearsal.hooks,
+      processRunner: rehearsal.processRunner,
+    },
+  );
+  expect(run.output).toBe('body result');
+  const stepIds = rehearsal.report(run).commands.map((command) => command.stepId);
+  expect(stepIds).toEqual(expect.arrayContaining(['guard/baseline', 'guard/restore']));
+  // A real guardProgram run would need `guarded.txt` to exist for baseline and would create it on
+  // restore; neither happened, so the commands above were synthesized rather than spawned.
+  await expect(readFile(join(cwd, 'guarded.txt'))).rejects.toThrow();
+});
+
 it('atomically writes private files and replays read snapshots and hash-only receipts', async () => {
   let fail = true;
   const workflow = definition(async (ctx) => {
