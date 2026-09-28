@@ -858,15 +858,20 @@ export async function runWorkflow<TInput, TOutput>(
           } catch (cause) {
             throw new Error(`Step ${id}: ${message(cause)}`, { cause });
           }
-          if (request.provider === 'codex' && request.options.images !== undefined)
+          if (request.provider === 'codex' && request.options.images !== undefined) {
+            // The same scope signal the effect captures below; interruption must release a stalled read.
+            const signal = scopes.signal;
             try {
               request = {
                 ...request,
-                imageAttachments: await snapshotImages(request.options.images, request.cwd),
+                imageAttachments: await snapshotImages(request.options.images, request.cwd, signal),
               };
             } catch (cause) {
+              // Surface cancellation exactly as the effect's own launch check would.
+              signal.throwIfAborted();
               throw new Error(`Step ${id}: image snapshot failed: ${message(cause)}`, { cause });
             }
+          }
           execution = {
             ...execution,
             requested: {

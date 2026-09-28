@@ -126,7 +126,7 @@ export class CliHarness implements Harness {
       request.provider === 'claude'
         ? (this.options.claudeBinary ?? 'claude')
         : (this.options.codexBinary ?? 'codex');
-    const invocation = await prepareInvocation(request);
+    const invocation = await prepareInvocation(request, signal);
     try {
       const result = await runProcess({
         binary,

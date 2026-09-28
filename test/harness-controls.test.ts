@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process';
 import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, basename, delimiter } from 'node:path';
@@ -19,6 +20,7 @@ import {
   validateConfig,
   tomlLiteral,
 } from '../src/workflow/runtime/agent-controls.js';
+import { snapshotImages } from '../src/workflow/runtime/images.js';
 import { parse } from 'smol-toml';
 let directory: string;
 const signal = new AbortController().signal;
@@ -476,6 +478,66 @@ it('names the step id when an attached image cannot be read for snapshotting', a
     'Step missing-image: image snapshot failed:',
   );
   expect(invoke).not.toHaveBeenCalled();
+});
+
+it.skipIf(process.platform === 'win32')(
+  'rejects a FIFO image source promptly instead of blocking on it',
+  async () => {
+    const fifo = join(directory, 'pipe.png');
+    execFileSync('mkfifo', [fifo]);
+    const invoke = vi.fn<Harness['invoke']>().mockResolvedValue(reply);
+    const definition = defineWorkflow({
+      ...base,
+      async run(ctx) {
+        return (await ctx.codex.text('fifo-image', { prompt: 'x', images: [fifo] })).output;
+      },
+    });
+    await expect(runWorkflow(definition, { ...setup(), harness: { invoke } })).rejects.toThrow(
+      'Step fifo-image: image snapshot failed: image source is not a regular file',
+    );
+    expect(invoke).not.toHaveBeenCalled();
+    // The adapter's fallback snapshot applies the same rule.
+    await expect(snapshotImages([fifo], directory, new AbortController().signal)).rejects.toThrow(
+      'image source is not a regular file',
+    );
+  },
+  5_000,
+);
+
+it('rejects an image snapshot with an aborted signal before reading', async () => {
+  const reason = new Error('stop before reading');
+  // A missing path would fail with ENOENT if the snapshot tried to open it.
+  await expect(
+    snapshotImages([join(directory, 'missing.png')], directory, AbortSignal.abort(reason)),
+  ).rejects.toBe(reason);
+});
+
+it('reports run interruption during image snapshotting as cancellation, not a snapshot failure', async () => {
+  const controller = new AbortController();
+  const invoke = vi.fn<Harness['invoke']>().mockImplementation((request) => {
+    // Interrupt after the first effect launches; its valid result still commits.
+    if (request.provider === 'claude') controller.abort(new Error('interrupted'));
+    return Promise.resolve(reply);
+  });
+  const definition = defineWorkflow({
+    ...base,
+    async run(ctx) {
+      await ctx.claude.text('first', { prompt: 'x' });
+      const missing = join(directory, 'missing.png');
+      return (await ctx.codex.text('image', { prompt: 'x', images: [missing] })).output;
+    },
+  });
+  const failure: unknown = await runWorkflow(definition, {
+    ...setup(),
+    harness: { invoke },
+    signal: controller.signal,
+  }).catch((error: unknown) => error);
+  expect(failure).toBeInstanceOf(Error);
+  expect((failure as Error).message).not.toContain('image snapshot failed');
+  const saved = await readRun({ stateDir: join(directory, 'state'), runId: 'controls' });
+  expect(saved.status).toBe('cancelled');
+  expect(saved.steps['first']?.status).toBe('completed');
+  expect(invoke).toHaveBeenCalledTimes(1);
 });
 
 it('captures first-use versions, warns on resumed drift, and records inherited/requested effort', async () => {

@@ -27,7 +27,7 @@ defaults come from the core's implicit `text` profile; custom harnesses must enf
 | `networkAccess`   | Explicit boolean under workspace-write; requires that sandbox even when false                                                        |
 | `harnessProfile`  | Native Codex profile (`--profile`); `profile` still selects a quiet-choir role                                                       |
 | `config`          | JSON values rendered as TOML per dotted key; rejects null and aliases of owned controls                                              |
-| `images`          | Paths resolved against effect cwd; contents fingerprinted and snapshotted before launch; must stay readable on resume for re-hashing |
+| `images`          | Regular files resolved against effect cwd; contents fingerprinted, snapshotted before launch and re-hashed on resume (keep readable) |
 | `addDirs`         | Additional **writable** directories, resolved against effect cwd                                                                     |
 | `extraArgs`       | Fingerprinted `--flag` or `--flag=value`; owned flags/aliases and subcommands rejected                                               |
 | `env`             | Fingerprinted overlay; keep rotating secrets in the parent environment                                                               |

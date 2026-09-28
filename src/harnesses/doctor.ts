@@ -294,7 +294,7 @@ export async function probeHarnessContracts(options: DoctorOptions = {}): Promis
                   extraArgs: ['--strict-config'],
                 },
               };
-        const invocation = await prepareInvocation(request);
+        const invocation = await prepareInvocation(request, signal);
         try {
           // Deliberately invalid effort is possible only in this diagnostic, after ordinary validation.
           if (provider === 'codex') {

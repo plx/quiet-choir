@@ -26,8 +26,14 @@ export interface CliInvocation {
   readonly decode: (text: string) => string;
   readonly dispose: () => Promise<void>;
 }
-/** The single argv builder used by normal invocation and doctor contract probes. @internal */
-export async function prepareInvocation(request: HarnessRequest): Promise<CliInvocation> {
+/**
+ * The single argv builder used by normal invocation and doctor contract probes; `signal` cancels
+ * the fallback image snapshot. @internal
+ */
+export async function prepareInvocation(
+  request: HarnessRequest,
+  signal?: AbortSignal,
+): Promise<CliInvocation> {
   validate(() => {
     validateAgentOptions(request.provider, request.options);
   });
@@ -138,7 +144,8 @@ export async function prepareInvocation(request: HarnessRequest): Promise<CliInv
         args.push('--output-schema', await file('schema.json', JSON.stringify(plan.schema)));
       }
       const images =
-        request.imageAttachments ?? (await snapshotImages(options.images ?? [], request.cwd));
+        request.imageAttachments ??
+        (await snapshotImages(options.images ?? [], request.cwd, signal));
       for (const [index, image] of images.entries()) {
         const bytes = Buffer.from(image.base64, 'base64');
         const suffix =
