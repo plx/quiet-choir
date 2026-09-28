@@ -21,6 +21,7 @@ export default defineWorkflow({
           schema: z.string(),
           run: ({ signal }) => ensureWorktree({ ...setup, signal }),
         });
+        await ensureWorktree({ ...setup, signal: ctx.signal });
         return ctx.codex.value('edit', { profile: 'editor', cwd, prompt: `Implement: ${item}` });
       },
     );

@@ -222,9 +222,8 @@ it('reusable helper gives repeated leaf IDs distinct stable file scopes', async 
   expect(ids.every((id) => id.endsWith('/review/verdict'))).toBe(true);
 });
 
-it('worktree recipe keeps edits across failure/resume and helper refuses changed ownership', async () => {
-  const repo = join(root, 'repo'),
-    worktreeRoot = join(root, 'worktrees');
+async function initRepo(): Promise<string> {
+  const repo = join(root, 'repo');
   await mkdir(repo);
   await execute('git', ['init', '--quiet'], { cwd: repo });
   const hooks = join(root, 'empty-hooks');
@@ -246,6 +245,12 @@ it('worktree recipe keeps edits across failure/resume and helper refuses changed
     ],
     { cwd: repo },
   );
+  return repo;
+}
+
+it('worktree recipe keeps edits across failure/resume and helper refuses changed ownership', async () => {
+  const repo = await initRepo(),
+    worktreeRoot = join(root, 'worktrees');
   const harness = new Fake(async (request) => {
     await writeFile(join(request.cwd, 'result.txt'), request.options.prompt);
     return request.cwd;
@@ -277,6 +282,33 @@ it('worktree recipe keeps edits across failure/resume and helper refuses changed
   await execute('git', ['switch', '-c', 'unrelated-branch'], { cwd: first });
   await expect(ensureWorktree(reuse)).rejects.toThrow('Worktree registration changed');
   expect(await readFile(join(first, 'result.txt'), 'utf8')).toBe('Implement: first');
+});
+
+it('worktree recipe revalidates ownership before a resumed edit', async () => {
+  const repo = await initRepo(),
+    worktreeRoot = join(root, 'worktrees');
+  const harness = new Fake(() => {
+    throw new Error('Editor unavailable');
+  });
+  const setup = { ...options(), cwd: repo, grants: ['editor'], harness };
+  await expect(
+    runWorkflow(worktrees, { ...setup, input: { repo, root: worktreeRoot, items: ['first'] } }),
+  ).rejects.toThrow('Editor unavailable');
+  const edits = harness.count('items/first/edit');
+  expect(edits).toBeGreaterThan(0);
+  expect((await readRun(setup)).steps['items/first/worktree']?.status).toBe('completed');
+  const target = await ensureWorktree({
+    repo,
+    root: worktreeRoot,
+    runId: 'pattern',
+    item: 'first',
+    signal: new AbortController().signal,
+  });
+  await execute('git', ['switch', '-c', 'unrelated-branch'], { cwd: target });
+  await expect(runWorkflow(worktrees, { ...setup, resume: true })).rejects.toThrow(
+    'Worktree registration changed',
+  );
+  expect(harness.calls).toHaveLength(edits);
 });
 
 it('polling resumes after cancellation with its original deadline and times out as data', async () => {

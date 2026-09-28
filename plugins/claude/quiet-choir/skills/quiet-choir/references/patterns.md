@@ -257,7 +257,8 @@ was superseded by implemented [#44](https://github.com/plx/quiet-choir/issues/44
 branch/path from the run ID and item, reuses only a matching registered worktree, and refuses
 changed ownership or an unrelated path. Supply absolute `repo` and `root`, keep `root` outside the
 target worktree, use unique run IDs for that root, and launch with `--grant editor` when edits are
-authorized. Local Git operations run inside the durable step.
+authorized. The durable step creates the worktree and records its path; every execution then
+revalidates ownership before the editing call, because a replayed step would skip the check.
 
 <!-- skills-check: example pattern-worktrees -->
 
@@ -285,6 +286,7 @@ export default defineWorkflow({
           schema: z.string(),
           run: ({ signal }) => ensureWorktree({ ...setup, signal }),
         });
+        await ensureWorktree({ ...setup, signal: ctx.signal });
         return ctx.codex.value('edit', { profile: 'editor', cwd, prompt: `Implement: ${item}` });
       },
     );
@@ -294,8 +296,10 @@ export default defineWorkflow({
 
 **Cost:** one worktree/branch and one editing call per item, plus retries. Created branches,
 worktrees, and file edits remain after cancellation; no cleanup/reset is automatic. A partial Git
-operation may require inspection before retry. **Superseded when:**
-[#59](https://github.com/plx/quiet-choir/issues/59) provides supported worktree coordination.
+operation may require inspection before retry. The unjournaled ownership check runs on every
+execution, so a resume after the edit completed also refuses a changed worktree. **Superseded
+when:** [#59](https://github.com/plx/quiet-choir/issues/59) provides supported worktree
+coordination.
 
 ## Polling and deadlines
 
