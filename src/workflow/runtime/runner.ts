@@ -1927,12 +1927,18 @@ export async function runWorkflow<
               outputSchema: structured ? schemaJson(schema) : null,
             });
             options.rehearsal?.onSchema?.(id, schema);
-            // A missing adapter is reported by the live attempt as a ConfigurationError, so the
-            // step records the failure and it is never settled, retried, or journaled as map data.
-            adapter =
-              replayOnly || !registry.available(registration)
-                ? undefined
-                : registry.adapter(registration);
+            // A missing adapter or failed factory is reported by the live attempt as a
+            // ConfigurationError, so the step records the failure and it is never settled,
+            // retried, or journaled as map data.
+            try {
+              adapter =
+                replayOnly || !registry.available(registration)
+                  ? undefined
+                  : registry.adapter(registration);
+            } catch (cause) {
+              if (!(cause instanceof ConfigurationError)) throw cause;
+              adapter = undefined;
+            }
             execution = resolvePolicy(
               id,
               harness,

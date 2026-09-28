@@ -102,6 +102,7 @@ export class HarnessRegistry {
   readonly #fallback: Harness | undefined;
   readonly #configurations: HarnessConfigurations;
   readonly #cache = new WeakMap<HarnessDeclaration, Harness>();
+  readonly #failures = new WeakMap<HarnessDeclaration, ConfigurationError>();
   readonly #definitions = new WeakMap<object, ReadonlyMap<string, HarnessDeclaration>>();
 
   public constructor(options: {
@@ -181,13 +182,25 @@ export class HarnessRegistry {
       ? this.#adapters[definition.name]
       : undefined;
     if (!explicit && this.#fallback) return this.#fallback;
-    const adapter =
-      explicit ??
-      definition.createAdapter?.(
-        (Object.hasOwn(this.#configurations, definition.name)
-          ? this.#configurations[definition.name]
-          : undefined) ?? {},
-      );
+    const failed = this.#failures.get(definition);
+    if (failed) throw failed;
+    let adapter: HarnessAdapter | undefined = explicit;
+    if (!adapter)
+      try {
+        adapter = definition.createAdapter?.(
+          (Object.hasOwn(this.#configurations, definition.name)
+            ? this.#configurations[definition.name]
+            : undefined) ?? {},
+        );
+      } catch (cause) {
+        // A factory failure is misconfiguration: never settled, retried or journaled as map data.
+        const error = new ConfigurationError(
+          `Harness ${definition.name} adapter factory failed: ${cause instanceof Error ? cause.message : String(cause)}`,
+          { cause },
+        );
+        this.#failures.set(definition, error);
+        throw error;
+      }
     if (!adapter || typeof adapter.invoke !== 'function')
       throw new ConfigurationError(
         `No harness adapter configured for ${definition.name}; supply RunOptions.adapters, RunOptions.harness, or createAdapter.`,

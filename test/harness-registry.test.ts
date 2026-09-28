@@ -418,3 +418,53 @@ it('keeps object-level option refinements when adding runtime fields', async () 
   ).toBe('ranged');
   expect(calls).toBe(1);
 });
+
+it('rejects a failing adapter factory as configuration instead of settling it', async () => {
+  let factories = 0;
+  const broken = defineHarness({
+    ...third,
+    createAdapter: () => {
+      factories++;
+      throw new Error('missing credentials');
+    },
+  });
+  const definition = defineWorkflow({
+    ...base,
+    harnesses: [broken],
+    async run(ctx) {
+      const direct = await ctx.agent('third').value('direct', { prompt: 'x', onError: 'return' });
+      return direct.ok ? direct.value : 'settled';
+    },
+  });
+  const options = await setup();
+  await expect(runWorkflow(definition, options)).rejects.toThrow(
+    'Harness third adapter factory failed: missing credentials',
+  );
+  expect(factories).toBe(1);
+  const failed = await readRun(options);
+  expect(failed.steps['direct']).toMatchObject({ status: 'failed' });
+  expect(failed.steps['direct']?.settledError).toBeUndefined();
+
+  const mapped = defineWorkflow({
+    ...base,
+    harnesses: [broken],
+    async run(ctx) {
+      const items = await ctx.map('items', [0], { concurrency: 1, onError: 'settle' }, () =>
+        ctx.agent('third').value('ask', { prompt: 'x' }),
+      );
+      return JSON.stringify(items.map((item) => item.ok));
+    },
+  });
+  const mapOptions = await setup();
+  await expect(runWorkflow(mapped, mapOptions)).rejects.toThrow('adapter factory failed');
+  expect((await readRun(mapOptions)).maps?.['items']?.items[0]?.status).toBe('running');
+
+  // Correcting the configuration on resume runs the unfinished step live.
+  const resumed = await runWorkflow(definition, {
+    ...options,
+    resume: true,
+    allowHarnessChange: true,
+    adapters: { third: { invoke: async () => response('fixed') } },
+  });
+  expect(resumed.output).toBe('fixed');
+});
