@@ -24,6 +24,7 @@ const expectedCommands = [
   'workflow:list',
   'workflow:pending',
   'workflow:resume',
+  'workflow:tick',
   'workflow:typecheck',
   'workflow:validate',
 ];
@@ -316,8 +317,8 @@ export default defineWorkflow({
     for (let attempt = 0; attempt < 1500; attempt++) {
       if (existsSync(checkpoint)) {
         const record = readRunSync({ stateDir, runId: 'crash-run' });
-        if (record.steps.wait?.status === 'running' && record.steps.wait.wakeAt !== null) {
-          wakeAt = record.steps.wait.wakeAt;
+        if (record.steps.wait?.status === 'waiting' && record.steps.wait.wait?.deadline != null) {
+          wakeAt = record.steps.wait.wait.deadline;
           break;
         }
       }
@@ -345,11 +346,11 @@ export default defineWorkflow({
     const recovered = JSON.parse(crashResume.stdout);
     assert.equal(recovered.output, 'done');
     assert.equal(
-      recovered.steps.wait.wakeAt,
+      recovered.steps.wait.wait.deadline,
       wakeAt,
       'Resume must preserve the original durable timer',
     );
-    assert.equal(recovered.steps.wait.attempts, 2);
+    assert.equal(recovered.steps.wait.attempts, 1);
     assert.equal(
       readFileSync(crashEffects, 'utf8'),
       'first\n',

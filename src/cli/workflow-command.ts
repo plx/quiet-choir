@@ -184,8 +184,8 @@ export abstract class WorkflowCommand extends BaseCommand {
         ...(rehearsal === undefined ? {} : { rehearsal }),
       },
       rehearsal === undefined
-        ? `Run ${run.id} suspended. Use workflow pending to review its questions, then workflow answer and workflow resume.`
-        : `Rehearsal ${run.id} reached a question. Temporary state was removed; start a real run to request the decision.`,
+        ? `Run ${run.id} suspended. Use workflow pending to review waits, workflow answer for signals, and workflow tick to resume when due.`
+        : `Rehearsal ${run.id} reached an external wait. Temporary state was removed; start a real run to request the decision.`,
     );
     // Oclif's exit() throws through catch(), which would misclassify suspension as a usage error.
     process.exitCode = 75;

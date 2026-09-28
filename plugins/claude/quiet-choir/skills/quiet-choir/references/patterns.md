@@ -305,52 +305,56 @@ provides supported worktree coordination.
 
 ## Polling and deadlines
 
-**Rule:** record the clock once, then use its fixed deadline inside a single local effect. This
-runnable example reads an absolute status file containing `pending`, `success`, or `failure`. Have
-the producer replace the file atomically. Replace that read with a signal-aware CI/API query for
-real use; select an appropriate polling interval (the file demo uses 100 ms). Terminal state wins
-when observed; a still-pending state past the deadline returns `timeout` as data. Pending polls are
-not separate durable steps.
+**Rule:** if the body does not branch on an observation, it is not a step. Use `ctx.now` for a
+recorded clock anchor and `ctx.poll` for read-only readiness checks. This example reads an absolute
+status file containing `pending`, `success`, or `failure`; have its producer replace it atomically.
+Use `ctx.step` for a snapshot or a selection over changing state, with an occurrence ID derived from
+replayed data. An incomplete collection is an error, never “no work left.”
 
 <!-- skills-check: example pattern-polling -->
 
 ```ts
 import { readFile } from 'node:fs/promises';
-import { setTimeout as wait } from 'node:timers/promises';
 import { defineWorkflow, z } from '../../src/index.js';
 
-const Result = z.enum(['success', 'failure', 'timeout']);
+const Terminal = z.enum(['success', 'failure']);
 export default defineWorkflow({
   name: 'polling',
-  version: '1',
+  version: '2',
   input: z.object({ file: z.string(), ms: z.int().min(1).max(60_000) }),
-  output: Result,
+  output: z.enum(['success', 'failure', 'timeout']),
   async run(ctx, input) {
-    const clock = { input: null, schema: z.number(), run: () => Date.now() };
-    const deadline = (await ctx.step('started-at', clock)) + input.ms;
-    return ctx.step('wait', {
-      input: { file: input.file, deadline },
-      schema: Result,
-      async run({ signal }): Promise<z.infer<typeof Result>> {
-        for (;;) {
-          const state = (await readFile(input.file, { encoding: 'utf8', signal })).trim();
-          if (state === 'success' || state === 'failure') return state;
-          if (state !== 'pending') throw new Error('Unknown check status');
-          if (Date.now() >= deadline) return 'timeout';
-          await wait(100, undefined, { signal });
-        }
+    const deadline = (await ctx.now('started-at')) + input.ms;
+    const result = await ctx.poll('wait', {
+      input: { file: input.file },
+      schema: Terminal,
+      deadline,
+      every: 100,
+      async observe({ signal }) {
+        const state = (await readFile(input.file, { encoding: 'utf8', signal })).trim();
+        if (state === 'success' || state === 'failure') return { done: true, value: state };
+        if (state !== 'pending') throw new Error('Unknown check status');
+        return { done: false, note: { state } };
       },
     });
+    return result.by === 'deadline' ? 'timeout' : result.value;
   },
 });
 ```
 
-**Cost:** two checkpointed effects regardless of poll count, repeated reads while pending, and a
-live process while waiting. Interrupting the wait leaves it retryable against the original deadline;
-no agent calls occur. **Superseded when:** the wait/deadline work tracked by
-[#55](https://github.com/plx/quiet-choir/issues/55) and
-[#57](https://github.com/plx/quiet-choir/issues/57) provides the supported replacement. Do not
-compute a changing `ctx.sleep` duration in the body.
+**Cost:** one clock step and one wait record, regardless of check count. Progress overwrites its
+check count, last note, and next check time; only the terminal value determines the branch. There
+are no agent calls. The demo's 100 ms interval stays in-process; an interval above 1000 ms parks
+when no active sibling remains. Use `workflow tick` to resume when due, or `--wait-mode block` to
+keep the process alive. Existing execution diagnostics can still grow across resumes.
+
+`ctx.sleepUntil('release-at', deadline)` uses an absolute deadline from input or `ctx.now`.
+`ctx.sleep('pause', ms)` pins a relative timeout once. Never compute a changing sleep duration from
+`Date.now()` in the body. For competing signal/poll/deadline sources, use one `ctx.wait`: recorded
+on-time signal wins, then a final poll (even after a missed deadline), then deadline. Never use
+`Promise.race` over durable operations; replay completion order is not the original timing.
+Observers must be read-only and cannot call context operations. Put reconciled writes in `ctx.step`.
+See [durable waits](waits.md) for suspension, tick, and notifications.
 
 ## Salvage an old run
 
@@ -566,21 +570,21 @@ The original prototype made several of these fail only during replay. Current gu
 or support more cases; the table describes the current runtime, not the old failure modes.
 [Inspection](inspection.md#match-a-symptom-to-its-next-action) covers exact error templates.
 
-| Tempting code                                                                   | Current consequence                                                                                                               | Use instead                                                                                                                                                                 |
-| ------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Catch a throwing durable call, then select a fallback or sentinel               | The failed call can heal on resume and change a completed branch/input                                                            | [Latch](#latch-an-outcome) with `onError:'return'`, or fail and resume                                                                                                      |
-| Retry by incrementing IDs (`ask/0`, `ask/1`)                                    | An earlier call can heal and bypass later recorded effects                                                                        | Same-ID `retry` as in [latch](#latch-an-outcome)                                                                                                                            |
-| Catch a map and assume its failure is a durable quorum decision                 | Catching no longer poisons the whole run, but replay can change an unjournaled decision                                           | [Tolerant panel](#failure-tolerant-panel); use [drain](#cross-harness-fan-outfan-in) for retryable failure                                                                  |
-| Race durable calls with `Promise.race`                                          | Replay completion order can choose another branch; losing effects still need ownership/draining                                   | [Poll inside one step](#polling-and-deadlines) for readiness/deadlines, or an agent `timeoutMs` with `onError:'return'` for timeout decisions; do not race durable branches |
-| Compute a sleep duration/deadline from a live body `Date.now()`                 | A later execution changes its dependency/identity                                                                                 | [Recorded clock and polling](#polling-and-deadlines)                                                                                                                        |
-| Read time/env/files/git diff in the body and place them in prompts              | Replay sees changed inputs despite unchanged workflow input                                                                       | Record the read in a local step, as in [polling](#polling-and-deadlines), then build prompts from saved values                                                              |
-| Supply undefined data indiscriminately                                          | Undefined object members are omitted; roots, array elements/holes, classes, and non-JSON values still fail                        | [Small JSON extraction](#work-then-extract); filter arrays or use null deliberately                                                                                         |
-| Use unrepresentable schemas (`z.void`, `z.undefined`, dates/bigints/transforms) | Call-time JSON Schema conversion can fail even after top-level `validate`                                                         | [Work, then extract](#work-then-extract) with JSON shapes and string dates; [rehearse](#rehearse-for-free) the reached path                                                 |
-| Ban all Codex `.optional()` fields or assume strict mode accepts them unchanged | Default compat now encodes optionals/arrays/records; strict mode still has narrower wire rules                                    | The [flat extraction schema](#work-then-extract) and [current Codex schema rules](codex.md#structured-output-and-protocol)                                                  |
-| Return a wider type than the schema                                             | Schema-first typing now rejects wider callbacks before import; local validation still matters                                     | [Typed extraction](#work-then-extract) and [rehearsal](#rehearse-for-free); use the actual output schema, not casts                                                         |
-| Start `void` chains or ignore a durable promise                                 | Owned operations drain, ignored failures reject, and new operations after closure are refused; unowned async chains remain unsafe | Await each stage as in the [per-item pipeline](#per-item-pipeline)                                                                                                          |
-| Raise limits by changing completed semantic inputs/model/tool grants            | Limits/retry are now policy; semantic changes still invalidate terminal identity                                                  | Keep the [bounded loop](#bounded-reviewrevise), raise authorized sticky limits, and use [fork reuse](#salvage-an-old-run) for semantic edits                                |
-| Run parallel editing calls in one checkout                                      | Filesystem edits race and checkpoints cannot roll them back                                                                       | [Worktree per item](#worktree-per-item), with explicit ownership and grants                                                                                                 |
+| Tempting code                                                                   | Current consequence                                                                                                               | Use instead                                                                                                                                                         |
+| ------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Catch a throwing durable call, then select a fallback or sentinel               | The failed call can heal on resume and change a completed branch/input                                                            | [Latch](#latch-an-outcome) with `onError:'return'`, or fail and resume                                                                                              |
+| Retry by incrementing IDs (`ask/0`, `ask/1`)                                    | An earlier call can heal and bypass later recorded effects                                                                        | Same-ID `retry` as in [latch](#latch-an-outcome)                                                                                                                    |
+| Catch a map and assume its failure is a durable quorum decision                 | Catching no longer poisons the whole run, but replay can change an unjournaled decision                                           | [Tolerant panel](#failure-tolerant-panel); use [drain](#cross-harness-fan-outfan-in) for retryable failure                                                          |
+| Race durable calls with `Promise.race`                                          | Replay completion order can choose another branch; losing effects still need ownership/draining                                   | [Use one wait](#polling-and-deadlines) for readiness/deadlines, or an agent `timeoutMs` with `onError:'return'` for timeout decisions; do not race durable branches |
+| Compute a sleep duration/deadline from a live body `Date.now()`                 | A later execution changes its dependency/identity                                                                                 | [Recorded clock and polling](#polling-and-deadlines)                                                                                                                |
+| Read time/env/files/git diff in the body and place them in prompts              | Replay sees changed inputs despite unchanged workflow input                                                                       | Record the read in a local step, as in [polling](#polling-and-deadlines), then build prompts from saved values                                                      |
+| Supply undefined data indiscriminately                                          | Undefined object members are omitted; roots, array elements/holes, classes, and non-JSON values still fail                        | [Small JSON extraction](#work-then-extract); filter arrays or use null deliberately                                                                                 |
+| Use unrepresentable schemas (`z.void`, `z.undefined`, dates/bigints/transforms) | Call-time JSON Schema conversion can fail even after top-level `validate`                                                         | [Work, then extract](#work-then-extract) with JSON shapes and string dates; [rehearse](#rehearse-for-free) the reached path                                         |
+| Ban all Codex `.optional()` fields or assume strict mode accepts them unchanged | Default compat now encodes optionals/arrays/records; strict mode still has narrower wire rules                                    | The [flat extraction schema](#work-then-extract) and [current Codex schema rules](codex.md#structured-output-and-protocol)                                          |
+| Return a wider type than the schema                                             | Schema-first typing now rejects wider callbacks before import; local validation still matters                                     | [Typed extraction](#work-then-extract) and [rehearsal](#rehearse-for-free); use the actual output schema, not casts                                                 |
+| Start `void` chains or ignore a durable promise                                 | Owned operations drain, ignored failures reject, and new operations after closure are refused; unowned async chains remain unsafe | Await each stage as in the [per-item pipeline](#per-item-pipeline)                                                                                                  |
+| Raise limits by changing completed semantic inputs/model/tool grants            | Limits/retry are now policy; semantic changes still invalidate terminal identity                                                  | Keep the [bounded loop](#bounded-reviewrevise), raise authorized sticky limits, and use [fork reuse](#salvage-an-old-run) for semantic edits                        |
+| Run parallel editing calls in one checkout                                      | Filesystem edits race and checkpoints cannot roll them back                                                                       | [Worktree per item](#worktree-per-item), with explicit ownership and grants                                                                                         |
 
 For a tail-only code fix, first inspect what completed, then use explicit code acceptance or a fork.
 A new ID alone repays agent calls; it does not imply salvage. Never treat paid effects as rolled

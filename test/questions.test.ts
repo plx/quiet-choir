@@ -535,6 +535,8 @@ it('keeps one exclusive inbox for a flat run before and after migration', async 
   record.formatVersion = 6;
   delete record.seq;
   delete record.engine;
+  // Format 6 predates wait progress; its questions carry none.
+  for (const step of Object.values(record.steps)) delete step.wait;
   await rm(join(stateDir, 'questions'), { recursive: true });
   await writeRun(stateDir, record);
   const inbox = join(stateDir, 'questions.inbox');
@@ -573,6 +575,8 @@ it('publishes the format-6 filename in a migrated run so both writer versions sh
   record.formatVersion = 6;
   delete record.seq;
   delete record.engine;
+  // Format 6 predates wait progress; its questions carry none.
+  for (const step of Object.values(record.steps)) delete step.wait;
   await rm(join(stateDir, 'questions'), { recursive: true });
   await writeRun(stateDir, record);
   const inbox = join(stateDir, 'questions.inbox');

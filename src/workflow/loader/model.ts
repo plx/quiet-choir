@@ -11,7 +11,7 @@ import type { JsonValue } from '../runtime/model.js';
 import type { PolicyOverride } from '../runtime/policy.js';
 import type { SuspendedRun } from '../runtime/runner.js';
 import type { RunRecord } from '../runtime/store.js';
-import type { PendingQuestion } from '../runtime/question-model.js';
+import type { PendingOperation } from '../runtime/wait-model.js';
 import type { AnswerDelivery } from '../runtime/inbox.js';
 import type { ForkOptions, ResumeCheck, WorkflowIdentity } from '../runtime/replay-model.js';
 import type { TypecheckPlan } from '../typecheck/model.js';
@@ -32,6 +32,8 @@ export interface ExecuteWorkflowPlan extends ExecutionPlan {
   readonly agentLimits?: AgentLimits;
   readonly killOrphans?: boolean;
   readonly killGraceMs?: number;
+  readonly waitMode?: 'suspend' | 'block';
+  readonly notifyCommand?: string;
   readonly typecheck: TypecheckPlan;
   readonly runId: string;
   readonly stateDir: string;
@@ -123,7 +125,7 @@ export type WorkflowCommandResult = ExecutionResult &
     | {
         readonly kind: 'workflow.pending.result';
         readonly ok: true;
-        readonly pending: readonly PendingQuestion[];
+        readonly pending: readonly PendingOperation[];
       }
     | {
         readonly kind: 'workflow.answer.result';

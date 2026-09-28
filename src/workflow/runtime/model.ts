@@ -1,4 +1,11 @@
 import type { AskOptions, ApproveOptions, Approval } from './question-model.js';
+import type {
+  WaitSources,
+  WaitOutcome,
+  PollOptions,
+  PollOutcome,
+  DeadlineOutcome,
+} from './wait-model.js';
 import type { PhaseOptions } from './observability-model.js';
 import type { z } from 'zod';
 import type { AgentDefaults, AgentProfile, BuiltinProfile } from './profiles-model.js';
@@ -372,6 +379,17 @@ export interface StepDefinition<T> {
 
 /** Durable operations available to ordinary TypeScript workflow code. */
 export interface WorkflowContext<TProfile extends string = string> {
+  /** Record the current clock once and replay it as a stable deadline anchor. */
+  now(id: string): Promise<number>;
+  /** Choose and persist one signal, poll, or deadline outcome. Never race durable operations yourself. */
+  wait<const S extends WaitSources>(id: string, sources: S): Promise<WaitOutcome<S>>;
+  /** Wait until a fixed epoch timestamp, suspending when quiescent unless due shortly. */
+  sleepUntil(id: string, epochMs: number): Promise<null>;
+  /** Poll changing state with a pinned finite deadline and one bounded progress record. */
+  poll<T, N extends JsonValue = JsonValue>(
+    id: string,
+    options: PollOptions<T, N>,
+  ): Promise<PollOutcome<T> | DeadlineOutcome>;
   /** Await an external, schema-validated answer; quiescent runs suspend without rejecting. */
   ask<T>(id: string, options: AskOptions<T>): Promise<T>;
   /** Await approval of the fingerprinted subject. Human routing is a guardrail, not authentication. */
@@ -416,7 +434,7 @@ export interface WorkflowContext<TProfile extends string = string> {
     id: string,
     definition: StepDefinition<T> & { readonly onError?: TMode },
   ): Promise<EffectResult<T, TMode>>;
-  /** Checkpoint a wall-clock wake time so resuming waits only the remaining duration. */
+  /** Pin a relative timeout once; long waits suspend after active work drains. */
   sleep(id: string, milliseconds: number): Promise<null>;
   /** Scope each item as id/key (index by default); validate all keys before starting any mapper. */
   map<T, U>(

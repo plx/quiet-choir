@@ -1,5 +1,7 @@
 import { z } from 'zod';
 import { questionRecordSchema, workflowLaunchSchema } from './question-schema.js';
+import { waitRecordSchema } from './wait-schema.js';
+import type { WaitRecord } from './wait-model.js';
 import type { QuestionRecord, WorkflowLaunch } from './question-model.js';
 import { MAX_RUN_EVENTS } from './observability.js';
 import type {
@@ -82,6 +84,8 @@ export interface FailedAttempt {
 
 /** Persisted state of one effect. */
 export interface StepRecord {
+  /** Bounded timing and observation progress for a durable wait. */
+  wait?: WaitRecord;
   /** An original format-one identity awaiting verification by replay. */
   legacyIdentity?: 1;
   /** Attempts predating detailed history; counts are retained, unknown timings remain absent. */
@@ -102,7 +106,7 @@ export interface StepRecord {
   errorStack?: string | null;
 
   /** Effect category; included in replay compatibility checks. */
-  kind: 'step' | 'claude' | 'codex' | 'sleep' | 'ask';
+  kind: 'step' | 'claude' | 'codex' | 'sleep' | 'ask' | 'wait';
   /** Hash of semantic components, including error mode. */
   fingerprint: string;
   /** Last saved lifecycle state. */
@@ -169,6 +173,8 @@ export interface MapRecord {
 
 /** Local checkpoint format. The format is intentionally versioned independently of workflows. */
 export interface RunRecord {
+  /** Earliest parked deadline/poll; null when only an external signal can wake the run. */
+  nextWakeAt?: number | null;
   /** Source launch metadata for resume by ID; absent for older and embedded runs. */
   launch?: WorkflowLaunch;
   /** Harness provenance, absent in checkpoints created before rehearsal support. */
@@ -317,9 +323,10 @@ const stepSchema = z.object({
   legacyIdentity: z.literal(1).optional(),
   legacyAttempts: z.number().int().nonnegative().optional(),
   question: questionRecordSchema.optional(),
+  wait: waitRecordSchema.optional(),
   ...timingFields,
   phase: z.string().nullable().optional(),
-  kind: z.enum(['step', 'claude', 'codex', 'sleep', 'ask']),
+  kind: z.enum(['step', 'claude', 'codex', 'sleep', 'ask', 'wait']),
   seq: z.number().int().positive().optional(),
   reusedFrom: reusedStepSchema.optional(),
   fingerprint: z.string(),
@@ -404,6 +411,7 @@ const stepsSchema = z.custom<Record<string, StepRecord>>(
     Object.values(value).every((step) => stepSchema.safeParse(step).success),
 );
 const recordFieldsSchema = z.object({
+  nextWakeAt: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).nullable().optional(),
   launch: workflowLaunchSchema.optional(),
   seq: z.number().int().nonnegative().optional(),
   engine: z.object({ quietChoir: z.string(), node: z.string() }).optional(),
@@ -649,12 +657,24 @@ const recordSchema = recordFieldsSchema.superRefine((record, context) => {
     });
   const sequences = new Set<number>();
   for (const [id, step] of Object.entries(record.steps)) {
+    const signalCompleted =
+      step.status === 'completed' &&
+      (step.kind === 'ask' ||
+        (step.kind === 'wait' &&
+          step.output !== null &&
+          typeof step.output === 'object' &&
+          !Array.isArray(step.output) &&
+          step.output['by'] === 'signal'));
     if (
-      (step.kind === 'ask') !== (step.question !== undefined) ||
-      (['waiting', 'withdrawn'].includes(step.status) && step.kind !== 'ask') ||
-      (step.kind === 'ask' &&
+      (step.kind === 'ask' && step.question === undefined) ||
+      (step.question !== undefined && !['ask', 'wait'].includes(step.kind)) ||
+      (['waiting', 'withdrawn'].includes(step.status) && !['ask', 'wait'].includes(step.kind)) ||
+      (['ask', 'wait'].includes(step.kind) &&
         !['waiting', 'withdrawn', 'completed', 'superseded'].includes(step.status)) ||
-      (step.question && (step.status === 'completed') !== (step.question.resolution !== null))
+      (step.question && signalCompleted !== (step.question.resolution !== null)) ||
+      (step.kind === 'wait' && step.wait === undefined) ||
+      (step.wait !== undefined &&
+        (record.formatVersion < 7 || !['ask', 'wait'].includes(step.kind)))
     )
       context.addIssue({
         code: 'custom',

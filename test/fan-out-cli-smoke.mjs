@@ -55,6 +55,8 @@ async function interrupt(id, sleep) {
       state,
       '--input',
       JSON.stringify({ prefix: id, sleep }),
+      '--wait-mode',
+      'block',
     ],
     { cwd: fixture, env },
   );
@@ -75,7 +77,7 @@ async function interrupt(id, sleep) {
         const record = checkpoint(id);
         if (
           sleep
-            ? record.steps.nap?.status === 'running'
+            ? record.steps.nap?.status === 'waiting'
             : record.steps.lint?.status === 'running' && existsSync(join(fixture, `${id}-lint.txt`))
         )
           break;
@@ -97,8 +99,8 @@ async function interrupt(id, sleep) {
     const record = checkpoint(id);
     assert.equal(record.status, 'cancelled');
     assert.deepEqual(record.rootCause, { stepId: null, error: 'Workflow interrupted.' });
-    assert.equal(record.steps[sleep ? 'nap' : 'lint'].status, 'cancelled');
-    assert.equal(record.steps[sleep ? 'nap' : 'lint'].cancelledBy, null);
+    assert.equal(record.steps[sleep ? 'nap' : 'lint'].status, sleep ? 'waiting' : 'cancelled');
+    assert.equal(record.steps[sleep ? 'nap' : 'lint'].cancelledBy ?? null, null);
     assert.equal(existsSync(join(state, id, 'lock')), false);
   } finally {
     if (child.exitCode === null && child.signalCode === null) {

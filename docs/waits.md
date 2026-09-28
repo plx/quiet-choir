@@ -1,0 +1,148 @@
+# Durable waits and ticking
+
+A read that selects a workflow branch belongs in `ctx.step`. A read that only says “keep waiting”
+belongs in a read-only poll. Use occurrence IDs derived from replayed data when selecting work in
+successive rounds; an incomplete collection is an error, not an empty selection. Reconcile external
+writes inside `ctx.step`, using idempotency keys, markers, or conditional APIs where available.
+
+| Operation                                                    | Saved result                                                             |
+| ------------------------------------------------------------ | ------------------------------------------------------------------------ |
+| `ctx.now(id)`                                                | One clock reading, replayed unchanged                                    |
+| `ctx.sleep(id, milliseconds)`                                | `null`, with a relative timeout pinned on first open                     |
+| `ctx.sleepUntil(id, epochMs)`                                | `null`, with an explicit absolute deadline                               |
+| `ctx.poll(id, { input, schema, every, observe, timeoutMs })` | A typed `poll` or `deadline` outcome; `deadline` can replace `timeoutMs` |
+| `ctx.wait(id, { signal?, poll?, timeoutMs?, deadline? })`    | One recorded winner, discriminated by `by`                               |
+
+At least one source is required. Relative timeout and absolute deadline are mutually exclusive. Each
+sleep/poll/wait creates exactly one `wait` record; `now` creates a normal local step. Existing
+`ask`/`approve` records retain their `ask` identity and raw answer shape, sharing the same wait
+coordinator. Completed legacy sleep records still replay; unfinished legacy sleeps use their saved
+wake time and the previous blocking path. New forks ask or wait afresh rather than copying a prior
+run's external decision.
+
+## Clock and identity
+
+Use input, previously recorded data, or `await ctx.now('started-at')` to derive an absolute
+deadline. Never compute a relative sleep from a live body `Date.now()`: a later replay changes its
+identity. `RunOptions.clock` supplies `now(): number` and
+`sleep(milliseconds, signal): Promise<void>`; the default uses system wall time. Custom clocks must
+return nonnegative, integer epoch milliseconds through year 9999, and timers must reject promptly on
+cancellation. Clock adjustments and laptop sleep can delay actual checks; deadlines do not guarantee
+execution at an exact instant.
+
+A wait fingerprints its original timeout/deadline, the signal's full question contract, and the
+poll's input, schema, normalized spacing, and observer source. Captured dependencies belong in
+`input`; source hashing cannot inspect closures. Waiting and completed identities are pinned even
+with code-change acceptance. Use new IDs and immutable subjects for new decisions, such as an exact
+commit SHA. Changing an explicit deadline under the same ID fails instead of silently extending it.
+
+## Checks and outcomes
+
+`observe` receives `{ signal, idempotencyKey, attempt }` and returns either `{ done: true, value }`
+or `{ done: false, note? }`. It must read external state without writes, nested context operations,
+or cached answers. The engine prohibits durable and observational context operations inside
+observers; it cannot prevent arbitrary filesystem/network writes by trusted JavaScript. Parse
+terminal results through the supplied Zod schema. Unknown object keys are projected away before
+lossless JSON validation.
+
+`every` is a positive integer interval, or `{ initialMs, maxMs, factor? }` with factor defaulting to
+two. Spacing grows after nonterminal checks up to `maxMs`, measured from check completion. It is a
+minimum interval, not scheduler latency. `ctx.poll` requires a finite time bound. General `ctx.wait`
+can be unbounded. A thrown observer error fails the invocation; a later explicit resume can retry
+the check. Nonterminal progress overwrites `checks`, `note`, and `nextCheckAt`; notes are limited to
+16 KiB. Naps do not write checkpoints. The wait has one attempt; `checks` counts observations across
+resumes. Existing per-body execution diagnostics still grow with resumes: this is not history
+compaction or a claim that all run state stays constant indefinitely.
+
+Each check uses fixed precedence:
+
+1. A valid signal with recorded delivery time at or before the deadline wins. Signals use the same
+   inbox, presentation, validation, and self-asserted actor as [questions](questions.md).
+2. Otherwise a ready poll wins. If the process missed the deadline, it still gives the poll one
+   final check against current state, even when its next scheduled check was later.
+3. Otherwise an expired deadline wins, retaining the last nonterminal note.
+
+The owner rescans signals after an awaited poll before committing its result. A late signal cannot
+win; a late final poll can. Timestamp-based ordering trusts the filesystem writer, not an
+independent authenticated clock. The recorded winner is final and replays without rechecking the
+external system. Signal outcomes carry `value`, `at`, and `actor`; poll outcomes carry `value`,
+`at`, and `checks`; deadline outcomes carry `at` and `note`.
+
+Never `Promise.race` durable operations: replay resolves completed operations in a different timing
+order. Competing readiness sources belong in one `ctx.wait`. `Promise.all` remains useful for
+independent waits and siblings. No general durable race between arbitrary effects is provided.
+
+## Suspension and tick
+
+After active effects and writes drain, long waits suspend without aborting siblings, rejecting the
+wait promise, or unwinding body cleanup. `nextWakeAt` is the earliest deadline or next poll time, or
+null for signal-only waits. Waits due within **1000 ms** stay in-process by default; a frequent poll
+can therefore stay live indefinitely. `RunOptions.waitMode: 'block'` or `--wait-mode block` on
+execute/resume keeps all waits live. Await tracked operations; raw asynchronous body tasks do not
+keep a quiescent run alive. See [question suspension](questions.md#suspend-and-resume).
+
+```sh
+quiet-choir workflow pending --state-dir /absolute/state --json
+quiet-choir workflow tick --state-dir /absolute/state --json
+quiet-choir workflow tick --state-dir /absolute/state --run review-1 --watch --timeout 540s --json
+```
+
+Tick reads checkpoints before importing any source. It resumes only suspended runs whose
+`nextWakeAt` has arrived or whose open signal has an inbox delivery. It skips locked runs. It checks
+saved source bytes before import, claims the ordinary writer lock, and rechecks readiness and source
+bytes under ownership. Concurrent ticks cannot both import and launch the same due run. The normal
+replay compatibility checks still apply. Changed source reports `incompatible` without modifying the
+checkpoint; use explicit [code-change recovery](decisions/0006-code-change-recovery.md).
+
+Tick uses stored entrypoint/tsconfig/cwd. Local-only and default CLI-harness runs can resume
+directly; custom/fixture adapters require the original embedding application to supply that live
+adapter. Tick does not infer native configuration files, change grants, accept code, or kill orphan
+children. Completed, failed, and not-yet-due runs do not import. A failed run needs an explicit
+resume, not an automatic retry on every cron pass. Batch unreadable-run errors are reported per run.
+
+CLI harness configuration (custom binaries, output limits) is not stored in the checkpoint: tick and
+resume both use `CliHarness` defaults unless `--harness-config` is passed. A cron line for a run
+started with custom binaries or limits must repeat `--harness-config` on every `tick` call.
+
+The result contains a resume-attempt count, completed IDs, suspended `{ runId, nextWakeAt }`
+entries, and failed/skipped/incompatible entries with reasons. Suspended entries can also have a
+skip or incompatibility reason. `--max-runs N` bounds resume attempts across the invocation. With
+`--run`, exit is 0 completed, 75 still pending/locked, or 1 failed/incompatible; without it,
+individual run failures do not change exit 0. Command errors retain the
+[CLI error contract](cli-contract.md).
+
+`--watch` waits for the next due time or an inbox filesystem event, with a one-second fallback scan
+for missed events. `--timeout` defaults to 540s and accepts ms/s/m/h; it bounds the whole
+invocation. Cancellation asks active work to drain, so an uncooperative local callback can delay
+exit. Watch is a bounded local process; nothing starts automatically after it exits. Install cron or
+launchd if periodic ticking is desired, supplying absolute paths and a suitable executable PATH. For
+example:
+
+```cron
+* * * * * cd /absolute/project && /absolute/node /absolute/quiet-choir/bin/run.js workflow tick --state-dir /absolute/state --json >> /absolute/tick.log 2>&1
+```
+
+`workflow pending --json` returns legacy question projections and general waits distinguished by
+`kind: "wait"`, including deadline, next check, count, last note, optional signal, and answer
+command. A dry-run skips timing-only waits and performs a poll's initial read-only observation;
+unresolved external waits suspend. Rehearsals never fabricate signals and do not invoke notification
+commands.
+
+## Operator notifications
+
+`--notify-command CMD` on execute/resume/tick, or `QUIET_CHOIR_NOTIFY_COMMAND`, runs `sh -c CMD`
+with event JSON on stdin. Events are `wait.opened` (signal waits only), `run.suspended`,
+`run.completed`, and `run.failed`. JSON includes run/step identity, timestamp, and state directory;
+`wait.opened` includes `data.question`. Hooks start asynchronously and are drained after workflow
+ownership is released. Each command has a 10-second deadline and 64 KiB combined output limit;
+failures warn without changing the workflow result. No hook runs merely because tick inspected a
+run.
+
+`notifiedAt` is persisted before the first signal-open event, even without a configured hook. It
+prevents repeated first-open notifications on resume, but a crash between persistence and delivery
+can lose a notification. Run lifecycle hooks may repeat across resumes. These are best-effort
+operator hints, not a delivery service. For example
+`--notify-command 'cat >> /absolute/events.jsonl'` records local JSON events. A user may configure a
+desktop notifier or HTTP command; quiet-choir ships no messaging integration. Business messages
+belong in explicit idempotent workflow steps, and polling replies must validate the expected
+author's authority before treating them as approval.

@@ -42,3 +42,5 @@ part of the documentation.
 - [0018: Suspend at quiescence for external question answers](0018-durable-questions.md)
 
 - [0019: Journal changes in private per-project run directories](0019-journal-storage-and-project-state.md)
+
+- [0020: Resolve external readiness in one durable wait](0020-durable-waits-and-tick.md)

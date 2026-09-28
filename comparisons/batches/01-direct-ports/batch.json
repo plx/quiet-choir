@@ -1,12 +1,12 @@
 {
   "id": "01-direct-ports",
   "number": "01",
-  "label": "01 · Direct ports",
+  "label": "01 \u00b7 Direct ports",
   "description": "The first translation: same Claude agents, same workflow intent, explicit API differences.",
   "revision": "9b5404d11b885b28380d3eb17471ef7b17601b5e",
   "sourceUrl": "https://github.com/hesreallyhim/ultracode-workflows/tree/9b5404d11b885b28380d3eb17471ef7b17601b5e/plugins/ultracode-workflows/workflows",
   "sourceFileBase": "https://github.com/hesreallyhim/ultracode-workflows/blob/9b5404d11b885b28380d3eb17471ef7b17601b5e/plugins/ultracode-workflows/workflows/",
-  "validation": "All 26 ports typecheck under the batch’s migration settings. 61 deterministic scenarios match original prompts, effort and outputs; six intentional bootstrap/SDLC migrations verify durable questions, and one interrupted pipeline verifies checkpoint reuse (68 checks total). No live agents were run; fixtures do not establish agent quality or exhaustive equivalence.",
+  "validation": "All 26 ports typecheck under the batch\u2019s migration settings. 61 deterministic scenarios match original prompts, effort and outputs; six intentional bootstrap/SDLC migrations verify durable questions, and one interrupted pipeline verifies checkpoint reuse (68 checks total). No live agents were run; fixtures do not establish agent quality or exhaustive equivalence.",
   "commonChanges": [
     "agent(prompt, options) becomes an explicit ctx.claude.object or ctx.claude.text call with a durable ID, followed by result.output. JSON Schemas become Zod schemas; their field descriptions and optional properties are retained.",
     "Shared phase/log helpers use ctx.phase and ctx.log: observations persist with replay-marked stderr output, separate from effect identity. Inspect/list/watch expose saved progress. Unchanged ports retain differential prompt/reply/effort checks; bootstrap and SDLC have explicit question-contract fixtures.",
@@ -19,9 +19,9 @@
   ],
   "apiSnapshot": {
     "package": "quiet-choir 0.0.0",
-    "sha256": "eec696d0f4d1be26bcede4e535c791d0c07d4db190ae5f8249cd06d67a609f40",
+    "sha256": "21b265230c23c66836922bc42607bf60b107233b7e97bf3bce21fdd117aeca28",
     "file": "src/workflow/runtime/model.ts",
-    "description": "Runtime API used by the active ports at quiet-choir commit f7fa0af0599ba94c728e3e656d54d72b31dd8452. WorkflowContext adds schema-first ask/approve; runWorkflow returns completed or suspended results, and inbox delivery resumes the saved question under the same run ID. Bootstrap pins approval to its saved plan; SDLC composes conductors inline and binds redo answers to the requesting stage. The legacy context forwards ask/approve as well as value overloads. Shared helpers use ctx.phase and ctx.log for persisted, replay-marked observations. Format 6 records executions, resolved requests, attempt timing/usage/stacks, bounded events, and harness-kind provenance; inspect/list/watch expose progress without imports. Saved workflow failures expose WorkflowRunError with original cause and saved state. Format 6 and existing non-question identities remain compatible. Native calls retain run/step/attempt identity, durable process registration, bounded cleanup and orphan recovery. Historical ports keep strictProfiles:false with class grants for elevated raw capabilities. This model-file hash is provenance for that file, not the entire runtime; regression tests use the current built checkout. Broad historical port schema/normalization cleanup remains #65.",
-    "revision": "f7fa0af0599ba94c728e3e656d54d72b31dd8452"
+    "description": "Runtime API used by the active ports at quiet-choir commit ed1d0ade3438ae8823e2217c9478dde61e76595a. Durable now/wait/sleepUntil/poll APIs add recorded clocks, one-record readiness waits, and due-run ticking; new long sleeps can suspend, while legacy sleeps retain replay. The legacy context forwards all four new helpers alongside ask/approve and value overloads. Storage format 7 preserves replay contract 6. Bootstrap/SDLC retain their six question contracts, and all 68 comparison cases remain unchanged. This model-file hash is provenance for that file, not the entire runtime; regression tests use the current built checkout. Broad historical port schema/normalization cleanup remains #65.",
+    "revision": "ed1d0ade3438ae8823e2217c9478dde61e76595a"
   }
 }

@@ -409,7 +409,7 @@ it('polling resumes after cancellation with its original deadline and times out 
       harness,
       signal: controller.signal,
       onEvent(event) {
-        if (event.type === 'step.started' && event.stepId === 'wait') controller.abort();
+        if (event.type === 'step.waiting' && event.stepId === 'wait') controller.abort();
       },
     }),
   ).rejects.toThrow();
@@ -418,7 +418,7 @@ it('polling resumes after cancellation with its original deadline and times out 
   const result = await runWorkflow(polling, { ...options(), resume: true, harness });
   expect(result.output).toBe('timeout');
   expect(result.steps['started-at']).toEqual(interrupted.steps['started-at']);
-  expect(result.steps['wait']?.attempts).toBe(2);
+  expect(result.steps['wait']?.attempts).toBe(1);
   expect(harness.calls).toHaveLength(0);
 });
 
@@ -530,7 +530,7 @@ it('polling observes readiness without creating one checkpointed step per poll',
     input: { file, ms: 10000 },
     harness,
     onEvent(event) {
-      if (event.type === 'step.started' && event.stepId === 'wait') started();
+      if (event.type === 'step.waiting' && event.stepId === 'wait') started();
     },
   });
   await ready;

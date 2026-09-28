@@ -69,3 +69,6 @@ implementations remain invisible to callback hashing; declare dependencies in it
 A committed item's child can remain failed/cancelled as diagnostic history while the item outcome
 replays. Standalone ordinary catches outside a settled item still do not persist branch decisions.
 Durable race winners remain out of scope (#57).
+
+[ADR 0020](0020-durable-waits-and-tick.md) adds one recorded winner among signal/poll/deadline
+sources. Races among arbitrary durable effects remain unsupported.

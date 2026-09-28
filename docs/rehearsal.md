@@ -188,3 +188,7 @@ keys, clean environments, isolated configuration, no inherited hooks/MCP, and lo
 and Responses APIs. It checks real envelopes, exit codes, reconnection, and parsing; it does not
 claim that a fake server validates provider schemas or prices. Review refreshed sanitized captures
 before committing them. Ordinary tests replay the corpus and never need native authentication.
+
+General timing-only waits also skip delays. Polls perform their initial read-only observation;
+unresolved external waits suspend, and signal values are never fabricated. Notification hooks are
+disabled in rehearsal. `skippedSleeps` includes timing-only wait records.

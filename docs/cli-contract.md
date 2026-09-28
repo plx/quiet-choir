@@ -52,7 +52,7 @@ The error codes map to numeric exits in one CLI table:
 | 3    | `run.exists`, `run.not_found`, `run.locked`, `run.incompatible`, `run.input_changed`, `run.unreadable`, `run.orphans`, `answer.conflict` (the question is not waiting or already has a delivery)                      | Correct run/storage selection, wait for the owner, or explicitly resolve compatibility/ownership. No workflow body ran.  |
 | 4    | `load.typecheck`, `load.import`, `load.definition`                                                                                                                                                                    | Fix trusted source or its definition. No execution checkpoint was written.                                               |
 | 74   | `workflow.storage`                                                                                                                                                                                                    | Inspect saved state and fix storage/ownership before deciding how to resume. External effects may already have happened. |
-| 75   | `workflow.run.suspended`                                                                                                                                                                                              | Saved suspension with pending questions; answer and resume the same run.                                                 |
+| 75   | `workflow.run.suspended`                                                                                                                                                                                              | Saved suspension with pending waits; answer questions, deliver signals, or tick when due.                                |
 | 130  | `workflow.interrupted`                                                                                                                                                                                                | Inspect the returned state and resume when ready.                                                                        |
 
 Typechecking and import are distinct from workflow execution. Imports can have arbitrary side
@@ -113,3 +113,13 @@ contract. See [the changelog](../CHANGELOG.md) for the prototype API break.
 and config path. Built-in defaults add `noUncheckedIndexedAccess` to strict Node/ES2023 checking;
 `exactOptionalPropertyTypes` is enabled only by a project config. Resume also typechecks, so an
 unchanged in-flight run can be blocked by these stricter defaults before import or effects.
+
+## Tick
+
+`workflow tick` returns a single aggregate JSON document, including resumed count and completed,
+suspended, failed, skipped, and incompatible entries. With --run, exits are 0 completed, 75 pending,
+and 1 failed/incompatible; batch per-run failures remain data with exit 0. Usage/infrastructure
+errors retain the command failure document. --watch is bounded by --timeout (default 540s), with
+--max-runs limiting resume attempts. `--harness-config` supplies CLI harness configuration (JSON or
+`@file`) for resumed CLI runs, since the checkpoint stores only the harness kind, not its config.
+See [waits](waits.md) for due detection and notification hooks.

@@ -48,7 +48,11 @@ version requires a new run ID (a fork can reuse compatible steps). See [durabili
 | `ctx.map(id, items, { concurrency, key?, onError? }, mapper)`                      | Ordered fan-out with per-item prefixes and optional outcome journal                                 |
 | `ctx.ask(id, { prompt, schema, details?, choices?, audience?, subject?, title? })` | Durable schema-validated external answer; a quiescent run suspends                                  |
 | `ctx.approve(id, options)`                                                         | `{ approved: boolean, comment?: string }`; fixed-schema question                                    |
-| `ctx.sleep(id, milliseconds)`                                                      | `null`; persists the wake deadline, then waits in this process                                      |
+| `ctx.now(id)`                                                                      | Recorded clock anchor                                                                               |
+| `ctx.wait(id, sources)`                                                            | One replayed signal/poll/deadline outcome                                                           |
+| `ctx.sleepUntil(id, epochMs)`                                                      | Absolute deadline from input or recorded time                                                       |
+| `ctx.poll(id, options)`                                                            | Read-only observations with a finite bound                                                          |
+| `ctx.sleep(id, milliseconds)`                                                      | `null`; pins a relative deadline, with long waits suspending                                        |
 | `ctx.runId`                                                                        | Stable run identifier                                                                               |
 | `ctx.signal`                                                                       | Current scope signal; inherits run and parent-map cancellation                                      |
 
@@ -234,9 +238,9 @@ a union result; preserve the literal mode (or explicitly use `onError: 'throw'`)
 
 Do not use `Promise.race` or `Promise.any` over durable operations. Replay timing can pick a
 different winner, and the runner drains losing work instead of cancelling it. Use an agent's
-`timeoutMs` with `onError: 'return'` for timeout decisions. There is no `ctx.race`; a durable winner
-journal and scoped loser cancellation are deferred to
-[#57](https://github.com/plx/quiet-choir/issues/57).
+`timeoutMs` with `onError: 'return'` for agent timeout decisions. Competing signal/poll/deadline
+sources use one `ctx.wait`; see [durable waits](waits.md). There is no `ctx.race` over arbitrary
+effects and no scoped loser-cancellation contract.
 
 Automatic failure stickiness and `--retry-failed` are not implemented: inferring handling from error
 identity/cause chains can freeze an ordinary retry loop permanently. A saved settled failure is a
@@ -290,3 +294,5 @@ Run `checkCodexSchema(schema)` early to see paths and suggested fixes; `workflow
 run the body to discover call-site schemas. Refinements are local checks, so restate them in the
 prompt. See [Codex](codex.md) for the full encoding rules. Claude also requires an object root and
 receives the original schema.
+
+Read [durable waits](waits.md) for source precedence, suspension, notifications, and ticking.

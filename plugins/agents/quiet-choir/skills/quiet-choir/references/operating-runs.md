@@ -150,3 +150,6 @@ investigation. External mutations remain in place after cancellation.
 For code/schema edits use [acceptance or fork recovery](durability.md#choose-a-recovery-path);
 `--resume --accept-code-change` retains per-step compatibility checks. Inspect the actual saved
 checkpoint after storage failure, since an uncheckpointed action can repeat.
+
+For parked deadlines and polls, use [workflow tick](waits.md#operate-a-parked-run); pending JSON
+includes their progress.

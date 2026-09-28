@@ -160,7 +160,9 @@ export class RehearsalHarness extends FixtureHarness {
     }
     if (record?.status === 'suspended')
       this.warnings.add(
-        'Rehearsal stopped at an unanswered question. Temporary state is removed; answer/resume commands are unavailable. Start a real run to request and persist the decision.',
+        Object.values(record.steps).some((step) => step.status === 'waiting' && step.question)
+          ? 'Rehearsal stopped at an unanswered question. Temporary state is removed; answer/resume commands are unavailable. Start a real run to request and persist the decision.'
+          : 'Rehearsal stopped at an unresolved external wait. Temporary state is removed; start a real run to keep polling or resume later.',
       );
     // A fully completed resume short-circuits before body events; all saved effects replay as a unit.
     const replayed =
@@ -188,7 +190,13 @@ export class RehearsalHarness extends FixtureHarness {
         0,
       ),
       stubbedSteps: [...this.stubbedSteps],
-      skippedSleeps: [...this.skippedSleeps].filter((id) => record?.steps[id]?.kind === 'sleep'),
+      skippedSleeps: [...this.skippedSleeps].filter((id) => {
+        const step = record?.steps[id];
+        return (
+          step?.kind === 'sleep' ||
+          (step?.kind === 'wait' && !step.question && !step.wait?.request.poll)
+        );
+      }),
       warnings: [...this.warnings],
     });
   }

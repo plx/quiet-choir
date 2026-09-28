@@ -384,16 +384,16 @@ describe('durable TypeScript workflows', () => {
         ...options,
         signal: controller.signal,
         onEvent: (event) => {
-          if (event.type === 'step.started') controller.abort(new Error('stop'));
+          if (event.type === 'step.waiting') controller.abort(new Error('stop'));
         },
       }),
     ).rejects.toThrow('stop');
     const before = await readRun({ stateDir: options.stateDir, runId: options.runId });
-    const wakeAt = before.steps['wait']?.wakeAt;
+    const wakeAt = before.steps['wait']?.wait?.deadline;
     await delay(50);
     const after = await runWorkflow(definition, { ...options, resume: true });
-    expect(after.steps['wait']?.wakeAt).toBe(wakeAt);
-    expect(after.steps['wait']?.attempts).toBe(2);
+    expect(after.steps['wait']?.wait?.deadline).toBe(wakeAt);
+    expect(after.steps['wait']?.attempts).toBe(1);
   });
 
   it('drains siblings and retains their completed checkpoints on an outer failure', async () => {

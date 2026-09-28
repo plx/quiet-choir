@@ -136,7 +136,16 @@ consumer imports `quiet-choir` as above.
 | `ctx.map(id, items, { concurrency, key?, onError? }, mapper)` | Bounded fan-out; each item prefixes explicit leaf IDs with its map ID and key |
 | `ctx.ask(id, { prompt, schema, ... })`                        | Durable external answer; suspends after active work drains                    |
 | `ctx.approve(id, options)`                                    | Durable `{ approved, comment? }` decision for a specific subject              |
+| `ctx.now(id)`                                                 | Record a stable clock anchor for replay                                       |
+| `ctx.wait(id, sources)`                                       | Resolve a signal, read-only poll, or deadline in one record                   |
+| `ctx.sleepUntil(id, epochMs)`                                 | Wait until a fixed deadline; long waits suspend                               |
+| `ctx.poll(id, options)`                                       | Poll with a schema, spacing, and finite deadline                              |
 | `ctx.sleep(id, milliseconds)`                                 | Persist a wake time and wait only the remaining time after resume             |
+
+Long waits suspend at quiescence without cancelling siblings; waits due within 1000 ms stay live.
+Use `workflow tick --run RUN --watch --timeout 540s --json` or periodic cron to resume due work.
+`--wait-mode block` keeps execute/resume in-process. Use one `ctx.wait` for competing sources; never
+`Promise.race` durable operations. See [durable waits and notifications](docs/waits.md).
 
 `value()` writes the same durable records and identities as `object()`/`text()`, returning only the
 output. With `onError: 'return'`, it returns `Settled<T>` or `Settled<string>`. Successful new agent
@@ -320,8 +329,8 @@ default; a caught throwing call may heal and change the replay path. Cancellatio
 Use one ID with `retry: { maxAttempts: 3, delayMs: 100, on: ['rate-limit', 'timeout'] }` for
 transient retries. Retry policy can change on resume; `onError` is step identity. Do not race
 durable operations with `Promise.race`/`Promise.any`: replay may choose a different winner. Agent
-`timeoutMs` plus `onError: 'return'` journals a timeout decision. Durable races are deferred to #57.
-See
+`timeoutMs` plus `onError: 'return'` journals a timeout decision. Signal/poll/deadline races use one
+`ctx.wait`; arbitrary effect races remain unsupported. See
 [failure handling](plugins/agents/quiet-choir/skills/quiet-choir/references/workflow-authoring.md#failure-handling)
 for safe fallbacks, best-effort maps, classification limits, and deliberate retry via fork
 invalidation.
@@ -561,7 +570,7 @@ layered project/user settings are deferred.
 | 3    | `answer.conflict` for duplicate/closed questions, or `run.*`: existing/missing/locked/unreadable run, incompatible resume, changed input, or surviving/unverified child processes (`run.orphans`). No workflow body runs.              |
 | 4    | `load.*`: typecheck, import, or workflow-definition failure. No execution checkpoint is written.                                                                                                                                       |
 | 74   | `workflow.storage`: saving, process registration, or releasing ownership failed. Inspect the reported saved state; it can still be `running`, `completed`, or absent.                                                                  |
-| 75   | Saved suspension: `workflow.run.suspended` with pending questions and answer/resume commands. A saved suspension stands even when a signal arrived.                                                                                    |
+| 75   | Saved suspension: `workflow.run.suspended` with pending waits and answer/resume commands. A saved suspension stands even when a signal arrived.                                                                                        |
 | 130  | `workflow.interrupted`: SIGINT/SIGTERM/SIGHUP. Graceful cancellation saves `cancelled` when possible. A second signal kills tracked groups immediately and reports the last readable checkpoint, which may still be `running`.         |
 
 `npm run check` includes formatting, lint, strict typechecking, tests with coverage gates, build,

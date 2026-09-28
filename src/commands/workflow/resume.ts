@@ -22,7 +22,17 @@ export default class WorkflowResume extends WorkflowCommand {
     readonly 'kill-orphans': boolean | undefined;
     readonly harness: string;
     readonly 'harness-config': string | undefined;
+    readonly 'notify-command': string | undefined;
+    readonly 'wait-mode': 'suspend' | 'block' | undefined;
   }> = {
+    'notify-command': Flags.string({
+      description: 'Best-effort sh -c hook receiving event JSON on stdin',
+      env: 'QUIET_CHOIR_NOTIFY_COMMAND',
+    }),
+
+    'wait-mode': Flags.option({ options: ['suspend', 'block'] as const })({
+      description: 'Suspend long waits (default) or keep waiting in this process',
+    }),
     'state-dir': Flags.directory({
       description:
         'Runs container; defaults to environment, legacy run discovery, then project XDG state',
@@ -59,6 +69,8 @@ export default class WorkflowResume extends WorkflowCommand {
     });
     const result = await executor.execute({
       kind: 'workflow.resume',
+      ...(flags['notify-command'] === undefined ? {} : { notifyCommand: flags['notify-command'] }),
+      ...(flags['wait-mode'] === undefined ? {} : { waitMode: flags['wait-mode'] }),
       runId: args.runId,
       stateDir: stateDir,
       harness,

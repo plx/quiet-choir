@@ -174,7 +174,7 @@ Put flags after the command name, for example `workflow inspect first --json`.
 | 3    | `answer.conflict` for duplicate/closed questions, or `run.*`: existing/missing/locked/unreadable run, incompatible resume, changed input, or surviving/unverified child processes (`run.orphans`). No workflow body runs.                                                  |
 | 4    | `load.*`: typecheck, import, or workflow-definition failure. No execution checkpoint is written.                                                                                                                                                                           |
 | 74   | `workflow.storage`: saving, process registration, or releasing ownership failed. Inspect the reported saved state; it can still be `running`, `completed`, or absent.                                                                                                      |
-| 75   | Saved suspension with pending questions; answer and resume the same run. A saved suspension stands even when a signal arrived.                                                                                                                                             |
+| 75   | Saved suspension with pending waits; answer questions, deliver signals, or tick when due. A saved suspension stands even when a signal arrived.                                                                                                                            |
 | 130  | `workflow.interrupted`: SIGINT/SIGTERM/SIGHUP. Graceful cancellation saves `cancelled` when possible; if that save fails, the exit is 74 instead. A second signal kills tracked groups immediately and reports the last readable checkpoint, which may still be `running`. |
 
 `configuration doctor --json` runs five checks for each installed harness: tested version range,
@@ -234,3 +234,6 @@ change, with final exits completed 0, failed 1, cancelled 130, stale 3.
 `workflow list --status stale --json` finds abandoned runs without importing source. See
 [inspection](inspection.md) for status filters, unknown owners, warnings, partial usage, and
 retention.
+
+Use [workflow tick](waits.md) for due stored entrypoints and bounded watching; --wait-mode block on
+execute/resume keeps waits live.

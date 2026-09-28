@@ -23,6 +23,8 @@ interface WorkflowExecuteArgs {
 }
 
 interface WorkflowExecuteFlags {
+  readonly 'notify-command': string | undefined;
+  readonly 'wait-mode': 'suspend' | 'block' | undefined;
   readonly harness: string;
   readonly 'harness-config': string | undefined;
   readonly 'dry-run': boolean | undefined;
@@ -58,6 +60,14 @@ export default class WorkflowExecute extends WorkflowCommand {
   };
 
   public static override readonly flags: Interfaces.FlagInput<WorkflowExecuteFlags> = {
+    'notify-command': Flags.string({
+      description: 'Best-effort sh -c hook receiving event JSON on stdin',
+      env: 'QUIET_CHOIR_NOTIFY_COMMAND',
+    }),
+
+    'wait-mode': Flags.option({ options: ['suspend', 'block'] as const })({
+      description: 'Suspend long waits (default) or keep waiting in this process',
+    }),
     harness: Flags.string({ description: 'cli or fixture:<JSON file>', default: 'cli' }),
     'harness-config': Flags.string({
       description: 'CliHarness configuration JSON or @file; paths resolve against cwd',
@@ -215,6 +225,8 @@ export default class WorkflowExecute extends WorkflowCommand {
     });
     const result = await executor.execute({
       ...launch,
+      ...(flags['notify-command'] === undefined ? {} : { notifyCommand: flags['notify-command'] }),
+      ...(flags['wait-mode'] === undefined ? {} : { waitMode: flags['wait-mode'] }),
       harness,
       dryRun: flags['dry-run'] ?? false,
       stubSteps: flags['stub-steps'] ?? [],
