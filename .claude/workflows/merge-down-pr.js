@@ -800,7 +800,10 @@ function replyFor(t, fixed, filed) {
     if (issue) body += `\n\nTracked in #${issue.number}.`;
   }
   // A rejected code-scanning thread also dismisses its alert (merge-down.mjs picks the reason).
-  return { threadId: t.id, body, ...(t.action === 'reject' ? { dismiss: true } : {}) };
+  // A settled code-scanning alert must leave the open set: rejected ones are dismissed as false
+  // positives, deferred ones as "won't fix" pointing at the follow-up (merge-down.mjs decides).
+  const dismiss = t.action === 'reject' ? 'reject' : t.action === 'defer' ? 'defer' : null;
+  return { threadId: t.id, body, ...(dismiss ? { dismiss } : {}) };
 }
 
 // Returns {replies, changed} or a blocked record.
@@ -832,6 +835,23 @@ async function fixRoundOf(threads, work) {
     return { error: `could not fix: ${unfixed.map((i) => `${i.key} (${i.summary})`).join('; ')}` };
   if (fixed && !fixed.checkPassed)
     return { error: `local checks still fail after fixes: ${fixed.notes.join('; ')}` };
+  if (fixed) {
+    // Don't take the implementer's word: its commits must be in the branch, and the last check
+    // must have passed against the head we are about to publish.
+    const commits = [...new Set(fixed.items.map((i) => i.commit.trim()).filter(Boolean))].join(',');
+    const verified = (
+      await clerk(`verify ${`fix-${fixRound}`}`, 'Fix', [
+        step('verify', 'verify-fixes', commits ? `--commits ${commits}` : ''),
+      ])
+    ).verify;
+    if (verified.error) return { error: `could not verify fixes: ${verified.error}` };
+    if (verified.missingCommits.length) {
+      return { error: `reported commits not in the branch: ${verified.missingCommits.join(', ')}` };
+    }
+    if (!verified.checkPassedAtHead) {
+      return { error: `no passing check recorded for head ${verified.head.slice(0, 7)}` };
+    }
+  }
   if (fixed?.notes?.length) record.fixNotes = [...(record.fixNotes ?? []), ...fixed.notes];
   record.fixes = [...(record.fixes ?? []), ...(fixed?.items ?? [])];
   const replies = threads.map((t) => replyFor(t, fixed, filed)).filter(Boolean);
@@ -981,7 +1001,7 @@ Decisions already made on this PR, for consistency (don't reopen them unless a n
 ${settled || '- none'}
 
 For each unresolved thread: verdict (valid | partly-valid | invalid | obsolete), action (fix | defer | reject | none), severity, complexity (mechanical | subtle), plan, and a 1–3 sentence reply to post (the workflow appends the fixing commit or follow-up issue). A fix must stay within this PR's issue scope; otherwise defer${PR.laterInStack ? ', or reject with "addressed by #N" when a later PR in stack.md covers it' : ''}. This is Codex round ${codexRequests}; re-reviews stop after round ${A.maxCodexRounds} unless a round keeps finding real major problems (hard cap ${A.codexRoundsHardCap}), so be decisive and rate severity honestly. Use the thread ids exactly as in threads.md, including alert:N for code-scanning alerts that have no review thread. Plans cover code and docs only, never GitHub actions.
-Threads by github-advanced-security are CodeQL code-scanning alerts (threads.md also lists every open alert on the PR). Fix real problems, and prefer a cheap safer pattern over arguing when one exists (for example, pass values to generated scripts through argv or env instead of interpolating them into code). Reject only a genuine false positive or test-only pattern, with a short justification; the workflow dismisses the alert using your reply.${standing}`,
+Threads by github-advanced-security are CodeQL code-scanning alerts (threads.md also lists every open alert on the PR). Fix real problems, and prefer a cheap safer pattern over arguing when one exists (for example, pass values to generated scripts through argv or env instead of interpolating them into code). Reject only a genuine false positive or test-only pattern, with a short justification; the workflow dismisses the alert using your reply. Defer an alert only as an accepted risk with a follow-up: it is then dismissed as "won't fix".${standing}`,
       { ...TIER.reviewer, label: `triage r${record.rounds}`, phase: 'Review', schema: TRIAGE },
     );
     if (!triage) return blocked('review', 'thread triage returned nothing');
@@ -1035,7 +1055,11 @@ Threads by github-advanced-security are CodeQL code-scanning alerts (threads.md 
         : `Codex round limit reached after round ${codexRequests} (latest findings minor); the last fixes were gated on CI only`,
     );
   }
-  if (ciFailed && !next.changed) return blocked('gate', 'CI failed and the repair made no changes');
+  // Triage that changed nothing still has replies to publish, and the failed jobs deserve their
+  // one re-run on this head before anyone concludes the failure is real.
+  if (ciFailed && !next.changed && rerunHeads.includes(head)) {
+    return blocked('gate', 'CI failed and the repair made no changes');
+  }
 }
 
 // ── Land ─────────────────────────────────────────────────────────────────────────────────────

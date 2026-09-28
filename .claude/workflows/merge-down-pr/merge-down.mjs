@@ -17,6 +17,7 @@
 //   reply    --pr N < replies.json        reply to review threads (resolves Codex threads by default)
 //   request-review --pr N                comment "@codex review"
 //   rerun    --pr N --sha S              re-run failed CI jobs for S once (flake check)
+//   verify-fixes --pr N --commits a,b    reported commits are in HEAD; last check passed at HEAD
 //   await    --pr N --sha S --since ISO [--codex required|skip] [--max-seconds 540]
 //   land     --pr N --sha S [--issue I] [--expect-close | --keep-open I]
 //   close    --pr N < comment.md          comment, then close (Dependabot commands self-close)
@@ -804,6 +805,7 @@ function check(a, P) {
   const passed = r.status === 0;
   return {
     passed,
+    head: git(W, ['rev-parse', 'HEAD']),
     exitCode: r.status,
     failedStep: passed ? null : (steps.at(-1) ?? null),
     seconds: Math.round((Date.now() - started) / 1000),
@@ -898,7 +900,32 @@ async function publish(a, P, R) {
   return result;
 }
 
-function dismissAlert(R, number, path, comment) {
+// Check an implementer's report mechanically: every commit it names is in the branch, and the
+// last check run passed against the exact current head.
+function verifyFixes(a, P) {
+  const pr = requirePr(a);
+  const W = P.workdir;
+  const commits = String(a.commits ?? '')
+    .split(',')
+    .map((c) => c.trim())
+    .filter(Boolean);
+  const head = git(W, ['rev-parse', 'HEAD']);
+  const missing = commits.filter(
+    (c) =>
+      !gitOk(W, ['rev-parse', '--verify', '--quiet', `${c}^{commit}`]) ||
+      !gitOk(W, ['merge-base', '--is-ancestor', c, head]),
+  );
+  const saved = readJson(join(prDir(P, pr), 'last', 'check.json'));
+  const checkOk = Boolean(saved?.passed) && saved?.head === head;
+  return {
+    head,
+    missingCommits: missing,
+    checkPassedAtHead: checkOk,
+    checkHead: saved?.head ?? null,
+  };
+}
+
+function dismissAlert(R, number, path, comment, deferred = false) {
   const where =
     path ??
     ghJson(['api', `repos/${R.repo}/code-scanning/alerts/${number}`]).most_recent_instance?.location
@@ -913,7 +940,7 @@ function dismissAlert(R, number, path, comment) {
     '-f',
     'state=dismissed',
     '-f',
-    `dismissed_reason=${testOnly ? 'used in tests' : 'false positive'}`,
+    `dismissed_reason=${deferred ? "won't fix" : testOnly ? 'used in tests' : 'false positive'}`,
     '-f',
     `dismissed_comment=${comment.slice(0, 280)}`,
   ]);
@@ -934,7 +961,9 @@ function reply(a, P, R) {
     if (standalone) {
       // A code-scanning alert with no review thread: nothing to reply to, only an alert to settle.
       try {
-        if (item.dismiss) dismissAlert(R, Number(standalone[1]), null, item.body);
+        if (item.dismiss) {
+          dismissAlert(R, Number(standalone[1]), null, item.body, item.dismiss === 'defer');
+        }
         entry.dismissedAlert = item.dismiss ? Number(standalone[1]) : null;
       } catch (error) {
         entry.error = error.message;
@@ -957,7 +986,7 @@ function reply(a, P, R) {
       entry.url = posted.data.addPullRequestReviewThreadReply.comment.url;
       const thread = known.find((t) => t.id === item.threadId);
       if (item.dismiss && thread?.alert) {
-        dismissAlert(R, thread.alert, thread.path, item.body);
+        dismissAlert(R, thread.alert, thread.path, item.body, item.dismiss === 'defer');
         entry.dismissedAlert = thread.alert;
       }
       if (item.resolve ?? (thread?.isCodex || thread?.isBot) ?? false) {
@@ -1126,7 +1155,18 @@ async function land(a, P, R) {
     return { merged: false, reason: `open code-scanning alerts on the PR: ${list}` };
   }
 
-  run('gh', ['pr', 'merge', String(pr), '-R', R.repo, '--squash', '--match-head-commit', sha]);
+  // The REST endpoint merges now or fails; `gh pr merge` may instead enqueue the PR or enable
+  // auto-merge, which would land it later without this workflow's verification.
+  gh([
+    'api',
+    '-X',
+    'PUT',
+    `repos/${R.repo}/pulls/${pr}/merge`,
+    '-f',
+    'merge_method=squash',
+    '-f',
+    `sha=${sha}`,
+  ]);
   let mergeCommit = null;
   for (let i = 0; i < 20 && !mergeCommit; i++) {
     if (i) await sleep(3000);
@@ -1221,6 +1261,7 @@ const COMMANDS = {
   reply,
   'request-review': requestReview,
   rerun: rerunFailed,
+  'verify-fixes': (a, P) => verifyFixes(a, P),
   await: awaitGate,
   land,
   close,
