@@ -37,7 +37,9 @@ Claude skips the workspace trust dialog and can execute project hooks in never-t
 Do not point inherited calls at untrusted checkouts. `tools: []` alone does not suppress inherited
 MCP or hooks. Codex's two flags do not promise removal of every project instruction or managed
 integration; they specifically skip user config and execpolicy rules. Custom providers normally
-stored in `config.toml` need explicit `config` or an inherited role.
+stored in `config.toml` need explicit `config` or an inherited role. `harnessProfile` selects a
+native profile from the same skipped `config.toml`, so restricted mode rejects it; select `inherit`
+or configure the equivalent settings through `config`.
 
 Neither mode confines the workflow's TypeScript, local callbacks, or `ctx.exec`. OS sandbox
 selection and tool grants remain separate controls. Custom harnesses must enforce the resolved mode
