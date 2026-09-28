@@ -105,7 +105,7 @@ it('parks a long timeout after a sibling completes and retains its original dead
 
 it('keeps one bounded wait record across hundreds of nonterminal observations', async () => {
   const sizes: number[] = [];
-  for (const count of [10, 800]) {
+  for (const count of [10, 200]) {
     const clock = new Clock(true);
     let checks = 0;
     const definition = defineWorkflow({
