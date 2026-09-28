@@ -31,6 +31,10 @@ import { WorktreeGit } from '../src/worktrees/git.js';
 import { RunWorktrees } from '../src/workflow/runtime/worktrees.js';
 import { testInvocation } from './harness-invocation.js';
 
+// Every test drives dozens of real Git processes and fsynced checkpoints; under a loaded parallel
+// coverage run they exceed the 5s default even though each finishes in about a second alone.
+vi.setConfig({ testTimeout: 20_000 });
+
 let directory: string, repo: string, stateDir: string, root: string;
 const processRunner = new NodeProcessRunner();
 const git = new WorktreeGit(processRunner),

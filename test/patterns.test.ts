@@ -315,7 +315,7 @@ it('worktree recipe integrates pinned edits and replays without repeating writer
       /^worktree /gmu,
     ),
   ).toHaveLength(1);
-});
+}, 20_000);
 
 it('polling resumes after cancellation with its original deadline and times out as data', async () => {
   const file = join(root, 'checks.txt');
