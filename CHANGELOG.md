@@ -9,7 +9,8 @@
   fingerprints. Use `HarnessRequestInput` for pure `CliHarness.plan()`/direct adapter inputs. Export
   `FixtureHarness`, fixture types/parser, and deterministic schema sampling from the root.
 - New records save harness provenance; changing kinds on resume/fork requires `allowHarnessChange` /
-  `--allow-harness-change`. Unlabelled format-6 checkpoints remain resumable.
+  `--allow-harness-change`, except from a harness-less (`none`) run. Unlabelled format-6 checkpoints
+  remain resumable.
 - Ship repository-only real-envelope fake CLIs and an opt-in, zero-cost `test:contract` capture job.
 
 - Persist step/attempt timing, resolved request summaries, usage, stacks, and body executions.

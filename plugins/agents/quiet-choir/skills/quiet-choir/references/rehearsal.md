@@ -125,11 +125,13 @@ never grants future native execution.
 New records save `harness.kind`: `cli`, `fixture`, `dry-run`, `custom` for an unnamed embedded
 adapter, or `none` without an adapter. A different kind on resume or fork requires
 `--allow-harness-change` (embedding: `allowHarnessChange: true`), even on the completed-run fast
-path. This prevents accidental reuse of simulated outputs as native results. It does not establish
-trust in arbitrary executable adapters. Custom adapters should give distinct modes explicit `kind`
-values. Actual changed executions retain `previousKinds`; completed fast-path reads retain their
-original provenance. Earlier format-6 records have no kind, so they remain resumable without
-guessing their historical adapter. Pre-rehearsal fingerprints are unchanged.
+path. This prevents accidental reuse of simulated outputs as native results. A run that has only
+ever been `none` holds no agent outputs, so any harness can resume or fork it without the flag or a
+recorded change; adapters cannot claim the reserved kind `none`. The check does not establish trust
+in arbitrary executable adapters. Custom adapters should give distinct modes explicit `kind` values.
+Actual changed executions retain `previousKinds`; completed fast-path reads retain their original
+provenance. Earlier format-6 records have no kind, so they remain resumable without guessing their
+historical adapter. Pre-rehearsal fingerprints are unchanged.
 
 Configure CLI executable paths and process limits with inline JSON or a file:
 

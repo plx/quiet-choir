@@ -282,6 +282,9 @@ export async function runWorkflow<TInput, TOutput>(
   const harnessKind = options.harness?.kind ?? (options.harness ? 'custom' : 'none');
   if (typeof harnessKind !== 'string' || !harnessKind.trim() || harnessKind.length > 100)
     throw new Error('Harness kind must be a nonempty string of at most 100 characters.');
+  // 'none' marks a run with no agent outputs, which any harness may adopt without authorization.
+  if (options.harness && harnessKind === 'none')
+    throw new Error("Harness kind 'none' is reserved for runs without a harness adapter.");
   if (options.rehearsal !== undefined && harnessKind !== 'dry-run')
     throw new Error('Rehearsal hooks require a dry-run harness.');
   const limiter = resolveAgentLimiter(options.agentLimit);
@@ -370,7 +373,14 @@ export async function runWorkflow<TInput, TOutput>(
       fork && forkStateDir ? await loadFork(fork.runId, forkStateDir, definition.name) : undefined;
     function requireHarnessChange(source: RunRecord | undefined): void {
       // Unlabelled legacy records remain resumable: their historical adapter cannot be inferred.
-      if (source?.harness && source.harness.kind !== harnessKind && !options.allowHarnessChange)
+      // A source that never had an adapter holds no agent outputs, so any harness may adopt it.
+      const harnessLess = source?.harness?.kind === 'none' && !source.harness.previousKinds.length;
+      if (
+        source?.harness &&
+        !harnessLess &&
+        source.harness.kind !== harnessKind &&
+        !options.allowHarnessChange
+      )
         throw new RunRefusedError(
           'run.incompatible',
           options.runId,
@@ -501,7 +511,9 @@ export async function runWorkflow<TInput, TOutput>(
       previousKinds: [
         ...new Set([
           ...(priorHarness?.previousKinds ?? []),
-          ...(priorHarness && priorHarness.kind !== harnessKind ? [priorHarness.kind] : []),
+          ...(priorHarness && priorHarness.kind !== 'none' && priorHarness.kind !== harnessKind
+            ? [priorHarness.kind]
+            : []),
         ]),
       ],
     };
