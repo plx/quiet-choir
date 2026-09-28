@@ -2,6 +2,17 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- Harness calls settle after bounded output draining and reap owned groups on every exit. Cleanup
+  grace defaults to 3000ms, settable with `--kill-grace-ms`. SIGINT/SIGTERM/SIGHUP first drain; a
+  second signal synchronously kills tracked groups and exits 130.
+- Durable child ownership prevents abandoned-lock recovery beside live agents. Inspection reports
+  owner/process liveness; `--resume --kill-orphans` stops only identity-confirmed groups. Refusals
+  use exit 3 (`run.orphans`). See [process lifecycle](docs/process-lifecycle.md) for remaining gaps.
+- **Harness port migration:** `invoke` and optional `metadata` now receive `HarnessInvocation` with
+  `signal`, run/step/attempt IDs and `trackProcess`, replacing the bare signal parameter. Registry
+  persistence failures use `CheckpointError.operation: 'process'`; they cannot retry or become
+  settled workflow data. Checkpoint format 5 and completed replay remain compatible.
+
 - Live agents now share a run-wide concurrency cap, defaulting to min(8, max(1, available CPUs -
   2)). Configure total/provider limits through RunOptions or CLI flags, or share a limiter across
   runs. Queueing is cancellable, visible through admission events, and outside per-call deadlines.

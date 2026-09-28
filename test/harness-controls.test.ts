@@ -1,4 +1,5 @@
 import { execFileSync } from 'node:child_process';
+import { testInvocation } from './harness-invocation.js';
 import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, basename, delimiter } from 'node:path';
@@ -88,7 +89,7 @@ it('passes every Claude control literally and stores large/structured values in 
   };
   await new CliHarness({ claudeBinary: basename(path) }).invoke(
     { provider: 'claude', cwd: directory, outputSchema: null, options: controls },
-    signal,
+    testInvocation(signal),
   );
   const result = JSON.parse(await readFile(join(directory, 'capture.json'), 'utf8')) as {
     args: string[];
@@ -154,7 +155,7 @@ it('passes every Codex control, preserves TOML values, snapshots images, and sep
   };
   await new CliHarness({ codexBinary: basename(path) }).invoke(
     { provider: 'codex', cwd: directory, outputSchema: null, options },
-    signal,
+    testInvocation(signal),
   );
   const result = JSON.parse(await readFile(join(directory, 'capture.json'), 'utf8')) as {
     args: string[];
@@ -205,7 +206,7 @@ it.each(['failure', 'timeout', 'abort'] as const)(
           timeoutMs: mode === 'timeout' ? 1000 : 10_000,
         },
       },
-      controller.signal,
+      testInvocation(controller.signal),
     );
     if (mode === 'abort') {
       await vi.waitFor(
@@ -324,7 +325,7 @@ it.each(['claude', 'codex'] as const)(
           outputSchema: null,
           options: { prompt: 'x', extraArgs: ['--model=x'] },
         },
-        signal,
+        testInvocation(signal),
       ),
     ).rejects.toThrow('owned by model');
   },
@@ -353,7 +354,7 @@ it('rejects typed enum conflicts, bypass settings and config shadowing before sp
           outputSchema: null,
           options: { prompt: 'x', ...options },
         },
-        signal,
+        testInvocation(signal),
       ),
     ).rejects.not.toThrow('Cannot start');
   for (const key of [
@@ -665,7 +666,7 @@ it('keeps shared version discovery alive when its first map subtree aborts', asy
   });
   let finish!: () => void;
   const metadata = vi.fn<NonNullable<Harness['metadata']>>().mockImplementation(
-    (_request, signal) =>
+    (_request, { signal }) =>
       new Promise((resolve, reject) => {
         finish = () => {
           resolve({ binary: 'fake', version: '1' });
@@ -725,7 +726,7 @@ it('releases an aborted scope from stalled discovery and drains discovery before
   });
   const order: string[] = [];
   const metadata = vi.fn<NonNullable<Harness['metadata']>>().mockImplementation(
-    (_request, signal) =>
+    (_request, { signal }) =>
       new Promise((_resolve, reject) => {
         // A well-behaved adapter that waits for its supplied signal and nothing else.
         signal.addEventListener(

@@ -118,6 +118,11 @@ stubs. Executable overrides are available as `--claude-binary` and `--codex-bina
 `CliHarness` also reads `--version` on each provider's first live use in a run invocation. Saved
 `harnesses` record binary/version, and inspect shows them. Discovery failures and version changes on
 resume are warnings, not identity changes. Completed-only replay does not launch version probes.
-Custom harnesses can implement optional `metadata(request, signal)`; older records remain readable.
-Discovery is shared by the run: an aborted map scope stops waiting for it, and the run aborts its
-`signal` and awaits it before releasing ownership when no effect still needs the result.
+Custom harnesses can implement optional `metadata(request, invocation)`; the invocation supplies the
+run's discovery signal and process-registration port. Older records remain readable. Discovery is
+shared by the run: an aborted map scope stops waiting for it, and the run aborts `invocation.signal`
+and awaits it before releasing ownership when no effect still needs the result. See
+[process lifecycle](process-lifecycle.md) for adapter migration and orphan recovery.
+
+Doctor probes use the same first/second SIGINT, SIGTERM and SIGHUP cleanup as workflow execution,
+but have only in-memory ownership because no resumable workflow run exists.

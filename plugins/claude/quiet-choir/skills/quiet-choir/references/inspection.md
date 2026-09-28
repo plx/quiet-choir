@@ -15,18 +15,26 @@ called in a subdirectory. Its launch directory is the base for relative paths, t
 `cwd`, and agent calls; resume must use the original directory. There is no CLI `--cwd` flag.
 
 Inspection does not import the workflow or take the writer lock. Each read sees a persisted
-checkpoint, not the live JavaScript stack. There is no watch command; repeat inspection if needed.
-For embedding, `await readRun({ runId, cwd, stateDir })` returns the same validated record. Like
-`runWorkflow`, it defaults to `<cwd>/.quiet-choir/runs` and resolves relative `stateDir` paths
-against `cwd` (default: `process.cwd()`). `resolveStateDir({ cwd, stateDir })` returns the absolute
-directory. A missing CLI inspection names that directory and lists the run IDs present; embedded
-`readRun` retains the filesystem error's `code: 'ENOENT'`.
+checkpoint plus current OS ownership observations, not the live JavaScript stack. There is no watch
+command; repeat inspection if needed. For embedding, `await readRun({ runId, cwd, stateDir })`
+returns the validated checkpoint alone; `inspectRunOwnership({ runId, cwd, stateDir })` returns the
+separate current ownership view. Like `runWorkflow`, it defaults to `<cwd>/.quiet-choir/runs` and
+resolves relative `stateDir` paths against `cwd` (default: `process.cwd()`).
+`resolveStateDir({ cwd, stateDir })` returns the absolute directory. A missing CLI inspection names
+that directory and lists the run IDs present; embedded `readRun` retains the filesystem error's
+`code: 'ENOENT'`.
 
 Checkpoints are `<stateDir>/<runId>.json`, with a sibling `<runId>.json.lock/` while owned. The lock
-also survives a hard kill, so it does not prove a live owner. Once the owner PID is dead, a resume
-on the same host recovers it automatically; foreign-host or incomplete ownership needs inspection.
-Prefer `inspect` or `readRun` to validate data. `inspect` exits 0 even for `failed` or `running`
-records; check `status`. A JSON inspection result has these useful fields:
+also survives a hard kill, so it does not prove a live owner. A same-host resume checks durable
+child records before recovering a dead/released owner. Live or unverified children refuse execution
+(exit 3); explicit `--resume --kill-orphans` stops only birth-identity-confirmed survivors. A reused
+PID is not signaled. Text inspection names the owner PID and state (`dead: stale lock` when
+appropriate), then child binary, PID/group, step, attempt and state. JSON adds
+`ownership: { locked, owner, processes, warning? }`; this field is not saved in the checkpoint.
+Missing identities and malformed records are reported, never permission to kill. Foreign-host or
+incomplete ownership needs inspection. Prefer `inspect` or `readRun` to validate data. `inspect`
+exits 0 even for `failed` or `running` records; check `status`. A JSON inspection result has these
+useful fields:
 
 | Field                                     | Interpretation                                                     |
 | ----------------------------------------- | ------------------------------------------------------------------ |
@@ -83,7 +91,7 @@ or guaranteed partial output. Run-level failures (for example final schema valid
 imply any step failed. Start from `rootCause: { stepId, error }`, also shown by human inspection. A
 map's initiating step stays `failed`; an interrupted sibling is `cancelled`, with a distinct
 cancellation message and `cancelledBy` set to the initiating step ID (null for a mapper-body failure
-or run interrupt). Ctrl-C/SIGTERM records run status `cancelled` and root cause
+or run interrupt). First Ctrl-C/SIGTERM/SIGHUP records run status `cancelled` and root cause
 `{ stepId: null, error: 'Workflow interrupted.' }`. Completed or handled failures leave `rootCause`
 null when the run completes. Resolved, validated actions still save success after abort.
 
@@ -128,21 +136,21 @@ execution's path resolution. Neither guarantee covers unowned async work that a 
 
 ## Checkpoint and cleanup diagnostics
 
-`CheckpointError` distinguishes storage operations (`save` or `release`) from workflow failures.
-When both fail, the domain error leads the message; an `AggregateError` retains the checkpoint
-errors in `errors` and the primary error in `cause`. Brief transient write errors are retried, but
-persistent errors stop new effects. A successful action is never retried in-process because its
-completion write failed. A later save can recover it; inspect the actual saved step before resume,
-since an uncheckpointed action can repeat.
+`CheckpointError` distinguishes storage operations (`save`, `release`, or `process`) from workflow
+failures. When both fail, the domain error leads the message; an `AggregateError` retains the
+checkpoint errors in `errors` and the primary error in `cause`. Brief transient write errors are
+retried, but persistent errors stop new effects. A successful action is never retried in-process
+because its completion write failed. A later save can recover it; inspect the actual saved step
+before resume, since an uncheckpointed action can repeat.
 
-A persisted completion still succeeds if the lock directory is already gone, or if its removal fails
-with `EACCES` or `ENOENT` after ownership was verified. The CLI prints a warning to stderr and
-includes `warnings` in the returned run (`--json`); embedding callers receive
-`WorkflowRun.warnings`. These cleanup warnings belong to that invocation and are not saved after
-ownership is released. Repair permissions or inspect the lock before another run. Changed ownership,
-or missing or unreadable ownership metadata in a remaining lock, remains an error. A removed state
-directory is named explicitly and is not silently recreated. See [durability](durability.md) for
-recovery precautions.
+A persisted completion still succeeds if the lock directory is already gone, if its removal fails
+with `EACCES` or `ENOENT` after ownership was verified, or when unreaped child records retain a
+released-owner lock. The CLI prints a warning to stderr and includes `warnings` in the returned run
+(`--json`); embedding callers receive `WorkflowRun.warnings`. These cleanup warnings belong to that
+invocation and are not saved after ownership is released. Repair permissions or inspect the lock
+before another run. Changed ownership, or missing or unreadable ownership metadata in a remaining
+lock, remains an error. A removed state directory is named explicitly and is not silently recreated.
+See [durability](durability.md) for recovery precautions.
 
 `agent.queued` and `agent.admitted` are live admission notifications, not checkpoint transitions.
 They include `provider`, `inFlight` reserved-slot counts, `queued` waiter count, and `waitedMs`

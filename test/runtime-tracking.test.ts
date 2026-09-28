@@ -1,4 +1,5 @@
 /* eslint-disable @typescript-eslint/no-deprecated -- Exercise the supported legacy map/replay contract. */
+import { testInvocation } from './harness-invocation.js';
 import { access, mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -437,7 +438,7 @@ it('rejects a CliHarness.invoke request with an unknown option key', async () =>
         outputSchema: null,
         options: { prompt: 'p', maxTurn: 5 } as unknown as ClaudeOptions,
       },
-      controller.signal,
+      testInvocation(controller.signal),
     ),
   ).rejects.toThrow(/Unrecognized key\(s\).*maxTurn/);
 });

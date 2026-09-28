@@ -4,6 +4,7 @@ import type {
   HarnessRequest,
   HarnessResponse,
   HarnessMetadata,
+  HarnessInvocation,
 } from '../workflow/runtime/model.js';
 import type { ExecutionPolicy } from '../workflow/runtime/policy.js';
 import { HarnessError } from '../workflow/runtime/harness-error.js';
@@ -24,7 +25,7 @@ export interface CliHarnessOptions {
   readonly codexBinary?: string;
   /** Combined stdout/stderr limit per process; defaults to 8 MiB. */
   readonly maxOutputBytes?: number;
-  /** Milliseconds to wait after SIGTERM before SIGKILL; defaults to 250. */
+  /** Milliseconds to wait after SIGTERM before SIGKILL; defaults to 3000. */
   readonly killGraceMs?: number;
 }
 
@@ -50,7 +51,7 @@ export class CliHarness implements Harness {
   public constructor(options: CliHarnessOptions = {}) {
     this.options = { ...options };
     this.maxOutputBytes = positive(options.maxOutputBytes ?? 8 * 1024 * 1024, 'maxOutputBytes');
-    this.killGraceMs = timerDuration(options.killGraceMs ?? 250, 'killGraceMs');
+    this.killGraceMs = timerDuration(options.killGraceMs ?? 3000, 'killGraceMs');
   }
 
   /** Adapter-owned defaults exposed to the runtime for accurate per-attempt policy records. */
@@ -70,7 +71,11 @@ export class CliHarness implements Harness {
   }
 
   /** Read the selected executable version without inference; failures become diagnostics. */
-  public async metadata(request: HarnessRequest, signal: AbortSignal): Promise<HarnessMetadata> {
+  public async metadata(
+    request: HarnessRequest,
+    context: HarnessInvocation,
+  ): Promise<HarnessMetadata> {
+    const { signal } = context;
     const binary =
       request.provider === 'claude'
         ? (this.options.claudeBinary ?? 'claude')
@@ -85,23 +90,19 @@ export class CliHarness implements Harness {
         maxOutputBytes: 16_384,
         killGraceMs: this.killGraceMs,
         signal,
+        trackProcess: (child) => context.trackProcess(child),
         ...(request.options.env === undefined ? {} : { env: request.options.env }),
       });
       const version =
         result.code === 0
           ? /\b[0-9]+\.[0-9]+\.[0-9]+(?:[-+][a-zA-Z0-9.-]+)?\b/u.exec(result.stdout)?.[0]
           : undefined;
-      return {
-        binary,
-        version: version ?? null,
-        ...(version === undefined || result.stderr.trim()
-          ? {
-              warnings: [
-                `${binary} version discovery: ${result.stderr.trim().slice(-1024) || 'unrecognized version output'}`,
-              ],
-            }
-          : {}),
-      };
+      const warnings = [...result.warnings];
+      if (version === undefined || result.stderr.trim())
+        warnings.push(
+          `${binary} version discovery: ${result.stderr.trim().slice(-1024) || 'unrecognized version output'}`,
+        );
+      return { binary, version: version ?? null, ...(warnings.length ? { warnings } : {}) };
     } catch (error) {
       signal.throwIfAborted();
       return {
@@ -115,7 +116,11 @@ export class CliHarness implements Harness {
   }
 
   /** Execute a fresh headless session, rejecting cancellation, limits, and protocol failures. */
-  public async invoke(request: HarnessRequest, signal: AbortSignal): Promise<HarnessResponse> {
+  public async invoke(
+    request: HarnessRequest,
+    context: HarnessInvocation,
+  ): Promise<HarnessResponse> {
+    const { signal } = context;
     signal.throwIfAborted();
     // Validation before launch rejects as configuration, never as a settled effect failure;
     // prepareInvocation applies the same rule to option and output-schema validation.
@@ -137,6 +142,7 @@ export class CliHarness implements Harness {
         maxOutputBytes: this.maxOutputBytes,
         killGraceMs: this.killGraceMs,
         signal,
+        trackProcess: (child) => context.trackProcess(child),
         ...(request.options.env === undefined ? {} : { env: request.options.env }),
       });
       const outcome =
@@ -144,8 +150,14 @@ export class CliHarness implements Harness {
           ? parseClaude(result.stdout, request.outputSchema !== null)
           : parseCodex(result.stdout);
       if (result.code === 0 && result.signal === null && outcome.kind === 'success')
-        return { ...outcome.response, text: invocation.decode(outcome.response.text) };
-      throw new HarnessError({
+        return {
+          ...outcome.response,
+          text: invocation.decode(outcome.response.text),
+          ...((outcome.response.warnings?.length ?? 0) + result.warnings.length
+            ? { warnings: [...(outcome.response.warnings ?? []), ...result.warnings] }
+            : {}),
+        };
+      const failure = new HarnessError({
         provider: request.provider,
         exit: { code: result.code, signal: result.signal },
         failure: outcome.kind === 'failure' ? outcome.failure : null,
@@ -169,6 +181,8 @@ export class CliHarness implements Harness {
             }
           : {}),
       });
+      if (result.warnings.length) failure.message += ` Cleanup: ${result.warnings.join(' ')}`;
+      throw failure;
     } finally {
       await invocation.dispose();
     }

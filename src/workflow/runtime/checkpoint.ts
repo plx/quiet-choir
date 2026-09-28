@@ -6,10 +6,10 @@ import { writeRun, type RunRecord } from './store.js';
 /** A storage failure, separate from the outcome of the workflow or external effect. */
 export class CheckpointError extends Error {
   /** Storage operation that failed. */
-  public readonly operation: 'save' | 'release';
+  public readonly operation: 'save' | 'release' | 'process';
 
   /** Describe the failed operation and retain the underlying filesystem error as cause. */
-  public constructor(operation: 'save' | 'release', message: string, cause: unknown) {
+  public constructor(operation: 'save' | 'release' | 'process', message: string, cause: unknown) {
     super(message, { cause });
     this.name = 'CheckpointError';
     this.operation = operation;
@@ -29,7 +29,7 @@ function message(error: unknown): string {
 
 /** Translate a storage error while naming a removed state directory explicitly. @internal */
 export async function checkpointError(
-  operation: 'save' | 'release',
+  operation: 'save' | 'release' | 'process',
   stateDir: string,
   runId: string,
   cause: unknown,

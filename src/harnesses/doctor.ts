@@ -2,6 +2,7 @@ import { mkdtemp, rm, writeFile, readFile, mkdir } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { ProcessSupervisor } from '../processes/supervisor.js';
 import type { HarnessMetadata, HarnessRequest } from '../workflow/runtime/model.js';
 import {
   effortValues,
@@ -43,6 +44,10 @@ export interface DoctorCheck {
 }
 /** Inputs for diagnostic probes. Probes use pre-inference rejections, never ordinary tasks. */
 export interface DoctorOptions {
+  /** Optional live probe ownership for an embedder's force-stop handler; probes have no durable run. */
+  readonly processSupervisor?: ProcessSupervisor;
+  /** Probe TERM-to-KILL grace, defaults to 3000ms. */
+  readonly killGraceMs?: number;
   /** Harness to check; defaults to both. */
   readonly harness?: 'claude' | 'codex' | 'all';
   /** Working directory used for read-only help/version probes; exact argv uses a temporary directory. */
@@ -81,7 +86,8 @@ const message = (error: unknown): string =>
   (error instanceof Error ? error.message : String(error)).slice(-2048);
 const codexHome = (options: DoctorOptions): string =>
   options.codexHome ?? process.env['CODEX_HOME'] ?? join(homedir(), '.codex');
-const warning = (result: ProcessResult): boolean => /\bwarn(?:ing)?\b/iu.test(result.stderr);
+const warning = (result: ProcessResult): boolean =>
+  result.warnings.length > 0 || /\bwarn(?:ing)?\b/iu.test(result.stderr);
 const same = (actual: readonly string[], expected: readonly string[]): boolean =>
   JSON.stringify([...new Set(actual)].sort()) === JSON.stringify([...expected].sort());
 function choices(help: string, flag: string): string[] {
@@ -138,9 +144,13 @@ export async function probeHarnessContracts(options: DoctorOptions = {}): Promis
       ? (['claude', 'codex'] as const)
       : [options.harness];
   const signal = options.signal ?? new AbortController().signal;
+  const supervisor = options.processSupervisor ?? new ProcessSupervisor();
+  const killGraceMs = options.killGraceMs ?? 3000;
   const timeoutMs = options.timeoutMs ?? 30_000;
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0 || timeoutMs > 2_147_483_647)
     throw new Error('Doctor timeoutMs must be a positive bounded integer.');
+  if (!Number.isSafeInteger(killGraceMs) || killGraceMs <= 0 || killGraceMs > 2_147_483_647)
+    throw new Error('Doctor killGraceMs must be a positive bounded integer.');
   const checks: DoctorCheck[] = [];
   const harnesses: DoctorReport['harnesses'] = {};
   let inherited: InheritedCodexConfig | undefined;
@@ -161,7 +171,16 @@ export async function probeHarnessContracts(options: DoctorOptions = {}): Promis
         input: 'quiet-choir contract probe; do not perform any task',
         timeoutMs,
         maxOutputBytes: 2 * 1024 * 1024,
-        killGraceMs: 250,
+        killGraceMs,
+        trackProcess: (child) => {
+          const forget = supervisor.track(child);
+          return Promise.resolve({
+            release: () => {
+              forget();
+              return Promise.resolve();
+            },
+          });
+        },
         signal,
         ...(env ? { env } : {}),
       });
@@ -188,7 +207,7 @@ export async function probeHarnessContracts(options: DoctorOptions = {}): Promis
           result.signal === null &&
           version === tested.minimum &&
           !warning(result),
-        message: `${binary}@${version ?? 'unknown'}; tested ${tested.minimum}..${tested.maximum}${result.stderr ? `; stderr: ${result.stderr.slice(-1024)}` : ''}`,
+        message: `${binary}@${version ?? 'unknown'}; tested ${tested.minimum}..${tested.maximum}${result.warnings.length ? `; process warnings: ${result.warnings.join(' ')}` : ''}${result.stderr ? `; stderr: ${result.stderr.slice(-1024)}` : ''}`,
       };
     });
     let help = '';
@@ -327,7 +346,7 @@ export async function probeHarnessContracts(options: DoctorOptions = {}): Promis
           return {
             ok: zero && exact.code === 1 && exact.signal === null && !warning(exact),
             message: zero
-              ? `Verified pre-inference rejection with zero reported spend${warning(exact) ? `; stderr warning: ${exact.stderr.slice(-1024)}` : ''}.`
+              ? `Verified pre-inference rejection with zero reported spend${warning(exact) ? `; process/stderr warning: ${[...exact.warnings, exact.stderr.slice(-1024)].filter(Boolean).join('; ')}` : ''}.`
               : `Expected zero-cost ${provider === 'claude' ? '404 invalid model' : '400 invalid effort'}; received ${parsed.kind === 'failure' ? rejection : parsed.kind}${exact.stderr ? `; stderr: ${exact.stderr.slice(-1024)}` : ''}`,
           };
         } finally {
@@ -354,7 +373,7 @@ export async function probeHarnessContracts(options: DoctorOptions = {}): Promis
           ok: result.code === 0 && missing.length === 0 && !warning(result),
           message: missing.length
             ? `Missing flags: ${missing.join(', ')}`
-            : `Required exec plumbing flags present${warning(result) ? '; stderr warning' : ''}.`,
+            : `Required exec plumbing flags present${warning(result) ? '; process/stderr warning' : ''}.`,
         };
       }
       const absent = join(tmpdir(), `quiet-choir-missing-${randomUUID()}`);
@@ -406,7 +425,7 @@ export async function probeHarnessContracts(options: DoctorOptions = {}): Promis
           !warning(result) &&
           same(efforts, effortValues) &&
           same(modes, expectedModes),
-        message: `Effort: ${efforts.join(', ')}; permission modes: ${modes.join(', ')}. Interactive/bypass modes are deliberately unexposed${warning(result) ? '; stderr warning' : ''}.`,
+        message: `Effort: ${efforts.join(', ')}; permission modes: ${modes.join(', ')}. Interactive/bypass modes are deliberately unexposed${warning(result) ? '; process/stderr warning' : ''}.`,
       };
     });
     await check('inherited-defaults', async () => {

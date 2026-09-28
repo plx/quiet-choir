@@ -212,17 +212,51 @@ export interface HarnessResponse {
   readonly turns?: number;
 }
 
+/** Identity of a directly spawned child and its owned process group. */
+export interface HarnessProcess {
+  /** Child PID; must be greater than one. */
+  readonly pid: number;
+  /** Detached POSIX group ID (equal to pid), or null for a Windows child. */
+  readonly pgid: number | null;
+  /** Executable name, excluding arguments and credentials. */
+  readonly binary: string;
+  /** Absolute invocation working directory. */
+  readonly cwd: string;
+  /** Wall-clock spawn timestamp for diagnostics. */
+  readonly startedAt: string;
+  /** OS birth identity, including boot identity where available; null when unavailable. */
+  readonly osStartTime: string | null;
+}
+
+/** Runtime ownership and cancellation for a single harness attempt. */
+export interface HarnessInvocation {
+  /** Captured scope signal; installation discovery instead receives the run's shared discovery signal. */
+  readonly signal: AbortSignal;
+  /** Owning durable run. */
+  readonly runId: string;
+  /** Fully qualified effect name. */
+  readonly stepId: string;
+  /** One-based attempt number across resumes. */
+  readonly attempt: number;
+  /** Register immediately after spawn, before sending input. Release only after reaping. */
+  trackProcess(process: HarnessProcess): Promise<{
+    /** Remove the durable ownership record after confirming the process/group is gone. */
+    release(): Promise<void>;
+  }>;
+}
+
 /** Replaceable integration port, also useful for deterministic tests. */
 export interface Harness {
   /**
    * Discover the native binary/version on first live use in each run invocation. Discovery is
-   * shared by the run: `signal` aborts on interruption or once no effect still awaits the result.
+   * shared by the run: `invocation.signal` aborts on interruption or once no effect still awaits
+   * the result.
    */
-  metadata?(request: HarnessRequest, signal: AbortSignal): Promise<HarnessMetadata>;
+  metadata?(request: HarnessRequest, invocation: HarnessInvocation): Promise<HarnessMetadata>;
   /** Report effective adapter limits for attempt records. Omit unknown defaults; never perform effects here. */
   policyDefaults?(provider: HarnessRequest['provider']): ExecutionPolicy;
   /** Invoke one fresh session; enforce your own limits, settle on abort, and reject process/protocol failure. */
-  invoke(request: HarnessRequest, signal: AbortSignal): Promise<HarnessResponse>;
+  invoke(request: HarnessRequest, invocation: HarnessInvocation): Promise<HarnessResponse>;
 }
 
 /** Typed and validated agent output, saved together with harness metadata. */

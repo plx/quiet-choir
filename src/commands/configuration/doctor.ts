@@ -1,6 +1,8 @@
 import { Flags, type Interfaces } from '@oclif/core';
 import { DoctorExecutor } from '../../application/doctor.js';
 import { BaseCommand } from '../../cli/base-command.js';
+import { executionSignals, tolerateClosedTerminal } from '../../cli/signals.js';
+import { ProcessSupervisor } from '../../processes/supervisor.js';
 
 interface DoctorFlags {
   readonly json: boolean | undefined;
@@ -27,16 +29,20 @@ export default class ConfigurationDoctor extends BaseCommand {
   };
   public async run(): Promise<void> {
     const { flags } = await this.parse(ConfigurationDoctor);
-    const controller = new AbortController();
-    const cancel = (): void => {
-      controller.abort(new Error('Doctor interrupted.'));
-    };
-    process.once('SIGINT', cancel);
-    process.once('SIGTERM', cancel);
+    tolerateClosedTerminal();
+    const supervisor = new ProcessSupervisor();
+    const controller = executionSignals(
+      supervisor,
+      (message) => {
+        this.logToStderr(message);
+      },
+      'Doctor',
+    );
     try {
       const result = await new DoctorExecutor(
         this.createExecutionLogger(flags),
         controller.signal,
+        supervisor,
       ).execute({
         kind: 'configuration.doctor',
         cwd: process.cwd(),
@@ -61,8 +67,7 @@ export default class ConfigurationDoctor extends BaseCommand {
       if (controller.signal.aborted) this.exit(130);
       throw error;
     } finally {
-      process.removeListener('SIGINT', cancel);
-      process.removeListener('SIGTERM', cancel);
+      controller.dispose();
     }
   }
 }

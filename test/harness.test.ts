@@ -1,3 +1,4 @@
+import { testInvocation } from './harness-invocation.js';
 import { chmod, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -179,7 +180,10 @@ describe('headless CLI adapter', () => {
     const prompt = 'Do not execute: $(touch injected) `touch injected` $HOME "quoted"\nnext line';
     const harness = new CliHarness({ claudeBinary: binary });
     await expect(
-      harness.invoke({ ...request('claude', directory), options: { prompt } }, signal),
+      harness.invoke(
+        { ...request('claude', directory), options: { prompt } },
+        testInvocation(signal),
+      ),
     ).resolves.toMatchObject({ text: 'hello' });
     const invocation: unknown = JSON.parse(
       await readFile(join(directory, 'invocation.json'), 'utf8'),
@@ -225,7 +229,7 @@ describe('headless CLI adapter', () => {
             model: 'test-model',
           },
         },
-        signal,
+        testInvocation(signal),
       );
       expect(result.text).toBe('{"answer":42}');
       const args: unknown = JSON.parse(await readFile(join(directory, 'args.json'), 'utf8'));
@@ -250,7 +254,10 @@ describe('headless CLI adapter', () => {
       await fixture(`const fs = require('node:fs'); fs.writeFileSync('args.json', JSON.stringify(process.argv.slice(2)));
       console.log(${JSON.stringify(jsonl(codexSuccess))});`);
     await expect(
-      new CliHarness({ codexBinary: binary }).invoke(request('codex', directory), signal),
+      new CliHarness({ codexBinary: binary }).invoke(
+        request('codex', directory),
+        testInvocation(signal),
+      ),
     ).resolves.toMatchObject({ text: 'hello' });
     expect(JSON.parse(await readFile(join(directory, 'args.json'), 'utf8'))).toEqual([
       'exec',
@@ -287,7 +294,7 @@ describe('headless CLI adapter', () => {
           model: 'test-model',
         },
       },
-      signal,
+      testInvocation(signal),
     );
     const data = JSON.parse(await readFile(join(directory, 'invocation.json'), 'utf8')) as {
       args: string[];
@@ -316,7 +323,7 @@ describe('headless CLI adapter', () => {
     await expect(
       new CliHarness({ codexBinary: binary }).invoke(
         { ...request('codex', directory), outputSchema: {} },
-        signal,
+        testInvocation(signal),
       ),
     ).rejects.toThrow('code 9');
     await expect(
@@ -328,12 +335,15 @@ describe('headless CLI adapter', () => {
     await expect(
       new CliHarness({ claudeBinary: '/missing/quiet-choir-claude' }).invoke(
         request('claude'),
-        signal,
+        testInvocation(signal),
       ),
     ).rejects.toThrow('Install the harness CLI');
     const { binary } = await fixture('');
     await chmod(binary, 0o600);
-    const launch = new CliHarness({ codexBinary: binary }).invoke(request('codex'), signal);
+    const launch = new CliHarness({ codexBinary: binary }).invoke(
+      request('codex'),
+      testInvocation(signal),
+    );
     await expect(launch).rejects.toThrow('Cannot start');
     const error: unknown = await launch.catch((caught: unknown) => caught);
     expect(error).toMatchObject({ code: 'EACCES', phase: 'spawn' });
@@ -354,7 +364,7 @@ describe('headless CLI adapter', () => {
   ])('rejects failed subprocesses and invalid protocols', async (script, expected) => {
     const { binary } = await fixture(script);
     await expect(
-      new CliHarness({ claudeBinary: binary }).invoke(request('claude'), signal),
+      new CliHarness({ claudeBinary: binary }).invoke(request('claude'), testInvocation(signal)),
     ).rejects.toThrow(expected);
   });
 
@@ -365,7 +375,7 @@ describe('headless CLI adapter', () => {
     await expect(
       new CliHarness({ claudeBinary: binary, maxOutputBytes: 64 }).invoke(
         request('claude'),
-        signal,
+        testInvocation(signal),
       ),
     ).rejects.toThrow('64-byte output limit');
   });
@@ -377,7 +387,7 @@ describe('headless CLI adapter', () => {
     await expect(
       new CliHarness({ claudeBinary: binary, killGraceMs: 20 }).invoke(
         { ...request('claude'), options: { prompt: 'hi', timeoutMs: 150 } },
-        signal,
+        testInvocation(signal),
       ),
     ).rejects.toThrow('150ms deadline');
   });
@@ -390,7 +400,7 @@ describe('headless CLI adapter', () => {
     const controller = new AbortController();
     const invocation = new CliHarness({ claudeBinary: binary, killGraceMs: 20 }).invoke(
       request('claude', directory),
-      controller.signal,
+      testInvocation(controller.signal),
     );
     const assertion = expect(invocation).rejects.toThrow('cancelled');
     await expect.poll(async () => readFile(join(directory, 'child-pid'), 'utf8')).toMatch(/^\d+$/u);
@@ -415,7 +425,7 @@ describe('headless CLI adapter', () => {
     await expect(
       new CliHarness({ claudeBinary: '/missing/binary' }).invoke(
         request('claude'),
-        controller.signal,
+        testInvocation(controller.signal),
       ),
     ).rejects.toThrow('already stopped');
   });
@@ -424,19 +434,19 @@ describe('headless CLI adapter', () => {
     expect(() => new CliHarness({ maxOutputBytes: 0 })).toThrow('maxOutputBytes');
     expect(() => new CliHarness({ killGraceMs: Number.POSITIVE_INFINITY })).toThrow('killGraceMs');
     expect(() => new CliHarness({ killGraceMs: 2_147_483_648 })).toThrow('must not exceed');
-    await expect(new CliHarness().invoke(request('claude', 'relative'), signal)).rejects.toThrow(
-      'absolute path',
-    );
+    await expect(
+      new CliHarness().invoke(request('claude', 'relative'), testInvocation(signal)),
+    ).rejects.toThrow('absolute path');
     await expect(
       new CliHarness().invoke(
         { ...request('claude'), options: { prompt: '', timeoutMs: 0 } },
-        signal,
+        testInvocation(signal),
       ),
     ).rejects.toThrow('timeoutMs');
     await expect(
       new CliHarness().invoke(
         { ...request('claude'), options: { prompt: '', timeoutMs: 2_147_483_648 } },
-        signal,
+        testInvocation(signal),
       ),
     ).rejects.toThrow('must not exceed');
     await expect(
@@ -447,7 +457,7 @@ describe('headless CLI adapter', () => {
           outputSchema: null,
           options: { prompt: '', maxTurns: 0 },
         },
-        signal,
+        testInvocation(signal),
       ),
     ).rejects.toThrow('maxTurns');
     await expect(
@@ -458,7 +468,7 @@ describe('headless CLI adapter', () => {
           outputSchema: null,
           options: { prompt: '', maxBudgetUsd: 0 },
         },
-        signal,
+        testInvocation(signal),
       ),
     ).rejects.toThrow('maxBudgetUsd');
   });
@@ -476,11 +486,13 @@ describe('headless CLI adapter', () => {
       { ...request('codex'), outputSchema: tuple },
       { ...request('claude'), options: { prompt: '', tools: ['Read'], allowedTools: ['Bash'] } },
     ]) {
-      await expect(harness.invoke(invalid, signal)).rejects.toBeInstanceOf(ConfigurationError);
+      await expect(harness.invoke(invalid, testInvocation(signal))).rejects.toBeInstanceOf(
+        ConfigurationError,
+      );
     }
     // Launch failures after validation remain ordinary effect failures.
-    await expect(harness.invoke(request('claude'), signal)).rejects.not.toBeInstanceOf(
-      ConfigurationError,
-    );
+    await expect(
+      harness.invoke(request('claude'), testInvocation(signal)),
+    ).rejects.not.toBeInstanceOf(ConfigurationError);
   });
 });

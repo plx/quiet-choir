@@ -49,8 +49,9 @@ no service, scheduler, migration system, or claim of recovery from disk loss. Du
 saved deadline, not a scheduled job that runs without a process.
 
 A lock with missing/corrupt ownership metadata, an owner on another host, or an interrupted recovery
-claim is retained for manual inspection. Automatic reclamation is limited to a confirmed dead local
-PID. This is conservative local coordination; it does not solve PID reuse or shared-filesystem
+claim is retained for manual inspection. ADR 0013 extends reclamation with owner birth identity,
+released-owner markers and durable child records: live or unknown children prevent replacement work.
+OS birth checks guard ordinary PID reuse but are not atomic process handles or shared-filesystem
 leases.
 
 These limits are deliberate places to evaluate the spike. A production successor could preserve the

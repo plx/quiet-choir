@@ -146,12 +146,15 @@ See [durability](durability.md#recovering-a-timeout-or-turn-limit) for the recov
 `attemptHistory` fields. Use `skipGitRepoCheck` only for work outside Git.
 
 Agent calls accept `retry: { maxAttempts, delayMs?, on? }` for explicitly repeatable work; the
-default remains one attempt. Timeout/cancellation terminates process groups on macOS/Linux, with
-only immediate-child cleanup on Windows. One Ctrl-C or SIGTERM cancels, drains, and exits 130. A
-second Ctrl-C kills the runner mid-drain and can leave its lock and a `running` record. SIGKILL,
-SIGHUP (closed terminal or dropped SSH), or a crash can leave detached children running and editing.
-Before resuming, check `pgrep -fl 'claude --print|codex exec'` and identify any children belonging
-to the interrupted run.
+default remains one attempt. Every leader exit reaps owned process groups on macOS/Linux, with only
+immediate-child cleanup on Windows. One Ctrl-C, SIGTERM or SIGHUP cancels, reaps owned groups,
+drains and exits 130. A second signal synchronously SIGKILLs tracked groups and exits 130; the lock
+and an older checkpoint may remain. SIGKILL or a crash can leave children running and editing.
+Inspect owner/process liveness before retrying. Resume refuses live or unverified recorded children
+(exit 3); use `--resume --kill-orphans` to stop identity-confirmed survivors first. The default TERM
+grace is 3000ms, configurable with `--kill-grace-ms`. Unknown identities are retained and never
+signaled; escaped groups and the spawn-to-record crash gap still need separate investigation. See
+[durability](durability.md) for recovery and platform limits.
 
 Structured-output success paths for both adapters completed live with claude 2.1.283 and codex-cli
 0.157.1. That is evidence for those versions and captures, not a guarantee.

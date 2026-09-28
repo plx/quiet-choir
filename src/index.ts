@@ -28,6 +28,8 @@ export type {
   ClaudeOptions,
   CodexOptions,
   HarnessRequest,
+  HarnessInvocation,
+  HarnessProcess,
   AgentUsage,
   HarnessResponse,
   Harness,
@@ -43,9 +45,10 @@ export { CheckpointError } from './workflow/runtime/checkpoint.js';
 export { ConfigurationError } from './workflow/runtime/configuration-error.js';
 export { runWorkflow } from './workflow/runtime/runner.js';
 export type { WorkflowEvent, WorkflowRun, RunOptions } from './workflow/runtime/runner.js';
-export { readRun } from './workflow/runtime/store.js';
+export { readRun, inspectRunOwnership } from './workflow/runtime/store.js';
 export type {
   RunRecord,
+  RunOwnership,
   MapRecord,
   MapItemRecord,
   StepRecord,
@@ -108,3 +111,10 @@ export type {
   AgentLimiter,
   AgentLimiterSnapshot,
 } from './workflow/runtime/agent-limiter.js';
+
+export { ProcessSupervisor } from './processes/supervisor.js';
+export { OrphanProcessesError } from './workflow/runtime/process-registry.js';
+export type {
+  HarnessProcessRecord,
+  HarnessProcessInspection,
+} from './workflow/runtime/process-registry.js';

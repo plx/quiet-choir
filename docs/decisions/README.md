@@ -28,3 +28,5 @@ part of the documentation.
 - [0010: Resolve named agent capabilities before effects](0010-agent-profiles-and-grants.md)
 - [0011: Own typed harness arguments and verify native contracts](0011-harness-controls-and-contracts.md)
 - [0012: Bound agent admission across each run](0012-agent-admission.md)
+
+- [0013: Bound process cleanup and retain child ownership across runner death](0013-process-ownership.md)

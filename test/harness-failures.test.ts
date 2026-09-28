@@ -1,3 +1,4 @@
+import { testInvocation } from './harness-invocation.js';
 import { chmod, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -160,7 +161,7 @@ it('prefers terminal failure text over unrelated stderr and bounds diagnostic ta
     'irrelevant MCP log '.repeat(1000),
   );
   const error: unknown = await new CliHarness({ claudeBinary: binary })
-    .invoke(request('claude'), signal)
+    .invoke(request('claude'), testInvocation(signal))
     .catch((error: unknown) => error);
   expect(error).toBeInstanceOf(HarnessError);
   if (!(error instanceof HarnessError)) throw new Error('Expected HarnessError');
@@ -174,7 +175,7 @@ it.each(['', 'not-json'.repeat(1000)])(
   async (stdout) => {
     const { binary } = await binaryFor(stdout, 'stderr'.repeat(1000), 9);
     const error: unknown = await new CliHarness({ codexBinary: binary })
-      .invoke(request('codex'), signal)
+      .invoke(request('codex'), testInvocation(signal))
       .catch((error: unknown) => error);
     expect(error).toBeInstanceOf(HarnessError);
     if (!(error instanceof HarnessError)) throw new Error('Expected HarnessError');
@@ -195,7 +196,7 @@ it.each([0, 1])('fails a protocol error on exit %s without quoting plain text', 
     code,
   );
   await expect(
-    new CliHarness({ claudeBinary: binary }).invoke(request('claude'), signal),
+    new CliHarness({ claudeBinary: binary }).invoke(request('claude'), testInvocation(signal)),
   ).rejects.toThrow(`claude error: auth expired [exit code ${String(code)}]`);
 });
 
@@ -204,7 +205,7 @@ it('retains usage when a success envelope is followed by a nonzero exit', async 
     '{"type":"result","subtype":"success","result":"done","session_id":"session","usage":{"input_tokens":4,"output_tokens":2},"total_cost_usd":0.01}',
   );
   await expect(
-    new CliHarness({ claudeBinary: binary }).invoke(request('claude'), signal),
+    new CliHarness({ claudeBinary: binary }).invoke(request('claude'), testInvocation(signal)),
   ).rejects.toMatchObject({
     name: 'HarnessError',
     exit: { code: 1, signal: null },
