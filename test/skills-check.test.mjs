@@ -83,6 +83,11 @@ for (const [label, text, expected] of [
     /dangling link/u,
   ],
   [
+    'dangling link in raw HTML with a quoted greater-than before href',
+    '\n<a title=">" href="references/missing.md">missing</a>\n',
+    /dangling link/u,
+  ],
+  [
     'missing anchor',
     '\n[missing](references/agent-calls.md#does-not-exist)\n',
     /missing link anchor/u,
@@ -165,6 +170,12 @@ test('explicit fragments are counted while complete examples remain checked', as
     const result = await checkSkills(root, { compile: false });
     assert.ok(result.fragments >= 2);
     assert.ok(result.examples >= 10);
+  });
+});
+test("href text inside another attribute's quoted value is not treated as a link destination", async () => {
+  await fixture(async (root) => {
+    await append(root, '\n<a title="see href=references/missing.md">text</a>\n');
+    await checkSkills(root, { compile: false });
   });
 });
 test('Markdown parser handles longer fences, language aliases, and duplicate heading anchors', () => {

@@ -107,7 +107,7 @@ export async function checkLinks(file, text, packageRoot) {
   for (const match of body.matchAll(/\[([^\]]+)\](?![([])/gu))
     if (definitions.has(key(match[1]))) destinations.push(definitions.get(key(match[1])));
   for (const match of body.matchAll(
-    /<(?:a|img)\b[^>]*?\s(?:href|src)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>]+))[^>]*>/giu,
+    /<(?:a|img)\b(?:[^>"']|"[^"]*"|'[^']*')*?\s(?:href|src)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>]+))(?:[^>"']|"[^"]*"|'[^']*')*>/giu,
   ))
     destinations.push(match[1] ?? match[2] ?? match[3]);
   const root = await realpath(packageRoot);
