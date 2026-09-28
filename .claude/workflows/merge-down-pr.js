@@ -809,7 +809,8 @@ async function fixRoundOf(threads, work) {
       return { error: `follow-up filing incomplete: ${unfiled.join(', ') || 'no result'}` };
     }
   }
-  const unfixed = (fixed?.items ?? []).filter((i) => i.status === 'not-fixed');
+  // "partly" is unfinished: the thread would be called addressed and resolved regardless.
+  const unfixed = (fixed?.items ?? []).filter((i) => i.status !== 'fixed');
   if (unfixed.length)
     return { error: `could not fix: ${unfixed.map((i) => `${i.key} (${i.summary})`).join('; ')}` };
   if (fixed && !fixed.checkPassed)
@@ -909,7 +910,7 @@ while (true) {
   const codexFindings = wantCodex && gate.codex.state === 'findings';
   // Anything else unanswered: code-scanning (CodeQL) threads or alerts, other bots, humans.
   const attention = (gate.attention?.untriagedThreads ?? 0) + (gate.attention?.openAlerts ?? 0);
-  const needsTriage = codexFindings || attention > 0;
+  let needsTriage = codexFindings || attention > 0;
   if (attention && !codexFindings) {
     log(`Round ${record.rounds}: ${attention} unanswered thread(s)/alert(s) need triage`);
   }
@@ -934,6 +935,15 @@ while (true) {
         ciFailed = false;
       } else {
         gate.ci = again.ci;
+      }
+      // Threads can arrive while the re-run is pending.
+      const lateAttention =
+        (again.attention?.untriagedThreads ?? 0) + (again.attention?.openAlerts ?? 0);
+      if (lateAttention) {
+        needsTriage = true;
+        log(
+          `Round ${record.rounds}: ${lateAttention} thread(s)/alert(s) arrived during the CI re-run`,
+        );
       }
     }
   }

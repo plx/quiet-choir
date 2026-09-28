@@ -227,22 +227,31 @@ function cleanCommentBody(body) {
 }
 
 function reviewThreads(R, pr) {
-  const query = `query($o:String!,$n:String!,$p:Int!){repository(owner:$o,name:$n){pullRequest(number:$p){
-    reviewThreads(first:100){nodes{id isResolved isOutdated path line originalLine
-      comments(first:50){nodes{databaseId author{login __typename} body url createdAt}}}}}}}`;
-  const data = ghJson([
-    'api',
-    'graphql',
-    '-f',
-    `query=${query}`,
-    '-f',
-    `o=${R.owner}`,
-    '-f',
-    `n=${R.name}`,
-    '-F',
-    `p=${pr}`,
-  ]);
-  return data.data.repository.pullRequest.reviewThreads.nodes.map((t) => {
+  const query = `query($o:String!,$n:String!,$p:Int!,$after:String){repository(owner:$o,name:$n){pullRequest(number:$p){
+    reviewThreads(first:100,after:$after){pageInfo{hasNextPage endCursor} nodes{id isResolved isOutdated path line originalLine
+      comments(first:50){nodes{databaseId author{login __typename} body url createdAt}}
+      last: comments(last:1){nodes{author{login}}}}}}}}`;
+  const nodes = [];
+  let after = null;
+  do {
+    const data = ghJson([
+      'api',
+      'graphql',
+      '-f',
+      `query=${query}`,
+      '-f',
+      `o=${R.owner}`,
+      '-f',
+      `n=${R.name}`,
+      '-F',
+      `p=${pr}`,
+      ...(after ? ['-f', `after=${after}`] : []),
+    ]);
+    const page = data.data.repository.pullRequest.reviewThreads;
+    nodes.push(...page.nodes);
+    after = page.pageInfo.hasNextPage ? page.pageInfo.endCursor : null;
+  } while (after);
+  return nodes.map((t) => {
     const comments = t.comments.nodes.map((c) => ({
       author: c.author?.login ?? 'ghost',
       isBot: c.author?.__typename === 'Bot',
@@ -261,7 +270,7 @@ function reviewThreads(R, pr) {
       isCodex: first.author === CODEX_AUTHOR,
       isBot: Boolean(first.isBot),
       alert: Number(first.body.match(/security\/code-scanning\/(\d+)/)?.[1]) || null,
-      lastAuthor: comments.at(-1)?.author ?? null,
+      lastAuthor: t.last?.nodes?.[0]?.author?.login ?? comments.at(-1)?.author ?? null,
       priority: first.body.match(/!\[(P\d) Badge\]/)?.[1] ?? null,
       title: cleanCommentBody(first.body).split('\n')[0].replace(/\*\*/g, '').trim(),
       url: first.url,
@@ -314,8 +323,14 @@ function linkedIssue(R, p) {
   const closing = (p.closingIssuesReferences ?? []).map((i) => i.number);
   let number = closing[0] ?? null;
   let keyword = number ? 'closes' : null;
-  if (!number) {
-    const m = /\b(close[sd]?|fix(?:e[sd])?|resolve[sd]?|refs?)\b:?\s+#(\d+)/i.exec(p.body ?? '');
+  // Stacked PRs have no closingIssuesReferences yet: a closing keyword anywhere in the body beats
+  // an earlier "Refs #N", which only names context.
+  for (const pattern of [
+    /\b(close[sd]?|fix(?:e[sd])?|resolve[sd]?)\b:?\s+#(\d+)/i,
+    /\b(refs?)\b:?\s+#(\d+)/i,
+  ]) {
+    if (number) break;
+    const m = pattern.exec(p.body ?? '');
     if (m) [keyword, number] = [m[1].toLowerCase(), Number(m[2])];
   }
   if (!number) {
@@ -1068,6 +1083,13 @@ async function land(a, P, R) {
     return { merged: false, reason: `base is ${p.baseRefName}, expected ${R.def}` };
   }
   const linked = p.closingIssuesReferences.map((x) => x.number);
+  const untriaged = reviewThreads(R, pr).filter(
+    (t) => !t.isResolved && (t.lastAuthor ?? t.author) !== R.viewer,
+  );
+  if (untriaged.length && !a['allow-untriaged']) {
+    const list = untriaged.map((t) => `${t.id} (${t.author}: ${t.title})`).join('; ');
+    return { merged: false, reason: `unanswered review threads: ${list}` };
+  }
   const alerts = openAlerts(R, pr);
   if (alerts.length && !a['allow-alerts']) {
     const list = alerts.map((x) => `#${x.number} ${x.rule} ${x.path}:${x.line}`).join('; ');
