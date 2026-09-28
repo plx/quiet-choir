@@ -549,7 +549,7 @@ layered project/user settings are deferred.
 
 | Exit | Meaning                                                                                                                                                                                                                                |
 | ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 0    | Success. Inspect accepts any readable status; check `.status`. After a first signal, only a saved execute/resume completion exits 0.                                                                                                   |
+| 0    | Success. Inspect accepts any readable status; check `.status`. After a first signal, only a saved execute/resume completion or a delivered `workflow answer` exits 0.                                                                  |
 | 1    | `workflow.failed`: execution failed and the failure checkpoint was saved. Fix and resume. A saved `failed` run reports this even when a signal arrived.                                                                                |
 | 2    | `answer.invalid` for invalid answers, or `usage.*`: invalid flags, misplaced flags, omitted/nonexistent/unsupported FILE, invalid run ID, invalid input JSON/file/schema, or resume without an ID. No execution checkpoint is written. |
 | 3    | `answer.conflict` for duplicate/closed questions, or `run.*`: existing/missing/locked/unreadable run, incompatible resume, changed input, or surviving/unverified child processes (`run.orphans`). No workflow body runs.              |

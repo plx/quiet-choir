@@ -15,7 +15,10 @@ exit 0/1/130/3 for completed/failed/cancelled/stale. It does not add an error do
 observed failure. An interrupted watcher emits an error document and leaves the observed run
 untouched. See [run observability](observability.md) for polling, stale detection, and partial
 usage. Non-watching inspect exits 0 for any readable checkpoint status, including `failed`,
-`cancelled`, and `running`.
+`cancelled`, and `running`. `workflow pending --json` returns
+`{kind:"workflow.pending.result", ok, pending}`, `workflow answer --json` returns
+`{kind:"workflow.answer.result", ok, delivery}`, and a suspension returns
+`{kind:"workflow.run.suspended", ok:true, exitCode:75, runId, stateDir, pending, resumeCommand, run}`.
 
 `execute --dry-run --json` returns a `workflow.rehearsal` document with `ok:true`, calls, replays,
 provider counts, nominal Claude ceiling, warnings, and its in-memory run record. Failures retain the
@@ -39,15 +42,15 @@ Failures have these fields:
 
 The error codes map to numeric exits in one CLI table:
 
-| Exit | Codes                                                                                                                                                                  | Next step                                                                                                                |
-| ---- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
-| 1    | `workflow.failed`                                                                                                                                                      | A failed checkpoint was saved. Fix the workflow or execution policy and resume.                                          |
-| 2    | `usage.flag`, `usage.file_not_found`, `usage.entrypoint`, `usage.run_id`, `usage.input_json`, `usage.input_file`, `usage.input_schema`, `usage.resume_requires_run_id` | Correct arguments/input. No execution checkpoint was written.                                                            |
-| 3    | `run.exists`, `run.not_found`, `run.locked`, `run.incompatible`, `run.input_changed`, `run.unreadable`, `run.orphans`                                                  | Correct run/storage selection, wait for the owner, or explicitly resolve compatibility/ownership. No workflow body ran.  |
-| 4    | `load.typecheck`, `load.import`, `load.definition`                                                                                                                     | Fix trusted source or its definition. No execution checkpoint was written.                                               |
-| 74   | `workflow.storage`                                                                                                                                                     | Inspect saved state and fix storage/ownership before deciding how to resume. External effects may already have happened. |
-| 75   | Reserved                                                                                                                                                               | Suspension is not implemented yet.                                                                                       |
-| 130  | `workflow.interrupted`                                                                                                                                                 | Inspect the returned state and resume when ready.                                                                        |
+| Exit | Codes                                                                                                                                                                                                                 | Next step                                                                                                                |
+| ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| 1    | `workflow.failed`                                                                                                                                                                                                     | A failed checkpoint was saved. Fix the workflow or execution policy and resume.                                          |
+| 2    | `usage.flag`, `usage.file_not_found`, `usage.entrypoint`, `usage.run_id`, `usage.input_json`, `usage.input_file`, `usage.input_schema`, `usage.resume_requires_run_id`, `answer.invalid` (the answer was not written) | Correct arguments/input. No execution checkpoint was written.                                                            |
+| 3    | `run.exists`, `run.not_found`, `run.locked`, `run.incompatible`, `run.input_changed`, `run.unreadable`, `run.orphans`, `answer.conflict` (the question is not waiting or already has a delivery)                      | Correct run/storage selection, wait for the owner, or explicitly resolve compatibility/ownership. No workflow body ran.  |
+| 4    | `load.typecheck`, `load.import`, `load.definition`                                                                                                                                                                    | Fix trusted source or its definition. No execution checkpoint was written.                                               |
+| 74   | `workflow.storage`                                                                                                                                                                                                    | Inspect saved state and fix storage/ownership before deciding how to resume. External effects may already have happened. |
+| 75   | `workflow.run.suspended`                                                                                                                                                                                              | Saved suspension with pending questions; answer and resume the same run.                                                 |
+| 130  | `workflow.interrupted`                                                                                                                                                                                                | Inspect the returned state and resume when ready.                                                                        |
 
 Typechecking and import are distinct from workflow execution. Imports can have arbitrary side
 effects; no exit status promises to undo them. Run-ID and input-JSON validation happen before
@@ -64,8 +67,8 @@ than 130 because the cancellation checkpoint may not have been saved. A run whos
 `cancelled` only when the interrupt caused the failure. Saved completion with a known cleanup
 warning still succeeds under the [process ownership contract](process-lifecycle.md), as does a
 completion or suspension (exit 75) that `execute`, `resume`, or `answer --resume` saved before a
-late signal. Inspect, validate, typecheck, and check-resume report `workflow.interrupted` after a
-first signal even when their work finishes.
+late signal, or an answer that `workflow answer` already delivered. Inspect, validate, typecheck,
+and check-resume report `workflow.interrupted` after a first signal even when their work finishes.
 
 `check-resume` incompatibility uses exit 3 with the full comparison in `error.details`. Its
 compatible success retains `check`. A missing run includes `details.stateDir`, sorted
