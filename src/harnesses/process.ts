@@ -169,6 +169,9 @@ export function runProcess(request: ProcessRequest): Promise<ProcessResult> {
           kill('SIGKILL');
           warn('Harness process cleanup escalated to SIGKILL.');
         }
+        // A reaped, exited leader without a failure is already bounded by the drain timer; a
+        // backstop here would truncate a short grace's valid output before that drain ends.
+        if (exited && reaped && !failure) return;
         backstop = setTimeout(() => {
           refresh();
           if (pipesEnded !== 2)

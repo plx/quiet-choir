@@ -107,6 +107,26 @@ describe.skipIf(process.platform === 'win32')('bounded POSIX process ownership',
     expect(groupState({ pid, pgid: pid })).toBe('alive');
   });
 
+  it('keeps draining a reaped successful leader past a short grace and backstop', async () => {
+    const path = join(directory, 'escaped');
+    const started = performance.now();
+    const result = await runProcess(
+      request(
+        `
+      const child = require('node:child_process').spawn(process.execPath, ['-e', "setTimeout(() => console.log('late line'), 600)"], { detached: true, stdio: ['ignore', 1, 2] });
+      require('node:fs').writeFileSync(${JSON.stringify(path)}, String(child.pid));
+      child.unref(); process.exit(0);
+    `,
+        { killGraceMs: 1, backstopMs: 200, drainMs: 1500 },
+      ),
+    );
+    remember(Number(await readFile(path, 'utf8')));
+    expect(result.code).toBe(0);
+    expect(result.stdout).toContain('late line');
+    expect(result.warnings.join(' ')).not.toContain('backstop');
+    expect(performance.now() - started).toBeLessThan(1500 + 700);
+  });
+
   it('force-settles a timeout despite permanently inherited pipes in another group', async () => {
     const path = join(directory, 'escaped');
     const started = performance.now();

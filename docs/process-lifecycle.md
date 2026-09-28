@@ -19,11 +19,13 @@ orphan recovery instead uses `RunOptions.killGraceMs`, also defaulting to 3000ms
 execution policy, outside identity and not sticky; repeat a CLI override on resume.
 
 A 500ms backstop after escalation closes inherited pipes and settles the invocation even when an
-escaped descendant holds them. A deadline therefore initiates a bounded sequence of
-`timeoutMs + killGraceMs + 500ms`; this is subject to event-loop scheduling and OS/filesystem calls,
-not a real-time guarantee. Normal completion may also wait for the drain/cleanup periods. Cleanup
-that cannot be confirmed retains its process record. A saved successful result is not retried
-because record cleanup failed: the returned run contains a warning and the lock remains inspectable.
+escaped descendant holds them. It is skipped when a leader exited without failure and its group is
+already reaped; the two-second drain alone then bounds settlement. A deadline therefore initiates a
+bounded sequence of `timeoutMs + killGraceMs + 500ms`; this is subject to event-loop scheduling and
+OS/filesystem calls, not a real-time guarantee. Normal completion may also wait for the
+drain/cleanup periods. Cleanup that cannot be confirmed retains its process record. A saved
+successful result is not retried because record cleanup failed: the returned run contains a warning
+and the lock remains inspectable.
 
 ## Interrupts
 
