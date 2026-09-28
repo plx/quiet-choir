@@ -17,6 +17,7 @@ import {
   type WorkflowContext,
 } from '../src/index.js';
 import { answerPath } from '../src/workflow/runtime/inbox.js';
+import { writeRun } from '../src/workflow/runtime/store.js';
 
 let stateDir: string;
 const options = () => ({ stateDir, runId: 'questions', input: null });
@@ -511,7 +512,7 @@ it('keeps case-variant questions distinct on case-insensitive filesystems', asyn
   ]);
 });
 
-it('ingests an answer published in the old inbox after migration has moved it', async () => {
+it('ingests an answer published in the flat-layout inbox of a directory run', async () => {
   const definition = workflow((ctx) => ctx.ask('gate', question));
   expect((await runWorkflow(definition, options())).status).toBe('suspended');
   const delivery = await writeAnswer({ ...options(), stepId: 'gate', value: 'ship' });
@@ -522,4 +523,40 @@ it('ingests an answer published in the old inbox after migration has moved it', 
     writeAnswer({ ...options(), stepId: 'gate', value: 'revise' }),
   ).rejects.toMatchObject({ reason: 'conflict' });
   expect((await runWorkflow(definition, { ...options(), resume: true })).output).toBe('ship');
+});
+
+it('keeps one exclusive inbox for a flat run before and after migration', async () => {
+  const definition = workflow(async (ctx) => [
+    await ctx.ask('first', question),
+    await ctx.ask('second', question),
+  ]);
+  expect((await runWorkflow(definition, options())).status).toBe('suspended');
+  const record = await readRun(options());
+  record.formatVersion = 6;
+  delete record.seq;
+  delete record.engine;
+  await rm(join(stateDir, 'questions'), { recursive: true });
+  await writeRun(stateDir, record);
+  const inbox = join(stateDir, 'questions.inbox');
+  const before = await writeAnswer({ ...options(), stepId: 'first', value: 'ship' });
+  expect(before.path).toBe(join(inbox, basename(before.path)));
+  expect((await runWorkflow(definition, { ...options(), resume: true })).status).toBe('suspended');
+  expect((await readRun(options())).formatVersion).toBe(7);
+  expect(await readdir(join(stateDir, 'questions'))).not.toContain('inbox');
+  const after = await writeAnswer({ ...options(), stepId: 'second', value: 'revise' });
+  expect(after.path).toBe(join(inbox, basename(after.path)));
+  await expect(
+    writeAnswer({ ...options(), stepId: 'second', value: 'ship' }),
+  ).rejects.toMatchObject({ reason: 'conflict' });
+  // Earlier builds moved migrated inboxes into the run directory; those deliveries still count.
+  const moved = join(stateDir, 'questions', 'inbox');
+  await mkdir(moved);
+  await rename(after.path, join(moved, basename(after.path)));
+  await expect(
+    writeAnswer({ ...options(), stepId: 'second', value: 'ship' }),
+  ).rejects.toMatchObject({ reason: 'conflict' });
+  expect((await runWorkflow(definition, { ...options(), resume: true })).output).toEqual([
+    'ship',
+    'revise',
+  ]);
 });

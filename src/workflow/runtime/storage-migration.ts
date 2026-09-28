@@ -1,5 +1,4 @@
-import { link, mkdir, readFile, rename } from 'node:fs/promises';
-import { join } from 'node:path';
+import { link, mkdir, readFile } from 'node:fs/promises';
 import { legacyRunPath, runDirectory } from './paths.js';
 import { atomicStorageWrite, syncDirectory } from './storage-io.js';
 import { parseRunRecord, type RunRecord } from './record.js';
@@ -33,18 +32,8 @@ export async function prepareStorageMigration(
       );
   }
   await syncDirectory(stateDir);
-  const directory = runDirectory(stateDir, runId);
-  await mkdir(directory, { recursive: true, mode: 0o700 });
-  try {
-    await rename(join(stateDir, `${runId}.inbox`), join(directory, 'inbox'));
-  } catch (error) {
-    if (!(
-      error instanceof Error &&
-      'code' in error &&
-      ['ENOENT', 'EEXIST', 'ENOTEMPTY'].includes(String(error.code))
-    ))
-      throw error;
-  }
+  await mkdir(runDirectory(stateDir, runId), { recursive: true, mode: 0o700 });
+  // The inbox stays at `<runId>.inbox`: lock-free writers may be linking into it right now.
   // Publish the old-binary guard before the directory checkpoint can become authoritative.
   // Until finish succeeds, a missing directory snapshot is recoverable from the exact backup.
   // No workflow action starts before both writes finish.

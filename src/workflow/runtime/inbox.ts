@@ -61,16 +61,20 @@ export function answerPath(stateDir: string, runId: string, stepId: string): str
   return join(runInboxPath(stateDir, runId), `${filename}.answer.json`);
 }
 
-/** Current and pre-migration answer names; old in-flight deliveries remain consumable. @internal */
+/** Current and pre-migration answer names in both inbox layouts; none is left unconsumed. @internal */
 export function answerCandidates(stateDir: string, runId: string, stepId: string): string[] {
   const encoded = encodeURIComponent(stepId);
   const legacy = `${encoded.length <= 180 ? encoded : `~sha256-${digest(stepId)}`}.answer.json`;
+  const path = answerPath(stateDir, runId, stepId);
+  const inboxes = [
+    join(runDirectory(stateDir, runId), 'inbox'),
+    `${runDirectory(stateDir, runId)}.inbox`,
+  ];
   return [
     ...new Set([
-      answerPath(stateDir, runId, stepId),
-      join(stateDir, `${runId}.inbox`, basename(answerPath(stateDir, runId, stepId))),
-      join(runDirectory(stateDir, runId), 'inbox', legacy),
-      join(stateDir, `${runId}.inbox`, legacy),
+      path,
+      ...inboxes.map((inbox) => join(inbox, basename(path))),
+      ...inboxes.map((inbox) => join(inbox, legacy)),
     ]),
   ];
 }

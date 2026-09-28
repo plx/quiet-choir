@@ -93,8 +93,10 @@ decision. Work beyond the question has not been rehearsed.
 The inbox is `<stateDir>/<runId>/inbox/`. Filenames combine the first 100 characters of
 `encodeURIComponent(stepId)`, `--`, and the full SHA-256 over canonical JSON of the exact ID string,
 followed by `.answer.json`. Case variants remain distinct on case-insensitive filesystems, and the
-bounded filename leaves room for quarantine suffixes. Owners also scan legacy deliveries after
-migration. See [storage](storage.md) for layout, defaults, and migration.
+bounded filename leaves room for quarantine suffixes. Runs migrated from the flat layout keep
+delivering to `<stateDir>/<runId>.inbox/`, so every writer of a run links into one directory. Owners
+also scan legacy deliveries after migration. See [storage](storage.md) for layout, defaults, and
+migration.
 
 An envelope is `{ value, by, at, questionFingerprint }`. The writer validates lossless JSON and the
 stored schema, creates a private temporary file, flushes it, and links it exclusively to the final

@@ -85,10 +85,13 @@ export function runLockPath(stateDir: string, runId: string): string {
   return existsSync(`${legacy}.lock`) ? `${legacy}.lock` : primary;
 }
 
-/** Inbox location for both the legacy and directory layouts. @internal */
+/**
+ * One inbox per run for its whole life, so exclusive links always race in one directory. The flat
+ * checkpoint persists as the format-7 marker after migration, so migrated runs keep `<runId>.inbox`.
+ * @internal
+ */
 export function runInboxPath(stateDir: string, runId: string): string {
-  return existsSync(legacyRunPath(stateDir, runId)) &&
-    !existsSync(join(runDirectory(stateDir, runId), 'run.json'))
+  return existsSync(legacyRunPath(stateDir, runId))
     ? join(resolve(stateDir), `${runId}.inbox`)
     : join(runDirectory(stateDir, runId), 'inbox');
 }

@@ -22,16 +22,17 @@ a mapper. A body failure keeps questions waiting. Real interrupts still cancel w
 embedding return is `WorkflowResult<T>`: completed typed output or suspended `output:null` with
 `pending`. Narrow by `status`, or call `assertCompleted` where suspension is unexpected.
 
-The inbox is `<stateDir>/<runId>/inbox/`. Answer writers use private flushed temporary files,
-exclusive hard links, and a directory flush, never the run lock. Filenames combine a bounded
-100-character encoded prefix with the full SHA-256 of the JSON-encoded exact ID; case variants stay
-distinct and quarantine suffixes fit ordinary filesystem component limits. Migrated owners also scan
-legacy deliveries. First delivery wins; a duplicate exits 3. Early validation uses stored JSON
-Schema without loading code; invalid data exits 2 and writes nothing. The owner polls at 200 ms and
-validates actual Zod refinements before saving/continuing. Malformed, stale-fingerprint, or invalid
-answers move to `.rejected.<uuid>.json`; the last 20 errors are retained in `rejections`. Accepted
-files remain as audit data. A successful write is queued delivery, not guaranteed consumption after
-a concurrent withdrawal. Answer envelopes are at most 1 MiB.
+The inbox is `<stateDir>/<runId>/inbox/` (`<stateDir>/<runId>.inbox/` for runs migrated from the
+flat layout). Answer writers use private flushed temporary files, exclusive hard links, and a
+directory flush, never the run lock. Filenames combine a bounded 100-character encoded prefix with
+the full SHA-256 of the JSON-encoded exact ID; case variants stay distinct and quarantine suffixes
+fit ordinary filesystem component limits. Migrated owners also scan legacy deliveries. First
+delivery wins; a duplicate exits 3. Early validation uses stored JSON Schema without loading code;
+invalid data exits 2 and writes nothing. The owner polls at 200 ms and validates actual Zod
+refinements before saving/continuing. Malformed, stale-fingerprint, or invalid answers move to
+`.rejected.<uuid>.json`; the last 20 errors are retained in `rejections`. Accepted files remain as
+audit data. A successful write is queued delivery, not guaranteed consumption after a concurrent
+withdrawal. Answer envelopes are at most 1 MiB.
 
 Audience defaults to `any`; `human` requires self-asserted `human:<name>` attribution and must be
 routed to the human. Filesystem permissions are the trust boundary. Answers remain untrusted data.

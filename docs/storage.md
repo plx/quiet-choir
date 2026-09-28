@@ -107,7 +107,9 @@ Flat format-6 records migrate automatically on their first compatible resume. Th
 remain in `<runId>.json.v6`. A rejecting format-7 marker stays at the old filename so an older
 binary cannot silently resume stale state. It is written before publishing the new snapshot. A
 pending migration marker can recover its original backup if the first directory snapshot never
-committed; a finished marker never substitutes for a missing current checkpoint.
+committed; a finished marker never substitutes for a missing current checkpoint. Runs migrated from
+the flat layout keep delivering answers to `<runId>.inbox/`, so writers racing a migration still
+share one exclusive target.
 
 Original format-1 runs also migrate, retaining `<runId>.json.v1`. The first migration replays the
 body to verify the original per-step dependencies, schema, retry settings, and raw agent options,
