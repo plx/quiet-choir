@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process';
 import {
   chmod,
   mkdtemp,
@@ -623,6 +624,26 @@ it.each(['restore', 'error'] as const)(
     expect(await readFile(join(cwd, 'file'), 'utf8')).toBe('same bytes');
   },
 );
+
+it('guardFile pins its baseline blob so git gc cannot prune it before restore', async () => {
+  const git = (...args: string[]) => execFileSync('git', args, { cwd, encoding: 'utf8' });
+  const workflow = definition(async (ctx) => {
+    await ctx.exec('init', ['git', 'init', '-q']);
+    await ctx.writeFile('original', 'file', 'uncommitted baseline');
+    return guardFile(ctx, 'guard', 'file', async () => {
+      await ctx.writeFile('mutate', 'file', 'broken');
+      expect(git('for-each-ref', '--format=%(objecttype)', 'refs/quiet-choir/guards/')).toBe(
+        'blob\n',
+      );
+      git('reflog', 'expire', '--expire=now', '--all');
+      git('gc', '--quiet', '--prune=now');
+      return 'done';
+    });
+  });
+  expect((await runWorkflow(workflow, { ...setup(), processRunner: native })).output).toBe('done');
+  expect(await readFile(join(cwd, 'file'), 'utf8')).toBe('uncommitted baseline');
+  expect(git('for-each-ref', 'refs/quiet-choir/')).toBe('');
+});
 
 it('guardFile restores after an ordinary body failure and replays that terminal failure', async () => {
   const workflow = definition(async (ctx) => {

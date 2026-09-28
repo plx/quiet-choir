@@ -50,6 +50,8 @@ export function guardFile<T>(
           path: z.string(),
           blob: z.string().min(1),
           mode: z.number().int().nonnegative(),
+          // No pattern here: dry-run must synthesize it; the restore program validates the ref.
+          ref: z.string().min(1),
         }),
       },
     );
@@ -82,6 +84,7 @@ export function guardFile<T>(
         String(settings.maxBytes),
         baseline.blob,
         String(baseline.mode),
+        baseline.ref,
       ],
       {
         schema: z.object({ changed: z.boolean() }),

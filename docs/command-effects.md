@@ -72,12 +72,13 @@ guard, not a sandbox against hostile processes racing directory replacements.
 
 `guardFile(ctx, id, path, body, { onChange: 'restore' | 'error' })` saves the current uncommitted
 text as a raw Git blob, journals one body outcome, then compares and restores the file in one
-command. No blob bytes appear in command output or checkpoints. `--no-filters` preserves CRLF. The
-default is to restore silently; `'error'` restores first and then rejects if content or permission
-bits changed. The file must be a regular UTF-8 file inside cwd (symlink leaves are rejected), cwd
-must be in a Git repository, and Git/Node must be installed. `maxBytes` defaults to 1 MiB. `version`
-declares changes in closed-over body dependencies; body source and onChange policy participate in
-its journaled identity.
+command. No blob bytes appear in command output or checkpoints. The baseline blob stays pinned under
+`refs/quiet-choir/guards/` until restore finishes, so `git gc` cannot prune it in the meantime.
+`--no-filters` preserves CRLF. The default is to restore silently; `'error'` restores first and then
+rejects if content or permission bits changed. The file must be a regular UTF-8 file inside cwd
+(symlink leaves are rejected), cwd must be in a Git repository, and Git/Node must be installed.
+`maxBytes` defaults to 1 MiB. `version` declares changes in closed-over body dependencies; body
+source and onChange policy participate in its journaled identity.
 
 The body must return JSON. Its success or ordinary failure is terminal for that guard ID, preventing
 a failed body from rerunning after an already completed restore replays. Retrying that whole body

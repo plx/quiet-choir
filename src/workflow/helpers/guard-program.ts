@@ -1,11 +1,11 @@
 /** Small child program: blob bytes stay in the process, never in a workflow result. @internal */
 export const guardProgram = String.raw`
 import { execFileSync } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { constants } from 'node:fs';
 import { open, realpath, lstat, rename, rm } from 'node:fs/promises';
 import { resolve, relative, dirname, basename, sep, isAbsolute } from 'node:path';
-const [mode, supplied, limitText, expected, savedMode] = process.argv.slice(1);
+const [mode, supplied, limitText, expected, savedMode, savedRef] = process.argv.slice(1);
 const limit = Number(limitText);
 const root = await realpath(process.cwd());
 const lexical = resolve(root, supplied);
@@ -37,11 +37,17 @@ try {
   if (mode === 'baseline') {
     if (!before) throw new Error('Guard baseline file is missing.');
     const blob = git(['hash-object', '-w', '--no-filters', '--stdin'], before.content).toString('utf8').trim();
-    process.stdout.write(JSON.stringify({ path, blob, mode: before.mode }));
+    // A ref keeps the loose blob reachable through git gc until restore finishes; refs outside
+    // refs/worktree/ are shared by linked worktrees, and the path keeps worktrees apart.
+    const key = process.env.QUIET_CHOIR_IDEMPOTENCY_KEY || randomUUID();
+    const ref = 'refs/quiet-choir/guards/' + createHash('sha256').update(JSON.stringify([key, path])).digest('hex');
+    git(['update-ref', ref, blob]);
+    process.stdout.write(JSON.stringify({ path, blob, mode: before.mode, ref }));
   } else {
     if (!/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(expected)) throw new Error('Invalid baseline blob.');
     const permissions = /^[0-9]+$/.test(savedMode ?? '') ? Number(savedMode) : NaN;
     if (!Number.isSafeInteger(permissions) || permissions > 0o777) throw new Error('Invalid baseline mode.');
+    if (!/^refs\/quiet-choir\/guards\/[a-z0-9-]+$/.test(savedRef ?? '')) throw new Error('Invalid baseline ref.');
     const changed = before === null || hash(before.content) !== expected || before.mode !== permissions;
     if (changed) {
       const size = Number(git(['cat-file', '-s', expected]).toString('utf8').trim());
@@ -59,6 +65,8 @@ try {
         try { await directory.sync(); } finally { await directory.close(); }
       } finally { await rm(temporary, { force: true }); }
     }
+    // Deleting an absent ref succeeds, so a rerun after a crash here is safe.
+    git(['update-ref', '-d', savedRef]);
     process.stdout.write(JSON.stringify({ changed }));
   }
 } catch (error) {
