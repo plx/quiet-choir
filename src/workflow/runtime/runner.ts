@@ -358,6 +358,7 @@ export async function runWorkflow<TInput, TOutput>(
   const storage = await (options.store ?? new FileRunStore(stateDir))
     .open(options.runId, {
       ...options,
+      cwd,
       probeOwner: options.rehearsal === undefined,
     })
     .catch(async (cause: unknown) => {

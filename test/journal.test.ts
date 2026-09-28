@@ -603,3 +603,29 @@ it('resolves canonical projects and honors explicit, environment, and legacy pre
     vi.unstubAllEnvs();
   }
 });
+
+it('registers the default project for an embedded run that omits cwd and stateDir', async () => {
+  const { defaultStateDir, projectStateDirectories } =
+    await import('../src/workflow/runtime/paths.js');
+  vi.stubEnv('XDG_STATE_HOME', join(stateDir, 'external'));
+  vi.stubEnv('QUIET_CHOIR_STATE_DIR', undefined);
+  try {
+    const definition = defineWorkflow({
+      name: 'embedded',
+      version: '1',
+      input: z.null(),
+      output: z.null(),
+      run: () => Promise.resolve(null),
+    });
+    expect(
+      (await runWorkflow(definition, { runId: 'embedded-default-root', input: null })).status,
+    ).toBe('completed');
+    const runs = defaultStateDir();
+    expect(JSON.parse(await fs.readFile(join(runs, '..', 'project.json'), 'utf8'))).toEqual({
+      cwd: await fs.realpath(process.cwd()),
+    });
+    expect((await projectStateDirectories()).directories).toEqual([runs]);
+  } finally {
+    vi.unstubAllEnvs();
+  }
+});
