@@ -981,6 +981,98 @@ it('checks the Git version before any agent invocation', async () => {
   expect(invoke).not.toHaveBeenCalled();
 });
 
+it('treats a failed Git version probe as a configuration error that settled maps cannot journal or retry', async () => {
+  const invoke = vi.fn<Harness['invoke']>(() => Promise.resolve(response));
+  const runner: ProcessRunner = {
+    run: (request, invocation) =>
+      Array.isArray(request.command) && request.command.includes('--version')
+        ? Promise.reject(Object.assign(new Error('spawn git ENOENT'), { code: 'ENOENT' }))
+        : processRunner.run(request, invocation),
+  };
+  const workflow = defineWorkflow({
+    version: '1',
+    name: 'missing-git',
+    input: z.null(),
+    output: z.boolean(),
+    async run(ctx) {
+      const [result] = await ctx.map(
+        'items',
+        ['only'],
+        { concurrency: 1, onError: 'settle' },
+        async () =>
+          ctx.claude.text('edit', {
+            prompt: 'edit',
+            isolation: 'worktree',
+            onError: 'return',
+            retry: { maxAttempts: 3, delayMs: 0 },
+          }),
+      );
+      if (!result?.ok || !result.value.ok) throw new Error('isolated call did not complete');
+      return result.value.value.worktree?.commit !== undefined;
+    },
+  });
+  await expect(
+    runWorkflow(workflow, {
+      ...options('missing-git'),
+      input: null,
+      processRunner: runner,
+      harness: { invoke },
+    }),
+  ).rejects.toThrow('executable Git 2.38 or newer');
+  const failed = await readRun({ stateDir, runId: 'missing-git' });
+  const steps = Object.values(failed.steps);
+  expect(steps).toHaveLength(1);
+  expect(steps[0]?.status).toBe('failed');
+  expect(steps[0]?.attempts).toBe(1);
+  expect(failed.maps?.['items']?.items[0]).toMatchObject({ status: 'running', outcome: null });
+  expect(invoke).not.toHaveBeenCalled();
+});
+
+it('propagates cancellation during the Git version probe instead of a configuration error', async () => {
+  const controller = new AbortController();
+  let started!: () => void;
+  const probeStarted = new Promise<void>((resolve) => {
+    started = resolve;
+  });
+  const invoke = vi.fn<Harness['invoke']>(() => Promise.resolve(response));
+  const runner: ProcessRunner = {
+    run: (request, invocation) =>
+      Array.isArray(request.command) && request.command.includes('--version')
+        ? new Promise((_, reject) => {
+            started();
+            invocation.signal.addEventListener(
+              'abort',
+              () => {
+                reject(invocation.signal.reason as Error);
+              },
+              { once: true },
+            );
+          })
+        : processRunner.run(request, invocation),
+  };
+  const workflow = defineWorkflow({
+    name: 'cancelled-probe',
+    version: '1',
+    input: z.null(),
+    output: z.string(),
+    async run(ctx) {
+      return (await ctx.claude.text('edit', { prompt: 'edit', isolation: 'worktree' })).output;
+    },
+  });
+  const promise = runWorkflow(workflow, {
+    ...options('cancelled-probe'),
+    input: null,
+    processRunner: runner,
+    harness: { invoke },
+    signal: controller.signal,
+  });
+  const rejected = expect(promise).rejects.toThrow('probe cancelled');
+  await probeStarted;
+  controller.abort(new Error('probe cancelled'));
+  await rejected;
+  expect(invoke).not.toHaveBeenCalled();
+});
+
 it('keeps committed results when cache cleanup fails and reports repeated cleanup warnings', async () => {
   let calls = 0;
   const harness: Harness = {

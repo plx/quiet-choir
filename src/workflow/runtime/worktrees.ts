@@ -131,7 +131,16 @@ export class RunWorktrees {
     this.initialization ??= (async () => {
       const git = this.driver();
       const sharedInvocation = { ...invocation, signal: this.runSignal ?? invocation.signal };
-      const version = await git.text(this.record.cwd, ['--version'], sharedInvocation);
+      let version: string;
+      try {
+        version = await git.text(this.record.cwd, ['--version'], sharedInvocation);
+      } catch (cause) {
+        if (cause instanceof CheckpointError || sharedInvocation.signal.aborted) throw cause;
+        throw new ConfigurationError(
+          'Worktree isolation requires an executable Git 2.38 or newer.',
+          { cause },
+        );
+      }
       const match = /git version (\d+)\.(\d+)/u.exec(version);
       if (!match || Number(match[1]) < 2 || (Number(match[1]) === 2 && Number(match[2]) < 38))
         throw new ConfigurationError(
