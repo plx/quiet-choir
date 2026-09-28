@@ -164,6 +164,30 @@ it('retains helper usage on local validation failure and includes cost when gati
   expect(summarizeUsage(await readRun(cappedOptions)).attempts).toBe(0);
 });
 
+it('rejects non-normalized decision distributions and tolerates float error', async () => {
+  const choose = (probabilities: Record<string, number>) =>
+    defineWorkflow({
+      ...base,
+      async run(ctx) {
+        const answers = Object.keys(probabilities) as [string, ...string[]];
+        const answer = await decision(ctx, async () => ({
+          output: { answer: answers[0], probabilities },
+        })).choose('route', { state: null, question: 'x', answers });
+        return answer.answer;
+      },
+    });
+  const options = await setup();
+  await expect(runWorkflow(choose({ fix: 0.2, skip: 0.2 }), options)).rejects.toThrow(
+    'Probabilities must sum to 1.',
+  );
+  expect((await readRun(options)).steps['route']).toMatchObject({
+    status: 'failed',
+    output: null,
+  });
+  // 0.7 + 0.2 + 0.1 is 0.9999999999999999 in binary floating point.
+  expect((await runWorkflow(choose({ a: 0.7, b: 0.2, c: 0.1 }), await setup())).output).toBe('a');
+});
+
 it('excludes step labels from identity and rejects late usage reporters', async () => {
   const options = await setup();
   let label = 'first';

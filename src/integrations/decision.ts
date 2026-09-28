@@ -14,7 +14,7 @@ export interface DecisionQuestion<A extends readonly [string, ...string[]]> {
 export interface DecisionAnswer<TAnswer extends string> {
   /** One answer from the declared finite answer space. */
   readonly answer: TAnswer;
-  /** Probability reported for every declared answer. */
+  /** Normalized distribution: a probability for every declared answer, summing to one. */
   readonly probabilities: Record<TAnswer, number>;
 }
 
@@ -53,10 +53,18 @@ export function decision(
         question: question.question,
         answers: [...question.answers] as const,
       };
-      const schema = z.object({
-        answer: z.enum(snapshot.answers),
-        probabilities: z.record(z.enum(snapshot.answers), z.number().min(0).max(1)),
-      });
+      const schema = z
+        .object({
+          answer: z.enum(snapshot.answers),
+          probabilities: z.record(z.enum(snapshot.answers), z.number().min(0).max(1)),
+        })
+        .refine(
+          ({ probabilities }) =>
+            Math.abs(
+              Object.values<number>(probabilities).reduce((sum, value) => sum + value, 0) - 1,
+            ) <= 1e-6,
+          { message: 'Probabilities must sum to 1.', path: ['probabilities'] },
+        );
       return ctx.step(id, {
         version: 'decision/1',
         input: { ...snapshot, answers: [...snapshot.answers] },
