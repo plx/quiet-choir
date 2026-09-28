@@ -117,6 +117,14 @@ export function formatRunSummary(run: RunSummary, verbose = false): string {
     lines.push(`Root cause (${run.rootCause.stepId ?? 'workflow'}): ${run.rootCause.error}`);
   else if (run.error) lines.push(`Error: ${run.error}`);
   lines.push(`Usage: ${cost(run)}`);
+  if (run.children.length) {
+    lines.push('Workflow tree (steps and usage include descendants):');
+    lines.push(`  ${run.workflow.name}@${run.workflow.version}: ${run.status}`);
+    for (const child of run.children)
+      lines.push(
+        `${'  '.repeat(Math.min(child.depth + 1, 32))}${child.label}: ${child.workflow.name}@${child.workflow.version} ${child.status}; ${String(child.steps)} steps; ${child.usage.costUsd === null ? 'unknown cost' : `$${child.usage.costUsd.toFixed(4)} reported`}; ${String(child.usage.unknownCostAttempts)} unknown cost${child.phases.length ? `; phases: ${child.phases.join(', ')}` : ''} [${child.id}]`,
+      );
+  }
   const usage = run.usage;
   const metric = (value: number | null): string => (value === null ? '?' : String(value));
   lines.push(

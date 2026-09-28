@@ -1,5 +1,6 @@
 import { runBudgetSchema, type RunBudgetPolicy, type RunBudgetStop } from './run-budget.js';
 import { agentUsageSchema } from './usage.js';
+import type { ChildRecord } from './child-model.js';
 import { mergePreparationSchema, type MergePreparation } from './worktree-schema.js';
 import type { AgentDiagnostics, AgentTranscript } from './agent-stream-model.js';
 import { agentDiagnosticsSchema, agentTranscriptSchema } from './agent-stream-schema.js';
@@ -123,6 +124,8 @@ export interface FailedAttempt {
 
 /** Persisted state of one effect. */
 export interface StepRecord {
+  /** Owning inline workflow frame, or null/absent for the root. */
+  frame?: string | null;
   /** Resolved inputs and target publication intent for a durable integration. */
   merge?: MergePreparation;
   /** Latest isolation state; resolved base remains pinned on unfinished retries. */
@@ -207,6 +210,8 @@ export interface StepRecord {
 
 /** One settled mapper's owned records and saved outcome. */
 export interface MapItemRecord {
+  /** Inline frames owned by this mapper, claimed without rerunning it on settled replay. */
+  children?: string[];
   /** Running items are retried; completed items replay the entire saved outcome. */
   status: 'running' | 'completed';
   /** Serialized mapper result/failure, or null until committed. */
@@ -231,6 +236,10 @@ export interface MapRecord {
 
 /** Local checkpoint format. The format is intentionally versioned independently of workflows. */
 export interface RunRecord {
+  /** Inline child invocations keyed by runtime frame ID. */
+  children?: Record<string, ChildRecord>;
+  /** Sticky nesting guard; root depth is zero. Not part of replay identity. */
+  maxChildDepth?: number;
   /** Sticky operator caps; omission in old records means unlimited. */
   runBudget?: RunBudgetPolicy;
   /** Latest budget refusal, without a corresponding agent attempt. */
@@ -402,6 +411,7 @@ const stepKindSchema = z.enum([
   'merge',
 ]);
 const stepSchema = z.object({
+  frame: z.string().nullable().optional(),
   merge: mergePreparationSchema.optional(),
   worktree: worktreeStepSchema.optional(),
   legacyIdentity: z.literal(1).optional(),
@@ -507,6 +517,25 @@ const stepsSchema = z.custom<Record<string, StepRecord>>(
     Object.values(value).every((step) => stepSchema.safeParse(step).success),
 );
 const recordFieldsSchema = z.object({
+  maxChildDepth: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional(),
+  children: z
+    .record(
+      z.string(),
+      z.object({
+        declared: z.boolean(),
+        label: z.string().min(1),
+        workflow: z.object({ name: z.string().min(1), version: z.string().min(1) }),
+        parent: z.string().nullable(),
+        depth: z.number().int().positive(),
+        inputDigest: z.string(),
+        schemaDigest: z.string(),
+        status: z.enum(['running', 'completed', 'failed', 'cancelled', 'suspended']),
+        startedAt: z.iso.datetime(),
+        finishedAt: z.iso.datetime().nullable(),
+        error: z.string().nullable(),
+      }),
+    )
+    .optional(),
   worktrees: worktreeLedgerSchema.optional(),
   worktreeWarnings: z.array(z.string()).optional(),
   nextWakeAt: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).nullable().optional(),
@@ -565,6 +594,7 @@ const recordFieldsSchema = z.object({
         message: z.string().nullable(),
         data: jsonSchema,
         stepId: z.string().nullable(),
+        frame: z.string().nullable().optional(),
       }),
     )
     .max(MAX_RUN_EVENTS)
@@ -612,6 +642,7 @@ const recordFieldsSchema = z.object({
               .nullable(),
             steps: z.array(z.string()),
             maps: z.array(z.string()),
+            children: z.array(z.string()).optional(),
           }),
         ),
       }),
@@ -860,19 +891,20 @@ export function validateRunRecord(value: unknown): void {
 
 /** Validate only a field/effect/map changed by one new storage journal entry. @internal */
 export function validateRecordChange(
-  area: 'run' | 'steps' | 'maps',
+  area: 'run' | 'steps' | 'maps' | 'children',
   key: string,
   value: unknown,
 ): void {
   if (area === 'run') {
     if (
-      ['seq', 'formatVersion', 'id', 'steps', 'maps'].includes(key) ||
+      ['seq', 'formatVersion', 'id', 'steps', 'maps', 'children'].includes(key) ||
       !Object.hasOwn(recordFieldsSchema.shape, key)
     )
       throw new Error(`Invalid storage journal field ${key}.`);
     recordFieldsSchema.shape[key as keyof typeof recordFieldsSchema.shape].parse(value);
   } else if (value !== undefined) {
     if (area === 'steps') stepSchema.parse(value);
-    else recordFieldsSchema.shape.maps.unwrap().valueType.parse(value);
+    else if (area === 'maps') recordFieldsSchema.shape.maps.unwrap().valueType.parse(value);
+    else recordFieldsSchema.shape.children.unwrap().valueType.parse(value);
   }
 }

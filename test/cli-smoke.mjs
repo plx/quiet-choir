@@ -23,6 +23,7 @@ const expectedCommands = [
   'workflow:fixtures',
   'workflow:inspect',
   'workflow:list',
+  'workflow:list-defs',
   'workflow:pending',
   'workflow:resume',
   'workflow:tick',

@@ -1,5 +1,5 @@
 import { cleanWorktrees } from '../runtime/worktree-clean.js';
-import type { CleanWorkflowPlan } from './model.js';
+import type { CleanWorkflowPlan, ListDefinitionsPlan, ExecuteNamedWorkflowPlan } from './model.js';
 import { NodeProcessRunner } from '../../processes/runner.js';
 import type { ProcessRunner } from '../runtime/exec-model.js';
 import { realpath } from 'node:fs/promises';
@@ -22,13 +22,14 @@ import {
 } from '../runtime/run-errors.js';
 import { defaultAgentLimits, validateAgentLimits } from '../runtime/agent-limiter.js';
 import type { ProcessSupervisor } from '../../processes/supervisor.js';
-import { capabilityManifest } from '../runtime/profiles.js';
+import { checkedDefinition, describeWorkflow } from '../runtime/definition.js';
+import { listDefinitions } from './registry.js';
+import { analyzeTypecheckEntrypoint } from '../typecheck/plan.js';
 import { randomUUID } from 'node:crypto';
 
 import { tsImport } from 'tsx/esm/api';
 import { register as registerCommonJs } from 'tsx/cjs/api';
 import ts from 'typescript';
-import { z } from 'zod';
 
 import type { ExecutionLogger, Executor } from '../../application/execution.js';
 import type { Harness, WorkflowDefinition } from '../runtime/model.js';
@@ -73,29 +74,13 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-function isSchema(value: unknown): boolean {
-  return value instanceof z.ZodType;
-}
-
 function workflowDefinition(module: unknown): WorkflowDefinition<unknown, unknown> {
   const definition: unknown = isRecord(module) ? module['default'] : undefined;
   if (!isRecord(definition))
     throw new Error(
       'Workflow must default-export a defineWorkflow({ name, version, input, output, run }) definition.',
     );
-  for (const field of ['name', 'version']) {
-    if (typeof definition[field] !== 'string' || !definition[field].trim())
-      throw new Error(`Workflow "${field}" must be a nonempty string.`);
-  }
-  if (typeof definition['run'] !== 'function')
-    throw new Error('Workflow "run" must be a function.');
-  for (const field of ['input', 'output']) {
-    if (!isSchema(definition[field]))
-      throw new Error(
-        `Workflow "${field}" is not a zod 4 schema (zod/v3 and zod/mini are unsupported; import { z } from 'quiet-choir').`,
-      );
-  }
-  return definition as unknown as WorkflowDefinition<unknown, unknown>;
+  return checkedDefinition(definition) as unknown as WorkflowDefinition<unknown, unknown>;
 }
 
 /** Type-check, import, and optionally run trusted workflow code behind a plain-data boundary. */
@@ -110,7 +95,9 @@ export class WorkflowExecutor implements Executor<
   | ResumeWorkflowPlan
   | AnswerWorkflowPlan
   | PendingWorkflowsPlan
-  | CleanWorkflowPlan,
+  | CleanWorkflowPlan
+  | ListDefinitionsPlan
+  | ExecuteNamedWorkflowPlan,
   WorkflowCommandResult
 > {
   readonly #options: WorkflowExecutorOptions;
@@ -131,7 +118,9 @@ export class WorkflowExecutor implements Executor<
       | ResumeWorkflowPlan
       | AnswerWorkflowPlan
       | PendingWorkflowsPlan
-      | CleanWorkflowPlan,
+      | CleanWorkflowPlan
+      | ListDefinitionsPlan
+      | ExecuteNamedWorkflowPlan,
   ): Promise<WorkflowCommandResult> {
     let unregister: (() => void) | undefined;
     let rehearsal: RehearsalHarness | undefined;
@@ -149,6 +138,30 @@ export class WorkflowExecutor implements Executor<
     try {
       if ('runId' in plan && !isValidRunId(plan.runId))
         return workflowFailure('usage.run_id', runIdMessage, context);
+      if (plan.kind === 'workflow.list-defs' || plan.kind === 'workflow.execute-name') {
+        stage = 'load.definition';
+        const registry = await listDefinitions(
+          plan.directories,
+          (typecheck) => this.execute({ kind: 'workflow.validate', typecheck }),
+          plan.kind === 'workflow.list-defs' && plan.refresh,
+        );
+        if (plan.kind === 'workflow.list-defs' || !registry.ok) return registry;
+        if (registry.kind !== 'workflow.list-defs.result')
+          throw new Error('Unexpected definition registry result.');
+        const selected = registry.definitions.find((entry) => entry.workflow.name === plan.name);
+        if (!selected)
+          throw new Error(
+            `Unknown workflow name ${plan.name}; search directories with workflow list-defs or supply --registry-dir DIR.`,
+          );
+        const analyzed = analyzeTypecheckEntrypoint(selected.entrypoint, plan.cwd);
+        if (!analyzed.ok) throw new Error(analyzed.error.message);
+        return await this.execute({
+          ...plan,
+          kind: 'workflow.execute',
+          registryName: plan.name,
+          typecheck: analyzed.plan,
+        });
+      }
       if (plan.kind === 'workflow.execute' && plan.forkFrom && !isValidRunId(plan.forkFrom.runId))
         return workflowFailure('usage.run_id', runIdMessage, context);
       if (plan.kind === 'workflow.resume') {
@@ -321,18 +334,23 @@ export class WorkflowExecutor implements Executor<
       this.#options.signal?.throwIfAborted();
       stage = 'load.definition';
       const definition = workflowDefinition(module);
-      z.toJSONSchema(definition.input, { target: 'draft-7' });
-      z.toJSONSchema(definition.output, { target: 'draft-7' });
+      if (
+        plan.kind === 'workflow.execute' &&
+        plan.registryName !== undefined &&
+        definition.name !== plan.registryName
+      )
+        throw new Error(
+          `Registry name ${plan.registryName} now resolves to workflow ${definition.name}; refresh workflow list-defs before executing by name.`,
+        );
+      const description = describeWorkflow(definition, plan.typecheck.entrypoint);
       if (plan.kind === 'workflow.validate') {
         return {
           kind: 'workflow.validate.result',
           ok: true,
           entrypoint: plan.typecheck.entrypoint,
           workflow: {
-            name: definition.name,
-            version: definition.version,
+            ...description,
             ...workflowSnapshot(definition, { source }),
-            capabilities: capabilityManifest(definition),
           },
         };
       }
@@ -377,6 +395,7 @@ export class WorkflowExecutor implements Executor<
         processRunner:
           rehearsal?.processRunner ?? this.#options.processRunner ?? new NodeProcessRunner(),
         ...(plan.maxRunCostUsd === undefined ? {} : { maxRunCostUsd: plan.maxRunCostUsd }),
+        ...(plan.maxChildDepth === undefined ? {} : { maxChildDepth: plan.maxChildDepth }),
         ...(plan.maxRunAgentAttempts === undefined
           ? {}
           : { maxRunAgentAttempts: plan.maxRunAgentAttempts }),

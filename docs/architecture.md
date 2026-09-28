@@ -114,6 +114,15 @@ See [ADR 0015](decisions/0015-observe-runs-without-changing-effect-identity.md) 
 
 ## CLI execution boundary
 
+Inline `ctx.workflow` enters a named child frame in the same run, with schema-validated I/O and
+explicit profile delegation. Frames share admission, budgets and cancellation, retain their own
+identity/status, and use compact namespaces for deep nesting. Settled map ownership includes child
+frames; declared child identity is checked even when a committed mapper is skipped. Descriptive
+metadata stays outside runtime fingerprints. The loader publishes schemas and declared trees, and
+the directory registry caches plain metadata only; execution reimports the selected definition. See
+[ADR 0026](decisions/0026-inline-children-and-definition-registry.md) and
+[child workflows](child-workflows.md).
+
 Commands follow the plan-execute pattern recorded in [ADR 0001](decisions/0001-plan-execute-cli.md):
 
 1. Parse and analyze CLI input into a plain-data plan while constructing the executor from runtime

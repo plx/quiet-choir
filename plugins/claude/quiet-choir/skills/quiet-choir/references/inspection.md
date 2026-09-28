@@ -316,3 +316,10 @@ They include `provider`, `inFlight` reserved-slot counts, `queued` waiter count,
 report queued=0. With an explicitly shared limiter, counts cover all sharing runs. A queued step is
 already persisted as running; checkpoints do not distinguish waiting from native execution. Use
 `limiter.snapshot()` for embedded live monitoring. Observer failures never own a slot.
+
+## Child frames
+
+`inspect --json` includes `children`; text inspection renders the root and child tree with status,
+phase labels, step counts and known/unknown usage. Child totals include descendants and must not be
+added across tree levels. A changed child version/schema remains incompatible after source
+acceptance. See [composition and recovery](child-workflows.md).

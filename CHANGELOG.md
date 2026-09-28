@@ -2,6 +2,12 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- Add inline `ctx.workflow` frames with validated I/O, child identity checks, delegated profiles,
+  configurable depth and inspectable usage trees. Child waits suspend the shared run; settled maps
+  require declared children so their identities can be checked without rerunning committed mappers.
+- Publish workflow descriptions, required input/output schemas and child declarations through
+  validation. Add cached directory discovery and execution by registry name; imports remain trusted.
+
 - Normalize native usage into explicit token categories and effective-model totals; preserve raw and
   custom measurements without changing the preceding agent fingerprint schema. Inspection exposes
   public `summarizeUsage` totals, unknown counts and interrupted attempts.

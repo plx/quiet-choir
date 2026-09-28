@@ -17,6 +17,7 @@ export default class WorkflowResume extends WorkflowCommand {
     }),
   };
   public static override readonly flags: Interfaces.FlagInput<{
+    readonly 'max-child-depth': number | undefined;
     readonly 'max-run-cost-usd': string | undefined;
     readonly 'max-run-agent-attempts': string | undefined;
     readonly 'state-dir': string | undefined;
@@ -29,6 +30,11 @@ export default class WorkflowResume extends WorkflowCommand {
     readonly 'notify-command': string | undefined;
     readonly 'wait-mode': 'suspend' | 'block' | undefined;
   }> = {
+    'max-child-depth': Flags.integer({
+      min: 0,
+      max: Number.MAX_SAFE_INTEGER,
+      description: 'Replace the saved inline child depth limit',
+    }),
     ...runBudgetFlags,
     'notify-command': Flags.string({
       description: 'Best-effort sh -c hook receiving event JSON on stdin',
@@ -76,6 +82,9 @@ export default class WorkflowResume extends WorkflowCommand {
     });
     const result = await executor.execute({
       kind: 'workflow.resume',
+      ...(flags['max-child-depth'] === undefined
+        ? {}
+        : { maxChildDepth: flags['max-child-depth'] }),
       ...runBudget,
       ...(flags['notify-command'] === undefined ? {} : { notifyCommand: flags['notify-command'] }),
       ...(flags['wait-mode'] === undefined ? {} : { waitMode: flags['wait-mode'] }),

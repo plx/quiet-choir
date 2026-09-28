@@ -16,7 +16,7 @@ import { atomicStorageWrite, syncDirectory } from './storage-io.js';
 
 /** A changed field, effect, or settled map; absent value removes an optional field. @internal */
 export interface JournalChange {
-  readonly area: 'run' | 'steps' | 'maps';
+  readonly area: 'run' | 'steps' | 'maps' | 'children';
   readonly key: string;
   readonly value?: JsonValue;
 }
@@ -31,13 +31,13 @@ const envelope = z.strictObject({
   at: z.iso.datetime(),
   changes: z.array(
     z.strictObject({
-      area: z.enum(['run', 'steps', 'maps']),
+      area: z.enum(['run', 'steps', 'maps', 'children']),
       key: z.string(),
       value: z.unknown().optional(),
     }),
   ),
 });
-const immutableFields = new Set(['seq', 'formatVersion', 'id', 'steps', 'maps']);
+const immutableFields = new Set(['seq', 'formatVersion', 'id', 'steps', 'maps', 'children']);
 
 /** Validate only new journal data, never all previous effect outputs on every write. @internal */
 export function parseJournalEntry(value: unknown): JournalEntry {
@@ -59,7 +59,9 @@ function apply(record: RunRecord, entry: JournalEntry): void {
         ? record
         : change.area === 'steps'
           ? record.steps
-          : (record.maps ??= {});
+          : change.area === 'maps'
+            ? (record.maps ??= {})
+            : (record.children ??= {});
     if (change.value === undefined) Reflect.deleteProperty(target, change.key);
     else
       Object.defineProperty(target, change.key, {
@@ -142,6 +144,7 @@ function difference(before: RunRecord, after: RunRecord): JournalChange[] {
   fields('run', before, after);
   fields('steps', before.steps, after.steps);
   fields('maps', before.maps ?? {}, after.maps ?? {});
+  fields('children', before.children ?? {}, after.children ?? {});
   return changes;
 }
 

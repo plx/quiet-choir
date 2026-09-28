@@ -1,4 +1,6 @@
 import { RunBudget, RunBudgetExceededError, runBudgetSchema } from './run-budget.js';
+import { RunChildren } from './children.js';
+import { checkedDefinition, describeWorkflow } from './definition.js';
 import { agentUsageSchema, normalizeUsage, usageIdentitySchema } from './usage.js';
 import { legacyAttemptKind } from './usage-summary.js';
 import { mergeOptionsSchema, mergeResultSchema } from './worktree-schema.js';
@@ -158,6 +160,8 @@ export { ConfigurationError } from './configuration-error.js';
 
 /** Unawaited notifications: step transitions follow persistence; admission events are live. */
 export type WorkflowEvent = {
+  /** Inline child frame, or null/absent for the root workflow. */
+  readonly frame?: string | null;
   /** Bounded native activity for live agent.progress events. */
   readonly progress?: AgentProgress;
   /** Native model, or null when unknown. */
@@ -232,6 +236,12 @@ export type WorkflowEvent = {
       /** Run lifecycle, phase, or log notification. */
       readonly type: RunEvent['type'];
     }
+  | {
+      /** Child lifecycle notifications refer to their frame rather than a leaf effect. */
+      readonly stepId: null;
+      /** Inline invocation lifecycle after its frame checkpoint. */
+      readonly type: 'child.started' | 'child.completed' | 'child.failed';
+    }
 );
 
 /** A completed run with its output type inferred from the workflow definition. */
@@ -271,6 +281,8 @@ export function assertCompleted<T>(result: WorkflowResult<T>): asserts result is
 
 /** Explicit dependencies and execution policy for a workflow run. */
 export interface RunOptions extends WorkflowCodeOptions {
+  /** Sticky inline nesting limit, default 8; root depth is zero and zero prohibits new children. */
+  readonly maxChildDepth?: number;
   /** Sticky reported-cost threshold for new agent attempts; null clears it. In-flight calls can overshoot. */
   readonly maxRunCostUsd?: number | null;
   /** Sticky cap on locally admitted agent attempts across resumes; null clears it. */
@@ -457,6 +469,15 @@ export async function runWorkflow<TInput, TOutput>(
       ? {}
       : { maxRunAgentAttempts: options.maxRunAgentAttempts }),
   });
+  const incomingChildDepth = z
+    .number()
+    .int()
+    .nonnegative()
+    .max(Number.MAX_SAFE_INTEGER)
+    .optional()
+    .parse(options.maxChildDepth);
+  checkedDefinition(definition);
+  if (definition.children !== undefined) describeWorkflow(definition);
   const limiter = resolveAgentLimiter(options.agentLimit);
   const capabilities = resolveCapabilities(definition);
   const incomingProfiles = validateProfileOverrides(options.profileOverrides ?? [], capabilities);
@@ -655,13 +676,21 @@ export async function runWorkflow<TInput, TOutput>(
       ...(options.policyReset ? {} : existing?.runBudget),
       ...incomingBudget,
     });
-    if (existing?.status === 'completed' && !options.acceptCodeChange && !legacyReplay) {
+    const maxChildDepth =
+      incomingChildDepth ?? (options.policyReset ? undefined : existing?.maxChildDepth) ?? 8;
+    if (
+      existing?.status === 'completed' &&
+      !options.acceptCodeChange &&
+      !legacyReplay &&
+      !Object.keys(existing.children ?? {}).length
+    ) {
       const output = jsonValue(definition.output.parse(existing.output), 'Workflow output', {
         canonical: false,
       });
       if (
         migrating ||
         engineChanged ||
+        incomingChildDepth !== undefined ||
         Object.keys(incomingBudget).length ||
         incomingPolicy.length ||
         incomingProfiles.length ||
@@ -670,6 +699,7 @@ export async function runWorkflow<TInput, TOutput>(
         options.allowModelOverride !== undefined
       ) {
         existing.runBudget = runBudget;
+        existing.maxChildDepth = maxChildDepth;
         existing.profileOverrides = profileOverrides;
         existing.grants = grants;
         existing.grantedProfiles = grantedProfiles;
@@ -715,6 +745,7 @@ export async function runWorkflow<TInput, TOutput>(
       updatedAt: now,
     };
     record.runBudget = runBudget;
+    record.maxChildDepth = maxChildDepth;
     delete record.budgetStop;
     for (const step of Object.values(record.steps))
       for (const attempt of step.attemptHistory ?? []) {
@@ -897,11 +928,47 @@ export async function runWorkflow<TInput, TOutput>(
         /* Observers cannot invalidate persisted work. */
       }
     };
-    const observations = new RunObservations(record, save, (event, replayed) => {
-      notify({ ...event, message: event.message ?? '', attempt: 0, runId: record.id, replayed });
+    const observations: RunObservations = new RunObservations(
+      record,
+      save,
+      (event, replayed) => {
+        notify({ ...event, message: event.message ?? '', attempt: 0, runId: record.id, replayed });
+      },
+      () => children.frame,
+    );
+    const children: RunChildren = new RunChildren({
+      definition: checkedDefinition(definition),
+      capabilities,
+      grants,
+      pins: grantedProfiles,
+      overrides: profileOverrides,
+      maxDepth: maxChildDepth,
+      record,
+      names,
+      scopes,
+      operations,
+      origins,
+      used,
+      isInEffect: () => !!inEffect.getStore(),
+      context: () => context,
+      launch,
+      save,
+      isolatePhase: (body) => observations.isolate(body),
+      emit: (type, id, child) => {
+        notify({
+          type,
+          frame: id,
+          stepId: null,
+          at: new Date().toISOString(),
+          execution: observations.execution.n,
+          runId: record.id,
+          attempt: 0,
+          message: `${child.workflow.name}@${child.workflow.version}: ${child.status}`,
+        });
+      },
     });
     const emit = (
-      type: Exclude<WorkflowEvent['type'], RunEvent['type']>,
+      type: Exclude<WorkflowEvent['type'], RunEvent['type'] | `child.${string}`>,
       id: string,
       step: StepRecord,
       details: Partial<Omit<WorkflowEvent, 'type' | 'runId' | 'stepId' | 'attempt'>> = {},
@@ -914,6 +981,7 @@ export async function runWorkflow<TInput, TOutput>(
         stepId: id,
         attempt: step.attempts,
         phase: step.phase ?? null,
+        frame: step.frame ?? children.frame,
         ...details,
       });
     };
@@ -960,7 +1028,20 @@ export async function runWorkflow<TInput, TOutput>(
       return { permit, finish: budget.enter() };
     }
 
+    // Attribute a step record to the currently active child frame, so summarizeChildren() and
+    // frame-scoped events agree with the frame code runs under today, even for a step whose
+    // identity/output were recorded under a different frame (a root scope refactored into a
+    // child, or the reverse). Returns whether the persisted frame changed.
+    function attributeFrame(step: StepRecord): boolean {
+      const frame = children.frame;
+      if ((step.frame ?? null) === frame) return false;
+      if (frame !== null) step.frame = frame;
+      else delete step.frame;
+      return true;
+    }
+
     async function beforeLive(id: string, step: StepRecord): Promise<void> {
+      attributeFrame(step);
       if (strictHealedDivergence) {
         controller.abort(strictHealedDivergence);
         throw strictHealedDivergence;
@@ -1047,6 +1128,8 @@ export async function runWorkflow<TInput, TOutput>(
       signal.throwIfAborted();
       validateStepId(id, names.describe(id));
       if (used.has(id)) throw duplicateStepId(id, names.describe(id));
+      if (record.children?.[id])
+        throw new Error(`Step ${id} collides with a recorded child frame.`);
       used.add(id);
       scopes.step(id);
       const { maxAttempts, delayMs } = execution.policy.retry;
@@ -1128,6 +1211,7 @@ export async function runWorkflow<TInput, TOutput>(
       }
       if (prior && isTerminalStep(prior)) {
         const output = replay(prior);
+        if (attributeFrame(prior)) await save();
         emit('step.replayed', id, prior);
         return output;
       }
@@ -1162,6 +1246,7 @@ export async function runWorkflow<TInput, TOutput>(
               at: new Date().toISOString(),
             },
           };
+          attributeFrame(copied);
           Object.defineProperty(record.steps, id, {
             value: copied,
             enumerable: true,
@@ -1730,13 +1815,14 @@ export async function runWorkflow<TInput, TOutput>(
             };
             validateAgentOptions(provider, data.options, false);
             const resolvedProfile = resolveProfileCall(
-              capabilities,
+              children.authority?.manifest ?? capabilities,
               provider,
               data.options,
-              grants,
-              grantedProfiles,
+              children.authority?.grants ?? grants,
+              children.authority?.pins ?? grantedProfiles,
             );
             profile = resolvedProfile.profile;
+            children.authority?.check(profile.name, provider, resolvedProfile.options);
             schema = outputSchema();
             legacyRequest = jsonValue({
               provider,
@@ -1753,8 +1839,20 @@ export async function runWorkflow<TInput, TOutput>(
               policy,
               matchedPolicy,
               profile,
-              profileOverrides,
+              children.authority?.overrides ?? profileOverrides,
             );
+            if (children.authority) {
+              const bounded = children.authority.limits(profile.name, execution.policy);
+              const sources = { ...execution.sources };
+              for (const field of ['timeoutMs', 'maxTurns', 'maxBudgetUsd'] as const)
+                if (bounded[field] !== execution.policy[field])
+                  sources[field] = `child-delegation:${profile.name}`;
+              execution = {
+                ...execution,
+                policy: bounded,
+                sources,
+              };
+            }
             // Provider semantics supply model/effort defaults, while per-call and launch policy win.
             if (execution.requestedModel === null && resolvedProfile.options.model !== undefined)
               execution = {
@@ -2153,6 +2251,9 @@ export async function runWorkflow<TInput, TOutput>(
       save,
       nextSeq: () => nextSeq++,
       isCheckpointFailure: (error) => checkpointProblems.includes(error as CheckpointError),
+      replayChild: (id) => {
+        children.replay(id);
+      },
       replayed: (id, step) => {
         if (step.kind !== 'sleep')
           policy.forEach((rule, index) => {
@@ -2253,6 +2354,8 @@ export async function runWorkflow<TInput, TOutput>(
               'This RunStore has no filesystem inbox. Durable questions require FileRunStore or a store implementing the same stateDir protocol.',
             );
           if (used.has(id)) throw duplicateStepId(id, names.describe(id));
+          if (record.children?.[id])
+            throw new Error(`Question ${id} collides with a recorded child frame.`);
           used.add(id);
           scopes.step(id);
           const registered = await questions.register(
@@ -2286,6 +2389,8 @@ export async function runWorkflow<TInput, TOutput>(
           if (sources.signal && !supportsInbox)
             throw new Error('Signal waits require a RunStore with the filesystem inbox protocol.');
           if (used.has(id)) throw duplicateStepId(id, names.describe(id));
+          if (record.children?.[id])
+            throw new Error(`Wait ${id} collides with a recorded child frame.`);
           used.add(id);
           scopes.step(id);
           const registered = await questions.wait(
@@ -2302,6 +2407,7 @@ export async function runWorkflow<TInput, TOutput>(
       );
     }
     const context: WorkflowContext = {
+      workflow: children.invoke,
       cwd,
       readFile: (leaf, path, settings = {}) => {
         const id = names.qualify(leaf);
@@ -2605,6 +2711,7 @@ export async function runWorkflow<TInput, TOutput>(
           signal.throwIfAborted();
           if (!options.rehearsal) await worktrees.cleanup(false);
           record.status = 'suspended';
+          children.finish('suspended');
           record.output = null;
           warnUnmatched();
           const priorEvents = [...(record.events ?? [])];
@@ -2646,6 +2753,8 @@ export async function runWorkflow<TInput, TOutput>(
       closed = true;
       await drainDiscovery();
       signal.throwIfAborted();
+      children.assertVisited();
+      children.finish('cancelled', 'Root workflow completed without awaiting this child frame.');
       const missingMaps = Object.keys(maps).filter(
         (id) =>
           !visitedMaps.has(id) &&
@@ -2726,6 +2835,7 @@ export async function runWorkflow<TInput, TOutput>(
       if (!options.rehearsal) await worktrees.cleanup(false).catch(() => undefined);
       // A callback's own AbortError is a failure; only scope cancellation cancels the run.
       record.status = interrupted || error instanceof CancelledError ? 'cancelled' : 'failed';
+      children.finish(record.status, message(error));
       record.error = message(error);
       if (hasTerminalOutcomes(record))
         record.recoveryHint =

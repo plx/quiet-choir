@@ -15,12 +15,19 @@ import {
 } from '../runtime/store.js';
 import { summarizeUsage } from '../runtime/usage-summary.js';
 import type { RequestSummary, RunEvent, UsageSummary } from '../runtime/observability-model.js';
+import type { ChildRecord } from '../runtime/child-model.js';
 
 /** Inspection states are derived; stale never overwrites the checkpoint status. @internal */
 export type InspectionStatus = RunRecord['status'] | 'stale';
 
 /** Compact plain-data projection, shared by text, JSON summary, watch, and list. @internal */
 export interface RunSummary {
+  readonly children: readonly (ChildRecord & {
+    readonly id: string;
+    readonly steps: number;
+    readonly usage: UsageSummary;
+    readonly phases: readonly string[];
+  })[];
   readonly cwd: string;
   readonly stateDir?: string;
   readonly harnesses: NonNullable<RunRecord['harnesses']>;
@@ -86,6 +93,52 @@ function stale(run: RunRecord, ownership: RunOwnership): boolean {
   );
 }
 
+function summarizeChildren(run: RunRecord): RunSummary['children'] {
+  const frames = run.children ?? {};
+  const ordered: string[] = [];
+  const seen = new Set<string>();
+  const visit = (id: string): void => {
+    if (seen.has(id)) return;
+    seen.add(id);
+    ordered.push(id);
+    for (const [child, frame] of Object.entries(frames)) if (frame.parent === id) visit(child);
+  };
+  for (const [id, frame] of Object.entries(frames)) if (frame.parent === null) visit(id);
+  for (const id of Object.keys(frames)) visit(id);
+  const inside = (candidate: string | null | undefined, ancestor: string): boolean => {
+    const visited = new Set<string>();
+    while (candidate && !visited.has(candidate)) {
+      if (candidate === ancestor) return true;
+      visited.add(candidate);
+      candidate = frames[candidate]?.parent;
+    }
+    return false;
+  };
+  return ordered.flatMap((id) => {
+    const frame = frames[id];
+    if (!frame) return [];
+    const steps = Object.fromEntries(
+      Object.entries(run.steps).filter(([, step]) => inside(step.frame, id)),
+    );
+    return [
+      {
+        ...frame,
+        id,
+        steps: Object.keys(steps).length,
+        usage: summarizeUsage({ ...run, steps }),
+        phases: [
+          ...new Set([
+            ...Object.values(steps).flatMap((step) => (step.phase ? [step.phase] : [])),
+            ...(run.events ?? []).flatMap((event) =>
+              event.type === 'phase' && event.phase && inside(event.frame, id) ? [event.phase] : [],
+            ),
+          ]),
+        ],
+      },
+    ];
+  });
+}
+
 /** No source import, lock acquisition, or checkpoint mutation. @internal */
 export function summarizeRun(
   run: RunRecord,
@@ -126,6 +179,7 @@ export function summarizeRun(
       .sort()
       .at(-1) ?? run.updatedAt;
   return {
+    children: summarizeChildren(run),
     cwd: run.cwd,
     harnesses: run.harnesses ?? {},
     id: run.id,

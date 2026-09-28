@@ -6,7 +6,8 @@ import type { WorkflowFailure } from './failure.js';
 import type { InspectionStatus, RunSummary } from './inspection.js';
 import type { AgentLimits } from '../runtime/agent-limiter.js';
 import type { RunOwnership } from '../runtime/store.js';
-import type { CapabilityManifest, ProfileOverride } from '../runtime/profiles-model.js';
+import type { ProfileOverride } from '../runtime/profiles-model.js';
+import type { WorkflowDescription } from '../runtime/child-model.js';
 import type { ExecutionPlan, ExecutionResult } from '../../application/execution.js';
 import type { JsonValue } from '../runtime/model.js';
 import type { PolicyOverride } from '../runtime/policy.js';
@@ -23,8 +24,24 @@ export interface ValidateWorkflowPlan extends ExecutionPlan {
   readonly typecheck: TypecheckPlan;
 }
 
+/** Discover trusted workflow modules in directories, validating each before publishing metadata. */
+export interface ListDefinitionsPlan extends ExecutionPlan {
+  readonly kind: 'workflow.list-defs';
+  readonly directories: readonly string[];
+  readonly refresh?: boolean;
+}
+
+/** Resolve a registry name before using the ordinary source-file execution path. */
+export interface ExecuteNamedWorkflowPlan extends Omit<ExecuteWorkflowPlan, 'kind' | 'typecheck'> {
+  readonly kind: 'workflow.execute-name';
+  readonly name: string;
+  readonly directories: readonly string[];
+}
+
 /** Plain-data instructions for starting or resuming a workflow. */
 export interface ExecuteWorkflowPlan extends ExecutionPlan {
+  readonly maxChildDepth?: number;
+  readonly registryName?: string;
   readonly maxRunCostUsd?: number | null;
   readonly maxRunAgentAttempts?: number | null;
   readonly progress?: boolean;
@@ -133,6 +150,11 @@ export interface CleanWorkflowPlan extends ExecutionPlan {
 /** The outcome of a workflow command, without live schemas or loaded modules. */
 export type WorkflowCommandResult = ExecutionResult &
   (
+    | {
+        readonly kind: 'workflow.list-defs.result';
+        readonly ok: true;
+        readonly definitions: readonly ValidatedWorkflow[];
+      }
     | (WorktreeCleanResult & { readonly kind: 'workflow.clean.result'; readonly ok: true })
     | WorkflowFailure
     | {
@@ -161,12 +183,9 @@ export type WorkflowCommandResult = ExecutionResult &
         readonly kind: 'workflow.validate.result';
         readonly ok: true;
         readonly entrypoint: string;
-        readonly workflow: {
-          readonly name: string;
-          readonly version: string;
+        readonly workflow: WorkflowDescription & {
           readonly fingerprint: string;
           readonly identity?: WorkflowIdentity;
-          readonly capabilities: CapabilityManifest;
         };
       }
     | {
@@ -184,3 +203,9 @@ export type WorkflowCommandResult = ExecutionResult &
         readonly rehearsal?: RehearsalReport;
       }
   );
+
+/** One validated definition, shared by validate and registry results. */
+export type ValidatedWorkflow = Extract<
+  WorkflowCommandResult,
+  { readonly kind: 'workflow.validate.result' }
+>;
