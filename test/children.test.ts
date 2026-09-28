@@ -472,6 +472,60 @@ it('does not let raw read capabilities or nested aliases escape delegated profil
   expect(calls).toBe(0);
 });
 
+it('keeps a failing parent denial policy in children and refuses a weaker call override', async () => {
+  const stateDir = await directory();
+  let calls = 0;
+  const inheriting = defineWorkflow({
+    name: 'inheriting',
+    ...base,
+    output: z.string(),
+    profiles: { scout: { extends: 'readonly' } },
+    async run(ctx) {
+      const result = await ctx.claude.text('look', {
+        profile: 'scout',
+        prompt: 'x',
+        onError: 'return',
+      });
+      return result.ok ? 'accepted' : result.error.kind;
+    },
+  });
+  const weakening = defineWorkflow({
+    name: 'weakening',
+    ...base,
+    profiles: { scout: { extends: 'readonly' } },
+    async run(ctx) {
+      await ctx.claude.text('look', { profile: 'scout', prompt: 'x', onPermissionDenied: 'warn' });
+      return null;
+    },
+  });
+  const root = defineWorkflow({
+    name: 'parent',
+    ...base,
+    output: z.string(),
+    profiles: { scout: { extends: 'readonly', onPermissionDenied: 'fail' } },
+    async run(ctx) {
+      await expect(ctx.workflow('weakening', weakening, null)).rejects.toThrow(
+        'exceeds parent profile scout: onPermissionDenied',
+      );
+      return ctx.workflow('inheriting', inheriting, null);
+    },
+  });
+  const run = await runWorkflow(root, {
+    stateDir,
+    runId: 'denials',
+    input: null,
+    harness: {
+      invoke: () => {
+        calls++;
+        return Promise.resolve({ text: 'ok', sessionId: null, permissionDenials: 1 });
+      },
+    },
+  });
+  expect(run.output).toBe('permission');
+  expect(calls).toBe(1);
+  expect(run.steps['weakening/look']).toBeUndefined();
+});
+
 it('shares run budgets across frames and resumes with per-frame usage retained', async () => {
   const stateDir = await directory();
   let calls = 0;

@@ -117,4 +117,5 @@ per-call retries or settled error handling cannot bypass a latched run gate.
 Inline child roles map to parent roles of the same name, or `ctx.workflow` options map them
 explicitly. Missing/insufficient grants fail before child effects. Child tool exposure cannot grow;
 mapped parent model/effort defaults and limit overrides pass down, and limits are bounded by the
-parent. Root concurrency and budgets span every frame. See [child workflows](child-workflows.md).
+parent. A parent `onPermissionDenied: 'fail'` passes down too; a child cannot weaken it to `warn`.
+Root concurrency and budgets span every frame. See [child workflows](child-workflows.md).

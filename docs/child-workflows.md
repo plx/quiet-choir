@@ -57,7 +57,9 @@ grandchild cannot recover them. Raw call-site capabilities are checked too, even
 Child models/effort inherit the mapped parent's values when omitted. Parent profile limit overrides
 pass through role mappings, and child call limits are bounded by the delegated parent limits. Child
 profile definitions remain the source of its requested tools; mapping never promotes it to
-additional parent tools. Workflow JavaScript remains trusted operator code, not a security sandbox.
+additional parent tools. A delegated role that fails on permission denials stays failing: a child
+role that omits `onPermissionDenied` inherits `fail`, and an explicit child profile or Claude call
+`warn` is refused. Workflow JavaScript remains trusted operator code, not a security sandbox.
 
 Events carry `frame`; `child.started`, `child.completed` and `child.failed` follow frame saves.
 Phase/log observations retain their frame, and imperative phase updates stay local to each child.

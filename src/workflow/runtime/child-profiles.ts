@@ -1,6 +1,7 @@
 import type { ChildOptions, WorkflowDeclaration } from './child-model.js';
 import type { ClaudeOptions, CodexOptions, ExecutionPolicy } from './model.js';
 import type {
+  AgentProfile,
   CapabilityManifest,
   ProfileLimits,
   ProfileOverride,
@@ -39,6 +40,34 @@ function narrows(rule: string, parent: string): boolean {
     rule === parent ||
     (!parent.includes('(') && rule.startsWith(`${parent}(`) && rule.endsWith(')'))
   );
+}
+
+/** The effective denial policy a provider call gets from a profile, before call options. */
+function denialPolicy(profile: ResolvedProfile, provider: 'claude' | 'codex'): 'warn' | 'fail' {
+  return (
+    (provider === 'claude' ? profile.claude.onPermissionDenied : undefined) ??
+    profile.onPermissionDenied ??
+    'warn'
+  );
+}
+
+/** A child's own top-level denial policy, ignoring the resolver's implicit warn default. */
+function declaredDenialPolicy(
+  definition: WorkflowDeclaration,
+  name: string,
+): 'warn' | 'fail' | undefined {
+  const profiles = definition.profiles ?? {};
+  const seen = new Set<string>();
+  for (let current: string | undefined = name; current !== undefined && !seen.has(current);) {
+    seen.add(current);
+    const layer: AgentProfile | undefined = Object.hasOwn(profiles, current)
+      ? profiles[current]
+      : undefined;
+    if (!layer) break;
+    if (layer.onPermissionDenied !== undefined) return layer.onPermissionDenied;
+    current = layer.extends;
+  }
+  return definition.defaults?.onPermissionDenied;
 }
 
 function subset(child: ResolvedProfile, parent: ResolvedProfile, label: string): void {
@@ -91,6 +120,10 @@ function subset(child: ResolvedProfile, parent: ResolvedProfile, label: string):
     reject('disallowedTools');
   if (parent.claude.strictMcpConfig === true && child.claude.strictMcpConfig !== true)
     reject('strictMcpConfig');
+  // Failing on reported denials is a parent guarantee; a child may only keep it.
+  for (const provider of ['claude', 'codex'] as const)
+    if (denialPolicy(parent, provider) === 'fail' && denialPolicy(child, provider) !== 'fail')
+      reject('onPermissionDenied');
 }
 
 /** Resolve declared child needs and check them against concrete parent roles before child effects. @internal */
@@ -131,10 +164,29 @@ export function delegateCapabilities(
     bounds.set(name, limits);
     return limits;
   };
-  const checkProfile = (name: string, role: ResolvedProfile): void => {
+  // An omitted child policy inherits a failing ceiling instead of the resolver's default warn;
+  // an explicit weaker policy is left in place so the subset check refuses it.
+  const inheritDenials = (
+    name: string,
+    role: ResolvedProfile,
+    ceiling: ResolvedProfile,
+  ): ResolvedProfile => {
+    if (declaredDenialPolicy(definition, name) !== undefined) return role;
+    return {
+      ...role,
+      ...(ceiling.onPermissionDenied === 'fail' ? { onPermissionDenied: 'fail' as const } : {}),
+      ...(role.claude.onPermissionDenied === undefined &&
+      ceiling.claude.onPermissionDenied === 'fail'
+        ? { claude: { ...role.claude, onPermissionDenied: 'fail' as const } }
+        : {}),
+    };
+  };
+  const checkProfile = (name: string, role: ResolvedProfile): ResolvedProfile => {
     const ceiling = bound(name);
-    subset(role, ceiling, `${definition.name}.${name}`);
+    const inherited = inheritDenials(name, role, ceiling);
+    subset(inherited, ceiling, `${definition.name}.${name}`);
     requireGrant(ceiling, parentGrants, parentPins);
+    return inherited;
   };
   for (const name of new Set([
     manifest.defaultProfile,
@@ -144,10 +196,11 @@ export function delegateCapabilities(
     if (role) checkProfile(name, role);
   }
   const delegated: Record<string, ResolvedProfile> = {};
-  for (const [name, role] of Object.entries(manifest.profiles)) {
+  for (const [name, declared] of Object.entries(manifest.profiles)) {
     // Remove unavailable optional built-ins as well: a grandchild must not inherit phantom authority.
+    let role: ResolvedProfile;
     try {
-      checkProfile(name, role);
+      role = checkProfile(name, declared);
     } catch {
       continue;
     }
