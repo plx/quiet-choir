@@ -21,6 +21,7 @@ import {
 } from '../src/index.js';
 import { testInvocation } from './harness-invocation.js';
 import { AttemptTranscript } from '../src/workflow/runtime/agent-transcript.js';
+import * as storageIo from '../src/workflow/runtime/storage-io.js';
 
 let directory: string;
 beforeEach(async () => {
@@ -616,6 +617,22 @@ it('serializes transcript streams, caps every file, and refuses a symlinked outp
   await expect(AttemptTranscript.create(directory, 'step', 2, 'claude')).rejects.toThrow(
     'real directory',
   );
+});
+
+it('flushes the transcript directory before marking a discarded receipt unretained', async () => {
+  const transcript = await AttemptTranscript.create(directory, 'discard-step', 1, 'codex');
+  await transcript.write('stdout', Buffer.from('hello'));
+  const path = transcript.snapshot().path;
+  await transcript.discard();
+  expect(transcript.snapshot().retained).toBe(false);
+  await expect(stat(path)).rejects.toMatchObject({ code: 'ENOENT' });
+});
+
+it('keeps a discarded receipt retained when the directory sync fails', async () => {
+  const transcript = await AttemptTranscript.create(directory, 'discard-sync-fail', 1, 'codex');
+  vi.spyOn(storageIo, 'syncDirectory').mockRejectedValueOnce(new Error('sync failed'));
+  await expect(transcript.discard()).rejects.toThrow('sync failed');
+  expect(transcript.snapshot().retained).toBe(true);
 });
 
 it.each([{ maxRetainedBytes: 64 }, { maxStreamBytes: 64 }] satisfies PolicyOverride[])(
