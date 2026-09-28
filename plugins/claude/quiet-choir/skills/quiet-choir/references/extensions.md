@@ -279,10 +279,11 @@ may be called `provider`; the request's harness name identifies the adapter inst
 optional ownership context. Lookup is `RunOptions.adapters[name]`, then the legacy catch-all
 `harness`, then `definition.createAdapter(harnessConfigurations[name] ?? {})`. Factories stay unused
 on replay; a throwing factory fails the step as a `ConfigurationError`, never a settled outcome.
-Fresh missing adapters and duplicate names fail before effects; recorded names and revisions must
-still be declared. Increment revision when recorded options change meaning. New records have
-`kind: 'agent'`, harness and revision; preceding built-in records normalize on read, and their
-revision-one fingerprint hashes remain stable.
+Fresh missing adapters, including those of declared children a resumed or forked run never reached,
+and duplicate names fail before effects; recorded names and revisions must still be declared.
+Increment revision when recorded options change meaning. New records have `kind: 'agent'`, harness
+and revision; preceding built-in records normalize on read, and their revision-one fingerprint
+hashes remain stable.
 
 Package profiles use `profiles.<role>.harnesses.<name>`. Declare `capabilityKeys` and a pure
 `access` classifier accepting partial profile options; without a classifier access defaults to exec.

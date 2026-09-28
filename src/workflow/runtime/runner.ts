@@ -699,14 +699,23 @@ export async function runWorkflow<
     const maxChildDepth =
       incomingChildDepth ?? (options.policyReset ? undefined : existing?.maxChildDepth) ?? 8;
     registry.preflight(checkedDefinition(definition), existing ?? forkSource, null);
-    if (!existing && !forkSource) {
+    {
+      // Recorded child frames are preflighted against their own steps by RunChildren, which keeps
+      // adapter-free replay of terminal calls. Every declared child the source never reached still
+      // needs its adapters before any root effect, on resume and fork as on a fresh run.
+      const recorded = new Set(
+        Object.values((existing ?? forkSource)?.children ?? {}).map((child) =>
+          JSON.stringify([child.workflow.name, child.workflow.version]),
+        ),
+      );
       const pending = [...(definition.children ?? [])];
       const visited = new Set<object>();
       while (pending.length) {
         const child = pending.pop();
         if (!child || visited.has(child)) continue;
         visited.add(child);
-        registry.preflight(child, undefined, null);
+        if (!recorded.has(JSON.stringify([child.name, child.version])))
+          registry.preflight(child, undefined, null);
         pending.push(...(child.children ?? []));
       }
     }

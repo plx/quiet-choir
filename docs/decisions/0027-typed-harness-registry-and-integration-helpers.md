@@ -29,7 +29,8 @@ Lookup is explicit `RunOptions.adapters[name]`, then the existing `RunOptions.ha
 then the declared factory with `harnessConfigurations[name]`. Factories are lazy: replay does not
 construct adapters. Duplicate names, unavailable fresh registrations, removed recorded names and
 changed revisions fail preflight. Child declarations use their own registries and the root's
-execution machinery. Declaration checks also cover children hidden in replayed settled maps.
+execution machinery. Declaration checks also cover children hidden in replayed settled maps, and
+resume or fork preflights every declared child the source never recorded.
 
 All agent calls use the existing effect path for grants, retry, admission, worktrees, transcripts,
 process ownership and budgets. Additional profile options live under `profiles.<role>.harnesses`.

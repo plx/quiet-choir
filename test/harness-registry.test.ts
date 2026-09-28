@@ -468,3 +468,89 @@ it('rejects a failing adapter factory as configuration instead of settling it', 
   });
   expect(resumed.output).toBe('fixed');
 });
+
+it('preflights unreached declared children on resume and fork before new root effects', async () => {
+  let gates = 0;
+  let fail = true;
+  const child = workflow();
+  const parent = defineWorkflow({
+    ...base,
+    name: 'parent',
+    children: [child],
+    async run(ctx) {
+      await ctx.step('gate', {
+        input: null,
+        schema: z.null(),
+        run: () => {
+          gates++;
+          if (fail) throw new Error('not yet');
+          return null;
+        },
+      });
+      return ctx.workflow('child', child, null);
+    },
+  });
+  const options = await setup();
+  const adapters = { third: { invoke: async () => response('child') } };
+  await expect(runWorkflow(parent, { ...options, adapters })).rejects.toThrow('not yet');
+  expect(gates).toBe(1);
+  fail = false;
+  await expect(
+    runWorkflow(parent, { ...options, resume: true, allowHarnessChange: true }),
+  ).rejects.toThrow('No harness adapter configured for third');
+  await expect(
+    runWorkflow(parent, {
+      ...options,
+      runId: 'forked',
+      forkFrom: { runId: options.runId },
+      allowHarnessChange: true,
+    }),
+  ).rejects.toThrow('No harness adapter configured for third');
+  expect(gates).toBe(1);
+  expect((await readRun(options)).children ?? {}).toEqual({});
+});
+
+it('replays a recorded declared child without an adapter on resume and fork', async () => {
+  let fail = true;
+  const child = workflow();
+  const parent = defineWorkflow({
+    ...base,
+    name: 'parent',
+    children: [child],
+    async run(ctx) {
+      const answer = await ctx.workflow('child', child, null);
+      await ctx.step('gate', {
+        input: null,
+        schema: z.null(),
+        run: () => {
+          if (fail) throw new Error('not yet');
+          return null;
+        },
+      });
+      return answer;
+    },
+  });
+  const options = await setup();
+  let calls = 0;
+  const adapters = {
+    third: {
+      invoke: async () => {
+        calls++;
+        return response('child');
+      },
+    },
+  };
+  await expect(runWorkflow(parent, { ...options, adapters })).rejects.toThrow('not yet');
+  expect(calls).toBe(1);
+  fail = false;
+  const forked = await runWorkflow(parent, {
+    ...options,
+    runId: 'forked',
+    forkFrom: { runId: options.runId },
+    allowHarnessChange: true,
+  });
+  expect(forked.output).toBe('child');
+  const resumed = await runWorkflow(parent, { ...options, resume: true, allowHarnessChange: true });
+  expect(resumed.output).toBe('child');
+  expect(calls).toBe(1);
+});
