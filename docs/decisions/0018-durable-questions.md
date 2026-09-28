@@ -54,5 +54,5 @@ Blocked mappers retain slots. This was the initial signal-only boundary.
 [ADR 0020](0020-durable-waits-and-tick.md) now generalizes it to suspendable polls/deadlines/sleeps,
 preserving the same quiescence contract. Embedders must narrow the result union. CLI answer success
 reports delivery, not consumption, and can race with withdrawal. Filesystem permissions remain the
-trust boundary and effects remain at least once. Deadlines/defaults, blocking answerers, special
-SIGINT suspension, and a no-import resume fast path remain later work.
+trust boundary and effects remain at least once. ADR 0020 adds wait deadlines, block mode, and a
+no-import due check for tick; question defaults and special SIGINT suspension remain later work.
