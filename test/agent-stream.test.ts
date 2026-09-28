@@ -5,6 +5,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import {
   CliHarness,
   CheckpointError,
+  HarnessError,
   WorkflowRunError,
   FileRunStore,
   defineWorkflow,
@@ -384,6 +385,67 @@ it.each(['claude', 'codex'] as const)(
     expect(saved.events?.some((event) => event.type.startsWith('agent.'))).toBe(false);
   },
 );
+
+it('keeps the first observed session ID when a successful response reports a later one', async () => {
+  const definition = defineWorkflow({
+    ...base,
+    async run(ctx) {
+      return (await ctx.claude.text('session-drift', { prompt: 'answer' })).sessionId ?? 'missing';
+    },
+  });
+  const run = await runWorkflow(definition, {
+    ...setup(),
+    harness: {
+      async invoke(_request, invocation) {
+        await invocation.onSession?.('first');
+        return { text: 'ok', sessionId: 'second', usage };
+      },
+    },
+  });
+  expect(run.output).toBe('first');
+  const attempt = required(run.steps['session-drift']?.attemptHistory?.[0]);
+  expect(attempt.sessionId).toBe('first');
+  expect(attempt.diagnostics).toMatchObject({ finalSessionId: 'second' });
+});
+
+it('keeps the first observed session ID when a failing attempt reports a later one', async () => {
+  const definition = defineWorkflow({
+    ...base,
+    async run(ctx) {
+      const result = await ctx.codex.text('session-drift-failure', {
+        prompt: 'answer',
+        onError: 'return',
+      });
+      return result.ok ? 'unexpected success' : result.error.message;
+    },
+  });
+  const run = await runWorkflow(definition, {
+    ...setup(),
+    harness: {
+      async invoke(_request, invocation) {
+        await invocation.onSession?.('first');
+        throw new HarnessError({
+          provider: 'codex',
+          kind: 'protocol',
+          exit: { code: 1, signal: null },
+          failure: null,
+          reason: 'boom',
+          stderr: '',
+          stdout: '',
+          sessionId: 'second',
+          diagnostics: {},
+          rawText: null,
+        });
+      },
+    },
+  });
+  const step = run.steps['session-drift-failure'];
+  const attempt = required(step?.attemptHistory?.[0]);
+  expect(attempt.status).toBe('failed');
+  expect(attempt.sessionId).toBe('first');
+  expect(attempt.diagnostics).toMatchObject({ finalSessionId: 'second' });
+  expect(step?.failedAttempts?.[0]).toMatchObject({ sessionId: 'first' });
+});
 
 it('streams a 9 MiB Codex command line through a 1 KiB parser budget and preserves the answer', async () => {
   const agent = await binary(`

@@ -409,6 +409,23 @@ function cancellationError(signal: AbortSignal, cause: unknown): CancelledError 
   return new CancelledError(null, cause, 'run');
 }
 
+/**
+ * Resolve the first observed session ID and never let a later one overwrite it; returns a value
+ * the caller assigns back, always a string or explicit null (never left undefined) once anything
+ * is observed. A later, differing ID is not discarded: it is recorded as a diagnostic so the
+ * evidence survives.
+ */
+function preserveFirstSessionId(
+  record: { sessionId?: string | null; diagnostics?: AgentDiagnostics },
+  observed: string | null | undefined,
+): string | null {
+  const current = record.sessionId;
+  if (current === undefined) return observed ?? null;
+  if (observed != null && current != null && observed !== current)
+    record.diagnostics = { ...record.diagnostics, finalSessionId: observed };
+  return current;
+}
+
 /** Run or resume a workflow with local, at-least-once durable effects. Throws after saving failures. */
 export async function runWorkflow<TInput, TOutput>(
   definition: WorkflowDefinition<TInput, TOutput>,
@@ -1315,8 +1332,8 @@ export async function runWorkflow<TInput, TOutput>(
               attemptRecord.validationIssues = jsonValue(cause.issues) as JsonValue[];
             if (evidence) {
               if (evidence.usage !== null) attemptRecord.usage = structuredClone(evidence.usage);
-              attemptRecord.sessionId = evidence.sessionId ?? attemptRecord.sessionId ?? null;
               attemptRecord.diagnostics = { ...attemptRecord.diagnostics, ...evidence.diagnostics };
+              attemptRecord.sessionId = preserveFirstSessionId(attemptRecord, evidence.sessionId);
               attemptRecord.response = evidence.rawText;
               attemptRecord.responseTruncated = evidence.responseTruncated;
               recordTranscript();
@@ -1850,9 +1867,9 @@ export async function runWorkflow<TInput, TOutput>(
               } catch (error) {
                 const evidence = harnessEvidence(error);
                 if (evidence) {
-                  attempt.sessionId = evidence.sessionId ?? attempt.sessionId ?? null;
                   attempt.usage = evidence.usage;
                   attempt.diagnostics = { ...attempt.diagnostics, ...evidence.diagnostics };
+                  attempt.sessionId = preserveFirstSessionId(attempt, evidence.sessionId);
                   attempt.response = evidence.rawText;
                   attempt.responseTruncated = evidence.responseTruncated;
                 }
@@ -1867,7 +1884,7 @@ export async function runWorkflow<TInput, TOutput>(
                 throw error;
               }
               attempt.usage = structuredClone(response.usage);
-              attempt.sessionId = response.sessionId ?? attempt.sessionId ?? null;
+              attempt.sessionId = preserveFirstSessionId(attempt, response.sessionId);
               const evidence = boundedResponse(response.text);
               attempt.response = evidence.rawText;
               attempt.responseTruncated = evidence.responseTruncated;
