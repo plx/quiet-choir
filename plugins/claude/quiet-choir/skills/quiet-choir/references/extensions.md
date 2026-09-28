@@ -24,8 +24,12 @@ Supply these execution options as needed:
   ordering divergence. See [durability](durability.md#choose-a-recovery-path).
 - `resume`: set true to continue; otherwise an existing run gives `Run X already exists`.
 - `cwd`: defaults to `process.cwd()` and must match the original run on resume.
-- `stateDir`: resolves against `cwd`, defaulting to `.quiet-choir/runs`; use an absolute path and
-  retain it for inspection/resume.
+- `stateDir`: resolves against `cwd`; precedence is explicit option, `QUIET_CHOIR_STATE_DIR`,
+  existing legacy run, then the external XDG project root. Retain the absolute path for inspection.
+- `store`: injectable `RunStore`, defaulting to `FileRunStore`. Its owned handle supplies read,
+  append, compact, artifact directories, process registration, and release. Local effects can use an
+  in-memory implementation. File stores expose their bound absolute `stateDir`; a separate option
+  must match. Questions require the filesystem inbox protocol and refuse stores without it.
 - `policy`, `policyReset`, `allowModelOverride`: sticky execution rules, reset, and explicit model
   override authorization; see [durability](durability.md).
 - `harness`, `signal`, `fingerprint`, and `onEvent`: integration, cancellation, code compatibility,
@@ -252,7 +256,8 @@ Exercise adapters with fake executables and protocol fixtures before making real
 
 The provider union and `ctx.claude`/`ctx.codex` clients are currently fixed. A custom `Harness` can
 replace their transport/integration; adding `ctx.someOtherProvider` requires an explicit core API
-change. There is no runtime registry for arbitrary providers, storage backends, or middleware.
+change. There is no runtime registry for arbitrary providers or middleware; storage is injected
+through `RunOptions.store`.
 
 ## Reuse workflow logic
 

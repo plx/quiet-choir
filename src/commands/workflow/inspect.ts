@@ -1,4 +1,3 @@
-import { resolve } from 'node:path';
 import { Args, Flags, type Interfaces } from '@oclif/core';
 import { WorkflowCommand } from '../../cli/workflow-command.js';
 import { formatRunSummary, parseWatchInterval, watchExitCodes } from '../../cli/inspection-view.js';
@@ -9,7 +8,7 @@ interface WorkflowInspectArgs {
   readonly runId: string;
 }
 interface WorkflowInspectFlags {
-  readonly 'state-dir': string;
+  readonly 'state-dir': string | undefined;
   readonly json: boolean | undefined;
   readonly summary: boolean | undefined;
   readonly watch: boolean | undefined;
@@ -22,8 +21,8 @@ export default class WorkflowInspect extends WorkflowCommand {
   };
   public static override readonly flags: Interfaces.FlagInput<WorkflowInspectFlags> = {
     'state-dir': Flags.directory({
-      description: 'Local durable run storage',
-      default: '.quiet-choir/runs',
+      description:
+        'Runs container; defaults to environment, legacy run discovery, then project XDG state',
     }),
     json: Flags.boolean({
       description: 'Print the run as JSON (JSONL per change with --watch)',
@@ -46,7 +45,7 @@ export default class WorkflowInspect extends WorkflowCommand {
 
   public async run(): Promise<void> {
     const { args, flags } = await this.parse(WorkflowInspect);
-    this.runContext(args.runId, flags['state-dir']);
+    const stateDir = this.runContext(args.runId, flags['state-dir']);
     const intervalMs = parseWatchInterval(flags.interval ?? '2s');
     const render = (value: RunInspection): void => {
       const human = `${flags.watch && !flags.json && process.stdout.isTTY ? '\u001b[2J\u001b[H' : ''}${formatRunSummary(value.summary, flags.verbose)}`;
@@ -65,7 +64,7 @@ export default class WorkflowInspect extends WorkflowCommand {
         ? { kind: 'workflow.watch' as const, intervalMs }
         : { kind: 'workflow.inspect' as const }),
       runId: args.runId,
-      stateDir: resolve(flags['state-dir']),
+      stateDir: stateDir,
     });
     if (!result.ok) this.failResult(result);
     if (result.kind === 'workflow.run.result' && result.summary && result.ownership) {

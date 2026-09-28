@@ -1,3 +1,4 @@
+import { readRunSync } from '../dist/workflow/runtime/store.js';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import {
@@ -33,7 +34,7 @@ const cli = (...args) =>
       timeout: 30_000,
     },
   );
-const checkpoint = (id) => JSON.parse(readFileSync(join(state, `${id}.json`), 'utf8'));
+const checkpoint = (id) => readRunSync({ stateDir: state, runId: id });
 const lines = (prefix, name) =>
   readFileSync(join(fixture, `${prefix}-${name}.txt`), 'utf8')
     .trim()
@@ -69,7 +70,7 @@ async function interrupt(id, sleep) {
   const deadline = Date.now() + 20_000;
   try {
     for (;;) {
-      const path = join(state, `${id}.json`);
+      const path = join(state, id, 'run.json');
       if (existsSync(path)) {
         const record = checkpoint(id);
         if (
@@ -83,7 +84,7 @@ async function interrupt(id, sleep) {
       if (Date.now() > deadline) throw new Error('CLI did not start its interrupt target');
       await delay(20);
     }
-    assert.equal(existsSync(join(state, `${id}.json.lock`)), true);
+    assert.equal(existsSync(join(state, id, 'lock')), true);
     child.kill('SIGINT');
     const result = await Promise.race([
       exited,
@@ -98,7 +99,7 @@ async function interrupt(id, sleep) {
     assert.deepEqual(record.rootCause, { stepId: null, error: 'Workflow interrupted.' });
     assert.equal(record.steps[sleep ? 'nap' : 'lint'].status, 'cancelled');
     assert.equal(record.steps[sleep ? 'nap' : 'lint'].cancelledBy, null);
-    assert.equal(existsSync(join(state, `${id}.json.lock`)), false);
+    assert.equal(existsSync(join(state, id, 'lock')), false);
   } finally {
     if (child.exitCode === null && child.signalCode === null) {
       child.kill('SIGTERM');

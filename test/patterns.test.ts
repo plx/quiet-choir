@@ -431,7 +431,7 @@ it('salvage forks two completed calls without mutating the source checkpoint', a
   await expect(
     runWorkflow(salvage, { ...options(), input: { topics: ['a', 'b', 'c'] }, harness }),
   ).rejects.toThrow('Third call unavailable');
-  const file = join(root, 'state/pattern.json'),
+  const file = join(root, 'state/pattern/run.json'),
     before = await readFile(file, 'utf8');
   const result = await runWorkflow(salvage, {
     ...options(),

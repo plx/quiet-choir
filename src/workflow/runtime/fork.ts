@@ -2,7 +2,7 @@ import { RunRefusedError } from './run-errors.js';
 import { readRequiredRun } from './read-required-run.js';
 import { z } from 'zod';
 
-import { engineInfo, oldFormatMessage } from './engine.js';
+import { oldFormatMessage } from './engine.js';
 import { digest, jsonValue } from './json.js';
 import { matchesStepGlob, policyOverrideSchema } from './policy.js';
 import type { ForkOptions, ForkProvenance } from './replay-model.js';
@@ -25,7 +25,7 @@ export function validateFork(value: unknown): ForkOptions {
 /** Load a source for a new fork without taking its writer lock. @internal */
 export async function loadFork(runId: string, stateDir: string, name: string): Promise<RunRecord> {
   const source = await readRequiredRun({ runId, stateDir });
-  if (source.formatVersion !== engineInfo.formatVersion)
+  if (![6, 7].includes(source.formatVersion))
     throw new RunRefusedError('run.incompatible', runId, oldFormatMessage(source.formatVersion), {
       formatVersion: source.formatVersion,
     });

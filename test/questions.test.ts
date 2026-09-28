@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
-import { mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { afterEach, beforeEach, expect, expectTypeOf, it } from 'vitest';
 import {
@@ -17,6 +17,7 @@ import {
   type WorkflowContext,
 } from '../src/index.js';
 import { answerPath } from '../src/workflow/runtime/inbox.js';
+import { writeRun } from '../src/workflow/runtime/store.js';
 
 let stateDir: string;
 const options = () => ({ stateDir, runId: 'questions', input: null });
@@ -279,7 +280,9 @@ it('validates early without writing and permits exactly one concurrent writer', 
   for (const result of results)
     if (result.status === 'rejected') expect(result.reason).toMatchObject({ reason: 'conflict' });
   expect((await stat(answerPath(stateDir, 'questions', 'gate'))).mode & 0o777).toBe(0o600);
-  expect(await readdir(join(stateDir, 'questions.inbox'))).toEqual(['gate.answer.json']);
+  expect(await readdir(join(stateDir, 'questions', 'inbox'))).toEqual([
+    answerPath(stateDir, 'questions', 'gate').split('/').at(-1),
+  ]);
   const result = await runWorkflow(definition, { ...options(), resume: true });
   assertCompleted(result);
   expect(result.output).toBe('ship');
@@ -301,8 +304,8 @@ it('quarantines authoritative refinement failures and accepts a corrected delive
   expect(rejected.status).toBe('suspended');
   const pending = await listPending({ stateDir });
   expect(pending[0]?.rejections[0]?.error).toContain('Must be even');
-  expect(await readdir(join(stateDir, 'questions.inbox'))).toHaveLength(1);
-  expect((await readdir(join(stateDir, 'questions.inbox')))[0]).toContain('.rejected.');
+  expect(await readdir(join(stateDir, 'questions', 'inbox'))).toHaveLength(1);
+  expect((await readdir(join(stateDir, 'questions', 'inbox')))[0]).toContain('.rejected.');
   await writeAnswer({ ...options(), stepId: 'refined', value: 4 });
   const result = await runWorkflow(definition, { ...options(), resume: true });
   expect(result.output).toBe(4);
@@ -491,4 +494,116 @@ it('keeps hashed long-ID filenames disjoint from every legal short ID', async ()
   await writeAnswer({ ...options(), stepId: long, value: 1 });
   await writeAnswer({ ...options(), stepId: short, value: 2 });
   expect((await runWorkflow(definition, { ...options(), resume: true })).output).toEqual([1, 2]);
+});
+
+it('keeps case-variant questions distinct on case-insensitive filesystems', async () => {
+  const definition = workflow((ctx) =>
+    Promise.all([ctx.ask('Case', question), ctx.ask('case', question)]),
+  );
+  expect((await runWorkflow(definition, options())).status).toBe('suspended');
+  const [upper, lower] = await Promise.all([
+    writeAnswer({ ...options(), stepId: 'Case', value: 'ship' }),
+    writeAnswer({ ...options(), stepId: 'case', value: 'revise' }),
+  ]);
+  expect(upper.path.toLowerCase()).not.toBe(lower.path.toLowerCase());
+  expect((await runWorkflow(definition, { ...options(), resume: true })).output).toEqual([
+    'ship',
+    'revise',
+  ]);
+});
+
+it('ingests an answer published in the flat-layout inbox of a directory run', async () => {
+  const definition = workflow((ctx) => ctx.ask('gate', question));
+  expect((await runWorkflow(definition, options())).status).toBe('suspended');
+  const delivery = await writeAnswer({ ...options(), stepId: 'gate', value: 'ship' });
+  const oldInbox = join(stateDir, 'questions.inbox');
+  await mkdir(oldInbox);
+  await rename(delivery.path, join(oldInbox, basename(delivery.path)));
+  await expect(
+    writeAnswer({ ...options(), stepId: 'gate', value: 'revise' }),
+  ).rejects.toMatchObject({ reason: 'conflict' });
+  expect((await runWorkflow(definition, { ...options(), resume: true })).output).toBe('ship');
+});
+
+it('keeps one exclusive inbox for a flat run before and after migration', async () => {
+  const definition = workflow(async (ctx) => [
+    await ctx.ask('first', question),
+    await ctx.ask('second', question),
+  ]);
+  expect((await runWorkflow(definition, options())).status).toBe('suspended');
+  const record = await readRun(options());
+  record.formatVersion = 6;
+  delete record.seq;
+  delete record.engine;
+  await rm(join(stateDir, 'questions'), { recursive: true });
+  await writeRun(stateDir, record);
+  const inbox = join(stateDir, 'questions.inbox');
+  const before = await writeAnswer({ ...options(), stepId: 'first', value: 'ship' });
+  expect(before.path).toBe(join(inbox, basename(before.path)));
+  expect((await runWorkflow(definition, { ...options(), resume: true })).status).toBe('suspended');
+  expect((await readRun(options())).formatVersion).toBe(7);
+  expect(await readdir(join(stateDir, 'questions'))).not.toContain('inbox');
+  const after = await writeAnswer({ ...options(), stepId: 'second', value: 'revise' });
+  expect(after.path).toBe(join(inbox, basename(after.path)));
+  await expect(
+    writeAnswer({ ...options(), stepId: 'second', value: 'ship' }),
+  ).rejects.toMatchObject({ reason: 'conflict' });
+  // Earlier builds moved migrated inboxes into the run directory; those deliveries still count.
+  const moved = join(stateDir, 'questions', 'inbox');
+  await mkdir(moved);
+  await rename(after.path, join(moved, basename(after.path)));
+  await expect(
+    writeAnswer({ ...options(), stepId: 'second', value: 'ship' }),
+  ).rejects.toMatchObject({ reason: 'conflict' });
+  expect((await runWorkflow(definition, { ...options(), resume: true })).output).toEqual([
+    'ship',
+    'revise',
+  ]);
+});
+
+it('publishes the format-6 filename in a migrated run so both writer versions share one link', async () => {
+  const long = `a${'/a'.repeat(95)}`;
+  const definition = workflow(async (ctx) => [
+    await ctx.ask('first', question),
+    await ctx.ask('review/second', question),
+    await ctx.ask(long, question),
+  ]);
+  expect((await runWorkflow(definition, options())).status).toBe('suspended');
+  const record = await readRun(options());
+  record.formatVersion = 6;
+  delete record.seq;
+  delete record.engine;
+  await rm(join(stateDir, 'questions'), { recursive: true });
+  await writeRun(stateDir, record);
+  const inbox = join(stateDir, 'questions.inbox');
+  const first = await writeAnswer({ ...options(), stepId: 'first', value: 'ship' });
+  expect(first.path).toBe(join(inbox, 'first.answer.json'));
+  expect((await runWorkflow(definition, { ...options(), resume: true })).status).toBe('suspended');
+  expect((await readRun(options())).formatVersion).toBe(7);
+  // A pre-upgrade writer links `<encoded>.answer.json` into the same flat inbox.
+  const legacy = join(inbox, 'review%2Fsecond.answer.json');
+  expect(answerPath(stateDir, 'questions', 'review/second')).toBe(legacy);
+  const envelope = JSON.stringify({
+    value: 'revise',
+    by: 'agent:legacy',
+    at: new Date().toISOString(),
+    questionFingerprint: (await readRun(options())).steps['review/second']?.fingerprint,
+  });
+  await writeFile(legacy, envelope);
+  await expect(
+    writeAnswer({ ...options(), stepId: 'review/second', value: 'ship' }),
+  ).rejects.toMatchObject({ reason: 'conflict' });
+  expect(await readFile(legacy, 'utf8')).toBe(envelope);
+  expect((await readdir(inbox)).filter((name) => name.includes('second'))).toEqual([
+    'review%2Fsecond.answer.json',
+  ]);
+  expect((await runWorkflow(definition, { ...options(), resume: true })).status).toBe('suspended');
+  const hashed = await writeAnswer({ ...options(), stepId: long, value: 'ship' });
+  const digest = createHash('sha256').update(JSON.stringify(long)).digest('hex');
+  expect(hashed.path).toBe(join(inbox, `~sha256-${digest}.answer.json`));
+  expect((await runWorkflow(definition, { ...options(), resume: true })).output).toEqual([
+    'ship',
+    'revise',
+    'ship',
+  ]);
 });

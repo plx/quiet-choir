@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { z } from 'zod';
@@ -15,6 +15,7 @@ import { matchesStepGlob, policyOverrideSchema, type ExecutionPolicy } from '../
 import type { RunOptions, WorkflowEvent } from '../runtime/runner.js';
 import { readRequiredRun } from '../runtime/read-required-run.js';
 import { writeRun, type RunRecord } from '../runtime/store.js';
+import { runDirectory } from '../runtime/paths.js';
 import type { HarnessSelection } from './harness-selection.js';
 
 /** One attempted live call in rehearsal order, including planner/fixture failures. @internal */
@@ -217,8 +218,10 @@ export async function rehearsalState(
     await rm(stateDir, { recursive: true, force: true });
   };
   try {
-    if (resume)
+    if (resume) {
+      await mkdir(runDirectory(stateDir, runId), { recursive: true, mode: 0o700 });
       await writeRun(stateDir, await readRequiredRun({ runId, stateDir: sourceStateDir }));
+    }
     return { stateDir, dispose };
   } catch (error) {
     await dispose();

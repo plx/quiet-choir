@@ -6,15 +6,18 @@ contract, including argument parsing errors. Request human help without `--json`
 `npm run --silent cli -- …` when invoking through npm; quiet-choir cannot suppress its parent
 process's banner.
 
-Success documents retain their shapes: execute returns a run, inspect returns a run with current
-ownership diagnostics, validate returns workflow metadata, typecheck returns its compiler result,
-and check-resume returns a compatible comparison in `check`. `inspect --json --summary` returns the
-compact dashboard, and `workflow list --json` returns `{kind, ok, stateDir, runs, warnings}`.
-`inspect --watch --json` emits JSONL per checkpoint/ownership change, ending with a snapshot and
-exit 0/1/130/3 for completed/failed/cancelled/stale. It does not add an error document for an
-observed failure. An interrupted watcher emits an error document and leaves the observed run
-untouched. See [run observability](observability.md) for polling, stale detection, and partial
-usage. Non-watching inspect exits 0 for any readable checkpoint status, including `failed`,
+Success documents retain their shapes: execute returns a run plus its absolute `stateDir`, inspect
+returns a run with current ownership diagnostics, validate returns workflow metadata, typecheck
+returns its compiler result, and check-resume returns a compatible comparison in `check`.
+`inspect --json --summary` returns the compact dashboard, and `workflow list --json` returns
+`{kind, ok, stateDir, runs, warnings}`. `list --all` discovers registered XDG projects without
+imports; rows include `cwd` and `stateDir`. `execute --resume --run-id ID` may omit FILE and use
+stored launch paths, as does `resume ID`. A supplied different FILE is refused before import. See
+[storage](storage.md). `inspect --watch --json` emits JSONL per checkpoint/ownership change, ending
+with a snapshot and exit 0/1/130/3 for completed/failed/cancelled/stale. It does not add an error
+document for an observed failure. An interrupted watcher emits an error document and leaves the
+observed run untouched. See [run observability](observability.md) for polling, stale detection, and
+partial usage. Non-watching inspect exits 0 for any readable checkpoint status, including `failed`,
 `cancelled`, and `running`. `workflow pending --json` returns
 `{kind:"workflow.pending.result", ok, pending}`, `workflow answer --json` returns
 `{kind:"workflow.answer.result", ok, delivery}`, and a suspension returns
@@ -72,8 +75,9 @@ and check-resume report `workflow.interrupted` after a first signal even when th
 
 `check-resume` incompatibility uses exit 3 with the full comparison in `error.details`. Its
 compatible success retains `check`. A missing run includes `details.stateDir`, sorted
-`details.available` (at most 20 IDs), and `details.count`. The default directory remains relative to
-the launch directory.
+`details.available` (at most 20 IDs), and `details.count`. Storage resolves explicit options,
+environment, existing legacy runs, then the external XDG project default; relative explicit paths
+resolve against the launch directory.
 
 Workflow `console.log` and `process.stdout.write` during import/execution are redirected to stderr
 in JSON mode. `Run ID:`, debug logs, warnings, and human diagnostics also use stderr. Redirecting

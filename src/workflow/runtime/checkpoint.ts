@@ -2,6 +2,7 @@ import { stat } from 'node:fs/promises';
 import { setTimeout as delay } from 'node:timers/promises';
 
 import { writeRun, type RunRecord } from './store.js';
+import type { JournalWriter } from './journal.js';
 
 /** A storage failure, separate from the outcome of the workflow or external effect. */
 export class CheckpointError extends Error {
@@ -60,10 +61,11 @@ export async function writeCheckpoint(
   runId: string,
   snapshot: () => RunRecord,
   context: string,
+  options: { readonly writer?: JournalWriter; readonly durable?: boolean } = {},
 ): Promise<void> {
   for (let attempt = 0; ; attempt++) {
     try {
-      await writeRun(stateDir, snapshot());
+      await writeRun(stateDir, snapshot(), options);
       return;
     } catch (cause) {
       const code = errorCode(cause);

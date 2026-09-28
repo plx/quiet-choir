@@ -1,11 +1,17 @@
+import { createStorageDirectory, syncDirectory } from './storage-io.js';
 import { createHash, randomUUID } from 'node:crypto';
-import { link, mkdir, open, readFile, readdir, rm } from 'node:fs/promises';
-import { join } from 'node:path';
+import { link, open, readFile, rm, stat } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
 import { z } from 'zod';
 import { jsonValue, digest } from './json.js';
 import { validateStepId } from './identity.js';
-import { resolveStateDir, type StateDirectoryOptions } from './paths.js';
-import { readRun, type RunRecord } from './store.js';
+import {
+  resolveStateDir,
+  runInboxPath,
+  runDirectory,
+  type StateDirectoryOptions,
+} from './paths.js';
+import { readRun, listRunIds, type RunRecord } from './store.js';
 import { isValidRunId, runIdMessage } from './run-errors.js';
 import { answerEnvelopeSchema, validateAnswerAuthor } from './question-schema.js';
 import type { JsonValue } from './model.js';
@@ -46,13 +52,46 @@ export interface AnswerDelivery {
   readonly questionFingerprint: string;
 }
 
-/** Portable inbox name, retaining readable IDs when they fit the filesystem limit. @internal */
+/** Format-6 answer name, still the final path in a migrated run's flat inbox. */
+function legacyAnswerName(stepId: string): string {
+  const encoded = encodeURIComponent(stepId);
+  return `${encoded.length <= 180 ? encoded : `~sha256-${digest(stepId)}`}.answer.json`;
+}
+
+/** Format-7 answer name: a readable prefix plus a digest that keeps case variants distinct. */
+function currentAnswerName(stepId: string): string {
+  return `${encodeURIComponent(stepId).slice(0, 100)}--${digest(stepId)}.answer.json`;
+}
+
+/**
+ * Portable inbox name, retaining readable IDs when they fit the filesystem limit. A flat
+ * `<runId>.inbox` keeps the format-6 name so pre-upgrade and current writers race on one link.
+ * @internal
+ */
 export function answerPath(stateDir: string, runId: string, stepId: string): string {
   if (!isValidRunId(runId)) throw new Error(runIdMessage);
   validateStepId(stepId);
-  const encoded = encodeURIComponent(stepId);
-  const filename = encoded.length <= 180 ? encoded : `~sha256-${digest(stepId)}`;
-  return join(stateDir, `${runId}.inbox`, `${filename}.answer.json`);
+  const inbox = runInboxPath(stateDir, runId);
+  const flat = inbox === `${runDirectory(stateDir, runId)}.inbox`;
+  return join(inbox, flat ? legacyAnswerName(stepId) : currentAnswerName(stepId));
+}
+
+/** Current and pre-migration answer names in both inbox layouts; none is left unconsumed. @internal */
+export function answerCandidates(stateDir: string, runId: string, stepId: string): string[] {
+  const legacy = legacyAnswerName(stepId);
+  const current = currentAnswerName(stepId);
+  const path = answerPath(stateDir, runId, stepId);
+  const inboxes = [
+    join(runDirectory(stateDir, runId), 'inbox'),
+    `${runDirectory(stateDir, runId)}.inbox`,
+  ];
+  return [
+    ...new Set([
+      path,
+      ...inboxes.map((inbox) => join(inbox, current)),
+      ...inboxes.map((inbox) => join(inbox, legacy)),
+    ]),
+  ];
 }
 
 /** Write one exclusive, fsynced inbox delivery without acquiring the run lock or importing code. */
@@ -94,9 +133,21 @@ export async function writeAnswer(options: WriteAnswerOptions): Promise<AnswerDe
   });
   if (Buffer.byteLength(serialized) > 1_048_576)
     throw new AnswerError('invalid', 'Answer envelope exceeds 1 MiB.');
-  const directory = join(stateDir, `${run.id}.inbox`);
   const path = answerPath(stateDir, run.id, options.stepId);
-  await mkdir(directory, { recursive: true, mode: 0o700 });
+  for (const candidate of answerCandidates(stateDir, run.id, options.stepId)) {
+    if (candidate === path) continue;
+    const existing = await stat(candidate).catch((error: unknown) => {
+      if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return undefined;
+      throw error;
+    });
+    if (existing)
+      throw new AnswerError(
+        'conflict',
+        `Question ${options.stepId} already has a legacy inbox delivery.`,
+      );
+  }
+  const directory = dirname(path);
+  await createStorageDirectory(directory);
   const temporary = join(directory, `.answer-${randomUUID()}.tmp`);
   try {
     const file = await open(temporary, 'wx', 0o600);
@@ -108,6 +159,7 @@ export async function writeAnswer(options: WriteAnswerOptions): Promise<AnswerDe
     }
     try {
       await link(temporary, path);
+      await syncDirectory(directory);
     } catch (error) {
       if (error instanceof Error && 'code' in error && error.code === 'EEXIST')
         throw new AnswerError(
@@ -177,17 +229,9 @@ export async function pendingQuestions(
 /** List every waiting question by reading checkpoints and source bytes only; never imports code. */
 export async function listPending(options: StateDirectoryOptions = {}): Promise<PendingQuestion[]> {
   const stateDir = resolveStateDir(options);
-  let files: string[];
-  try {
-    files = await readdir(stateDir);
-  } catch (error) {
-    if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return [];
-    throw error;
-  }
   const pending: PendingQuestion[] = [];
-  for (const file of files.sort()) {
-    if (!file.endsWith('.json') || !isValidRunId(file.slice(0, -5))) continue;
-    const run = await readRun({ stateDir, runId: file.slice(0, -5) });
+  for (const runId of await listRunIds(stateDir)) {
+    const run = await readRun({ stateDir, runId });
     pending.push(...(await pendingQuestions(run, stateDir)));
   }
   return pending;

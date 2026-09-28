@@ -404,7 +404,7 @@ it('keeps error mode in identity and preserves terminal failures during forks', 
     throw new Error('tail');
   });
   await expect(runWorkflow(source, { ...options(), harness })).rejects.toThrow('tail');
-  const before = await readFile(join(stateDir, 'outcomes.json'), 'utf8');
+  const before = await readFile(join(stateDir, 'outcomes', 'run.json'), 'utf8');
   const target = workflow(async (ctx) => {
     const result = await ctx.claude.text('ask', { prompt: 'p', onError: 'return' });
     return result.ok ? 'unexpected' : result.error.kind;
@@ -417,7 +417,7 @@ it('keeps error mode in identity and preserves terminal failures during forks', 
   });
   expect(fork.output).toBe('timeout');
   expect(fork.steps['ask']?.reusedFrom?.runId).toBe('outcomes');
-  expect(await readFile(join(stateDir, 'outcomes.json'), 'utf8')).toBe(before);
+  expect(await readFile(join(stateDir, 'outcomes', 'run.json'), 'utf8')).toBe(before);
   expect(harness.invoke).toHaveBeenCalledTimes(1);
   await expect(
     runWorkflow(

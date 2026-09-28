@@ -4,6 +4,9 @@
 
 Accepted for the prototype spike.
 
+Storage/layout and migration details below are superseded by
+[ADR 0019](0019-journal-storage-and-project-state.md); the orchestration contracts remain.
+
 ## Context
 
 Claude's dynamic workflows move agent orchestration into JavaScript. We want the same ability to

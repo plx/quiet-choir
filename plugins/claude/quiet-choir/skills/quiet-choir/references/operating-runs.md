@@ -120,7 +120,7 @@ node "$QC_CHECKOUT/bin/run.js" workflow inspect first --state-dir "$QC_RUNS" --j
   jq '{status, updatedAt, ownership, sleeps: [.steps | to_entries[] |
     select(.value.kind == "sleep" and .value.status == "running") |
     {id: .key, wakeAt: .value.wakeAt}]}'
-cat "$QC_RUNS/first.json.lock/owner.json"
+cat "$QC_RUNS/first/lock/owner.json"
 ```
 
 The lock can be absent; `cat` then failing is expected. `updatedAt` is not a heartbeat. A long agent

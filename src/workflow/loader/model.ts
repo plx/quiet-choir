@@ -51,7 +51,7 @@ export interface ExecuteWorkflowPlan extends ExecutionPlan {
 /** Resume using a checkpoint's stored entrypoint, compiler configuration, and working directory. */
 export interface ResumeWorkflowPlan extends Omit<
   ExecuteWorkflowPlan,
-  'kind' | 'typecheck' | 'cwd' | 'resume' | 'input'
+  'kind' | 'typecheck' | 'cwd' | 'resume'
 > {
   readonly kind: 'workflow.resume';
 }
@@ -71,6 +71,7 @@ export interface AnswerWorkflowPlan extends ExecutionPlan {
 /** Read every waiting question without importing workflow code. */
 export interface PendingWorkflowsPlan extends ExecutionPlan {
   readonly kind: 'workflow.pending';
+  readonly additionalStateDirs?: readonly string[];
   readonly stateDir: string;
 }
 
@@ -109,6 +110,8 @@ export interface WatchWorkflowPlan extends ExecutionPlan {
 /** Enumerate checkpoints without loading workflow modules. */
 export interface ListWorkflowsPlan extends ExecutionPlan {
   readonly kind: 'workflow.list';
+  readonly all?: boolean;
+  readonly additionalStateDirs?: readonly string[];
   readonly stateDir: string;
   readonly status?: InspectionStatus;
 }

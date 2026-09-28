@@ -24,7 +24,7 @@ const cli = (...args) =>
     encoding: 'utf8',
     timeout: 30_000,
   });
-const checkpoint = () => JSON.parse(readFileSync(join(state, 'profiles.json'), 'utf8'));
+const checkpoint = () => JSON.parse(readFileSync(join(state, 'profiles', 'run.json'), 'utf8'));
 try {
   mkdirSync(bin);
   mkdirSync(join(fixture, 'node_modules'));
@@ -62,7 +62,7 @@ async run(ctx){writeFileSync('body-started','yes');await ctx.claude.text('saved'
   assert.equal(denied.status, 2, denied.stderr);
   assert.match(denied.stderr, /--grant fixer/);
   assert.equal(existsSync(join(fixture, 'body-started')), false);
-  assert.equal(existsSync(join(state, 'profiles.json')), false);
+  assert.equal(existsSync(join(state, 'profiles', 'run.json')), false);
   const first = cli(...args, '--grant', 'fixer');
   assert.equal(first.status, 1, first.stderr);
   assert.match(first.stderr, /--resume[\s›]*--profile scout.maxTurns=60/);

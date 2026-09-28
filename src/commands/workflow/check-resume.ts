@@ -1,5 +1,3 @@
-import { resolve } from 'node:path';
-
 import { Args, Flags, type Interfaces } from '@oclif/core';
 
 import { WorkflowCommand } from '../../cli/workflow-command.js';
@@ -11,7 +9,7 @@ interface CheckArgs {
 }
 interface CheckFlags {
   readonly 'run-id': string;
-  readonly 'state-dir': string;
+  readonly 'state-dir': string | undefined;
   readonly 'accept-code-change': boolean | undefined;
   readonly json: boolean | undefined;
 }
@@ -27,8 +25,8 @@ export default class WorkflowCheckResume extends WorkflowCommand {
   public static override readonly flags: Interfaces.FlagInput<CheckFlags> = {
     'run-id': Flags.string({ description: 'Existing run identifier', required: true }),
     'state-dir': Flags.directory({
-      description: 'Local durable run storage',
-      default: '.quiet-choir/runs',
+      description:
+        'Runs container; defaults to environment, legacy run discovery, then project XDG state',
     }),
     'accept-code-change': Flags.boolean({
       description: 'Check explicit source/schema acceptance instead of strict resume',
@@ -45,7 +43,7 @@ export default class WorkflowCheckResume extends WorkflowCommand {
 
   public async run(): Promise<void> {
     const { args, flags } = await this.parse(WorkflowCheckResume);
-    this.runContext(flags['run-id'], flags['state-dir']);
+    const stateDir = this.runContext(flags['run-id'], flags['state-dir']);
     const typecheck = await this.entrypoint(args.file);
     const executor = new WorkflowExecutor({
       logger: this.createExecutionLogger(flags),
@@ -55,7 +53,7 @@ export default class WorkflowCheckResume extends WorkflowCommand {
       kind: 'workflow.check-resume',
       typecheck,
       runId: flags['run-id'],
-      stateDir: resolve(flags['state-dir']),
+      stateDir: stateDir,
       cwd: process.cwd(),
       ...(flags['accept-code-change'] === undefined
         ? {}

@@ -148,7 +148,7 @@ it('completes the captured reconnect turn, persists warnings, and replays withou
   expect(await readFile(calls, 'utf8')).toBe('call\n');
 });
 
-it('keeps version 1 inspectable but refuses policy-era replay without changing the checkpoint', async () => {
+it('migrates the original version-one agent checkpoint without invoking its harness', async () => {
   const stateDir = await directory();
   await writeFile(
     join(stateDir, 'legacy.json'),
@@ -176,8 +176,8 @@ it('keeps version 1 inspectable but refuses policy-era replay without changing t
         },
       },
     }),
-  ).rejects.toThrow('Checkpoint format version 1 cannot resume');
-  expect(await readFile(join(stateDir, 'legacy.json'), 'utf8')).toBe(before);
+  ).resolves.toMatchObject({ formatVersion: 7, status: 'completed' });
+  expect(await readFile(join(stateDir, 'legacy.json.v1'), 'utf8')).toBe(before);
   const saved = await readRun({ stateDir, runId: 'legacy' });
   expect(saved.steps['agent']?.attempts).toBe(1);
   expect(saved.steps['agent']?.warnings).toBeUndefined();

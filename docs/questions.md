@@ -90,17 +90,22 @@ decision. Work beyond the question has not been rehearsed.
 
 ## Inbox protocol and trust
 
-The flat-layout inbox is `<stateDir>/<runId>.inbox/`. Normal filenames are
-`<encodeURIComponent(stepId)>.answer.json`; encoded IDs over 180 characters use
-`~sha256-<digest(stepId)>.answer.json`, where `digest` is SHA-256 over canonical JSON of the ID
-string. The `~` prefix cannot collide with an encoded legal step ID. The bounded filename leaves
-room for quarantine suffixes on ordinary POSIX filesystems.
+The inbox is `<stateDir>/<runId>/inbox/`. Filenames combine the first 100 characters of
+`encodeURIComponent(stepId)`, `--`, and the full SHA-256 over canonical JSON of the exact ID string,
+followed by `.answer.json`. Case variants remain distinct on case-insensitive filesystems, and the
+bounded filename leaves room for quarantine suffixes. Runs migrated from the flat layout keep
+delivering to `<stateDir>/<runId>.inbox/` under the format-6 filename: `encodeURIComponent(stepId)`
+when it is at most 180 characters, otherwise `~sha256-` and the same digest, followed by
+`.answer.json`. Every writer of such a run, before or after an upgrade, links to one final path, so
+the first link wins; as before the upgrade, that name does not separate case variants on
+case-insensitive filesystems. Owners also scan the other name and inbox for older deliveries. See
+[storage](storage.md) for layout, defaults, and migration.
 
 An envelope is `{ value, by, at, questionFingerprint }`. The writer validates lossless JSON and the
 stored schema, creates a private temporary file, flushes it, and links it exclusively to the final
-path. Writers never acquire the run lock. Only one concurrent delivery wins; the temporary name is
-removed afterward. Files use 0600 and new directories 0700. Envelopes are capped at 1 MiB. These
-modes do not repair existing directory permissions.
+path, then flushes the directory. Writers never acquire the run lock. Only one concurrent delivery
+wins; the temporary name is removed afterward. Files use 0600 and new directories 0700. Envelopes
+are capped at 1 MiB. These modes do not repair existing directory permissions.
 
 Only the run owner ingests answers. It polls every 200 ms while questions are open, and scans again
 at quiescence. It checks the envelope, fingerprint, attribution, and actual Zod schema, then saves

@@ -59,7 +59,7 @@ it('forks the unchanged launch prefix, records differences/provenance, and never
     return (await ctx.claude.text('write', { prompt: 'write' })).output;
   });
   await runWorkflow(definition, { ...options(), harness });
-  const before = await readFile(join(stateDir, 'source.json'), 'utf8');
+  const before = await readFile(join(stateDir, 'source', 'run.json'), 'utf8');
   calls.length = 0;
   edited = true;
   const events: string[] = [];
@@ -88,7 +88,7 @@ it('forks the unchanged launch prefix, records differences/provenance, and never
     reuseClosed: true,
   });
   expect(Object.values(fork.steps).map((step) => step.seq)).toEqual([1, 2, 3]);
-  expect(await readFile(join(stateDir, 'source.json'), 'utf8')).toBe(before);
+  expect(await readFile(join(stateDir, 'source', 'run.json'), 'utf8')).toBe(before);
 });
 
 it('supports matching reuse and explicit invalidation globs, while prefix misses close reuse', async () => {
@@ -167,8 +167,8 @@ it.each(['failed', 'running'] as const)('never copies a %s source record', async
   const unfinished = source.steps['a'];
   if (!unfinished) throw new Error('missing fixture');
   unfinished.status = status;
-  await writeFile(join(stateDir, 'source.json'), JSON.stringify(source));
-  const before = await readFile(join(stateDir, 'source.json'), 'utf8');
+  await writeFile(join(stateDir, 'source', 'run.json'), JSON.stringify(source));
+  const before = await readFile(join(stateDir, 'source', 'run.json'), 'utf8');
   invoke.mockClear();
   const fork = await runWorkflow(definition, {
     ...options('fork'),
@@ -179,7 +179,7 @@ it.each(['failed', 'running'] as const)('never copies a %s source record', async
   expect(fork.steps['a']?.attempts).toBe(1);
   expect(fork.steps['a']?.reusedFrom).toBeUndefined();
   expect(fork.steps['b']?.reusedFrom).toBeDefined();
-  expect(await readFile(join(stateDir, 'source.json'), 'utf8')).toBe(before);
+  expect(await readFile(join(stateDir, 'source', 'run.json'), 'utf8')).toBe(before);
 });
 
 it.each(['unchanged', 'changed', 'missing'] as const)(
@@ -207,7 +207,7 @@ it.each(['unchanged', 'changed', 'missing'] as const)(
     expect((await readRun({ stateDir, runId: 'fork' })).input).toEqual({ n: 1 });
     if (state === 'changed')
       await runWorkflow(definition, { ...base, resume: true, policyReset: true });
-    if (state === 'missing') await rm(join(stateDir, 'source.json'));
+    if (state === 'missing') await rm(join(stateDir, 'source', 'run.json'));
     pause = false;
     const result = await runWorkflow(definition, { ...base, runId: 'fork', resume: true });
     expect(invoke).toHaveBeenCalledTimes(state === 'unchanged' ? 0 : 1);
@@ -220,7 +220,7 @@ it.each(['unchanged', 'changed', 'missing'] as const)(
 it('rejects an old format, different name, existing target, invalid flags, or invalid globs without touching the source', async () => {
   const definition = workflow(() => Promise.resolve('done'));
   await runWorkflow(definition, options());
-  const path = join(stateDir, 'source.json');
+  const path = join(stateDir, 'source', 'run.json');
   const before = await readFile(path, 'utf8');
   await expect(
     runWorkflow(
@@ -244,9 +244,14 @@ it('rejects an old format, different name, existing target, invalid flags, or in
     }),
   ).rejects.toThrow();
   expect(await readFile(path, 'utf8')).toBe(before);
+  await rm(join(stateDir, 'source'), { recursive: true });
+  const legacyPath = join(stateDir, 'source.json');
   for (const formatVersion of [1, 2, 3, 4, 5]) {
-    await writeFile(path, JSON.stringify({ ...(JSON.parse(before) as object), formatVersion }));
-    const legacy = await readFile(path, 'utf8');
+    await writeFile(
+      legacyPath,
+      JSON.stringify({ ...(JSON.parse(before) as object), formatVersion }),
+    );
+    const legacy = await readFile(legacyPath, 'utf8');
     expect((await readRun(options())).formatVersion).toBe(formatVersion);
     await expect(
       runWorkflow(definition, { ...options('old-fork'), forkFrom: { runId: 'source' } }),
@@ -255,7 +260,7 @@ it('rejects an old format, different name, existing target, invalid flags, or in
       `format version ${String(formatVersion)}`,
     );
     expect((await checkResume(definition, options())).compatible).toBe(false);
-    expect(await readFile(path, 'utf8')).toBe(legacy);
+    expect(await readFile(legacyPath, 'utf8')).toBe(legacy);
   }
 });
 
@@ -417,7 +422,7 @@ it('checks compatibility while a writer lock exists, itemizes changed files, and
   const source = { hash: 'old', files: { 'lib/report.ts': 'old', 'removed.ts': 'old' } };
   const setup = { runId: 'source', stateDir, input: { n: 1 }, source };
   await runWorkflow(definition, setup);
-  const before = await readFile(join(stateDir, 'source.json'), 'utf8');
+  const before = await readFile(join(stateDir, 'source', 'run.json'), 'utf8');
   const release = await lockRun(stateDir, 'source');
   try {
     const current = { hash: 'new', files: { 'lib/report.ts': 'new', 'added.ts': 'new' } };
@@ -448,7 +453,7 @@ it('checks compatibility while a writer lock exists, itemizes changed files, and
         .compatible,
     ).toBe(false);
     expect(run).toHaveBeenCalledTimes(1);
-    expect(await readFile(join(stateDir, 'source.json'), 'utf8')).toBe(before);
+    expect(await readFile(join(stateDir, 'source', 'run.json'), 'utf8')).toBe(before);
   } finally {
     await release();
   }

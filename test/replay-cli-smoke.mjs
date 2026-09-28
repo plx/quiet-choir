@@ -73,7 +73,7 @@ process.stdin.on('end', () => { appendFileSync(process.env.QC_REPLAY_CALLS, prom
   assert.deepEqual(Object.keys(metadata.identity.files), ['workflow.ts']); // Linked dist declarations excluded.
   const original = run('source');
   assert.equal(original.workflow.fingerprint, metadata.fingerprint);
-  const before = readFileSync(join(state, 'source.json'), 'utf8');
+  const before = readFileSync(join(state, 'source', 'run.json'), 'utf8');
   writeFileSync(file, source('changed'));
   const prefix = run('prefix', '--fork-from', 'source');
   assert.deepEqual(readFileSync(calls, 'utf8').trim().split('\n'), [
@@ -102,12 +102,12 @@ process.stdin.on('end', () => { appendFileSync(process.env.QC_REPLAY_CALLS, prom
     'write',
   ]);
   assert.equal(matching.steps.local.reusedFrom.runId, 'source');
-  assert.equal(readFileSync(join(state, 'source.json'), 'utf8'), before);
+  assert.equal(readFileSync(join(state, 'source', 'run.json'), 'utf8'), before);
 
   const report = cli('check-resume', file, '--run-id', 'source', '--state-dir', state, '--json');
   assert.equal(report.status, 3, report.stderr);
   assert.deepEqual(JSON.parse(report.stdout).error.details.files, ['workflow.ts']);
-  assert.equal(readFileSync(join(state, 'source.json'), 'utf8'), before);
+  assert.equal(readFileSync(join(state, 'source', 'run.json'), 'utf8'), before);
   const failedResume = cli('execute', file, '--run-id', 'source', '--state-dir', state, '--resume');
   assert.equal(failedResume.status, 3);
   assert.match(failedResume.stderr, /workflow\.ts/);

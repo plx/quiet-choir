@@ -97,18 +97,22 @@ dashboard; `--json --summary` returns the same compact progress, status counts, 
 active/problem steps, resolved limits, root cause, reported usage, and recent logs. `-v` shows saved
 stacks. For embedding, `await readRun({ runId, cwd, stateDir })` returns the validated checkpoint
 alone; `inspectRunOwnership({ runId, cwd, stateDir })` returns the separate current ownership view.
-Like `runWorkflow`, it defaults to `<cwd>/.quiet-choir/runs` and resolves relative `stateDir` paths
-against `cwd` (default: `process.cwd()`). `resolveStateDir({ cwd, stateDir })` returns the absolute
-directory. A missing CLI inspection names that directory and lists the run IDs present; embedded
-`readRun` retains the filesystem error's `code: 'ENOENT'`.
+Like `runWorkflow`, it resolves explicit options, then `QUIET_CHOIR_STATE_DIR`, an existing run's
+legacy location, and the external XDG project default. Relative state paths resolve against `cwd`
+(default: `process.cwd()`). `resolveStateDir({ cwd, stateDir, runId })` returns the absolute
+directory; include `runId` to discover its legacy location. A missing CLI inspection names that
+directory and lists the run IDs present; embedded `readRun` retains the filesystem error's
+`code: 'ENOENT'`.
 
-Checkpoints are `<stateDir>/<runId>.json`, with a sibling `<runId>.json.lock/` while owned. The lock
-also survives a hard kill, so it does not prove a live owner. A same-host resume checks durable
-child records before recovering a dead/released owner. Live or unverified children refuse execution
-(exit 3); explicit `--resume --kill-orphans` stops only birth-identity-confirmed survivors. A reused
-PID is not signaled. Text inspection names the owner PID and state (with `stale` run status for a
-missing lock or dead/released owner), then child binary, PID/group, step, attempt and state. JSON
-adds `ownership: { locked, owner, processes, warning? }`; this field is not saved in the checkpoint.
+Current checkpoints combine `<stateDir>/<runId>/run.json` and `journal.jsonl`; use the reader, since
+the snapshot alone can lag. Ownership lives in `<runId>/lock/`. Migrated runs also retain a legacy
+guard at `<runId>.json.lock/`. Locks survive hard kills, so their presence does not prove a live
+owner. A same-host resume checks durable child records before recovering a dead/released owner. Live
+or unverified children refuse execution (exit 3); explicit `--resume --kill-orphans` stops only
+birth-identity-confirmed survivors. A reused PID is not signaled. Text inspection names the owner
+PID and state (with `stale` run status for a missing lock or dead/released owner), then child
+binary, PID/group, step, attempt and state. JSON adds
+`ownership: { locked, owner, processes, warning? }`; this field is not saved in the checkpoint.
 Missing identities and malformed records are reported, never permission to kill. Foreign-host or
 incomplete ownership needs inspection. Prefer `inspect` or `readRun` to validate data. `inspect`
 without `--watch` exits 0 even for `failed`, `cancelled`, or `running` records; check `status`. A
@@ -144,18 +148,21 @@ and stack to each attempt. Steps retain the latest phase/timing/request/stack; e
 status and `attemptHistory` are used, with no duplicate boolean or history array. A `running`
 attempt has no saved settlement. Redefined unfinished steps retain old hashes and change times in
 `redefinitions`; unvisited unfinished steps become `superseded` after a successful body replay.
-Existing terminal outcomes still must be visited. Versions 1–5 can be inspected, but this format-6
-runtime refuses their resumption or fork reuse.
+Existing terminal outcomes still must be visited. Storage format 7 retains replay contract 6. Flat
+format 6 migrates automatically; original format 1 migrates by verifying its old step identities and
+must migrate before fork reuse. Formats 2–5 remain inspection-only in this runtime. See
+[legacy migration](durability.md#legacy-records).
 
 `workflow.identity` holds code/schema/file hashes and engine metadata. `forkedFrom` identifies a
 source snapshot, reuse mode, invalidation globs, intentional differences, and progress; each copied
 step records `reusedFrom`. Its attempts/history describe the source work, not fresh target calls.
-`seq` records first-use order in the target. `codeChanges` audits explicit source/schema acceptance;
-`replayWarnings` captures ordering or lost-fork-source warnings. `recoveryHint` identifies a failed
-run whose recorded effects all have terminal outcomes, so a tail-only fix may re-finalize with no
-repeated work. Use `workflow check-resume FILE --run-id ID --json` to compare run gates without a
-writer lock; it imports trusted source but does not call its body. Unlike inspection alone, it can
-identify changed source files and schemas.
+Step `seq` records first-use order in the target; root `seq` is the storage journal sequence.
+`codeChanges` audits explicit source/schema acceptance; `replayWarnings` captures ordering or
+lost-fork-source warnings. `recoveryHint` identifies a failed run whose recorded effects all have
+terminal outcomes, so a tail-only fix may re-finalize with no repeated work. Use
+`workflow check-resume FILE --run-id ID --json` to compare run gates without a writer lock; it
+imports trusted source but does not call its body. Unlike inspection alone, it can identify changed
+source files and schemas.
 
 A `settled-failed` step is terminal: `settledError` saves `message`, `kind`, and total `attempts`.
 Failed `attemptHistory` entries retain `errorKind`. A run may complete with settled failures.

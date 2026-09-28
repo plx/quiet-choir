@@ -1,3 +1,4 @@
+import { defaultStateDir, projectCwd } from '../src/workflow/runtime/paths.js';
 /* eslint-disable @typescript-eslint/no-deprecated -- Exercise the supported legacy map/replay contract. */
 import { testInvocation } from './harness-invocation.js';
 import { access, mkdtemp, readFile, rm } from 'node:fs/promises';
@@ -37,6 +38,7 @@ async function directory(): Promise<string> {
   return root;
 }
 afterEach(async () => {
+  vi.unstubAllEnvs();
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
@@ -95,7 +97,7 @@ it('ignores rejecting async observers and does not await slow observers', async 
 
 it('drains immediate continuations to completion while retaining the writer lock', async () => {
   const stateDir = await directory();
-  const lock = join(stateDir, 'chain.json.lock');
+  const lock = join(stateDir, 'chain', 'lock');
   const events: string[] = [];
   let chain: Promise<void> | undefined;
   const result = await runWorkflow(
@@ -126,9 +128,9 @@ it('drains immediate continuations to completion while retaining the writer lock
     'completed',
   ]);
   await expect(access(lock)).rejects.toMatchObject({ code: 'ENOENT' });
-  const checkpoint = await readFile(join(stateDir, 'chain.json'), 'utf8');
+  const checkpoint = await readFile(join(stateDir, 'chain', 'run.json'), 'utf8');
   await delay(30);
-  expect(await readFile(join(stateDir, 'chain.json'), 'utf8')).toBe(checkpoint);
+  expect(await readFile(join(stateDir, 'chain', 'run.json'), 'utf8')).toBe(checkpoint);
 });
 
 it('drains detached continuations several microtasks deep', async () => {
@@ -465,6 +467,8 @@ it.each(['runs', undefined])(
   'shares readRun path resolution for cwd and stateDir=%s',
   async (stateDir) => {
     const cwd = await directory();
+    vi.stubEnv('XDG_STATE_HOME', await directory());
+    vi.stubEnv('QUIET_CHOIR_STATE_DIR', undefined);
     const options = {
       cwd,
       ...(stateDir === undefined ? {} : { stateDir }),
@@ -476,8 +480,10 @@ it.each(['runs', undefined])(
       options,
     );
     expect(await readRun(options)).toEqual(result);
-    expect(resolveStateDir(options)).toBe(join(cwd, stateDir ?? '.quiet-choir/runs'));
-    expect(resolveStateDir()).toBe(join(process.cwd(), '.quiet-choir/runs'));
+    expect(resolveStateDir(options)).toBe(
+      stateDir === undefined ? defaultStateDir(cwd) : join(projectCwd(cwd), stateDir),
+    );
+    expect(resolveStateDir()).toBe(defaultStateDir());
     await expect(readRun({ ...options, runId: 'missing' })).rejects.toMatchObject({
       code: 'ENOENT',
     });

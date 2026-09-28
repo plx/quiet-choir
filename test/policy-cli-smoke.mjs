@@ -57,7 +57,7 @@ export default defineWorkflow({ name: 'policy-cli', version: '1', input: z.objec
   const first = cli(...args);
   assert.equal(first.status, 1, first.stderr);
   assert.match(first.stderr, /1000ms deadline/);
-  const initial = JSON.parse(readFileSync(join(state, 'recovery.json'), 'utf8'));
+  const initial = JSON.parse(readFileSync(join(state, 'recovery', 'run.json'), 'utf8'));
   assert.equal(initial.steps.plan.status, 'completed');
   assert.equal(initial.steps.review.status, 'failed');
   const resume = cli(

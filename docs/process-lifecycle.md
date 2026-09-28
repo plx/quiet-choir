@@ -60,12 +60,14 @@ step, attempt and observed state. `inspectRunOwnership({ runId, stateDir, cwd })
 read-only view to embedders. `readRun` continues returning only the persisted checkpoint. Inspection
 observations can change immediately; they are not a lease or heartbeat.
 
-Dead-owner recovery reads `<runId>.json.lock/processes/<pgid>.json` (PID on Windows) before removing
-the lock. Records are private, written exclusively and fsynced, and include run/step/attempt,
+Dead-owner recovery reads `<runId>/lock/processes/<pgid>.json` (PID on Windows) before removing the
+lock. Records are private, written exclusively and fsynced, and include run/step/attempt,
 binary/cwd, spawn time, OS birth identity and the writer token. They contain no argv, input or env.
 Version-discovery children are recorded too, using the triggering effect's identity and the run's
 shared discovery signal, which aborts on interruption or once no effect still awaits discovery. This
-is owner state, separate from the versioned replay checkpoint.
+is owner state, separate from the versioned replay checkpoint. Migrated runs acquire and retain the
+legacy guard before the current lock; recovery checks both locations. All new children register
+under the current lock. See [storage](storage.md).
 
 A confirmed live child causes `OrphanProcessesError` (`code: 'run.orphans'`, CLI exit **3**) before
 replacement effects run. `--kill-orphans` verifies identities, sends TERM, waits the selected grace,

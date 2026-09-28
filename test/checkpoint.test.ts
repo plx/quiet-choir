@@ -350,7 +350,7 @@ it('keeps ownership loss fatal even after persisting completion', async () => {
           input: null,
           schema: z.null(),
           async run() {
-            const path = join(stateDir, 'run.json.lock', 'owner.json');
+            const path = join(stateDir, 'run', 'lock', 'owner.json');
             const owner = z
               .object({ pid: z.number(), host: z.string(), token: z.string() })
               .parse(JSON.parse(await readFile(path, 'utf8')));
@@ -379,7 +379,7 @@ it('keeps unknown release failures fatal and retains earlier validation errors',
       options(),
     ),
   ).rejects.toMatchObject({ operation: 'release', cause: releaseError });
-  await rm(join(stateDir, 'run.json.lock'), { recursive: true });
+  await rm(join(stateDir, 'run', 'lock'), { recursive: true });
   const error: unknown = await runWorkflow(
     workflow(() => Promise.resolve('done')),
     { ...options(), runId: 'bad-input', input: 'wrong' },
@@ -424,7 +424,7 @@ it('warns about a removed lock while returning the actual persisted completion',
         input: null,
         schema: z.string(),
         async run() {
-          await rm(join(stateDir, 'run.json.lock'), { recursive: true });
+          await rm(join(stateDir, 'run', 'lock'), { recursive: true });
           return 'done';
         },
       }),
@@ -437,7 +437,7 @@ it('warns about a removed lock while returning the actual persisted completion',
 });
 
 const asRoot = process.getuid?.() === 0;
-const ownerPath = (): string => join(stateDir, 'run.json.lock', 'owner.json');
+const ownerPath = (): string => join(stateDir, 'run', 'lock', 'owner.json');
 function stepThen(effect: () => Promise<void>): WorkflowDefinition<null, string> {
   return workflow(async (ctx) => {
     await ctx.step('tamper', {
@@ -451,6 +451,35 @@ function stepThen(effect: () => Promise<void>): WorkflowDefinition<null, string>
     return 'done';
   });
 }
+
+it('warns when both locks of a migrated run vanish before release', async () => {
+  let fail = true;
+  const definition = workflow(async (ctx) => {
+    if (fail) throw new Error('tail');
+    return ctx.step('remove-locks', {
+      input: null,
+      schema: z.string(),
+      async run() {
+        await rm(join(stateDir, 'run', 'lock'), { recursive: true });
+        await rm(join(stateDir, 'run.json.lock'), { recursive: true });
+        return 'done';
+      },
+    });
+  });
+  await expect(runWorkflow(definition, options())).rejects.toThrow('tail');
+  const record = await readRun(options());
+  record.formatVersion = 6;
+  delete record.seq;
+  delete record.engine;
+  await rm(join(stateDir, 'run'), { recursive: true });
+  await store.writeRun(stateDir, record);
+  fail = false;
+  const result = await runWorkflow(definition, { ...options(), resume: true });
+  expect(result.output).toBe('done');
+  expect(result.warnings).toEqual([expect.stringContaining('Could not release run run lock')]);
+  expect(result.warnings?.[0]).toContain('ENOENT');
+  expect((await readRun(options())).formatVersion).toBe(7);
+});
 
 it('keeps release fatal when only the lock ownership metadata disappears', async () => {
   await expect(
@@ -486,7 +515,7 @@ it.skipIf(asRoot)('keeps release fatal when lock ownership metadata is unreadabl
 });
 
 it.skipIf(asRoot)('warns when lock removal fails after ownership was verified', async () => {
-  const lockPath = join(stateDir, 'run.json.lock');
+  const lockPath = join(stateDir, 'run', 'lock');
   try {
     const result = await runWorkflow(
       stepThen(() => chmod(lockPath, 0o500)),
@@ -501,13 +530,12 @@ it.skipIf(asRoot)('warns when lock removal fails after ownership was verified', 
   }
 });
 
-it('checks cancellation after a queued start save recovers, before launching its action', async () => {
-  let writes = 0;
+it('cancels every sibling whose coalesced start batch could not commit', async () => {
+  let failures = 0;
   vi.mocked(store.writeRun).mockImplementation((directory, record) => {
-    writes++;
-    return writes >= 3 && writes <= 5
-      ? Promise.reject(ioError('EIO'))
-      : actualStore.writeRun(directory, record);
+    if (record.status === 'running' && record.steps['second'] && failures++ < 3)
+      return Promise.reject(ioError('EIO'));
+    return actualStore.writeRun(directory, record);
   });
   const first = vi.fn(() => 'first');
   const second = vi.fn(() => 'second');
@@ -528,10 +556,10 @@ it('checks cancellation after a queued start save recovers, before launching its
     name: 'WorkflowRunError',
     cause: expect.any(CheckpointError) as unknown,
   });
-  expect(first).toHaveBeenCalledTimes(1);
+  expect(first).not.toHaveBeenCalled();
   expect(second).not.toHaveBeenCalled();
   expect(third).not.toHaveBeenCalled();
-  expect(writes).toBeGreaterThan(5);
+  expect((await readRun(options())).status).toBe('failed');
 });
 
 it('preserves a successful sibling result after storage-triggered cancellation', async () => {

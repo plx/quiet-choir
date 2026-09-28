@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-deprecated -- Exercise the supported legacy map/replay contract. */
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -509,7 +509,7 @@ describe('durable TypeScript workflows', () => {
         )
       ).output,
     ).toBe(1);
-    expect(JSON.parse(await readFile(path, 'utf8'))).toMatchObject({ status: 'completed' });
+    expect(await readRun(options)).toMatchObject({ status: 'completed' });
   });
 
   it('does not let observers change durable execution and honors an already-aborted signal', async () => {

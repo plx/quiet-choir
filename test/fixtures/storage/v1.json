@@ -1,0 +1,53 @@
+{
+  "createdAt": "2026-09-27T06:40:43.439Z",
+  "cwd": "/quiet-choir/legacy-project",
+  "error": "tail after 7/legacy answer",
+  "formatVersion": 1,
+  "id": "legacy",
+  "input": null,
+  "output": null,
+  "status": "failed",
+  "steps": {
+    "agent": {
+      "attempts": 1,
+      "error": null,
+      "fingerprint": "7ab06c6cbf66f63a0a49a1001be053124d782f2000c6c7ce5144700c527dc69e",
+      "kind": "claude",
+      "output": {
+        "output": "legacy answer",
+        "sessionId": null,
+        "usage": {
+          "costUsd": 0,
+          "inputTokens": 2,
+          "outputTokens": 3
+        }
+      },
+      "status": "completed",
+      "wakeAt": null
+    },
+    "local": {
+      "attempts": 1,
+      "error": null,
+      "fingerprint": "c0cef1c50f0ce8d0084897ef8f9506ed5af0e9318f82a8002e3eefa50c298425",
+      "kind": "step",
+      "output": 7,
+      "status": "completed",
+      "wakeAt": null
+    },
+    "pause": {
+      "attempts": 1,
+      "error": null,
+      "fingerprint": "75a32e77e52b468d82b16e701426d47192b4c3b72a003ca51c9d7feae2385980",
+      "kind": "sleep",
+      "output": null,
+      "status": "completed",
+      "wakeAt": 1790491243490
+    }
+  },
+  "updatedAt": "2026-09-27T06:40:43.510Z",
+  "workflow": {
+    "fingerprint": "44e4937eed7a893fc83f493ac86492587f097447663845f844fe08b745852650",
+    "name": "legacy-v1",
+    "version": "1"
+  }
+}

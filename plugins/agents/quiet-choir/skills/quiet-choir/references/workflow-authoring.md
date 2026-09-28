@@ -116,7 +116,8 @@ Diagnostics name the bounded full ID, scope, leaf, bad character/index, and allo
 
 The deprecated positional `ctx.map(items, concurrency, mapper, options?)` adds no item prefix and
 keeps existing IDs and semantic fingerprints unchanged. Format-5 records are inspectable but require
-the original runtime for resumption; the current execution epoch requires format 6. Adopting
+the original runtime for resumption. Current storage format 7 preserves replay contract 6; flat
+format 6 migrates automatically and original format 1 uses a legacy identity bridge. Adopting
 scopes/named maps changes IDs and requires a new run (or an explicit fork); accepting code changes
 does not rename saved effects.
 

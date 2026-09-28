@@ -96,16 +96,16 @@ it('types input failures before a record exists and preserves the validator caus
   expect(error.details).toMatchObject([{ code: 'invalid_type', path: [] }]);
   await expect(readRun(options())).rejects.toHaveProperty('code', 'ENOENT');
   await runWorkflow(definition, options());
-  const before = await readFile(join(stateDir, 'run.json'), 'utf8');
+  const before = await readFile(join(stateDir, 'run', 'run.json'), 'utf8');
   await expect(
     runWorkflow(definition, { ...options(), input: 'wrong', resume: true }),
   ).rejects.toBeInstanceOf(WorkflowInputError);
-  expect(await readFile(join(stateDir, 'run.json'), 'utf8')).toBe(before);
+  expect(await readFile(join(stateDir, 'run', 'run.json'), 'utf8')).toBe(before);
 });
 
 it('returns typed refusals with compatibility and ownership details without changing checkpoints', async () => {
   await runWorkflow(definition, options());
-  const before = await readFile(join(stateDir, 'run.json'), 'utf8');
+  const before = await readFile(join(stateDir, 'run', 'run.json'), 'utf8');
   await expect(runWorkflow(definition, options())).rejects.toMatchObject({
     name: 'RunRefusedError',
     code: 'run.exists',
@@ -127,7 +127,7 @@ it('returns typed refusals with compatibility and ownership details without chan
   } finally {
     await release();
   }
-  expect(await readFile(join(stateDir, 'run.json'), 'utf8')).toBe(before);
+  expect(await readFile(join(stateDir, 'run', 'run.json'), 'utf8')).toBe(before);
   await writeFile(join(stateDir, 'broken.json'), '{broken');
   const unreadable: unknown = await runWorkflow(definition, {
     ...options(),

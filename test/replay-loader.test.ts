@@ -127,7 +127,7 @@ describe('source-aware loader recovery', { timeout: 90_000 }, () => {
       'workflow.ts',
     ]);
     await execute('source');
-    const bytes = await readFile(join(stateDir, 'source.json'), 'utf8');
+    const bytes = await readFile(join(stateDir, 'source', 'run.json'), 'utf8');
     const release = await lockRun(stateDir, 'source');
     try {
       await appendFile(join(root, 'helper.ts'), '\n// changed helper\n');
@@ -144,7 +144,7 @@ describe('source-aware loader recovery', { timeout: 90_000 }, () => {
         details: { compatible: false, files: ['helper.ts'], canAcceptCodeChange: true },
         run: JSON.parse(bytes) as unknown,
       });
-      expect(await readFile(join(stateDir, 'source.json'), 'utf8')).toBe(bytes);
+      expect(await readFile(join(stateDir, 'source', 'run.json'), 'utf8')).toBe(bytes);
     } finally {
       await release();
     }
@@ -152,7 +152,7 @@ describe('source-aware loader recovery', { timeout: 90_000 }, () => {
 
   it('hashes transpiled callback logic but ignores comment/formatting edits, and honors explicit versions', async () => {
     await execute('source');
-    const before = await readFile(join(stateDir, 'source.json'), 'utf8');
+    const before = await readFile(join(stateDir, 'source', 'run.json'), 'utf8');
     await writeFile(file, source('()=>{return "one";}'));
     const commentFork = await execute('comments', { forkFrom: { runId: 'source' } });
     expect(commentFork).toMatchObject({
@@ -170,7 +170,7 @@ describe('source-aware loader recovery', { timeout: 90_000 }, () => {
     expect(
       (await readRun({ stateDir, runId: 'version' })).steps['effect']?.reusedFrom,
     ).toBeUndefined();
-    expect(await readFile(join(stateDir, 'source.json'), 'utf8')).toBe(before);
+    expect(await readFile(join(stateDir, 'source', 'run.json'), 'utf8')).toBe(before);
   });
 
   it('repairs an unfinished callback, and does not let accepted code changes bypass completed-step checks', async () => {

@@ -1,4 +1,6 @@
+import { prepareLegacyReplay } from './legacy.js';
 import { RunActivity } from './activity.js';
+import { FileRunStore, type RunStore } from './run-store.js';
 import { RunQuestions } from './questions.js';
 import { pendingQuestions } from './inbox.js';
 import { approvalSchema, workflowLaunchSchema } from './question-schema.js';
@@ -49,13 +51,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 
 import { z } from 'zod';
 
-import {
-  CheckpointError,
-  checkpointError,
-  errorCode,
-  withCheckpointErrors,
-  writeCheckpoint,
-} from './checkpoint.js';
+import { CheckpointError, checkpointError, errorCode, withCheckpointErrors } from './checkpoint.js';
 import { resolveStateDir } from './paths.js';
 import {
   agentIdentity,
@@ -106,8 +102,6 @@ import type {
 import {
   hasTerminalOutcomes,
   isTerminalStep,
-  lockRun,
-  readRun,
   type RunRecord,
   type StepRecord,
   type AttemptRecord,
@@ -216,6 +210,8 @@ export function assertCompleted<T>(result: WorkflowResult<T>): asserts result is
 
 /** Explicit dependencies and execution policy for a workflow run. */
 export interface RunOptions extends WorkflowCodeOptions {
+  /** Optional storage implementation; defaults to private local journal files. */
+  readonly store?: RunStore;
   /** Optional entrypoint metadata supplied by the CLI or embedder for resume by ID. */
   readonly launch?: WorkflowLaunch;
   /** Stop identity-confirmed children of a dead/released owner before acquiring its lock. */
@@ -232,7 +228,7 @@ export interface RunOptions extends WorkflowCodeOptions {
   readonly grants?: readonly string[];
   /** Required stable identifier. Reuse it with resume to continue an execution. */
   readonly runId: string;
-  /** Checkpoint directory; defaults to .quiet-choir/runs under the working directory. */
+  /** Runs container; defaults to QUIET_CHOIR_STATE_DIR, legacy run discovery, or project-specific XDG state. */
   readonly stateDir?: string;
   /** Workflow working directory; defaults to process.cwd(). */
   readonly cwd?: string;
@@ -343,7 +339,13 @@ export async function runWorkflow<TInput, TOutput>(
     throw new Error('acceptCodeChange requires resume.');
   const fork = options.forkFrom === undefined ? undefined : validateFork(options.forkFrom);
   const cwd = await canonicalCwd(options.cwd);
-  const stateDir = resolveStateDir(options);
+  const stateDir = options.store?.stateDir ?? resolveStateDir(options);
+  if (
+    options.store?.stateDir !== undefined &&
+    options.stateDir !== undefined &&
+    resolveStateDir(options) !== options.store.stateDir
+  )
+    throw new Error('RunOptions.stateDir must match the bound RunStore stateDir.');
   const snapshot = workflowSnapshot(definition, options);
   const { fingerprint } = snapshot;
   if (
@@ -353,21 +355,24 @@ export async function runWorkflow<TInput, TOutput>(
       options.killGraceMs > 2_147_483_647)
   )
     throw new Error('killGraceMs must be an integer from 1 to 2147483647.');
-  const release = await lockRun(stateDir, options.runId, {
-    ...options,
-    probeOwner: options.rehearsal === undefined,
-  }).catch(async (cause: unknown) => {
-    if (cause instanceof RunRefusedError || options.signal?.aborted) throw cause;
-    if (errorCode(cause) !== undefined)
-      throw await checkpointError(
-        'lock',
-        stateDir,
-        options.runId,
-        cause,
-        `Could not acquire run ${options.runId} lock`,
-      );
-    throw unreadableRunError({ stateDir, runId: options.runId }, cause);
-  });
+  const storage = await (options.store ?? new FileRunStore(stateDir))
+    .open(options.runId, {
+      ...options,
+      cwd,
+      probeOwner: options.rehearsal === undefined,
+    })
+    .catch(async (cause: unknown) => {
+      if (cause instanceof RunRefusedError || options.signal?.aborted) throw cause;
+      if (errorCode(cause) !== undefined)
+        throw await checkpointError(
+          'lock',
+          stateDir,
+          options.runId,
+          cause,
+          `Could not acquire run ${options.runId} lock`,
+        );
+      throw unreadableRunError({ stateDir, runId: options.runId }, cause);
+    });
   const controller = new AbortController();
   const abort = (): void => {
     controller.abort(new CancelledError(null, options.signal?.reason));
@@ -380,10 +385,9 @@ export async function runWorkflow<TInput, TOutput>(
   async function executeOwned(): Promise<WorkflowResult<TOutput>> {
     let existing: RunRecord | undefined;
     try {
-      existing = await readRun({ stateDir, runId: options.runId });
+      existing = await storage.read();
     } catch (error) {
-      if (errorCode(error) !== 'ENOENT')
-        throw unreadableRunError({ stateDir, runId: options.runId }, error);
+      throw unreadableRunError({ stateDir, runId: options.runId }, error);
     }
     if (existing && !options.resume)
       throw new RunRefusedError(
@@ -394,7 +398,7 @@ export async function runWorkflow<TInput, TOutput>(
       );
     if (!existing && options.resume)
       throw await missingRunError({ stateDir, runId: options.runId });
-    if (existing && existing.formatVersion !== engineInfo.formatVersion)
+    if (existing && ![1, 6, 7].includes(existing.formatVersion))
       throw new RunRefusedError(
         'run.incompatible',
         options.runId,
@@ -495,11 +499,25 @@ export async function runWorkflow<TInput, TOutput>(
     // The body gets a noncanonical JSON copy of the once-parsed input: schema field order without
     // undefined members, and no second pass through non-idempotent schema overwrites.
     const bodyInput = jsonValue(input, 'Workflow input', { canonical: false }) as TInput;
-    if (existing?.status === 'completed' && !options.acceptCodeChange) {
+    const legacyReplay = existing?.formatVersion === 1;
+    const migrating = existing !== undefined && existing.formatVersion !== 7;
+    const engineChanged =
+      existing !== undefined &&
+      (existing.engine?.quietChoir !== engineInfo.version ||
+        existing.engine.node !== process.version);
+    if (existing && legacyReplay) prepareLegacyReplay(existing);
+    if (existing) {
+      existing.formatVersion = 7;
+      existing.seq ??= 0;
+      existing.engine = { quietChoir: engineInfo.version, node: process.version };
+    }
+    if (existing?.status === 'completed' && !options.acceptCodeChange && !legacyReplay) {
       const output = jsonValue(definition.output.parse(existing.output), 'Workflow output', {
         canonical: false,
       });
       if (
+        migrating ||
+        engineChanged ||
         incomingPolicy.length ||
         incomingProfiles.length ||
         incomingGrants.length ||
@@ -513,12 +531,7 @@ export async function runWorkflow<TInput, TOutput>(
         existing.allowModelOverride = allowModelOverride;
         existing.policyWarnings = [];
         existing.updatedAt = new Date().toISOString();
-        await writeCheckpoint(
-          stateDir,
-          existing.id,
-          () => structuredClone(existing),
-          'Could not save execution policy',
-        );
+        await storage.append(existing, { context: 'Could not save completed run metadata' });
       }
       return {
         ...existing,
@@ -539,7 +552,9 @@ export async function runWorkflow<TInput, TOutput>(
     }
     const now = new Date().toISOString();
     const record: RunRecord = existing ?? {
-      formatVersion: 6,
+      formatVersion: 7,
+      seq: 0,
+      engine: { quietChoir: engineInfo.version, node: process.version },
       rootCause: null,
       maps: {},
       id: options.runId,
@@ -576,6 +591,8 @@ export async function runWorkflow<TInput, TOutput>(
       });
       record.workflow = { name: definition.name, version: definition.version, ...snapshot };
     }
+    if (legacyReplay)
+      record.workflow = { name: definition.name, version: definition.version, ...snapshot };
     if (fork && forkSource && forkStateDir) {
       record.forkedFrom = {
         runId: fork.runId,
@@ -595,7 +612,7 @@ export async function runWorkflow<TInput, TOutput>(
       : []);
     delete record.recoveryHint;
     const previousTerminal = Object.entries(record.steps)
-      .filter(([, step]) => isTerminalStep(step))
+      .filter(([, step]) => isTerminalStep(step) && step.legacyIdentity === undefined)
       .map(([id, step]) => ({ id, seq: step.seq ?? 0 }));
     // Committed settled maps join the pre-live skip check; their seq shares the step counter.
     const previousTerminalMaps = Object.entries(record.maps ?? {})
@@ -634,36 +651,21 @@ export async function runWorkflow<TInput, TOutput>(
       );
     };
     const activity = new RunActivity();
-    let writeQueue = Promise.resolve();
-    function save(context = `Could not save run ${record.id}`): Promise<void> {
+    function save(context = `Could not save run ${record.id}`, durable = true): Promise<void> {
       const finish = activity.begin();
-      const write = writeQueue
-        .catch(() => {
-          /* A failed write must not poison later snapshots. */
+      record.updatedAt = new Date().toISOString();
+      return storage
+        .append(record, { context, durable })
+        .catch(async (error: unknown) => {
+          const failure =
+            error instanceof CheckpointError
+              ? error
+              : await checkpointError('save', stateDir, record.id, error, context);
+          if (!checkpointProblems.includes(failure)) checkpointProblems.push(failure);
+          controller.abort(failure);
+          throw failure;
         })
-        .then(async () => {
-          try {
-            await writeCheckpoint(
-              stateDir,
-              record.id,
-              () => {
-                record.updatedAt = new Date().toISOString();
-                return structuredClone(record);
-              },
-              context,
-            );
-          } catch (error) {
-            const failure =
-              error instanceof CheckpointError
-                ? error
-                : await checkpointError('save', stateDir, record.id, error, context);
-            checkpointProblems.push(failure);
-            controller.abort(failure);
-            throw failure;
-          }
-        });
-      writeQueue = write;
-      return write.finally(finish);
+        .finally(finish);
     }
     async function trySave(): Promise<boolean> {
       try {
@@ -810,6 +812,7 @@ export async function runWorkflow<TInput, TOutput>(
       onError?: TMode,
       observedRequest: RequestSummary | null = null,
       observedPhase: PhaseInfo | null = observations.phase,
+      legacyDependencies?: JsonValue,
     ): Promise<EffectResult<T, TMode>> {
       const signal = scopes.signal;
       const value = (output: T): EffectResult<T, TMode> =>
@@ -868,6 +871,26 @@ export async function runWorkflow<TInput, TOutput>(
         throw new Error(`Step ${id}: ${message(cause)}`, { cause });
       }
       const prior = Object.hasOwn(record.steps, id) ? record.steps[id] : undefined;
+      if (prior?.legacyIdentity === 1) {
+        const oldFingerprint = digest({
+          kind,
+          dependencies: legacyDependencies ?? jsonValue(dependencies),
+          schema: schemaJson(schema),
+          retry: {
+            maxAttempts: local?.retry?.maxAttempts ?? 1,
+            delayMs: local?.retry?.delayMs ?? 100,
+          },
+        });
+        if (prior.kind !== kind || prior.fingerprint !== oldFingerprint || onError === 'return')
+          throw new Error(
+            `Step ${id}: original format-one identity changed; restore its inputs/options/schema/retry before migrating or start a new run.`,
+          );
+        prior.fingerprint = stepFingerprint;
+        prior.identity = identity;
+        prior.seq = nextSeq++;
+        delete prior.legacyIdentity;
+        await save();
+      }
       const redefined =
         prior !== undefined && (prior.kind !== kind || prior.fingerprint !== stepFingerprint);
       if (redefined && prior.kind === 'ask')
@@ -1000,7 +1023,7 @@ export async function runWorkflow<TInput, TOutput>(
           error: null as string | null,
         };
         (step.attemptHistory ??= []).push(attemptRecord);
-        await save();
+        await save(undefined, kind === 'sleep');
         try {
           signal.throwIfAborted();
           emit('step.started', id, step);
@@ -1164,6 +1187,7 @@ export async function runWorkflow<TInput, TOutput>(
           let schema: z.ZodType<T>;
           let execution: AttemptPolicy;
           let profile: ResolvedProfile;
+          let legacyRequest: JsonValue;
           try {
             const data = jsonValue(
               { options: optionData(agentOptions, structured) },
@@ -1181,6 +1205,12 @@ export async function runWorkflow<TInput, TOutput>(
             );
             profile = resolvedProfile.profile;
             schema = outputSchema();
+            legacyRequest = jsonValue({
+              provider,
+              options: data.options,
+              cwd: resolve(cwd, data.options.cwd ?? '.'),
+              outputSchema: structured ? schemaJson(schema) : null,
+            });
             options.rehearsal?.onSchema?.(id, schema);
             execution = resolvePolicy(
               id,
@@ -1308,7 +1338,7 @@ export async function runWorkflow<TInput, TOutput>(
                 attempt: context.attempt,
                 trackProcess: async (child) => {
                   try {
-                    return await release.trackProcess(
+                    return await storage.trackProcess(
                       { runId: options.runId, stepId: id, attempt: context.attempt },
                       child,
                     );
@@ -1410,6 +1440,7 @@ export async function runWorkflow<TInput, TOutput>(
             agentOptions.onError,
             requestSummary(request, execution),
             phase,
+            legacyRequest,
           );
           return select(result);
         });
@@ -1563,6 +1594,7 @@ export async function runWorkflow<TInput, TOutput>(
         controller.abort(error);
       },
     });
+    const supportsInbox = options.store === undefined || options.store.stateDir !== undefined;
     const ask = <T>(leaf: string, options: AskOptions<T>): Promise<T> => {
       const id = names.qualify(leaf);
       return launch(
@@ -1571,6 +1603,10 @@ export async function runWorkflow<TInput, TOutput>(
           if (inEffect.getStore())
             throw new Error(
               'Nested durable steps are unsupported; compose questions in the workflow body.',
+            );
+          if (!supportsInbox)
+            throw new Error(
+              'This RunStore has no filesystem inbox. Durable questions require FileRunStore or a store implementing the same stateDir protocol.',
             );
           if (used.has(id)) throw duplicateStepId(id, names.describe(id));
           used.add(id);
@@ -1865,7 +1901,7 @@ export async function runWorkflow<TInput, TOutput>(
   }
   options.signal?.removeEventListener('abort', abort);
   try {
-    await release();
+    await storage.release();
   } catch (cause) {
     const error = await checkpointError(
       'release',

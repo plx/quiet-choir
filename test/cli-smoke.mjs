@@ -1,3 +1,4 @@
+import { readRunSync } from '../dist/workflow/runtime/store.js';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
@@ -239,7 +240,7 @@ export default defineWorkflow({
   name: 'warning', version: '1', input: z.object({}), output: z.string(),
   async run(ctx) {
     return ctx.step('remove-lock', { input: null, schema: z.string(), async run() {
-      await rm(${JSON.stringify(join(stateDir, 'warning-run.json.lock'))}, { recursive: true });
+      await rm(${JSON.stringify(join(stateDir, 'warning-run', 'lock'))}, { recursive: true });
       return 'done';
     }});
   },
@@ -261,7 +262,7 @@ export default defineWorkflow({
   assert.equal(JSON.parse(warning.stdout).warnings.length, 1);
   assert.match(warning.stderr, /Warning: Could not release run warning-run lock/);
   assert.equal(
-    JSON.parse(readFileSync(join(stateDir, 'warning-run.json'), 'utf8')).status,
+    JSON.parse(readFileSync(join(stateDir, 'warning-run', 'run.json'), 'utf8')).status,
     'completed',
   );
 
@@ -311,10 +312,10 @@ export default defineWorkflow({
   });
   let wakeAt;
   try {
-    const checkpoint = join(stateDir, 'crash-run.json');
+    const checkpoint = join(stateDir, 'crash-run', 'run.json');
     for (let attempt = 0; attempt < 1500; attempt++) {
       if (existsSync(checkpoint)) {
-        const record = JSON.parse(readFileSync(checkpoint, 'utf8'));
+        const record = readRunSync({ stateDir, runId: 'crash-run' });
         if (record.steps.wait?.status === 'running' && record.steps.wait.wakeAt !== null) {
           wakeAt = record.steps.wait.wakeAt;
           break;

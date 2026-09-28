@@ -1,3 +1,4 @@
+import { readRunSync } from '../dist/workflow/runtime/store.js';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import {
@@ -124,7 +125,7 @@ if(process.argv.includes('--version')){console.log('2.1.283');process.exit(0);}
 process.on('SIGTERM',()=>{});
 process.stdin.resume();process.stdin.on('end',()=>{
  const run=process.env.QC_PROCESS_RUN;
- const record=JSON.parse(fs.readFileSync(path.join(process.env.QC_PROCESS_STATE,run+'.json.lock/processes/'+process.pid+'.json'),'utf8'));
+ const record=JSON.parse(fs.readFileSync(path.join(process.env.QC_PROCESS_STATE,run+'/lock/processes/'+process.pid+'.json'),'utf8'));
  if(process.env.QC_PROCESS_MODE==='finish'&&fs.existsSync(run+'.calls')) {
   const old=fs.readFileSync(run+'.calls','utf8').trim().split('\\n').map(JSON.parse).filter(call=>call.mode==='hang');
   if(old.some(({pid})=>groupState({pid,pgid:pid})!=='dead'))throw Error('Replacement started before original processes stopped');
@@ -159,7 +160,9 @@ export default defineWorkflow({name:'process-lifecycle-cli',version:'1',input:z.
   );
   killed.child.kill('SIGKILL');
   assert.equal((await killed.done).signal, 'SIGKILL');
-  const checkpoint = readFileSync(join(state, 'killed.json'), 'utf8');
+  const checkpoint = readFileSync(join(state, 'killed', 'run.json'), 'utf8');
+  const journal = readFileSync(join(state, 'killed', 'journal.jsonl'), 'utf8');
+  const committed = readRunSync({ stateDir: state, runId: 'killed' });
   const inspect = cli(['inspect', 'killed', '--state-dir', state]);
   assert.equal(inspect.status, 0, inspect.stderr);
   assert.match(inspect.stdout, /^Run killed: stale /);
@@ -169,10 +172,11 @@ export default defineWorkflow({name:'process-lifecycle-cli',version:'1',input:z.
   const refused = cli([...argsFor('killed'), '--resume'], envFor('killed', 'finish'));
   assert.equal(refused.status, 3, refused.stderr);
   assert.equal(JSON.parse(refused.stdout).error.code, 'run.orphans');
-  assert.deepEqual(JSON.parse(refused.stdout).run, JSON.parse(checkpoint));
+  assert.deepEqual(JSON.parse(refused.stdout).run, committed);
   assert.match(refused.stderr, /live or unverified harness processes/);
   assert.equal(calls('killed').length, 3);
-  assert.equal(readFileSync(join(state, 'killed.json'), 'utf8'), checkpoint);
+  assert.equal(readFileSync(join(state, 'killed', 'run.json'), 'utf8'), checkpoint);
+  assert.equal(readFileSync(join(state, 'killed', 'journal.jsonl'), 'utf8'), journal);
   const recovered = cli(
     [...argsFor('killed'), '--resume', '--kill-orphans'],
     envFor('killed', 'finish'),
@@ -181,7 +185,7 @@ export default defineWorkflow({name:'process-lifecycle-cli',version:'1',input:z.
   assert.equal(JSON.parse(recovered.stdout).output, 3);
   assert.equal(calls('killed').length, 6);
   assert.ok(gone(original));
-  assert.equal(existsSync(join(state, 'killed.json.lock')), false);
+  assert.equal(existsSync(join(state, 'killed', 'lock')), false);
   for (const step of Object.values(JSON.parse(recovered.stdout).steps))
     assert.equal(step.attemptHistory.at(-1).policy.killGraceMs, 200);
 
@@ -194,10 +198,10 @@ export default defineWorkflow({name:'process-lifecycle-cli',version:'1',input:z.
     assert.equal(result.code, 130, result.stderr);
     assert.match(result.stderr, /Send again to force/);
     assert.ok(gone(records));
-    const record = JSON.parse(readFileSync(join(state, `${id}.json`), 'utf8'));
+    const record = readRunSync({ stateDir: state, runId: id });
     assert.equal(record.status, 'cancelled');
     assert.ok(Object.values(record.steps).every((step) => step.status === 'cancelled'));
-    assert.equal(existsSync(join(state, `${id}.json.lock`)), false);
+    assert.equal(existsSync(join(state, id, 'lock')), false);
   }
 
   const forced = start('forced', '20000');
@@ -224,7 +228,7 @@ export default defineWorkflow({name:'process-lifecycle-cli',version:'1',input:z.
   closed.child.kill('SIGHUP');
   assert.equal((await closed.done).code, 130);
   assert.ok(gone(closedRecords));
-  assert.equal(existsSync(join(state, 'closed.json.lock')), false);
+  assert.equal(existsSync(join(state, 'closed', 'lock')), false);
   const doctorBinary = join(bin, 'doctor-harness');
   writeFileSync(
     doctorBinary,

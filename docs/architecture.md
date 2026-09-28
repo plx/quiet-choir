@@ -52,21 +52,22 @@ are pinned to tools/permissions/sandbox and saved for resume. Profile names and 
 resolved semantic controls remain identity. See
 [ADR 0010](decisions/0010-agent-profiles-and-grants.md).
 
-Each local run has a JSON checkpoint and an exclusive owner lock. Terminal named outcomes (successes
-or explicitly settled failures) are reused when their identities match; unfinished steps execute
-again. A resumed workflow function starts from the beginning, so everything outside a durable
-operation must be deterministic and free of side effects. `ctx.map` provides locally bounded mapper
-concurrency, scoped cancellation, and drain-by-default failure handling. Explicitly named settled
-maps also journal entire item outcomes and owned records; resume skips committed mappers. Ordinary
-throwing maps have no collection journal. Named maps prefix items by validated key or index;
-scope/within compose explicit leaves through a separate prefix context, independent of cancellation
-ownership. A core-owned limiter independently caps live harness invocations across all maps and
-composed helper workflows. The default is min(8, max(1, available CPUs - 2)); data limits configure
-each run, and a shared limiter object can cap multiple runs. Eligible FIFO admission skips providers
-at their own ceilings. Only `Harness.invoke` holds a slot, released before response validation or
-checkpoint writes. Queueing is cancellable and outside per-call deadlines. Admission events are live
-status, not persisted transitions; queued attempts remain `running`. See
-[ADR 0012](decisions/0012-agent-admission.md) and [agent concurrency](agent-concurrency.md).
+Each local run has a directory containing a JSON snapshot, append-only journal, and exclusive owner
+lock. Terminal named outcomes (successes or explicitly settled failures) are reused when their
+identities match; unfinished steps execute again. A resumed workflow function starts from the
+beginning, so everything outside a durable operation must be deterministic and free of side effects.
+`ctx.map` provides locally bounded mapper concurrency, scoped cancellation, and drain-by-default
+failure handling. Explicitly named settled maps also journal entire item outcomes and owned records;
+resume skips committed mappers. Ordinary throwing maps have no collection journal. Named maps prefix
+items by validated key or index; scope/within compose explicit leaves through a separate prefix
+context, independent of cancellation ownership. A core-owned limiter independently caps live harness
+invocations across all maps and composed helper workflows. The default is min(8, max(1, available
+CPUs - 2)); data limits configure each run, and a shared limiter object can cap multiple runs.
+Eligible FIFO admission skips providers at their own ceilings. Only `Harness.invoke` holds a slot,
+released before response validation or checkpoint writes. Queueing is cancellable and outside
+per-call deadlines. Admission events are live status, not persisted transitions; queued attempts
+remain `running`. See [ADR 0012](decisions/0012-agent-admission.md) and
+[agent concurrency](agent-concurrency.md).
 
 `ctx.sleep` records a durable wake deadline. The CLI checks canonical, project-relative source
 hashes alongside explicit version and engine metadata. Strict resume remains the default. Explicit
@@ -148,3 +149,13 @@ CLI commands translate answer/pending/resume arguments into plain plans for `Wor
 Stored launch paths enable resume by ID and code-free drift hints; core execution never imports
 those paths. See [ADR 0018](decisions/0018-durable-questions.md) and
 [question semantics](questions.md).
+
+## Journal storage
+
+`RunStore` separates owned read/write/compaction/process registration from orchestration. The file
+implementation coalesces concurrent saves, validates changed journal records, and commits observable
+outcomes before their promises settle. Readers reconstruct the snapshot plus newer entries without a
+writer lock. Storage format 7 preserves replay contract 6 and existing step identities. Default
+state lives under a canonical-project XDG root; the CLI discovers projects and stored launch paths
+without importing workflows. Migration retains original bytes and coordinates both lock layouts. See
+[storage](storage.md) and [ADR 0019](decisions/0019-journal-storage-and-project-state.md).
