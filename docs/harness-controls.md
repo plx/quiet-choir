@@ -83,8 +83,10 @@ parent environment are likewise external to identity; explicit `config` values a
 Custom harnesses must honor `HarnessRequest.imageAttachments` rather than reopening source paths.
 Attached images must be regular files that are still readable when a run resumes, because their
 bytes are re-hashed for step identity; a missing, unreadable, or non-regular image (such as a FIFO)
-fails that step and names it by id; the step's other image reads are cancelled and closed first. Run
-interruption cancels a pending snapshot read as ordinary cancellation.
+fails that step and names it by id; the step's other image reads are cancelled first. Run
+interruption cancels a pending snapshot as ordinary cancellation. Either way, an open, stat, or read
+stuck on a stalled mount is abandoned rather than awaited, and its handle is closed in the
+background if the operation ever returns.
 
 ## Configuration doctor
 
