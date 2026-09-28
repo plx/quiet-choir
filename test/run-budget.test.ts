@@ -188,11 +188,134 @@ it('counts retries and refuses the next retry without altering failed-attempt ev
   ).rejects.toThrow('maxRunAgentAttempts');
   const saved = await readRun({ stateDir, runId: 'retry' });
   expect(calls).toBe(2);
+  expect(saved.status).toBe('failed');
+  expect(saved.budgetStop).toMatchObject({
+    stepId: 'retry',
+    metric: 'maxRunAgentAttempts',
+    limit: 2,
+    observed: 2,
+  });
   expect(saved.steps['retry']).toMatchObject({ attempts: 2, status: 'failed' });
   expect(saved.steps['retry']?.attemptHistory?.map((attempt) => attempt.status)).toEqual([
     'failed',
     'failed',
   ]);
+});
+
+function untilAborted(signal: AbortSignal): Promise<never> {
+  return new Promise((_resolve, reject) => {
+    signal.addEventListener('abort', () => {
+      reject(signal.reason as Error);
+    });
+  });
+}
+
+it('cancels a budgeted first attempt queued for admission without creating its record', async () => {
+  const stateDir = await directory();
+  const controller = new AbortController();
+  const queued = deferred();
+  const invoked = deferred();
+  const prompts: string[] = [];
+  const definition = defineWorkflow({
+    ...base,
+    async run(ctx) {
+      await Promise.all(['first', 'second'].map((id) => ctx.claude.text(id, { prompt: id })));
+      return null;
+    },
+  });
+  const running = runWorkflow(definition, {
+    stateDir,
+    runId: 'queued',
+    input: null,
+    agentLimit: 1,
+    maxRunAgentAttempts: 10,
+    signal: controller.signal,
+    harness: {
+      invoke(request, context) {
+        prompts.push(request.options.prompt);
+        invoked.resolve();
+        return untilAborted(context.signal);
+      },
+    },
+    onEvent(event) {
+      if (event.type === 'agent.queued' && event.stepId === 'second') queued.resolve();
+    },
+  });
+  const rejected = expect(running).rejects.toThrow('operator stop');
+  await Promise.all([queued.promise, invoked.promise]);
+  controller.abort(new Error('operator stop'));
+  await rejected;
+  const saved = await readRun({ stateDir, runId: 'queued' });
+  expect(prompts).toEqual(['first']);
+  expect(saved.status).toBe('cancelled');
+  expect(saved.steps['first']).toMatchObject({ status: 'cancelled', attempts: 1 });
+  expect(saved.steps['second']).toBeUndefined();
+  expect(saved.budgetStop).toBeUndefined();
+});
+
+it('cancels a budgeted retry queued for admission instead of leaving the step failed', async () => {
+  const stateDir = await directory();
+  const controller = new AbortController();
+  const flakyInvoked = deferred();
+  const blockerQueued = deferred();
+  const retryQueued = deferred();
+  const blockerInvoked = deferred();
+  let flakyQueues = 0;
+  const prompts: string[] = [];
+  const definition = defineWorkflow({
+    ...base,
+    async run(ctx) {
+      const flaky = ctx.claude.text('flaky', {
+        prompt: 'flaky',
+        retry: { maxAttempts: 3, delayMs: 0 },
+      });
+      // Queue the blocker behind flaky's first attempt so its retry must wait for the slot.
+      await flakyInvoked.promise;
+      await Promise.all([flaky, ctx.claude.text('blocker', { prompt: 'blocker' })]);
+      return null;
+    },
+  });
+  const running = runWorkflow(definition, {
+    stateDir,
+    runId: 'queued-retry',
+    input: null,
+    agentLimit: 1,
+    maxRunAgentAttempts: 10,
+    signal: controller.signal,
+    harness: {
+      async invoke(request, context) {
+        prompts.push(request.options.prompt);
+        if (request.options.prompt === 'blocker') {
+          blockerInvoked.resolve();
+          return untilAborted(context.signal);
+        }
+        flakyInvoked.resolve();
+        await blockerQueued.promise;
+        throw new Error('flaky failed');
+      },
+    },
+    onEvent(event) {
+      if (event.type !== 'agent.queued') return;
+      if (event.stepId === 'blocker') blockerQueued.resolve();
+      if (event.stepId === 'flaky' && ++flakyQueues === 2) retryQueued.resolve();
+    },
+  });
+  const rejected = expect(running).rejects.toThrow();
+  await Promise.all([retryQueued.promise, blockerInvoked.promise]);
+  controller.abort(new Error('operator stop'));
+  await rejected;
+  const saved = await readRun({ stateDir, runId: 'queued-retry' });
+  expect(prompts).toEqual(['flaky', 'blocker']);
+  expect(saved.status).toBe('cancelled');
+  expect(saved.steps['flaky']).toMatchObject({
+    status: 'cancelled',
+    attempts: 1,
+    error: 'Workflow cancelled.',
+  });
+  expect(saved.steps['flaky']?.attemptHistory?.map((attempt) => attempt.status)).toEqual([
+    'failed',
+  ]);
+  expect(saved.steps['blocker']).toMatchObject({ status: 'cancelled', attempts: 1 });
 });
 
 it('allows local work and replays with a zero cap and validates policy before creating a run', async () => {

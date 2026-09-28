@@ -1,4 +1,4 @@
-import { RunBudget, runBudgetSchema } from './run-budget.js';
+import { RunBudget, RunBudgetExceededError, runBudgetSchema } from './run-budget.js';
 import { agentUsageSchema, normalizeUsage, usageIdentitySchema } from './usage.js';
 import { legacyAttemptKind } from './usage-summary.js';
 import { mergeOptionsSchema, mergeResultSchema } from './worktree-schema.js';
@@ -1199,8 +1199,29 @@ export async function runWorkflow<TInput, TOutput>(
       const agent = kind === 'claude' || kind === 'codex';
       for (let attempt = 1; ; attempt++) {
         signal.throwIfAborted();
-        const admitted =
-          agent && budget.enabled ? await budgetAdmission(id, step, kind, signal) : undefined;
+        let admitted: Awaited<ReturnType<typeof budgetAdmission>> | undefined;
+        try {
+          admitted =
+            agent && budget.enabled ? await budgetAdmission(id, step, kind, signal) : undefined;
+        } catch (cause) {
+          // A queued first attempt leaves no record; a queued retry must not stay 'failed'.
+          if (
+            attempt === 1 ||
+            !signal.aborted ||
+            cause instanceof RunBudgetExceededError ||
+            signal.reason instanceof CheckpointError
+          )
+            throw cause;
+          const cancelled = cancellationError(signal, cause);
+          origins.remember(cancelled, id);
+          step.status = 'cancelled';
+          step.cancelledBy = cancelled.cancelledBy;
+          step.error = cancelled.message;
+          step.errorStack = errorStack(cancelled);
+          step.finishedAt = new Date().toISOString();
+          if (await trySave()) emit('step.cancelled', id, step);
+          throw cancelled;
+        }
         try {
           if (attempt === 1) {
             if (redefined) {

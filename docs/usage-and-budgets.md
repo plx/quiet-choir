@@ -78,8 +78,10 @@ With either cap enabled, the runtime reserves a limiter slot before the durable 
 including any metadata, transcript or worktree preparation. It releases the slot immediately after
 the harness settles, before response validation and outcome saves. Reserving admission before setup
 prevents queued requests from slipping past a newly reached threshold. Without run caps, the prior
-invocation-only admission behavior remains unchanged. Queueing alone creates no budgeted attempt. An
-admitted preparation failure does count as an attempt even if it never reaches native inference.
+invocation-only admission behavior remains unchanged. Queueing alone creates no budgeted attempt;
+cancelling a queued first attempt leaves no record, and cancelling a queued retry marks the step
+cancelled while keeping its failed attempts. An admitted preparation failure does count as an
+attempt even if it never reaches native inference.
 
 A refusal creates no step/attempt record and saves a run-level `budgetStop`. It cancels queued
 admissions, lets all admitted agent attempts finish, then rejects with `RunBudgetExceededError`. The
