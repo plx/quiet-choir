@@ -20,8 +20,9 @@ Expose `now`, `wait`, `sleepUntil`, and bounded `poll`; new `sleep` calls use th
 One wait stores its pinned identity, deadline, count, latest bounded note, and next check. An
 eligible signal wins before a poll, then deadline. A missed deadline still permits one final
 current-state poll; the winner commits before its promise resolves and is never re-evaluated on
-replay. Polls perform read-only observations under the nested-operation guard. Timer naps never save
-state.
+replay. A signal delivered after the pinned deadline is quarantined like any other invalid delivery,
+since the deadline is fixed and the late answer can never become eligible. Polls perform read-only
+observations under the nested-operation guard. Timer naps never save state.
 
 Quiescent waits suspend without unwinding or cancelling siblings. Waits due within 1000 ms stay
 live; explicit block mode keeps all waits live. Run-level nextWakeAt is derived from open registered

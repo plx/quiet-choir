@@ -1,6 +1,6 @@
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { afterEach, beforeEach, expect, expectTypeOf, it } from 'vitest';
 import {
@@ -213,6 +213,51 @@ it.each(['signal', 'late-signal', 'late-poll'] as const)(
     expect(await listPending({ stateDir })).toEqual([]);
   },
 );
+
+it('quarantines a signal delivered after the deadline while the clock is still before it', async () => {
+  const clock = new Clock();
+  const opened = clock.time;
+  const definition = defineWorkflow({
+    name: 'late-signal-live',
+    version: '1',
+    input: z.null(),
+    output: z.unknown(),
+    run: (ctx) =>
+      ctx.wait('gate', {
+        deadline: opened + 10_000,
+        signal: { prompt: 'Approve?', schema: z.object({ approved: z.literal(true) }) },
+      }),
+  });
+  const options = { stateDir, runId: 'late-signal-live', input: null, clock };
+  expect((await runWorkflow(definition, options)).status).toBe('suspended');
+  const answer = await writeAnswer({
+    ...options,
+    stepId: 'gate',
+    value: { approved: true },
+    by: 'agent:test',
+  });
+  const envelope = JSON.parse(await readFile(answer.path, 'utf8')) as Record<string, unknown>;
+  envelope['at'] = new Date(opened + 10_001).toISOString();
+  await writeFile(answer.path, JSON.stringify(envelope));
+  // The clock is still well before the deadline: a naive check would leave the file in place
+  // and `due()` would keep waking the run every tick until the deadline finally passes.
+  clock.time = opened + 500;
+  const run = await runWorkflow(definition, { ...options, resume: true });
+  expect(run.status).toBe('suspended');
+  const step = run.steps['gate'];
+  expect(step?.status).toBe('waiting');
+  expect(step?.question?.rejections).toHaveLength(1);
+  expect(step?.question?.rejections[0]?.error).toBe(
+    'Answer was delivered after the wait deadline.',
+  );
+  await expect(readFile(answer.path, 'utf8')).rejects.toThrow();
+  const siblings = await readdir(dirname(answer.path));
+  expect(siblings.some((name) => name.includes('.rejected.'))).toBe(true);
+  // Once the deadline passes, the run resolves by deadline as before.
+  clock.time = opened + 11_000;
+  const resolved = await runWorkflow(definition, { ...options, resume: true });
+  expect(resolved.output).toMatchObject({ by: 'deadline' });
+});
 
 it('fails deadline drift on resume and keeps a pinned sleepUntil through interruption', async () => {
   const clock = new Clock();

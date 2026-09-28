@@ -89,8 +89,10 @@ informational engine versions out of effect identity. See
 
 Waits pin timing/source identity, persist one winner, and never checkpoint timer naps. In each scan,
 an eligible signal precedes the poll, then deadline; after a missed deadline give the poll one final
-check. Poll observers run under the nested-operation guard. Due-within-1000ms waits remain active;
-long waits park under the same quiescence contract as questions. Error draining stops new checks
-without aborting active siblings. Tick must claim the ordinary writer before importing source and
-transfer that ownership to the runtime. See
+check. A signal timestamped after the pinned deadline is quarantined like an invalid delivery, since
+the deadline can never move to admit it, and tick must not keep rewaking the run over it. Poll
+observers run under the nested-operation guard. Due-within-1000ms waits remain active; long waits
+park under the same quiescence contract as questions. Error draining stops new checks without
+aborting active siblings. Tick must claim the ordinary writer before importing source and transfer
+that ownership to the runtime. See
 [ADR 0020](../../../docs/decisions/0020-durable-waits-and-tick.md).

@@ -380,7 +380,7 @@ export class RunQuestions {
         step.wait?.deadline !== undefined &&
         at > step.wait.deadline
       )
-        return undefined;
+        throw new Error('Answer was delivered after the wait deadline.');
       return {
         outcome: { by: 'signal', value, at, actor: envelope.by },
         at: envelope.at,
