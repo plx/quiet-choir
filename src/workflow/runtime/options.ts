@@ -1,3 +1,4 @@
+import { worktreeIsolationSchema } from './worktree-schema.js';
 import {
   commonControlFields,
   claudeControlFields,
@@ -16,6 +17,7 @@ import { retryPolicySchema } from './policy.js';
 const positiveInteger = z.number().int().positive().max(Number.MAX_SAFE_INTEGER);
 const shared = {
   ...commonControlFields,
+  isolation: worktreeIsolationSchema.optional(),
   prompt: z.string(),
   profile: z.string().min(1).optional(),
   onError: z.enum(['throw', 'return']).optional(),

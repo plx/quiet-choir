@@ -12,21 +12,23 @@ Its upstream originals remain immutable. The initial ports targeted `a6a7b82`; `
 records the runtime API at `f7fa0af`, including durable `ask`/`approve`, the completed/suspended
 result union, and lock-free answer delivery, on top of direct-output agent values, schema-only
 callback inference, omission of undefined object members, persisted phases/logs, executions, timing,
-usage, request diagnostics, and saved-failure wrappers with original causes. Journal storage
-(injectable `RunStore`/`FileRunStore` and external project state) leaves that model file unchanged:
-storage format 7 preserves replay contract 6, and inspection applies the snapshot and journal
-through `readRun`. Shared helpers forward to `ctx.phase` and `ctx.log`, and the shared legacy
-context forwards `ask`/`approve` and `value` overloads; broad port normalization/cast/catchall
-cleanup remains #65. Returned values keep schema field order. The active suite has 61 unchanged
-differential checks, which preserve original prompts, effort settings, and outputs, six
-durable-question contracts for bootstrap/SDLC, and one interrupted-pipeline recovery check. Those
-two ports intentionally replace new-run approval round trips with one-run questions; their notes
-describe the differences from the immutable originals. Native calls retain run/step/attempt
-identity, durable child registration, admission caps, and harness provenance. Bug-hunt uses scoped
-IDs; other ports retain supported legacy overloads. Historical ports explicitly retain raw input
-capabilities with `strictProfiles: false`. The model-file hash belongs to that commit; regression
-tests use the current built checkout, including `readRun({ runId, stateDir })` in the recovery
-verifier.
+usage, request diagnostics, and saved-failure wrappers with original causes. It now also includes
+runtime-owned worktree isolation and explicit integration: ordinary agent results keep their
+existing shape, and isolated calls add captured worktree metadata. Journal storage (injectable
+`RunStore`/`FileRunStore` and external project state) leaves that model file unchanged: storage
+format 7 preserves replay contract 6, and inspection applies the snapshot and journal through
+`readRun`. Shared helpers forward to `ctx.phase` and `ctx.log`, and the shared legacy context
+forwards `worktree`/`merge` alongside durable commands, files, waits, `ask`/`approve`, and `value`
+overloads; broad port normalization/cast/catchall cleanup remains #65. Returned values keep schema
+field order. The active suite has 61 unchanged differential checks, which preserve original prompts,
+effort settings, and outputs, six durable-question contracts for bootstrap/SDLC, and one
+interrupted-pipeline recovery check. Those two ports intentionally replace new-run approval round
+trips with one-run questions; their notes describe the differences from the immutable originals.
+Native calls retain run/step/attempt identity, durable child registration, admission caps, and
+harness provenance. Bug-hunt uses scoped IDs; other ports retain supported legacy overloads.
+Historical ports explicitly retain raw input capabilities with `strictProfiles: false`. The
+model-file hash belongs to that commit; regression tests use the current built checkout, including
+`readRun({ runId, stateDir })` in the recovery verifier.
 
 The site is a reader, not an execution console. Every original is preserved byte for byte, with its
 MIT license. Every port uses `ctx.claude` explicitly. The comparison layer adds no runtime APIs.

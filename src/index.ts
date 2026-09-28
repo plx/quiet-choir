@@ -208,3 +208,21 @@ export type {
 
 export { guardFile } from './workflow/helpers/guard-file.js';
 export type { GuardFileOptions } from './workflow/helpers/guard-file.js';
+
+export type {
+  WorktreeBase,
+  WorktreeHandle,
+  WorktreeIsolation,
+  WorktreeChange,
+  WorktreeCreateOptions,
+  WorktreeSetupContext,
+  WorktreePolicy,
+  MergeOptions,
+  MergeResult,
+} from './workflow/runtime/worktree-model.js';
+
+export type {
+  WorktreeStep,
+  WorktreeLedger,
+  MergePreparation,
+} from './workflow/runtime/worktree-schema.js';

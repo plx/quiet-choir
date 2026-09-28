@@ -137,8 +137,9 @@ timeouts on agent calls.
 Pass `{ onError: 'abort' }` to cancel only that map's subtree. Catching a failed map permits more
 work, and a caught inner-map failure does not cancel unrelated outer branches. `ctx.signal` is a
 getter for the current scope; effects capture that signal at launch. Ctrl-C/SIGTERM cancels every
-scope. Parallel mappers share the working directory; use separate directories/worktrees when their
-edits could conflict. quiet-choir does not create these automatically.
+scope. Parallel mappers share the working directory unless a call selects `isolation: 'worktree'` or
+a shared `ctx.worktree` handle. Use [runtime worktrees](worktrees.md) for overlapping edits or
+concurrent commands, and structural file sharding for disjoint writers.
 
 Local and agent steps run once per execution unless given `retry: { maxAttempts: 3, delayMs: 100 }`.
 `maxAttempts` counts attempts in the current execution; delay doubles up to 30 seconds. Only opt

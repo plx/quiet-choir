@@ -117,7 +117,9 @@ This avoids reusing later workspace-dependent work after an earlier effect rerun
 `--reuse matching` explicitly reuses every matching terminal ID; it can reuse a result whose
 undeclared filesystem inputs changed when an earlier effect reran. Choose it only when dependencies
 are fully represented by input/prompt/schema/versions. Neither mode reconstructs workspace edits or
-provides isolation. Review the workspace and previous effects before repeating writes.
+provides isolation by itself. Explicit [worktree effects](worktrees.md) preserve immutable changes;
+forked shared handles are recreated for the new owner. Review other workspace effects before
+repeating writes.
 
 From the original launch directory, with absolute `QC_CHECKOUT` and `qc_state_dir`:
 
@@ -308,10 +310,11 @@ aliases. `project.json` registers default projects for `workflow list --all`. Re
 printed absolute state path when operating from another project.
 
 Each `<stateDir>/<runId>/` contains `run.json`, `journal.jsonl`, `lock/`, and on-demand `inbox/` and
-`artifacts/<encoded-prefix>--<full-hash>/<attempt>/`. `worktrees/` is reserved for future use; no
-checkout is created automatically. Artifact directory components are bounded and distinguish exact
-IDs even on case-insensitive filesystems. Artifact writers must use 0600; diagnostic bytes need not
-be synced and are never replay inputs. This revision allocates locations, not transcripts.
+`artifacts/<encoded-prefix>--<full-hash>/<attempt>/`. Opt-in [worktree caches](worktrees.md) default
+to a separate project-state container outside the checkout, with recorded per-run ownership and
+pinned Git refs. Artifact directory components are bounded and distinguish exact IDs even on
+case-insensitive filesystems. Artifact writers must use 0600; diagnostic bytes need not be synced
+and are never replay inputs. This revision allocates locations, not transcripts.
 
 Concurrent saves share journal appends and flushes. Completions, failures, questions, run status,
 and sleep wake deadlines are durable before their promises/events become observable. Ordinary starts

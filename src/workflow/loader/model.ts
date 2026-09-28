@@ -1,3 +1,4 @@
+import type { WorktreeCleanResult } from '../runtime/worktree-clean.js';
 import type { HarnessFixtures } from '../../harnesses/fixture.js';
 import type { RehearsalReport } from './rehearsal.js';
 import type { HarnessSelection } from './harness-selection.js';
@@ -118,9 +119,18 @@ export interface ListWorkflowsPlan extends ExecutionPlan {
   readonly status?: InspectionStatus;
 }
 
+/** Plain-data request to remove only one run’s managed worktree caches and optional refs. */
+export interface CleanWorkflowPlan extends ExecutionPlan {
+  readonly kind: 'workflow.clean';
+  readonly runId: string;
+  readonly stateDir: string;
+  readonly refs?: boolean;
+}
+
 /** The outcome of a workflow command, without live schemas or loaded modules. */
 export type WorkflowCommandResult = ExecutionResult &
   (
+    | (WorktreeCleanResult & { readonly kind: 'workflow.clean.result'; readonly ok: true })
     | WorkflowFailure
     | {
         readonly kind: 'workflow.pending.result';

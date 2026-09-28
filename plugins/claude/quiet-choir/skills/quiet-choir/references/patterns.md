@@ -4,9 +4,8 @@ Read this cookbook before writing loops, fan-out, failure handling, or waits. Th
 checkout examples from `examples/patterns/`, tested with fake harnesses through failure and resume.
 Every TypeScript/JSON fence is checked against its source file; each workflow is at most 30 lines.
 Save it at that checkout location, or replace `../../src/index.js` with your
-[runtime import](setup-and-cli.md#run-against-another-project). The worktree example also needs the
-[complete helper module](worktree-helper.md) beside it. Do not run files from the plugin cache as
-the target workspace.
+[runtime import](setup-and-cli.md#run-against-another-project). Do not run files from the plugin
+cache as the target workspace.
 
 Agent recipes make real calls with the normal CLI harness. Start with
 [fixture rehearsal](#rehearse-for-free) or `--dry-run --json`; local callbacks still perform real
@@ -253,55 +252,53 @@ was superseded by implemented [#44](https://github.com/plx/quiet-choir/issues/44
 
 ## Worktree per item
 
-**Rule:** parallel editing calls need distinct directories. Copy the
-[worktree helper](worktree-helper.md) to `worktree-helper.ts` beside this workflow. It creates a
-branch/path from the root, run ID, and item, reuses only a matching registered worktree, and refuses
-changed ownership or an unrelated path. Supply absolute `repo` and `root`, keep `root` outside the
-target worktree, use unique run IDs for that root, and launch with `--grant editor` when edits are
-authorized. The durable step creates the worktree and records its path; every execution then
-revalidates ownership before the editing call, because a replayed step would skip the check.
+**Rule:** use runtime isolation when targets may overlap, commands observe concurrent edits, or a
+failed writer's partial state is unsafe to reuse. Structural file sharding remains valid for
+disjoint writers. Launch from the target repository with `--grant editor` when edits are authorized.
+Git 2.38+ is required; embedded callers also supply `NodeProcessRunner` and may configure cache
+policy.
 
 <!-- skills-check: example pattern-worktrees -->
 
 ```ts
 import { defineWorkflow, z } from '../../src/index.js';
-import { ensureWorktree } from './worktree-helper.js';
 
-const Input = z.object({ repo: z.string(), root: z.string(), items: z.array(z.string()).max(8) });
 export default defineWorkflow({
   name: 'worktrees',
-  version: '1',
-  input: Input,
-  output: z.array(z.string()),
+  version: '2',
+  input: z.object({ items: z.array(z.string()).max(8) }),
+  output: z.object({ commit: z.string(), conflicts: z.array(z.string()) }),
   profiles: { editor: { extends: 'edit' } },
   async run(ctx, input) {
-    const { repo, root } = input;
-    return ctx.map(
+    const changes = await ctx.map(
       'items',
       input.items,
       { concurrency: 2, key: (item) => ctx.id(item) },
       async (item) => {
-        const setup = { repo, root, runId: ctx.runId, item };
-        const cwd = await ctx.step('worktree', {
-          input: setup,
-          schema: z.string(),
-          run: ({ signal }) => ensureWorktree({ ...setup, signal }),
+        const result = await ctx.codex.text('edit', {
+          profile: 'editor',
+          isolation: 'worktree',
+          prompt: `Implement: ${item}`,
         });
-        const current = await ensureWorktree({ ...setup, signal: ctx.signal });
-        if (current !== cwd) throw new Error(`Worktree moved from ${cwd} to ${current}`);
-        return ctx.codex.value('edit', { profile: 'editor', cwd, prompt: `Implement: ${item}` });
+        if (!result.worktree) throw new Error('Missing isolated change');
+        return result.worktree;
       },
     );
+    const result = await ctx.merge('integrate', changes);
+    return { commit: result.commit, conflicts: result.conflicts.flatMap((c) => c.files) };
   },
 });
 ```
 
-**Cost:** one worktree/branch and one editing call per item, plus retries. Created branches,
-worktrees, and file edits remain after cancellation; no cleanup/reset is automatic. A partial Git
-operation may require inspection before retry. The unjournaled ownership check runs on every
-execution, so a resume after the edit completed also refuses a changed worktree or a root that now
-resolves elsewhere. **Superseded when:** [#59](https://github.com/plx/quiet-choir/issues/59)
-provides supported worktree coordination.
+**Cost:** one editing call per item plus opted-in retries; local Git preparation/capture/integration
+makes no model calls. Each attempt gets a fresh detached checkout from its saved base. `ctx.merge`
+integrates in input order into a run-owned ref; the source checkout is unchanged. Conflicts are data
+and conflicting inputs are skipped. Use source commit IDs as well as filenames when designing a
+repair loop: some structural conflicts have no path list. Default cleanup removes caches after
+success and retains commit pins. **Supersession:** runtime isolation in
+[#59](https://github.com/plx/quiet-choir/issues/59) replaces the manual helper and its dirty
+retries. For shared write/test/fix handles, retention, explicit checkout publication, and
+source-free cleanup, read [worktrees](worktrees.md).
 
 ## Polling and deadlines
 

@@ -1,3 +1,4 @@
+import type { WorktreeHandle } from './worktree-model.js';
 import type { z } from 'zod';
 import type { HarnessInvocation, JsonValue, RetryPolicy } from './model.js';
 
@@ -11,6 +12,8 @@ export type Command =
 
 /** Semantic command inputs and changeable execution limits. */
 export interface ExecOptions {
+  /** Run on a shared checkout, serializing preparation, execution, and snapshot persistence. */
+  readonly worktree?: WorktreeHandle;
   /** Directory relative to the workflow cwd. */
   readonly cwd?: string;
   /** Fingerprinted overlay; keep rotating credentials in the inherited environment. */

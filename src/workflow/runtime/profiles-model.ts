@@ -30,12 +30,19 @@ export interface AgentProfile extends ProfileLimits {
   /** Claude model, tool gates, role prompts and native controls. */
   readonly claude?: Omit<
     ClaudeOptions,
-    'profile' | 'prompt' | 'cwd' | 'onError' | 'retry' | keyof ProfileLimits
+    'profile' | 'prompt' | 'cwd' | 'onError' | 'retry' | 'isolation' | keyof ProfileLimits
   >;
   /** Codex model, sandbox, effort and native controls. */
   readonly codex?: Omit<
     CodexOptions,
-    'profile' | 'prompt' | 'cwd' | 'onError' | 'retry' | 'images' | keyof ProfileLimits
+    | 'profile'
+    | 'prompt'
+    | 'cwd'
+    | 'onError'
+    | 'retry'
+    | 'images'
+    | 'isolation'
+    | keyof ProfileLimits
   >;
 }
 

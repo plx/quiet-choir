@@ -25,9 +25,9 @@ these relationships, including on failure paths. The durability rationale is in
 A settled failure is a terminal branch decision, just like a completed result: identity and path
 checks must preserve it on replay and fork reuse. Cancellation, configuration, and checkpoint-write
 failures never become fallback values. Configuration failures are a missing harness or process
-adapter, plus a `ConfigurationError` thrown by an adapter for validation that fails before launch.
-Retry filtering remains policy; retain every attempt's diagnostics. Do not infer handling from
-JavaScript error identity/cause chains. See
+adapter, plus a `ConfigurationError` thrown by an adapter or worktree isolation for validation that
+fails before launch. Retry filtering remains policy; retain every attempt's diagnostics. Do not
+infer handling from JavaScript error identity/cause chains. See
 [ADR 0007](../../../docs/decisions/0007-durable-failure-outcomes.md).
 
 Settled maps require explicit journal IDs. Each committed item owns its leaf and nested-map IDs;
@@ -104,3 +104,11 @@ reject truncation. File receipts contain hashes, not write content; reads remain
 Conditional rename is optimistic, not protection from unrelated writers. Guard bodies have terminal
 journaled outcomes so an already replayed restore cannot be followed by a rerun mutation. See
 [ADR 0021](../../../docs/decisions/0021-durable-commands-and-files.md).
+
+Worktree isolation belongs above harness adapters and uses ProcessRunner for tracked Git commands.
+Pin the logical base before any invocation; retries never reuse failed per-call directories. Shared
+handle and integration locks span durable outcome saves, not only callbacks. A valid result after
+abort still gets captured. Forks may reuse immutable changes, never another run’s handle ownership.
+Git merge computations leave checkouts alone; only an explicit clean checkout target may update its
+tree. Cleanup touches only ledger-owned caches/refs, and failed cleanup cannot repeat valid work.
+See [ADR 0022](../../../docs/decisions/0022-runtime-owned-worktree-isolation.md).

@@ -174,3 +174,10 @@ Durable commands depend on `ProcessRunner`, injected by the CLI as `NodeProcessR
 `processes/run.ts` handles native child ownership and capture; core orchestration never spawns. Exec
 does not consume agent admission or inherit agent grants. File effects own atomic publication and
 bounded snapshots. See [ADR 0021](decisions/0021-durable-commands-and-files.md).
+
+Worktree isolation also uses `ProcessRunner` above harness adapters. The runtime pins bases, owns
+per-attempt directories, and holds shared-handle locks through snapshot persistence. Explicit merge
+effects checkpoint inputs and publication intent before updating refs or a requested clean checkout.
+The source-free clean executor acquires ordinary run ownership and removes only recorded caches and
+pins. See [ADR 0022](decisions/0022-runtime-owned-worktree-isolation.md) and
+[worktrees](worktrees.md).

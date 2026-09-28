@@ -80,6 +80,9 @@ jobs:
       - name: Test durable shell and file effects CLI
         run: node test/exec-files-cli-smoke.mjs
 
+      - name: Test worktree isolation and cleanup CLI
+        run: node test/worktrees-cli-smoke.mjs
+
       - name: Check Workflow Lab comparisons
         run: npm run comparisons:check
 

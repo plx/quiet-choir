@@ -1,3 +1,10 @@
+import type { MergeOptions, MergeResult } from './worktree-model.js';
+import type {
+  WorktreeIsolation,
+  WorktreeChange,
+  WorktreeHandle,
+  WorktreeCreateOptions,
+} from './worktree-model.js';
 import type {
   ReadFileOptions,
   ReadFileResult,
@@ -100,6 +107,8 @@ export interface ImageAttachment {
 
 /** Options shared by headless agent calls. */
 export interface AgentOptions {
+  /** Fresh detached checkout per attempt, or a serialized shared handle. */
+  readonly isolation?: WorktreeIsolation;
   /** Shared reasoning effort; cannot accompany Codex reasoningEffort. */
   readonly effort?: Effort;
   /** Additional tool directories; Codex treats these as writable roots. */
@@ -306,6 +315,8 @@ export interface Harness {
 
 /** Typed and validated agent output, saved together with harness metadata. */
 export interface AgentResult<T> {
+  /** Captured change for isolated calls; absent for ordinary and legacy results. */
+  readonly worktree?: WorktreeChange;
   /** Validated output, inferred from the schema for object calls. */
   readonly output: T;
   /** Native harness session identifier. */
@@ -360,7 +371,7 @@ export interface RetryPolicy {
 
 /** Context supplied to a local effect. */
 export interface StepContext {
-  /** Canonical workflow working directory. */
+  /** Actual execution directory; mapped into an isolated checkout when selected. */
   readonly cwd: string;
   /** Cooperative cancellation signal; effects should pass it to cancellable operations. */
   readonly signal: AbortSignal;
@@ -372,6 +383,8 @@ export interface StepContext {
 
 /** A local durable effect. Keep nondeterminism and side effects inside its callback. */
 export interface StepDefinition<T> {
+  /** Serialize on this handle and snapshot its tree after a validated result. */
+  readonly worktree?: WorktreeHandle;
   /** Persist and return final failures as Settled<T>; cancellation still rejects. */
   readonly onError?: ErrorMode;
   /** Explicit revision for captured values, helpers, or environment not visible in callback source. */
@@ -388,6 +401,14 @@ export interface StepDefinition<T> {
 
 /** Durable operations available to ordinary TypeScript workflow code. */
 export interface WorkflowContext<TProfile extends string = string> {
+  /** Integrate pinned changes in input order; only target checkout modifies the source working tree. */
+  merge(
+    id: string,
+    changes: readonly (WorktreeChange | WorktreeHandle)[],
+    options?: MergeOptions,
+  ): Promise<MergeResult>;
+  /** Create a run-owned shared checkout; completed effects on it become pinned snapshots. */
+  worktree(id: string, options?: WorktreeCreateOptions): Promise<WorktreeHandle>;
   /** Canonical workflow working directory. */
   readonly cwd: string;
   /** Operator-privileged durable commands; agent tool grants do not restrict this API. */

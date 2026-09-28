@@ -1,3 +1,5 @@
+import { cleanWorktrees } from '../runtime/worktree-clean.js';
+import type { CleanWorkflowPlan } from './model.js';
 import { NodeProcessRunner } from '../../processes/runner.js';
 import type { ProcessRunner } from '../runtime/exec-model.js';
 import { realpath } from 'node:fs/promises';
@@ -107,7 +109,8 @@ export class WorkflowExecutor implements Executor<
   | ListWorkflowsPlan
   | ResumeWorkflowPlan
   | AnswerWorkflowPlan
-  | PendingWorkflowsPlan,
+  | PendingWorkflowsPlan
+  | CleanWorkflowPlan,
   WorkflowCommandResult
 > {
   readonly #options: WorkflowExecutorOptions;
@@ -127,7 +130,8 @@ export class WorkflowExecutor implements Executor<
       | ListWorkflowsPlan
       | ResumeWorkflowPlan
       | AnswerWorkflowPlan
-      | PendingWorkflowsPlan,
+      | PendingWorkflowsPlan
+      | CleanWorkflowPlan,
   ): Promise<WorkflowCommandResult> {
     let unregister: (() => void) | undefined;
     let rehearsal: RehearsalHarness | undefined;
@@ -169,6 +173,19 @@ export class WorkflowExecutor implements Executor<
                 : { kind: 'tsconfig', path: run.launch.tsconfig },
           },
         });
+      }
+      if (plan.kind === 'workflow.clean') {
+        stage = 'workflow.storage';
+        return {
+          kind: 'workflow.clean.result',
+          ok: true,
+          ...(await cleanWorktrees(
+            plan,
+            this.#options.processRunner ?? new NodeProcessRunner(),
+            this.#options.signal,
+            this.#options.processSupervisor,
+          )),
+        };
       }
       if (plan.kind === 'workflow.pending') {
         stage = 'run.unreadable';
