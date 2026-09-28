@@ -73,6 +73,16 @@ for (const [label, text, expected] of [
   ],
   ['dangling link', '\n[missing](references/missing.md)\n', /dangling link/u],
   [
+    'dangling link in mixed-case raw HTML',
+    '\n<A HREF="references/missing.md">missing</A>\n',
+    /dangling link/u,
+  ],
+  [
+    'dangling link in raw HTML with spaced attribute',
+    "\n<img src = 'references/missing.md'>\n",
+    /dangling link/u,
+  ],
+  [
     'missing anchor',
     '\n[missing](references/agent-calls.md#does-not-exist)\n',
     /missing link anchor/u,
