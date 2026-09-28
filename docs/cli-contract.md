@@ -46,8 +46,10 @@ kills tracked groups and writes the last readable checkpoint synchronously befor
 `error.details.forced` is true and `status` may still be `running`. SIGKILL, process crashes, and a
 closed output pipe cannot deliver a JSON document. Storage failures use exit 74 so that a failed
 save never masquerades as exit 1, and a storage failure during an interrupt keeps exit 74 rather
-than 130 because the cancellation checkpoint may not have been saved. Saved completion with a known
-cleanup warning still succeeds under the [process ownership contract](process-lifecycle.md).
+than 130 because the cancellation checkpoint may not have been saved. A run whose saved status is
+`failed` reports `workflow.failed` (exit 1) even when a signal arrived, because the runner saves
+`cancelled` only when the interrupt caused the failure. Saved completion with a known cleanup
+warning still succeeds under the [process ownership contract](process-lifecycle.md).
 
 `check-resume` incompatibility uses exit 3 with the full comparison in `error.details`. Its
 compatible success retains `check`. A missing run includes `details.stateDir`, sorted

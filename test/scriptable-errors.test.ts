@@ -312,3 +312,62 @@ export default defineWorkflow({
     ).toBe('running');
   },
 );
+
+it(
+  'keeps a saved failed checkpoint as a workflow failure when a signal also arrives',
+  { timeout: 20_000 },
+  async () => {
+    const root = join(stateDir, 'workflow');
+    await mkdir(root);
+    await writeFile(join(root, 'package.json'), '{"type":"module"}');
+    await symlink(join(projectRoot, 'node_modules'), join(root, 'node_modules'));
+    const file = join(root, 'workflow.ts');
+    await writeFile(
+      file,
+      `import { z } from 'zod';
+import { defineWorkflow } from ${JSON.stringify(join(projectRoot, 'src/workflow/runtime/model.js'))};
+const hooks = globalThis as unknown as { choirBodyWaiting?: () => void };
+export default defineWorkflow({
+  name: 'interrupted-failure', version: '1', input: z.null(), output: z.string(),
+  // Application code that turns the abort into its own ordinary error, outside any effect.
+  run: (ctx) => new Promise<string>((_, reject) => {
+    ctx.signal.addEventListener('abort', () => { reject(new Error('application failure')); }, { once: true });
+    hooks.choirBodyWaiting?.();
+  }),
+});`,
+    );
+    const analysis = analyzeTypecheckEntrypoint(file, projectRoot);
+    if (!analysis.ok) throw new Error(analysis.error.message);
+    const controller = new AbortController();
+    const hooks = globalThis as { choirBodyWaiting?: () => void };
+    hooks.choirBodyWaiting = () => {
+      controller.abort();
+    };
+    try {
+      const result = await new WorkflowExecutor({
+        signal: controller.signal,
+        logger: { log: vi.fn() },
+      }).execute({
+        kind: 'workflow.execute',
+        typecheck: analysis.plan,
+        runId: 'interrupted-failure',
+        stateDir: join(stateDir, 'state'),
+        cwd: root,
+        resume: false,
+        input: null,
+      });
+      expect(controller.signal.aborted).toBe(true);
+      if (result.ok) throw new Error('expected a failure');
+      expect(result.code).toBe('workflow.failed');
+      expect(result.message).toContain('application failure');
+      expect(workflowErrorDocument(result)).toMatchObject({
+        exitCode: 1,
+        error: { code: 'workflow.failed' },
+        status: 'failed',
+        run: { status: 'failed', error: 'application failure' },
+      });
+    } finally {
+      delete hooks.choirBodyWaiting;
+    }
+  },
+);

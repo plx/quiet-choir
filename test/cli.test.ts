@@ -357,6 +357,22 @@ describe('workflow lifecycle command adapters', () => {
     expect(output.error).toMatchObject({ oclif: { exit: 130 } });
   });
 
+  it('keeps exit 1 for a saved failed checkpoint when a signal also arrives', async () => {
+    const file = await workflowFile();
+    const run = { ...runRecord, status: 'failed', error: 'application failure' } as const;
+    vi.spyOn(WorkflowExecutor.prototype, 'execute').mockImplementation(() => {
+      process.emit('SIGINT');
+      return Promise.resolve(workflowFailure('workflow.failed', 'application failure', { run }));
+    });
+    const output = await captureCommand(WorkflowExecute, [file, '--json']);
+    expect(output.error).toMatchObject({ oclif: { exit: 1 } });
+    expect(JSON.parse(output.stdout)).toMatchObject({
+      exitCode: 1,
+      error: { code: 'workflow.failed' },
+      run: { status: 'failed' },
+    });
+  });
+
   it.each([false, true])('inspects a run without a source file (JSON=%s)', async (json) => {
     const execute = vi.spyOn(WorkflowExecutor.prototype, 'execute').mockResolvedValue({
       kind: 'workflow.run.result',

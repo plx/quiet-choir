@@ -74,8 +74,13 @@ export abstract class WorkflowCommand extends BaseCommand {
       );
       failure = { ...failure, run };
     }
-    // Storage failures keep exit 74 so automation repairs storage before resuming.
-    if (this.signal.aborted && failure.code !== 'workflow.storage')
+    // Storage failures keep exit 74 so automation repairs storage before resuming, and a saved
+    // `failed` checkpoint keeps exit 1 because the signal did not cause that failure.
+    if (
+      this.signal.aborted &&
+      failure.code !== 'workflow.storage' &&
+      !(failure.code === 'workflow.failed' && failure.run?.status === 'failed')
+    )
       failure = { ...failure, code: 'workflow.interrupted' };
     const exit = workflowExitCodes[failure.code];
     if (requestedJson(this.argv)) {
