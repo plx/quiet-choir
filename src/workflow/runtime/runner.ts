@@ -702,21 +702,49 @@ export async function runWorkflow<
     {
       // Recorded child frames are preflighted against their own steps by RunChildren, which keeps
       // adapter-free replay of terminal calls. Every declared child the source never reached still
-      // needs its adapters before any root effect, on resume and fork as on a fresh run.
-      const recorded = new Set(
-        Object.values((existing ?? forkSource)?.children ?? {}).map((child) =>
-          JSON.stringify([child.workflow.name, child.workflow.version]),
-        ),
-      );
-      const pending = [...(definition.children ?? [])];
-      const visited = new Set<object>();
+      // needs its adapters before any root effect, on resume and fork as on a fresh run. Recording
+      // is tracked per declaration path: a child reached under one parent, or a dynamic child with
+      // the same identity, says nothing about the same declaration elsewhere in the tree.
+      const frames = (existing ?? forkSource)?.children ?? {};
+      const recorded = new Set<string>();
+      for (const frame of Object.values(frames)) {
+        const path: [string, string][] = [];
+        const seen = new Set<object>();
+        let current: (typeof frames)[string] | undefined = frame;
+        while (current?.declared && !seen.has(current)) {
+          seen.add(current);
+          path.unshift([current.workflow.name, current.workflow.version]);
+          if (current.parent === null) {
+            recorded.add(JSON.stringify(path));
+            break;
+          }
+          current = Object.hasOwn(frames, current.parent) ? frames[current.parent] : undefined;
+        }
+      }
+      // Walk declaration paths only while they stay recorded; the first unrecorded path makes its
+      // whole declared subtree unrecorded, so that subtree is preflighted once per definition.
+      const pending = (definition.children ?? []).map((child) => ({
+        child,
+        path: [[child.name, child.version]],
+      }));
+      const unrecorded: NonNullable<typeof definition.children>[number][] = [];
       while (pending.length) {
-        const child = pending.pop();
-        if (!child || visited.has(child)) continue;
-        visited.add(child);
-        if (!recorded.has(JSON.stringify([child.name, child.version])))
-          registry.preflight(child, undefined, null);
-        pending.push(...(child.children ?? []));
+        const next = pending.pop();
+        if (!next) break;
+        if (!recorded.has(JSON.stringify(next.path))) {
+          unrecorded.push(next.child);
+          continue;
+        }
+        for (const child of next.child.children ?? [])
+          pending.push({ child, path: [...next.path, [child.name, child.version]] });
+      }
+      const preflighted = new Set<object>();
+      while (unrecorded.length) {
+        const child = unrecorded.pop();
+        if (!child || preflighted.has(child)) continue;
+        preflighted.add(child);
+        registry.preflight(child, undefined, null);
+        unrecorded.push(...(child.children ?? []));
       }
     }
     if (

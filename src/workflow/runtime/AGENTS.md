@@ -148,9 +148,9 @@ active. Journal child changes individually. See
 
 Registered harnesses share the existing effect path; never introduce untracked custom dispatch.
 Preflight names/revisions before effects, including declared children hidden by settled-map replay
-and declared children that a resumed or forked source never recorded. Keep adapter factories lazy on
-replay, named overrides ahead of the legacy catch-all, and explicit adapter-mode changes guarded.
-Strict package profiles own declared capability keys; child delegation cannot enlarge opaque
-controls. Preserve frozen built-in revision-one hashes and normalize legacy names only in read
-views. Helper metadata is observational; local usage is separate from agent attempt counts, and
-reports must stop when the callback returns. See ADR 0027.
+and declared children that a resumed or forked source never recorded at that declaration path. Keep
+adapter factories lazy on replay, named overrides ahead of the legacy catch-all, and explicit
+adapter-mode changes guarded. Strict package profiles own declared capability keys; child delegation
+cannot enlarge opaque controls. Preserve frozen built-in revision-one hashes and normalize legacy
+names only in read views. Helper metadata is observational; local usage is separate from agent
+attempt counts, and reports must stop when the callback returns. See ADR 0027.

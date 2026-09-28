@@ -554,3 +554,100 @@ it('replays a recorded declared child without an adapter on resume and fork', as
   expect(resumed.output).toBe('child');
   expect(calls).toBe(1);
 });
+
+it('preflights a declared child recorded only under another parent before new root effects', async () => {
+  let gates = 0;
+  let fail = true;
+  const child = workflow();
+  const via = (name: string) =>
+    defineWorkflow({
+      ...base,
+      name,
+      children: [child],
+      async run(ctx) {
+        return ctx.workflow('child', child, null);
+      },
+    });
+  const first = via('first');
+  const second = via('second');
+  const parent = defineWorkflow({
+    ...base,
+    name: 'parent',
+    children: [first, second],
+    async run(ctx) {
+      const answer = await ctx.workflow('first', first, null);
+      await ctx.step('gate', {
+        input: null,
+        schema: z.null(),
+        run: () => {
+          gates++;
+          if (fail) throw new Error('not yet');
+          return null;
+        },
+      });
+      return answer + (await ctx.workflow('second', second, null));
+    },
+  });
+  const options = await setup();
+  const adapters = { third: { invoke: async () => response('child') } };
+  await expect(runWorkflow(parent, { ...options, adapters })).rejects.toThrow('not yet');
+  expect(gates).toBe(1);
+  expect(Object.values((await readRun(options)).children ?? {})).toHaveLength(2);
+  fail = false;
+  await expect(
+    runWorkflow(parent, { ...options, resume: true, allowHarnessChange: true }),
+  ).rejects.toThrow('No harness adapter configured for third');
+  await expect(
+    runWorkflow(parent, {
+      ...options,
+      runId: 'forked',
+      forkFrom: { runId: options.runId },
+      allowHarnessChange: true,
+    }),
+  ).rejects.toThrow('No harness adapter configured for third');
+  expect(gates).toBe(1);
+  const resumed = await runWorkflow(parent, { ...options, resume: true, adapters });
+  expect(resumed.output).toBe('childchild');
+  expect(gates).toBe(2);
+});
+
+it('does not let a dynamic child with the same identity stand in for a declared child', async () => {
+  let gates = 0;
+  let fail = true;
+  const child = workflow();
+  const dynamic = defineWorkflow({
+    ...base,
+    async run() {
+      return 'dynamic';
+    },
+  });
+  const parent = defineWorkflow({
+    ...base,
+    name: 'parent',
+    children: [child],
+    async run(ctx) {
+      const first = await ctx.workflow('dynamic', dynamic, null);
+      await ctx.step('gate', {
+        input: null,
+        schema: z.null(),
+        run: () => {
+          gates++;
+          if (fail) throw new Error('not yet');
+          return null;
+        },
+      });
+      return first + (await ctx.workflow('child', child, null));
+    },
+  });
+  const options = await setup();
+  const adapters = { third: { invoke: async () => response('child') } };
+  await expect(runWorkflow(parent, { ...options, adapters })).rejects.toThrow('not yet');
+  expect(Object.values((await readRun(options)).children ?? {})).toMatchObject([
+    { declared: false, workflow: { name: 'registry', version: '1' } },
+  ]);
+  fail = false;
+  await expect(
+    runWorkflow(parent, { ...options, resume: true, allowHarnessChange: true }),
+  ).rejects.toThrow('No harness adapter configured for third');
+  expect(gates).toBe(1);
+});
