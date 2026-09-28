@@ -1,6 +1,11 @@
 import type { ChildOptions, WorkflowDeclaration } from './child-model.js';
 import type { ClaudeOptions, CodexOptions, ExecutionPolicy } from './model.js';
-import type { CapabilityManifest, ProfileOverride, ResolvedProfile } from './profiles-model.js';
+import type {
+  CapabilityManifest,
+  ProfileLimits,
+  ProfileOverride,
+  ResolvedProfile,
+} from './profiles-model.js';
 import { digest } from './json.js';
 import { profileGrantDigest, requireGrant, resolveCapabilities } from './profiles.js';
 
@@ -16,6 +21,17 @@ export interface ChildCapabilities {
     call: ClaudeOptions | CodexOptions,
   ) => void;
   readonly limits: <T extends ExecutionPolicy>(name: string, policy: T) => T;
+}
+
+/** Clamp resource limit fields to a ceiling, keeping an undefined ceiling field unconstrained. */
+function clampLimits<T extends ProfileLimits>(values: T, ceiling: ProfileLimits): T {
+  const result = { ...values };
+  for (const field of ['timeoutMs', 'maxTurns', 'maxBudgetUsd'] as const)
+    if (ceiling[field] !== undefined)
+      Object.assign(result, {
+        [field]: Math.min(result[field] ?? ceiling[field], ceiling[field]),
+      });
+  return result;
 }
 
 function narrows(rule: string, parent: string): boolean {
@@ -136,10 +152,13 @@ export function delegateCapabilities(
       continue;
     }
     const ceiling = bound(name);
+    // Clamp to the effective ceiling here too: a grandchild otherwise treats the child's larger
+    // declared limit as its own ceiling and can exceed the root's cap.
+    const clamped = clampLimits(role, ceiling);
     const inherited: ResolvedProfile = {
-      ...role,
+      ...clamped,
       claude: {
-        ...role.claude,
+        ...clamped.claude,
         ...(role.claude.model === undefined && ceiling.claude.model !== undefined
           ? { model: ceiling.claude.model }
           : {}),
@@ -148,7 +167,7 @@ export function delegateCapabilities(
           : {}),
       },
       codex: {
-        ...role.codex,
+        ...clamped.codex,
         ...(role.codex.model === undefined && ceiling.codex.model !== undefined
           ? { model: ceiling.codex.model }
           : {}),
@@ -177,14 +196,7 @@ export function delegateCapabilities(
       checkProfile(name, { ...role, [provider]: { ...role[provider], ...call } });
     },
     limits(name, policy) {
-      const ceiling = bound(name);
-      const result = { ...policy };
-      for (const field of ['timeoutMs', 'maxTurns', 'maxBudgetUsd'] as const)
-        if (ceiling[field] !== undefined)
-          Object.assign(result, {
-            [field]: Math.min(result[field] ?? ceiling[field], ceiling[field]),
-          });
-      return result;
+      return clampLimits(policy, bound(name));
     },
   };
 }
