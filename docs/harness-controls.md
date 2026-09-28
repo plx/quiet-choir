@@ -117,3 +117,5 @@ stubs. Executable overrides are available as `--claude-binary` and `--codex-bina
 `harnesses` record binary/version, and inspect shows them. Discovery failures and version changes on
 resume are warnings, not identity changes. Completed-only replay does not launch version probes.
 Custom harnesses can implement optional `metadata(request, signal)`; older records remain readable.
+Discovery is shared by the run: an aborted map scope stops waiting for it, and the run aborts its
+`signal` and awaits it before releasing ownership when no effect still needs the result.

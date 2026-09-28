@@ -717,3 +717,56 @@ it('keeps shared version discovery alive when its first map subtree aborts', asy
   expect(invoke.mock.calls[0]?.[0].options.prompt).toBe('y');
   expect((await readRun(setup())).steps['outside']?.status).toBe('completed');
 });
+
+it('releases an aborted scope from stalled discovery and drains discovery before settling', async () => {
+  let ready!: () => void;
+  const discovered = new Promise<void>((resolve) => {
+    ready = resolve;
+  });
+  const order: string[] = [];
+  const metadata = vi.fn<NonNullable<Harness['metadata']>>().mockImplementation(
+    (_request, signal) =>
+      new Promise((_resolve, reject) => {
+        // A well-behaved adapter that waits for its supplied signal and nothing else.
+        signal.addEventListener(
+          'abort',
+          () => {
+            order.push('discovery settled');
+            reject(new Error('discovery aborted', { cause: signal.reason }));
+          },
+          { once: true },
+        );
+        ready();
+      }),
+  );
+  const invoke = vi.fn<Harness['invoke']>().mockResolvedValue(reply);
+  const definition = defineWorkflow({
+    ...base,
+    async run(ctx) {
+      await ctx.map('group', [0, 1], { concurrency: 2, onError: 'abort' }, async (item) => {
+        if (item === 0) {
+          try {
+            return (await ctx.claude.text('inside', { prompt: 'x' })).output;
+          } finally {
+            order.push('inside released');
+          }
+        }
+        await discovered;
+        throw new Error('map failure');
+      });
+      return 'unreachable';
+    },
+  });
+  const failure = runWorkflow(definition, { ...setup(), harness: { metadata, invoke } }).finally(
+    () => {
+      order.push('run settled');
+    },
+  );
+  await expect(failure).rejects.toThrow('map failure');
+  expect(order).toEqual(['inside released', 'discovery settled', 'run settled']);
+  expect(metadata).toHaveBeenCalledTimes(1);
+  expect(invoke).not.toHaveBeenCalled();
+  const saved = await readRun(setup());
+  expect(saved.status).toBe('failed');
+  expect(saved.steps['inside']?.status).not.toBe('running');
+});

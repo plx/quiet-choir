@@ -173,6 +173,20 @@ async function waitUntil(timestamp: number, signal: AbortSignal): Promise<void> 
   }
 }
 
+/** Await shared `work`, but stop waiting (without cancelling it) once `signal` aborts. */
+function untilAborted<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
+  signal.throwIfAborted();
+  return new Promise<T>((resolve, reject) => {
+    const abort = (): void => {
+      reject(signal.reason as Error);
+    };
+    signal.addEventListener('abort', abort, { once: true });
+    void work.then(resolve, reject).finally(() => {
+      signal.removeEventListener('abort', abort);
+    });
+  });
+}
+
 /** Describe the boundary that aborted `signal`; callers must only pass an aborted signal. */
 function cancellationError(signal: AbortSignal, cause: unknown): CancelledError {
   if (signal.reason instanceof CancelledError)
@@ -792,6 +806,14 @@ export async function runWorkflow<TInput, TOutput>(
     }
 
     const metadataRequests = new Map<string, Promise<void>>();
+    // Discovery is run-owned; an aborted scope may abandon its wait, so draining releases the rest.
+    const discoveryController = new AbortController();
+    const discoverySignal = AbortSignal.any([signal, discoveryController.signal]);
+    async function drainDiscovery(): Promise<void> {
+      // Every effect that awaited discovery has settled, so any unsettled request is abandoned.
+      discoveryController.abort(new CancelledError(null, undefined));
+      await Promise.allSettled(metadataRequests.values());
+    }
     function client<TOptions extends AgentOptions>(
       provider: 'claude' | 'codex',
     ): AgentClient<TOptions> {
@@ -933,7 +955,7 @@ export async function runWorkflow<TInput, TOutput>(
                 if (!discovery) {
                   discovery = (async () => {
                     // Installation discovery is shared by the run, not owned by the first map subtree.
-                    const metadata = await options.harness?.metadata?.(request, signal);
+                    const metadata = await options.harness?.metadata?.(request, discoverySignal);
                     if (!metadata) return;
                     const old = record.harnesses?.[provider];
                     const warnings = [...(metadata.warnings ?? [])];
@@ -947,9 +969,11 @@ export async function runWorkflow<TInput, TOutput>(
                     ];
                     await save();
                   })();
+                  // Abandoned waits must not leave an unobserved rejection behind.
+                  discovery.catch(() => undefined);
                   metadataRequests.set(provider, discovery);
                 }
-                await discovery;
+                await untilAborted(discovery, context.signal);
                 context.signal.throwIfAborted();
               }
               let response;
@@ -1148,6 +1172,7 @@ export async function runWorkflow<TInput, TOutput>(
       await operations.drain();
       operations.assertObserved();
       closed = true;
+      await drainDiscovery();
       signal.throwIfAborted();
       const missingMaps = Object.keys(maps).filter(
         (id) =>
@@ -1203,6 +1228,7 @@ export async function runWorkflow<TInput, TOutput>(
       // Body failures stop new launches but preserve in-flight work. Only explicit cancellation
       // or checkpoint failure aborts a scope; draining here does not send a signal.
       await operations.drain();
+      await drainDiscovery();
       // A callback's own AbortError is a failure; only scope cancellation cancels the run.
       record.status = interrupted || error instanceof CancelledError ? 'cancelled' : 'failed';
       record.error = message(error);

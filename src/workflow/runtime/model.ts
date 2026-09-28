@@ -214,7 +214,10 @@ export interface HarnessResponse {
 
 /** Replaceable integration port, also useful for deterministic tests. */
 export interface Harness {
-  /** Discover the native binary/version on first live use in each run invocation. */
+  /**
+   * Discover the native binary/version on first live use in each run invocation. Discovery is
+   * shared by the run: `signal` aborts on interruption or once no effect still awaits the result.
+   */
   metadata?(request: HarnessRequest, signal: AbortSignal): Promise<HarnessMetadata>;
   /** Report effective adapter limits for attempt records. Omit unknown defaults; never perform effects here. */
   policyDefaults?(provider: HarnessRequest['provider']): ExecutionPolicy;
