@@ -69,7 +69,8 @@ npm run build
 node test/skills-cli-smoke.mjs
 ```
 
-`npm run check` includes all three stages, and CI runs them in Quality and package. The skill check:
+`npm run check` includes all three stages. CI runs `skills:check` and the build in Quality and
+package, and the recipe smoke in the CLI smokes job. The skill check:
 
 - Parses YAML frontmatter and validates both documentation-plugin manifests. The portable schema's
   normative validation keywords are pinned from Agent Plugins 1.0.0; Claude's schema explicitly

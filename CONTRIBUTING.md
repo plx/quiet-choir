@@ -22,15 +22,15 @@ incident-investigation, sdlc-orchestrator and bug-hunt; see
 
 `test:cli` first runs `test/cli-smoke-runner.test.mjs` (the runner's own `node:test` checks) and
 then `scripts/run-cli-smokes.mjs`, which runs every `test/*smoke.mjs` against the built CLI, four at
-a time by default. A new smoke needs no CI or `package.json` edit; CI runs the same
-`npm run test:cli` step. Each smoke gets its own temporary `XDG_STATE_HOME` and none of the caller's
-`QUIET_CHOIR_*` variables, and the runner fails if the real state directory
-(`${XDG_STATE_HOME:-~/.local/state}/quiet-choir`) gains entries during the run. Pass name filters
-and `--concurrency N` after `--` to iterate on a subset (`npm run test:cli -- worktrees`; a smoke's
-exact name, such as `cli-smoke`, selects only that smoke); a failing smoke prints the tail of its
-output and keeps its state directory. The Vitest suite has a similar guard
-(`test/setup/state-guard.ts`). CI runs coverage thresholds on the Node 24 leg only; the Node 22.13
-and 26 legs run `npm test`.
+a time by default. A new smoke needs no CI or `package.json` edit; CI runs `npm run test:cli` in a
+separate CLI smokes job, alongside Quality and package. Each smoke gets its own temporary
+`XDG_STATE_HOME` and none of the caller's `QUIET_CHOIR_*` variables, and the runner fails if the
+real state directory (`${XDG_STATE_HOME:-~/.local/state}/quiet-choir`) gains entries during the run.
+Pass name filters and `--concurrency N` after `--` to iterate on a subset
+(`npm run test:cli -- worktrees`; a smoke's exact name, such as `cli-smoke`, selects only that
+smoke); a failing smoke prints the tail of its output and keeps its state directory. The Vitest
+suite has a similar guard (`test/setup/state-guard.ts`). CI runs coverage thresholds on the Node 24
+leg only; the Node 22.13 and 26 legs run `npm test`.
 
 Cookbook changes must update `examples/patterns/` and the corresponding named fences in both
 physical skill copies. `skills:check` enforces source equality and the 30-line workflow limit;
