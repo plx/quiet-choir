@@ -184,10 +184,13 @@ files shown in the reader are batch helpers, not additions to the runtime API.
    and preview Source comparison, Port notes, and Shared support for the new batch and an existing
    bookmark. New batches using the same source and data contract need no UI code changes.
 
-Ports import the current checkout's built package. To reproduce a historical batch, use its recorded
-Quiet Choir commit together with the matching historical batch revision and verification commands;
-rebuilding a newer runtime does not reproduce the old target API. Active-batch maintenance follows
-the regression policy above; comparisons of deliberately different APIs belong in new batches.
+Ports import the current checkout's built package. To reproduce a historical batch, check out the
+batch's historical revision (its `batch.json`) and find the Quiet Choir commit whose
+`src/workflow/runtime/model.ts` matches that batch's `apiSnapshot.sha256`: the revision the site
+shows, or walk `git log -- src/workflow/runtime/model.ts` and hash each version. Then run the
+matching verification commands; rebuilding a newer runtime does not reproduce the old target API.
+Active-batch maintenance follows the regression policy above; comparisons of deliberately different
+APIs belong in new batches.
 
 The reader currently attributes all workflows to the Batch 01 upstream, and `license.txt` comes from
 the first registered batch. Comparisons from a different upstream or license need corresponding
