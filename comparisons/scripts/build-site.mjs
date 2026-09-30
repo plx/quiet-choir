@@ -1,8 +1,8 @@
 import { readFile, readdir, mkdir, copyFile, writeFile, rename } from 'node:fs/promises';
-import { createHash } from 'node:crypto';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { checkApiSnapshots, deriveApiRevision } from './api-snapshot.mjs';
+import { checkSourceHashes } from './source-hashes.mjs';
 const root = fileURLToPath(new URL('../', import.meta.url));
 const repoRoot = fileURLToPath(new URL('../../', import.meta.url));
 const target = resolve(process.argv[2] ?? '.context/comparison-site');
@@ -21,6 +21,9 @@ await rename(`${target}/.openai/hosting.json.tmp`, `${target}/.openai/hosting.js
 const snapshotProblems = checkApiSnapshots(repoRoot);
 if (snapshotProblems.length > 0)
   throw new Error(`API snapshot check failed:\n${snapshotProblems.join('\n')}`);
+const sourceProblems = checkSourceHashes(repoRoot);
+if (sourceProblems.length > 0)
+  throw new Error(`Upstream source hash check failed:\n${sourceProblems.join('\n')}`);
 const ids = JSON.parse(await readFile(`${root}/batches/index.json`, 'utf8'));
 const batches = [];
 for (const id of ids) {
@@ -31,11 +34,8 @@ for (const id of ids) {
   for (const entry of catalog)
     if (!notes[entry.name]?.summary) throw new Error(`Missing narrative for ${id}/${entry.name}`);
   const workflows = [];
-  const hashes = JSON.parse(await readFile(`${dir}/source-hashes.json`, 'utf8'));
   for (const entry of catalog) {
     const original = await readFile(`${dir}/originals/${entry.name}.js`, 'utf8');
-    if (createHash('sha256').update(original).digest('hex') !== hashes[`${entry.name}.js`])
-      throw new Error(`Original snapshot changed: ${id}/${entry.name}`);
     workflows.push({
       ...entry,
       notes: notes[entry.name],

@@ -24,5 +24,6 @@
   "roadmap-plan.js": "aba34ce174dac0c4ec5140051c3753874b7bbe218a25e14b4eda548b2acc9d7a",
   "sdlc-orchestrator.js": "c1ff1920afc9f6878c59e5d98eb4006cb3fe5c9423ccee4f5d029a7ba2b6954d",
   "security-audit.js": "e771e67e5e05c8b8d5cc51fd0cad91fded6ebdf6a1cfead98e8e7f62061ca40e",
-  "test-gap-filler.js": "e243b59725bb69e63c0823f1eb66618d903a53c266cad45a69a755911865504b"
+  "test-gap-filler.js": "e243b59725bb69e63c0823f1eb66618d903a53c266cad45a69a755911865504b",
+  "LICENSE": "da6fc5b1c0ed9929f91afd4874ea6d8f3b6e2311b6d3d39227270bb8ebdc9b00"
 }
