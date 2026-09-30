@@ -6,6 +6,7 @@ export default defineConfig({
     environment: 'node',
     include: ['test/**/*.test.ts'],
     restoreMocks: true,
+    globalSetup: ['test/setup/state-guard.ts'],
     setupFiles: ['test/setup/storage-sync.ts'],
     coverage: {
       exclude: ['src/**/*.d.ts'],

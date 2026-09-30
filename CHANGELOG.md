@@ -2,6 +2,14 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- Development and test infrastructure: run every `test/*smoke.mjs` in CI through
+  `scripts/run-cli-smokes.mjs` in a separate CLI smokes job (eight smokes never ran there), in
+  parallel with a private state directory each and a guard that fails when real quiet-choir state
+  gains entries. CI gates coverage on the Node 24 leg only, `resume`, `pending` and `tick` have
+  in-process exit-code tests, and the dependency pin policy (`@types/node`, the TypeScript aliases,
+  the `vitest` group) is encoded in Dependabot and `test/package.test.ts`. No runtime behavior
+  changes; see CONTRIBUTING.md.
+
 - Development and test infrastructure: route every in-process fsync through one internal helper and
   run the unit suite with it disabled (about 80% of summed test time on APFS), then return the
   raised test timeouts to the default or a measured, commented value. Production still syncs and no

@@ -50,54 +50,6 @@ jobs:
       - name: Build
         run: npm run build
 
-      - name: Test documented skill recipes
-        run: node test/skills-cli-smoke.mjs
-
-      - name: Test compiled process recovery CLI
-        run: node test/process-lifecycle-cli-smoke.mjs
-
-      - name: Test scriptable workflow CLI
-        run: node test/scriptable-cli-smoke.mjs
-
-      - name: Test workflow observability CLI
-        run: node test/observability-cli-smoke.mjs
-
-      - name: Test workflow rehearsal CLI
-        run: node test/rehearsal-cli-smoke.mjs
-
-      - name: Test schema-first workflow values CLI
-        run: node test/schema-values-cli-smoke.mjs
-
-      - name: Test durable question CLI
-        run: node test/questions-cli-smoke.mjs
-
-      - name: Test journal storage CLI
-        run: node test/storage-cli-smoke.mjs
-
-      - name: Test durable waits and tick CLI
-        run: node test/waits-cli-smoke.mjs
-
-      - name: Test durable shell and file effects CLI
-        run: node test/exec-files-cli-smoke.mjs
-
-      - name: Test worktree isolation and cleanup CLI
-        run: node test/worktrees-cli-smoke.mjs
-
-      - name: Test restricted harness CLI
-        run: node test/harness-isolation-cli-smoke.mjs
-
-      - name: Test streaming harness CLI
-        run: node test/agent-stream-cli-smoke.mjs
-
-      - name: Test usage and run budget CLI
-        run: node test/usage-cli-smoke.mjs
-
-      - name: Test child workflow and registry CLI
-        run: node test/children-cli-smoke.mjs
-
-      - name: Test typed harness registry and integration helper CLI
-        run: node test/harness-registry-cli-smoke.mjs
-
       - name: Check Workflow Lab comparisons
         run: npm run comparisons:check
 
@@ -106,6 +58,38 @@ jobs:
 
       - name: Validate package
         run: npm run package:check
+
+  smokes:
+    name: CLI smokes
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Run CLI smokes
+        run: npm run test:cli
+
+      - name: Check that CLI smokes left no real quiet-choir state
+        run: |
+          d="${XDG_STATE_HOME:-$HOME/.local/state}/quiet-choir"
+          if [ -e "$d" ]; then find "$d" -maxdepth 3; exit 1; fi
 
   test:
     name: Tests / Node.js ${{ matrix.node-version }}
@@ -134,4 +118,14 @@ jobs:
         run: npm ci
 
       - name: Test with coverage gates
+        if: matrix.node-version == '24'
         run: npm run test:coverage
+
+      - name: Test
+        if: matrix.node-version != '24'
+        run: npm test
+
+      - name: Check that tests left no real quiet-choir state
+        run: |
+          d="${XDG_STATE_HOME:-$HOME/.local/state}/quiet-choir"
+          if [ -e "$d" ]; then find "$d" -maxdepth 3; exit 1; fi

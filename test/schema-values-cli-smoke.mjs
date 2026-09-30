@@ -7,9 +7,13 @@ import { fileURLToPath } from 'node:url';
 
 const project = fileURLToPath(new URL('..', import.meta.url));
 const root = mkdtempSync(join(tmpdir(), 'choir-values-cli-'));
+// Default run state goes under the temp root, never the developer's real XDG state.
+const env = { ...process.env, XDG_STATE_HOME: join(root, 'xdg') };
+delete env.QUIET_CHOIR_STATE_DIR;
 const cli = (...args) =>
   spawnSync(process.execPath, [join(project, 'bin/run.js'), 'workflow', ...args], {
     cwd: root,
+    env,
     encoding: 'utf8',
     timeout: 30_000,
   });

@@ -20,6 +20,18 @@ when the target API changes. The six ports are release-notes, project-bootstrap,
 incident-investigation, sdlc-orchestrator and bug-hunt; see
 [the batch policy](comparisons/README.md#regression-and-snapshot-policy).
 
+`test:cli` first runs `test/cli-smoke-runner.test.mjs` (the runner's own `node:test` checks) and
+then `scripts/run-cli-smokes.mjs`, which runs every `test/*smoke.mjs` against the built CLI, four at
+a time by default. A new smoke needs no CI or `package.json` edit; CI runs `npm run test:cli` in a
+separate CLI smokes job, alongside Quality and package. Each smoke gets its own temporary
+`XDG_STATE_HOME` and none of the caller's `QUIET_CHOIR_*` variables, and the runner fails if the
+real state directory (`${XDG_STATE_HOME:-~/.local/state}/quiet-choir`) gains entries during the run.
+Pass name filters and `--concurrency N` after `--` to iterate on a subset
+(`npm run test:cli -- worktrees`; a smoke's exact name, such as `cli-smoke`, selects only that
+smoke); a failing smoke prints the tail of its output and keeps its state directory. The Vitest
+suite has a similar guard (`test/setup/state-guard.ts`). CI runs coverage thresholds on the Node 24
+leg only; the Node 22.13 and 26 legs run `npm test`.
+
 Cookbook changes must update `examples/patterns/` and the corresponding named fences in both
 physical skill copies. `skills:check` enforces source equality and the 30-line workflow limit;
 `test/patterns.test.ts` verifies failure/resume behavior with fake harnesses and temporary Git
@@ -36,6 +48,24 @@ primitive supersedes a workaround, update its recipe and traps in the same PR.
   core workflow model.
 - Add or update an architecture decision record under `docs/decisions/` when a choice has durable,
   cross-cutting consequences.
+
+## Dependency pin policy
+
+`test/package.test.ts` enforces these relationships without naming versions, so an allowed bump
+needs no test edit. `.github/dependabot.yml` applies the same policy.
+
+- `@types/node` tracks the lowest supported Node.js `major.minor` in `engines.node` (currently
+  22.13), so the bundled runtime type-check never offers an API the oldest supported Node.js lacks.
+  Dependabot ignores its major and minor updates; patch updates are fine. Raise it together with the
+  `engines.node` floor.
+- `typescript` is an npm alias to `@typescript/typescript6`, the compiler behind the runtime
+  type-check, and `@typescript/native` aliases TypeScript 7 for development. Do not move either
+  across a major version without a deliberate change.
+- `vitest` and `@vitest/*` move together through the `vitest` Dependabot group, because
+  `@vitest/coverage-v8` peers on the exact `vitest` version.
+- Other runtime dependencies, such as `@oclif/core`, are pinned to exact versions in `package.json`
+  and may be bumped by Dependabot. The test checks that they are exact runtime dependencies, not
+  which version they are.
 
 ## Pull requests
 
