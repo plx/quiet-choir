@@ -58,8 +58,8 @@ export interface TickResumedEntry {
 }
 
 /**
- * Why this tick left a run alone. `locked`: a live, unknown or remote owner, incomplete lock
- * metadata, or a lock recovery in progress. `orphans`: the owner is gone, but a child process is
+ * Why this tick left a run alone. `locked`: a live, unknown or remote owner of either run lock,
+ * incomplete lock metadata, or a live, unknown or remote recoverer. `orphans`: the owner is gone, but a child process is
  * alive or unverified. `crash-loop`: the run was already recovered from a stale `running` state
  * the maximum number of consecutive times without completing a new step. `deadline`: the run was
  * ready, but less than the claim margin of this tick's timeout remained. @internal

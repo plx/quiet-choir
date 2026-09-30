@@ -452,9 +452,10 @@ import. `workflow resume RUN` uses its stored entrypoint. Embedded callers narro
   callbacks.
 - Runs use an atomic snapshot and an append-only journal with shared durable commits. An exclusive
   local writer owns both; readers apply entries newer than the snapshot sequence. Dead local owners
-  can be recovered; live or foreign-host owners are refused. Incomplete lock metadata or an
-  abandoned recovery requires inspection and manual cleanup. Acquiring the lock removes only that
-  run's recognized UUID snapshot temporary files. Use a local POSIX filesystem.
+  can be recovered; live or foreign-host owners are refused. Locks are published and removed by
+  rename, and a crashed recoverer's claim is reclaimed automatically; incomplete lock metadata
+  requires inspection and manual cleanup. Acquiring the lock removes only that run's recognized UUID
+  snapshot temporary files. Use a local POSIX filesystem.
 - Transient checkpoint writes retry briefly. Persistent storage errors stop new effects and never
   retry a successful action in-process. `CheckpointError` identifies save/release failures; combined
   errors preserve the workflow's original cause. A successfully saved failure is thrown as
