@@ -2,6 +2,12 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- Workflow Lab: `comparisons:check` now fails when a batch's `apiSnapshot.sha256` differs from
+  `src/workflow/runtime/model.ts` and rejects a hand-written `apiSnapshot.revision`. Squash merges
+  orphan the commit a PR could pin, so the site build derives the revision (the newest commit
+  reachable from HEAD whose model file has that hash) and shows it in the Target API block. No
+  runtime behavior changes; see comparisons/README.md, "Regression and snapshot policy".
+
 - Development and test infrastructure: run every `test/*smoke.mjs` in CI through
   `scripts/run-cli-smokes.mjs` in a separate CLI smokes job (eight smokes never ran there), in
   parallel with a private state directory each and a guard that fails when real quiet-choir state
