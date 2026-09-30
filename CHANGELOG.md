@@ -2,6 +2,15 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- Runtime: under `workflow execute`, errors and evidence from workflow and custom-adapter code now
+  behave as they do embedded. tsx gives that code its own copy of quiet-choir, so identity checks
+  failed across the boundary: a custom adapter's `HarnessError` with HTTP 429 was recorded as
+  `unknown` and never retried by `retry.on: ['rate-limit']`, a `ConfigurationError` was settled or
+  retried instead of rejecting, `attachHarnessEvidence` data was lost, and `e instanceof ExecError`
+  was false in workflow code. Every public error class is now branded with a `Symbol.for` name chain
+  checked by `Symbol.hasInstance`, and evidence is a non-enumerable symbol property. A branded
+  error's unknown `kind` is recorded as `unknown`. See ADR 0028.
+
 - CLI: piped `--json` failure documents from `workflow execute`, `resume`, `answer --resume` and
   `configuration doctor` were cut off at the pipe buffer (64 KiB on macOS), because the CLI exited
   before stdout drained. The CLI now waits for its own output before exiting on a command failure,

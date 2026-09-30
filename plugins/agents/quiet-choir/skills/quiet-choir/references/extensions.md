@@ -267,6 +267,13 @@ before launch (for example, a schema the provider cannot enforce): it rejects ev
 errors are effect failures. Exercise adapters with fake executables and protocol fixtures before
 making real calls.
 
+`workflow execute` imports workflow and adapter code in a separate module instance, with its own
+copy of `quiet-choir` and `quiet-choir/harness-kit`. The exported error classes (`HarnessError`,
+`ConfigurationError`, `ExecError`, `CancelledError` and the rest) and `attachHarnessEvidence` still
+work across that boundary: the runtime classifies them as it does embedded, and `instanceof` on them
+is reliable in workflow code, including for errors the runtime throws, such as `ctx.exec`'s
+`ExecError`.
+
 Register a third harness with
 `defineHarness({ name, revision, options, capabilities, createAdapter })` and
 `defineWorkflow({ harnesses: [definition], ... })`. The strict Zod object schema owns its option
