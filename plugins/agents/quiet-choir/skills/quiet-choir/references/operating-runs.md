@@ -152,4 +152,6 @@ For code/schema edits use [acceptance or fork recovery](durability.md#choose-a-r
 checkpoint after storage failure, since an uncheckpointed action can repeat.
 
 For parked deadlines and polls, use [workflow tick](waits.md#operate-a-parked-run); pending JSON
-includes their progress.
+includes their progress. `tick --json` reports resumed outcomes, skipped reasons and an observed
+count; with `--run`, exit 75 means the run is still pending, locked or running, and exit 1 means it
+failed, was cancelled, or is incompatible or unreadable.

@@ -2,6 +2,16 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- CLI (breaking): `workflow tick --json` now reports only what the tick did. The resumed count and
+  the `completed`, `suspended`, `failed` and `incompatible` buckets are replaced by `resumed`
+  entries (`{ runId, outcome, nextWakeAt?, message? }` for each run whose resume started), `skipped`
+  entries (`{ runId, reason, message?, nextWakeAt? }`, with reasons not due, no longer due, locked,
+  running, incompatible and unreadable) and an `observed` count of already-terminal runs. Each run
+  appears in at most one entry, so a not-due or incompatible run is no longer also listed as
+  suspended. A cancelled resume is reported as `cancelled`, not failed. `--run` on a run that
+  already failed or was cancelled exits 1, and on one that already completed exits 0. `--max-runs`
+  counts only executed resumes. See docs/waits.md.
+
 - Runtime: under `workflow execute`, errors and evidence from workflow and custom-adapter code now
   behave as they do embedded. tsx gives that code its own copy of quiet-choir, so identity checks
   failed across the boundary: a custom adapter's `HarnessError` with HTTP 429 was recorded as

@@ -64,12 +64,16 @@ checkpoint stores only the harness kind, never its CLI configuration: pass `--ha
 on `tick` (as on `resume`) to reach a run started with custom binaries or limits, since defaults
 apply otherwise.
 
-With --run, exits are 0 completed, 75 pending/locked, 1 failed/incompatible. Without it, run
-failures are data and the batch exits 0 unless the command fails. --max-runs bounds resume attempts
-across one invocation. --watch uses inbox events, next due time, and a one-second fallback scan;
---timeout (default 540s) bounds the invocation. Active callbacks must cooperate with cancellation to
-exit promptly. No process runs after tick exits. For periodic operation, install a user-authorized
-cron or launchd task using absolute paths and a working PATH, for example:
+The JSON lists `resumed` entries (outcome completed, suspended, failed, cancelled or incompatible),
+`skipped` entries (reason not due, no longer due, locked, running, incompatible or unreadable) and
+an `observed` count of already-terminal runs, with each run in at most one entry. With --run, exits
+are 0 completed (now or earlier), 75 pending/locked/running, 1
+failed/cancelled/incompatible/unreadable. Without it, run failures are data and the batch exits 0
+unless the command fails. --max-runs bounds executed resumes across one invocation. --watch uses
+inbox events, next due time, and a one-second fallback scan; --timeout (default 540s) bounds the
+invocation. Active callbacks must cooperate with cancellation to exit promptly. No process runs
+after tick exits. For periodic operation, install a user-authorized cron or launchd task using
+absolute paths and a working PATH, for example:
 
 ```cron
 * * * * * cd /absolute/project && /absolute/node /absolute/quiet-choir/bin/run.js workflow tick --state-dir /absolute/state --json >> /absolute/tick.log 2>&1

@@ -104,12 +104,17 @@ CLI harness configuration (custom binaries, output limits) is not stored in the 
 resume both use `CliHarness` defaults unless `--harness-config` is passed. A cron line for a run
 started with custom binaries or limits must repeat `--harness-config` on every `tick` call.
 
-The result contains a resume-attempt count, completed IDs, suspended `{ runId, nextWakeAt }`
-entries, and failed/skipped/incompatible entries with reasons. Suspended entries can also have a
-skip or incompatibility reason. `--max-runs N` bounds resume attempts across the invocation. With
-`--run`, exit is 0 completed, 75 still pending/locked, or 1 failed/incompatible; without it,
-individual run failures do not change exit 0. Command errors retain the
-[CLI error contract](cli-contract.md).
+The result reports what this tick did. `resumed` has one `{ runId, outcome }` entry per run whose
+resume started, with outcome `completed`, `suspended` (plus `nextWakeAt`), `failed`, `cancelled` or
+`incompatible` (each with a `message`). `skipped` has `{ runId, reason }` entries for runs left
+alone: `not due` and `no longer due` (with `nextWakeAt`), `locked`, `running`, and `incompatible` or
+`unreadable` (with a `message`). `observed` counts runs that were already completed, failed or
+cancelled. Each run appears in at most one entry; a later resume of the same run during `--watch`
+replaces its entry. `--max-runs N` bounds executed resumes across the invocation; refusals before
+import do not count. With `--run`, exit is 0 when the run completed (in this tick or earlier), 75
+when it is still pending (not due, suspended again, locked or running), and 1 when it failed, was
+cancelled, or is incompatible or unreadable. Without `--run`, individual run outcomes do not change
+exit 0. Command errors retain the [CLI error contract](cli-contract.md).
 
 `--watch` waits for the next due time or an inbox filesystem event, with a one-second fallback scan
 for missed events. `--timeout` defaults to 540s and accepts ms/s/m/h; it bounds the whole
