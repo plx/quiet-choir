@@ -21,10 +21,10 @@ differential cases, six durable-question contracts, two intentional inherited-cr
 one interrupted pipeline. The added cases reproduce the originals' missing
 `dependency-upgrade.failures` and empty `api-migration.files` TypeErrors, then verify the corrected
 port behavior. Per-workflow notes disclose additional defensive guards and missing-credibility
-ordering; the original snapshots are never edited to manufacture equality. Its shared helpers
-forward to `ctx.phase` and `ctx.log`, and its legacy context forwards `worktree`/`merge` alongside
-durable commands, files, waits, `ask`/`approve` and `value` overloads; the recovery verifier
-inspects saved runs through `readRun({ runId, stateDir })`.
+ordering; the original snapshots are never edited to manufacture equality, and `comparisons:check`
+enforces that. Its shared helpers forward to `ctx.phase` and `ctx.log`, and its legacy context
+forwards `worktree`/`merge` alongside durable commands, files, waits, `ask`/`approve` and `value`
+overloads; the recovery verifier inspects saved runs through `readRun({ runId, stateDir })`.
 
 Batch 02 has real input/output schemas and root-strict types. Its
 [notes](batches/02-idiomatic-ports/notes.json),
@@ -45,17 +45,19 @@ explicit in the notes and limit direct comparisons of call counts.
 
 ## Repository layout
 
-| Path                                 | Role                                                             |
-| ------------------------------------ | ---------------------------------------------------------------- |
-| `batches/index.json`                 | Ordered batch directory IDs; the first is the reader default     |
-| `batches/<id>/`                      | Originals, ports, metadata, attribution and verification results |
-| `scripts/verify-ports.mjs`           | Batch 01 differential baseline plus the strict/question checks   |
-| `scripts/verify-idiomatic-ports.mjs` | Batch 02 paired fixtures and the F1–F5 matrix                    |
-| `scripts/check-api-snapshot.mjs`     | Fails when a batch's `apiSnapshot.sha256` is not the API file's  |
-| `scripts/api-snapshot.mjs`           | Snapshot check and derivation of the API revision (with a test)  |
-| `scripts/build-site.mjs`             | Packages every registered batch and the static reader            |
-| `site/`                              | Authored HTML, CSS, JavaScript, and the durable Sites identity   |
-| `../.context/comparison-site/`       | Generated publishing checkout; ignored by this repository        |
+| Path                                 | Role                                                                |
+| ------------------------------------ | ------------------------------------------------------------------- |
+| `batches/index.json`                 | Ordered batch directory IDs; the first is the reader default        |
+| `batches/<id>/`                      | Originals, ports, metadata, attribution and verification results    |
+| `scripts/verify-ports.mjs`           | Batch 01 differential baseline plus the strict/question checks      |
+| `scripts/verify-idiomatic-ports.mjs` | Batch 02 paired fixtures and the F1–F5 matrix                       |
+| `scripts/check-api-snapshot.mjs`     | Fails when a batch's `apiSnapshot.sha256` is not the API file's     |
+| `scripts/api-snapshot.mjs`           | Snapshot check and derivation of the API revision (with a test)     |
+| `scripts/check-source-hashes.mjs`    | Fails when an original or LICENSE differs from `source-hashes.json` |
+| `scripts/source-hashes.mjs`          | The upstream source and LICENSE hash check (with a test)            |
+| `scripts/build-site.mjs`             | Packages every registered batch and the static reader               |
+| `site/`                              | Authored HTML, CSS, JavaScript, and the durable Sites identity      |
+| `../.context/comparison-site/`       | Generated publishing checkout; ignored by this repository           |
 
 The strict/question checks live in `verify-strict-ports.mjs` and `verify-question-ports.mjs`, with
 the shared reply generator in `fixture-sample.mjs`. The Batch 02 verifier uses
@@ -74,12 +76,14 @@ python3 -m http.server 4173 --directory .context/comparison-site/dist
 Open `http://localhost:4173`. The builder checks pinned source hashes, the API snapshot hash and
 required metadata, derives each batch's API revision from the checkout's history, embeds both
 batches and copies the static reader. It does not execute ports, upload or deploy anything.
-`comparisons:check` first checks that `apiSnapshot.sha256` matches the API file in every batch (see
-the snapshot policy below) and runs the node tests for that check, then compiles both batches under
-root settings, verifies the Batch 01 baseline and runs the Batch 02 paired fault suite in read-only
-`--check` mode after the package build. It is part of `npm run check` and the CI quality job. The
-fixture suite needs local Git and process identity inspection; it uses no native model CLI,
-credentials, network or paid inference.
+`comparisons:check` first checks that every batch's `originals/*.js` files and `LICENSE` match the
+hashes pinned in `source-hashes.json` (failing on any mismatch, unrecorded file or stale entry),
+then that `apiSnapshot.sha256` matches the API file in every batch (see the snapshot policy below),
+and runs the node tests for both checks, then compiles both batches under root settings, verifies
+the Batch 01 baseline and runs the Batch 02 paired fault suite in read-only `--check` mode after the
+package build. It is part of `npm run check` and the CI quality job. The fixture suite needs local
+Git and process identity inspection; it uses no native model CLI, credentials, network or paid
+inference.
 
 Regenerate reports only for an intentional change, then review their diffs:
 
@@ -160,7 +164,9 @@ files shown in the reader are batch helpers, not additions to the runtime API.
    batches and their IDs intact. Use Batch 02's file shapes as the template. For an API comparison,
    keep the upstream originals fixed so differences isolate the Quiet Choir changes.
 2. Store the pinned upstream `.js` files in `originals/`, preserve `LICENSE`, and record each file's
-   SHA-256 in `source-hashes.json`, keyed by filename including `.js`. Do not format the originals.
+   SHA-256 in `source-hashes.json`, keyed by filename including `.js`, with the batch-root license
+   under the key `LICENSE` (`shasum -a 256 <file>`). Do not format the originals.
+   `comparisons:check` fails on a mismatch, a missing entry or a stale entry.
 3. Add `.workflow.ts` ports and their local helpers to `ported/`, plus a batch `tsconfig.json`. Keep
    workflow names stable across batches so switching batches retains the selected workflow.
 4. Fill in `batch.json`: matching directory `id`, display `number`/`label`/`description`, upstream
