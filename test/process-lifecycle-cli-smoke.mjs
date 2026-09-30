@@ -199,7 +199,9 @@ export default defineWorkflow({name:'process-lifecycle-cli',version:'1',input:z.
     assert.match(result.stderr, /Send again to force/);
     assert.ok(gone(records));
     const record = readRunSync({ stateDir: state, runId: id });
-    assert.equal(record.status, 'cancelled');
+    // A first signal saves a resumable suspension; the in-flight steps are still cancelled.
+    assert.equal(record.status, 'suspended');
+    assert.equal(record.interruptedBy.reason, `Workflow interrupted by ${signal}.`);
     assert.ok(Object.values(record.steps).every((step) => step.status === 'cancelled'));
     assert.equal(existsSync(join(state, id, 'lock')), false);
   }

@@ -275,7 +275,9 @@ export default defineWorkflow({ name:'json', version:'1',
     assert.equal(stdout.trim().split('\n').length, 1, stdout);
     const document = JSON.parse(stdout);
     assert.equal(document.error.code, 'workflow.interrupted');
-    assert.equal(document.status, mode === 'stuck' ? 'running' : 'cancelled');
+    // A drained first signal saves a resumable suspension; a forced exit leaves 'running'.
+    assert.equal(document.status, mode === 'stuck' ? 'running' : 'suspended');
+    if (mode !== 'stuck') assert.match(document.run.interruptedBy.reason, /^Workflow interrupted/);
     assert.deepEqual(document.run, saved(id));
     if (mode === 'stuck') assert.equal(document.error.details.forced, true);
   }
