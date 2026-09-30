@@ -187,9 +187,10 @@ export default defineWorkflow({
 
   const missing = cli('workflow', 'inspect', 'nope', '--state-dir', stateDir);
   assert.equal(missing.status, 3, missing.stdout);
-  const missingMessage = missing.stderr.replace(/\n\s*›\s*/gu, '');
+  // oclif wraps long error lines and prefixes each continuation with exactly this marker.
+  const missingMessage = missing.stderr.replace(/\n › {3}/gu, '');
   assert.ok(missingMessage.includes(`Run nope not found in ${stateDir}`), missing.stderr);
-  assert.match(missing.stderr, /1 runs present: smoke-run/);
+  assert.match(missingMessage, /1 runs present: smoke-run/, missing.stderr);
   assert.doesNotMatch(missing.stderr, /ENOENT/);
 
   // A real host process with no rejection handler must survive detached observer/precheck failures.
