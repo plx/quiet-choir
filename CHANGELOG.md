@@ -2,6 +2,11 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- CLI: piped `--json` failure documents from `workflow execute`, `resume`, `answer --resume` and
+  `configuration doctor` were cut off at the pipe buffer (64 KiB on macOS), because the CLI exited
+  before stdout drained. The CLI now waits for its own output before exiting on a command failure,
+  so these documents arrive whole. Exit codes are unchanged; see docs/cli-contract.md.
+
 - Workflow Lab: `comparisons:check` now fails when any upstream `originals/*.js` file or batch
   `LICENSE` differs from its SHA-256 in `source-hashes.json`, or when an original has no entry or an
   entry has no file, in every registered batch. The site build uses the same check. Both
