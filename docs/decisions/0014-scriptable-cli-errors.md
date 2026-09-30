@@ -21,7 +21,8 @@ Executors flatten errors into plain data. The CLI owns the single numeric-exit t
 JSON envelope on failure. Exit 1 requires a saved failed run; storage errors use exit 74 and report
 observed state without fabricating a failure checkpoint. Existing completed-run warnings remain
 successes. Interrupts use 130 and the current cancelled/forced-cleanup contract. Exit 75 remains
-reserved for suspension.
+reserved for suspension. [ADR 0029](0029-persist-interruptions-as-resumable-suspensions.md) later
+saves a first signal as a resumable `suspended` run that still exits 130.
 
 A workflow command base catches parsing failures, redirects workflow stdout during import/run, and
 restores streams for embedding tests. It deliberately keeps normal oclif logging enabled, so stderr

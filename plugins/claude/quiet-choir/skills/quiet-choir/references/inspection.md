@@ -31,7 +31,8 @@ and log. Ordinary inspect exits 0 for any readable status. Timestamps are not he
 | ---------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
 | `completed`                                          | Read `output`; settled failures may be intentional results. No recovery needed.                                                         |
 | `failed`                                             | Read `rootCause`, step error, and attempt diagnostics; fix the cause, then choose compatible resume, explicit code acceptance, or fork. |
-| `cancelled`                                          | Determine who interrupted it; inspect children, then resume if continuing is intended.                                                  |
+| `cancelled`                                          | Determine who cancelled it; inspect children, then resume if continuing is intended.                                                    |
+| `suspended` with `interruptedBy`                     | A signal or tick deadline interrupted it; it is due now. Let tick resume it, or resume it explicitly.                                   |
 | `running`, live owner                                | Wait/watch; inspect running sleeps' `wakeAt` and the log before calling it stalled.                                                     |
 | Derived `stale`, absent/dead/released owner          | Inspect children; plain resume recovers safe ownership automatically. Tick also recovers it, up to the crash-loop cap.                  |
 | Live/unverified children, remote or incomplete owner | Follow [ownership recovery](operating-runs.md#stalls-and-orphan-recovery); do not infer permission to kill from PID or age alone.       |
@@ -182,11 +183,11 @@ npm run --silent cli -- workflow list --state-dir "$qc_state_dir" --status stale
 
 Watch polls every 2s by default (`ms`, `s`, or `m` suffix, 1ms–2147483647ms). Text redraws on
 changes in a terminal; JSON is JSONL, one document per checkpoint/ownership change, without
-elapsed-time-only lines. It exits with a final snapshot: completed 0, failed 1, cancelled 130,
-stale 3. Unknown/remote ownership is not assumed dead. Missing/unreadable checkpoints use ordinary
-workflow error JSON. Interrupting the watcher adds an error document and exits 130 without stopping
-the observed workflow. Watch may miss intermediate writes and is not a lossless event stream. Normal
-inspect still exits 0.
+elapsed-time-only lines. It exits with a final snapshot: completed 0, failed 1, suspended 75
+(including an interrupted run), cancelled 130, stale 3. Unknown/remote ownership is not assumed
+dead. Missing/unreadable checkpoints use ordinary workflow error JSON. Interrupting the watcher adds
+an error document and exits 130 without stopping the observed workflow. Watch may miss intermediate
+writes and is not a lossless event stream. Normal inspect still exits 0.
 
 List sorts newest `updatedAt` first and supports running/failed/completed/cancelled/stale filters.
 Unreadable files are skipped with stderr warnings. JSON is
@@ -236,10 +237,11 @@ human inspection. Attribution uses error identity/cause chains, not message matc
 `WorkflowRunError` names the root step/kind and exposes `runId`, `stepId`, saved `run`, and original
 `cause`; `-v` prints the saved stack. A map's initiating step stays `failed`; an interrupted sibling
 is `cancelled`, with a distinct cancellation message and `cancelledBy` set to the initiating step ID
-(null for a mapper-body failure or run interrupt). First Ctrl-C/SIGTERM/SIGHUP records run status
-`cancelled` and root cause `{ stepId: null, error: 'Workflow interrupted.' }`. Completed or handled
-failures leave `rootCause` null when the run completes. Resolved, validated actions still save
-success after abort.
+(null for a mapper-body failure or run interrupt). First Ctrl-C/SIGTERM/SIGHUP, or tick's --timeout,
+records run status `suspended` with `interruptedBy: { reason, at }` (such as
+`Workflow interrupted by SIGINT.`) and no root cause; an explicit cancellation records `cancelled`
+with root cause `{ stepId: null, error }`. Completed or handled failures leave `rootCause` null when
+the run completes. Resolved, validated actions still save success after abort.
 
 `maps[id]` contains settled-map identity, status, and ordered item journals. Each committed item
 stores `{ ok, value/error }` and its owned step/nested-map IDs. Those outcomes replay as a unit; a

@@ -127,7 +127,8 @@ export default defineWorkflow({ name:'observe-cli', version:'1', input:z.object(
     [1, 2],
   );
 
-  // A cooperative SIGINT persists cancellation; the separate watcher mirrors exit 130.
+  // A cooperative SIGINT persists a resumable suspension and exits 130; the separate watcher sees
+  // an interrupted run as suspended and exits 75.
   const interrupted = start(execute('interrupted', 'wait'));
   await until(() => active('interrupted'), 'interrupt workflow started');
   const watching = start(['inspect', 'interrupted', '--watch', '--summary', '--interval', '20ms']);
@@ -136,19 +137,21 @@ export default defineWorkflow({ name:'observe-cli', version:'1', input:z.object(
   const cancelled = await interrupted.closed;
   assert.equal(cancelled.code, 130, cancelled.stderr);
   const watched = await watching.closed;
-  assert.equal(watched.code, 130, watched.stderr);
+  assert.equal(watched.code, 75, watched.stderr);
   const snapshots = watched.stdout
     .trim()
     .split('\n')
     .map((line) => JSON.parse(line));
-  assert.equal(snapshots.at(-1).status, 'cancelled');
+  assert.equal(snapshots.at(-1).status, 'suspended');
+  assert.match(snapshots.at(-1).interruptedBy.reason, /Workflow interrupted by SIGINT/);
   assert.ok(snapshots.every((entry) => entry.id === 'interrupted'));
   const cancelledRun = saved('interrupted');
-  assert.equal(cancelledRun.executions[0].outcome, 'cancelled');
-  assert.equal(cancelledRun.rootCause.stepId, null);
+  assert.equal(cancelledRun.status, 'suspended');
+  assert.equal(cancelledRun.executions[0].outcome, 'suspended');
+  assert.equal(cancelledRun.rootCause, null);
   assert.equal(cancelledRun.steps.wait.attemptHistory[0].status, 'cancelled');
   assert.ok(cancelledRun.steps.wait.durationMs >= 0);
-  assert.equal(cancelledRun.events.at(-1).type, 'run.cancelled');
+  assert.equal(cancelledRun.events.at(-1).type, 'run.suspended');
 
   // Owner death changes the read-only status even with unchanged checkpoint bytes.
   const abandoned = start(execute('abandoned', 'wait'));

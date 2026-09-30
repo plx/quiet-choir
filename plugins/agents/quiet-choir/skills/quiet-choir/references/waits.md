@@ -72,15 +72,26 @@ on `tick` (as on `resume`) to reach a run started with custom binaries or limits
 apply otherwise.
 
 The JSON lists `resumed` entries (outcome completed, suspended, failed, cancelled or incompatible),
-`skipped` entries (reason not due, no longer due, locked, orphans, crash-loop, incompatible or
-unreadable) and an `observed` count of already-terminal runs, with each run in at most one entry.
-With --run, exits are 0 completed (now or earlier), 75 pending/locked/orphans, 1
-failed/cancelled/crash-loop/incompatible/unreadable. Without it, run failures are data and the batch
-exits 0 unless the command fails. --max-runs bounds executed resumes across one invocation. --watch
-uses inbox events, next due time, and a one-second fallback scan; --timeout (default 540s) bounds
-the invocation. Active callbacks must cooperate with cancellation to exit promptly. No process runs
-after tick exits. For periodic operation, install a user-authorized cron or launchd task using
-absolute paths and a working PATH, for example:
+`skipped` entries (reason not due, no longer due, locked, orphans, crash-loop, deadline,
+incompatible or unreadable) and an `observed` count of already-terminal runs, with each run in at
+most one entry. With --run, exits are 0 completed (now or earlier), 75
+pending/interrupted/locked/orphans/deadline, 1 failed/cancelled/crash-loop/incompatible/unreadable.
+Without it, run failures are data and the batch exits 0 unless the command fails. --max-runs bounds
+executed resumes across one invocation. --watch uses inbox events, next due time, and a one-second
+fallback scan; --timeout (default 540s) bounds the invocation. Active callbacks must cooperate with
+cancellation to exit promptly.
+
+When --timeout fires, tick interrupts in-flight resumes: each run drains and is saved `suspended`
+with `nextWakeAt` = now and `interruptedBy: {reason, at}`, reported as `suspended` with
+`message: "Tick timeout reached."`, and resumed by the next tick without repeating completed steps.
+A first SIGINT/SIGTERM/SIGHUP to execute, resume or tick saves the same resumable suspension (and
+execute/resume still exit 130). Explicit or workflow-scoped cancellation still saves `cancelled`,
+which tick never retries. `--claim-margin` (same syntax; default 10% of --timeout; `0ms` disables;
+must be smaller than --timeout) stops new claims once less than the margin remains: ready runs are
+left untouched and reported as skipped `deadline`, and --watch ends there. Size --timeout for the
+longest step one tick should finish; a longer agent call is interrupted and restarted each tick. No
+process runs after tick exits. For periodic operation, install a user-authorized cron or launchd
+task using absolute paths and a working PATH, for example:
 
 ```cron
 * * * * * cd /absolute/project && /absolute/node /absolute/quiet-choir/bin/run.js workflow tick --state-dir /absolute/state --json >> /absolute/tick.log 2>&1

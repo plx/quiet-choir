@@ -97,8 +97,11 @@ async function interrupt(id, sleep) {
     assert.equal(result.code, 130, stderr);
     assert.match(stderr, /Workflow interrupted/);
     const record = checkpoint(id);
-    assert.equal(record.status, 'cancelled');
-    assert.deepEqual(record.rootCause, { stepId: null, error: 'Workflow interrupted.' });
+    // A first signal saves a resumable suspension that is due now, not a failure.
+    assert.equal(record.status, 'suspended');
+    assert.equal(record.rootCause, null);
+    assert.match(record.interruptedBy.reason, /Workflow interrupted/);
+    assert.ok(record.nextWakeAt <= Date.now());
     assert.equal(record.steps[sleep ? 'nap' : 'lint'].status, sleep ? 'waiting' : 'cancelled');
     assert.equal(record.steps[sleep ? 'nap' : 'lint'].cancelledBy ?? null, null);
     assert.equal(existsSync(join(state, id, 'lock')), false);

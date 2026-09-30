@@ -6,8 +6,9 @@ Use the [golden path](../SKILL.md#run-a-first-workflow-against-a-project) with a
 fresh run ID. Long foreground jobs can outlast the host tool's timeout; `nohup`, redirected stdin,
 and separate result/log files let the runner continue after that command returns. Save the PID as a
 diagnostic, not as durable proof of ownership. `nohup` handles terminal hangup at launch; direct
-SIGINT/SIGTERM still cancel. Use one pair of files per run/attempt so a recovery does not overwrite
-failure evidence. A machine reboot still stops local processes; there is no scheduler.
+SIGINT/SIGTERM still interrupt (a resumable `suspended` save, exit 130). Use one pair of files per
+run/attempt so a recovery does not overwrite failure evidence. A machine reboot still stops local
+processes; there is no scheduler.
 
 `--json` writes one completion, suspension, or failure document to stdout; logs and workflow console
 output go to stderr. A failure document has `ok:false`, `exitCode`,
@@ -55,7 +56,7 @@ it.
 | 4        | Workflow typecheck, import, or definition failure                                                                                           |
 | 75       | Saved suspension; deliver answers and resume the same run                                                                                   |
 | 74       | Checkpoint/storage failure                                                                                                                  |
-| 130      | Workflow interruption (SIGINT/SIGTERM/SIGHUP), or interrupted watch                                                                         |
+| 130      | Interruption (SIGINT/SIGTERM/SIGHUP) saved a resumable suspension, or interrupted watch; tick or resume continues the run                   |
 
 Use stable `error.code` for automation. Put flags after the command
 (`workflow execute FILE --json`).
@@ -153,7 +154,7 @@ checkpoint after storage failure, since an uncheckpointed action can repeat.
 
 For parked deadlines and polls, use [workflow tick](waits.md#operate-a-parked-run); pending JSON
 includes their progress. `tick --json` reports resumed outcomes, skipped reasons and an observed
-count; with `--run`, exit 75 means the run is still pending, locked or blocked by orphans, and exit
-1 means it failed, was cancelled, or is crash-looping, incompatible or unreadable. Tick also
-recovers stale `running` runs, up to 3 consecutive times without a new completed step
-(`crash-loop`).
+count; with `--run`, exit 75 means the run is still pending (including interrupted by the tick's
+--timeout), locked, blocked by orphans or skipped for the claim-margin `deadline`, and exit 1 means
+it failed, was cancelled, or is crash-looping, incompatible or unreadable. Tick also recovers stale
+`running` runs, up to 3 consecutive times without a new completed step (`crash-loop`).

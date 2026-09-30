@@ -80,7 +80,39 @@ export class WorkflowInputError extends Error {
   }
 }
 
-/** A failed or cancelled workflow whose final failure checkpoint was saved successfully. */
+/**
+ * Abort reason that marks an external interruption, such as a process signal or a tick deadline,
+ * rather than a deliberate cancel. When a run's `RunOptions.signal` aborts with this reason and the
+ * abort interrupts the run, the runner drains in-flight work and saves a resumable `suspended`
+ * checkpoint with `nextWakeAt` set to now and an `interruptedBy` note, then still rejects with
+ * {@link WorkflowRunError}. Any other abort reason saves `cancelled`.
+ *
+ * @example
+ * ```ts
+ * controller.abort(new RunInterruptedError('Worker shutting down.'));
+ * ```
+ */
+export class RunInterruptedError extends Error {
+  static {
+    brandError(this, 'RunInterruptedError');
+  }
+
+  /** Recognize an instance from any quiet-choir module instance, such as a CLI workflow's own import. */
+  public static override [Symbol.hasInstance](value: unknown): value is RunInterruptedError {
+    return isBranded(this, value);
+  }
+
+  /** The message becomes the saved run's `interruptedBy.reason`. */
+  public constructor(message = 'Workflow interrupted.', options?: ErrorOptions) {
+    super(message, options);
+    this.name = 'RunInterruptedError';
+  }
+}
+
+/**
+ * A failed, cancelled, or interrupted-and-suspended workflow whose final checkpoint was saved
+ * successfully. An interrupted run's saved status is `suspended` with `interruptedBy` set.
+ */
 export class WorkflowRunError extends Error {
   static {
     brandError(this, 'WorkflowRunError');
@@ -98,7 +130,7 @@ export class WorkflowRunError extends Error {
 
   /** Keep the saved snapshot and the prior rejection (including any checkpoint aggregate) as cause. */
   public constructor(
-    /** Successfully persisted failed/cancelled snapshot from this invocation. */
+    /** Successfully persisted failed, cancelled, or interrupted snapshot from this invocation. */
     public readonly run: RunRecord,
     cause: unknown,
   ) {

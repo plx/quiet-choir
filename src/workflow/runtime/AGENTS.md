@@ -73,8 +73,10 @@ replay counts after payload eviction; never claim a completion that failed to co
 stale status is derived from ownership, not written into a checkpoint. `recovery-decision.ts` is the
 single place the ownership recovery and crash-loop rules are encoded; tick writes its
 `staleRecovery` counter only under ownership, and the runner removes it on a clean suspension or
-completion. See
-[ADR 0015](../../../docs/decisions/0015-observe-runs-without-changing-effect-identity.md).
+completion. An interrupt whose run-signal reason is a `RunInterruptedError` saves `suspended` with
+`nextWakeAt` now and `interruptedBy` after the ordinary drain, keeps `staleRecovery`, and still
+rejects; every other abort keeps `cancelled`, and a new execution clears `interruptedBy` (ADR 0029).
+See [ADR 0015](../../../docs/decisions/0015-observe-runs-without-changing-effect-identity.md).
 
 Questions pin their full identity even while waiting. Registration, non-question effects, and
 checkpoint writes count as active; a promise blocked on an external answer does not. Suspend only

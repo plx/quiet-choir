@@ -60,3 +60,5 @@ part of the documentation.
 - [0027: Typed harness registry and integration helpers](0027-typed-harness-registry-and-integration-helpers.md)
 
 - [0028: Brand public errors across module instances](0028-brand-public-errors-across-module-instances.md)
+
+- [0029: Persist external interruptions as resumable suspensions](0029-persist-interruptions-as-resumable-suspensions.md)

@@ -162,8 +162,108 @@ export default defineWorkflow({ name: 'crash', version: '1', input: z.object({})
   const resumed = document(0, 'resume', 'C', '--json');
   assert.equal(resumed.status, 'completed');
   assert.equal((await readRun({ stateDir, runId: 'C' })).staleRecovery, undefined);
+
+  // Parts 3 and 4 share a workflow whose `held` step honours its abort signal until a gate opens.
+  const heldFile = join(root, 'held.mts');
+  const marker = (name, kind) => join(root, `${name}-${kind}`);
+  writeFileSync(
+    heldFile,
+    `import { defineWorkflow, z } from ${dist};
+import { appendFileSync, existsSync } from 'node:fs';
+import { join } from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
+const root = ${JSON.stringify(root)};
+export default defineWorkflow({ name: 'held', version: '1',
+  input: z.object({ name: z.string(), nap: z.number() }), output: z.string(),
+  async run(ctx, input) {
+    const file = (kind: string) => join(root, input.name + '-' + kind);
+    if (input.nap > 0) await ctx.sleep('nap', input.nap);
+    await ctx.step('before', { input: null, schema: z.null(), run: () => {
+      appendFileSync(file('before'), 'before\\n');
+      return null;
+    } });
+    return ctx.step('held', { input: null, schema: z.string(), run: async ({ signal }) => {
+      appendFileSync(file('started'), 'started\\n');
+      while (!existsSync(file('gate'))) await delay(25, undefined, { signal });
+      return 'done';
+    } });
+  } });`,
+  );
+
+  // Part 3: a SIGTERM'd execute saves a resumable suspension and exits 130; tick completes it.
+  const term = spawn(
+    process.execPath,
+    cliArgs(['execute', heldFile, '--run-id', 'S', '--input', '{"name":"S","nap":0}', '--json']),
+    { cwd: root, stdio: ['ignore', 'pipe', 'pipe'] },
+  );
+  let termOut = '';
+  let termErr = '';
+  term.stdout.setEncoding('utf8').on('data', (chunk) => {
+    termOut += chunk;
+  });
+  term.stderr.setEncoding('utf8').on('data', (chunk) => {
+    termErr += chunk;
+  });
+  const termExit = once(term, 'close');
+  await until(
+    () => existsSync(marker('S', 'started')) || term.exitCode !== null,
+    'the held step to start',
+  );
+  assert.ok(existsSync(marker('S', 'started')), termErr || termOut);
+  term.kill('SIGTERM');
+  const [termCode] = await termExit;
+  assert.equal(termCode, 130, termErr);
+  const interrupted = JSON.parse(termOut);
+  assert.equal(interrupted.error.code, 'workflow.interrupted');
+  assert.equal(interrupted.run.status, 'suspended');
+  assert.equal(interrupted.run.interruptedBy.reason, 'Workflow interrupted by SIGTERM.');
+  assert.equal(interrupted.run.steps.before.status, 'completed');
+  writeFileSync(marker('S', 'gate'), 'go');
+  const afterSignal = document(0, 'tick', '--run', 'S', '--json');
+  assert.deepEqual(afterSignal.resumed, [{ runId: 'S', outcome: 'completed' }]);
+  assert.equal(readFileSync(marker('S', 'before'), 'utf8'), 'before\n');
+  const signalled = await readRun({ stateDir, runId: 'S' });
+  assert.equal(signalled.output, 'done');
+  assert.equal(signalled.interruptedBy, undefined);
+
+  // Part 4: tick's own --timeout interrupts the held step; the run stays resumable.
+  const parked = document(
+    75,
+    'execute',
+    heldFile,
+    '--run-id',
+    'T',
+    '--input',
+    '{"name":"T","nap":1500}',
+    '--json',
+  );
+  await delay(Math.max(0, parked.run.nextWakeAt - Date.now() + 100));
+  const timedOut = document(
+    75,
+    'tick',
+    '--run',
+    'T',
+    '--timeout',
+    '5s',
+    '--claim-margin',
+    '0ms',
+    '--json',
+  );
+  assert.equal(timedOut.resumed.length, 1);
+  const [entry] = timedOut.resumed;
+  assert.equal(entry.outcome, 'suspended');
+  assert.equal(entry.message, 'Tick timeout reached.');
+  assert.ok(entry.nextWakeAt <= Date.now());
+  assert.ok(existsSync(marker('T', 'started')));
+  const summary = document(0, 'inspect', 'T', '--json', '--summary');
+  assert.equal(summary.status, 'suspended');
+  assert.equal(summary.interruptedBy.reason, 'Tick timeout reached.');
+  writeFileSync(marker('T', 'gate'), 'go');
+  const afterTimeout = document(0, 'tick', '--run', 'T', '--json');
+  assert.deepEqual(afterTimeout.resumed, [{ runId: 'T', outcome: 'completed' }]);
+  assert.equal(readFileSync(marker('T', 'before'), 'utf8'), 'before\n');
   console.log(
-    'Tick recovery CLI: a SIGKILLed tick is recovered by the next tick, and a crash loop stops at the persisted cap until an explicit resume.',
+    'Tick recovery CLI: a SIGKILLed tick is recovered by the next tick, a crash loop stops at the persisted cap until an explicit resume, and signal or tick-timeout interruptions resume on the next tick.',
   );
 } finally {
   rmSync(root, { recursive: true, force: true });

@@ -378,8 +378,11 @@ Pass `{ onError: 'abort' }` to cancel just that map's subtree after a failure. C
 allows later workflow steps, and a caught inner-map failure leaves other outer branches running.
 `ctx.signal` and each effect's signal refer to the current scope. Run interruption still cancels all
 scopes. Interrupted effects have status `cancelled` and `cancelledBy`; the initiating effect stays
-`failed`. Inspect `rootCause: { stepId, error }` for the run's cause. Ctrl-C records a null step ID
-and `Workflow interrupted.`; handled failures leave `rootCause` null in a completed run.
+`failed`. Inspect `rootCause: { stepId, error }` for the run's cause; handled failures leave
+`rootCause` null in a completed run. Ctrl-C (or SIGTERM/SIGHUP) is not a failure: it drains, saves a
+resumable `suspended` run with `interruptedBy: { reason, at }` and no root cause, and exits 130; the
+next `workflow tick` or `resume` continues it. An explicit or workflow-scoped cancellation saves
+`cancelled`.
 
 Use an explicitly named settled map to retain every item's outcome, including mapper-body errors:
 
@@ -621,7 +624,7 @@ layered project/user settings are deferred.
 | 4    | `load.*`: typecheck, import, or workflow-definition failure. No execution checkpoint is written.                                                                                                                                       |
 | 74   | `workflow.storage`: saving, process registration, or releasing ownership failed. Inspect the reported saved state; it can still be `running`, `completed`, or absent.                                                                  |
 | 75   | Saved suspension: `workflow.run.suspended` with pending waits and answer/resume commands. A saved suspension stands even when a signal arrived.                                                                                        |
-| 130  | `workflow.interrupted`: SIGINT/SIGTERM/SIGHUP. Graceful cancellation saves `cancelled` when possible. A second signal kills tracked groups immediately and reports the last readable checkpoint, which may still be `running`.         |
+| 130  | `workflow.interrupted`: SIGINT/SIGTERM/SIGHUP. A first signal saves a resumable `suspended` run (`interruptedBy`) when possible. A second kills tracked groups at once and reports the last readable checkpoint, maybe `running`.      |
 
 `npm run check` includes formatting, lint, strict typechecking, tests with coverage gates, build,
 compiled CLI smoke tests, TypeDoc validation, and package checks. No automated test calls a paid

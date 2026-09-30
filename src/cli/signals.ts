@@ -1,4 +1,5 @@
 import type { ProcessSupervisor } from '../processes/supervisor.js';
+import { RunInterruptedError } from '../workflow/runtime/run-errors.js';
 
 /** A vanished terminal must not interrupt child cleanup. @internal */
 export function terminalError(error: unknown): boolean {
@@ -18,7 +19,10 @@ export function tolerateClosedTerminal(): void {
     });
 }
 
-/** First signal drains; any second signal synchronously kills all owned groups before exit. @internal */
+/**
+ * First signal drains and marks the abort as an external interruption, so a run saves a resumable
+ * suspension; any second signal synchronously kills all owned groups before exit. @internal
+ */
 export function executionSignals(
   supervisor: ProcessSupervisor,
   log: (message: string) => void,
@@ -29,7 +33,7 @@ export function executionSignals(
   dispose(): void;
 } {
   const controller = new AbortController();
-  const cancel = (): void => {
+  const cancel = (name: NodeJS.Signals): void => {
     if (controller.signal.aborted) {
       supervisor.forceKill();
       try {
@@ -38,19 +42,25 @@ export function executionSignals(
         process.exit(130);
       }
     }
-    controller.abort(new Error(`${label} interrupted.`));
+    controller.abort(new RunInterruptedError(`${label} interrupted by ${name}.`));
     try {
       log(`${label} interrupted; draining active work. Send again to force.`);
     } catch (error) {
       if (!terminalError(error)) throw error;
     }
   };
-  for (const name of ['SIGINT', 'SIGTERM', 'SIGHUP'] as const) process.on(name, cancel);
+  // Bind each name: the listener argument is absent when a signal is emitted programmatically.
+  const listeners = (['SIGINT', 'SIGTERM', 'SIGHUP'] as const).map((name) => {
+    const listener = (): void => {
+      cancel(name);
+    };
+    return [name, listener] as const;
+  });
+  for (const [name, listener] of listeners) process.on(name, listener);
   return {
     signal: controller.signal,
     dispose() {
-      for (const name of ['SIGINT', 'SIGTERM', 'SIGHUP'] as const)
-        process.removeListener(name, cancel);
+      for (const [name, listener] of listeners) process.removeListener(name, listener);
     },
   };
 }

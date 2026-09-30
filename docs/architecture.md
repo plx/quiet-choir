@@ -226,8 +226,10 @@ deadlines. It owns parked promises separately from active work, preserving quies
 sibling draining. New sleeps use wait records; old sleep records retain their replay bridge.
 Plain-data `workflow tick` checks readiness/source bytes, acquires the ordinary writer before
 imports, and injects that owned store into the loader/runtime. Operator hooks run outside durable
-effects and drain after ownership release. See [waits](waits.md) and
-[ADR 0020](decisions/0020-durable-waits-and-tick.md).
+effects and drain after ownership release. A marked external interruption (a CLI signal or tick's
+deadline) saves a resumable suspension that is due at once. See [waits](waits.md),
+[ADR 0020](decisions/0020-durable-waits-and-tick.md) and
+[ADR 0029](decisions/0029-persist-interruptions-as-resumable-suspensions.md).
 
 Durable commands depend on `ProcessRunner`, injected by the CLI as `NodeProcessRunner`. The shared
 `processes/run.ts` handles native child ownership and capture; core orchestration never spawns. Exec

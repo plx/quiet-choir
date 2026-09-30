@@ -1018,6 +1018,79 @@ describe('tick command exit and error codes', () => {
   });
 
   it.each([
+    [['--timeout', '60s', '--claim-margin', '5s'], { timeoutMs: 60_000, claimMarginMs: 5_000 }],
+    [['--timeout', '2m', '--claim-margin', '0ms'], { timeoutMs: 120_000, claimMarginMs: 0 }],
+    [
+      ['--timeout', '1h', '--claim-margin', '1.5m'],
+      { timeoutMs: 3_600_000, claimMarginMs: 90_000 },
+    ],
+  ] as const)('passes --claim-margin %j as claimMarginMs', async (flags, expected) => {
+    const stateDir = await stateDirectory();
+    const execute = vi
+      .spyOn(TickWorkflowExecutor.prototype, 'execute')
+      .mockResolvedValue(tickResult(0));
+    const output = await captureCommand(WorkflowTick, ['--state-dir', stateDir, ...flags]);
+    expect(output.error).toBeUndefined();
+    expect(execute).toHaveBeenCalledWith(expect.objectContaining(expected));
+  });
+
+  it('leaves the claim margin to the executor default when the flag is absent', async () => {
+    const stateDir = await stateDirectory();
+    const execute = vi
+      .spyOn(TickWorkflowExecutor.prototype, 'execute')
+      .mockResolvedValue(tickResult(0));
+    await captureCommand(WorkflowTick, ['--state-dir', stateDir, '--timeout', '10s']);
+    expect(execute.mock.calls[0]?.[0]).not.toHaveProperty('claimMarginMs');
+  });
+
+  it.each([
+    ['10s', '10s'],
+    ['10s', '11s'],
+    ['10s', 'soon'],
+    ['10s', '-1s'],
+    ['10s', '0.5ms'],
+  ])('rejects --timeout %s with --claim-margin %s before execution', async (timeout, margin) => {
+    const stateDir = await stateDirectory();
+    const execute = vi.spyOn(TickWorkflowExecutor.prototype, 'execute');
+    const output = await captureCommand(WorkflowTick, [
+      '--state-dir',
+      stateDir,
+      '--timeout',
+      timeout,
+      '--claim-margin',
+      margin,
+    ]);
+    expect(output.error).toMatchObject({ code: 'usage.flag', oclif: { exit: 2 } });
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it('renders a deadline skip and an interrupted suspension', async () => {
+    const stateDir = await stateDirectory();
+    vi.spyOn(TickWorkflowExecutor.prototype, 'execute').mockResolvedValue({
+      kind: 'workflow.tick.result',
+      ok: true,
+      resumed: [
+        {
+          runId: 'run-a',
+          outcome: 'suspended',
+          nextWakeAt: Date.UTC(2030, 0, 1),
+          message: 'Tick timeout reached.',
+        },
+      ],
+      skipped: [{ runId: 'run-b', reason: 'deadline', nextWakeAt: null }],
+      observed: 0,
+      exitCode: 0,
+    });
+    const output = await captureCommand(WorkflowTick, ['--state-dir', stateDir]);
+    expect(output.stdout).toContain(
+      [
+        'run-a: suspended: Tick timeout reached. (next wake 2030-01-01T00:00:00.000Z)',
+        'run-b: skipped: deadline',
+      ].join('\n'),
+    );
+  });
+
+  it.each([
     ['run.locked', 3],
     ['workflow.storage', 74],
   ] as const)('maps the %s failure to exit %i', async (code, exit) => {

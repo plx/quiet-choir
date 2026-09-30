@@ -119,6 +119,8 @@ export function formatRunSummary(run: RunSummary, verbose = false): string {
       `${step.status} ${step.id}  ${request ? `${request.harness} ${request.model ?? '(native model)'}` : label}${step.elapsedMs === null ? '' : `  ${duration(step.elapsedMs)} elapsed`}${limits ? `; ${limits}` : ''}${step.rootCause ? ' [root cause]' : ''}${step.error ? `  ${step.error}` : ''}`,
     );
   }
+  if (run.interruptedBy)
+    lines.push(`Interrupted at ${run.interruptedBy.at}: ${run.interruptedBy.reason} (resumable)`);
   if (run.rootCause)
     lines.push(`Root cause (${run.rootCause.stepId ?? 'workflow'}): ${run.rootCause.error}`);
   else if (run.error) lines.push(`Error: ${run.error}`);

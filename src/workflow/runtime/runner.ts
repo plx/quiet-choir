@@ -65,6 +65,7 @@ import type { PhaseInfo, PhaseOptions, RequestSummary, RunEvent } from './observ
 import {
   isValidRunId,
   runIdMessage,
+  RunInterruptedError,
   RunRefusedError,
   WorkflowInputError,
   WorkflowRunError,
@@ -2857,6 +2858,7 @@ export async function runWorkflow<
     record.error = null;
     record.output = null;
     record.rootCause = null;
+    delete record.interruptedBy;
     const started = observations.lifecycle('run.started');
     await save();
     notify({ ...started, message: 'Run started.', attempt: 0, runId: record.id });
@@ -3027,6 +3029,30 @@ export async function runWorkflow<
       observationsClosed = true;
       await observations.flush().catch(() => undefined);
       if (!options.rehearsal) await worktrees.cleanup(false).catch(() => undefined);
+      // A marked external interruption (a CLI signal or tick's deadline) is not a failure: save a
+      // resumable suspension that is due now. It keeps staleRecovery, since it shows no progress.
+      if (interrupted && options.signal.reason instanceof RunInterruptedError) {
+        record.status = 'suspended';
+        children.finish('suspended');
+        record.error = null;
+        record.rootCause = null;
+        record.output = null;
+        record.interruptedBy = { reason: message(error), at: new Date().toISOString() };
+        // After questions.close(): the question pump would otherwise rewrite the wake time.
+        record.nextWakeAt = clockNow(clock);
+        warnUnmatched();
+        const suspended = observations.lifecycle('run.suspended');
+        if (await trySave()) {
+          savedFailure = structuredClone(record);
+          notify({
+            ...suspended,
+            message: `Run interrupted; resumable: ${message(error)}`,
+            attempt: 0,
+            runId: record.id,
+          });
+        }
+        throw error;
+      }
       // A callback's own AbortError is a failure; only scope cancellation cancels the run.
       record.status = interrupted || error instanceof CancelledError ? 'cancelled' : 'failed';
       children.finish(record.status, message(error));

@@ -33,7 +33,9 @@ Actions that reject in an aborted scope are cancelled, with `CancelledError` and
 rather than inheriting the initiating step's message. Run `rootCause` attributes the escaping
 failure; handled failures do not poison a later successful run. Error identity/cause tracking is
 diagnostic, not the implicit durable handling inference rejected in decision 0007. CLI interruption
-retains `Workflow interrupted.` as the run cause with a null step ID.
+retains `Workflow interrupted.` as the run cause with a null step ID. (Since
+[ADR 0029](0029-persist-interruptions-as-resumable-suspensions.md), a marked interruption saves a
+resumable suspension with `interruptedBy` and no run cause; unmarked aborts keep this rule.)
 
 `onError: 'settle'` requires an explicit run-unique map journal `id`. This deliberately adds
 identity to the illustrative API in issue #43: unnamed completion-order counters cannot safely

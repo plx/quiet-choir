@@ -168,6 +168,7 @@ export type {
 
 export {
   WorkflowRunError,
+  RunInterruptedError,
   WorkflowInputError,
   RunRefusedError,
   isValidRunId,
