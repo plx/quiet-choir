@@ -830,15 +830,13 @@ describe('tick deadline interruption and claim margin', { timeout: 40_000 }, () 
     const frozen = Date.now();
     const now = vi.spyOn(Date, 'now').mockReturnValue(frozen);
     const realSetTimeout = globalThis.setTimeout;
-    const timers = vi.spyOn(globalThis, 'setTimeout').mockImplementation(((
-      handler: () => void,
-      ms?: number,
-      ...args: unknown[]
-    ) => {
-      if (ms !== 10_000) return realSetTimeout(handler, ms, ...args);
-      handler();
-      return realSetTimeout(() => undefined, 0);
-    }));
+    const timers = vi
+      .spyOn(globalThis, 'setTimeout')
+      .mockImplementation((handler: () => void, ms?: number, ...args: unknown[]) => {
+        if (ms !== 10_000) return realSetTimeout(handler, ms, ...args);
+        handler();
+        return realSetTimeout(() => undefined, 0);
+      });
     let result: TickWorkflowsResult | WorkflowFailure;
     try {
       result = await tick.execute({ ...f.tickPlan, timeoutMs: 10_000, claimMarginMs: 0 });
