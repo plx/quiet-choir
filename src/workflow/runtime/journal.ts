@@ -13,7 +13,7 @@ import {
   validateRecordChange,
   type RunRecord,
 } from './record.js';
-import { atomicStorageWrite, syncDirectory } from './storage-io.js';
+import { atomicStorageWrite, syncDirectory, syncHandle } from './storage-io.js';
 
 /** A changed field, effect, or settled map; absent value removes an optional field. @internal */
 export interface JournalChange {
@@ -179,7 +179,7 @@ export class JournalWriter {
     const validLength = bytes.lastIndexOf(10) + 1;
     if (validLength !== bytes.length) {
       await file.truncate(validLength);
-      await file.sync();
+      await syncHandle(file);
     }
     this.#bytes = validLength;
     await syncDirectory(directory);
@@ -223,7 +223,7 @@ export class JournalWriter {
       if (!result.bytesWritten) throw new Error('Storage journal write made no progress.');
       written += result.bytesWritten;
     }
-    if (durable) await file.sync();
+    if (durable) await syncHandle(file);
     this.#bytes += Buffer.byteLength(bytes);
     record.seq = entry.seq;
     this.#previous = { ...structuredClone(record), seq: entry.seq };
@@ -239,6 +239,6 @@ export class JournalWriter {
     await using file = await open(join(directory, 'journal.jsonl'), 'r+');
     await file.truncate(0);
     this.#bytes = 0;
-    await file.sync();
+    await syncHandle(file);
   }
 }

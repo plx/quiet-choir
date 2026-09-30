@@ -1,4 +1,4 @@
-import { createStorageDirectory, syncDirectory } from './storage-io.js';
+import { createStorageDirectory, syncDirectory, syncHandle } from './storage-io.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { link, open, readFile, rm, stat } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
@@ -153,7 +153,7 @@ export async function writeAnswer(options: WriteAnswerOptions): Promise<AnswerDe
     const file = await open(temporary, 'wx', 0o600);
     try {
       await file.writeFile(serialized);
-      await file.sync();
+      await syncHandle(file);
     } finally {
       await file.close();
     }

@@ -3,6 +3,7 @@ import { constants } from 'node:fs';
 import { link, lstat, mkdir, open, realpath, rename, rm } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, relative, resolve, sep } from 'node:path';
 import { z } from 'zod';
+import { syncDirectory, syncHandle } from './storage-io.js';
 import type { ReadFileResult, WriteFileOptions, WriteFileResult } from './file-model.js';
 
 const sha256 = z.string().regex(/^[a-f0-9]{64}$/u);
@@ -140,14 +141,6 @@ async function currentFile(
     await opened.handle.close();
   }
 }
-async function syncDirectory(path: string): Promise<void> {
-  const handle = await open(path, 'r');
-  try {
-    await handle.sync();
-  } finally {
-    await handle.close();
-  }
-}
 async function parents(path: string): Promise<void> {
   const parent = dirname(path);
   if (parent === path) return;
@@ -185,7 +178,7 @@ export async function replaceFile(
     try {
       if (before) await handle.chmod(before.mode);
       await handle.writeFile(bytes);
-      await handle.sync();
+      await syncHandle(handle);
     } finally {
       await handle.close();
     }

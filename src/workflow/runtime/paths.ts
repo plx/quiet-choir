@@ -1,4 +1,4 @@
-import { createStorageDirectory, syncDirectory } from './storage-io.js';
+import { createStorageDirectory, syncDirectory, syncHandle } from './storage-io.js';
 import { createHash } from 'node:crypto';
 import { existsSync, realpathSync } from 'node:fs';
 import { open, readdir, readFile } from 'node:fs/promises';
@@ -103,7 +103,7 @@ export async function prepareStateDirectory(stateDir: string, cwd?: string): Pro
     try {
       await using file = await open(path, 'wx', 0o600);
       await file.writeFile(value);
-      await file.sync();
+      await syncHandle(file);
       await syncDirectory(dirname(path));
     } catch (error) {
       if (!(error instanceof Error && 'code' in error && error.code === 'EEXIST')) throw error;

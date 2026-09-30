@@ -3,7 +3,7 @@ import { constants } from 'node:fs';
 import { chmod, lstat, mkdir, open, rm, type FileHandle } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import type { AgentTranscript, AgentTranscriptWriter } from './agent-stream-model.js';
-import { syncDirectory } from './storage-io.js';
+import { syncDirectory, syncHandle } from './storage-io.js';
 
 const marker = `${JSON.stringify({ type: 'truncated', reason: 'maxTranscriptBytes' })}\n`;
 
@@ -58,7 +58,7 @@ export class AttemptTranscript implements AgentTranscriptWriter {
       0o600,
     );
     try {
-      await file.sync();
+      await syncHandle(file);
       await syncDirectory(directory);
       return new AttemptTranscript(path, file, cap);
     } catch (error) {
@@ -106,7 +106,7 @@ export class AttemptTranscript implements AgentTranscriptWriter {
     this.#closed ??= (async () => {
       try {
         await this.#pending;
-        await this.#file.sync();
+        await syncHandle(this.#file);
       } finally {
         await this.#file.close();
       }
