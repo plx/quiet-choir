@@ -78,7 +78,7 @@ export default defineConfig(
   },
   {
     // Pure decision modules: no I/O, clock or store. Values come only from the two allowlisted
-    // siblings; everything else must be `import type`. replay-decision.ts is listed ahead of #186.
+    // siblings; everything else must be `import type`.
     files: ['src/workflow/runtime/attempt-failure.ts', 'src/workflow/runtime/replay-decision.ts'],
     rules: {
       '@typescript-eslint/no-restricted-imports': [

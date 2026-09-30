@@ -135,6 +135,13 @@ import { bindContext } from './context.js';
 import { stepError, errorKind } from './step-error.js';
 import { ConfigurationError } from './configuration-error.js';
 import { classifyAttemptFailure } from './attempt-failure.js';
+import {
+  decideReplay,
+  forkReuseValid,
+  legacyKind,
+  replayRefusalMessage,
+  type ReplayInput,
+} from './replay-decision.js';
 import { digest, jsonValue } from './json.js';
 import type {
   AgentClient,
@@ -1277,29 +1284,46 @@ export async function runWorkflow<
         throw new Error(`Step ${id}: ${message(cause)}`, { cause });
       }
       const prior = Object.hasOwn(record.steps, id) ? record.steps[id] : undefined;
-      if (prior?.legacyIdentity === 1) {
-        if ((kind === 'agent' || kind === 'claude' || kind === 'codex') && isTerminalStep(prior))
-          throw new Error(
-            `Step ${id}: original format-one agent has no pinned isolation mode; start a new run or invalidate it in a fork.`,
-          );
-        const legacyKind = kind === 'agent' ? (observedRequest?.harness ?? kind) : kind;
-        const oldFingerprint = digest({
-          kind: legacyKind,
-          dependencies: legacyDependencies ?? jsonValue(dependencies),
-          schema: schemaJson(schema),
-          retry: {
-            maxAttempts: local?.retry?.maxAttempts ?? 1,
-            delayMs: local?.retry?.delayMs ?? 100,
-          },
-        });
-        if (
-          prior.kind !== legacyKind ||
-          prior.fingerprint !== oldFingerprint ||
-          onError === 'return'
-        )
-          throw new Error(
-            `Step ${id}: original format-one identity changed; restore its inputs/options/schema/retry before migrating or start a new run.`,
-          );
+      const forkedFrom = record.forkedFrom;
+      const replayInput: ReplayInput = {
+        id,
+        kind,
+        prior,
+        identity,
+        fingerprint: stepFingerprint,
+        onError,
+        request: observedRequest,
+        // Lazy: an agent result schema cannot always become JSON Schema, and a terminal legacy
+        // agent step must be refused before anything tries.
+        legacyFingerprint: () =>
+          digest({
+            kind: legacyKind(kind, observedRequest),
+            dependencies: legacyDependencies ?? jsonValue(dependencies),
+            schema: schemaJson(schema),
+            retry: {
+              maxAttempts: local?.retry?.maxAttempts ?? 1,
+              delayMs: local?.retry?.delayMs ?? 100,
+            },
+          }),
+        forkedFrom: forkedFrom !== undefined,
+        // Called at most once, only when decideReplay reaches fork reuse: it moves the cursor.
+        forkCandidate: () =>
+          forkedFrom &&
+          reuseCandidate(forkedFrom, forkSource, id, kind, stepFingerprint, (sourceStep) =>
+            forkReuseValid(
+              kind,
+              onError,
+              sourceStep,
+              (output) => schema.safeParse(structuredClone(output)).success,
+            ),
+          ),
+        rehearsal: options.rehearsal !== undefined,
+        isolated: isolation !== undefined,
+        strictHealedDivergence: strictHealedDivergence !== undefined,
+      };
+      const decision = decideReplay(replayInput);
+      let outcome = decision.outcome;
+      if (decision.migrateLegacy && prior) {
         prior.kind = kind;
         if (kind === 'agent' && observedRequest) {
           prior.harness = observedRequest.harness;
@@ -1310,74 +1334,56 @@ export async function runWorkflow<
         prior.seq = nextSeq++;
         delete prior.legacyIdentity;
         await save();
+        // A concurrent effect may have recorded a strict healed divergence during the save.
+        outcome = decideReplay({
+          ...replayInput,
+          strictHealedDivergence: strictHealedDivergence !== undefined,
+        }).outcome;
       }
-      const redefined =
-        prior !== undefined && (prior.kind !== kind || prior.fingerprint !== stepFingerprint);
-      if (redefined && (prior.kind === 'ask' || prior.kind === 'wait'))
-        throw new Error(
-          `Step ${id}: a ${prior.kind === 'ask' ? 'question' : 'wait'} cannot be redefined as another effect; use a new ID.`,
-        );
-      if (redefined && isTerminalStep(prior)) {
-        const changed = [
-          ...new Set([...Object.keys(prior.identity ?? {}), ...Object.keys(identity)]),
-        ].filter((key) => prior.identity?.[key] !== identity[key]);
-        throw new Error(
-          `Step ${id}: ${changed.join(', ') || 'identity'} changed on a ${prior.status === 'completed' ? 'completed' : 'settled-failed'} step; start a new run.`,
-        );
+      if (outcome.kind === 'refuse') {
+        const { refusal } = outcome;
+        if (refusal.reason !== 'strict-healed-divergence')
+          throw refusal.reason === 'rehearsal-git'
+            ? new ConfigurationError(replayRefusalMessage(id, refusal))
+            : new Error(replayRefusalMessage(id, refusal));
+        // decideReplay refuses this way only while a divergence is recorded.
+        if (strictHealedDivergence) {
+          controller.abort(strictHealedDivergence);
+          throw strictHealedDivergence;
+        }
       }
-      if (prior && isTerminalStep(prior)) {
+      if (outcome.kind === 'replay' && prior) {
         const output = replay(prior);
         if (attributeFrame(prior)) await save();
         emit('step.replayed', id, prior);
         return output;
       }
-      if (options.rehearsal && (isolation || kind === 'worktree' || kind === 'merge'))
-        throw new ConfigurationError(
-          'Dry-run does not simulate Git worktree effects. Use a fixture harness in a temporary repository to rehearse isolation without paid calls.',
-        );
       const wasFailed = prior?.status === 'failed';
-      if (!prior && record.forkedFrom) {
-        const candidate = reuseCandidate(
-          record.forkedFrom,
-          forkSource,
-          id,
-          kind,
-          stepFingerprint,
-          (sourceStep) =>
-            kind === 'worktree'
-              ? false
-              : sourceStep.status === 'settled-failed'
-                ? onError === 'return' && sourceStep.settledError !== undefined
-                : schema.safeParse(structuredClone(sourceStep.output)).success,
-        );
-        if (candidate) {
-          const copied: StepRecord = {
-            ...structuredClone(candidate),
-            seq: nextSeq++,
-            reusedFrom: {
-              runId: record.forkedFrom.runId,
-              stateDir: record.forkedFrom.stateDir,
-              stepId: id,
-              fingerprint: stepFingerprint,
-              at: new Date().toISOString(),
-            },
-          };
-          attributeFrame(copied);
-          Object.defineProperty(record.steps, id, {
-            value: copied,
-            enumerable: true,
-            configurable: true,
-            writable: true,
-          });
-          await save();
-          emit('step.reused', id, copied);
-          return replay(copied);
-        }
+      if (outcome.kind === 'reuse-fork' && forkedFrom) {
+        const { candidate } = outcome;
+        const copied: StepRecord = {
+          ...structuredClone(candidate),
+          seq: nextSeq++,
+          reusedFrom: {
+            runId: forkedFrom.runId,
+            stateDir: forkedFrom.stateDir,
+            stepId: id,
+            fingerprint: stepFingerprint,
+            at: new Date().toISOString(),
+          },
+        };
+        attributeFrame(copied);
+        Object.defineProperty(record.steps, id, {
+          value: copied,
+          enumerable: true,
+          configurable: true,
+          writable: true,
+        });
+        await save();
+        emit('step.reused', id, copied);
+        return replay(copied);
       }
-      if (strictHealedDivergence) {
-        controller.abort(strictHealedDivergence);
-        throw strictHealedDivergence;
-      }
+      const redefined = outcome.kind === 'redefine';
       const step: StepRecord = prior ?? {
         kind,
         ...(meta === undefined ? {} : { meta }),
