@@ -69,6 +69,8 @@ export const meta = {
  *   args.commitTrailer   lines to end every commit message with (e.g. Co-Authored-By)
  *   args.prFooter        text to end the PR description with
  *   args.root            directory holding worktree/ and state/ (default: <main checkout>-epic-burndown)
+ *   args.mergeDownScript absolute path of merge-down-pr.js to run as the landing child (default:
+ *                        the registered 'merge-down-pr'; pass the path when iterating on the child)
  *
  * OUTCOMES (record.status)
  *   landed           the ticket's PR merged and the issue closed; epic ticked
@@ -142,6 +144,9 @@ const A = {
   root: args?.root ?? null,
   tools: args?.tools ?? '.claude/workflows/execute-epic-ticket/epic.mjs',
   mergeDownTools: args?.mergeDownTools ?? '.claude/workflows/merge-down-pr/merge-down.mjs',
+  // Absolute path of merge-down-pr.js. By name, the child comes from the workflow registry, and a
+  // resume with unchanged parent code and args may not pick up edits to the child.
+  mergeDownScript: args?.mergeDownScript ?? null,
 };
 if (!Number.isInteger(A.epic) || A.epic <= 0) {
   return { status: 'error', reason: 'args.epic (an issue number) is required' };
@@ -1094,7 +1099,7 @@ try {
 }
 let landed;
 try {
-  landed = await workflow('merge-down-pr', {
+  landed = await workflow(A.mergeDownScript ? { scriptPath: A.mergeDownScript } : 'merge-down-pr', {
     ...A.mergeDown,
     pr: ticketResult.pr,
     parentEpic: A.epic,

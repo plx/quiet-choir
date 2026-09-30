@@ -452,7 +452,9 @@ async function rehearse(scenario) {
         return value;
       }),
     );
-  const workflow = async (name, childArgs) => {
+  const workflow = async (ref, childArgs) => {
+    const name =
+      typeof ref === 'string' ? ref : ref.scriptPath.split('/').pop().replace(/\.js$/, '');
     calls.push({ label: `workflow:${name}`, args: childArgs });
     assert.equal(name, 'merge-down-pr');
     world.effects.push(`merge-down-pr #${childArgs.pr}`);
