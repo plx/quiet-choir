@@ -39,7 +39,7 @@ export default class WorkflowCheckResume extends WorkflowCommand {
   public static override readonly summary =
     'Check run compatibility without a writer lock or workflow-body execution';
   public static override readonly description =
-    'Typechecks and imports trusted module top-level code. Does not invoke effects or predict dynamic step identity or replay order.';
+    'Typechecks and imports trusted module top-level code. Does not invoke effects or predict dynamic step identity or replay order; preview an accepted resume with workflow execute FILE --dry-run --resume --accept-code-change, which reports a changed completed step as run.incompatible.';
 
   public async run(): Promise<void> {
     const { args, flags } = await this.parse(WorkflowCheckResume);

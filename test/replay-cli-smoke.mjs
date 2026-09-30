@@ -142,6 +142,38 @@ process.stdin.on('end', () => { appendFileSync(process.env.QC_REPLAY_CALLS, prom
   assert.equal(inspect.status, 0, inspect.stderr);
   assert.deepEqual(JSON.parse(inspect.stdout).codeChanges, finalized.codeChanges);
 
+  // An edited completed callback cannot be accepted: the preflight refuses before any write.
+  const tailBytes = readFileSync(join(state, 'tail', 'run.json'), 'utf8');
+  writeFileSync(
+    file,
+    source(
+      'review',
+      'return `${value}-fixed`;',
+      `() => { appendFileSync(String(process.env.QC_REPLAY_EFFECTS), 'edited\\n'); return 'done'; }`,
+    ),
+  );
+  const divergent = cli(
+    'execute',
+    file,
+    '--run-id',
+    'tail',
+    '--state-dir',
+    state,
+    '--resume',
+    '--accept-code-change',
+    '--json',
+  );
+  assert.equal(divergent.status, 3, divergent.stderr);
+  const refusal = JSON.parse(divergent.stdout).error;
+  assert.equal(refusal.code, 'run.incompatible');
+  assert.deepEqual(refusal.details.divergent, [{ stepId: 'local', components: ['callback'] }]);
+  assert(refusal.details.next[0].includes('--fork-from'));
+  assert.match(refusal.message, /--fork-from tail --reuse matching --invalidate local/u);
+  assert.equal(readFileSync(join(state, 'tail', 'run.json'), 'utf8'), tailBytes);
+  assert.equal(readFileSync(calls, 'utf8'), callsBefore);
+  assert.equal(readFileSync(effects, 'utf8'), effectsBefore);
+  writeFileSync(file, source('review', 'return `${value}-fixed`;'));
+
   const alias = join(root, 'alias');
   symlinkSync(root, alias);
   const normal = cli('validate', file, '--json');
@@ -157,7 +189,7 @@ process.stdin.on('end', () => { appendFileSync(process.env.QC_REPLAY_CALLS, prom
   assert.equal(readFileSync(calls, 'utf8'), callsBefore);
   assert.equal(readFileSync(effects, 'utf8'), effectsBefore);
   console.log(
-    'PASS CLI fork prefix/matching/invalidation, immutable source, canonical hash, check-resume, and zero-effect re-finalization',
+    'PASS CLI fork prefix/matching/invalidation, immutable source, canonical hash, check-resume, zero-effect re-finalization, and divergent accept refusal',
   );
 } finally {
   rmSync(root, { recursive: true, force: true });

@@ -16,12 +16,19 @@ import { fixturesFromRun } from './fixtures.js';
 import { selectedAdapters } from './harness-selection.js';
 import { FixtureHarness } from '../../harnesses/fixture.js';
 import { RehearsalHarness, rehearsalState } from './rehearsal.js';
+import {
+  divergenceRefusal,
+  isDivergenceRefusal,
+  preflightAcceptedReplay,
+  type PreflightRunOptions,
+} from './code-change-preflight.js';
 import { jsonValue } from '../runtime/json.js';
 import { inspectRun, listRuns, watchRun, type RunInspection } from './inspection.js';
 import { workflowFailure } from './failure.js';
 import { missingRunError, readRequiredRun } from '../runtime/read-required-run.js';
 import { unlockRun } from '../runtime/lock.js';
 import {
+  findStepIdentityChange,
   isValidRunId,
   runIdMessage,
   RunRefusedError,
@@ -402,33 +409,19 @@ export class WorkflowExecutor implements Executor<
             'warn',
             `Harness ${name} is not declared in the static workflow tree; this setting only applies if a child invoked dynamically (via ctx.workflow) declares it.`,
           );
-      const run = await runWorkflow(definition, {
-        ...(Object.keys(adapters).length ? { adapters } : {}),
-        ...(plan.harness?.configurations === undefined
-          ? {}
-          : { harnessConfigurations: plan.harness.configurations }),
+      // Options shared with the accepted-replay preflight; live-only ones are added below.
+      const shared: PreflightRunOptions = {
         runId: plan.runId,
         launch: await workflowLaunch(plan.typecheck, source),
-        stateDir: previewState?.stateDir ?? plan.stateDir,
         cwd: plan.cwd,
-        processRunner:
-          rehearsal?.processRunner ?? this.#options.processRunner ?? new NodeProcessRunner(),
         ...(plan.maxRunCostUsd === undefined ? {} : { maxRunCostUsd: plan.maxRunCostUsd }),
         ...(plan.maxChildDepth === undefined ? {} : { maxChildDepth: plan.maxChildDepth }),
         ...(plan.maxRunAgentAttempts === undefined
           ? {}
           : { maxRunAgentAttempts: plan.maxRunAgentAttempts }),
-        ...(plan.waitMode === undefined ? {} : { waitMode: plan.waitMode }),
-        ...(this.#options.store === undefined ? {} : { store: this.#options.store }),
         ...(this.#options.clock === undefined ? {} : { clock: this.#options.clock }),
-        ...(rehearsal === undefined ? {} : { rehearsal: rehearsal.hooks }),
-        allowHarnessChange: rehearsal !== undefined || (plan.allowHarnessChange ?? false),
         resume: plan.resume,
-        ...(plan.killOrphans === undefined ? {} : { killOrphans: plan.killOrphans }),
         ...(plan.killGraceMs === undefined ? {} : { killGraceMs: plan.killGraceMs }),
-        ...(this.#options.processSupervisor === undefined
-          ? {}
-          : { processSupervisor: this.#options.processSupervisor }),
         ...(agentLimits === undefined ? {} : { agentLimit: agentLimits }),
         ...(plan.policy === undefined ? {} : { policy: plan.policy }),
         ...(plan.profileOverrides === undefined ? {} : { profileOverrides: plan.profileOverrides }),
@@ -438,14 +431,50 @@ export class WorkflowExecutor implements Executor<
           ? {}
           : { allowModelOverride: plan.allowModelOverride }),
         ...(plan.input === undefined ? {} : { input: plan.input }),
-        ...(harness === undefined ? {} : { harness }),
         ...(this.#options.signal === undefined ? {} : { signal: this.#options.signal }),
         source,
+        ...(plan.acceptCodeChange === undefined ? {} : { acceptCodeChange: plan.acceptCodeChange }),
+        ...(plan.strictReplay === undefined ? {} : { strictReplay: plan.strictReplay }),
+      };
+      if (plan.resume && plan.acceptCodeChange && !plan.dryRun) {
+        // An accepted replay that meets a changed completed step would fail only after recording
+        // the change and clearing the saved outcome; find that on a disposable copy first.
+        this.#options.logger.log(
+          'info',
+          'Preflighting the accepted code change against a disposable copy.',
+        );
+        const change = await preflightAcceptedReplay(definition, shared, {
+          stateDir: plan.stateDir,
+          ...(plan.harness === undefined ? {} : { selection: plan.harness }),
+        });
+        if (change)
+          throw divergenceRefusal(change, {
+            runId: plan.runId,
+            stateDir: resolveStateDir({ stateDir: plan.stateDir }),
+            entrypoint: await realpath(plan.typecheck.entrypoint),
+          });
+      }
+      const run = await runWorkflow(definition, {
+        ...shared,
+        ...(Object.keys(adapters).length ? { adapters } : {}),
+        ...(plan.harness?.configurations === undefined
+          ? {}
+          : { harnessConfigurations: plan.harness.configurations }),
+        stateDir: previewState?.stateDir ?? plan.stateDir,
+        processRunner:
+          rehearsal?.processRunner ?? this.#options.processRunner ?? new NodeProcessRunner(),
+        ...(plan.waitMode === undefined ? {} : { waitMode: plan.waitMode }),
+        ...(this.#options.store === undefined ? {} : { store: this.#options.store }),
+        ...(rehearsal === undefined ? {} : { rehearsal: rehearsal.hooks }),
+        allowHarnessChange: rehearsal !== undefined || (plan.allowHarnessChange ?? false),
+        ...(plan.killOrphans === undefined ? {} : { killOrphans: plan.killOrphans }),
+        ...(this.#options.processSupervisor === undefined
+          ? {}
+          : { processSupervisor: this.#options.processSupervisor }),
+        ...(harness === undefined ? {} : { harness }),
         ...(plan.forkFrom === undefined
           ? {}
           : { forkFrom: { ...plan.forkFrom, stateDir: plan.forkFrom.stateDir ?? plan.stateDir } }),
-        ...(plan.acceptCodeChange === undefined ? {} : { acceptCodeChange: plan.acceptCodeChange }),
-        ...(plan.strictReplay === undefined ? {} : { strictReplay: plan.strictReplay }),
         onEvent: (event) => {
           rehearsal?.observe(event);
           notifications?.observe(event);
@@ -486,10 +515,26 @@ export class WorkflowExecutor implements Executor<
             : run,
         ...(rehearsal === undefined ? {} : { rehearsal: rehearsal.report(run) }),
       };
-    } catch (error: unknown) {
+    } catch (thrown: unknown) {
+      // A dry-run of an accepted resume reports a changed completed step the way the real command
+      // refuses it, with the real state directory and entrypoint.
+      const dryRunChange =
+        plan.kind === 'workflow.execute' && plan.dryRun && plan.resume && plan.acceptCodeChange
+          ? findStepIdentityChange(thrown)
+          : undefined;
+      const error =
+        dryRunChange && plan.kind === 'workflow.execute'
+          ? divergenceRefusal(dryRunChange, {
+              runId: plan.runId,
+              stateDir: resolveStateDir({ stateDir: plan.stateDir }),
+              entrypoint: await realpath(plan.typecheck.entrypoint).catch(
+                () => plan.typecheck.entrypoint,
+              ),
+            })
+          : thrown;
       const run =
-        error instanceof WorkflowRunError
-          ? error.run
+        thrown instanceof WorkflowRunError
+          ? thrown.run
           : context.runId && context.stateDir && isValidRunId(context.runId)
             ? await readRun({ runId: context.runId, stateDir: context.stateDir }).catch(() => null)
             : null;
@@ -519,7 +564,8 @@ export class WorkflowExecutor implements Executor<
                   : stage;
       return workflowFailure(
         code,
-        run?.recoveryHint && !message.includes('re-finalize')
+        // A divergence refusal must not advertise the path it refused.
+        run?.recoveryHint && !isDivergenceRefusal(error) && !message.includes('re-finalize')
           ? `${message} ${run.recoveryHint}`
           : message,
         {
@@ -529,7 +575,7 @@ export class WorkflowExecutor implements Executor<
             ? {}
             : {
                 rehearsal: rehearsal.report(run),
-                stack: error instanceof Error ? (error.stack ?? error.message) : String(error),
+                stack: thrown instanceof Error ? (thrown.stack ?? thrown.message) : String(thrown),
               }),
           stepId: error instanceof WorkflowRunError ? error.stepId : null,
           details:

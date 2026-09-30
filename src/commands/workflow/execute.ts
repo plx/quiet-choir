@@ -162,7 +162,8 @@ export default class WorkflowExecute extends WorkflowCommand {
       dependsOn: ['fork-from'],
     }),
     'accept-code-change': Flags.boolean({
-      description: 'Accept and record source/schema changes; keep step checks',
+      description:
+        'Accept and record source/schema changes; keep step checks. Refuses without changes when a completed step changed; preview with --dry-run',
       dependsOn: ['resume'],
     }),
     'strict-replay': Flags.boolean({

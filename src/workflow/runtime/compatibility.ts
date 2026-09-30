@@ -117,7 +117,7 @@ export function compareResume(
       ? `Checkpoint format version 1: workflow ${changes} changed. ${canAcceptCodeChange ? 'Its original aggregate cannot separate code from schema drift; --accept-code-change authorizes migration while preserving original per-step checks. Source hashes from older CLIs include engine files and absolute paths.' : 'Restore the original name, version, cwd and input, or start a new run.'}`
       : changed.length === 0
         ? `Run ${saved.id} is compatible at run level; step identity and replay checks still run during execution.${hint}`
-        : `Workflow ${changes} changed; ${unchanged.join(', ')} unchanged.${!inputValid ? ' Saved/supplied input does not validate.' : ''} ${canAcceptCodeChange ? `Use --resume --accept-code-change or create a new run with --fork-from ${saved.id}.` : `Start a new run${tests['name'] ? `, optionally with --fork-from ${saved.id}` : ''}.`}${hint}`;
+        : `Workflow ${changes} changed; ${unchanged.join(', ')} unchanged.${!inputValid ? ' Saved/supplied input does not validate.' : ''} ${canAcceptCodeChange ? acceptAdvice(saved) : `Start a new run${tests['name'] ? `, optionally with --fork-from ${saved.id}` : ''}.`}${hint}`;
   return {
     compatible,
     changed,
@@ -129,6 +129,17 @@ export function compareResume(
     refinalizable,
     message,
   };
+}
+
+/**
+ * Recovery advice for a code-only change. A completed run's outcome is final, so the fork path comes
+ * first; either way the accepted resume is previewed with a dry run, because it refuses without
+ * changes when a completed step's identity changed.
+ */
+function acceptAdvice(saved: Pick<RunRecord, 'id' | 'status'>): string {
+  return saved.status === 'completed'
+    ? `Create a new run with --fork-from ${saved.id} (--reuse matching reruns only changed steps). To re-finalize this run instead, preview with --dry-run --resume --accept-code-change, then use --resume --accept-code-change.`
+    : `Preview with --dry-run --resume --accept-code-change, then use --resume --accept-code-change (it refuses without changes when a completed step's identity changed), or create a new run with --fork-from ${saved.id}.`;
 }
 
 /** Read compatibility without a writer lock or workflow-body execution; imports are the caller's responsibility. */
