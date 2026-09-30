@@ -37,6 +37,8 @@ export interface RunSummary {
   readonly status: InspectionStatus;
   readonly recordedStatus: RunRecord['status'];
   readonly nextWakeAt: number | null;
+  /** Why the latest execution was interrupted into a resumable suspension, or null. */
+  readonly interruptedBy: NonNullable<RunRecord['interruptedBy']> | null;
   readonly execution: number | null;
   readonly startedAt: string;
   readonly updatedAt: string;
@@ -185,6 +187,7 @@ export function summarizeRun(
     status: stale(run, ownership) ? 'stale' : run.status,
     recordedStatus: run.status,
     nextWakeAt: run.nextWakeAt ?? null,
+    interruptedBy: run.interruptedBy ?? null,
     execution: execution?.n ?? null,
     startedAt,
     updatedAt: run.updatedAt,

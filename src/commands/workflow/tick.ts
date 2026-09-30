@@ -7,12 +7,26 @@ import {
 } from '../../workflow/loader/harness-selection.js';
 import { resolveStateDir } from '../../workflow/runtime/paths.js';
 
+const durationUnits: Readonly<Record<string, number>> = {
+  ms: 1,
+  s: 1_000,
+  m: 60_000,
+  h: 3_600_000,
+};
+
+/** Milliseconds for a duration such as 540s, 9m or 250ms; NaN when the text is not one. */
+function parseDuration(value: string): number {
+  const match = /^([0-9]+(?:\.[0-9]+)?)(ms|s|m|h)$/u.exec(value);
+  return match ? Number(match[1]) * (durationUnits[match[2] ?? ''] ?? NaN) : NaN;
+}
+
 interface TickFlags {
   readonly 'notify-command': string | undefined;
   readonly 'state-dir': string | undefined;
   readonly run: string | undefined;
   readonly watch: boolean | undefined;
   readonly timeout: string;
+  readonly 'claim-margin': string | undefined;
   readonly 'max-runs': number | undefined;
   readonly 'harness-config': string | undefined;
   readonly json: boolean | undefined;
@@ -30,12 +44,16 @@ export default class WorkflowTick extends WorkflowCommand {
     'state-dir': Flags.directory({ description: 'Runs container; defaults to project state' }),
     run: Flags.string({
       description:
-        'Only this run; exit 0 completed, 75 pending/locked/orphans, or 1 failed/cancelled/incompatible/unreadable/crash-loop',
+        'Only this run; exit 0 completed, 75 pending/interrupted/locked/orphans/deadline, or 1 failed/cancelled/incompatible/unreadable/crash-loop',
     }),
     watch: Flags.boolean({ description: 'Wait for deadlines or inbox deliveries until timeout' }),
     timeout: Flags.string({
       description: 'Maximum invocation duration, e.g. 540s, 9m, or 250ms',
       default: '540s',
+    }),
+    'claim-margin': Flags.string({
+      description:
+        'Stop claiming new runs when less than this much of --timeout remains, e.g. 30s or 0ms; defaults to 10% of --timeout',
     }),
     'max-runs': Flags.integer({
       description: 'Maximum resume attempts in this invocation',
@@ -55,13 +73,21 @@ export default class WorkflowTick extends WorkflowCommand {
         ? resolveStateDir(flags['state-dir'] === undefined ? {} : { stateDir: flags['state-dir'] })
         : this.runContext(flags.run, flags['state-dir']);
     this.failureContext = { runId: flags.run ?? null, stateDir };
-    const duration = /^([0-9]+(?:\.[0-9]+)?)(ms|s|m|h)$/u.exec(flags.timeout);
-    const unit: Readonly<Record<string, number>> = { ms: 1, s: 1_000, m: 60_000, h: 3_600_000 };
-    const timeoutMs = duration ? Number(duration[1]) * (unit[duration[2] ?? ''] ?? 0) : 0;
+    const timeoutMs = parseDuration(flags.timeout);
     if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 2_147_483_647)
       this.fail(
         'usage.flag',
         '--timeout must be a positive duration such as 540s (at most 2147483647ms).',
+      );
+    const claimMarginMs =
+      flags['claim-margin'] === undefined ? undefined : parseDuration(flags['claim-margin']);
+    if (
+      claimMarginMs !== undefined &&
+      (!Number.isSafeInteger(claimMarginMs) || claimMarginMs < 0 || claimMarginMs >= timeoutMs)
+    )
+      this.fail(
+        'usage.flag',
+        '--claim-margin must be a duration such as 30s or 0ms, smaller than --timeout.',
       );
     let harness: HarnessSelection | undefined;
     if (flags['harness-config'] !== undefined) {
@@ -84,6 +110,7 @@ export default class WorkflowTick extends WorkflowCommand {
       ...(harness === undefined ? {} : { harness }),
       watch: flags.watch ?? false,
       timeoutMs,
+      ...(claimMarginMs === undefined ? {} : { claimMarginMs }),
     });
     if (!result.ok) this.failResult(result);
     this.output(

@@ -5,7 +5,12 @@ import { answerCandidates, questionCodeChanged } from '../runtime/inbox.js';
 import { FileRunStore, type OwnedRunStore, type RunStore } from '../runtime/run-store.js';
 import { inspectRunOwnership, type RunRecord } from '../runtime/store.js';
 import { readRequiredRun } from '../runtime/read-required-run.js';
-import { isValidRunId, runIdMessage, RunRefusedError } from '../runtime/run-errors.js';
+import {
+  isValidRunId,
+  runIdMessage,
+  RunInterruptedError,
+  RunRefusedError,
+} from '../runtime/run-errors.js';
 import { clockNow, systemClock } from '../runtime/clock.js';
 import { OrphanProcessesError } from '../runtime/process-registry.js';
 import {
@@ -25,6 +30,11 @@ export interface TickWorkflowsPlan extends ExecutionPlan {
   readonly runId?: string;
   readonly watch?: boolean;
   readonly timeoutMs?: number;
+  /**
+   * Stop claiming new runs once less than this much of the timeout remains; 0 disables the margin.
+   * Defaults to 10% of `timeoutMs` and must be smaller than it.
+   */
+  readonly claimMarginMs?: number;
   readonly maxRuns?: number;
   readonly notifyCommand?: string;
   /** CLI harness configuration for resumed runs; the checkpoint stores only harness kind. */
@@ -40,7 +50,10 @@ export interface TickResumedEntry {
   readonly outcome: TickResumeOutcome;
   /** Present exactly for a suspended outcome; null when only a signal can wake the run. */
   readonly nextWakeAt?: number | null;
-  /** Present for failed, cancelled, and incompatible outcomes. */
+  /**
+   * Present for failed, cancelled, and incompatible outcomes, and for a suspended outcome caused by
+   * an interruption (tick's deadline or a signal), whose run is due again at once.
+   */
   readonly message?: string;
 }
 
@@ -48,10 +61,18 @@ export interface TickResumedEntry {
  * Why this tick left a run alone. `locked`: a live, unknown or remote owner, incomplete lock
  * metadata, or a lock recovery in progress. `orphans`: the owner is gone, but a child process is
  * alive or unverified. `crash-loop`: the run was already recovered from a stale `running` state
- * the maximum number of consecutive times without completing a new step. @internal
+ * the maximum number of consecutive times without completing a new step. `deadline`: the run was
+ * ready, but less than the claim margin of this tick's timeout remained. @internal
  */
 export type TickSkipReason =
-  'not due' | 'no longer due' | 'locked' | 'orphans' | 'crash-loop' | 'incompatible' | 'unreadable';
+  | 'not due'
+  | 'no longer due'
+  | 'locked'
+  | 'orphans'
+  | 'crash-loop'
+  | 'deadline'
+  | 'incompatible'
+  | 'unreadable';
 
 /** One run this tick inspected but did not resume. @internal */
 export interface TickSkippedEntry {
@@ -59,7 +80,7 @@ export interface TickSkippedEntry {
   readonly reason: TickSkipReason;
   /** Present for orphans, crash-loop, incompatible and unreadable runs. */
   readonly message?: string;
-  /** Present for runs that are not due or no longer due. */
+  /** Present for runs that are not due, no longer due, or skipped at the deadline. */
   readonly nextWakeAt?: number | null;
 }
 
@@ -79,7 +100,8 @@ export interface TickWorkflowsResult extends ExecutionResult {
   /**
    * Batch operation returns 0. With --run: 0 when the run completed, in this tick or before; 1 when
    * it failed, was cancelled, or is incompatible, unreadable or crash-looping; 75 when it is still
-   * pending (not due, no longer due, suspended again, locked, or blocked by orphan processes).
+   * pending (not due, no longer due, suspended again or interrupted by the deadline, locked, blocked
+   * by orphan processes, or skipped inside the claim margin).
    */
   readonly exitCode: 0 | 75 | 1;
 }
@@ -103,6 +125,15 @@ function resumeOutcome(
   result: Awaited<ReturnType<WorkflowExecutor['execute']>>,
 ): TickResumedEntry {
   if (!result.ok) {
+    // An interruption (the deadline or a signal) leaves a resumable suspension that is due now. This
+    // also covers an interruption before the runtime reopened the run, which stays suspended.
+    if (result.code === 'workflow.interrupted' && result.run?.status === 'suspended')
+      return {
+        runId,
+        outcome: 'suspended',
+        nextWakeAt: result.run.nextWakeAt ?? null,
+        message: result.message,
+      };
     const outcome: TickResumeOutcome =
       result.code === 'run.incompatible'
         ? 'incompatible'
@@ -239,6 +270,7 @@ export class TickWorkflowExecutor implements Executor<
   public async execute(plan: TickWorkflowsPlan): Promise<TickWorkflowsResult | WorkflowFailure> {
     const context = { runId: plan.runId ?? null, stateDir: plan.stateDir };
     const timeoutMs = plan.timeoutMs ?? 540_000;
+    const claimMarginMs = plan.claimMarginMs ?? Math.floor(timeoutMs / 10);
     const maxRuns = plan.maxRuns ?? Number.MAX_SAFE_INTEGER;
     if (plan.runId !== undefined && !isValidRunId(plan.runId))
       return workflowFailure('usage.run_id', runIdMessage, context);
@@ -254,11 +286,20 @@ export class TickWorkflowExecutor implements Executor<
         'Tick requires a positive integer maxRuns and timeoutMs from 1 to 2147483647.',
         context,
       );
+    if (!Number.isSafeInteger(claimMarginMs) || claimMarginMs < 0 || claimMarginMs >= timeoutMs)
+      return workflowFailure(
+        'usage.flag',
+        'Tick requires an integer claimMarginMs from 0 to less than timeoutMs.',
+        context,
+      );
     const timer = new AbortController();
     const deadline = Date.now() + timeoutMs;
     const timeout = setTimeout(() => {
-      timer.abort(new Error('Tick timeout reached.'));
+      // A marked interruption: the runtime saves the run as a resumable suspension, due now.
+      timer.abort(new RunInterruptedError('Tick timeout reached.'));
     }, timeoutMs);
+    /** Whether a claim could no longer finish usefully; stays true after the deadline. */
+    const insideMargin = (): boolean => deadline - Date.now() < claimMarginMs;
     const signal =
       this.options.signal === undefined
         ? timer.signal
@@ -312,7 +353,8 @@ export class TickWorkflowExecutor implements Executor<
       for (;;) {
         const ids = plan.runId === undefined ? await store.list() : [plan.runId];
         for (const id of ids) {
-          if (signal.aborted || attempts >= maxRuns) break;
+          // Not the deadline: runs seen after it are still reported, as skipped for the deadline.
+          if (this.options.signal?.aborted || attempts >= maxRuns) break;
           if (final.has(id)) continue;
           let claim: ReturnType<typeof claimedStore> | undefined;
           let executing = false;
@@ -340,6 +382,11 @@ export class TickWorkflowExecutor implements Executor<
                   ? 'Stored workflow source hashes are missing or changed.'
                   : 'No stored entrypoint; resume through the original application.',
               });
+              continue;
+            }
+            // Leave a ready run untouched rather than claim it with too little time to progress.
+            if (insideMargin()) {
+              skip(id, 'deadline', { nextWakeAt: run.nextWakeAt ?? null });
               continue;
             }
             // Ordinary lock recovery reclaims a dead or released owner; orphans are never killed.
@@ -410,15 +457,18 @@ export class TickWorkflowExecutor implements Executor<
         if (
           !plan.watch ||
           signal.aborted ||
+          // No further claim can happen, so do not idle until the hard deadline.
+          insideMargin() ||
           attempts >= maxRuns ||
           (plan.runId !== undefined && final.has(plan.runId))
         )
           break;
         const now = clockNow(clock);
         const next = [...wakes.values()].flatMap((at) => (at === null || at <= now ? [] : [at]));
-        const untilDeadline = deadline - Date.now();
+        // Wake when the margin starts, not at the deadline: after that no claim can happen.
+        const untilMargin = deadline - claimMarginMs - Date.now();
         const untilNext = next.length > 0 ? Math.min(...next) - now : Infinity;
-        await waitForChange(plan.stateDir, Math.min(untilDeadline, untilNext), signal);
+        await waitForChange(plan.stateDir, Math.min(untilMargin, untilNext), signal);
       }
       if (this.options.signal?.aborted)
         return workflowFailure('workflow.interrupted', 'Tick interrupted.', context);

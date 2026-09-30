@@ -15,7 +15,7 @@ import { hostname, tmpdir } from 'node:os';
 import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ThresholdLogger } from '../src/application/execution.js';
 import { WorkflowExecutor } from '../src/workflow/loader/executor.js';
 import { TickWorkflowExecutor } from '../src/workflow/loader/tick.js';
@@ -24,6 +24,7 @@ import type { TickWorkflowsResult } from '../src/workflow/loader/tick.js';
 import type { WorkflowFailure } from '../src/workflow/loader/failure.js';
 import { FileRunStore, readRun, writeAnswer, type WorkflowClock } from '../src/index.js';
 import { countCompletedSteps } from '../src/workflow/runtime/recovery-decision.js';
+import { inspectRun } from '../src/workflow/loader/inspection.js';
 
 const project = dirname(dirname(fileURLToPath(import.meta.url)));
 const roots: string[] = [];
@@ -58,7 +59,8 @@ const byRunId = <T extends { readonly runId: string }>(entries: readonly T[]): T
   [...entries].sort((a, b) => a.runId.localeCompare(b.runId));
 
 async function fixture(
-  kind: 'due' | 'future' | 'signal' | 'failure' | 'agent' | 'cancel' | 'versioned' = 'due',
+  kind:
+    'due' | 'future' | 'signal' | 'failure' | 'agent' | 'cancel' | 'versioned' | 'gated' = 'due',
   notify: boolean | 'fail' = false,
   shared: { readonly stateDir?: string; readonly runId?: string } = {},
 ) {
@@ -72,12 +74,15 @@ async function fixture(
   const effects = join(root, 'effects.txt');
   const agentLog = join(root, 'agent.jsonl');
   const notifications = join(root, 'notifications.jsonl');
+  const before = join(root, 'before.txt');
+  const gate = join(root, 'gate');
   const notifyCommand =
     notify === 'fail' ? 'exit 7' : `cat >> '${notifications.replaceAll("'", "'\"'\"'")}'`;
   await writeFile(
     file,
     `
-import { appendFileSync } from 'node:fs';
+import { appendFileSync${kind === 'gated' ? ', existsSync' : ''} } from 'node:fs';
+${kind === 'gated' ? "import { setTimeout as delay } from 'node:timers/promises';" : ''}
 import { z } from 'zod';
 import { defineWorkflow } from ${JSON.stringify(join(project, 'src/workflow/runtime/model.js'))};
 ${kind === 'cancel' ? `import { CancelledError } from ${JSON.stringify(join(project, 'src/workflow/runtime/fan-out.js'))};` : ''}
@@ -92,6 +97,19 @@ export default defineWorkflow({ name: 'tick',
         : "await ctx.sleep('timer', 60_000);"
     }
     ${kind === 'cancel' ? "throw new CancelledError(null, new Error('stop'));" : ''}
+    ${
+      kind === 'gated'
+        ? `await ctx.step('before', { input: null, schema: z.null(), run: () => {
+      appendFileSync(${JSON.stringify(before)}, 'before\\n');
+      return null;
+    } });
+    // Honours its abort signal, so an interruption does not wait for the gate.
+    await ctx.step('gate', { input: null, schema: z.null(), run: async ({ signal }) => {
+      while (!existsSync(${JSON.stringify(gate)})) await delay(20, undefined, { signal });
+      return null;
+    } });`
+        : ''
+    }
     ${
       kind === 'agent'
         ? `await ctx.claude.text('call', { prompt: 'hi', env: { QUIET_CHOIR_FAKE_LOG: ${JSON.stringify(agentLog)} } });`
@@ -141,6 +159,8 @@ export default defineWorkflow({ name: 'tick',
     agentLog,
     notifications,
     notifyCommand,
+    before,
+    gate,
     plan,
     tickPlan: { kind: 'workflow.tick' as const, runId, stateDir },
   };
@@ -660,5 +680,159 @@ describe('tick loader and operator hooks', { timeout: 40_000 }, () => {
       exitCode: 0,
     });
     expect((await readRun(progressed.plan)).staleRecovery).toBeUndefined();
+  });
+});
+
+/** Shift Date.now by `offsetMs` after its first call, which is the tick's deadline computation. */
+function jumpAfterDeadline(offsetMs: number): () => void {
+  const real = Date.now.bind(Date);
+  let calls = 0;
+  const spy = vi
+    .spyOn(Date, 'now')
+    .mockImplementation(() => real() + (calls++ === 0 ? 0 : offsetMs));
+  return () => {
+    spy.mockRestore();
+  };
+}
+
+// Issue #199: tick's deadline interrupts into a resumable suspension, and a margin stops claims.
+// measured: 6.7 s alone for the timeout case (a fixed 6 s tick timeout, sized for a slow import on
+// a loaded CI leg, plus tsImport compiles) and 2.3 s for the margin case; the loader suite's 40 s
+// raise covers the compile-heavy tail.
+describe('tick deadline interruption and claim margin', { timeout: 40_000 }, () => {
+  it('suspends a run interrupted by the tick timeout and completes it on the next tick', async () => {
+    const f = await fixture('gated');
+    // The timeout must leave room to import the workflow and complete `before` on a loaded runner.
+    const first = oneEntryPerRun(
+      await tick.execute({ ...f.tickPlan, timeoutMs: 6_000, claimMarginMs: 0 }),
+    );
+    expect(first).toEqual({
+      kind: 'workflow.tick.result',
+      ok: true,
+      resumed: [
+        {
+          runId: 'run',
+          outcome: 'suspended',
+          nextWakeAt: expect.any(Number) as unknown,
+          message: 'Tick timeout reached.',
+        },
+      ],
+      skipped: [],
+      observed: 0,
+      exitCode: 75,
+    });
+    expect(first.resumed[0]?.nextWakeAt).toBeLessThanOrEqual(Date.now());
+    const saved = await readRun(f.plan);
+    expect(saved).toMatchObject({
+      status: 'suspended',
+      interruptedBy: { reason: 'Tick timeout reached.' },
+      error: null,
+      rootCause: null,
+      steps: { before: { status: 'completed' }, gate: { status: 'cancelled' } },
+    });
+    const inspection = await inspectRun({ stateDir: f.stateDir, runId: 'run' });
+    expect(inspection.summary).toMatchObject({
+      status: 'suspended',
+      interruptedBy: { reason: 'Tick timeout reached.' },
+    });
+    await writeFile(f.gate, '');
+    expect(oneEntryPerRun(await tick.execute(f.tickPlan))).toMatchObject({
+      resumed: [{ runId: 'run', outcome: 'completed' }],
+      exitCode: 0,
+    });
+    const completed = await readRun(f.plan);
+    expect(completed.status).toBe('completed');
+    expect(completed.interruptedBy).toBeUndefined();
+    expect(await readFile(f.before, 'utf8')).toBe('before\n');
+    expect(await readFile(f.effects, 'utf8')).toBe('effect\n');
+  });
+
+  it('stops claiming inside the margin and reports the rest as skipped for the deadline', async () => {
+    const gated = await fixture('gated', false, { runId: 'a' });
+    const { stateDir } = gated;
+    const waiting = await fixture('due', false, { stateDir, runId: 'b' });
+    const before = await runBytes(stateDir, 'b');
+    // The margin starts 1 s in; run a is claimed at once and held open well past that.
+    const started = Date.now();
+    const ticking = tick.execute({
+      kind: 'workflow.tick',
+      stateDir,
+      timeoutMs: 10_000,
+      claimMarginMs: 9_000,
+    });
+    await delay(1_500);
+    await writeFile(gated.gate, '');
+    const result = oneEntryPerRun(await ticking);
+    expect(Date.now() - started).toBeGreaterThanOrEqual(1_500);
+    expect(result).toEqual({
+      kind: 'workflow.tick.result',
+      ok: true,
+      resumed: [{ runId: 'a', outcome: 'completed' }],
+      skipped: [{ runId: 'b', reason: 'deadline', nextWakeAt: expect.any(Number) as unknown }],
+      observed: 0,
+      exitCode: 0,
+    });
+    expect(await runBytes(stateDir, 'b')).toEqual(before);
+    expect(await readFile(waiting.imports, 'utf8')).toBe('import\n');
+
+    // With --run, a run skipped for the deadline is still pending.
+    const restore = jumpAfterDeadline(5_000);
+    let single: TickWorkflowsResult | WorkflowFailure;
+    try {
+      single = await tick.execute({ ...waiting.tickPlan, timeoutMs: 10_000, claimMarginMs: 6_000 });
+    } finally {
+      restore();
+    }
+    expect(oneEntryPerRun(single)).toMatchObject({
+      resumed: [],
+      skipped: [{ runId: 'b', reason: 'deadline' }],
+      exitCode: 75,
+    });
+    expect(await runBytes(stateDir, 'b')).toEqual(before);
+    expect(await readFile(waiting.imports, 'utf8')).toBe('import\n');
+  });
+
+  it('defaults the margin to 10% of the timeout, and 0 disables it', async () => {
+    const f = await fixture();
+    const before = await runBytes(f.stateDir, 'run');
+    // 500 ms left of a 10 s timeout is inside the default 1 s margin.
+    let restore = jumpAfterDeadline(9_500);
+    let skipped: TickWorkflowsResult | WorkflowFailure;
+    try {
+      skipped = await tick.execute({ ...f.tickPlan, timeoutMs: 10_000 });
+    } finally {
+      restore();
+    }
+    expect(oneEntryPerRun(skipped)).toMatchObject({
+      skipped: [{ runId: 'run', reason: 'deadline' }],
+      exitCode: 75,
+    });
+    expect(await runBytes(f.stateDir, 'run')).toEqual(before);
+    // The same 500 ms is enough with the margin disabled.
+    restore = jumpAfterDeadline(9_500);
+    let resumed: TickWorkflowsResult | WorkflowFailure;
+    try {
+      resumed = await tick.execute({ ...f.tickPlan, timeoutMs: 10_000, claimMarginMs: 0 });
+    } finally {
+      restore();
+    }
+    expect(oneEntryPerRun(resumed)).toMatchObject({
+      resumed: [{ runId: 'run', outcome: 'completed' }],
+      exitCode: 0,
+    });
+  });
+
+  it.each([
+    [{ timeoutMs: 1_000, claimMarginMs: 1_000 }],
+    [{ timeoutMs: 1_000, claimMarginMs: 5_000 }],
+    [{ timeoutMs: 1_000, claimMarginMs: -1 }],
+    [{ timeoutMs: 1_000, claimMarginMs: 0.5 }],
+  ])('refuses an invalid claim margin %j', async (limits) => {
+    const stateDir = await mkdtemp(join(tmpdir(), 'choir-tick-'));
+    roots.push(stateDir);
+    expect(await tick.execute({ kind: 'workflow.tick', stateDir, ...limits })).toMatchObject({
+      ok: false,
+      code: 'usage.flag',
+    });
   });
 });
