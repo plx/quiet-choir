@@ -5,6 +5,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { FileRunStore } from '../dist/index.js';
 
 const repository = fileURLToPath(new URL('..', import.meta.url));
 const root = mkdtempSync(join(tmpdir(), 'choir-waits-cli-'));
@@ -76,21 +77,30 @@ try {
   assert.deepEqual(pending[0].note, { pending: 1 });
   assert.ok(pending[0].nextCheckAt);
   assert.equal(pending[0].kind, 'wait');
-  assert.equal(document(75, 'tick', '--run', 'gate', '--json').resumed, 0);
-  assert.equal(
+  const notDue = document(75, 'tick', '--run', 'gate', '--json');
+  assert.deepEqual(notDue.resumed, []);
+  assert.deepEqual(
+    notDue.skipped.map(({ runId, reason }) => ({ runId, reason })),
+    [{ runId: 'gate', reason: 'not due' }],
+  );
+  assert.deepEqual(
     document(75, 'tick', '--run', 'gate', '--watch', '--timeout', '50ms', '--json').resumed,
-    0,
+    [],
   );
   assert.equal(readFileSync(imported, 'utf8'), 'import\n');
   assert.equal(command('answer', 'gate', 'ready', '--json', 'true').status, 0);
   const results = await Promise.all([concurrentTick(), concurrentTick()]);
   assert.equal(
-    results.reduce((n, result) => n + JSON.parse(result.stdout).resumed, 0),
+    results.reduce((n, result) => n + JSON.parse(result.stdout).resumed.length, 0),
     1,
   );
   assert.equal(readFileSync(calls, 'utf8'), 'effect\n');
   assert.equal(readFileSync(imported, 'utf8'), 'import\nimport\n');
-  assert.equal(document(0, 'tick', '--run', 'gate', '--json').resumed, 0);
+  // An already-completed run is only observed, and --run exits 0 for it.
+  const observedGate = document(0, 'tick', '--run', 'gate', '--json');
+  assert.deepEqual(observedGate.resumed, []);
+  assert.deepEqual(observedGate.skipped, []);
+  assert.equal(observedGate.observed, 1);
   const hooks = readFileSync(events, 'utf8').trim().split('\n').map(JSON.parse);
   assert.deepEqual(
     hooks.map((event) => event.type),
@@ -111,22 +121,42 @@ try {
     'exit 9',
   );
   assert.equal(command('answer', 'failing', 'ready', '--json', 'true').status, 0);
-  const failed = document(1, 'tick', '--run', 'failing', '--json');
-  assert.equal(failed.failed[0].runId, 'failing');
+  // A per-run failure is data in batch mode: exit 0.
+  const batch = document(0, 'tick', '--max-runs', '1', '--json');
+  assert.deepEqual(
+    batch.resumed.map(({ runId, outcome }) => ({ runId, outcome })),
+    [{ runId: 'failing', outcome: 'failed' }],
+  );
+  assert.deepEqual(batch.skipped, []);
   assert.equal(
     readFileSync(events, 'utf8').trim().split('\n').map(JSON.parse).at(-1).type,
     'run.failed',
   );
+  const failed = document(1, 'tick', '--run', 'failing', '--json');
+  assert.deepEqual(failed.resumed, []);
+  assert.equal(failed.observed, 1);
 
   document(75, 'execute', file, '--run-id', 'drift', '--json');
   assert.equal(command('answer', 'drift', 'ready', '--json', 'true').status, 0);
   const saved = readFileSync(join(stateDir, 'drift', 'run.json'), 'utf8');
   const importsBefore = readFileSync(imported, 'utf8');
+  const held = await new FileRunStore(stateDir).open('drift');
+  try {
+    const locked = document(75, 'tick', '--run', 'drift', '--json');
+    assert.deepEqual(locked.resumed, []);
+    assert.deepEqual(locked.skipped, [{ runId: 'drift', reason: 'locked' }]);
+  } finally {
+    await held.release();
+  }
   writeFileSync(file, source + '\n// incompatible edit\n');
-  assert.equal(document(1, 'tick', '--run', 'drift', '--json').incompatible[0].runId, 'drift');
+  const drifted = document(1, 'tick', '--run', 'drift', '--json');
+  assert.deepEqual(drifted.resumed, []);
+  assert.deepEqual(
+    drifted.skipped.map(({ runId, reason }) => ({ runId, reason })),
+    [{ runId: 'drift', reason: 'incompatible' }],
+  );
   assert.equal(readFileSync(imported, 'utf8'), importsBefore);
   assert.equal(readFileSync(join(stateDir, 'drift', 'run.json'), 'utf8'), saved);
-  assert.equal(document(0, 'tick', '--max-runs', '1', '--json').failed[0].runId, 'failing');
   assert.equal(document(2, 'tick', '--timeout', 'nonsense', '--json').error.code, 'usage.flag');
 
   const sleepFile = join(root, 'sleep.mts');
@@ -139,7 +169,7 @@ try {
     'completed',
   );
   console.log(
-    'Waits CLI: parked progress, tick exits/watch/concurrency/drift, hook flag/environment/dedup/failures, and block mode passed.',
+    'Waits CLI: parked progress, tick entries/exits (not due, locked, observed, failed, drift)/watch/concurrency, hook flag/environment/dedup/failures, and block mode passed.',
   );
 } finally {
   rmSync(root, { recursive: true, force: true });

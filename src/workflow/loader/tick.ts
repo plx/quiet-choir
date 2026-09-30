@@ -24,18 +24,104 @@ export interface TickWorkflowsPlan extends ExecutionPlan {
   readonly harness?: HarnessSelection;
 }
 
-/** Counts executions and reports each run's latest observed outcome in this invocation. */
+/** What a resume started by this tick ended as. @internal */
+export type TickResumeOutcome = 'completed' | 'suspended' | 'failed' | 'cancelled' | 'incompatible';
+
+/** One run whose resume this tick actually started, with its latest outcome. @internal */
+export interface TickResumedEntry {
+  readonly runId: string;
+  readonly outcome: TickResumeOutcome;
+  /** Present exactly for a suspended outcome; null when only a signal can wake the run. */
+  readonly nextWakeAt?: number | null;
+  /** Present for failed, cancelled, and incompatible outcomes. */
+  readonly message?: string;
+}
+
+/** Why this tick left a run alone. @internal */
+export type TickSkipReason =
+  'not due' | 'no longer due' | 'locked' | 'running' | 'incompatible' | 'unreadable';
+
+/** One run this tick inspected but did not resume. @internal */
+export interface TickSkippedEntry {
+  readonly runId: string;
+  readonly reason: TickSkipReason;
+  /** Present for incompatible and unreadable runs. */
+  readonly message?: string;
+  /** Present for runs that are not due or no longer due. */
+  readonly nextWakeAt?: number | null;
+}
+
+/**
+ * Reports what this invocation did. Each run appears in at most one of `resumed` and `skipped`;
+ * already-terminal runs are only counted in `observed`.
+ */
 export interface TickWorkflowsResult extends ExecutionResult {
   readonly kind: 'workflow.tick.result';
   readonly ok: true;
-  readonly resumed: number;
-  readonly completed: readonly string[];
-  readonly suspended: readonly { readonly runId: string; readonly nextWakeAt: number | null }[];
-  readonly failed: readonly { readonly runId: string; readonly message: string }[];
-  readonly skipped: readonly { readonly runId: string; readonly reason: string }[];
-  readonly incompatible: readonly { readonly runId: string; readonly message: string }[];
-  /** With --run, mirrors completion, suspension, or failure. Batch operation returns zero. */
+  /** Runs whose resume started, with each run's latest outcome in this invocation. */
+  readonly resumed: readonly TickResumedEntry[];
+  /** Runs inspected but not resumed, unless this invocation also resumed them. */
+  readonly skipped: readonly TickSkippedEntry[];
+  /** Runs found completed, failed, or cancelled without being resumed by this invocation. */
+  readonly observed: number;
+  /**
+   * Batch operation returns 0. With --run: 0 when the run completed, in this tick or before; 1 when
+   * it failed, was cancelled, or is incompatible or unreadable; 75 when it is still pending (not due,
+   * no longer due, suspended again, locked, or running).
+   */
   readonly exitCode: 0 | 75 | 1;
+}
+
+type TerminalStatus = 'completed' | 'failed' | 'cancelled';
+
+type TickEntry =
+  | { readonly type: 'resumed'; readonly entry: TickResumedEntry }
+  | { readonly type: 'skipped'; readonly entry: TickSkippedEntry }
+  | { readonly type: 'observed'; readonly status: TerminalStatus };
+
+function terminalStatus(run: RunRecord): TerminalStatus | undefined {
+  return run.status === 'completed' || run.status === 'failed' || run.status === 'cancelled'
+    ? run.status
+    : undefined;
+}
+
+/** Map one resume result to its outcome; an unexpected result shape throws. */
+function resumeOutcome(
+  runId: string,
+  result: Awaited<ReturnType<WorkflowExecutor['execute']>>,
+): TickResumedEntry {
+  if (!result.ok) {
+    const outcome: TickResumeOutcome =
+      result.code === 'run.incompatible'
+        ? 'incompatible'
+        : result.code === 'workflow.interrupted' || result.run?.status === 'cancelled'
+          ? 'cancelled'
+          : 'failed';
+    return { runId, outcome, message: result.message };
+  }
+  if (result.kind !== 'workflow.run.result')
+    throw new Error('Tick resume returned an unexpected result.');
+  const run = result.run;
+  if (run.status === 'completed') return { runId, outcome: 'completed' };
+  if (run.status === 'suspended')
+    return { runId, outcome: 'suspended', nextWakeAt: run.nextWakeAt ?? null };
+  if (run.status === 'failed' || run.status === 'cancelled')
+    return { runId, outcome: run.status, message: run.error ?? run.status };
+  throw new Error('Tick resume returned an unexpected result.');
+}
+
+/** The --run exit code implied by one classification of the run. */
+function exitFor(entry: TickEntry): 0 | 75 | 1 {
+  if (entry.type === 'observed') return entry.status === 'completed' ? 0 : 1;
+  if (entry.type === 'skipped')
+    return entry.entry.reason === 'incompatible' || entry.entry.reason === 'unreadable' ? 1 : 75;
+  const { outcome } = entry.entry;
+  return outcome === 'completed' ? 0 : outcome === 'suspended' ? 75 : 1;
+}
+
+/** Whether later watch passes must leave the run alone, as tick never retries a finished run. */
+function isFinal(entry: TickEntry): boolean {
+  return exitFor(entry) !== 75;
 }
 
 async function due(run: RunRecord, stateDir: string, now: number): Promise<boolean> {
@@ -160,46 +246,56 @@ export class TickWorkflowExecutor implements Executor<
         : AbortSignal.any([timer.signal, this.options.signal]);
     const store = new FileRunStore(plan.stateDir);
     const clock = this.options.clock ?? systemClock;
-    const completed = new Set<string>();
-    const suspended = new Map<string, number | null>();
-    const failed = new Map<string, string>();
-    const skipped = new Map<string, string>();
-    const incompatible = new Map<string, string>();
-    let resumed = 0;
-    const observe = (run: RunRecord): void => {
-      suspended.delete(run.id);
-      skipped.delete(run.id);
-      if (run.status === 'completed') completed.add(run.id);
-      else if (run.status === 'suspended') suspended.set(run.id, run.nextWakeAt ?? null);
-      else if (run.status === 'failed' || run.status === 'cancelled')
-        failed.set(run.id, run.error ?? run.status);
-      else skipped.set(run.id, run.status);
+    const entries = new Map<string, TickEntry>();
+    const final = new Set<string>();
+    // Latest known wake time per pending run, kept apart from sticky resumed entries.
+    const wakes = new Map<string, number | null>();
+    let attempts = 0;
+    let runExit: 0 | 75 | 1 = 75;
+    const record = (runId: string, entry: TickEntry): void => {
+      // A run this tick resumed stays reported as resumed; only a later resume replaces it.
+      if (entry.type === 'resumed' || entries.get(runId)?.type !== 'resumed')
+        entries.set(runId, entry);
+      if (isFinal(entry)) final.add(runId);
+      const wake = entry.type === 'observed' ? undefined : entry.entry.nextWakeAt;
+      if (wake === undefined) wakes.delete(runId);
+      else wakes.set(runId, wake);
+      if (runId === plan.runId) runExit = exitFor(entry);
+    };
+    const skip = (runId: string, reason: TickSkipReason, extra: Partial<TickSkippedEntry> = {}) => {
+      record(runId, { type: 'skipped', entry: { runId, reason, ...extra } });
+    };
+    /** Record a run that cannot be resumed now; returns false when it is due. */
+    const classify = async (run: RunRecord, notDue: 'not due' | 'no longer due') => {
+      const terminal = terminalStatus(run);
+      if (terminal !== undefined) record(run.id, { type: 'observed', status: terminal });
+      else if (run.status === 'running') skip(run.id, 'running');
+      else if (!(await due(run, plan.stateDir, clockNow(clock))))
+        skip(run.id, notDue, { nextWakeAt: run.nextWakeAt ?? null });
+      else return false;
+      return true;
     };
     try {
       for (;;) {
         const ids = plan.runId === undefined ? await store.list() : [plan.runId];
         for (const id of ids) {
-          if (signal.aborted || resumed >= maxRuns) break;
-          if (failed.has(id) || incompatible.has(id) || completed.has(id)) continue;
+          if (signal.aborted || attempts >= maxRuns) break;
+          if (final.has(id)) continue;
           let claim: ReturnType<typeof claimedStore> | undefined;
+          let executing = false;
           try {
             let run = await readRequiredRun({ stateDir: plan.stateDir, runId: id });
-            observe(run);
-            if (!(await due(run, plan.stateDir, clockNow(clock)))) {
-              if (run.status === 'suspended') skipped.set(id, 'not due');
-              continue;
-            }
+            if (await classify(run, 'not due')) continue;
             if ((await inspectRunOwnership({ stateDir: plan.stateDir, runId: id })).locked) {
-              skipped.set(id, 'locked');
+              skip(id, 'locked');
               continue;
             }
             if (!run.launch || (await questionCodeChanged(run)) !== false) {
-              incompatible.set(
-                id,
-                run.launch
+              skip(id, 'incompatible', {
+                message: run.launch
                   ? 'Stored workflow source hashes are missing or changed.'
                   : 'No stored entrypoint; resume through the original application.',
-              );
+              });
               continue;
             }
             const owned = await store.open(id, {
@@ -213,41 +309,42 @@ export class TickWorkflowExecutor implements Executor<
             const latest = await owned.read();
             if (!latest) throw new Error(`Run ${id} disappeared after acquiring ownership.`);
             run = latest;
-            observe(run);
-            if (!(await due(run, plan.stateDir, clockNow(clock)))) {
-              skipped.set(id, 'no longer due');
-              continue;
-            }
+            // A concurrent tick may have finished or resumed the run before this one got the lock.
+            if (await classify(run, 'no longer due')) continue;
             if (!run.launch || (await questionCodeChanged(run)) !== false) {
-              incompatible.set(id, 'Stored workflow source hashes are missing or changed.');
+              skip(id, 'incompatible', {
+                message: 'Stored workflow source hashes are missing or changed.',
+              });
               continue;
             }
-            const result = await new WorkflowExecutor({
-              ...this.options,
-              store: claim.store,
-              signal,
-            }).execute({
-              kind: 'workflow.resume',
-              runId: id,
-              stateDir: plan.stateDir,
-              waitMode: 'suspend',
-              ...(plan.notifyCommand === undefined ? {} : { notifyCommand: plan.notifyCommand }),
-              ...(this.options.harness === undefined && run.harness?.kind === 'cli'
-                ? { harness: plan.harness ?? { kind: 'cli' as const, config: {} } }
-                : {}),
-            });
-            resumed++;
-            skipped.delete(id);
-            if (!result.ok) {
-              if (result.code === 'run.incompatible') incompatible.set(id, result.message);
-              else failed.set(id, result.message);
-              if (result.run) observe(result.run);
-            } else if (result.kind === 'workflow.run.result') observe(result.run);
-            else throw new Error('Tick resume returned an unexpected result.');
+            executing = true;
+            let result: Awaited<ReturnType<WorkflowExecutor['execute']>>;
+            try {
+              result = await new WorkflowExecutor({
+                ...this.options,
+                store: claim.store,
+                signal,
+              }).execute({
+                kind: 'workflow.resume',
+                runId: id,
+                stateDir: plan.stateDir,
+                waitMode: 'suspend',
+                ...(plan.notifyCommand === undefined ? {} : { notifyCommand: plan.notifyCommand }),
+                ...(this.options.harness === undefined && run.harness?.kind === 'cli'
+                  ? { harness: plan.harness ?? { kind: 'cli' as const, config: {} } }
+                  : {}),
+              });
+            } finally {
+              attempts++;
+            }
+            record(id, { type: 'resumed', entry: resumeOutcome(id, result) });
           } catch (error) {
-            if (error instanceof RunRefusedError && error.code === 'run.locked')
-              skipped.set(id, 'locked');
-            else failed.set(id, error instanceof Error ? error.message : String(error));
+            const message = error instanceof Error ? error.message : String(error);
+            if (executing)
+              record(id, { type: 'resumed', entry: { runId: id, outcome: 'failed', message } });
+            else if (error instanceof RunRefusedError && error.code === 'run.locked')
+              skip(id, 'locked');
+            else skip(id, 'unreadable', { message });
           } finally {
             await claim?.release();
           }
@@ -255,36 +352,33 @@ export class TickWorkflowExecutor implements Executor<
         if (
           !plan.watch ||
           signal.aborted ||
-          resumed >= maxRuns ||
-          (plan.runId !== undefined &&
-            (completed.has(plan.runId) || failed.has(plan.runId) || incompatible.has(plan.runId)))
+          attempts >= maxRuns ||
+          (plan.runId !== undefined && final.has(plan.runId))
         )
           break;
         const now = clockNow(clock);
-        const next = [...suspended]
-          .filter(([id]) => !incompatible.has(id) && !failed.has(id))
-          .flatMap(([, at]) => (at === null || at <= now ? [] : [at]));
+        const next = [...wakes.values()].flatMap((at) => (at === null || at <= now ? [] : [at]));
         const untilDeadline = deadline - Date.now();
         const untilNext = next.length > 0 ? Math.min(...next) - now : Infinity;
         await waitForChange(plan.stateDir, Math.min(untilDeadline, untilNext), signal);
       }
       if (this.options.signal?.aborted)
         return workflowFailure('workflow.interrupted', 'Tick interrupted.', context);
+      const resumed: TickResumedEntry[] = [];
+      const skipped: TickSkippedEntry[] = [];
+      let observed = 0;
+      for (const entry of entries.values()) {
+        if (entry.type === 'resumed') resumed.push(entry.entry);
+        else if (entry.type === 'skipped') skipped.push(entry.entry);
+        else observed++;
+      }
       return {
         kind: 'workflow.tick.result',
         ok: true,
         resumed,
-        completed: [...completed],
-        suspended: [...suspended].map(([runId, nextWakeAt]) => ({ runId, nextWakeAt })),
-        failed: [...failed].map(([runId, message]) => ({ runId, message })),
-        skipped: [...skipped].map(([runId, reason]) => ({ runId, reason })),
-        incompatible: [...incompatible].map(([runId, message]) => ({ runId, message })),
-        exitCode:
-          plan.runId === undefined || completed.has(plan.runId)
-            ? 0
-            : failed.has(plan.runId) || incompatible.has(plan.runId)
-              ? 1
-              : 75,
+        skipped,
+        observed,
+        exitCode: plan.runId === undefined ? 0 : runExit,
       };
     } catch (error) {
       return workflowFailure(

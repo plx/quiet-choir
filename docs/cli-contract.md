@@ -118,10 +118,13 @@ unchanged in-flight run can be blocked by these stricter defaults before import 
 
 ## Tick
 
-`workflow tick` returns a single aggregate JSON document, including resumed count and completed,
-suspended, failed, skipped, and incompatible entries. With --run, exits are 0 completed, 75 pending,
-and 1 failed/incompatible; batch per-run failures remain data with exit 0. Usage/infrastructure
-errors retain the command failure document. --watch is bounded by --timeout (default 540s), with
---max-runs limiting resume attempts. `--harness-config` supplies CLI harness configuration (JSON or
-`@file`) for resumed CLI runs, since the checkpoint stores only the harness kind, not its config.
-See [waits](waits.md) for due detection and notification hooks.
+`workflow tick` returns a single aggregate JSON document: `resumed` entries with each started
+resume's outcome (completed, suspended, failed, cancelled or incompatible), `skipped` entries with a
+reason (not due, no longer due, locked, running, incompatible or unreadable), and an `observed`
+count of already-terminal runs. Each run appears in at most one entry. With --run, exits are 0
+completed (now or earlier), 75 pending, locked or running, and 1 failed, cancelled, incompatible or
+unreadable; batch per-run failures remain data with exit 0. Usage/infrastructure errors retain the
+command failure document. --watch is bounded by --timeout (default 540s), with --max-runs limiting
+executed resumes. `--harness-config` supplies CLI harness configuration (JSON or `@file`) for
+resumed CLI runs, since the checkpoint stores only the harness kind, not its config. See
+[waits](waits.md) for due detection and notification hooks.
