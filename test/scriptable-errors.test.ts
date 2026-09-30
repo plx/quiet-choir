@@ -419,7 +419,8 @@ export default defineWorkflow({
   },
 );
 
-// measured: see the neighbouring signal case; the same real compiler pass dominates.
+// measured: 0.5 s alone; the same real compiler pass as the neighbouring signal case dominates
+// (1.7-3.6 s in local full coverage runs, 5.1 s on the Node 22.13 CI leg)
 it('maps a saved interrupted suspension to workflow.interrupted', { timeout: 15_000 }, async () => {
   const root = join(stateDir, 'workflow');
   await mkdir(root);
