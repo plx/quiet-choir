@@ -95,10 +95,25 @@ still completes this cleanup; a second signal reaches these recovery groups too.
 A different OS birth identity means the PID has been reused: the unrelated process is never
 signaled. Missing/unreadable identity, a surviving group whose original leader cannot be identified,
 and malformed records are reported and retained; `--kill-orphans` refuses to guess. Inspect those
-processes separately and wait for their exit or deliberately repair the abandoned lock after
-establishing ownership. Do not delete records simply because a checkpoint looks old. Locks whose
-workflow finished but whose processes could not be reaped have an explicit `released` owner state,
-so a long-lived embedding process does not permanently obstruct recovery.
+processes separately and wait for their exit, then clear the abandoned lock with `workflow unlock`
+(below). Do not delete records or lock directories by hand. Locks whose workflow finished but whose
+processes could not be reaped have an explicit `released` owner state, so a long-lived embedding
+process does not permanently obstruct recovery.
+
+`quiet-choir workflow unlock RUN [--state-dir DIR] [--force-remote] [--json]` is the sanctioned way
+to clear a lock that resume refuses: incomplete ownership metadata from damage or an older build, a
+damaged `recovery.json`, or a foreign host that is gone. The `run.locked` messages print it. It
+imports no workflow code and never signals a process. Before removing anything it judges both the
+primary lock and the legacy guard: a locally alive or unverifiable owner or recoverer refuses with
+`run.locked`, and an alive or unverifiable child record refuses with `run.orphans`, naming the owner
+and the records (stop confirmed children with `workflow resume RUN --kill-orphans`). A foreign-host
+owner or recoverer refuses unless `--force-remote` asserts that the recorded host is this machine
+under an old name or is permanently gone; the owner, recoverer and children are then judged by local
+PID and birth-identity observations, so a recorded PID that is alive here still refuses. Missing or
+unreadable `owner.json` and `recovery.json` do not block it and are reported as warnings. Each lock
+leaves only by the tombstone rename, after re-reading the observed tokens; a lock that changed
+meanwhile refuses with "changed during unlock; retry", and one that vanished is reported `absent`. A
+run with no lock is a no-op. Do not run it concurrently with a resume or tick of the same run.
 
 Linux identity combines boot ID and `/proc/<pid>/stat` start ticks; macOS uses boot time and the
 C-locale `ps lstart` timestamp (one-second resolution); Windows uses the process creation timestamp

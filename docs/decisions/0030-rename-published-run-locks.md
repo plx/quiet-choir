@@ -1,7 +1,7 @@
 # 0030: Publish, release and recover run locks by rename
 
 - Status: accepted
-- Issue: #208
+- Issue: #208; amended by #209 (guarded `workflow unlock`)
 - Extends [ADR 0002](0002-durable-external-workflows.md)'s local run lock and
   [ADR 0013](0013-process-ownership.md)'s dead-owner recovery.
 
@@ -95,7 +95,39 @@ remote, and a dead recoverer's run is recovered through ordinary lock acquisitio
   lock. An older build's `recovery/` directory is ignored, not respected, so a crashed old recoverer
   cannot wedge a run; a live old recoverer racing a new one is not excluded. Upgrade by letting
   older builds' runs finish or stop first.
-- A lock that exists without a readable `owner.json` is still refused, and an unreadable
-  `recovery.json` holds the lock. Removing such a lock stays a manual operator step.
+- A lock that exists without a readable `owner.json` is still refused by acquire, and an unreadable
+  `recovery.json` holds the lock. The guarded `workflow unlock` (amendment below) clears them.
 - Windows is not tested: an empty legacy lock is not taken over there, because Windows refuses to
   rename onto an existing directory.
+
+## Amendment: guarded `workflow unlock` (#209)
+
+Operators need a sanctioned way to clear the locks that acquire refuses: incomplete metadata from
+damage or an older build, a damaged marker, and a lock whose foreign host was renamed or is gone.
+`quiet-choir workflow unlock RUN [--force-remote]` does so through the same protocol, and the
+`run.locked` messages now print it.
+
+- **Observe, judge, remove.** Unlock reads every existing lock (primary, then guard), then judges
+  them all with the pure `decideUnlock` in `recovery-decision.ts` before anything is removed. In
+  order: a foreign-host owner or recoverer without `--force-remote` refuses; a locally alive or
+  unknown owner or recoverer refuses (`run.locked`); an alive or unknown child record in either lock
+  refuses (`run.orphans`, naming the owner). Missing or unreadable `owner.json` and `recovery.json`
+  are removable and reported as warnings; an atomically published marker is unreadable only after
+  damage. Unlock never signals a process; stopping children stays with `resume --kill-orphans`.
+- **`--force-remote` is an assertion, not an override.** It says the recorded host is this machine
+  under an old name or is permanently gone, so the owner, recoverer and children are judged by local
+  PID and birth-identity observations instead of the blanket `remote`/`unknown`. A recorded PID that
+  happens to be alive here (for example without a recorded birth identity) still refuses, which is
+  conservative.
+- **Generalized tombstone check.** `retire()`'s expectation becomes
+  `{ owner: string | null; recovery?: string | null }`: a string must match the file's token, null
+  expects no readable file, and an omitted recovery is not checked; a file missing from the
+  tombstone still counts as a sweep in progress. Release and recovery pass what they passed before.
+  Unlock re-reads both tokens just before the rename and always passes both, so a marker linked by a
+  concurrent recoverer, or a complete owner that replaced an empty older-build lock, fails the check
+  and the lock is renamed back ("changed during unlock; retry"). A lock that vanished is reported
+  `absent`. As with release, if a new acquirer publishes onto the vacated path first, the rename
+  back fails and the orphaned tombstone is swept later; do not run unlock concurrently with a resume
+  or tick of the same run.
+- A run with no lock is a no-op, but a run with neither a lock nor a checkpoint is `run.not_found`,
+  so a mistyped ID is not a silent success. Unlock does not sweep strays; the next acquire does.
