@@ -96,10 +96,12 @@ launch the same due run. The normal replay compatibility checks still apply. Cha
 `incompatible` without modifying the checkpoint; use explicit
 [code-change recovery](decisions/0006-code-change-recovery.md).
 
-Before claiming a run, tick classifies its lock. A live, unknown or remote owner, or incomplete lock
-metadata, is skipped as `locked`. A dead or released owner whose child records are all dead is
-reclaimed through ordinary lock recovery, so a due suspended run behind a lock left by a crash is
-resumed. A dead or released owner with a live or unverified child record is skipped as `orphans`,
+Before claiming a run, tick classifies both of its locks (the current lock and the legacy guard). A
+live, unknown or remote owner of either, incomplete or unreadable lock metadata, or a live, unknown
+or remote recoverer (`recovery.json`) is skipped as `locked`. A dead or released owner whose child
+records are all dead is reclaimed through ordinary lock recovery, so a due suspended run behind a
+lock left by a crash is resumed; so is a run whose recoverer died, whose marker the next acquire
+reclaims. A dead or released owner with a live or unverified child record is skipped as `orphans`,
 without resuming the run or changing its checkpoint; tick never kills orphans. A `running` run with
 no lock or a reclaimable lock is stale: its owner was killed (OOM, sandbox teardown, a SIGKILLed
 tick). Tick recovers it without waiting for a due time, after re-reading it under ownership. There

@@ -57,7 +57,8 @@ scripts, use stable CLI `error.code` and structured harness categories instead o
 | ---------------------------------------------------------------------------------------------------------- | ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
 | `Run <id> already exists; use resume or choose a new run ID.`                                              | New execution reused an ID                              | Resume the intended run, or choose a fresh ID.                                                                                 |
 | `Run <id> is locked by PID <pid> on <host>.`                                                               | Live/foreign owner                                      | Inspect ownership on that host; wait or deliberately cancel its runner.                                                        |
-| `Run <id> is locked with incomplete ownership metadata; inspect <path> before removing an abandoned lock.` | Acquisition in progress or damaged lock                 | Recheck and investigate ownership; do not remove an active writer's lock.                                                      |
+| `Run <id> is locked with incomplete ownership metadata; inspect <path> before removing an abandoned lock.` | Damaged lock or an older build's interrupted acquire    | Recheck and investigate ownership; do not remove an active writer's lock.                                                      |
+| `Run <id> lock recovery is in progress; retry or inspect <path>.`                                          | Live, unknown or remote recoverer, or damaged marker    | Retry after it finishes; a dead recoverer's marker is reclaimed automatically.                                                 |
 | `Run <id> has <count> live or unverified harness processes …`                                              | Survivor or unverifiable child record                   | Inspect; `--resume --kill-orphans` handles only confirmed identities.                                                          |
 | `Workflow <changes> changed; <unchanged> unchanged.`                                                       | Source/schema or name/version/cwd compatibility changed | Read `check-resume --json` details; compare saved cwd/name/version. Accept eligible code edits or fork/start anew as directed. |
 | `Checkpoint format version <n> cannot resume or fork with the current durable-outcome contract …`          | Older runtime record                                    | Inspect it; use its original runtime to resume or start a fresh ID.                                                            |
@@ -112,12 +113,16 @@ owner. A same-host resume checks durable child records before recovering a dead/
 or unverified children refuse execution (exit 3); explicit `--resume --kill-orphans` stops only
 birth-identity-confirmed survivors. A reused PID is not signaled. Text inspection names the owner
 PID and state (with `stale` run status for a missing lock or dead/released owner), then child
-binary, PID/group, step, attempt and state. JSON adds
-`ownership: { locked, owner, processes, warning? }`; this field is not saved in the checkpoint.
-Missing identities and malformed records are reported, never permission to kill. Foreign-host or
-incomplete ownership needs inspection. Prefer `inspect` or `readRun` to validate data. `inspect`
-without `--watch` exits 0 even for `failed`, `cancelled`, or `running` records; check `status`. A
-JSON inspection result has these useful fields:
+binary, PID/group, step, attempt and state, and one line per existing lock with its owner and any
+recovery marker. JSON adds `ownership: { locked, owner, processes, warning?, locks }`; this field is
+not saved in the checkpoint. `locks` lists the existing `primary` lock and legacy `guard`, each as
+`{ kind, path, owner, recovery, warning? }`, where `owner` and `recovery` (a `recovery.json`
+recoverer) are `{ pid, host, state }` or null. Tick skips a run as `locked` while any lock's owner
+or recoverer is alive, unknown or remote; a dead recoverer's marker is reclaimed. Missing identities
+and malformed records are reported, never permission to kill. Foreign-host or incomplete ownership
+needs inspection. Prefer `inspect` or `readRun` to validate data. `inspect` without `--watch` exits
+0 even for `failed`, `cancelled`, or `running` records; check `status`. A JSON inspection result has
+these useful fields:
 
 | Field                                     | Interpretation                                                                 |
 | ----------------------------------------- | ------------------------------------------------------------------------------ |

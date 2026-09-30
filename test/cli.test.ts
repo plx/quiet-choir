@@ -461,7 +461,7 @@ describe('workflow lifecycle command adapters', () => {
       const stateDir = await mkdtemp(join(tmpdir(), 'quiet-choir-cli-'));
       temporaryDirectories.push(stateDir);
       await writeFile(join(stateDir, 'test-run.json'), JSON.stringify(runRecord));
-      const ownership = { locked: false, owner: null, processes: [] };
+      const ownership = { locked: false, owner: null, processes: [], locks: [] };
       vi.spyOn(WorkflowExecutor.prototype, 'execute').mockImplementation(() => {
         process.emit('SIGINT');
         return Promise.resolve({
@@ -497,7 +497,7 @@ describe('workflow lifecycle command adapters', () => {
       harnesses: { codex: { binary: 'codex', version: '0.157.1' } },
       harnessWarnings: ['native version changed'],
     };
-    const ownership = { locked: false, owner: null, processes: [] };
+    const ownership = { locked: false, owner: null, processes: [], locks: [] };
     const execute = vi.spyOn(WorkflowExecutor.prototype, 'execute').mockResolvedValue({
       kind: 'workflow.run.result',
       ok: true,
@@ -520,10 +520,10 @@ describe('workflow lifecycle command adapters', () => {
       kind: 'workflow.run.result',
       ok: true,
       run: { ...runRecord, status: 'failed', error: 'Effect failed.' },
-      ownership: { locked: false, owner: null, processes: [] },
+      ownership: { locked: false, owner: null, processes: [], locks: [] },
       summary: summarizeRun(
         { ...runRecord, status: 'failed', error: 'Effect failed.' },
-        { locked: false, owner: null, processes: [] },
+        { locked: false, owner: null, processes: [], locks: [] },
       ),
     });
     const failed = await captureCommand(WorkflowInspect, ['test-run']);
@@ -671,7 +671,12 @@ describe('recovery command adapters', () => {
 
 describe('monitoring command adapters', () => {
   it.each([false, true])('lists and filters saved runs (JSON=%s)', async (json) => {
-    const summary = summarizeRun(runRecord, { locked: false, owner: null, processes: [] });
+    const summary = summarizeRun(runRecord, {
+      locked: false,
+      owner: null,
+      processes: [],
+      locks: [],
+    });
     const execute = vi.spyOn(WorkflowExecutor.prototype, 'execute').mockResolvedValue({
       kind: 'workflow.list.result',
       ok: true,
@@ -694,7 +699,7 @@ describe('monitoring command adapters', () => {
     );
   });
   it('renders compact summaries and returns the watched terminal status without an error document', async () => {
-    const ownership = { locked: false, owner: null, processes: [] };
+    const ownership = { locked: false, owner: null, processes: [], locks: [] };
     const summary = summarizeRun({ ...runRecord, status: 'failed' }, ownership);
     const execute = vi.spyOn(WorkflowExecutor.prototype, 'execute').mockResolvedValue({
       kind: 'workflow.run.result',

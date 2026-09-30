@@ -64,12 +64,21 @@ quiet-choir workflow execute review.workflow.ts --run-id review-1 \
 
 Inspection adds an ephemeral `ownership` object to the JSON run record. Text output names the owner
 PID, host and liveness, including `dead: stale lock`, and each recorded process's binary, PID/group,
-step, attempt and observed state. `inspectRunOwnership({ runId, stateDir, cwd })` exposes the same
-read-only view to embedders. `readRun` continues returning only the persisted checkpoint. Inspection
-observations can change immediately; they are not a lease or heartbeat.
+step, attempt and observed state, then one line per existing lock with its owner and any recovery
+marker. The JSON `ownership.locks` array lists the current lock (`primary`) and the legacy guard
+(`guard`) that exist, each with its `path`, `owner` (`pid`, `host`, liveness `state`, or null),
+`recovery` (the `recovery.json` recoverer's `pid`, `host` and `state`, or null) and a `warning` when
+either file exists but cannot be read. The top-level `locked`, `owner`, `processes` and `warning`
+describe the lock that ownership resolves to, as before.
+`inspectRunOwnership({ runId, stateDir, cwd })` exposes the same read-only view to embedders.
+`readRun` continues returning only the persisted checkpoint. Inspection observations can change
+immediately; they are not a lease or heartbeat.
 
-Dead-owner recovery reads `<runId>/lock/processes/<pgid>.json` (PID on Windows) before removing the
-lock. Records are private, written exclusively and fsynced, and include run/step/attempt,
+Dead-owner recovery first links a `recovery.json` marker into the lock, so only one recoverer
+proceeds; a dead recoverer's marker is reclaimed by the next acquire, and a live, unknown or remote
+one holds the lock ([ADR 0030](decisions/0030-rename-published-run-locks.md)). It then reads
+`<runId>/lock/processes/<pgid>.json` (PID on Windows) before retiring the lock through a tombstone
+rename. Records are private, written exclusively and fsynced, and include run/step/attempt,
 binary/cwd, spawn time, OS birth identity and the writer token. They contain no argv, input or env.
 Version-discovery children are recorded too, using the triggering effect's identity and the run's
 shared discovery signal, which aborts on interruption or once no effect still awaits discovery. This

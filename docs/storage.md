@@ -49,9 +49,12 @@ retains typechecking, code/schema checks, grants, and step identity validation.
     <runId>/
       run.json                       # compacted record with storage seq
       journal.jsonl                  # transitions newer than the snapshot
-      lock/
+      lock/                          # published whole by one rename
         owner.json
+        recovery.json                # only while a recoverer claims a dead owner's lock
         processes/<pgid>.json
+      lock.<pid>.<uuid>.tmp/         # an acquire's publish directory; swept once its PID is dead
+      lock.<pid>.<uuid>.gone/        # a released or recovered lock's tombstone; swept
       inbox/                         # exclusive answer deliveries
       attempts/<sha256-full-step-id>/<attempt>.<provider>.jsonl
       artifacts/<encoded-id>--<hash>/<attempt>/
@@ -103,6 +106,17 @@ lock. This ordering prevents an abandoned old lock from bypassing a live current
 identity checks and conservative orphan recovery remain unchanged. Owner-only cleanup removes
 recognized UUID temporary files for that run; unrelated data is retained. Deleting active state
 reports the state directory explicitly.
+
+Each lock (the current `lock/` and the legacy guard `<runId>.json.lock/`) changes hands by rename
+([ADR 0030](decisions/0030-rename-published-run-locks.md)). An acquire writes and fsyncs
+`owner.json` in a private sibling `<lock>.<pid>.<uuid>.tmp/`, then renames it onto the lock path, so
+a lock never exists without a complete `owner.json`. Release and dead-owner recovery rename the
+verified lock to a `<lock>.<pid>.<uuid>.gone/` tombstone, check its tokens and delete it. A
+recoverer first links an atomically written `recovery.json` (`{ pid, host, osStartTime, token }`)
+into the dead owner's lock; a live, unknown or remote recoverer holds the lock, and the next acquire
+reclaims the marker of a dead one. The next owner sweeps its lock's `.gone` tombstones and the
+`.tmp` directories of dead creators; a SIGKILL at any of these steps leaves a run that a plain
+resume recovers. An older build's `recovery/` directory is ignored.
 
 ## Legacy records
 

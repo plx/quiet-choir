@@ -62,3 +62,5 @@ part of the documentation.
 - [0028: Brand public errors across module instances](0028-brand-public-errors-across-module-instances.md)
 
 - [0029: Persist external interruptions as resumable suspensions](0029-persist-interruptions-as-resumable-suspensions.md)
+
+- [0030: Publish, release and recover run locks by rename](0030-rename-published-run-locks.md)

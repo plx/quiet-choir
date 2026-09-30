@@ -205,7 +205,7 @@ export const invalid: number = 'wrong';`);
     });
     expect(inspected).toMatchObject({
       ...executed,
-      ownership: { locked: false, owner: null, processes: [] },
+      ownership: { locked: false, owner: null, processes: [], locks: [] },
       summary: { id: 'loader-test', status: 'completed', counts: { total: 1, completed: 1 } },
     });
     const resumed = await runner.execute({ ...executionPlan, resume: true });

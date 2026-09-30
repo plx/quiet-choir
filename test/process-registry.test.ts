@@ -110,6 +110,7 @@ describe.skipIf(process.platform === 'win32')('durable harness ownership', () =>
       locked: false,
       owner: null,
       processes: [],
+      locks: [],
     });
   });
 

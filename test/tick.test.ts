@@ -612,6 +612,49 @@ describe('tick loader and operator hooks', { timeout: 40_000 }, () => {
     expect((await readRun(f.plan)).status).toBe('suspended');
   });
 
+  it('resumes a run whose recoverer died, reclaiming its recovery marker', async () => {
+    const f = await fixture();
+    const lock = await deadOwnerLock(f.stateDir, 'run');
+    const exited = spawnSync(process.execPath, ['-e', '']);
+    await writeFile(
+      join(lock, 'recovery.json'),
+      JSON.stringify({ pid: exited.pid, host: hostname(), token: randomUUID() }),
+    );
+    expect(oneEntryPerRun(await tick.execute(f.tickPlan))).toMatchObject({
+      resumed: [{ runId: 'run', outcome: 'completed' }],
+      skipped: [],
+      exitCode: 0,
+    });
+    expect((await readRun(f.plan)).status).toBe('completed');
+    await expect(stat(lock)).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
+  it('skips a run as locked while a recoverer lives or the guard lock is held', async () => {
+    const f = await fixture();
+    const lock = await deadOwnerLock(f.stateDir, 'run');
+    const live = JSON.stringify({ pid: process.pid, host: hostname(), token: randomUUID() });
+    await writeFile(join(lock, 'recovery.json'), live);
+    const before = await runBytes(f.stateDir, 'run');
+    const locked = {
+      resumed: [],
+      skipped: [{ runId: 'run', reason: 'locked' }],
+    };
+    expect(oneEntryPerRun(await tick.execute(f.tickPlan))).toMatchObject(locked);
+    expect(await runBytes(f.stateDir, 'run')).toEqual(before);
+
+    // A dead primary owner does not make the run reclaimable while the guard's owner lives.
+    await rm(join(lock, 'recovery.json'));
+    const guard = join(f.stateDir, 'run.json.lock');
+    await mkdir(guard);
+    await writeFile(join(guard, 'owner.json'), live);
+    const beforeGuard = await runBytes(f.stateDir, 'run');
+    expect(oneEntryPerRun(await tick.execute(f.tickPlan))).toMatchObject(locked);
+    expect(await runBytes(f.stateDir, 'run')).toEqual(beforeGuard);
+    expect(await readFile(join(guard, 'owner.json'), 'utf8')).toBe(live);
+    expect(await readFile(f.imports, 'utf8')).toBe('import\n');
+    expect((await readRun(f.plan)).status).toBe('suspended');
+  });
+
   it('recovers a running run whose owner is gone and clears the counter on completion', async () => {
     const f = await fixture();
     await crashedWhileRunning(f.stateDir, 'run');

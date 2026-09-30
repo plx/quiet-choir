@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import type { RunOwnership } from '../src/workflow/runtime/lock.js';
+import type { RunLockView, RunOwnership } from '../src/workflow/runtime/lock.js';
 import type { HarnessProcessInspection } from '../src/workflow/runtime/process-registry.js';
 import type { StepRecord } from '../src/workflow/runtime/record.js';
 import {
@@ -14,9 +14,28 @@ import {
 
 // Recovery rules as a pure table: no state directory, lock or process.
 type OwnerState = NonNullable<RunOwnership['owner']>['state'];
+type MarkerState = NonNullable<RunLockView['recovery']>['state'];
 type ProcessStates = 'none' | HarnessProcessInspection['state'];
 
-function ownership(owner: OwnerState | null, processes: ProcessStates): RunOwnership {
+function lock(
+  kind: RunLockView['kind'],
+  owner: OwnerState | null,
+  recovery: MarkerState | null = null,
+): RunLockView {
+  return {
+    kind,
+    path: `/state/${kind}`,
+    owner: owner === null ? null : { pid: 4242, host: 'here', state: owner },
+    recovery: recovery === null ? null : { pid: 4343, host: 'here', state: recovery },
+  };
+}
+
+/** A primary lock (the top-level owner) with an optional marker, plus an optional guard lock. */
+function ownership(
+  owner: OwnerState | null,
+  processes: ProcessStates,
+  options: { recovery?: MarkerState | null; guard?: RunLockView } = {},
+): RunOwnership {
   return {
     locked: true,
     owner: owner === null ? null : { pid: 4242, host: 'here', state: owner },
@@ -27,6 +46,10 @@ function ownership(owner: OwnerState | null, processes: ProcessStates): RunOwner
             { file: '1.json', process: null, state: 'dead' },
             { file: '2.json', process: null, state: processes },
           ],
+    locks: [
+      lock('primary', owner, options.recovery ?? null),
+      ...(options.guard ? [options.guard] : []),
+    ],
   };
 }
 
@@ -38,28 +61,91 @@ const owners: readonly (OwnerState | null)[] = [
   'dead',
   'released',
 ];
+const markers: readonly (MarkerState | null)[] = [null, 'alive', 'unknown', 'remote', 'dead'];
 const processStates: readonly ProcessStates[] = ['none', 'dead', 'reused', 'alive', 'unknown'];
 
-function expected(owner: OwnerState | null, processes: ProcessStates): RecoveryClass {
+function expected(
+  owner: OwnerState | null,
+  processes: ProcessStates,
+  recovery: MarkerState | null = null,
+): RecoveryClass {
   if (owner !== 'dead' && owner !== 'released') return 'held';
+  if (recovery !== null && recovery !== 'dead') return 'held';
   return processes === 'alive' || processes === 'unknown' ? 'orphans' : 'reclaimable';
 }
 
 describe('classifyRecovery', () => {
   it('treats a missing lock as free', () => {
-    expect(classifyRecovery({ locked: false, owner: null, processes: [] })).toBe('free');
+    expect(classifyRecovery({ locked: false, owner: null, processes: [], locks: [] })).toBe('free');
   });
 
-  it.each(owners.flatMap((owner) => processStates.map((processes) => [owner, processes] as const)))(
-    'classifies owner %s with processes %s',
-    (owner, processes) => {
-      expect(classifyRecovery(ownership(owner, processes))).toBe(expected(owner, processes));
+  it.each(
+    owners.flatMap((owner) =>
+      markers.flatMap((recovery) =>
+        processStates.map((processes) => [owner, recovery, processes] as const),
+      ),
+    ),
+  )(
+    'classifies owner %s with recovery marker %s and processes %s',
+    (owner, recovery, processes) => {
+      expect(classifyRecovery(ownership(owner, processes, { recovery }))).toBe(
+        expected(owner, processes, recovery),
+      );
     },
   );
 
+  it.each(
+    owners.flatMap((guard) =>
+      markers.flatMap((recovery) =>
+        (['dead', 'released'] as const).map((primary) => [primary, guard, recovery] as const),
+      ),
+    ),
+  )(
+    'with a reclaimable %s primary, classifies a guard owned %s with recovery marker %s',
+    (primary, guard, recovery) => {
+      expect(
+        classifyRecovery(ownership(primary, 'none', { guard: lock('guard', guard, recovery) })),
+      ).toBe(expected(guard, 'none', recovery));
+    },
+  );
+
+  it('holds a run whose guard alone is locked by a live owner, and frees one without locks', () => {
+    const guardOnly: RunOwnership = {
+      locked: true,
+      owner: { pid: 4242, host: 'here', state: 'dead' },
+      processes: [],
+      locks: [lock('primary', 'dead'), lock('guard', 'alive')],
+    };
+    expect(classifyRecovery(guardOnly)).toBe('held');
+    expect(classifyRecovery({ ...guardOnly, locks: [lock('guard', 'dead', 'dead')] })).toBe(
+      'reclaimable',
+    );
+  });
+
+  it('holds a reclaimable owner when any lock carries a warning', () => {
+    const warned: RunLockView = { ...lock('guard', 'dead'), warning: 'recovery.json: bad JSON' };
+    expect(classifyRecovery(ownership('dead', 'none', { guard: warned }))).toBe('held');
+  });
+
+  it('falls back to the top-level owner when the observation has no per-lock view', () => {
+    const base = { locked: true, processes: [], locks: [] } as const;
+    expect(classifyRecovery({ ...base, owner: { pid: 1, host: 'h', state: 'dead' } })).toBe(
+      'reclaimable',
+    );
+    expect(classifyRecovery({ ...base, owner: { pid: 1, host: 'h', state: 'alive' } })).toBe(
+      'held',
+    );
+  });
+
   it('holds an unreadable lock even with a warning and no processes', () => {
     expect(
-      classifyRecovery({ locked: true, owner: null, processes: [], warning: 'bad owner.json' }),
+      classifyRecovery({
+        locked: true,
+        owner: null,
+        processes: [],
+        warning: 'bad owner.json',
+        locks: [],
+      }),
     ).toBe('held');
   });
 });

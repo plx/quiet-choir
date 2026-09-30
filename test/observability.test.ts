@@ -27,7 +27,7 @@ const response = {
   sessionId: null,
   usage: { inputTokens: 10, outputTokens: 4, costUsd: 0.1 },
 };
-const unlocked = { locked: false, owner: null, processes: [] };
+const unlocked = { locked: false, owner: null, processes: [], locks: [] };
 function deferred() {
   let resolve!: () => void;
   const promise = new Promise<void>((done) => {

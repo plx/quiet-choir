@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-deprecated -- Exercise the supported legacy map/replay contract. */
-import { chmod, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { chmod, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -526,7 +526,9 @@ it.skipIf(asRoot)('warns when lock removal fails after ownership was verified', 
     expect(result.warnings?.[0]).toContain('EACCES');
     expect((await readRun({ stateDir, runId: 'run' })).status).toBe('completed');
   } finally {
-    await chmod(lockPath, 0o700);
+    // Release renamed the verified lock to a tombstone; only its removal failed.
+    for (const name of await readdir(join(stateDir, 'run')))
+      if (name.startsWith('lock')) await chmod(join(stateDir, 'run', name), 0o700);
   }
 });
 

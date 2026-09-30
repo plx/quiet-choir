@@ -10,7 +10,9 @@
  *
  * Invariants:
  * - Only a dead or released local owner can be reclaimed; alive, unknown, remote and unreadable
- *   owners are held.
+ *   owners are held. Every existing lock counts: the primary lock and the legacy guard.
+ * - A recovery marker whose recoverer is alive, unknown, remote or unreadable holds the run; a dead
+ *   recoverer's marker does not, because the next acquire reclaims it.
  * - Live or unverified child records block automatic recovery; nothing here authorizes a signal.
  * - The crash-loop cap counts consecutive recoveries without a new completed step; progress resets
  *   it.
@@ -21,18 +23,30 @@ import type { RunOwnership } from './lock.js';
 import type { RunRecord } from './record.js';
 
 /**
- * How ownership of a run can be recovered. `free`: no lock. `reclaimable`: the owner is dead or
- * released and no child record is alive or unverified. `orphans`: the owner is dead or released,
- * but a child record is alive or unverified. `held`: the owner is alive, unknown or remote, or the
- * lock metadata is incomplete or unreadable. @internal
+ * How ownership of a run can be recovered. `free`: no lock. `reclaimable`: every lock's owner is
+ * dead or released, no recovery marker has a live recoverer, and no child record is alive or
+ * unverified. `orphans`: as reclaimable, but a child record is alive or unverified. `held`: some
+ * lock's owner is alive, unknown or remote, its metadata is incomplete or unreadable, or a
+ * recoverer is alive, unknown or remote. @internal
  */
 export type RecoveryClass = 'free' | 'reclaimable' | 'orphans' | 'held';
 
 /** Classify one ownership observation for recovery. @internal */
 export function classifyRecovery(ownership: RunOwnership): RecoveryClass {
   if (!ownership.locked) return 'free';
-  const state = ownership.owner?.state;
-  if (state !== 'dead' && state !== 'released') return 'held';
+  const reclaimable = (state: string | undefined): boolean =>
+    state === 'dead' || state === 'released';
+  // The top-level owner still decides for observations without a per-lock view.
+  if (!reclaimable(ownership.owner?.state)) return 'held';
+  if (
+    ownership.locks.some(
+      (lock) =>
+        lock.warning !== undefined ||
+        !reclaimable(lock.owner?.state) ||
+        (lock.recovery !== null && lock.recovery.state !== 'dead'),
+    )
+  )
+    return 'held';
   return ownership.processes.some((entry) => entry.state === 'alive' || entry.state === 'unknown')
     ? 'orphans'
     : 'reclaimable';
