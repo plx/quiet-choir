@@ -399,7 +399,8 @@ async function rehearse(scenario) {
   const agent = async (prompt, opts) => {
     calls.push({ label: opts.label, model: opts.model, effort: opts.effort, phase: opts.phase });
     assert.ok(opts.model && opts.effort, `agent "${opts.label}" must set model and effort`);
-    if (opts.model === 'haiku') {
+    // Clerks (and re-read copyists) are recognized by their command listing, not their model.
+    if (prompt.includes('<command id="')) {
       // A clerk that dies (usage limit, API error) returns null, as agent() does.
       const subs = commandsIn(prompt).map((c) => (c.sub === 'last' ? c.flags.cmd : c.sub));
       if (subs.some((sub) => scenario.deadClerk?.includes(sub))) return null;
@@ -838,8 +839,14 @@ const SCENARIOS = {
   'recovers a corrupted relay by re-reading, not re-running': {
     world: { issues: { 102: {} } },
     corrupt: ['open-pr', 'survey'],
-    check({ result, world }) {
+    check({ result, world, calls }) {
       assert.equal(result.status, 'landed');
+      const rereads = calls.filter((c) => c.label?.includes('(re-read'));
+      assert.ok(rereads.length >= 2, 'both corrupted relays were re-read');
+      assert.ok(
+        rereads.every((c) => c.model !== 'haiku'),
+        'a re-read uses a different model than the clerk whose copy failed',
+      );
       assert.equal(world.effects.filter((e) => e === 'open-pr #102').length, 1, 'PR opened once');
     },
   },
