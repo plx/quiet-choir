@@ -43,6 +43,56 @@ Keep pull requests reviewable and explain observable behavior changes. CI must p
 supported Node.js line. Update hand-written guides and API comments in the same change as the
 behavior they describe.
 
+## Test timeouts and storage sync
+
+Unit tests run with runtime fsyncs turned off. Every in-process flush goes through `syncHandle` and
+`syncDirectory` in `src/workflow/runtime/storage-io.ts`, and `test/setup/storage-sync.ts` (a Vitest
+`setupFiles` entry) switches them off before each test. The switch is an internal module-level
+setting. There is no environment variable, CLI flag or `RunOptions` field for it, the public entry
+points do not export it, and the package `exports` map blocks deep imports, so the CLI and published
+consumers cannot reach it. `test/storage-sync.test.ts` proves the production path still syncs the
+journal, snapshot, lock, inbox, file and transcript writes, that a full workflow makes no
+`FileHandle.sync` calls under the test default, and that no direct `.sync()` call exists in `src/`
+outside `storage-io.ts` and the spawned `guard-program.ts` helper. New storage code must call the
+helpers, not `handle.sync()`.
+
+A test that injects faults through `FileHandle.sync`, or otherwise needs the flush to happen, opts
+back in: call `enableRealStorageSync()` inside the test body, or `useRealStorageSync()` at the top
+of a file or `describe` block (both from `test/setup/durable-sync.ts`). Crash, SIGKILL, benchmark
+and CLI smoke tests run in child processes, which never load the setup file, so they keep real fsync
+without any opt-in. A killed process cannot lose page-cache data anyway, so those tests never
+depended on the flush; the kill-based recovery cases still prove replay.
+
+Profile (macOS 27.0 on APFS, Node 26.8.1, Vitest 4.1.10, 56 test files in parallel; "before" is
+`e68aba0` with 55 files). Alone means the single test in a fresh run; full means a whole-suite run.
+Node 22 and 24 were not installed locally; CI covers them.
+
+| Measurement                                  | Before, alone | Before, full run (no coverage / coverage) | After, alone | After, full coverage run (worst of 3) |
+| -------------------------------------------- | ------------- | ----------------------------------------- | ------------ | ------------------------------------- |
+| 144-leaf nested map (`[6, 8, 3]` at 2)       | 0.64 s        | 3.4 s / 3.7 s                             | 0.52 s       | 1.05 s                                |
+| 200 nonterminal wait observations            | 1.39 s        | 7.8 s / 6.2 s                             | 0.07 s       | 0.38 s                                |
+| children, no quadratic serialized collection | 0.90 s        | 5.0 s / 4.0 s                             | 0.09 s       | 0.25 s                                |
+| journal 500 × 5 KiB at concurrency 8         | 0.85 s        | 4.1 s / 4.7 s                             | 0.47 s       | 1.53 s                                |
+| Whole suite, wall clock                      |               | 91.6 s / 87.3 s                           |              | 26.4 s (no coverage), 70.8-75.6 s     |
+| Whole suite, summed file durations           |               | 937 s / 881 s                             |              | 196 s (no coverage), 299-341 s        |
+
+An A/B on the old code (stubbing `FileHandle.sync` and `datasync` in a temporary setup file) split
+the cost: 25.2 s wall and 182 s summed without coverage, 69.5 s and 294 s with coverage, all with
+unchanged CPU. So fsync was about 81% of summed test time without coverage and 67% with it. Alone, a
+single test barely notices, because an uncontended APFS flush is cheap; the cost appears when 50
+files flush concurrently, which is why the raised timeouts only showed up in full runs. Coverage
+wall time is now dominated by TypeScript compiles in the loader, registry and typecheck suites. The
+same profile shows `journal.ts` persisting whole `MapRecord`s per settled item (quadratic journal
+bytes); that is tracked separately and does not affect the timeouts.
+
+Timeout rule: a test or suite timeout above Vitest's 5 s default needs an adjacent comment of the
+form `// measured: 1.2 s alone, 4.1 s in the full coverage run (dominated by tsImport compile)`.
+Measure in a full parallel `npm run test:coverage` run, remove the raise when the test fits the
+default with at least 3x headroom, and otherwise set the value to about 3x the measured full-run
+time. A timeout that flakes on a CI leg gets a new measured value and comment, not the old number.
+Subprocess, `tsImport`, typecheck and Git suites usually keep a raised value because compiles and
+process startup, not fsync, dominate them.
+
 ## Harness protocol captures
 
 `test/fixtures/harness/` contains sanitized stdout/stderr and process exit codes captured with
