@@ -785,6 +785,15 @@ Return the epic (number, url, created) and one entry per item key.`,
     { ...TIER.scribe, label: 'file follow-ups', phase: 'Fix', schema: FILED },
   );
   if (filed?.epic?.number) record.followupEpic = filed.epic.number;
+  // Scribes sometimes drop the "finding:"/"thread:" prefix from an item key ("F4" for
+  // "finding:F4"). Map a returned key back to the one item it names, so a filed issue is not
+  // counted as unfiled.
+  const keys = items.map((i) => i.key);
+  for (const f of filed?.issues ?? []) {
+    if (keys.includes(f.key)) continue;
+    const match = keys.filter((k) => k.endsWith(`:${f.key}`));
+    if (match.length === 1) f.key = match[0];
+  }
   for (const f of filed?.issues ?? [])
     record.followups.push({
       key: f.key,
