@@ -26,10 +26,11 @@ a time by default. A new smoke needs no CI or `package.json` edit; CI runs the s
 `npm run test:cli` step. Each smoke gets its own temporary `XDG_STATE_HOME` and none of the caller's
 `QUIET_CHOIR_*` variables, and the runner fails if the real state directory
 (`${XDG_STATE_HOME:-~/.local/state}/quiet-choir`) gains entries during the run. Pass name filters
-and `--concurrency N` after `--` to iterate on a subset (`npm run test:cli -- worktrees`); a failing
-smoke prints the tail of its output and keeps its state directory. The Vitest suite has a similar
-guard (`test/setup/state-guard.ts`). CI runs coverage thresholds on the Node 24 leg only; the Node
-22.13 and 26 legs run `npm test`.
+and `--concurrency N` after `--` to iterate on a subset (`npm run test:cli -- worktrees`; a smoke's
+exact name, such as `cli-smoke`, selects only that smoke); a failing smoke prints the tail of its
+output and keeps its state directory. The Vitest suite has a similar guard
+(`test/setup/state-guard.ts`). CI runs coverage thresholds on the Node 24 leg only; the Node 22.13
+and 26 legs run `npm test`.
 
 Cookbook changes must update `examples/patterns/` and the corresponding named fences in both
 physical skill copies. `skills:check` enforces source equality and the 30-line workflow limit;

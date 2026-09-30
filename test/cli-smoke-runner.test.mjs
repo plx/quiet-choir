@@ -115,6 +115,20 @@ describe('runSmokes', () => {
     assert.equal(none.exitCode, 1);
   });
 
+  it('selects only the named smoke on an exact name, and by substring otherwise', async () => {
+    const files = { 'cli-smoke.mjs': '', 'x-cli-smoke.mjs': '' };
+    const names = (outcome) => outcome.results.map((result) => result.name).sort();
+    for (const filter of ['cli-smoke', 'cli-smoke.mjs']) {
+      const exact = await run(files, { filters: [filter] });
+      assert.equal(exact.exitCode, 0, exact.log);
+      assert.deepEqual(names(exact), ['cli-smoke.mjs'], filter);
+    }
+    const substring = await run(files, { filters: ['x-cli'] });
+    assert.deepEqual(names(substring), ['x-cli-smoke.mjs']);
+    const both = await run(files, { filters: ['cli-sm'] });
+    assert.deepEqual(names(both), ['cli-smoke.mjs', 'x-cli-smoke.mjs']);
+  });
+
   it('isolates default state: a smoke writing under XDG_STATE_HOME never reaches the real root', async () => {
     const { exitCode, log, real } = await run({
       'writes-smoke.mjs': `

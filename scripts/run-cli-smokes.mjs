@@ -4,7 +4,8 @@
 //   node scripts/run-cli-smokes.mjs [--concurrency N] [--dir DIR] [filter...]
 //
 // A filter is a substring of the smoke's file name, so `npm run test:cli -- worktrees` runs one
-// smoke. New smokes need no registration: any file in test/ whose name ends in `smoke.mjs` runs.
+// smoke; a filter equal to a smoke's exact name (with or without `.mjs`) selects only that smoke.
+// New smokes need no registration: any file in test/ whose name ends in `smoke.mjs` runs.
 // Environment: QUIET_CHOIR_SMOKE_CONCURRENCY (default min(4, availableParallelism())) and
 // QUIET_CHOIR_SMOKE_TIMEOUT_MS (per smoke, default 10 minutes).
 import { spawn } from 'node:child_process';
@@ -23,6 +24,17 @@ export function discoverSmokes(dir) {
   return readdirSync(dir)
     .filter((name) => name.endsWith('smoke.mjs'))
     .sort();
+}
+
+/**
+ * Whether `filter` selects the smoke `name`. A filter that is a smoke's exact file name, with or
+ * without `.mjs`, selects only that smoke (so `cli-smoke` does not also run `x-cli-smoke.mjs`);
+ * any other filter is a substring of the file name.
+ */
+function selectsSmoke(filter, name, all) {
+  if (all.some((smoke) => smoke === filter || smoke === `${filter}.mjs`))
+    return name === filter || name === `${filter}.mjs`;
+  return name.includes(filter);
 }
 
 /** The default per-project state root: `<XDG_STATE_HOME or ~/.local/state>/quiet-choir`. */
@@ -118,7 +130,9 @@ export async function runSmokes({
     log(`No *smoke.mjs files found in ${dir}.`);
     return { exitCode: 1, results: [] };
   }
-  const names = all.filter((name) => filters.length === 0 || filters.some((f) => name.includes(f)));
+  const names = all.filter(
+    (name) => filters.length === 0 || filters.some((f) => selectsSmoke(f, name, all)),
+  );
   if (names.length === 0) {
     log(`No smoke matches ${filters.join(', ')}. Available: ${all.join(', ')}`);
     return { exitCode: 1, results: [] };
