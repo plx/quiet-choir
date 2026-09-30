@@ -8,8 +8,12 @@ import {
   countCompletedSteps,
   crashLoopMessage,
   decideStaleRecovery,
+  decideUnlock,
   STALE_RECOVERY_CAP,
   type RecoveryClass,
+  type UnlockDecision,
+  type UnlockHolder,
+  type UnlockObservation,
 } from '../src/workflow/runtime/recovery-decision.js';
 
 // Recovery rules as a pure table: no state directory, lock or process.
@@ -227,5 +231,162 @@ describe('decideStaleRecovery', () => {
     const message = crashLoopMessage('r1', 3);
     expect(message).toContain('cap 3');
     expect(message).toContain("'quiet-choir workflow resume r1'");
+  });
+});
+
+describe('decideUnlock', () => {
+  type HolderSpec = UnlockHolder['state'] | 'remote-dead' | 'remote-alive' | null;
+  type MarkerSpec = Exclude<HolderSpec, 'released'> | 'unreadable';
+  const holder = (spec: Exclude<HolderSpec, null>, token: string): UnlockHolder => {
+    const remote = spec.startsWith('remote-');
+    return {
+      pid: 4242,
+      host: remote ? 'elsewhere' : 'here',
+      token,
+      remote,
+      state: remote
+        ? spec === 'remote-alive'
+          ? 'alive'
+          : 'dead'
+        : (spec as UnlockHolder['state']),
+    };
+  };
+  function observed(
+    kind: UnlockObservation['kind'],
+    owner: HolderSpec,
+    recovery: MarkerSpec = null,
+    processes: ProcessStates = 'none',
+  ): UnlockObservation {
+    return {
+      kind,
+      path: `/state/${kind}`,
+      owner: owner === null ? null : holder(owner, `${kind}-owner`),
+      recovery:
+        recovery === null || recovery === 'unreadable'
+          ? recovery
+          : (holder(recovery, `${kind}-marker`) as UnlockObservation['recovery']),
+      processes:
+        processes === 'none'
+          ? []
+          : [
+              { file: '1.json', process: null, state: 'dead' },
+              { file: '2.json', process: null, state: processes },
+            ],
+    };
+  }
+  const summary = (decision: UnlockDecision): string =>
+    decision.kind === 'remove'
+      ? 'remove'
+      : decision.kind === 'orphans'
+        ? `orphans ${decision.lock.kind}`
+        : `locked ${decision.lock.kind} ${decision.role} ${decision.reason}`;
+
+  const owners: readonly HolderSpec[] = [
+    null,
+    'alive',
+    'unknown',
+    'dead',
+    'released',
+    'remote-dead',
+    'remote-alive',
+  ];
+  const markers: readonly MarkerSpec[] = [
+    null,
+    'unreadable',
+    'alive',
+    'unknown',
+    'dead',
+    'remote-dead',
+    'remote-alive',
+  ];
+
+  /** The rules restated for one primary lock: remote, then locally live, then orphans. */
+  function expectedUnlock(
+    owner: HolderSpec,
+    recovery: MarkerSpec,
+    processes: ProcessStates,
+    forceRemote: boolean,
+  ): string {
+    const remote = (spec: string | null): boolean => spec?.startsWith('remote-') ?? false;
+    const live = (spec: string | null): 'alive' | 'unknown' | undefined =>
+      spec === 'alive' || spec === 'remote-alive'
+        ? 'alive'
+        : spec === 'unknown'
+          ? 'unknown'
+          : undefined;
+    if (!forceRemote && remote(owner)) return 'locked primary owner remote';
+    if (!forceRemote && remote(recovery)) return 'locked primary recovery remote';
+    const ownerLive = live(owner);
+    if (ownerLive) return `locked primary owner ${ownerLive}`;
+    const markerLive = live(recovery);
+    if (markerLive) return `locked primary recovery ${markerLive}`;
+    if (processes === 'alive' || processes === 'unknown') return 'orphans primary';
+    return 'remove';
+  }
+
+  it.each(
+    owners.flatMap((owner) =>
+      markers.flatMap((recovery) =>
+        processStates.flatMap((processes) =>
+          [false, true].map((force) => [owner, recovery, processes, force] as const),
+        ),
+      ),
+    ),
+  )(
+    'decides owner %s, marker %s, processes %s, forceRemote %s',
+    (owner, recovery, processes, force) => {
+      expect(summary(decideUnlock([observed('primary', owner, recovery, processes)], force))).toBe(
+        expectedUnlock(owner, recovery, processes, force),
+      );
+    },
+  );
+
+  it('removes nothing-to-judge observations: no locks, null owners and unreadable markers', () => {
+    expect(decideUnlock([], false)).toEqual({ kind: 'remove' });
+    expect(
+      summary(
+        decideUnlock([observed('primary', null), observed('guard', null, 'unreadable')], false),
+      ),
+    ).toBe('remove');
+  });
+
+  it('judges every lock before removing any, and applies precedence across locks', () => {
+    // A live guard owner holds the run even when the primary is removable.
+    expect(
+      summary(decideUnlock([observed('primary', 'dead'), observed('guard', 'alive')], false)),
+    ).toBe('locked guard owner alive');
+    // A remote guard outranks a live primary owner; the flag lets the live one decide.
+    const mixed = [observed('primary', 'alive'), observed('guard', 'remote-dead')];
+    expect(summary(decideUnlock(mixed, false))).toBe('locked guard owner remote');
+    expect(summary(decideUnlock(mixed, true))).toBe('locked primary owner alive');
+    // A live guard marker outranks orphans in the primary.
+    expect(
+      summary(
+        decideUnlock(
+          [observed('primary', 'dead', null, 'alive'), observed('guard', 'dead', 'unknown')],
+          false,
+        ),
+      ),
+    ).toBe('locked guard recovery unknown');
+    // Orphans in the guard are found after a clean primary, with that lock's records.
+    const orphans = decideUnlock(
+      [observed('primary', 'released', null, 'dead'), observed('guard', null, 'dead', 'unknown')],
+      false,
+    );
+    expect(orphans).toMatchObject({ kind: 'orphans', lock: { kind: 'guard', owner: null } });
+    expect(orphans.kind === 'orphans' && orphans.processes.map((entry) => entry.state)).toEqual([
+      'dead',
+      'unknown',
+    ]);
+  });
+
+  it('carries the refused holder', () => {
+    const decision = decideUnlock([observed('primary', 'dead', 'remote-dead')], false);
+    expect(decision).toMatchObject({
+      kind: 'locked',
+      role: 'recovery',
+      reason: 'remote',
+      holder: { token: 'primary-marker', host: 'elsewhere' },
+    });
   });
 });

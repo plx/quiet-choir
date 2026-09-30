@@ -16,10 +16,16 @@
  * - Live or unverified child records block automatic recovery; nothing here authorizes a signal.
  * - The crash-loop cap counts consecutive recoveries without a new completed step; progress resets
  *   it.
+ * - An operator unlock removes nothing while any lock's owner or recoverer is locally alive or
+ *   unknown, or any child record is alive or unknown. A foreign-host owner or recoverer is refused
+ *   unless the operator asserts the host is gone (`forceRemote`); then it is judged by the same
+ *   local observations. Missing or unreadable metadata never holds an unlock; its warning travels
+ *   with the result.
  *
  * ESLint keeps this module free of runtime imports.
  */
 import type { RunOwnership } from './lock.js';
+import type { HarnessProcessInspection } from './process-registry.js';
 import type { RunRecord } from './record.js';
 
 /**
@@ -89,4 +95,81 @@ export function decideStaleRecovery(
 /** Explain why tick stopped recovering a crash-looping run. @internal */
 export function crashLoopMessage(runId: string, count: number): string {
   return `Run ${runId} was recovered ${String(count)} times after its owner stopped, without completing a new step; tick will not recover it again (cap ${String(STALE_RECOVERY_CAP)}). Inspect it, then run 'quiet-choir workflow resume ${runId}' to retry explicitly.`;
+}
+
+/** A lock owner or recoverer as unlock observes it: judged locally, even on a foreign host. @internal */
+export interface UnlockHolder {
+  /** Recorded process ID. */
+  readonly pid: number;
+  /** Recorded host. */
+  readonly host: string;
+  /** Ownership or recovery token. */
+  readonly token: string;
+  /** Whether the recorded host differs from this machine's current hostname. */
+  readonly remote: boolean;
+  /** Local PID and birth-identity judgment; `released` only for an owner. */
+  readonly state: 'alive' | 'dead' | 'unknown' | 'released';
+}
+
+/** One existing lock directory as unlock observes it. @internal */
+export interface UnlockObservation {
+  /** `primary` is `<runId>/lock`; `guard` is the legacy `<runId>.json.lock`. */
+  readonly kind: 'primary' | 'guard';
+  /** Absolute lock directory path. */
+  readonly path: string;
+  /** Owner, or null when `owner.json` is missing or unreadable. */
+  readonly owner: UnlockHolder | null;
+  /** Recovery marker, `unreadable` for a damaged `recovery.json`, or null when there is none. */
+  readonly recovery:
+    (UnlockHolder & { readonly state: 'alive' | 'dead' | 'unknown' }) | 'unreadable' | null;
+  /** Child records observed locally; a null owner token skips only the token comparison. */
+  readonly processes: readonly HarnessProcessInspection[];
+  /** Missing or unreadable metadata, reported with the result. */
+  readonly warning?: string;
+}
+
+/** What an operator unlock may do with the observed locks. @internal */
+export type UnlockDecision =
+  | { readonly kind: 'remove' }
+  | {
+      readonly kind: 'locked';
+      readonly lock: UnlockObservation;
+      readonly role: 'owner' | 'recovery';
+      readonly holder: UnlockHolder;
+      readonly reason: 'remote' | 'alive' | 'unknown';
+    }
+  | {
+      readonly kind: 'orphans';
+      readonly lock: UnlockObservation;
+      readonly processes: readonly HarnessProcessInspection[];
+    };
+
+/**
+ * Judge every observed lock before anything is removed. Precedence: a foreign-host owner or
+ * recoverer without `forceRemote`, then a locally alive or unknown owner or recoverer, then an
+ * alive or unknown child record in any lock; otherwise remove. Within each rule the primary lock
+ * precedes the guard and the owner precedes the recoverer. @internal
+ */
+export function decideUnlock(
+  locks: readonly UnlockObservation[],
+  forceRemote: boolean,
+): UnlockDecision {
+  const holders = locks.flatMap((lock) =>
+    (
+      [
+        ['owner', lock.owner],
+        ['recovery', lock.recovery === 'unreadable' ? null : lock.recovery],
+      ] as const
+    ).flatMap(([role, holder]) => (holder === null ? [] : [{ lock, role, holder }])),
+  );
+  if (!forceRemote)
+    for (const { lock, role, holder } of holders)
+      if (holder.remote) return { kind: 'locked', lock, role, holder, reason: 'remote' };
+  for (const { lock, role, holder } of holders)
+    if (holder.state === 'alive' || holder.state === 'unknown')
+      return { kind: 'locked', lock, role, holder, reason: holder.state };
+  for (const lock of locks)
+    if (lock.processes.some((entry) => entry.state === 'alive' || entry.state === 'unknown'))
+      return { kind: 'orphans', lock, processes: lock.processes };
+  return { kind: 'remove' };
 }
