@@ -1,3 +1,4 @@
+import { brandError, isBranded } from './error-brand.js';
 import { z } from 'zod';
 import type { RunRecord } from './record.js';
 import { summarizeUsage } from './usage-summary.js';
@@ -26,6 +27,15 @@ export interface RunBudgetStop {
 
 /** A latched operator stop, delivered only after admitted agent attempts drain. */
 export class RunBudgetExceededError extends Error {
+  static {
+    brandError(this, 'RunBudgetExceededError');
+  }
+
+  /** Recognize an instance from any quiet-choir module instance, such as a CLI workflow's own import. */
+  public static override [Symbol.hasInstance](value: unknown): value is RunBudgetExceededError {
+    return isBranded(this, value);
+  }
+
   /** Stable machine-readable classification. */
   public readonly code = 'QUIET_CHOIR_RUN_BUDGET';
   /** Run whose next attempt was refused. */

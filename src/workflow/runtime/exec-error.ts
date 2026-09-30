@@ -1,8 +1,18 @@
+import { brandError, isBranded } from './error-brand.js';
 import type { ErrorKind } from './model.js';
 import type { ExecDiagnostics, ExecResult } from './exec-model.js';
 
 /** Structured command failure; runtime attempt history retains its bounded diagnostics. */
 export class ExecError extends Error {
+  static {
+    brandError(this, 'ExecError');
+  }
+
+  /** Recognize an instance from any quiet-choir module instance, such as a CLI workflow's own import. */
+  public static override [Symbol.hasInstance](value: unknown): value is ExecError {
+    return isBranded(this, value);
+  }
+
   /** Retry classification. */
   public readonly kind: ErrorKind;
   /** Available process exit/output diagnostics. */

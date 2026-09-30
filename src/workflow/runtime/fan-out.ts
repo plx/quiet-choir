@@ -1,3 +1,4 @@
+import { brandError, isBranded } from './error-brand.js';
 import type { StepError } from './model.js';
 
 /** Attribution for the first failure that ended a run. */
@@ -20,6 +21,15 @@ export interface FanOutFailure {
 
 /** A map stopped by failure after all started mappers have settled. */
 export class FanOutError extends AggregateError {
+  static {
+    brandError(this, 'FanOutError');
+  }
+
+  /** Recognize an instance from any quiet-choir module instance, such as a CLI workflow's own import. */
+  public static override [Symbol.hasInstance](value: unknown): value is FanOutError {
+    return isBranded(this, value);
+  }
+
   /** Policy that stopped this map. */
   public readonly policy: 'abort' | 'drain';
   /** Mapper failures in observation order; the first is the primary cause. */
@@ -48,6 +58,15 @@ export class FanOutError extends AggregateError {
 
 /** Scope cancellation, deliberately distinct from the failure that caused it. */
 export class CancelledError extends Error {
+  static {
+    brandError(this, 'CancelledError');
+  }
+
+  /** Recognize an instance from any quiet-choir module instance, such as a CLI workflow's own import. */
+  public static override [Symbol.hasInstance](value: unknown): value is CancelledError {
+    return isBranded(this, value);
+  }
+
   /** Failing effect that cancelled siblings, or null for a body failure/interrupt. */
   public readonly cancelledBy: string | null;
   /** Boundary whose signal was cancelled. */

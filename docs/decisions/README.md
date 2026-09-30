@@ -58,3 +58,5 @@ part of the documentation.
 - [0026: Inline children and definition registry](0026-inline-children-and-definition-registry.md)
 
 - [0027: Typed harness registry and integration helpers](0027-typed-harness-registry-and-integration-helpers.md)
+
+- [0028: Brand public errors across module instances](0028-brand-public-errors-across-module-instances.md)

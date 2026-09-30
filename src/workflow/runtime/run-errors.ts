@@ -1,3 +1,4 @@
+import { brandError, isBranded } from './error-brand.js';
 import type { JsonValue } from './model.js';
 import type { RunRecord } from './store.js';
 
@@ -29,6 +30,15 @@ export type CliErrorCode =
 
 /** A run cannot start with the requested checkpoint or ownership. */
 export class RunRefusedError extends Error {
+  static {
+    brandError(this, 'RunRefusedError');
+  }
+
+  /** Recognize an instance from any quiet-choir module instance, such as a CLI workflow's own import. */
+  public static override [Symbol.hasInstance](value: unknown): value is RunRefusedError {
+    return isBranded(this, value);
+  }
+
   /** Preserve the underlying error without parsing its message. */
   public constructor(
     /** Stable refusal classification. */
@@ -47,6 +57,15 @@ export class RunRefusedError extends Error {
 
 /** A workflow input failed its schema before the body or effects ran. */
 export class WorkflowInputError extends Error {
+  static {
+    brandError(this, 'WorkflowInputError');
+  }
+
+  /** Recognize an instance from any quiet-choir module instance, such as a CLI workflow's own import. */
+  public static override [Symbol.hasInstance](value: unknown): value is WorkflowInputError {
+    return isBranded(this, value);
+  }
+
   /** Stable usage classification. */
   public readonly code = 'usage.input_schema';
 
@@ -63,6 +82,15 @@ export class WorkflowInputError extends Error {
 
 /** A failed or cancelled workflow whose final failure checkpoint was saved successfully. */
 export class WorkflowRunError extends Error {
+  static {
+    brandError(this, 'WorkflowRunError');
+  }
+
+  /** Recognize an instance from any quiet-choir module instance, such as a CLI workflow's own import. */
+  public static override [Symbol.hasInstance](value: unknown): value is WorkflowRunError {
+    return isBranded(this, value);
+  }
+
   /** Persisted run identifier. */
   public readonly runId: string;
   /** Effect responsible for the failure; null for a body failure or run interruption. */

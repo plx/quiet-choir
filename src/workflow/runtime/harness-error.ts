@@ -1,3 +1,4 @@
+import { brandError, isBranded } from './error-brand.js';
 import type { AgentUsage, ErrorKind } from './model.js';
 import type { AgentDiagnostics } from './agent-stream-model.js';
 
@@ -9,7 +10,13 @@ export interface HarnessEvidence {
   readonly rawText: string | null;
   readonly responseTruncated: boolean;
 }
-const evidence = new WeakMap<object, HarnessEvidence>();
+/**
+ * Evidence lives on a registry-symbol property, so the host reads what another quiet-choir module
+ * instance (a CLI workflow's own import) attached. See ADR 0028.
+ */
+const evidenceKey = Symbol.for('quiet-choir.evidence');
+/** Evidence for non-extensible (frozen) errors, readable only within this module instance. */
+const frozenEvidence = new WeakMap<object, HarnessEvidence>();
 
 /** Bound failed response evidence to 256 KiB, including UTF-8 boundaries. @internal */
 export function boundedResponse(text: string | null): {
@@ -26,7 +33,14 @@ export function boundedResponse(text: string | null): {
 
 /** Preserve evidence even when the original error must propagate unchanged. @internal */
 export function attachHarnessEvidence(error: unknown, value: HarnessEvidence): void {
-  if (typeof error === 'object' && error !== null) evidence.set(error, value);
+  if (typeof error !== 'object' || error === null) return;
+  const attached = Reflect.defineProperty(error, evidenceKey, {
+    value,
+    enumerable: false,
+    writable: true,
+    configurable: true,
+  });
+  if (!attached) frozenEvidence.set(error, value);
 }
 
 /** Read adapter evidence without inferring error handling from cause chains. @internal */
@@ -39,7 +53,10 @@ export function harnessEvidence(error: unknown): HarnessEvidence | undefined {
       rawText: error.rawText,
       responseTruncated: error.responseTruncated,
     };
-  return typeof error === 'object' && error !== null ? evidence.get(error) : undefined;
+  if (typeof error !== 'object' || error === null) return undefined;
+  if (Object.hasOwn(error, evidenceKey))
+    return Reflect.get(error, evidenceKey) as HarnessEvidence | undefined;
+  return frozenEvidence.get(error);
 }
 
 /** Terminal failure reported by a harness protocol, independent of process exit status. */
@@ -104,6 +121,15 @@ export interface HarnessErrorDetails {
 
 /** A failed harness invocation with bounded diagnostics and recoverable usage metadata. */
 export class HarnessError extends Error {
+  static {
+    brandError(this, 'HarnessError');
+  }
+
+  /** Recognize an instance from any quiet-choir module instance, such as a CLI workflow's own import. */
+  public static override [Symbol.hasInstance](value: unknown): value is HarnessError {
+    return isBranded(this, value);
+  }
+
   /** Extensible bounded native diagnostics. */
   public readonly diagnostics: AgentDiagnostics;
   /** Rejected response, retained up to 256 KiB. */

@@ -163,7 +163,10 @@ exits and JSON rendering, including parser failures and stdout redirection; see
 The application and workflow layers do not import oclif. Compiler objects, errors, filesystem
 handles, loggers, and other live runtime objects must not escape through plan or result types.
 Workflow definitions themselves contain schemas and callbacks; they are loaded executable code, not
-serializable CLI plans. Checkpoints contain only validated JSON data.
+serializable CLI plans. Checkpoints contain only validated JSON data. The loader imports workflow
+code in its own module instance, with its own copy of `quiet-choir` and `quiet-choir/harness-kit`;
+the runtime recognizes public errors and adapter evidence from that copy by registry-symbol brands,
+not object identity. See [ADR 0028](decisions/0028-brand-public-errors-across-module-instances.md).
 
 The workflow typecheck executor currently embeds the stable TypeScript 6 compiler API as a runtime
 dependency. The repository itself builds with the native TypeScript 7 compiler; TypeScript 7.0's
