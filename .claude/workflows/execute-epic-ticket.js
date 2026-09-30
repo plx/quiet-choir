@@ -647,6 +647,9 @@ ${situation()}
 
 Model the style on the ticket itself (issue.md): "## Summary" (2–4 sentences), "## Problem" (with path:line references as of origin/${DEF}), "## Proposal", "## Acceptance criteria" (checkboxes), "## Related" (#${T.number} and others), ending with "_Part of #${A.epic}. Split from #${T.number}._". Choose one label: bug, enhancement, or documentation.
 
+The planner's reasoning (design choices every slice must follow; carry the relevant ones into each slice):
+${result.rationale}
+
 Slices, in order:
 ${JSON.stringify(result.slices, null, 1)}
 
@@ -683,7 +686,9 @@ Return one entry per slice in the same order: key "slice-1", "slice-2", …; dup
     after = out.number;
     previous = out.number;
   }
-  const marker = `${result.issueComment.trim()}\n\nSlices: ${filed.map((n) => `#${n}`).join(', ')}. This ticket closes when they have all landed.\n\n<!-- epic:split ${filed.join(',')} -->`;
+  // The planner's reasoning holds the design choices the slices share; keep it on the parent.
+  const notes = `<details><summary>Planning notes</summary>\n\n${result.rationale.trim()}\n\n</details>`;
+  const marker = `${result.issueComment.trim()}\n\nSlices: ${filed.map((n) => `#${n}`).join(', ')}. This ticket closes when they have all landed.\n\n${notes}\n\n<!-- epic:split ${filed.join(',')} -->`;
   const noted = await one(
     `mark #${T.number} split`,
     'Plan',
