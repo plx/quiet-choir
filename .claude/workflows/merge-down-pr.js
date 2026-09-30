@@ -865,8 +865,13 @@ async function fixRoundOf(threads, work) {
     }
   }
   // "partly" is unfinished, and "fixed" needs the commit that did it: otherwise the thread would
-  // be called addressed and resolved without any change behind it.
-  const unfixed = (fixed?.items ?? []).filter((i) => i.status !== 'fixed' || !i.commit?.trim());
+  // be called addressed and resolved without any change behind it. A failed check is the
+  // exception: a flake is resolved by a green re-run at the same head, with no commit, and the
+  // verification below still demands a passing check at the exact head being published.
+  const needsCommit = (i) => !/^(check|ci):/.test(i.key);
+  const unfixed = (fixed?.items ?? []).filter(
+    (i) => i.status !== 'fixed' || (needsCommit(i) && !i.commit?.trim()),
+  );
   if (unfixed.length)
     return { error: `could not fix: ${unfixed.map((i) => `${i.key} (${i.summary})`).join('; ')}` };
   if (fixed && !fixed.checkPassed)
