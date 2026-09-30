@@ -1157,34 +1157,59 @@ export async function runWorkflow<
       signal,
     );
 
-    async function effect<T, TMode extends ErrorMode = 'throw'>(
-      id: string,
-      kind: StepRecord['kind'],
-      dependencies: JsonInput,
-      schema: z.ZodType<T>,
-      execution: AttemptPolicy,
-      action: (
+    /** Worktree isolation an effect runs inside; `agent` marks an agent call. */
+    interface EffectIsolation {
+      readonly value: WorktreeIsolation;
+      readonly cwd: string;
+      readonly agent?: boolean;
+    }
+
+    /** Named inputs of one durable effect; omitted optional fields take the defaults below. */
+    interface EffectSpec<T, TMode extends ErrorMode> {
+      readonly id: string;
+      readonly kind: StepRecord['kind'];
+      readonly schema: z.ZodType<T>;
+      readonly execution: AttemptPolicy;
+      readonly action: (
         context: StepContext,
         step: StepRecord,
         attempt: AttemptRecord,
         releaseAfterSave: (release: () => void) => void,
         transcript: AgentTranscriptWriter | undefined,
         reservedPermit?: AgentPermit,
-      ) => Promise<T> | T,
-      wakeAt: number | null,
-      requestedIdentity?: StepIdentity,
-      local?: StepDefinition<T>,
-      onError?: TMode,
-      observedRequest: RequestSummary | null = null,
-      observedPhase: PhaseInfo | null = observations.phase,
-      legacyDependencies?: JsonValue,
-      observedExec?: ExecSummary,
-      isolation?: {
-        readonly value: WorktreeIsolation;
-        readonly cwd: string;
-        readonly agent?: boolean;
-      },
+      ) => Promise<T> | T;
+      /** Identity input recorded for the step; omitted means null. */
+      readonly dependencies?: JsonInput;
+      /** Sleep deadline in clock milliseconds; omitted means null. */
+      readonly wakeAt?: number | null;
+      /** Agent request diagnostics; omitted means null. */
+      readonly request?: RequestSummary | null;
+      /**
+       * Phase to record. Omitted means `observations.phase` at effect() entry; an explicit null
+       * (a phase captured as null when the operation was called) is recorded as null.
+       */
+      readonly phase?: PhaseInfo | null;
+      readonly identity?: StepIdentity;
+      readonly local?: StepDefinition<T>;
+      readonly onError?: TMode;
+      readonly legacyDependencies?: JsonValue;
+      readonly exec?: ExecSummary;
+      readonly isolation?: EffectIsolation;
+    }
+
+    async function effect<T, TMode extends ErrorMode = 'throw'>(
+      spec: EffectSpec<T, TMode>,
     ): Promise<EffectResult<T, TMode>> {
+      // Rebind first, before any await, so the phase default reads observations.phase at entry.
+      const { id, kind, schema, execution, action, local, onError, legacyDependencies, isolation } =
+        spec;
+      const requestedIdentity = spec.identity;
+      const observedExec = spec.exec;
+      const wakeAt = spec.wakeAt === undefined ? null : spec.wakeAt;
+      const observedRequest = spec.request === undefined ? null : spec.request;
+      const observedPhase = spec.phase === undefined ? observations.phase : spec.phase;
+      // Key presence, not undefined: a plain-JS step without input must still fail jsonValue().
+      const dependencies = 'dependencies' in spec ? spec.dependencies : null;
       const signal = scopes.signal;
       const meta =
         local?.meta === undefined
@@ -1861,13 +1886,12 @@ export async function runWorkflow<
           ...(jsonValue(prepared.summary) as Record<string, JsonValue>),
           schema: jsonSchema,
         });
-        return effect<T | ExecResult>(
+        return effect<T | ExecResult>({
           id,
-          'exec',
-          null,
-          outputSchema,
+          kind: 'exec',
+          schema: outputSchema,
           execution,
-          (context) =>
+          action: (context) =>
             executeCommand(
               options.processRunner,
               {
@@ -1885,18 +1909,13 @@ export async function runWorkflow<
               prepared.summary.okExitCodes,
               schema,
             ),
-          null,
           identity,
-          undefined,
-          undefined,
-          null,
           phase,
-          undefined,
-          prepared.summary,
-          prepared.settings.worktree === undefined
-            ? undefined
-            : { value: prepared.settings.worktree, cwd: prepared.summary.cwd },
-        );
+          exec: prepared.summary,
+          ...(prepared.settings.worktree === undefined
+            ? {}
+            : { isolation: { value: prepared.settings.worktree, cwd: prepared.summary.cwd } }),
+        });
       });
     }
 
@@ -2111,13 +2130,13 @@ export async function runWorkflow<
           request = { ...request, options: applied };
           if (native) validateAgentOptions(harness, request.options);
           else harnessOptions(registration, request.options);
-          const result = await effect(
+          const result = await effect({
             id,
-            'agent',
-            jsonValue(request, `Step "${id}" agent request`),
-            resultSchema,
+            kind: 'agent',
+            dependencies: jsonValue(request, `Step "${id}" agent request`),
+            schema: resultSchema,
             execution,
-            async (context, step, attempt, _release, transcript, reservedPermit) => {
+            action: async (context, step, attempt, _release, transcript, reservedPermit) => {
               // A missing adapter rejects as ConfigurationError: never settled or retried.
               const liveAdapter = adapter ?? registry.adapter(registration);
               const liveRequest: HarnessRequest = {
@@ -2326,18 +2345,15 @@ export async function runWorkflow<
                   : {}),
               };
             },
-            null,
             identity,
-            undefined,
-            agentOptions.onError,
-            requestSummary(request, execution),
+            ...(agentOptions.onError === undefined ? {} : { onError: agentOptions.onError }),
+            request: requestSummary(request, execution),
             phase,
-            legacyRequest,
-            undefined,
-            isolation === undefined
-              ? undefined
-              : { value: isolation, cwd: request.cwd, agent: true },
-          );
+            legacyDependencies: legacyRequest,
+            ...(isolation === undefined
+              ? {}
+              : { isolation: { value: isolation, cwd: request.cwd, agent: true } }),
+          });
           return select(result);
         });
       }
@@ -2594,29 +2610,24 @@ export async function runWorkflow<
         return launch(id, async () => {
           const checked = readFileOptionsSchema.parse(settings);
           const target = await filePath(cwd, path, checked.allowOutsideCwd);
-          return effect<ReadFileResult>(
+          return effect<ReadFileResult>({
             id,
-            'read-file',
-            null,
-            readFileResultSchema,
-            resolvePolicy(id, 'step', {}, {}, policy, matchedPolicy),
-            async (context) => {
+            kind: 'read-file',
+            schema: readFileResultSchema,
+            execution: resolvePolicy(id, 'step', {}, {}, policy, matchedPolicy),
+            action: async (context) => {
               const stub = options.rehearsal?.localStep?.(id, schemaJson(readFileResultSchema));
               return stub
                 ? readFileResultSchema.parse(stub.output)
                 : snapshotFile(target, checked.maxBytes ?? 1_048_576, context.signal);
             },
-            null,
-            stepIdentity({
+            identity: stepIdentity({
               kind: 'read-file',
               path: target,
               schema: schemaJson(readFileResultSchema),
             }),
-            undefined,
-            undefined,
-            null,
             phase,
-          );
+          });
         });
       },
       writeFile: (leaf, path, content, settings = {}) => {
@@ -2626,20 +2637,18 @@ export async function runWorkflow<
           const checked = writeFileOptionsSchema.parse(settings);
           if (typeof content !== 'string') throw new Error('File content must be a string.');
           const target = await filePath(cwd, path, checked.allowOutsideCwd);
-          return effect<WriteFileResult>(
+          return effect<WriteFileResult>({
             id,
-            'write-file',
-            null,
-            writeFileResultSchema,
-            resolvePolicy(id, 'step', {}, {}, policy, matchedPolicy),
-            async (context) => {
+            kind: 'write-file',
+            schema: writeFileResultSchema,
+            execution: resolvePolicy(id, 'step', {}, {}, policy, matchedPolicy),
+            action: async (context) => {
               const stub = options.rehearsal?.localStep?.(id, schemaJson(writeFileResultSchema));
               return stub
                 ? writeFileResultSchema.parse(stub.output)
                 : replaceFile(target, content, checked as WriteFileOptions, context.signal);
             },
-            null,
-            stepIdentity({
+            identity: stepIdentity({
               kind: 'write-file',
               path: target,
               sha256: fileDigest(content),
@@ -2647,11 +2656,8 @@ export async function runWorkflow<
               createOnly: checked.ifMatch === null,
               schema: schemaJson(writeFileResultSchema),
             }),
-            undefined,
-            undefined,
-            null,
             phase,
-          );
+          });
         });
       },
       merge: (leaf, changes, settings = {}) => {
@@ -2671,31 +2677,30 @@ export async function runWorkflow<
             onConflict: checked.onConflict ?? 'report',
             target: checked.target ?? 'ref',
           });
-          return effect(
+          return effect({
             id,
-            'merge',
+            kind: 'merge',
             dependencies,
-            mergeResultSchema,
-            resolvePolicy(id, 'step', {}, {}, [], matchedPolicy),
-            (context, step, attempt, releaseAfterSave) =>
+            schema: mergeResultSchema,
+            execution: resolvePolicy(id, 'step', {}, {}, [], matchedPolicy),
+            action: (context, step, attempt, releaseAfterSave) =>
               worktrees.merge(id, inputs, checked, context, step, attempt, releaseAfterSave),
-            null,
-          );
+          });
         });
       },
       worktree: (leaf, settings = {}) => {
         const id = names.qualify(leaf);
         return launch(id, () => {
           const parsed = worktreeCreateSchema.parse(settings);
-          return effect(
+          return effect({
             id,
-            'worktree',
-            parsed,
-            worktreeHandleSchema,
-            resolvePolicy(id, 'step', {}, {}, [], matchedPolicy),
-            (context, step, attempt) => worktrees.create(id, parsed.base, context, step, attempt),
-            null,
-          );
+            kind: 'worktree',
+            dependencies: parsed,
+            schema: worktreeHandleSchema,
+            execution: resolvePolicy(id, 'step', {}, {}, [], matchedPolicy),
+            action: (context, step, attempt) =>
+              worktrees.create(id, parsed.base, context, step, attempt),
+          });
         });
       },
       exec: Object.assign(
@@ -2777,12 +2782,12 @@ export async function runWorkflow<
       ): Promise<EffectResult<T, TMode>> => {
         const id = names.qualify(leaf);
         return launch(id, () =>
-          effect(
+          effect<T, TMode>({
             id,
-            'step',
-            step.input,
-            step.schema,
-            resolvePolicy(
+            kind: 'step',
+            dependencies: step.input,
+            schema: step.schema,
+            execution: resolvePolicy(
               id,
               'step',
               step.retry === undefined ? {} : { retry: step.retry },
@@ -2790,25 +2795,20 @@ export async function runWorkflow<
               policy,
               matchedPolicy,
             ),
-            options.rehearsal === undefined
-              ? step.run
-              : (context) => {
-                  options.rehearsal?.onSchema?.(id, step.schema);
-                  const stub = options.rehearsal?.localStep?.(id, schemaJson(step.schema));
-                  return stub === undefined ? step.run(context) : step.schema.parse(stub.output);
-                },
-            null,
-            undefined,
-            step,
-            step.onError,
-            null,
-            observations.phase,
-            undefined,
-            undefined,
-            step.worktree === undefined
-              ? undefined
-              : { value: worktreeHandleSchema.parse(step.worktree), cwd },
-          ),
+            action:
+              options.rehearsal === undefined
+                ? step.run
+                : (context) => {
+                    options.rehearsal?.onSchema?.(id, step.schema);
+                    const stub = options.rehearsal?.localStep?.(id, schemaJson(step.schema));
+                    return stub === undefined ? step.run(context) : step.schema.parse(stub.output);
+                  },
+            local: step,
+            ...(step.onError === undefined ? {} : { onError: step.onError }),
+            ...(step.worktree === undefined
+              ? {}
+              : { isolation: { value: worktreeHandleSchema.parse(step.worktree), cwd } }),
+          }),
         );
       },
       sleep: (leaf, milliseconds) => {
@@ -2832,20 +2832,20 @@ export async function runWorkflow<
             throw new Error(
               `Step ${id}: Sleep duration must be a finite nonnegative safe duration (got ${String(milliseconds)}).`,
             );
-          return effect(
+          return effect({
             id,
-            'sleep',
-            milliseconds,
-            z.null(),
-            resolvePolicy(id, 'sleep', {}, {}, [], matchedPolicy),
-            async (context, step) => {
+            kind: 'sleep',
+            dependencies: milliseconds,
+            schema: z.null(),
+            execution: resolvePolicy(id, 'sleep', {}, {}, [], matchedPolicy),
+            action: async (context, step) => {
               context.signal.throwIfAborted();
               if (options.rehearsal === undefined)
                 await waitUntil(step.wakeAt ?? clockNow(clock), context.signal, clock);
               return null;
             },
-            clockNow(clock) + milliseconds,
-          );
+            wakeAt: clockNow(clock) + milliseconds,
+          });
         });
       },
       map,
