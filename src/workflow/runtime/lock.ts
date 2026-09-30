@@ -90,6 +90,25 @@ async function readOwner(lockPath: string): Promise<Owner> {
   return ownerSchema.parse(JSON.parse(await readFile(join(lockPath, 'owner.json'), 'utf8')));
 }
 
+/**
+ * Read the owner of a lock that another process may be retiring. A lock retired between two looks
+ * may already be gone, or replaced by a complete new one, so a missing `owner.json` in a present
+ * lock is judged only after repeated looks; `gone` means no lock is there now.
+ */
+async function readContended(lockPath: string): Promise<Owner | 'gone'> {
+  let missing: unknown;
+  for (let look = 0; look < 3; look++) {
+    try {
+      return await readOwner(lockPath);
+    } catch (error) {
+      if (!isErrno(error, 'ENOENT')) throw error;
+      if (await lockGone(lockPath)) return 'gone';
+      missing ??= error;
+    }
+  }
+  throw missing;
+}
+
 async function readMarker(path: string): Promise<Marker> {
   return markerSchema.parse(JSON.parse(await readFile(path, 'utf8')));
 }
@@ -173,11 +192,11 @@ async function inspectLock(
   let recovery: RunLockView['recovery'] = null;
   if (names.includes('owner.json'))
     try {
-      const value = await readOwner(path);
+      const value = await readContended(path);
+      // Retired between the listing and the read: there is no lock to report.
+      if (value === 'gone') return undefined;
       owner = { pid: value.pid, host: value.host, state: ownerState(value) };
     } catch (error) {
-      // Retired between the listing and the read: report what was there, not a damage warning.
-      if (isErrno(error, 'ENOENT') && (await lockGone(path))) return undefined;
       warnings.push(`owner.json: ${message(error)}`);
     }
   if (names.includes('recovery.json'))
@@ -362,7 +381,7 @@ async function publishLock(lockPath: string, owner: Owner): Promise<'published' 
 /**
  * Move a verified lock out of the way in one rename, check that the tombstone is the lock that was
  * verified, then delete it. A mismatch renames it back and throws `mismatch()`; a tombstone that a
- * new owner already swept counts as retired. The rename and removal keep their errno.
+ * new owner is already sweeping counts as retired. The rename and removal keep their errno.
  */
 async function retire(
   lockPath: string,
@@ -378,10 +397,10 @@ async function retire(
       (await readOwner(tombstone)).token === expected.owner &&
       (expected.recovery === undefined ||
         (await readMarker(join(tombstone, 'recovery.json'))).token === expected.recovery);
-  } catch {
-    // A new owner may already have swept a verified tombstone.
-    if (await lockGone(tombstone)) return;
-    matches = false;
+  } catch (error) {
+    // Only a sweep removes files from a tombstone: a new owner is already deleting this one, which
+    // was verified before the rename. Anything unreadable is not the lock that was verified.
+    matches = isErrno(error, 'ENOENT');
   }
   if (!matches) {
     await rename(tombstone, lockPath).catch(() => undefined);
@@ -537,10 +556,8 @@ async function acquireLock(
     if ((await publishLock(lockPath, owner)) === 'contended') {
       let previous;
       try {
-        previous = await readOwner(lockPath);
+        previous = await readContended(lockPath);
       } catch (cause) {
-        // Released between the failed publish and this read: look again.
-        if (isErrno(cause, 'ENOENT') && (await lockGone(lockPath))) continue;
         throw new RunRefusedError(
           'run.locked',
           runId,
@@ -549,6 +566,8 @@ async function acquireLock(
           { cause },
         );
       }
+      // Released between the failed publish and this read: look again.
+      if (previous === 'gone') continue;
       if (!['dead', 'released'].includes(ownerState(previous)))
         throw new RunRefusedError(
           'run.locked',

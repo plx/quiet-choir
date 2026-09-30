@@ -13,7 +13,12 @@ import type { RunRecord, StepRecord } from '../src/workflow/runtime/store.js';
 
 vi.mock('node:fs/promises', async (importOriginal) => {
   const actual = await importOriginal<typeof fs>();
-  return { ...actual, open: vi.fn(actual.open), rename: vi.fn(actual.rename) };
+  return {
+    ...actual,
+    open: vi.fn(actual.open),
+    rename: vi.fn(actual.rename),
+    readFile: vi.fn(actual.readFile),
+  };
 });
 const actualFs = await vi.importActual<typeof fs>('node:fs/promises');
 
@@ -327,6 +332,21 @@ describe('lock publication and release by rename', () => {
       token: 'live',
     });
     await release();
+  });
+
+  it('judges a lock replaced between two looks by its new owner, not as incomplete', async () => {
+    const path = await abandonedLock({ pid: process.pid, host: hostname(), token: 'live' });
+    let missed = false;
+    vi.mocked(fs.readFile).mockImplementation(async (file, options) => {
+      // The first look races a release; by the second, a complete new lock has been published.
+      if (!missed && file === join(path, 'owner.json')) {
+        missed = true;
+        throw Object.assign(new Error('gone'), { code: 'ENOENT' });
+      }
+      return actualFs.readFile(file, options);
+    });
+    await expect(lockRun(stateDir, 'run-1')).rejects.toThrow(/locked by PID/);
+    expect(missed).toBe(true);
   });
 
   it('treats a Windows EPERM rename as contention only when the lock exists', async () => {
