@@ -2,7 +2,9 @@
 
 ## Status
 
-Accepted. Extends ADR 0002's lock recovery and ADR 0003's cleanup warning policy.
+Accepted. Extends ADR 0002's lock recovery and ADR 0003's cleanup warning policy. Extended by
+[0030](0030-rename-published-run-locks.md) for rename-published locks and a reclaimable recovery
+marker.
 
 ## Context
 

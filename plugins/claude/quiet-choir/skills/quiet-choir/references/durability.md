@@ -328,18 +328,25 @@ data. Read with `readRun` or `inspect`, which apply entries newer than root `seq
 compaction races; `cat run.json` alone can be stale. Readers ignore a torn final line, which the
 next owner truncates. Complete corruption, sequence gaps, and missing journals refuse.
 
-A per-run `lock/` has `owner.json` containing a PID, hostname, birth identity and token.
-Dead/released same-host owners can be recovered only after checking child records in
-`processes/<pgid>.json` (PID on Windows). Live and foreign-host owners are refused. Confirmed live
-or unverified children cause exit 3 before replacement work. Inspect first;
+A per-run `lock/` has `owner.json` containing a PID, hostname, birth identity and token. Every lock
+change is one rename: an acquire publishes a sibling directory that already holds a fsynced
+`owner.json`, and release or recovery renames the verified lock to a `.gone` tombstone before
+deleting it, so a SIGKILL at any step leaves a run that a plain resume recovers. The next owner
+sweeps stray tombstones and dead acquirers' `.tmp` directories. Dead/released same-host owners can
+be recovered only after checking child records in `processes/<pgid>.json` (PID on Windows). One
+recoverer at a time holds an atomically linked `recovery.json` (PID, host, birth identity, token) in
+the lock; a live, unknown or remote recoverer refuses others with "lock recovery is in progress",
+and the next acquire reclaims a dead recoverer's marker. Live and foreign-host owners are refused.
+Confirmed live or unverified children cause exit 3 before replacement work. Inspect first;
 `--resume --kill-orphans` stops only identity-confirmed groups and verifies they are gone. Reused
 PIDs are never signaled; missing identity, malformed records and leaderless surviving groups remain
-for separate inspection. Incomplete ownership metadata or an abandoned `recovery` directory requires
-inspection and manual cleanup only after confirming there is no active owner. Do not delete a lock
-merely because a run looks stalled. Migrated runs acquire the legacy guard before the current lock
-and hold both through release; new children belong to the current lock. This prevents an abandoned
-old guard from bypassing a live new owner. Owner-only cleanup removes recognized UUID snapshot
-temporary files for that run and preserves unrelated data.
+for separate inspection. A lock without readable `owner.json` (damage, or an older build's
+interrupted acquire) or with an unreadable `recovery.json` requires inspection and manual cleanup
+only after confirming there is no active owner. An older build's `recovery/` directory is ignored.
+Do not delete a lock merely because a run looks stalled. Migrated runs acquire the legacy guard
+before the current lock and hold both through release; new children belong to the current lock. This
+prevents an abandoned old guard from bypassing a live new owner. Owner-only cleanup removes
+recognized UUID snapshot temporary files for that run and preserves unrelated data.
 
 Map failures default to `drain`: stop scheduling and let active mappers checkpoint without an abort
 signal before rejecting with `FanOutError`. Body rejections, including `Promise.all`, close the

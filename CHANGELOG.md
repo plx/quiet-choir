@@ -2,6 +2,24 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- Runtime: run locks change hands by rename, so a crash at any step leaves a run that a plain resume
+  or tick recovers. An acquire publishes a sibling directory that already holds a fsynced
+  `owner.json`, so a lock never exists without complete ownership metadata, and an empty lock left
+  by an older build's interrupted acquire is taken over. Release and dead-owner recovery rename the
+  verified lock to a `.gone` tombstone, check its tokens and delete it, and the next owner sweeps
+  stray tombstones and dead acquirers' `.tmp` directories. Recovery is claimed with an atomically
+  linked `lock/recovery.json` (`{ pid, host, osStartTime, token }`) instead of a `recovery/`
+  directory: a live, unknown or remote recoverer holds the lock ("lock recovery is in progress"),
+  and the next acquire reclaims a dead recoverer's marker without stealing one that replaced it. An
+  older build's `recovery/` directory is ignored. See ADR 0030.
+
+- API and CLI: `RunOwnership` (from `inspectRunOwnership` and `workflow inspect --json`) has a new
+  `locks` array listing the existing primary lock and legacy guard, each as
+  `{ kind, path, owner, recovery, warning? }` (new exported type `RunLockView`), and text inspection
+  prints one line per lock. The top-level `locked`, `owner`, `processes` and `warning` fields are
+  unchanged. Tick now skips a run as `locked` while either lock's owner, or a recoverer, is alive,
+  unknown or remote, and resumes a run whose recoverer crashed.
+
 - Runtime and CLI (breaking): an external interruption is now a resumable suspension instead of
   `cancelled`. The new public, branded `RunInterruptedError` marks it: the CLI's first
   SIGINT/SIGTERM/SIGHUP aborts with `Workflow interrupted by <SIGNAL>.` and tick's `--timeout` with

@@ -5,7 +5,9 @@
 Accepted for the prototype spike.
 
 Storage/layout and migration details below are superseded by
-[ADR 0019](0019-journal-storage-and-project-state.md); the orchestration contracts remain.
+[ADR 0019](0019-journal-storage-and-project-state.md); the orchestration contracts remain. Extended
+by [0030](0030-rename-published-run-locks.md) for rename-published locks and a reclaimable recovery
+marker.
 
 ## Context
 
