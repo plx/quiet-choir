@@ -204,7 +204,12 @@ const PLAN = obj({
 const SKEPTIC = obj({ agree: bool, evidence: str, remaining: arr(str) });
 const IMPLEMENTED = obj({
   criteria: arr(
-    obj({ id: str, status: oneOf('done', 'partial', 'not-done'), commit: str, evidence: str }),
+    obj({
+      id: str,
+      status: oneOf('done', 'verify-on-pr', 'partial', 'not-done'),
+      commit: str,
+      evidence: str,
+    }),
   ),
   checkPassed: bool,
   head: str,
@@ -692,16 +697,21 @@ The plan (also in ${T.planFile}; you own the implementation — if a step is wro
 ${JSON.stringify(plan, null, 1)}
 ${extra}
 Rules:
+- First check what is already on the branch (\`git -C ${sh(W)} log --oneline origin/${DEF}..HEAD\`, \`git -C ${sh(W)} status\`): an earlier attempt at this ticket may have committed part or all of the work. Build on correct work rather than redoing it.
 - Stay within the ticket's scope and the plan's outOfScope list. Do not refactor unrelated code or reformat untouched files. If you notice a real problem outside scope, don't fix it: add it to followups (title + detail with path:line references).
 - Never write to GitHub (no comments, issues, reviews, PRs) and never push: the workflow publishes.
 - Commit on the current branch in small logical commits with concise imperative messages${A.commitTrailer ? `, each ending with a blank line and then:\n${A.commitTrailer}\n` : '.'} No new branches, no amending or rewriting existing commits.
 - Before checking, format and lint what you touched: \`cd ${sh(W)} && npx prettier --write <files> && npx eslint --fix <files>\`.
 - Then run \`node ${sh(TOOL)} check --epic ${A.epic} --issue ${T.number}${ROOT ? ` --root ${sh(ROOT)}` : ''} --label ${label}\` (the full suite, several minutes; prints JSON with passed, failedStep and the log path). If it fails, fix and re-run, at most 4 runs. Never weaken, skip, or delete tests to get green; if a failure is unrelated to your change and pre-existing on origin/${DEF}, say so in notes.
 - Commit everything; leave the worktree clean. Finally run \`node ${sh(TOOL)} snapshot --epic ${A.epic} --issue ${T.number}${ROOT ? ` --root ${sh(ROOT)}` : ''}\`.
-Return one entry per plan acceptance id: status (done | partial | not-done), the short SHA of the commit that delivers it, and evidence (the test or file that shows it). Also checkPassed (from your last check), head (from snapshot), deviations from the plan, followups, and notes. Plain text, no HTML entities.`,
+Return one entry per plan acceptance id: status (done | verify-on-pr | partial | not-done), the short SHA of the commit that delivers it, and evidence (the test or file that shows it). Use verify-on-pr only for a criterion that cannot be checked until the PR exists, such as a CI job's duration or GitHub-side state like code-scanning alerts: do everything that can be done locally, and put in evidence exactly what to check on the PR and what result counts as met. Also checkPassed (from your last check), head (from snapshot), deviations from the plan, followups, and notes. Plain text, no HTML entities.`,
     { ...tier, label, phase: 'Implement', schema: IMPLEMENTED },
   );
 }
+
+// verify-on-pr: done locally, but only checkable once the PR exists (CI timings, alerts). Those
+// criteria go to the landing review as explicit checks instead of blocking here.
+const SETTLED = new Set(['done', 'verify-on-pr']);
 
 async function implementTicket(plan) {
   phase('Implement');
@@ -719,7 +729,7 @@ async function implementTicket(plan) {
   const unfinished = (r) =>
     !r ||
     !r.checkPassed ||
-    plan.acceptance.some((c) => r.criteria.find((x) => x.id === c.id)?.status !== 'done');
+    plan.acceptance.some((c) => !SETTLED.has(r.criteria.find((x) => x.id === c.id)?.status));
   if (unfinished(result) && tierName === 'mechanic') {
     log('mechanic left work unfinished or checks failing; escalating to the surgeon tier');
     tierName = 'surgeon';
@@ -735,7 +745,7 @@ async function implementTicket(plan) {
   if (missingIds.length) {
     return { error: `implementer did not report: ${missingIds.map((c) => c.id).join(', ')}` };
   }
-  const open = result.criteria.filter((c) => c.status !== 'done');
+  const open = result.criteria.filter((c) => !SETTLED.has(c.status));
   if (open.length) {
     return {
       error: `unfinished criteria: ${open.map((c) => `${c.id} (${c.status}: ${c.evidence})`).join('; ')}`,
@@ -764,6 +774,9 @@ async function implementTicket(plan) {
     deviations: result.deviations,
     notes: result.notes,
   };
+  record.verifyOnPr = result.criteria
+    .filter((c) => c.status === 'verify-on-pr')
+    .map((c) => ({ id: c.id, check: c.evidence }));
   return { result, head: v.head };
 }
 
@@ -1090,6 +1103,11 @@ try {
     standingNotes: [
       ...A.standingNotes,
       `This PR implements #${T.number} of epic #${A.epic} and was written by the execute-epic-ticket workflow${T.planFile ? ` from the plan in ${T.planFile}` : ''}. Judge it against the ticket's acceptance criteria; work the epic's other tickets own is out of scope (see the epic's checklist).`,
+      ...(record.verifyOnPr?.length
+        ? [
+            `These acceptance criteria could only be checked once the PR existed; CI has run on it, so check each one now (e.g. \`gh run view\` timings, code-scanning alerts) and treat an unmet one as a fix: ${record.verifyOnPr.map((c) => `[${c.id}] ${c.check}`).join(' ')}`,
+          ]
+        : []),
     ],
   });
 } catch (error) {

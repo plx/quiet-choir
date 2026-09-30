@@ -740,6 +740,32 @@ const SCENARIOS = {
       assert.match(result.blocked.reason, /a2 \(partial/);
     },
   },
+  'hands criteria that need the PR to the landing review instead of blocking': {
+    world: { issues: { 102: {} } },
+    agents: {
+      impl: () =>
+        IMPL_DONE({
+          criteria: [
+            { id: 'a1', status: 'done', commit: 'aaaaaaa', evidence: 't' },
+            {
+              id: 'a2',
+              status: 'verify-on-pr',
+              commit: 'aaaaaaa',
+              evidence: 'the quality job finishes in under 6 minutes on the PR',
+            },
+          ],
+        }),
+    },
+    check({ result, calls }) {
+      assert.equal(result.status, 'landed');
+      assert.deepEqual(
+        result.verifyOnPr.map((c) => c.id),
+        ['a2'],
+      );
+      const child = calls.find((c) => c.label === 'workflow:merge-down-pr');
+      assert.ok(child.args.standingNotes.some((n) => /\[a2\] the quality job/.test(n)));
+    },
+  },
   'files implementer follow-ups under the follow-up epic, not the burned-down one': {
     world: { issues: { 102: {} } },
     agents: {
