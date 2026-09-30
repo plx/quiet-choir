@@ -215,6 +215,10 @@ it('watches only actual changes and stops after completion with one final snapsh
   const watching = watchRun({ stateDir, runId: 'run', intervalMs: 5 }, (snapshot) => {
     changes.push(snapshot.summary.status);
   });
+  // Wait for the first snapshot, then let several polls pass: none may report an unchanged run.
+  await vi.waitFor(() => {
+    expect(changes).toEqual(['running']);
+  });
   await delay(35);
   expect(changes).toEqual(['running']);
   run.status = 'completed';
@@ -232,6 +236,9 @@ it('stops on owner loss even when checkpoint bytes do not change, but interrupti
   const changed: string[] = [];
   const watching = watchRun({ stateDir, runId: 'run', intervalMs: 5 }, (snapshot) => {
     changed.push(snapshot.summary.status);
+  });
+  await vi.waitFor(() => {
+    expect(changed).toEqual(['running']);
   });
   await delay(20);
   // Lose the owner atomically: a recursive rm briefly exposes an owner-less lock, a real change.
