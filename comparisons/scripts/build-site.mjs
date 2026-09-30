@@ -2,7 +2,9 @@ import { readFile, readdir, mkdir, copyFile, writeFile, rename } from 'node:fs/p
 import { createHash } from 'node:crypto';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { checkApiSnapshots, deriveApiRevision } from './api-snapshot.mjs';
 const root = fileURLToPath(new URL('../', import.meta.url));
+const repoRoot = fileURLToPath(new URL('../../', import.meta.url));
 const target = resolve(process.argv[2] ?? '.context/comparison-site');
 await mkdir(`${target}/dist`, { recursive: true });
 await mkdir(`${target}/.openai`, { recursive: true });
@@ -16,6 +18,9 @@ try {
 }
 await writeFile(`${target}/.openai/hosting.json.tmp`, JSON.stringify(manifest, null, 2) + '\n');
 await rename(`${target}/.openai/hosting.json.tmp`, `${target}/.openai/hosting.json`);
+const snapshotProblems = checkApiSnapshots(repoRoot);
+if (snapshotProblems.length > 0)
+  throw new Error(`API snapshot check failed:\n${snapshotProblems.join('\n')}`);
 const ids = JSON.parse(await readFile(`${root}/batches/index.json`, 'utf8'));
 const batches = [];
 for (const id of ids) {
@@ -57,7 +62,19 @@ for (const id of ids) {
       if (name !== 'metrics' || error.code !== 'ENOENT') throw error;
     }
   }
-  batches.push({ ...batch, workflows, support, reports });
+  const { file, sha256 } = batch.apiSnapshot;
+  const revision = deriveApiRevision({ repoRoot, file, sha256 });
+  if (revision === null)
+    console.warn(
+      `Warning: no commit reachable from HEAD has ${file} at ${sha256} (uncommitted change or shallow clone); ${id} publishes no API revision.`,
+    );
+  batches.push({
+    ...batch,
+    apiSnapshot: { ...batch.apiSnapshot, revision },
+    workflows,
+    support,
+    reports,
+  });
 }
 for (const file of ['index.html', 'style.css', 'app.js'])
   await copyFile(`${root}/site/${file}`, `${target}/dist/${file}`);

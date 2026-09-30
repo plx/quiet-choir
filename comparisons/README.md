@@ -51,6 +51,8 @@ explicit in the notes and limit direct comparisons of call counts.
 | `batches/<id>/`                      | Originals, ports, metadata, attribution and verification results |
 | `scripts/verify-ports.mjs`           | Batch 01 differential baseline plus the strict/question checks   |
 | `scripts/verify-idiomatic-ports.mjs` | Batch 02 paired fixtures and the F1–F5 matrix                    |
+| `scripts/check-api-snapshot.mjs`     | Fails when a batch's `apiSnapshot.sha256` is not the API file's  |
+| `scripts/api-snapshot.mjs`           | Snapshot check and derivation of the API revision (with a test)  |
 | `scripts/build-site.mjs`             | Packages every registered batch and the static reader            |
 | `site/`                              | Authored HTML, CSS, JavaScript, and the durable Sites identity   |
 | `../.context/comparison-site/`       | Generated publishing checkout; ignored by this repository        |
@@ -69,12 +71,15 @@ node comparisons/scripts/build-site.mjs
 python3 -m http.server 4173 --directory .context/comparison-site/dist
 ```
 
-Open `http://localhost:4173`. The builder checks pinned source hashes and required metadata, embeds
-both batches and copies the static reader. It does not execute ports, upload or deploy anything.
-`comparisons:check` compiles both batches under root settings, verifies the Batch 01 baseline and
-runs the Batch 02 paired fault suite in read-only `--check` mode after the package build. It is part
-of `npm run check` and the CI quality job. The fixture suite needs local Git and process identity
-inspection; it uses no native model CLI, credentials, network or paid inference.
+Open `http://localhost:4173`. The builder checks pinned source hashes, the API snapshot hash and
+required metadata, derives each batch's API revision from the checkout's history, embeds both
+batches and copies the static reader. It does not execute ports, upload or deploy anything.
+`comparisons:check` first checks that `apiSnapshot.sha256` matches the API file in every batch (see
+the snapshot policy below) and runs the node tests for that check, then compiles both batches under
+root settings, verifies the Batch 01 baseline and runs the Batch 02 paired fault suite in read-only
+`--check` mode after the package build. It is part of `npm run check` and the CI quality job. The
+fixture suite needs local Git and process identity inspection; it uses no native model CLI,
+credentials, network or paid inference.
 
 Regenerate reports only for an intentional change, then review their diffs:
 
@@ -97,12 +102,19 @@ row in the **same PR**, even when the API still compiles. The mapping is:
 | Settled maps, admission limits and usage gates (#42, #47, #62)  | bug-hunt                       |
 | Accepted-code replay (#41)                                      | Every F4 row                   |
 
-Refresh `apiSnapshot.revision` and the API-file SHA-256 when the target API changes. Use a durable
-commit containing that API, reachable from the default branch after landing; replace a disposable
-pre-squash reference after landing if necessary. The hash identifies one API file, not the entire
-runtime. Reproduce an older report using its recorded runtime **and matching batch revision**. Batch
-01 stays compiled and checked as the paired baseline; future primitive acceptance belongs to
-Batch 02. Further intentional API/idiom comparisons belong in a new numbered batch.
+The API file's SHA-256 is the contract. Update `apiSnapshot.sha256` in **every** batch in the same
+PR that changes `src/workflow/runtime/model.ts` (`shasum -a 256 src/workflow/runtime/model.ts`);
+`comparisons:check` fails until it matches. Never record a commit in `apiSnapshot`: this repository
+squash-merges, so a PR cannot know its own post-merge commit and any commit it names is orphaned
+once it lands. The check rejects a `revision` key. Instead, `build-site.mjs` derives the revision
+when it builds the site: the newest commit reachable from the checked-out `HEAD` whose API file
+hashes to the recorded value, shown in the reader's Target API block. Publish from `main` so that
+commit is the one on main that last set the file to that hash; the builder warns and shows "not yet
+committed" when no reachable commit matches, for example for uncommitted work or a shallow clone.
+The check itself needs no git history. The hash identifies one API file, not the entire runtime.
+Reproduce an older report using its recorded runtime **and matching batch revision**. Batch 01 stays
+compiled and checked as the paired baseline; future primitive acceptance belongs to Batch 02.
+Further intentional API/idiom comparisons belong in a new numbered batch.
 
 ## Run a port
 
@@ -153,8 +165,9 @@ files shown in the reader are batch helpers, not additions to the runtime API.
    workflow names stable across batches so switching batches retains the selected workflow.
 4. Fill in `batch.json`: matching directory `id`, display `number`/`label`/`description`, upstream
    `revision`/`sourceUrl`/`sourceFileBase`, `commonChanges`, and an accurate `validation` statement.
-   Record the target Quiet Choir commit in `apiSnapshot.revision`, its package version and API file,
-   and that file's SHA-256. For the current API file, use
+   Record `apiSnapshot.package` (its package version), `file` (the API file), `sha256` (that file's
+   hash) and `description`, and no other keys; there is no `revision` field, because the site
+   derives it from main. For the current API file, use
    `shasum -a 256 src/workflow/runtime/model.ts`. The file hash is not a full runtime fingerprint.
 5. Add one `catalog.json` entry per workflow: `name` matching both source filenames, `description`,
    `whenToUse`, `phases`, argument `fields`, call-site `counts`, and `hasBudget`. These describe the
@@ -171,10 +184,13 @@ files shown in the reader are batch helpers, not additions to the runtime API.
    and preview Source comparison, Port notes, and Shared support for the new batch and an existing
    bookmark. New batches using the same source and data contract need no UI code changes.
 
-Ports import the current checkout's built package. To reproduce a historical batch, use its recorded
-Quiet Choir commit together with the matching historical batch revision and verification commands;
-rebuilding a newer runtime does not reproduce the old target API. Active-batch maintenance follows
-the regression policy above; comparisons of deliberately different APIs belong in new batches.
+Ports import the current checkout's built package. To reproduce a historical batch, check out the
+batch's historical revision (its `batch.json`) and find the Quiet Choir commit whose
+`src/workflow/runtime/model.ts` matches that batch's `apiSnapshot.sha256`: the revision the site
+shows, or walk `git log -- src/workflow/runtime/model.ts` and hash each version. Then run the
+matching verification commands; rebuilding a newer runtime does not reproduce the old target API.
+Active-batch maintenance follows the regression policy above; comparisons of deliberately different
+APIs belong in new batches.
 
 The reader currently attributes all workflows to the Batch 01 upstream, and `license.txt` comes from
 the first registered batch. Comparisons from a different upstream or license need corresponding
