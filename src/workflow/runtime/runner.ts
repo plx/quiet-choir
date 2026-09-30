@@ -134,6 +134,7 @@ import { NameScopes } from './names.js';
 import { bindContext } from './context.js';
 import { stepError, errorKind } from './step-error.js';
 import { ConfigurationError } from './configuration-error.js';
+import { classifyAttemptFailure } from './attempt-failure.js';
 import { digest, jsonValue } from './json.js';
 import type {
   AgentClient,
@@ -1635,21 +1636,27 @@ export async function runWorkflow<
                 recordTranscript();
               }
               lease?.failed();
-              // Only an aborted scope signal is a scope cancellation. A callback's own AbortError
-              // keeps its message and fails the step, but is still never retried or settled. This
-              // run's own storage failure (e.g. process registration) aborts the run but stays a failure.
-              const scoped =
-                signal.aborted && !checkpointProblems.includes(cause as CheckpointError);
-              const error = scoped ? cancellationError(signal, cause) : cause;
+              // ADR 0007 rules live in attempt-failure.ts; this runs after the transcript-close block,
+              // which may have replaced cause with a storage failure.
+              const classification = classifyAttemptFailure({
+                cause,
+                aborted: signal.aborted,
+                checkpointProblem: checkpointProblems.includes(cause as CheckpointError),
+                retryOn: execution.policy.retry.on,
+                attempt,
+                maxAttempts,
+                onError,
+              });
+              const error = classification.scoped ? cancellationError(signal, cause) : cause;
               origins.remember(error, id);
               const outcome = stepError(error, step.attempts);
-              step.status = scoped ? 'cancelled' : 'failed';
+              step.status = classification.status;
               if (error instanceof CancelledError) step.cancelledBy = error.cancelledBy;
               step.error = outcome.message;
               step.errorStack = errorStack(error);
               attemptRecord.errorStack = step.errorStack;
               attemptRecord.errorKind = outcome.kind;
-              attemptRecord.status = scoped ? 'cancelled' : 'failed';
+              attemptRecord.status = classification.status;
               step.finishedAt = attemptRecord.finishedAt = new Date().toISOString();
               step.durationMs = attemptRecord.durationMs = Math.max(
                 0,
@@ -1686,33 +1693,23 @@ export async function runWorkflow<
                 });
                 emit('agent.finished', id, step, {
                   harness: step.harness ?? kind,
-                  outcome: scoped ? 'cancelled' : 'failed',
+                  outcome: classification.status,
                   sessionId: attemptRecord.sessionId ?? attemptRecord.requestedSessionId ?? null,
                   ...(attemptRecord.usage ? { usage: attemptRecord.usage } : {}),
                   diagnostics: attemptRecord.diagnostics ?? {},
                 });
               }
-              // Only this run's own storage failures are fatal; a domain error reusing the class is not.
-              const infrastructure =
-                checkpointProblems.includes(cause as CheckpointError) ||
-                cause instanceof ConfigurationError;
-              // Configuration failures must also never become settled map data.
-              if (cause instanceof ConfigurationError) origins.markFatal(error);
-              const fatal = scoped || errorKind(cause) === 'cancelled' || infrastructure;
-              const retry =
-                !fatal &&
-                attempt < maxAttempts &&
-                (execution.policy.retry.on === undefined ||
-                  execution.policy.retry.on.includes(outcome.kind));
-              if (!fatal && !retry && onError === 'return') {
+              if (classification.markFatal) origins.markFatal(error);
+              if (classification.settle) {
                 step.status = 'settled-failed';
                 step.settledError = outcome;
                 if (!(await trySave())) throw error;
                 emit('step.settled', id, step);
                 return replay(step);
               }
-              if (await trySave()) emit(scoped ? 'step.cancelled' : 'step.failed', id, step);
-              if (!retry || signal.reason instanceof CheckpointError) throw error;
+              if (await trySave())
+                emit(classification.scoped ? 'step.cancelled' : 'step.failed', id, step);
+              if (!classification.retry || signal.reason instanceof CheckpointError) throw error;
               try {
                 await waitUntil(
                   clockNow(clock) + Math.min(30_000, delayMs * 2 ** (attempt - 1)),
