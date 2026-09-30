@@ -488,3 +488,59 @@ it('keeps fractional sleeps compatible and stores each convenience call as one w
   expect(run.steps['fraction']?.wait?.request.timeoutMs).toBe(0.25);
   expect(run.steps['fraction']?.wait?.deadline).toBe(1_800_000_000_001);
 });
+
+it('lets a rehearsal stub replace a poll observer with a schema-checked terminal value', async () => {
+  let observed = 0;
+  const stubbed: string[] = [];
+  const schemas: string[] = [];
+  const definition = defineWorkflow({
+    name: 'stubbed-poll',
+    version: '1',
+    input: z.null(),
+    output: z.unknown(),
+    run: async (ctx) => ({
+      stubbed: await ctx.poll('ready', {
+        input: null,
+        schema: z.object({ answer: z.number() }),
+        every: 1,
+        timeoutMs: 1_000_000,
+        observe: () => {
+          observed++;
+          return Promise.resolve({ done: false as const });
+        },
+      }),
+      live: await ctx.poll('live', {
+        input: null,
+        schema: z.null(),
+        every: 1,
+        timeoutMs: 1_000_000,
+        observe: () => {
+          observed++;
+          return Promise.resolve({ done: true as const, value: null });
+        },
+      }),
+    }),
+  });
+  const run = await runWorkflow(definition, {
+    stateDir,
+    runId: 'stubbed-poll',
+    input: null,
+    clock: new Clock(),
+    harness: { kind: 'dry-run', invoke: () => Promise.reject(new Error('no agents')) },
+    rehearsal: {
+      localStep: (id) => {
+        if (id !== 'ready') return undefined;
+        stubbed.push(id);
+        return { output: { answer: 7 } };
+      },
+      onSchema: (id) => {
+        schemas.push(id);
+      },
+    },
+  });
+  expect(run.status).toBe('completed');
+  expect(run.output).toMatchObject({ stubbed: { by: 'poll', value: { answer: 7 } } });
+  expect(stubbed).toEqual(['ready']);
+  expect(schemas).toEqual(['ready', 'live']);
+  expect(observed).toBe(1);
+});

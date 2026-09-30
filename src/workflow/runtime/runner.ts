@@ -348,7 +348,10 @@ export interface RunOptions extends WorkflowCodeOptions {
   readonly allowHarnessChange?: boolean;
   /** Live rehearsal hooks. Requires a harness whose kind is dry-run; local callbacks otherwise run normally. */
   readonly rehearsal?: {
-    /** Replace selected local callbacks; undefined means execute the original callback. */
+    /**
+     * Replace a selected local callback, file effect or poll observer (by step or wait ID);
+     * undefined means execute the original. A replaced poll completes with the output.
+     */
     readonly localStep?: (
       stepId: string,
       schema: JsonValue,
@@ -2522,7 +2525,14 @@ export async function runWorkflow<
       clock,
       waitMode: options.waitMode ?? 'suspend',
       skipTimers: options.rehearsal !== undefined,
-      observe: (source, context) => inEffect.run('poll', () => source.observe(context)),
+      observe: (id, source, context) => {
+        // Rehearsal stubs cover poll observers too: a matched wait completes with a synthesized
+        // terminal value, still parsed by the poll schema, and its observer never runs.
+        options.rehearsal?.onSchema?.(id, source.schema);
+        const stub = options.rehearsal?.localStep?.(id, schemaJson(source.schema));
+        if (stub !== undefined) return Promise.resolve({ done: true, value: stub.output });
+        return inEffect.run('poll', () => source.observe(context));
+      },
       save,
       emit: (type, id, step) => {
         emit(

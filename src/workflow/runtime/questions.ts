@@ -51,7 +51,9 @@ interface QuestionDependencies {
   readonly save: () => Promise<void>;
   readonly beforeLive: (id: string, step: StepRecord) => Promise<void>;
   readonly nextSeq: () => number;
+  /** Run one poll observation for the wait `id`; rehearsal may replace it with a stub. */
   readonly observe?: (
+    id: string,
     source: PollSource<unknown>,
     context: StepContext,
   ) => ReturnType<PollSource<unknown>['observe']>;
@@ -428,7 +430,7 @@ export class RunQuestions {
       waiter.signal.throwIfAborted();
       progress.checks++;
       const result = await (this.#deps.observe
-        ? this.#deps.observe(poll, context)
+        ? this.#deps.observe(id, poll, context)
         : poll.observe(context));
       if (
         (result as unknown) === null ||
