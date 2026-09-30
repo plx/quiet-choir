@@ -43,8 +43,9 @@ export interface ReplayInput {
   /** The agent request diagnostics, whose harness names a legacy agent step's kind. */
   readonly request: StepRecord['request'];
   /**
-   * Computes the original format-one fingerprint. Called at most once, only for a legacy prior
-   * that passed the agent check; it may throw (a schema without a JSON Schema form).
+   * Computes the original format-one fingerprint. Called exactly once for a legacy prior that
+   * passes the agent check, and never otherwise; it may throw (a schema without a JSON Schema
+   * form).
    */
   readonly legacyFingerprint: () => string;
   /** Whether the run is a fork. */
@@ -146,9 +147,11 @@ export function decideReplay(input: ReplayInput): ReplayDecision {
   if (prior?.legacyIdentity === 1) {
     if ((kind === 'agent' || kind === 'claude' || kind === 'codex') && isTerminal(prior))
       return refuse(false, { reason: 'legacy-agent-unpinned' });
+    // Computed before any comparison, as it always was: its failure surfaces first.
+    const legacyFingerprint = input.legacyFingerprint();
     if (
       prior.kind !== legacyKind(kind, input.request) ||
-      prior.fingerprint !== input.legacyFingerprint() ||
+      prior.fingerprint !== legacyFingerprint ||
       onError === 'return'
     )
       return refuse(false, { reason: 'legacy-identity-changed' });
