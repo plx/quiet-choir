@@ -1,3 +1,4 @@
+import { brandError, isBranded } from './error-brand.js';
 import { stat } from 'node:fs/promises';
 import { setTimeout as delay } from 'node:timers/promises';
 
@@ -6,6 +7,15 @@ import type { JournalWriter } from './journal.js';
 
 /** A storage failure, separate from the outcome of the workflow or external effect. */
 export class CheckpointError extends Error {
+  static {
+    brandError(this, 'CheckpointError');
+  }
+
+  /** Recognize an instance from any quiet-choir module instance, such as a CLI workflow's own import. */
+  public static override [Symbol.hasInstance](value: unknown): value is CheckpointError {
+    return isBranded(this, value);
+  }
+
   /** Storage operation that failed. */
   public readonly operation: 'save' | 'release' | 'process' | 'lock';
 

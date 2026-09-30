@@ -31,8 +31,8 @@ export const stepErrorSchema = z.object({
 /** Classify structured metadata, never guessed substrings of user-controlled error messages. @internal */
 export function errorKind(error: unknown): ErrorKind {
   if (error instanceof CancelledError) return 'cancelled';
-  if (error instanceof ExecError) return error.kind;
-  if (error instanceof HarnessError) return error.kind;
+  // Another quiet-choir copy (possibly another version) may build these; trust only known kinds.
+  if (error instanceof ExecError || error instanceof HarnessError) return knownKind(error.kind);
   if (error instanceof z.ZodError || error instanceof SyntaxError) return 'schema';
   if (error instanceof Error) {
     if (error.name === 'AbortError') return 'cancelled';
@@ -46,6 +46,11 @@ export function errorKind(error: unknown): ErrorKind {
     if (code === 'ENOENT' || code === 'EPIPE') return 'process';
   }
   return 'unknown';
+}
+
+function knownKind(kind: unknown): ErrorKind {
+  const kinds: readonly unknown[] = errorKindSchema.options;
+  return kinds.includes(kind) ? (kind as ErrorKind) : 'unknown';
 }
 
 /** Convert an effect failure to lossless data. @internal */

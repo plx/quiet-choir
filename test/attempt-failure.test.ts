@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import {
   classifyAttemptFailure,
@@ -9,6 +9,11 @@ import { CheckpointError } from '../src/workflow/runtime/checkpoint.js';
 import { ConfigurationError } from '../src/workflow/runtime/configuration-error.js';
 import { CancelledError } from '../src/workflow/runtime/fan-out.js';
 import { stepError } from '../src/workflow/runtime/step-error.js';
+
+// A second module instance, as `workflow execute` gives workflow and custom-adapter code (ADR 0028).
+vi.resetModules();
+const secondConfiguration = await import('../src/workflow/runtime/configuration-error.js');
+const secondHarness = await import('../src/workflow/runtime/harness-error.js');
 
 // ADR 0007 outcomes as a pure table: no state directory, store or workflow run.
 const defaults: AttemptFailureInput = {
@@ -112,6 +117,42 @@ const rows: Row[] = [
       markFatal: true,
       errorKind: 'unknown',
     },
+  },
+  {
+    name: "another module instance's ConfigurationError is fatal even with onError return",
+    input: {
+      cause: new secondConfiguration.ConfigurationError('bad config'),
+      onError: 'return',
+    },
+    expected: {
+      ...fatalFailure,
+      infrastructure: true,
+      markFatal: true,
+      errorKind: 'unknown',
+    },
+  },
+  {
+    name: "another module instance's HarnessError 429 retries under retry.on rate-limit",
+    input: {
+      cause: new secondHarness.HarnessError({
+        harness: 'custom',
+        exit: { code: 1, signal: null },
+        failure: {
+          reason: 'Rate limit reached',
+          subtype: null,
+          terminalReason: null,
+          apiStatus: 429,
+          sessionId: null,
+          usage: null,
+        },
+        reason: 'rate limited',
+        stderr: '',
+        stdout: '',
+      }),
+      retryOn: ['rate-limit'],
+      onError: 'return',
+    },
+    expected: { ...retrying, errorKind: 'rate-limit' },
   },
   {
     name: 'a retryable kind retries when retry.on is omitted',

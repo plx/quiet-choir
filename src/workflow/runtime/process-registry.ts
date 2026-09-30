@@ -1,3 +1,4 @@
+import { brandError, isBranded } from './error-brand.js';
 import { RunRefusedError } from './run-errors.js';
 import { syncDirectory as storageSyncDirectory, syncHandle } from './storage-io.js';
 import { jsonValue } from './json.js';
@@ -53,6 +54,15 @@ const processSchema = z
 
 /** A live or unverifiable process record prevents replacement work. */
 export class OrphanProcessesError extends RunRefusedError {
+  static {
+    brandError(this, 'OrphanProcessesError');
+  }
+
+  /** Recognize an instance from any quiet-choir module instance, such as a CLI workflow's own import. */
+  public static override [Symbol.hasInstance](value: unknown): value is OrphanProcessesError {
+    return isBranded(this, value);
+  }
+
   /** Stable refusal code for live or unverifiable child processes. */
   public override readonly code = 'run.orphans';
   /** Read-only observations retained for inspection. */

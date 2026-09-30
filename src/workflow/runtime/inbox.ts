@@ -1,3 +1,4 @@
+import { brandError, isBranded } from './error-brand.js';
 import { createStorageDirectory, syncDirectory, syncHandle } from './storage-io.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { link, open, readFile, rm, stat } from 'node:fs/promises';
@@ -19,6 +20,15 @@ import type { PendingOperation } from './wait-model.js';
 
 /** A rejected delivery: invalid input is exit 2, a closed/already answered question is exit 3. */
 export class AnswerError extends Error {
+  static {
+    brandError(this, 'AnswerError');
+  }
+
+  /** Recognize an instance from any quiet-choir module instance, such as a CLI workflow's own import. */
+  public static override [Symbol.hasInstance](value: unknown): value is AnswerError {
+    return isBranded(this, value);
+  }
+
   /** Distinguishes validation from first-answer or lifecycle conflicts. */
   public readonly reason: 'invalid' | 'conflict';
   public constructor(reason: 'invalid' | 'conflict', message: string) {
