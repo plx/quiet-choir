@@ -67,6 +67,7 @@ import {
   runIdMessage,
   RunInterruptedError,
   RunRefusedError,
+  StepIdentityChangedError,
   WorkflowInputError,
   WorkflowRunError,
 } from './run-errors.js';
@@ -1346,7 +1347,13 @@ export async function runWorkflow<
         if (refusal.reason !== 'strict-healed-divergence')
           throw refusal.reason === 'rehearsal-git'
             ? new ConfigurationError(replayRefusalMessage(id, refusal))
-            : new Error(replayRefusalMessage(id, refusal));
+            : refusal.reason === 'terminal-redefined'
+              ? new StepIdentityChangedError(replayRefusalMessage(id, refusal), {
+                  stepId: id,
+                  components: refusal.changed,
+                  status: refusal.status,
+                })
+              : new Error(replayRefusalMessage(id, refusal));
         // decideReplay refuses this way only while a divergence is recorded.
         if (strictHealedDivergence) {
           controller.abort(strictHealedDivergence);

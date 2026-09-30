@@ -148,6 +148,76 @@ export class WorkflowRunError extends Error {
   }
 }
 
+/**
+ * A resumed body reached a completed or settled-failed step whose identity no longer matches its
+ * record. Replay never reuses such a step, even with `acceptCodeChange`, so the run fails; the CLI's
+ * `--accept-code-change` detects this on a disposable copy first and refuses with
+ * `run.incompatible` instead. A saved run reports it as the cause of {@link WorkflowRunError}.
+ *
+ * @example
+ * ```ts
+ * for (let error: unknown = failure; error instanceof Error; error = error.cause)
+ *   if (error instanceof StepIdentityChangedError) console.log(error.stepId, error.components);
+ * ```
+ */
+export class StepIdentityChangedError extends Error {
+  static {
+    brandError(this, 'StepIdentityChangedError');
+  }
+
+  /** Recognize an instance from any quiet-choir module instance, such as a CLI workflow's own import. */
+  public static override [Symbol.hasInstance](value: unknown): value is StepIdentityChangedError {
+    return isBranded(this, value);
+  }
+
+  /** Step whose recorded identity differs. */
+  public readonly stepId: string;
+  /** Identity components that differ, such as `prompt` or `callback`; empty when only the digest differs. */
+  public readonly components: readonly string[];
+  /** The recorded step's terminal status. */
+  public readonly status: 'completed' | 'settled-failed';
+
+  public constructor(
+    message: string,
+    details: {
+      readonly stepId: string;
+      readonly components: readonly string[];
+      readonly status: 'completed' | 'settled-failed';
+    },
+    options?: ErrorOptions,
+  ) {
+    super(message, options);
+    this.name = 'StepIdentityChangedError';
+    this.stepId = details.stepId;
+    this.components = Object.freeze([...details.components]);
+    this.status = details.status;
+  }
+}
+
+/**
+ * The first {@link StepIdentityChangedError} in an error's causes, aggregate members (including
+ * `FanOutError`) and `WorkflowRunError` cause. @internal
+ */
+export function findStepIdentityChange(
+  error: unknown,
+  seen = new Set<unknown>(),
+): StepIdentityChangedError | undefined {
+  if (!(error instanceof Error) || seen.has(error)) return undefined;
+  seen.add(error);
+  if (error instanceof StepIdentityChangedError) return error;
+  const nested: unknown[] = [
+    error.cause,
+    ...(error instanceof AggregateError && Array.isArray(error.errors)
+      ? (error.errors as unknown[])
+      : []),
+  ];
+  for (const entry of nested) {
+    const found = findStepIdentityChange(entry, seen);
+    if (found) return found;
+  }
+  return undefined;
+}
+
 /** Whether an identifier is safe for a checkpoint filename. */
 export function isValidRunId(id: string): boolean {
   return /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$/u.test(id);

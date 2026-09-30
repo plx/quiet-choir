@@ -65,6 +65,11 @@ function samples(api: Api): Record<string, Error> {
     OrphanProcessesError: new api.OrphanProcessesError('run', []),
     WorkflowRunError: new api.WorkflowRunError(run, new Error('boom')),
     RunInterruptedError: new api.RunInterruptedError('stop'),
+    StepIdentityChangedError: new api.StepIdentityChangedError('changed', {
+      stepId: 'step',
+      components: ['prompt'],
+      status: 'completed',
+    }),
     WorkflowInputError: new api.WorkflowInputError(null, new Error('invalid')),
     AnswerError: new api.AnswerError('invalid', 'bad answer'),
   };

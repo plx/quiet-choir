@@ -499,15 +499,15 @@ describe('replayRefusalMessage', () => {
     ],
     [
       { reason: 'terminal-redefined', changed: ['input', 'schema'], status: 'completed' },
-      'Step a/b: input, schema changed on a completed step; start a new run.',
+      'Step a/b: input, schema changed on a completed step; --accept-code-change cannot reuse it. Fork a new run with --fork-from RUN --reuse matching --invalidate a/b.',
     ],
     [
       { reason: 'terminal-redefined', changed: ['input'], status: 'settled-failed' },
-      'Step a/b: input changed on a settled-failed step; start a new run.',
+      'Step a/b: input changed on a settled-failed step; --accept-code-change cannot reuse it. Fork a new run with --fork-from RUN --reuse matching --invalidate a/b.',
     ],
     [
       { reason: 'terminal-redefined', changed: [], status: 'completed' },
-      'Step a/b: identity changed on a completed step; start a new run.',
+      'Step a/b: identity changed on a completed step; --accept-code-change cannot reuse it. Fork a new run with --fork-from RUN --reuse matching --invalidate a/b.',
     ],
     [
       { reason: 'rehearsal-git' },

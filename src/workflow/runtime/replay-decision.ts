@@ -207,7 +207,7 @@ export function replayRefusalMessage(
     case 'question-or-wait-redefined':
       return `Step ${id}: a ${refusal.priorKind === 'ask' ? 'question' : 'wait'} cannot be redefined as another effect; use a new ID.`;
     case 'terminal-redefined':
-      return `Step ${id}: ${refusal.changed.join(', ') || 'identity'} changed on a ${refusal.status} step; start a new run.`;
+      return `Step ${id}: ${refusal.changed.join(', ') || 'identity'} changed on a ${refusal.status} step; --accept-code-change cannot reuse it. Fork a new run with --fork-from RUN --reuse matching --invalidate ${id}.`;
     case 'rehearsal-git':
       return 'Dry-run does not simulate Git worktree effects. Use a fixture harness in a temporary repository to rehearse isolation without paid calls.';
   }
