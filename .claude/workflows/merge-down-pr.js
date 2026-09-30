@@ -785,15 +785,7 @@ Return the epic (number, url, created) and one entry per item key.`,
     { ...TIER.scribe, label: 'file follow-ups', phase: 'Fix', schema: FILED },
   );
   if (filed?.epic?.number) record.followupEpic = filed.epic.number;
-  // Scribes sometimes drop the "finding:"/"thread:" prefix from an item key ("F4" for
-  // "finding:F4"). Map a returned key back to the one item it names, so a filed issue is not
-  // counted as unfiled.
-  const keys = items.map((i) => i.key);
-  for (const f of filed?.issues ?? []) {
-    if (keys.includes(f.key)) continue;
-    const match = keys.filter((k) => k.endsWith(`:${f.key}`));
-    if (match.length === 1) f.key = match[0];
-  }
+  canonicalizeKeys(items, filed?.issues);
   for (const f of filed?.issues ?? [])
     record.followups.push({
       key: f.key,
@@ -823,6 +815,18 @@ function replyFor(t, fixed, filed) {
   return { threadId: t.id, body, ...(dismiss ? { dismiss } : {}) };
 }
 
+// Agents sometimes report an item key without its "finding:"/"thread:"/"check:" prefix ("F1"
+// for "finding:F1"). Map each reported key back to the one item it names, so work that was done
+// is not counted as missing. A key that matches no item, or several, is left alone.
+function canonicalizeKeys(items, reported) {
+  const keys = items.map((i) => i.key);
+  for (const r of reported ?? []) {
+    if (keys.includes(r.key)) continue;
+    const match = keys.filter((k) => k.endsWith(`:${r.key}`));
+    if (match.length === 1) r.key = match[0];
+  }
+}
+
 // Returns {replies, changed} or a blocked record.
 async function fixRoundOf(threads, work) {
   if (!work.fix.length && !work.followup.length) {
@@ -834,6 +838,7 @@ async function fixRoundOf(threads, work) {
     async () => (work.followup.length && publishing ? fileFollowups(work.followup) : null),
   ]);
   if (work.fix.length && !fixed) return { error: 'implementer returned nothing' };
+  canonicalizeKeys(work.fix, fixed?.items);
   // An omitted item is not a fixed item: own findings and check repairs have no thread to resurface.
   const reported = new Set((fixed?.items ?? []).map((i) => i.key));
   const unreported = work.fix.filter((i) => !reported.has(i.key)).map((i) => i.key);
