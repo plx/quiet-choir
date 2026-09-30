@@ -24,7 +24,6 @@ export async function syncHandle(handle: FileHandle): Promise<void> {
 
 /** Flush a directory entry on the supported local POSIX filesystems. @internal */
 export async function syncDirectory(path: string): Promise<void> {
-  if (!storageSync) return;
   await using directory = await open(path, 'r');
   await syncHandle(directory);
 }

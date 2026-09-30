@@ -10,7 +10,7 @@ import {
   type Harness,
   type RunRecord,
 } from '../src/index.js';
-import { setStorageSyncForTesting } from '../src/workflow/runtime/storage-io.js';
+import { setStorageSyncForTesting, syncDirectory } from '../src/workflow/runtime/storage-io.js';
 import { enableRealStorageSync } from './setup/durable-sync.js';
 
 vi.mock('node:fs/promises', async (importOriginal) => {
@@ -109,6 +109,14 @@ describe('runtime fsync', () => {
     const synced = await spyOnSync();
     await exercise();
     expect(synced).toEqual([]);
+  });
+
+  it('still opens directories when syncing is off, so path errors surface', async () => {
+    expect(setStorageSyncForTesting(false)).toBe(false);
+    await expect(syncDirectory(join(directory, 'missing'))).rejects.toMatchObject({
+      code: 'ENOENT',
+    });
+    await expect(syncDirectory(directory)).resolves.toBeUndefined();
   });
 
   it('restores the previous setting from the test-only switch', () => {
