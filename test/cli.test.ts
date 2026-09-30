@@ -18,8 +18,14 @@ import InfoVersion from '../src/commands/info/version.js';
 import WorkflowAnswer from '../src/commands/workflow/answer.js';
 import WorkflowExecute from '../src/commands/workflow/execute.js';
 import WorkflowInspect from '../src/commands/workflow/inspect.js';
+import WorkflowPending from '../src/commands/workflow/pending.js';
+import WorkflowResume from '../src/commands/workflow/resume.js';
+import WorkflowTick from '../src/commands/workflow/tick.js';
 import WorkflowCheckResume from '../src/commands/workflow/check-resume.js';
 import { WorkflowExecutor } from '../src/workflow/loader/executor.js';
+import { TickWorkflowExecutor } from '../src/workflow/loader/tick.js';
+import type { TickWorkflowsResult } from '../src/workflow/loader/tick.js';
+import type { PendingOperation } from '../src/workflow/runtime/wait-model.js';
 import type { RunRecord } from '../src/workflow/runtime/store.js';
 import WorkflowTypecheck from '../src/commands/workflow/typecheck.js';
 import { TypeScriptExecutor } from '../src/workflow/typecheck/typescript-executor.js';
@@ -717,5 +723,285 @@ describe('monitoring command adapters', () => {
     } finally {
       process.exitCode = previous;
     }
+  });
+});
+
+/** An existing, empty runs container, so commands never consult the developer's project state. */
+async function stateDirectory(): Promise<string> {
+  const directory = await mkdtemp(join(tmpdir(), 'quiet-choir-cli-state-'));
+  temporaryDirectories.push(directory);
+  return directory;
+}
+
+describe('resume command exit and error codes', () => {
+  const suspendedRun = {
+    ...runRecord,
+    status: 'suspended',
+    output: null,
+    pending: [],
+    resumeCommand: ['quiet-choir', 'workflow', 'resume', 'test-run'],
+  } as const;
+
+  it.each([false, true])(
+    'exits 75 for a suspended run without an error (JSON=%s)',
+    async (json) => {
+      const stateDir = await stateDirectory();
+      const execute = vi
+        .spyOn(WorkflowExecutor.prototype, 'execute')
+        .mockResolvedValue({ kind: 'workflow.run.result', ok: true, run: suspendedRun });
+      const output = await captureCommand(WorkflowResume, [
+        'test-run',
+        '--state-dir',
+        stateDir,
+        ...(json ? ['--json'] : []),
+      ]);
+      expect(output.error).toBeUndefined();
+      expect(process.exitCode).toBe(75);
+      expect(execute).toHaveBeenCalledWith(
+        expect.objectContaining({ kind: 'workflow.resume', runId: 'test-run', stateDir }),
+      );
+      if (json)
+        expect(JSON.parse(output.stdout)).toMatchObject({
+          kind: 'workflow.run.suspended',
+          ok: true,
+          exitCode: 75,
+          runId: 'test-run',
+        });
+      else expect(output.stdout).toContain('Run test-run suspended.');
+    },
+  );
+
+  it('exits 0 and renders a completed run', async () => {
+    const stateDir = await stateDirectory();
+    vi.spyOn(WorkflowExecutor.prototype, 'execute').mockResolvedValue({
+      kind: 'workflow.run.result',
+      ok: true,
+      run: runRecord,
+    });
+    const output = await captureCommand(WorkflowResume, ['test-run', '--state-dir', stateDir]);
+    expect(output.error).toBeUndefined();
+    expect(process.exitCode).toBeUndefined();
+    expect(output.stdout).toContain('Run test-run completed.');
+    expect(output.stdout).toContain('42');
+  });
+
+  it.each([
+    ['run.locked', 3],
+    ['run.incompatible', 3],
+    ['run.not_found', 3],
+    ['run.unreadable', 3],
+    ['workflow.storage', 74],
+    ['workflow.failed', 1],
+  ] as const)('maps the %s failure to exit %i', async (code, exit) => {
+    const stateDir = await stateDirectory();
+    vi.spyOn(WorkflowExecutor.prototype, 'execute').mockResolvedValue(
+      workflowFailure(code, `Failure ${code}.`),
+    );
+    const human = await captureCommand(WorkflowResume, ['test-run', '--state-dir', stateDir]);
+    expect(human.error).toMatchObject({ code, oclif: { exit }, message: `Failure ${code}.` });
+    const json = await captureCommand(WorkflowResume, [
+      'test-run',
+      '--state-dir',
+      stateDir,
+      '--json',
+    ]);
+    expect(json.error).toMatchObject({ oclif: { exit } });
+    expect(JSON.parse(json.stdout)).toMatchObject({
+      kind: 'workflow.error',
+      ok: false,
+      exitCode: exit,
+      error: { code },
+      runId: 'test-run',
+    });
+  });
+
+  it('rejects an invalid run ID before execution', async () => {
+    const execute = vi.spyOn(WorkflowExecutor.prototype, 'execute');
+    const output = await captureCommand(WorkflowResume, ['bad/id']);
+    expect(output.error).toMatchObject({ code: 'usage.run_id', oclif: { exit: 2 } });
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it('rejects an invalid run budget before execution', async () => {
+    const stateDir = await stateDirectory();
+    const execute = vi.spyOn(WorkflowExecutor.prototype, 'execute');
+    const output = await captureCommand(WorkflowResume, [
+      'test-run',
+      '--state-dir',
+      stateDir,
+      '--max-run-cost-usd',
+      'lots',
+    ]);
+    expect(output.error).toMatchObject({ code: 'usage.flag', oclif: { exit: 2 } });
+    expect(execute).not.toHaveBeenCalled();
+  });
+});
+
+describe('pending command exit and error codes', () => {
+  const question: PendingOperation = {
+    runId: 'run-a',
+    stepId: 'approve',
+    questionFingerprint: 'fingerprint',
+    askedAt: '2026-01-01T00:00:00.000Z',
+    prompt: 'Ship it?',
+    details: null,
+    choices: [],
+    audience: 'human',
+    subject: null,
+    title: null,
+    schema: {},
+    rejections: [],
+    codeChanged: false,
+    answerCommand: null,
+  };
+  const wait: PendingOperation = {
+    kind: 'wait',
+    runId: 'run-b',
+    stepId: 'poll',
+    openedAt: 1,
+    deadline: 5_000,
+    nextCheckAt: 2_000,
+    checks: 3,
+    note: null,
+    signal: null,
+    rejections: [],
+    codeChanged: null,
+    answerCommand: null,
+  };
+
+  it('renders a question and a wait as human text', async () => {
+    const stateDir = await stateDirectory();
+    const execute = vi.spyOn(WorkflowExecutor.prototype, 'execute').mockResolvedValue({
+      kind: 'workflow.pending.result',
+      ok: true,
+      pending: [question, wait],
+    });
+    const output = await captureCommand(WorkflowPending, ['--state-dir', stateDir]);
+    expect(output.error).toBeUndefined();
+    expect(process.exitCode).toBeUndefined();
+    expect(execute).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'workflow.pending', stateDir }),
+    );
+    expect(output.stdout).toContain('run-a approve [human] Ship it?');
+    expect(output.stdout).toContain('run-b poll [wait] checks=3 nextCheckAt=2000 deadline=5000');
+  });
+
+  it('renders the pending result as JSON', async () => {
+    const stateDir = await stateDirectory();
+    vi.spyOn(WorkflowExecutor.prototype, 'execute').mockResolvedValue({
+      kind: 'workflow.pending.result',
+      ok: true,
+      pending: [question, wait],
+    });
+    const output = await captureCommand(WorkflowPending, ['--state-dir', stateDir, '--json']);
+    expect(output.error).toBeUndefined();
+    const document = JSON.parse(output.stdout) as { pending: { runId: string }[] };
+    expect(document).toMatchObject({ kind: 'workflow.pending.result', ok: true });
+    expect(document.pending.map((item) => item.runId)).toEqual(['run-a', 'run-b']);
+  });
+
+  it('says so when nothing is pending', async () => {
+    const stateDir = await stateDirectory();
+    vi.spyOn(WorkflowExecutor.prototype, 'execute').mockResolvedValue({
+      kind: 'workflow.pending.result',
+      ok: true,
+      pending: [],
+    });
+    const output = await captureCommand(WorkflowPending, ['--state-dir', stateDir]);
+    expect(output.error).toBeUndefined();
+    expect(output.stdout).toBe('No pending waits.');
+  });
+
+  it.each([
+    ['workflow.storage', 74],
+    ['run.unreadable', 3],
+  ] as const)('maps the %s failure to exit %i', async (code, exit) => {
+    const stateDir = await stateDirectory();
+    vi.spyOn(WorkflowExecutor.prototype, 'execute').mockResolvedValue(
+      workflowFailure(code, `Failure ${code}.`),
+    );
+    const human = await captureCommand(WorkflowPending, ['--state-dir', stateDir]);
+    expect(human.error).toMatchObject({ code, oclif: { exit } });
+    const json = await captureCommand(WorkflowPending, ['--state-dir', stateDir, '--json']);
+    expect(json.error).toMatchObject({ oclif: { exit } });
+    expect(JSON.parse(json.stdout)).toMatchObject({ ok: false, exitCode: exit, error: { code } });
+  });
+});
+
+describe('tick command exit and error codes', () => {
+  const tickResult = (exitCode: 0 | 75 | 1): TickWorkflowsResult => ({
+    kind: 'workflow.tick.result',
+    ok: true,
+    resumed: 1,
+    completed: exitCode === 0 ? ['run-a'] : [],
+    suspended: exitCode === 75 ? [{ runId: 'run-a', nextWakeAt: null }] : [],
+    failed: exitCode === 1 ? [{ runId: 'run-a', message: 'It broke.' }] : [],
+    skipped: [],
+    incompatible: [],
+    exitCode,
+  });
+
+  it.each([0, 75, 1] as const)('propagates a result exit code of %i', async (exitCode) => {
+    const stateDir = await stateDirectory();
+    const execute = vi
+      .spyOn(TickWorkflowExecutor.prototype, 'execute')
+      .mockResolvedValue(tickResult(exitCode));
+    const output = await captureCommand(WorkflowTick, ['--state-dir', stateDir]);
+    expect(output.error).toBeUndefined();
+    expect(process.exitCode ?? 0).toBe(exitCode);
+    expect(execute).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'workflow.tick', stateDir, watch: false }),
+    );
+    expect(output.stdout).toContain('Resumed 1;');
+    if (exitCode === 1) expect(output.stdout).toContain('run-a: failed: It broke.');
+  });
+
+  it('renders the tick result as JSON', async () => {
+    const stateDir = await stateDirectory();
+    vi.spyOn(TickWorkflowExecutor.prototype, 'execute').mockResolvedValue(tickResult(75));
+    const output = await captureCommand(WorkflowTick, ['--state-dir', stateDir, '--json']);
+    expect(output.error).toBeUndefined();
+    expect(process.exitCode).toBe(75);
+    expect(JSON.parse(output.stdout)).toMatchObject({
+      kind: 'workflow.tick.result',
+      ok: true,
+      exitCode: 75,
+    });
+  });
+
+  it('rejects an invalid --run ID before execution', async () => {
+    const execute = vi.spyOn(TickWorkflowExecutor.prototype, 'execute');
+    const output = await captureCommand(WorkflowTick, ['--run', 'bad/id']);
+    expect(output.error).toMatchObject({ code: 'usage.run_id', oclif: { exit: 2 } });
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it.each(['0s', '0', 'soon', '-5s'])('rejects --timeout %s before execution', async (timeout) => {
+    const stateDir = await stateDirectory();
+    const execute = vi.spyOn(TickWorkflowExecutor.prototype, 'execute');
+    const output = await captureCommand(WorkflowTick, [
+      '--state-dir',
+      stateDir,
+      '--timeout',
+      timeout,
+    ]);
+    expect(output.error).toMatchObject({ code: 'usage.flag', oclif: { exit: 2 } });
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['run.locked', 3],
+    ['workflow.storage', 74],
+  ] as const)('maps the %s failure to exit %i', async (code, exit) => {
+    const stateDir = await stateDirectory();
+    vi.spyOn(TickWorkflowExecutor.prototype, 'execute').mockResolvedValue(
+      workflowFailure(code, `Failure ${code}.`),
+    );
+    const human = await captureCommand(WorkflowTick, ['--state-dir', stateDir]);
+    expect(human.error).toMatchObject({ code, oclif: { exit } });
+    expect(process.exitCode).toBeUndefined();
+    const json = await captureCommand(WorkflowTick, ['--state-dir', stateDir, '--json']);
+    expect(json.error).toMatchObject({ oclif: { exit } });
+    expect(JSON.parse(json.stdout)).toMatchObject({ ok: false, exitCode: exit, error: { code } });
   });
 });
