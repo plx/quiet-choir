@@ -91,6 +91,7 @@ errors, and answers; keep them private. See
 | `workflow fixtures RUN_ID`               | Export completed agent outputs as reusable fixture JSON without importing source                          |
 | `workflow list`                          | Lists run summaries with status filters without importing source                                          |
 | `workflow inspect RUN_ID`                | Reads the saved run without importing workflow code or acquiring a writer lock                            |
+| `workflow unlock RUN_ID`                 | Clears an abandoned lock without importing workflow code; refuses live owners and children                |
 
 Entrypoints must be TypeScript source (`.ts`, `.tsx`, `.mts`, `.cts`), not declaration files. The
 nearest `tsconfig.json` in or above the workflow directory applies and is fingerprinted. Under the
