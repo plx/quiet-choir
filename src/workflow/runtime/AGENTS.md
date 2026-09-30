@@ -8,7 +8,8 @@ not semantic identity; unfinished identities may be redefined with history. See
 fingerprint; an embedded caller must supply its own. Local effects also hash callback source and
 version, without claiming to capture closed-over values. Explicit code acceptance retains completed
 step checks. Fork sources are read-only; prefix reuse must close synchronously on a miss, before
-awaits allow concurrent launches. See
+awaits allow concurrent launches. `replay-decision.ts` is the single place the replay and
+redefinition rules are encoded. See
 [ADR 0006](../../../docs/decisions/0006-code-change-recovery.md).
 
 An effect can succeed externally before its checkpoint commits. Preserve the at-least-once contract

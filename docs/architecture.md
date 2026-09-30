@@ -110,6 +110,19 @@ keeps saves, events, cancellation errors and backoff. An ESLint import guard kee
 of I/O by allowing value imports only from `step-error.ts` and `configuration-error.ts`, and
 `test/attempt-failure.test.ts` is the executable table of the rules.
 
+The replay and redefinition rules live in one pure function, `decideReplay` in
+`src/workflow/runtime/replay-decision.ts`, which returns an optional format-one migration and one
+outcome: refuse, replay, reuse a fork step, redefine, or run fresh. Terminal identities are
+immutable: a completed or settled-failed step replays only under the same kind and fingerprint.
+Questions and waits are never redefined, even while unfinished. An original format-one step migrates
+only on an exact old-fingerprint match, and never for a terminal agent step, whose isolation mode
+was never pinned. Dry-run refuses Git effects after terminal replay but before fork reuse. Fork
+reuse is considered only for an absent step in a forked run, and the lookup that advances or closes
+the provenance cursor runs only when the decision reaches it. A strict healed divergence permits
+terminal replay and fork reuse but stops before the next live effect. The runner keeps the migration
+writes, saves, events, frame attribution and the divergence abort, and the same ESLint import guard
+covers the module. `test/replay-decision.test.ts` is the executable table of these rules.
+
 HarnessInvocation carries run/step/attempt identity, the captured cancellation signal and a
 process-registration port. The runtime persists child/group ownership inside the run lock; adapters
 report spawns and release records only after reaping. Dead-owner recovery checks those records
