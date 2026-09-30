@@ -188,26 +188,35 @@ const RESOLVE = obj({
   resolutions: arr(obj({ file: str, how: str })),
   concerns: arr(str),
 });
-const FIX = obj({
-  items: arr(
-    obj({ key: str, status: oneOf('fixed', 'partly', 'not-fixed'), commit: str, summary: str }),
-  ),
-  checkPassed: bool,
-  head: str,
-  notes: arr(str),
-});
-const FILED = obj({
-  epic: obj({ number: num, url: str, created: bool }),
-  issues: arr(
-    obj({
-      key: str,
-      number: num,
-      url: str,
-      title: str,
-      action: oneOf('created', 'commented-existing'),
-    }),
-  ),
-});
+// Reports must name the work items they were given: the key is constrained to those keys, so a
+// mistyped or prefix-less key is a schema retry rather than "not reported" (see canonicalizeKeys).
+const FIX = (keys) =>
+  obj({
+    items: arr(
+      obj({
+        key: oneOf(...keys),
+        status: oneOf('fixed', 'partly', 'not-fixed'),
+        commit: str,
+        summary: str,
+      }),
+    ),
+    checkPassed: bool,
+    head: str,
+    notes: arr(str),
+  });
+const FILED = (keys) =>
+  obj({
+    epic: obj({ number: num, url: str, created: bool }),
+    issues: arr(
+      obj({
+        key: oneOf(...keys),
+        number: num,
+        url: str,
+        title: str,
+        action: oneOf('created', 'commented-existing'),
+      }),
+    ),
+  });
 const REPORT = obj({ posted: bool, commentUrl: str, headline: str });
 
 // ── Run state ────────────────────────────────────────────────────────────────────────────────
@@ -743,7 +752,7 @@ Rules:
 - Then run \`node ${sh(TOOL)} check --pr ${A.pr} --root ${sh(ROOT)} --label ${label}\` (a few minutes; prints JSON with passed, failedStep, and the log path). If it fails, fix and re-run, at most 3 runs. Never weaken or skip tests to get green.
 - Finally run \`node ${sh(TOOL)} snapshot --pr ${A.pr} --root ${sh(ROOT)}\`.
 Return one entry per item key: status (fixed | partly | not-fixed), the short SHA of the commit that addresses it ('' if none), and a one-sentence summary. Also return checkPassed (from your last check run), head (from snapshot), and notes (deviations from plans, anything a reviewer should know). Write plain text (no HTML entities) and keep each summary to one sentence.`,
-      { ...t, label, phase: 'Fix', schema: FIX },
+      { ...t, label, phase: 'Fix', schema: FIX(items.map((i) => i.key)) },
     );
   let result = await run(tier, '');
   if (!result) {
@@ -782,7 +791,12 @@ Items:
 ${items.map((i) => `### [${i.key}] ${i.title}\nSeverity: ${i.severity}. Source: ${i.source}.\n${i.detail}\nSuggested direction: ${i.plan}${i.files?.length ? `\nFiles: ${i.files.join(', ')}` : ''}`).join('\n\n')}
 
 Return the epic (number, url, created) and one entry per item key.`,
-    { ...TIER.scribe, label: 'file follow-ups', phase: 'Fix', schema: FILED },
+    {
+      ...TIER.scribe,
+      label: 'file follow-ups',
+      phase: 'Fix',
+      schema: FILED(items.map((i) => i.key)),
+    },
   );
   if (filed?.epic?.number) record.followupEpic = filed.epic.number;
   canonicalizeKeys(items, filed?.issues);

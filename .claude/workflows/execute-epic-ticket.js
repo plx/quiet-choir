@@ -207,33 +207,37 @@ const PLAN = obj({
   }),
 });
 const SKEPTIC = obj({ agree: bool, evidence: str, remaining: arr(str) });
-const IMPLEMENTED = obj({
-  criteria: arr(
-    obj({
-      id: str,
-      status: oneOf('done', 'verify-on-pr', 'partial', 'not-done'),
-      commit: str,
-      evidence: str,
-    }),
-  ),
-  checkPassed: bool,
-  head: str,
-  deviations: arr(str),
-  followups: arr(obj({ title: str, detail: str })),
-  notes: arr(str),
-});
+// Reports must name the items they were given: ids and keys are constrained to those values, so a
+// mistyped id is a schema retry rather than an unreported criterion.
+const IMPLEMENTED = (ids) =>
+  obj({
+    criteria: arr(
+      obj({
+        id: oneOf(...ids),
+        status: oneOf('done', 'verify-on-pr', 'partial', 'not-done'),
+        commit: str,
+        evidence: str,
+      }),
+    ),
+    checkPassed: bool,
+    head: str,
+    deviations: arr(str),
+    followups: arr(obj({ title: str, detail: str })),
+    notes: arr(str),
+  });
 const PR_TEXT = obj({ title: str, body: str });
-const WRITEUPS = obj({
-  issues: arr(
-    obj({
-      key: str,
-      duplicateOf: num,
-      title: str,
-      label: oneOf('bug', 'enhancement', 'documentation'),
-      body: str,
-    }),
-  ),
-});
+const WRITEUPS = (keys) =>
+  obj({
+    issues: arr(
+      obj({
+        key: oneOf(...keys),
+        duplicateOf: num,
+        title: str,
+        label: oneOf('bug', 'enhancement', 'documentation'),
+        body: str,
+      }),
+    ),
+  });
 
 // ── Run state ────────────────────────────────────────────────────────────────────────────────
 
@@ -646,7 +650,12 @@ Slices, in order:
 ${JSON.stringify(result.slices, null, 1)}
 
 Return one entry per slice in the same order: key "slice-1", "slice-2", …; duplicateOf 0; title; label; body.`,
-    { ...TIER.scribe, label: `write slices #${T.number}`, phase: 'Plan', schema: WRITEUPS },
+    {
+      ...TIER.scribe,
+      label: `write slices #${T.number}`,
+      phase: 'Plan',
+      schema: WRITEUPS(result.slices.map((_, i) => `slice-${i + 1}`)),
+    },
   );
   if (!written || written.issues.length !== result.slices.length) {
     return blocked('split', 'slice write-ups missing or incomplete');
@@ -710,7 +719,12 @@ Rules:
 - Then run \`node ${sh(TOOL)} check --epic ${A.epic} --issue ${T.number}${ROOT ? ` --root ${sh(ROOT)}` : ''} --label ${label}\` (the full suite, several minutes; prints JSON with passed, failedStep and the log path). If it fails, fix and re-run, at most 4 runs. Never weaken, skip, or delete tests to get green; if a failure is unrelated to your change and pre-existing on origin/${DEF}, say so in notes.
 - Commit everything; leave the worktree clean. Finally run \`node ${sh(TOOL)} snapshot --epic ${A.epic} --issue ${T.number}${ROOT ? ` --root ${sh(ROOT)}` : ''}\`.
 Return one entry per plan acceptance id: status (done | verify-on-pr | partial | not-done), the short SHA of the commit that delivers it, and evidence (the test or file that shows it). Use verify-on-pr only for a criterion that cannot be checked until the PR exists, such as a CI job's duration or GitHub-side state like code-scanning alerts: do everything that can be done locally, and put in evidence exactly what to check on the PR and what result counts as met. Also checkPassed (from your last check), head (from snapshot), deviations from the plan, followups, and notes. Plain text, no HTML entities.`,
-    { ...tier, label, phase: 'Implement', schema: IMPLEMENTED },
+    {
+      ...tier,
+      label,
+      phase: 'Implement',
+      schema: IMPLEMENTED(plan.acceptance.map((c) => c.id)),
+    },
   );
 }
 
@@ -814,7 +828,12 @@ Items:
 ${items.map((f, i) => `### [f${i + 1}] ${f.title}\n${f.detail}`).join('\n\n')}
 
 Return one entry per item with key f1, f2, …; duplicateOf is 0 when there is no duplicate.`,
-    { ...TIER.scribe, label: `write follow-ups #${T.number}`, phase: 'Publish', schema: WRITEUPS },
+    {
+      ...TIER.scribe,
+      label: `write follow-ups #${T.number}`,
+      phase: 'Publish',
+      schema: WRITEUPS(items.map((_, i) => `f${i + 1}`)),
+    },
   );
   const filed = [];
   for (const w of written?.issues ?? []) {

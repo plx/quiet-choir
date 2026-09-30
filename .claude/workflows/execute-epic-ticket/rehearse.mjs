@@ -348,6 +348,43 @@ const MERGED = (pr) => ({
   headline: 'Merged after 1 fix.',
 });
 
+// The subset of JSON Schema the workflow's schemas use: a scripted result must satisfy the schema
+// the real agent would be held to (types, required keys, enums such as the allowed item ids).
+function conforms(schema, value, path = '$') {
+  if (schema.enum && !schema.enum.includes(value))
+    return `${path}: ${JSON.stringify(value)} not in enum`;
+  switch (schema.type) {
+    case 'object': {
+      if (!value || typeof value !== 'object' || Array.isArray(value))
+        return `${path}: not an object`;
+      for (const key of schema.required ?? [])
+        if (!(key in value)) return `${path}.${key}: missing`;
+      for (const [key, sub] of Object.entries(schema.properties ?? {})) {
+        if (key in value) {
+          const problem = conforms(sub, value[key], `${path}.${key}`);
+          if (problem) return problem;
+        }
+      }
+      return null;
+    }
+    case 'array':
+      if (!Array.isArray(value)) return `${path}: not an array`;
+      for (const [i, item] of value.entries()) {
+        const problem = conforms(schema.items, item, `${path}[${i}]`);
+        if (problem) return problem;
+      }
+      return null;
+    case 'string':
+      return typeof value === 'string' ? null : `${path}: not a string`;
+    case 'number':
+      return typeof value === 'number' ? null : `${path}: not a number`;
+    case 'boolean':
+      return typeof value === 'boolean' ? null : `${path}: not a boolean`;
+    default:
+      return null;
+  }
+}
+
 // ── Runner ───────────────────────────────────────────────────────────────────────────────────
 
 async function rehearse(scenario) {
@@ -399,6 +436,14 @@ async function rehearse(scenario) {
                 ? 'slices'
                 : 'unknown';
     const ticket = Number(/#(\d+)/.exec(label)?.[1] ?? 0);
+    const scripted = await scriptedResult(kind, ticket, prompt, opts);
+    if (opts.schema && scripted !== null) {
+      const problem = conforms(opts.schema, scripted);
+      assert.equal(problem, null, `agent "${label}" result violates its schema: ${problem}`);
+    }
+    return scripted;
+  };
+  const scriptedResult = async (kind, ticket, prompt, opts) => {
     const handler = scenario.agents?.[kind];
     if (handler) return handler({ ticket, n: nth(`${kind}:${ticket}`), prompt, opts, world });
     switch (kind) {
