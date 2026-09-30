@@ -265,6 +265,17 @@ export interface RunRecord {
     /** When tick last recorded a recovery. */
     at: string;
   };
+  /**
+   * Why the latest execution was interrupted into a resumable `suspended` state, when an abort with
+   * a `RunInterruptedError` reason (a CLI signal or tick's deadline) stopped it. Cleared when a
+   * later execution starts.
+   */
+  interruptedBy?: {
+    /** The interruption's message, such as `Tick timeout reached.`. */
+    reason: string;
+    /** When the interrupted execution saved its suspension. */
+    at: string;
+  };
   /** Random UUID namespace used to derive Claude attempt session IDs. */
   sessionSalt?: string;
   /** Runtime-owned worktree caches, handles, and durable pins. */
@@ -612,6 +623,7 @@ const recordFieldsSchema = z.object({
       at: z.iso.datetime(),
     })
     .optional(),
+  interruptedBy: z.object({ reason: z.string(), at: z.iso.datetime() }).optional(),
   sessionSalt: z.uuid().optional(),
   executions: z
     .array(

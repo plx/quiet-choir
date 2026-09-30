@@ -8,6 +8,7 @@ import {
   isValidRunId,
   readRun,
   runWorkflow,
+  RunInterruptedError,
   RunRefusedError,
   WorkflowInputError,
   WorkflowRunError,
@@ -417,3 +418,66 @@ export default defineWorkflow({
     }
   },
 );
+
+// measured: see the neighbouring signal case; the same real compiler pass dominates.
+it('maps a saved interrupted suspension to workflow.interrupted', { timeout: 15_000 }, async () => {
+  const root = join(stateDir, 'workflow');
+  await mkdir(root);
+  await writeFile(join(root, 'package.json'), '{"type":"module"}');
+  await symlink(join(projectRoot, 'node_modules'), join(root, 'node_modules'));
+  const file = join(root, 'workflow.ts');
+  await writeFile(
+    file,
+    `import { z } from 'zod';
+import { defineWorkflow } from ${JSON.stringify(join(projectRoot, 'src/workflow/runtime/model.js'))};
+const hooks = globalThis as unknown as { choirStepWaiting?: () => void };
+export default defineWorkflow({
+  name: 'interrupted-suspension', version: '1', input: z.null(), output: z.string(),
+  run: (ctx) => ctx.step('wait', {
+    input: null,
+    schema: z.string(),
+    run: ({ signal }) => new Promise<string>((_, reject) => {
+      signal.addEventListener('abort', () => { reject(signal.reason as Error); }, { once: true });
+      hooks.choirStepWaiting?.();
+    }),
+  }),
+});`,
+  );
+  const analysis = analyzeTypecheckEntrypoint(file, projectRoot);
+  if (!analysis.ok) throw new Error(analysis.error.message);
+  const controller = new AbortController();
+  const hooks = globalThis as { choirStepWaiting?: () => void };
+  hooks.choirStepWaiting = () => {
+    controller.abort(new RunInterruptedError('Workflow interrupted by SIGTERM.'));
+  };
+  try {
+    const result = await new WorkflowExecutor({
+      signal: controller.signal,
+      logger: { log: vi.fn() },
+    }).execute({
+      kind: 'workflow.execute',
+      typecheck: analysis.plan,
+      runId: 'interrupted-suspension',
+      stateDir: join(stateDir, 'state'),
+      cwd: root,
+      resume: false,
+      input: null,
+    });
+    if (result.ok) throw new Error('expected a failure');
+    expect(result.code).toBe('workflow.interrupted');
+    expect(workflowExitCodes[result.code]).toBe(130);
+    expect(result.message).toBe('Workflow interrupted by SIGTERM.');
+    expect(workflowErrorDocument(result)).toMatchObject({
+      exitCode: 130,
+      error: { code: 'workflow.interrupted' },
+      status: 'suspended',
+      run: {
+        status: 'suspended',
+        error: null,
+        interruptedBy: { reason: 'Workflow interrupted by SIGTERM.' },
+      },
+    });
+  } finally {
+    delete hooks.choirStepWaiting;
+  }
+});

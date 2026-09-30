@@ -1,3 +1,7 @@
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
 
 import * as host from '../src/index.js';
@@ -60,6 +64,7 @@ function samples(api: Api): Record<string, Error> {
     RunRefusedError: new api.RunRefusedError('run.locked', 'run', 'locked'),
     OrphanProcessesError: new api.OrphanProcessesError('run', []),
     WorkflowRunError: new api.WorkflowRunError(run, new Error('boom')),
+    RunInterruptedError: new api.RunInterruptedError('stop'),
     WorkflowInputError: new api.WorkflowInputError(null, new Error('invalid')),
     AnswerError: new api.AnswerError('invalid', 'bad answer'),
   };
@@ -166,6 +171,46 @@ describe('public error brands (ADR 0028)', () => {
     expect(errorKind(new secondKit.HarnessError(rateLimited({ kind: 'bogus' as ErrorKind })))).toBe(
       'unknown',
     );
+  });
+
+  it('suspends a run when another module instance marks the interruption', async () => {
+    const stateDir = await mkdtemp(join(tmpdir(), 'choir-brand-'));
+    try {
+      let entered!: () => void;
+      const started = new Promise<void>((resolve) => {
+        entered = resolve;
+      });
+      const definition = host.defineWorkflow({
+        name: 'brand-interrupt',
+        version: '1',
+        input: host.z.null(),
+        output: host.z.null(),
+        run: (ctx) =>
+          ctx.step('slow', {
+            input: null,
+            schema: host.z.null(),
+            run: async ({ signal }) => {
+              entered();
+              await delay(60_000, undefined, { signal });
+              return null;
+            },
+          }),
+      });
+      const controller = new AbortController();
+      const options = { stateDir, runId: 'run', input: null };
+      const pending = host
+        .runWorkflow(definition, { ...options, signal: controller.signal })
+        .catch((error: unknown) => error);
+      await started;
+      controller.abort(new second.RunInterruptedError('Second instance stop.'));
+      expect(await pending).toBeInstanceOf(host.WorkflowRunError);
+      expect(await host.readRun(options)).toMatchObject({
+        status: 'suspended',
+        interruptedBy: { reason: 'Second instance stop.' },
+      });
+    } finally {
+      await rm(stateDir, { recursive: true, force: true });
+    }
   });
 
   it('reads adapter evidence attached by another module instance', () => {

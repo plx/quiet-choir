@@ -469,9 +469,10 @@ export class WorkflowExecutor implements Executor<
             : null;
       const message = error instanceof Error ? error.message : String(error);
       // A failed save outranks an interrupt: the cancellation state may not be on disk. A saved
-      // checkpoint outranks the ambient signal: the runner saves `cancelled` only when the abort
-      // caused the failure, so a `failed` run stays a failure even if a signal also arrived. An
-      // answer rejection is a definitive refusal, not an interrupted execution.
+      // checkpoint outranks the ambient signal: the runner saves `cancelled`, or a resumable
+      // `suspended` with `interruptedBy` for a marked interruption, only when the abort caused the
+      // failure, so a `failed` run stays a failure even if a signal also arrived. An answer
+      // rejection is a definitive refusal, not an interrupted execution.
       const code = hasCheckpointError(error)
         ? 'workflow.storage'
         : error instanceof AnswerError
@@ -479,7 +480,8 @@ export class WorkflowExecutor implements Executor<
             ? 'answer.invalid'
             : 'answer.conflict'
           : error instanceof WorkflowRunError
-            ? error.run.status === 'cancelled'
+            ? error.run.status === 'cancelled' ||
+              (error.run.status === 'suspended' && error.run.interruptedBy !== undefined)
               ? 'workflow.interrupted'
               : 'workflow.failed'
             : this.#options.signal?.aborted

@@ -7,7 +7,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { runProcess, type ProcessRequest } from '../src/harnesses/process.js';
 import { groupState, processIdentity, signalProcess } from '../src/processes/identity.js';
-import { CliHarness, ProcessSupervisor } from '../src/index.js';
+import { CliHarness, ProcessSupervisor, RunInterruptedError } from '../src/index.js';
 import { executionSignals, terminalError } from '../src/cli/signals.js';
 
 let directory: string;
@@ -272,6 +272,9 @@ it('treats SIGINT, SIGTERM, and SIGHUP equally and removes all owned listeners',
     try {
       process.emit(name);
       expect(handler.signal.aborted).toBe(true);
+      // The first signal marks a resumable interruption rather than a deliberate cancel.
+      expect(handler.signal.reason).toBeInstanceOf(RunInterruptedError);
+      expect((handler.signal.reason as Error).message).toBe(`Workflow interrupted by ${name}.`);
       expect(logs[0]).toContain('Send again to force');
     } finally {
       handler.dispose();
