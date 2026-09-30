@@ -33,6 +33,7 @@ import { formatRunSummary } from '../src/cli/inspection-view.js';
 import { RehearsalHarness } from '../src/workflow/loader/rehearsal.js';
 import { OutputCapture } from '../src/processes/capture.js';
 import { fileDigest } from '../src/workflow/runtime/files.js';
+import { enableRealStorageSync } from './setup/durable-sync.js';
 
 let cwd: string;
 let stateDir: string;
@@ -883,6 +884,7 @@ it('applies sticky exec output/timeout policy and keeps agent-only controls out 
 it.each(['fsync', 'conflict'] as const)(
   'preserves the target and removes temporary files after publication %s failure',
   async (failure) => {
+    enableRealStorageSync();
     const fs = (await import('node:fs/promises')).default;
     const { syncBuiltinESMExports } = await import('node:module');
     const { replaceFile } = await import('../src/workflow/runtime/files.js');

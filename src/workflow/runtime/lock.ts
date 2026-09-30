@@ -1,4 +1,4 @@
-import { createStorageDirectory, syncDirectory } from './storage-io.js';
+import { createStorageDirectory, syncDirectory, syncHandle } from './storage-io.js';
 import { randomUUID } from 'node:crypto';
 import { lstat, mkdir, open, readFile, readdir, rename, rm } from 'node:fs/promises';
 import { hostname } from 'node:os';
@@ -282,7 +282,7 @@ async function acquireLock(
     try {
       await using file = await open(join(lockPath, 'owner.json'), 'wx', 0o600);
       await file.writeFile(JSON.stringify(owner));
-      await file.sync();
+      await syncHandle(file);
       await syncDirectory(lockPath);
       await syncDirectory(dirname(lockPath));
       // Only this run's lock owner can remove abandoned atomic-write files.
@@ -328,7 +328,7 @@ async function acquireLock(
         const temp = join(lockPath, `owner.${randomUUID()}.tmp`);
         await using file = await open(temp, 'wx', 0o600);
         await file.writeFile(JSON.stringify({ ...owner, released: true }));
-        await file.sync();
+        await syncHandle(file);
         await rename(temp, join(lockPath, 'owner.json'));
         throw new OrphanProcessesError(runId, processes);
       }

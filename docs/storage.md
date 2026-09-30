@@ -144,6 +144,10 @@ Results depend on filesystem and load. Tests also SIGKILL local child runners du
 prove that already-resolved effects are not repeated, including recovery with a torn journal tail.
 All storage/CLI tests use local callbacks or fake harnesses, with no paid inference.
 
+The production path always syncs. Only the in-process unit suite disables fsync, through an internal
+test-setup hook that the CLI and public API cannot reach; crash, benchmark and CLI tests run in
+child processes and keep real fsync, and `test/storage-sync.test.ts` proves both behaviors.
+
 A local macOS run on Node 24.20.0 (2026-09-27) measured 200 trivial steps at 1,571 ms with
 concurrency 1 and 168 ms with concurrency 16: **9.38× faster**, with 215 versus 26 flushes. The 500
 × 5 KiB run at concurrency 8 took 811 ms, writing 7,176,506 bytes for 3,237,347 bytes of final state

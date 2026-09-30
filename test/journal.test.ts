@@ -13,6 +13,7 @@ import {
 import { JournalWriter, readJournalRun } from '../src/workflow/runtime/journal.js';
 import { artifactName } from '../src/workflow/runtime/run-store.js';
 import { writeRun } from '../src/workflow/runtime/store.js';
+import { enableRealStorageSync } from './setup/durable-sync.js';
 
 vi.mock('node:fs/promises', async (importOriginal) => {
   const actual = await importOriginal<typeof fs>();
@@ -37,6 +38,7 @@ function deferred() {
 }
 
 it('group commits sibling completions before any effect promise resolves', async () => {
+  enableRealStorageSync();
   const syncing = deferred(),
     permit = deferred();
   let started = false,
@@ -142,7 +144,9 @@ it('writes less than ten times the final state for 500 local 5KB results at conc
   const final = (await fs.stat(join(stateDir, 'bytes', 'run.json'))).size;
   expect(bytes).toBeLessThan(final * 10);
   expect(await fs.readFile(join(stateDir, 'bytes', 'journal.jsonl'), 'utf8')).toBe('');
-}, 20_000);
+  // measured: 0.5 s alone, 1.5-2.3 s in local full coverage runs and 1.9 s on the Node 22.13 CI leg
+  // (dominated by serializing the growing map record into the journal)
+}, 10_000);
 
 it('ignores a torn final journal line and repairs it before the next owner appends', async () => {
   let fail = true,
@@ -336,6 +340,8 @@ it.each([3, 11, 29])(
     for (const id of acknowledged) expect(actions.filter((value) => value === id)).toHaveLength(1);
     expect((await readRun({ stateDir, runId: 'crash' })).output).toBe(80);
   },
+  // measured: 1.1 s alone, 1.6-1.9 s in local full coverage runs and 1.7 s on the Node 22.13 CI leg,
+  // but over 5 s in a full run on a heavily loaded machine (two forked tsx children with real fsync)
   20_000,
 );
 
@@ -551,6 +557,7 @@ it('does not let a dead legacy lock bypass a live directory owner', async () => 
 it.each(['partial-write', 'flush'])(
   'retries a %s failure without repeating a successful action',
   async (failure) => {
+    if (failure === 'flush') enableRealStorageSync();
     let ready = false,
       injected = false,
       calls = 0;

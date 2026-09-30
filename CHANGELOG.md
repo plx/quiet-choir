@@ -2,6 +2,11 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- Development and test infrastructure: route every in-process fsync through one internal helper and
+  run the unit suite with it disabled (about 80% of summed test time on APFS), then return the
+  raised test timeouts to the default or a measured, commented value. Production still syncs and no
+  runtime behavior changes; see CONTRIBUTING.md, "Test timeouts and storage sync".
+
 - Add Workflow Lab Batch 02: six idiomatic ports with domain schemas, named roles, code-owned
   commands/writes, approved isolated setup, recoverable mutation tests, inline lifecycle children
   and settled bug panels. Record paired fixture metrics and actual SIGKILL recovery; keep model

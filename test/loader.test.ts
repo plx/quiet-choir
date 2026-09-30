@@ -49,6 +49,8 @@ export default defineWorkflow({
 });`;
 
 // Real compiler passes can exceed five seconds under coverage on shared CI runners.
+// measured: the slowest case takes 0.6 s alone, 3.2-6.5 s in local full coverage runs and 10.0 s on
+// the Node 22.13 CI leg (tsImport compile).
 describe('trusted TypeScript workflow loader', { timeout: 20_000 }, () => {
   it('type-checks and validates metadata without invoking the body', async () => {
     const { file } = await fixture(

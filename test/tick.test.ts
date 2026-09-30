@@ -119,8 +119,9 @@ afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
-// Each test spawns real tick-loader child processes against temporary fixtures; on the oldest
-// supported Node version under loaded CI this occasionally clears 20s by a few hundred ms.
+// Each test spawns real tick-loader child processes against temporary fixtures.
+// measured: the slowest case takes 1.9 s alone, 5.1-13.4 s in local full coverage runs and 19.5 s on
+// the Node 22.13 CI leg (child Node startup and tsImport compiles).
 describe('tick loader and operator hooks', { timeout: 40_000 }, () => {
   it('resumes a due timer from its saved entrypoint and skips completed imports', async () => {
     const f = await fixture();
@@ -257,26 +258,22 @@ describe('tick loader and operator hooks', { timeout: 40_000 }, () => {
     });
   });
 
-  it(
-    'emits run.failed and ignores notification-command failures',
-    { timeout: 60_000 },
-    async () => {
-      const f = await fixture('failure', true);
-      expect(await tick.execute({ ...f.tickPlan, notifyCommand: f.notifyCommand })).toMatchObject({
-        exitCode: 1,
-      });
-      const types = (await readFile(f.notifications, 'utf8'))
-        .trim()
-        .split('\n')
-        .map((line) => (JSON.parse(line) as { type: string }).type);
-      expect(types).toEqual(['run.suspended', 'run.failed']);
-      const failing = await fixture('due', 'fail');
-      expect(
-        await tick.execute({ ...failing.tickPlan, notifyCommand: failing.notifyCommand }),
-      ).toMatchObject({ exitCode: 0 });
-      expect((await readRun(failing.plan)).status).toBe('completed');
-    },
-  );
+  it('emits run.failed and ignores notification-command failures', async () => {
+    const f = await fixture('failure', true);
+    expect(await tick.execute({ ...f.tickPlan, notifyCommand: f.notifyCommand })).toMatchObject({
+      exitCode: 1,
+    });
+    const types = (await readFile(f.notifications, 'utf8'))
+      .trim()
+      .split('\n')
+      .map((line) => (JSON.parse(line) as { type: string }).type);
+    expect(types).toEqual(['run.suspended', 'run.failed']);
+    const failing = await fixture('due', 'fail');
+    expect(
+      await tick.execute({ ...failing.tickPlan, notifyCommand: failing.notifyCommand }),
+    ).toMatchObject({ exitCode: 0 });
+    expect((await readRun(failing.plan)).status).toBe('completed');
+  });
 
   it('carries a supplied --harness-config into the resumed CLI run', async () => {
     const f = await fixture('agent');

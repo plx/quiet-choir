@@ -1,4 +1,5 @@
 import { RunRefusedError } from './run-errors.js';
+import { syncDirectory as storageSyncDirectory, syncHandle } from './storage-io.js';
 import { jsonValue } from './json.js';
 import { mkdir, open, readFile, readdir, rm } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -76,8 +77,7 @@ export class OrphanProcessesError extends RunRefusedError {
 async function syncDirectory(path: string): Promise<void> {
   // Windows has no POSIX directory fsync; file content is still flushed there.
   if (process.platform === 'win32') return;
-  await using directory = await open(path, 'r');
-  await directory.sync();
+  await storageSyncDirectory(path);
 }
 
 function observe(record: HarnessProcessRecord, file: string): HarnessProcessInspection {
@@ -169,7 +169,7 @@ export async function trackProcess(
     }
     await using file = await open(path, 'wx', 0o600);
     await file.writeFile(`${JSON.stringify(record)}\n`);
-    await file.sync();
+    await syncHandle(file);
     await syncDirectory(directory);
     await syncDirectory(lockPath);
   } catch (error) {

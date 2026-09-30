@@ -36,7 +36,8 @@ afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
-// Cache invalidation and refresh cases compile repeatedly; Node 22 coverage on CI needs headroom.
+// measured: the slowest case takes 1.8 s alone, 10.2-19.6 s in local full coverage runs and 30.6 s on
+// the Node 22.13 CI leg (dominated by repeated TypeScript compiles for cache invalidation).
 describe('trusted definition registry', { timeout: 60_000 }, () => {
   it('deduplicates overlapping directories and ignores generated trees and directory symlinks', async () => {
     const root = await project();

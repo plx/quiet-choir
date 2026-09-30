@@ -34,9 +34,9 @@ import { RunWorktrees } from '../src/workflow/runtime/worktrees.js';
 import { repairWorktreeRegistrations } from '../src/workflow/runtime/worktree-recovery.js';
 import { testInvocation } from './harness-invocation.js';
 
-// Every test drives dozens of real Git processes and fsynced checkpoints; under a loaded parallel
-// coverage run they exceed the 5s default even though each finishes in about a second alone.
-vi.setConfig({ testTimeout: 20_000 });
+// Every test drives real Git processes. measured: 0.4-1.5 s per case on the CI legs, up to 1.3 s
+// alone and 3.1 s in local full coverage runs on a loaded machine (dominated by Git processes).
+vi.setConfig({ testTimeout: 10_000 });
 
 let directory: string, repo: string, stateDir: string, root: string;
 const processRunner = new NodeProcessRunner();
@@ -143,8 +143,6 @@ it.each(['claude', 'codex'] as const)(
     expect(invoke).toHaveBeenCalledTimes(2);
     expect(runGit).not.toHaveBeenCalled();
   },
-  // Multiple real Git/process-ownership round trips can exceed the default under CI coverage.
-  20_000,
 );
 
 it('maps monorepo cwd, warns about dirty source files, and snapshots only committed baseline plus edits', async () => {
@@ -718,8 +716,6 @@ it.each(['rebase', 'merge', 'squash'] as const)(
     });
     expect(replay.output).toEqual(completed.output);
   },
-  // Three real worktrees, conflict integration and replay include durable filesystem I/O.
-  15_000,
 );
 
 it('merges the latest shared handle into an unoccupied branch without touching HEAD', async () => {
@@ -1457,7 +1453,6 @@ it.each(['owned', 'different-owner'] as const)(
     await runWorkflow(workflow, { ...settings, resume: true });
     expect(invoke).toHaveBeenCalledTimes(1);
   },
-  20_000,
 );
 
 it.each([
@@ -1535,7 +1530,6 @@ it.each([
     await unchanged(metadata);
     expect(invoke).not.toHaveBeenCalled();
   },
-  20_000,
 );
 
 it.each([
@@ -1557,66 +1551,62 @@ it.each([
     corrupt: (metadata: string) =>
       writeFile(join(metadata, 'gitdir'), Buffer.from([0xff, 0xfe, 0xfd])),
   },
-])(
-  'rejects a resumed worktree registration with $label as malformed',
-  async ({ corrupt }) => {
-    let interrupted = false;
-    const breakingRunner: ProcessRunner = {
-      async run(request, invocation) {
-        const result = await processRunner.run(request, invocation);
-        if (
-          !interrupted &&
-          Array.isArray(request.command) &&
-          request.command.includes('worktree') &&
-          request.command.includes('add')
-        ) {
-          interrupted = true;
-          const path = z.string().parse(request.command.at(-2));
-          const metadata = resolve(
-            path,
-            (await readFile(join(path, '.git'), 'utf8')).replace(/^gitdir: /u, '').trimEnd(),
-          );
-          await corrupt(metadata);
-          throw new Error('fixture interrupted registration');
-        }
-        return result;
-      },
-    };
-    const invoke = vi.fn<Harness['invoke']>(async (request) => {
-      await writeFile(join(request.cwd, 'file.txt'), 'resumed edit\n');
-      return response;
-    });
-    const workflow = defineWorkflow({
-      name: 'planned-registration-malformed',
-      version: '1',
-      input: z.null(),
-      output: z.string(),
-      async run(ctx) {
-        const result = await ctx.codex.text('edit', { prompt: 'edit', isolation: 'worktree' });
-        assert(result.worktree?.commit);
-        return result.worktree.commit;
-      },
-    });
-    const settings = {
-      ...options('planned-registration-malformed'),
-      harness: { invoke },
-      worktrees: { root, keep: 'all' as const },
-    };
-    await expect(
-      runWorkflow(workflow, { ...settings, input: null, processRunner: breakingRunner }),
-    ).rejects.toThrow('fixture interrupted registration');
-    expect(invoke).not.toHaveBeenCalled();
-    const rejection: unknown = await runWorkflow(workflow, {
-      ...settings,
-      resume: true,
-    }).catch((error: unknown) => error);
-    expect(rejection).toBeInstanceOf(Error);
-    expect((rejection as Error).cause).toBeInstanceOf(ConfigurationError);
-    expect((rejection as Error).message).toContain('malformed');
-    expect(invoke).not.toHaveBeenCalled();
-  },
-  20_000,
-);
+])('rejects a resumed worktree registration with $label as malformed', async ({ corrupt }) => {
+  let interrupted = false;
+  const breakingRunner: ProcessRunner = {
+    async run(request, invocation) {
+      const result = await processRunner.run(request, invocation);
+      if (
+        !interrupted &&
+        Array.isArray(request.command) &&
+        request.command.includes('worktree') &&
+        request.command.includes('add')
+      ) {
+        interrupted = true;
+        const path = z.string().parse(request.command.at(-2));
+        const metadata = resolve(
+          path,
+          (await readFile(join(path, '.git'), 'utf8')).replace(/^gitdir: /u, '').trimEnd(),
+        );
+        await corrupt(metadata);
+        throw new Error('fixture interrupted registration');
+      }
+      return result;
+    },
+  };
+  const invoke = vi.fn<Harness['invoke']>(async (request) => {
+    await writeFile(join(request.cwd, 'file.txt'), 'resumed edit\n');
+    return response;
+  });
+  const workflow = defineWorkflow({
+    name: 'planned-registration-malformed',
+    version: '1',
+    input: z.null(),
+    output: z.string(),
+    async run(ctx) {
+      const result = await ctx.codex.text('edit', { prompt: 'edit', isolation: 'worktree' });
+      assert(result.worktree?.commit);
+      return result.worktree.commit;
+    },
+  });
+  const settings = {
+    ...options('planned-registration-malformed'),
+    harness: { invoke },
+    worktrees: { root, keep: 'all' as const },
+  };
+  await expect(
+    runWorkflow(workflow, { ...settings, input: null, processRunner: breakingRunner }),
+  ).rejects.toThrow('fixture interrupted registration');
+  expect(invoke).not.toHaveBeenCalled();
+  const rejection: unknown = await runWorkflow(workflow, {
+    ...settings,
+    resume: true,
+  }).catch((error: unknown) => error);
+  expect(rejection).toBeInstanceOf(Error);
+  expect((rejection as Error).cause).toBeInstanceOf(ConfigurationError);
+  expect((rejection as Error).message).toContain('malformed');
+  expect(invoke).not.toHaveBeenCalled();
+});
 
 it('surfaces an aborted signal from worktree registration recovery as cancellation, not a configuration error', async () => {
   // Exercising this precisely through a full interrupted `git worktree add` plus a real-time
@@ -1710,7 +1700,7 @@ it('throws ConfigurationError when a resumed worktree registration is missing it
   expect((rejection as Error).cause).toBeInstanceOf(ConfigurationError);
   expect((rejection as Error).message).toContain('metadata is missing');
   expect(invoke).not.toHaveBeenCalled();
-}, 20_000);
+});
 
 it('keeps a resumed different-owner worktree registration a configuration failure that a retried, settled map cannot journal', async () => {
   // First interrupt and corrupt the planned registration exactly as the plain-call case does,
@@ -1810,7 +1800,7 @@ it('keeps a resumed different-owner worktree registration a configuration failur
     status: 'running',
     outcome: null,
   });
-}, 20_000);
+});
 
 it('serializes sibling Git registrations while retaining concurrent isolated effects', async () => {
   let active = 0,

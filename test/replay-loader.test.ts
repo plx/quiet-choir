@@ -75,9 +75,10 @@ afterEach(async () => {
 });
 
 // Each case type-checks fixtures that import the whole engine source several times (up to four full
-// compiler passes). On shared CI runners the heaviest case has run for 27-31s, and coverage on Node
-// 22 adds more; this is a correctness suite, not a compiler latency benchmark.
-describe('source-aware loader recovery', { timeout: 90_000 }, () => {
+// compiler passes), so compiles, not storage, dominate. measured: the heaviest case takes 4.0 s alone,
+// 17.9-39.6 s in local full coverage runs, and 57.7 s on the Node 22.13 CI leg (43-50 s on Node
+// 24/26). This is a correctness suite, not a compiler latency benchmark.
+describe('source-aware loader recovery', { timeout: 120_000 }, () => {
   it('normalizes symlink spellings, excludes engine sources, and validates the exact stored fingerprint', async () => {
     const alias = join(root, 'alias');
     await symlink(root, alias);
