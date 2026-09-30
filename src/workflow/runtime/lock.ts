@@ -15,6 +15,7 @@ import {
   type HarnessProcessInspection,
 } from './process-registry.js';
 import { RunRefusedError } from './run-errors.js';
+import { decideUnlock, type UnlockHolder, type UnlockObservation } from './recovery-decision.js';
 import {
   resolveStateDir,
   runLockPath,
@@ -44,13 +45,24 @@ type Owner = z.infer<typeof ownerSchema>;
 type Marker = z.infer<typeof markerSchema>;
 type Liveness = 'alive' | 'dead' | 'unknown' | 'remote';
 
-/** Local liveness of the process that wrote an owner or recovery record. */
-function liveness(identity: {
+interface RecordedIdentity {
   readonly pid: number;
   readonly host: string;
   readonly osStartTime?: string | null | undefined;
-}): Liveness {
+}
+
+/** Local liveness of the process that wrote an owner or recovery record. */
+function liveness(identity: RecordedIdentity): Liveness {
   if (identity.host !== hostname()) return 'remote';
+  return localLiveness(identity);
+}
+
+/**
+ * Judge a recorded PID and birth identity on this machine, whatever host the record names. Only an
+ * operator's assertion that the recorded host is this machine or gone makes this meaningful for a
+ * foreign record.
+ */
+function localLiveness(identity: RecordedIdentity): Exclude<Liveness, 'remote'> {
   const state = pidState(identity.pid);
   if (state !== 'alive') return state;
   const current = processIdentity(identity.pid);
@@ -379,29 +391,39 @@ async function publishLock(lockPath: string, owner: Owner): Promise<'published' 
 }
 
 /**
+ * Whether a tombstone file carries the expected token. A string must match; null expects no readable
+ * file (missing or unparseable); undefined is not checked. A missing file always matches: only a
+ * sweep removes files from a tombstone, so a new owner is already deleting this one, which was
+ * verified before the rename. Anything else unreadable is not the file that was verified.
+ */
+async function carries(
+  read: () => Promise<{ readonly token: string }>,
+  expected: string | null | undefined,
+): Promise<boolean> {
+  if (expected === undefined) return true;
+  try {
+    return (await read()).token === expected;
+  } catch (error) {
+    return expected === null || isErrno(error, 'ENOENT');
+  }
+}
+
+/**
  * Move a verified lock out of the way in one rename, check that the tombstone is the lock that was
  * verified, then delete it. A mismatch renames it back and throws `mismatch()`; a tombstone that a
  * new owner is already sweeping counts as retired. The rename and removal keep their errno.
  */
 async function retire(
   lockPath: string,
-  expected: { readonly owner: string; readonly recovery?: string },
+  expected: { readonly owner: string | null; readonly recovery?: string | null },
   mismatch: () => Error,
 ): Promise<void> {
   const tombstone = siblingPath(lockPath, 'gone');
   await rename(lockPath, tombstone);
   await syncDirectory(dirname(lockPath));
-  let matches: boolean;
-  try {
-    matches =
-      (await readOwner(tombstone)).token === expected.owner &&
-      (expected.recovery === undefined ||
-        (await readMarker(join(tombstone, 'recovery.json'))).token === expected.recovery);
-  } catch (error) {
-    // Only a sweep removes files from a tombstone: a new owner is already deleting this one, which
-    // was verified before the rename. Anything unreadable is not the lock that was verified.
-    matches = isErrno(error, 'ENOENT');
-  }
+  const matches =
+    (await carries(() => readOwner(tombstone), expected.owner)) &&
+    (await carries(() => readMarker(join(tombstone, 'recovery.json')), expected.recovery));
   if (!matches) {
     await rename(tombstone, lockPath).catch(() => undefined);
     throw mismatch();
@@ -497,26 +519,33 @@ async function claimRecovery(
   lockPath: string,
   marker: Marker,
   changed: () => Error,
+  unlock: string,
 ): Promise<'claimed' | 'retry'> {
   const published = await publishMarker(lockPath, marker);
   if (published === 'published') return 'claimed';
   if (published === 'gone') return 'retry';
-  const inProgress = (cause: unknown): RunRefusedError =>
+  const inProgress = (existing: Marker | undefined, cause?: unknown): RunRefusedError =>
     new RunRefusedError(
       'run.locked',
       runId,
-      `Run ${runId} lock recovery is in progress; retry or inspect ${lockPath}.`,
-      { lockPath },
-      { cause },
+      `Run ${runId} lock recovery is in progress; retry, or ${
+        existing === undefined
+          ? `clear the damaged marker in ${lockPath} with ${unlock}`
+          : existing.host === hostname()
+            ? `once recoverer PID ${String(existing.pid)} on ${existing.host} is gone, clear it with ${unlock}`
+            : `once recoverer PID ${String(existing.pid)} on ${existing.host} is gone, clear it with ${unlock} --force-remote (only if ${existing.host} is this machine under an old name or is permanently gone)`
+      }.`,
+      existing === undefined ? { lockPath } : { lockPath, pid: existing.pid, host: existing.host },
+      cause === undefined ? undefined : { cause },
     );
   let existing: Marker;
   try {
     existing = await readMarker(join(lockPath, 'recovery.json'));
   } catch (cause) {
     if (isErrno(cause, 'ENOENT')) return 'retry';
-    throw inProgress(cause);
+    throw inProgress(undefined, cause);
   }
-  if (liveness(existing) !== 'dead') throw inProgress(undefined);
+  if (liveness(existing) !== 'dead') throw inProgress(existing);
   // Reclaim only the marker that was judged dead, never one that replaced it meanwhile.
   const taken = await takeMarker(lockPath, existing.token);
   if (taken === 'missing') return 'retry';
@@ -552,6 +581,7 @@ async function acquireLock(
       cause === undefined ? undefined : { cause },
     );
   const lost = (): Error => new Error(`Run ${runId} lock ownership was lost.`);
+  const unlock = unlockCommand(stateDir, runId);
   for (let attempt = 0; attempt < 3; attempt++) {
     if ((await publishLock(lockPath, owner)) === 'contended') {
       let previous;
@@ -561,18 +591,23 @@ async function acquireLock(
         throw new RunRefusedError(
           'run.locked',
           runId,
-          `Run ${runId} is locked with incomplete ownership metadata; inspect ${lockPath} before removing an abandoned lock.`,
+          `Run ${runId} is locked with incomplete ownership metadata (damage or an older build); after confirming no process owns ${lockPath}, clear it with ${unlock}.`,
           { lockPath },
           { cause },
         );
       }
       // Released between the failed publish and this read: look again.
       if (previous === 'gone') continue;
-      if (!['dead', 'released'].includes(ownerState(previous)))
+      const previousState = ownerState(previous);
+      if (previousState !== 'dead' && previousState !== 'released')
         throw new RunRefusedError(
           'run.locked',
           runId,
-          `Run ${runId} is locked by PID ${String(previous.pid)} on ${previous.host}.`,
+          `Run ${runId} is locked by PID ${String(previous.pid)} on ${previous.host}. ${
+            previousState === 'remote'
+              ? `If ${previous.host} is this machine under an old name or is permanently gone, clear it with ${unlock} --force-remote.`
+              : `Wait for it or stop it; ${unlock} clears the lock only once that owner is gone.`
+          }`,
           { pid: previous.pid, host: previous.host, lockPath },
         );
       // Only one contender may retire a dead owner's lock. Recheck ownership after winning recovery.
@@ -582,7 +617,7 @@ async function acquireLock(
         osStartTime: owner.osStartTime,
         token: randomUUID(),
       };
-      if ((await claimRecovery(runId, lockPath, marker, changed)) === 'retry') continue;
+      if ((await claimRecovery(runId, lockPath, marker, changed, unlock)) === 'retry') continue;
       let retired = false;
       try {
         const current = await readOwner(lockPath);
@@ -672,4 +707,208 @@ async function acquireLock(
     `Could not acquire run ${runId}; retry after competing writers finish.`,
     { lockPath },
   );
+}
+
+/** The operator command that clears an abandoned lock of this run, spelled like `resumeCommand`. */
+function unlockCommand(stateDir: string, runId: string): string {
+  return `quiet-choir workflow unlock ${runId} --state-dir ${resolve(stateDir)}`;
+}
+
+function unlockHolder(
+  identity: Marker,
+): UnlockHolder & { readonly state: Exclude<Liveness, 'remote'> } {
+  return {
+    pid: identity.pid,
+    host: identity.host,
+    token: identity.token,
+    remote: identity.host !== hostname(),
+    state: localLiveness(identity),
+  };
+}
+
+/** Observe one lock directory for unlock, or undefined when it does not exist. */
+async function observeUnlock(
+  kind: RunLockView['kind'],
+  path: string,
+  runId: string,
+): Promise<UnlockObservation | undefined> {
+  let names: string[];
+  try {
+    names = await readdir(path);
+  } catch (error) {
+    if (isErrno(error, 'ENOENT')) return undefined;
+    throw error;
+  }
+  const warnings: string[] = [];
+  let owner: UnlockHolder | null = null;
+  if (names.includes('owner.json'))
+    try {
+      const value = await readContended(path);
+      // Retired between the listing and the read: there is no lock to unlock.
+      if (value === 'gone') return undefined;
+      owner = value.released ? { ...unlockHolder(value), state: 'released' } : unlockHolder(value);
+    } catch (error) {
+      warnings.push(`owner.json: ${message(error)}`);
+    }
+  else warnings.push("owner.json: missing (an older build's interrupted acquire, or damage)");
+  let recovery: UnlockObservation['recovery'] = null;
+  if (names.includes('recovery.json'))
+    try {
+      recovery = unlockHolder(await readMarker(join(path, 'recovery.json')));
+    } catch (error) {
+      if (!isErrno(error, 'ENOENT')) {
+        recovery = 'unreadable';
+        warnings.push(`recovery.json: ${message(error)}`);
+      }
+    }
+  return {
+    kind,
+    path,
+    owner,
+    recovery,
+    processes: await inspectProcesses(path, runId, owner?.token ?? null),
+    ...(warnings.length ? { warning: warnings.join('; ') } : {}),
+  };
+}
+
+/** The owner and marker tokens a lock carries now (null for none readable), or `gone`. */
+async function currentTokens(
+  path: string,
+): Promise<{ readonly owner: string | null; readonly recovery: string | null } | 'gone'> {
+  let owner: string | null;
+  try {
+    const value = await readContended(path);
+    if (value === 'gone') return 'gone';
+    owner = value.token;
+  } catch {
+    if (await lockGone(path)) return 'gone';
+    owner = null;
+  }
+  let recovery: string | null;
+  try {
+    recovery = (await readMarker(join(path, 'recovery.json'))).token;
+  } catch {
+    recovery = null;
+  }
+  return { owner, recovery };
+}
+
+/** One lock that `workflow unlock` found, with the local judgments it acted on. @internal */
+export interface UnlockedLock {
+  /** `primary` is `<runId>/lock`; `guard` is the legacy `<runId>.json.lock`. */
+  readonly kind: 'primary' | 'guard';
+  /** Absolute lock directory path. */
+  readonly path: string;
+  /** Owner with its local liveness, or null when `owner.json` was missing or unreadable. */
+  readonly owner: {
+    readonly pid: number;
+    readonly host: string;
+    readonly state: 'alive' | 'dead' | 'unknown' | 'released';
+  } | null;
+  /** A (dead) recoverer's marker, or null when there was none or it was unreadable. */
+  readonly recovery: {
+    readonly pid: number;
+    readonly host: string;
+    readonly state: 'alive' | 'dead' | 'unknown';
+  } | null;
+  /** Child records observed before removal; none alive or unknown. */
+  readonly processes: readonly HarnessProcessInspection[];
+  /** Missing or unreadable metadata. */
+  readonly warning?: string;
+  /** `absent` when the lock vanished before it could be renamed away. */
+  readonly action: 'removed' | 'absent';
+}
+
+/**
+ * Clear an abandoned run lock for an operator, without importing workflow code. Every existing
+ * lock is observed and judged (`decideUnlock`) before anything is removed; a refusal throws
+ * `run.locked` or `run.orphans` and changes nothing. Removal re-verifies the observed owner and
+ * marker tokens, then retires each lock through the tombstone rename, primary first. Nothing is
+ * ever signaled. Returns the locks found; empty when the run was not locked. @internal
+ */
+export async function unlockRun(options: {
+  readonly runId: string;
+  readonly stateDir: string;
+  readonly forceRemote?: boolean;
+}): Promise<UnlockedLock[]> {
+  const { runId } = options;
+  const stateDir = resolveStateDir({ stateDir: options.stateDir });
+  const unlock = unlockCommand(stateDir, runId);
+  const locks = (
+    await Promise.all([
+      observeUnlock('primary', join(runDirectory(stateDir, runId), 'lock'), runId),
+      observeUnlock('guard', `${legacyRunPath(stateDir, runId)}.lock`, runId),
+    ])
+  ).filter((lock) => lock !== undefined);
+  const decision = decideUnlock(locks, options.forceRemote ?? false);
+  if (decision.kind === 'locked') {
+    const { lock, role, holder, reason } = decision;
+    const who = `Run ${runId} ${lock.kind} lock ${role === 'owner' ? 'owner' : 'recoverer'} PID ${String(holder.pid)}`;
+    throw new RunRefusedError(
+      'run.locked',
+      runId,
+      reason === 'remote'
+        ? `${who} is on foreign host ${holder.host}. If ${holder.host} is this machine under an old name or is permanently gone, rerun with ${unlock} --force-remote.`
+        : `${who} on ${holder.host} is ${reason === 'alive' ? 'alive' : 'unverifiable'}; unlock never stops a process. Wait for it to exit or stop it, then retry.`,
+      {
+        lockPath: lock.path,
+        kind: lock.kind,
+        role,
+        pid: holder.pid,
+        host: holder.host,
+        state: reason,
+      },
+    );
+  }
+  if (decision.kind === 'orphans') {
+    const owner = decision.lock.owner;
+    const refusal = new OrphanProcessesError(
+      runId,
+      decision.processes,
+      owner && { pid: owner.pid, host: owner.host, state: owner.state },
+    );
+    refusal.message = `${refusal.message} Unlock never signals a process: wait for them to exit and retry, or stop confirmed ones with quiet-choir workflow resume ${runId} --state-dir ${stateDir} --kill-orphans.`;
+    throw refusal;
+  }
+  const unlocked: UnlockedLock[] = [];
+  for (const lock of locks) {
+    const expected = {
+      owner: lock.owner?.token ?? null,
+      recovery:
+        lock.recovery === null || lock.recovery === 'unreadable' ? null : lock.recovery.token,
+    };
+    const changed = (): RunRefusedError =>
+      new RunRefusedError(
+        'run.locked',
+        runId,
+        `Run ${runId} lock ownership changed during unlock; retry.`,
+        { lockPath: lock.path },
+      );
+    let action: UnlockedLock['action'] = 'removed';
+    const current = await currentTokens(lock.path);
+    if (current === 'gone') action = 'absent';
+    else {
+      if (current.owner !== expected.owner || current.recovery !== expected.recovery)
+        throw changed();
+      try {
+        await retire(lock.path, expected, changed);
+      } catch (error) {
+        if (!isErrno(error, 'ENOENT')) throw error;
+        action = 'absent';
+      }
+    }
+    unlocked.push({
+      kind: lock.kind,
+      path: lock.path,
+      owner: lock.owner && { pid: lock.owner.pid, host: lock.owner.host, state: lock.owner.state },
+      recovery:
+        lock.recovery === null || lock.recovery === 'unreadable'
+          ? null
+          : { pid: lock.recovery.pid, host: lock.recovery.host, state: lock.recovery.state },
+      processes: lock.processes,
+      ...(lock.warning === undefined ? {} : { warning: lock.warning }),
+      action,
+    });
+  }
+  return unlocked;
 }

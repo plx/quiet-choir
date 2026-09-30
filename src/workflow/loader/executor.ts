@@ -1,10 +1,16 @@
 import type { WorkflowDeclaration } from '../runtime/child-model.js';
 import { importWorkflow, WorkflowDefinitionError } from './import.js';
 import { cleanWorktrees } from '../runtime/worktree-clean.js';
-import type { CleanWorkflowPlan, ListDefinitionsPlan, ExecuteNamedWorkflowPlan } from './model.js';
+import type {
+  CleanWorkflowPlan,
+  ListDefinitionsPlan,
+  ExecuteNamedWorkflowPlan,
+  UnlockWorkflowPlan,
+} from './model.js';
 import { NodeProcessRunner } from '../../processes/runner.js';
 import type { ProcessRunner } from '../runtime/exec-model.js';
-import { realpath } from 'node:fs/promises';
+import { lstat, realpath } from 'node:fs/promises';
+import { join } from 'node:path';
 import { WorkflowNotifications } from './notifications.js';
 import { fixturesFromRun } from './fixtures.js';
 import { selectedAdapters } from './harness-selection.js';
@@ -13,7 +19,8 @@ import { RehearsalHarness, rehearsalState } from './rehearsal.js';
 import { jsonValue } from '../runtime/json.js';
 import { inspectRun, listRuns, watchRun, type RunInspection } from './inspection.js';
 import { workflowFailure } from './failure.js';
-import { readRequiredRun } from '../runtime/read-required-run.js';
+import { missingRunError, readRequiredRun } from '../runtime/read-required-run.js';
+import { unlockRun } from '../runtime/lock.js';
 import {
   isValidRunId,
   runIdMessage,
@@ -31,7 +38,7 @@ import { analyzeTypecheckEntrypoint } from '../typecheck/plan.js';
 import type { ExecutionLogger, Executor } from '../../application/execution.js';
 import type { Harness } from '../runtime/model.js';
 import { runWorkflow } from '../runtime/runner.js';
-import { resolveStateDir } from '../runtime/paths.js';
+import { legacyRunPath, resolveStateDir, runDirectory } from '../runtime/paths.js';
 import { CheckpointError } from '../runtime/checkpoint.js';
 import { readRun } from '../runtime/store.js';
 import type { RunStore } from '../runtime/run-store.js';
@@ -80,6 +87,7 @@ export class WorkflowExecutor implements Executor<
   | AnswerWorkflowPlan
   | PendingWorkflowsPlan
   | CleanWorkflowPlan
+  | UnlockWorkflowPlan
   | ListDefinitionsPlan
   | ExecuteNamedWorkflowPlan,
   WorkflowCommandResult
@@ -103,6 +111,7 @@ export class WorkflowExecutor implements Executor<
       | AnswerWorkflowPlan
       | PendingWorkflowsPlan
       | CleanWorkflowPlan
+      | UnlockWorkflowPlan
       | ListDefinitionsPlan
       | ExecuteNamedWorkflowPlan,
   ): Promise<WorkflowCommandResult> {
@@ -182,6 +191,23 @@ export class WorkflowExecutor implements Executor<
             this.#options.signal,
             this.#options.processSupervisor,
           )),
+        };
+      }
+      if (plan.kind === 'workflow.unlock') {
+        stage = 'workflow.storage';
+        const stateDir = resolveStateDir({ stateDir: plan.stateDir });
+        const locks = await unlockRun(plan);
+        // Nothing locked and nothing saved is most likely a mistyped run ID, not a no-op. Checked
+        // here, not in the lock module, so an unreadable record never blocks an unlock.
+        if (!locks.length && !(await hasCheckpoint(stateDir, plan.runId)))
+          throw await missingRunError({ runId: plan.runId, stateDir });
+        return {
+          kind: 'workflow.unlock.result',
+          ok: true,
+          runId: plan.runId,
+          stateDir,
+          forceRemote: plan.forceRemote,
+          locks,
         };
       }
       if (plan.kind === 'workflow.pending') {
@@ -518,6 +544,21 @@ export class WorkflowExecutor implements Executor<
       await previewState?.dispose();
     }
   }
+}
+
+/** Whether a directory checkpoint or a legacy flat checkpoint exists for the run. */
+async function hasCheckpoint(stateDir: string, runId: string): Promise<boolean> {
+  for (const path of [
+    join(runDirectory(stateDir, runId), 'run.json'),
+    legacyRunPath(stateDir, runId),
+  ])
+    try {
+      await lstat(path);
+      return true;
+    } catch (error) {
+      if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) return true;
+    }
+  return false;
 }
 
 function hasCheckpointError(error: unknown, seen = new Set<unknown>()): boolean {
