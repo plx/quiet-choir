@@ -30,10 +30,14 @@ afterEach(async () => {
   leftovers.clear();
   await rm(directory, { recursive: true, force: true });
 });
-function request(code: string, overrides: Partial<ProcessRequest> = {}): ProcessRequest {
+function request(
+  code: string,
+  overrides: Partial<ProcessRequest> = {},
+  ...argv: string[]
+): ProcessRequest {
   return {
     binary: process.execPath,
-    args: ['-e', code],
+    args: ['-e', code, ...argv],
     cwd: directory,
     input: '',
     timeoutMs: 3000,
@@ -94,10 +98,11 @@ describe.skipIf(process.platform === 'win32')('bounded POSIX process ownership',
       request(
         `
       const child = require('node:child_process').spawn('/bin/sleep', ['30'], { detached: true, stdio: ['ignore', 1, 2] });
-      require('node:fs').writeFileSync(${JSON.stringify(path)}, String(child.pid));
+      require('node:fs').writeFileSync(process.argv[1], String(child.pid));
       child.unref(); console.log('valid result'); process.exit(0);
     `,
         { drainMs: 120, killGraceMs: 500 },
+        path,
       ),
     );
     const pid = Number(await readFile(path, 'utf8'));
@@ -114,10 +119,11 @@ describe.skipIf(process.platform === 'win32')('bounded POSIX process ownership',
       request(
         `
       const child = require('node:child_process').spawn(process.execPath, ['-e', "setTimeout(() => console.log('late line'), 600)"], { detached: true, stdio: ['ignore', 1, 2] });
-      require('node:fs').writeFileSync(${JSON.stringify(path)}, String(child.pid));
+      require('node:fs').writeFileSync(process.argv[1], String(child.pid));
       child.unref(); process.exit(0);
     `,
         { killGraceMs: 1, backstopMs: 200, drainMs: 1500 },
+        path,
       ),
     );
     remember(Number(await readFile(path, 'utf8')));
@@ -134,10 +140,11 @@ describe.skipIf(process.platform === 'win32')('bounded POSIX process ownership',
       request(
         `
       const child = require('node:child_process').spawn('/bin/sleep', ['30'], { detached: true, stdio: ['ignore', 1, 2] });
-      require('node:fs').writeFileSync(${JSON.stringify(path)}, String(child.pid)); child.unref();
+      require('node:fs').writeFileSync(process.argv[1], String(child.pid)); child.unref();
       process.on('SIGTERM', () => {}); setInterval(() => {}, 1000);
     `,
         { timeoutMs: 700, killGraceMs: 120, backstopMs: 180, drainMs: 9000 },
+        path,
       ),
     );
     // Install the rejection assertion before waiting for fixture readiness.
@@ -153,7 +160,7 @@ describe.skipIf(process.platform === 'win32')('bounded POSIX process ownership',
     let released = false;
     await runProcess(
       request(
-        `process.stdin.on('data', () => require('node:fs').writeFileSync(${JSON.stringify(path)}, 'received')); process.stdin.on('end', () => process.exit(0));`,
+        `process.stdin.on('data', () => require('node:fs').writeFileSync(process.argv[1], 'received')); process.stdin.on('end', () => process.exit(0));`,
         {
           input: 'secret task',
           trackProcess: async (child) => {
@@ -171,6 +178,7 @@ describe.skipIf(process.platform === 'win32')('bounded POSIX process ownership',
             };
           },
         },
+        path,
       ),
     );
     expect(await readFile(path, 'utf8')).toBe('received');
@@ -184,7 +192,7 @@ describe.skipIf(process.platform === 'win32')('bounded POSIX process ownership',
     await expect(
       runProcess(
         request(
-          `process.stdin.on('data', () => require('node:fs').writeFileSync(${JSON.stringify(path)}, 'unsafe')); setInterval(() => {}, 1000);`,
+          `process.stdin.on('data', () => require('node:fs').writeFileSync(process.argv[1], 'unsafe')); setInterval(() => {}, 1000);`,
           {
             input: 'task',
             trackProcess: (child) => {
@@ -192,6 +200,7 @@ describe.skipIf(process.platform === 'win32')('bounded POSIX process ownership',
               return Promise.reject(error);
             },
           },
+          path,
         ),
       ),
     ).rejects.toBe(error);
@@ -216,7 +225,8 @@ describe.skipIf(process.platform === 'win32')('bounded POSIX process ownership',
       process.execPath,
       [
         '-e',
-        `process.on('SIGTERM', () => {}); require('node:fs').writeFileSync(${JSON.stringify(path)}, 'ready'); setInterval(() => {}, 1000);`,
+        `process.on('SIGTERM', () => {}); require('node:fs').writeFileSync(process.argv[1], 'ready'); setInterval(() => {}, 1000);`,
+        path,
       ],
       { detached: true, stdio: 'ignore' },
     );
