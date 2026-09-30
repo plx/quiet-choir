@@ -2,6 +2,22 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- CLI: `workflow unlock RUN [--state-dir DIR] [--force-remote] [--json]` clears an abandoned run
+  lock without importing workflow code and returns
+  `{kind:"workflow.unlock.result", ok, runId, stateDir, forceRemote, locks}`. It judges the primary
+  lock and the legacy guard before removing anything, and refuses with exit 3: `run.locked` for a
+  locally alive or unverifiable owner or recoverer, or a foreign host without `--force-remote`;
+  `run.orphans` for an alive or unverifiable child record; `run.not_found` for a run with neither a
+  lock nor a checkpoint. `--force-remote` asserts that the recorded host is this machine under an
+  old name or is gone, and judges it by local observations. Metadata-less older-build locks,
+  unreadable markers and dead recoverers' markers are removed with a warning. Removal uses the
+  tombstone rename only and never signals a process; a run with no lock is a no-op. The three
+  `run.locked` refusals (incomplete metadata, locked by PID on host, lock recovery in progress) keep
+  their prefixes and now print the `quiet-choir workflow unlock RUN --state-dir DIR` command (with
+  `--force-remote` for a foreign host), and the docs and skills no longer describe manual cleanup.
+  `OrphanProcessesError` gains an optional third constructor argument, the lock owner
+  `{ pid, host, state }` or null, added to `details.owner` and the message (additive). See ADR 0030.
+
 - Runtime: run locks change hands by rename, so a crash at any step leaves a run that a plain resume
   or tick recovers. An acquire publishes a sibling directory that already holds a fsynced
   `owner.json`, so a lock never exists without complete ownership metadata, and an empty lock left

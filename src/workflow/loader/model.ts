@@ -1,4 +1,5 @@
 import type { WorktreeCleanResult } from '../runtime/worktree-clean.js';
+import type { UnlockedLock } from '../runtime/lock.js';
 import type { HarnessFixtures } from '../../harnesses/fixture.js';
 import type { RehearsalReport } from './rehearsal.js';
 import type { HarnessSelection } from './harness-selection.js';
@@ -147,6 +148,17 @@ export interface CleanWorkflowPlan extends ExecutionPlan {
   readonly refs?: boolean;
 }
 
+/**
+ * Plain-data request to clear an abandoned lock of one run without importing workflow code.
+ * `forceRemote` asserts that a foreign recorded host is this machine under an old name or is gone.
+ */
+export interface UnlockWorkflowPlan extends ExecutionPlan {
+  readonly kind: 'workflow.unlock';
+  readonly runId: string;
+  readonly stateDir: string;
+  readonly forceRemote: boolean;
+}
+
 /** The outcome of a workflow command, without live schemas or loaded modules. */
 export type WorkflowCommandResult = ExecutionResult &
   (
@@ -156,6 +168,15 @@ export type WorkflowCommandResult = ExecutionResult &
         readonly definitions: readonly ValidatedWorkflow[];
       }
     | (WorktreeCleanResult & { readonly kind: 'workflow.clean.result'; readonly ok: true })
+    | {
+        readonly kind: 'workflow.unlock.result';
+        readonly ok: true;
+        readonly runId: string;
+        readonly stateDir: string;
+        readonly forceRemote: boolean;
+        /** Every lock found, primary first; empty when the run was not locked. */
+        readonly locks: readonly UnlockedLock[];
+      }
     | WorkflowFailure
     | {
         readonly kind: 'workflow.pending.result';

@@ -116,7 +116,10 @@ recoverer first links an atomically written `recovery.json` (`{ pid, host, osSta
 into the dead owner's lock; a live, unknown or remote recoverer holds the lock, and the next acquire
 reclaims the marker of a dead one. The next owner sweeps its lock's `.gone` tombstones and the
 `.tmp` directories of dead creators; a SIGKILL at any of these steps leaves a run that a plain
-resume recovers. An older build's `recovery/` directory is ignored.
+resume recovers. An older build's `recovery/` directory is ignored. A lock that resume refuses
+(incomplete metadata, a damaged marker, or a gone foreign host) is cleared with
+`workflow unlock RUN`, never by deleting the directory; see
+[process ownership](process-lifecycle.md).
 
 ## Legacy records
 

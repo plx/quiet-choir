@@ -28,6 +28,7 @@ const expectedCommands = [
   'workflow:resume',
   'workflow:tick',
   'workflow:typecheck',
+  'workflow:unlock',
   'workflow:validate',
 ];
 

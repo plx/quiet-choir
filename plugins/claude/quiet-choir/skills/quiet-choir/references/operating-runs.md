@@ -127,8 +127,21 @@ cat "$QC_RUNS/first/lock/owner.json"
 The lock can be absent; `cat` then failing is expected. `updatedAt` is not a heartbeat. A long agent
 call or sleep may produce no checkpoint changes. Compare sleep `wakeAt` (epoch milliseconds) with
 the current clock and inspect logs. A live owner means wait or intentionally cancel the runner; a
-foreign-host owner needs investigation on that host. Missing/incomplete `owner.json` can be a writer
-mid-acquire: recheck before treating it as abandoned. Do not delete a lock on age alone.
+foreign-host owner needs investigation on that host. Missing/incomplete `owner.json` in a lock is
+damage or an older build's interrupted acquire. Never delete lock directories by hand, and do not
+clear a lock on age alone. When resume refuses an abandoned lock with `run.locked`, clear it with
+the command its message prints:
+
+```sh
+node "$QC_CHECKOUT/bin/run.js" workflow unlock first --state-dir "$QC_RUNS" --json
+```
+
+Add `--force-remote` only when the recorded foreign host is this machine under an old name or is
+permanently gone. Unlock imports no workflow code and never signals a process. It exits 3 with
+`run.locked` while an owner or recoverer is alive or unverifiable (or foreign without the flag), and
+with `run.orphans` (naming the owner and child records) while a recorded child is alive or
+unverifiable; stop confirmed children with `--resume --kill-orphans` below instead. A run with no
+lock is a no-op (`locks: []`).
 
 For a dead same-host owner or no lock, a normal compatible resume automatically recovers ownership
 if there are no surviving/unverified children. After fixing an external cause, omit input to reuse

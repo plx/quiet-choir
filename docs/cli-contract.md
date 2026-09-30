@@ -24,6 +24,18 @@ inspect exits 0 for any readable checkpoint status, including `failed`, `cancell
 returns
 `{kind:"workflow.run.suspended", ok:true, exitCode:75, runId, stateDir, pending, resumeCommand, run}`.
 
+`workflow unlock ID [--force-remote] --json` clears an abandoned run lock without importing workflow
+code and returns `{kind:"workflow.unlock.result", ok:true, runId, stateDir, forceRemote, locks}`.
+`locks` lists every lock found, primary first, as
+`{kind:"primary"|"guard", path, owner, recovery, processes, warning?, action:"removed"|"absent"}`,
+where `owner` and `recovery` are `{pid, host, state}` (the local judgment) or null, and `warning`
+reports missing or unreadable metadata; it is empty when the run was not locked. It refuses with
+exit 3 and removes nothing: `run.locked` while an owner or recoverer is alive or unverifiable, or is
+on a foreign host without `--force-remote` (`error.details` has `lockPath`, `kind`, `role`, `pid`,
+`host` and `state`); `run.orphans` while a recorded child is alive or unverifiable (`error.details`
+has `processes` and `owner`); and `run.not_found` when the run has neither a lock nor a checkpoint.
+See [process ownership](process-lifecycle.md).
+
 `execute --dry-run --json` returns a `workflow.rehearsal` document with `ok:true`, calls, replays,
 provider counts, nominal Claude ceiling, warnings, and its in-memory run record. Failures retain the
 usual error document and exits, adding `rehearsal` and `error.stack`. Temporary state has already

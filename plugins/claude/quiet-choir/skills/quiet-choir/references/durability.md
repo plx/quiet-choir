@@ -341,12 +341,15 @@ Confirmed live or unverified children cause exit 3 before replacement work. Insp
 `--resume --kill-orphans` stops only identity-confirmed groups and verifies they are gone. Reused
 PIDs are never signaled; missing identity, malformed records and leaderless surviving groups remain
 for separate inspection. A lock without readable `owner.json` (damage, or an older build's
-interrupted acquire) or with an unreadable `recovery.json` requires inspection and manual cleanup
-only after confirming there is no active owner. An older build's `recovery/` directory is ignored.
-Do not delete a lock merely because a run looks stalled. Migrated runs acquire the legacy guard
-before the current lock and hold both through release; new children belong to the current lock. This
-prevents an abandoned old guard from bypassing a live new owner. Owner-only cleanup removes
-recognized UUID snapshot temporary files for that run and preserves unrelated data.
+interrupted acquire), with an unreadable `recovery.json`, or owned by a foreign host that was
+renamed or is gone is cleared with `workflow unlock RUN --state-dir DIR` (`--force-remote` asserts
+the foreign host is this machine or gone) after confirming there is no active owner. Unlock refuses
+live or unverifiable owners, recoverers and children, removes locks only by the tombstone rename,
+and never signals. An older build's `recovery/` directory is ignored. Never delete lock directories
+by hand, and do not unlock merely because a run looks stalled. Migrated runs acquire the legacy
+guard before the current lock and hold both through release; new children belong to the current
+lock. This prevents an abandoned old guard from bypassing a live new owner. Owner-only cleanup
+removes recognized UUID snapshot temporary files for that run and preserves unrelated data.
 
 Map failures default to `drain`: stop scheduling and let active mappers checkpoint without an abort
 signal before rejecting with `FanOutError`. Body rejections, including `Promise.all`, close the
@@ -385,7 +388,8 @@ A crash between spawn and durable registration can still leave an unrecorded chi
 create another group/session escape ownership. OS birth checks have platform resolution and a
 check-to-signal race (macOS ps start time has second resolution); they are not atomic process
 handles. Unconfirmed records are retained and never authorize recovery signals. Investigate those
-processes separately; do not delete a lock because its checkpoint is old. No cleanup undoes edits.
+processes separately; once they are gone, `workflow unlock` clears the lock. Never unlock because a
+checkpoint is old. No cleanup undoes edits.
 
 Checkpoints contain plaintext workflow input/output, every completed step's full validated result
 (including agent responses and files a local step read), and errors. Checkpoint files are created

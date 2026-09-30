@@ -164,6 +164,9 @@ The source checkout changes only with explicit `target: 'checkout'`. Use shardin
 disjoint files; isolate overlapping writers or commands that observe concurrent edits. See
 [worktree isolation, policies, and cleanup](docs/worktrees.md). `workflow clean RUN [--refs]`
 removes owned caches and optionally pins without importing source.
+`workflow unlock RUN [--force-remote] [--json]` clears an abandoned run lock without importing
+source; it refuses while an owner, recoverer or recorded child is alive or unverifiable (see
+[process ownership](docs/process-lifecycle.md)).
 
 `object()` and `text()` results contain `output`, native `sessionId`, and reported token/cost
 `usage`. Native session IDs are for correlation only: `CliHarness` uses Claude
@@ -453,8 +456,10 @@ import. `workflow resume RUN` uses its stored entrypoint. Embedded callers narro
 - Runs use an atomic snapshot and an append-only journal with shared durable commits. An exclusive
   local writer owns both; readers apply entries newer than the snapshot sequence. Dead local owners
   can be recovered; live or foreign-host owners are refused. Locks are published and removed by
-  rename, and a crashed recoverer's claim is reclaimed automatically; incomplete lock metadata
-  requires inspection and manual cleanup. Acquiring the lock removes only that run's recognized UUID
+  rename, and a crashed recoverer's claim is reclaimed automatically. A lock with incomplete
+  metadata, a damaged recovery marker or a foreign host that is gone is cleared with
+  `workflow unlock RUN` (`--force-remote` for the host), which refuses live owners and children;
+  never delete lock directories by hand. Acquiring the lock removes only that run's recognized UUID
   snapshot temporary files. Use a local POSIX filesystem.
 - Transient checkpoint writes retry briefly. Persistent storage errors stop new effects and never
   retry a successful action in-process. `CheckpointError` identifies save/release failures; combined
