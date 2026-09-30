@@ -298,8 +298,12 @@ export class TickWorkflowExecutor implements Executor<
       // A marked interruption: the runtime saves the run as a resumable suspension, due now.
       timer.abort(new RunInterruptedError('Tick timeout reached.'));
     }, timeoutMs);
-    /** Whether a claim could no longer finish usefully; stays true after the deadline. */
-    const insideMargin = (): boolean => deadline - Date.now() < claimMarginMs;
+    /**
+     * Whether a claim could no longer finish usefully; stays true after the deadline. A fired
+     * deadline always counts, whatever the wall clock says (a margin of 0 would not otherwise).
+     */
+    const insideMargin = (): boolean =>
+      timer.signal.aborted || deadline - Date.now() < claimMarginMs;
     const signal =
       this.options.signal === undefined
         ? timer.signal

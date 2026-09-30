@@ -822,6 +822,38 @@ describe('tick deadline interruption and claim margin', { timeout: 40_000 }, () 
     });
   });
 
+  it('counts a fired deadline as inside the margin even when the clock is still behind it', async () => {
+    const f = await fixture();
+    const before = await runBytes(f.stateDir, 'run');
+    // Fire the tick's deadline timer at once while Date.now stays at the start, so the margin
+    // arithmetic alone (0 ms margin) would still allow a claim.
+    const frozen = Date.now();
+    const now = vi.spyOn(Date, 'now').mockReturnValue(frozen);
+    const realSetTimeout = globalThis.setTimeout;
+    const timers = vi.spyOn(globalThis, 'setTimeout').mockImplementation(((
+      handler: () => void,
+      ms?: number,
+      ...args: unknown[]
+    ) => {
+      if (ms !== 10_000) return realSetTimeout(handler, ms, ...args);
+      handler();
+      return realSetTimeout(() => undefined, 0);
+    }));
+    let result: TickWorkflowsResult | WorkflowFailure;
+    try {
+      result = await tick.execute({ ...f.tickPlan, timeoutMs: 10_000, claimMarginMs: 0 });
+    } finally {
+      timers.mockRestore();
+      now.mockRestore();
+    }
+    expect(oneEntryPerRun(result)).toMatchObject({
+      resumed: [],
+      skipped: [{ runId: 'run', reason: 'deadline' }],
+      exitCode: 75,
+    });
+    expect(await runBytes(f.stateDir, 'run')).toEqual(before);
+  });
+
   it.each([
     [{ timeoutMs: 1_000, claimMarginMs: 1_000 }],
     [{ timeoutMs: 1_000, claimMarginMs: 5_000 }],
