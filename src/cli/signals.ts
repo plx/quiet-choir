@@ -50,9 +50,12 @@ export function executionSignals(
     }
   };
   // Bind each name: the listener argument is absent when a signal is emitted programmatically.
-  const listeners = (['SIGINT', 'SIGTERM', 'SIGHUP'] as const).map(
-    (name) => [name, () => { cancel(name); }] as const,
-  );
+  const listeners = (['SIGINT', 'SIGTERM', 'SIGHUP'] as const).map((name) => {
+    const listener = (): void => {
+      cancel(name);
+    };
+    return [name, listener] as const;
+  });
   for (const [name, listener] of listeners) process.on(name, listener);
   return {
     signal: controller.signal,
