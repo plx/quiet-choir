@@ -88,7 +88,7 @@
     "test:coverage": "vitest run --coverage",
     "test:watch": "vitest",
     "typecheck": "tsc --project tsconfig.json",
-    "comparisons:check": "tsc -p comparisons/batches/01-direct-ports/tsconfig.json && tsc -p comparisons/batches/02-idiomatic-ports/tsconfig.json && node --import tsx comparisons/scripts/verify-ports.mjs --check && node --import tsx comparisons/scripts/verify-idiomatic-ports.mjs --check",
+    "comparisons:check": "node comparisons/scripts/check-api-snapshot.mjs && node --test comparisons/scripts/api-snapshot.test.mjs && tsc -p comparisons/batches/01-direct-ports/tsconfig.json && tsc -p comparisons/batches/02-idiomatic-ports/tsconfig.json && node --import tsx comparisons/scripts/verify-ports.mjs --check && node --import tsx comparisons/scripts/verify-idiomatic-ports.mjs --check",
     "test:contract": "node ./test/harness-contract.mjs",
     "test:contract:isolation": "node ./test/harness-isolation-contract.mjs",
     "skills:check": "node scripts/check-skills.mjs && node --test test/skills-check.test.mjs",
