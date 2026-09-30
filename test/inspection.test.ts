@@ -124,6 +124,26 @@ it('shows all status counts, first-use order, phase progress, limits, root cause
   expect(formatRunList([summary])).toContain('inspect@1  failed');
 });
 
+it('shows an interrupted suspension as resumable and watches it as suspended', () => {
+  const run: RunRecord = {
+    ...record(),
+    status: 'suspended',
+    nextWakeAt: Date.parse(time),
+    interruptedBy: { reason: 'Tick timeout reached.', at: time },
+  };
+  const summary = summarizeRun(run, unlocked);
+  expect(summary).toMatchObject({
+    status: 'suspended',
+    interruptedBy: { reason: 'Tick timeout reached.', at: time },
+  });
+  expect(formatRunSummary(summary)).toContain(
+    `Interrupted at ${time}: Tick timeout reached. (resumable)`,
+  );
+  expect(watchExitCodes[summary.status]).toBe(75);
+  expect(summarizeRun(record(), unlocked).interruptedBy).toBeNull();
+  expect(formatRunSummary(summarizeRun(record(), unlocked))).not.toContain('Interrupted at');
+});
+
 it('derives stale only from proven owner loss, preserving unknown and remote owners', () => {
   const run = record();
   expect(summarizeRun(run, unlocked).status).toBe('stale');
