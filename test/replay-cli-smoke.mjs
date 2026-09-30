@@ -28,6 +28,7 @@ function cli(...args) {
       ...process.env,
       PATH: `${join(root, 'bin')}:${process.env.PATH}`,
       QC_REPLAY_CALLS: calls,
+      QC_REPLAY_EFFECTS: effects,
     },
   });
 }
@@ -39,7 +40,7 @@ function run(id, ...args) {
 function source(
   review = 'review',
   tail = 'return value;',
-  callback = `() => { appendFileSync(${JSON.stringify(effects)}, 'local\\n'); return 'done'; }`,
+  callback = `() => { appendFileSync(String(process.env.QC_REPLAY_EFFECTS), 'local\\n'); return 'done'; }`,
 ) {
   return `import { appendFileSync } from 'node:fs';
 import { defineWorkflow, z } from 'quiet-choir';

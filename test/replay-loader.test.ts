@@ -199,7 +199,7 @@ describe('source-aware loader recovery', { timeout: 120_000 }, () => {
   it('re-finalizes a tail validation failure and surfaces the recovery hint', async () => {
     const effectPath = join(root, 'effects');
     const prefix = "import { appendFileSync } from 'node:fs';\n";
-    const callback = `() => { appendFileSync(${JSON.stringify(effectPath)}, 'effect\\n'); return 'done'; }`;
+    const callback = `() => { appendFileSync(new URL('./effects', import.meta.url), 'effect\\n'); return 'done'; }`;
     await writeFile(file, prefix + source(callback, '1', 'return undefined as unknown as string;'));
     const failed = await execute('source');
     expect(failed).toMatchObject({
