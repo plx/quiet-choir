@@ -47,6 +47,12 @@ function owner(run: RunSummary): string {
       : 'no lock';
 }
 
+function lockLine(lock: RunSummary['ownership']['locks'][number]): string {
+  const holder = (value: { pid: number; host: string; state: string }): string =>
+    `pid ${String(value.pid)} (${value.state}) on ${value.host}`;
+  return `Lock ${lock.kind} ${lock.path}: ${lock.owner ? `owner ${holder(lock.owner)}` : 'owner unreadable'}${lock.recovery ? `; recovery ${holder(lock.recovery)}` : ''}${lock.warning ? `; warning: ${lock.warning}` : ''}`;
+}
+
 /** Render only known values: a running workflow never ends in a bare null. @internal */
 export function formatRunSummary(run: RunSummary, verbose = false): string {
   const lines = [
@@ -163,6 +169,7 @@ export function formatRunSummary(run: RunSummary, verbose = false): string {
     lines.push(
       `Recent: ${event.at}${event.phase ? ` [${event.phase}]` : ''} ${event.message ?? event.type}${event.data === null ? '' : ` ${JSON.stringify(event.data)}`}`,
     );
+  for (const lock of run.ownership.locks) lines.push(lockLine(lock));
   for (const process of run.ownership.processes)
     lines.push(
       process.process

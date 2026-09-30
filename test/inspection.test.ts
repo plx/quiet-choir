@@ -20,7 +20,7 @@ vi.mock('../src/workflow/runtime/store.js', async (importOriginal) => {
 const actualStore = await vi.importActual<typeof store>('../src/workflow/runtime/store.js');
 
 let stateDir: string;
-const unlocked: RunOwnership = { locked: false, owner: null, processes: [] };
+const unlocked: RunOwnership = { locked: false, owner: null, processes: [], locks: [] };
 const time = '2026-01-01T00:00:00.000Z';
 const record = (id = 'run'): RunRecord => ({
   formatVersion: 1,
@@ -149,15 +149,60 @@ it('derives stale only from proven owner loss, preserving unknown and remote own
   expect(summarizeRun(run, unlocked).status).toBe('stale');
   for (const state of ['alive', 'dead', 'unknown', 'remote', 'released'] as const) {
     expect(
-      summarizeRun(run, { locked: true, owner: { pid: 10, host: 'h', state }, processes: [] })
-        .status,
+      summarizeRun(run, {
+        locked: true,
+        owner: { pid: 10, host: 'h', state },
+        processes: [],
+        locks: [],
+      }).status,
     ).toBe(['dead', 'released'].includes(state) ? 'stale' : 'running');
   }
   expect(
-    summarizeRun(run, { locked: true, owner: null, processes: [], warning: 'incomplete' }).status,
+    summarizeRun(run, {
+      locked: true,
+      owner: null,
+      processes: [],
+      warning: 'incomplete',
+      locks: [],
+    }).status,
   ).toBe('running');
   run.status = 'completed';
   expect(summarizeRun(run, unlocked).status).toBe('completed');
+});
+
+it('prints one line per lock with its owner, recovery marker and warning', () => {
+  const ownership: RunOwnership = {
+    locked: true,
+    owner: { pid: 10, host: 'h', state: 'dead' },
+    processes: [],
+    locks: [
+      {
+        kind: 'primary',
+        path: '/state/run/lock',
+        owner: { pid: 10, host: 'h', state: 'dead' },
+        recovery: { pid: 11, host: 'h', state: 'alive' },
+      },
+      {
+        kind: 'guard',
+        path: '/state/run.json.lock',
+        owner: null,
+        recovery: null,
+        warning: 'owner.json: bad JSON',
+      },
+    ],
+  };
+  const summary = summarizeRun(record(), ownership);
+  // A live recoverer holds the run, so it is not stale.
+  expect(summary.status).toBe('running');
+  const text = formatRunSummary(summary);
+  expect(text).toContain('Owner: pid 10 (dead) on h');
+  expect(text).toContain(
+    'Lock primary /state/run/lock: owner pid 10 (dead) on h; recovery pid 11 (alive) on h',
+  );
+  expect(text).toContain(
+    'Lock guard /state/run.json.lock: owner unreadable; warning: owner.json: bad JSON',
+  );
+  expect(formatRunSummary(summarizeRun(record(), unlocked))).not.toContain('Lock ');
 });
 
 it('adopts a checkpoint that completed between the record read and the ownership read, instead of reporting stale', async () => {
@@ -176,7 +221,7 @@ it('adopts a checkpoint that completed between the record read and the ownership
   await save(record('race'));
   vi.mocked(store.inspectRunOwnership).mockImplementationOnce(async () => {
     await completeCheckpoint('race');
-    return { locked: false, owner: null, processes: [] };
+    return { locked: false, owner: null, processes: [], locks: [] };
   });
   const inspection = await inspectRun({ stateDir, runId: 'race' });
   expect(inspection.summary.status).toBe('completed');
@@ -186,7 +231,7 @@ it('adopts a checkpoint that completed between the record read and the ownership
   await save(record('race-watch'));
   vi.mocked(store.inspectRunOwnership).mockImplementationOnce(async () => {
     await completeCheckpoint('race-watch');
-    return { locked: false, owner: null, processes: [] };
+    return { locked: false, owner: null, processes: [], locks: [] };
   });
   const changes: string[] = [];
   const final = await watchRun({ stateDir, runId: 'race-watch', intervalMs: 5 }, (snapshot) => {

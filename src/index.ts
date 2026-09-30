@@ -95,6 +95,7 @@ export { readRun, inspectRunOwnership } from './workflow/runtime/store.js';
 export type {
   RunRecord,
   RunOwnership,
+  RunLockView,
   MapRecord,
   MapItemRecord,
   StepRecord,
