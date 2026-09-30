@@ -146,7 +146,7 @@ function notesView() {
     .map(([name, path]) => `<a href="${escape(path)}">Open ${escape(name)} JSON ↗</a>`)
     .join(
       ' · ',
-    )}</p>${block('Target API', `${batch.apiSnapshot.package} · ${batch.apiSnapshot.description} API SHA-256: ${batch.apiSnapshot.sha256}`)}<div class="note-block"><h2>Source & attribution</h2><p><a href="${escape(batch.sourceFileBase + workflow.name + '.js')}" target="_blank" rel="noreferrer">View the pinned original on GitHub ↗</a><br>Original workflows © 2026 Really Him, MIT. Ports retain this license. Snapshot: <code>${escape(batch.revision)}</code>.</p></div></div>`;
+    )}</p>${block('Target API', `${batch.apiSnapshot.package} · ${batch.apiSnapshot.description} API SHA-256: ${batch.apiSnapshot.sha256} Commit on main: ${batch.apiSnapshot.revision ? batch.apiSnapshot.revision.slice(0, 10) : 'not yet committed'}.`)}<div class="note-block"><h2>Source & attribution</h2><p><a href="${escape(batch.sourceFileBase + workflow.name + '.js')}" target="_blank" rel="noreferrer">View the pinned original on GitHub ↗</a><br>Original workflows © 2026 Really Him, MIT. Ports retain this license. Snapshot: <code>${escape(batch.revision)}</code>.</p></div></div>`;
 }
 function block(label, text) {
   return `<div class="note-block"><h2>${escape(label)}</h2><p>${escape(text)}</p></div>`;
