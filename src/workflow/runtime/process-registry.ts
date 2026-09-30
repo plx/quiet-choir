@@ -68,16 +68,41 @@ export class OrphanProcessesError extends RunRefusedError {
   /** Read-only observations retained for inspection. */
   public readonly processes: readonly HarnessProcessInspection[];
 
-  /** Describe the surviving/unverifiable processes without exposing prompts or environment. */
-  public constructor(runId: string, processes: readonly HarnessProcessInspection[]) {
+  /**
+   * Describe the surviving/unverifiable processes without exposing prompts or environment.
+   *
+   * @param runId - Run whose lock retains the records.
+   * @param processes - Current observations of the lock's child records.
+   * @param owner - Optional owner context of the lock that holds the records, or null when its
+   *   `owner.json` is missing or unreadable. When given, `details` carries it as `owner` and the
+   *   message names it; when omitted, `details` is `{ processes }` as before.
+   */
+  public constructor(
+    runId: string,
+    processes: readonly HarnessProcessInspection[],
+    owner?: {
+      /** Owner's recorded process ID. */
+      readonly pid: number;
+      /** Host on which the owner acquired the lock. */
+      readonly host: string;
+      /** Owner liveness as the caller judged it. */
+      readonly state: 'alive' | 'dead' | 'unknown' | 'remote' | 'released';
+    } | null,
+  ) {
     const pending = processes.filter(
       (entry) => entry.state === 'alive' || entry.state === 'unknown',
     );
+    const ownerText =
+      owner === undefined
+        ? ''
+        : owner === null
+          ? ' The lock has no readable owner metadata.'
+          : ` Owner PID ${String(owner.pid)} on ${owner.host} (${owner.state}).`;
     super(
       'run.orphans',
       runId,
-      `Run ${runId} has ${String(pending.length)} live or unverified harness processes (${pending.map((entry) => (entry.process ? `${entry.process.binary} pid ${String(entry.process.pid)}, step ${entry.process.stepId}, attempt ${String(entry.process.attempt)}: ${entry.state}` : `${entry.file}: ${entry.detail ?? 'invalid record'}`)).join('; ')}). Stop confirmed processes with --kill-orphans, or wait. Unverified identities are never signaled; inspect the retained lock.`,
-      jsonValue({ processes }),
+      `Run ${runId} has ${String(pending.length)} live or unverified harness processes (${pending.map((entry) => (entry.process ? `${entry.process.binary} pid ${String(entry.process.pid)}, step ${entry.process.stepId}, attempt ${String(entry.process.attempt)}: ${entry.state}` : `${entry.file}: ${entry.detail ?? 'invalid record'}`)).join('; ')}).${ownerText} Stop confirmed processes with --kill-orphans, or wait. Unverified identities are never signaled; inspect the retained lock.`,
+      jsonValue(owner === undefined ? { processes } : { processes, owner }),
     );
     this.name = 'OrphanProcessesError';
     this.processes = processes;
@@ -116,11 +141,14 @@ function observe(record: HarnessProcessRecord, file: string): HarnessProcessInsp
   };
 }
 
-/** Read records without modifying the lock; malformed ownership is retained. @internal */
+/**
+ * Read records without modifying the lock; malformed ownership is retained. A null `ownerToken`
+ * (a lock without readable owner metadata) skips only the token comparison. @internal
+ */
 export async function inspectProcesses(
   lockPath: string,
   runId: string,
-  ownerToken: string,
+  ownerToken: string | null,
 ): Promise<HarnessProcessInspection[]> {
   const directory = join(lockPath, 'processes');
   let files: string[];
@@ -137,7 +165,7 @@ export async function inspectProcesses(
           JSON.parse(await readFile(join(directory, file), 'utf8')),
         );
         if (
-          record.ownerToken !== ownerToken ||
+          (ownerToken !== null && record.ownerToken !== ownerToken) ||
           record.runId !== runId ||
           file !== `${String(record.pgid ?? record.pid)}.json`
         )

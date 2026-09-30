@@ -18,6 +18,8 @@ import {
 } from '../src/index.js';
 import { groupState, processIdentity } from '../src/processes/identity.js';
 import { lockRun } from '../src/workflow/runtime/store.js';
+import { inspectProcesses } from '../src/workflow/runtime/process-registry.js';
+import { RunRefusedError } from '../src/workflow/runtime/run-errors.js';
 
 vi.mock('node:fs/promises', async (importOriginal) => {
   const actual = await importOriginal<typeof fs>();
@@ -285,4 +287,57 @@ it('reports incomplete and remote ownership without claiming local child identit
   expect((await inspectRunOwnership({ stateDir: directory, runId: 'run' })).owner?.state).toBe(
     'remote',
   );
+});
+
+it('observes records of any owner token when the lock has no readable owner', async () => {
+  const lockPath = join(directory, 'run', 'lock');
+  await fs.mkdir(join(lockPath, 'processes'), { recursive: true });
+  const record = {
+    pid: 2_000_000_000,
+    pgid: 2_000_000_000,
+    binary: 'fake-harness',
+    cwd: directory,
+    startedAt: new Date().toISOString(),
+    osStartTime: null,
+    runId: 'run',
+    stepId: 'review/3',
+    attempt: 1,
+    ownerToken: 'whoever',
+  };
+  await fs.writeFile(join(lockPath, 'processes', '2000000000.json'), JSON.stringify(record));
+  await fs.writeFile(
+    join(lockPath, 'processes', '7.json'),
+    JSON.stringify({ ...record, pid: 7, pgid: 7, runId: 'other' }),
+  );
+  const [byToken, other] = await inspectProcesses(lockPath, 'run', 'mine');
+  // Sorted by file name: 2000000000.json, then 7.json.
+  expect(byToken).toMatchObject({ state: 'unknown', process: null });
+  expect(other).toMatchObject({ state: 'unknown', process: null });
+  const [anyToken, stillOther] = await inspectProcesses(lockPath, 'run', null);
+  expect(anyToken).toMatchObject({ state: 'dead', process: { ownerToken: 'whoever' } });
+  // A null token skips only the token comparison: the run ID must still match.
+  expect(stillOther).toMatchObject({ state: 'unknown', process: null });
+});
+
+it('names the owner in an orphan refusal when the caller gives one', () => {
+  const processes = [
+    { file: '1.json', process: null, state: 'unknown' as const, detail: 'bad record' },
+  ];
+  const plain = new OrphanProcessesError('run', processes);
+  expect(plain.details).toEqual({ processes: [{ ...processes[0] }] });
+  expect(plain.message).not.toMatch(/Owner/);
+  const owned = new OrphanProcessesError('run', processes, {
+    pid: 42,
+    host: 'here',
+    state: 'dead',
+  });
+  expect(owned).toBeInstanceOf(OrphanProcessesError);
+  expect(owned).toBeInstanceOf(RunRefusedError);
+  expect(owned.code).toBe('run.orphans');
+  expect(owned.details).toEqual({ processes, owner: { pid: 42, host: 'here', state: 'dead' } });
+  expect(owned.message).toMatch(/\(1\.json: bad record\)\. Owner PID 42 on here \(dead\)\./u);
+  expect(owned.message).toMatch(/Stop confirmed processes with --kill-orphans/u);
+  const ownerless = new OrphanProcessesError('run', processes, null);
+  expect(ownerless.details).toEqual({ processes, owner: null });
+  expect(ownerless.message).toMatch(/no readable owner metadata/u);
 });
