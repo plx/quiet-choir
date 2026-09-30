@@ -153,5 +153,7 @@ checkpoint after storage failure, since an uncheckpointed action can repeat.
 
 For parked deadlines and polls, use [workflow tick](waits.md#operate-a-parked-run); pending JSON
 includes their progress. `tick --json` reports resumed outcomes, skipped reasons and an observed
-count; with `--run`, exit 75 means the run is still pending, locked or running, and exit 1 means it
-failed, was cancelled, or is incompatible or unreadable.
+count; with `--run`, exit 75 means the run is still pending, locked or blocked by orphans, and exit
+1 means it failed, was cancelled, or is crash-looping, incompatible or unreadable. Tick also
+recovers stale `running` runs, up to 3 consecutive times without a new completed step
+(`crash-loop`).

@@ -35,6 +35,15 @@ No second lock, background service, distributed claim, or automatic source accep
 bounded watch combines filesystem inbox events with deadline/fallback timers. Individual run
 failures remain data in batch tick results.
 
+Tick also recovers runs whose owner is gone. A pure classifier (`recovery-decision.ts`) shared with
+the derived stale display decides whether a lock is free, reclaimable, blocked by live or unverified
+orphans, or held. Reclaimable locks go through the ordinary lock recovery of
+[ADR 0013](0013-process-ownership.md), without killing orphans. A record still `running` under the
+new ownership is a stale recovery: before resuming, tick durably saves a `staleRecovery` counter
+with the completed-step baseline. Three consecutive recoveries without a new completed step stop
+automatic recovery until an explicit resume; a clean suspension or completion removes the counter.
+Only tick writes it, under ownership; the stale status itself stays derived.
+
 Operator shell hooks receive committed wait-open and run lifecycle events. A persisted notifiedAt
 marker deduplicates first-open attempts; delivery is best-effort and can be lost across a crash.
 Hook failures cannot change workflow outcomes. Business messages remain explicit idempotent steps.

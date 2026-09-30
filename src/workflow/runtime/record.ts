@@ -253,6 +253,18 @@ export interface RunRecord {
   runBudget?: RunBudgetPolicy;
   /** Latest budget refusal, without a corresponding agent attempt. */
   budgetStop?: RunBudgetStop;
+  /**
+   * Tick's crash-loop counter for automatic recovery of a `running` run whose owner is gone. Only
+   * tick writes it, under ownership, before resuming; a clean suspension or completion removes it.
+   */
+  staleRecovery?: {
+    /** Consecutive stale recoveries without a new completed step, starting at 1. */
+    count: number;
+    /** Completed steps when the latest recovery started; a different value resets the count. */
+    completedSteps: number;
+    /** When tick last recorded a recovery. */
+    at: string;
+  };
   /** Random UUID namespace used to derive Claude attempt session IDs. */
   sessionSalt?: string;
   /** Runtime-owned worktree caches, handles, and durable pins. */
@@ -590,6 +602,13 @@ const recordFieldsSchema = z.object({
       metric: z.enum(['maxRunCostUsd', 'maxRunAgentAttempts']),
       limit: z.number().nonnegative(),
       observed: z.number().nonnegative(),
+      at: z.iso.datetime(),
+    })
+    .optional(),
+  staleRecovery: z
+    .object({
+      count: z.number().int().positive(),
+      completedSteps: z.number().int().nonnegative(),
       at: z.iso.datetime(),
     })
     .optional(),

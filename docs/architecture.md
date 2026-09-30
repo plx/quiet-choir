@@ -123,6 +123,14 @@ terminal replay and fork reuse but stops before the next live effect. The runner
 writes, saves, events, frame attribution and the divergence abort, and the same ESLint import guard
 covers the module. `test/replay-decision.test.ts` is the executable table of these rules.
 
+The recovery rules for runs whose owner may be gone live in
+`src/workflow/runtime/recovery-decision.ts`. `classifyRecovery` sorts an ownership observation into
+free, reclaimable, orphans or held; the inspection stale display and `workflow tick` both use it.
+`decideStaleRecovery` applies tick's crash-loop cap of 3 consecutive recoveries with an unchanged
+completed-step count. Tick keeps the lock recovery, the durable counter save and the resume; the
+same ESLint import guard covers the module, and `test/recovery-decision.test.ts` is its executable
+table.
+
 HarnessInvocation carries run/step/attempt identity, the captured cancellation signal and a
 process-registration port. The runtime persists child/group ownership inside the run lock; adapters
 report spawns and release records only after reaping. Dead-owner recovery checks those records

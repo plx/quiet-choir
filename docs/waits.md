@@ -87,12 +87,30 @@ quiet-choir workflow tick --state-dir /absolute/state --json
 quiet-choir workflow tick --state-dir /absolute/state --run review-1 --watch --timeout 540s --json
 ```
 
-Tick reads checkpoints before importing any source. It resumes only suspended runs whose
-`nextWakeAt` has arrived or whose open signal has an inbox delivery. It skips locked runs. It checks
-saved source bytes before import, claims the ordinary writer lock, and rechecks readiness and source
-bytes under ownership. Concurrent ticks cannot both import and launch the same due run. The normal
-replay compatibility checks still apply. Changed source reports `incompatible` without modifying the
-checkpoint; use explicit [code-change recovery](decisions/0006-code-change-recovery.md).
+Tick reads checkpoints before importing any source. It resumes suspended runs whose `nextWakeAt` has
+arrived or whose open signal has an inbox delivery, and recovers `running` runs whose owner is gone.
+It checks saved source bytes before import, claims the ordinary writer lock, and rechecks readiness
+and source bytes under ownership. Concurrent ticks cannot both import and launch the same due run.
+The normal replay compatibility checks still apply. Changed source reports `incompatible` without
+modifying the checkpoint; use explicit
+[code-change recovery](decisions/0006-code-change-recovery.md).
+
+Before claiming a run, tick classifies its lock. A live, unknown or remote owner, or incomplete lock
+metadata, is skipped as `locked`. A dead or released owner whose child records are all dead is
+reclaimed through ordinary lock recovery, so a due suspended run behind a lock left by a crash is
+resumed. A dead or released owner with a live or unverified child record is skipped as `orphans`,
+without resuming the run or changing its checkpoint; tick never kills orphans. A `running` run with
+no lock or a reclaimable lock is stale: its owner was killed (OOM, sandbox teardown, a SIGKILLed
+tick). Tick recovers it without waiting for a due time, after re-reading it under ownership. There
+is no `workflow cancel` yet, so a run someone killed on purpose is also resumed by the next tick.
+
+Recovery of a stale `running` run is capped. Before resuming, tick durably saves a `staleRecovery`
+counter `{ count, completedSteps, at }` in the checkpoint. The count grows by one while the number
+of completed steps is unchanged, and restarts at 1 when a step has completed since the last
+recovery. After 3 consecutive recoveries without a new completed step, tick neither resumes nor
+writes the run and reports it as `crash-loop`; inspect it and run `quiet-choir workflow resume RUN`
+to retry explicitly. A clean suspension or completion removes the counter. A due suspended run
+behind a dead lock never touches it.
 
 Tick uses stored entrypoint/tsconfig/cwd. Local-only and default CLI-harness runs can resume
 directly; custom/fixture adapters require the original embedding application to supply that live
@@ -107,13 +125,14 @@ started with custom binaries or limits must repeat `--harness-config` on every `
 The result reports what this tick did. `resumed` has one `{ runId, outcome }` entry per run whose
 resume started, with outcome `completed`, `suspended` (plus `nextWakeAt`), `failed`, `cancelled` or
 `incompatible` (each with a `message`). `skipped` has `{ runId, reason }` entries for runs left
-alone: `not due` and `no longer due` (with `nextWakeAt`), `locked`, `running`, and `incompatible` or
-`unreadable` (with a `message`). `observed` counts runs that were already completed, failed or
-cancelled. Each run appears in at most one entry; a later resume of the same run during `--watch`
-replaces its entry. `--max-runs N` bounds executed resumes across the invocation; refusals before
-import do not count. With `--run`, exit is 0 when the run completed (in this tick or earlier), 75
-when it is still pending (not due, suspended again, locked or running), and 1 when it failed, was
-cancelled, or is incompatible or unreadable. Without `--run`, individual run outcomes do not change
+alone: `not due` and `no longer due` (with `nextWakeAt`), `locked`, and `orphans`, `crash-loop`,
+`incompatible` or `unreadable` (with a `message`). `observed` counts runs that were already
+completed, failed or cancelled. Each run appears in at most one entry; a later resume of the same
+run during `--watch` replaces its entry. `--max-runs N` bounds executed resumes across the
+invocation; refusals before import do not count. With `--run`, exit is 0 when the run completed (in
+this tick or earlier), 75 when it is still pending (not due, suspended again, locked, or blocked by
+orphans), and 1 when it failed, was cancelled, or is crash-looping, incompatible or unreadable.
+`--watch` stops retrying a crash-looping run. Without `--run`, individual run outcomes do not change
 exit 0. Command errors retain the [CLI error contract](cli-contract.md).
 
 `--watch` waits for the next due time or an inbox filesystem event, with a one-second fallback scan

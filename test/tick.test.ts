@@ -1,6 +1,18 @@
-import { appendFile, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
+import {
+  appendFile,
+  mkdir,
+  mkdtemp,
+  readdir,
+  readFile,
+  rm,
+  stat,
+  symlink,
+  writeFile,
+} from 'node:fs/promises';
+import { hostname, tmpdir } from 'node:os';
+import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -11,6 +23,7 @@ import { analyzeTypecheckEntrypoint } from '../src/workflow/typecheck/plan.js';
 import type { TickWorkflowsResult } from '../src/workflow/loader/tick.js';
 import type { WorkflowFailure } from '../src/workflow/loader/failure.js';
 import { FileRunStore, readRun, writeAnswer, type WorkflowClock } from '../src/index.js';
+import { countCompletedSteps } from '../src/workflow/runtime/recovery-decision.js';
 
 const project = dirname(dirname(fileURLToPath(import.meta.url)));
 const roots: string[] = [];
@@ -133,6 +146,55 @@ export default defineWorkflow({ name: 'tick',
   };
 }
 
+/** Every file under a run directory, by relative path, to prove a tick changed nothing. */
+async function runBytes(stateDir: string, runId: string): Promise<Record<string, string>> {
+  const root = join(stateDir, runId);
+  const files: Record<string, string> = {};
+  const visit = async (directory: string): Promise<void> => {
+    for (const entry of await readdir(directory, { withFileTypes: true })) {
+      const path = join(directory, entry.name);
+      if (entry.isDirectory()) await visit(path);
+      else files[relative(root, path)] = await readFile(path, 'utf8');
+    }
+  };
+  await visit(root);
+  return files;
+}
+
+/** Leave the run's primary lock behind with a local owner whose process has exited. */
+async function deadOwnerLock(stateDir: string, runId: string): Promise<string> {
+  const exited = spawnSync(process.execPath, ['-e', '']);
+  const lock = join(stateDir, runId, 'lock');
+  await mkdir(lock);
+  await writeFile(
+    join(lock, 'owner.json'),
+    JSON.stringify({ pid: exited.pid, host: hostname(), token: randomUUID() }),
+  );
+  return lock;
+}
+
+/** Make a suspended fixture look like a run whose owner died mid-execution, without a lock. */
+async function crashedWhileRunning(
+  stateDir: string,
+  runId: string,
+  staleRecovery?: (completedSteps: number) => { count: number; completedSteps: number },
+): Promise<void> {
+  const owned = await new FileRunStore(stateDir).open(runId);
+  try {
+    const run = await owned.read();
+    if (!run) throw new Error('missing run');
+    run.status = 'running';
+    if (staleRecovery)
+      run.staleRecovery = {
+        ...staleRecovery(countCompletedSteps(run)),
+        at: new Date().toISOString(),
+      };
+    await owned.append(run, { durable: true });
+  } finally {
+    await owned.release();
+  }
+}
+
 afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
@@ -250,7 +312,6 @@ describe('tick loader and operator hooks', { timeout: 40_000 }, () => {
     const loser = results.find((result) => result.resumed.length === 0);
     expect([
       { skipped: [{ runId: 'run', reason: 'locked' }], observed: 0, exitCode: 75 },
-      { skipped: [{ runId: 'run', reason: 'running' }], observed: 0, exitCode: 75 },
       { skipped: [], observed: 1, exitCode: 0 },
     ]).toContainEqual({
       skipped: loser?.skipped,
@@ -485,5 +546,119 @@ describe('tick loader and operator hooks', { timeout: 40_000 }, () => {
       observed: 0,
       exitCode: 1,
     });
+  });
+  it('resumes a due suspended run behind a dead owner lock without counting a stale recovery', async () => {
+    const f = await fixture();
+    await deadOwnerLock(f.stateDir, 'run');
+    expect(oneEntryPerRun(await tick.execute(f.tickPlan))).toEqual({
+      kind: 'workflow.tick.result',
+      ok: true,
+      resumed: [{ runId: 'run', outcome: 'completed' }],
+      skipped: [],
+      observed: 0,
+      exitCode: 0,
+    });
+    expect(await readFile(f.effects, 'utf8')).toBe('effect\n');
+    const saved = await readRun(f.plan);
+    expect(saved.status).toBe('completed');
+    expect(saved.staleRecovery).toBeUndefined();
+    await expect(stat(join(f.stateDir, 'run', 'lock'))).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
+  it('skips orphans behind a dead owner without importing or changing the run', async () => {
+    const f = await fixture();
+    const lock = await deadOwnerLock(f.stateDir, 'run');
+    await mkdir(join(lock, 'processes'));
+    await writeFile(join(lock, 'processes', 'x.json'), '{not json');
+    const before = await runBytes(f.stateDir, 'run');
+    const result = oneEntryPerRun(await tick.execute(f.tickPlan));
+    expect(result).toEqual({
+      kind: 'workflow.tick.result',
+      ok: true,
+      resumed: [],
+      skipped: [
+        {
+          runId: 'run',
+          reason: 'orphans',
+          message: expect.stringContaining('live or unverified harness processes') as unknown,
+        },
+      ],
+      observed: 0,
+      exitCode: 75,
+    });
+    expect(await runBytes(f.stateDir, 'run')).toEqual(before);
+    expect(before['lock/processes/x.json']).toBe('{not json');
+    expect(await readFile(f.imports, 'utf8')).toBe('import\n');
+    expect((await readRun(f.plan)).status).toBe('suspended');
+  });
+
+  it('recovers a running run whose owner is gone and clears the counter on completion', async () => {
+    const f = await fixture();
+    await crashedWhileRunning(f.stateDir, 'run');
+    expect(oneEntryPerRun(await tick.execute(f.tickPlan))).toEqual({
+      kind: 'workflow.tick.result',
+      ok: true,
+      resumed: [{ runId: 'run', outcome: 'completed' }],
+      skipped: [],
+      observed: 0,
+      exitCode: 0,
+    });
+    expect(await readFile(f.effects, 'utf8')).toBe('effect\n');
+    const saved = await readRun(f.plan);
+    expect(saved.status).toBe('completed');
+    expect(saved.staleRecovery).toBeUndefined();
+
+    // A failed resume keeps the durable count that tick saved before handing over the run.
+    const failing = await fixture('failure');
+    await crashedWhileRunning(failing.stateDir, 'run');
+    const baseline = countCompletedSteps(await readRun(failing.plan));
+    expect(oneEntryPerRun(await tick.execute(failing.tickPlan))).toMatchObject({
+      resumed: [{ runId: 'run', outcome: 'failed' }],
+      exitCode: 1,
+    });
+    expect((await readRun(failing.plan)).staleRecovery).toEqual({
+      count: 1,
+      completedSteps: baseline,
+      at: expect.any(String) as unknown,
+    });
+  });
+
+  it('stops at the crash-loop cap without writing, but resumes after progress', async () => {
+    const f = await fixture();
+    await crashedWhileRunning(f.stateDir, 'run', (completedSteps) => ({
+      count: 3,
+      completedSteps,
+    }));
+    const before = await runBytes(f.stateDir, 'run');
+    expect(oneEntryPerRun(await tick.execute(f.tickPlan))).toEqual({
+      kind: 'workflow.tick.result',
+      ok: true,
+      resumed: [],
+      skipped: [
+        {
+          runId: 'run',
+          reason: 'crash-loop',
+          message: expect.stringMatching(
+            /recovered 3 times .*cap 3\).*'quiet-choir workflow resume run'/u,
+          ) as unknown,
+        },
+      ],
+      observed: 0,
+      exitCode: 1,
+    });
+    expect(await runBytes(f.stateDir, 'run')).toEqual(before);
+    expect(await readFile(f.imports, 'utf8')).toBe('import\n');
+
+    // A baseline other than the current completed-step count means a step completed since.
+    const progressed = await fixture();
+    await crashedWhileRunning(progressed.stateDir, 'run', (completedSteps) => ({
+      count: 3,
+      completedSteps: completedSteps + 1,
+    }));
+    expect(oneEntryPerRun(await tick.execute(progressed.tickPlan))).toMatchObject({
+      resumed: [{ runId: 'run', outcome: 'completed' }],
+      exitCode: 0,
+    });
+    expect((await readRun(progressed.plan)).staleRecovery).toBeUndefined();
   });
 });
