@@ -2,6 +2,12 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- Workflow Lab: `comparisons:check` now fails when any upstream `originals/*.js` file or batch
+  `LICENSE` differs from its SHA-256 in `source-hashes.json`, or when an original has no entry or an
+  entry has no file, in every registered batch. The site build uses the same check. Both
+  `source-hashes.json` files now record the `LICENSE` hash. No runtime behavior changes; see
+  comparisons/README.md.
+
 - Workflow Lab: `comparisons:check` now fails when a batch's `apiSnapshot.sha256` differs from
   `src/workflow/runtime/model.ts` and rejects a hand-written `apiSnapshot.revision`. Squash merges
   orphan the commit a PR could pin, so the site build derives the revision (the newest commit

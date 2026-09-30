@@ -16,8 +16,9 @@ the documented golden path and embedding recipes with temporary projects and fak
 also typechecks both Workflow Lab batches, preserves the Batch 01 differential baseline and verifies
 the active Batch 02 fault matrix without rewriting reports. A primitive PR must update its matching
 Batch 02 port, notes and fault row in the same PR, even if it still compiles. `comparisons:check`
-also fails until `apiSnapshot.sha256` in every batch matches `src/workflow/runtime/model.ts`; never
-record a commit. The six ports are release-notes, project-bootstrap, test-gap-filler,
+fails when any upstream original or batch `LICENSE` differs from its hash in `source-hashes.json`,
+and also fails until `apiSnapshot.sha256` in every batch matches `src/workflow/runtime/model.ts`;
+never record a commit. The six ports are release-notes, project-bootstrap, test-gap-filler,
 incident-investigation, sdlc-orchestrator and bug-hunt; see
 [the batch policy](comparisons/README.md#regression-and-snapshot-policy).
 
