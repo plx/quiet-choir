@@ -162,6 +162,16 @@ describe('runSmokes', () => {
     assert.match(log, /proj-1\/runs\/leaked/u);
   });
 
+  it('rejects a concurrency or timeout that is not a positive integer', async () => {
+    for (const options of [
+      { concurrency: undefined, env: { QUIET_CHOIR_SMOKE_CONCURRENCY: '-1' } },
+      { concurrency: 0 },
+      { concurrency: undefined, env: { QUIET_CHOIR_SMOKE_CONCURRENCY: '2.5' } },
+      { env: { QUIET_CHOIR_SMOKE_TIMEOUT_MS: 'soon' } },
+    ])
+      await assert.rejects(run({ 'a-smoke.mjs': '' }, options), /must be a positive integer/u);
+  });
+
   it('kills a smoke that exceeds its timeout and counts it as a failure', async () => {
     const { exitCode, log, results } = await run(
       { 'hang-smoke.mjs': 'setInterval(() => {}, 1000);' },

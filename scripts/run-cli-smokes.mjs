@@ -69,6 +69,13 @@ function seconds(ms) {
   return `${(ms / 1000).toFixed(1)}s`;
 }
 
+function positiveInteger(label, value) {
+  const number = Number(value);
+  if (value === '' || !Number.isInteger(number) || number < 1)
+    throw new Error(`The ${label} must be a positive integer, not ${String(value)}.`);
+  return number;
+}
+
 function killGroup(child, signal = 'SIGKILL') {
   if (child.pid === undefined) return;
   try {
@@ -98,11 +105,14 @@ export async function runSmokes({
     console.log(line);
   },
 } = {}) {
-  const limit =
-    concurrency ??
-    (Number(env['QUIET_CHOIR_SMOKE_CONCURRENCY']) || Math.min(4, availableParallelism()));
-  const smokeTimeout =
-    timeoutMs ?? (Number(env['QUIET_CHOIR_SMOKE_TIMEOUT_MS']) || defaultTimeoutMs);
+  const limit = positiveInteger(
+    'concurrency',
+    concurrency ?? env['QUIET_CHOIR_SMOKE_CONCURRENCY'] ?? Math.min(4, availableParallelism()),
+  );
+  const smokeTimeout = positiveInteger(
+    'smoke timeout',
+    timeoutMs ?? env['QUIET_CHOIR_SMOKE_TIMEOUT_MS'] ?? defaultTimeoutMs,
+  );
   const all = discoverSmokes(dir);
   if (all.length === 0) {
     log(`No *smoke.mjs files found in ${dir}.`);
@@ -209,7 +219,7 @@ export async function runSmokes({
     log(tail(result.output));
     log(`--- state kept at ${result.xdg} ---`);
   }
-  let exitCode = failed.length === 0 ? 0 : 1;
+  let exitCode = failed.length === 0 && results.length === names.length ? 0 : 1;
   if (aborted) {
     log(`Interrupted by ${aborted}.`);
     exitCode = 1;
@@ -246,23 +256,16 @@ function parseArguments(argv) {
     else if (arg?.startsWith('--')) throw new Error(`Unknown option ${arg}.`);
     else if (arg !== undefined) options.filters.push(arg);
   }
-  if (
-    options.concurrency !== undefined &&
-    (!Number.isInteger(options.concurrency) || options.concurrency < 1)
-  )
-    throw new Error('--concurrency must be a positive integer.');
   return options;
 }
 
 async function main() {
-  let options;
   try {
-    options = parseArguments(process.argv.slice(2));
+    return (await runSmokes(parseArguments(process.argv.slice(2)))).exitCode;
   } catch (error) {
     console.error(error instanceof Error ? error.message : String(error));
     return 2;
   }
-  return (await runSmokes(options)).exitCode;
 }
 
 const entryScript = process.argv[1];
