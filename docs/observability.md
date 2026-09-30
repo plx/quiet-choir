@@ -22,11 +22,12 @@ alongside run/workflow identities. Completed step payloads are omitted from the 
 records lack some measurements; inspection leaves those fields unknown rather than reconstructing
 execution.
 
-A saved `running` run with no lock or a dead/released owner is shown as `stale`. Remote or
-unverifiable ownership remains `running` with its ownership diagnostics. A lock alone does not prove
-liveness. Inspection uses the existing same-host PID and available birth-identity checks; it never
-signals a process or recovers a lock. Timestamps are not heartbeats. A quiet agent call can leave
-`updatedAt` unchanged for minutes.
+A saved `running` run with no lock or a dead/released owner is shown as `stale`, and
+[`workflow tick`](waits.md#suspension-and-tick) recovers it unless live or unverified children
+remain, up to its crash-loop cap. Remote or unverifiable ownership remains `running` with its
+ownership diagnostics. A lock alone does not prove liveness. Inspection uses the existing same-host
+PID and available birth-identity checks; it never signals a process or recovers a lock. Timestamps
+are not heartbeats. A quiet agent call can leave `updatedAt` unchanged for minutes.
 
 ## Watch and list
 

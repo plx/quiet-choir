@@ -33,7 +33,7 @@ and log. Ordinary inspect exits 0 for any readable status. Timestamps are not he
 | `failed`                                             | Read `rootCause`, step error, and attempt diagnostics; fix the cause, then choose compatible resume, explicit code acceptance, or fork. |
 | `cancelled`                                          | Determine who interrupted it; inspect children, then resume if continuing is intended.                                                  |
 | `running`, live owner                                | Wait/watch; inspect running sleeps' `wakeAt` and the log before calling it stalled.                                                     |
-| Derived `stale`, absent/dead/released owner          | Inspect children; plain resume recovers safe ownership automatically.                                                                   |
+| Derived `stale`, absent/dead/released owner          | Inspect children; plain resume recovers safe ownership automatically. Tick also recovers it, up to the crash-loop cap.                  |
 | Live/unverified children, remote or incomplete owner | Follow [ownership recovery](operating-runs.md#stalls-and-orphan-recovery); do not infer permission to kill from PID or age alone.       |
 
 Run-level `.status` saves running/completed/failed/cancelled/suspended. Summary/list/watch can

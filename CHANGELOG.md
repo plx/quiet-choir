@@ -2,6 +2,18 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- CLI (breaking): `workflow tick` recovers crashed runs. A `running` run whose owner is gone (no
+  lock, or a dead or released owner) is resumed through ordinary lock recovery, and a due suspended
+  run behind a lock left by a dead owner is resumed instead of skipped. The `running` skip reason is
+  replaced by `locked` (live, unknown or remote owner, or incomplete lock metadata), `orphans` (the
+  owner is gone but a child process is alive or unverified; tick never kills it; `--run` exits 75)
+  and `crash-loop` (3 consecutive recoveries without a new completed step; `--run` exits 1 and
+  `--watch` stops retrying it until an explicit `workflow resume`). See docs/waits.md.
+
+- Runtime: `RunRecord` has an optional `staleRecovery { count, completedSteps, at }` counter. Tick
+  saves it durably under ownership before each stale recovery, and the runner removes it on a clean
+  suspension or completion. `inspect` and `list` still derive `stale` without writing it.
+
 - CLI (breaking): `workflow tick --json` now reports only what the tick did. The resumed count and
   the `completed`, `suspended`, `failed` and `incompatible` buckets are replaced by `resumed`
   entries (`{ runId, outcome, nextWakeAt?, message? }` for each run whose resume started), `skipped`

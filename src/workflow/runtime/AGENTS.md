@@ -70,7 +70,10 @@ Phase/log observations have no durable IDs or fingerprint components. Own and dr
 including late callbacks, before releasing the writer. Keep scoped phase attribution separate from
 names/cancellation and capture it before asynchronous request preparation. Retain kth-occurrence
 replay counts after payload eviction; never claim a completion that failed to commit. Read-only
-stale status is derived from ownership, not written into a checkpoint. See
+stale status is derived from ownership, not written into a checkpoint. `recovery-decision.ts` is the
+single place the ownership recovery and crash-loop rules are encoded; tick writes its
+`staleRecovery` counter only under ownership, and the runner removes it on a clean suspension or
+completion. See
 [ADR 0015](../../../docs/decisions/0015-observe-runs-without-changing-effect-identity.md).
 
 Questions pin their full identity even while waiting. Registration, non-question effects, and

@@ -56,7 +56,14 @@ node "$QC_CHECKOUT/bin/run.js" workflow tick --state-dir "$QC_RUNS" \
 
 Tick reads state without imports, skips locked/not-due runs, verifies saved source bytes, and claims
 the ordinary run lock before loading a due stored entrypoint. Concurrent ticks cannot launch the
-same run. Changed source reports incompatible without changing the checkpoint: use the explicit
+same run. A lock left by a dead or released owner is reclaimed through ordinary lock recovery, so a
+due suspended run behind it resumes; live or unverified child records give `orphans` instead, and
+tick never kills them. A `running` run whose owner is gone (no lock, or a dead or released owner) is
+stale: tick recovers it without a due time. Before each such recovery it durably saves a
+`staleRecovery` counter; after 3 consecutive recoveries with no new completed step it stops with
+`crash-loop` until an explicit `workflow resume RUN`. A completed step restarts the count, and a
+clean suspension or completion removes it. With no `workflow cancel` yet, a run killed on purpose is
+recovered too. Changed source reports incompatible without changing the checkpoint: use the explicit
 [recovery path](durability.md#recovery-procedure). Tick does not retry failed runs, accept edits,
 change grants, or kill orphans. Custom/fixture adapters need their embedding application; tick's
 standalone CLI uses saved local/default-CLI provenance, not undisclosed adapter configuration. The
@@ -65,13 +72,13 @@ on `tick` (as on `resume`) to reach a run started with custom binaries or limits
 apply otherwise.
 
 The JSON lists `resumed` entries (outcome completed, suspended, failed, cancelled or incompatible),
-`skipped` entries (reason not due, no longer due, locked, running, incompatible or unreadable) and
-an `observed` count of already-terminal runs, with each run in at most one entry. With --run, exits
-are 0 completed (now or earlier), 75 pending/locked/running, 1
-failed/cancelled/incompatible/unreadable. Without it, run failures are data and the batch exits 0
-unless the command fails. --max-runs bounds executed resumes across one invocation. --watch uses
-inbox events, next due time, and a one-second fallback scan; --timeout (default 540s) bounds the
-invocation. Active callbacks must cooperate with cancellation to exit promptly. No process runs
+`skipped` entries (reason not due, no longer due, locked, orphans, crash-loop, incompatible or
+unreadable) and an `observed` count of already-terminal runs, with each run in at most one entry.
+With --run, exits are 0 completed (now or earlier), 75 pending/locked/orphans, 1
+failed/cancelled/crash-loop/incompatible/unreadable. Without it, run failures are data and the batch
+exits 0 unless the command fails. --max-runs bounds executed resumes across one invocation. --watch
+uses inbox events, next due time, and a one-second fallback scan; --timeout (default 540s) bounds
+the invocation. Active callbacks must cooperate with cancellation to exit promptly. No process runs
 after tick exits. For periodic operation, install a user-authorized cron or launchd task using
 absolute paths and a working PATH, for example:
 
