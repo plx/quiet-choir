@@ -212,11 +212,19 @@ function codexActivity(R, pr) {
   const reactions = ghPaged(`repos/${R.repo}/issues/${pr}/reactions`)
     .filter((r) => r.user?.login === CODEX_LOGIN)
     .map((r) => ({ content: r.content, createdAt: r.created_at }));
+  // Codex answers a review request it cannot serve with a plain comment ("You have reached your
+  // Codex usage limits for code reviews…") and no summary row, reaction, or review. Without this,
+  // a gate would wait for a review that is never coming.
+  const limitNotices = comments
+    .filter((c) => c.user?.login === CODEX_LOGIN)
+    .filter((c) => /usage limits?/i.test(c.body ?? '') && !/review-summary/.test(c.body ?? ''))
+    .map((c) => ({ createdAt: c.created_at }));
   return {
     summaryUpdatedAt: summary?.updated_at ?? null,
     rows: summary ? parseSummaryRows(summary.body) : [],
     reviews,
     reactions,
+    limitNotices,
   };
 }
 
@@ -1048,6 +1056,9 @@ function codexProgress(R, pr, sha, since, seenComplete) {
   if (findings.length) return { state: 'findings', reviewIds: findings.map((r) => r.id) };
   if (act.reactions.some((r) => r.content === '+1' && fresh(r.createdAt))) {
     return { state: 'clean', via: 'reaction' };
+  }
+  if (act.limitNotices.some((n) => fresh(n.createdAt))) {
+    return { state: 'error', reason: 'Codex usage limit reached' };
   }
   const row = act.rows.find((r) => sha.startsWith(r.commit));
   if (row && fresh(act.summaryUpdatedAt)) {

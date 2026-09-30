@@ -363,6 +363,9 @@ async function rehearse(scenario) {
     calls.push({ label: opts.label, model: opts.model, effort: opts.effort, phase: opts.phase });
     assert.ok(opts.model && opts.effort, `agent "${opts.label}" must set model and effort`);
     if (opts.model === 'haiku') {
+      // A clerk that dies (usage limit, API error) returns null, as agent() does.
+      const subs = commandsIn(prompt).map((c) => (c.sub === 'last' ? c.flags.cmd : c.sub));
+      if (subs.some((sub) => scenario.deadClerk?.includes(sub))) return null;
       const out = {};
       for (const c of commandsIn(prompt)) {
         const key = `${c.tool}:${scopeOf(c)}:${c.sub === 'last' ? c.flags.cmd : c.sub}`;
@@ -765,6 +768,16 @@ const SCENARIOS = {
     check({ result, world }) {
       assert.equal(result.status, 'landed');
       assert.equal(world.effects.filter((e) => e === 'open-pr #102').length, 1, 'PR opened once');
+    },
+  },
+  'reports a dead clerk as an API failure, not relay corruption': {
+    world: { issues: { 102: {} } },
+    deadClerk: ['open-pr'],
+    check({ result, calls }) {
+      assert.equal(result.status, 'blocked');
+      assert.match(result.blocked.reason, /clerk agent died/);
+      // One re-read in case the command ran before the clerk died, then stop.
+      assert.equal(calls.filter((c) => c.label?.startsWith('open PR')).length, 2);
     },
   },
   'reports an epic with no open tickets as done': {

@@ -321,6 +321,8 @@ async function relay(label, phaseName, steps, render = RUN_STEPS) {
   const listing = steps.map((c) => `<command id="${c.id}">\n${c.run}\n</command>`).join('\n\n');
   clerkRuns++;
   const text = await agent(render(listing), { ...TIER.clerk, label, phase: phaseName });
+  // A clerk that died (API error, usage limit) is not a corrupted relay: say so, don't guess.
+  if (text === null) return { verified: {}, missing: steps, dead: true };
   const copied = parseObject(text) ?? {};
   const verified = {};
   const missing = [];
@@ -336,7 +338,7 @@ async function relay(label, phaseName, steps, render = RUN_STEPS) {
       missing.push(s);
     }
   }
-  return { verified, missing };
+  return { verified, missing, dead: false };
 }
 
 // Run helper steps through a haiku clerk; returns {id: verified output}. Unverifiable outputs are
@@ -345,6 +347,7 @@ async function clerk(label, phaseName, steps, render = RUN_STEPS) {
   const first = await relay(label, phaseName, steps, render);
   const out = first.verified;
   let missing = first.missing;
+  let dead = first.dead;
   for (let i = 1; i <= 2 && missing.length; i++) {
     const rereads = missing.map((s) => ({
       ...s,
@@ -353,10 +356,15 @@ async function clerk(label, phaseName, steps, render = RUN_STEPS) {
     const again = await relay(`${label} (re-read ${i})`, phaseName, rereads);
     Object.assign(out, again.verified);
     missing = again.missing;
+    // Two dead clerks in a row: the model API is unavailable, and more re-reads would die too.
+    if (dead && again.dead) break;
+    dead = again.dead;
   }
   for (const s of missing) {
     out[s.id] = {
-      error: `no verifiable output from "${s.sub}" (not run, or the relay was corrupted)`,
+      error: dead
+        ? `the clerk agent died before relaying "${s.sub}" (API error or usage limit); re-run once the API is available`
+        : `no verifiable output from "${s.sub}" (not run, or the relay was corrupted)`,
     };
   }
   return out;

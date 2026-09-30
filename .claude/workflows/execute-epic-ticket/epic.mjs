@@ -517,6 +517,13 @@ export function insertChecklistLine(body, { number, title, after = null, repo })
     at = parsed.findLastIndex((p) => p !== null && p.indent === outer);
   }
   if (at < 0) {
+    // No checklist yet: start one under an existing "## Items" heading (an epic created with an
+    // empty Items section), else under a new heading at the end.
+    const heading = lines.findIndex((l) => /^##\s+Items\s*$/i.test(l));
+    if (heading >= 0) {
+      lines.splice(heading + 1, 0, '', `- ${entry}`);
+      return { body: lines.join(eol), changed: true };
+    }
     const base = text.replace(/\s+$/, '');
     return {
       body: `${base}${base ? eol + eol : ''}## Items${eol}${eol}- ${entry}${eol}`,
