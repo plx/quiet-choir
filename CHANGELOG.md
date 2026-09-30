@@ -2,6 +2,28 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- CLI: `--resume --accept-code-change` (on `execute` and `resume`) no longer destroys a run when the
+  edit changed a completed step. It first replays the accepted body against a disposable copy of the
+  record, with fixtures disabled and every unfinished local step, file effect, poll observer and
+  command stubbed. If the copy meets a completed or settled-failed step whose identity changed, the
+  command refuses with `run.incompatible` (exit 3) and leaves status, fingerprint, output,
+  `codeChanges` and waiting questions unchanged. `error.details.divergent` is
+  `[{ stepId, components }]` and `error.details.next` holds the argv
+  `quiet-choir workflow execute FILE --fork-from RUN --reuse matching --invalidate STEP --run-id <NEW_RUN_ID> --state-dir DIR`,
+  also named in the message. Other preflight outcomes let the resume proceed; the workflow body (not
+  its unfinished callbacks) runs one extra time. `execute --dry-run --resume --accept-code-change`
+  returns the same code and details. The plain-resume and check-resume messages point at that
+  preview and, for a completed run, list `--fork-from` before `--accept-code-change`. See ADR 0006.
+
+- API: new public, branded `StepIdentityChangedError` (`stepId`, `components`, `status`) is the
+  cause of the `WorkflowRunError` for a replayed completed or settled-failed step whose identity
+  changed; its message now names `--fork-from RUN --reuse matching --invalidate STEP` instead of
+  "start a new run". Embedded `runWorkflow({ acceptCodeChange: true })` has no preflight.
+
+- Rehearsal (behavior change): `--stub-steps` patterns and the `RunOptions.rehearsal.localStep` hook
+  now also match `ctx.poll` wait IDs. A matched poll completes with a synthesized value, parsed by
+  its schema, without calling its observer.
+
 - CLI: `workflow unlock RUN [--state-dir DIR] [--force-remote] [--json]` clears an abandoned run
   lock without importing workflow code and returns
   `{kind:"workflow.unlock.result", ok, runId, stateDir, forceRemote, locks}`. It judges the primary

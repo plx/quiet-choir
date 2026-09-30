@@ -3,7 +3,9 @@
 ## Status
 
 Accepted. Extends ADR 0005 with callback identity, explicit code acceptance, and fork reuse. Strict
-resume remains the default. Checkpoint format 3 supersedes format 2 for execution and reuse.
+resume remains the default. Checkpoint format 3 supersedes format 2 for execution and reuse. Amended
+by #126: the CLI refuses an accepted replay that would fail on a changed completed step before it
+changes the run.
 
 ## Context
 
@@ -69,3 +71,30 @@ Agents can fix late bugs without repaying unchanged calls, while an edited compl
 cannot silently return stale data through accept-code-change. Reuse is explicit and recorded. The
 remaining dependency gaps are real: callback hashing is useful evidence, not full closure capture.
 All filesystem and external effects retain at-least-once behavior and are never rolled back.
+
+## Amendment: refuse divergent accepted replays (#126)
+
+Following the plain-resume advice for an edit to a completed step recorded the acceptance, cleared
+the saved output and replaced the fingerprint, then failed on the step check. A completed run ended
+`failed` with no output, and a suspended run waiting on a human ended `failed`.
+
+The accepted identity still persists before effects for an admitted invocation. Before admitting
+one, the CLI replays the accepted body against a disposable copy of the record (the
+`--dry-run --resume` machinery). The copy disables fixtures and stubs every unfinished local step,
+file effect, poll observer and command, so no unfinished callback runs live; completed effects
+replay their saved outputs. When the copy meets a completed or settled-failed step whose identity
+changed (the runner's typed `StepIdentityChangedError`), the command refuses with
+`run.incompatible`, `details.divergent` (the first such step and its changed components) and
+`details.next` (the `--fork-from RUN --reuse matching --invalidate STEP` command). Status,
+fingerprint, output and `codeChanges` stay unchanged. `--dry-run --resume --accept-code-change`
+returns the same refusal, and check-resume stays body-free but points at that preview.
+
+The preflight fails open: completion, suspension, a refusal before the body, a rehearsal limitation
+(such as a Git worktree effect) or any other failure admits the real invocation, which reproduces
+any genuine problem itself. Synthesized outputs can steer the copy down another branch, and an
+answer delivered but not yet consumed is not copied, so a divergence past that point can still be
+missed; the real run then fails as before, now with the typed cause and the fork recipe. The
+preflight reads without the writer lock, so like check-resume it is a snapshot, not a reservation
+against concurrent writers. The workflow body, but no unfinished callback, runs once more per
+accepted resume. Embedded `runWorkflow({ acceptCodeChange: true })` callers get the typed
+`StepIdentityChangedError` cause but no preflight.

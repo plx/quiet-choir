@@ -207,14 +207,17 @@ recovery.
 matching completed effects; repeat `--invalidate 'reports/**'` to force chosen effects live.
 `--fork-state-dir` selects alternate source storage. Fork modifiers require `--fork-from`, which
 cannot be combined with `--resume`. `--accept-code-change` requires `--resume` and records accepted
-source/schema changes while retaining step checks. `--strict-replay` stops at the early ordering
-warning before live work. See [durability](durability.md#choose-a-recovery-path).
+source/schema changes while retaining step checks; when a completed step changed it refuses with
+`run.incompatible` before recording anything, and `error.details.next` holds the fork command.
+`--strict-replay` stops at the early ordering warning before live work. See
+[durability](durability.md#choose-a-recovery-path).
 
 `check-resume --json` emits `{kind, ok, check}` for a compatible report (exit 0). Incompatibility
 uses `workflow.error` with `error.code:"run.incompatible"` and the comparison in `error.details`
 (exit 3). Loading failures use `load.*` (exit 4); reading failures use `run.*` (exit 3). This is a
 run-level check, not a preview of future steps. Its `--accept-code-change` flag checks the explicit
-acceptance mode without saving that acceptance.
+acceptance mode without saving that acceptance; `execute --dry-run --resume --accept-code-change`
+previews the step checks.
 
 ## Agent admission flags
 

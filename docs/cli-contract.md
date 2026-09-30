@@ -94,10 +94,17 @@ late signal, or an answer that `workflow answer` already delivered. Inspect, val
 and check-resume report `workflow.interrupted` after a first signal even when their work finishes.
 
 `check-resume` incompatibility uses exit 3 with the full comparison in `error.details`. Its
-compatible success retains `check`. A missing run includes `details.stateDir`, sorted
-`details.available` (at most 20 IDs), and `details.count`. Storage resolves explicit options,
-environment, existing legacy runs, then the external XDG project default; relative explicit paths
-resolve against the launch directory.
+compatible success retains `check`. `execute --resume --accept-code-change` (and
+`resume --accept-code-change`) first replays the accepted body against a disposable copy of the
+record. When that replay reaches a completed or settled-failed step whose identity changed, the
+command refuses with `run.incompatible` (exit 3) before writing anything: `error.details.divergent`
+is `[{stepId, components}]` for the first such step, and `error.details.next` holds one argv array,
+`quiet-choir workflow execute FILE --fork-from RUN --reuse matching --invalidate STEP --run-id <NEW_RUN_ID> --state-dir DIR`,
+spelled like `resumeCommand` with a placeholder for the new run ID.
+`execute --dry-run --resume --accept-code-change` returns the same code, message and details. A
+missing run includes `details.stateDir`, sorted `details.available` (at most 20 IDs), and
+`details.count`. Storage resolves explicit options, environment, existing legacy runs, then the
+external XDG project default; relative explicit paths resolve against the launch directory.
 
 Workflow `console.log` and `process.stdout.write` during import/execution are redirected to stderr
 in JSON mode. `Run ID:`, debug logs, warnings, and human diagnostics also use stderr. Redirecting
@@ -125,8 +132,12 @@ not invent a saved run.
 
 `RunRefusedError` has a stable `run.*` code, run ID, plain details, and an optional underlying
 cause. `WorkflowInputError` has `usage.input_schema`, validation issues, and the validator cause.
-`isValidRunId` and `CliErrorCode` are exported for callers. `readRun` retains its low-level ENOENT
-contract. See [the changelog](../CHANGELOG.md) for the prototype API break.
+`StepIdentityChangedError` (a `WorkflowRunError` cause) names the `stepId`, changed `components` and
+terminal `status` of a replayed step whose identity changed; an embedded
+`runWorkflow({ resume: true, acceptCodeChange: true })` has no preflight, so it records the
+acceptance and then fails with this cause. `isValidRunId` and `CliErrorCode` are exported for
+callers. `readRun` retains its low-level ENOENT contract. See [the changelog](../CHANGELOG.md) for
+the prototype API break.
 
 `workflow typecheck` lists effective compiler flags in human output. JSON success includes
 `compilerOptions`; a typecheck failure includes it in `error.details`, alongside compiler version

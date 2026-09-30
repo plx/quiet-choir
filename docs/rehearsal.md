@@ -19,8 +19,9 @@ normal/default state directory is not created. Typechecking/importing still run 
 callbacks and top-level workflow code execute for real.** Temporary checkpoints do not undo their
 filesystem, subprocess, network, or external effects. Stub named local effects when needed:
 `--stub-steps 'publish/**' --stub-steps 'notify/*'`. These patterns match fully qualified IDs; `*`
-stays within a segment and `**` crosses segments. Matched callbacks receive synthesized results
-through their original Zod validation; unmatched callbacks run normally. Durable sleeps complete
+stays within a segment and `**` crosses segments. Matched callbacks, file reads/writes and poll
+observers receive synthesized results through their original Zod validation (a matched poll
+completes without calling its observer); unmatched callbacks run normally. Durable sleeps complete
 immediately. Rehearsal preserves capability/profile validation and still requires declared grants.
 
 ## Fixtures
@@ -118,6 +119,13 @@ unfinished effects use fixtures or synthesis. Source locks/process registries ar
 recovered. Fork sources remain read-only. `--accept-code-change` and `--strict-replay` retain their
 normal meanings. A preview deliberately allows the harness change only in its disposable copy; it
 never grants future native execution.
+
+`--dry-run --resume --accept-code-change` previews an accepted code change. When the replay reaches
+a completed or settled-failed step whose identity changed, it returns the same `run.incompatible`
+refusal as the real command, with `error.details.divergent` and `error.details.next` spelled for the
+real state directory (see [ADR 0006](decisions/0006-code-change-recovery.md)). The real command runs
+the same replay on its own before it changes anything, with every unfinished local step, file
+effect, poll observer and command stubbed and fixtures disabled.
 
 New records save `harness.kind`: `cli`, `fixture`, `dry-run`, `custom` for an unnamed embedded
 adapter, or `none` without an adapter. A different kind on resume or fork requires
