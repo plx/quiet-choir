@@ -176,5 +176,6 @@ it('doctor typechecks a trusted registry, forwards configuration, and invokes on
   await expect(
     executor.execute({ kind: 'configuration.doctor', cwd, workflow: path, harness: 'missing' }),
   ).rejects.toThrow('no declared harness missing');
-  // measured: 4.0 s alone, 16.5 s in the full coverage run (dominated by TypeScript compiles)
-}, 60_000);
+  // measured: 4.0 s alone, 16.5-39.1 s in local full coverage runs and 50.0 s on the Node 22.13 CI
+  // leg (dominated by TypeScript compiles)
+}, 100_000);

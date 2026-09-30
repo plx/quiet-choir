@@ -65,7 +65,8 @@ depended on the flush; the kill-based recovery cases still prove replay.
 
 Profile (macOS 27.0 on APFS, Node 26.8.1, Vitest 4.1.10, 56 test files in parallel; "before" is
 `e68aba0` with 55 files). Alone means the single test in a fresh run; full means a whole-suite run.
-Node 22 and 24 were not installed locally; CI covers them.
+The change was also run locally on Node 22.13.0 and 24.20.0 with coverage (all 1,047 tests passed;
+92-157 s wall on a machine shared with other builds).
 
 | Measurement                                  | Before, alone | Before, full run (no coverage / coverage) | After, alone | After, full coverage run (worst of 3) |
 | -------------------------------------------- | ------------- | ----------------------------------------- | ------------ | ------------------------------------- |
@@ -85,13 +86,20 @@ wall time is now dominated by TypeScript compiles in the loader, registry and ty
 same profile shows `journal.ts` persisting whole `MapRecord`s per settled item (quadratic journal
 bytes); that is tracked separately and does not affect the timeouts.
 
+Linux CI runners behave differently. On `e68aba0`'s CI run (ext4, about two Vitest workers), the
+fsync-heavy tests were already fast even with real syncs (144-leaf 1.5 s, 500 × 5 KiB 1.9 s), while
+the compile-dominated tests were slowest on the Node 22.13 leg: the heaviest replay-loader case took
+57.7 s, the registry doctor case 50.0 s, registry cache invalidation 30.6 s, tick 19.5 s, typecheck
+15.1 s and the loader 10.0 s. Those suites keep a raised value of about 2x their slowest CI time.
+
 Timeout rule: a test or suite timeout above Vitest's 5 s default needs an adjacent comment of the
 form `// measured: 1.2 s alone, 4.1 s in the full coverage run (dominated by tsImport compile)`.
-Measure in a full parallel `npm run test:coverage` run, remove the raise when the test fits the
-default with at least 3x headroom, and otherwise set the value to about 3x the measured full-run
-time. A timeout that flakes on a CI leg gets a new measured value and comment, not the old number.
-Subprocess, `tsImport`, typecheck and Git suites usually keep a raised value because compiles and
-process startup, not fsync, dominate them.
+Measure in a full parallel `npm run test:coverage` run and check the per-test durations in the CI
+log, where the Node 22.13 leg is usually slowest. Remove the raise when the test fits the default
+with at least 3x headroom, and otherwise set the value to about 3x the local full-run time and at
+least 2x the slowest CI leg. A timeout that flakes on a CI leg gets a new measured value and
+comment, not the old number. Subprocess, `tsImport`, typecheck and Git suites usually keep a raised
+value because compiles and process startup, not fsync, dominate them.
 
 ## Harness protocol captures
 

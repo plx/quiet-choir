@@ -120,9 +120,9 @@ afterEach(async () => {
 });
 
 // Each test spawns real tick-loader child processes against temporary fixtures.
-// measured: the slowest case takes 1.9 s alone and 5.1 s in the full coverage run (child Node
-// startup and tsImport compiles).
-describe('tick loader and operator hooks', { timeout: 20_000 }, () => {
+// measured: the slowest case takes 1.9 s alone, 5.1-13.4 s in local full coverage runs and 19.5 s on
+// the Node 22.13 CI leg (child Node startup and tsImport compiles).
+describe('tick loader and operator hooks', { timeout: 40_000 }, () => {
   it('resumes a due timer from its saved entrypoint and skips completed imports', async () => {
     const f = await fixture();
     expect(await tick.execute(f.tickPlan)).toMatchObject({

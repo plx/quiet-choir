@@ -108,9 +108,9 @@ describe('typecheck plan analysis', () => {
 });
 
 // Compiler integration tests share CI CPUs with the loader suites under coverage. measured: the
-// slowest case takes 1.2 s alone and 4.0 s in the full coverage run (full TypeScript programs). The
-// Node 22.13 CI runner has taken 5.2 s for a two-compile case that takes 1.4 s here.
-describe('TypeScriptExecutor', { timeout: 15_000 }, () => {
+// slowest case takes 1.2 s alone, 4.0-9.9 s in local full coverage runs and 15.1 s on the Node 22.13
+// CI leg (full TypeScript programs).
+describe('TypeScriptExecutor', { timeout: 30_000 }, () => {
   it('checks Node workflows with strict defaults and returns plain data', async () => {
     const root = await createFixture({
       'workflow.ts': [
