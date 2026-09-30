@@ -13,6 +13,7 @@ import {
 import { JournalWriter, readJournalRun } from '../src/workflow/runtime/journal.js';
 import { artifactName } from '../src/workflow/runtime/run-store.js';
 import { writeRun } from '../src/workflow/runtime/store.js';
+import { enableRealStorageSync } from './setup/durable-sync.js';
 
 vi.mock('node:fs/promises', async (importOriginal) => {
   const actual = await importOriginal<typeof fs>();
@@ -37,6 +38,7 @@ function deferred() {
 }
 
 it('group commits sibling completions before any effect promise resolves', async () => {
+  enableRealStorageSync();
   const syncing = deferred(),
     permit = deferred();
   let started = false,
@@ -551,6 +553,7 @@ it('does not let a dead legacy lock bypass a live directory owner', async () => 
 it.each(['partial-write', 'flush'])(
   'retries a %s failure without repeating a successful action',
   async (failure) => {
+    if (failure === 'flush') enableRealStorageSync();
     let ready = false,
       injected = false,
       calls = 0;
