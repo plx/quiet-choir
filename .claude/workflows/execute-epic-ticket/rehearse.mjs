@@ -436,14 +436,14 @@ async function rehearse(scenario) {
                 ? 'slices'
                 : 'unknown';
     const ticket = Number(/#(\d+)/.exec(label)?.[1] ?? 0);
-    const scripted = await scriptedResult(kind, ticket, prompt, opts);
+    const scripted = await scriptedResult(kind, ticket, prompt, opts, label);
     if (opts.schema && scripted !== null) {
       const problem = conforms(opts.schema, scripted);
       assert.equal(problem, null, `agent "${label}" result violates its schema: ${problem}`);
     }
     return scripted;
   };
-  const scriptedResult = async (kind, ticket, prompt, opts) => {
+  const scriptedResult = async (kind, ticket, prompt, opts, label) => {
     const handler = scenario.agents?.[kind];
     if (handler) return handler({ ticket, n: nth(`${kind}:${ticket}`), prompt, opts, world });
     switch (kind) {

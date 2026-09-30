@@ -431,6 +431,7 @@ const survey = await one(
 if (survey.error) return blocked('survey', survey.error);
 const REPO = survey.repo;
 const DEF = survey.defaultBranch;
+if (survey.tool) TOOL = survey.tool;
 record.epicTitle = survey.epic.title;
 record.remaining = survey.counts;
 log(

@@ -774,6 +774,9 @@ export function compactSurvey(result, limit = 3) {
   delete rest.items;
   return {
     ...rest,
+    // Absolute path of this script, so prompts can name a command that works from any directory
+    // (implementers run inside the ticket worktree, where the relative path does not exist).
+    ...(result.paths?.toolsDir ? { tool: join(result.paths.toolsDir, 'epic.mjs') } : {}),
     items: open.map((i) => ({
       number: i.number,
       status: i.status,
