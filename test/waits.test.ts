@@ -142,7 +142,7 @@ it('keeps one bounded wait record across hundreds of nonterminal observations', 
     sizes.push((await readFile(join(stateDir, id, 'run.json'))).length);
   }
   expect(Math.abs((sizes[1] ?? 0) - (sizes[0] ?? 0))).toBeLessThan(100);
-}, 20_000);
+});
 
 it.each(['signal', 'late-signal', 'late-poll'] as const)(
   'resolves %s using recorded source precedence',
@@ -332,7 +332,7 @@ it('drains active siblings after body failure even with a blocked wait inside a 
   ).rejects.toThrow('initiating failure');
   expect(finished).toBe(true);
   expect((await readRun({ stateDir, runId: 'drain' })).steps['sibling']?.status).toBe('completed');
-}, 5_000);
+});
 
 it('rejects nested context operations in poll observers before their actions run', async () => {
   let calls = 0;

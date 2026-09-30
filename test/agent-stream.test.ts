@@ -241,9 +241,11 @@ it.each(['rejected', 'resolved'] as const)(
     expect(attempt.error).toContain('Transcript close did not settle within 2000ms');
     expect(attempt.transcript).toMatchObject({ path: 'memory:stalled', retained: true });
   },
+  // measured: 2.0 s alone and in the full coverage run (it waits out the 2 s transcript deadline)
   10_000,
 );
 
+// measured: 2.0 s alone and in the full coverage run (it waits out the 2 s transcript deadline)
 it('bounds a stalled on-failure discard after the committed success', async () => {
   const definition = defineWorkflow({
     ...base,

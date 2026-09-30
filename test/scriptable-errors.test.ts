@@ -252,9 +252,10 @@ it('renders explicit empty context for pre-run failures and reserves exit 1 for 
   expect(workflowExitCodes['workflow.storage']).toBe(74);
 });
 
+// measured: 0.5 s alone, 1.9 s in the full coverage run (real compiler passes)
 it(
   'classifies a lock setup I/O failure through the executor as workflow.storage/74',
-  { timeout: 20_000 },
+  { timeout: 10_000 },
   async () => {
     const root = join(stateDir, 'workflow-lock');
     await mkdir(root);
@@ -291,10 +292,10 @@ export default defineWorkflow({
   },
 );
 
-// Real compiler passes can exceed five seconds under coverage on shared CI runners.
+// measured: 1.2 s alone, 2.7 s in the full coverage run (real compiler passes)
 it(
   'keeps a failed cancellation save as a storage failure when an interrupt also occurs',
-  { timeout: 20_000 },
+  { timeout: 10_000 },
   async () => {
     const root = join(stateDir, 'workflow');
     await mkdir(root);
@@ -354,9 +355,10 @@ export default defineWorkflow({
   },
 );
 
+// measured: 0.4 s alone, 1.7 s in the full coverage run (real compiler passes)
 it(
   'keeps a saved failed checkpoint as a workflow failure when a signal also arrives',
-  { timeout: 20_000 },
+  { timeout: 10_000 },
   async () => {
     const root = join(stateDir, 'workflow');
     await mkdir(root);

@@ -26,9 +26,9 @@ afterEach(async () => {
 });
 
 it('explicit abort cancels a waiting map sibling immediately and retains the first mapper failure', async () => {
-  // The sibling waits on a 10s timer; give the deadlock detector a generous
-  // margin so CPU contention from other concurrently-run test files cannot
-  // produce a false "deadlocked" result before the real rejection propagates.
+  // The sibling waits on a 10s timer; the 2s deadlock detector is far past the measured run time
+  // (0.03 s alone, 0.2 s in the full coverage run) so CPU contention from other test files cannot
+  // produce a false "deadlocked" result, and it still fires inside the default 5s test timeout.
   const stateDir = await directory();
   let markReady = (): void => undefined;
   const ready = new Promise<void>((resolve) => {
@@ -80,7 +80,7 @@ it('explicit abort cancels a waiting map sibling immediately and retains the fir
       () => 'unexpected success',
       (error: unknown) => (error instanceof Error ? error.message : String(error)),
     ),
-    delay(5_000).then(() => 'deadlocked'),
+    delay(2_000).then(() => 'deadlocked'),
   ]);
   controller.abort();
   await invocation.catch(() => undefined);
@@ -88,7 +88,7 @@ it('explicit abort cancels a waiting map sibling immediately and retains the fir
   expect(siblingDrained).toBe(true);
   expect(thirdStarted).toBe(false);
   expect((await readRun({ stateDir, runId: 'map' })).error).toBe('first mapper failed');
-}, 15_000);
+});
 
 it('snapshots mutable agent options before saving and invoking the harness', async () => {
   const stateDir = await directory();

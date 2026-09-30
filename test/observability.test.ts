@@ -377,7 +377,7 @@ it('caps event payloads and deduplicates entries even after the original occurre
   expect(
     run.events?.filter((event) => event.type === 'log').every((event) => event.execution === 1),
   ).toBe(true);
-}, 60_000);
+});
 
 it('validates observations and owns unawaited scoped failures without suppressing later logs', async () => {
   await expect(

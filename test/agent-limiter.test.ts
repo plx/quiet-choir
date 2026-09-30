@@ -146,62 +146,56 @@ it.each([
   { dimensions: [4, 3], limit: 5 },
   { dimensions: [6, 8, 3], limit: 2 },
   { dimensions: [12], limit: undefined },
-])(
-  'caps nested maps $dimensions at $limit without deadlock',
-  async ({ dimensions, limit }) => {
-    const cap = limit ?? defaultAgentLimits().total;
-    let active = 0,
-      peak = 0,
-      calls = 0;
-    const wave = deferred();
-    const invoke = vi.fn<Harness['invoke']>().mockImplementation(async () => {
-      calls++;
-      active++;
-      peak = Math.max(peak, active);
-      if (active === cap) wave.resolve();
-      try {
-        await wave.promise;
-        await delay(5);
-        return reply;
-      } finally {
-        active--;
-      }
-    });
-    const definition = defineWorkflow({
-      ...base,
-      async run(ctx) {
-        const visit = async (depth: number): Promise<void> => {
-          if (depth === dimensions.length) {
-            await ctx.claude.text('agent', { prompt: 'x' });
-            return;
-          }
-          const count = dimensions[depth] ?? 0;
-          await ctx.map(
-            'level',
-            Array.from({ length: count }, (_, i) => i),
-            { concurrency: count },
-            async () => {
-              await visit(depth + 1);
-            },
-          );
-        };
-        await visit(0);
-        return calls;
-      },
-    });
-    const result = await runWorkflow(definition, {
-      ...options(),
-      harness: { invoke },
-      ...(limit === undefined ? {} : { agentLimit: limit }),
-    });
-    expect(result.output).toBe(dimensions.reduce((a, b) => a * b, 1));
-    expect(peak).toBe(cap);
-    expect(active).toBe(0);
-  },
-  // The 144-leaf case serializes several fsynced checkpoint writes per step (about 5s locally);
-  // coverage and parallel suites stretch that past 15s. A deadlock still fails this budget.
-  60_000,
-);
+])('caps nested maps $dimensions at $limit without deadlock', async ({ dimensions, limit }) => {
+  const cap = limit ?? defaultAgentLimits().total;
+  let active = 0,
+    peak = 0,
+    calls = 0;
+  const wave = deferred();
+  const invoke = vi.fn<Harness['invoke']>().mockImplementation(async () => {
+    calls++;
+    active++;
+    peak = Math.max(peak, active);
+    if (active === cap) wave.resolve();
+    try {
+      await wave.promise;
+      await delay(5);
+      return reply;
+    } finally {
+      active--;
+    }
+  });
+  const definition = defineWorkflow({
+    ...base,
+    async run(ctx) {
+      const visit = async (depth: number): Promise<void> => {
+        if (depth === dimensions.length) {
+          await ctx.claude.text('agent', { prompt: 'x' });
+          return;
+        }
+        const count = dimensions[depth] ?? 0;
+        await ctx.map(
+          'level',
+          Array.from({ length: count }, (_, i) => i),
+          { concurrency: count },
+          async () => {
+            await visit(depth + 1);
+          },
+        );
+      };
+      await visit(0);
+      return calls;
+    },
+  });
+  const result = await runWorkflow(definition, {
+    ...options(),
+    harness: { invoke },
+    ...(limit === undefined ? {} : { agentLimit: limit }),
+  });
+  expect(result.output).toBe(dimensions.reduce((a, b) => a * b, 1));
+  expect(peak).toBe(cap);
+  expect(active).toBe(0);
+});
 
 it('shares one limiter across two simultaneously executing runs', async () => {
   const limiter = createAgentLimiter({ total: 2 });

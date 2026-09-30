@@ -144,7 +144,7 @@ it('writes less than ten times the final state for 500 local 5KB results at conc
   const final = (await fs.stat(join(stateDir, 'bytes', 'run.json'))).size;
   expect(bytes).toBeLessThan(final * 10);
   expect(await fs.readFile(join(stateDir, 'bytes', 'journal.jsonl'), 'utf8')).toBe('');
-}, 20_000);
+});
 
 it('ignores a torn final journal line and repairs it before the next owner appends', async () => {
   let fail = true,
@@ -338,7 +338,6 @@ it.each([3, 11, 29])(
     for (const id of acknowledged) expect(actions.filter((value) => value === id)).toHaveLength(1);
     expect((await readRun({ stateDir, runId: 'crash' })).output).toBe(80);
   },
-  20_000,
 );
 
 it('recovers a crash after the old-binary guard but before the first directory snapshot', async () => {
