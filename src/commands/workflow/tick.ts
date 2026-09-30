@@ -29,7 +29,8 @@ export default class WorkflowTick extends WorkflowCommand {
 
     'state-dir': Flags.directory({ description: 'Runs container; defaults to project state' }),
     run: Flags.string({
-      description: 'Only this run; exit 0 completed, 75 pending, or 1 failed/incompatible',
+      description:
+        'Only this run; exit 0 completed, 75 pending/locked/running, or 1 failed/cancelled/incompatible/unreadable',
     }),
     watch: Flags.boolean({ description: 'Wait for deadlines or inbox deliveries until timeout' }),
     timeout: Flags.string({
@@ -88,10 +89,17 @@ export default class WorkflowTick extends WorkflowCommand {
     this.output(
       result,
       [
-        `Resumed ${String(result.resumed)}; completed ${String(result.completed.length)}; suspended ${String(result.suspended.length)}.`,
-        ...result.failed.map(({ runId, message }) => `${runId}: failed: ${message}`),
-        ...result.incompatible.map(({ runId, message }) => `${runId}: incompatible: ${message}`),
-        ...result.skipped.map(({ runId, reason }) => `${runId}: ${reason}`),
+        `Resumed ${String(result.resumed.length)}; skipped ${String(result.skipped.length)}; observed ${String(result.observed)}.`,
+        ...result.resumed.map(
+          ({ runId, outcome, message, nextWakeAt }) =>
+            `${runId}: ${outcome}${message === undefined ? '' : `: ${message}`}${
+              nextWakeAt == null ? '' : ` (next wake ${new Date(nextWakeAt).toISOString()})`
+            }`,
+        ),
+        ...result.skipped.map(
+          ({ runId, reason, message }) =>
+            `${runId}: skipped: ${reason}${message === undefined ? '' : `: ${message}`}`,
+        ),
       ].join('\n'),
     );
     process.exitCode = result.exitCode;

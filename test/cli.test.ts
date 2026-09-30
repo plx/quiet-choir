@@ -932,12 +932,14 @@ describe('tick command exit and error codes', () => {
   const tickResult = (exitCode: 0 | 75 | 1): TickWorkflowsResult => ({
     kind: 'workflow.tick.result',
     ok: true,
-    resumed: 1,
-    completed: exitCode === 0 ? ['run-a'] : [],
-    suspended: exitCode === 75 ? [{ runId: 'run-a', nextWakeAt: null }] : [],
-    failed: exitCode === 1 ? [{ runId: 'run-a', message: 'It broke.' }] : [],
-    skipped: [],
-    incompatible: [],
+    resumed:
+      exitCode === 0
+        ? [{ runId: 'run-a', outcome: 'completed' }]
+        : exitCode === 1
+          ? [{ runId: 'run-a', outcome: 'failed', message: 'It broke.' }]
+          : [],
+    skipped: exitCode === 75 ? [{ runId: 'run-a', reason: 'locked' }] : [],
+    observed: 0,
     exitCode,
   });
 
@@ -952,8 +954,34 @@ describe('tick command exit and error codes', () => {
     expect(execute).toHaveBeenCalledWith(
       expect.objectContaining({ kind: 'workflow.tick', stateDir, watch: false }),
     );
-    expect(output.stdout).toContain('Resumed 1;');
+    expect(output.stdout).toContain(
+      exitCode === 75
+        ? 'Resumed 0; skipped 1; observed 0.\nrun-a: skipped: locked'
+        : 'Resumed 1; skipped 0; observed 0.',
+    );
+    if (exitCode === 0) expect(output.stdout).toContain('run-a: completed');
     if (exitCode === 1) expect(output.stdout).toContain('run-a: failed: It broke.');
+  });
+
+  it('renders a suspended outcome with its next wake and a skip with its message', async () => {
+    const stateDir = await stateDirectory();
+    vi.spyOn(TickWorkflowExecutor.prototype, 'execute').mockResolvedValue({
+      kind: 'workflow.tick.result',
+      ok: true,
+      resumed: [{ runId: 'run-a', outcome: 'suspended', nextWakeAt: Date.UTC(2030, 0, 1) }],
+      skipped: [{ runId: 'run-b', reason: 'incompatible', message: 'Changed.' }],
+      observed: 2,
+      exitCode: 0,
+    });
+    const output = await captureCommand(WorkflowTick, ['--state-dir', stateDir]);
+    expect(output.error).toBeUndefined();
+    expect(output.stdout).toContain(
+      [
+        'Resumed 1; skipped 1; observed 2.',
+        'run-a: suspended (next wake 2030-01-01T00:00:00.000Z)',
+        'run-b: skipped: incompatible: Changed.',
+      ].join('\n'),
+    );
   });
 
   it('renders the tick result as JSON', async () => {
