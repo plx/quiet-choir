@@ -63,15 +63,17 @@ replacement input is usage failure; valid but changed input is `run.input_change
 An ordinary interrupt drains owned work and saves `cancelled` when storage permits. A second signal
 kills tracked groups and writes the last readable checkpoint synchronously before exit 130;
 `error.details.forced` is true and `status` may still be `running`. SIGKILL, process crashes, and a
-closed output pipe cannot deliver a JSON document. Storage failures use exit 74 so that a failed
-save never masquerades as exit 1, and a storage failure during an interrupt keeps exit 74 rather
-than 130 because the cancellation checkpoint may not have been saved. A run whose saved status is
-`failed` reports `workflow.failed` (exit 1) even when a signal arrived, because the runner saves
-`cancelled` only when the interrupt caused the failure. Saved completion with a known cleanup
-warning still succeeds under the [process ownership contract](process-lifecycle.md), as does a
-completion or suspension (exit 75) that `execute`, `resume`, or `answer --resume` saved before a
-late signal, or an answer that `workflow answer` already delivered. Inspect, validate, typecheck,
-and check-resume report `workflow.interrupted` after a first signal even when their work finishes.
+closed output pipe cannot deliver a JSON document. Failure documents, like success documents, are
+written in full before the process exits, including when stdout is a pipe. Storage failures use exit
+74 so that a failed save never masquerades as exit 1, and a storage failure during an interrupt
+keeps exit 74 rather than 130 because the cancellation checkpoint may not have been saved. A run
+whose saved status is `failed` reports `workflow.failed` (exit 1) even when a signal arrived,
+because the runner saves `cancelled` only when the interrupt caused the failure. Saved completion
+with a known cleanup warning still succeeds under the
+[process ownership contract](process-lifecycle.md), as does a completion or suspension (exit 75)
+that `execute`, `resume`, or `answer --resume` saved before a late signal, or an answer that
+`workflow answer` already delivered. Inspect, validate, typecheck, and check-resume report
+`workflow.interrupted` after a first signal even when their work finishes.
 
 `check-resume` incompatibility uses exit 3 with the full comparison in `error.details`. Its
 compatible success retains `check`. A missing run includes `details.stateDir`, sorted
