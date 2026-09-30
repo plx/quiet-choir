@@ -2902,11 +2902,15 @@ export async function runWorkflow<
           record.output = null;
           warnUnmatched();
           const priorEvents = [...(record.events ?? [])];
+          // A clean suspension ends a crash loop; tick's counter restarts on the next stale recovery.
+          const priorStaleRecovery = record.staleRecovery;
+          delete record.staleRecovery;
           const suspended = observations.lifecycle('run.suspended');
           try {
             await save();
           } catch (error) {
             record.events = priorEvents;
+            if (priorStaleRecovery) record.staleRecovery = priorStaleRecovery;
             throw error;
           }
           notify({
@@ -2969,12 +2973,15 @@ export async function runWorkflow<
       if (!options.rehearsal) await worktrees.cleanup(true);
       record.status = 'completed';
       const priorEvents = [...(record.events ?? [])];
+      const priorStaleRecovery = record.staleRecovery;
+      delete record.staleRecovery;
       const completed = observations.lifecycle('run.completed');
       try {
         await save();
       } catch (error) {
         // A later failure snapshot must not claim that an uncommitted completion happened.
         record.events = priorEvents;
+        if (priorStaleRecovery) record.staleRecovery = priorStaleRecovery;
         throw error;
       }
       notify({ ...completed, message: 'Run completed.', attempt: 0, runId: record.id });

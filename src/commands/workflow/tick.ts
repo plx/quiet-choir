@@ -20,7 +20,7 @@ interface TickFlags {
 
 export default class WorkflowTick extends WorkflowCommand {
   public static override readonly summary =
-    'Resume due suspended runs; optionally watch for a bounded duration';
+    'Resume due suspended runs and recover crashed ones; optionally watch for a bounded duration';
   public static override readonly flags: Interfaces.FlagInput<TickFlags> = {
     'notify-command': Flags.string({
       description: 'Best-effort sh -c hook receiving event JSON on stdin',
@@ -30,7 +30,7 @@ export default class WorkflowTick extends WorkflowCommand {
     'state-dir': Flags.directory({ description: 'Runs container; defaults to project state' }),
     run: Flags.string({
       description:
-        'Only this run; exit 0 completed, 75 pending/locked/running, or 1 failed/cancelled/incompatible/unreadable',
+        'Only this run; exit 0 completed, 75 pending/locked/orphans, or 1 failed/cancelled/incompatible/unreadable/crash-loop',
     }),
     watch: Flags.boolean({ description: 'Wait for deadlines or inbox deliveries until timeout' }),
     timeout: Flags.string({

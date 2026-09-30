@@ -14,6 +14,7 @@ import {
   type StepRecord,
 } from '../runtime/store.js';
 import { summarizeUsage } from '../runtime/usage-summary.js';
+import { classifyRecovery } from '../runtime/recovery-decision.js';
 import type { RequestSummary, RunEvent, UsageSummary } from '../runtime/observability-model.js';
 import type { ChildRecord } from '../runtime/child-model.js';
 
@@ -85,13 +86,9 @@ export interface RunInspection {
   readonly summary: RunSummary;
 }
 
+/** A running run whose owner is gone: no lock, or a dead or released owner, whatever its children. */
 function stale(run: RunRecord, ownership: RunOwnership): boolean {
-  return (
-    run.status === 'running' &&
-    (!ownership.locked ||
-      ownership.owner?.state === 'dead' ||
-      ownership.owner?.state === 'released')
-  );
+  return run.status === 'running' && classifyRecovery(ownership) !== 'held';
 }
 
 function summarizeChildren(run: RunRecord): RunSummary['children'] {

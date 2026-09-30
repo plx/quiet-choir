@@ -7,6 +7,13 @@ import { inspectRunOwnership, type RunRecord } from '../runtime/store.js';
 import { readRequiredRun } from '../runtime/read-required-run.js';
 import { isValidRunId, runIdMessage, RunRefusedError } from '../runtime/run-errors.js';
 import { clockNow, systemClock } from '../runtime/clock.js';
+import { OrphanProcessesError } from '../runtime/process-registry.js';
+import {
+  classifyRecovery,
+  countCompletedSteps,
+  crashLoopMessage,
+  decideStaleRecovery,
+} from '../runtime/recovery-decision.js';
 import { WorkflowExecutor, type WorkflowExecutorOptions } from './executor.js';
 import { workflowFailure, type WorkflowFailure } from './failure.js';
 import type { HarnessSelection } from './harness-selection.js';
@@ -37,15 +44,20 @@ export interface TickResumedEntry {
   readonly message?: string;
 }
 
-/** Why this tick left a run alone. @internal */
+/**
+ * Why this tick left a run alone. `locked`: a live, unknown or remote owner, incomplete lock
+ * metadata, or a lock recovery in progress. `orphans`: the owner is gone, but a child process is
+ * alive or unverified. `crash-loop`: the run was already recovered from a stale `running` state
+ * the maximum number of consecutive times without completing a new step. @internal
+ */
 export type TickSkipReason =
-  'not due' | 'no longer due' | 'locked' | 'running' | 'incompatible' | 'unreadable';
+  'not due' | 'no longer due' | 'locked' | 'orphans' | 'crash-loop' | 'incompatible' | 'unreadable';
 
 /** One run this tick inspected but did not resume. @internal */
 export interface TickSkippedEntry {
   readonly runId: string;
   readonly reason: TickSkipReason;
-  /** Present for incompatible and unreadable runs. */
+  /** Present for orphans, crash-loop, incompatible and unreadable runs. */
   readonly message?: string;
   /** Present for runs that are not due or no longer due. */
   readonly nextWakeAt?: number | null;
@@ -66,8 +78,8 @@ export interface TickWorkflowsResult extends ExecutionResult {
   readonly observed: number;
   /**
    * Batch operation returns 0. With --run: 0 when the run completed, in this tick or before; 1 when
-   * it failed, was cancelled, or is incompatible or unreadable; 75 when it is still pending (not due,
-   * no longer due, suspended again, locked, or running).
+   * it failed, was cancelled, or is incompatible, unreadable or crash-looping; 75 when it is still
+   * pending (not due, no longer due, suspended again, locked, or blocked by orphan processes).
    */
   readonly exitCode: 0 | 75 | 1;
 }
@@ -110,11 +122,18 @@ function resumeOutcome(
   throw new Error('Tick resume returned an unexpected result.');
 }
 
-/** The --run exit code implied by one classification of the run. */
+/**
+ * The --run exit code implied by one classification of the run. Crash-loop is final, like an
+ * incompatible run; orphans stay pending because live children may still exit.
+ */
 function exitFor(entry: TickEntry): 0 | 75 | 1 {
   if (entry.type === 'observed') return entry.status === 'completed' ? 0 : 1;
   if (entry.type === 'skipped')
-    return entry.entry.reason === 'incompatible' || entry.entry.reason === 'unreadable' ? 1 : 75;
+    return entry.entry.reason === 'incompatible' ||
+      entry.entry.reason === 'unreadable' ||
+      entry.entry.reason === 'crash-loop'
+      ? 1
+      : 75;
   const { outcome } = entry.entry;
   return outcome === 'completed' ? 0 : outcome === 'suspended' ? 75 : 1;
 }
@@ -265,15 +284,29 @@ export class TickWorkflowExecutor implements Executor<
     const skip = (runId: string, reason: TickSkipReason, extra: Partial<TickSkippedEntry> = {}) => {
       record(runId, { type: 'skipped', entry: { runId, reason, ...extra } });
     };
-    /** Record a run that cannot be resumed now; returns false when it is due. */
+    /**
+     * Record a run that cannot be resumed now; returns false when it is due or stale. A `running`
+     * run is stale only once its owner is known to be gone, which the caller checks separately.
+     */
     const classify = async (run: RunRecord, notDue: 'not due' | 'no longer due') => {
       const terminal = terminalStatus(run);
       if (terminal !== undefined) record(run.id, { type: 'observed', status: terminal });
-      else if (run.status === 'running') skip(run.id, 'running');
+      else if (run.status === 'running') return false;
       else if (!(await due(run, plan.stateDir, clockNow(clock))))
         skip(run.id, notDue, { nextWakeAt: run.nextWakeAt ?? null });
       else return false;
       return true;
+    };
+    /** Skip a stale run that already reached the crash-loop cap; returns the decision otherwise. */
+    const staleDecision = (run: RunRecord) => {
+      const decision = decideStaleRecovery(
+        run.staleRecovery,
+        countCompletedSteps(run),
+        new Date(clockNow(clock)).toISOString(),
+      );
+      if (decision.kind === 'crash-loop')
+        skip(run.id, 'crash-loop', { message: crashLoopMessage(run.id, decision.count) });
+      return decision;
     };
     try {
       for (;;) {
@@ -286,10 +319,21 @@ export class TickWorkflowExecutor implements Executor<
           try {
             let run = await readRequiredRun({ stateDir: plan.stateDir, runId: id });
             if (await classify(run, 'not due')) continue;
-            if ((await inspectRunOwnership({ stateDir: plan.stateDir, runId: id })).locked) {
+            // A running run reaching here is a stale-recovery candidate and bypasses due().
+            const ownership = await inspectRunOwnership({ stateDir: plan.stateDir, runId: id });
+            const recovery = classifyRecovery(ownership);
+            if (recovery === 'held') {
               skip(id, 'locked');
               continue;
             }
+            if (recovery === 'orphans') {
+              skip(id, 'orphans', {
+                message: new OrphanProcessesError(id, ownership.processes).message,
+              });
+              continue;
+            }
+            // Leave a crash-looping run, and any dead lock it holds, untouched.
+            if (run.status === 'running' && staleDecision(run).kind === 'crash-loop') continue;
             if (!run.launch || (await questionCodeChanged(run)) !== false) {
               skip(id, 'incompatible', {
                 message: run.launch
@@ -298,6 +342,7 @@ export class TickWorkflowExecutor implements Executor<
               });
               continue;
             }
+            // Ordinary lock recovery reclaims a dead or released owner; orphans are never killed.
             const owned = await store.open(id, {
               cwd: run.cwd,
               signal,
@@ -316,6 +361,17 @@ export class TickWorkflowExecutor implements Executor<
                 message: 'Stored workflow source hashes are missing or changed.',
               });
               continue;
+            }
+            // Still running under our ownership: the previous owner is provably gone. Count the
+            // recovery durably before resuming, so a run that crashes every time stops at the cap.
+            if (latest.status === 'running') {
+              const decision = staleDecision(latest);
+              if (decision.kind === 'crash-loop') continue;
+              latest.staleRecovery = decision.staleRecovery;
+              await owned.append(latest, {
+                durable: true,
+                context: 'Could not save stale recovery count',
+              });
             }
             executing = true;
             let result: Awaited<ReturnType<WorkflowExecutor['execute']>>;
@@ -342,6 +398,8 @@ export class TickWorkflowExecutor implements Executor<
             const message = error instanceof Error ? error.message : String(error);
             if (executing)
               record(id, { type: 'resumed', entry: { runId: id, outcome: 'failed', message } });
+            // Children appeared or stayed unverified between inspection and lock recovery.
+            else if (error instanceof OrphanProcessesError) skip(id, 'orphans', { message });
             else if (error instanceof RunRefusedError && error.code === 'run.locked')
               skip(id, 'locked');
             else skip(id, 'unreadable', { message });
