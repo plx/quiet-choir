@@ -34,8 +34,9 @@ import { RunWorktrees } from '../src/workflow/runtime/worktrees.js';
 import { repairWorktreeRegistrations } from '../src/workflow/runtime/worktree-recovery.js';
 import { testInvocation } from './harness-invocation.js';
 
-// Every test drives real Git processes. The default timeout suffices for most; the five slowest
-// cases carry their own measured value below.
+// Every test drives real Git processes. measured: 0.4-1.5 s per case on the CI legs, up to 1.3 s
+// alone and 3.1 s in local full coverage runs on a loaded machine (dominated by Git processes).
+vi.setConfig({ testTimeout: 10_000 });
 
 let directory: string, repo: string, stateDir: string, root: string;
 const processRunner = new NodeProcessRunner();
@@ -142,8 +143,6 @@ it.each(['claude', 'codex'] as const)(
     expect(invoke).toHaveBeenCalledTimes(2);
     expect(runGit).not.toHaveBeenCalled();
   },
-  // measured: 1.7 s in the full coverage run (0.8 s alone), dominated by real Git processes
-  10_000,
 );
 
 it('maps monorepo cwd, warns about dirty source files, and snapshots only committed baseline plus edits', async () => {
@@ -179,7 +178,6 @@ it('maps monorepo cwd, warns about dirty source files, and snapshots only commit
   expect(run.steps['edit']?.worktree?.files).toEqual([{ path: 'packages/a/new', status: 'added' }]);
 });
 
-// measured: 1.2 s alone, 2.5 s in the full coverage run (dominated by real Git processes)
 it('never overlaps worktree administration for concurrent isolated calls', async () => {
   let active = 0,
     overlap = 0;
@@ -234,7 +232,7 @@ it('never overlaps worktree administration for concurrent isolated calls', async
   });
   expect(result.output).toBe(0);
   expect(overlap).toBe(0);
-}, 10_000);
+});
 
 it('keys worktree administration by the shared common Git directory across linked checkouts', async () => {
   const linked = join(directory, 'linked');
@@ -299,7 +297,6 @@ it('keys worktree administration by the shared common Git directory across linke
   expect(overlap).toBe(0);
 });
 
-// measured: 0.9 s alone, 2.4 s in the full coverage run (dominated by real Git processes)
 it('serializes shared effects, resets failed attempts, retains ignored dependencies, and rebuilds missing caches', async () => {
   let handle: WorktreeHandle | undefined;
   let fail = true,
@@ -378,9 +375,8 @@ it('serializes shared effects, resets failed attempts, retains ignored dependenc
   expect(setups).toBe(6);
   expect(await readFile(join(repo, 'file.txt'), 'utf8')).toBe('base\n');
   expect((await command('worktree', 'list', '--porcelain')).match(/^worktree /gmu)).toHaveLength(1);
-}, 10_000);
+});
 
-// measured: 0.7 s alone, 2.2 s in the full coverage run (dominated by real Git processes)
 it('does not advance a shared baseline when capture fails before effect completion', async () => {
   // eslint-disable-next-line @typescript-eslint/unbound-method -- Rebound to each manager with apply below.
   const prepare = RunWorktrees.prototype.prepare;
@@ -432,7 +428,7 @@ it('does not advance a shared baseline when capture fails before effect completi
   const resumed = await runWorkflow(workflow, { ...options('capture-boundary'), resume: true });
   expect(await command('show', `${String(resumed.output)}:file.txt`)).toBe('base\nonce');
   expect(await readFile(join(repo, 'file.txt'), 'utf8')).toBe('base\n');
-}, 10_000);
+});
 
 it('composes inherited configuration with both legacy and explicit checkout selection', async () => {
   const received: string[] = [];
@@ -720,8 +716,6 @@ it.each(['rebase', 'merge', 'squash'] as const)(
     });
     expect(replay.output).toEqual(completed.output);
   },
-  // measured: 2.4 s in the full coverage run (0.8 s alone), dominated by real Git processes
-  10_000,
 );
 
 it('merges the latest shared handle into an unoccupied branch without touching HEAD', async () => {

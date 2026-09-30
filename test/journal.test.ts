@@ -144,7 +144,9 @@ it('writes less than ten times the final state for 500 local 5KB results at conc
   const final = (await fs.stat(join(stateDir, 'bytes', 'run.json'))).size;
   expect(bytes).toBeLessThan(final * 10);
   expect(await fs.readFile(join(stateDir, 'bytes', 'journal.jsonl'), 'utf8')).toBe('');
-});
+  // measured: 0.5 s alone, 1.5-2.3 s in local full coverage runs and 1.9 s on the Node 22.13 CI leg
+  // (dominated by serializing the growing map record into the journal)
+}, 10_000);
 
 it('ignores a torn final journal line and repairs it before the next owner appends', async () => {
   let fail = true,
@@ -338,6 +340,9 @@ it.each([3, 11, 29])(
     for (const id of acknowledged) expect(actions.filter((value) => value === id)).toHaveLength(1);
     expect((await readRun({ stateDir, runId: 'crash' })).output).toBe(80);
   },
+  // measured: 1.1 s alone, 1.6-1.9 s in local full coverage runs and 1.7 s on the Node 22.13 CI leg,
+  // but over 5 s in a full run on a heavily loaded machine (two forked tsx children with real fsync)
+  20_000,
 );
 
 it('recovers a crash after the old-binary guard but before the first directory snapshot', async () => {
