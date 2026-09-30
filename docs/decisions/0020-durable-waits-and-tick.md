@@ -44,6 +44,10 @@ with the completed-step baseline. Three consecutive recoveries without a new com
 automatic recovery until an explicit resume; a clean suspension or completion removes the counter.
 Only tick writes it, under ownership; the stale status itself stays derived.
 
+Tick's deadline interrupts in-flight resumes into resumable suspensions that are due at once, and a
+claim margin (default 10% of the timeout) stops new claims near the deadline, reporting ready runs
+as skipped `deadline`. See [ADR 0029](0029-persist-interruptions-as-resumable-suspensions.md).
+
 Operator shell hooks receive committed wait-open and run lifecycle events. A persisted notifiedAt
 marker deduplicates first-open attempts; delivery is best-effort and can be lost across a crash.
 Hook failures cannot change workflow outcomes. Business messages remain explicit idempotent steps.

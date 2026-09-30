@@ -37,11 +37,13 @@ pipe. JSON mode is **JSONL**, one document per checkpoint/ownership change; elap
 not produce another line. Use `--summary` for compact status snapshots. Intermediate writes between
 polls can be missed: this is an inspection loop, not a durable event stream.
 
-Watch ends with a final snapshot and exits 0 for completed, 1 for failed, 130 for cancelled, or 3
-for stale. It emits no extra error document merely because the observed run failed. A missing or
-unreadable run uses the ordinary JSON error contract. Interrupting the watcher exits 130 with an
-error document after any prior snapshots, and leaves the observed workflow running. Non-watching
-inspection exits 0 for every readable status. Exit 75 remains reserved for future suspension.
+Watch ends with a final snapshot and exits 0 for completed, 1 for failed, 75 for suspended, 130 for
+cancelled, or 3 for stale. A run interrupted by a first signal or a tick deadline is saved as a
+resumable suspension, so its watcher ends as suspended with exit 75, and the summary's
+`interruptedBy` (text: `Interrupted at …`) names the reason. It emits no extra error document merely
+because the observed run failed. A missing or unreadable run uses the ordinary JSON error contract.
+Interrupting the watcher exits 130 with an error document after any prior snapshots, and leaves the
+observed workflow running. Non-watching inspection exits 0 for every readable status.
 
 `workflow list` reads checkpoint filenames, sorts newest `updatedAt` first, and supports `running`,
 `failed`, `completed`, `cancelled`, and `stale` filters. Unreadable checkpoints are skipped with a
@@ -121,9 +123,10 @@ committed work, and observer promises are not awaited.
 
 `rootCause` uses error identity and cause chains, not message matching. It attributes diagnostics;
 it never decides durable error handling. Explicitly cancelled siblings keep `status: 'cancelled'`,
-while valid late callback results still commit as completed. Run interrupts have no root effect.
-`WorkflowRunError` exposes `runId`, `stepId`, saved `run`, and original `cause`, with a message such
-as `Step word/1 (claude) failed: …`. `-v` on execute or inspect prints the stored stack/cause chain.
+while valid late callback results still commit as completed. Run interrupts have no root effect; a
+marked interruption saves no `rootCause` or `error` at all, only `interruptedBy`. `WorkflowRunError`
+exposes `runId`, `stepId`, saved `run`, and original `cause`, with a message such as
+`Step word/1 (claude) failed: …`. `-v` on execute or inspect prints the stored stack/cause chain.
 
 Usage totals come from exported `summarizeUsage(run)`: one entry per local agent attempt, including
 failed and interrupted work, with replay counted once and fork reuse excluded. Text includes

@@ -88,11 +88,12 @@ quiet-choir workflow tick --state-dir /absolute/state --run review-1 --watch --t
 ```
 
 Tick reads checkpoints before importing any source. It resumes suspended runs whose `nextWakeAt` has
-arrived or whose open signal has an inbox delivery, and recovers `running` runs whose owner is gone.
-It checks saved source bytes before import, claims the ordinary writer lock, and rechecks readiness
-and source bytes under ownership. Concurrent ticks cannot both import and launch the same due run.
-The normal replay compatibility checks still apply. Changed source reports `incompatible` without
-modifying the checkpoint; use explicit
+arrived or whose open signal has an inbox delivery, including runs interrupted by a signal or a tick
+deadline (see [interruptions](#interruptions-and-the-claim-margin)), and recovers `running` runs
+whose owner is gone. It checks saved source bytes before import, claims the ordinary writer lock,
+and rechecks readiness and source bytes under ownership. Concurrent ticks cannot both import and
+launch the same due run. The normal replay compatibility checks still apply. Changed source reports
+`incompatible` without modifying the checkpoint; use explicit
 [code-change recovery](decisions/0006-code-change-recovery.md).
 
 Before claiming a run, tick classifies its lock. A live, unknown or remote owner, or incomplete lock
@@ -115,29 +116,31 @@ behind a dead lock never touches it.
 Tick uses stored entrypoint/tsconfig/cwd. Local-only and default CLI-harness runs can resume
 directly; custom/fixture adapters require the original embedding application to supply that live
 adapter. Tick does not infer native configuration files, change grants, accept code, or kill orphan
-children. Completed, failed, and not-yet-due runs do not import. A failed run needs an explicit
-resume, not an automatic retry on every cron pass. Batch unreadable-run errors are reported per run.
+children. Completed, failed, cancelled, and not-yet-due runs do not import. A failed or cancelled
+run needs an explicit resume, not an automatic retry on every cron pass. Batch unreadable-run errors
+are reported per run.
 
 CLI harness configuration (custom binaries, output limits) is not stored in the checkpoint: tick and
 resume both use `CliHarness` defaults unless `--harness-config` is passed. A cron line for a run
 started with custom binaries or limits must repeat `--harness-config` on every `tick` call.
 
 The result reports what this tick did. `resumed` has one `{ runId, outcome }` entry per run whose
-resume started, with outcome `completed`, `suspended` (plus `nextWakeAt`), `failed`, `cancelled` or
-`incompatible` (each with a `message`). `skipped` has `{ runId, reason }` entries for runs left
-alone: `not due` and `no longer due` (with `nextWakeAt`), `locked`, and `orphans`, `crash-loop`,
-`incompatible` or `unreadable` (with a `message`). `observed` counts runs that were already
-completed, failed or cancelled. Each run appears in at most one entry; a later resume of the same
-run during `--watch` replaces its entry. `--max-runs N` bounds executed resumes across the
-invocation; refusals before import do not count. With `--run`, exit is 0 when the run completed (in
-this tick or earlier), 75 when it is still pending (not due, suspended again, locked, or blocked by
-orphans), and 1 when it failed, was cancelled, or is crash-looping, incompatible or unreadable.
+resume started, with outcome `completed`, `suspended` (plus `nextWakeAt`, and a `message` when an
+interruption caused it), `failed`, `cancelled` or `incompatible` (each with a `message`). `skipped`
+has `{ runId, reason }` entries for runs left alone: `not due`, `no longer due` and `deadline` (with
+`nextWakeAt`), `locked`, and `orphans`, `crash-loop`, `incompatible` or `unreadable` (with a
+`message`). `observed` counts runs that were already completed, failed or cancelled. Each run
+appears in at most one entry; a later resume of the same run during `--watch` replaces its entry.
+`--max-runs N` bounds executed resumes across the invocation; refusals before import do not count.
+With `--run`, exit is 0 when the run completed (in this tick or earlier), 75 when it is still
+pending (not due, suspended again or interrupted, locked, blocked by orphans, or skipped for the
+deadline), and 1 when it failed, was cancelled, or is crash-looping, incompatible or unreadable.
 `--watch` stops retrying a crash-looping run. Without `--run`, individual run outcomes do not change
 exit 0. Command errors retain the [CLI error contract](cli-contract.md).
 
 `--watch` waits for the next due time or an inbox filesystem event, with a one-second fallback scan
 for missed events. `--timeout` defaults to 540s and accepts ms/s/m/h; it bounds the whole
-invocation. Cancellation asks active work to drain, so an uncooperative local callback can delay
+invocation. Interruption asks active work to drain, so an uncooperative local callback can delay
 exit. Watch is a bounded local process; nothing starts automatically after it exits. Install cron or
 launchd if periodic ticking is desired, supplying absolute paths and a suitable executable PATH. For
 example:
@@ -145,6 +148,32 @@ example:
 ```cron
 * * * * * cd /absolute/project && /absolute/node /absolute/quiet-choir/bin/run.js workflow tick --state-dir /absolute/state --json >> /absolute/tick.log 2>&1
 ```
+
+### Interruptions and the claim margin
+
+When tick's `--timeout` fires, it interrupts in-flight resumes with a marked
+`RunInterruptedError('Tick timeout reached.')`. A first SIGINT, SIGTERM or SIGHUP to `execute`,
+`resume` or `tick` does the same with `Workflow interrupted by SIGTERM.` and similar. The runtime
+drains active work as for any interrupt, then saves the run as `suspended` with `nextWakeAt` set to
+now and `interruptedBy: { reason, at }`, and `execute`/`resume` still exit 130. Tick reports the
+resume as `suspended` with the reason as its `message` (exit 75 with `--run`). Because the run is
+due at once, the next tick resumes it and completed steps replay from the checkpoint; only the
+interrupted effects run again, under the usual at-least-once contract. `inspect` shows the run as
+`suspended` with an `Interrupted at …` line, and `inspect --watch` ends with exit 75. A run
+interrupted while it was parking a long sleep or a question-only wait is also due at once: the next
+tick imports it and it parks again, at the cost of one extra import. A new execution clears
+`interruptedBy`. Explicit or workflow-scoped cancellation (a `CancelledError`, or an embedder abort
+with any other reason) still saves `cancelled`, and a failure saves `failed`; tick never retries
+either. Embedders opt in by aborting `RunOptions.signal` with a `RunInterruptedError`. See
+[ADR 0029](decisions/0029-persist-interruptions-as-resumable-suspensions.md).
+
+`--claim-margin` stops tick from claiming a new run once less than the margin of its `--timeout`
+remains, so a resume is not started only to be interrupted at once. It accepts the same ms/s/m/h
+syntax, defaults to 10% of `--timeout` (54s for the default 540s), must be smaller than `--timeout`,
+and `0ms` disables it. A ready run seen inside the margin is left untouched and reported as skipped
+`deadline` with its `nextWakeAt`; the next tick picks it up. `--watch` ends when the margin starts
+instead of idling until the timeout. Size the timeout for the longest step you expect a tick to
+finish: a longer agent call is interrupted at the deadline and restarted by the next tick.
 
 `workflow pending --json` returns legacy question projections and general waits distinguished by
 `kind: "wait"`, including deadline, next check, count, last note, optional signal, and answer

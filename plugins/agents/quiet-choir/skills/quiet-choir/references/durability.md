@@ -18,9 +18,10 @@ chains drain first. Late continuations cannot start effects after close. A block
 its slot. Long sleeps also park; waits due within 1000 ms stay live by default.
 
 If the body resolves with open questions, they become `withdrawn`, including questions abandoned by
-a mapper. A body failure keeps questions waiting. Real interrupts still cancel with exit 130. The
-embedding return is `WorkflowResult<T>`: completed typed output or suspended `output:null` with
-`pending`. Narrow by `status`, or call `assertCompleted` where suspension is unexpected.
+a mapper. A body failure keeps questions waiting. Real interrupts still exit 130, saving a resumable
+suspension. The embedding return is `WorkflowResult<T>`: completed typed output or suspended
+`output:null` with `pending`. Narrow by `status`, or call `assertCompleted` where suspension is
+unexpected.
 
 The inbox is `<stateDir>/<runId>/inbox/` (`<stateDir>/<runId>.inbox/` for runs migrated from the
 flat layout). Answer writers use private flushed temporary files, exclusive hard links, and a
@@ -348,11 +349,15 @@ still-running branch. Catch inside branches or use `Promise.allSettled` to let s
 Explicit map `abort` cancels only that subtree; `ctx.signal` reads the current scope. Caught map
 failures leave the parent scope usable. Local callbacks must eventually settle or draining can hang.
 Run interruption cancels every scope. One Ctrl-C, SIGTERM or SIGHUP terminates owned harness groups,
-drains active work, saves run status `cancelled`, and exits 130. stderr prints “Send again to
-force.” Interrupted steps record `cancelledBy`; inspect `rootCause` to identify the initiating
-failure instead of reading cancellation messages as independent root failures. A second signal
-synchronously SIGKILLs every tracked group, then exits 130 without awaiting writes; the lock and an
-older `running` record can remain. EIO/EPIPE from a closed terminal do not interrupt cleanup.
+drains active work, saves a resumable run status `suspended` with `nextWakeAt` = now and
+`interruptedBy: {reason, at}` (no `rootCause`), and exits 130; the next tick or `resume` continues
+from completed steps. Tick's own --timeout interrupts the same way. An embedder opts in by aborting
+`RunOptions.signal` with `RunInterruptedError`; any other abort reason, or a workflow-scoped
+`CancelledError`, saves `cancelled`. stderr prints “Send again to force.” Cancelled steps record
+`cancelledBy`; inspect `rootCause` to identify an initiating failure instead of reading cancellation
+messages as independent root failures. A second signal synchronously SIGKILLs every tracked group,
+then exits 130 without awaiting writes; the lock and an older `running` record can remain. EIO/EPIPE
+from a closed terminal do not interrupt cleanup.
 
 SIGKILL or a crash cannot run handlers. Use `workflow inspect ID --state-dir PATH --json` to see
 `ownership.owner` liveness and `ownership.processes` with binary, PID/group, step, attempt and

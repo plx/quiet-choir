@@ -2,6 +2,23 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- Runtime and CLI (breaking): an external interruption is now a resumable suspension instead of
+  `cancelled`. The new public, branded `RunInterruptedError` marks it: the CLI's first
+  SIGINT/SIGTERM/SIGHUP aborts with `Workflow interrupted by <SIGNAL>.` and tick's `--timeout` with
+  `Tick timeout reached.`, and embedders opt in by aborting `RunOptions.signal` with it. The run
+  drains as before, then saves `suspended` with `nextWakeAt` = now and a new optional
+  `interruptedBy { reason, at }` field (no `error` or `rootCause`), so the next tick resumes it
+  without repeating completed steps. `execute`/`resume` still exit 130 with `workflow.interrupted`,
+  and the rejection is still a `WorkflowRunError`. Tick reports such a resume as `suspended` with a
+  `message` (`--run` exits 75). `inspect` shows the reason, and `inspect --watch` on an interrupted
+  run now ends as suspended with exit 75 instead of 130. Unmarked aborts, workflow-scoped
+  cancellation and explicit failures still save `cancelled` or `failed`. See ADR 0029.
+
+- CLI: `workflow tick --claim-margin` (ms/s/m/h; default 10% of `--timeout`; `0ms` disables it; must
+  be smaller than `--timeout`) stops tick from claiming new runs near its deadline. Ready runs seen
+  inside the margin are left untouched and reported as skipped `deadline` (`--run` exits 75), and
+  `--watch` ends when the margin starts. See docs/waits.md.
+
 - CLI (breaking): `workflow tick` recovers crashed runs. A `running` run whose owner is gone (no
   lock, or a dead or released owner) is resumed through ordinary lock recovery, and a due suspended
   run behind a lock left by a dead owner is resumed instead of skipped. The `running` skip reason is

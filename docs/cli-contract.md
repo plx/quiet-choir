@@ -14,13 +14,14 @@ returns its compiler result, and check-resume returns a compatible comparison in
 imports; rows include `cwd` and `stateDir`. `execute --resume --run-id ID` may omit FILE and use
 stored launch paths, as does `resume ID`. A supplied different FILE is refused before import. See
 [storage](storage.md). `inspect --watch --json` emits JSONL per checkpoint/ownership change, ending
-with a snapshot and exit 0/1/130/3 for completed/failed/cancelled/stale. It does not add an error
-document for an observed failure. An interrupted watcher emits an error document and leaves the
-observed run untouched. See [run observability](observability.md) for polling, stale detection, and
-partial usage. Non-watching inspect exits 0 for any readable checkpoint status, including `failed`,
-`cancelled`, and `running`. `workflow pending --json` returns
-`{kind:"workflow.pending.result", ok, pending}`, `workflow answer --json` returns
-`{kind:"workflow.answer.result", ok, delivery}`, and a suspension returns
+with a snapshot and exit 0/1/75/130/3 for completed/failed/suspended/cancelled/stale (an interrupted
+run ends as suspended). It does not add an error document for an observed failure. An interrupted
+watcher emits an error document and leaves the observed run untouched. See
+[run observability](observability.md) for polling, stale detection, and partial usage. Non-watching
+inspect exits 0 for any readable checkpoint status, including `failed`, `cancelled`, and `running`.
+`workflow pending --json` returns `{kind:"workflow.pending.result", ok, pending}`,
+`workflow answer --json` returns `{kind:"workflow.answer.result", ok, delivery}`, and a suspension
+returns
 `{kind:"workflow.run.suspended", ok:true, exitCode:75, runId, stateDir, pending, resumeCommand, run}`.
 
 `execute --dry-run --json` returns a `workflow.rehearsal` document with `ok:true`, calls, replays,
@@ -53,27 +54,32 @@ The error codes map to numeric exits in one CLI table:
 | 4    | `load.typecheck`, `load.import`, `load.definition`                                                                                                                                                                    | Fix trusted source or its definition. No execution checkpoint was written.                                               |
 | 74   | `workflow.storage`                                                                                                                                                                                                    | Inspect saved state and fix storage/ownership before deciding how to resume. External effects may already have happened. |
 | 75   | `workflow.run.suspended`                                                                                                                                                                                              | Saved suspension with pending waits; answer questions, deliver signals, or tick when due.                                |
-| 130  | `workflow.interrupted`                                                                                                                                                                                                | Inspect the returned state and resume when ready.                                                                        |
+| 130  | `workflow.interrupted`                                                                                                                                                                                                | A first signal saved a resumable `suspended` run; the next tick or `resume` continues it.                                |
 
 Typechecking and import are distinct from workflow execution. Imports can have arbitrary side
 effects; no exit status promises to undo them. Run-ID and input-JSON validation happen before
 import. Schema validation needs the imported workflow definition. Resume with a schema-invalid
 replacement input is usage failure; valid but changed input is `run.input_changed`.
 
-An ordinary interrupt drains owned work and saves `cancelled` when storage permits. A second signal
-kills tracked groups and writes the last readable checkpoint synchronously before exit 130;
-`error.details.forced` is true and `status` may still be `running`. SIGKILL, process crashes, and a
-closed output pipe cannot deliver a JSON document. Failure documents, like success documents, are
-written in full before the process exits, including when stdout is a pipe. Storage failures use exit
-74 so that a failed save never masquerades as exit 1, and a storage failure during an interrupt
-keeps exit 74 rather than 130 because the cancellation checkpoint may not have been saved. A run
-whose saved status is `failed` reports `workflow.failed` (exit 1) even when a signal arrived,
-because the runner saves `cancelled` only when the interrupt caused the failure. Saved completion
-with a known cleanup warning still succeeds under the
-[process ownership contract](process-lifecycle.md), as does a completion or suspension (exit 75)
-that `execute`, `resume`, or `answer --resume` saved before a late signal, or an answer that
-`workflow answer` already delivered. Inspect, validate, typecheck, and check-resume report
-`workflow.interrupted` after a first signal even when their work finishes.
+A first SIGINT, SIGTERM or SIGHUP drains owned work and, when storage permits, saves a resumable
+`suspended` run with `nextWakeAt` set to now and `interruptedBy: {reason, at}` (for example
+`Workflow interrupted by SIGTERM.`), then still exits 130 with `workflow.interrupted`. The next
+`workflow tick` treats the run as due and resumes it, reusing completed steps; `resume` works too.
+Explicit or workflow-scoped cancellation still saves `cancelled`, which tick never retries. See
+[ADR 0029](decisions/0029-persist-interruptions-as-resumable-suspensions.md). A second signal kills
+tracked groups and writes the last readable checkpoint synchronously before exit 130;
+`error.details.forced` is true and `status` may still be `running`, which tick recovers as a stale
+run. SIGKILL, process crashes, and a closed output pipe cannot deliver a JSON document. Failure
+documents, like success documents, are written in full before the process exits, including when
+stdout is a pipe. Storage failures use exit 74 so that a failed save never masquerades as exit 1,
+and a storage failure during an interrupt keeps exit 74 rather than 130 because the interruption
+checkpoint may not have been saved. A run whose saved status is `failed` reports `workflow.failed`
+(exit 1) even when a signal arrived, because the runner saves an interrupted suspension (or
+`cancelled`) only when the interrupt caused the failure. Saved completion with a known cleanup
+warning still succeeds under the [process ownership contract](process-lifecycle.md), as does a
+completion or suspension (exit 75) that `execute`, `resume`, or `answer --resume` saved before a
+late signal, or an answer that `workflow answer` already delivered. Inspect, validate, typecheck,
+and check-resume report `workflow.interrupted` after a first signal even when their work finishes.
 
 `check-resume` incompatibility uses exit 3 with the full comparison in `error.details`. Its
 compatible success retains `check`. A missing run includes `details.stateDir`, sorted
@@ -120,13 +126,19 @@ unchanged in-flight run can be blocked by these stricter defaults before import 
 
 `workflow tick` returns a single aggregate JSON document: `resumed` entries with each started
 resume's outcome (completed, suspended, failed, cancelled or incompatible), `skipped` entries with a
-reason (not due, no longer due, locked, orphans, crash-loop, incompatible or unreadable), and an
-`observed` count of already-terminal runs. Each run appears in at most one entry. Tick also recovers
-`running` runs whose owner is gone, up to 3 consecutive times without a new completed step; then it
-reports `crash-loop` with a message naming `workflow resume`. With --run, exits are 0 completed (now
-or earlier), 75 pending, locked or orphans, and 1 failed, cancelled, crash-loop, incompatible or
-unreadable; batch per-run failures remain data with exit 0. Usage/infrastructure errors retain the
-command failure document. --watch is bounded by --timeout (default 540s), with --max-runs limiting
-executed resumes. `--harness-config` supplies CLI harness configuration (JSON or `@file`) for
-resumed CLI runs, since the checkpoint stores only the harness kind, not its config. See
-[waits](waits.md) for due detection and notification hooks.
+reason (not due, no longer due, locked, orphans, crash-loop, deadline, incompatible or unreadable),
+and an `observed` count of already-terminal runs. Each run appears in at most one entry. Tick also
+recovers `running` runs whose owner is gone, up to 3 consecutive times without a new completed step;
+then it reports `crash-loop` with a message naming `workflow resume`. With --run, exits are 0
+completed (now or earlier), 75 pending, interrupted, locked, orphans or deadline, and 1 failed,
+cancelled, crash-loop, incompatible or unreadable; batch per-run failures remain data with exit 0.
+Usage/infrastructure errors retain the command failure document. Every tick is bounded by --timeout
+(default 540s), including --watch, with --max-runs limiting executed resumes. When the timeout
+fires, tick interrupts in-flight resumes into resumable suspensions: each is reported `suspended`
+with `message: "Tick timeout reached."` and is due on the next tick, which reuses its completed
+steps. `--claim-margin` (same duration syntax; default 10% of --timeout, `0ms` disables it, and it
+must be smaller than --timeout) stops new claims once less than the margin remains: a ready run is
+then left untouched and reported as skipped `deadline`, and --watch ends there. `--harness-config`
+supplies CLI harness configuration (JSON or `@file`) for resumed CLI runs, since the checkpoint
+stores only the harness kind, not its config. See [waits](waits.md) for due detection and
+notification hooks.
