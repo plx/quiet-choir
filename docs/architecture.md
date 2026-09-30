@@ -98,6 +98,18 @@ changes in external dependencies or services. See
 [ADR 0009](decisions/0009-scoped-step-ids.md) for stable scoped IDs, and
 [research notes](research.md) for the comparison to Claude's dynamic workflows.
 
+The attempt failure rules of [ADR 0007](decisions/0007-durable-failure-outcomes.md) live in one pure
+function, `classifyAttemptFailure` in `src/workflow/runtime/attempt-failure.ts`. Only an aborted
+signal that is not the run's own checkpoint failure is a scope cancellation. Cancellation (including
+a callback's own `AbortError`), checkpoint failures and `ConfigurationError` are fatal, so they are
+never retried and never settled; `ConfigurationError` is also marked fatal so it never becomes
+settled map data. `retry.on` omitted retries every kind and `[]` disables retry, both bounded by
+`maxAttempts`. A failure settles only when it is not fatal, is exhausted or filtered out of retry,
+and the effect uses `onError: 'return'`. The runner gathers the facts, calls the function once and
+keeps saves, events, cancellation errors and backoff. An ESLint import guard keeps the module free
+of I/O by allowing value imports only from `step-error.ts` and `configuration-error.ts`, and
+`test/attempt-failure.test.ts` is the executable table of the rules.
+
 HarnessInvocation carries run/step/attempt identity, the captured cancellation signal and a
 process-registration port. The runtime persists child/group ownership inside the run lock; adapters
 report spawns and release records only after reaping. Dead-owner recovery checks those records

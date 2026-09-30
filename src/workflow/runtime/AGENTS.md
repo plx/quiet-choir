@@ -27,7 +27,8 @@ checks must preserve it on replay and fork reuse. Cancellation, configuration, a
 failures never become fallback values. Configuration failures are a missing harness or process
 adapter, plus a `ConfigurationError` thrown by an adapter or worktree isolation for validation that
 fails before launch. Retry filtering remains policy; retain every attempt's diagnostics. Do not
-infer handling from JavaScript error identity/cause chains. See
+infer handling from JavaScript error identity/cause chains. `attempt-failure.ts` is the single place
+these attempt rules are encoded. See
 [ADR 0007](../../../docs/decisions/0007-durable-failure-outcomes.md).
 
 Settled maps require explicit journal IDs. Each committed item owns its leaf and nested-map IDs;

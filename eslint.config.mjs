@@ -2,6 +2,7 @@ import eslint from '@eslint/js';
 import { defineConfig } from 'eslint/config';
 import prettier from 'eslint-config-prettier';
 import globals from 'globals';
+import { builtinModules } from 'node:module';
 import tseslint from 'typescript-eslint';
 
 export default defineConfig(
@@ -69,6 +70,33 @@ export default defineConfig(
               group: ['../**', './**', '!../index.js'],
               message:
                 'Integration helpers must use the public quiet-choir entry point, not runtime internals.',
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
+    // Pure decision modules: no I/O, clock or store. Values come only from the two allowlisted
+    // siblings; everything else must be `import type`. replay-decision.ts is listed ahead of #186.
+    files: ['src/workflow/runtime/attempt-failure.ts', 'src/workflow/runtime/replay-decision.ts'],
+    rules: {
+      '@typescript-eslint/no-restricted-imports': [
+        'error',
+        {
+          patterns: [
+            {
+              group: [
+                'node:*',
+                ...builtinModules,
+                './**',
+                '../**',
+                '!./step-error.js',
+                '!./configuration-error.js',
+              ],
+              allowTypeImports: true,
+              message:
+                'Pure decision modules (ADR 0007 attempt failures, replay decisions) must stay free of I/O: import values only from ./step-error.js and ./configuration-error.js; everything else must be import type.',
             },
           ],
         },
