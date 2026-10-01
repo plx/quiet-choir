@@ -245,6 +245,76 @@
       "rules": ["tuple"]
     },
     {
+      "name": "unknown-property",
+      "schema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "a": {}
+        },
+        "required": ["a"],
+        "additionalProperties": false
+      },
+      "output": {
+        "a": {
+          "nested": [1, "x"]
+        }
+      },
+      "rules": ["untyped"]
+    },
+    {
+      "name": "any-property",
+      "schema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "a": {}
+        },
+        "required": ["a"],
+        "additionalProperties": false
+      },
+      "output": {
+        "a": {
+          "nested": [1, "x"]
+        }
+      },
+      "rules": ["untyped"]
+    },
+    {
+      "name": "unknown-record-value",
+      "schema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "propertyNames": {
+          "type": "string"
+        },
+        "additionalProperties": {}
+      },
+      "output": {
+        "k": {
+          "nested": true
+        }
+      },
+      "rules": ["record", "untyped"]
+    },
+    {
+      "name": "any-record-value",
+      "schema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "propertyNames": {
+          "type": "string"
+        },
+        "additionalProperties": {}
+      },
+      "output": {
+        "k": {
+          "nested": true
+        }
+      },
+      "rules": ["record", "untyped"]
+    },
+    {
       "name": "nullable",
       "schema": {
         "$schema": "http://json-schema.org/draft-07/schema#",

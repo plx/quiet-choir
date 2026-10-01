@@ -88,12 +88,15 @@ remove the file after the call. The default `structuredOutput: 'compat'` encodes
   encode as arrays; wrap the variants in discriminated `z.object`s instead.
 - Discriminated unions use `anyOf`; loose objects are closed on the wire (no extra keys requested).
 - Tuples fail before launch in both modes; use a named object or a homogeneous array.
+- Untyped values (`z.unknown()`/`z.any()`, including record values and array items) fail before
+  launch in both modes, because Codex needs a type for every value; use a concrete type, or request
+  a `z.string()` and parse it locally.
 
 The original Zod schema validates decoded output. Refinements run only locally; state them in the
 prompt. With `structuredOutput: 'strict'`, use an object root, required properties (use
-`.nullable()` for missing values), and avoid records, loose objects, discriminated unions, and
-tuples. Exported `checkCodexSchema(schema)` returns incompatible JSON paths and fixes without
-launching a process. `workflow validate` does not execute the body and cannot inspect these
+`.nullable()` for missing values), and avoid records, loose objects, discriminated unions, tuples,
+and untyped values. Exported `checkCodexSchema(schema)` returns incompatible JSON paths and fixes
+without launching a process. `workflow validate` does not execute the body and cannot inspect these
 call-site schemas. Codex enforces strict wire schemas; raw `.optional()` properties were rejected
 before inference in the captured 0.157.1 probes. The default compat encoding handles `.optional()`
 and the other shapes above; use strict mode only with native Codex schemas. An explicit mode is part

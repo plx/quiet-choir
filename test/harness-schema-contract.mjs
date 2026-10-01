@@ -30,10 +30,14 @@ const report = {
   cases: [],
 };
 let failures = 0;
+// Compat rejects these locally, so there is no wire schema to probe.
+const compatRejected = ['tuple', 'untyped'];
 try {
   for (const entry of matrix.cases.filter((entry) => !selected || selected.includes(entry.name))) {
     const variants =
-      binary === 'codex' && !entry.rules.includes('tuple') ? ['strict', 'compat'] : ['strict'];
+      binary === 'codex' && !entry.rules.some((rule) => compatRejected.includes(rule))
+        ? ['strict', 'compat']
+        : ['strict'];
     for (const mode of variants) {
       const wire = mode === 'compat' ? prepareCodexSchema(entry.schema, mode).schema : entry.schema;
       const path = join(directory, 'schema.json');

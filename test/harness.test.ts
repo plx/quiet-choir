@@ -332,7 +332,15 @@ describe('headless CLI adapter', () => {
       fs.writeFileSync('schema-path', args[args.indexOf('--output-schema') + 1]); process.exit(9);`);
     await expect(
       new CliHarness({ codexBinary: binary }).invoke(
-        { ...request('codex', directory), outputSchema: {} },
+        {
+          ...request('codex', directory),
+          outputSchema: {
+            type: 'object',
+            properties: {},
+            required: [],
+            additionalProperties: false,
+          },
+        },
         testInvocation(signal),
       ),
     ).rejects.toThrow('code 9');

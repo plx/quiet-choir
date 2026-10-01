@@ -287,14 +287,15 @@ a detached copy and cannot mutate the checkpoint.
 Codex object calls default to `structuredOutput: 'compat'`. The adapter encodes optionals, records,
 discriminated unions, loose objects, and non-object roots, then decodes before validating the
 original Zod schema. Nullable optionals keep null; other optional nulls become absent properties.
-Loose objects request only named keys. Tuples need a named-object or homogeneous-array replacement.
+Loose objects request only named keys. Tuples need a named-object or homogeneous-array replacement,
+and `z.unknown()`/`z.any()` values need a concrete type (or a `z.string()` parsed locally).
 
 Use `structuredOutput: 'strict'` for native Codex schemas: an object root, every property required,
-`.nullable()` for missing values, and no records, loose objects, discriminated unions, or tuples.
-Run `checkCodexSchema(schema)` early to see paths and suggested fixes; `workflow validate` does not
-run the body to discover call-site schemas. Refinements are local checks, so restate them in the
-prompt. See [Codex](codex.md) for the full encoding rules. Claude also requires an object root and
-receives the original schema.
+`.nullable()` for missing values, and no records, loose objects, discriminated unions, tuples, or
+`z.unknown()`/`z.any()` values. Run `checkCodexSchema(schema)` early to see paths and suggested
+fixes; `workflow validate` does not run the body to discover call-site schemas. Refinements are
+local checks, so restate them in the prompt. See [Codex](codex.md) for the full encoding rules.
+Claude also requires an object root and receives the original schema.
 
 Read [durable waits](waits.md) for source precedence, suspension, notifications, and ticking.
 

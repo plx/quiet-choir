@@ -49,6 +49,12 @@ function resolveRef(root: JsonValue, ref: string, seen = new Set<string>()): Sch
   return resolved;
 }
 
+/** Keys that give a schema node a type; a node with none of them accepts any JSON value. */
+const typedKeys = ['type', 'anyOf', 'oneOf', 'allOf', '$ref', 'const', 'enum'];
+
+const untypedFix =
+  'Give this value a concrete type (a primitive, z.object, z.array, z.enum, or a union of them); Codex output schemas need a type for every value, so z.unknown()/z.any() properties, array items and z.record values cannot be sent. To return arbitrary JSON, request a string (z.string()) and parse it locally.';
+
 /** Find schema shapes observed to be rejected by Codex, without invoking a harness. */
 export function checkCodexSchema(schema: z.ZodType | JsonValue): SchemaIssue[] {
   const root = schemaJson(schema);
@@ -57,7 +63,10 @@ export function checkCodexSchema(schema: z.ZodType | JsonValue): SchemaIssue[] {
   const add = (path: string, rule: string, fix: string): void => {
     issues.push({ path, rule, fix });
   };
-  const visit = (value: JsonValue, path: string, isRoot = false): void => {
+  // `exempt` marks the additionalProperties subtree of a non-record object (z.looseObject,
+  // .catchall): strict mode reports `open-object` there and compat closes the object, discarding
+  // that subtree, so an untyped value inside it is not a separate problem.
+  const visit = (value: JsonValue, path: string, isRoot = false, exempt = false): void => {
     const node = object(value);
     if (!node) {
       if (isRoot)
@@ -66,12 +75,14 @@ export function checkCodexSchema(schema: z.ZodType | JsonValue): SchemaIssue[] {
           'object-root',
           'Wrap the root in z.object({ value: ... }), or use structuredOutput: "compat".',
         );
+      // The boolean `true` schema is `{}` and accepts anything, so it is as untyped as `{}`.
+      if (value === true && !exempt) add(path, 'untyped', untypedFix);
       return;
     }
     if (active.has(node)) return;
     active.add(node);
     if (typeof node['$ref'] === 'string') {
-      visit(resolveRef(root, node['$ref']), path, isRoot);
+      visit(resolveRef(root, node['$ref']), path, isRoot, exempt);
       active.delete(node);
       return;
     }
@@ -81,6 +92,8 @@ export function checkCodexSchema(schema: z.ZodType | JsonValue): SchemaIssue[] {
         'object-root',
         'Wrap the root in z.object({ value: ... }), or use structuredOutput: "compat".',
       );
+    if (!exempt && !typedKeys.some((key) => node[key] !== undefined))
+      add(path, 'untyped', untypedFix);
     if (node['propertyNames'] !== undefined)
       add(path, 'record', 'Use a fixed z.object shape, or structuredOutput: "compat" for records.');
     if (node['oneOf'] !== undefined)
@@ -117,21 +130,22 @@ export function checkCodexSchema(schema: z.ZodType | JsonValue): SchemaIssue[] {
             'optional',
             'Make this property required and .nullable(), or use structuredOutput: "compat".',
           );
-        visit(child, childPath);
+        visit(child, childPath, false, exempt);
       }
     }
     for (const key of ['anyOf', 'oneOf', 'allOf', 'items', 'prefixItems']) {
       const child = node[key];
       if (Array.isArray(child))
         child.forEach((entry, index) => {
-          visit(entry, `${path}.${key}[${String(index)}]`);
+          visit(entry, `${path}.${key}[${String(index)}]`, false, exempt);
         });
-      else if (child !== undefined) visit(child, `${path}.${key}`);
+      else if (child !== undefined) visit(child, `${path}.${key}`, false, exempt);
     }
     for (const key of ['additionalProperties', '$defs', 'definitions']) {
       const child = object(node[key]);
       if (!child) continue;
-      if (key === 'additionalProperties') visit(child, `${path}.${key}`);
+      if (key === 'additionalProperties')
+        visit(child, `${path}.${key}`, false, exempt || node['propertyNames'] === undefined);
       else
         for (const [name, entry] of Object.entries(child))
           visit(entry, propertyPath(`${path}.${key}`, name));
@@ -153,6 +167,14 @@ export interface CodexSchemaPlan {
   readonly decode: (text: string) => string;
 }
 
+/** Rules compat cannot encode, so it rejects them against the original schema's paths. */
+const compatRejectedRules = ['tuple', 'untyped'];
+
+/** Whether a reported path goes through a `$defs`/`definitions` container (see `propertyPath`). */
+function isDefinitionPath(path: string): boolean {
+  return /\.(?:\$defs|definitions)(?:\.|\[|$)/u.test(path);
+}
+
 function reject(issues: readonly SchemaIssue[], mode: 'strict' | 'compat'): void {
   if (!issues.length) return;
   // In compat mode, `structuredOutput: "compat"` is already in effect, so hints that suggest
@@ -164,7 +186,7 @@ function reject(issues: readonly SchemaIssue[], mode: 'strict' | 'compat'): void
   const fixes =
     mode === 'compat'
       ? issues.map((issue) =>
-          issue.path.includes('.allOf[')
+          issue.rule !== 'untyped' && issue.path.includes('.allOf[')
             ? {
                 ...issue,
                 fix: 'structuredOutput: "compat" cannot adapt shapes inside z.intersection (allOf); merge the parts into a single z.object (e.g. .extend()) or use a fixed shape.',
@@ -197,8 +219,13 @@ export function prepareCodexSchema(schema: JsonValue, mode: 'strict' | 'compat')
     reject(checkCodexSchema(schema), 'strict');
     return { schema, decode: (text) => text };
   }
+  // Compat only sends the definitions reachable from the root, so an issue inside a definitions
+  // container is not sent (compat closes a catchall object and drops its `$defs` value schema, for
+  // example). A reachable definition is still reported at its use site, so skip the container paths.
   reject(
-    checkCodexSchema(schema).filter((issue) => issue.rule === 'tuple'),
+    checkCodexSchema(schema).filter(
+      (issue) => compatRejectedRules.includes(issue.rule) && !isDefinitionPath(issue.path),
+    ),
     'compat',
   );
   const definitions: Schema = {};
