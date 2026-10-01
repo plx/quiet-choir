@@ -115,7 +115,11 @@ export default defineWorkflow({ name: 'harness-config-cli', version: '1', input:
   assert.match(refused.value.error.message, /--allow-harness-config-change/u);
   assert.deepEqual(checkpoint('resumed'), before);
 
-  await delay(Math.max(0, started + sleepMs + 200 - Date.now()));
+  // Wait for the ticked run's own wake time. Both runs were executed back to back, so under load
+  // the first execute alone can outlast sleepMs, and a deadline taken before it lets tick run
+  // early and report the run as not due.
+  const wakeAt = record('ticked').nextWakeAt ?? started + sleepMs;
+  await delay(Math.max(0, wakeAt + 200 - Date.now()));
   const ticked = checkpoint('ticked');
   const tickRefused = run(['tick', '--run', 'ticked']);
   assert.equal(tickRefused.status, 1, tickRefused.stderr);
