@@ -13,7 +13,9 @@ import { schemaMatrix } from './schema-matrix.js';
 const compatRejectedRules = ['tuple', 'untyped'];
 const isCompatRejected = (entry: { rules: readonly string[] }): boolean =>
   entry.rules.some((rule) => compatRejectedRules.includes(rule));
-const untypedEntries = schemaMatrix.filter((entry) => entry.rules.includes('untyped'));
+const untypedEntries = schemaMatrix.filter((entry) =>
+  (entry.rules as readonly string[]).includes('untyped'),
+);
 const directories: string[] = [];
 const jsonSchema = (schema: z.ZodType): ReturnType<typeof jsonValue> =>
   jsonValue(JSON.parse(JSON.stringify(z.toJSONSchema(schema, { target: 'draft-7' }))));
