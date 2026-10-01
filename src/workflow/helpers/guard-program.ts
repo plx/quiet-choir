@@ -1,3 +1,11 @@
+/**
+ * Identity of the guard program's behavior and its argv/stdout contract. Bump it whenever
+ * `guardProgram` changes behavior or that contract changes, never for formatting-only edits: it
+ * stands in for the program text in guard step identity, so a bump makes earlier guard steps refuse
+ * on resume. test/guard-file-identity.test.ts pins the program text next to it. @internal
+ */
+export const GUARD_PROGRAM_VERSION = 'guardFile/1';
+
 /** Small child program: blob bytes stay in the process, never in a workflow result. @internal */
 export const guardProgram = String.raw`
 import { execFileSync } from 'node:child_process';

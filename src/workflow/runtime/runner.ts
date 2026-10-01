@@ -39,6 +39,7 @@ import {
   writeFileResultSchema,
 } from './files.js';
 import { executeCommand, prepareExec } from './exec.js';
+import { execIdentityKey, type InternalExecIdentity } from './exec-identity.js';
 import { execResultSchema } from './exec-schema.js';
 import { ExecError } from './exec-error.js';
 import type { Command, ExecOptions, ExecResult, ExecSummary, ProcessRunner } from './exec-model.js';
@@ -1881,7 +1882,14 @@ export async function runWorkflow<
       return launch(id, async () => {
         if (schema !== null && !(schema instanceof z.ZodType))
           throw new Error('exec.json requires a Zod schema.');
-        const prepared = await prepareExec(command, settings, cwd, schema !== null);
+        // Strip the built-in helper's identity before the strict option schema sees the settings.
+        const { [execIdentityKey]: helperIdentity, ...publicSettings } = settings as ExecOptions &
+          InternalExecIdentity;
+        const helper =
+          helperIdentity === undefined
+            ? undefined
+            : jsonValue(helperIdentity, `Step "${id}" exec identity`);
+        const prepared = await prepareExec(command, publicSettings, cwd, schema !== null);
         const execution = resolvePolicy(
           id,
           'exec',
@@ -1893,12 +1901,19 @@ export async function runWorkflow<
         const outputSchema = schema ?? execResultSchema;
         const jsonSchema = schemaJson(outputSchema);
         options.rehearsal?.onSchema?.(id, outputSchema);
+        const summary = jsonValue(prepared.summary) as Record<string, JsonValue>;
         const identity = stepIdentity({
           kind: 'exec',
           ...(prepared.settings.worktree === undefined
             ? {}
             : { worktree: isolationIdentity(prepared.settings.worktree) }),
-          ...(jsonValue(prepared.summary) as Record<string, JsonValue>),
+          // A helper's stable value stands in for the argv, which can embed paths and program text.
+          ...(helper === undefined
+            ? summary
+            : {
+                ...Object.fromEntries(Object.entries(summary).filter(([key]) => key !== 'command')),
+                helper,
+              }),
           schema: jsonSchema,
         });
         return effect<T | ExecResult>({

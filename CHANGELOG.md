@@ -2,6 +2,12 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- Guard identity (fix; identity change): `guardFile` baseline and restore steps are fingerprinted on
+  a versioned guard identity (`guardFile/1`, path, `maxBytes`, and the baseline blob, mode and ref)
+  instead of `process.execPath` and the inline guard program text, so a Node or quiet-choir upgrade
+  no longer strands a resumed run. The real argv is still executed and recorded. A resumed run whose
+  `guard/baseline` completed under an earlier build refuses once with `command, helper changed` and
+  needs a new run. Other exec steps keep their digests; no `formatVersion` bump.
 - Harness isolation (feature; the default is unchanged): Codex calls accept
   `instructions: 'native' | 'none'` (new `CodexOptions.instructions`). `'none'` runs the child
   against a private temporary `CODEX_HOME` holding only a 0600 copy of the real `auth.json` and adds

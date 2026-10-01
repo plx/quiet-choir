@@ -271,43 +271,50 @@ describe('tick loader and operator hooks', { timeout: 40_000 }, () => {
     expect(await readFile(f.imports, 'utf8')).toBe('import\n');
   });
 
-  it('reports changed source without importing or changing the checkpoint', async () => {
-    const f = await fixture();
-    const saved = await readRun(f.plan);
-    await appendFile(f.file, '\n// changed source\n');
-    expect(oneEntryPerRun(await tick.execute(f.tickPlan))).toEqual({
-      kind: 'workflow.tick.result',
-      ok: true,
-      resumed: [],
-      skipped: [
-        {
-          runId: 'run',
-          reason: 'incompatible',
-          message: 'Stored workflow source hashes are missing or changed.',
-        },
-      ],
-      observed: 0,
-      exitCode: 1,
-    });
-    expect(await readRun(f.plan)).toEqual(saved);
-    expect(await readFile(f.imports, 'utf8')).toBe('import\n');
-    // A refusal before import is not a resume attempt: a watch limited to one resume refuses the
-    // changed run, keeps watching, and still resumes a run that becomes due later.
-    const watching = tick.execute({
-      kind: 'workflow.tick',
-      stateDir: f.stateDir,
-      maxRuns: 1,
-      watch: true,
-      timeoutMs: 15_000,
-    });
-    const other = await fixture('due', false, { stateDir: f.stateDir, runId: 'other' });
-    expect(oneEntryPerRun(await watching)).toMatchObject({
-      resumed: [{ runId: 'other', outcome: 'completed' }],
-      skipped: [{ runId: 'run', reason: 'incompatible' }],
-      exitCode: 0,
-    });
-    expect(await readFile(other.effects, 'utf8')).toBe('effect\n');
-  });
+  // measured: 2.4 s alone; 27 s in a full coverage run on a loaded machine, where the 15 s watch
+  // deadline cut the second resume off as an interruption. The watch ends at the first resume, so
+  // the larger tick timeout only matters on failure; the test timeout covers it with headroom.
+  it(
+    'reports changed source without importing or changing the checkpoint',
+    { timeout: 90_000 },
+    async () => {
+      const f = await fixture();
+      const saved = await readRun(f.plan);
+      await appendFile(f.file, '\n// changed source\n');
+      expect(oneEntryPerRun(await tick.execute(f.tickPlan))).toEqual({
+        kind: 'workflow.tick.result',
+        ok: true,
+        resumed: [],
+        skipped: [
+          {
+            runId: 'run',
+            reason: 'incompatible',
+            message: 'Stored workflow source hashes are missing or changed.',
+          },
+        ],
+        observed: 0,
+        exitCode: 1,
+      });
+      expect(await readRun(f.plan)).toEqual(saved);
+      expect(await readFile(f.imports, 'utf8')).toBe('import\n');
+      // A refusal before import is not a resume attempt: a watch limited to one resume refuses the
+      // changed run, keeps watching, and still resumes a run that becomes due later.
+      const watching = tick.execute({
+        kind: 'workflow.tick',
+        stateDir: f.stateDir,
+        maxRuns: 1,
+        watch: true,
+        timeoutMs: 45_000,
+      });
+      const other = await fixture('due', false, { stateDir: f.stateDir, runId: 'other' });
+      expect(oneEntryPerRun(await watching)).toMatchObject({
+        resumed: [{ runId: 'other', outcome: 'completed' }],
+        skipped: [{ runId: 'run', reason: 'incompatible' }],
+        exitCode: 0,
+      });
+      expect(await readFile(other.effects, 'utf8')).toBe('effect\n');
+    },
+  );
 
   it('skips a locked run and gives concurrent ticks only one importer and effect', async () => {
     const f = await fixture();

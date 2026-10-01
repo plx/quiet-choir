@@ -78,7 +78,11 @@ command. No blob bytes appear in command output or checkpoints. The baseline blo
 rejects if content or permission bits changed. The file must be a regular UTF-8 file inside cwd
 (symlink leaves are rejected), cwd must be in a Git repository, and Git/Node must be installed.
 `maxBytes` defaults to 1 MiB. `version` declares changes in closed-over body dependencies; body
-source and onChange policy participate in its journaled identity.
+source and onChange policy participate in its journaled identity. The baseline and restore steps are
+fingerprinted on a versioned guard identity (guard program version, path, `maxBytes` and the
+baseline blob, mode and ref), not on the Node binary path or the inline program text, so a Node
+upgrade or path change does not strand a resumed guard. quiet-choir bumps the version only when the
+guard program's behavior changes.
 
 The body must return JSON. Its success or ordinary failure is terminal for that guard ID, preventing
 a failed body from rerunning after an already completed restore replays. Retrying that whole body
