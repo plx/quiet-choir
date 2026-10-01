@@ -72,3 +72,5 @@ part of the documentation.
 - [0033: Redact free-form controls from public capability manifests](0033-redact-free-form-controls-from-public-manifests.md)
 
 - [0034: Compact results for the run commands, the full record behind --full](0034-compact-run-command-results.md)
+
+- [0035: Sticky launch policy in the run's launch metadata](0035-sticky-launch-policy.md)

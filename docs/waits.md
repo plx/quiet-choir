@@ -124,8 +124,10 @@ After active effects and writes drain, long waits suspend without aborting sibli
 wait promise, or unwinding body cleanup. `nextWakeAt` is the earliest deadline or next poll time, or
 null for signal-only waits. Waits due within **1000 ms** stay in-process by default; a frequent poll
 can therefore stay live indefinitely. `RunOptions.waitMode: 'block'` or `--wait-mode block` on
-execute/resume keeps all waits live. Await tracked operations; raw asynchronous body tasks do not
-keep a quiescent run alive. See [question suspension](questions.md#suspend-and-resume).
+execute/resume keeps all waits live. The CLI records the mode, so a later `resume` or
+`answer --resume` without `--wait-mode` keeps it; `tick` always suspends, for that execution only.
+Await tracked operations; raw asynchronous body tasks do not keep a quiescent run alive. See
+[question suspension](questions.md#suspend-and-resume).
 
 ```sh
 quiet-choir workflow pending --state-dir /absolute/state --json
