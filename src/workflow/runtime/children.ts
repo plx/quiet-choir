@@ -41,10 +41,29 @@ interface Dependencies {
   readonly save: () => Promise<void>;
   readonly isolatePhase: <T>(body: () => Promise<T>) => Promise<T>;
   readonly emit: (
-    type: 'child.started' | 'child.completed' | 'child.failed',
+    type: 'child.started' | 'child.completed' | 'child.failed' | 'child.superseded',
     id: string,
     child: ChildRecord,
   ) => void;
+}
+
+/** Frames that a successful completion retired, with the state needed to undo an unsaved completion. */
+interface Supersession {
+  /** Transitioned frame IDs and records, in record order. */
+  readonly frames: readonly (readonly [string, ChildRecord])[];
+  /** Put every transitioned frame back as it was before supersede() ran. */
+  readonly restore: () => void;
+  /** Emit one child.superseded event per transitioned frame. */
+  readonly announce: () => void;
+}
+
+const SUPERSEDED_REASON = 'Superseded: the completed workflow no longer invoked this child frame.';
+
+/** Resume guidance for an identity refusal on a frame that never completed. */
+function unfinishedHint(saved: ChildRecord, alternatives: boolean): string {
+  return saved.status === 'completed'
+    ? ''
+    : ` The saved frame is ${saved.status}, not completed: to retry a fixed child, keep its name, version, input and schemas and resume with --accept-code-change${alternatives ? '; otherwise use a new run or an explicit fork' : ''}.`;
 }
 
 const optionsSchema = z.strictObject({
@@ -91,7 +110,7 @@ export class RunChildren {
           const error = new RunRefusedError(
             'run.incompatible',
             this.#deps.record.id,
-            `Child frame ${id} changed: ${saved.workflow.name}@${saved.workflow.version} -> ${current ? `${current.name}@${current.version}` : 'no matching declared child'}; declared child identity must match on resume.`,
+            `Child frame ${id} changed: ${saved.workflow.name}@${saved.workflow.version} -> ${current ? `${current.name}@${current.version}` : 'no matching declared child'}; declared child identity must match on resume.${unfinishedHint(saved, true)}`,
           );
           this.#deps.origins.markFatal(error);
           throw error;
@@ -197,7 +216,7 @@ export class RunChildren {
             prior.parent !== (parent?.id ?? null))
         )
           invalid(
-            `Child frame ${id} changed: ${prior.workflow.name}@${prior.workflow.version} -> ${definition.name}@${definition.version}; child name, version, input and schemas must match on resume. Use a new run or an explicit fork.`,
+            `Child frame ${id} changed: ${prior.workflow.name}@${prior.workflow.version} -> ${definition.name}@${definition.version}; child name, version, input and schemas must match on resume. Use a new run or an explicit fork.${unfinishedHint(prior, false)}`,
           );
         // Dynamic parents become known only at invocation. Validate their declared descendants
         // before a committed settled map can skip those descendants' bodies.
@@ -305,13 +324,66 @@ export class RunChildren {
 
   public finish(status: 'suspended' | 'failed' | 'cancelled', reason?: string): void {
     for (const frame of Object.values(this.#deps.record.children ?? {}))
-      if (frame.status === 'running' || frame.status === 'suspended') {
-        frame.status = status;
-        if (status !== 'suspended') {
-          frame.finishedAt = new Date().toISOString();
-          frame.error ??= reason ?? 'The enclosing workflow ended before this child settled.';
+      if (frame.status === 'running' || frame.status === 'suspended')
+        this.#settle(frame, status, reason);
+  }
+
+  /** On completion, cancel only frames this execution invoked but never awaited. */
+  public cancelUnawaited(reason: string): void {
+    for (const [id, frame] of Object.entries(this.#deps.record.children ?? {}))
+      if (this.#visited.has(id) && (frame.status === 'running' || frame.status === 'suspended'))
+        this.#settle(frame, 'cancelled', reason);
+  }
+
+  #settle(frame: ChildRecord, status: 'suspended' | 'failed' | 'cancelled', reason?: string): void {
+    frame.status = status;
+    if (status !== 'suspended') {
+      frame.finishedAt = new Date().toISOString();
+      frame.error ??= reason ?? 'The enclosing workflow ended before this child settled.';
+    }
+  }
+
+  /**
+   * Retire every unfinished frame this execution never reached. Call it only for a completion that
+   * already passed the replay checks: a completed frame or a frame holding terminal effects must
+   * still fail the run instead.
+   */
+  public supersede(): Supersession {
+    const at = new Date().toISOString();
+    const transitioned: (readonly [string, ChildRecord])[] = [];
+    const previous: {
+      frame: ChildRecord;
+      status: ChildRecord['status'];
+      finishedAt: string | null;
+      error: string | null;
+    }[] = [];
+    for (const [id, frame] of Object.entries(this.#deps.record.children ?? {})) {
+      if (this.#visited.has(id) || frame.status === 'completed' || frame.status === 'superseded')
+        continue;
+      previous.push({
+        frame,
+        status: frame.status,
+        finishedAt: frame.finishedAt,
+        error: frame.error,
+      });
+      frame.status = 'superseded';
+      frame.finishedAt = at;
+      frame.error ??= SUPERSEDED_REASON;
+      transitioned.push([id, frame]);
+    }
+    return {
+      frames: transitioned,
+      restore: () => {
+        for (const { frame, status, finishedAt, error } of previous) {
+          frame.status = status;
+          frame.finishedAt = finishedAt;
+          frame.error = error;
         }
-      }
+      },
+      announce: () => {
+        for (const [id, frame] of transitioned) this.#deps.emit('child.superseded', id, frame);
+      },
+    };
   }
 
   public assertVisited(): void {

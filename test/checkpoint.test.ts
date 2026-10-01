@@ -299,6 +299,36 @@ it('rejects a failed final run checkpoint without reclassifying completed effect
   expect(saved.executions?.[0]?.outcome).toBe('failed');
 });
 
+it('does not leave a superseded child frame behind when the completion save fails', async () => {
+  let invoke = true;
+  const child = defineWorkflow({
+    name: 'kid',
+    version: '1',
+    input: z.null(),
+    output: z.null(),
+    run: () => Promise.reject<null>(new Error('kid broke')),
+  });
+  const definition = workflow(async (ctx) => {
+    if (invoke) await ctx.workflow('kid', child, null);
+    return 'done';
+  });
+  await expect(runWorkflow(definition, options())).rejects.toThrow('kid broke');
+  const before = (await readRun(options())).children?.['kid'];
+  expect(before?.status).toBe('failed');
+  invoke = false;
+  vi.mocked(store.writeRun).mockImplementation((directory, record) =>
+    record.status === 'completed'
+      ? Promise.reject(ioError('EIO'))
+      : actualStore.writeRun(directory, record),
+  );
+  await expect(runWorkflow(definition, { ...options(), resume: true })).rejects.toMatchObject({
+    cause: expect.any(CheckpointError) as unknown,
+  });
+  const saved = await readRun(options());
+  expect(saved.status).toBe('failed');
+  expect(saved.children?.['kid']).toEqual(before);
+});
+
 it('owns phase/log saves and preserves committed observations after a storage failure', async () => {
   let failures = 0;
   vi.mocked(store.writeRun).mockImplementation((directory, record) => {
