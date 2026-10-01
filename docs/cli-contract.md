@@ -162,6 +162,11 @@ with `message: "Tick timeout reached."` and is due on the next tick, which reuse
 steps. `--claim-margin` (same duration syntax; default 10% of --timeout, `0ms` disables it, and it
 must be smaller than --timeout) stops new claims once less than the margin remains: a ready run is
 then left untouched and reported as skipped `deadline`, and --watch ends there. `--harness-config`
-supplies CLI harness configuration (JSON or `@file`) for resumed CLI runs, since the checkpoint
-stores only the harness kind, not its config. See [waits](waits.md) for due detection and
-notification hooks.
+supplies CLI harness configuration (JSON or `@file`) for resumed CLI runs, and omitting it means the
+defaults. It must match the configuration digest the run recorded at its latest live execution:
+otherwise the run is reported `incompatible` and left unchanged, unless
+`--allow-harness-config-change` accepts the change for every run that tick resumes.
+`workflow resume`, `execute --resume` and `answer --resume` refuse the same mismatch with
+`run.incompatible` (exit 3, `error.details.previousConfigDigest` and
+`error.details.requestedConfigDigest`) and accept the same flag. See [waits](waits.md) for due
+detection and notification hooks.

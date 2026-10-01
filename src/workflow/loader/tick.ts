@@ -37,8 +37,14 @@ export interface TickWorkflowsPlan extends ExecutionPlan {
   readonly claimMarginMs?: number;
   readonly maxRuns?: number;
   readonly notifyCommand?: string;
-  /** CLI harness configuration for resumed runs; the checkpoint stores only harness kind. */
+  /**
+   * CLI harness configuration for resumed CLI runs; omitted means the default configuration. A run
+   * records a digest of the configuration it last executed with, and a resume under a different one
+   * ends `incompatible` unless {@link TickWorkflowsPlan.allowHarnessConfigChange} is set.
+   */
   readonly harness?: HarnessSelection;
+  /** Accept a changed harness configuration for every run this tick resumes. */
+  readonly allowHarnessConfigChange?: boolean;
 }
 
 /** What a resume started by this tick ended as. @internal */
@@ -440,6 +446,9 @@ export class TickWorkflowExecutor implements Executor<
                 ...(this.options.harness === undefined && run.harness?.kind === 'cli'
                   ? { harness: plan.harness ?? { kind: 'cli' as const, config: {} } }
                   : {}),
+                ...(plan.allowHarnessConfigChange === undefined
+                  ? {}
+                  : { allowHarnessConfigChange: plan.allowHarnessConfigChange }),
               });
             } finally {
               attempts++;

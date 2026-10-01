@@ -23,6 +23,7 @@ export default class WorkflowAnswer extends WorkflowCommand {
     readonly resume: boolean | undefined;
     readonly harness: string;
     readonly 'harness-config': string | undefined;
+    readonly 'allow-harness-config-change': boolean | undefined;
   }> = {
     'state-dir': Flags.directory({
       description:
@@ -41,6 +42,10 @@ export default class WorkflowAnswer extends WorkflowCommand {
     }),
     'harness-config': Flags.string({
       description: 'Harness configuration for --resume',
+      dependsOn: ['resume'],
+    }),
+    'allow-harness-config-change': Flags.boolean({
+      description: 'Accept a --harness-config different from the one the run last executed with',
       dependsOn: ['resume'],
     }),
   };
@@ -77,6 +82,9 @@ export default class WorkflowAnswer extends WorkflowCommand {
       resume: flags.resume ?? false,
       ...(flags.by === undefined ? {} : { by: flags.by }),
       ...(harness === undefined ? {} : { harness }),
+      ...(flags['allow-harness-config-change'] === undefined
+        ? {}
+        : { allowHarnessConfigChange: flags['allow-harness-config-change'] }),
     });
     if (!result.ok) this.failResult(result);
     if (result.kind === 'workflow.answer.result')

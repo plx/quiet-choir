@@ -91,9 +91,14 @@ recovered too. Changed source reports incompatible without changing the checkpoi
 [recovery path](durability.md#recovery-procedure). Tick does not retry failed runs, accept edits,
 change grants, or kill orphans. Custom/fixture adapters need their embedding application; tick's
 standalone CLI uses saved local/default-CLI provenance, not undisclosed adapter configuration. The
-checkpoint stores only the harness kind, never its CLI configuration: pass `--harness-config` again
-on `tick` (as on `resume`) to reach a run started with custom binaries or limits, since defaults
-apply otherwise.
+checkpoint stores a digest of the CLI configuration (`harness.configDigest`), never its values. Pass
+the same `--harness-config` again on `tick` (as on `resume` and `answer --resume`) to reach a run
+started with custom binaries or limits; an omitted one means the defaults. A mismatch is reported
+`incompatible` (exit 1 with `--run`; `run.incompatible`, exit 3, on resume) and leaves the run
+unchanged. `--allow-harness-config-change` accepts a new configuration; on tick it applies to every
+resumed run, so pair it with `--run`. Tick reads no `QUIET_CHOIR_HARNESS_CONFIG`. `killGraceMs`,
+fixtures and harness selection are not digested, and a kind change still needs
+`--allow-harness-change`.
 
 The JSON lists `resumed` entries (outcome completed, suspended, failed, cancelled or incompatible),
 `skipped` entries (reason not due, no longer due, locked, orphans, crash-loop, deadline,

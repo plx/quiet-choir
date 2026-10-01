@@ -42,6 +42,7 @@ interface WorkflowExecuteFlags {
   readonly 'dry-run': boolean | undefined;
   readonly 'stub-steps': string[] | undefined;
   readonly 'allow-harness-change': boolean | undefined;
+  readonly 'allow-harness-config-change': boolean | undefined;
   readonly 'kill-orphans': boolean | undefined;
   readonly 'kill-grace-ms': string | undefined;
   readonly 'max-agents': string | undefined;
@@ -127,6 +128,9 @@ export default class WorkflowExecute extends WorkflowCommand {
     }),
     'allow-harness-change': Flags.boolean({
       description: 'Accept replaying outputs from a different recorded harness kind',
+    }),
+    'allow-harness-config-change': Flags.boolean({
+      description: 'Accept a --harness-config different from the one the run last executed with',
     }),
     'kill-orphans': Flags.boolean({
       description: 'Before resume, stop identity-confirmed processes left by a dead owner',
@@ -310,6 +314,7 @@ export default class WorkflowExecute extends WorkflowCommand {
       dryRun: flags['dry-run'] ?? false,
       stubSteps: flags['stub-steps'] ?? [],
       allowHarnessChange: flags['allow-harness-change'] ?? false,
+      allowHarnessConfigChange: flags['allow-harness-config-change'] ?? false,
       agentLimits,
       ...runBudget,
       killGraceMs,

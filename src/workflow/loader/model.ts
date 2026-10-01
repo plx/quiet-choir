@@ -51,6 +51,8 @@ export interface ExecuteWorkflowPlan extends ExecutionPlan {
   readonly dryRun?: boolean;
   readonly stubSteps?: readonly string[];
   readonly allowHarnessChange?: boolean;
+  /** Accept a harness configuration whose digest differs from the one the run last executed with. */
+  readonly allowHarnessConfigChange?: boolean;
   readonly agentLimits?: AgentLimits;
   readonly killOrphans?: boolean;
   readonly killGraceMs?: number;
@@ -90,6 +92,8 @@ export interface AnswerWorkflowPlan extends ExecutionPlan {
   readonly by?: string;
   readonly resume?: boolean;
   readonly harness?: HarnessSelection;
+  /** For `resume`: accept a harness configuration different from the run's recorded one. */
+  readonly allowHarnessConfigChange?: boolean;
 }
 
 /** Read every waiting question without importing workflow code. */

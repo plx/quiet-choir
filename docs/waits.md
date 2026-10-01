@@ -168,9 +168,19 @@ children. Completed, failed, cancelled, and not-yet-due runs do not import. A fa
 run needs an explicit resume, not an automatic retry on every cron pass. Batch unreadable-run errors
 are reported per run.
 
-CLI harness configuration (custom binaries, output limits) is not stored in the checkpoint: tick and
-resume both use `CliHarness` defaults unless `--harness-config` is passed. A cron line for a run
-started with custom binaries or limits must repeat `--harness-config` on every `tick` call.
+Each live CLI execution records `harness.configDigest`, a SHA-256 of its resolved CLI harness
+configuration (custom binaries, output limits, `scrubEnv`, `harnesses.<name>`), never the values.
+`tick`, `resume` and `answer --resume` compare the configuration they supply with it, and an omitted
+`--harness-config` means the defaults. A mismatch refuses with `run.incompatible` (tick reports the
+run as `incompatible`, exit 1 with `--run`) without changing the checkpoint; `error.details` has
+`previousConfigDigest` and `requestedConfigDigest`. So a cron line for a run started with custom
+binaries or limits must repeat the same `--harness-config` on every `tick` call: tick reads no
+`QUIET_CHOIR_HARNESS_CONFIG`. To accept a different configuration, pass
+`--allow-harness-config-change`; on tick it applies to every run that invocation resumes, so pair it
+with `--run`. `killGraceMs`, fixtures and the harness selection are not part of the digest, a binary
+named without a `/` is digested by name rather than by its PATH lookup, and a harness kind change
+stays governed by `--allow-harness-change` alone. Records written before the digest existed stay
+resumable and adopt the next execution's digest.
 
 The result reports what this tick did. `resumed` has one `{ runId, outcome }` entry per run whose
 resume started, with outcome `completed`, `suspended` (plus `nextWakeAt`, and a `message` when an

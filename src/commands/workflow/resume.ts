@@ -24,6 +24,7 @@ export default class WorkflowResume extends WorkflowCommand {
     readonly json: boolean | undefined;
     readonly 'accept-code-change': boolean | undefined;
     readonly 'allow-harness-change': boolean | undefined;
+    readonly 'allow-harness-config-change': boolean | undefined;
     readonly 'kill-orphans': boolean | undefined;
     readonly harness: string[];
     readonly 'harness-config': string | undefined;
@@ -55,6 +56,9 @@ export default class WorkflowResume extends WorkflowCommand {
     }),
     'allow-harness-change': Flags.boolean({
       description: 'Accept saved effects from another harness kind',
+    }),
+    'allow-harness-config-change': Flags.boolean({
+      description: 'Accept a --harness-config different from the one the run last executed with',
     }),
     'kill-orphans': Flags.boolean({
       description: 'Recover identity-confirmed orphan children before resuming',
@@ -101,6 +105,7 @@ export default class WorkflowResume extends WorkflowCommand {
       harness,
       acceptCodeChange: flags['accept-code-change'] ?? false,
       allowHarnessChange: flags['allow-harness-change'] ?? false,
+      allowHarnessConfigChange: flags['allow-harness-config-change'] ?? false,
       killOrphans: flags['kill-orphans'] ?? false,
     });
     if (!result.ok) {
