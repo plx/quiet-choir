@@ -1,3 +1,4 @@
+import type { NextCommand } from './next-commands.js';
 import type { RehearsalReport } from './rehearsal.js';
 import type { CliErrorCode } from '../runtime/run-errors.js';
 import type { JsonValue } from '../runtime/model.js';
@@ -18,6 +19,8 @@ export interface WorkflowFailure {
   readonly stateDir: string | null;
   readonly run: RunRecord | null;
   readonly diagnostics: readonly TypecheckDiagnostic[];
+  /** Runnable follow-ups, built with the invocation's launcher; absent means none. */
+  readonly next?: readonly NextCommand[];
 }
 
 /** Fill absent failure context explicitly, without synthesizing checkpoint state. @internal */

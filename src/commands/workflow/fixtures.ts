@@ -25,6 +25,7 @@ export default class WorkflowFixtures extends WorkflowCommand {
     const stateDir = this.runContext(args.runId, flags['state-dir']);
     const executor = new WorkflowExecutor({
       logger: this.createExecutionLogger(flags),
+      commandLauncher: this.commandLauncher,
       signal: this.signal,
     });
     const result = await executor.execute({

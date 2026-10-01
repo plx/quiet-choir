@@ -18,6 +18,8 @@ import { classifyRecovery } from '../runtime/recovery-decision.js';
 import type { RequestSummary, RunEvent, UsageSummary } from '../runtime/observability-model.js';
 import type { JsonValue } from '../runtime/model.js';
 import type { ChildRecord } from '../runtime/child-model.js';
+import type { CommandLauncher } from '../runtime/commands.js';
+import { runNextCommands, type NextCommand } from './next-commands.js';
 
 /** Inspection states are derived; stale never overwrites the checkpoint status. @internal */
 export type InspectionStatus = RunRecord['status'] | 'stale';
@@ -71,6 +73,11 @@ export interface RunSummary {
   })[];
   readonly cwd: string;
   readonly stateDir?: string;
+  /**
+   * Runnable follow-ups for a failed, stale or suspended run, set by `inspectRun` beside
+   * `stateDir`; empty for other statuses and for runs without a stored entrypoint.
+   */
+  readonly next?: readonly NextCommand[];
   readonly harnesses: NonNullable<RunRecord['harnesses']>;
   readonly id: string;
   readonly workflow: { readonly name: string; readonly version: string };
@@ -437,18 +444,30 @@ export function summarizeRun(
   };
 }
 
+/** What to read, and the launcher that starts the summary's `next` commands. @internal */
+export interface InspectRunOptions extends ReadRunOptions {
+  readonly commandLauncher?: CommandLauncher | undefined;
+}
+
 /**
  * Read liveness after the record, then re-read on apparent owner loss to avoid a completion race.
  * A stale verdict only stands when the checkpoint is provably the same before and after the
  * ownership read; otherwise retry, bounded, against the fresh pair. @internal
  */
-export async function inspectRun(options: ReadRunOptions): Promise<RunInspection> {
+export async function inspectRun(options: InspectRunOptions): Promise<RunInspection> {
   const stateDir = resolveStateDir(options);
-  const inspection = (run: RunRecord, ownership: RunOwnership): RunInspection => ({
-    run,
-    ownership,
-    summary: { ...summarizeRun(run, ownership), stateDir },
-  });
+  const inspection = (run: RunRecord, ownership: RunOwnership): RunInspection => {
+    const summary = summarizeRun(run, ownership);
+    return {
+      run,
+      ownership,
+      summary: {
+        ...summary,
+        stateDir,
+        next: runNextCommands(run, summary.status, stateDir, options.commandLauncher),
+      },
+    };
+  };
   let run = await readRequiredRun(options);
   let ownership = await inspectRunOwnership(options);
   for (let attempt = 0; attempt < 3; attempt++) {
@@ -470,6 +489,7 @@ export async function listRuns(options: {
   readonly additionalStateDirs?: readonly string[];
   readonly stateDir: string;
   readonly status?: InspectionStatus;
+  readonly commandLauncher?: CommandLauncher | undefined;
 }): Promise<{
   readonly stateDir: string;
   readonly runs: readonly RunSummary[];
@@ -489,7 +509,11 @@ export async function listRuns(options: {
   for (const directory of roots) {
     for (const runId of await listRunIds(directory)) {
       try {
-        const { summary } = await inspectRun({ stateDir: directory, runId });
+        const { summary } = await inspectRun({
+          stateDir: directory,
+          runId,
+          commandLauncher: options.commandLauncher,
+        });
         if (options.status === undefined || summary.status === options.status) runs.push(summary);
       } catch (error) {
         warnings.push(
@@ -504,7 +528,7 @@ export async function listRuns(options: {
 
 /** Deliver one snapshot per stored/ownership change; elapsed time alone is not a JSONL change. @internal */
 export async function watchRun(
-  options: ReadRunOptions & { readonly intervalMs: number },
+  options: InspectRunOptions & { readonly intervalMs: number },
   onChange: (value: RunInspection) => void,
   signal?: AbortSignal,
 ): Promise<RunInspection> {

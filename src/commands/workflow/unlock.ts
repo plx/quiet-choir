@@ -32,6 +32,7 @@ export default class WorkflowUnlock extends WorkflowCommand {
     const stateDir = this.runContext(args.runId, flags['state-dir']);
     const executor = new WorkflowExecutor({
       logger: this.createExecutionLogger(flags),
+      commandLauncher: this.commandLauncher,
       signal: this.signal,
       processSupervisor: this.processSupervisor,
     });

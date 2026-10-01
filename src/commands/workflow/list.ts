@@ -47,6 +47,7 @@ export default class WorkflowList extends WorkflowCommand {
     this.failureContext = { runId: null, stateDir: stateDir };
     const executor = new WorkflowExecutor({
       logger: this.createExecutionLogger(flags),
+      commandLauncher: this.commandLauncher,
       signal: this.signal,
     });
     const result = await executor.execute({

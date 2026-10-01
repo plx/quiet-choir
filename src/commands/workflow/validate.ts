@@ -40,6 +40,7 @@ export default class WorkflowValidate extends WorkflowCommand {
     const typecheck = await this.entrypoint(args.file);
     const executor = new WorkflowExecutor({
       logger: this.createExecutionLogger(flags),
+      commandLauncher: this.commandLauncher,
       signal: this.signal,
     });
     const result = await executor.execute({ kind: 'workflow.validate', typecheck });

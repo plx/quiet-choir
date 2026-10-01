@@ -68,6 +68,7 @@ export function workflowErrorDocument(
       .filter(([, step]) => step.status === 'failed' || step.status === 'cancelled')
       .map(([id, step]) => ({ id, kind: step.kind, attempts: step.attempts, error: step.error })),
     diagnostics: failure.diagnostics,
+    next: failure.next ?? [],
     ...(compact
       ? { summary: failure.run && summarizeRunResult(failure.run, failure.stateDir) }
       : { run: failure.run }),

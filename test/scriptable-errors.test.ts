@@ -44,6 +44,7 @@ beforeEach(async () => {
   vi.mocked(store.lockRun).mockImplementation(actualStore.lockRun);
 });
 afterEach(async () => {
+  vi.unstubAllEnvs();
   await rm(stateDir, { recursive: true, force: true });
 });
 const options = () => ({ runId: 'run', stateDir, input: null });
@@ -142,6 +143,8 @@ it('returns typed refusals with compatibility and ownership details without chan
 });
 
 it('bounds and sorts available IDs for an unknown run', async () => {
+  // No registered project may hold the run: keep the candidate search off the real state.
+  vi.stubEnv('XDG_STATE_HOME', join(stateDir, 'xdg'));
   for (let index = 0; index < 25; index++)
     await writeFile(join(stateDir, `run-${String(index).padStart(2, '0')}.json`), '{}');
   await writeFile(join(stateDir, 'not a run.json'), '{}');
@@ -155,6 +158,7 @@ it('bounds and sorts available IDs for an unknown run', async () => {
     stateDir,
     count: 25,
     available: Array.from({ length: 20 }, (_, index) => `run-${String(index).padStart(2, '0')}`),
+    candidates: [],
   });
   expect(error.cause).toHaveProperty('code', 'ENOENT');
   await expect(
@@ -246,6 +250,7 @@ it('renders explicit empty context for pre-run failures and reserves exit 1 for 
     run: null,
     failedSteps: [],
     diagnostics: [],
+    next: [],
   });
   expect(Object.entries(workflowExitCodes).filter(([, exit]) => exit === 1)).toEqual([
     ['workflow.failed', 1],

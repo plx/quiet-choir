@@ -17,6 +17,7 @@ import { isValidRunId, runIdMessage } from './run-errors.js';
 import { answerEnvelopeSchema, validateAnswerAuthor } from './question-schema.js';
 import type { JsonValue } from './model.js';
 import type { PendingOperation } from './wait-model.js';
+import { workflowArgv, type CommandLauncher } from './commands.js';
 
 /** A rejected delivery: invalid input is exit 2, a closed/already answered question is exit 3. */
 export class AnswerError extends Error {
@@ -206,15 +207,15 @@ export async function questionCodeChanged(run: RunRecord): Promise<boolean | nul
 export async function pendingOperations(
   run: RunRecord,
   stateDir: string,
+  launcher?: CommandLauncher,
 ): Promise<PendingOperation[]> {
   const codeChanged = await questionCodeChanged(run);
   const pending: PendingOperation[] = [];
   for (const [stepId, step] of Object.entries(run.steps)) {
     if (step.status !== 'waiting') continue;
     const answerCommand = step.question
-      ? [
-          'quiet-choir',
-          'workflow',
+      ? workflowArgv(
+          launcher,
           'answer',
           run.id,
           stepId,
@@ -222,7 +223,7 @@ export async function pendingOperations(
           stateDir,
           '--json',
           '<ANSWER_JSON>',
-        ]
+        )
       : null;
     if (step.kind === 'wait' && step.wait) {
       pending.push({
@@ -256,15 +257,19 @@ export async function pendingOperations(
   return pending;
 }
 
+/** Options for {@link listPending}. */
+export interface ListPendingOptions extends StateDirectoryOptions {
+  /** Program words that start each `answerCommand`; defaults to `['quiet-choir']`. */
+  readonly commandLauncher?: CommandLauncher;
+}
+
 /** List parked questions, polls, and deadlines by reading state only; never imports code. */
-export async function listPending(
-  options: StateDirectoryOptions = {},
-): Promise<PendingOperation[]> {
+export async function listPending(options: ListPendingOptions = {}): Promise<PendingOperation[]> {
   const stateDir = resolveStateDir(options);
   const pending: PendingOperation[] = [];
   for (const runId of await listRunIds(stateDir)) {
     const run = await readRun({ stateDir, runId });
-    pending.push(...(await pendingOperations(run, stateDir)));
+    pending.push(...(await pendingOperations(run, stateDir, options.commandLauncher)));
   }
   return pending;
 }

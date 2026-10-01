@@ -23,6 +23,7 @@ export default class WorkflowPending extends WorkflowCommand {
     );
     const executor = new WorkflowExecutor({
       logger: this.createExecutionLogger(flags),
+      commandLauncher: this.commandLauncher,
       signal: this.signal,
     });
     const result = await executor.execute({

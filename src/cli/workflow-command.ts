@@ -10,6 +10,7 @@ import {
   WorkflowCommandError,
 } from './workflow-errors.js';
 import { summarizeRunResult } from '../workflow/loader/run-result.js';
+import { formatNextCommands } from './presentation.js';
 import { workflowFailure, type WorkflowFailure } from '../workflow/loader/failure.js';
 import { isValidRunId, runIdMessage, type CliErrorCode } from '../workflow/runtime/run-errors.js';
 import type { JsonValue } from '../workflow/runtime/model.js';
@@ -18,6 +19,8 @@ import type { TypecheckPlan } from '../workflow/typecheck/model.js';
 import { tolerateClosedTerminal, executionSignals } from './signals.js';
 import { ProcessSupervisor } from '../processes/supervisor.js';
 import { readRunSync, readRun, type RunRecord } from '../workflow/runtime/store.js';
+import { commandLauncher as detectedCommandLauncher } from './launcher.js';
+import type { CommandLauncher } from '../workflow/runtime/commands.js';
 
 /** Workflow presentation boundary, including failures that occur before argument parsing. @internal */
 export abstract class WorkflowCommand extends BaseCommand {
@@ -27,6 +30,8 @@ export abstract class WorkflowCommand extends BaseCommand {
   };
   protected readonly processSupervisor = new ProcessSupervisor();
   protected signal: AbortSignal = new AbortController().signal;
+  /** Program words for emitted commands, detected by `launchCli`; undefined in-process. */
+  protected readonly commandLauncher: CommandLauncher | undefined = detectedCommandLauncher();
   #signals: ReturnType<typeof executionSignals> | undefined;
   #stdoutWrite: typeof process.stdout.write | undefined;
 
@@ -96,11 +101,12 @@ export abstract class WorkflowCommand extends BaseCommand {
       );
       this.exit(exit);
     }
+    const human = [failure.message, ...formatNextCommands(failure.next)].join('\n');
     if (cause instanceof WorkflowCommandError && cause.humanExitOnly) {
-      this.logToStderr(failure.message);
+      this.logToStderr(human);
       this.exit(exit);
     }
-    this.error(failure.message, { code: failure.code, exit });
+    this.error(human, { code: failure.code, exit });
   }
 
   /**
