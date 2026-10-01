@@ -404,6 +404,7 @@ const workflowIdentitySchema = z.object({
 const requestSummarySchema = z
   .object({
     isolation: harnessIsolationSchema.optional(),
+    instructions: z.enum(['native', 'none']).optional(),
     environment: environmentSummarySchema.optional(),
     harness: z
       .string()

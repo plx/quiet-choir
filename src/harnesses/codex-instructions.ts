@@ -181,5 +181,5 @@ export function codexInstructionWarning(detection: CodexInstructionDetection): s
   if (!user.length) return undefined;
   const parts = files.map((source) => `${source.path} (sha256 ${source.sha256.slice(0, 12)})`);
   if (skills) parts.push(`${String(skills)} skill description file${skills === 1 ? '' : 's'}`);
-  return `Codex loads user-level instructions in every isolation mode, including restricted: ${parts.join(', ')}. Results can depend on who runs this workflow.`;
+  return `Codex loads user-level instructions in every isolation mode, including restricted: ${parts.join(', ')}. Results can depend on who runs this workflow. Set codex instructions: 'none' to run a call without them.`;
 }

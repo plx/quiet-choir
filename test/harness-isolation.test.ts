@@ -17,6 +17,11 @@ import { testInvocation } from './harness-invocation.js';
 import { childEnvironment } from '../src/harnesses/environment.js';
 import { publicCapabilityManifest } from '../src/workflow/runtime/profiles.js';
 import { validateAgentOptions } from '../src/workflow/runtime/options.js';
+import { legacyAgentIdentity } from '../src/workflow/runtime/legacy-agent.js';
+import type { BuiltinHarnessRequestInput } from '../src/workflow/runtime/model.js';
+import { codexInstructionWarning } from '../src/harnesses/codex-instructions.js';
+import { inspectRun } from '../src/workflow/loader/inspection.js';
+import { formatRunSummary } from '../src/cli/inspection-view.js';
 
 let directory: string;
 const reply = {
@@ -443,4 +448,202 @@ it('records one user-level instruction warning per run, and flags a change on re
         expect.objectContaining({ scope: 'project', kind: 'agents' }),
       );
   }
+});
+
+// Pinned on main before Codex `instructions` existed (#130): unset and 'native' must keep these.
+const pinnedRequests = {
+  codexPlain: {
+    harness: 'codex',
+    cwd: '/pinned/cwd',
+    outputSchema: null,
+    options: { prompt: 'pinned prompt' },
+  },
+  codexOptions: {
+    harness: 'codex',
+    cwd: '/pinned/cwd',
+    outputSchema: null,
+    options: {
+      prompt: 'pinned prompt',
+      model: 'gpt-5',
+      effort: 'low',
+      sandbox: 'workspace-write',
+      config: { 'features.x': true },
+      env: { set: { A: 'b' } },
+    },
+  },
+  claude: {
+    harness: 'claude',
+    cwd: '/pinned/cwd',
+    outputSchema: null,
+    options: { prompt: 'pinned prompt', tools: ['Read'], maxTurns: 3 },
+  },
+} as const satisfies Record<string, BuiltinHarnessRequestInput>;
+const pinnedDigests = {
+  codexPlain: '440c8defac487e76bb6686deb544bdf0553a52b56d91279b91ba6d01dbe148cc',
+  codexOptions: '6f0a8d10ccd191cefbd2badb6a5679596ff9aa5ad324159dcec3848fda0bb7e1',
+  claude: '2d5ee84d4ac85337d6dba576936f436acb2c7d1e2132eed426cdec62ddb3721a',
+};
+const identityDigest = (identity: Readonly<Record<string, string>>): string =>
+  sha256(
+    JSON.stringify(Object.entries(identity).sort(([left], [right]) => (left < right ? -1 : 1))),
+  );
+
+it('keeps pinned legacy agent identity digests', () => {
+  for (const [name, request] of Object.entries(pinnedRequests))
+    expect(identityDigest(legacyAgentIdentity(request, { type: 'object' })), name).toBe(
+      pinnedDigests[name as keyof typeof pinnedDigests],
+    );
+});
+
+it('fingerprints Codex instructions only when they are none', () => {
+  const base = pinnedRequests.codexOptions;
+  const identity = (instructions?: 'native' | 'none') =>
+    legacyAgentIdentity(
+      {
+        ...base,
+        options: { ...base.options, ...(instructions === undefined ? {} : { instructions }) },
+      },
+      { type: 'object' },
+    );
+  expect(identity('native')).toEqual(identity());
+  expect(identityDigest(identity('native'))).toBe(pinnedDigests.codexOptions);
+  const none = identity('none');
+  const changed = Object.keys(none).filter((key) => none[key] !== identity()[key]);
+  expect(changed).toEqual(['option.instructions']);
+  expect(Object.keys(none).length).toBe(Object.keys(identity()).length + 1);
+});
+
+it('accepts Codex instructions only where they can mean none', () => {
+  const codex =
+    (options: Record<string, unknown>, resolved = true) =>
+    () => {
+      validateAgentOptions('codex', { prompt: '', ...options }, resolved);
+    };
+  expect(codex({ instructions: 'none' })).not.toThrow();
+  expect(codex({ instructions: 'native', isolation: 'inherit' })).not.toThrow();
+  expect(codex({ instructions: 'bogus' })).toThrow('instructions');
+  expect(codex({ instructions: 'none', isolation: 'inherit' })).toThrow(
+    "instructions 'none' requires restricted isolation; inherit loads CODEX_HOME configuration",
+  );
+  // A partial call-site check still rejects an explicit inherit.
+  expect(codex({ instructions: 'none', isolation: 'inherit' }, false)).toThrow(
+    'requires restricted',
+  );
+  // project_doc_max_bytes belongs to the mode only under none.
+  for (const config of [{ project_doc_max_bytes: 1 }, { 'project_doc_max_bytes.x': 1 }])
+    expect(codex({ instructions: 'none', config })).toThrow("owned by instructions 'none'");
+  expect(codex({ config: { project_doc_max_bytes: 1 } })).not.toThrow();
+  expect(codex({ instructions: 'native', config: { project_doc_max_bytes: 1 } })).not.toThrow();
+  expect(codex({ instructions: 'none', config: { developer_instructions: 'x' } })).not.toThrow();
+
+  expect(() => {
+    validateAgentOptions('claude', { prompt: '', instructions: 'none' });
+  }).toThrow('Unrecognized key(s) "instructions"');
+  expect(() =>
+    capabilityManifest({ profiles: { p: { claude: { instructions: 'none' } as never } } }),
+  ).toThrow('instructions');
+  expect(
+    capabilityManifest({ profiles: { p: { codex: { instructions: 'none' } } } }).profiles['p']
+      ?.codex.instructions,
+  ).toBe('none');
+  expect(() =>
+    capabilityManifest({
+      profiles: { p: { codex: { instructions: 'none', isolation: 'inherit' } } },
+    }),
+  ).toThrow('requires restricted');
+  // instructions removes context and grants nothing, so it stays a read-only control.
+  expect(
+    capabilityManifest({ profiles: { p: { codex: { instructions: 'none' } } } }).profiles['p']
+      ?.codexAccess,
+  ).toBe('read');
+});
+
+it('plans none as a private CODEX_HOME plus project_doc_max_bytes=0', () => {
+  const harness = new CliHarness();
+  const plan = (instructions?: 'native' | 'none') =>
+    harness.plan({
+      harness: 'codex',
+      cwd: directory,
+      outputSchema: null,
+      options: { prompt: '', ...(instructions === undefined ? {} : { instructions }) },
+    });
+  const none = plan('none');
+  expect(none.codexHome).toBe('private');
+  expect(none.argv.slice(0, 12)).toEqual([
+    'exec',
+    '--json',
+    '--sandbox',
+    'read-only',
+    '--config',
+    'approval_policy="never"',
+    '--ephemeral',
+    '--color',
+    'never',
+    '--ignore-user-config',
+    '--ignore-rules',
+    '--config',
+  ]);
+  expect(none.argv[12]).toBe('project_doc_max_bytes=0');
+  for (const other of [plan(), plan('native')]) {
+    expect(other).not.toHaveProperty('codexHome');
+    expect(other.argv).toEqual(plan().argv);
+    expect(other.argv.join(' ')).not.toContain('project_doc_max_bytes');
+  }
+});
+
+it('records resolved Codex instructions, shows none in inspect, and pins none in identity', async () => {
+  let instructions: 'native' | 'none' | undefined;
+  const invoke = vi.fn<Harness['invoke']>().mockResolvedValue(reply);
+  const workflow = defineWorkflow({
+    name: 'instructions-mode',
+    version: '1',
+    input: z.null(),
+    output: z.string(),
+    async run(ctx) {
+      // strictProfiles (the default) allows a call-site instructions choice.
+      const result = await ctx.codex.text('call', {
+        prompt: 'same',
+        ...(instructions === undefined ? {} : { instructions }),
+      });
+      await ctx.claude.text('other', { prompt: 'same' });
+      throw new Error(`tail failure ${result.output}`);
+    },
+  });
+  const options = {
+    runId: 'instructions-mode',
+    cwd: directory,
+    stateDir: join(directory, 'runs'),
+    grants: ['all'],
+    harness: { invoke },
+  };
+  await expect(runWorkflow(workflow, { ...options, input: null })).rejects.toThrow('tail failure');
+  const recorded = await readRun(options);
+  expect(recorded.steps['call']?.request?.instructions).toBe('native');
+  expect(recorded.steps['other']?.request).not.toHaveProperty('instructions');
+  instructions = 'native';
+  await expect(runWorkflow(workflow, { ...options, resume: true })).rejects.toThrow('tail failure');
+  expect(invoke).toHaveBeenCalledTimes(2);
+  instructions = 'none';
+  await expect(runWorkflow(workflow, { ...options, resume: true })).rejects.toThrow(
+    /changed|fingerprint|incompatible/u,
+  );
+
+  // Inspect lists failed agent steps with their limits.
+  invoke.mockRejectedValue(new Error('agent failure'));
+  const fresh = { ...options, runId: 'instructions-none' };
+  await expect(runWorkflow(workflow, { ...fresh, input: null })).rejects.toThrow('agent failure');
+  expect((await readRun(fresh)).steps['call']?.request?.instructions).toBe('none');
+  expect(formatRunSummary((await inspectRun(fresh)).summary)).toMatch(
+    /failed call {2}codex .*restricted configuration, no native instructions/u,
+  );
+});
+
+it('points the user-level instruction warning at the opt-out', () => {
+  const warning = codexInstructionWarning({
+    sources: [{ scope: 'user', kind: 'agents', path: '/home/AGENTS.md', sha256: 'a'.repeat(64) }],
+    omittedSkills: 0,
+    warnings: [],
+  });
+  expect(warning).toContain('every isolation mode, including restricted');
+  expect(warning).toContain("Set codex instructions: 'none' to run a call without them.");
 });

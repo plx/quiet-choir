@@ -64,3 +64,5 @@ part of the documentation.
 - [0029: Persist external interruptions as resumable suspensions](0029-persist-interruptions-as-resumable-suspensions.md)
 
 - [0030: Publish, release and recover run locks by rename](0030-rename-published-run-locks.md)
+
+- [0031: Private CODEX_HOME for instruction-free Codex calls](0031-private-codex-home-for-instruction-free-calls.md)

@@ -23,7 +23,10 @@ export function legacyAgentIdentity(request: HarnessRequestInput, schema: JsonVa
             (key === 'tools' || key === 'allowedTools') &&
             Array.isArray(value) &&
             value.length === 0
-          ) && !(key === 'sandbox' && value === 'read-only'),
+          ) &&
+          !(key === 'sandbox' && value === 'read-only') &&
+          // 'native' is the default, so it fingerprints like unset (#130).
+          !(key === 'instructions' && value === 'native'),
       )
       .filter(
         ([key]) =>

@@ -50,6 +50,7 @@ export const codexControlFields = {
     .optional(),
   config: data.optional(),
   images: strings.optional(),
+  instructions: z.enum(['native', 'none']).optional(),
 };
 
 const commonOwners: Record<string, string> = {
@@ -198,12 +199,20 @@ export function tomlLiteral(value: JsonValue): string {
     .map(([key, child]) => `${JSON.stringify(key)} = ${tomlLiteral(child)}`)
     .join(', ')} }`;
 }
+/** Config keys a Codex `instructions: 'none'` call sets itself. @internal */
+export const instructionConfig: Readonly<Record<string, string>> = {
+  project_doc_max_bytes: "instructions 'none'",
+};
 /** Restrict config aliases of owned settings, including parent tables and nested keys. @internal */
-export function validateConfig(config: Readonly<Record<string, JsonValue>>): void {
+export function validateConfig(
+  config: Readonly<Record<string, JsonValue>>,
+  owned: Readonly<Record<string, string>> = {},
+): void {
+  const reserved = { ...reservedConfig, ...owned };
   for (const [key, value] of Object.entries(config)) {
     if (!/^[a-zA-Z0-9_-]+(?:\.[a-zA-Z0-9_-]+)*$/u.test(key))
       throw new Error(`Invalid Codex config key: ${key}. Use unquoted dotted keys.`);
-    const match = Object.entries(reservedConfig).find(
+    const match = Object.entries(reserved).find(
       ([reserved]) =>
         key === reserved || key.startsWith(`${reserved}.`) || reserved.startsWith(`${key}.`),
     );

@@ -37,6 +37,9 @@ export function requestSummary(
   const options = request.options;
   return {
     isolation: resolveIsolation(options).isolation,
+    ...(request.harness === 'codex'
+      ? { instructions: (options as CodexOptions).instructions ?? 'native' }
+      : {}),
     environment: environmentSummary(options.env),
     harness: request.harness,
     revision: request.revision ?? 1,

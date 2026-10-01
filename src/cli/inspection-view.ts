@@ -111,6 +111,7 @@ export function formatRunSummary(run: RunSummary, verbose = false): string {
             : `$${String(request.limits.maxBudgetUsd)} budget`,
           request.limits.sandbox,
           request.isolation ? `${request.isolation} configuration` : null,
+          request.instructions === 'none' ? 'no native instructions' : null,
         ]
           .filter((value) => value !== null)
           .join(', ')

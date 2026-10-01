@@ -2,6 +2,23 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- Harness isolation (feature; the default is unchanged): Codex calls accept
+  `instructions: 'native' | 'none'` (new `CodexOptions.instructions`). `'none'` runs the child
+  against a private temporary `CODEX_HOME` holding only a 0600 copy of the real `auth.json` and adds
+  `--config project_doc_max_bytes=0`, so neither the user's nor the project's `AGENTS.md`, user
+  skills or memories reach the request (asserted in the isolation contract on codex-cli 0.157.1). A
+  token refreshed during the call is written back to the real `auth.json` atomically under a lock in
+  `os.tmpdir()`, only while the real file is unchanged; otherwise the later `last_refresh` wins and
+  the call warns, naming paths and never contents. The private home is removed after success,
+  failure and cancellation. `'none'` is rejected with `isolation: 'inherit'`, owns the
+  `project_doc_max_bytes` config key, and is rejected for Claude. It is not a capability control, so
+  call sites may set it under `strictProfiles`. `'none'` enters step identity; `'native'` and unset
+  fingerprint as before, so existing runs keep their identities. Plans carry the new optional
+  `CliArgumentPlan.codexHome: 'private'` (shown in dry-run call plans), Codex steps record the new
+  optional `RequestSummary.instructions`, and `workflow inspect` shows `no native instructions`. The
+  additive record field needs no `formatVersion` bump. The run's user-level instruction warning now
+  ends with a hint to set `instructions: 'none'`. See ADR 0031.
+
 - Harness isolation (behavior change, diagnostics only): restricted Codex still loads the user's
   `CODEX_HOME/AGENTS.md` (or `AGENTS.override.md`), the descriptions of `CODEX_HOME/skills`, and
   project `AGENTS.md`/`AGENTS.override.md` from the Git root down to `cwd`, while restricted Claude
