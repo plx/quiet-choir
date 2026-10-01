@@ -69,6 +69,12 @@ needs no test edit. `.github/dependabot.yml` applies the same policy.
   and may be bumped by Dependabot. The test checks that they are exact runtime dependencies, not
   which version they are.
 
+A failing golden in `test/schema-identity.test.ts` after a dependency bump (usually zod, or tsx when
+it alters a schema encoding) is a gate, not a snapshot to refresh: the encoding enters step
+identity, so changing it needs an explicit decision under ADR 0005 and ADR 0006 (see the durability
+reference) before the expected value moves. The gate does not catch callback-text drift from a tsx
+upgrade.
+
 ## Pull requests
 
 Keep pull requests reviewable and explain observable behavior changes. CI must pass on every

@@ -8,12 +8,13 @@ import type { HarnessDeclaration, WorkflowHarnesses } from './harness-model.js';
 import { RunBudget, RunBudgetExceededError, runBudgetSchema } from './run-budget.js';
 import { RunChildren } from './children.js';
 import { checkedDefinition, describeWorkflow } from './definition.js';
-import { agentUsageSchema, normalizeUsage, usageIdentitySchema } from './usage.js';
+import { agentUsageSchema, normalizeUsage } from './usage.js';
 import { legacyAttemptKind } from './usage-summary.js';
 import { mergeOptionsSchema, mergeResultSchema } from './worktree-schema.js';
 import { randomUUID } from 'node:crypto';
 import { deriveAgentSessionId } from './agent-session.js';
 import { agentDiagnosticsSchema } from './agent-stream-schema.js';
+import { agentResultIdentitySchema } from './agent-result-schema.js';
 import type {
   AgentDiagnostics,
   AgentProgress,
@@ -104,7 +105,7 @@ import {
   workflowSnapshot,
   type WorkflowCodeOptions,
 } from './compatibility.js';
-import { engineInfo, oldFormatMessage } from './engine.js';
+import { oldFormatMessage, recordedEngine } from './engine.js';
 import { loadFork, pinnedFork, reuseCandidate, validateFork } from './fork.js';
 import type { ForkOptions, ResumeCheck } from './replay-model.js';
 import { schemaJson } from './schema.js';
@@ -695,15 +696,18 @@ export async function runWorkflow<
     const bodyInput = jsonValue(input, 'Workflow input', { canonical: false }) as TInput;
     const legacyReplay = existing?.formatVersion === 1;
     const migrating = existing !== undefined && existing.formatVersion !== 7;
+    const engine = recordedEngine();
     const engineChanged =
       existing !== undefined &&
-      (existing.engine?.quietChoir !== engineInfo.version ||
-        existing.engine.node !== process.version);
+      (existing.engine?.quietChoir !== engine.quietChoir ||
+        existing.engine.node !== engine.node ||
+        existing.engine.zod !== engine.zod ||
+        existing.engine.tsx !== engine.tsx);
     if (existing && legacyReplay) prepareLegacyReplay(existing);
     if (existing) {
       existing.formatVersion = 7;
       existing.seq ??= 0;
-      existing.engine = { quietChoir: engineInfo.version, node: process.version };
+      existing.engine = engine;
     }
     const runBudget = runBudgetSchema.parse({
       maxRunCostUsd: null,
@@ -814,7 +818,7 @@ export async function runWorkflow<
     const record: RunRecord = existing ?? {
       formatVersion: 7,
       seq: 0,
-      engine: { quietChoir: engineInfo.version, node: process.version },
+      engine,
       rootCause: null,
       maps: {},
       id: options.runId,
@@ -2111,18 +2115,9 @@ export async function runWorkflow<
               effort: execution.reasoningEffort ?? request.options.effort ?? 'inherited',
             },
           };
-          const baseResultSchema = z.object({
-            diagnostics: agentDiagnosticsSchema,
-            output: schema,
-            sessionId: z.string().nullable(),
-            usage: usageIdentitySchema,
-          });
           const isolation =
             request.options.worktree === true ? 'worktree' : request.options.worktree;
-          const identitySchema =
-            isolation === undefined
-              ? baseResultSchema
-              : baseResultSchema.extend({ worktree: worktreeChangeSchema });
+          const identitySchema = agentResultIdentitySchema(schema, isolation !== undefined);
           const identity = agentIdentity(request, schemaJson(identitySchema), registration);
           const resultSchema = identitySchema.extend({ usage: agentUsageSchema });
           const onPermissionDenied =

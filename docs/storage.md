@@ -75,9 +75,10 @@ outside the workspace prevents ordinary Git cleanup from removing it. Same-user 
 still access it; this is not an authentication boundary for human approvals.
 
 The header keeps canonical CLI entrypoint/tsconfig paths and source hashes, the existing harness
-binary/version metadata, and informational `{ quietChoir, node }` engine versions. Harness discovery
-uses the existing optional `Harness.metadata` port once per live provider per invocation. Metadata
-changes do not affect step identity; no discovery or inference is needed for pure replay.
+binary/version metadata, and informational `{ quietChoir, node, zod, tsx }` engine versions (the
+last two are optional in older records). Harness discovery uses the existing optional
+`Harness.metadata` port once per live provider per invocation. Metadata changes do not affect step
+identity; no discovery or inference is needed for pure replay.
 
 ## Commit and read
 
