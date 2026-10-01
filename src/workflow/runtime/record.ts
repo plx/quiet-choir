@@ -728,6 +728,16 @@ const recordFieldsSchema = z.object({
         binary: z.string(),
         version: z.string().nullable(),
         warnings: z.array(z.string()).optional(),
+        instructionSources: z
+          .array(
+            z.object({
+              scope: z.enum(['user', 'project']),
+              kind: z.enum(['agents', 'agents-override', 'skill']),
+              path: z.string(),
+              sha256: z.string().regex(/^[a-f0-9]{64}$/u),
+            }),
+          )
+          .optional(),
       }),
     )
     .optional(),

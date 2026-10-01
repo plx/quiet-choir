@@ -6,6 +6,7 @@ import { randomUUID } from 'node:crypto';
 import { ProcessSupervisor } from '../processes/supervisor.js';
 import type {
   HarnessMetadata,
+  InstructionSource,
   BuiltinHarnessRequestInput as HarnessRequestInput,
 } from '../harness-kit.js';
 import { childEnvironment } from './environment.js';
@@ -13,6 +14,7 @@ import { effortValues, codexEffortValues, permissionModeValues } from '../harnes
 import { prepareInvocation } from './invocation.js';
 import { runProcess, type ProcessResult } from './process.js';
 import { parseClaude, parseCodex } from './protocol.js';
+import { detectCodexInstructionSources } from './codex-instructions.js';
 import { readInheritedCodexConfig, type InheritedCodexConfig } from './doctor-config.js';
 
 /** Contract-tested version bounds. Equal bounds deliberately certify only captured versions. */
@@ -84,6 +86,8 @@ export interface DoctorReport {
   readonly harnesses: Record<string, HarnessMetadata>;
   /** Selected Codex config values, when inspection succeeded. */
   readonly inherited?: InheritedCodexConfig;
+  /** User-level Codex instruction files restricted calls still load, as paths and digests only. */
+  readonly codexInstructions?: readonly InstructionSource[];
 }
 const message = (error: unknown): string =>
   (error instanceof Error ? error.message : String(error)).slice(-2048);
@@ -157,6 +161,7 @@ export async function probeHarnessContracts(options: DoctorOptions = {}): Promis
   const checks: DoctorCheck[] = [];
   const harnesses: DoctorReport['harnesses'] = {};
   let inherited: InheritedCodexConfig | undefined;
+  let codexInstructions: readonly InstructionSource[] | undefined;
   let zeroInference = true;
   for (const harness of providers) {
     signal.throwIfAborted();
@@ -445,10 +450,23 @@ export async function probeHarnessContracts(options: DoctorOptions = {}): Promis
           message:
             'Restricted mode skips user/project settings; omitted model/effort use remaining native defaults. Doctor does not read Claude authentication/settings secrets.',
         };
-      inherited = await readInheritedCodexConfig(codexHome(options), options.codexProfile);
+      const home = codexHome(options);
+      inherited = await readInheritedCodexConfig(home, options.codexProfile);
+      const detection = await detectCodexInstructionSources({
+        codexHome: home,
+        cwd: options.cwd ?? process.cwd(),
+        ...(options.signal ? { signal: options.signal } : {}),
+      });
+      codexInstructions = detection.sources.filter((source) => source.scope === 'user');
+      const found = codexInstructions.filter((source) => source.kind !== 'skill');
+      const skills = codexInstructions.length - found.length + detection.omittedSkills;
+      const named = [
+        ...found.map((source) => `${source.path} (sha256 ${source.sha256.slice(0, 12)})`),
+        ...(skills ? [`${String(skills)} skill description file${skills === 1 ? '' : 's'}`] : []),
+      ];
       return {
         ok: true,
-        message: `User/profile configuration: model=${inherited.model ?? 'inherited CLI default'}, effort=${inherited.effort ?? 'inherited CLI default'}, profile=${inherited.profile ?? 'none'}. These are inherit-mode diagnostics; restricted calls ignore user configuration. Project/managed layers may further override native defaults.`,
+        message: `User/profile configuration: model=${inherited.model ?? 'inherited CLI default'}, effort=${inherited.effort ?? 'inherited CLI default'}, profile=${inherited.profile ?? 'none'}. These are inherit-mode diagnostics; restricted calls skip config.toml (model, provider, profiles) and execpolicy rules, but Codex still loads CODEX_HOME/AGENTS.md (or AGENTS.override.md), CODEX_HOME/skills descriptions, and project AGENTS.md files from the Git root to the working directory. ${named.length ? `User-level instruction sources found: ${named.join(', ')}.` : 'No user-level instruction files were found.'}${detection.warnings.length ? ` ${detection.warnings.join(' ')}` : ''} Project/managed layers may further override native defaults.`,
       };
     });
   }
@@ -458,5 +476,6 @@ export async function probeHarnessContracts(options: DoctorOptions = {}): Promis
     checks,
     harnesses,
     ...(inherited ? { inherited } : {}),
+    ...(codexInstructions ? { codexInstructions } : {}),
   };
 }

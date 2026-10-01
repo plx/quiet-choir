@@ -2195,6 +2195,14 @@ export async function runWorkflow<
                       warnings.push(
                         `${harness} inherited environment or scrubbed variable names changed; values are not recorded or fingerprinted.`,
                       );
+                    if (
+                      old?.instructionSources &&
+                      metadata.instructionSources &&
+                      digest(old.instructionSources) !== digest(metadata.instructionSources)
+                    )
+                      warnings.push(
+                        `${harness} instruction sources changed since this run last used it; completed effects remain reusable.`,
+                      );
                     (record.harnesses ??= {})[harness] = metadata;
                     record.harnessWarnings = [
                       ...new Set([...(record.harnessWarnings ?? []), ...warnings]),
