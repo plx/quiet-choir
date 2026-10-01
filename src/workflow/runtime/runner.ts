@@ -2195,10 +2195,14 @@ export async function runWorkflow<
                       warnings.push(
                         `${harness} inherited environment or scrubbed variable names changed; values are not recorded or fingerprinted.`,
                       );
+                    // Project files follow the call's cwd, so only user-level edits are a change.
+                    const userSources = (sources: typeof metadata.instructionSources) =>
+                      sources?.filter((source) => source.scope === 'user');
                     if (
                       old?.instructionSources &&
                       metadata.instructionSources &&
-                      digest(old.instructionSources) !== digest(metadata.instructionSources)
+                      digest(userSources(old.instructionSources)) !==
+                        digest(userSources(metadata.instructionSources))
                     )
                       warnings.push(
                         `${harness} instruction sources changed since this run last used it; completed effects remain reusable.`,

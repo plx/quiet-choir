@@ -405,9 +405,12 @@ it('records one user-level instruction warning per run, and flags a change on re
   const userWarnings = (warnings: readonly string[] | undefined) =>
     (warnings ?? []).filter((warning) => warning.includes('user-level instructions'));
 
-  for (const edit of [false, true]) {
+  for (const mode of ['steady', 'edited', 'project'] as const) {
+    const edit = mode === 'edited';
+    await rm(join(directory, 'AGENTS.md'), { force: true });
+    await writeFile(join(home, 'AGENTS.md'), userMarker);
     fail = true;
-    const options = run(edit ? 'instructions-edited' : 'instructions-steady');
+    const options = run(`instructions-${mode}`);
     await expect(runWorkflow(workflow, { ...options, input: null })).rejects.toThrow(
       'gate failure',
     );
@@ -421,6 +424,8 @@ it('records one user-level instruction warning per run, and flags a change on re
 
     fail = false;
     if (edit) await writeFile(join(home, 'AGENTS.md'), `${userMarker} edited`);
+    // A project file appearing between attempts is not a user-level change.
+    if (mode === 'project') await writeFile(join(directory, 'AGENTS.md'), 'project instructions');
     const completed = await runWorkflow(workflow, { ...options, resume: true });
     const changed = (completed.harnessWarnings ?? []).filter((warning) =>
       warning.includes('instruction sources changed'),
@@ -433,5 +438,9 @@ it('records one user-level instruction warning per run, and flags a change on re
       expect(userWarnings(completed.harnessWarnings)).toHaveLength(1);
     }
     expect(JSON.stringify(completed)).not.toContain(userMarker);
+    if (mode === 'project')
+      expect(completed.harnesses?.['codex']?.instructionSources).toContainEqual(
+        expect.objectContaining({ scope: 'project', kind: 'agents' }),
+      );
   }
 });
