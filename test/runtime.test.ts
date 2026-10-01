@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-deprecated -- Exercise the supported legacy map/replay contract. */
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -11,6 +11,7 @@ import {
   defineWorkflow,
   readRun,
   runWorkflow,
+  RunRefusedError,
   z,
   type Harness,
   type WorkflowContext,
@@ -301,6 +302,174 @@ describe('durable TypeScript workflows', () => {
     expect(result.output).toBe(42);
     expect(result.harness).toEqual({ kind: 'cli', previousKinds: ['fixture'] });
     expect(invoke).toHaveBeenCalledTimes(1);
+  });
+
+  describe('harness configuration digest', () => {
+    const first = 'a'.repeat(64);
+    const second = 'b'.repeat(64);
+    async function paused() {
+      const options = await setup();
+      const state = { pause: true };
+      const definition = workflow(async (ctx) => {
+        const agent = await ctx.codex.object('ask', {
+          prompt: 'x',
+          schema: z.object({ answer: z.number() }),
+        });
+        if (state.pause) throw new Error('pause');
+        return agent.output.answer;
+      });
+      const invoke = vi.fn<Harness['invoke']>().mockResolvedValue(response);
+      return { options, state, definition, invoke, cli: { kind: 'cli', invoke } };
+    }
+    async function checkpointBytes(options: { stateDir: string; runId: string }) {
+      const directory = join(options.stateDir, options.runId);
+      return Promise.all(
+        ['run.json', 'journal.jsonl'].map((name) =>
+          readFile(join(directory, name), 'utf8').catch(() => null),
+        ),
+      );
+    }
+
+    it('records the digest and refuses a different one without touching the checkpoint', async () => {
+      const { options, state, definition, invoke, cli } = await paused();
+      await expect(
+        runWorkflow(definition, { ...options, harness: cli, harnessConfigDigest: first }),
+      ).rejects.toThrow('pause');
+      expect((await readRun(options)).harness).toEqual({
+        kind: 'cli',
+        previousKinds: [],
+        configDigest: first,
+      });
+      state.pause = false;
+      const before = await checkpointBytes(options);
+      const refused = runWorkflow(definition, {
+        ...options,
+        resume: true,
+        harness: cli,
+        harnessConfigDigest: second,
+      });
+      await expect(refused).rejects.toBeInstanceOf(RunRefusedError);
+      await expect(refused).rejects.toMatchObject({
+        code: 'run.incompatible',
+        details: { previousConfigDigest: first, requestedConfigDigest: second },
+        message: expect.stringContaining('--allow-harness-config-change') as unknown,
+      });
+      expect(await checkpointBytes(options)).toEqual(before);
+      expect(invoke).toHaveBeenCalledTimes(1);
+      // The completed-run fast path is checked the same way, like the kind check.
+      const result = await runWorkflow(definition, {
+        ...options,
+        resume: true,
+        harness: cli,
+        harnessConfigDigest: first,
+      });
+      expect(result.output).toBe(42);
+      expect(result.harness).toEqual({ kind: 'cli', previousKinds: [], configDigest: first });
+      await expect(
+        runWorkflow(definition, {
+          ...options,
+          resume: true,
+          harness: cli,
+          harnessConfigDigest: second,
+        }),
+      ).rejects.toThrow('different harness configuration');
+      expect(invoke).toHaveBeenCalledTimes(1);
+    });
+
+    it('accepts a changed digest only with allowHarnessConfigChange and records it', async () => {
+      const { options, state, definition, invoke, cli } = await paused();
+      await expect(
+        runWorkflow(definition, { ...options, harness: cli, harnessConfigDigest: first }),
+      ).rejects.toThrow('pause');
+      state.pause = false;
+      const result = await runWorkflow(definition, {
+        ...options,
+        resume: true,
+        harness: cli,
+        harnessConfigDigest: second,
+        allowHarnessConfigChange: true,
+      });
+      expect(result.output).toBe(42);
+      expect(invoke).toHaveBeenCalledTimes(1);
+      expect((await readRun(options)).harness).toEqual({
+        kind: 'cli',
+        previousKinds: [],
+        configDigest: second,
+      });
+    });
+
+    it('keeps records without a digest resumable and omits it when the configuration is unknown', async () => {
+      const { options, state, definition, invoke, cli } = await paused();
+      // An embedder's own harness: no digest is supplied, so none is recorded.
+      await expect(runWorkflow(definition, { ...options, harness: cli })).rejects.toThrow('pause');
+      expect((await readRun(options)).harness).toEqual({ kind: 'cli', previousKinds: [] });
+      // A legacy record (or one with an unknown configuration) adopts the supplied digest.
+      await expect(
+        runWorkflow(definition, {
+          ...options,
+          resume: true,
+          harness: cli,
+          harnessConfigDigest: first,
+        }),
+      ).rejects.toThrow('pause');
+      expect((await readRun(options)).harness?.configDigest).toBe(first);
+      // Omitting the option checks nothing and leaves the configuration unknown again.
+      await expect(
+        runWorkflow(definition, { ...options, resume: true, harness: cli }),
+      ).rejects.toThrow('pause');
+      expect((await readRun(options)).harness).toEqual({ kind: 'cli', previousKinds: [] });
+      state.pause = false;
+      const result = await runWorkflow(definition, {
+        ...options,
+        resume: true,
+        harness: cli,
+        harnessConfigDigest: second,
+      });
+      expect(result.output).toBe(42);
+      expect(result.harness?.configDigest).toBe(second);
+      expect(invoke).toHaveBeenCalledTimes(1);
+    });
+
+    it('leaves a harness kind change to allowHarnessChange alone', async () => {
+      const { options, state, definition, invoke } = await paused();
+      await expect(
+        runWorkflow(definition, {
+          ...options,
+          harness: { kind: 'fixture', invoke },
+          harnessConfigDigest: first,
+        }),
+      ).rejects.toThrow('pause');
+      state.pause = false;
+      const cli = { kind: 'cli', invoke };
+      await expect(
+        runWorkflow(definition, {
+          ...options,
+          resume: true,
+          harness: cli,
+          harnessConfigDigest: second,
+        }),
+      ).rejects.toThrow('--allow-harness-change');
+      const result = await runWorkflow(definition, {
+        ...options,
+        resume: true,
+        harness: cli,
+        harnessConfigDigest: second,
+        allowHarnessChange: true,
+      });
+      expect(result.output).toBe(42);
+      expect(result.harness).toEqual({
+        kind: 'cli',
+        previousKinds: ['fixture'],
+        configDigest: second,
+      });
+    });
+
+    it('rejects a digest that is not a SHA-256 hex string', async () => {
+      const { options, definition, cli } = await paused();
+      await expect(
+        runWorkflow(definition, { ...options, harness: cli, harnessConfigDigest: 'nope' }),
+      ).rejects.toThrow('harnessConfigDigest must be');
+    });
   });
 
   it('detects changed step input/schema/kind, duplicate IDs and skipped recorded work', async () => {

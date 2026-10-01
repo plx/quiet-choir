@@ -349,6 +349,17 @@ export interface RunOptions extends WorkflowCodeOptions {
   readonly harnessConfigurations?: HarnessConfigurations;
   /** Explicitly accept replaying outputs recorded under a different harness kind, including forks. */
   readonly allowHarnessChange?: boolean;
+  /**
+   * SHA-256 digest of the CLI harness configuration this execution uses, recorded as
+   * `harness.configDigest`. When it is supplied on resume and the run last executed under the same
+   * harness kind with a different recorded digest, the resume is refused with `run.incompatible`
+   * unless {@link RunOptions.allowHarnessConfigChange} is set. Omit it when the configuration is
+   * unknown, such as with an embedder's own {@link Harness}: nothing is checked and the field is
+   * left out of the record.
+   */
+  readonly harnessConfigDigest?: string;
+  /** Explicitly accept resuming under a `harnessConfigDigest` different from the recorded one. */
+  readonly allowHarnessConfigChange?: boolean;
   /** Live rehearsal hooks. Requires a harness whose kind is dry-run; local callbacks otherwise run normally. */
   readonly rehearsal?: {
     /**
@@ -499,6 +510,11 @@ export async function runWorkflow<
     throw new Error("Harness kind 'none' is reserved for runs without a harness adapter.");
   if (options.rehearsal !== undefined && harnessKind !== 'dry-run')
     throw new Error('Rehearsal hooks require a dry-run harness.');
+  if (
+    options.harnessConfigDigest !== undefined &&
+    !/^[a-f0-9]{64}$/u.test(options.harnessConfigDigest)
+  )
+    throw new Error('harnessConfigDigest must be a lowercase hex SHA-256 digest.');
   const incomingBudget = runBudgetSchema.partial().parse({
     ...(options.maxRunCostUsd === undefined ? {} : { maxRunCostUsd: options.maxRunCostUsd }),
     ...(options.maxRunAgentAttempts === undefined
@@ -633,6 +649,26 @@ export async function runWorkflow<
     }
     requireHarnessChange(existing);
     requireHarnessChange(forkSource);
+    // A kind change is governed by allowHarnessChange alone. Records without a digest (older ones,
+    // or an execution with an unknown configuration) stay resumable and adopt the supplied one.
+    // Forks are new runs and record their own digest.
+    const previousConfigDigest = existing?.harness?.configDigest;
+    const requestedConfigDigest = options.harnessConfigDigest;
+    if (
+      existing?.harness &&
+      previousConfigDigest !== undefined &&
+      requestedConfigDigest !== undefined &&
+      existing.harness.kind === harnessKind &&
+      harnessKind !== 'none' &&
+      previousConfigDigest !== requestedConfigDigest &&
+      !options.allowHarnessConfigChange
+    )
+      throw new RunRefusedError(
+        'run.incompatible',
+        options.runId,
+        `Run ${options.runId} last executed with a different harness configuration (sha256 ${previousConfigDigest.slice(0, 12)}); this invocation supplies ${requestedConfigDigest.slice(0, 12)}. Repeat the original --harness-config, or pass --allow-harness-config-change to accept the change.`,
+        { previousConfigDigest, requestedConfigDigest },
+      );
     function parseInput(raw: unknown): TInput {
       try {
         return definition.input.parse(raw);
@@ -869,6 +905,9 @@ export async function runWorkflow<
             : []),
         ]),
       ],
+      ...(options.harnessConfigDigest === undefined
+        ? {}
+        : { configDigest: options.harnessConfigDigest }),
     };
     if (options.acceptCodeChange && compatibility && compatibility.changed.length > 0) {
       (record.codeChanges ??= []).push({

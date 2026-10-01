@@ -294,6 +294,11 @@ export interface RunRecord {
     kind: string;
     /** Earlier kinds whose outputs were explicitly accepted for reuse. */
     previousKinds: string[];
+    /**
+     * SHA-256 of the resolved CLI harness configuration at the latest live execution. Absent in
+     * older records and for executions whose configuration is unknown (an embedder's own harness).
+     */
+    configDigest?: string;
   };
   /** Workflow-body execution history, introduced in format 6. */
   executions?: ExecutionRecord[];
@@ -730,6 +735,10 @@ const recordFieldsSchema = z.object({
     .object({
       kind: z.string().min(1).max(100),
       previousKinds: z.array(z.string().min(1).max(100)),
+      configDigest: z
+        .string()
+        .regex(/^[a-f0-9]{64}$/u)
+        .optional(),
     })
     .optional(),
   harnesses: z
