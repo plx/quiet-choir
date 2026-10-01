@@ -144,15 +144,25 @@ future recovery or integration impossible after Git collects otherwise unreachab
 
 ### Interrupted worktree registration
 
-Git registration commands are serialized per repository (common Git directory) across runs in one
-process, while isolated agent work remains concurrent. This keeps sibling creation from observing
-partially written Git metadata. A hard kill can still interrupt Git while it writes a new worktree's
-`commondir` file. An empty file prevents later Git worktree commands, including Git's own repair
-command. On the next live use after ownership/orphan recovery, quiet-choir repairs this specific
-empty-file state only for a saved `planned` cache. It requires both the checkout's `.git` pointer
-and the registration's `gitdir` backlink to match the run-owned path and recorded repository, then
-conditionally replaces the empty file and records an inspection warning. The failed per-call
-checkout is still not reused.
+Git registration commands (`worktree add`, `list` and `remove`, and the repair below) are serialized
+per repository (common Git directory), while isolated agent work remains concurrent. This keeps
+sibling creation from observing partially written Git metadata. Calls in one process first queue in
+memory; then each takes the repository lock `<common Git dir>/quiet-choir/worktree-admin.lock`,
+which excludes every other quiet-choir process using that repository, whatever its state directory
+or linked checkout. So `workflow clean` and live runs serialize against each other. The lock reuses
+the run lock's crash-atomic design: a dead or crashed owner's lock is recovered automatically, and a
+live owner is waited on (the wait ends only with cancellation). An owner on another host, or one
+whose liveness or metadata cannot be verified, fails the attempt after about 30 s with the lock path
+to remove once no quiet-choir process on any machine sharing the repository is administering it. Git
+commands run outside quiet-choir, such as a manual `git worktree add`, are not serialized. See
+[ADR 0032](decisions/0032-interprocess-worktree-administration-lock.md).
+
+A hard kill can still interrupt Git while it writes a new worktree's `commondir` file. An empty file
+prevents later Git worktree commands, including Git's own repair command. On the next live use after
+ownership/orphan recovery, quiet-choir repairs this specific empty-file state only for a saved
+`planned` cache. It requires both the checkout's `.git` pointer and the registration's `gitdir`
+backlink to match the run-owned path and recorded repository, then conditionally replaces the empty
+file and records an inspection warning. The failed per-call checkout is still not reused.
 
 This is not arbitrary repository repair: changed owners, redirected metadata, nonempty corruption
 and unrelated worktrees are not rewritten. Other interrupted Git states may still require manual
