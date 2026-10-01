@@ -498,10 +498,11 @@ export default defineWorkflow({
   }
 });
 
-// measured: see the comment at the timeout (real compiler passes)
+// measured: 1.1 s alone, 3.7 s in the full local coverage run (three real compiler passes; the
+// one-pass lock test above takes 6.0 s on the Node 22.13 CI leg, so this allows about 18 s there)
 it(
   'puts runnable next entries on failed, orphaned, dry-run and moved-entrypoint failures',
-  { timeout: 30_000 },
+  { timeout: 40_000 },
   async () => {
     const root = join(stateDir, 'workflow-next');
     await mkdir(root);
