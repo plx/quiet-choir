@@ -3,8 +3,23 @@ import { hostname, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { defineWorkflow, runWorkflow, z, type RunRecord, type RunOwnership } from '../src/index.js';
-import { inspectRun, listRuns, summarizeRun, watchRun } from '../src/workflow/loader/inspection.js';
+import {
+  defineWorkflow,
+  runWorkflow,
+  z,
+  type AttemptRecord,
+  type ExecSummary,
+  type RunRecord,
+  type RunOwnership,
+  type StepRecord,
+} from '../src/index.js';
+import {
+  inspectRun,
+  listRuns,
+  summarizeRun,
+  toRunListRow,
+  watchRun,
+} from '../src/workflow/loader/inspection.js';
 import {
   formatRunList,
   formatRunSummary,
@@ -118,7 +133,7 @@ it('shows all status counts, first-use order, phase progress, limits, root cause
   expect(text).toContain('Phase: verify 1/3 (0 running)');
   expect(text).toContain('Root cause (a-root): root issue');
   expect(text).toContain('per-call timeout 5m00s');
-  expect(text).toContain('partial; 2/2 attempts missing usage');
+  expect(text).toContain('partial; 1/2 attempts without token usage; cost unreported for 2/2');
   expect(text).toContain('inspection.test.ts');
   expect(text).not.toMatch(/^null$/m);
   expect(formatRunList([summary])).toContain('inspect@1  failed');
@@ -409,4 +424,340 @@ it('supports bounded intervals and stable terminal watch exits', async () => {
   await expect(watchRun({ stateDir, runId: 'run', intervalMs: 0 }, vi.fn())).rejects.toThrow(
     'Watch interval',
   );
+});
+
+const iso = (seconds: number): string => new Date(Date.parse(time) + seconds * 1000).toISOString();
+
+function baseStep(overrides: Partial<StepRecord>): StepRecord {
+  return {
+    kind: 'step',
+    fingerprint: 'f',
+    status: 'completed',
+    attempts: 1,
+    output: null,
+    error: null,
+    wakeAt: null,
+    ...overrides,
+  };
+}
+
+function execStep(
+  seq: number,
+  command: ExecSummary['command'],
+  overrides: Partial<StepRecord> = {},
+): StepRecord {
+  return baseStep({
+    kind: 'exec',
+    seq,
+    startedAt: iso(seq),
+    finishedAt: iso(seq + 2),
+    durationMs: 2000,
+    exec: {
+      command,
+      cwd: '/Users/someone/work/a-long-project-directory/packages/service',
+      envSha256: '0'.repeat(64),
+      inheritEnv: true,
+      inputSha256: '1'.repeat(64),
+      okExitCodes: [0],
+      structured: false,
+    },
+    ...overrides,
+  });
+}
+
+interface AgentFixture {
+  readonly harness: 'claude' | 'codex';
+  readonly model: string | null;
+  readonly effort?: string;
+  readonly profile?: string;
+  readonly costUsd?: number | null;
+  readonly status?: StepRecord['status'];
+  readonly inputTokens?: number | null;
+  readonly outputTokens?: number | null;
+}
+
+function agentStep(seq: number, fixture: AgentFixture): StepRecord {
+  const { harness, model, effort, profile, status = 'completed' } = fixture;
+  return baseStep({
+    kind: harness,
+    seq,
+    status,
+    startedAt: iso(seq),
+    finishedAt: status === 'running' ? null : iso(seq + 12),
+    durationMs: status === 'running' ? null : 12_000,
+    request: {
+      harness,
+      model,
+      profile: profile ?? null,
+      limits: {
+        timeoutMs: null,
+        maxTurns: null,
+        maxBudgetUsd: null,
+        sandbox: null,
+        killGraceMs: null,
+      },
+      tools: null,
+      cwd: '/',
+      structured: false,
+      promptSha256: '2'.repeat(64),
+      promptPreview: 'prompt',
+    },
+    attemptHistory: [
+      {
+        attempt: 1,
+        fingerprint: 'f',
+        startedAt: iso(seq),
+        finishedAt: iso(seq + 12),
+        status: status === 'running' ? 'running' : 'completed',
+        error: null,
+        requestedModel: model,
+        reasoningEffort: null,
+        ...(effort === undefined ? {} : { requested: { model: model ?? 'inherited', effort } }),
+        policy: { retry: { maxAttempts: 1, delayMs: 0 } },
+        sources: {},
+        usage: {
+          inputTokens: fixture.inputTokens === undefined ? 1000 : fixture.inputTokens,
+          outputTokens: fixture.outputTokens === undefined ? 200 : fixture.outputTokens,
+          costUsd: fixture.costUsd === undefined ? 0.0123 : fixture.costUsd,
+          tokens: {
+            uncachedInput: 100,
+            cacheRead: 800,
+            cacheWrite: 100,
+            output: 200,
+            reasoning: 50,
+          },
+          model: { requested: model, effective: model === null ? null : [model] },
+        },
+      },
+    ] as unknown as AttemptRecord[],
+  });
+}
+
+function withSteps(
+  steps: Record<string, StepRecord>,
+  overrides: Partial<RunRecord> = {},
+): RunRecord {
+  return { ...record(), status: 'completed', output: { done: true }, steps, ...overrides };
+}
+
+it('puts the workflow output in the summary only for a completed run', () => {
+  const output = { files: ['a.ts'], nested: { ok: true } };
+  expect(summarizeRun(withSteps({}, { output }), unlocked).output).toEqual(output);
+  for (const status of ['running', 'failed', 'suspended', 'cancelled'] as const)
+    expect(
+      summarizeRun(withSteps({}, { status, output: { stale: 1 } }), unlocked).output,
+    ).toBeNull();
+});
+
+it('prints a completed command on one line and keeps full detail for failures and -v', () => {
+  const run = withSteps({
+    'check/git': execStep(1, ['/usr/bin/git', 'status', '--porcelain']),
+    'check/node': execStep(2, ['/usr/local/bin/node', '-e', 'process.exit(0)']),
+    'check/path': execStep(3, ['/usr/bin/env', '/opt/tool/bin/run', 'x']),
+    'check/shell': execStep(4, {
+      shell: `npm test -- --reporter=dot ${'x'.repeat(80)}\nsecond line`,
+    }),
+    'check/fail': execStep(5, ['/usr/bin/false'], {
+      status: 'failed',
+      execError: {
+        code: 1,
+        signal: null,
+        stdoutTail: '',
+        stderrTail: 'diagnostic',
+        truncated: false,
+        durationMs: 5,
+      },
+    }),
+  });
+  const summary = summarizeRun(run, unlocked);
+  const text = formatRunSummary(summary);
+  expect(text).toMatch(/^completed check\/git {2}git status {2}2s$/m);
+  expect(text).toMatch(/^completed check\/node {2}node {2}2s$/m);
+  expect(text).toMatch(/^completed check\/path {2}env {2}2s$/m);
+  expect(text).toMatch(/^completed check\/shell {2}\[SHELL\] npm test .{40,}… {2}2s$/m);
+  expect(text).not.toContain('second line');
+  expect(text).not.toContain('/usr/bin/git');
+  expect(text).not.toContain('a-long-project-directory/packages/service) completed');
+  // A failed command keeps argv, cwd, and the stderr tail.
+  expect(text).toContain('Command check/fail [argv]: ["/usr/bin/false"]');
+  expect(text).toContain('stderr tail: "diagnostic"');
+  expect(text).toMatch(/^failed check\/fail /m);
+  const verbose = formatRunSummary(summary, true);
+  expect(verbose).toContain(
+    'Command check/git [argv]: ["/usr/bin/git","status","--porcelain"] (cwd /Users/someone/work/a-long-project-directory/packages/service)',
+  );
+  expect(verbose).toMatch(/^completed check\/git {2}exec {2}2s elapsed/m);
+});
+
+function reviewRun(): RunRecord {
+  const steps: Record<string, StepRecord> = {};
+  let seq = 0;
+  for (let i = 0; i < 20; i++)
+    steps[`build/command-${String(i)}`] = execStep(++seq, [
+      '/usr/local/bin/npm',
+      'run',
+      'lint',
+    ] as const);
+  for (let i = 0; i < 8; i++)
+    steps[`review/scan-${String(i)}`] = agentStep(++seq, {
+      harness: 'claude',
+      model: 'sonnet',
+      effort: 'high',
+      profile: 'reviewer',
+    });
+  for (let i = 0; i < 9; i++)
+    steps[`review/verify-${String(i)}`] = agentStep(++seq, {
+      harness: 'codex',
+      model: null,
+      effort: 'inherited',
+    });
+  steps['review/escalated'] = agentStep(seq + 1, {
+    harness: 'codex',
+    model: 'gpt-5.4',
+    effort: 'high',
+    costUsd: 0.2,
+  });
+  return withSteps(steps);
+}
+
+it('lists every agent tier compactly on a 38-step review-style run, under 3 KB', () => {
+  const summary = summarizeRun(reviewRun(), unlocked);
+  expect(summary.counts.total).toBe(38);
+  const text = formatRunSummary(summary);
+  expect(text).toContain('Agents: 18 steps');
+  expect(text).toMatch(/^ {2}claude sonnet effort high profile reviewer: 8 steps, \$0\.0984$/m);
+  expect(text).toMatch(/^review\/escalated {2}codex gpt-5\.4 effort high {2}12s {2}\$0\.2000$/m);
+  expect(Buffer.byteLength(text)).toBeLessThan(3072);
+});
+
+it('keeps agent summaries bounded: 40 calls under 10 KB of JSON, recent capped at 50', () => {
+  const forty: Record<string, StepRecord> = {};
+  for (let i = 0; i < 40; i++)
+    forty[`agent/${String(i).padStart(2, '0')}`] = agentStep(i + 1, {
+      harness: i % 2 ? 'codex' : 'claude',
+      model: i % 2 ? 'gpt-5.4' : 'sonnet',
+      effort: 'high',
+    });
+  expect(Buffer.byteLength(JSON.stringify(summarizeRun(withSteps(forty), unlocked)))).toBeLessThan(
+    10_240,
+  );
+
+  const sixty: Record<string, StepRecord> = {};
+  for (let i = 0; i < 60; i++)
+    sixty[`agent/${String(i).padStart(2, '0')}`] = agentStep(i + 1, {
+      harness: i % 3 === 0 ? 'codex' : 'claude',
+      model: i % 3 === 0 ? 'gpt-5.4' : 'sonnet',
+      effort: i % 3 === 0 ? 'high' : 'low',
+    });
+  const summary = summarizeRun(withSteps(sixty), unlocked);
+  expect(summary.agents.total).toBe(60);
+  expect(summary.agents.recent).toHaveLength(50);
+  expect(summary.agents.recent.map((row) => row.id)).toEqual(
+    Array.from({ length: 50 }, (_, i) => `agent/${String(i + 10).padStart(2, '0')}`),
+  );
+  expect(summary.agents.byRequest.reduce((sum, group) => sum + group.steps, 0)).toBe(60);
+  expect(summary.agents.byRequest.map((group) => [group.harness, group.steps])).toEqual([
+    ['codex', 20],
+    ['claude', 40],
+  ]);
+  // Text stays bounded for any run size unless -v asks for all recent rows.
+  const lines = (text: string) => text.split('\n').filter((line) => line.startsWith('agent/'));
+  expect(lines(formatRunSummary(summary))).toHaveLength(20);
+  expect(lines(formatRunSummary(summary, true))).toHaveLength(50);
+});
+
+it('reports requested model, effort and profile from older and partial records without inventing them', () => {
+  const legacy = baseStep({ kind: 'agent', harness: 'custom', seq: 1, attempts: 1 });
+  const fork = agentStep(2, { harness: 'claude', model: 'sonnet' });
+  const summary = summarizeRun(
+    withSteps({
+      legacy,
+      fork: {
+        ...fork,
+        reusedFrom: { runId: 'other' } as unknown as NonNullable<StepRecord['reusedFrom']>,
+      },
+      codex: agentStep(3, { harness: 'codex', model: 'gpt-5.4' }),
+    }),
+    unlocked,
+  );
+  expect(summary.agents.total).toBe(2);
+  expect(summary.agents.recent).toMatchObject([
+    { id: 'legacy', harness: 'custom', model: null, effort: null, profile: null, costUsd: null },
+    { id: 'codex', harness: 'codex', model: 'gpt-5.4', effort: null },
+  ]);
+});
+
+it('says tokens are complete when only cost is missing, and partial when tokens are missing', () => {
+  const steps = (specs: AgentFixture[]) =>
+    withSteps(
+      Object.fromEntries(specs.map((spec, i) => [`agent-${String(i)}`, agentStep(i + 1, spec)])),
+    );
+  const costOnly = summarizeRun(
+    steps([
+      { harness: 'claude', model: 'sonnet' },
+      { harness: 'claude', model: 'sonnet' },
+      { harness: 'claude', model: 'sonnet', costUsd: null },
+      { harness: 'claude', model: 'sonnet', costUsd: null },
+      { harness: 'claude', model: 'sonnet', costUsd: null },
+    ]),
+    unlocked,
+  );
+  const text = formatRunSummary(costOnly);
+  expect(text).toContain('tokens complete; cost unreported for 3/5 attempts');
+  expect(text).not.toContain('missing usage');
+  expect(costOnly.usage).toMatchObject({ incompleteAttempts: 3, unknownTokenAttempts: 0 });
+
+  const noTokens = summarizeRun(
+    steps([
+      { harness: 'claude', model: 'sonnet' },
+      { harness: 'claude', model: 'sonnet', inputTokens: null, costUsd: null },
+      { harness: 'claude', model: 'sonnet', outputTokens: null },
+    ]),
+    unlocked,
+  );
+  expect(noTokens.usage).toMatchObject({ unknownTokenAttempts: 2, unknownCostAttempts: 1 });
+  expect(formatRunSummary(noTokens)).toContain(
+    'partial; 2/3 attempts without token usage; cost unreported for 1/3',
+  );
+  expect(formatRunList([noTokens])).toContain('partial; 2/3 attempts without token usage');
+  const complete = formatRunSummary(
+    summarizeRun(steps([{ harness: 'claude', model: 'sonnet' }]), unlocked),
+  );
+  expect(complete).not.toMatch(/partial|unreported/u);
+});
+
+it('projects list rows to a bounded, exact key set while the human table keeps its summaries', () => {
+  const summaries = Array.from({ length: 10 }, (_, i) =>
+    summarizeRun(
+      { ...reviewRun(), id: `run-${String(i).padStart(2, '0')}-0123456789abcdef` },
+      unlocked,
+    ),
+  ).map((summary) => ({ ...summary, stateDir: '/Users/someone/.local/state/quiet-choir/proj' }));
+  const rows = summaries.map(toRunListRow);
+  expect(Buffer.byteLength(JSON.stringify({ runs: rows }))).toBeLessThan(10_240);
+  expect(Object.keys(rows[0] ?? {}).sort()).toEqual(
+    [
+      'cwd',
+      'counts',
+      'id',
+      'nextWakeAt',
+      'ownership',
+      'recordedStatus',
+      'stateDir',
+      'status',
+      'updatedAt',
+      'usage',
+      'warnings',
+      'workflow',
+    ].sort(),
+  );
+  expect(Object.keys(rows[0]?.usage ?? {}).sort()).toEqual([
+    'attempts',
+    'costUsd',
+    'inputTokens',
+    'outputTokens',
+    'unknownCostAttempts',
+    'unknownTokenAttempts',
+  ]);
+  expect(formatRunList(summaries)).toContain('run-00-0123456789abcdef  example@1  completed');
 });

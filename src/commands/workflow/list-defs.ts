@@ -1,5 +1,6 @@
 import { Args, Flags, type Interfaces } from '@oclif/core';
 import { resolve } from 'node:path';
+import { withoutHarnessOptions } from '../../cli/workflow-metadata-view.js';
 import { WorkflowCommand } from '../../cli/workflow-command.js';
 import { WorkflowExecutor } from '../../workflow/loader/executor.js';
 
@@ -16,8 +17,13 @@ export default class WorkflowListDefinitions extends WorkflowCommand {
   public static override readonly flags: Interfaces.FlagInput<{
     readonly json: boolean | undefined;
     readonly refresh: boolean | undefined;
+    readonly 'harness-schemas': boolean | undefined;
   }> = {
     json: Flags.boolean({ description: 'Print validated workflow schemas and metadata as JSON' }),
+    'harness-schemas': Flags.boolean({
+      description: 'With --json, include each harness option JSON Schema',
+      dependsOn: ['json'],
+    }),
     refresh: Flags.boolean({
       description: 'Recheck and import definitions even when their source cache matches',
     }),
@@ -42,7 +48,15 @@ export default class WorkflowListDefinitions extends WorkflowCommand {
     if (!result.ok) this.failResult(result);
     if (result.kind === 'workflow.list-defs.result')
       this.output(
-        result,
+        flags['harness-schemas']
+          ? result
+          : {
+              ...result,
+              definitions: result.definitions.map((entry) => ({
+                ...entry,
+                workflow: withoutHarnessOptions(entry.workflow),
+              })),
+            },
         result.definitions
           .map(
             (entry) =>
