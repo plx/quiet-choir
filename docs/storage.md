@@ -28,6 +28,13 @@ current project's legacy location. `workflow list --all` reads registered XDG pr
 importing workflow modules; rows include their working and state directories. Explicit state
 containers are not automatically registered as XDG projects.
 
+The default root still hashes the exact working directory, so a project subdirectory has its own
+root. When a run is not found there, `run.not_found` lists `details.candidates` (`{stateDir, cwd}`):
+registered project roots, their legacy locations, and the default and legacy roots of the current
+directory's ancestors that hold the ID. The message names the first one's exact `--state-dir`, and
+the failure's `next` entries inspect the run there. See
+[next commands](cli-contract.md#next-commands).
+
 ```sh
 quiet-choir workflow list --all --json
 quiet-choir workflow execute --resume --run-id my-run

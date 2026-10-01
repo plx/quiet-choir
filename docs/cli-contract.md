@@ -113,6 +113,7 @@ Failures have these fields:
 | `run`                         | Saved record, or null when unavailable. Every other command, a `--dry-run` failure, or `--full` on execute/resume/answer |
 | `failedSteps`                 | Saved failed/cancelled steps with ID, kind, attempts, and error                                                          |
 | `diagnostics`                 | Compiler diagnostics, or an empty array                                                                                  |
+| `next`                        | Runnable follow-ups `{why, argv}`, or an empty array; see [next commands](#next-commands)                                |
 
 The error codes map to numeric exits in one CLI table:
 
@@ -157,12 +158,61 @@ compatible success retains `check`. `execute --resume --accept-code-change` (and
 record. When that replay reaches a completed or settled-failed step whose identity changed, the
 command refuses with `run.incompatible` (exit 3) before writing anything: `error.details.divergent`
 is `[{stepId, components}]` for the first such step, and `error.details.next` holds one argv array,
-`quiet-choir workflow execute FILE --fork-from RUN --reuse matching --invalidate STEP --run-id <NEW_RUN_ID> --state-dir DIR`,
-spelled like `resumeCommand` with a placeholder for the new run ID.
+`LAUNCHER workflow execute FILE --fork-from RUN --reuse matching --invalidate STEP --run-id <NEW_RUN_ID> --state-dir DIR`,
+built behind the same launcher as `resumeCommand` with a placeholder for the new run ID.
 `execute --dry-run --resume --accept-code-change` returns the same code, message and details. A
-missing run includes `details.stateDir`, sorted `details.available` (at most 20 IDs), and
-`details.count`. Storage resolves explicit options, environment, existing legacy runs, then the
-external XDG project default; relative explicit paths resolve against the launch directory.
+missing run includes `details.stateDir`, sorted `details.available` (at most 20 IDs),
+`details.count`, and `details.candidates`: at most 10 other runs containers that hold the ID, as
+`{stateDir, cwd}` sorted by `stateDir`, or an empty array. The search covers every registered XDG
+project root and its legacy `.quiet-choir/runs`, plus the default and legacy roots of the current
+directory and its ancestors; it never lists the root already searched, and an unreadable candidate
+is skipped rather than changing the code. The message then ends with
+`Found in DIR (project CWD); rerun with --state-dir DIR.` Resolution itself is unchanged: explicit
+`--state-dir` and `QUIET_CHOIR_STATE_DIR` win, and the default root still hashes the exact working
+directory. A resume whose stored entrypoint no longer exists (a moved checkout or deleted file) is
+`run.incompatible` (exit 3) with `details: {storedEntrypoint, reason:"entrypoint_missing"}`; fork
+from the new location. Storage resolves explicit options, environment, existing legacy runs, then
+the external XDG project default; relative explicit paths resolve against the launch directory.
+
+## Next commands
+
+Every failure document has a top-level `next` array, and `inspect --json --summary` (and
+`list --full`) summaries carry one too; compact `list` rows do not. Each entry is
+`{why: string, argv: string[]}`: run `argv` directly, without a shell, after substituting its
+placeholders. Text inspect and human failure messages print each entry as
+`Next: <shell-quoted argv>  (why)`.
+
+| Source                                          | Entries                                                                                               |
+| ----------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| `workflow.failed` with a saved failed run       | `resume RUN --state-dir DIR`                                                                          |
+| `workflow.interrupted` with a saved suspension  | as for a suspended summary                                                                            |
+| `run.orphans`                                   | `resume RUN --state-dir DIR --kill-orphans`                                                           |
+| `run.incompatible`, code or schema change only  | `resume … --accept-code-change` (unless the run completed), then a fork                               |
+| `run.incompatible`, other run-level changes     | a fork from the stored entrypoint; none when the workflow name changed                                |
+| `run.incompatible`, divergent completed step    | the fork command from `error.details.next`                                                            |
+| `run.incompatible`, different requested FILE    | `resume` with the stored entrypoint, then a fork from the requested FILE                              |
+| `run.incompatible`, `entrypoint_missing`        | `execute <ENTRYPOINT> --fork-from RUN --run-id <NEW_RUN_ID> --state-dir DIR`                          |
+| `run.not_found` with `details.candidates`       | `inspect RUN --state-dir CANDIDATE` for at most 5 candidates                                          |
+| Failed or stale summary                         | `resume RUN --state-dir DIR`                                                                          |
+| Suspended summary                               | `answer RUN STEP --state-dir DIR --json <ANSWER_JSON>` for at most 5 waiting questions, then `resume` |
+| Dry-run failures, embedded runs, any other case | `[]`                                                                                                  |
+
+A fork is `execute ENTRYPOINT --fork-from RUN --run-id <NEW_RUN_ID> --state-dir DIR`; it records the
+directory it is launched from as the new run's cwd. Placeholders are `<ANSWER_JSON>` (serialized
+answer data), `<NEW_RUN_ID>` and `<ENTRYPOINT>` (the workflow file's new path). A human question
+also needs `--by human:<name>`, added after asking the human. A run without stored launch paths (an
+embedded run) gets no entries, since it cannot be resumed by ID.
+
+Emitted argv, including `resumeCommand`, `answerCommand` and the divergence fork command, start with
+the launcher of the invocation that produced them. When `process.argv[1]` is an installed
+`quiet-choir` that a PATH lookup resolves to the same file, the launcher is `quiet-choir`.
+Otherwise, including `node "$QC_CHECKOUT/bin/run.js"`, npx and `node_modules/.bin` shims, it is
+`[node, realpath(bin/run.js)]` with absolute paths (development mode keeps the tsx loader flags), so
+the commands run from any directory without `quiet-choir` on PATH. Embedders and in-process callers
+that pass no `commandLauncher` keep `['quiet-choir']`. Commands are computed for each invocation and
+never saved, so a later `pending` or `inspect` regenerates them for the current Node and checkout.
+They do not carry harness selection, `--harness-config`, fixtures or wait mode yet (#136); repeat
+those flags yourself.
 
 Workflow `console.log` and `process.stdout.write` during import/execution are redirected to stderr
 in JSON mode. `Run ID:`, debug logs, warnings, and human diagnostics also use stderr. Redirecting
