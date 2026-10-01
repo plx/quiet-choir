@@ -83,6 +83,7 @@ export default defineConfig(
       'src/workflow/runtime/attempt-failure.ts',
       'src/workflow/runtime/replay-decision.ts',
       'src/workflow/runtime/recovery-decision.ts',
+      'src/workflow/loader/start-readiness.ts',
     ],
     rules: {
       '@typescript-eslint/no-restricted-imports': [
@@ -100,7 +101,7 @@ export default defineConfig(
               ],
               allowTypeImports: true,
               message:
-                'Pure decision modules (ADR 0007 attempt failures, replay decisions, recovery decisions) must stay free of I/O: import values only from ./step-error.js and ./configuration-error.js; everything else must be import type.',
+                'Pure decision modules (ADR 0007 attempt failures, replay decisions, recovery decisions, start readiness) must stay free of I/O: import values only from ./step-error.js and ./configuration-error.js; everything else must be import type.',
             },
           ],
         },
