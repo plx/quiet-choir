@@ -17,6 +17,8 @@ import { testInvocation } from './harness-invocation.js';
 import { childEnvironment } from '../src/harnesses/environment.js';
 import { publicCapabilityManifest } from '../src/workflow/runtime/profiles.js';
 import { validateAgentOptions } from '../src/workflow/runtime/options.js';
+import { legacyAgentIdentity } from '../src/workflow/runtime/legacy-agent.js';
+import type { BuiltinHarnessRequestInput } from '../src/workflow/runtime/model.js';
 
 let directory: string;
 const reply = {
@@ -443,4 +445,49 @@ it('records one user-level instruction warning per run, and flags a change on re
         expect.objectContaining({ scope: 'project', kind: 'agents' }),
       );
   }
+});
+
+// Pinned on main before Codex `instructions` existed (#130): unset and 'native' must keep these.
+const pinnedRequests = {
+  codexPlain: {
+    harness: 'codex',
+    cwd: '/pinned/cwd',
+    outputSchema: null,
+    options: { prompt: 'pinned prompt' },
+  },
+  codexOptions: {
+    harness: 'codex',
+    cwd: '/pinned/cwd',
+    outputSchema: null,
+    options: {
+      prompt: 'pinned prompt',
+      model: 'gpt-5',
+      effort: 'low',
+      sandbox: 'workspace-write',
+      config: { 'features.x': true },
+      env: { set: { A: 'b' } },
+    },
+  },
+  claude: {
+    harness: 'claude',
+    cwd: '/pinned/cwd',
+    outputSchema: null,
+    options: { prompt: 'pinned prompt', tools: ['Read'], maxTurns: 3 },
+  },
+} as const satisfies Record<string, BuiltinHarnessRequestInput>;
+const pinnedDigests = {
+  codexPlain: '440c8defac487e76bb6686deb544bdf0553a52b56d91279b91ba6d01dbe148cc',
+  codexOptions: '6f0a8d10ccd191cefbd2badb6a5679596ff9aa5ad324159dcec3848fda0bb7e1',
+  claude: '2d5ee84d4ac85337d6dba576936f436acb2c7d1e2132eed426cdec62ddb3721a',
+};
+const identityDigest = (identity: Readonly<Record<string, string>>): string =>
+  sha256(
+    JSON.stringify(Object.entries(identity).sort(([left], [right]) => (left < right ? -1 : 1))),
+  );
+
+it('keeps pinned legacy agent identity digests', () => {
+  for (const [name, request] of Object.entries(pinnedRequests))
+    expect(identityDigest(legacyAgentIdentity(request, { type: 'object' })), name).toBe(
+      pinnedDigests[name as keyof typeof pinnedDigests],
+    );
 });
