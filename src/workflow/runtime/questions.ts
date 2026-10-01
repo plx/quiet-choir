@@ -9,11 +9,17 @@ import { digest, jsonValue } from './json.js';
 import { stepIdentity } from './identity.js';
 import { answerEnvelopeSchema, validateAnswerAuthor } from './question-schema.js';
 import type { AskOptions } from './question-model.js';
-import type { JsonValue, StepContext } from './model.js';
+import type { JsonValue } from './model.js';
 import type { RunRecord, StepRecord } from './store.js';
 import { clockNow, MAX_EPOCH_MS, SHORT_WAIT_MS, systemClock } from './clock.js';
 import { waitNote, waitRequest } from './wait-schema.js';
-import type { PollSource, WaitSources, WorkflowClock } from './wait-model.js';
+import type {
+  PollContext,
+  PollSource,
+  WaitRecord,
+  WaitSources,
+  WorkflowClock,
+} from './wait-model.js';
 
 type Outcome =
   | { by: 'signal'; value: JsonValue; at: number; actor: string | null }
@@ -56,6 +62,15 @@ type Observed =
   | { readonly kind: 'deadline' }
   | { readonly kind: 'observeTimeoutMs' };
 
+/** Freeze a cloned JSON value in place so an observer cannot mutate what it was handed. */
+function deepFreeze<T>(value: T): T {
+  if (value !== null && typeof value === 'object') {
+    for (const child of Object.values(value)) deepFreeze(child);
+    Object.freeze(value);
+  }
+  return value;
+}
+
 /** Wait real time for a promise to settle; true when it settled within the bound. */
 async function settlesWithin(promise: Promise<unknown>, milliseconds: number): Promise<boolean> {
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -97,8 +112,12 @@ interface QuestionDependencies {
   readonly observe?: (
     id: string,
     source: PollSource<unknown>,
-    context: StepContext,
+    context: PollContext,
   ) => ReturnType<PollSource<unknown>['observe']>;
+  /** Whether an error is an authoring violation that must fail the run; never tolerated. */
+  readonly isFatal?: (error: unknown) => boolean;
+  /** Run a poll error-policy callback under the same guard as an observer. */
+  readonly guard?: <R>(action: () => R) => R;
   readonly emit: (
     type: 'step.waiting' | 'step.completed' | 'step.replayed' | 'wait.opened',
     id: string,
@@ -469,8 +488,14 @@ export class RunQuestions {
     const poll = waiter.sources.poll;
     if (poll && (expired || progress.nextCheckAt === null || now >= progress.nextCheckAt)) {
       waiter.signal.throwIfAborted();
+      // Read before counting this check: observers see what earlier checks persisted.
+      const previous = Object.freeze({
+        note: deepFreeze(structuredClone(progress.note)),
+        checks: progress.checks,
+        openedAt: progress.openedAt,
+      });
       progress.checks++;
-      const observed = await this.#observe(id, poll, progress.deadline, waiter);
+      const observed = await this.#observe(id, poll, progress.deadline, waiter, previous);
       if (this.#isClosed() || observed.kind === 'closed') return;
       if (observed.kind === 'cancelled')
         throw waiter.signal.reason instanceof CancelledError
@@ -482,11 +507,15 @@ export class RunQuestions {
         await this.#complete(id, step, waiter, { by: 'deadline', at, note: progress.note });
         return;
       }
-      // Failing like a thrown observer keeps the documented fail-on-throw behavior.
-      if (observed.kind === 'observeTimeoutMs') throw this.#observeTimeout(id, poll);
-      const result = (await observed.observation) as Awaited<
-        ReturnType<PollSource<unknown>['observe']>
-      >;
+      let result: Awaited<ReturnType<PollSource<unknown>['observe']>>;
+      try {
+        // An expiry fails like a thrown observer, so the same onError policy applies to it.
+        if (observed.kind === 'observeTimeoutMs') throw this.#observeTimeout(id, poll);
+        result = (await observed.observation) as typeof result;
+      } catch (error) {
+        await this.#tolerate(id, step, waiter, poll, progress, error);
+        return;
+      }
       if (this.#isClosed()) return;
       if (
         (result as unknown) === null ||
@@ -494,6 +523,8 @@ export class RunQuestions {
         typeof result.done !== 'boolean'
       )
         throw new Error(`Wait ${id}: observe must return {done:true,value} or {done:false,note?}.`);
+      // A successful observation resets the consecutive error count.
+      delete progress.lastError;
       signal = await this.#signal(id, step, waiter);
       if (this.#isClosed()) return;
       if (signal) {
@@ -513,18 +544,87 @@ export class RunQuestions {
         await this.#complete(id, step, waiter, { by: 'deadline', at, note: progress.note });
         return;
       }
-      const every = progress.request.poll?.every;
-      if (!every) throw new Error('Poll progress is missing its stored interval.');
-      const interval = Math.min(
-        every.maxMs,
-        every.initialMs * every.factor ** (progress.checks - 1),
-      );
-      progress.nextCheckAt = Math.min(MAX_EPOCH_MS, at + Math.ceil(interval));
+      progress.nextCheckAt = Math.min(MAX_EPOCH_MS, at + Math.ceil(this.#interval(progress)));
       this.#updateWake();
       await this.#deps.save();
     } else if (expired) {
       await this.#complete(id, step, waiter, { by: 'deadline', at: now, note: progress.note });
     }
+  }
+  /** The poll's normal spacing after the current check. */
+  #interval(progress: WaitRecord): number {
+    const every = progress.request.poll?.every;
+    if (!every) throw new Error('Poll progress is missing its stored interval.');
+    return Math.min(every.maxMs, every.initialMs * every.factor ** (progress.checks - 1));
+  }
+  /**
+   * Apply the poll's onError policy to a rejected observation or an observeTimeoutMs expiry. It
+   * returns once the error is recorded and the next check scheduled, or the wait completed by
+   * signal or deadline; otherwise it throws, failing the wait. Run cancellation, closing, and
+   * context-operation violations are never tolerated. The note is left untouched.
+   */
+  async #tolerate(
+    id: string,
+    step: StepRecord,
+    waiter: Waiter,
+    poll: PollSource<unknown>,
+    progress: WaitRecord,
+    error: unknown,
+  ): Promise<void> {
+    const policy = poll.onError;
+    if (
+      !policy ||
+      this.#isClosed() ||
+      waiter.signal.aborted ||
+      error instanceof CancelledError ||
+      this.#deps.isFatal?.(error) === true
+    )
+      throw error;
+    const guard = this.#deps.guard ?? (<R>(action: () => R): R => action());
+    const { classify, retryAfterMs } = policy;
+    if (classify) {
+      const kind = guard(() => classify(error)) as unknown;
+      if (kind === 'fatal') throw error;
+      if (kind !== 'transient')
+        throw new Error(`Wait ${id}: onError.classify must return 'transient' or 'fatal'.`);
+    }
+    const consecutive = (progress.lastError?.consecutive ?? 0) + 1;
+    // The error past the tolerance fails the wait with its own message.
+    if (consecutive > policy.tolerate) throw error;
+    const lastError = {
+      message: (error instanceof Error ? error.message : String(error)).slice(0, 4096),
+      consecutive,
+      at: clockNow(this.#clock),
+    };
+    // Keep the usual precedence: signal, then poll, then deadline.
+    const signal = await this.#signal(id, step, waiter);
+    if (this.#isClosed()) return;
+    if (signal) {
+      progress.lastError = lastError;
+      await this.#complete(id, step, waiter, signal.outcome, signal);
+      return;
+    }
+    const at = clockNow(this.#clock);
+    if (progress.deadline !== null && at >= progress.deadline) {
+      progress.lastError = lastError;
+      await this.#complete(id, step, waiter, { by: 'deadline', at, note: progress.note });
+      return;
+    }
+    let delay = this.#interval(progress);
+    if (retryAfterMs) {
+      const requested = guard(() => retryAfterMs(error)) as unknown;
+      if (requested !== null) {
+        if (typeof requested !== 'number' || !Number.isFinite(requested) || requested < 0)
+          throw new Error(
+            `Wait ${id}: onError.retryAfterMs must return null or a finite number of at least 0.`,
+          );
+        delay = requested;
+      }
+    }
+    progress.lastError = lastError;
+    progress.nextCheckAt = Math.min(MAX_EPOCH_MS, at + Math.ceil(delay));
+    this.#updateWake();
+    await this.#deps.save();
   }
   /**
    * Run one observation under its own signal, which aborts when the run scope aborts, when the
@@ -537,6 +637,7 @@ export class RunQuestions {
     poll: PollSource<unknown>,
     deadline: number | null,
     waiter: Waiter,
+    previous: PollContext['previous'],
   ): Promise<Observed> {
     const controller = new AbortController();
     const timer = new AbortController();
@@ -562,7 +663,7 @@ export class RunQuestions {
     waiter.signal.addEventListener('abort', forward, { once: true });
     const started = clockNow(this.#clock);
     const limitMs = poll.observeTimeoutMs ?? defaultObserveTimeoutMs;
-    const context: StepContext = {
+    const context: PollContext = {
       reportUsage: () => {
         throw new Error('Usage reporting is only available inside an active local step callback.');
       },
@@ -570,6 +671,7 @@ export class RunQuestions {
       signal: controller.signal,
       idempotencyKey: `${this.#deps.record.id}/${id}`,
       attempt: 1,
+      previous,
     };
     const observation = (async () =>
       this.#deps.observe ? this.#deps.observe(id, poll, context) : poll.observe(context))();

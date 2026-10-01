@@ -345,6 +345,39 @@ it('polling resumes after cancellation with its original deadline and times out 
   expect(harness.calls).toHaveLength(0);
 });
 
+it('polling tolerates a status file that is briefly missing between checks', async () => {
+  const file = join(root, 'checks.txt');
+  await writeFile(file, 'pending');
+  const harness = new Fake(() => {
+    throw new Error('Polling must not call agents');
+  });
+  const running = runWorkflow(polling, { ...options(), input: { file, ms: 60_000 }, harness });
+  /** Wait until the live run's saved wait progress satisfies `ready`. */
+  const progress = async (
+    ready: (
+      wait: NonNullable<Awaited<ReturnType<typeof readRun>>['steps'][string]['wait']>,
+    ) => boolean,
+  ): Promise<void> => {
+    for (;;) {
+      const wait = (await readRun(options()).catch(() => undefined))?.steps['wait']?.wait;
+      if (wait && ready(wait)) return;
+      await delay(5);
+    }
+  };
+  await progress((wait) => wait.checks >= 1);
+  // The producer deletes the file before rewriting it; a check in between sees ENOENT.
+  await rm(file);
+  await progress((wait) => wait.lastError !== undefined);
+  await writeFile(file, 'success');
+  const result = await running;
+  expect(result.output).toBe('success');
+  const step = result.steps['wait'];
+  expect(step?.error).toBeNull();
+  expect(step?.wait).not.toHaveProperty('lastError');
+  expect(step?.wait?.note).toEqual({ state: 'pending' });
+  expect(harness.calls).toHaveLength(0);
+});
+
 it('salvage forks two completed calls without mutating the source checkpoint', async () => {
   const harness = new Fake((request) => {
     if (request.call.runId === 'pattern' && request.call.stepId === 'answer/2')

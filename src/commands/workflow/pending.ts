@@ -40,7 +40,7 @@ export default class WorkflowPending extends WorkflowCommand {
         result.pending
           .map((q) =>
             'kind' in q
-              ? `${q.runId} ${q.stepId} [wait] checks=${String(q.checks)} nextCheckAt=${String(q.nextCheckAt)} deadline=${String(q.deadline)}${q.signal ? ` ${q.signal.prompt}` : ''}${q.note === null ? '' : `\n  ${JSON.stringify(q.note)}`}`
+              ? `${q.runId} ${q.stepId} [wait] checks=${String(q.checks)} nextCheckAt=${String(q.nextCheckAt)} deadline=${String(q.deadline)}${q.signal ? ` ${q.signal.prompt}` : ''}${q.note === null ? '' : `\n  ${JSON.stringify(q.note)}`}${q.lastError ? `\n  lastError (consecutive=${String(q.lastError.consecutive)}): ${q.lastError.message}` : ''}`
               : `${q.runId} ${q.stepId} [${q.audience}] ${q.prompt}${q.codeChanged ? ' (source changed; check resume before requesting a decision)' : ''}${q.rejections.length ? `\n  Last rejection: ${q.rejections.at(-1)?.error ?? ''}` : ''}`,
           )
           .join('\n') || 'No pending waits.',

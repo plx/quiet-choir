@@ -104,10 +104,13 @@ the deadline can never move to admit it, and tick must not keep rewaking the run
 observers run under the nested-operation guard, each with its own signal aborted on cancellation,
 the deadline, `observeTimeoutMs` (policy, never identity) or close; an observer ignoring it is
 abandoned after a real-time grace with a `waitWarnings` entry, and an abandoned scan never writes
-after close() returns. Due-within-1000ms waits remain active; long waits park under the same
-quiescence contract as questions. Error draining stops new checks without aborting active siblings.
-Tick must claim the ordinary writer before importing source and transfer that ownership to the
-runtime. See [ADR 0020](../../../docs/decisions/0020-durable-waits-and-tick.md).
+after close() returns. A poll's `onError` (policy, never identity) may tolerate only a rejected
+observation or its timeout, never cancellation, an `isFatal` authoring error, or a shape, schema or
+note failure; its consecutive count lives in the persisted `lastError`. Due-within-1000ms waits
+remain active; long waits park under the same quiescence contract as questions. Error draining stops
+new checks without aborting active siblings. Tick must claim the ordinary writer before importing
+source and transfer that ownership to the runtime. See
+[ADR 0020](../../../docs/decisions/0020-durable-waits-and-tick.md).
 
 Exec depends on ProcessRunner, never a native spawn import. It shares durable registration with
 agents but never their admission slots, grants, or usage. Keep command/cwd/env/input/exit contract

@@ -35,26 +35,36 @@ poll's input, schema, normalized spacing, and observer source. Captured dependen
 `input`; source hashing cannot inspect closures. Waiting and completed identities are pinned even
 with code-change acceptance. Use new IDs and immutable subjects for new decisions, such as an exact
 commit SHA. Changing an explicit deadline under the same ID fails instead of silently extending it.
-The poll's `observeTimeoutMs` is execution policy, not identity: it is never persisted in the wait
-request and may change on resume.
+The poll's `observeTimeoutMs` and `onError` are execution policy, not identity: neither is persisted
+in the wait request, and both may change on resume.
 
 ## Checks and outcomes
 
-`observe` receives `{ signal, idempotencyKey, attempt }` and returns either `{ done: true, value }`
-or `{ done: false, note? }`. It must read external state without writes, nested context operations,
-or cached answers. The engine prohibits durable and observational context operations inside
-observers; it cannot prevent arbitrary filesystem/network writes by trusted JavaScript. Parse
-terminal results through the supplied Zod schema. Unknown object keys are projected away before
-lossless JSON validation.
+`observe` receives `{ signal, idempotencyKey, attempt, previous }` and returns either
+`{ done: true, value }` or `{ done: false, note? }`. It must read external state without writes,
+nested context operations, or cached answers. The engine prohibits durable and observational context
+operations inside observers; it cannot prevent arbitrary filesystem/network writes by trusted
+JavaScript. Parse terminal results through the supplied Zod schema. Unknown object keys are
+projected away before lossless JSON validation.
+
+`previous` is the wait's persisted progress before this check: `previous.note` is the latest
+nonterminal note, `previous.checks` the number of earlier checks (tolerated errors included), and
+`previous.openedAt` the wait's first-open time. On the first check `note` is null and `checks` is 0.
+The values come from the checkpoint, so they survive suspend, tick and resume, unlike closure state
+in a freshly imported observer; a debounce such as "Completed on two consecutive checks" keeps its
+flag in the note. `previous` is frozen. Keep any other timestamps you need in the note. The note's
+type parameter `N` is not inferred from the notes you return: it is `JsonValue` unless you pass type
+arguments to `ctx.poll`, so narrow or parse `previous.note`, for example with a Zod schema.
 
 `every` is a positive integer interval, or `{ initialMs, maxMs, factor? }` with factor defaulting to
 two. Spacing grows after nonterminal checks up to `maxMs`, measured from check completion. It is a
 minimum interval, not scheduler latency. `ctx.poll` requires a finite time bound. General `ctx.wait`
-can be unbounded. A thrown observer error fails the invocation; a later explicit resume can retry
-the check. Nonterminal progress overwrites `checks`, `note`, and `nextCheckAt`; notes are limited to
-16 KiB. Naps do not write checkpoints. The wait has one attempt; `checks` counts observations across
-resumes. Existing per-body execution diagnostics still grow with resumes: this is not history
-compaction or a claim that all run state stays constant indefinitely.
+can be unbounded. By default a thrown observer error fails the invocation; a later explicit resume
+can retry the check, and `workflow tick` never retries a failed run. Nonterminal progress overwrites
+`checks`, `note`, and `nextCheckAt`; notes are limited to 16 KiB. Naps do not write checkpoints. The
+wait has one attempt; `checks` counts observations across resumes. Existing per-body execution
+diagnostics still grow with resumes: this is not history compaction or a claim that all run state
+stays constant indefinitely.
 
 Each observation gets its own `signal`, and observers must honor it. It aborts when the run is
 cancelled or interrupted, when the wait's deadline passes during the observation, and when the
@@ -67,6 +77,26 @@ longer than a minute. An observer that ignores its aborted signal is abandoned a
 2-second grace, also when the run closes or is interrupted, and the run records a warning in
 `waitWarnings` (shown in the completed result's `warnings` and by `inspect`). Its JavaScript may
 keep running, but it can no longer affect the run.
+
+`onError: { tolerate, classify?, retryAfterMs? }` opts a poll into tolerating transient observation
+errors, such as a 502 from an API or a status file that is briefly missing. Only a rejected
+observation and an `observeTimeoutMs` expiry are candidates; the expiry's error has code
+`QUIET_CHOIR_POLL_OBSERVE_TIMEOUT`, so `classify` can treat it as fatal. `classify(error)` returns
+`'transient'` or `'fatal'`; without it every candidate is transient. A tolerated error counts as a
+check, leaves the note unchanged and is recorded as `lastError: { message, consecutive, at }` on the
+wait. The next check follows the poll's normal spacing, or `retryAfterMs(error)` milliseconds when
+that returns a finite number of at least zero (null keeps the normal spacing; `0` checks again at
+once, bounded only by `tolerate` and the deadline). `tolerate` is a positive integer: the error
+after `tolerate` consecutive tolerated errors fails the wait with its own message, as does a
+`'fatal'` classification or a callback that throws. Any successful observation resets the count. The
+count is persisted, so it spans suspend, tick and resume. The deadline still wins: a tolerated error
+at or after the deadline, including on the final check after a missed deadline, resolves the wait by
+`deadline` with the last good note. `classify` and `retryAfterMs` run under the same guard as
+observers and cannot call context operations. Never tolerated, with or without a policy: run
+cancellation or interruption, context-operation violations inside an observer, an `observe` result
+of the wrong shape, a terminal value that fails the schema, and an invalid or oversized note. A
+tolerated `observeTimeoutMs` expiry can leave the abandoned observer running while the next check
+starts; the usual `waitWarnings` entry records it.
 
 Each check uses fixed precedence:
 
@@ -194,11 +224,12 @@ instead of idling until the timeout. Size the timeout for the longest step you e
 finish: a longer agent call is interrupted at the deadline and restarted by the next tick.
 
 `workflow pending --json` returns legacy question projections and general waits distinguished by
-`kind: "wait"`, including deadline, next check, count, last note, optional signal, and answer
-command. A dry-run skips timing-only waits and performs a poll's initial read-only observation,
-unless a `--stub-steps` pattern matches the wait ID: then the observer never runs and the wait
-completes with a synthesized value parsed by the poll schema. Unresolved external waits suspend.
-Rehearsals never fabricate signals and do not invoke notification commands.
+`kind: "wait"`, including deadline, next check, count, last note, `lastError` (the latest tolerated
+observation error with its `consecutive` count, or null), optional signal, and answer command. A
+dry-run skips timing-only waits and performs a poll's initial read-only observation, unless a
+`--stub-steps` pattern matches the wait ID: then the observer never runs and the wait completes with
+a synthesized value parsed by the poll schema. Unresolved external waits suspend. Rehearsals never
+fabricate signals and do not invoke notification commands.
 
 ## Operator notifications
 

@@ -30,6 +30,51 @@ export type PollInterval =
       readonly factor?: number;
     };
 
+/**
+ * The context one poll observation receives: the step context plus the wait's persisted progress
+ * before this check. Every check is a fresh call (often in a fresh process after a suspension), so
+ * cross-check state such as debounce flags belongs in the note, not in closures.
+ */
+export type PollContext<N extends JsonValue = JsonValue> = StepContext & {
+  /** Progress persisted before this check; frozen, so observers cannot change saved state. */
+  readonly previous: {
+    /**
+     * The latest nonterminal note, or null on the first check. It is read back from storage, so
+     * narrow or parse it (for example with a Zod schema); `N` is not inferred from returned notes.
+     */
+    readonly note: N | null;
+    /** Checks completed before this one, including tolerated errors; 0 on the first check. */
+    readonly checks: number;
+    /** First-open Unix epoch milliseconds of the wait. Keep other timestamps in the note. */
+    readonly openedAt: number;
+  };
+};
+
+/**
+ * Opt-in tolerance for transient observation errors. Without it a rejected observation fails the
+ * wait. It is execution policy, not identity: it is not persisted and may change on resume.
+ *
+ * Only a rejection of the observation itself, or an observeTimeoutMs expiry (code
+ * `QUIET_CHOIR_POLL_OBSERVE_TIMEOUT`), is a candidate. Run cancellation or interruption,
+ * context-operation violations, an invalid observe result, a terminal value that fails the schema,
+ * and an invalid note always fail the wait.
+ */
+export interface PollErrorPolicy {
+  /**
+   * Consecutive tolerated errors allowed, a positive integer. Error `tolerate + 1` in a row fails
+   * the wait with its own message. A successful observation resets the count; the count persists
+   * across suspend, tick and resume.
+   */
+  readonly tolerate: number;
+  /** Decide whether an error may be tolerated; defaults to `'transient'` for every candidate. */
+  readonly classify?: (error: unknown) => 'transient' | 'fatal';
+  /**
+   * Delay, in milliseconds, before the next check after a tolerated error: a finite number of at
+   * least zero. Null, or no callback, uses the poll's normal spacing.
+   */
+  readonly retryAfterMs?: (error: unknown) => number | null;
+}
+
 /** One read-only check; only its final value becomes a workflow branch decision. */
 export interface PollSource<T, N extends JsonValue = JsonValue> {
   /** Explicit dependencies, included in durable identity. */
@@ -47,13 +92,18 @@ export interface PollSource<T, N extends JsonValue = JsonValue> {
    */
   readonly observeTimeoutMs?: number;
   /**
+   * Tolerate a bounded number of consecutive observation errors instead of failing the wait. It is
+   * execution policy, not identity: it is not persisted and may change on resume.
+   */
+  readonly onError?: PollErrorPolicy;
+  /**
    * Read external state without writes or nested workflow operations. Honor `context.signal`: an
    * observation that ignores its aborted signal is abandoned after a short grace, with a run
-   * warning.
+   * warning. `context.previous` carries the persisted note and check count from earlier checks.
    */
   readonly observe: NoInfer<
     (
-      context: StepContext,
+      context: PollContext<N>,
     ) => Promise<
       { readonly done: true; readonly value: T } | { readonly done: false; readonly note?: N }
     >
@@ -200,6 +250,18 @@ export interface WaitRecord {
   note: JsonValue;
   /** First signal-notification attempt timestamp, or null. */
   notifiedAt: number | null;
+  /** Latest tolerated observation error and its consecutive count; absent after a success. */
+  lastError?: WaitError;
+}
+
+/** A tolerated poll observation error, recorded instead of failing the wait. */
+export interface WaitError {
+  /** Error message, truncated to 4096 characters. */
+  readonly message: string;
+  /** Consecutive tolerated errors, including this one. */
+  readonly consecutive: number;
+  /** Unix epoch milliseconds when the error was recorded. */
+  readonly at: number;
 }
 
 /** Code-free view of a parked poll or deadline, optionally including a signal. */
@@ -220,6 +282,8 @@ export interface PendingWait {
   readonly checks: number;
   /** Most recent nonterminal note. */
   readonly note: JsonValue;
+  /** Latest tolerated observation error, or null when the last check succeeded or none ran. */
+  readonly lastError: WaitError | null;
   /** External signal presentation, or null. */
   readonly signal: QuestionRequest | null;
   /** Most recent rejected signal deliveries, empty without a signal source. */
