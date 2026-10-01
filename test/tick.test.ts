@@ -22,10 +22,19 @@ import { TickWorkflowExecutor } from '../src/workflow/loader/tick.js';
 import { analyzeTypecheckEntrypoint } from '../src/workflow/typecheck/plan.js';
 import type { TickWorkflowsResult } from '../src/workflow/loader/tick.js';
 import type { WorkflowFailure } from '../src/workflow/loader/failure.js';
-import { FileRunStore, readRun, writeAnswer, type WorkflowClock } from '../src/index.js';
+import {
+  FileRunStore,
+  readRun,
+  writeAnswer,
+  type LaunchPolicy,
+  type WorkflowClock,
+} from '../src/index.js';
 import { countCompletedSteps } from '../src/workflow/runtime/recovery-decision.js';
 import { inspectRun } from '../src/workflow/loader/inspection.js';
-import { harnessConfigDigest } from '../src/workflow/loader/harness-selection.js';
+import {
+  harnessConfigDigest,
+  readHarnessSelection,
+} from '../src/workflow/loader/harness-selection.js';
 import type { CliHarnessOptions } from '../src/harnesses/cli.js';
 
 const project = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -62,13 +71,23 @@ const byRunId = <T extends { readonly runId: string }>(entries: readonly T[]): T
 
 async function fixture(
   kind:
-    'due' | 'future' | 'signal' | 'failure' | 'agent' | 'cancel' | 'versioned' | 'gated' = 'due',
+    | 'due'
+    | 'future'
+    | 'signal'
+    | 'failure'
+    | 'agent'
+    | 'cancel'
+    | 'versioned'
+    | 'gated'
+    | 'twice' = 'due',
   notify: boolean | 'fail' = false,
   shared: {
     readonly stateDir?: string;
     readonly runId?: string;
     /** CLI harness configuration the agent run starts with; the default otherwise. */
     readonly harnessConfig?: CliHarnessOptions;
+    /** Start the agent run with `--harness fixture:f.json`, whose rule answers its call. */
+    readonly fixtureHarness?: boolean;
   } = {},
 ) {
   const runId = shared.runId ?? 'run';
@@ -103,6 +122,7 @@ export default defineWorkflow({ name: 'tick',
         ? "await ctx.ask('ready', { prompt: 'Ready?', schema: z.boolean() });"
         : "await ctx.sleep('timer', 60_000);"
     }
+    ${kind === 'twice' ? "await ctx.sleep('again', 60_000);" : ''}
     ${kind === 'cancel' ? "throw new CancelledError(null, new Error('stop'));" : ''}
     ${
       kind === 'gated'
@@ -145,7 +165,12 @@ export default defineWorkflow({ name: 'tick',
     input: null,
     ...(notify ? { notifyCommand } : {}),
     ...(kind === 'agent'
-      ? { harness: { kind: 'cli' as const, config: shared.harnessConfig ?? {} }, grants: ['exec'] }
+      ? {
+          harness: shared.fixtureHarness
+            ? await fixtureSelection(root, 'f.json', 'from f')
+            : { kind: 'cli' as const, config: shared.harnessConfig ?? {} },
+          grants: ['exec'],
+        }
       : {}),
   };
   const first = await new WorkflowExecutor({
@@ -171,6 +196,34 @@ export default defineWorkflow({ name: 'tick',
     plan,
     tickPlan: { kind: 'workflow.tick' as const, runId, stateDir },
   };
+}
+
+/** Write a fixture file answering the agent call and read it the way `--harness` does. */
+async function fixtureSelection(root: string, name: string, text: string) {
+  await writeFile(
+    join(root, name),
+    JSON.stringify({ version: 1, calls: [{ step: 'call', text }] }),
+  );
+  return readHarnessSelection(`fixture:${name}`, undefined, root);
+}
+
+/** Change a saved run's recorded launch policy (or drop it, as an older build left it). */
+async function editPolicy(
+  stateDir: string,
+  runId: string,
+  edit: (policy: LaunchPolicy) => LaunchPolicy | undefined,
+): Promise<void> {
+  const owned = await new FileRunStore(stateDir).open(runId);
+  try {
+    const run = await owned.read();
+    if (!run?.launch?.policy) throw new Error('missing launch policy');
+    const { policy, ...launch } = run.launch;
+    const next = edit(policy);
+    run.launch = next === undefined ? launch : { ...launch, policy: next };
+    await owned.append(run, { durable: true });
+  } finally {
+    await owned.release();
+  }
 }
 
 /** Every file under a run directory, by relative path, to prove a tick changed nothing. */
@@ -579,6 +632,99 @@ export default defineWorkflow({ name: 'debounce', version: '1', input: z.null(),
     }
     const capture = JSON.parse(await readFile(f.agentLog, 'utf8')) as Record<string, unknown>;
     expect(capture).toMatchObject({ harness: 'claude', scenario: 'claude-text-success' });
+  });
+
+  it('ticks a fixture-harness run with its recorded fixture, and an explicit harness overrides', async () => {
+    const f = await fixture('agent', false, { fixtureHarness: true });
+    const recorded = (await readRun(f.plan)).launch?.policy;
+    expect(recorded?.harness).toMatchObject({
+      kind: 'fixture',
+      fixtures: [{ path: join(f.root, 'f.json') }],
+    });
+    // An explicit cli selection applies as given, so the fixture run needs a harness change.
+    expect(
+      oneEntryPerRun(
+        await tick.execute({
+          ...f.tickPlan,
+          harness: { kind: 'cli', config: {} },
+          inheritHarness: false,
+        }),
+      ),
+    ).toMatchObject({
+      resumed: [
+        {
+          runId: 'run',
+          outcome: 'incompatible',
+          message: expect.stringContaining('fixture') as unknown,
+        },
+      ],
+      skipped: [],
+      exitCode: 1,
+    });
+    // No harness: the recorded fixture answers the call, and the run appears once, as completed.
+    expect(oneEntryPerRun(await tick.execute(f.tickPlan))).toEqual({
+      kind: 'workflow.tick.result',
+      ok: true,
+      resumed: [{ runId: 'run', outcome: 'completed' }],
+      skipped: [],
+      observed: 0,
+      exitCode: 0,
+    });
+    const saved = await readRun(f.plan);
+    expect(saved.harness?.kind).toBe('fixture');
+    expect(saved.steps['call']?.status).toBe('completed');
+    expect(saved.launch?.policy).toEqual(recorded);
+    await expect(stat(f.agentLog)).rejects.toMatchObject({ code: 'ENOENT' });
+
+    // An explicit fixture replaces the recorded one.
+    const g = await fixture('agent', false, { fixtureHarness: true, runId: 'other' });
+    expect(
+      oneEntryPerRun(
+        await tick.execute({
+          ...g.tickPlan,
+          harness: await fixtureSelection(g.root, 'g.json', 'from g'),
+          inheritHarness: false,
+        }),
+      ),
+    ).toMatchObject({ resumed: [{ runId: 'other', outcome: 'completed' }], exitCode: 0 });
+    expect((await readRun(g.plan)).launch?.policy?.harness.fixtures).toEqual([
+      { path: join(g.root, 'g.json'), sha256: expect.any(String) as unknown },
+    ]);
+  });
+
+  it('suspends a block-mode run for this tick only, keeping block on record', async () => {
+    const f = await fixture('twice');
+    await editPolicy(f.stateDir, 'run', (policy) => ({ ...policy, waitMode: 'block' }));
+    expect(oneEntryPerRun(await tick.execute(f.tickPlan))).toMatchObject({
+      resumed: [{ runId: 'run', outcome: 'suspended', nextWakeAt: expect.any(Number) as unknown }],
+      exitCode: 75,
+    });
+    const saved = await readRun(f.plan);
+    expect(saved.steps['timer']?.status).toBe('completed');
+    expect(saved.steps['again']?.status).toBe('waiting');
+    expect(saved.launch?.policy?.waitMode).toBe('block');
+  });
+
+  it('keeps the older rule for runs without a recorded policy', async () => {
+    // A fixture run: no harness is forwarded, so the default cli selection needs a harness change.
+    const fixtureRun = await fixture('agent', false, { fixtureHarness: true });
+    await editPolicy(fixtureRun.stateDir, 'run', () => undefined);
+    expect(oneEntryPerRun(await tick.execute(fixtureRun.tickPlan))).toMatchObject({
+      resumed: [{ runId: 'run', outcome: 'incompatible' }],
+      exitCode: 1,
+    });
+    // A CLI run receives the tick's configuration.
+    const claudeBinary = join(project, 'test/bin/fake-claude.mjs');
+    const cliRun = await fixture('agent', false, { harnessConfig: { claudeBinary } });
+    await editPolicy(cliRun.stateDir, 'run', () => undefined);
+    const harness = { kind: 'cli' as const, config: { claudeBinary } };
+    expect(
+      oneEntryPerRun(await tick.execute({ ...cliRun.tickPlan, harness, inheritHarness: true })),
+    ).toMatchObject({ resumed: [{ runId: 'run', outcome: 'completed' }], exitCode: 0 });
+    expect((await readRun(cliRun.plan)).launch?.policy).toEqual({
+      harness: { kind: 'cli' },
+      waitMode: 'suspend',
+    });
   });
 
   it('uses the injected clock, not the system clock, to judge readiness', async () => {

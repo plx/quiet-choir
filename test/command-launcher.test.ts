@@ -8,7 +8,12 @@ import {
   setCommandLauncher,
   type LauncherProbe,
 } from '../src/cli/launcher.js';
-import { defaultCommandLauncher, workflowArgv } from '../src/workflow/runtime/commands.js';
+import {
+  defaultCommandLauncher,
+  launchPolicyFlags,
+  workflowArgv,
+} from '../src/workflow/runtime/commands.js';
+import type { LaunchPolicy } from '../src/index.js';
 
 const node = '/usr/local/bin/node';
 const checkout = '/work/checkout/bin/run.js';
@@ -124,5 +129,68 @@ describe('command launcher state', () => {
       'r',
     ]);
     expect(workflowArgv([], 'inspect', 'r')).toEqual(['quiet-choir', 'workflow', 'inspect', 'r']);
+  });
+});
+
+describe('launchPolicyFlags', () => {
+  const digest = 'a'.repeat(64);
+  const launch = (policy?: LaunchPolicy) => ({
+    entrypoint: '/w.ts',
+    tsconfig: null,
+    ...(policy === undefined ? {} : { policy }),
+  });
+  it.each<[string, LaunchPolicy | undefined, readonly string[]]>([
+    ['no policy (an older record or an embedder launch)', undefined, []],
+    ['the defaults, cli and suspend', { harness: { kind: 'cli' }, waitMode: 'suspend' }, []],
+    [
+      'a global fixture',
+      {
+        harness: { kind: 'fixture', fixtures: [{ path: '/p/f.json', sha256: digest }] },
+        waitMode: 'suspend',
+      },
+      ['--harness', 'fixture:/p/f.json'],
+    ],
+    [
+      'named fixtures under cli',
+      {
+        harness: {
+          kind: 'cli',
+          fixtures: [
+            { name: 'third', path: '/p/t.json', sha256: digest },
+            { name: 'fourth', path: '/p/u.json', sha256: digest },
+          ],
+        },
+        waitMode: 'suspend',
+      },
+      ['--harness', 'third=fixture:/p/t.json', '--harness', 'fourth=fixture:/p/u.json'],
+    ],
+    ['block', { harness: { kind: 'cli' }, waitMode: 'block' }, ['--wait-mode', 'block']],
+    [
+      'everything, unnamed fixture first',
+      {
+        harness: {
+          kind: 'fixture',
+          fixtures: [
+            { name: 'third', path: '/p/t.json', sha256: digest },
+            { path: '/p/f.json', sha256: digest },
+          ],
+        },
+        waitMode: 'block',
+      },
+      [
+        '--harness',
+        'fixture:/p/f.json',
+        '--harness',
+        'third=fixture:/p/t.json',
+        '--wait-mode',
+        'block',
+      ],
+    ],
+  ])('%s', (_label, policy, expected) => {
+    expect(launchPolicyFlags(launch(policy))).toEqual(expected);
+  });
+
+  it('adds nothing without a launch', () => {
+    expect(launchPolicyFlags(undefined)).toEqual([]);
   });
 });

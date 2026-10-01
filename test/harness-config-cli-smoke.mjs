@@ -113,6 +113,11 @@ export default defineWorkflow({ name: 'harness-config-cli', version: '1', input:
   assert.equal(refused.value.error.code, 'run.incompatible');
   assert.equal(refused.value.error.details.previousConfigDigest, digest);
   assert.match(refused.value.error.message, /--allow-harness-config-change/u);
+  // Inheriting the recorded launch policy (#136) does not weaken the check: the message names the
+  // flag the policy cannot carry, because configuration values are never recorded.
+  assert.match(refused.value.error.message, /original --harness-config/u);
+  assert.equal(record('resumed').launch.policy.harness.kind, 'cli');
+  assert.equal(JSON.stringify(record('resumed').launch).includes(fake), false);
   assert.deepEqual(checkpoint('resumed'), before);
 
   // Wait for the ticked run's own wake time. Both runs were executed back to back, so under load
@@ -124,6 +129,8 @@ export default defineWorkflow({ name: 'harness-config-cli', version: '1', input:
   const tickRefused = run(['tick', '--run', 'ticked']);
   assert.equal(tickRefused.status, 1, tickRefused.stderr);
   assert.equal(tickRefused.value.resumed[0].outcome, 'incompatible');
+  assert.match(tickRefused.value.resumed[0].message, /original --harness-config/u);
+  assert.deepEqual(tickRefused.value.skipped, []);
   const tickChanged = run(['tick', '--run', 'ticked', '--harness-config', config(other)]);
   assert.equal(tickChanged.status, 1, tickChanged.stderr);
   assert.equal(tickChanged.value.resumed[0].outcome, 'incompatible');
