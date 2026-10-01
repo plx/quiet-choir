@@ -6,7 +6,9 @@ recorded completed steps jointly guard replay compatibility. Execution limits an
 not semantic identity; unfinished identities may be redefined with history. See
 [ADR 0005](../../../docs/decisions/0005-step-identity-and-policy.md). The CLI supplies the source
 fingerprint; an embedded caller must supply its own. Local effects also hash callback source and
-version, without claiming to capture closed-over values. Explicit code acceptance retains completed
+version, without claiming to capture closed-over values; built-in helpers (`ctx.now`,
+`decision.choose`) use the internal `identity: 'version'` instead, so their identity is a versioned
+constant (`now/1`, `decision/1`) with no callback text. Explicit code acceptance retains completed
 step checks. Fork sources are read-only; prefix reuse must close synchronously on a miss, before
 awaits allow concurrent launches. `replay-decision.ts` is the single place the replay and
 redefinition rules are encoded. See

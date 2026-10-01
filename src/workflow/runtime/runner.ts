@@ -418,6 +418,8 @@ function untilAborted<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
 
 /** Transcript close/discard deadline once the invocation settled; matches the process drain scale. */
 const transcriptSettleMs = 2000;
+/** Step version that identifies ctx.now; see the `now` implementation before changing it. */
+const NOW_STEP_VERSION = 'now/1';
 
 /**
  * Bound a transcript close/discard so a writer stalled behind a never-settling write cannot hold
@@ -1272,6 +1274,15 @@ export async function runWorkflow<
           throw new Error(
             'Local effects require a run callback and, when supplied, a nonempty string version.',
           );
+        if (
+          local?.identity !== undefined &&
+          ((local.identity as unknown) !== 'version' ||
+            typeof local.version !== 'string' ||
+            !local.version.trim())
+        )
+          throw new Error(
+            "Version-identified local effects require identity: 'version' and a nonempty string version.",
+          );
         identity =
           requestedIdentity ??
           stepIdentity({
@@ -1281,7 +1292,11 @@ export async function runWorkflow<
             schema: schemaJson(schema),
             ...(local
               ? {
-                  callback: Function.prototype.toString.call(local.run),
+                  // Built-in helpers are named by an explicit version; public steps keep
+                  // callback-plus-version identity (durability.md, ADR 0005).
+                  ...(local.identity === 'version'
+                    ? {}
+                    : { callback: Function.prototype.toString.call(local.run) }),
                   version: local.version ?? null,
                   cwd,
                   ...(local.worktree === undefined
@@ -2769,6 +2784,11 @@ export async function runWorkflow<
       ),
       now: (id) =>
         context.step(id, {
+          // Identified by NOW_STEP_VERSION, not callback text. Bump it only if ctx.now's recorded
+          // behavior or result contract changes, never for refactors: a bump strands completed
+          // now steps. test/builtin-identity.test.ts pins it.
+          version: NOW_STEP_VERSION,
+          identity: 'version',
           input: null,
           schema: z.number().int().nonnegative(),
           run: () => clockNow(clock),
