@@ -120,8 +120,10 @@ This execute command makes real harness calls and needs authentication. Rehearse
 `--dry-run --json`; inspect its reached calls, limits, and warnings before paying.
 `--harness fixture:./fixtures.json` selects saved responses, and `--dry-run --resume --run-id ID`
 previews the rest of a real run on temporary state. Local callbacks run unless matched by
-`--stub-steps`. Changing the harness kind for actual resume/fork requires `--allow-harness-change`.
-See [rehearsal](rehearsal.md) for the complete loop and JSON report contract.
+`--stub-steps`. Changing the harness kind for actual resume/fork requires `--allow-harness-change`;
+resuming or ticking under a different `--harness-config` (omitted means the defaults) requires
+`--allow-harness-config-change`. See [rehearsal](rehearsal.md) for the complete loop and JSON report
+contract.
 
 `workflow pending --json` and `workflow answer RUN STEP --json VALUE` read stored question contracts
 without importing workflow code. `workflow resume RUN --json` loads its saved entrypoint and

@@ -78,9 +78,10 @@ Use `--harness fixture:./fixtures.json` for named fixture responses, or combine 
 for temporary execution and synthesis of missing calls. `workflow fixtures RUN_ID --json` exports
 successful agent outputs from a completed run. `--dry-run --resume --run-id RUN_ID` previews the
 remaining work on a copy of real state. Changing a recorded harness kind for actual resume/fork
-requires `--allow-harness-change`. Configure CLI paths/limits with `--harness-config` JSON or @file.
-See [workflow rehearsal](docs/rehearsal.md) for fixture format, report fields, and free native
-protocol tests.
+requires `--allow-harness-change`. Configure CLI paths/limits with `--harness-config` JSON or @file;
+a run records its digest, so resume and tick must repeat the same configuration (omitted means the
+defaults) or pass `--allow-harness-config-change`. See [workflow rehearsal](docs/rehearsal.md) for
+fixture format, report fields, and free native protocol tests.
 
 ## Author a workflow
 

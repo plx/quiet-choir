@@ -135,8 +135,11 @@ ever been `none` holds no agent outputs, so any harness can resume or fork it wi
 recorded change; adapters cannot claim the reserved kind `none`. The check does not establish trust
 in arbitrary executable adapters. Custom adapters should give distinct modes explicit `kind` values.
 Actual changed executions retain `previousKinds`; completed fast-path reads retain their original
-provenance. Earlier format-6 records have no kind, so they remain resumable without guessing their
-historical adapter. Pre-rehearsal fingerprints are unchanged.
+provenance. Live CLI executions also save `harness.configDigest`; resuming under the same kind with
+a different `--harness-config` requires `--allow-harness-config-change` (embedding:
+`allowHarnessConfigChange: true` with `harnessConfigDigest`). Dry runs supply no digest. Earlier
+format-6 records have no kind, so they remain resumable without guessing their historical adapter.
+Pre-rehearsal fingerprints are unchanged.
 
 Configure CLI executable paths and process limits with inline JSON or a file:
 

@@ -2,6 +2,20 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- Harness configuration (fix; resume refusal): every live CLI execution now records
+  `harness.configDigest`, a SHA-256 of its resolved CLI harness configuration (binary paths, output
+  limits, `scrubEnv` and `harnesses.<name>`), never the values, using the same canonical digest as
+  environment summaries and step identities. `workflow resume`, `execute --resume`,
+  `answer --resume` and `tick` compare the configuration they supply (an omitted `--harness-config`
+  means the defaults) and refuse a mismatch with `run.incompatible` before changing the checkpoint,
+  with `previousConfigDigest` and `requestedConfigDigest` in the details; tick reports the run as
+  `incompatible`. So a tick no longer silently resumes a run started with custom binaries under the
+  defaults. The new `--allow-harness-config-change` flag on execute, resume, answer and tick accepts
+  the change; on tick it applies to every resumed run. `killGraceMs`, fixtures and the harness
+  selection are not digested, a kind change stays governed by `--allow-harness-change`, and dry runs
+  and embedders' own harnesses supply no digest (new optional `RunOptions.harnessConfigDigest` and
+  `allowHarnessConfigChange`). Records without a digest stay resumable and adopt the next one.
+  Additive and optional; no `formatVersion` bump.
 - Identity gate (test and diagnostics; no identity change): `test/schema-identity.test.ts` pins the
   literal `schemaJson` encodings of a schema corpus, the built-in result schemas and the
   agent-result identity wrapper (new internal `agentResultIdentitySchema`, extracted from the
