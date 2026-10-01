@@ -1,5 +1,6 @@
+import { createHash } from 'node:crypto';
 import { testInvocation } from './harness-invocation.js';
-import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -310,3 +311,41 @@ it.skipIf(process.platform === 'win32')(
     expect(report.checks[0]?.message).toContain('process warnings');
   },
 );
+
+it('names user-level Codex instruction files in the inherited-defaults check without leaking contents', async () => {
+  const home = join(directory, 'codex-home');
+  await mkdir(home);
+  const options = {
+    harness: 'codex',
+    codexBinary: await binary('codex'),
+    codexHome: home,
+  } as const;
+  const check = (report: DoctorReport) =>
+    report.checks.find((entry) => entry.check === 'inherited-defaults');
+
+  const absent = await probeHarnessContracts(options);
+  expect(check(absent)).toMatchObject({
+    ok: true,
+    message: expect.stringContaining('No user-level instruction files were found.'),
+  });
+  expect(absent.codexInstructions).toEqual([]);
+
+  const canary = 'DOCTOR_AGENTS_CANARY_3310';
+  await writeFile(join(home, 'AGENTS.md'), canary);
+  const present = await probeHarnessContracts(options);
+  const message = check(present)?.message ?? '';
+  expect(check(present)?.ok).toBe(true);
+  expect(message).toContain(join(home, 'AGENTS.md'));
+  expect(message).toContain('AGENTS.override.md');
+  expect(message).toContain('Codex still loads');
+  expect(message).not.toContain('restricted calls ignore user configuration');
+  expect(present.codexInstructions).toEqual([
+    {
+      scope: 'user',
+      kind: 'agents',
+      path: join(home, 'AGENTS.md'),
+      sha256: createHash('sha256').update(canary).digest('hex'),
+    },
+  ]);
+  expect(JSON.stringify(present)).not.toContain(canary);
+});

@@ -1,4 +1,5 @@
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, delimiter } from 'node:path';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
@@ -298,4 +299,139 @@ it('rejects prototype-key environment edits instead of silently dropping them', 
 it('rejects malformed adapter scrub policies before probing or spawning', () => {
   expect(() => new CliHarness({ scrubEnv: ['INVALID=NAME'] })).toThrow('scrubEnv');
   expect(() => new CliHarness({ scrubEnv: 'NAME' as unknown as false })).toThrow('scrubEnv');
+});
+
+const userMarker = 'USER_AGENTS_CANARY_5521';
+async function codexHome(): Promise<string> {
+  const home = join(directory, 'codex-home');
+  await mkdir(home, { recursive: true });
+  await writeFile(join(home, 'AGENTS.md'), userMarker);
+  return home;
+}
+const sha256 = (text: string): string => createHash('sha256').update(text).digest('hex');
+
+it.each(['stubbed host environment', 'per-call env.set'])(
+  'reports the user-level Codex AGENTS.md from the child environment: %s',
+  async (source) => {
+    const binary = join(directory, await fakeBinary());
+    const home = await codexHome();
+    const hostHome = join(directory, 'host-home');
+    vi.stubEnv('CODEX_HOME', source === 'stubbed host environment' ? home : hostHome);
+    const harness = new CliHarness({ codexBinary: binary });
+    const metadata = await harness.metadata(
+      {
+        harness: 'codex',
+        cwd: directory,
+        outputSchema: null,
+        options: {
+          prompt: 'x',
+          ...(source === 'per-call env.set' ? { env: { set: { CODEX_HOME: home } } } : {}),
+        },
+      },
+      testInvocation(),
+    );
+    expect(metadata.instructionSources).toEqual([
+      { scope: 'user', kind: 'agents', path: join(home, 'AGENTS.md'), sha256: sha256(userMarker) },
+    ]);
+    expect(metadata.warnings).toEqual([expect.stringContaining(join(home, 'AGENTS.md'))]);
+    expect(metadata.warnings?.[0]).toContain('every isolation mode, including restricted');
+    expect(JSON.stringify(metadata)).not.toContain(userMarker);
+  },
+);
+
+it('falls back to HOME/.codex, reports detection even when the version probe fails, and leaves Claude alone', async () => {
+  const binary = join(directory, await fakeBinary());
+  const home = join(directory, 'fake-home');
+  await mkdir(join(home, '.codex'), { recursive: true });
+  await writeFile(join(home, '.codex', 'AGENTS.override.md'), userMarker);
+  vi.stubEnv('CODEX_HOME', undefined);
+  vi.stubEnv('HOME', home);
+  const request = (harness: 'claude' | 'codex') => ({
+    harness,
+    cwd: directory,
+    outputSchema: null,
+    options: { prompt: 'x' },
+  });
+  const failing = new CliHarness({ codexBinary: join(directory, 'missing-binary') });
+  const failed = await failing.metadata(request('codex'), testInvocation());
+  expect(failed.version).toBeNull();
+  expect(failed.instructionSources).toEqual([
+    expect.objectContaining({
+      kind: 'agents-override',
+      path: join(home, '.codex', 'AGENTS.override.md'),
+    }),
+  ]);
+  expect(failed.warnings).toHaveLength(2);
+  const claude = await new CliHarness({ claudeBinary: binary }).metadata(
+    request('claude'),
+    testInvocation(),
+  );
+  expect(claude).not.toHaveProperty('instructionSources');
+  expect(JSON.stringify(claude)).not.toContain('AGENTS');
+});
+
+it('records one user-level instruction warning per run, and flags a change on resume', async () => {
+  const binary = join(directory, await fakeBinary());
+  const home = await codexHome();
+  vi.stubEnv('CODEX_HOME', home);
+  let fail = true;
+  const workflow = defineWorkflow({
+    name: 'instructions',
+    version: '1',
+    strictProfiles: false,
+    input: z.null(),
+    output: z.string(),
+    async run(ctx) {
+      await ctx.codex.text('first', { prompt: 'one' });
+      await ctx.codex.text('second', { prompt: 'two', isolation: 'inherit' });
+      await ctx.step('gate', {
+        input: null,
+        schema: z.null(),
+        run() {
+          if (fail) throw new Error('gate failure');
+          return null;
+        },
+      });
+      return (await ctx.codex.text('third', { prompt: 'three' })).output;
+    },
+  });
+  const run = (runId: string) => ({
+    runId,
+    stateDir: join(directory, 'runs'),
+    cwd: directory,
+    grants: ['all'],
+    harness: new CliHarness({ codexBinary: binary }),
+  });
+  const userWarnings = (warnings: readonly string[] | undefined) =>
+    (warnings ?? []).filter((warning) => warning.includes('user-level instructions'));
+
+  for (const edit of [false, true]) {
+    fail = true;
+    const options = run(edit ? 'instructions-edited' : 'instructions-steady');
+    await expect(runWorkflow(workflow, { ...options, input: null })).rejects.toThrow(
+      'gate failure',
+    );
+    const first = await readRun(options);
+    expect(userWarnings(first.harnessWarnings)).toHaveLength(1);
+    expect(first.harnessWarnings?.[0]).toContain(join(home, 'AGENTS.md'));
+    expect(first.harnesses?.['codex']?.instructionSources).toEqual([
+      expect.objectContaining({ scope: 'user', sha256: sha256(userMarker) }),
+    ]);
+    expect(JSON.stringify(first)).not.toContain(userMarker);
+
+    fail = false;
+    if (edit) await writeFile(join(home, 'AGENTS.md'), `${userMarker} edited`);
+    const completed = await runWorkflow(workflow, { ...options, resume: true });
+    const changed = (completed.harnessWarnings ?? []).filter((warning) =>
+      warning.includes('instruction sources changed'),
+    );
+    if (edit) {
+      expect(changed).toHaveLength(1);
+      expect(userWarnings(completed.harnessWarnings)).toHaveLength(2);
+    } else {
+      expect(changed).toEqual([]);
+      expect(userWarnings(completed.harnessWarnings)).toHaveLength(1);
+    }
+    expect(JSON.stringify(completed)).not.toContain(userMarker);
+  }
 });
