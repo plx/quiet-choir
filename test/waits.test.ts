@@ -16,6 +16,10 @@ import {
 } from '../src/index.js';
 import { RunActivity } from '../src/workflow/runtime/activity.js';
 import { RunQuestions } from '../src/workflow/runtime/questions.js';
+import { stepIdentity } from '../src/workflow/runtime/identity.js';
+import { digest } from '../src/workflow/runtime/json.js';
+import { waitRequest } from '../src/workflow/runtime/wait-schema.js';
+import type { WaitSources } from '../src/workflow/runtime/wait-model.js';
 import type { RunRecord } from '../src/workflow/runtime/store.js';
 
 class Clock implements WorkflowClock {
@@ -817,6 +821,58 @@ it('keeps observeTimeoutMs out of wait identity and validates it', async () => {
     await expect(
       runWorkflow(definition(invalid), { ...options, runId: `invalid-${String(index)}` }),
     ).rejects.toThrow('Poll observeTimeoutMs must be a positive integer.');
+});
+
+it('keeps the persisted request and identity of an existing observer-form poll', () => {
+  // new Function keeps the observer's source text out of the test transform, so the golden values
+  // below (computed before poll policy options existed) stay stable across esbuild/vitest bumps.
+  const observe = new Function('return async () => ({ done: false })')() as NonNullable<
+    WaitSources['poll']
+  >['observe'];
+  const poll = {
+    input: { pr: 128 },
+    schema: z.object({ passed: z.boolean() }),
+    every: { initialMs: 1_000, maxMs: 60_000 },
+    observe,
+  };
+  const golden = (sources: WaitSources): { request: string; fingerprint: string } => {
+    const { request } = waitRequest(sources);
+    return {
+      request: JSON.stringify(request),
+      fingerprint: digest(stepIdentity({ kind: 'wait', request, signal: null })),
+    };
+  };
+  const expected = {
+    request: JSON.stringify({
+      timeoutMs: 600_000,
+      deadline: null,
+      poll: {
+        input: { pr: 128 },
+        schema: {
+          $schema: 'http://json-schema.org/draft-07/schema#',
+          additionalProperties: false,
+          properties: { passed: { type: 'boolean' } },
+          required: ['passed'],
+          type: 'object',
+        },
+        every: { initialMs: 1000, maxMs: 60000, factor: 2 },
+        observe: 'cf2042aca0faefb5aa4e7b3034331123b7e7b4c1f3ac54c212d19d18505a2c97',
+      },
+    }),
+    fingerprint: '419abf41102926b453176c97c1735c5f39a27c6744388d74f9caee5da4dcc0fc',
+  };
+  expect(golden({ timeoutMs: 600_000, poll })).toEqual(expected);
+  // Policy options never enter identity.
+  expect(
+    golden({
+      timeoutMs: 600_000,
+      poll: {
+        ...poll,
+        observeTimeoutMs: 5_000,
+        onError: { tolerate: 3, classify: () => 'transient', retryAfterMs: () => null },
+      } as NonNullable<WaitSources['poll']>,
+    }),
+  ).toEqual(expected);
 });
 
 /** A bare RunQuestions over an in-memory record, for close() paths the runner rarely reaches. */
