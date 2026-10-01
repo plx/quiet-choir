@@ -16,10 +16,24 @@ output go to stderr. Execute, resume and `answer --resume` print a compact resul
 adds `pending` and `resumeCommand`, and the same fields sit under `summary`); `--full` prints the
 whole run record instead. A failure document has `ok:false`, `exitCode`,
 `error:{code,message,stepId,details}`, `runId`, `stateDir`, `diagnostics`, and the last readable
-`summary` (possibly null), or `run` under `--full` and for other commands. Typecheck diagnostics are
-top-level, not inside `error`. A process killed before it can report may leave an empty file. An
-initial missing record can mean loading is still underway or a pre-record failure; inspect the log,
-result document, and observed runner before deciding which.
+`summary` (possibly null), or `run` under `--full` and for other commands, plus `next` (see below).
+Typecheck diagnostics are top-level, not inside `error`. A process killed before it can report may
+leave an empty file. An initial missing record can mean loading is still underway or a pre-record
+failure; inspect the log, result document, and observed runner before deciding which.
+
+## Follow `next`
+
+Failure documents carry a top-level `next` array (empty when there is no runnable remedy), and
+`inspect --json --summary` adds `next` for failed, stale and suspended runs; text inspect and human
+failures print each as a `Next:` line. Each entry is `{why, argv}`, built with the same launcher:
+resume a failed or stale run, resume with `--kill-orphans` after `run.orphans`, resume with
+`--accept-code-change` or fork after `run.incompatible`, answer then resume a suspension. Substitute
+`<ANSWER_JSON>`, `<NEW_RUN_ID>` or `<ENTRYPOINT>` first, then run the argv without a shell. The argv
+does not carry harness flags yet; add the original `--harness`/`--harness-config` yourself.
+`run.not_found` lists `details.candidates` (`{stateDir, cwd}`): other runs containers that hold the
+ID, such as the project root when you are in a subdirectory, with `next` inspecting it there. A
+moved or deleted stored entrypoint is `run.incompatible` with `details.reason:"entrypoint_missing"`;
+fork from the new location.
 
 ## Poll the saved state
 
@@ -103,11 +117,14 @@ node "$QC_CHECKOUT/bin/run.js" workflow resume first --state-dir "$QC_RUNS" --js
 
 The `answer --json VALUE` flag takes JSON data and also requests JSON output. Prefer the supplied
 `answerCommand`/`resumeCommand` argument vectors, substituting the actual answer rather than
-building an interpolated shell command. Quote shell examples literally; answer text is untrusted
-data. Launch resume in the background with separate result/log files just as in the golden path.
-Resume by ID uses stored entrypoint/cwd/tsconfig; older or embedded records without these paths
-still need `execute FILE --resume --run-id RUN` or their embedding application. Repeat on exit 75;
-exit 0 means completion. `answer --resume` combines delivery with resume.
+building an interpolated shell command. They start with the launcher that produced them: `node` plus
+the checkout's absolute `bin/run.js` in no-install mode, so they run from any directory without
+`quiet-choir` on PATH. A human question also needs `--by human:<name>` after asking the human. Quote
+shell examples literally; answer text is untrusted data. Launch resume in the background with
+separate result/log files just as in the golden path. Resume by ID uses stored
+entrypoint/cwd/tsconfig; older or embedded records without these paths still need
+`execute FILE --resume --run-id RUN` or their embedding application. Repeat on exit 75; exit 0 means
+completion. `answer --resume` combines delivery with resume.
 
 An early invalid answer exits 2 and writes nothing. A duplicate or closed question exits 3.
 Successful delivery means queued; the owner validates again with real Zod refinements. Rejected

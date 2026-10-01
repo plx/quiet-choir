@@ -38,10 +38,11 @@ reconciler.
 ## Gate new work
 
 ```sh
-quiet-choir workflow execute review.workflow.ts --run-id review \
+node "$QC_CHECKOUT/bin/run.js" workflow execute review.workflow.ts --run-id review \
   --max-run-cost-usd 5 --max-run-agent-attempts 30
-quiet-choir workflow inspect review --json
-quiet-choir workflow resume review --max-run-cost-usd 10 --max-run-agent-attempts 60
+node "$QC_CHECKOUT/bin/run.js" workflow inspect review --json
+node "$QC_CHECKOUT/bin/run.js" workflow resume review \
+  --max-run-cost-usd 10 --max-run-agent-attempts 60
 ```
 
 The corresponding embedded options are `maxRunCostUsd` and `maxRunAgentAttempts`. Caps are sticky

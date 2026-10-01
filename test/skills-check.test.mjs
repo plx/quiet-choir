@@ -140,6 +140,48 @@ test('rejects malformed nested difference marker variants', async () => {
     );
   });
 });
+test('a shell fence invoking bare quiet-choir is rejected at its line', async () => {
+  await fixture(async (root) => {
+    const before = (await readFile(skill(root), 'utf8')).split('\n').length;
+    await append(root, '\n```sh\necho first\n$ quiet-choir workflow list --json\n```\n');
+    // The appended text starts on the file's last (empty) line; the command is three lines later.
+    await assert.rejects(
+      checkSkills(root, { compile: false }),
+      new RegExp(`SKILL\\.md:${String(before + 3)}: shell fence invokes bare quiet-choir`, 'u'),
+    );
+  });
+});
+test('an installed-mode annotation permits bare quiet-choir in a shell fence', async () => {
+  await fixture(async (root) => {
+    await append(
+      root,
+      '\n<!-- skills-check: installed-mode -->\n```sh\nquiet-choir workflow list --json\n```\n',
+    );
+    await checkSkills(root, { compile: false });
+  });
+});
+test('bare quiet-choir outside a shell fence, or as a later word, is not a launcher', async () => {
+  await fixture(async (root) => {
+    await append(
+      root,
+      '\n```text\nquiet-choir workflow list\n```\n\n```sh\nnode "$QC_CHECKOUT/bin/run.js" workflow list # quiet-choir\nquiet-choirs\n```\n',
+    );
+    await checkSkills(root, { compile: false });
+  });
+});
+test('an unknown skills-check annotation is still rejected', async () => {
+  await fixture(async (root) => {
+    await append(
+      root,
+      '\n<!-- skills-check: installed -->\n```sh\nquiet-choir workflow list\n```\n',
+      false,
+    );
+    await assert.rejects(
+      checkSkills(root, { compile: false }),
+      /invalid example\/fragment annotation/u,
+    );
+  });
+});
 test('frontmatter YAML is validated, including duplicate fields', async () => {
   await fixture(async (root) => {
     const file = skill(root);
