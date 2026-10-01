@@ -4,8 +4,11 @@ import { afterEach, describe, expect, it } from 'vitest';
 import {
   commandLauncher,
   detectCommandLauncher,
+  detectSpawnLauncher,
   processLauncherProbe,
   setCommandLauncher,
+  setSpawnLauncher,
+  spawnLauncher,
   type LauncherProbe,
 } from '../src/cli/launcher.js';
 import {
@@ -101,6 +104,50 @@ describe('detectCommandLauncher', () => {
     expect(real.isExecutable('/definitely/not/here')).toBe(false);
     const launcher = detectCommandLauncher(real);
     expect(launcher[0]).toBe(process.execPath);
+  });
+});
+
+describe('detectSpawnLauncher', () => {
+  // A spawned child must be Node itself running the real script: never the PATH word, so the
+  // child PID is the runner's PID and no PATH lookup is needed.
+  it.each<[string, Partial<LauncherProbe>, readonly string[] | undefined]>([
+    ['a checkout run directly as bin/run.js', {}, [node, checkout]],
+    [
+      'an installed bin on PATH that resolves to this script',
+      {
+        argv1: '/usr/local/bin/quiet-choir',
+        pathEnv: ['/usr/bin', '/usr/local/bin'].join(delimiter),
+      },
+      [node, checkout],
+    ],
+    [
+      'an npx or npm-run shim',
+      {
+        argv1: '/work/project/node_modules/.bin/quiet-choir',
+        pathEnv: ['/work/project/node_modules/.bin', '/usr/bin'].join(delimiter),
+      },
+      [node, checkout],
+    ],
+    [
+      'development mode, keeping the loader flags',
+      { development: true },
+      [node, '--import', 'tsx', checkout],
+    ],
+    ['a missing argv[1]', { argv1: undefined }, undefined],
+    ['an unresolvable argv[1]', { argv1: '/nowhere/run.js' }, undefined],
+  ])('%s', (_label, overrides, expected) => {
+    expect(detectSpawnLauncher(probe(overrides))).toEqual(expected);
+  });
+
+  it('is recorded separately from the command launcher', () => {
+    try {
+      expect(spawnLauncher()).toBeUndefined();
+      setSpawnLauncher([node, checkout]);
+      expect(spawnLauncher()).toEqual([node, checkout]);
+      expect(commandLauncher()).toBeUndefined();
+    } finally {
+      setSpawnLauncher(undefined);
+    }
   });
 });
 

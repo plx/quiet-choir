@@ -1,6 +1,12 @@
 import { Errors, flush, handle, run, settings } from '@oclif/core';
 import { workflowFailure, type WorkflowFailure } from '../workflow/loader/failure.js';
-import { detectCommandLauncher, processLauncherProbe, setCommandLauncher } from './launcher.js';
+import {
+  detectCommandLauncher,
+  detectSpawnLauncher,
+  processLauncherProbe,
+  setCommandLauncher,
+  setSpawnLauncher,
+} from './launcher.js';
 import { requestedJson, workflowErrorDocument, workflowExitCodes } from './workflow-errors.js';
 
 /** Reject topic-level flags before oclif turns them into successful topic help. @internal */
@@ -59,7 +65,9 @@ export async function launchCli(options: { dir: string; development?: boolean })
     process.env['NODE_ENV'] = 'development';
     settings.debug = true;
   }
-  setCommandLauncher(detectCommandLauncher(processLauncherProbe(options.development === true)));
+  const probe = processLauncherProbe(options.development === true);
+  setCommandLauncher(detectCommandLauncher(probe));
+  setSpawnLauncher(detectSpawnLauncher(probe));
   try {
     await run(argv, options.dir);
     await flush();

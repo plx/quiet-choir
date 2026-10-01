@@ -59,6 +59,24 @@ export function detectCommandLauncher(probe: LauncherProbe): CommandLauncher {
   return [probe.execPath, ...(probe.development ? probe.execArgv : []), script];
 }
 
+/**
+ * The program words that spawn this CLI as a child process: always
+ * `[execPath, ...(development ? execArgv : []), realpath(argv1)]`, never the bare `quiet-choir`
+ * PATH word. Spawning Node directly needs no PATH lookup, keeps development loader flags, and makes
+ * the child's PID the PID of the CLI process itself (a shell shim would put another process in
+ * between). Undefined when `argv1` is missing or cannot be resolved. @internal
+ */
+export function detectSpawnLauncher(probe: LauncherProbe): CommandLauncher | undefined {
+  if (!probe.argv1) return undefined;
+  let script: string;
+  try {
+    script = probe.realpath(probe.argv1);
+  } catch {
+    return undefined;
+  }
+  return [probe.execPath, ...(probe.development ? probe.execArgv : []), script];
+}
+
 /** Probe the current process. @internal */
 export function processLauncherProbe(development: boolean): LauncherProbe {
   return {
@@ -81,6 +99,7 @@ export function processLauncherProbe(development: boolean): LauncherProbe {
 }
 
 let current: CommandLauncher | undefined;
+let currentSpawn: CommandLauncher | undefined;
 
 /** Record the launcher of this CLI process; only `launchCli` sets it. @internal */
 export function setCommandLauncher(launcher: CommandLauncher | undefined): void {
@@ -90,4 +109,14 @@ export function setCommandLauncher(launcher: CommandLauncher | undefined): void 
 /** The detected launcher, or undefined (the runtime default) outside a launched CLI. @internal */
 export function commandLauncher(): CommandLauncher | undefined {
   return current;
+}
+
+/** Record the spawn launcher of this CLI process; only `launchCli` sets it. @internal */
+export function setSpawnLauncher(launcher: CommandLauncher | undefined): void {
+  currentSpawn = launcher;
+}
+
+/** The detected spawn launcher, or undefined outside a launched CLI or without a script path. @internal */
+export function spawnLauncher(): CommandLauncher | undefined {
+  return currentSpawn;
 }
