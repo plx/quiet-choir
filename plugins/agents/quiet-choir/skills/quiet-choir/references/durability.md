@@ -69,7 +69,7 @@ operations.
 | Terminal step    | ID, kind, input/prompt, schema, local callback/version, onError, model/effort, capabilities, and cwd match; errors name changed components |
 | Unfinished step  | A changed identity is adopted, the old hashes remain in `redefinitions`, and `step.redefined` is emitted                                   |
 | Execution policy | `timeoutMs`, `maxTurns`, `maxBudgetUsd`, and `retry` may change without invalidating any step                                              |
-| Replay path      | Every terminal step must be visited; unvisited unfinished records become `superseded` when the body completes                              |
+| Replay path      | Every terminal step must be visited; unvisited unfinished steps and child frames become `superseded` when the body completes               |
 
 The CLI hashes raw bytes of compiler-discovered local source files and the nearest tsconfig, using
 real paths named relative to the tsconfig directory (or nearest package root, then entrypoint

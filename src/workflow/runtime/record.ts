@@ -596,7 +596,7 @@ const recordFieldsSchema = z.object({
         depth: z.number().int().positive(),
         inputDigest: z.string(),
         schemaDigest: z.string(),
-        status: z.enum(['running', 'completed', 'failed', 'cancelled', 'suspended']),
+        status: z.enum(['running', 'completed', 'failed', 'cancelled', 'suspended', 'superseded']),
         startedAt: z.iso.datetime(),
         finishedAt: z.iso.datetime().nullable(),
         error: z.string().nullable(),

@@ -144,6 +144,38 @@ it('shows an interrupted suspension as resumable and watches it as suspended', (
   expect(formatRunSummary(summarizeRun(record(), unlocked))).not.toContain('Interrupted at');
 });
 
+it('shows a superseded child frame as its own status in the workflow tree and JSON summary', () => {
+  const run: RunRecord = {
+    ...record(),
+    status: 'completed',
+    children: {
+      kid: {
+        declared: false,
+        label: 'kid',
+        workflow: { name: 'kid', version: '1' },
+        parent: null,
+        depth: 1,
+        inputDigest: 'input',
+        schemaDigest: 'schema',
+        status: 'superseded',
+        startedAt: time,
+        finishedAt: time,
+        error: 'kid broke',
+      },
+    },
+  };
+  const summary = summarizeRun(run, unlocked);
+  expect(
+    (JSON.parse(JSON.stringify(summary)) as { children: { id: string; status: string }[] })
+      .children,
+  ).toMatchObject([{ id: 'kid', status: 'superseded', error: 'kid broke' }]);
+  const tree = formatRunSummary(summary)
+    .split('\n')
+    .find((line) => line.includes('[kid]'));
+  expect(tree).toContain('kid: kid@1 superseded;');
+  expect(tree).not.toMatch(/failed|cancelled/u);
+});
+
 it('derives stale only from proven owner loss, preserving unknown and remote owners', () => {
   const run = record();
   expect(summarizeRun(run, unlocked).status).toBe('stale');

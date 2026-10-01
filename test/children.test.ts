@@ -173,9 +173,10 @@ it('rejects changed child versions even on completed embedded-run resume and che
   });
   await runWorkflow(root, { stateDir, runId: 'version', input: null });
   version = '2';
-  await expect(runWorkflow(root, { stateDir, runId: 'version', resume: true })).rejects.toThrow(
-    /child.*leaf-review@1 -> leaf-review@2/u,
-  );
+  const refusal = runWorkflow(root, { stateDir, runId: 'version', resume: true });
+  await expect(refusal).rejects.toThrow(/child.*leaf-review@1 -> leaf-review@2/u);
+  // A completed frame has a committed outcome, so the unfinished-frame retry hint does not apply.
+  await expect(refusal).rejects.not.toThrow(/accept-code-change/u);
   const withoutChild = defineWorkflow({
     name: 'parent',
     ...base,
@@ -817,3 +818,292 @@ it('fails, rather than cancels, a child frame whose body throws its own AbortErr
   expect(run.status).toBe('completed');
   expect(run.children?.['child']?.status).toBe('failed');
 });
+
+const pause = () =>
+  new Promise<void>((resolve) => {
+    setTimeout(resolve, 5);
+  });
+const typesOf = (events: readonly WorkflowEvent[]) => events.map((event) => event.type);
+
+it('supersedes a failed child frame that a resumed run no longer invokes, once', async () => {
+  const stateDir = await directory();
+  let invoke = true;
+  let broken = true;
+  const kid = defineWorkflow({
+    name: 'kid',
+    ...base,
+    async run(ctx) {
+      if (broken) throw new Error('kid broke before its first step');
+      return ctx.step('work', { input: null, schema: z.null(), run: () => null });
+    },
+  });
+  const root = defineWorkflow({
+    name: 'parent',
+    ...base,
+    async run(ctx) {
+      if (invoke) await ctx.workflow('kid', kid, null);
+      return null;
+    },
+  });
+  const options = { stateDir, runId: 'supersede-failed' };
+  await expect(runWorkflow(root, { ...options, input: null })).rejects.toThrow('kid broke');
+  const failed = (await readRun(options)).children?.['kid'];
+  expect(failed).toMatchObject({ status: 'failed', error: 'kid broke before its first step' });
+  await pause();
+
+  invoke = false;
+  const events: WorkflowEvent[] = [];
+  const resumed = await runWorkflow(root, {
+    ...options,
+    resume: true,
+    onEvent: (event) => {
+      events.push(event);
+    },
+  });
+  expect(resumed.status).toBe('completed');
+  const frame = resumed.children?.['kid'];
+  expect(frame).toMatchObject({
+    status: 'superseded',
+    error: 'kid broke before its first step',
+    startedAt: failed?.startedAt,
+  });
+  expect(Date.parse(frame?.finishedAt ?? '')).toBeGreaterThan(Date.parse(failed?.finishedAt ?? ''));
+  const superseded = events.filter((event) => event.type === 'child.superseded');
+  expect(superseded).toHaveLength(1);
+  expect(superseded[0]).toMatchObject({ frame: 'kid', stepId: null });
+  expect(typesOf(events).indexOf('child.superseded')).toBeGreaterThan(
+    typesOf(events).indexOf('run.completed'),
+  );
+  expect((await readRun(options)).children?.['kid']).toEqual(frame);
+
+  // A later plain resume replays the body again (frames exist) but retires nothing twice.
+  const again: WorkflowEvent[] = [];
+  await runWorkflow(root, {
+    ...options,
+    resume: true,
+    onEvent: (event) => {
+      again.push(event);
+    },
+  });
+  expect(typesOf(again)).toContain('run.completed');
+  expect(typesOf(again)).not.toContain('child.superseded');
+  expect((await readRun(options)).children?.['kid']).toEqual(frame);
+
+  // Invoking the frame again with the same identity treats it like any unfinished prior frame.
+  invoke = true;
+  broken = false;
+  const revived = await runWorkflow(root, { ...options, resume: true });
+  expect(revived.children?.['kid']).toMatchObject({ status: 'completed', error: null });
+  expect(revived.steps['kid/work']?.status).toBe('completed');
+});
+
+it('supersedes an externally cancelled child frame that a resume skips', async () => {
+  const stateDir = await directory();
+  const controller = new AbortController();
+  let invoke = true;
+  let started: (() => void) | undefined;
+  const ready = new Promise<void>((resolve) => {
+    started = resolve;
+  });
+  const child = defineWorkflow({
+    name: 'child',
+    ...base,
+    async run(ctx) {
+      return ctx.step('blocked', {
+        input: null,
+        schema: z.null(),
+        run: ({ signal }) =>
+          new Promise<null>((_resolve, reject) => {
+            started?.();
+            signal.addEventListener(
+              'abort',
+              () => {
+                reject(new DOMException('stopped', 'AbortError'));
+              },
+              { once: true },
+            );
+          }),
+      });
+    },
+  });
+  const root = defineWorkflow({
+    name: 'parent',
+    ...base,
+    children: [child],
+    async run(ctx) {
+      if (invoke) await ctx.workflow('child', child, null);
+      return null;
+    },
+  });
+  const options = { stateDir, runId: 'supersede-cancelled' };
+  const pending = runWorkflow(root, { ...options, input: null, signal: controller.signal });
+  await ready;
+  controller.abort(new Error('stop'));
+  await expect(pending).rejects.toThrow('stop');
+  const cancelled = (await readRun(options)).children?.['child'];
+  expect(cancelled?.status).toBe('cancelled');
+  await pause();
+
+  invoke = false;
+  const resumed = await runWorkflow(root, { ...options, resume: true });
+  expect(resumed.status).toBe('completed');
+  expect(resumed.children?.['child']).toMatchObject({
+    status: 'superseded',
+    error: cancelled?.error,
+  });
+  expect(Date.parse(resumed.children?.['child']?.finishedAt ?? '')).toBeGreaterThan(
+    Date.parse(cancelled?.finishedAt ?? ''),
+  );
+  expect(resumed.steps['child/blocked']?.status).toBe('superseded');
+});
+
+it('supersedes, rather than cancels, a parked child frame the resumed body never invokes', async () => {
+  const stateDir = await directory();
+  let invoke = true;
+  const child = defineWorkflow({
+    name: 'question',
+    ...base,
+    async run(ctx) {
+      await ctx.ask('answer', { prompt: 'Choose', schema: z.string() });
+      return null;
+    },
+  });
+  const root = defineWorkflow({
+    name: 'parent',
+    ...base,
+    async run(ctx) {
+      if (invoke) await ctx.workflow('child', child, null);
+      return null;
+    },
+  });
+  const options = { stateDir, runId: 'supersede-parked' };
+  const suspended = await runWorkflow(root, { ...options, input: null });
+  expect(suspended.children?.['child']?.status).toBe('suspended');
+
+  invoke = false;
+  const events: WorkflowEvent[] = [];
+  const resumed = await runWorkflow(root, {
+    ...options,
+    resume: true,
+    onEvent: (event) => {
+      events.push(event);
+    },
+  });
+  expect(resumed.status).toBe('completed');
+  expect(resumed.children?.['child']).toMatchObject({
+    status: 'superseded',
+    error: 'Superseded: the completed workflow no longer invoked this child frame.',
+  });
+  expect(resumed.children?.['child']?.finishedAt).not.toBeNull();
+  // Body completion withdraws open questions (ADR 0018), whether or not their frame was reached.
+  expect(resumed.steps['child/answer']?.status).toBe('withdrawn');
+  expect(events.filter((event) => event.type === 'child.superseded')).toHaveLength(1);
+});
+
+it('still fails a resume that skips a failed frame holding a completed step, without superseding it', async () => {
+  const stateDir = await directory();
+  let invoke = true;
+  const child = defineWorkflow({
+    name: 'partial',
+    ...base,
+    async run(ctx) {
+      await ctx.step('done', { input: null, schema: z.null(), run: () => null });
+      throw new Error('failed after a step');
+    },
+  });
+  const root = defineWorkflow({
+    name: 'parent',
+    ...base,
+    async run(ctx) {
+      if (invoke) await ctx.workflow('child', child, null);
+      return null;
+    },
+  });
+  const options = { stateDir, runId: 'supersede-skipped-step' };
+  await expect(runWorkflow(root, { ...options, input: null })).rejects.toThrow('after a step');
+  const before = (await readRun(options)).children?.['child'];
+
+  invoke = false;
+  const events: WorkflowEvent[] = [];
+  await expect(
+    runWorkflow(root, {
+      ...options,
+      resume: true,
+      onEvent: (event) => {
+        events.push(event);
+      },
+    }),
+  ).rejects.toThrow('Replay skipped recorded steps (child/done)');
+  const saved = await readRun(options);
+  expect(saved.status).toBe('failed');
+  expect(saved.children?.['child']).toEqual(before);
+  expect(typesOf(events)).not.toContain('child.superseded');
+});
+
+it('supersedes a grandchild that a revisited parent frame no longer invokes', async () => {
+  const stateDir = await directory();
+  let callLeaf = true;
+  const leaf = defineWorkflow({
+    name: 'leaf',
+    ...base,
+    run: () => Promise.reject<null>(new Error('leaf broke')),
+  });
+  const middle = defineWorkflow({
+    name: 'middle',
+    ...base,
+    async run(ctx) {
+      if (callLeaf) await ctx.workflow('leaf', leaf, null);
+      return null;
+    },
+  });
+  const root = defineWorkflow({
+    name: 'parent',
+    ...base,
+    run: (ctx) => ctx.workflow('middle', middle, null),
+  });
+  const options = { stateDir, runId: 'supersede-nested' };
+  await expect(runWorkflow(root, { ...options, input: null })).rejects.toThrow('leaf broke');
+  expect((await readRun(options)).children).toMatchObject({
+    middle: { status: 'failed' },
+    'middle/leaf': { status: 'failed', parent: 'middle' },
+  });
+
+  callLeaf = false;
+  const resumed = await runWorkflow(root, { ...options, resume: true });
+  expect(resumed.children).toMatchObject({
+    middle: { status: 'completed', error: null },
+    'middle/leaf': { status: 'superseded', error: 'leaf broke', parent: 'middle' },
+  });
+});
+
+it.each([true, false])(
+  'suggests --accept-code-change when a changed child identity hits an unfinished frame (declared: %s)',
+  async (declared) => {
+    const stateDir = await directory();
+    let version = '1';
+    const child = () =>
+      defineWorkflow({
+        name: 'kid',
+        ...base,
+        version,
+        run: () => Promise.reject<null>(new Error('kid broke')),
+      });
+    const root = () => {
+      const kid = child();
+      return defineWorkflow({
+        name: 'parent',
+        ...base,
+        ...(declared ? { children: [kid] } : {}),
+        run: (ctx) => ctx.workflow('kid', kid, null),
+      });
+    };
+    const options = { stateDir, runId: `hint-${String(declared)}` };
+    await expect(runWorkflow(root(), { ...options, input: null })).rejects.toThrow('kid broke');
+    version = '2';
+    const refusal = runWorkflow(root(), { ...options, resume: true });
+    await expect(refusal).rejects.toThrow(/Child frame kid changed: kid@1 -> kid@2/u);
+    await expect(refusal).rejects.toThrow(
+      /saved frame is failed, not completed: to retry a fixed child, keep its name, version, input and schemas and resume with --accept-code-change/u,
+    );
+  },
+);

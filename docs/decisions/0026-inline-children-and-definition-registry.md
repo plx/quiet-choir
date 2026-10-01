@@ -29,6 +29,27 @@ rediscover dynamic definitions. Reclaim their recorded frame ownership and verif
 before replay. Ordinary inline bodies still run on resume; completed runs with frames revisit them
 to check direct child identity. Suspended frames park with their root run.
 
+A successful completion retires every child frame that the completing execution never reached
+(neither invoked nor reclaimed through settled-map replay) and that is still `running`, `suspended`,
+`failed` or `cancelled`: its status becomes the terminal `superseded`, `finishedAt` records the
+supersession and an existing `error` is kept (a frame without one gets a supersession note). This
+matches unvisited unfinished steps, which become `superseded` under ADR 0005, so `inspect` no longer
+shows an earlier attempt's failure as the live outcome of a branch the workflow has moved past. It
+covers frames that failed or were cancelled before recording any terminal effect, and frames that a
+crash or an earlier suspension left running or parked. The replay checks run first and are
+unchanged: an unvisited completed frame, or a frame whose descendants hold a completed or
+settled-failed step or a settled map item, still fails the run with "Replay skipped completed child
+frames", "Replay skipped recorded steps" or "Replay skipped settled maps", and keeps its old status.
+Supersession is applied last, after output validation and worktree cleanup, and is undone if the
+completion checkpoint fails, so a failure snapshot never claims a retirement. Frames visited in the
+completing execution keep their live outcome: an unawaited running or parked frame is `cancelled`,
+and a failed frame the parent caught stays `failed`. One `child.superseded` event per retired frame
+follows `run.completed`. Already superseded frames are skipped, so a later resume emits nothing
+again; a later execution that invokes the frame with the same identity replays it like any other
+unfinished frame. Failed, cancelled and superseded frames still must keep their name, version, input
+and schemas on resume; the refusal for such a frame points at keeping that identity and resuming
+with `--accept-code-change`. Redefining an unfinished frame's identity is not supported.
+
 Publish optional descriptive metadata and I/O schemas through validate. The directory registry
 discovers trusted `*.workflow.ts` files, rejects duplicate names, and caches only JSON metadata
 after checking source hashes. It never caches execution authority: executing a name reimports the

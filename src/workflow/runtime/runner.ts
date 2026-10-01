@@ -259,8 +259,11 @@ export type WorkflowEvent = {
   | {
       /** Child lifecycle notifications refer to their frame rather than a leaf effect. */
       readonly stepId: null;
-      /** Inline invocation lifecycle after its frame checkpoint. */
-      readonly type: 'child.started' | 'child.completed' | 'child.failed';
+      /**
+       * Inline invocation lifecycle after its frame checkpoint. `child.superseded` follows
+       * `run.completed` for each unfinished frame the completed run no longer invoked.
+       */
+      readonly type: 'child.started' | 'child.completed' | 'child.failed' | 'child.superseded';
     }
 );
 
@@ -3053,7 +3056,7 @@ export async function runWorkflow<
       await drainDiscovery();
       signal.throwIfAborted();
       children.assertVisited();
-      children.finish('cancelled', 'Root workflow completed without awaiting this child frame.');
+      children.cancelUnawaited('Root workflow completed without awaiting this child frame.');
       const missingMaps = Object.keys(maps).filter(
         (id) =>
           !visitedMaps.has(id) &&
@@ -3079,6 +3082,8 @@ export async function runWorkflow<
       warnUnmatched();
       record.output = jsonValue(definition.output.parse(output), 'Workflow output');
       if (!options.rehearsal) await worktrees.cleanup(true);
+      // Last, after every check that can still fail the run: a failure must not claim retirements.
+      const retired = children.supersede();
       record.status = 'completed';
       const priorEvents = [...(record.events ?? [])];
       const priorStaleRecovery = record.staleRecovery;
@@ -3090,10 +3095,12 @@ export async function runWorkflow<
         // A later failure snapshot must not claim that an uncommitted completion happened.
         record.events = priorEvents;
         if (priorStaleRecovery) record.staleRecovery = priorStaleRecovery;
+        retired.restore();
         throw error;
       }
       notify({ ...completed, message: 'Run completed.', attempt: 0, runId: record.id });
       for (const [id, step] of superseded) emit('step.superseded', id, step);
+      retired.announce();
       return {
         ...structuredClone(record),
         status: 'completed',

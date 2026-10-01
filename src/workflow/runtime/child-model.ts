@@ -69,13 +69,20 @@ export interface ChildRecord {
   readonly inputDigest: string;
   /** Input/output schema identity; descriptions of the workflow itself are excluded. */
   readonly schemaDigest: string;
-  /** Last recorded frame state. Suspension applies to the enclosing run. */
-  status: 'running' | 'completed' | 'failed' | 'cancelled' | 'suspended';
+  /**
+   * Last recorded frame state. Suspension applies to the enclosing run. `superseded` is terminal
+   * until a later execution invokes the frame again: a successfully completed run did not invoke
+   * this unfinished frame, so it is no longer that branch's outcome.
+   */
+  status: 'running' | 'completed' | 'failed' | 'cancelled' | 'suspended' | 'superseded';
   /** Start time of the latest body execution. */
   startedAt: string;
-  /** Latest durable settlement time, or null for an active/parked frame. */
+  /** Latest durable settlement or supersession time, or null for an active/parked frame. */
   finishedAt: string | null;
-  /** Latest body/validation failure, or null. */
+  /**
+   * Latest body/validation failure or cancellation reason, or null. Supersession keeps an existing
+   * reason and records its own only when there was none.
+   */
   error: string | null;
 }
 
