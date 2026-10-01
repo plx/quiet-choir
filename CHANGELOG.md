@@ -2,6 +2,24 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- Harness isolation (behavior change, diagnostics only): restricted Codex still loads the user's
+  `CODEX_HOME/AGENTS.md` (or `AGENTS.override.md`), the descriptions of `CODEX_HOME/skills`, and
+  project `AGENTS.md`/`AGENTS.override.md` from the Git root down to `cwd`, while restricted Claude
+  suppresses both. Codex `HarnessMetadata` now carries the new optional
+  `HarnessMetadata.instructionSources` (new public type `InstructionSource`: `scope`, `kind`,
+  absolute `path` and `sha256`, never contents), recorded in the run record on the first live Codex
+  call of each run whatever its isolation mode. The run records one warning in `harnessWarnings`
+  naming the user-level files, and a resume adds
+  `codex instruction sources changed since this run last used it` when their digests differ. This is
+  diagnostics: it never enters step identity, so no completed work is invalidated.
+  `workflow doctor`'s inherited-defaults check no longer says restricted calls ignore user
+  configuration; it states what restricted mode skips and still loads, names the user-level files it
+  finds, and stays passing. `DoctorReport.codexInstructions` lists them. The additive record field
+  needs no `formatVersion` bump. `docs/harness-isolation.md` and both skill copies now state the
+  Codex instruction boundary, and the opt-in isolation contract records which canaries reach the
+  request. The 0.157.1 rules are modelled for defaults only; inherit-mode config keys such as
+  `project_doc_max_bytes` are not.
+
 - Waits (feature; the default is unchanged): a poll may set
   `onError: { tolerate, classify?, retryAfterMs? }` to tolerate up to `tolerate` consecutive
   observation errors (rejections and `observeTimeoutMs` expiries) instead of failing the wait. A

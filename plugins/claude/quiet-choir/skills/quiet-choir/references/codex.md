@@ -55,11 +55,14 @@ by default. It does not expose interactive approvals or an unrestricted sandbox.
 launch with `--grant role`. Add `isolation: 'worktree'` for a fresh checkout on every attempt, or
 pass a `ctx.worktree` handle for serialized write/test/fix effects. Shard structurally disjoint
 files; isolate overlapping targets, concurrent runners, and retries unsafe on partial edits. See
-[worktrees](worktrees.md) for snapshots and explicit integration. Restricted mode skips user config
-and execpolicy rules, while native project/managed instruction behavior remains. Custom providers
-need explicit `config` or an inherited role. Authentication still uses `CODEX_HOME`. See
-[harness isolation](harness-isolation.md); the workflow's own TypeScript remains outside this
-boundary.
+[worktrees](worktrees.md) for snapshots and explicit integration. Restricted mode skips
+`config.toml` and execpolicy rules, but Codex still loads the user's `CODEX_HOME/AGENTS.md` (or
+`AGENTS.override.md`), `CODEX_HOME/skills` descriptions, and project `AGENTS.md` or
+`AGENTS.override.md` from the Git root down to `cwd`, plus managed layers. Metadata records these
+files as paths and digests, the run warns about user-level ones, and `workflow doctor` names them.
+Custom providers need explicit `config` or an inherited role. Authentication still uses
+`CODEX_HOME`. See [harness isolation](harness-isolation.md); the workflow's own TypeScript remains
+outside this boundary.
 
 Calls use `--ephemeral`, so the native thread ID is correlation metadata and no local session
 transcript is persisted by Codex. quiet-choir separately retains capped private attempt transcripts

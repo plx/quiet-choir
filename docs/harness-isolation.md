@@ -14,10 +14,10 @@ See [worktree isolation](worktrees.md).
 
 ## Native boundary
 
-| Provider | Restricted invocation                 | Remaining dependencies                                                                                                         |
-| -------- | ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| Claude   | `--restricted --strict-mcp-config`    | Authentication, managed settings/policy, built-ins, and explicit opt-ins                                                       |
-| Codex    | `--ignore-user-config --ignore-rules` | Authentication through `CODEX_HOME`, managed/system layers, native instruction and project trust behavior, and explicit config |
+| Provider | Restricted invocation                 | Remaining dependencies                                                                                                                                                                                                         |
+| -------- | ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Claude   | `--restricted --strict-mcp-config`    | Authentication, managed settings/policy, built-ins, and explicit opt-ins                                                                                                                                                       |
+| Codex    | `--ignore-user-config --ignore-rules` | Authentication through `CODEX_HOME`, managed/system layers, user `CODEX_HOME/AGENTS.md` or `AGENTS.override.md`, `CODEX_HOME/skills`, project `AGENTS.md`/`AGENTS.override.md` from the Git root to `cwd`, and explicit config |
 
 Claude suppresses user/project/local settings, their hooks, discovered MCP servers, project
 instructions, user plugins/skills, and auto-memory. Built-in components can remain. Explicit
@@ -35,11 +35,22 @@ worktree snapshotting runs outside the agent and does not require the agent to c
 `inherit` is an explicit trust decision. `cwd` selects project `.claude`/`.codex` inputs. Headless
 Claude skips the workspace trust dialog and can execute project hooks in never-trusted directories.
 Do not point inherited calls at untrusted checkouts. `tools: []` alone does not suppress inherited
-MCP or hooks. Codex's two flags do not promise removal of every project instruction or managed
-integration; they specifically skip user config and execpolicy rules. Custom providers normally
-stored in `config.toml` need explicit `config` or an inherited role. `harnessProfile` selects a
-native profile from the same skipped `config.toml`, so restricted mode rejects it; select `inherit`
-or configure the equivalent settings through `config`.
+MCP or hooks. Custom providers normally stored in `config.toml` need explicit `config` or an
+inherited role. `harnessProfile` selects a native profile from the same skipped `config.toml`, so
+restricted mode rejects it; select `inherit` or configure the equivalent settings through `config`.
+
+Codex instruction boundary. Unlike restricted Claude, restricted Codex still loads instruction
+files. `--ignore-user-config` skips `config.toml` and `--ignore-rules` skips execpolicy rules, but
+Codex 0.157.1 still reads the user's `CODEX_HOME/AGENTS.md` (or `AGENTS.override.md`, which replaces
+it unless empty), the descriptions of skills under `CODEX_HOME/skills`, and project `AGENTS.md` or
+`AGENTS.override.md` in each directory from the nearest Git root down to `cwd` (only `cwd` when no
+`.git` entry exists), as well as managed layers. Results can therefore depend on who runs the
+workflow. Codex harness metadata records these files as paths and SHA-256 digests
+(`HarnessMetadata.instructionSources`, never contents); the run warns once about user-level files
+and again if they change on resume, and `workflow doctor` names them. Detection runs on the first
+live Codex call of each run, from that call's `cwd`, so project files reached from other directories
+are not re-detected, and inherit-mode config keys such as `project_doc_max_bytes` are not modelled.
+Removing these files is a possible opt-in mode, tracked in issue #130.
 
 Neither mode confines the workflow's TypeScript, local callbacks, or `ctx.exec`. OS sandbox
 selection and tool grants remain separate controls. Custom harnesses must enforce the resolved mode
@@ -84,7 +95,13 @@ inherited mode if a CLI rejects the flags.
 Claude 2.1.283 and Codex 0.157.1. It uses fresh homes and dummy keys. It confirms hook and
 project-instruction suppression, explicit settings/MCP/plugin/prompt/tool opt-ins, outside-read
 denial and `addDirs` restoration, protected settings-write denial, and Codex's explicit provider
-override. No upstream inference occurs. The sanitized report is in
+override. For restricted Codex it also records, without asserting, whether canaries in a user
+`AGENTS.md`, a user skill description and a project `AGENTS.md` reach the request body
+(`userInstructionsReachedRequest`, `projectInstructionsReachedRequest` and
+`userSkillReachedRequest`, all true on 0.157.1), how `AGENTS.override.md` replaces `AGENTS.md`, that
+discovery runs from the Git root down to `cwd`, and that an empty user-level override falls back to
+`AGENTS.md` while an empty project-level one does not. A change in Codex then shows as a fixture
+diff. No upstream inference occurs. The sanitized report is in
 [`test/fixtures/harness-isolation-results.json`](../test/fixtures/harness-isolation-results.json).
 
 Earlier zero-cost OAuth probes on the same Claude version reached invalid-model responses with
