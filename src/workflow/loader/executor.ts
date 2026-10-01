@@ -323,6 +323,8 @@ export class WorkflowExecutor implements Executor<WorkflowExecutorPlan, Workflow
       if (plan.kind === 'workflow.execute' && plan.resume) {
         const saved = await readRequiredRun({ runId: plan.runId, stateDir: plan.stateDir });
         if (saved.launch) {
+          // A missing stored file is the entrypoint_missing refusal, whatever FILE was requested.
+          await storedEntrypointExists(saved.id, saved.launch.entrypoint);
           const requested = await realpath(plan.typecheck.entrypoint);
           if (requested !== saved.launch.entrypoint)
             throw new RunRefusedError(

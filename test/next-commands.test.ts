@@ -25,6 +25,7 @@ function run(overrides: Record<string, unknown> = {}): RunRecord {
   return {
     id: 'r1',
     status: 'failed',
+    formatVersion: 7,
     launch: { entrypoint, tsconfig: null },
     steps: {},
     ...overrides,
@@ -180,6 +181,51 @@ describe('failureNextCommands', () => {
       [fork(entrypoint)],
     ],
     [
+      'run.incompatible for a cwd change of a format-1 run (fork refuses legacy checkpoints)',
+      {
+        code: 'run.incompatible',
+        details: compatibility(['cwd'], false),
+        run: run({ formatVersion: 1 }),
+      },
+      [],
+    ],
+    [
+      'run.incompatible for a code change of a format-1 run keeps only the resume entry',
+      {
+        code: 'run.incompatible',
+        details: compatibility(['code'], true),
+        run: run({ formatVersion: 1 }),
+      },
+      [resume('--accept-code-change')],
+    ],
+    [
+      'run.incompatible for a cwd change of a format-6 run',
+      {
+        code: 'run.incompatible',
+        details: compatibility(['cwd'], false),
+        run: run({ formatVersion: 6 }),
+      },
+      [fork(entrypoint)],
+    ],
+    [
+      'run.incompatible for a different requested entrypoint of a format-1 run',
+      {
+        code: 'run.incompatible',
+        details: { storedEntrypoint: entrypoint, requestedEntrypoint: '/elsewhere/w.ts' },
+        run: run({ formatVersion: 1 }),
+      },
+      [resume()],
+    ],
+    [
+      'run.incompatible for a missing stored entrypoint of a format-1 run',
+      {
+        code: 'run.incompatible',
+        details: { storedEntrypoint: entrypoint, reason: 'entrypoint_missing' },
+        run: run({ formatVersion: 1 }),
+      },
+      [],
+    ],
+    [
       'run.incompatible for a workflow name change',
       { code: 'run.incompatible', details: compatibility(['name', 'code'], false) },
       [],
@@ -227,6 +273,16 @@ describe('failureNextCommands', () => {
         '--state-dir',
         `/c${String(index)}`,
       ]),
+    ],
+    [
+      'run.not_found of a --fork-from source inspects the missing run, not the named one',
+      {
+        code: 'run.not_found',
+        runId: 'new-run',
+        run: null,
+        details: { runId: 'r1', candidates: [{ stateDir: '/c0', cwd: '/p' }] },
+      },
+      [[...prefix, 'inspect', 'r1', '--state-dir', '/c0']],
     ],
     ['run.not_found without candidates', { code: 'run.not_found', details: { count: 0 } }, []],
     ['a rehearsal failure', { rehearsal: true }, []],

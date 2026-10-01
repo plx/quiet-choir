@@ -161,7 +161,8 @@ is `[{stepId, components}]` for the first such step, and `error.details.next` ho
 `LAUNCHER workflow execute FILE --fork-from RUN --reuse matching --invalidate STEP --run-id <NEW_RUN_ID> --state-dir DIR`,
 built behind the same launcher as `resumeCommand` with a placeholder for the new run ID.
 `execute --dry-run --resume --accept-code-change` returns the same code, message and details. A
-missing run includes `details.stateDir`, sorted `details.available` (at most 20 IDs),
+missing run includes `details.runId` (the run that was not found, which is a `--fork-from` source
+when that is what is missing), `details.stateDir`, sorted `details.available` (at most 20 IDs),
 `details.count`, and `details.candidates`: at most 10 other runs containers that hold the ID, as
 `{stateDir, cwd}` sorted by `stateDir`, or an empty array. The search covers every registered XDG
 project root and its legacy `.quiet-choir/runs`, plus the default and legacy roots of the current
@@ -188,11 +189,11 @@ placeholders. Text inspect and human failure messages print each entry as
 | `workflow.interrupted` with a saved suspension  | as for a suspended summary                                                                            |
 | `run.orphans`                                   | `resume RUN --state-dir DIR --kill-orphans`                                                           |
 | `run.incompatible`, code or schema change only  | `resume … --accept-code-change` (unless the run completed), then a fork                               |
-| `run.incompatible`, other run-level changes     | a fork from the stored entrypoint; none when the workflow name changed                                |
+| `run.incompatible`, other run-level changes     | a fork from the stored entrypoint; none when the workflow name changed or for a legacy checkpoint     |
 | `run.incompatible`, divergent completed step    | the fork command from `error.details.next`                                                            |
 | `run.incompatible`, different requested FILE    | `resume` with the stored entrypoint, then a fork from the requested FILE                              |
 | `run.incompatible`, `entrypoint_missing`        | `execute <ENTRYPOINT> --fork-from RUN --run-id <NEW_RUN_ID> --state-dir DIR`                          |
-| `run.not_found` with `details.candidates`       | `inspect RUN --state-dir CANDIDATE` for at most 5 candidates                                          |
+| `run.not_found` with `details.candidates`       | `inspect RUN --state-dir CANDIDATE` for at most 5 candidates, RUN being `details.runId`               |
 | Failed or stale summary                         | `resume RUN --state-dir DIR`                                                                          |
 | Suspended summary                               | `answer RUN STEP --state-dir DIR --json <ANSWER_JSON>` for at most 5 waiting questions, then `resume` |
 | Dry-run failures, embedded runs, any other case | `[]`                                                                                                  |

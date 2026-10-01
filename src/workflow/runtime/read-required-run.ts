@@ -85,6 +85,7 @@ export async function missingRunError(
     options.runId,
     `Run ${options.runId} not found in ${stateDir} (${String(ids.length)} runs present${ids.length ? `: ${available.join(', ')}${ids.length > 20 ? ', …' : ''}` : ''}). --state-dir resolves against the current directory.${found}`,
     {
+      runId: options.runId,
       stateDir,
       available,
       count: ids.length,

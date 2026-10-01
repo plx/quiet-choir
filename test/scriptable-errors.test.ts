@@ -165,6 +165,7 @@ it('bounds and sorts available IDs for an unknown run', async () => {
   if (!(error instanceof RunRefusedError)) throw error;
   expect(error.code).toBe('run.not_found');
   expect(error.details).toEqual({
+    runId: 'missing',
     stateDir,
     count: 25,
     available: Array.from({ length: 20 }, (_, index) => `run-${String(index).padStart(2, '0')}`),
@@ -592,5 +593,22 @@ export default defineWorkflow({
       '--state-dir',
       runs,
     ]);
+
+    // A different FILE does not hide the deleted stored entrypoint behind a mismatch refusal
+    // whose resume entry could not succeed.
+    const other = join(stateDir, 'other.workflow.ts');
+    await writeFile(other, 'export {};');
+    const different = await executor.execute({
+      kind: 'workflow.execute',
+      typecheck: { ...analysis.plan, entrypoint: other },
+      runId: 'next-run',
+      stateDir: runs,
+      cwd: root,
+      resume: true,
+    });
+    if (different.ok) throw new Error('expected a refusal');
+    expect(different.code).toBe('run.incompatible');
+    expect(different.details).toEqual({ storedEntrypoint: stored, reason: 'entrypoint_missing' });
+    expect(different.next?.[0]?.argv).toContain('<ENTRYPOINT>');
   },
 );

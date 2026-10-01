@@ -146,13 +146,17 @@ function incompatibleNext(
   stateDir: string,
 ): NextCommand[] {
   const { launcher, run } = context;
+  // Fork refuses legacy (format 1) checkpoints, so such a run never gets a fork entry.
+  const canFork = !run || run.formatVersion === 6 || run.formatVersion === 7;
   if (details['reason'] === 'entrypoint_missing')
-    return [
-      {
-        why: 'The stored entrypoint is gone (moved checkout or deleted file); fork from its new location, substituting <ENTRYPOINT>.',
-        argv: fork(launcher, '<ENTRYPOINT>', runId, stateDir),
-      },
-    ];
+    return canFork
+      ? [
+          {
+            why: 'The stored entrypoint is gone (moved checkout or deleted file); fork from its new location, substituting <ENTRYPOINT>.',
+            argv: fork(launcher, '<ENTRYPOINT>', runId, stateDir),
+          },
+        ]
+      : [];
   // A divergence refusal already carries its fork command, built with the same launcher.
   const divergence = Array.isArray(details['next']) ? strings(details['next'][0]) : undefined;
   if (divergence)
@@ -170,10 +174,14 @@ function incompatibleNext(
         why: 'Resume with the entrypoint the run was launched from.',
         argv: resume(launcher, runId, stateDir),
       },
-      {
-        why: 'Or fork a new run from the requested entrypoint.',
-        argv: fork(launcher, requested, runId, stateDir),
-      },
+      ...(canFork
+        ? [
+            {
+              why: 'Or fork a new run from the requested entrypoint.',
+              argv: fork(launcher, requested, runId, stateDir),
+            },
+          ]
+        : []),
     ];
   const changed = strings(details['changed']);
   const entrypoint = run?.launch?.entrypoint;
@@ -182,15 +190,16 @@ function incompatibleNext(
     why: 'Fork a new run under the current code, reusing matching completed steps.',
     argv: fork(launcher, entrypoint, runId, stateDir),
   };
+  const forks = canFork ? [forkEntry] : [];
   return details['canAcceptCodeChange'] === true && run?.status !== 'completed'
     ? [
         {
           why: 'Only code or schemas changed; accept the change and resume (refused without changes if a completed step changed).',
           argv: resume(launcher, runId, stateDir, '--accept-code-change'),
         },
-        forkEntry,
+        ...forks,
       ]
-    : [forkEntry];
+    : forks;
 }
 
 /**
@@ -203,14 +212,16 @@ export function failureNextCommands(context: FailureNextContext): NextCommand[] 
   if (context.rehearsal) return [];
   if (code === 'run.not_found') {
     const candidates = Array.isArray(details?.['candidates']) ? details['candidates'] : [];
+    // The missing run can be a --fork-from source, not the run the command named.
+    const missing = typeof details?.['runId'] === 'string' ? details['runId'] : runId;
     return candidates.slice(0, maxCandidateEntries).flatMap((candidate) => {
       const entry = record(candidate);
       const candidateDir = entry?.['stateDir'];
-      return runId !== null && typeof candidateDir === 'string'
+      return missing !== null && typeof candidateDir === 'string'
         ? [
             {
-              why: `The run exists in ${candidateDir}${typeof entry?.['cwd'] === 'string' ? ` (project ${entry['cwd']})` : ''}; inspect it there.`,
-              argv: workflowArgv(launcher, 'inspect', runId, '--state-dir', candidateDir),
+              why: `Run ${missing} exists in ${candidateDir}${typeof entry?.['cwd'] === 'string' ? ` (project ${entry['cwd']})` : ''}; inspect it there.`,
+              argv: workflowArgv(launcher, 'inspect', missing, '--state-dir', candidateDir),
             },
           ]
         : [];
