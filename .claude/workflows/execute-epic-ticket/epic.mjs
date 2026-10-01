@@ -43,6 +43,7 @@
 // when the file is executed directly.
 
 import { spawnSync } from 'node:child_process';
+import { availableParallelism, loadavg } from 'node:os';
 import { createHash } from 'node:crypto';
 import {
   appendFileSync,
@@ -106,6 +107,12 @@ export function isRetryableRead(cmd, args) {
     return verb === 'fetch' || verb === 'ls-remote';
   }
   return false;
+}
+// The machine running these checks is shared. Under heavy load a full-parallel vitest run times
+// out and every implementer re-ran it with fewer workers by hand, so cap the workers when the
+// 1-minute load exceeds the core count (the cap only changes scheduling, not what is tested).
+export function checkLoadEnv(load = loadavg()[0], cores = availableParallelism()) {
+  return load > cores ? { VITEST_MAX_WORKERS: '4' } : {};
 }
 const pause = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 
@@ -1081,10 +1088,11 @@ function check(a, P) {
     installed = true;
   }
 
+  const loadEnv = checkLoadEnv();
   const r = run('bash', ['-c', cmd], {
     cwd: W,
     allowFail: true,
-    env: { NO_COLOR: '1', FORCE_COLOR: '0' },
+    env: { NO_COLOR: '1', FORCE_COLOR: '0', ...loadEnv },
   });
   const text = stripAnsi(`${r.stdout}\n${r.stderr}`);
   writeFileSync(log, text);
@@ -1094,6 +1102,7 @@ function check(a, P) {
     passed,
     head,
     clean,
+    maxWorkers: loadEnv.VITEST_MAX_WORKERS ?? null,
     exitCode: r.status,
     failedStep: passed ? null : (steps.at(-1) ?? null),
     seconds: Math.round((Date.now() - started) / 1000),
