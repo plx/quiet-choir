@@ -71,6 +71,14 @@ export function waitRequest(sources: WaitSources): {
     ((poll as unknown) === null || typeof poll !== 'object' || typeof poll.observe !== 'function')
   )
     throw new Error('Poll source requires an observe callback.');
+  // observeTimeoutMs is execution policy: it is validated here but deliberately kept out of the
+  // request below, so it never enters wait identity and may change on resume.
+  const observeTimeoutMs = poll?.observeTimeoutMs as unknown;
+  if (
+    observeTimeoutMs !== undefined &&
+    !(Number.isSafeInteger(observeTimeoutMs) && (observeTimeoutMs as number) > 0)
+  )
+    throw new Error('Poll observeTimeoutMs must be a positive integer.');
   const every = poll?.every;
   const request = requestSchema.parse(
     jsonValue(

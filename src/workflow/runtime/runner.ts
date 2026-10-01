@@ -2549,6 +2549,10 @@ export async function runWorkflow<
       },
       beforeLive,
       nextSeq: () => nextSeq++,
+      warn: (message) => {
+        // Persisted by the next completion, failure or suspension save; bounded like worktrees.
+        record.waitWarnings = [...new Set([...(record.waitWarnings ?? []), message])].slice(-20);
+      },
       fail: (error) => {
         origins.markFatal(error);
         controller.abort(error);
@@ -3011,13 +3015,15 @@ export async function runWorkflow<
         ...(record.policyWarnings.length ||
         record.replayWarnings.length ||
         record.harnessWarnings?.length ||
-        record.worktreeWarnings?.length
+        record.worktreeWarnings?.length ||
+        record.waitWarnings?.length
           ? {
               warnings: [
                 ...record.policyWarnings,
                 ...record.replayWarnings,
                 ...(record.harnessWarnings ?? []),
                 ...(record.worktreeWarnings ?? []),
+                ...(record.waitWarnings ?? []),
               ],
             }
           : {}),
