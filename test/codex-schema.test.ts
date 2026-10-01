@@ -10,6 +10,10 @@ import { prepareCodexSchema } from '../src/harnesses/codex-schema.js';
 import { jsonValue } from '../src/workflow/runtime/json.js';
 import { schemaMatrix } from './schema-matrix.js';
 
+const compatRejectedRules = ['tuple', 'untyped'];
+const isCompatRejected = (entry: { rules: readonly string[] }): boolean =>
+  entry.rules.some((rule) => compatRejectedRules.includes(rule));
+const untypedEntries = schemaMatrix.filter((entry) => entry.rules.includes('untyped'));
 const directories: string[] = [];
 const jsonSchema = (schema: z.ZodType): ReturnType<typeof jsonValue> =>
   jsonValue(JSON.parse(JSON.stringify(z.toJSONSchema(schema, { target: 'draft-7' }))));
@@ -63,8 +67,11 @@ it.each(schemaMatrix)(
     expect([...new Set(issues.map((issue) => issue.rule))]).toEqual(rules);
     expect(issues.every((issue) => issue.path.startsWith('$') && issue.fix.length > 0)).toBe(true);
     expect(checkCodexSchema(jsonSchema(schema))).toEqual(issues);
-    if (rules.some((rule) => rule === 'tuple')) {
-      expect(() => prepareCodexSchema(jsonSchema(schema), 'compat')).toThrow('$.pair (tuple)');
+    const rejected = issues.find((issue) => compatRejectedRules.includes(issue.rule));
+    if (rejected) {
+      expect(() => prepareCodexSchema(jsonSchema(schema), 'compat')).toThrow(
+        `${rejected.path} (${rejected.rule})`,
+      );
       return;
     }
     const plan = prepareCodexSchema(jsonSchema(schema), 'compat');
@@ -94,7 +101,7 @@ it.each(schemaMatrix.filter((entry) => entry.rules.length > 0))(
   },
 );
 
-it.each(schemaMatrix.filter((entry) => entry.name !== 'tuple'))(
+it.each(schemaMatrix.filter((entry) => !isCompatRejected(entry)))(
   'executes and validates $name through the default compat adapter',
   async ({ schema, wire, output }) => {
     const { binary, directory } = await binaryFor(wire);
@@ -121,6 +128,24 @@ it.each(schemaMatrix.filter((entry) => entry.name !== 'tuple'))(
     ).toEqual([]);
   },
 );
+
+it.each(untypedEntries)('rejects $name before spawning in both modes', async ({ schema }) => {
+  for (const structuredOutput of ['compat', 'strict'] as const) {
+    const { binary, marker } = await binaryFor({});
+    await expect(
+      new CliHarness({ codexBinary: binary }).invoke(
+        {
+          harness: 'codex',
+          cwd: process.cwd(),
+          options: { prompt: 'fixture', structuredOutput },
+          outputSchema: jsonSchema(schema),
+        },
+        testInvocation(new AbortController().signal),
+      ),
+    ).rejects.toThrow(`(structuredOutput: "${structuredOutput}")`);
+    await expect(stat(marker)).rejects.toMatchObject({ code: 'ENOENT' });
+  }
+});
 
 it('retains nullable optionals and strips null only from non-nullable optionals inside unions and records', () => {
   const schema = z.object({
@@ -186,8 +211,12 @@ it('rejects a union of a record and an array whose wire encodings collide, in ei
     required: ['data'],
     additionalProperties: false,
     definitions: {
-      r: { type: 'object', propertyNames: { type: 'string' }, additionalProperties: {} },
-      a: { type: 'array', items: {} },
+      r: {
+        type: 'object',
+        propertyNames: { type: 'string' },
+        additionalProperties: { type: 'number' },
+      },
+      a: { type: 'array', items: { type: 'number' } },
     },
   };
   expect(() => prepareCodexSchema(shared, 'compat')).toThrow('$.data (record-array-union)');
@@ -335,18 +364,122 @@ it('rejects boolean root schemas instead of skipping the root check', () => {
     fix: 'Wrap the root in z.object({ value: ... }), or use structuredOutput: "compat".',
   };
   expect(checkCodexSchema(false)).toEqual([issue]);
-  expect(checkCodexSchema(true)).toEqual([issue]);
+  // `true` is `{}`: it also accepts any value, so it is untyped as well as not an object.
+  expect(checkCodexSchema(true).map(({ path, rule }) => ({ path, rule }))).toEqual([
+    { path: '$', rule: 'object-root' },
+    { path: '$', rule: 'untyped' },
+  ]);
   expect(() => prepareCodexSchema(false, 'strict')).toThrow('object-root');
   // `false` can never be satisfied on the wire (compat has no way to encode "always invalid"),
   // so it must be rejected locally rather than compiled into an unrestricted `{ value: {} }`.
   expect(() => prepareCodexSchema(false, 'compat')).toThrow('always fails validation');
-  // `true` accepts anything, so wrapping it as `{ value: {} }` is a faithful encoding.
-  expect(prepareCodexSchema(true, 'compat').schema).toEqual({
-    type: 'object',
-    properties: { value: {} },
-    required: ['value'],
-    additionalProperties: false,
-  });
+  // `true` has no concrete wire type, so compat rejects it like z.unknown() instead of wrapping it.
+  expect(() => prepareCodexSchema(true, 'compat')).toThrow('$ (untyped)');
+});
+
+const untypedAt = (schema: z.ZodType | ReturnType<typeof jsonValue>): string[] =>
+  checkCodexSchema(schema)
+    .filter((issue) => issue.rule === 'untyped')
+    .map((issue) => issue.path);
+
+it('flags type-less subschemas at the path of the offending value', () => {
+  expect(untypedAt(z.object({ a: z.unknown() }))).toEqual(['$.a']);
+  expect(untypedAt(z.object({ a: z.array(z.unknown()) }))).toEqual(['$.a.items']);
+  expect(untypedAt(z.object({ a: z.unknown().nullable() }))).toEqual(['$.a.anyOf[0]']);
+  expect(untypedAt(z.object({ a: z.unknown().describe('anything') }))).toEqual(['$.a']);
+  expect(untypedAt(z.object({ a: z.never() }))).toEqual(['$.a']);
+  expect(untypedAt(z.unknown())).toEqual(['$']);
+  expect(
+    checkCodexSchema(z.object({ a: z.unknown().optional() })).map(({ path, rule }) => ({
+      path,
+      rule,
+    })),
+  ).toEqual([
+    { path: '$.a', rule: 'optional' },
+    { path: '$.a', rule: 'untyped' },
+  ]);
+  expect(untypedAt({ type: 'object', properties: { a: true }, required: ['a'] })).toEqual(['$.a']);
+  const issue = checkCodexSchema(z.object({ a: z.unknown() }))[0];
+  expect(issue?.fix).toContain('concrete type');
+  expect(issue?.fix).toContain('z.string()');
+});
+
+it('judges a $ref by its target and checks shared definitions once per use', () => {
+  const shared = z.unknown();
+  expect(untypedAt(z.object({ a: shared, b: shared }))).toEqual(['$.a', '$.b']);
+  expect(untypedAt({ $defs: { t: { type: 'string' } }, $ref: '#/$defs/t' })).toEqual([]);
+});
+
+it('does not flag enum-only nodes, z.json() or loose objects', () => {
+  expect(untypedAt(z.object({ a: z.literal(['x', 1]) }))).toEqual([]);
+  expect(untypedAt(z.object({ a: z.json() }))).toEqual([]);
+  const loose = z.looseObject({ a: z.string() });
+  expect(checkCodexSchema(loose).map((issue) => issue.rule)).toEqual(['open-object']);
+  const catchall = z.object({ a: z.string() }).catchall(z.unknown());
+  expect(checkCodexSchema(catchall).map((issue) => issue.rule)).toEqual(['open-object']);
+  const nested = z.object({ a: z.string() }).catchall(z.object({ x: z.unknown() }));
+  expect(untypedAt(nested)).toEqual([]);
+  // A shared definition is still checked on its own.
+  expect(
+    untypedAt({
+      type: 'object',
+      properties: {},
+      additionalProperties: { type: 'object', additionalProperties: {} },
+      $defs: { loose: {} },
+    }),
+  ).toEqual(['$.$defs.loose']);
+});
+
+it('rejects untyped values in compat with the original path and no compat remedy', () => {
+  const cases: [z.ZodType, string][] = [
+    [z.object({ a: z.unknown() }), '$.a (untyped)'],
+    [z.object({ a: z.array(z.any()) }), '$.a.items (untyped)'],
+    [z.object({ a: z.unknown().nullable() }), '$.a.anyOf[0] (untyped)'],
+    [z.record(z.string(), z.unknown()), '$.additionalProperties (untyped)'],
+    [z.record(z.enum(['a']), z.unknown()), '$.additionalProperties (untyped)'],
+    [z.partialRecord(z.enum(['a']), z.unknown()), '$.additionalProperties (untyped)'],
+    [z.unknown(), '$ (untyped)'],
+  ];
+  for (const [schema, path] of cases) {
+    let message = '';
+    try {
+      prepareCodexSchema(jsonSchema(schema), 'compat');
+    } catch (error) {
+      message = (error as Error).message;
+    }
+    expect(message).toContain('Codex rejects this output schema (structuredOutput: "compat"):');
+    expect(message).toContain(path);
+    expect(message).toContain('concrete type');
+    expect(message).not.toContain('or use structuredOutput');
+    expect(message).not.toMatch(/\$\.value\b/u);
+  }
+});
+
+it('keeps the untyped fix for a value inside an unmerged intersection', () => {
+  const schema = z.intersection(z.object({ a: z.unknown() }), z.record(z.string(), z.unknown()));
+  const json = jsonSchema(schema);
+  expect(JSON.stringify(json)).toContain('allOf');
+  let message = '';
+  try {
+    prepareCodexSchema(json, 'compat');
+  } catch (error) {
+    message = (error as Error).message;
+  }
+  expect(message).toContain('(untyped)');
+  expect(message).toContain('concrete type');
+  expect(message).not.toContain('z.intersection');
+});
+
+it('still closes loose and catchall objects in compat', () => {
+  for (const schema of [
+    z.looseObject({ a: z.string() }),
+    z.object({ a: z.string() }).catchall(z.unknown()),
+    z.object({ a: z.string() }).catchall(z.object({ x: z.unknown() })),
+  ]) {
+    const plan = prepareCodexSchema(jsonSchema(schema), 'compat');
+    expect(plan.schema).toMatchObject({ additionalProperties: false });
+    expect(checkCodexSchema(plan.schema)).toEqual([]);
+  }
 });
 
 it('labels rejections with the active structuredOutput mode and drops compat-only hints', () => {
