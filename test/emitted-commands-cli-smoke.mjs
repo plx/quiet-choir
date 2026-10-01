@@ -1,7 +1,7 @@
 // Emitted commands must run exactly as printed: answerCommand, resumeCommand and next entries are
 // executed with execFile from an unrelated directory, with no quiet-choir on PATH (#135).
 import assert from 'node:assert/strict';
-import { execFileSync, spawnSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 import {
   existsSync,
   mkdirSync,
