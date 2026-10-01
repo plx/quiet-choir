@@ -249,6 +249,80 @@ describe('fixture routing and export', () => {
     expect(second.output).toBe('plainstructured');
     expect(() => fixturesFromRun({ ...first, status: 'failed' })).toThrow('completed run');
   });
+  it('exports settled agent failures as error rules in execution order and replays them as settled failures', async () => {
+    const options = await setup();
+    const definition = workflow(async (ctx) => {
+      const first = await ctx.claude.text('first', { prompt: 'x' });
+      const broken = await ctx.codex.text('broken', { prompt: 'x', onError: 'return' });
+      const last = await ctx.claude.text('last', { prompt: 'x' });
+      return `${first.output}|${broken.ok ? broken.value.output : broken.error.message}|${last.output}`;
+    });
+    const source = await runWorkflow(definition, {
+      ...options,
+      harness: new FixtureHarness({
+        version: 1,
+        calls: [
+          { step: 'first', text: 'one' },
+          { step: 'broken', error: 'boom' },
+          { step: 'last', text: 'three' },
+        ],
+      }),
+    });
+    expect(source.status).toBe('completed');
+    expect(source.steps['broken']?.status).toBe('settled-failed');
+    const fixtures = fixturesFromRun(source);
+    expect(fixtures.calls).toEqual([
+      expect.objectContaining({ step: 'first', harness: 'claude', output: 'one' }),
+      { step: 'broken', harness: 'codex', error: 'boom' },
+      expect.objectContaining({ step: 'last', harness: 'claude', output: 'three' }),
+    ]);
+    const replay = await runWorkflow(definition, {
+      ...options,
+      runId: 'replay',
+      harness: new FixtureHarness(fixtures),
+    });
+    expect(replay.status).toBe('completed');
+    expect(replay.steps['broken']?.status).toBe('settled-failed');
+    expect(replay.steps['broken']?.settledError?.message).toBe(
+      source.steps['broken']?.settledError?.message,
+    );
+    expect(replay.output).toBe(source.output);
+    expect(fixturesFromRun(replay)).toEqual(fixtures);
+  });
+  it('exports an unprefixed settled message verbatim and never an empty error', async () => {
+    const options = await setup();
+    const definition = workflow(async (ctx) => {
+      const broken = await ctx.claude.text('broken', { prompt: 'x', onError: 'return' });
+      return broken.ok ? broken.value.output : broken.error.message;
+    });
+    const source = await runWorkflow(definition, {
+      ...options,
+      harness: new FixtureHarness({ version: 1, calls: [{ step: 'broken', error: 'boom' }] }),
+    });
+    const settled = source.steps['broken'];
+    if (settled?.settledError === undefined) throw new Error('expected a settled failure');
+    const withMessage = (message: string | undefined, kind = settled.settledError?.kind) =>
+      fixturesFromRun({
+        ...source,
+        steps: {
+          broken: {
+            ...settled,
+            settledError:
+              message === undefined ? undefined : { ...settled.settledError, kind, message },
+          },
+        },
+      } as typeof source);
+    expect(withMessage('rate limited').calls).toEqual([
+      { step: 'broken', harness: 'claude', error: 'rate limited' },
+    ]);
+    expect(withMessage('Step other: x').calls[0]).toMatchObject({ error: 'Step other: x' });
+    expect(withMessage('', 'schema').calls[0]).toMatchObject({ error: 'Settled schema failure' });
+    expect(withMessage('Step broken: ', 'schema').calls[0]).toMatchObject({
+      error: 'Settled schema failure',
+    });
+    expect(withMessage(undefined).calls[0]).toMatchObject({ error: 'Settled unknown failure' });
+    expect(() => parseHarnessFixtures(withMessage(''))).not.toThrow();
+  });
   it('validates inline and @file config, resolves relative executables, and defers module loading', async () => {
     const { stateDir } = await setup();
     const config = { claudeBinary: './fake/claude', maxOutputBytes: 33554432 };
