@@ -700,7 +700,7 @@ const recordFieldsSchema = z.object({
   cwd: z.string(),
   input: jsonSchema,
   output: jsonSchema,
-  status: z.enum(['running', 'completed', 'failed', 'cancelled', 'suspended', 'superseded']),
+  status: z.enum(['running', 'completed', 'failed', 'cancelled', 'suspended']),
   error: z.string().nullable(),
   steps: stepsSchema,
   rootCause: z.object({ stepId: z.string().nullable(), error: z.string() }).nullable().optional(),

@@ -15,6 +15,7 @@ import {
   z,
 } from '../src/index.js';
 import type { WorkflowDefinition } from '../src/index.js';
+import { parseRunRecord } from '../src/workflow/runtime/record.js';
 import * as store from '../src/workflow/runtime/store.js';
 
 vi.mock('../src/workflow/runtime/store.js', async (importOriginal) => {
@@ -735,4 +736,17 @@ it('preserves a mapper body failure when saving its settled outcome also fails',
   expect(error.errors[0]).toBe(original);
   expect(error.errors.slice(1)).toEqual([expect.any(CheckpointError), expect.any(CheckpointError)]);
   expect((await readRun(options())).maps?.['items']?.items[0]?.status).toBe('running');
+});
+
+it('rejects a run record whose run status is superseded, which only child frames may be', async () => {
+  await runWorkflow(
+    workflow(() => Promise.resolve('done')),
+    options(),
+  );
+  const text = await readFile(join(stateDir, 'run', 'run.json'), 'utf8');
+  expect(() => parseRunRecord(text, 'run')).not.toThrow();
+  const record = z.record(z.string(), z.unknown()).parse(JSON.parse(text));
+  expect(() =>
+    parseRunRecord(JSON.stringify({ ...record, status: 'superseded' }), 'run'),
+  ).toThrow();
 });
