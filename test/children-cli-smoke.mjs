@@ -61,6 +61,26 @@ export default defineWorkflow({name:'sdlc',version:'1',description:'Build from a
   assert.deepEqual(metadata.inputSchema.required, ['topic']);
   assert.equal(metadata.children[0].children[0].name, 'design-tournament');
   assert.equal(metadata.description, 'Build from a topic');
+  const optionPaths = (value, path = 'workflow') =>
+    value.harnesses
+      .flatMap((entry, i) => ('options' in entry ? [`${path}.harnesses[${String(i)}]`] : []))
+      .concat(
+        value.children.flatMap((child, i) => optionPaths(child, `${path}.children[${String(i)}]`)),
+      );
+  assert.deepEqual(
+    optionPaths(metadata),
+    [],
+    'list-defs --json omits option schemas at every depth',
+  );
+  const withSchemas = ok(['list-defs', definitions, '--json', '--harness-schemas']);
+  const schemaTree = withSchemas.definitions[0].workflow;
+  assert.ok(schemaTree.harnesses.every((entry) => typeof entry.options === 'object'));
+  assert.ok(
+    schemaTree.children[0].children[0].harnesses.every(
+      (entry) => typeof entry.options === 'object',
+    ),
+    'child harnesses keep their option schemas with --harness-schemas',
+  );
   assert.equal(count(imported), 1);
   ok(['list-defs', definitions, '--json']);
   assert.equal(count(imported), 1, 'Matching source metadata must avoid a second import');
