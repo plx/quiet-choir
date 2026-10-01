@@ -43,6 +43,7 @@ export default class WorkflowListDefinitions extends WorkflowCommand {
       : [process.cwd()];
     const result = await new WorkflowExecutor({
       logger: this.createExecutionLogger(flags),
+      commandLauncher: this.commandLauncher,
       signal: this.signal,
     }).execute({ kind: 'workflow.list-defs', directories, refresh: flags.refresh ?? false });
     if (!result.ok) this.failResult(result);

@@ -1,4 +1,13 @@
-import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  realpath,
+  rename,
+  rm,
+  symlink,
+  writeFile,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -17,6 +26,7 @@ import {
 import * as store from '../src/workflow/runtime/store.js';
 import { lockRun } from '../src/workflow/runtime/store.js';
 import { readRequiredRun } from '../src/workflow/runtime/read-required-run.js';
+import { OrphanProcessesError } from '../src/workflow/runtime/process-registry.js';
 import { workflowFailure } from '../src/workflow/loader/failure.js';
 import { WorkflowExecutor } from '../src/workflow/loader/executor.js';
 import { analyzeTypecheckEntrypoint } from '../src/workflow/typecheck/plan.js';
@@ -44,6 +54,7 @@ beforeEach(async () => {
   vi.mocked(store.lockRun).mockImplementation(actualStore.lockRun);
 });
 afterEach(async () => {
+  vi.unstubAllEnvs();
   await rm(stateDir, { recursive: true, force: true });
 });
 const options = () => ({ runId: 'run', stateDir, input: null });
@@ -142,6 +153,8 @@ it('returns typed refusals with compatibility and ownership details without chan
 });
 
 it('bounds and sorts available IDs for an unknown run', async () => {
+  // No registered project may hold the run: keep the candidate search off the real state.
+  vi.stubEnv('XDG_STATE_HOME', join(stateDir, 'xdg'));
   for (let index = 0; index < 25; index++)
     await writeFile(join(stateDir, `run-${String(index).padStart(2, '0')}.json`), '{}');
   await writeFile(join(stateDir, 'not a run.json'), '{}');
@@ -152,9 +165,11 @@ it('bounds and sorts available IDs for an unknown run', async () => {
   if (!(error instanceof RunRefusedError)) throw error;
   expect(error.code).toBe('run.not_found');
   expect(error.details).toEqual({
+    runId: 'missing',
     stateDir,
     count: 25,
     available: Array.from({ length: 20 }, (_, index) => `run-${String(index).padStart(2, '0')}`),
+    candidates: [],
   });
   expect(error.cause).toHaveProperty('code', 'ENOENT');
   await expect(
@@ -246,6 +261,7 @@ it('renders explicit empty context for pre-run failures and reserves exit 1 for 
     run: null,
     failedSteps: [],
     diagnostics: [],
+    next: [],
   });
   expect(Object.entries(workflowExitCodes).filter(([, exit]) => exit === 1)).toEqual([
     ['workflow.failed', 1],
@@ -482,3 +498,117 @@ export default defineWorkflow({
     delete hooks.choirStepWaiting;
   }
 });
+
+// measured: 1.1 s alone, 3.7 s in the full local coverage run (three real compiler passes; the
+// one-pass lock test above takes 6.0 s on the Node 22.13 CI leg, so this allows about 18 s there)
+it(
+  'puts runnable next entries on failed, orphaned, dry-run and moved-entrypoint failures',
+  { timeout: 40_000 },
+  async () => {
+    const root = join(stateDir, 'workflow-next');
+    await mkdir(root);
+    await writeFile(join(root, 'package.json'), '{"type":"module"}');
+    await symlink(join(projectRoot, 'node_modules'), join(root, 'node_modules'));
+    const file = join(root, 'workflow.ts');
+    await writeFile(
+      file,
+      `import { z } from 'zod';
+import { defineWorkflow } from ${JSON.stringify(join(projectRoot, 'src/workflow/runtime/model.js'))};
+export default defineWorkflow({
+  name: 'next-entries', version: '1', input: z.null(), output: z.string(),
+  run: (ctx) => ctx.step('flaky', { input: null, schema: z.string(), run: () => { throw new Error('flaky failed'); } }),
+});`,
+    );
+    const analysis = analyzeTypecheckEntrypoint(file, projectRoot);
+    if (!analysis.ok) throw new Error(analysis.error.message);
+    const runs = join(stateDir, 'state');
+    const launcher = ['/x/node', '/y/run.js'];
+    const executor = new WorkflowExecutor({ logger: { log: vi.fn() }, commandLauncher: launcher });
+    const resume = (...flags: string[]) => [
+      ...launcher,
+      'workflow',
+      'resume',
+      'next-run',
+      '--state-dir',
+      runs,
+      ...flags,
+    ];
+    const failed = await executor.execute({
+      kind: 'workflow.execute',
+      typecheck: analysis.plan,
+      runId: 'next-run',
+      stateDir: runs,
+      cwd: root,
+      resume: false,
+      input: null,
+    });
+    if (failed.ok) throw new Error('expected a failure');
+    expect(failed.code).toBe('workflow.failed');
+    expect(failed.next?.map((entry) => entry.argv)).toEqual([resume()]);
+    expect(workflowErrorDocument(failed)).toMatchObject({ next: [{ argv: resume() }] });
+
+    const rehearsal = await executor.execute({
+      kind: 'workflow.execute',
+      typecheck: analysis.plan,
+      runId: 'next-run',
+      stateDir: runs,
+      cwd: root,
+      resume: true,
+      dryRun: true,
+    });
+    if (rehearsal.ok) throw new Error('expected a rehearsal failure');
+    expect(rehearsal.next).toBeUndefined();
+    expect(workflowErrorDocument(rehearsal)).toMatchObject({ next: [] });
+
+    vi.mocked(lockRun).mockRejectedValueOnce(new OrphanProcessesError('next-run', []));
+    const orphans = await executor.execute({
+      kind: 'workflow.resume',
+      runId: 'next-run',
+      stateDir: runs,
+    });
+    if (orphans.ok) throw new Error('expected an orphan refusal');
+    expect(orphans.code).toBe('run.orphans');
+    expect(orphans.next?.[0]?.argv).toEqual(resume('--kill-orphans'));
+
+    const stored = await realpath(file);
+    await rename(root, `${root}-moved`);
+    const moved = await executor.execute({
+      kind: 'workflow.resume',
+      runId: 'next-run',
+      stateDir: runs,
+    });
+    if (moved.ok) throw new Error('expected a refusal');
+    expect(moved.code).toBe('run.incompatible');
+    expect(workflowExitCodes[moved.code]).toBe(3);
+    expect(moved.details).toEqual({ storedEntrypoint: stored, reason: 'entrypoint_missing' });
+    expect(moved.next?.[0]?.argv).toEqual([
+      ...launcher,
+      'workflow',
+      'execute',
+      '<ENTRYPOINT>',
+      '--fork-from',
+      'next-run',
+      '--run-id',
+      '<NEW_RUN_ID>',
+      '--state-dir',
+      runs,
+    ]);
+
+    // A different FILE does not hide the deleted stored entrypoint behind a mismatch refusal
+    // whose resume entry could not succeed.
+    const other = join(stateDir, 'other.workflow.ts');
+    await writeFile(other, 'export {};');
+    const different = await executor.execute({
+      kind: 'workflow.execute',
+      typecheck: { ...analysis.plan, entrypoint: other },
+      runId: 'next-run',
+      stateDir: runs,
+      cwd: root,
+      resume: true,
+    });
+    if (different.ok) throw new Error('expected a refusal');
+    expect(different.code).toBe('run.incompatible');
+    expect(different.details).toEqual({ storedEntrypoint: stored, reason: 'entrypoint_missing' });
+    expect(different.next?.[0]?.argv).toContain('<ENTRYPOINT>');
+  },
+);

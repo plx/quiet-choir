@@ -2,6 +2,27 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- Runnable emitted commands (one contract break and one exit-code change; no identity or
+  storage-format change): `resumeCommand`, `answerCommand` and the divergence fork command in
+  `error.details.next` now start with the launcher of the invocation that produced them. An
+  installed `quiet-choir` on PATH stays `quiet-choir`; the no-install
+  `node "$QC_CHECKOUT/bin/run.js"` mode, npx and `node_modules/.bin` shims emit
+  `[node, /abs/bin/run.js, "workflow", …]`, so the commands run from any directory without
+  `quiet-choir` on PATH (argv[0] changes for those modes). Embedders keep `['quiet-choir']` unless
+  they pass the new public `RunOptions.commandLauncher` or `listPending({commandLauncher})`
+  (`CommandLauncher` and `ListPendingOptions` types). Commands are computed per invocation and never
+  saved. Additive: every failure document has a top-level `next` array of `{why, argv}` follow-ups
+  (empty when there is none): resume a failed run, resume with `--kill-orphans` after `run.orphans`,
+  resume with `--accept-code-change` or fork after `run.incompatible`, inspect a `run.not_found`
+  candidate; `inspect --json --summary` adds `next` for failed, stale and suspended runs; text
+  inspect and human failures print `Next:` lines. `run.not_found` adds `details.candidates`
+  (`{stateDir, cwd}`, at most 10): registered project roots, their legacy locations and the current
+  directory's ancestors that hold the run, so `inspect RUN` from a project subdirectory names the
+  exact `--state-dir`; state-directory resolution is unchanged. Exit change: `workflow resume RUN`
+  (or `execute --resume --run-id` without FILE) whose stored entrypoint no longer exists is now
+  `run.incompatible` (exit 3, `details.reason:"entrypoint_missing"`) instead of `usage.flag` (exit
+  2). `npm run skills:check` rejects a skill shell fence line that starts with bare `quiet-choir`
+  unless the fence is annotated `<!-- skills-check: installed-mode -->`.
 - Inspect, list and validate output (two contract breaks; no identity or storage-format change):
   `workflow list --json` rows are now compact (`id`, `workflow`, `status`, `recordedStatus`,
   `counts`, `updatedAt`, `ownership`, `nextWakeAt`, `cwd`, `stateDir`, `warnings` and a `usage` of

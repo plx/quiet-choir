@@ -9,6 +9,9 @@ import { checkLinks, fences, inside } from './skill-markdown.mjs';
 export const repository = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 export const packages = ['agents', 'claude'].map((host) => `plugins/${host}/quiet-choir`);
 const skillPath = 'skills/quiet-choir';
+/** Shell fences whose lines may not start with a bare launcher the reader may not have installed. */
+const shellLanguages = new Set(['sh', 'bash', 'shell', 'zsh', 'console']);
+const bareLauncher = /^\s*(?:\$\s+)?quiet-choir(?:\s|$)/u;
 const json = async (file) => JSON.parse(await readFile(file, 'utf8'));
 function requireThat(condition, message) {
   if (!condition) throw new Error(message);
@@ -245,6 +248,13 @@ export async function checkSkills(root = repository, { compile = true } = {}) {
       links += await checkLinks(absolute, text, packageRoot);
       tree.set(file, normalizeDifferences(text, file, rules, seen));
       for (const fence of fences(text, absolute)) {
+        if (shellLanguages.has(fence.language) && !fence.installed)
+          fence.code.split('\n').forEach((line, offset) => {
+            requireThat(
+              !bareLauncher.test(line),
+              `${absolute}:${String(fence.line + offset)}: shell fence invokes bare quiet-choir; use node "$QC_CHECKOUT/bin/run.js", or annotate the fence with <!-- skills-check: installed-mode -->`,
+            );
+          });
         const source = sources.get(fence.id);
         if (fence.id?.startsWith('pattern-'))
           requireThat(source, `${absolute}: unknown pattern example ${fence.id}`);

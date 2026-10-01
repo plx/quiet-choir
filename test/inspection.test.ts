@@ -761,3 +761,40 @@ it('projects list rows to a bounded, exact key set while the human table keeps i
   ]);
   expect(formatRunList(summaries)).toContain('run-00-0123456789abcdef  example@1  completed');
 });
+
+it('gives a stale or failed summary a resume next entry and prints it as Next:', async () => {
+  const launch = { entrypoint: '/project/example.workflow.ts', tsconfig: null };
+  await save({ ...record('stale'), launch });
+  const launcher = ['/x/node', '/y/run.js'];
+  const resume = (runId: string) => [
+    ...launcher,
+    'workflow',
+    'resume',
+    runId,
+    '--state-dir',
+    stateDir,
+  ];
+  const stale = await inspectRun({ stateDir, runId: 'stale', commandLauncher: launcher });
+  expect(stale.summary.status).toBe('stale');
+  expect(stale.summary.next?.map((entry) => entry.argv)).toEqual([resume('stale')]);
+  expect(toRunListRow(stale.summary)).not.toHaveProperty('next');
+  await save({ ...record('failed'), status: 'failed', error: 'Effect failed.', launch });
+  const failed = await inspectRun({ stateDir, runId: 'failed' });
+  expect(failed.summary.next?.[0]?.argv).toEqual([
+    'quiet-choir',
+    'workflow',
+    'resume',
+    'failed',
+    '--state-dir',
+    stateDir,
+  ]);
+  expect(formatRunSummary(failed.summary)).toMatch(
+    /^Error: Effect failed\.\nNext: quiet-choir workflow resume failed --state-dir \S+ {2}\(Resume the failed run/mu,
+  );
+  await save({ ...record('done'), status: 'completed', launch });
+  const done = await inspectRun({ stateDir, runId: 'done' });
+  expect(done.summary.next).toEqual([]);
+  expect(formatRunSummary(done.summary)).not.toContain('Next:');
+  const listed = await listRuns({ stateDir, status: 'stale', commandLauncher: launcher });
+  expect(listed.runs[0]?.next?.[0]?.argv).toEqual(resume('stale'));
+});

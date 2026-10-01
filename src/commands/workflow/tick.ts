@@ -104,6 +104,7 @@ export default class WorkflowTick extends WorkflowCommand {
     }
     const result = await new TickWorkflowExecutor({
       logger: this.createExecutionLogger(flags),
+      commandLauncher: this.commandLauncher,
       signal: this.signal,
       processSupervisor: this.processSupervisor,
     }).execute({

@@ -538,6 +538,72 @@ describe('workflow lifecycle command adapters', () => {
   });
 });
 
+describe('next commands in failures', () => {
+  const next = [
+    {
+      why: 'Stop orphans and resume.',
+      argv: ['/x/node', '/a b/run.js', 'workflow', 'resume', 'r1', '--kill-orphans'],
+    },
+  ];
+  const failure = () =>
+    workflowFailure('run.orphans', 'Orphans survive.', { runId: 'r1', stateDir: '/s', next });
+
+  it('prints one shell-quoted Next: line per entry after a human failure message', async () => {
+    vi.spyOn(WorkflowExecutor.prototype, 'execute').mockResolvedValue(failure());
+    const output = await captureCommand(WorkflowResume, ['r1', '--state-dir', projectRoot]);
+    expect(output.error).toMatchObject({
+      oclif: { exit: 3 },
+      message:
+        "Orphans survive.\nNext: /x/node '/a b/run.js' workflow resume r1 --kill-orphans  (Stop orphans and resume.)",
+    });
+  });
+
+  it('keeps the JSON document constant-shape: next is the entries, or an empty array', async () => {
+    const execute = vi.spyOn(WorkflowExecutor.prototype, 'execute').mockResolvedValue(failure());
+    const json = ['r1', '--state-dir', projectRoot, '--json'];
+    const orphans = await captureCommand(WorkflowResume, json);
+    expect(JSON.parse(orphans.stdout)).toMatchObject({ error: { code: 'run.orphans' }, next });
+    execute.mockResolvedValue(workflowFailure('run.locked', 'Locked.', { runId: 'r1' }));
+    const locked = await captureCommand(WorkflowResume, json);
+    expect(JSON.parse(locked.stdout)).toMatchObject({ error: { code: 'run.locked' }, next: [] });
+  });
+
+  it('hands the detected launcher to the executor, which emits it in answerCommand', async () => {
+    const { setCommandLauncher } = await import('../src/cli/launcher.js');
+    const { defineWorkflow, runWorkflow, z } = await import('../src/index.js');
+    const stateDir = await stateDirectory();
+    const definition = defineWorkflow({
+      name: 'gate',
+      version: '1',
+      input: z.null(),
+      output: z.string(),
+      run: (ctx) => ctx.ask('gate', { prompt: 'Ship?', schema: z.string() }),
+    });
+    await runWorkflow(definition, { runId: 'gate', stateDir, input: null });
+    try {
+      setCommandLauncher(['/x/node', '/y/run.js']);
+      const output = await captureCommand(WorkflowPending, ['--state-dir', stateDir, '--json']);
+      expect(output.error).toBeUndefined();
+      expect(
+        (JSON.parse(output.stdout) as { pending: PendingOperation[] }).pending[0]?.answerCommand,
+      ).toEqual([
+        '/x/node',
+        '/y/run.js',
+        'workflow',
+        'answer',
+        'gate',
+        'gate',
+        '--state-dir',
+        stateDir,
+        '--json',
+        '<ANSWER_JSON>',
+      ]);
+    } finally {
+      setCommandLauncher(undefined);
+    }
+  });
+});
+
 describe('recovery command adapters', () => {
   it.each([false, true])(
     'prints a compatibility report and uses its exit status (compatible=%s)',

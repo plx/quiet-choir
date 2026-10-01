@@ -114,6 +114,7 @@ import { z } from 'zod';
 
 import { CheckpointError, checkpointError, errorCode, withCheckpointErrors } from './checkpoint.js';
 import { resolveStateDir } from './paths.js';
+import { workflowArgv, type CommandLauncher } from './commands.js';
 import {
   agentIdentity,
   stepIdentity,
@@ -322,6 +323,12 @@ export interface RunOptions extends WorkflowCodeOptions {
   readonly store?: RunStore;
   /** Optional entrypoint metadata supplied by the CLI or embedder for resume by ID. */
   readonly launch?: WorkflowLaunch;
+  /**
+   * Program words that start the emitted `resumeCommand` and each `answerCommand`, such as
+   * `[process.execPath, '/abs/bin/run.js']`. Defaults to `['quiet-choir']`. Emitted commands are
+   * computed per call and never saved in the record.
+   */
+  readonly commandLauncher?: CommandLauncher;
   /** Stop identity-confirmed children of a dead/released owner before acquiring its lock. */
   readonly killOrphans?: boolean;
   /** Orphan recovery TERM grace, defaults to 3000ms; configure live calls on CliHarness separately. */
@@ -3034,9 +3041,9 @@ export async function runWorkflow<
             ...structuredClone(record),
             status: 'suspended',
             output: null,
-            pending: await pendingOperations(record, stateDir),
+            pending: await pendingOperations(record, stateDir, options.commandLauncher),
             resumeCommand: record.launch
-              ? ['quiet-choir', 'workflow', 'resume', record.id, '--state-dir', stateDir]
+              ? workflowArgv(options.commandLauncher, 'resume', record.id, '--state-dir', stateDir)
               : null,
           };
         }

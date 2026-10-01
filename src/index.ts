@@ -205,7 +205,12 @@ export type {
   WorkflowLaunch,
 } from './workflow/runtime/question-model.js';
 export { writeAnswer, listPending, AnswerError } from './workflow/runtime/inbox.js';
-export type { WriteAnswerOptions, AnswerDelivery } from './workflow/runtime/inbox.js';
+export type {
+  WriteAnswerOptions,
+  AnswerDelivery,
+  ListPendingOptions,
+} from './workflow/runtime/inbox.js';
+export type { CommandLauncher } from './workflow/runtime/commands.js';
 
 export { FileRunStore } from './workflow/runtime/run-store.js';
 export type { RunStore, OwnedRunStore, RunStoreOpenOptions } from './workflow/runtime/run-store.js';

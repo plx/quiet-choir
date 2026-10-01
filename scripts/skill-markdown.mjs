@@ -1,7 +1,11 @@
 import { readFile, realpath, stat } from 'node:fs/promises';
 import { dirname, extname, isAbsolute, relative, resolve, sep } from 'node:path';
 
-/** Extract fenced examples without executing Markdown or treating nested code as links. */
+/**
+ * Extract fenced examples without executing Markdown or treating nested code as links. The line
+ * before a fence may annotate it as an `example ID`, a `fragment; reason: …`, or `installed-mode`
+ * (a shell fence that deliberately invokes an installed `quiet-choir` binary).
+ */
 export function fences(text, file = 'Markdown') {
   const lines = text.split('\n');
   const result = [];
@@ -16,8 +20,9 @@ export function fences(text, file = 'Markdown') {
     const annotation = lines[previous] ?? '';
     const fragment = /^\s*<!-- skills-check: fragment; reason: (.+) -->\s*$/u.exec(annotation);
     const example = /^\s*<!-- skills-check: example ([a-z0-9-]+) -->\s*$/u.exec(annotation);
+    const installed = /^\s*<!-- skills-check: installed-mode -->\s*$/u.test(annotation);
     if (
-      (annotation.includes('skills-check:') && !fragment && !example) ||
+      (annotation.includes('skills-check:') && !fragment && !example && !installed) ||
       (fragment && !fragment[1].trim())
     )
       throw new Error(`${file}:${String(previous + 1)}: invalid example/fragment annotation`);
@@ -37,6 +42,7 @@ export function fences(text, file = 'Markdown') {
       end: index,
       fragment: fragment?.[1],
       id,
+      installed,
     });
   }
   return result;

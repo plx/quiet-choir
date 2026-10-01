@@ -100,6 +100,7 @@ export default class WorkflowResume extends WorkflowCommand {
     }
     const executor = new WorkflowExecutor({
       logger: this.createExecutionLogger(flags),
+      commandLauncher: this.commandLauncher,
       signal: this.signal,
       processSupervisor: this.processSupervisor,
     });

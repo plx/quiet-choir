@@ -9,7 +9,7 @@ import type {
 } from './model.js';
 import { NodeProcessRunner } from '../../processes/runner.js';
 import type { ProcessRunner } from '../runtime/exec-model.js';
-import { lstat, realpath } from 'node:fs/promises';
+import { lstat, realpath, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { WorkflowNotifications } from './notifications.js';
 import { fixturesFromRun } from './fixtures.js';
@@ -25,6 +25,8 @@ import {
 import { jsonValue } from '../runtime/json.js';
 import { inspectRun, listRuns, watchRun, type RunInspection } from './inspection.js';
 import { workflowFailure } from './failure.js';
+import { failureNextCommands } from './next-commands.js';
+import type { CommandLauncher } from '../runtime/commands.js';
 import { missingRunError, readRequiredRun } from '../runtime/read-required-run.js';
 import { unlockRun } from '../runtime/lock.js';
 import {
@@ -46,7 +48,7 @@ import type { ExecutionLogger, Executor } from '../../application/execution.js';
 import type { Harness } from '../runtime/model.js';
 import { runWorkflow } from '../runtime/runner.js';
 import { legacyRunPath, resolveStateDir, runDirectory } from '../runtime/paths.js';
-import { CheckpointError } from '../runtime/checkpoint.js';
+import { CheckpointError, errorCode } from '../runtime/checkpoint.js';
 import { readRun } from '../runtime/store.js';
 import type { RunStore } from '../runtime/run-store.js';
 import type { WorkflowClock } from '../runtime/wait-model.js';
@@ -79,10 +81,15 @@ export interface WorkflowExecutorOptions {
   /** Live storage ownership injection, used by tick to claim before importing source. */
   readonly store?: RunStore;
   readonly clock?: WorkflowClock;
+  /**
+   * Program words that start every emitted command (`resumeCommand`, `answerCommand`, `next`).
+   * The CLI detects them from its own invocation; omitted means `['quiet-choir']`.
+   */
+  readonly commandLauncher?: CommandLauncher | undefined;
 }
 
-/** Type-check, import, and optionally run trusted workflow code behind a plain-data boundary. */
-export class WorkflowExecutor implements Executor<
+/** Every plain-data plan the workflow executor accepts. */
+export type WorkflowExecutorPlan =
   | ExportFixturesPlan
   | ValidateWorkflowPlan
   | ExecuteWorkflowPlan
@@ -96,32 +103,34 @@ export class WorkflowExecutor implements Executor<
   | CleanWorkflowPlan
   | UnlockWorkflowPlan
   | ListDefinitionsPlan
-  | ExecuteNamedWorkflowPlan,
-  WorkflowCommandResult
-> {
+  | ExecuteNamedWorkflowPlan;
+
+/** Type-check, import, and optionally run trusted workflow code behind a plain-data boundary. */
+export class WorkflowExecutor implements Executor<WorkflowExecutorPlan, WorkflowCommandResult> {
   readonly #options: WorkflowExecutorOptions;
 
   public constructor(options: WorkflowExecutorOptions) {
     this.#options = options;
   }
 
-  public async execute(
-    plan:
-      | ExportFixturesPlan
-      | ValidateWorkflowPlan
-      | ExecuteWorkflowPlan
-      | InspectWorkflowPlan
-      | CheckResumePlan
-      | WatchWorkflowPlan
-      | ListWorkflowsPlan
-      | ResumeWorkflowPlan
-      | AnswerWorkflowPlan
-      | PendingWorkflowsPlan
-      | CleanWorkflowPlan
-      | UnlockWorkflowPlan
-      | ListDefinitionsPlan
-      | ExecuteNamedWorkflowPlan,
-  ): Promise<WorkflowCommandResult> {
+  public async execute(plan: WorkflowExecutorPlan): Promise<WorkflowCommandResult> {
+    const result = await this.#execute(plan);
+    // Nested executions (resume, answer --resume, execution by name) may already carry theirs.
+    if (result.ok || result.next !== undefined) return result;
+    const next = failureNextCommands({
+      code: result.code,
+      details: result.details,
+      run: result.run,
+      runId: result.runId,
+      stateDir: result.stateDir,
+      launcher: this.#options.commandLauncher,
+      rehearsal: result.rehearsal !== undefined || ('dryRun' in plan && plan.dryRun),
+    });
+    // Absent means none; the CLI document always renders an array.
+    return next.length ? { ...result, next } : result;
+  }
+
+  async #execute(plan: WorkflowExecutorPlan): Promise<WorkflowCommandResult> {
     let unregister: (() => void) | undefined;
     let rehearsal: RehearsalHarness | undefined;
     let notifications: WorkflowNotifications | undefined;
@@ -172,6 +181,7 @@ export class WorkflowExecutor implements Executor<
             run.id,
             'This run has no stored entrypoint. Resume with workflow execute FILE --resume --run-id RUN, or the original embedding application.',
           );
+        await storedEntrypointExists(run.id, run.launch.entrypoint);
         return await this.execute({
           ...plan,
           kind: 'workflow.execute',
@@ -225,7 +235,12 @@ export class WorkflowExecutor implements Executor<
           pending: (
             await Promise.all(
               [...new Set([plan.stateDir, ...(plan.additionalStateDirs ?? [])])].map((stateDir) =>
-                listPending({ stateDir }),
+                listPending({
+                  stateDir,
+                  ...(this.#options.commandLauncher === undefined
+                    ? {}
+                    : { commandLauncher: this.#options.commandLauncher }),
+                }),
               ),
             )
           ).flat(),
@@ -254,18 +269,22 @@ export class WorkflowExecutor implements Executor<
       }
       if (plan.kind === 'workflow.list') {
         stage = 'run.unreadable';
-        return { kind: 'workflow.list.result', ok: true, ...(await listRuns(plan)) };
+        return {
+          kind: 'workflow.list.result',
+          ok: true,
+          ...(await listRuns({ ...plan, commandLauncher: this.#options.commandLauncher })),
+        };
       }
       if (plan.kind === 'workflow.inspect' || plan.kind === 'workflow.watch') {
         stage = 'run.unreadable';
         const inspection =
           plan.kind === 'workflow.watch'
             ? await watchRun(
-                plan,
+                { ...plan, commandLauncher: this.#options.commandLauncher },
                 this.#options.onInspection ?? (() => undefined),
                 this.#options.signal,
               )
-            : await inspectRun(plan);
+            : await inspectRun({ ...plan, commandLauncher: this.#options.commandLauncher });
         return {
           kind: 'workflow.run.result',
           ok: true,
@@ -304,6 +323,8 @@ export class WorkflowExecutor implements Executor<
       if (plan.kind === 'workflow.execute' && plan.resume) {
         const saved = await readRequiredRun({ runId: plan.runId, stateDir: plan.stateDir });
         if (saved.launch) {
+          // A missing stored file is the entrypoint_missing refusal, whatever FILE was requested.
+          await storedEntrypointExists(saved.id, saved.launch.entrypoint);
           const requested = await realpath(plan.typecheck.entrypoint);
           if (requested !== saved.launch.entrypoint)
             throw new RunRefusedError(
@@ -451,11 +472,15 @@ export class WorkflowExecutor implements Executor<
           ...(plan.harness === undefined ? {} : { selection: plan.harness }),
         });
         if (change)
-          throw divergenceRefusal(change, {
-            runId: plan.runId,
-            stateDir: resolveStateDir({ stateDir: plan.stateDir }),
-            entrypoint: await realpath(plan.typecheck.entrypoint),
-          });
+          throw divergenceRefusal(
+            change,
+            {
+              runId: plan.runId,
+              stateDir: resolveStateDir({ stateDir: plan.stateDir }),
+              entrypoint: await realpath(plan.typecheck.entrypoint),
+            },
+            this.#options.commandLauncher,
+          );
       }
       const run = await runWorkflow(definition, {
         ...shared,
@@ -468,6 +493,9 @@ export class WorkflowExecutor implements Executor<
           rehearsal?.processRunner ?? this.#options.processRunner ?? new NodeProcessRunner(),
         ...(plan.waitMode === undefined ? {} : { waitMode: plan.waitMode }),
         ...(this.#options.store === undefined ? {} : { store: this.#options.store }),
+        ...(this.#options.commandLauncher === undefined
+          ? {}
+          : { commandLauncher: this.#options.commandLauncher }),
         ...(rehearsal === undefined ? {} : { rehearsal: rehearsal.hooks }),
         allowHarnessChange: rehearsal !== undefined || (plan.allowHarnessChange ?? false),
         // Only a live CLI execution knows its configuration: a rehearsal ignores it, and an injected
@@ -536,13 +564,17 @@ export class WorkflowExecutor implements Executor<
           : undefined;
       const error =
         dryRunChange && plan.kind === 'workflow.execute'
-          ? divergenceRefusal(dryRunChange, {
-              runId: plan.runId,
-              stateDir: resolveStateDir({ stateDir: plan.stateDir }),
-              entrypoint: await realpath(plan.typecheck.entrypoint).catch(
-                () => plan.typecheck.entrypoint,
-              ),
-            })
+          ? divergenceRefusal(
+              dryRunChange,
+              {
+                runId: plan.runId,
+                stateDir: resolveStateDir({ stateDir: plan.stateDir }),
+                entrypoint: await realpath(plan.typecheck.entrypoint).catch(
+                  () => plan.typecheck.entrypoint,
+                ),
+              },
+              this.#options.commandLauncher,
+            )
           : thrown;
       const run =
         thrown instanceof WorkflowRunError
@@ -601,6 +633,26 @@ export class WorkflowExecutor implements Executor<
       unregister?.();
       await previewState?.dispose();
     }
+  }
+}
+
+/**
+ * Refuse a resume whose stored entrypoint is gone, such as after a checkout moved: the run is
+ * intact but cannot load its code from there, so this is `run.incompatible`, not a usage error.
+ */
+async function storedEntrypointExists(runId: string, entrypoint: string): Promise<void> {
+  try {
+    await stat(entrypoint);
+  } catch (error) {
+    const code = errorCode(error);
+    if (code !== 'ENOENT' && code !== 'ENOTDIR') throw error;
+    throw new RunRefusedError(
+      'run.incompatible',
+      runId,
+      `Run ${runId} was launched from ${entrypoint}, which no longer exists: the checkout moved or the file was deleted. Fork a new run from the new location with workflow execute FILE --fork-from ${runId}.`,
+      { storedEntrypoint: entrypoint, reason: 'entrypoint_missing' },
+      { cause: error },
+    );
   }
 }
 

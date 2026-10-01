@@ -120,6 +120,8 @@ export async function prepareStateDirectory(stateDir: string, cwd?: string): Pro
 /** Discover registered XDG projects without importing or touching workflow code. @internal */
 export async function projectStateDirectories(): Promise<{
   directories: string[];
+  /** The same roots with the project working directory each one is registered for. */
+  projects: { stateDir: string; cwd: string }[];
   warnings: string[];
 }> {
   const root = projectsDirectory();
@@ -127,7 +129,7 @@ export async function projectStateDirectories(): Promise<{
     if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return [];
     throw error;
   });
-  const directories: string[] = [],
+  const projects: { stateDir: string; cwd: string }[] = [],
     warnings: string[] = [];
   for (const entry of entries) {
     if (!entry.isDirectory()) continue;
@@ -139,12 +141,13 @@ export async function projectStateDirectories(): Promise<{
       const expected = defaultStateDir(raw.cwd);
       if (expected !== join(directory, 'runs'))
         throw new Error('Project state path does not match its recorded cwd.');
-      directories.push(expected);
+      projects.push({ stateDir: expected, cwd: raw.cwd });
     } catch (error) {
       warnings.push(
         `Skipped project ${directory}: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
   }
-  return { directories: directories.sort(), warnings };
+  projects.sort((a, b) => (a.stateDir < b.stateDir ? -1 : a.stateDir > b.stateDir ? 1 : 0));
+  return { directories: projects.map((project) => project.stateDir), projects, warnings };
 }

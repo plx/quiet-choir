@@ -1,5 +1,6 @@
 import type { InspectionStatus, RunSummary } from '../workflow/loader/inspection.js';
 import type { ExecSummary } from '../workflow/runtime/exec-model.js';
+import { formatNextCommands } from './presentation.js';
 
 /** Human units for elapsed time and call limits. @internal */
 function duration(ms: number): string {
@@ -199,6 +200,7 @@ export function formatRunSummary(run: RunSummary, verbose = false): string {
   if (run.rootCause)
     lines.push(`Root cause (${run.rootCause.stepId ?? 'workflow'}): ${run.rootCause.error}`);
   else if (run.error) lines.push(`Error: ${run.error}`);
+  lines.push(...formatNextCommands(run.next));
   lines.push(`Usage: ${cost(run)}`);
   if (run.children.length) {
     lines.push('Workflow tree (steps and usage include descendants):');

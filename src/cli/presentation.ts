@@ -2,6 +2,7 @@ import { relative } from 'node:path';
 
 import type { StubResult } from '../application/stub.js';
 import type { TypecheckDiagnosticDetails } from '../workflow/typecheck/model.js';
+import { formatArgv, type NextCommand } from '../workflow/loader/next-commands.js';
 
 /** Render a placeholder execution result for a human. */
 export function formatStubResult(result: StubResult): string {
@@ -23,4 +24,9 @@ export function formatTypecheckDiagnostic(
         } - `;
 
   return `${location}${diagnostic.category} TS${String(diagnostic.code)}: ${diagnostic.message}`;
+}
+
+/** One `Next: <shell-quoted argv>  (why)` line per runnable follow-up. @internal */
+export function formatNextCommands(next: readonly NextCommand[] | undefined): string[] {
+  return (next ?? []).map((entry) => `Next: ${formatArgv(entry.argv)}  (${entry.why})`);
 }

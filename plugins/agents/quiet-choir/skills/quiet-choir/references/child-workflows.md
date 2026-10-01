@@ -90,8 +90,8 @@ no source entrypoint is known.
 After saving the reusable review recipe in your trusted `workflows` directory:
 
 ```sh
-quiet-choir workflow list-defs ./workflows --json
-quiet-choir workflow execute reusable-helper --registry-dir ./workflows \
+node "$QC_CHECKOUT/bin/run.js" workflow list-defs ./workflows --json
+node "$QC_CHECKOUT/bin/run.js" workflow execute reusable-helper --registry-dir ./workflows \
   --input '{"paths":["src/index.ts"]}' --max-child-depth 8
 ```
 

@@ -308,6 +308,7 @@ export default class WorkflowExecute extends WorkflowCommand {
     this.logToStderr(`Run ID: ${runId}\nState directory: ${stateDir}`);
     const executor = new WorkflowExecutor({
       logger: this.createExecutionLogger(flags),
+      commandLauncher: this.commandLauncher,
       processSupervisor: this.processSupervisor,
       signal: this.signal,
     });

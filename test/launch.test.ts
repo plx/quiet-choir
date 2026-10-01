@@ -1,10 +1,16 @@
+import { realpathSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { Writable } from 'node:stream';
+import { fileURLToPath } from 'node:url';
 
 import type * as oclif from '@oclif/core';
 import { Errors, handle, run } from '@oclif/core';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { drainOutput, launchCli } from '../src/cli/launch.js';
+import { commandLauncher, setCommandLauncher } from '../src/cli/launcher.js';
+
+const projectRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 
 vi.mock('@oclif/core', async (importOriginal) => {
   const actual = await importOriginal<typeof oclif>();
@@ -103,6 +109,16 @@ describe('launchCli', () => {
   afterEach(() => {
     process.argv = argv;
     process.exitCode = exitCode;
+    // Other tests rely on the in-process default launcher.
+    setCommandLauncher(undefined);
+  });
+
+  it('records the launcher of this invocation before dispatching', async () => {
+    const script = join(projectRoot, 'bin/run.js');
+    process.argv = [process.execPath, script, 'workflow', 'list'];
+    await launchCli({ dir: import.meta.url });
+    expect(commandLauncher()).toEqual([process.execPath, realpathSync(script)]);
+    expect(run).toHaveBeenCalledWith(['workflow', 'list'], import.meta.url);
   });
 
   it('drains output and exits with the ExitError code without calling handle()', async () => {

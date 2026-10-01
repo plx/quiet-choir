@@ -628,3 +628,46 @@ it('publishes the format-6 filename in a migrated run so both writer versions sh
     'ship',
   ]);
 });
+
+it('builds resumeCommand and answerCommand behind an explicit launcher, quiet-choir by default', async () => {
+  const definition = workflow((ctx) => ctx.ask('gate', question));
+  const launch = { entrypoint: '/project/gate.workflow.ts', tsconfig: null };
+  const launcher = ['/x/node', '/y/run.js'];
+  const suspended = await runWorkflow(definition, {
+    ...options(),
+    launch,
+    commandLauncher: launcher,
+  });
+  if (suspended.status !== 'suspended') throw new Error('Expected a suspension.');
+  expect(suspended.resumeCommand).toEqual([
+    ...launcher,
+    'workflow',
+    'resume',
+    'questions',
+    '--state-dir',
+    stateDir,
+  ]);
+  expect(suspended.pending[0]?.answerCommand?.slice(0, 4)).toEqual([
+    ...launcher,
+    'workflow',
+    'answer',
+  ]);
+  expect((await listPending({ stateDir, commandLauncher: launcher }))[0]?.answerCommand).toEqual([
+    ...launcher,
+    'workflow',
+    'answer',
+    'questions',
+    'gate',
+    '--state-dir',
+    stateDir,
+    '--json',
+    '<ANSWER_JSON>',
+  ]);
+  expect((await listPending({ stateDir }))[0]?.answerCommand?.slice(0, 2)).toEqual([
+    'quiet-choir',
+    'workflow',
+  ]);
+  const resumed = await runWorkflow(definition, { ...options(), resume: true, launch });
+  if (resumed.status !== 'suspended') throw new Error('Expected a suspension.');
+  expect(resumed.resumeCommand?.slice(0, 3)).toEqual(['quiet-choir', 'workflow', 'resume']);
+});

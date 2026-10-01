@@ -1,5 +1,7 @@
 import type { HarnessSelection } from './harness-selection.js';
 import { RehearsalHarness, rehearsalState } from './rehearsal.js';
+import { formatArgv } from './next-commands.js';
+import { workflowArgv, type CommandLauncher } from '../runtime/commands.js';
 import { runWorkflow, type RunOptions } from '../runtime/runner.js';
 import {
   findStepIdentityChange,
@@ -77,10 +79,10 @@ export async function preflightAcceptedReplay(
 export function forkCommand(
   change: Pick<StepIdentityChangedError, 'stepId'>,
   target: { readonly runId: string; readonly stateDir: string; readonly entrypoint: string },
+  launcher?: CommandLauncher,
 ): string[] {
-  return [
-    'quiet-choir',
-    'workflow',
+  return workflowArgv(
+    launcher,
     'execute',
     target.entrypoint,
     '--fork-from',
@@ -93,7 +95,7 @@ export function forkCommand(
     '<NEW_RUN_ID>',
     '--state-dir',
     target.stateDir,
-  ];
+  );
 }
 
 /**
@@ -103,12 +105,13 @@ export function forkCommand(
 export function divergenceRefusal(
   change: StepIdentityChangedError,
   target: { readonly runId: string; readonly stateDir: string; readonly entrypoint: string },
+  launcher?: CommandLauncher,
 ): RunRefusedError {
-  const next = forkCommand(change, target);
+  const next = forkCommand(change, target, launcher);
   const error = new RunRefusedError(
     'run.incompatible',
     target.runId,
-    `Step ${change.stepId}: ${change.components.join(', ') || 'identity'} changed on a ${change.status} step. --accept-code-change never reuses a changed ${change.status} step, so this resume would record the change, clear the saved outcome and then fail; nothing was changed. Fork a new run instead: ${next.map(shellWord).join(' ')}`,
+    `Step ${change.stepId}: ${change.components.join(', ') || 'identity'} changed on a ${change.status} step. --accept-code-change never reuses a changed ${change.status} step, so this resume would record the change, clear the saved outcome and then fail; nothing was changed. Fork a new run instead: ${formatArgv(next)}`,
     {
       divergent: [{ stepId: change.stepId, components: [...change.components] }],
       next: [next],
@@ -122,10 +125,4 @@ export function divergenceRefusal(
 /** Whether an error is a refusal built by {@link divergenceRefusal}. @internal */
 export function isDivergenceRefusal(error: unknown): boolean {
   return error instanceof Error && divergenceRefusals.has(error);
-}
-
-function shellWord(value: string): string {
-  return value === '<NEW_RUN_ID>' || /^[\w./:@%+=,-]+$/u.test(value)
-    ? value
-    : `'${value.replaceAll("'", "'\\''")}'`;
 }
