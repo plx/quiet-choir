@@ -139,6 +139,26 @@ function summarizeChildren(run: RunRecord): RunSummary['children'] {
   });
 }
 
+/** Step totals by status, derived from the record alone. @internal */
+export function countSteps(run: RunRecord): RunSummary['counts'] {
+  const counts: RunSummary['counts'] = {
+    total: 0,
+    running: 0,
+    completed: 0,
+    failed: 0,
+    cancelled: 0,
+    'settled-failed': 0,
+    superseded: 0,
+    waiting: 0,
+    withdrawn: 0,
+  };
+  for (const step of Object.values(run.steps)) {
+    counts.total++;
+    counts[step.status]++;
+  }
+  return counts;
+}
+
 /** No source import, lock acquisition, or checkpoint mutation. @internal */
 export function summarizeRun(
   run: RunRecord,
@@ -150,18 +170,7 @@ export function summarizeRun(
   const entries = Object.entries(run.steps).sort(
     ([a, x], [b, y]) => (x.seq ?? Infinity) - (y.seq ?? Infinity) || a.localeCompare(b),
   );
-  const counts: RunSummary['counts'] = {
-    total: entries.length,
-    running: 0,
-    completed: 0,
-    failed: 0,
-    cancelled: 0,
-    'settled-failed': 0,
-    superseded: 0,
-    waiting: 0,
-    withdrawn: 0,
-  };
-  for (const [, step] of entries) counts[step.status]++;
+  const counts = countSteps(run);
   const current = entries.filter(
     ([, step]) => run.phase !== null && run.phase !== undefined && step.phase === run.phase.title,
   );

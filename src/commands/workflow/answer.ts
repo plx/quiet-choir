@@ -1,5 +1,6 @@
 import { Args, Flags, type Interfaces } from '@oclif/core';
 import { WorkflowCommand } from '../../cli/workflow-command.js';
+import { requestedFull } from '../../cli/workflow-errors.js';
 import { WorkflowExecutor } from '../../workflow/loader/executor.js';
 import {
   readHarnessSelection,
@@ -21,6 +22,7 @@ export default class WorkflowAnswer extends WorkflowCommand {
     readonly value: string;
     readonly by: string | undefined;
     readonly resume: boolean | undefined;
+    readonly full: boolean | undefined;
     readonly harness: string;
     readonly 'harness-config': string | undefined;
     readonly 'allow-harness-config-change': boolean | undefined;
@@ -36,6 +38,9 @@ export default class WorkflowAnswer extends WorkflowCommand {
     }),
     by: Flags.string({ description: 'Self-asserted author; human questions require human:<name>' }),
     resume: Flags.boolean({ description: 'After delivery, resume using the stored entrypoint' }),
+    full: Flags.boolean({
+      description: 'With --resume, print the full run record instead of the compact result',
+    }),
     harness: Flags.string({
       description: 'Harness for --resume: cli or fixture:<JSON file>',
       default: 'cli',
@@ -51,6 +56,10 @@ export default class WorkflowAnswer extends WorkflowCommand {
   };
   public static override readonly summary =
     'Validate and deliver an answer without taking the run lock';
+  protected override compactRunDocuments(): boolean {
+    return !requestedFull(this.argv);
+  }
+
   public async run(): Promise<void> {
     const { args, flags } = await this.parse(WorkflowAnswer);
     const stateDir = this.runContext(args.runId, flags['state-dir']);
@@ -96,7 +105,10 @@ export default class WorkflowAnswer extends WorkflowCommand {
         this.suspended(result.run);
         return;
       }
-      this.outputSavedCompletion(result.run, `Run ${result.run.id} ${result.run.status}.`);
+      this.outputSavedCompletion(
+        this.runResult(result.run, stateDir),
+        `Run ${result.run.id} ${result.run.status}.`,
+      );
     }
   }
 }

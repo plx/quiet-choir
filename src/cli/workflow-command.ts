@@ -9,6 +9,7 @@ import {
   workflowExitCodes,
   WorkflowCommandError,
 } from './workflow-errors.js';
+import { summarizeRunResult } from '../workflow/loader/run-result.js';
 import { workflowFailure, type WorkflowFailure } from '../workflow/loader/failure.js';
 import { isValidRunId, runIdMessage, type CliErrorCode } from '../workflow/runtime/run-errors.js';
 import type { JsonValue } from '../workflow/runtime/model.js';
@@ -89,7 +90,10 @@ export abstract class WorkflowCommand extends BaseCommand {
     const exit = workflowExitCodes[failure.code];
     if (requestedJson(this.argv)) {
       this.logToStderr(failure.message);
-      this.#render(workflowErrorDocument(failure), failure.message);
+      this.#render(
+        workflowErrorDocument(failure, { compact: this.compactRunDocuments() }),
+        failure.message,
+      );
       this.exit(exit);
     }
     if (cause instanceof WorkflowCommandError && cause.humanExitOnly) {
@@ -97,6 +101,21 @@ export abstract class WorkflowCommand extends BaseCommand {
       this.exit(exit);
     }
     this.error(failure.message, { code: failure.code, exit });
+  }
+
+  /**
+   * Whether failure and suspension documents carry a compact `summary` instead of the whole `run`.
+   * The run commands turn this on unless `--full` was requested. @internal
+   */
+  protected compactRunDocuments(): boolean {
+    return false;
+  }
+
+  /** The success document of a run command: the compact result, or the full record under `--full`. */
+  protected runResult(run: RunRecord, stateDir: string): object {
+    return this.compactRunDocuments()
+      ? { kind: 'workflow.run.result', ok: true, exitCode: 0, ...summarizeRunResult(run, stateDir) }
+      : { ...run, stateDir };
   }
 
   protected fail(code: CliErrorCode, message: string, details: JsonValue = null): never {
@@ -180,7 +199,9 @@ export abstract class WorkflowCommand extends BaseCommand {
         stateDir: rehearsal === undefined ? this.failureContext.stateDir : null,
         pending: run.pending ?? [],
         resumeCommand: run.resumeCommand ?? null,
-        run,
+        ...(rehearsal === undefined && this.compactRunDocuments()
+          ? { summary: summarizeRunResult(run, this.failureContext.stateDir) }
+          : { run }),
         ...(rehearsal === undefined ? {} : { rehearsal }),
       },
       rehearsal === undefined
@@ -208,6 +229,9 @@ export abstract class WorkflowCommand extends BaseCommand {
       { ...this.failureContext, run, details: { forced: true } },
     );
     // A second signal exits synchronously: do not lose a buffered JSON document on process.exit.
-    writeSync(1, `${JSON.stringify(workflowErrorDocument(failure))}\n`);
+    writeSync(
+      1,
+      `${JSON.stringify(workflowErrorDocument(failure, { compact: this.compactRunDocuments() }))}\n`,
+    );
   }
 }

@@ -424,7 +424,7 @@ describe('workflow lifecycle command adapters', () => {
     expect(JSON.parse(output.stdout)).toMatchObject({
       exitCode: 1,
       error: { code: 'workflow.failed' },
-      run: { status: 'failed' },
+      summary: { status: 'failed' },
     });
   });
 
@@ -436,7 +436,11 @@ describe('workflow lifecycle command adapters', () => {
     });
     const output = await captureCommand(WorkflowExecute, [file, '--run-id', 'test-run', '--json']);
     expect(output.error).toBeUndefined();
-    expect(JSON.parse(output.stdout)).toMatchObject({ id: 'test-run', status: 'completed' });
+    expect(JSON.parse(output.stdout)).toMatchObject({
+      kind: 'workflow.run.result',
+      runId: 'test-run',
+      status: 'completed',
+    });
   });
 
   it('keeps a durably queued answer successful when a signal arrives after delivery', async () => {
