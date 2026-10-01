@@ -918,15 +918,16 @@ If that JSON contains "done":false, run the exact same command again; repeat unt
 
 ${RELAY_RULES} The only id is "await": relay the output of the last run.`;
 
-// Codex reviews a PR automatically when it opens. Waiting for that review (and CI) before handing
-// over lets merge-down-pr's first review triage Codex's threads instead of racing them.
+// Codex reviews a PR automatically when it opens. Waiting for that review before handing over lets
+// merge-down-pr's first review triage Codex's threads instead of racing them. CI is not waited for
+// here (--ci skip): merge-down-pr's gate does that, and a slow CI queue once cost this wait ~2 h.
 async function awaitFirstReview(pr, sha, since) {
   for (let attempt = 1; attempt <= 3; attempt++) {
     const step = mdCmd(
       'await',
       'await',
       pr,
-      `--sha ${sha} --since ${since} --codex required --max-seconds 540`,
+      `--sha ${sha} --since ${since} --codex required --ci skip --max-seconds 540`,
     );
     const gate = (await clerk(`await review #${pr}.${attempt}`, 'Publish', [step], AWAIT_LOOP))
       .await;

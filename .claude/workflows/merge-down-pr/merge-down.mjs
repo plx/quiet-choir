@@ -18,7 +18,7 @@
 //   request-review --pr N                comment "@codex review"
 //   rerun    --pr N --sha S              re-run failed CI jobs for S once (flake check)
 //   verify-fixes --pr N --commits a,b    reported commits are in HEAD; last check passed at HEAD
-//   await    --pr N --sha S --since ISO [--codex required|skip] [--max-seconds 540]
+//   await    --pr N --sha S --since ISO [--codex required|skip] [--ci wait|skip] [--max-seconds 540]
 //   land     --pr N --sha S [--issue I] [--expect-close | --keep-open I]
 //   close    --pr N < comment.md          comment, then close (Dependabot commands self-close)
 //   last     --pr N --cmd C               re-print the saved output of the last C run
@@ -1077,6 +1077,9 @@ async function awaitGate(a, P, R) {
   const sha = a.sha ?? fail('--sha is required');
   const since = a.since ?? nowIso();
   const codexMode = a.codex ?? 'required';
+  // --ci skip: wait for the Codex review alone (a caller that gates on CI later, e.g. the
+  // epic workflow's first-review wait, should not sit out a slow CI queue here).
+  const ciMode = a.ci ?? 'wait';
   const maxSeconds = Number(a['max-seconds'] ?? 540);
   const ciGraceMs = Number(a['ci-grace'] ?? 300) * 1000;
   const started = Date.now();
@@ -1096,6 +1099,7 @@ async function awaitGate(a, P, R) {
     }
     const ci = ciSummary(p.statusCheckRollup);
     const ciDone =
+      ciMode === 'skip' ||
       ci.state === 'success' ||
       ci.state === 'failure' ||
       (ci.state === 'none' && Date.now() - Date.parse(since) > ciGraceMs);
