@@ -81,14 +81,15 @@ errors identify changed components and files. `validate --json` reports the same
 that a new run stores.
 
 Schema identity hashes the JSON Schema that the installed zod produces (`z.toJSONSchema`, draft-7),
-so a zod upgrade can change that encoding and strand completed steps, and a tsx upgrade can change
-local callback text (see the loader paragraph above). `test/schema-identity.test.ts` pins the
-literal encodings and the agent-result wrapper, so a Dependabot zod or tsx bump that changes one
-fails CI. Treat that failure as a gate, not a snapshot to refresh: the change needs an explicit
-decision under ADR 0005 and ADR 0006. The gate covers only the zod instance quiet-choir itself
-resolves, not a different zod a workflow imports. `record.engine` records the `quietChoir`, `node`,
-`zod` and `tsx` versions that wrote a run for diagnosis only; it stays outside identity and never
-refuses a resume.
+so a zod upgrade can change that encoding and strand completed steps. `test/schema-identity.test.ts`
+pins the literal encodings and the agent-result wrapper, so a Dependabot bump of zod, or of tsx when
+it alters those schema encodings, fails CI. Treat that failure as a gate, not a snapshot to refresh:
+the change needs an explicit decision under ADR 0005 and ADR 0006. A tsx upgrade can also change
+local callback text (see the loader paragraph above); that drift is not gated yet, and stable
+identities for built-in callbacks are tracked separately. The gate covers only the zod instance
+quiet-choir itself resolves, not a different zod a workflow imports. `record.engine` records the
+`quietChoir`, `node`, `zod` and `tsx` versions that wrote a run for diagnosis only; it stays outside
+identity and never refuses a resume.
 
 Dynamic imports assembled at runtime, external files, installed dependencies, environment, and
 native harness configuration are not fully captured. Embedded callers supply `fingerprint`, or
