@@ -2,6 +2,15 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- Identity gate (test and diagnostics; no identity change): `test/schema-identity.test.ts` pins the
+  literal `schemaJson` encodings of a schema corpus, the built-in result schemas and the
+  agent-result identity wrapper (new internal `agentResultIdentitySchema`, extracted from the
+  runner), plus the `agentIdentity` digests that go through it, so a zod or tsx bump that would
+  strand completed steps fails CI with a message pointing at ADR 0005, ADR 0006 and the durability
+  reference. Run records now also list the installed `zod` and `tsx` versions in the informational
+  `record.engine` (additive and optional, outside identity and `workflow.identity.engine`; no
+  `formatVersion` bump), and a completed run resumed under other versions only refreshes that
+  metadata. No digest moves.
 - Guard identity (fix; identity change): `guardFile` baseline and restore steps are fingerprinted on
   a versioned guard identity (`guardFile/1`, path, `maxBytes`, and the baseline blob, mode and ref)
   instead of `process.execPath` and the inline guard program text, so a Node or quiet-choir upgrade
