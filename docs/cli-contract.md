@@ -40,8 +40,8 @@ See [process ownership](process-lifecycle.md).
 provider counts, nominal Claude ceiling, warnings, and its in-memory run record. Failures retain the
 usual error document and exits, adding `rehearsal` and `error.stack`. Temporary state has already
 been removed on normal exit; dry-run never overwrites the requested/default state directory.
-`workflow fixtures ID --json` returns version-1 fixture JSON from a completed run. See
-[workflow rehearsal](rehearsal.md).
+`workflow fixtures ID --json` returns version-1 fixture JSON from a completed run: its agent outputs
+and settled agent failures. See [workflow rehearsal](rehearsal.md).
 
 Failures have these fields:
 

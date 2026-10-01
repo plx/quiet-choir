@@ -88,7 +88,7 @@ errors, and answers; keep them private. See
 | `workflow validate FILE`                 | Typechecks and imports, checks the default export and input/output schema conversion; does not call `run` |
 | `workflow execute FILE`                  | Typechecks, imports, and executes or resumes                                                              |
 | `workflow check-resume FILE --run-id ID` | Typechecks/imports and compares run gates without a writer lock or workflow-body execution                |
-| `workflow fixtures RUN_ID`               | Export completed agent outputs as reusable fixture JSON without importing source                          |
+| `workflow fixtures RUN_ID`               | Export agent outputs and settled agent failures as reusable fixture JSON without importing source         |
 | `workflow list`                          | Lists run summaries with status filters without importing source                                          |
 | `workflow inspect RUN_ID`                | Reads the saved run without importing workflow code or acquiring a writer lock                            |
 | `workflow unlock RUN_ID`                 | Clears an abandoned lock without importing workflow code; refuses live owners and children                |

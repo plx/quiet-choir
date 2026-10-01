@@ -63,8 +63,13 @@ node bin/run.js workflow execute edited.workflow.ts \
   --dry-run --harness fixture:./fixtures.json --json
 ```
 
-Export skips local/sleep effects and settled failures; successful agent outputs retain harness and
-usage but do not pin an attempt number. It does not modify the source checkpoint.
+Export skips local/sleep effects. It keeps completed agent outputs, which retain harness and usage
+but do not pin an attempt number, and settled agent failures (`onError: 'return'`) as `error` rules,
+both in execution order. On replay an error rule rejects with the fixture `Step <id>: ` prefix and
+settles with kind `unknown`; the original error kind and attempt count are not preserved, so a
+workflow that branches on them can take a different path in rehearsal. A message that already
+carries the same step's prefix is exported without it, so export, replay and export again give the
+same file. It does not modify the source checkpoint.
 
 ## Synthesis and report
 

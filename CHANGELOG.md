@@ -2,6 +2,13 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- Fixture export (fix; no identity change): `workflow fixtures` now exports settled agent failures
+  (`onError: 'return'`) as `error` rules, interleaved with the completed outputs in execution order,
+  instead of dropping them, so replaying an exported run no longer fails with
+  `No fixture matches step`. The text is the recorded message (never empty; a redundant
+  `Step <id>: ` prefix is stripped, so export, replay and export again are stable). On replay the
+  step settles with kind `unknown`; the original kind and attempt count are not preserved. Runs with
+  no settled agent failures export exactly as before.
 - Codex schemas (fix; earlier local error): `checkCodexSchema` has a new rule, `untyped`, for any
   schema node with no `type`, `anyOf`, `oneOf`, `allOf`, `$ref`, `const` or `enum`, which is what
   `z.unknown()`, `z.any()`, `z.never()` and the JSON Schema `true` produce. Codex rejects these
