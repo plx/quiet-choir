@@ -321,8 +321,8 @@ function child(refreshed: string | null): {
   return { ready: readyPromise, go: () => process_.send('go'), done };
 }
 
-// measured: 0.5 s alone and 1.4 s in the full coverage run per case (tsx child startups dominate).
-describe('concurrent write-back across processes', { timeout: 20_000 }, () => {
+// Fits the default timeout: 0.11-0.12 s alone and 0.14-0.22 s per case in the full coverage run.
+describe('concurrent write-back across processes', () => {
   const original = auth('2026-09-01T00:00:00Z');
   const older = auth('2026-09-02T00:00:00Z', `${secret}-older`);
   const newer = auth('2026-09-03T00:00:00Z', `${secret}-newer`);
