@@ -19,6 +19,7 @@ import {
   type HarnessRequest,
   type BuiltinHarnessRequestInput as HarnessRequestInput,
   type WorkflowContext,
+  type CodexOptions,
 } from '../src/index.js';
 import { RehearsalHarness, rehearsalState } from '../src/workflow/loader/rehearsal.js';
 import { fixturesFromRun } from '../src/workflow/loader/fixtures.js';
@@ -815,6 +816,17 @@ it.each(['claude', 'codex'] as const)(
     else expect(capture.schema).not.toHaveProperty('$schema');
   },
 );
+
+it('shows a Codex private CODEX_HOME and its flag in the dry-run plan', async () => {
+  const harness = new RehearsalHarness({ kind: 'cli', config: {} });
+  const base = request('private-home', 'codex');
+  const options: CodexOptions = { prompt: 'prompt', instructions: 'none' };
+  await harness.invoke({ ...base, options }, { ...testInvocation(), stepId: 'private-home' });
+  const plan = harness.report(null).calls[0]?.plan;
+  expect(plan?.codexHome).toBe('private');
+  const flag = plan?.argv.indexOf('project_doc_max_bytes=0') ?? -1;
+  expect(plan?.argv[flag - 1]).toBe('--config');
+});
 
 it('reports failed planning without claiming a payable call', async () => {
   const harness = new RehearsalHarness({ kind: 'cli', config: {} });

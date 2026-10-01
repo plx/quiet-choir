@@ -4,6 +4,7 @@ import {
   codexControlFields,
   validateExtraArgs,
   validateConfig,
+  instructionConfig,
   validateClaudeSettings,
   rejectBypass,
 } from './agent-controls.js';
@@ -93,7 +94,15 @@ export function validateAgentOptions(
       throw new Error(
         'harnessProfile selects a Codex user-config profile, which restricted isolation skips; select inherit or use config.',
       );
-    validateConfig(controls.config ?? {});
+    // inherit loads config.toml, which can carry its own instructions; a private home drops it.
+    if (controls.instructions === 'none' && isolation === 'inherit')
+      throw new Error(
+        "instructions 'none' requires restricted isolation; inherit loads CODEX_HOME configuration.",
+      );
+    validateConfig(
+      controls.config ?? {},
+      controls.instructions === 'none' ? instructionConfig : {},
+    );
   } else {
     if (
       (resolved || controls.isolation === 'restricted') &&

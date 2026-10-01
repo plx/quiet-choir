@@ -20,6 +20,8 @@ export interface PhaseInfo {
 export interface RequestSummary {
   /** Resolved native configuration mode; absent in older checkpoints. */
   readonly isolation?: HarnessIsolation;
+  /** Resolved Codex instruction loading; absent for other harnesses and in older checkpoints. */
+  readonly instructions?: 'native' | 'none';
   /** Explicit environment names and digest, never values. */
   readonly environment?: EnvironmentSummary;
   /** Selected harness. */

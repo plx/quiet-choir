@@ -9,6 +9,7 @@ import { tomlLiteral } from '../harness-kit.js';
 import { snapshotImages } from '../harness-kit.js';
 import { prepareCodexSchema } from './codex-schema.js';
 import { resolveIsolation } from '../harness-kit.js';
+import { prepareCodexHome, type PrivateCodexHome } from './codex-home.js';
 
 /** Run pre-launch validation, rejecting as configuration rather than a settled effect failure. */
 function validate<T>(check: () => T): T {
@@ -25,6 +26,10 @@ function validate<T>(check: () => T): T {
 export interface CliInvocation {
   readonly args: string[];
   readonly decode: (text: string) => string;
+  /** Child environment overrides, applied after the scrubbed and edited environment. */
+  readonly env?: Readonly<Record<string, string>>;
+  /** Write back private-home state once the child has exited; idempotent, returns warnings. */
+  readonly settle: () => Promise<readonly string[]>;
   readonly dispose: () => Promise<void>;
 }
 /** A private file represented in the plan without creating it. */
@@ -45,6 +50,11 @@ export interface CliArgumentPlan {
   readonly argv: readonly string[];
   /** Private files to materialize immediately before spawning. */
   readonly artifacts: readonly CliPlanArtifact[];
+  /**
+   * `'private'` when a Codex `instructions: 'none'` call runs against a fresh temporary CODEX_HOME
+   * holding only a copy of `auth.json`. Absent means the child uses the inherited CODEX_HOME.
+   */
+  readonly codexHome?: 'private';
 }
 
 /** Build and validate argv without filesystem access or processes. @internal */
@@ -149,6 +159,8 @@ export function planInvocation(
       'never',
     );
     if (isolation === 'restricted') args.push('--ignore-user-config', '--ignore-rules');
+    // The private CODEX_HOME removes user instructions; this removes project AGENTS.md files.
+    if (options.instructions === 'none') args.push('--config', 'project_doc_max_bytes=0');
     if (options.harnessProfile !== undefined) args.push('--profile', options.harnessProfile);
     const effort = options.effort ?? options.reasoningEffort;
     if (effort !== undefined)
@@ -194,7 +206,13 @@ export function planInvocation(
   if (request.options.model !== undefined) args.push('--model', request.options.model);
   args.push(...(request.options.extraArgs ?? []));
   if (request.harness === 'codex') args.push('--', '-');
-  return { argv: args, artifacts };
+  return {
+    argv: args,
+    artifacts,
+    ...(request.harness === 'codex' && request.options.instructions === 'none'
+      ? { codexHome: 'private' as const }
+      : {}),
+  };
 }
 
 /**
@@ -216,16 +234,35 @@ export async function invocationRequest(
   };
 }
 
+/** Where a private-home plan copies credentials from. @internal */
+export interface InvocationContext {
+  /** The real CODEX_HOME the child would otherwise use, resolved from its environment. */
+  readonly codexHome?: string;
+}
+
 /** Materialize only the planner's owned files and retain cleanup on every exit. @internal */
 export async function materializeInvocation(
   plan: CliArgumentPlan,
   request: HarnessRequestInput,
+  context: InvocationContext = {},
 ): Promise<CliInvocation> {
   let directory: string | undefined;
+  let home: PrivateCodexHome | undefined;
+  const settle = async (): Promise<readonly string[]> => (home ? home.settle() : []);
   const dispose = async (): Promise<void> => {
-    if (directory !== undefined) await rm(directory, { recursive: true, force: true });
+    try {
+      await home?.dispose();
+    } finally {
+      if (directory !== undefined) await rm(directory, { recursive: true, force: true });
+    }
   };
   try {
+    if (plan.codexHome === 'private') {
+      // Never fall back to the inherited home: that would silently load user instructions.
+      if (context.codexHome === undefined)
+        throw new Error('A private CODEX_HOME plan requires the source CODEX_HOME for auth.json.');
+      home = await prepareCodexHome(context.codexHome);
+    }
     const args = [...plan.argv];
     for (const artifact of plan.artifacts) {
       directory ??= await mkdtemp(join(tmpdir(), 'quiet-choir-invoke-'));
@@ -242,7 +279,13 @@ export async function materializeInvocation(
         ? validate(() => prepareCodexSchema(outputSchema, options.structuredOutput ?? 'compat'))
             .decode
         : (text: string): string => text;
-    return { args, decode, dispose };
+    return {
+      args,
+      decode,
+      ...(home ? { env: { CODEX_HOME: home.path } } : {}),
+      settle,
+      dispose,
+    };
   } catch (error) {
     await dispose();
     throw error;
@@ -256,7 +299,8 @@ export async function materializeInvocation(
 export async function prepareInvocation(
   request: HarnessRequestInput,
   signal?: AbortSignal,
+  context?: InvocationContext,
 ): Promise<CliInvocation> {
   const input = await invocationRequest(request, signal);
-  return materializeInvocation(planInvocation(input), input);
+  return materializeInvocation(planInvocation(input), input, context);
 }

@@ -18,6 +18,14 @@ export interface CodexOptions extends AgentOptions {
   readonly sandbox?: 'read-only' | 'workspace-write';
   /** Harness reasoning effort. */
   readonly reasoningEffort?: 'none' | 'minimal' | Effort;
+  /**
+   * Native instruction loading. `'native'` (the default) lets Codex read the user's
+   * `CODEX_HOME/AGENTS.md`, user skills and project `AGENTS.md` files. `'none'` runs Codex against
+   * a private temporary `CODEX_HOME` holding only a copy of `auth.json` (refreshed credentials are
+   * written back) and sets `project_doc_max_bytes=0`. `'none'` requires restricted isolation and
+   * enters step identity; `'native'` and unset fingerprint identically.
+   */
+  readonly instructions?: 'native' | 'none';
   /** Allow use outside a Git repository. */
   readonly skipGitRepoCheck?: boolean;
 }

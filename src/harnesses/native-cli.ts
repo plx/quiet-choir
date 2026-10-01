@@ -1,5 +1,5 @@
 import { validateAgentOptions } from '../harness-kit.js';
-import { isAbsolute } from 'node:path';
+import { isAbsolute, resolve } from 'node:path';
 import type {
   AgentUsage,
   Harness,
@@ -280,7 +280,11 @@ export class NativeCliHarness implements Harness {
       context,
       request.options.model ?? null,
     );
-    const invocation = await materializeInvocation(plan, input);
+    const environment = childEnvironment(request.options.env, this.options.scrubEnv).env;
+    // A private home copies auth.json from the home this child would otherwise use.
+    const invocation = await materializeInvocation(plan, input, {
+      codexHome: resolve(plan.cwd, codexHomeOf(environment)),
+    });
     let processResult: ProcessResult | undefined;
     try {
       const result = await runProcess({
@@ -299,7 +303,8 @@ export class NativeCliHarness implements Harness {
         signal,
         trackProcess: (child) => context.trackProcess(child),
         env: {
-          ...childEnvironment(request.options.env, this.options.scrubEnv).env,
+          ...environment,
+          ...invocation.env,
           QUIET_CHOIR_RUN_ID: context.runId,
           QUIET_CHOIR_STEP_ID: context.stepId,
           QUIET_CHOIR_ATTEMPT: String(context.attempt),
@@ -308,6 +313,8 @@ export class NativeCliHarness implements Harness {
         inheritEnv: false,
       });
       processResult = result;
+      // The child has exited, so a private home's refreshed credentials can be written back.
+      const warnings = [...result.warnings, ...(await invocation.settle())];
       const outcome = await stream.finish();
       const diagnostics = stream.diagnostics(result.stderr, result.warnings);
       if (result.code === 0 && result.signal === null && outcome.kind === 'success')
@@ -316,8 +323,8 @@ export class NativeCliHarness implements Harness {
           sessionId: outcome.response.sessionId ?? stream.protocol.sessionId,
           diagnostics,
           text: invocation.decode(outcome.response.text),
-          ...((outcome.response.warnings?.length ?? 0) + result.warnings.length
-            ? { warnings: [...(outcome.response.warnings ?? []), ...result.warnings] }
+          ...((outcome.response.warnings?.length ?? 0) + warnings.length
+            ? { warnings: [...(outcome.response.warnings ?? []), ...warnings] }
             : {}),
         };
       const failure = new HarnessError({
@@ -348,7 +355,7 @@ export class NativeCliHarness implements Harness {
             }
           : {}),
       });
-      if (result.warnings.length) failure.message += ` Cleanup: ${result.warnings.join(' ')}`;
+      if (warnings.length) failure.message += ` Cleanup: ${warnings.join(' ')}`;
       throw failure;
     } catch (error) {
       const captured =
@@ -356,8 +363,9 @@ export class NativeCliHarness implements Harness {
         (error instanceof Error && 'processResult' in error
           ? (error.processResult as ProcessResult)
           : undefined);
-      if (error instanceof Error && 'code' in error && error.code === 'QUIET_CHOIR_PROTOCOL')
-        throw new HarnessError({
+      if (error instanceof Error && 'code' in error && error.code === 'QUIET_CHOIR_PROTOCOL') {
+        const cleanup = await invocation.settle();
+        const failure = new HarnessError({
           harness: request.harness,
           exit: { code: captured?.code ?? null, signal: captured?.signal ?? null },
           failure: null,
@@ -369,6 +377,9 @@ export class NativeCliHarness implements Harness {
           diagnostics: stream.diagnostics(captured?.stderr ?? '', captured?.warnings),
           rawText: stream.protocol.text,
         });
+        if (cleanup.length) failure.message += ` Cleanup: ${cleanup.join(' ')}`;
+        throw failure;
+      }
       attachHarnessEvidence(error, {
         sessionId: stream.protocol.sessionId,
         usage: stream.protocol.usage,
