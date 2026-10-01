@@ -345,6 +345,7 @@ export default defineWorkflow({
       stateDir,
       '--resume',
       '--json',
+      '--full',
     );
     assert.equal(crashResume.status, 0, crashResume.stderr);
     const recovered = JSON.parse(crashResume.stdout);

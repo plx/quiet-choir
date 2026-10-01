@@ -76,7 +76,7 @@ try {
   writeFileSync(file, source);
 
   // (1) A suspension is a success path; its large document must parse as well.
-  const executed = await workflow('execute', file, '--run-id', 'pipe', '--json');
+  const executed = await workflow('execute', file, '--run-id', 'pipe', '--json', '--full');
   assert.equal(executed.status, 75, describe('execute', executed));
   assert.ok(Buffer.byteLength(executed.stdout) >= minimum, describe('execute', executed));
   const suspended = parsed('execute', executed);
@@ -93,16 +93,17 @@ try {
     '--by',
     'human:Pat',
     '--resume',
+    '--full',
   );
   assertFailureDocument('answer --resume --json', answered);
 
   // (3) resume of the failed run reports the same failure.
-  assertFailureDocument('resume --json', await workflow('resume', 'pipe', '--json'));
+  assertFailureDocument('resume --json', await workflow('resume', 'pipe', '--json', '--full'));
 
   // (4) execute --resume of the failed run reports it too.
   assertFailureDocument(
     'execute --resume --json',
-    await workflow('execute', file, '--resume', '--run-id', 'pipe', '--json'),
+    await workflow('execute', file, '--resume', '--run-id', 'pipe', '--json', '--full'),
   );
 
   // (5) configuration doctor exits 1 on a failing check and its document survives the pipe.

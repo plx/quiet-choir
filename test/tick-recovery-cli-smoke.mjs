@@ -87,7 +87,7 @@ export default defineWorkflow({ name: 'slow', version: '1', input: z.object({}),
     } });
   } });`,
   );
-  const suspended = document(75, 'execute', slowFile, '--run-id', 'R', '--json');
+  const suspended = document(75, 'execute', slowFile, '--run-id', 'R', '--json', '--full');
   assert.equal(suspended.kind, 'workflow.run.suspended');
   const wakeAt = suspended.run.nextWakeAt;
   assert.ok(wakeAt);
@@ -193,7 +193,16 @@ export default defineWorkflow({ name: 'held', version: '1',
   // Part 3: a SIGTERM'd execute saves a resumable suspension and exits 130; tick completes it.
   const term = spawn(
     process.execPath,
-    cliArgs(['execute', heldFile, '--run-id', 'S', '--input', '{"name":"S","nap":0}', '--json']),
+    cliArgs([
+      'execute',
+      heldFile,
+      '--run-id',
+      'S',
+      '--input',
+      '{"name":"S","nap":0}',
+      '--json',
+      '--full',
+    ]),
     { cwd: root, stdio: ['ignore', 'pipe', 'pipe'] },
   );
   let termOut = '';
@@ -236,6 +245,7 @@ export default defineWorkflow({ name: 'held', version: '1',
     '--input',
     '{"name":"T","nap":1500}',
     '--json',
+    '--full',
   );
   await delay(Math.max(0, parked.run.nextWakeAt - Date.now() + 100));
   const timedOut = document(

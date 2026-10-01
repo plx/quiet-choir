@@ -92,6 +92,7 @@ export default defineWorkflow({name:'custom-cli',version:'1',harnesses:[third],i
     '--state-dir',
     state,
     '--json',
+    '--full',
   ]);
   assert.equal(run.output, 'fix:openai:deep');
   assert.equal(run.steps.answer.kind, 'agent');

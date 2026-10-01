@@ -78,6 +78,7 @@ export default defineWorkflow({name:'sdlc',version:'1',description:'Build from a
     '--input',
     '{"topic":"chosen"}',
     '--json',
+    '--full',
   ]);
   assert.equal(executed.output, 'chosen');
   assert.equal(count(calls), 1);

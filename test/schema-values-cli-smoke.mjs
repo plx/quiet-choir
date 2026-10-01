@@ -89,6 +89,7 @@ export default defineWorkflow({name:'optional',version:'1',input:z.object({note:
     '--harness',
     `fixture:${fixtures}`,
     '--json',
+    '--full',
   ];
   const executed = cli(...args, '--input', '{}');
   assert.equal(executed.status, 0, executed.stderr);

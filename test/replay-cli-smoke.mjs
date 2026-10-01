@@ -33,7 +33,17 @@ function cli(...args) {
   });
 }
 function run(id, ...args) {
-  const result = cli('execute', file, '--state-dir', state, '--run-id', id, '--json', ...args);
+  const result = cli(
+    'execute',
+    file,
+    '--state-dir',
+    state,
+    '--run-id',
+    id,
+    '--json',
+    '--full',
+    ...args,
+  );
   assert.equal(result.status, 0, result.stderr);
   return JSON.parse(result.stdout);
 }

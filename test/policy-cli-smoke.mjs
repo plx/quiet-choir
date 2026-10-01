@@ -66,6 +66,7 @@ export default defineWorkflow({ name: 'policy-cli', version: '1', input: z.objec
     '--policy',
     '{"match":"review","timeoutMs":600000}',
     '--json',
+    '--full',
   );
   assert.equal(resume.status, 0, resume.stderr);
   const result = JSON.parse(resume.stdout);
@@ -91,7 +92,7 @@ export default defineWorkflow({ name: 'policy-cli', version: '1', input: z.objec
   assert.equal(attempts[1].policy.maxBudgetUsd, 0.5);
   assert.equal(attempts[1].policy.binary, 'claude');
   assert.deepEqual(saved.policy, [{ match: 'review', timeoutMs: 600000 }]);
-  const bare = cli(...args, '--resume', '--json');
+  const bare = cli(...args, '--resume', '--json', '--full');
   assert.equal(bare.status, 0, bare.stderr);
   assert.deepEqual(JSON.parse(bare.stdout).policy, saved.policy);
   assert.equal(readFileSync(join(fixture, 'writes.txt'), 'utf8'), 'write\n');
@@ -106,14 +107,15 @@ export default defineWorkflow({ name: 'policy-cli', version: '1', input: z.objec
     '{"model":"new"}',
     '--allow-model-override',
     '--json',
+    '--full',
   );
   assert.equal(allowed.status, 0, allowed.stderr);
   assert.equal(JSON.parse(allowed.stdout).allowModelOverride, true);
-  const authorizedBare = cli(...args, '--resume', '--json');
+  const authorizedBare = cli(...args, '--resume', '--json', '--full');
   assert.equal(authorizedBare.status, 0, authorizedBare.stderr);
   assert.equal(JSON.parse(authorizedBare.stdout).allowModelOverride, true);
   assert.equal(readFileSync(calls, 'utf8').trim().split('\n').length, 3);
-  const reset = cli(...args, '--resume', '--policy-reset', '--json');
+  const reset = cli(...args, '--resume', '--policy-reset', '--json', '--full');
   assert.equal(reset.status, 0, reset.stderr);
   assert.deepEqual(JSON.parse(reset.stdout).policy, []);
   const ordered = cli(
@@ -124,6 +126,7 @@ export default defineWorkflow({ name: 'policy-cli', version: '1', input: z.objec
     '--policy',
     '{"match":"review","timeoutMs":200}',
     '--json',
+    '--full',
   );
   assert.equal(ordered.status, 0, ordered.stderr);
   assert.deepEqual(JSON.parse(ordered.stdout).policy, [

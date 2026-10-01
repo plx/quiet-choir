@@ -169,7 +169,7 @@ export default defineWorkflow({name:'process-lifecycle-cli',version:'1',input:z.
   assert.match(inspect.stdout, /Owner: pid \d+ \(dead\)/);
   for (const { pid } of original)
     assert.match(inspect.stdout, new RegExp(`pid ${pid} .*step agents/`));
-  const refused = cli([...argsFor('killed'), '--resume'], envFor('killed', 'finish'));
+  const refused = cli([...argsFor('killed'), '--resume', '--full'], envFor('killed', 'finish'));
   assert.equal(refused.status, 3, refused.stderr);
   assert.equal(JSON.parse(refused.stdout).error.code, 'run.orphans');
   assert.deepEqual(JSON.parse(refused.stdout).run, committed);
@@ -178,7 +178,7 @@ export default defineWorkflow({name:'process-lifecycle-cli',version:'1',input:z.
   assert.equal(readFileSync(join(state, 'killed', 'run.json'), 'utf8'), checkpoint);
   assert.equal(readFileSync(join(state, 'killed', 'journal.jsonl'), 'utf8'), journal);
   const recovered = cli(
-    [...argsFor('killed'), '--resume', '--kill-orphans'],
+    [...argsFor('killed'), '--resume', '--kill-orphans', '--full'],
     envFor('killed', 'finish'),
   );
   assert.equal(recovered.status, 0, recovered.stderr);

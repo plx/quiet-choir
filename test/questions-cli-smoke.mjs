@@ -39,7 +39,7 @@ export default defineWorkflow({name:'questions',version:'1',input:z.object({}),o
 }});`;
 try {
   writeFileSync(file, source);
-  const executed = cli('execute', file, '--run-id', 'gate', '--json');
+  const executed = cli('execute', file, '--run-id', 'gate', '--json', '--full');
   assert.equal(executed.status, 75, executed.stderr);
   const suspended = JSON.parse(executed.stdout);
   assert.equal(suspended.kind, 'workflow.run.suspended');
@@ -93,7 +93,7 @@ try {
   assert.equal(duplicate.status, 3, duplicate.stderr);
   assert.equal(JSON.parse(duplicate.stdout).error.code, 'answer.conflict');
   writeFileSync(file, source);
-  const resumed = cli('resume', 'gate', '--json');
+  const resumed = cli('resume', 'gate', '--json', '--full');
   assert.equal(resumed.status, 0, resumed.stderr);
   const completed = JSON.parse(resumed.stdout);
   assert.equal(completed.status, 'completed');

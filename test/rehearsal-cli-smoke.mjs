@@ -153,7 +153,12 @@ export default defineWorkflow({name:'rehearsal-cli',version:'1',input:z.object({
       ],
     }),
   );
-  const fixture = run([...execute('fixture', 'text'), '--harness', `fixture:${fixturePath}`]);
+  const fixture = run([
+    ...execute('fixture', 'text'),
+    '--full',
+    '--harness',
+    `fixture:${fixturePath}`,
+  ]);
   assert.equal(fixture.status, 0, fixture.stderr);
   assert.equal(fixture.value.output, 'first answer / second answer');
   assert.equal(fixture.value.harness.kind, 'fixture');
@@ -189,7 +194,12 @@ export default defineWorkflow({name:'rehearsal-cli',version:'1',input:z.object({
     JSON.stringify({ version: 1, calls: [{ step: 'two', scenario: 'codex-invalid-schema' }] }),
   );
   writeFileSync(join(root, 'harness.json'), JSON.stringify(cliConfig));
-  const partial = run([...execute('partial', 'partial'), '--harness-config', '@harness.json']);
+  const partial = run([
+    ...execute('partial', 'partial'),
+    '--full',
+    '--harness-config',
+    '@harness.json',
+  ]);
   assert.equal(partial.status, 1, partial.stderr);
   assert.equal(partial.value.error.stepId, 'two');
   assert.equal(partial.value.run.harness.kind, 'cli');
