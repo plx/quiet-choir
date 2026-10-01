@@ -1,7 +1,23 @@
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
+import { execIdentityKey, type InternalExecIdentity } from '../runtime/exec-identity.js';
+import type { Command, ExecOptions } from '../runtime/exec-model.js';
 import type { WorkflowContext } from '../runtime/model.js';
-import { guardProgram } from './guard-program.js';
+import { GUARD_PROGRAM_VERSION, guardProgram } from './guard-program.js';
+
+/** The real argv runs the program; the identity names it by version and arguments only. */
+function guardStep<S extends z.ZodType>(
+  schema: S,
+  args: readonly string[],
+): readonly [Command, ExecOptions & InternalExecIdentity & { readonly schema: S }] {
+  return [
+    [process.execPath, '--input-type=module', '-e', guardProgram, ...args],
+    {
+      schema,
+      [execIdentityKey]: { name: 'guardFile', version: GUARD_PROGRAM_VERSION, args: [...args] },
+    },
+  ];
+}
 
 /** Policy for a single durable guarded body. */
 export interface GuardFileOptions {
@@ -36,24 +52,16 @@ export function guardFile<T>(
     if (typeof body !== 'function') throw new Error('guardFile requires a body callback.');
     const baseline = await ctx.exec.json(
       'baseline',
-      [
-        process.execPath,
-        '--input-type=module',
-        '-e',
-        guardProgram,
-        'baseline',
-        path,
-        String(settings.maxBytes),
-      ],
-      {
-        schema: z.object({
+      ...guardStep(
+        z.object({
           path: z.string(),
           blob: z.string().min(1),
           mode: z.number().int().nonnegative(),
           // No pattern here: dry-run must synthesize it; the restore program validates the ref.
           ref: z.string().min(1),
         }),
-      },
+        ['baseline', path, String(settings.maxBytes)],
+      ),
     );
     const identity = createHash('sha256')
       .update(
@@ -74,21 +82,14 @@ export function guardFile<T>(
     if (!outcome) throw new Error('Guard body outcome is missing.');
     const restored = await ctx.exec.json(
       'restore',
-      [
-        process.execPath,
-        '--input-type=module',
-        '-e',
-        guardProgram,
+      ...guardStep(z.object({ changed: z.boolean() }), [
         'restore',
         baseline.path,
         String(settings.maxBytes),
         baseline.blob,
         String(baseline.mode),
         baseline.ref,
-      ],
-      {
-        schema: z.object({ changed: z.boolean() }),
-      },
+      ]),
     );
     if (!outcome.ok) throw new Error(`Guarded body failed: ${outcome.error.message}`);
     if (restored.changed && settings.onChange === 'error')
