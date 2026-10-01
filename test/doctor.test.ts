@@ -324,10 +324,8 @@ it('names user-level Codex instruction files in the inherited-defaults check wit
     report.checks.find((entry) => entry.check === 'inherited-defaults');
 
   const absent = await probeHarnessContracts(options);
-  expect(check(absent)).toMatchObject({
-    ok: true,
-    message: expect.stringContaining('No user-level instruction files were found.'),
-  });
+  expect(check(absent)?.ok).toBe(true);
+  expect(check(absent)?.message).toContain('No user-level instruction files were found.');
   expect(absent.codexInstructions).toEqual([]);
 
   const canary = 'DOCTOR_AGENTS_CANARY_3310';
