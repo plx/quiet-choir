@@ -76,9 +76,25 @@ and native profile selection belong to typed controls.
 
 `env` accepts `{ set, unset }` edits after host-session scrubbing; the original flat set-only
 overlay also works. Explicit edits are fingerprinted, while saved diagnostics retain only names and
-a digest. Keep rotating secrets in the parent environment. Configuration defaults to `restricted`;
-`inherit` is an explicit exec-capability opt-out. See [harness isolation](harness-isolation.md) for
-provider boundaries, native authentication, protected writes, and verified opt-ins.
+a digest. Keep rotating secrets in the parent environment.
+
+Public manifests (the checkpoint's `capabilities`, `workflow validate --json` and the record
+`check-resume` prints) reduce every free-form native control to a digest. Claude `settings`,
+`mcpServers`, `agents` (descriptions and prompts), `systemPrompt`, `appendSystemPrompt` and Codex
+`config` are removed from the profile's `claude`/`codex` and listed under `redacted` as
+`{ sha256, keys? }`: `keys` are the top-level settings keys, MCP server names, subagent names or
+dotted config keys, and the two prompts have only `sha256`. A profile that sets none of them has no
+`redacted` member. Live calls, grant pins and step identity still use the raw values, so a changed
+value invalidates a pin or a completed step even though the manifest shows only a new digest.
+Reviewable controls stay plaintext: tools, permission mode, `agent`, plugins, `addDirs`,
+`extraArgs`, models, limits, isolation and sandbox. Never put secret values in `extraArgs`; use
+`env`. A digest of a short value can be confirmed by guessing. Checkpoints written before this
+change keep what they saved until the run next executes, which rewrites them. Prompts and previews
+in step records are plaintext state, outside the manifest. See
+[ADR 0033](decisions/0033-redact-free-form-controls-from-public-manifests.md). Configuration
+defaults to `restricted`; `inherit` is an explicit exec-capability opt-out. See
+[harness isolation](harness-isolation.md) for provider boundaries, native authentication, protected
+writes, and verified opt-ins.
 
 All new semantic controls participate in completed-step identity. Images use **file contents**, not
 paths: the runtime snapshots bytes before fingerprinting and passes those exact bytes to the

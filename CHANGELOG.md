@@ -2,6 +2,17 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- Capability manifests (behaviour change; no identity or storage-format change): checkpoints,
+  `workflow validate --json` and the record `check-resume` prints no longer contain Claude
+  `settings`, `mcpServers`, `agents` (descriptions and prompts), `systemPrompt`,
+  `appendSystemPrompt` or Codex `config` values. Each is listed under the profile's new optional
+  `redacted` member as `{ sha256, keys? }` (top-level names for objects, digest only for prompts),
+  like `env` already was. Live calls, grant pins and step identity use the raw values, so existing
+  pins and resumes are unaffected and a changed value is still detected. `extraArgs`, tools, plugins
+  and other reviewable controls stay plaintext; never put secrets in `extraArgs`. Older checkpoints
+  keep what they saved until the run next executes, which rewrites its manifest, and the definition
+  registry cache is rebuilt once. New exported type `RedactedControl`. See ADR 0033.
+
 - Worktree administration (behaviour change; no identity or storage-format change): Git
   `worktree add`, `list` and `remove` (and the interrupted-registration repair) are now serialized
   per repository across processes, not only within one process. Each command takes a new lock

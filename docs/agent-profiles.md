@@ -83,8 +83,10 @@ access. Native configuration/agent/escape/env controls, explicit inherited mode,
 enabled network access conservatively require exec grants. Codex additional directories require
 write access. Role prompts, model, effort, fallbacks and image attachments remain available per
 call. See [harness controls](harness-controls.md). The manifest bounds declared agent controls; it
-does not confine workflow JavaScript or arbitrary working directories. Configuration isolation is a
-separate [provider-specific boundary](harness-isolation.md).
+does not confine workflow JavaScript or arbitrary working directories. Printed and checkpointed
+manifests show settings, MCP servers, subagents, system prompts, Codex config and environment values
+only as names and digests under `redacted`/`environment`; grant pins use the raw declaration.
+Configuration isolation is a separate [provider-specific boundary](harness-isolation.md).
 
 Every declared or default role with write/exec access requires authorization before the body starts,
 even if a branch never uses it. `--grant fixer` authorizes that role; `--grant write` authorizes

@@ -62,8 +62,10 @@ const validation = z.object({
     }),
   ),
 });
+// Version 3: validate results saved by version 2 hold plaintext settings, MCP servers and prompts
+// (#103); they are never served and are rewritten with the redacted manifest.
 const cache = z.object({
-  version: z.literal(2),
+  version: z.literal(3),
   engine: z.string(),
   plan: z.json(),
   sources: z.record(z.string(), z.string()),
@@ -188,7 +190,7 @@ export async function listDefinitions(
         const sources = await cacheSources(plan, result);
         await mkdir(root, { recursive: true, mode: 0o700 });
         const temporary = `${path}.${randomUUID()}.tmp`;
-        await writeFile(temporary, JSON.stringify({ version: 2, engine, plan, sources, result }), {
+        await writeFile(temporary, JSON.stringify({ version: 3, engine, plan, sources, result }), {
           mode: 0o600,
           flag: 'wx',
         });

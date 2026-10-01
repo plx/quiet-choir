@@ -14,7 +14,14 @@ import {
   type Harness,
   type ProfileOverride,
 } from '../src/index.js';
-import { parseProfileOverride } from '../src/workflow/runtime/profiles.js';
+import {
+  capabilityManifestSchema,
+  parseProfileOverride,
+  profileGrantDigest,
+  publicCapabilityManifest,
+  resolveCapabilities,
+} from '../src/workflow/runtime/profiles.js';
+import { digest } from '../src/workflow/runtime/json.js';
 import { parseClaude } from '../src/harnesses/protocol.js';
 
 let stateDir: string;
@@ -608,4 +615,171 @@ it('keeps denial diagnostics on successful envelopes with process failure', asyn
     profile: 'text',
     maxBudgetUsd: 1e-7,
   });
+});
+
+// Marker values prove that nothing sensitive reaches a public manifest or checkpoint.
+const markers = {
+  settings: 'marker-settings-theme',
+  hook: 'marker-settings-hook',
+  mcpCommand: 'marker-mcp-command',
+  mcpToken: 'marker-mcp-token',
+  agentDescription: 'marker-agent-description',
+  agentPrompt: 'marker-agent-prompt',
+  systemPrompt: 'marker-system-prompt',
+  appendPrompt: 'marker-append-prompt',
+  env: 'marker-env-value',
+  codex: 'marker-codex-config',
+};
+const sensitiveProfile = (mcpToken = markers.mcpToken): AgentProfile => ({
+  claude: {
+    isolation: 'inherit',
+    settings: { theme: markers.settings, hooks: { Stop: markers.hook } },
+    mcpServers: { tracker: { command: markers.mcpCommand, env: { TOKEN: mcpToken } } },
+    agents: {
+      reviewer: { description: markers.agentDescription, prompt: markers.agentPrompt },
+    },
+    systemPrompt: markers.systemPrompt,
+    appendSystemPrompt: markers.appendPrompt,
+    env: { set: { PRIVATE: markers.env } },
+  },
+  codex: {
+    isolation: 'inherit',
+    config: { 'model_providers.x.base_url': markers.codex, model_verbosity: 'low' },
+  },
+});
+const profileP = (manifest: ReturnType<typeof resolveCapabilities>) => {
+  const profile = manifest.profiles['p'];
+  if (!profile) throw new Error('Missing profile p.');
+  return profile;
+};
+const sensitiveDefinition = (profiles: Record<string, AgentProfile>, fail: () => boolean) =>
+  defineWorkflow({
+    ...base,
+    profiles,
+    async run(ctx) {
+      await ctx.claude.text('first', { prompt: 'one', profile: 'p' });
+      await ctx.claude.text('second', { prompt: 'two', profile: 'p' });
+      if (fail()) throw new Error('pause');
+      return 'done';
+    },
+  });
+// Captured on main before the redaction change (#103) for sensitiveProfile(); it must never move.
+const sensitiveGrantDigest = '629539c408eb9f6d26dce10eda94f73ded2530a730458dbfcfc9047665e2d5f3';
+
+it('reduces free-form controls to names and digests in public manifests only', () => {
+  const definition = { profiles: { p: sensitiveProfile() } };
+  const live = resolveCapabilities(definition);
+  const raw = structuredClone(live);
+  const manifest = capabilityManifest(definition);
+  const text = JSON.stringify(manifest);
+  for (const marker of Object.values(markers)) expect(text).not.toContain(marker);
+  const profile = profileP(manifest);
+  const liveProfile = profileP(live);
+  expect(profile.redacted).toEqual({
+    claude: {
+      settings: { sha256: digest(liveProfile.claude.settings), keys: ['hooks', 'theme'] },
+      mcpServers: { sha256: digest(liveProfile.claude.mcpServers), keys: ['tracker'] },
+      agents: { sha256: digest(liveProfile.claude.agents), keys: ['reviewer'] },
+      systemPrompt: { sha256: digest(markers.systemPrompt) },
+      appendSystemPrompt: { sha256: digest(markers.appendPrompt) },
+    },
+    codex: {
+      config: {
+        sha256: digest(liveProfile.codex.config),
+        keys: ['model_providers.x.base_url', 'model_verbosity'],
+      },
+    },
+  });
+  for (const field of ['settings', 'mcpServers', 'agents', 'systemPrompt', 'appendSystemPrompt'])
+    expect(profile.claude).not.toHaveProperty(field);
+  expect(profile.codex).not.toHaveProperty('config');
+  expect(profile.environment?.claude.set).toEqual(['PRIVATE']);
+  expect(profile.claude.isolation).toBe('inherit');
+  expect(manifest.defaults).not.toHaveProperty('redacted');
+  for (const [name, builtin] of Object.entries(manifest.profiles))
+    if (name !== 'p') expect(builtin).not.toHaveProperty('redacted');
+  expect(capabilityManifestSchema.parse(manifest)).toEqual(manifest);
+  // The live manifest keeps raw values and the projection leaves its input untouched.
+  expect(liveProfile.claude.mcpServers).toEqual(sensitiveProfile().claude?.mcpServers);
+  expect(liveProfile.codex.config).toEqual(sensitiveProfile().codex?.config);
+  expect(live).toEqual(raw);
+  expect(publicCapabilityManifest(live)).toEqual(manifest);
+  // Idempotent only for built-in harnesses; registered harness env digests are re-digested on a second pass.
+  expect(publicCapabilityManifest(manifest)).toEqual(manifest);
+});
+
+it('keeps grant digests of the live profile stable across redaction', () => {
+  const live = resolveCapabilities({ profiles: { p: sensitiveProfile() } });
+  expect(profileGrantDigest(profileP(live))).toBe(sensitiveGrantDigest);
+  const changed = resolveCapabilities({ profiles: { p: sensitiveProfile('other-token') } });
+  expect(profileGrantDigest(profileP(changed))).not.toBe(sensitiveGrantDigest);
+});
+
+it('checkpoints redacted manifests, runs with raw controls and detects a redacted-only change on resume', async () => {
+  let stop = true;
+  const invoke = vi.fn<Harness['invoke']>().mockResolvedValue(reply);
+  const definition = sensitiveDefinition({ p: sensitiveProfile() }, () => stop);
+  const options = { ...setup(), harness: { invoke }, grants: ['p'] };
+  await expect(runWorkflow(definition, options)).rejects.toThrow('pause');
+  const saved = await readRun(setup());
+  const text = JSON.stringify(saved);
+  for (const marker of Object.values(markers)) expect(text).not.toContain(marker);
+  expect(saved.capabilities?.profiles['p']?.redacted?.claude?.mcpServers?.keys).toEqual([
+    'tracker',
+  ]);
+  expect(saved.grantedProfiles?.['p']).toBe(sensitiveGrantDigest);
+  expect(invoke.mock.calls[0]?.[0].options).toMatchObject({
+    settings: { theme: markers.settings },
+    mcpServers: { tracker: { env: { TOKEN: markers.mcpToken } } },
+    systemPrompt: markers.systemPrompt,
+    env: { set: { PRIVATE: markers.env } },
+  });
+  // Unchanged resume replays both steps and finishes without a new invocation.
+  stop = false;
+  await expect(runWorkflow(definition, { ...options, resume: true })).resolves.toMatchObject({
+    status: 'completed',
+  });
+  expect(invoke).toHaveBeenCalledTimes(2);
+});
+
+it('refuses a resume whose only change is a redacted value', async () => {
+  const profiles = { p: sensitiveProfile() };
+  const invoke = vi.fn<Harness['invoke']>().mockResolvedValue(reply);
+  const definition = sensitiveDefinition(profiles, () => true);
+  const options = { ...setup(), harness: { invoke }, grants: ['p'] };
+  await expect(runWorkflow(definition, options)).rejects.toThrow('pause');
+  profiles.p = sensitiveProfile('rotated-token');
+  // A completed step that ran under the profile is detected by identity, even with a named grant.
+  await expect(runWorkflow(definition, { ...options, resume: true })).rejects.toThrow(
+    'option.mcpServers changed on a completed step',
+  );
+  await expect(
+    runWorkflow(definition, { ...options, resume: true, grants: ['all'] }),
+  ).rejects.toThrow('option.mcpServers changed on a completed step');
+  expect(invoke).toHaveBeenCalledTimes(2);
+});
+
+it('refuses a named grant for a pending step whose profile changed only in a redacted value', async () => {
+  const profiles = { p: sensitiveProfile() };
+  const invoke = vi.fn<Harness['invoke']>().mockRejectedValue(new Error('offline'));
+  const definition = defineWorkflow({
+    ...base,
+    profiles,
+    async run(ctx) {
+      return (await ctx.claude.text('pending', { prompt: 'x', profile: 'p' })).output;
+    },
+  });
+  const options = { ...setup(), harness: { invoke }, grants: ['p'] };
+  await expect(runWorkflow(definition, options)).rejects.toThrow('offline');
+  expect((await readRun(setup())).grantedProfiles?.['p']).toBe(sensitiveGrantDigest);
+  profiles.p = sensitiveProfile('rotated-token');
+  // The saved named grant keeps its old pin; passing --grant p again would re-pin the new value.
+  await expect(
+    runWorkflow(definition, { ...setup(), harness: { invoke }, resume: true }),
+  ).rejects.toThrow('Retry with --grant p');
+  expect(invoke).toHaveBeenCalledTimes(1);
+  invoke.mockResolvedValue(reply);
+  await expect(
+    runWorkflow(definition, { ...options, resume: true, grants: ['all'] }),
+  ).resolves.toMatchObject({ status: 'completed' });
 });

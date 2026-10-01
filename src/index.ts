@@ -145,6 +145,7 @@ export type {
   AgentDefaults,
   ProfileOverride,
   ResolvedProfile,
+  RedactedControl,
   CapabilityManifest,
 } from './workflow/runtime/profiles-model.js';
 

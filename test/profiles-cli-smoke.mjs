@@ -38,7 +38,9 @@ if (process.argv.includes("--version")) { console.log("2.1.283"); process.exit(0
 import fs from 'node:fs';
 let prompt='';process.stdin.on('data',chunk=>prompt+=chunk);process.stdin.on('end',()=>{
  const args=process.argv.slice(2);const turns=Number(args[args.indexOf('--max-turns')+1]);
- fs.appendFileSync('calls.jsonl',JSON.stringify({prompt,args})+'\\n');
+ const at=args.indexOf('--settings');
+ const settings=at<0?null:fs.readFileSync(args[at+1],'utf8');
+ fs.appendFileSync('calls.jsonl',JSON.stringify({prompt,args,settings})+'\\n');
  const fail=prompt==='pending'&&turns<60;
  console.log(JSON.stringify({type:'result',subtype:fail?'error_max_turns':'success',is_error:fail,result:fail?'turn cap':'ok',num_turns:turns,total_cost_usd:0.31,permission_denials:fail?[{tool_name:'Read'}]:[]}));process.exitCode=fail?1:0;
 });`,
@@ -98,8 +100,63 @@ async run(ctx){writeFileSync('body-started','yes');await ctx.claude.text('saved'
   assert.equal(typo.status, 4, typo.stderr);
   assert.match(typo.stderr, /scuot/);
   assert.equal(readFileSync(join(fixture, 'calls.jsonl'), 'utf8'), calls);
+
+  // Free-form controls reach the harness but never a printed manifest or checkpoint (#103).
+  const markers = [
+    'marker-env-value',
+    'marker-settings-theme',
+    'marker-mcp-command',
+    'marker-mcp-token',
+    'marker-agent-prompt',
+    'marker-append-prompt',
+    'marker-codex-config',
+  ];
+  const clean = (label, text) => {
+    for (const marker of markers) assert.ok(!text.includes(marker), `${label} leaked ${marker}`);
+  };
+  const secretFile = join(fixture, 'secret.ts');
+  const secretSource = (tail) => `import {defineWorkflow,z} from 'quiet-choir';
+export default defineWorkflow({name:'secret-cli',version:'1',input:z.object({}),output:z.string(),
+profiles:{vault:{claude:{isolation:'inherit',env:{set:{PRIVATE:'marker-env-value'}},settings:{theme:'marker-settings-theme'},
+mcpServers:{tracker:{command:'marker-mcp-command',env:{TOKEN:'marker-mcp-token'}}},agents:{reviewer:{description:'Reviews',prompt:'marker-agent-prompt'}},
+appendSystemPrompt:'marker-append-prompt'},codex:{isolation:'inherit',config:{'model_providers.x.base_url':'marker-codex-config'}}}},
+async run(ctx){return (await ctx.claude.text('only',{prompt:'secret',profile:'vault'})).output${tail};}});`;
+  writeFileSync(secretFile, secretSource(''));
+  const secretValidation = cli('validate', secretFile, '--json');
+  assert.equal(secretValidation.status, 0, secretValidation.stderr);
+  clean('validate --json', secretValidation.stdout);
+  const secretProfile = JSON.parse(secretValidation.stdout).workflow.capabilities.profiles.vault;
+  assert.deepEqual(secretProfile.environment.claude.set, ['PRIVATE']);
+  assert.match(secretProfile.environment.claude.sha256, /^[a-f0-9]{64}$/);
+  assert.deepEqual(secretProfile.redacted.claude.settings.keys, ['theme']);
+  assert.deepEqual(secretProfile.redacted.claude.mcpServers.keys, ['tracker']);
+  assert.deepEqual(secretProfile.redacted.claude.agents.keys, ['reviewer']);
+  assert.match(secretProfile.redacted.claude.appendSystemPrompt.sha256, /^[a-f0-9]{64}$/);
+  assert.equal(secretProfile.redacted.claude.appendSystemPrompt.keys, undefined);
+  assert.deepEqual(secretProfile.redacted.codex.config.keys, ['model_providers.x.base_url']);
+  for (const field of ['settings', 'mcpServers', 'agents', 'appendSystemPrompt', 'env'])
+    assert.ok(!(field in secretProfile.claude), field);
+  const secretArgs = ['--run-id', 'redaction', '--state-dir', state];
+  const callsBefore = readFileSync(join(fixture, 'calls.jsonl'), 'utf8').trim().split('\n').length;
+  const secretRun = cli('execute', secretFile, ...secretArgs, '--grant', 'vault');
+  assert.equal(secretRun.status, 0, secretRun.stderr);
+  clean('execute output', secretRun.stdout + secretRun.stderr);
+  clean('checkpoint', readFileSync(join(state, 'redaction', 'run.json'), 'utf8'));
+  const secretCall = JSON.parse(
+    readFileSync(join(fixture, 'calls.jsonl'), 'utf8').trim().split('\n')[callsBefore],
+  );
+  assert.ok(secretCall.args.includes('--settings'));
+  assert.deepEqual(JSON.parse(secretCall.settings), { theme: 'marker-settings-theme' });
+  const compatible = cli('check-resume', secretFile, ...secretArgs, '--json');
+  clean('check-resume --json', compatible.stdout + compatible.stderr);
+  assert.equal(compatible.status, 0, compatible.stderr);
+  writeFileSync(secretFile, secretSource('+"!"'));
+  const incompatible = cli('check-resume', secretFile, ...secretArgs, '--json');
+  assert.equal(incompatible.status, 3, incompatible.stderr);
+  assert.equal(JSON.parse(incompatible.stdout).error.code, 'run.incompatible');
+  clean('check-resume --json (incompatible)', incompatible.stdout + incompatible.stderr);
   console.log(
-    'PASS CLI capability manifest, grant preflight, limit diagnostics, sticky profile recovery and typed names',
+    'PASS CLI capability manifest, grant preflight, limit diagnostics, sticky profile recovery, typed names and redacted free-form controls',
   );
 } finally {
   rmSync(fixture, { recursive: true, force: true });

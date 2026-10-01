@@ -54,9 +54,11 @@ resolved semantic controls remain identity. See
 
 The core resolves configuration isolation before agent identity, defaulting to `restricted`.
 Adapters enforce native flags and scrub host-session environment before explicit set/unset edits.
-Managed checkout selection remains above adapters. Environment values stay in live requests; public
-manifests and checkpoint diagnostics retain only names and hashes. Inherited host names are
-diagnostic, not semantic identity. See
+Managed checkout selection remains above adapters. Environment values, Claude settings, MCP servers,
+subagents, system prompts and Codex config stay in live requests; public manifests and checkpoint
+diagnostics retain only names and hashes (see
+[ADR 0033](decisions/0033-redact-free-form-controls-from-public-manifests.md)). Inherited host names
+are diagnostic, not semantic identity. See
 [ADR 0023](decisions/0023-restricted-harness-configuration.md).
 
 Native output is parsed incrementally by adapters. The runtime owns private bounded transcripts,

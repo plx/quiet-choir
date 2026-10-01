@@ -81,6 +81,18 @@ export interface ProfileOverride extends ProfileLimits {
   readonly profile: string;
 }
 
+/**
+ * Public stand-in for one free-form native control that manifests do not print. The raw value stays
+ * in the live profile for execution and grant pins; a digest of a short or guessable value can be
+ * guessed, which is the same trade-off as an environment digest.
+ */
+export interface RedactedControl {
+  /** SHA-256 of the canonical JSON of the raw control value. */
+  readonly sha256: string;
+  /** Sorted top-level names (settings keys, server or subagent names, dotted config keys); absent for strings. */
+  readonly keys?: readonly string[];
+}
+
 /** Fully resolved plain-data role, suitable for validation output. */
 export interface ResolvedProfile extends Omit<
   AgentProfile,
@@ -96,6 +108,30 @@ export interface ResolvedProfile extends Omit<
     readonly claude: EnvironmentSummary;
     /** Codex environment edit names and digest. */
     readonly codex: EnvironmentSummary;
+  };
+  /**
+   * Names and digests of free-form controls that public manifests (checkpoints, validate and
+   * check-resume output) omit from `claude` and `codex`. Absent when the profile sets none of them.
+   */
+  readonly redacted?: {
+    /** Claude controls omitted from `claude`. */
+    readonly claude?: {
+      /** Native settings object. */
+      readonly settings?: RedactedControl;
+      /** MCP server definitions, by server name. */
+      readonly mcpServers?: RedactedControl;
+      /** Subagent definitions, by agent name, including descriptions and prompts. */
+      readonly agents?: RedactedControl;
+      /** Replacement system prompt. */
+      readonly systemPrompt?: RedactedControl;
+      /** Appended system prompt. */
+      readonly appendSystemPrompt?: RedactedControl;
+    };
+    /** Codex controls omitted from `codex`. */
+    readonly codex?: {
+      /** Dotted native config overrides, by key. */
+      readonly config?: RedactedControl;
+    };
   };
   /** Name used for selection and diagnostics, outside step identity. */
   readonly name: string;
