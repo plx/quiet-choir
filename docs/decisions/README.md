@@ -74,3 +74,5 @@ part of the documentation.
 - [0034: Compact results for the run commands, the full record behind --full](0034-compact-run-command-results.md)
 
 - [0035: Sticky launch policy in the run's launch metadata](0035-sticky-launch-policy.md)
+
+- [0036: Detached start reports a run only when its runner owns the record](0036-detached-start.md)
