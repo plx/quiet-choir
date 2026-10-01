@@ -2,6 +2,18 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- Sticky launch policy (one contract change; additive storage field, no identity or format change):
+  each execution records `launch.policy` — the harness kind, each `--harness` fixture file by
+  absolute path with its SHA-256, and the wait mode — and never any `--harness-config` value.
+  Contract change: `resume`, `execute --resume`, `answer --resume` and `tick` without `--harness`
+  now use the run's recorded harness kind and fixtures instead of `cli`, and without `--wait-mode`
+  its recorded wait mode; explicit flags replace the recorded values. A recorded fixture that is
+  gone fails with `usage.flag`; a changed one is used with a warning. `resumeCommand` and every
+  `resume` entry of `next` end with `--harness fixture:<abs>`, `--harness <name>=fixture:<abs>` and
+  `--wait-mode block` as recorded. New flags: `workflow tick --harness` (repeatable) and
+  `answer --wait-mode`. Tick still suspends waits, now without changing a run's recorded mode. Runs
+  recorded by older builds resume as before. New public type `LaunchPolicy`. See
+  [ADR 0035](docs/decisions/0035-sticky-launch-policy.md).
 - Runnable emitted commands (one contract break and one exit-code change; no identity or
   storage-format change): `resumeCommand`, `answerCommand` and the divergence fork command in
   `error.details.next` now start with the launcher of the invocation that produced them. An

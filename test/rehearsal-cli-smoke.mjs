@@ -175,11 +175,23 @@ export default defineWorkflow({name:'rehearsal-cli',version:'1',input:z.object({
     run([...execute('export', 'text'), '--harness', 'fixture:export.json']).value.output,
     fixture.value.output,
   );
-  const refused = run(['execute', file, '--run-id', 'fixture', '--resume']);
+  // Without --harness, --resume keeps the recorded fixture (#136); an explicit switch to the CLI
+  // harness needs --allow-harness-change.
+  assert.equal(run(['execute', file, '--run-id', 'fixture', '--resume']).status, 0);
+  const refused = run(['execute', file, '--run-id', 'fixture', '--resume', '--harness', 'cli']);
   assert.equal(refused.status, 3);
   assert.match(refused.value.error.message, /--allow-harness-change/u);
   assert.equal(
-    run(['execute', file, '--run-id', 'fixture', '--resume', '--allow-harness-change']).status,
+    run([
+      'execute',
+      file,
+      '--run-id',
+      'fixture',
+      '--resume',
+      '--harness',
+      'cli',
+      '--allow-harness-change',
+    ]).status,
     0,
   );
   const completePreview = run(['execute', file, '--run-id', 'fixture', '--resume', '--dry-run']);

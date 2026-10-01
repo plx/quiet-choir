@@ -140,7 +140,19 @@ export default defineWorkflow({name:'custom-cli',version:'1',harnesses:[third],i
   assert.equal(rehearsal.calls[0].outputSource, 'fixture');
   const inspected = ok(['workflow', 'inspect', 'native', '--state-dir', state, '--json']);
   assert.equal(inspected.usageSummary.integrationUsage.attempts, 1);
-  const changed = cli(['workflow', 'resume', 'fixture', '--state-dir', state, '--json']);
+  // Without --harness, resume keeps the recorded named fixture (#136); explicitly dropping it
+  // still requires harness-mode acceptance.
+  ok(['workflow', 'resume', 'fixture', '--state-dir', state, '--json']);
+  const changed = cli([
+    'workflow',
+    'resume',
+    'fixture',
+    '--harness',
+    'cli',
+    '--state-dir',
+    state,
+    '--json',
+  ]);
   assert.notEqual(
     changed.status,
     0,

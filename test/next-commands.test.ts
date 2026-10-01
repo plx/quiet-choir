@@ -307,6 +307,85 @@ describe('failureNextCommands', () => {
   });
 });
 
+describe('launch policy on next entries', () => {
+  const policy = {
+    harness: {
+      kind: 'fixture',
+      fixtures: [
+        { path: '/p/f.json', sha256: 'a'.repeat(64) },
+        { name: 'third', path: '/p/t.json', sha256: 'b'.repeat(64) },
+      ],
+    },
+    waitMode: 'block',
+  };
+  const flags = [
+    '--harness',
+    'fixture:/p/f.json',
+    '--harness',
+    'third=fixture:/p/t.json',
+    '--wait-mode',
+    'block',
+  ];
+  const sticky = (overrides: Record<string, unknown> = {}) =>
+    run({ launch: { entrypoint, tsconfig: null, policy }, ...overrides });
+  const defaults = (overrides: Record<string, unknown> = {}) =>
+    run({
+      launch: {
+        entrypoint,
+        tsconfig: null,
+        policy: { harness: { kind: 'cli' }, waitMode: 'suspend' },
+      },
+      ...overrides,
+    });
+
+  it('repeats a fixture/block policy on every resume entry of a run', () => {
+    for (const status of ['failed', 'stale'] as const)
+      expect(runNextCommands(sticky(), status, stateDir, launcher).map(({ argv }) => argv)).toEqual(
+        [resume(...flags)],
+      );
+    const suspended = sticky({
+      status: 'suspended',
+      steps: { ask: { status: 'waiting', kind: 'ask', question: question('any') } },
+    });
+    // The answer entry only delivers; the resume entry after it carries the policy.
+    expect(
+      runNextCommands(suspended, 'suspended', stateDir, launcher).map(({ argv }) => argv),
+    ).toEqual([answer('ask'), resume(...flags)]);
+  });
+
+  it.each<[string, Partial<FailureNextContext>, readonly (readonly string[])[]]>([
+    ['workflow.failed', {}, [resume(...flags)]],
+    ['run.orphans', { code: 'run.orphans' }, [resume('--kill-orphans', ...flags)]],
+    [
+      'run.incompatible for a code-only change (the fork is a new launch)',
+      { code: 'run.incompatible', details: compatibility(['code'], true) },
+      [resume('--accept-code-change', ...flags), fork(entrypoint)],
+    ],
+    [
+      'run.incompatible for a different requested entrypoint',
+      {
+        code: 'run.incompatible',
+        details: { storedEntrypoint: entrypoint, requestedEntrypoint: '/elsewhere/w.ts' },
+      },
+      [resume(...flags), fork('/elsewhere/w.ts')],
+    ],
+  ])('%s carries the policy flags on its resume entries', (_label, overrides, expected) => {
+    expect(failure({ run: sticky(), ...overrides })).toEqual(expected);
+  });
+
+  it('adds no flags for a cli/suspend policy', () => {
+    expect(runNextCommands(defaults(), 'failed', stateDir, launcher)[0]?.argv).toEqual(resume());
+    expect(failure({ run: defaults(), code: 'run.orphans' })).toEqual([resume('--kill-orphans')]);
+    expect(
+      failure({
+        run: defaults(),
+        code: 'run.incompatible',
+        details: compatibility(['code'], true),
+      }),
+    ).toEqual([resume('--accept-code-change'), fork(entrypoint)]);
+  });
+});
+
 describe('formatArgv', () => {
   it('quotes for a POSIX shell and leaves placeholders bare', () => {
     expect(

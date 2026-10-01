@@ -212,8 +212,40 @@ Otherwise, including `node "$QC_CHECKOUT/bin/run.js"`, npx and `node_modules/.bi
 the commands run from any directory without `quiet-choir` on PATH. Embedders and in-process callers
 that pass no `commandLauncher` keep `['quiet-choir']`. Commands are computed for each invocation and
 never saved, so a later `pending` or `inspect` regenerates them for the current Node and checkout.
-They do not carry harness selection, `--harness-config`, fixtures or wait mode yet (#136); repeat
-those flags yourself.
+`resumeCommand` and every `resume` entry end with the run's recorded launch policy flags (below);
+`answerCommand` and fork entries do not.
+
+## Launch policy
+
+Each execution records a non-secret launch policy in the run's launch metadata (`launch.policy`),
+outside the workflow fingerprint and step identity: the global harness kind (`cli` or `fixture`),
+each fixture file as its absolute path (resolved against the command's working directory) with the
+SHA-256 of its bytes (unnamed for `fixture:<file>`, named for `name=fixture:<file>`), and the wait
+mode. The latest execution's policy replaces the previous one, so an explicit flag becomes the new
+sticky value. No `--harness-config` value is recorded; only its digest is, as before.
+
+- `resume`, `execute --resume` and `answer --resume` without `--harness` use the recorded harness
+  kind and fixtures, combined with this invocation's `--harness-config` (or its default); without
+  `--wait-mode` they use the recorded wait mode. `tick` without `--harness` does the same for each
+  run.
+- Explicit `--harness` or `--wait-mode` replaces the recorded value. A different harness kind still
+  needs `--allow-harness-change`.
+- A recorded fixture file that is missing or unreadable fails the resume with `usage.flag`, naming
+  the path; pass `--harness` explicitly. A fixture whose content changed is used with a warning that
+  names the file and both digests, and its new digest is recorded.
+- A run started with a custom `--harness-config` must be resumed with the same configuration: a
+  plain `resume` or `tick` is refused (`run.incompatible`, naming `--harness-config`) before any
+  agent starts, because the configuration is not recorded.
+- `tick` always resumes with `suspend` for that execution only, so one run's waits never hold the
+  batch; the recorded wait mode stays, and a later plain `resume` of a `block` run blocks again.
+- A run recorded by an older build (or launched by an embedder, which supplies no policy) behaves as
+  before: the default `cli` selection, with tick forwarding its `--harness-config` only to runs that
+  last executed with the CLI harness.
+
+Emitted resume commands carry `--harness fixture:<abs>`, `--harness <name>=fixture:<abs>` and
+`--wait-mode block` as recorded; the defaults (`cli`, `suspend`) are omitted, and `--harness-config`
+is never emitted. `answerCommand` only delivers an answer, so it carries none; the resume entry
+after it does.
 
 Workflow `console.log` and `process.stdout.write` during import/execution are redirected to stderr
 in JSON mode. `Run ID:`, debug logs, warnings, and human diagnostics also use stderr. Redirecting
@@ -274,8 +306,9 @@ then left untouched and reported as skipped `deadline`, and --watch ends there. 
 supplies CLI harness configuration (JSON or `@file`) for resumed CLI runs, and omitting it means the
 defaults. It must match the configuration digest the run recorded at its latest live execution:
 otherwise the run is reported `incompatible` and left unchanged, unless
-`--allow-harness-config-change` accepts the change for every run that tick resumes.
-`workflow resume`, `execute --resume` and `answer --resume` refuse the same mismatch with
-`run.incompatible` (exit 3, `error.details.previousConfigDigest` and
-`error.details.requestedConfigDigest`) and accept the same flag. See [waits](waits.md) for due
-detection and notification hooks.
+`--allow-harness-config-change` accepts the change for every run that tick resumes. `--harness`
+(repeatable, the same values as on `resume`) selects the harness for every run that tick resumes;
+without it, each run uses its recorded [launch policy](#launch-policy). `workflow resume`,
+`execute --resume` and `answer --resume` refuse the same mismatch with `run.incompatible` (exit 3,
+`error.details.previousConfigDigest` and `error.details.requestedConfigDigest`) and accept the same
+flag. See [waits](waits.md) for due detection and notification hooks.

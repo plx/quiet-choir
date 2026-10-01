@@ -671,3 +671,54 @@ it('builds resumeCommand and answerCommand behind an explicit launcher, quiet-ch
   if (resumed.status !== 'suspended') throw new Error('Expected a suspension.');
   expect(resumed.resumeCommand?.slice(0, 3)).toEqual(['quiet-choir', 'workflow', 'resume']);
 });
+
+it('repeats a recorded launch policy in resumeCommand, validating and replacing it per execution', async () => {
+  const definition = workflow((ctx) => ctx.ask('gate', question));
+  const policy = {
+    harness: {
+      kind: 'fixture' as const,
+      fixtures: [{ path: '/project/f.json', sha256: 'a'.repeat(64) }],
+    },
+    waitMode: 'block' as const,
+  };
+  const launch = { entrypoint: '/project/gate.workflow.ts', tsconfig: null, policy };
+  const suspended = await runWorkflow(definition, { ...options(), launch });
+  if (suspended.status !== 'suspended') throw new Error('Expected a suspension.');
+  expect(suspended.resumeCommand).toEqual([
+    'quiet-choir',
+    'workflow',
+    'resume',
+    'questions',
+    '--state-dir',
+    stateDir,
+    '--harness',
+    'fixture:/project/f.json',
+    '--wait-mode',
+    'block',
+  ]);
+  expect((await readRun(options())).launch?.policy).toEqual(policy);
+  // A malformed policy is refused before anything is written.
+  await expect(
+    runWorkflow(definition, {
+      ...options(),
+      resume: true,
+      launch: { ...launch, policy: { ...policy, harness: { kind: 'fixture' as const } } },
+    }),
+  ).rejects.toThrow();
+  // A launch without a policy (an embedder) replaces the recorded one, and adds no flags.
+  const resumed = await runWorkflow(definition, {
+    ...options(),
+    resume: true,
+    launch: { entrypoint: launch.entrypoint, tsconfig: null },
+  });
+  if (resumed.status !== 'suspended') throw new Error('Expected a suspension.');
+  expect(resumed.resumeCommand).toEqual([
+    'quiet-choir',
+    'workflow',
+    'resume',
+    'questions',
+    '--state-dir',
+    stateDir,
+  ]);
+  expect((await readRun(options())).launch?.policy).toBeUndefined();
+});

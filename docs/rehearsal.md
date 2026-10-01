@@ -52,7 +52,10 @@ settleable invocation failure.
 
 Fixture execution writes ordinary durable records. Use `--dry-run --harness fixture:./fixtures.json`
 for temporary state, immediate sleeps, and synthesis of unmatched calls regardless of the file's
-`unmatched` setting. Fixture overrides can direct branches and supply data that synthesis cannot.
+`unmatched` setting. Fixture overrides can direct branches and supply data that synthesis cannot. A
+fixture run records its fixture files by absolute path and digest, so `resume`, `answer --resume`
+and `tick` without `--harness` continue it with the same files (see
+[launch policy](cli-contract.md#launch-policy)).
 
 Export successful agent outputs from a completed run without importing its workflow or acquiring its
 lock:

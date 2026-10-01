@@ -13,7 +13,12 @@ import { lstat, realpath, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { WorkflowNotifications } from './notifications.js';
 import { fixturesFromRun } from './fixtures.js';
-import { harnessConfigDigest, selectedAdapters } from './harness-selection.js';
+import {
+  harnessConfigDigest,
+  inheritHarnessSelection,
+  launchPolicyOf,
+  selectedAdapters,
+} from './harness-selection.js';
 import { FixtureHarness } from '../../harnesses/fixture.js';
 import { RehearsalHarness, rehearsalState } from './rehearsal.js';
 import {
@@ -49,7 +54,7 @@ import type { Harness } from '../runtime/model.js';
 import { runWorkflow } from '../runtime/runner.js';
 import { legacyRunPath, resolveStateDir, runDirectory } from '../runtime/paths.js';
 import { CheckpointError, errorCode } from '../runtime/checkpoint.js';
-import { readRun } from '../runtime/store.js';
+import { readRun, type RunRecord } from '../runtime/store.js';
 import type { RunStore } from '../runtime/run-store.js';
 import type { WorkflowClock } from '../runtime/wait-model.js';
 import { TypeScriptExecutor } from '../typecheck/typescript-executor.js';
@@ -256,6 +261,8 @@ export class WorkflowExecutor implements Executor<WorkflowExecutorPlan, Workflow
             runId: plan.runId,
             stateDir: plan.stateDir,
             ...(plan.harness === undefined ? {} : { harness: plan.harness }),
+            ...(plan.inheritHarness === undefined ? {} : { inheritHarness: plan.inheritHarness }),
+            ...(plan.waitMode === undefined ? {} : { waitMode: plan.waitMode }),
             ...(plan.allowHarnessConfigChange === undefined
               ? {}
               : { allowHarnessConfigChange: plan.allowHarnessConfigChange }),
@@ -292,21 +299,35 @@ export class WorkflowExecutor implements Executor<WorkflowExecutorPlan, Workflow
         };
       }
       stage = 'usage.flag';
+      // The effective selection and wait mode. On resume, the run's recorded launch policy fills in
+      // what the invocation left out, before anything below builds a harness from the selection.
+      let selection = plan.kind === 'workflow.execute' ? plan.harness : undefined;
+      let waitMode = plan.kind === 'workflow.execute' ? plan.waitMode : undefined;
+      let saved: RunRecord | undefined;
+      if (plan.kind === 'workflow.execute' && plan.resume) {
+        saved = await readRequiredRun({ runId: plan.runId, stateDir: plan.stateDir });
+        const recorded = saved.launch?.policy;
+        if (recorded && plan.inheritHarness)
+          selection = await inheritHarnessSelection(selection, recorded.harness, (message) => {
+            this.#options.logger.log('warn', message);
+          });
+        waitMode ??= recorded?.waitMode;
+      }
       if (plan.kind === 'workflow.execute') {
         if ((plan.stubSteps?.length ?? 0) > 0 && !plan.dryRun)
           throw new Error('--stub-steps requires --dry-run.');
         if (plan.dryRun) {
           rehearsal = new RehearsalHarness(
-            plan.harness ?? { kind: 'cli', config: {} },
+            selection ?? { kind: 'cli', config: {} },
             plan.stubSteps,
           );
           harness = rehearsal;
           previewState = await rehearsalState(plan.runId, plan.stateDir, plan.resume);
           context.stateDir = previewState.stateDir;
-        } else if (plan.harness) {
-          if (plan.harness.kind === 'fixture') {
-            if (!plan.harness.fixtures) throw new Error('Fixture selection requires fixture data.');
-            harness = new FixtureHarness(plan.harness.fixtures);
+        } else if (selection) {
+          if (selection.kind === 'fixture') {
+            if (!selection.fixtures) throw new Error('Fixture selection requires fixture data.');
+            harness = new FixtureHarness(selection.fixtures);
           }
         }
       }
@@ -320,8 +341,7 @@ export class WorkflowExecutor implements Executor<WorkflowExecutorPlan, Workflow
           'info',
           `Agent limits: total=${String(agentLimits.total)}; per-harness=${JSON.stringify(agentLimits.perProvider ?? {})}`,
         );
-      if (plan.kind === 'workflow.execute' && plan.resume) {
-        const saved = await readRequiredRun({ runId: plan.runId, stateDir: plan.stateDir });
+      if (plan.kind === 'workflow.execute' && saved) {
         if (saved.launch) {
           // A missing stored file is the entrypoint_missing refusal, whatever FILE was requested.
           await storedEntrypointExists(saved.id, saved.launch.entrypoint);
@@ -413,7 +433,7 @@ export class WorkflowExecutor implements Executor<WorkflowExecutorPlan, Workflow
             ? {}
             : { processSupervisor: this.#options.processSupervisor }),
         });
-      const adapters = plan.dryRun ? {} : selectedAdapters(plan.harness, harness);
+      const adapters = plan.dryRun ? {} : selectedAdapters(selection, harness);
       const declaredNames = new Set<string>(['claude', 'codex']);
       const pendingDeclarations = [definition as unknown as WorkflowDeclaration];
       const visitedDeclarations = new Set<object>();
@@ -425,8 +445,8 @@ export class WorkflowExecutor implements Executor<WorkflowExecutorPlan, Workflow
         pendingDeclarations.push(...(declared.children ?? []));
       }
       for (const name of [
-        ...Object.keys(plan.harness?.named ?? {}),
-        ...Object.keys(plan.harness?.configurations ?? {}),
+        ...Object.keys(selection?.named ?? {}),
+        ...Object.keys(selection?.configurations ?? {}),
       ])
         if (!declaredNames.has(name))
           this.#options.logger.log(
@@ -434,9 +454,13 @@ export class WorkflowExecutor implements Executor<WorkflowExecutorPlan, Workflow
             `Harness ${name} is not declared in the static workflow tree; this setting only applies if a child invoked dynamically (via ctx.workflow) declares it.`,
           );
       // Options shared with the accepted-replay preflight; live-only ones are added below.
+      const policy = launchPolicyOf(selection, waitMode ?? 'suspend');
       const shared: PreflightRunOptions = {
         runId: plan.runId,
-        launch: await workflowLaunch(plan.typecheck, source),
+        launch: {
+          ...(await workflowLaunch(plan.typecheck, source)),
+          ...(policy === undefined ? {} : { policy }),
+        },
         cwd: plan.cwd,
         ...(plan.maxRunCostUsd === undefined ? {} : { maxRunCostUsd: plan.maxRunCostUsd }),
         ...(plan.maxChildDepth === undefined ? {} : { maxChildDepth: plan.maxChildDepth }),
@@ -469,7 +493,7 @@ export class WorkflowExecutor implements Executor<WorkflowExecutorPlan, Workflow
         );
         const change = await preflightAcceptedReplay(definition, shared, {
           stateDir: plan.stateDir,
-          ...(plan.harness === undefined ? {} : { selection: plan.harness }),
+          ...(selection === undefined ? {} : { selection }),
         });
         if (change)
           throw divergenceRefusal(
@@ -482,16 +506,18 @@ export class WorkflowExecutor implements Executor<WorkflowExecutorPlan, Workflow
             this.#options.commandLauncher,
           );
       }
+      // A one-execution mode (tick's suspend) applies now; the recorded policy keeps waitMode.
+      const effectiveWaitMode = plan.waitModeOnce ?? waitMode;
       const run = await runWorkflow(definition, {
         ...shared,
         ...(Object.keys(adapters).length ? { adapters } : {}),
-        ...(plan.harness?.configurations === undefined
+        ...(selection?.configurations === undefined
           ? {}
-          : { harnessConfigurations: plan.harness.configurations }),
+          : { harnessConfigurations: selection.configurations }),
         stateDir: previewState?.stateDir ?? plan.stateDir,
         processRunner:
           rehearsal?.processRunner ?? this.#options.processRunner ?? new NodeProcessRunner(),
-        ...(plan.waitMode === undefined ? {} : { waitMode: plan.waitMode }),
+        ...(effectiveWaitMode === undefined ? {} : { waitMode: effectiveWaitMode }),
         ...(this.#options.store === undefined ? {} : { store: this.#options.store }),
         ...(this.#options.commandLauncher === undefined
           ? {}
@@ -504,7 +530,7 @@ export class WorkflowExecutor implements Executor<WorkflowExecutorPlan, Workflow
         ...(plan.dryRun || this.#options.harness !== undefined
           ? {}
           : {
-              harnessConfigDigest: harnessConfigDigest(plan.harness),
+              harnessConfigDigest: harnessConfigDigest(selection),
               allowHarnessConfigChange: plan.allowHarnessConfigChange ?? false,
             }),
         ...(plan.killOrphans === undefined ? {} : { killOrphans: plan.killOrphans }),

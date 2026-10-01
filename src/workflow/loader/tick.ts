@@ -43,6 +43,14 @@ export interface TickWorkflowsPlan extends ExecutionPlan {
    * ends `incompatible` unless {@link TickWorkflowsPlan.allowHarnessConfigChange} is set.
    */
   readonly harness?: HarnessSelection;
+  /**
+   * For a run with a recorded launch policy, use its harness kind and fixtures, keeping the
+   * configuration of `harness`. Defaults to true when `harness` is omitted; the CLI sets it unless
+   * `--harness` was given. A run without a recorded policy keeps the older rule: `harness` (or the
+   * default) applies only to a run that last executed with the CLI harness, unless `harness` is
+   * explicit (`inheritHarness: false`).
+   */
+  readonly inheritHarness?: boolean;
   /** Accept a changed harness configuration for every run this tick resumes. */
   readonly allowHarnessConfigChange?: boolean;
 }
@@ -194,6 +202,29 @@ async function due(run: RunRecord, stateDir: string, now: number): Promise<boole
     }
   }
   return false;
+}
+
+/**
+ * The harness part of one run's resume plan. An injected live harness wins. An explicit selection
+ * applies to every run; otherwise a run with a recorded launch policy inherits it (keeping the
+ * tick's configuration), and an older run keeps the configuration rule for CLI runs only.
+ */
+function resumeHarness(
+  plan: TickWorkflowsPlan,
+  run: RunRecord,
+  injected: boolean,
+): { harness?: HarnessSelection; inheritHarness?: boolean } {
+  if (injected) return {};
+  const inherit = plan.inheritHarness ?? plan.harness === undefined;
+  if (!inherit && plan.harness) return { harness: plan.harness };
+  if (run.launch?.policy)
+    return {
+      ...(plan.harness === undefined ? {} : { harness: plan.harness }),
+      inheritHarness: true,
+    };
+  return run.harness?.kind === 'cli'
+    ? { harness: plan.harness ?? { kind: 'cli' as const, config: {} } }
+    : {};
 }
 
 /** Transfer the already-held writer to the runtime, releasing it exactly once on every path. */
@@ -441,11 +472,10 @@ export class TickWorkflowExecutor implements Executor<
                 kind: 'workflow.resume',
                 runId: id,
                 stateDir: plan.stateDir,
-                waitMode: 'suspend',
+                // Suspend for this execution only: blocking one run's waits would hold the batch.
+                waitModeOnce: 'suspend',
                 ...(plan.notifyCommand === undefined ? {} : { notifyCommand: plan.notifyCommand }),
-                ...(this.options.harness === undefined && run.harness?.kind === 'cli'
-                  ? { harness: plan.harness ?? { kind: 'cli' as const, config: {} } }
-                  : {}),
+                ...resumeHarness(plan, run, this.options.harness !== undefined),
                 ...(plan.allowHarnessConfigChange === undefined
                   ? {}
                   : { allowHarnessConfigChange: plan.allowHarnessConfigChange }),

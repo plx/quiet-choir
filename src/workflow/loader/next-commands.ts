@@ -1,4 +1,4 @@
-import { workflowArgv, type CommandLauncher } from '../runtime/commands.js';
+import { launchPolicyFlags, workflowArgv, type CommandLauncher } from '../runtime/commands.js';
 import type { CliErrorCode } from '../runtime/run-errors.js';
 import type { JsonValue } from '../runtime/model.js';
 import type { RunRecord } from '../runtime/store.js';
@@ -34,13 +34,23 @@ export function formatArgv(argv: readonly string[]): string {
     .join(' ');
 }
 
+/** A resume argv that repeats the run's recorded launch policy, when the record is known. */
 function resume(
   launcher: CommandLauncher | undefined,
+  run: RunRecord | null | undefined,
   runId: string,
   stateDir: string,
   ...flags: string[]
 ): string[] {
-  return workflowArgv(launcher, 'resume', runId, '--state-dir', stateDir, ...flags);
+  return workflowArgv(
+    launcher,
+    'resume',
+    runId,
+    '--state-dir',
+    stateDir,
+    ...flags,
+    ...launchPolicyFlags(run?.launch),
+  );
 }
 
 function fork(
@@ -65,7 +75,8 @@ function fork(
 /**
  * Follow-ups for a saved run in a given (possibly derived) status: resume a failed or stale run;
  * answer a suspended run's waiting questions (at most {@link maxAnswerEntries}), then resume it.
- * A run without a stored entrypoint (an embedded run) cannot be resumed by ID and gets none.
+ * A run without a stored entrypoint (an embedded run) cannot be resumed by ID and gets none. Resume
+ * entries repeat the run's recorded launch policy (fixture harness, block wait mode).
  * @internal
  */
 export function runNextCommands(
@@ -79,14 +90,14 @@ export function runNextCommands(
     return [
       {
         why: 'Resume the failed run; completed steps are reused and failed ones run again.',
-        argv: resume(launcher, run.id, stateDir),
+        argv: resume(launcher, run, run.id, stateDir),
       },
     ];
   if (status === 'stale')
     return [
       {
         why: 'The run is marked running but its owner is gone; resume recovers it.',
-        argv: resume(launcher, run.id, stateDir),
+        argv: resume(launcher, run, run.id, stateDir),
       },
     ];
   if (status !== 'suspended') return [];
@@ -112,7 +123,7 @@ export function runNextCommands(
       why: run.interruptedBy
         ? 'The run was interrupted into a resumable suspension; resume it.'
         : 'Resume once its waits are answered or due; an unanswered wait suspends it again.',
-      argv: resume(launcher, run.id, stateDir),
+      argv: resume(launcher, run, run.id, stateDir),
     },
   ];
 }
@@ -172,7 +183,7 @@ function incompatibleNext(
     return [
       {
         why: 'Resume with the entrypoint the run was launched from.',
-        argv: resume(launcher, runId, stateDir),
+        argv: resume(launcher, run, runId, stateDir),
       },
       ...(canFork
         ? [
@@ -195,7 +206,7 @@ function incompatibleNext(
     ? [
         {
           why: 'Only code or schemas changed; accept the change and resume (refused without changes if a completed step changed).',
-          argv: resume(launcher, runId, stateDir, '--accept-code-change'),
+          argv: resume(launcher, run, runId, stateDir, '--accept-code-change'),
         },
         ...forks,
       ]
@@ -239,7 +250,7 @@ export function failureNextCommands(context: FailureNextContext): NextCommand[] 
         ? [
             {
               why: 'Child processes of a dead owner survive; stop the identity-confirmed ones and resume.',
-              argv: resume(launcher, runId, stateDir, '--kill-orphans'),
+              argv: resume(launcher, run, runId, stateDir, '--kill-orphans'),
             },
           ]
         : [];
