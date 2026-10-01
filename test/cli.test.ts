@@ -22,6 +22,9 @@ import WorkflowPending from '../src/commands/workflow/pending.js';
 import WorkflowResume from '../src/commands/workflow/resume.js';
 import WorkflowTick from '../src/commands/workflow/tick.js';
 import WorkflowCheckResume from '../src/commands/workflow/check-resume.js';
+import WorkflowStart from '../src/commands/workflow/start.js';
+import { StartWorkflowExecutor } from '../src/workflow/loader/start.js';
+import { setSpawnLauncher } from '../src/cli/launcher.js';
 import { WorkflowExecutor } from '../src/workflow/loader/executor.js';
 import { TickWorkflowExecutor } from '../src/workflow/loader/tick.js';
 import type { TickWorkflowsResult } from '../src/workflow/loader/tick.js';
@@ -1209,5 +1212,165 @@ describe('tick command exit and error codes', () => {
     const json = await captureCommand(WorkflowTick, ['--state-dir', stateDir, '--json']);
     expect(json.error).toMatchObject({ oclif: { exit } });
     expect(JSON.parse(json.stdout)).toMatchObject({ ok: false, exitCode: exit, error: { code } });
+  });
+});
+
+describe('workflow start adapter', () => {
+  afterEach(() => {
+    setSpawnLauncher(undefined);
+  });
+  const launcher = ['/bin/node', '/checkout/bin/run.js'];
+  const started = (stateDir: string) => ({
+    kind: 'workflow.start.result' as const,
+    ok: true as const,
+    exitCode: 0 as const,
+    runId: 'x',
+    stateDir,
+    pid: 42,
+    status: 'running' as const,
+    log: `${stateDir}/x/launch/1.log`,
+    result: `${stateDir}/x/launch/1.result.json`,
+    next: [{ why: 'Inspect it.', argv: ['qc', 'workflow', 'inspect', 'x'] }],
+  });
+
+  it('builds the runner argv behind the spawn launcher and prints the started run', async () => {
+    const stateDir = await stateDirectory();
+    setSpawnLauncher(launcher);
+    const execute = vi
+      .spyOn(StartWorkflowExecutor.prototype, 'execute')
+      .mockResolvedValue(started(stateDir));
+    const output = await captureCommand(WorkflowStart, [
+      'wf.ts',
+      '--run-id',
+      'x',
+      '--state-dir',
+      stateDir,
+      '--provider-limit',
+      'codex=1',
+      '--start-timeout',
+      '5s',
+      '--kill-grace-ms',
+      '250',
+    ]);
+    expect(output.error).toBeUndefined();
+    expect(execute).toHaveBeenCalledWith({
+      kind: 'workflow.start',
+      runId: 'x',
+      stateDir,
+      cwd: process.cwd(),
+      argv: [
+        ...launcher,
+        'workflow',
+        'execute',
+        'wf.ts',
+        '--run-id',
+        'x',
+        '--state-dir',
+        stateDir,
+        '--provider-limit',
+        'codex=1',
+        '--kill-grace-ms',
+        '250',
+        '--json',
+      ],
+      timeoutMs: 5000,
+      killGraceMs: 250,
+    });
+    expect(output.stdout).toBe(
+      [
+        'Started run x (runner PID 42, status running).',
+        `Log: ${stateDir}/x/launch/1.log`,
+        `Result: ${stateDir}/x/launch/1.result.json`,
+        'Next: qc workflow inspect x  (Inspect it.)',
+      ].join('\n'),
+    );
+  });
+
+  it('generates a run ID, defaults the timeout and grace, and prints JSON', async () => {
+    const stateDir = await stateDirectory();
+    setSpawnLauncher(launcher);
+    const execute = vi
+      .spyOn(StartWorkflowExecutor.prototype, 'execute')
+      .mockResolvedValue(started(stateDir));
+    const output = await captureCommand(WorkflowStart, [
+      'wf.ts',
+      '--state-dir',
+      stateDir,
+      '--json',
+      '--kill-grace-ms',
+      '0',
+    ]);
+    expect(output.error).toBeUndefined();
+    const plan = execute.mock.calls[0]?.[0];
+    expect(plan?.runId).toMatch(/^[0-9a-f-]{36}$/u);
+    expect(plan?.argv.slice(-3)).toEqual(['--run-id', plan?.runId, '--json']);
+    expect(plan).toMatchObject({ timeoutMs: 60_000, killGraceMs: 3000 });
+    expect(JSON.parse(output.stdout)).toMatchObject({ kind: 'workflow.start.result', runId: 'x' });
+  });
+
+  it('propagates a runner failure with its launch evidence and no run ID', async () => {
+    const stateDir = await stateDirectory();
+    setSpawnLauncher(launcher);
+    const launch = {
+      runId: 'x',
+      pid: 42,
+      log: '/l',
+      result: '/r',
+      exitCode: 4,
+      signal: null,
+    };
+    vi.spyOn(StartWorkflowExecutor.prototype, 'execute').mockResolvedValue(
+      workflowFailure('load.typecheck', 'Workflow type check failed.', {
+        stateDir,
+        launch,
+        diagnostics: [
+          {
+            category: 'error',
+            code: 2322,
+            column: 7,
+            filePath: `${stateDir}/wf.ts`,
+            line: 2,
+            message: 'Nope.',
+            relatedInformation: [],
+          },
+        ],
+      }),
+    );
+    const output = await captureCommand(WorkflowStart, [
+      'wf.ts',
+      '--run-id',
+      'x',
+      '--state-dir',
+      stateDir,
+      '--json',
+    ]);
+    expect(output.error).toMatchObject({ oclif: { exit: 4 } });
+    expect(output.stderr).toContain('Log: /l');
+    expect(JSON.parse(output.stdout)).toMatchObject({
+      ok: false,
+      exitCode: 4,
+      error: { code: 'load.typecheck' },
+      runId: null,
+      launch,
+    });
+  });
+
+  it('refuses without a spawn launcher or with an invalid timeout, before executing', async () => {
+    const stateDir = await stateDirectory();
+    const execute = vi.spyOn(StartWorkflowExecutor.prototype, 'execute');
+    const missing = await captureCommand(WorkflowStart, ['wf.ts', '--state-dir', stateDir]);
+    expect(missing.error).toMatchObject({ code: 'usage.flag', oclif: { exit: 2 } });
+    setSpawnLauncher(launcher);
+    const timeout = await captureCommand(WorkflowStart, [
+      'wf.ts',
+      '--state-dir',
+      stateDir,
+      '--start-timeout',
+      '0s',
+    ]);
+    expect(timeout.error).toMatchObject({ code: 'usage.flag', oclif: { exit: 2 } });
+    const resume = await captureCommand(WorkflowStart, ['wf.ts', '--resume']);
+    expect(resume.error).toBeDefined();
+    expect(execute).not.toHaveBeenCalled();
   });
 });

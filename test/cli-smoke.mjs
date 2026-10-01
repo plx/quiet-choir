@@ -26,6 +26,7 @@ const expectedCommands = [
   'workflow:list-defs',
   'workflow:pending',
   'workflow:resume',
+  'workflow:start',
   'workflow:tick',
   'workflow:typecheck',
   'workflow:unlock',
