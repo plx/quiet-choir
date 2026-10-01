@@ -477,11 +477,44 @@ it('still closes loose and catchall objects in compat', () => {
     z.looseObject({ a: z.string() }),
     z.object({ a: z.string() }).catchall(z.unknown()),
     z.object({ a: z.string() }).catchall(z.object({ x: z.unknown() })),
+    // A meta id moves the discarded catchall value into `definitions`, which compat never sends.
+    z.object({ a: z.string() }).catchall(z.unknown().meta({ id: 'anything' })),
   ]) {
     const plan = prepareCodexSchema(jsonSchema(schema), 'compat');
     expect(plan.schema).toMatchObject({ additionalProperties: false });
     expect(checkCodexSchema(plan.schema)).toEqual([]);
   }
+});
+
+it('does not reject untyped or tuple nodes in definitions compat never sends', () => {
+  for (const loose of [{}, { type: 'array', items: [{ type: 'string' }] }]) {
+    const schema = {
+      type: 'object',
+      properties: {},
+      required: [],
+      additionalProperties: false,
+      $defs: { loose },
+    };
+    expect(checkCodexSchema(schema).map((issue) => issue.path)).toContain('$.$defs.loose');
+    expect(() => prepareCodexSchema(schema, 'compat')).not.toThrow();
+  }
+  const untypedDefinition = {
+    type: 'object',
+    properties: {},
+    required: [],
+    additionalProperties: false,
+    $defs: { loose: {} },
+  };
+  expect(() => prepareCodexSchema(untypedDefinition, 'strict')).toThrow('$.$defs.loose (untyped)');
+  // A reachable definition is still reported at its use site.
+  const reachable = {
+    type: 'object',
+    properties: { a: { $ref: '#/$defs/loose' } },
+    required: ['a'],
+    additionalProperties: false,
+    $defs: { loose: {} },
+  };
+  expect(() => prepareCodexSchema(reachable, 'compat')).toThrow('$.a (untyped)');
 });
 
 it('labels rejections with the active structuredOutput mode and drops compat-only hints', () => {

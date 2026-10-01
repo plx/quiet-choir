@@ -170,6 +170,11 @@ export interface CodexSchemaPlan {
 /** Rules compat cannot encode, so it rejects them against the original schema's paths. */
 const compatRejectedRules = ['tuple', 'untyped'];
 
+/** Whether a reported path goes through a `$defs`/`definitions` container (see `propertyPath`). */
+function isDefinitionPath(path: string): boolean {
+  return /\.(?:\$defs|definitions)(?:\.|\[|$)/u.test(path);
+}
+
 function reject(issues: readonly SchemaIssue[], mode: 'strict' | 'compat'): void {
   if (!issues.length) return;
   // In compat mode, `structuredOutput: "compat"` is already in effect, so hints that suggest
@@ -214,8 +219,13 @@ export function prepareCodexSchema(schema: JsonValue, mode: 'strict' | 'compat')
     reject(checkCodexSchema(schema), 'strict');
     return { schema, decode: (text) => text };
   }
+  // Compat only sends the definitions reachable from the root, so an issue inside a definitions
+  // container is not sent (compat closes a catchall object and drops its `$defs` value schema, for
+  // example). A reachable definition is still reported at its use site, so skip the container paths.
   reject(
-    checkCodexSchema(schema).filter((issue) => compatRejectedRules.includes(issue.rule)),
+    checkCodexSchema(schema).filter(
+      (issue) => compatRejectedRules.includes(issue.rule) && !isDefinitionPath(issue.path),
+    ),
     'compat',
   );
   const definitions: Schema = {};
