@@ -33,11 +33,17 @@ the declared tree permits version/schema checks before replay skips it. Dynamic 
 remain supported outside settled maps. As with the root, library callers must supply an appropriate
 code fingerprint or bump versions for semantic body/dependency changes; the CLI hashes local source.
 
-A child failure is catchable, and its frame remains failed even if the parent completes. Completed
-leaf effects survive. An ordinary caught child failure is retried by replaying its body; use settled
-effects/maps when the fallback decision itself must be durable. Infrastructure and unobserved
-operation failures retain the runtime's existing fatal rules. A child question can suspend the whole
-run at quiescence, then resume under the same frame after an answer arrives.
+A child failure is catchable, and its frame remains failed even if the parent completes. When a
+resumed body no longer invokes a frame that is still running, parked, failed or cancelled, a
+successful completion marks it `superseded` (terminal; `finishedAt` is the supersession time and the
+earlier `error` is kept). A skipped frame that holds a completed or settled-failed step, or a
+completed frame, still fails the run as a control-flow change. A frame that the completing body
+invoked but never awaited is `cancelled` instead. If a fixed child's frame failed, keep its name,
+version, input and schemas and resume with `--accept-code-change`; changing them is refused.
+Completed leaf effects survive. An ordinary caught child failure is retried by replaying its body;
+use settled effects/maps when the fallback decision itself must be durable. Infrastructure and
+unobserved operation failures retain the runtime's existing fatal rules. A child question can
+suspend the whole run at quiescence, then resume under the same frame after an answer arrives.
 
 `RunOptions.maxChildDepth` defaults to 8, with root depth zero. `--max-child-depth N` on execute or
 resume sets the sticky guard; zero prohibits child entry. Recursion is allowed and counts toward the
@@ -59,8 +65,9 @@ pass through role mappings, and child call limits are bounded by the delegated p
 profile definitions remain the source of its requested tools; mapping never promotes it to
 additional parent tools. Workflow JavaScript remains trusted operator code, not a security sandbox.
 
-Events carry `frame`; `child.started`, `child.completed` and `child.failed` follow frame saves.
-Phase/log observations retain their frame, and imperative phase updates stay local to each child.
+Events carry `frame`; `child.started`, `child.completed` and `child.failed` follow frame saves, and
+`child.superseded` follows `run.completed` for each frame the completed run retired. Phase/log
+observations retain their frame, and imperative phase updates stay local to each child.
 `inspect --json` includes the raw `children` ledger. Text inspection and compact JSON show the tree
 with status, step counts, reported usage, unknown costs and phases. Frame totals include
 descendants, so do not add every row together. Child records use individual journal changes rather

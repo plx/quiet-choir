@@ -2,6 +2,20 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- Child frames (behaviour change; no identity change): a successful completion now marks every child
+  frame it never reached that is still `running`, `suspended`, `failed` or `cancelled` with the new
+  terminal status `superseded`, like unvisited unfinished steps. `finishedAt` is the supersession
+  time and an earlier `error` is kept (a frame without one gets a supersession note). Before, such a
+  frame kept its stale `failed`/`cancelled` status, or was marked `cancelled` with "Root workflow
+  completed without awaiting this child frame." although the body never invoked it. That
+  cancellation now applies only to frames the completing execution invoked but did not await. A new
+  `child.superseded` event follows `run.completed` for each retired frame, and `inspect` shows the
+  status in the workflow tree. Skipped frames that hold a completed step, and skipped completed
+  frames, still fail the run unchanged. Supersession happens last and is undone if the completion
+  checkpoint fails. A resume that changes the identity of a failed, cancelled or superseded frame is
+  still refused, and the message now says to keep the identity and resume with
+  `--accept-code-change`. Storage stays format 7; an older build cannot read a record that contains
+  a superseded frame.
 - Fixture export (fix; no identity change): `workflow fixtures` now exports settled agent failures
   (`onError: 'return'`) as `error` rules, interleaved with the completed outputs in execution order,
   instead of dropping them, so replaying an exported run no longer fails with
