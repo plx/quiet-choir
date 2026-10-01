@@ -20,11 +20,21 @@ const report = {
   cases: [],
 };
 
-async function execute(provider, name, options = {}, tool) {
+const markers = {
+  userAgents: 'USER_AGENTS_MARKER',
+  projectAgents: 'PROJECT_AGENTS_MARKER',
+  userSkill: 'USER_SKILL_MARKER',
+};
+
+// extras.prepare({ home, project, config }) adjusts the Codex instruction layout; extras.subdir
+// runs the call from a directory below the project.
+async function execute(provider, name, options = {}, tool, extras = {}) {
   const home = join(root, name),
-    cwd = join(home, 'project'),
+    project = join(home, 'project'),
+    cwd = extras.subdir ? join(project, extras.subdir) : project,
     config = join(home, 'config');
-  await mkdir(join(cwd, '.claude'), { recursive: true });
+  await mkdir(join(project, '.claude'), { recursive: true });
+  await mkdir(cwd, { recursive: true });
   await mkdir(config);
   const events = join(home, 'hooks.txt');
   const hook = join(home, 'hook.mjs');
@@ -50,8 +60,20 @@ async function execute(provider, name, options = {}, tool) {
   const projectSettings = JSON.stringify({
     hooks: { SessionStart: hookDefinition('project'), UserPromptSubmit: hookDefinition('prompt') },
   });
-  await writeFile(join(cwd, '.claude', 'settings.json'), projectSettings);
-  await writeFile(join(cwd, 'CLAUDE.md'), 'PROJECT_INSTRUCTIONS_MARKER');
+  await writeFile(join(project, '.claude', 'settings.json'), projectSettings);
+  await writeFile(join(project, 'CLAUDE.md'), 'PROJECT_INSTRUCTIONS_MARKER');
+  if (provider === 'codex') {
+    // Codex instruction canaries: user-level AGENTS.md and skill, and a project AGENTS.md. With no
+    // .git entry above the project, Codex reads the working directory only.
+    await writeFile(join(config, 'AGENTS.md'), markers.userAgents);
+    await mkdir(join(config, 'skills', 'canary'), { recursive: true });
+    await writeFile(
+      join(config, 'skills', 'canary', 'SKILL.md'),
+      `---\nname: canary\ndescription: ${markers.userSkill}\n---\nCanary skill body.\n`,
+    );
+    await writeFile(join(project, 'AGENTS.md'), markers.projectAgents);
+    await extras.prepare?.({ home, project, config });
+  }
   const outside = join(home, 'outside');
   await mkdir(outside);
   await writeFile(join(outside, 'file.txt'), 'OUTSIDE_CONTENT_MARKER');
@@ -188,7 +210,7 @@ async function execute(provider, name, options = {}, tool) {
       if (error.code !== 'ENOENT') throw error;
       return '';
     });
-    const savedSettings = await readFile(join(cwd, '.claude', 'settings.json'), 'utf8');
+    const savedSettings = await readFile(join(project, '.claude', 'settings.json'), 'utf8');
     return {
       init,
       hooks,
@@ -288,12 +310,49 @@ try {
     });
   }
   if (providers.includes('codex')) {
+    const reached = (run, marker) => JSON.stringify(run.bodies).includes(marker);
     const codex = await execute('codex', 'codex-restricted');
+    // Recorded, not asserted: a change in Codex's native instruction loading shows up as a
+    // fixture diff, and quiet-choir's metadata warning and doctor text describe these results.
     report.cases.push({
       name: 'codex-restricted',
       version: codex.version,
       inheritedProviderIgnored: true,
       explicitProviderReachedLocalApi: codex.apiCalls > 0,
+      userInstructionsReachedRequest: reached(codex, markers.userAgents),
+      projectInstructionsReachedRequest: reached(codex, markers.projectAgents),
+      userSkillReachedRequest: reached(codex, markers.userSkill),
+    });
+    // Per-directory override precedence, and project discovery from a .git root down to cwd.
+    const overrides = await execute('codex', 'codex-restricted-layout', {}, undefined, {
+      subdir: 'pkg',
+      prepare: async ({ project, config }) => {
+        await mkdir(join(project, '.git'));
+        await writeFile(join(project, 'pkg', 'AGENTS.md'), 'PKG_AGENTS_MARKER');
+        await writeFile(join(project, 'AGENTS.override.md'), 'PROJECT_OVERRIDE_MARKER');
+        await writeFile(join(config, 'AGENTS.override.md'), 'USER_OVERRIDE_MARKER');
+      },
+    });
+    report.cases.push({
+      name: 'codex-restricted-layout',
+      version: overrides.version,
+      userOverrideReachedRequest: reached(overrides, 'USER_OVERRIDE_MARKER'),
+      userAgentsReplacedByOverride: !reached(overrides, markers.userAgents),
+      projectOverrideReachedRequest: reached(overrides, 'PROJECT_OVERRIDE_MARKER'),
+      projectAgentsReplacedByOverride: !reached(overrides, markers.projectAgents),
+      gitRootToCwdReachedRequest: reached(overrides, 'PKG_AGENTS_MARKER'),
+    });
+    const empty = await execute('codex', 'codex-restricted-empty-override', {}, undefined, {
+      prepare: async ({ project, config }) => {
+        await writeFile(join(config, 'AGENTS.override.md'), '');
+        await writeFile(join(project, 'AGENTS.override.md'), '');
+      },
+    });
+    report.cases.push({
+      name: 'codex-restricted-empty-override',
+      version: empty.version,
+      userAgentsReachedRequest: reached(empty, markers.userAgents),
+      projectAgentsReachedRequest: reached(empty, markers.projectAgents),
     });
   }
   console.log(JSON.stringify(report, null, 2));

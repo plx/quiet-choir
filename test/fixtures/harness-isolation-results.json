@@ -1,10 +1,10 @@
 {
-  "capturedAt": "2026-09-27T11:02:12.811Z",
+  "capturedAt": "2026-10-01T01:46:49.404Z",
   "transport": "local fake APIs and dummy keys; no inference",
   "cases": [
     {
       "name": "claude-restricted",
-      "version": "2.1.283 (Claude Code)",
+      "version": "2.1.286 (Claude Code)",
       "inheritedHooksExecuted": true,
       "restrictedHooksExecuted": false,
       "projectInstructionsExcluded": true,
@@ -30,7 +30,25 @@
       "name": "codex-restricted",
       "version": "codex-cli 0.157.1",
       "inheritedProviderIgnored": true,
-      "explicitProviderReachedLocalApi": true
+      "explicitProviderReachedLocalApi": true,
+      "userInstructionsReachedRequest": true,
+      "projectInstructionsReachedRequest": true,
+      "userSkillReachedRequest": true
+    },
+    {
+      "name": "codex-restricted-layout",
+      "version": "codex-cli 0.157.1",
+      "userOverrideReachedRequest": true,
+      "userAgentsReplacedByOverride": true,
+      "projectOverrideReachedRequest": true,
+      "projectAgentsReplacedByOverride": true,
+      "gitRootToCwdReachedRequest": true
+    },
+    {
+      "name": "codex-restricted-empty-override",
+      "version": "codex-cli 0.157.1",
+      "userAgentsReachedRequest": true,
+      "projectAgentsReachedRequest": false
     }
   ],
   "oauthEvidence": {

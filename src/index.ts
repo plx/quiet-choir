@@ -60,6 +60,7 @@ export type {
   EffectResult,
   Effort,
   HarnessMetadata,
+  InstructionSource,
   ImageAttachment,
   AgentOptions,
   ClaudeOptions,

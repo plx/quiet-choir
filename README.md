@@ -514,11 +514,12 @@ defaults. [Harness controls](docs/harness-controls.md) describes role prompts, a
 profiles/config, directories, image attachments and the fingerprinted `extraArgs`/`env` escape
 hatch. `configuration doctor --json` verifies installed CLI contracts with zero-inference rejection
 probes and reports inherited Codex defaults. Run metadata captures native CLI versions on first live
-use; a resume version change warns without invalidating completed work. Native output is parsed
-incrementally: `--progress` prints bounded activity to stderr and early session IDs are saved while
-the child runs. Independent CLI-settable caps bound retained protocol data, raw streams (1 GiB), and
-private per-attempt transcripts (64 MiB). Use `--transcripts on-failure` or `off` to change
-retention. Failed attempts preserve available response/usage/schema evidence. See
+use, plus the instruction files Codex loads in every mode (paths and digests); a resume version
+change warns without invalidating completed work. Native output is parsed incrementally:
+`--progress` prints bounded activity to stderr and early session IDs are saved while the child runs.
+Independent CLI-settable caps bound retained protocol data, raw streams (1 GiB), and private
+per-attempt transcripts (64 MiB). Use `--transcripts on-failure` or `off` to change retention.
+Failed attempts preserve available response/usage/schema evidence. See
 [agent streaming](docs/agent-streaming.md) for flags, transcript decoding, and upgrade
 compatibility. A stopped call may already have edited files.
 

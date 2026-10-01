@@ -24,7 +24,7 @@
   ],
   "apiSnapshot": {
     "package": "quiet-choir 0.0.0",
-    "sha256": "f1c298088bd85971bd5751a7206ffd69fbb51005912c05020b7f7958b788a381",
+    "sha256": "71c0960e1f99c696b4a0c722ceeaa40b2894bca2e9e7c3b28aab8bc70eff646a",
     "file": "src/workflow/runtime/model.ts",
     "description": "Validated against the quiet-choir API whose model file has this hash: typed harness registry, inline children, durable commands/files, worktrees, questions, settled maps and usage gates, plus the #65 recovery for owned interrupted worktree registrations. Both batches compile under the root strict settings; Batch 01 has 70 baseline fixtures and Batch 02 owns active primitive acceptance with a paired F1–F5 matrix. This model-file hash is provenance for that file, not the entire runtime; tests use the built checkout. Storage format 7 retains replay contract 6."
   }

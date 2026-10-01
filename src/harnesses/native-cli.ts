@@ -20,6 +20,11 @@ import { invocationRequest, materializeInvocation, planInvocation } from './invo
 import type { CliArgumentPlan } from './invocation.js';
 import { HarnessStream } from './stream.js';
 import {
+  codexHomeOf,
+  codexInstructionWarning,
+  detectCodexInstructionSources,
+} from './codex-instructions.js';
+import {
   childEnvironment,
   validateScrubEnvironment,
   type ScrubEnvironment,
@@ -190,6 +195,24 @@ export class NativeCliHarness implements Harness {
         ? (this.options.claudeBinary ?? 'claude')
         : (this.options.codexBinary ?? 'codex');
     const environment = childEnvironment(request.options.env, this.options.scrubEnv);
+    // Codex loads these files in every isolation mode, so detection never depends on it.
+    const instructions =
+      request.harness === 'codex'
+        ? await detectCodexInstructionSources({
+            codexHome: codexHomeOf(environment.env),
+            cwd: request.cwd,
+            signal,
+          })
+        : undefined;
+    const instructionWarning = instructions && codexInstructionWarning(instructions);
+    const instructionFields = (warnings: readonly string[]): Partial<HarnessMetadata> => {
+      const all = [...warnings, ...(instructionWarning ? [instructionWarning] : [])];
+      if (instructions) all.push(...instructions.warnings);
+      return {
+        ...(all.length ? { warnings: all } : {}),
+        ...(instructions ? { instructionSources: instructions.sources } : {}),
+      };
+    };
     try {
       const result = await runProcess({
         binary,
@@ -217,7 +240,7 @@ export class NativeCliHarness implements Harness {
         binary,
         version: version ?? null,
         environment: environment.summary,
-        ...(warnings.length ? { warnings } : {}),
+        ...instructionFields(warnings),
       };
     } catch (error) {
       signal.throwIfAborted();
@@ -225,9 +248,9 @@ export class NativeCliHarness implements Harness {
         binary,
         version: null,
         environment: environment.summary,
-        warnings: [
+        ...instructionFields([
           `${binary} version discovery failed: ${error instanceof Error ? error.message : String(error)}`,
-        ],
+        ]),
       };
     }
   }

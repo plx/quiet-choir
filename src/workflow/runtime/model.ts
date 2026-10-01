@@ -101,6 +101,18 @@ export type EffectResult<T, TMode extends ErrorMode> = TMode extends 'return' ? 
 /** Effort levels supported by both harnesses; model support can differ. */
 export type Effort = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 
+/** A native instruction file a harness loads on its own, recorded as a path and digest, never contents. */
+export interface InstructionSource {
+  /** User-level files depend on who runs the workflow; project files belong to the checkout. */
+  readonly scope: 'user' | 'project';
+  /** Plain AGENTS.md, an AGENTS.override.md that replaces it in its directory, or a skill description file. */
+  readonly kind: 'agents' | 'agents-override' | 'skill';
+  /** Absolute path of the file. */
+  readonly path: string;
+  /** SHA-256 hex digest of the file bytes. */
+  readonly sha256: string;
+}
+
 /** Native harness installation captured for diagnostics, outside semantic identity. */
 export interface HarnessMetadata {
   /** Parent variable names and scrubbed host-session names, never values. */
@@ -111,6 +123,8 @@ export interface HarnessMetadata {
   readonly version: string | null;
   /** Nonfatal discovery diagnostics. */
   readonly warnings?: readonly string[];
+  /** Native instruction files the harness loads whatever the isolation mode, as paths and digests. */
+  readonly instructionSources?: readonly InstructionSource[];
 }
 
 /** An immutable image snapshot; adapters must use these bytes when provided. */
