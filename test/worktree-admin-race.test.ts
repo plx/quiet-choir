@@ -35,7 +35,8 @@ afterEach(async () => {
 const children = 4;
 const cycles = 8;
 
-// measured: TODO
+// measured: 2.7 s alone, 9.3 s in the full coverage run on a loaded machine (four tsx child
+// startups and 96 serialized Git commands dominate).
 it(
   'serializes real worktree add, list and remove across racing processes',
   { timeout: 30_000 },
