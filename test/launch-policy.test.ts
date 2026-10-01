@@ -161,8 +161,8 @@ const policyOf = (path: string, text: string, waitMode: 'suspend' | 'block'): La
 });
 
 // Each test type-checks and imports a temporary workflow module several times through tsImport.
-// measured: 1.1-2.4 s alone per test; tsImport compiles dominate, as in the loader suites.
-describe('sticky launch policy', { timeout: 30_000 }, () => {
+// measured: 0.3-1.1 s alone, 1.1-5.4 s in the full coverage run (dominated by tsImport compiles).
+describe('sticky launch policy', { timeout: 20_000 }, () => {
   it('keeps --harness fixture and --wait-mode block across an interruption, a tick and a plain resume', async () => {
     const f = await setup();
     const path = join(f.root, 'f.json');
