@@ -178,6 +178,22 @@
         "mode": "compat",
         "status": "schema-accepted",
         "code": 1
+      },
+      {
+        "name": "unknown-property",
+        "mode": "strict",
+        "status": "schema-rejected",
+        "code": 1,
+        "version": "codex-cli 0.157.1",
+        "date": "2026-10-01T09:29:03.918Z"
+      },
+      {
+        "name": "unknown-record-value",
+        "mode": "strict",
+        "status": "schema-rejected",
+        "code": 1,
+        "version": "codex-cli 0.157.1",
+        "date": "2026-10-01T09:29:03.918Z"
       }
     ]
   },
