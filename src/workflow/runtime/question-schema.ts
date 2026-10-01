@@ -47,6 +47,36 @@ export const workflowLaunchSchema = z.object({
   entrypoint: z.string().refine(isAbsolute),
   tsconfig: z.string().refine(isAbsolute).nullable(),
   sources: z.record(z.string().refine(isAbsolute), z.string().regex(/^[a-f0-9]{64}$/u)).optional(),
+  policy: z
+    .object({
+      harness: z
+        .object({
+          kind: z.enum(['cli', 'fixture']),
+          fixtures: z
+            .array(
+              z
+                .object({
+                  name: z
+                    .string()
+                    .regex(/^[a-z][a-z0-9-]{0,31}$/u)
+                    .optional(),
+                  path: z.string().refine(isAbsolute),
+                  sha256: z.string().regex(/^[a-f0-9]{64}$/u),
+                })
+                .strict(),
+            )
+            .optional(),
+        })
+        .strict()
+        .refine(({ kind, fixtures = [] }) => {
+          const names = fixtures.flatMap(({ name }) => (name === undefined ? [] : [name]));
+          const global = fixtures.length - names.length;
+          return new Set(names).size === names.length && global === (kind === 'fixture' ? 1 : 0);
+        }, 'A launch policy has one unnamed fixture exactly for kind fixture, and unique names.'),
+      waitMode: z.enum(['suspend', 'block']),
+    })
+    .strict()
+    .optional(),
 });
 
 /** Validate and snapshot every question identity component. @internal */

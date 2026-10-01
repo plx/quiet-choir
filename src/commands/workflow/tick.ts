@@ -28,6 +28,7 @@ interface TickFlags {
   readonly timeout: string;
   readonly 'claim-margin': string | undefined;
   readonly 'max-runs': number | undefined;
+  readonly harness: string[] | undefined;
   readonly 'harness-config': string | undefined;
   readonly 'allow-harness-config-change': boolean | undefined;
   readonly json: boolean | undefined;
@@ -59,6 +60,11 @@ export default class WorkflowTick extends WorkflowCommand {
     'max-runs': Flags.integer({
       description: 'Maximum resume attempts in this invocation',
       min: 1,
+    }),
+    harness: Flags.string({
+      description:
+        "cli, fixture:<file>, or name=fixture:<file> for every resumed run; repeatable. Omitted uses each run's recorded selection",
+      multiple: true,
     }),
     'harness-config': Flags.string({
       description:
@@ -95,9 +101,13 @@ export default class WorkflowTick extends WorkflowCommand {
         '--claim-margin must be a duration such as 30s or 0ms, smaller than --timeout.',
       );
     let harness: HarnessSelection | undefined;
-    if (flags['harness-config'] !== undefined) {
+    if (flags.harness !== undefined || flags['harness-config'] !== undefined) {
       try {
-        harness = await readHarnessSelection('cli', flags['harness-config'], process.cwd());
+        harness = await readHarnessSelection(
+          flags.harness ?? 'cli',
+          flags['harness-config'],
+          process.cwd(),
+        );
       } catch (error) {
         this.fail('usage.flag', error instanceof Error ? error.message : String(error));
       }
@@ -114,6 +124,7 @@ export default class WorkflowTick extends WorkflowCommand {
       ...(flags.run === undefined ? {} : { runId: flags.run }),
       ...(flags['max-runs'] === undefined ? {} : { maxRuns: flags['max-runs'] }),
       ...(harness === undefined ? {} : { harness }),
+      inheritHarness: flags.harness === undefined,
       ...(flags['allow-harness-config-change'] === undefined
         ? {}
         : { allowHarnessConfigChange: flags['allow-harness-config-change'] }),

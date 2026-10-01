@@ -114,7 +114,7 @@ import { z } from 'zod';
 
 import { CheckpointError, checkpointError, errorCode, withCheckpointErrors } from './checkpoint.js';
 import { resolveStateDir } from './paths.js';
-import { workflowArgv, type CommandLauncher } from './commands.js';
+import { launchPolicyFlags, workflowArgv, type CommandLauncher } from './commands.js';
 import {
   agentIdentity,
   stepIdentity,
@@ -3043,7 +3043,14 @@ export async function runWorkflow<
             output: null,
             pending: await pendingOperations(record, stateDir, options.commandLauncher),
             resumeCommand: record.launch
-              ? workflowArgv(options.commandLauncher, 'resume', record.id, '--state-dir', stateDir)
+              ? workflowArgv(
+                  options.commandLauncher,
+                  'resume',
+                  record.id,
+                  '--state-dir',
+                  stateDir,
+                  ...launchPolicyFlags(record.launch),
+                )
               : null,
           };
         }

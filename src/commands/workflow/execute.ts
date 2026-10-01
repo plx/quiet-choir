@@ -38,7 +38,7 @@ interface WorkflowExecuteFlags {
   readonly 'max-transcript-bytes': string | undefined;
   readonly 'notify-command': string | undefined;
   readonly 'wait-mode': 'suspend' | 'block' | undefined;
-  readonly harness: string[];
+  readonly harness: string[] | undefined;
   readonly 'harness-config': string | undefined;
   readonly 'dry-run': boolean | undefined;
   readonly 'stub-steps': string[] | undefined;
@@ -106,12 +106,13 @@ export default class WorkflowExecute extends WorkflowCommand {
     }),
 
     'wait-mode': Flags.option({ options: ['suspend', 'block'] as const })({
-      description: 'Suspend long waits (default) or keep waiting in this process',
+      description:
+        'Suspend long waits (default) or keep waiting in this process; saved, and reused by a resume without it',
     }),
     harness: Flags.string({
-      description: 'cli, fixture:<file>, or name=fixture:<file>; repeatable',
+      description:
+        "cli (default), fixture:<file>, or name=fixture:<file>; repeatable. Saved; --resume without it reuses the run's selection",
       multiple: true,
-      default: ['cli'],
     }),
     'harness-config': Flags.string({
       env: 'QUIET_CHOIR_HARNESS_CONFIG',
@@ -245,7 +246,7 @@ export default class WorkflowExecute extends WorkflowCommand {
       )
         throw new Error('--kill-grace-ms must be an integer from 1 to 2147483647.');
       harness = await readHarnessSelection(
-        flags.harness,
+        flags.harness ?? 'cli',
         flags['harness-config'],
         process.cwd(),
         flags['kill-grace-ms'] === undefined ? undefined : killGraceMs,
@@ -321,6 +322,7 @@ export default class WorkflowExecute extends WorkflowCommand {
       ...(flags['notify-command'] === undefined ? {} : { notifyCommand: flags['notify-command'] }),
       ...(flags['wait-mode'] === undefined ? {} : { waitMode: flags['wait-mode'] }),
       harness,
+      ...(flags.resume ? { inheritHarness: flags.harness === undefined } : {}),
       dryRun: flags['dry-run'] ?? false,
       stubSteps: flags['stub-steps'] ?? [],
       allowHarnessChange: flags['allow-harness-change'] ?? false,

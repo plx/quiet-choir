@@ -28,7 +28,7 @@ export default class WorkflowResume extends WorkflowCommand {
     readonly 'allow-harness-change': boolean | undefined;
     readonly 'allow-harness-config-change': boolean | undefined;
     readonly 'kill-orphans': boolean | undefined;
-    readonly harness: string[];
+    readonly harness: string[] | undefined;
     readonly 'harness-config': string | undefined;
     readonly 'notify-command': string | undefined;
     readonly 'wait-mode': 'suspend' | 'block' | undefined;
@@ -45,7 +45,8 @@ export default class WorkflowResume extends WorkflowCommand {
     }),
 
     'wait-mode': Flags.option({ options: ['suspend', 'block'] as const })({
-      description: 'Suspend long waits (default) or keep waiting in this process',
+      description:
+        'Suspend long waits or keep waiting in this process; omitted uses the mode the run last executed with (default suspend)',
     }),
     'state-dir': Flags.directory({
       description:
@@ -71,9 +72,9 @@ export default class WorkflowResume extends WorkflowCommand {
       description: 'Recover identity-confirmed orphan children before resuming',
     }),
     harness: Flags.string({
-      description: 'cli, fixture:<file>, or name=fixture:<file>; repeatable',
+      description:
+        'cli, fixture:<file>, or name=fixture:<file>; repeatable. Omitted uses the selection the run last executed with (default cli)',
       multiple: true,
-      default: ['cli'],
     }),
     'harness-config': Flags.string({
       env: 'QUIET_CHOIR_HARNESS_CONFIG',
@@ -94,7 +95,11 @@ export default class WorkflowResume extends WorkflowCommand {
     let harness: HarnessSelection;
     try {
       runBudget = parseRunBudget(flags['max-run-cost-usd'], flags['max-run-agent-attempts']);
-      harness = await readHarnessSelection(flags.harness, flags['harness-config'], process.cwd());
+      harness = await readHarnessSelection(
+        flags.harness ?? 'cli',
+        flags['harness-config'],
+        process.cwd(),
+      );
     } catch (error) {
       this.fail('usage.flag', error instanceof Error ? error.message : String(error));
     }
@@ -115,6 +120,7 @@ export default class WorkflowResume extends WorkflowCommand {
       runId: args.runId,
       stateDir: stateDir,
       harness,
+      inheritHarness: flags.harness === undefined,
       acceptCodeChange: flags['accept-code-change'] ?? false,
       allowHarnessChange: flags['allow-harness-change'] ?? false,
       allowHarnessConfigChange: flags['allow-harness-config-change'] ?? false,

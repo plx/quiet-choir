@@ -23,8 +23,9 @@ export default class WorkflowAnswer extends WorkflowCommand {
     readonly by: string | undefined;
     readonly resume: boolean | undefined;
     readonly full: boolean | undefined;
-    readonly harness: string;
+    readonly harness: string | undefined;
     readonly 'harness-config': string | undefined;
+    readonly 'wait-mode': 'suspend' | 'block' | undefined;
     readonly 'allow-harness-config-change': boolean | undefined;
   }> = {
     'state-dir': Flags.directory({
@@ -43,8 +44,8 @@ export default class WorkflowAnswer extends WorkflowCommand {
         'Print the full run record: the success document with --resume, and run in suspension and failure documents',
     }),
     harness: Flags.string({
-      description: 'Harness for --resume: cli or fixture:<JSON file>',
-      default: 'cli',
+      description:
+        'Harness for --resume: cli or fixture:<JSON file>; omitted uses the selection the run last executed with',
     }),
     'harness-config': Flags.string({
       description: 'Harness configuration for --resume',
@@ -52,6 +53,11 @@ export default class WorkflowAnswer extends WorkflowCommand {
     }),
     'allow-harness-config-change': Flags.boolean({
       description: 'Accept a --harness-config different from the one the run last executed with',
+      dependsOn: ['resume'],
+    }),
+    'wait-mode': Flags.option({ options: ['suspend', 'block'] as const })({
+      description:
+        'Wait mode for --resume; omitted uses the mode the run last executed with (default suspend)',
       dependsOn: ['resume'],
     }),
   };
@@ -73,7 +79,11 @@ export default class WorkflowAnswer extends WorkflowCommand {
     let harness: HarnessSelection | undefined;
     if (flags.resume) {
       try {
-        harness = await readHarnessSelection(flags.harness, flags['harness-config'], process.cwd());
+        harness = await readHarnessSelection(
+          flags.harness ?? 'cli',
+          flags['harness-config'],
+          process.cwd(),
+        );
       } catch (error) {
         this.fail('usage.flag', error instanceof Error ? error.message : String(error));
       }
@@ -92,7 +102,8 @@ export default class WorkflowAnswer extends WorkflowCommand {
       stateDir: stateDir,
       resume: flags.resume ?? false,
       ...(flags.by === undefined ? {} : { by: flags.by }),
-      ...(harness === undefined ? {} : { harness }),
+      ...(harness === undefined ? {} : { harness, inheritHarness: flags.harness === undefined }),
+      ...(flags['wait-mode'] === undefined ? {} : { waitMode: flags['wait-mode'] }),
       ...(flags['allow-harness-config-change'] === undefined
         ? {}
         : { allowHarnessConfigChange: flags['allow-harness-config-change'] }),

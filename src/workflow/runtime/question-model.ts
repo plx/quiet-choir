@@ -116,4 +116,34 @@ export interface WorkflowLaunch {
   readonly tsconfig: string | null;
   /** Absolute source paths mapped to their SHA-256 hashes, for code-free drift checks. */
   readonly sources?: Readonly<Record<string, string>>;
+  /**
+   * Non-secret launch policy of the latest CLI execution, which a resume by ID without explicit
+   * flags inherits. Absent in older checkpoints and in launches an embedder supplies.
+   */
+  readonly policy?: LaunchPolicy;
+}
+
+/**
+ * The CLI's harness selection and wait mode, replaced on every execution and outside step identity.
+ * It never holds CLI harness configuration values (only their digest is recorded, on
+ * `RunRecord.harness.configDigest`).
+ */
+export interface LaunchPolicy {
+  /** Global harness kind and the fixture files the selection read. */
+  readonly harness: {
+    /** `cli` for the native CLIs, or `fixture` when a global fixture file answers agent calls. */
+    readonly kind: 'cli' | 'fixture';
+    /**
+     * Fixture files by absolute path with the SHA-256 of their bytes. An entry without a name is the
+     * global fixture, present exactly when `kind` is `fixture`; a named entry selects
+     * `name=fixture:<file>`.
+     */
+    readonly fixtures?: readonly {
+      readonly name?: string;
+      readonly path: string;
+      readonly sha256: string;
+    }[];
+  };
+  /** Whether long waits suspend the run or keep waiting in the process. */
+  readonly waitMode: 'suspend' | 'block';
 }

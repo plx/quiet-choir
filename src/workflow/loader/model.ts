@@ -56,7 +56,18 @@ export interface ExecuteWorkflowPlan extends ExecutionPlan {
   readonly agentLimits?: AgentLimits;
   readonly killOrphans?: boolean;
   readonly killGraceMs?: number;
+  /** Sticky wait mode; on resume, omitted means the run's recorded one (`suspend` without one). */
   readonly waitMode?: 'suspend' | 'block';
+  /**
+   * The wait mode of this execution only: it overrides `waitMode` without replacing the recorded
+   * one. Tick resumes every run with `suspend` this way.
+   */
+  readonly waitModeOnce?: 'suspend' | 'block';
+  /**
+   * On resume, replace the kind and fixtures of `harness` with the run's recorded launch policy,
+   * keeping its configuration. The CLI sets it when no `--harness` flag was given.
+   */
+  readonly inheritHarness?: boolean;
   readonly notifyCommand?: string;
   readonly typecheck: TypecheckPlan;
   readonly runId: string;
@@ -92,6 +103,10 @@ export interface AnswerWorkflowPlan extends ExecutionPlan {
   readonly by?: string;
   readonly resume?: boolean;
   readonly harness?: HarnessSelection;
+  /** For `resume`: use the run's recorded harness kind and fixtures, as on `workflow.resume`. */
+  readonly inheritHarness?: boolean;
+  /** For `resume`: the wait mode; omitted means the run's recorded one. */
+  readonly waitMode?: 'suspend' | 'block';
   /** For `resume`: accept a harness configuration different from the run's recorded one. */
   readonly allowHarnessConfigChange?: boolean;
 }
