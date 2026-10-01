@@ -40,11 +40,12 @@ protocol error, timeout, cancellation, or rejected local output. Without a termi
 the entry remains unknown. After owner recovery, resume marks prior running agent entries
 `interrupted`; their actual end time is unknown. A later success preserves earlier evidence.
 
-The summary includes outcomes, known cost/input/output totals, category totals, unknown-usage and
-unknown-cost counts, per-category unknown counts, and harness/model groups. Each metric sums its
-known portion; all-unknown stays null and an empty group totals zero. Multiple effective models can
-share one attempt, so model-group attempt counts are not additive. Model attribution is incomplete
-when evidence is missing; `(unknown)` is an explicit bucket.
+The summary includes outcomes, known cost/input/output totals, category totals, unknown-usage,
+unknown-token (an attempt without an input or output count) and unknown-cost counts, per-category
+unknown counts, and harness/model groups. Each metric sums its known portion; all-unknown stays null
+and an empty group totals zero. Multiple effective models can share one attempt, so model-group
+attempt counts are not additive. Model attribution is incomplete when evidence is missing;
+`(unknown)` is an explicit bucket.
 
 Older records fall back to saved step results and failed-attempt metadata and are flagged
 `undercounted` when detailed history is absent. Such an attempt keeps the kind it ran under: each

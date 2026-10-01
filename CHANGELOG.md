@@ -2,6 +2,26 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- Inspect, list and validate output (two contract breaks; no identity or storage-format change):
+  `workflow list --json` rows are now compact (`id`, `workflow`, `status`, `recordedStatus`,
+  `counts`, `updatedAt`, `ownership`, `nextWakeAt`, `cwd`, `stateDir`, `warnings` and a `usage` of
+  `attempts`, `costUsd`, `inputTokens`, `outputTokens`, `unknownTokenAttempts` and
+  `unknownCostAttempts`), about 1 KB per run instead of every step; `--full` (with `--json`)
+  restores whole run summaries. `workflow validate --json` and `workflow list-defs --json` omit
+  every `harnesses[].options` JSON Schema, at every depth of `children`, which was about 8.5 KB of a
+  12 KB document for the golden-path workflow; `--harness-schemas` (with `--json`) restores them.
+  The definition registry cache is unchanged; the schemas are dropped when printing. Additive:
+  `inspect --json --summary` (and watch snapshots) gain `output`, the workflow's output for a
+  completed run and null otherwise, and `agents` (`total`, a `byRequest` roll-up by requested
+  harness, model, effort and profile, and the last 50 calls as `recent`; the model is the requested
+  one, never assumed effective). The public `UsageTotals` type gains `unknownTokenAttempts`, the
+  attempts without an input or output count. Text changes: a completed command prints as one line
+  (`completed ID  git status  2s`) without cwd or absolute argv, and `-v`, failed, running and
+  waiting commands keep the two-line form; the summary lists agent calls (the last 20 completed ones
+  unless `-v`); and the usage headline now says
+  `(tokens complete; cost unreported for K/M attempts)` when only cost is missing,
+  `(partial; N/M attempts without token usage)` when tokens are missing, instead of
+  `attempts missing usage` for both.
 - Run command results (contract break; no identity or storage-format change): `workflow execute`,
   `resume` and `answer --resume` print a bounded result with `--json` instead of the whole run
   record. Success is

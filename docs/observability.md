@@ -17,10 +17,19 @@ quiet-choir workflow list --state-dir /absolute/path/to/runs --status stale --js
 `--json` alone retains the full checkpoint plus ephemeral `ownership`. `--json --summary` returns
 the dashboard projection: `status`, `recordedStatus`, `execution`, `startedAt`, `elapsedMs`,
 `updatedAt`, `lastActivityAt`, `lastActivityAgeMs`, `ownership`, `phase`, `counts`, ordered problem
-`steps`, `rootCause`, `error`, `errorStack`, `usage`, `recent`, `harnesses`, and `warnings`,
-alongside run/workflow identities. Completed step payloads are omitted from the summary. Older
-records lack some measurements; inspection leaves those fields unknown rather than reconstructing
-execution.
+`steps`, `rootCause`, `error`, `errorStack`, `output`, `agents`, `usage`, `recent`, `harnesses`, and
+`warnings`, alongside run/workflow identities. `output` is the workflow's output once the recorded
+status is `completed` and null otherwise, so a watch's final snapshot carries it. `agents` is
+`{ total, byRequest, recent }` for claude, codex and agent calls (fork-reused calls excluded):
+`byRequest` counts steps and sums reported cost per requested harness, model, effort and profile;
+`recent` holds the last 50 calls as
+`{ id, status, harness, model, effort, profile, elapsedMs, costUsd }`. `model` is the requested
+model, never assumed effective, and null means native configuration; `effort` can be `inherited` or
+null for older records. Completed step payloads are omitted from the summary, and text shows a
+completed command on one line (`completed ID  git status 2s`) and only the last 20 completed agent
+calls; `-v` restores the two-line command form, with absolute argv and cwd, and every recent agent
+row. Failed, running and waiting commands always print in full. Older records lack some
+measurements; inspection leaves those fields unknown rather than reconstructing execution.
 
 A saved `running` run with no lock or a dead/released owner is shown as `stale`, and
 [`workflow tick`](waits.md#suspension-and-tick) recovers it unless live or unverified children
@@ -48,8 +57,11 @@ observed workflow running. Non-watching inspection exits 0 for every readable st
 `workflow list` reads checkpoint filenames, sorts newest `updatedAt` first, and supports `running`,
 `failed`, `completed`, `cancelled`, and `stale` filters. Unreadable checkpoints are skipped with a
 stderr warning. JSON returns `{ kind: 'workflow.list.result', ok: true, stateDir, runs, warnings }`;
-`runs` contains summary objects. A missing state directory gives an empty list. Neither list nor
-watch imports source.
+`runs` contains compact rows (`id`, `workflow`, `status`, `recordedStatus`, `counts`, `updatedAt`,
+`ownership`, `nextWakeAt`, `cwd`, `stateDir`, `warnings` and `usage` with `attempts`, `costUsd`,
+`inputTokens`, `outputTokens`, `unknownTokenAttempts` and `unknownCostAttempts`); `--json --full`
+returns whole summary objects. A missing state directory gives an empty list. Neither list nor watch
+imports source.
 
 ## Phases and logs
 
@@ -132,10 +144,14 @@ Usage totals come from exported `summarizeUsage(run)`: one entry per local agent
 failed and interrupted work, with replay counted once and fork reuse excluded. Text includes
 harness/model breakdowns and unknown counts. Full `inspect --json` adds `usageSummary`; compact JSON
 retains `usage`. Known portions are summed, all-unknown stays null, and no attempts totals zero.
-`unknownUsageAttempts`, `unknownCostAttempts`, and per-category `unknownTokens` describe gaps.
-Legacy history fallback sets `undercounted`; legacy token semantics warn separately. Requested model
-aliases are never assumed effective. See [usage and budgets](usage-and-budgets.md) for measurement
-categories, raw evidence, caps, and their limitations.
+`unknownUsageAttempts`, `unknownTokenAttempts` (no input or output count), `unknownCostAttempts`,
+and per-category `unknownTokens` describe gaps. The text headline says
+`(partial; N/M attempts without token usage)` when tokens are missing, adding
+`; cost unreported for K/M` for cost gaps, and `(tokens complete; cost unreported for K/M attempts)`
+when only cost is missing. Legacy history fallback sets `undercounted`; legacy token semantics warn
+separately. Requested model aliases are never assumed effective. See
+[usage and budgets](usage-and-budgets.md) for measurement categories, raw evidence, caps, and their
+limitations.
 
 Storage format 7 retains replay contract 6. Flat format-6 runs migrate automatically on resume;
 original format 1 migrates by verifying its legacy step identities and must migrate before fork
