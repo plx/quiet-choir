@@ -13,9 +13,10 @@
   `kind` or `ok`. `answer --resume` success now includes `stateDir` (and is the same
   `{...run, stateDir}` under `--full`). The `answer.invalid` document drops from about 20 KB to
   about 1 KB. Scripts that read `steps`, `executions` or `run.*` from these commands must pass
-  `--full` or use the envelope or `workflow inspect`. Unchanged: `execute --dry-run` documents,
-  `answer` without `--resume`, human output, and the failure documents of every other command. See
-  ADR 0034.
+  `--full` or use the envelope or `workflow inspect`. Unchanged: `execute --dry-run` documents, the
+  `workflow.answer.result` success document of `answer` without `--resume`, human output, and the
+  failure documents of every other command. The failure documents of `answer` without `--resume`
+  (including `answer.invalid`) are compact unless `--full` is given. See ADR 0034.
 - Capability manifests (behaviour change; no identity or storage-format change): checkpoints,
   `workflow validate --json` and the record `check-resume` prints no longer contain Claude
   `settings`, `mcpServers`, `agents` (descriptions and prompts), `systemPrompt`,

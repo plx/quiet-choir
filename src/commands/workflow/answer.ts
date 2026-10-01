@@ -39,7 +39,8 @@ export default class WorkflowAnswer extends WorkflowCommand {
     by: Flags.string({ description: 'Self-asserted author; human questions require human:<name>' }),
     resume: Flags.boolean({ description: 'After delivery, resume using the stored entrypoint' }),
     full: Flags.boolean({
-      description: 'With --resume, print the full run record instead of the compact result',
+      description:
+        'Print the full run record: the success document with --resume, and run in suspension and failure documents',
     }),
     harness: Flags.string({
       description: 'Harness for --resume: cli or fixture:<JSON file>',
