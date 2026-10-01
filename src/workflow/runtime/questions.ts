@@ -591,7 +591,7 @@ export class RunQuestions {
     const consecutive = (progress.lastError?.consecutive ?? 0) + 1;
     // The error past the tolerance fails the wait with its own message.
     if (consecutive > policy.tolerate) throw error;
-    progress.lastError = {
+    const lastError = {
       message: (error instanceof Error ? error.message : String(error)).slice(0, 4096),
       consecutive,
       at: clockNow(this.#clock),
@@ -600,11 +600,13 @@ export class RunQuestions {
     const signal = await this.#signal(id, step, waiter);
     if (this.#isClosed()) return;
     if (signal) {
+      progress.lastError = lastError;
       await this.#complete(id, step, waiter, signal.outcome, signal);
       return;
     }
     const at = clockNow(this.#clock);
     if (progress.deadline !== null && at >= progress.deadline) {
+      progress.lastError = lastError;
       await this.#complete(id, step, waiter, { by: 'deadline', at, note: progress.note });
       return;
     }
@@ -619,6 +621,7 @@ export class RunQuestions {
         delay = requested;
       }
     }
+    progress.lastError = lastError;
     progress.nextCheckAt = Math.min(MAX_EPOCH_MS, at + Math.ceil(delay));
     this.#updateWake();
     await this.#deps.save();
