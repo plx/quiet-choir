@@ -18,11 +18,11 @@ mode. Accepted enum values do not guarantee support for every model. Each attemp
 `profile` always selects a quiet-choir role. `harnessProfile` selects Codex's native configuration
 profile (`--profile`). Native profile names contain letters, numbers, underscores or hyphens and
 start with a letter or number. `networkAccess` requires `workspace-write`, even when false.
-`addDirs` resolves against the effect's cwd; Codex makes those directories **writable**.
-Codex `instructions: 'none'` runs the child against a private temporary `CODEX_HOME` holding only a
-copy of `auth.json`, adds `--config project_doc_max_bytes=0`, and writes a refreshed `auth.json`
-back under a lock; it requires restricted isolation and owns the `project_doc_max_bytes` config key.
-It removes context and grants nothing, so it is not a capability control. See
+`addDirs` resolves against the effect's cwd; Codex makes those directories **writable**. Codex
+`instructions: 'none'` runs the child against a private temporary `CODEX_HOME` holding only a copy
+of `auth.json`, adds `--config project_doc_max_bytes=0`, and writes a refreshed `auth.json` back
+under a lock; it requires restricted isolation and owns the `project_doc_max_bytes` config key. It
+removes context and grants nothing, so it is not a capability control. See
 [harness isolation](harness-isolation.md).
 
 Declare capability controls in [agent profiles](agent-profiles.md), including tools, permissions,

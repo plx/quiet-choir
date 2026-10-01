@@ -14,12 +14,12 @@ usage, retries, identity, and process recovery.
 both. `sandbox` is read-only or workspace-write. `skipGitRepoCheck: true` permits calls outside Git.
 These are resolved through the shared profile/grant rules.
 
-| Additional option | Meaning                                                                                                                                                                              |
-| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `networkAccess`   | Explicit boolean under workspace-write; requires that sandbox even when false                                                                                                        |
-| `harnessProfile`  | Native Codex profile (`--profile`); `profile` still selects a quiet-choir role; requires an inherited role, since restricted isolation skips the `config.toml` that defines profiles |
-| `config`          | JSON values rendered as TOML per dotted key; rejects null and aliases of owned controls                                                                                              |
-| `images`          | Regular files resolved against effect cwd; contents fingerprinted, snapshotted before launch and re-hashed on resume (keep readable)                                                 |
+| Additional option | Meaning                                                                                                                                                                               |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `networkAccess`   | Explicit boolean under workspace-write; requires that sandbox even when false                                                                                                         |
+| `harnessProfile`  | Native Codex profile (`--profile`); `profile` still selects a quiet-choir role; requires an inherited role, since restricted isolation skips the `config.toml` that defines profiles  |
+| `config`          | JSON values rendered as TOML per dotted key; rejects null and aliases of owned controls                                                                                               |
+| `images`          | Regular files resolved against effect cwd; contents fingerprinted, snapshotted before launch and re-hashed on resume (keep readable)                                                  |
 | `instructions`    | `'native'` (default) or `'none'`: a private `CODEX_HOME` with only `auth.json` plus `project_doc_max_bytes=0`, so no user or project `AGENTS.md`, skills or memories; restricted only |
 
 Effort omission uses native defaults under the selected configuration mode. Set it explicitly for

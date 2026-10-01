@@ -14,9 +14,9 @@ See [worktree isolation](worktrees.md).
 
 ## Native boundary
 
-| Provider | Restricted invocation                 | Remaining dependencies                                                                                                                                                                                                         |
-| -------- | ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Claude   | `--restricted --strict-mcp-config`    | Authentication, managed settings/policy, built-ins, and explicit opt-ins                                                                                                                                                       |
+| Provider | Restricted invocation                 | Remaining dependencies                                                                                                                                                                                                                                                                                                                                      |
+| -------- | ------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Claude   | `--restricted --strict-mcp-config`    | Authentication, managed settings/policy, built-ins, and explicit opt-ins                                                                                                                                                                                                                                                                                    |
 | Codex    | `--ignore-user-config --ignore-rules` | Authentication through `CODEX_HOME`, managed/system layers, user `CODEX_HOME/AGENTS.md` or `AGENTS.override.md`, `CODEX_HOME/skills`, project `AGENTS.md`/`AGENTS.override.md` from the Git root to `cwd`, and explicit config. With `instructions: 'none'`: authentication (a private copy of `auth.json`), managed/system layers and explicit config only |
 
 Claude suppresses user/project/local settings, their hooks, discovered MCP servers, project
@@ -68,16 +68,17 @@ killed child is never written back.
 
 The trade-off: results no longer depend on who runs the workflow, but calls lose guidance users may
 expect from their own or the project's `AGENTS.md`, user skills and memories. Supply instructions
-deliberately through the prompt or explicit, fingerprinted `config` such as `developer_instructions`.
-`'none'` requires restricted isolation and is rejected with `inherit`: inherit loads `config.toml`,
-which can carry instructions of its own and which the private home deliberately omits. The mode also
-owns the `project_doc_max_bytes` config key. Custom providers still need explicit `config`, as in
-any restricted call. `instructions` is not a capability control: it removes context and grants
-nothing, so call sites may set it under `strictProfiles`. `'none'` enters step identity, while
-`'native'` (the default) and unset fingerprint identically, so existing runs keep their identities.
-Codex steps record the resolved value as `request.instructions`, `workflow inspect` lists `no native
-instructions` among a step's limits, and dry-run call plans carry `codexHome: 'private'` next to the
-argv. The restricted default is unchanged; making `'none'` the default is a separate decision. See
+deliberately through the prompt or explicit, fingerprinted `config` such as
+`developer_instructions`. `'none'` requires restricted isolation and is rejected with `inherit`:
+inherit loads `config.toml`, which can carry instructions of its own and which the private home
+deliberately omits. The mode also owns the `project_doc_max_bytes` config key. Custom providers
+still need explicit `config`, as in any restricted call. `instructions` is not a capability control:
+it removes context and grants nothing, so call sites may set it under `strictProfiles`. `'none'`
+enters step identity, while `'native'` (the default) and unset fingerprint identically, so existing
+runs keep their identities. Codex steps record the resolved value as `request.instructions`,
+`workflow inspect` lists `no native instructions` among a step's limits, and dry-run call plans
+carry `codexHome: 'private'` next to the argv. The restricted default is unchanged; making `'none'`
+the default is a separate decision. See
 [ADR 0031](decisions/0031-private-codex-home-for-instruction-free-calls.md).
 
 Limitations: the lock coordinates quiet-choir processes that share a temporary directory. A plain
@@ -134,14 +135,15 @@ denial and `addDirs` restoration, protected settings-write denial, and Codex's e
 override. For restricted Codex it also records, without asserting, whether canaries in a user
 `AGENTS.md`, a user skill description and a project `AGENTS.md` reach the request body
 (`userInstructionsReachedRequest`, `projectInstructionsReachedRequest` and
-`userSkillReachedRequest`, all true on 0.157.1, and the same with an explicit `instructions:
-'native'`), how `AGENTS.override.md` replaces `AGENTS.md`, that
-discovery runs from the Git root down to `cwd`, and that an empty user-level override falls back to
-`AGENTS.md` while an empty project-level one does not. A change in Codex then shows as a fixture
-diff. It asserts that with `instructions: 'none'` none of the three canaries reaches the request,
-the call still reaches the explicit provider, and the real `CODEX_HOME` listing and `auth.json` stay
-unchanged. A probe on 0.157.1 showed that `project_doc_max_bytes=0` (spelled `--config` or `-c`)
-removes only the project canary; the private home removes the user file and skill. No upstream inference occurs. The sanitized report is in
+`userSkillReachedRequest`, all true on 0.157.1, and the same with an explicit
+`instructions: 'native'`), how `AGENTS.override.md` replaces `AGENTS.md`, that discovery runs from
+the Git root down to `cwd`, and that an empty user-level override falls back to `AGENTS.md` while an
+empty project-level one does not. A change in Codex then shows as a fixture diff. It asserts that
+with `instructions: 'none'` none of the three canaries reaches the request, the call still reaches
+the explicit provider, and the real `CODEX_HOME` listing and `auth.json` stay unchanged. A probe on
+0.157.1 showed that `project_doc_max_bytes=0` (spelled `--config` or `-c`) removes only the project
+canary; the private home removes the user file and skill. No upstream inference occurs. The
+sanitized report is in
 [`test/fixtures/harness-isolation-results.json`](../test/fixtures/harness-isolation-results.json).
 
 Earlier zero-cost OAuth probes on the same Claude version reached invalid-model responses with
