@@ -2,6 +2,20 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- Waits (behavior change): each poll observation now gets its own `signal`, which aborts when the
+  run is cancelled or interrupted, when the wait deadline passes during the observation, and when
+  the new `PollSource.observeTimeoutMs` elapses (a positive integer, default 60 s, never past a
+  deadline still ahead). A deadline during an observation resolves the wait by `deadline` with the
+  last note; an `observeTimeoutMs` expiry before the deadline fails the wait like a thrown observer,
+  with an error naming `observeTimeoutMs`. An observation slower than 60 s, with more than 60 s left
+  before the deadline or in an unbounded `ctx.wait`, used to succeed and now fails; raise
+  `observeTimeoutMs` for it. The final check after a missed deadline is bounded the same way and
+  resolves by `deadline` if it does not finish. An observer that ignores its aborted signal is
+  abandoned after a 2 s grace, also when the run closes or is interrupted, so it no longer blocks
+  interruption or lock release; the run records the warning in the new optional
+  `RunRecord.waitWarnings`, which the completed result's `warnings` and `inspect` include.
+  `observeTimeoutMs` is policy, not wait identity: it is not persisted and may change on resume.
+
 - CLI: `--resume --accept-code-change` (on `execute` and `resume`) no longer destroys a run when the
   edit changed a completed step. It first replays the accepted body against a disposable copy of the
   record, with fixtures disabled and every unfinished local step, file effect, poll observer and

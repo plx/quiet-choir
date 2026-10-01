@@ -37,7 +37,9 @@ declaring quiescence, draining yields a macrotask so any continuation reachable 
 I/O runs, however many microtasks deep. Authors must still await all operations: the runner does not
 own arbitrary detached async functions, timers, or promises derived by user code. Consuming an
 operation transfers responsibility for the resulting promise to its caller. A callback that never
-settles can still prevent draining.
+settles can still prevent draining. Poll observations are the exception: their signal aborts at the
+wait deadline, at `observeTimeoutMs` and on close, and one that ignores it is abandoned after a
+bounded grace with a run warning ([ADR 0020](0020-durable-waits-and-tick.md)).
 
 This does not persist JavaScript error handling or continuations. Replay behavior for caught failed
 effects remains a separate concern. Observers remain best-effort telemetry with no delivery

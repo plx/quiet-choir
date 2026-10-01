@@ -35,6 +35,8 @@ poll's input, schema, normalized spacing, and observer source. Captured dependen
 `input`; source hashing cannot inspect closures. Waiting and completed identities are pinned even
 with code-change acceptance. Use new IDs and immutable subjects for new decisions, such as an exact
 commit SHA. Changing an explicit deadline under the same ID fails instead of silently extending it.
+The poll's `observeTimeoutMs` is execution policy, not identity: it is never persisted in the wait
+request and may change on resume.
 
 ## Checks and outcomes
 
@@ -54,12 +56,26 @@ the check. Nonterminal progress overwrites `checks`, `note`, and `nextCheckAt`; 
 resumes. Existing per-body execution diagnostics still grow with resumes: this is not history
 compaction or a claim that all run state stays constant indefinitely.
 
+Each observation gets its own `signal`, and observers must honor it. It aborts when the run is
+cancelled or interrupted, when the wait's deadline passes during the observation, and when the
+poll's `observeTimeoutMs` elapses. `observeTimeoutMs` is a positive integer that defaults to 60
+seconds (`60_000`); an observation never runs past a deadline still ahead of it. If the deadline
+passes during an observation, the observation's outcome is ignored and the wait resolves by
+`deadline` with the last note. If `observeTimeoutMs` elapses first, the wait fails like a thrown
+observer, with an error naming `observeTimeoutMs`. Raise it for an observer that legitimately takes
+longer than a minute. An observer that ignores its aborted signal is abandoned after a fixed
+2-second grace, also when the run closes or is interrupted, and the run records a warning in
+`waitWarnings` (shown in the completed result's `warnings` and by `inspect`). Its JavaScript may
+keep running, but it can no longer affect the run.
+
 Each check uses fixed precedence:
 
 1. A valid signal with recorded delivery time at or before the deadline wins. Signals use the same
    inbox, presentation, validation, and self-asserted actor as [questions](questions.md).
 2. Otherwise a ready poll wins. If the process missed the deadline, it still gives the poll one
-   final check against current state, even when its next scheduled check was later.
+   final check against current state, even when its next scheduled check was later. That final check
+   is bounded by `observeTimeoutMs` (60 seconds by default); if it does not finish in time, the
+   deadline wins.
 3. Otherwise an expired deadline wins, retaining the last nonterminal note.
 
 The owner rescans signals after an awaited poll before committing its result. A late signal cannot
