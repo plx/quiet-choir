@@ -13,7 +13,7 @@ compiler result, and check-resume returns a compatible comparison in `check`.
 (null otherwise) and an `agents` roll-up. `workflow list --json` returns
 `{kind, ok, stateDir, runs, warnings}` with compact rows: `id`, `workflow`, `status`,
 `recordedStatus`, `counts`, `updatedAt`, `ownership`, `nextWakeAt`, `cwd`, `stateDir`, `warnings`
-and a four-total `usage`; `--full` restores whole run summaries. `validate --json` and
+and a six-field `usage`; `--full` restores whole run summaries. `validate --json` and
 `list-defs --json` omit each `harnesses[].options` JSON Schema, at every depth of `children`, unless
 `--harness-schemas` is given. `list --all` discovers registered XDG projects without imports; rows
 include `cwd` and `stateDir`. `execute --resume --run-id ID` may omit FILE and use stored launch
