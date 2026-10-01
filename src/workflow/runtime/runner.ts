@@ -105,7 +105,7 @@ import {
   workflowSnapshot,
   type WorkflowCodeOptions,
 } from './compatibility.js';
-import { engineInfo, oldFormatMessage } from './engine.js';
+import { oldFormatMessage, recordedEngine } from './engine.js';
 import { loadFork, pinnedFork, reuseCandidate, validateFork } from './fork.js';
 import type { ForkOptions, ResumeCheck } from './replay-model.js';
 import { schemaJson } from './schema.js';
@@ -696,15 +696,18 @@ export async function runWorkflow<
     const bodyInput = jsonValue(input, 'Workflow input', { canonical: false }) as TInput;
     const legacyReplay = existing?.formatVersion === 1;
     const migrating = existing !== undefined && existing.formatVersion !== 7;
+    const engine = recordedEngine();
     const engineChanged =
       existing !== undefined &&
-      (existing.engine?.quietChoir !== engineInfo.version ||
-        existing.engine.node !== process.version);
+      (existing.engine?.quietChoir !== engine.quietChoir ||
+        existing.engine.node !== engine.node ||
+        existing.engine.zod !== engine.zod ||
+        existing.engine.tsx !== engine.tsx);
     if (existing && legacyReplay) prepareLegacyReplay(existing);
     if (existing) {
       existing.formatVersion = 7;
       existing.seq ??= 0;
-      existing.engine = { quietChoir: engineInfo.version, node: process.version };
+      existing.engine = engine;
     }
     const runBudget = runBudgetSchema.parse({
       maxRunCostUsd: null,
@@ -815,7 +818,7 @@ export async function runWorkflow<
     const record: RunRecord = existing ?? {
       formatVersion: 7,
       seq: 0,
-      engine: { quietChoir: engineInfo.version, node: process.version },
+      engine,
       rootCause: null,
       maps: {},
       id: options.runId,

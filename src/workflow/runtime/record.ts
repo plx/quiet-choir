@@ -328,6 +328,10 @@ export interface RunRecord {
     quietChoir: string;
     /** Informational Node.js version, including its v prefix. */
     node: string;
+    /** Informational zod version whose JSON Schema encoding fed schema identity; absent in older records. */
+    zod?: string;
+    /** Informational tsx version that loaded workflow source; absent in older records. */
+    tsx?: string;
   };
   /** Stable run identifier. */
   id: string;
@@ -600,7 +604,14 @@ const recordFieldsSchema = z.object({
   nextWakeAt: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).nullable().optional(),
   launch: workflowLaunchSchema.optional(),
   seq: z.number().int().nonnegative().optional(),
-  engine: z.object({ quietChoir: z.string(), node: z.string() }).optional(),
+  engine: z
+    .object({
+      quietChoir: z.string(),
+      node: z.string(),
+      zod: z.string().optional(),
+      tsx: z.string().optional(),
+    })
+    .optional(),
   formatVersion: z.union([
     z.literal(1),
     z.literal(2),

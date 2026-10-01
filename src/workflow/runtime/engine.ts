@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
 
 import { z } from 'zod';
 
@@ -12,6 +13,27 @@ export const engineInfo: EngineInfo = {
     .version,
   formatVersion: 6,
 };
+
+const require = createRequire(import.meta.url);
+/** The resolved version of a dependency, read once at module load. */
+const dependencyVersion = (name: string): string =>
+  z.object({ version: z.string() }).parse(require(`${name}/package.json`)).version;
+const zodVersion = dependencyVersion('zod');
+const tsxVersion = dependencyVersion('tsx');
+
+/**
+ * Informational toolchain versions for `record.engine`, excluded from workflow and step identity.
+ * These are quiet-choir's own resolved dependencies: the zod that encodes schema identity and the
+ * tsx that loads workflow source. Not part of {@link engineInfo}, which is digest-compared. @internal
+ */
+export function recordedEngine(): { quietChoir: string; node: string; zod: string; tsx: string } {
+  return {
+    quietChoir: engineInfo.version,
+    node: process.version,
+    zod: zodVersion,
+    tsx: tsxVersion,
+  };
+}
 
 /** Explain a checkpoint that predates the current durable-outcome contract. @internal */
 export function oldFormatMessage(version: number): string {
