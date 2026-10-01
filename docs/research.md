@@ -76,7 +76,7 @@ process to wake. [ADR 0002](decisions/0002-durable-external-workflows.md) record
 
 ## Structured schema contract (2026-09-26)
 
-The 15-shape matrix in `test/fixtures/codex-schema-matrix.json` was generated with Zod 4.5.4 and
+The 19-shape matrix in `test/fixtures/codex-schema-matrix.json` was generated with Zod 4.5.4 and
 checked against codex-cli 0.157.1 and Claude Code 2.1.283. Sanitized results and all Claude attempt
 measurements are in `test/fixtures/schema-contract-results.json`; refresh commands are in
 [CONTRIBUTING](../CONTRIBUTING.md#harness-protocol-captures).
@@ -87,6 +87,11 @@ encodings passed schema validation. Tuples remain local errors in compatibility 
 positive controls (nullable/default/union/minimum length/wrapped array) also passed. Fake-process
 and runtime tests verify decoding and original-Zod validation, including recursive references,
 nullable optionals, duplicate record keys, and local refinements.
+
+An untyped value (`{}`, from `z.unknown()`/`z.any()`) is rejected by Codex both as an object
+property and as a record value: on 2026-10-01, codex-cli 0.157.1 failed both `unknown-property` and
+`unknown-record-value` at schema validation, before inference (recorded per case in the results
+file). The checker's `untyped` rule flags it, and compat rejects it locally rather than encoding it.
 
 Claude returned valid structured results for eleven original shapes, including optionals, enum
 records, loose objects, and tuples. Non-object roots (array, string, and root discriminated union)

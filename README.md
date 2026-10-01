@@ -178,19 +178,21 @@ optional properties become nullable on the wire, non-object roots are wrapped, r
 entries (enum-keyed records require all keys), discriminated unions use `anyOf`, and loose objects
 are closed. The adapter reverses these encodings before the original Zod validation; nullable
 optionals retain null, while other optional nulls become absent properties. Unknown keys are not
-requested for loose objects. Tuples, and unions mixing a string-keyed record with an array, are
-rejected locally; use named object properties or discriminated objects.
+requested for loose objects. Tuples, `z.unknown()`/`z.any()` values (properties, array items and
+record values), and unions mixing a string-keyed record with an array, are rejected locally; use
+named object properties or discriminated objects, give the value a concrete type, or request a
+`z.string()` and parse it locally.
 
 Choose `structuredOutput: 'strict'` to send a native Codex schema: use an object root, make every
 property required (use `.nullable()` for missing values), and avoid records, loose objects,
-discriminated unions, and tuples. `checkCodexSchema(schema)` returns JSON paths and fixes before a
-workflow runs. `workflow validate` cannot inspect call-site schemas without running the body.
-Refinements are enforced locally, so repeat them in the prompt. Schema transforms and class-valued
-schemas cannot be converted to JSON Schema. `z.date()`, `z.void()`, `z.undefined()`, and
-`z.bigint()` also fail conversion when their operation runs; `validate` checks only workflow
-input/output. Use `z.null()` and return `null` for side-effect-only steps. Claude receives the
-original schema and also requires an object root; other Codex restrictions and wire transforms do
-not apply to it.
+discriminated unions, tuples, and untyped values (`z.unknown()`/`z.any()`).
+`checkCodexSchema(schema)` returns JSON paths and fixes before a workflow runs. `workflow validate`
+cannot inspect call-site schemas without running the body. Refinements are enforced locally, so
+repeat them in the prompt. Schema transforms and class-valued schemas cannot be converted to JSON
+Schema. `z.date()`, `z.void()`, `z.undefined()`, and `z.bigint()` also fail conversion when their
+operation runs; `validate` checks only workflow input/output. Use `z.null()` and return `null` for
+side-effect-only steps. Claude receives the original schema and also requires an object root; other
+Codex restrictions and wire transforms do not apply to it.
 
 Use `z.object` by default: local parsing strips unknown keys, and generated schemas close the object
 with `additionalProperties: false`. Use `z.looseObject` only when code must retain unknown keys;
