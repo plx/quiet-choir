@@ -1,6 +1,7 @@
 import { createRequire } from 'node:module';
 import { describe, expect, it } from 'vitest';
 import { z, type HarnessDeclaration } from '../src/index.js';
+import { agentResultIdentitySchema } from '../src/workflow/runtime/agent-result-schema.js';
 import { agentDiagnosticsSchema } from '../src/workflow/runtime/agent-stream-schema.js';
 import { execResultSchema } from '../src/workflow/runtime/exec-schema.js';
 import { readFileResultSchema, writeFileResultSchema } from '../src/workflow/runtime/files.js';
@@ -8,10 +9,8 @@ import { agentIdentity } from '../src/workflow/runtime/identity.js';
 import { digest } from '../src/workflow/runtime/json.js';
 import { approvalSchema } from '../src/workflow/runtime/question-schema.js';
 import { schemaJson } from '../src/workflow/runtime/schema.js';
-import { usageIdentitySchema } from '../src/workflow/runtime/usage.js';
 import {
   mergeResultSchema,
-  worktreeChangeSchema,
   worktreeHandleSchema,
 } from '../src/workflow/runtime/worktree-schema.js';
 
@@ -37,17 +36,6 @@ function message(name: string): string {
 /** Compare against a literal value; the only assertion path in this file. */
 function pinned(name: string, actual: unknown, expected: unknown): void {
   expect(actual, message(name)).toEqual(expected);
-}
-
-// Verbatim copy of the wrapper in runner.ts, until it is extracted.
-function resultIdentity(output: z.ZodType, isolated: boolean) {
-  const baseResultSchema = z.object({
-    diagnostics: agentDiagnosticsSchema,
-    output,
-    sessionId: z.string().nullable(),
-    usage: usageIdentitySchema,
-  });
-  return isolated ? baseResultSchema.extend({ worktree: worktreeChangeSchema }) : baseResultSchema;
 }
 
 describe('schemaJson corpus', () => {
@@ -323,7 +311,7 @@ describe('built-in schemas that runner.ts feeds to an effect', () => {
 
 describe('agent result identity wrapper', () => {
   it('pins the wrapper without a worktree', () => {
-    pinned('agent result wrapper', schemaJson(resultIdentity(z.string(), false)), {
+    pinned('agent result wrapper', schemaJson(agentResultIdentitySchema(z.string(), false)), {
       $schema: 'http://json-schema.org/draft-07/schema#',
       additionalProperties: false,
       definitions: {
@@ -367,74 +355,78 @@ describe('agent result identity wrapper', () => {
   });
 
   it('pins the wrapper with a worktree', () => {
-    pinned('agent result wrapper with worktree', schemaJson(resultIdentity(z.string(), true)), {
-      $schema: 'http://json-schema.org/draft-07/schema#',
-      additionalProperties: false,
-      definitions: {
-        __schema0: {
-          anyOf: [
-            { type: 'string' },
-            { type: 'number' },
-            { type: 'boolean' },
-            { type: 'null' },
-            { items: { $ref: '#/definitions/__schema0' }, type: 'array' },
-            {
-              additionalProperties: { $ref: '#/definitions/__schema0' },
-              propertyNames: { type: 'string' },
-              type: 'object',
-            },
-          ],
-        },
-      },
-      properties: {
-        diagnostics: {
-          additionalProperties: { $ref: '#/definitions/__schema0' },
-          propertyNames: { type: 'string' },
-          type: 'object',
-        },
-        output: { type: 'string' },
-        sessionId: { type: ['string', 'null'] },
-        usage: {
-          additionalProperties: false,
-          properties: {
-            costUsd: { type: ['number', 'null'] },
-            inputTokens: { type: ['number', 'null'] },
-            outputTokens: { type: ['number', 'null'] },
-          },
-          required: ['inputTokens', 'outputTokens', 'costUsd'],
-          type: 'object',
-        },
-        worktree: {
-          additionalProperties: false,
-          properties: {
-            base: { pattern: '^(?:[a-f0-9]{40}|[a-f0-9]{64})$', type: 'string' },
-            commit: {
-              anyOf: [
-                { pattern: '^(?:[a-f0-9]{40}|[a-f0-9]{64})$', type: 'string' },
-                { type: 'null' },
-              ],
-            },
-            files: {
-              items: {
-                additionalProperties: false,
-                properties: {
-                  path: { minLength: 1, type: 'string' },
-                  status: { enum: ['added', 'modified', 'deleted', 'renamed'], type: 'string' },
-                },
-                required: ['path', 'status'],
+    pinned(
+      'agent result wrapper with worktree',
+      schemaJson(agentResultIdentitySchema(z.string(), true)),
+      {
+        $schema: 'http://json-schema.org/draft-07/schema#',
+        additionalProperties: false,
+        definitions: {
+          __schema0: {
+            anyOf: [
+              { type: 'string' },
+              { type: 'number' },
+              { type: 'boolean' },
+              { type: 'null' },
+              { items: { $ref: '#/definitions/__schema0' }, type: 'array' },
+              {
+                additionalProperties: { $ref: '#/definitions/__schema0' },
+                propertyNames: { type: 'string' },
                 type: 'object',
               },
-              type: 'array',
-            },
-            ref: { anyOf: [{ minLength: 1, type: 'string' }, { type: 'null' }] },
+            ],
           },
-          required: ['base', 'commit', 'ref', 'files'],
-          type: 'object',
         },
+        properties: {
+          diagnostics: {
+            additionalProperties: { $ref: '#/definitions/__schema0' },
+            propertyNames: { type: 'string' },
+            type: 'object',
+          },
+          output: { type: 'string' },
+          sessionId: { type: ['string', 'null'] },
+          usage: {
+            additionalProperties: false,
+            properties: {
+              costUsd: { type: ['number', 'null'] },
+              inputTokens: { type: ['number', 'null'] },
+              outputTokens: { type: ['number', 'null'] },
+            },
+            required: ['inputTokens', 'outputTokens', 'costUsd'],
+            type: 'object',
+          },
+          worktree: {
+            additionalProperties: false,
+            properties: {
+              base: { pattern: '^(?:[a-f0-9]{40}|[a-f0-9]{64})$', type: 'string' },
+              commit: {
+                anyOf: [
+                  { pattern: '^(?:[a-f0-9]{40}|[a-f0-9]{64})$', type: 'string' },
+                  { type: 'null' },
+                ],
+              },
+              files: {
+                items: {
+                  additionalProperties: false,
+                  properties: {
+                    path: { minLength: 1, type: 'string' },
+                    status: { enum: ['added', 'modified', 'deleted', 'renamed'], type: 'string' },
+                  },
+                  required: ['path', 'status'],
+                  type: 'object',
+                },
+                type: 'array',
+              },
+              ref: { anyOf: [{ minLength: 1, type: 'string' }, { type: 'null' }] },
+            },
+            required: ['base', 'commit', 'ref', 'files'],
+            type: 'object',
+          },
+        },
+        required: ['diagnostics', 'output', 'sessionId', 'usage', 'worktree'],
+        type: 'object',
       },
-      required: ['diagnostics', 'output', 'sessionId', 'usage', 'worktree'],
-      type: 'object',
-    });
+    );
   });
 
   it('pins the agent identity of a revision-1 built-in request through the wrapper', () => {
@@ -444,9 +436,13 @@ describe('agent result identity wrapper', () => {
         revision: 1,
         cwd: '/repo',
         outputSchema: null,
-        options: { prompt: 'golden', isolation: 'restricted', tools: [], allowedTools: [] },
+        options: {
+          prompt: 'golden',
+          isolation: 'restricted',
+          ...{ tools: [], allowedTools: [] },
+        },
       },
-      schemaJson(resultIdentity(z.string(), false)),
+      schemaJson(agentResultIdentitySchema(z.string(), false)),
     );
     pinned(
       'claude revision-1 agent identity',
@@ -470,7 +466,7 @@ describe('agent result identity wrapper', () => {
         outputSchema: null,
         options: { prompt: 'golden' },
       },
-      schemaJson(resultIdentity(z.string(), true)),
+      schemaJson(agentResultIdentitySchema(z.string(), true)),
       declaration,
     );
     pinned(

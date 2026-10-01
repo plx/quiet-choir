@@ -8,12 +8,13 @@ import type { HarnessDeclaration, WorkflowHarnesses } from './harness-model.js';
 import { RunBudget, RunBudgetExceededError, runBudgetSchema } from './run-budget.js';
 import { RunChildren } from './children.js';
 import { checkedDefinition, describeWorkflow } from './definition.js';
-import { agentUsageSchema, normalizeUsage, usageIdentitySchema } from './usage.js';
+import { agentUsageSchema, normalizeUsage } from './usage.js';
 import { legacyAttemptKind } from './usage-summary.js';
 import { mergeOptionsSchema, mergeResultSchema } from './worktree-schema.js';
 import { randomUUID } from 'node:crypto';
 import { deriveAgentSessionId } from './agent-session.js';
 import { agentDiagnosticsSchema } from './agent-stream-schema.js';
+import { agentResultIdentitySchema } from './agent-result-schema.js';
 import type {
   AgentDiagnostics,
   AgentProgress,
@@ -2111,18 +2112,9 @@ export async function runWorkflow<
               effort: execution.reasoningEffort ?? request.options.effort ?? 'inherited',
             },
           };
-          const baseResultSchema = z.object({
-            diagnostics: agentDiagnosticsSchema,
-            output: schema,
-            sessionId: z.string().nullable(),
-            usage: usageIdentitySchema,
-          });
           const isolation =
             request.options.worktree === true ? 'worktree' : request.options.worktree;
-          const identitySchema =
-            isolation === undefined
-              ? baseResultSchema
-              : baseResultSchema.extend({ worktree: worktreeChangeSchema });
+          const identitySchema = agentResultIdentitySchema(schema, isolation !== undefined);
           const identity = agentIdentity(request, schemaJson(identitySchema), registration);
           const resultSchema = identitySchema.extend({ usage: agentUsageSchema });
           const onPermissionDenied =
