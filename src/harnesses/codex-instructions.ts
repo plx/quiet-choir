@@ -18,9 +18,10 @@ import type { InstructionSource } from '../harness-kit.js';
  *   to cwd, each directory contributes AGENTS.override.md if present, otherwise AGENTS.md. With no
  *   .git entry, only cwd is read.
  *
- * Existence decides precedence: an empty override is treated like any other. Inherit-mode config
- * keys (project_root_markers, project_doc_fallback_filenames, project_doc_max_bytes) can change
- * what Codex loads and are not modelled; this is a diagnostic, never part of step identity.
+ * An empty user-level override is ignored in favor of AGENTS.md, while an empty project-level
+ * override still replaces it (measured). A whitespace-only override was not probed. Inherit-mode
+ * config keys (project_root_markers, project_doc_fallback_filenames, project_doc_max_bytes) can
+ * change what Codex loads and are not modelled; this is a diagnostic, never part of step identity.
  */
 
 /** Skills listed individually before the remainder is only counted. */
@@ -94,10 +95,12 @@ export async function detectCodexInstructionSources(
     scope: InstructionSource['scope'],
     kind: InstructionSource['kind'],
     path: string,
+    nonEmpty = false,
   ): Promise<boolean> => {
     signal?.throwIfAborted();
     try {
       if ((await kindOf(path)) !== 'file') return false;
+      if (nonEmpty && (await stat(path)).size === 0) return false;
       sources.push({ scope, kind, path, sha256: await sha256(path, signal) });
       return true;
     } catch (error) {
@@ -109,7 +112,12 @@ export async function detectCodexInstructionSources(
   };
   // The override replaces the plain file in the same directory.
   const agents = async (scope: InstructionSource['scope'], directory: string): Promise<void> => {
-    if (await add(scope, 'agents-override', join(directory, 'AGENTS.override.md'))) return;
+    // Measured: an empty user-level override falls back to AGENTS.md; an empty project-level one
+    // still replaces it.
+    if (
+      await add(scope, 'agents-override', join(directory, 'AGENTS.override.md'), scope === 'user')
+    )
+      return;
     await add(scope, 'agents', join(directory, 'AGENTS.md'));
   };
 

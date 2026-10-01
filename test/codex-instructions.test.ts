@@ -98,6 +98,17 @@ describe('user discovery', () => {
     ]);
   });
 
+  it('ignores an empty user-level override but honors an empty project-level one', async () => {
+    await put(join(codexHome, 'AGENTS.md'), 'plain');
+    await put(join(codexHome, 'AGENTS.override.md'), '');
+    await put(join(root, 'AGENTS.md'), 'project plain');
+    await put(join(root, 'AGENTS.override.md'), '');
+    expect(names(await detect(root))).toEqual([
+      'user:agents:codex-home/AGENTS.md',
+      'project:agents-override:AGENTS.override.md',
+    ]);
+  });
+
   it('returns no sources for a missing CODEX_HOME', async () => {
     const found = await detectCodexInstructionSources({
       codexHome: join(root, 'absent'),
