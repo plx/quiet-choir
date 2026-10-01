@@ -85,11 +85,11 @@ so a zod upgrade can change that encoding and strand completed steps. `test/sche
 pins the literal encodings and the agent-result wrapper, so a Dependabot bump of zod, or of tsx when
 it alters those schema encodings, fails CI. Treat that failure as a gate, not a snapshot to refresh:
 the change needs an explicit decision under ADR 0005 and ADR 0006. A tsx upgrade can also change
-local callback text (see the loader paragraph above); that drift is not gated yet, and stable
-identities for built-in callbacks are tracked separately. The gate covers only the zod instance
-quiet-choir itself resolves, not a different zod a workflow imports. `record.engine` records the
-`quietChoir`, `node`, `zod` and `tsx` versions that wrote a run for diagnosis only; it stays outside
-identity and never refuses a resume.
+local callback text (see the loader paragraph above); that drift is not gated yet for user callbacks
+(built-in helpers are immune; see the local callback identity paragraph below). The gate covers only
+the zod instance quiet-choir itself resolves, not a different zod a workflow imports.
+`record.engine` records the `quietChoir`, `node`, `zod` and `tsx` versions that wrote a run for
+diagnosis only; it stays outside identity and never refuses a resume.
 
 Dynamic imports assembled at runtime, external files, installed dependencies, environment, and
 native harness configuration are not fully captured. Embedded callers supply `fingerprint`, or
@@ -192,6 +192,10 @@ do not. Other loaders and transpiler upgrades can cause extra misses. Captured v
 helpers, environment, and bound/native function implementations are **not** visible to this hash.
 Put values in `input`, bump the step `version`, or invalidate the step in a fork when they change.
 The run's source guard remains useful; callback hashing alone does not make arbitrary edits safe.
+
+Built-in helper steps such as `ctx.now` and `decision.choose` are identified by an explicit version
+(`now/1`, `decision/1`) instead of callback text, so refactoring quiet-choir or changing the loader
+does not strand them; their versions change only for a deliberate behavior change.
 
 Embedded equivalents are `forkFrom: { runId, stateDir?, reuse?, invalidate? }`,
 `resume: true, acceptCodeChange: true`, and `strictReplay: true`. Exported

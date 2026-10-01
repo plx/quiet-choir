@@ -1,5 +1,8 @@
 import { z, type WorkflowContext, type JsonValue, type AgentUsage } from '../index.js';
 
+/** Version that identifies a decision step; see `choose` before changing it. */
+const DECISION_STEP_VERSION = 'decision/1';
+
 /** Prompt-free decision input; this reference transport does not integrate a particular service. */
 export interface DecisionQuestion<A extends readonly [string, ...string[]]> {
   /** Explicit state captured as replay input. */
@@ -66,7 +69,12 @@ export function decision(
           { message: 'Probabilities must sum to 1.', path: ['probabilities'] },
         );
       return ctx.step(id, {
-        version: 'decision/1',
+        // Identified by DECISION_STEP_VERSION, not callback text. Bump it only if decision.choose's
+        // recorded behavior or result contract changes, never for refactors: a bump strands
+        // completed decision steps. `identity` is an internal, stripped field of the public step
+        // definition; test/builtin-identity.test.ts pins the result.
+        version: DECISION_STEP_VERSION,
+        identity: 'version',
         input: { ...snapshot, answers: [...snapshot.answers] },
         schema,
         meta: { integration: 'decision', op: 'choose' },

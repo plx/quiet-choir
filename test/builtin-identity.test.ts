@@ -1,0 +1,252 @@
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import {
+  defineWorkflow,
+  readRun,
+  runWorkflow,
+  WorkflowRunError,
+  z,
+  type RunOptions,
+  type WorkflowContext,
+} from '../src/index.js';
+import { decision } from '../src/integrations/decision.js';
+import { digest } from '../src/workflow/runtime/json.js';
+import type { StepIdentity } from '../src/workflow/runtime/identity.js';
+
+// The golden fingerprints include the cwd digest, so the cwd is fixed and never a temp directory.
+const cwd = '/golden-cwd';
+let stateDir: string;
+beforeEach(async () => {
+  stateDir = await mkdtemp(join(tmpdir(), 'choir-builtin-identity-'));
+});
+afterEach(async () => {
+  await rm(stateDir, { recursive: true, force: true });
+});
+
+/**
+ * One message for every golden, so the guidance is identical wherever a pin fails.
+ * The pinned values are literal, never a snapshot that `vitest -u` could rewrite.
+ */
+function message(name: string): string {
+  return [
+    `Pinned built-in step identity changed: ${name}.`,
+    `Changing it makes completed steps of existing suspended runs refuse on resume with "changed on a completed step".`,
+    `Do not just update the golden: see docs/decisions/0005-step-identity-and-policy.md and the durability reference, plugins/*/quiet-choir/skills/quiet-choir/references/durability.md.`,
+    `Bump a built-in's version constant (now/1, decision/1) only for a deliberate behavior change, and record the one-time break in CHANGELOG.md.`,
+  ].join('\n');
+}
+
+/** Compare against a literal value; the only assertion path for goldens in this file. */
+function pinned(name: string, actual: unknown, expected: unknown): void {
+  expect(actual, message(name)).toEqual(expected);
+}
+
+const workflow = (run: (ctx: WorkflowContext) => Promise<unknown>) =>
+  defineWorkflow({
+    name: 'builtin-identity',
+    version: '1',
+    input: z.null(),
+    output: z.null(),
+    run: async (ctx) => {
+      await run(ctx);
+      return null;
+    },
+  });
+const options = (overrides: Partial<RunOptions> = {}): RunOptions => ({
+  runId: 'golden',
+  stateDir,
+  input: null,
+  fingerprint: 'golden',
+  cwd,
+  ...overrides,
+});
+function identityOf(step: { readonly identity?: StepIdentity }): StepIdentity {
+  if (!step.identity) throw new Error('Step has no recorded identity.');
+  return step.identity;
+}
+async function recorded(runId = 'golden'): Promise<Record<string, StepRecordIdentity>> {
+  const run = await readRun({ stateDir, runId });
+  return Object.fromEntries(
+    Object.entries(run.steps).map(([id, step]) => [
+      id,
+      { identity: identityOf(step), fingerprint: step.fingerprint },
+    ]),
+  );
+}
+interface StepRecordIdentity {
+  readonly identity: StepIdentity;
+  readonly fingerprint: string;
+}
+
+const sharedComponents = {
+  cwd: '57b3000557c37127e98bf8b89621d12ab3ae2669d37a5fd4b07b36486b88667e',
+  kind: '0d9f50d8178cb7c5b044c4dce43f1a35c44697ac03e70407e2dda2324fa92f56',
+  onError: 'a8ae35eaddff8b9970e3075d77d711798ddfa511a5391581aef83e1a8ebbf64f',
+};
+
+describe('built-in step identity', () => {
+  it('pins ctx.now and decision.choose without a callback component', async () => {
+    const definition = workflow(async (ctx) => {
+      await ctx.now('started-at');
+      await decision(ctx, () =>
+        Promise.resolve({ output: { answer: 'yes', probabilities: { yes: 1, no: 0 } } }),
+      ).choose('pick', { state: null, question: 'golden?', answers: ['yes', 'no'] });
+    });
+    await runWorkflow(definition, options());
+    const steps = await recorded();
+    expect(steps['started-at']?.identity).not.toHaveProperty('callback');
+    expect(steps['pick']?.identity).not.toHaveProperty('callback');
+    pinned('ctx.now version', steps['started-at']?.identity['version'], digest('now/1'));
+    pinned('decision.choose version', steps['pick']?.identity['version'], digest('decision/1'));
+    pinned(
+      'decision.choose version digest',
+      digest('decision/1'),
+      '9877238849fe9f70252af45aaa4dc864cd4d1e18f0a6425749c9dc79c263a00c',
+    );
+    pinned('ctx.now', steps['started-at'], {
+      identity: {
+        ...sharedComponents,
+        input: '74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b',
+        schema: '63cd27a58e68ba86d947651d017132f4047c5f4f75d0984e107921b3293f20c4',
+        version: 'ef6a278dd5d8158fa3434604272b65ef77886edc6efaf60cee77ea6e6f0d8e27',
+      },
+      fingerprint: '9c0e758ae1e316f1da267fa93b21487ab1dda884abba2e41b30abffc3df512c7',
+    });
+    pinned('decision.choose', steps['pick'], {
+      identity: {
+        ...sharedComponents,
+        input: '96b2d77790b9809ed66856eab86eb88be932e77eb6b4b66e6bf88f6ef6577f27',
+        schema: '65af6e34af3412c5c937973da894109888b658664721c7adbba872792e06324a',
+        version: '9877238849fe9f70252af45aaa4dc864cd4d1e18f0a6425749c9dc79c263a00c',
+      },
+      fingerprint: '1454bdc9114a8108a88661d30b4b66a264c445e0440b378e4981caffd11eb175',
+    });
+  });
+
+  it('keeps the identity of a plain user step, captured before the change', async () => {
+    const definition = workflow((ctx) =>
+      ctx.step('user', { input: null, schema: z.string(), run: () => 'one' }),
+    );
+    await runWorkflow(definition, options());
+    pinned('plain user ctx.step', (await recorded())['user'], {
+      identity: {
+        ...sharedComponents,
+        callback: 'ca46dc0e120517c354203afe5e9d785ddc0f8d00ce9488c68e4eac0df4f09033',
+        input: '74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b',
+        schema: '42c50030e717f64ef6435e786fcb4b3dc38968555e23764a7902b7e5032bc966',
+        version: '74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b',
+      },
+      fingerprint: '4cf8b45f2059dd887e31d9b30a0acf2749c551650d47f96c5025a42196afcc7a',
+    });
+  });
+});
+
+describe('version-identified steps', () => {
+  it('survives a rewritten callback, but not a version change', async () => {
+    let calls = 0;
+    let callback = (): string => {
+      calls++;
+      return 'one';
+    };
+    const definition = (version: string) =>
+      workflow(async (ctx) => {
+        await ctx.step('flagged', {
+          identity: 'version',
+          version,
+          input: null,
+          schema: z.string(),
+          run: callback,
+        });
+        throw new Error('tail');
+      });
+    await expect(runWorkflow(definition('r9/1'), options())).rejects.toThrow('tail');
+    const before = (await recorded())['flagged'];
+    callback = () => {
+      calls++;
+      return 'one';
+    };
+    await expect(
+      runWorkflow(definition('r9/1'), options({ resume: true, fingerprint: 'code-2' })),
+    ).rejects.toThrow('tail');
+    expect(calls).toBe(1);
+    expect((await recorded())['flagged']?.fingerprint).toBe(before?.fingerprint);
+    const rejected = await runWorkflow(
+      definition('r9/2'),
+      options({ resume: true, fingerprint: 'code-3', acceptCodeChange: true }),
+    ).catch((error: unknown) => error);
+    expect(rejected).toBeInstanceOf(WorkflowRunError);
+    expect((rejected as Error).message).toContain('version changed on a completed step');
+    expect(calls).toBe(1);
+  });
+
+  it('still hashes callback text without the flag', async () => {
+    let callback = (): string => 'one';
+    const definition = workflow(async (ctx) => {
+      await ctx.step('plain', { version: 'r9/1', input: null, schema: z.string(), run: callback });
+      throw new Error('tail');
+    });
+    await expect(runWorkflow(definition, options())).rejects.toThrow('tail');
+    const first = (await recorded())['plain'];
+    callback = () => {
+      return 'one';
+    };
+    const rejected = await runWorkflow(
+      definition,
+      options({ resume: true, fingerprint: 'code-2', acceptCodeChange: true }),
+    ).catch((error: unknown) => error);
+    expect((rejected as Error).message).toContain('callback changed on a completed step');
+    await runWorkflow(definition, options({ runId: 'other' })).catch(() => undefined);
+    expect((await recorded('other'))['plain']?.fingerprint).not.toBe(first?.fingerprint);
+  });
+
+  it('rejects a missing or blank version and an unknown identity', async () => {
+    const attempt = (definition: Record<string, unknown>) =>
+      runWorkflow(
+        workflow((ctx) =>
+          ctx.step('bad', {
+            input: null,
+            schema: z.string(),
+            run: () => 'one',
+            ...definition,
+          } as Parameters<WorkflowContext['step']>[1]),
+        ),
+        options({ runId: `bad-${Math.random().toString(36).slice(2)}` }),
+      );
+    for (const definition of [
+      { identity: 'version' },
+      { identity: 'version', version: '  ' },
+      { identity: 'bogus', version: 'x/1' },
+    ])
+      await expect(attempt(definition)).rejects.toThrow(/Step bad: .*nonempty string version/s);
+  });
+
+  it('refuses once when a record holds the pre-change ctx.now identity', async () => {
+    const definition = workflow(async (ctx) => {
+      await ctx.now('started-at');
+      throw new Error('tail');
+    });
+    await expect(runWorkflow(definition, options())).rejects.toThrow('tail');
+    const run = await readRun({ stateDir, runId: 'golden' });
+    const step = run.steps['started-at'];
+    if (!step) throw new Error('missing step');
+    const identity = {
+      ...identityOf(step),
+      callback: '0deb0c1a83ed22c3d02611f3770e9a8d645ca134c329bbe547889eca63d75983',
+      version: digest(null),
+    };
+    step.identity = identity;
+    step.fingerprint = digest(identity);
+    const directory = join(stateDir, 'golden');
+    await writeFile(join(directory, 'run.json'), `${JSON.stringify(run)}\n`);
+    await writeFile(join(directory, 'journal.jsonl'), '');
+    const rejected = await runWorkflow(
+      definition,
+      options({ resume: true, fingerprint: 'code-2', acceptCodeChange: true }),
+    ).catch((error: unknown) => error);
+    expect(rejected).toBeInstanceOf(WorkflowRunError);
+    expect((rejected as Error).message).toContain('callback, version changed on a completed step');
+    expect(await readFile(join(directory, 'run.json'), 'utf8')).toContain('started-at');
+  });
+});

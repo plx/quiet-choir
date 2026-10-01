@@ -405,6 +405,14 @@ export interface StepDefinition<T> {
   readonly onError?: ErrorMode | undefined;
   /** Explicit revision for captured values, helpers, or environment not visible in callback source. */
   readonly version?: string;
+  /**
+   * Identify this step by its explicit `version` instead of callback source, so the callback text
+   * is excluded from identity and `version` becomes required. Built-in helpers only; this field is
+   * not public API.
+   *
+   * @internal
+   */
+  readonly identity?: 'version';
   /** Explicit JSON dependencies, checked for drift on replay after omitting undefined object members. */
   readonly input: JsonInput;
   /** Runtime validator for the result, also applied on replay. */
