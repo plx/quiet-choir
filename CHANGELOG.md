@@ -8,11 +8,10 @@
   (probed with codex-cli 0.157.1 as an object property and as a record value). Both
   `structuredOutput` modes now reject them before launch, for properties, array items, record values
   and the root, with the original schema path and a fix (give the value a concrete type, or request
-  a `z.string()` and parse it locally), instead of failing inside Codex with an opaque exit
-  1. Loose and `catchall` objects are unaffected (strict reports `open-object`; compat still closes
-     them), and enum-only nodes such as `z.literal(['x', 1])` and `z.json()` are not flagged.
-     Workflows that already failed at Codex now fail at plan time, including in dry runs. No
-     identity change.
+  a `z.string()` and parse it locally), instead of failing inside Codex with an opaque exit code.
+  Loose and `catchall` objects are unaffected (strict reports `open-object`; compat still closes
+  them), and enum-only nodes such as `z.literal(['x', 1])` and `z.json()` are not flagged. Workflows
+  that already failed at Codex now fail at plan time, including in dry runs. No identity change.
 - Harness configuration (fix; resume refusal): every live CLI execution now records
   `harness.configDigest`, a SHA-256 of its resolved CLI harness configuration (binary paths, output
   limits, `scrubEnv` and `harnesses.<name>`), never the values, using the same canonical digest as
