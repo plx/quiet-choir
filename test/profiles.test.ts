@@ -704,6 +704,7 @@ it('reduces free-form controls to names and digests in public manifests only', (
   expect(liveProfile.codex.config).toEqual(sensitiveProfile().codex?.config);
   expect(live).toEqual(raw);
   expect(publicCapabilityManifest(live)).toEqual(manifest);
+  // Idempotent only for built-in harnesses; registered harness env digests are re-digested on a second pass.
   expect(publicCapabilityManifest(manifest)).toEqual(manifest);
 });
 

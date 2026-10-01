@@ -516,7 +516,8 @@ function redactControls(
  * Snapshot for checkpoints and CLI diagnostics; live execution retains its private values. Drops
  * environment values (names and a digest stay in `environment`) and moves Claude settings, MCP
  * servers, subagents, system prompts and Codex config into `redacted` as digests with top-level
- * names. Safe to apply to its own output. @internal
+ * names. Apply only to a live manifest from resolveCapabilities: a second pass re-digests
+ * registered harness env digests. @internal
  */
 export function publicCapabilityManifest(manifest: CapabilityManifest): CapabilityManifest {
   const result = structuredClone(manifest);
