@@ -59,6 +59,7 @@ function suspend(runId, nap) {
     '--input',
     JSON.stringify({ nap }),
     '--json',
+    '--full',
   );
   assert.equal(suspended.kind, 'workflow.run.suspended');
   return suspended.run.nextWakeAt;

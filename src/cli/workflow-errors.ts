@@ -1,5 +1,6 @@
 import type { CliErrorCode } from '../workflow/runtime/run-errors.js';
 import type { WorkflowFailure } from '../workflow/loader/failure.js';
+import { summarizeRunResult } from '../workflow/loader/run-result.js';
 
 /** The single numeric exit policy for workflow commands. Exit 75 reports suspension outside this failure table. @internal */
 export const workflowExitCodes = {
@@ -39,8 +40,16 @@ export class WorkflowCommandError extends Error {
   }
 }
 
-/** Render only observed checkpoint data; a refusal never invents a failed run. @internal */
-export function workflowErrorDocument(failure: WorkflowFailure): object {
+/**
+ * Render only observed checkpoint data; a refusal never invents a failed run. With `compact`, a
+ * failure without a rehearsal carries a bounded `summary` instead of the whole `run` record.
+ * @internal
+ */
+export function workflowErrorDocument(
+  failure: WorkflowFailure,
+  options: { readonly compact?: boolean } = {},
+): object {
+  const compact = options.compact === true && failure.rehearsal === undefined;
   return {
     kind: failure.kind,
     ok: false,
@@ -59,7 +68,9 @@ export function workflowErrorDocument(failure: WorkflowFailure): object {
       .filter(([, step]) => step.status === 'failed' || step.status === 'cancelled')
       .map(([id, step]) => ({ id, kind: step.kind, attempts: step.attempts, error: step.error })),
     diagnostics: failure.diagnostics,
-    run: failure.run,
+    ...(compact
+      ? { summary: failure.run && summarizeRunResult(failure.run, failure.stateDir) }
+      : { run: failure.run }),
     ...(failure.rehearsal === undefined ? {} : { rehearsal: failure.rehearsal }),
   };
 }
@@ -70,4 +81,10 @@ export function requestedJson(argv: readonly string[]): boolean {
   return argv
     .slice(0, beforeSeparator === -1 ? undefined : beforeSeparator)
     .some((arg) => arg === '--json' || arg.startsWith('--json='));
+}
+
+/** Detect `--full` even when parsing the rest of argv fails. @internal */
+export function requestedFull(argv: readonly string[]): boolean {
+  const beforeSeparator = argv.indexOf('--');
+  return argv.slice(0, beforeSeparator === -1 ? undefined : beforeSeparator).includes('--full');
 }

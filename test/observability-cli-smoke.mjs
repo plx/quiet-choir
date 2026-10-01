@@ -85,7 +85,7 @@ export default defineWorkflow({ name:'observe-cli', version:'1', input:z.object(
   }
 });`,
   );
-  const good = run(execute('good'));
+  const good = run([...execute('good'), '--full']);
   assert.equal(good.status, 0, good.stderr);
   assert.equal(good.value.formatVersion, 7);
   assert.match(good.stderr, /\d{4}-\d{2}-\d{2}T\S+ good phase verify/);
@@ -112,7 +112,16 @@ export default defineWorkflow({ name:'observe-cli', version:'1', input:z.object(
   assert.equal(invalid.value.error.code, 'usage.flag');
 
   writeFileSync(repaired, 'fixed');
-  const resumed = run(['execute', file, '--run-id', 'bad', '--resume', '--log-level', 'debug']);
+  const resumed = run([
+    'execute',
+    file,
+    '--run-id',
+    'bad',
+    '--resume',
+    '--full',
+    '--log-level',
+    'debug',
+  ]);
   assert.equal(resumed.status, 0, resumed.stderr);
   assert.match(resumed.stderr, /bad phase verify \(replay\)/);
   assert.match(resumed.stderr, /bad log begin .*\(replay\)/);

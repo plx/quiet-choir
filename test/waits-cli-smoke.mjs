@@ -68,7 +68,7 @@ export default defineWorkflow({name:'waits',version:'1',input:z.object({fail:z.b
 try {
   writeFileSync(ready, 'pending');
   writeFileSync(file, source);
-  const initial = document(75, 'execute', file, '--run-id', 'gate', '--json');
+  const initial = document(75, 'execute', file, '--run-id', 'gate', '--json', '--full');
   assert.equal(initial.kind, 'workflow.run.suspended');
   assert.equal(initial.run.steps.ready.kind, 'wait');
   assert.ok(initial.run.nextWakeAt);

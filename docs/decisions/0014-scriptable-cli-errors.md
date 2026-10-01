@@ -38,4 +38,5 @@ isolates module side effects or rolls back external effects.
 Callers can select repair/resume actions by code and use the included record directly. Existing
 embedders matching rejection classes must now inspect `WorkflowRunError.cause`. Check-resume
 incompatibility uses the shared exit-3 envelope. CLI success shapes and checkpoint format 5 remain
-unchanged. Lost output pipes, SIGKILL, and process crashes cannot produce a result document.
+unchanged ([ADR 0034](0034-compact-run-command-results.md) later compacted them for the run
+commands). Lost output pipes, SIGKILL, and process crashes cannot produce a result document.

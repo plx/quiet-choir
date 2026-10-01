@@ -123,7 +123,11 @@ export default defineWorkflow({ name:'json', version:'1',
   assert.equal(stdin.status, 0, stdin.stderr);
   assert.equal(stdin.document.output, 19);
 
-  const failed = failure(execute('--input', '{"mode":"fail"}'), 'workflow.failed', 1).document;
+  const failed = failure(
+    [...execute('--input', '{"mode":"fail"}'), '--full'],
+    'workflow.failed',
+    1,
+  ).document;
   assert.equal(failed.status, 'failed');
   assert.equal(failed.error.stepId, 'result');
   assert.equal(failed.runId, failed.run.id);
@@ -205,7 +209,7 @@ export default defineWorkflow({ name:'json', version:'1',
   const originalSource = readFileSync(file, 'utf8');
   writeFileSync(file, readFileSync(brokenResume, 'utf8'));
   const loadFailure = failure(
-    ['execute', file, '--resume', '--run-id', 'file', '--state-dir', state],
+    ['execute', file, '--resume', '--run-id', 'file', '--state-dir', state, '--full'],
     'load.typecheck',
     4,
   ).document;
@@ -243,6 +247,7 @@ export default defineWorkflow({ name:'json', version:'1',
         '--wait-mode',
         'block',
         '--json',
+        '--full',
       ],
       { cwd: project, stdio: ['ignore', 'pipe', 'pipe'] },
     );
@@ -287,8 +292,8 @@ export default defineWorkflow({ name:'json', version:'1',
     74,
   ).document;
   assert.equal(storage.status, null);
-  assert.equal(
-    storage.run,
+  assert.strictEqual(
+    storage.summary,
     null,
     'Do not invent a failed checkpoint after its directory was removed',
   );

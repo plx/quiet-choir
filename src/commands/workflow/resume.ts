@@ -2,6 +2,7 @@ import { parseRunBudget, runBudgetFlags } from '../../cli/run-budget.js';
 import type { RunBudgetPolicy } from '../../workflow/runtime/run-budget.js';
 import { Args, Flags, type Interfaces } from '@oclif/core';
 import { WorkflowCommand } from '../../cli/workflow-command.js';
+import { requestedFull } from '../../cli/workflow-errors.js';
 import { WorkflowExecutor } from '../../workflow/loader/executor.js';
 import {
   readHarnessSelection,
@@ -22,6 +23,7 @@ export default class WorkflowResume extends WorkflowCommand {
     readonly 'max-run-agent-attempts': string | undefined;
     readonly 'state-dir': string | undefined;
     readonly json: boolean | undefined;
+    readonly full: boolean | undefined;
     readonly 'accept-code-change': boolean | undefined;
     readonly 'allow-harness-change': boolean | undefined;
     readonly 'allow-harness-config-change': boolean | undefined;
@@ -49,7 +51,12 @@ export default class WorkflowResume extends WorkflowCommand {
       description:
         'Runs container; defaults to environment, legacy run discovery, then project XDG state',
     }),
-    json: Flags.boolean({ description: 'Print the result or structured error as JSON' }),
+    json: Flags.boolean({
+      description: 'Print the run result or structured error as JSON; --full for the whole record',
+    }),
+    full: Flags.boolean({
+      description: 'With --json, print the full run record instead of the compact result',
+    }),
     'accept-code-change': Flags.boolean({
       description:
         'Record source/schema acceptance; retain question and step identity checks. Refuses without changes when a completed step changed',
@@ -75,6 +82,10 @@ export default class WorkflowResume extends WorkflowCommand {
   };
   public static override readonly summary =
     'Resume a run using its stored entrypoint and working directory';
+  protected override compactRunDocuments(): boolean {
+    return !requestedFull(this.argv);
+  }
+
   public async run(): Promise<void> {
     const { args, flags } = await this.parse(WorkflowResume);
     const stateDir = this.runContext(args.runId, flags['state-dir']);
@@ -120,7 +131,7 @@ export default class WorkflowResume extends WorkflowCommand {
       }
       for (const warning of result.run.warnings ?? []) this.logToStderr(`Warning: ${warning}`);
       this.outputSavedCompletion(
-        { ...result.run, stateDir },
+        this.runResult(result.run, stateDir),
         `Run ${result.run.id} ${result.run.status}.\n${JSON.stringify(result.run.output, null, 2)}`,
       );
     }

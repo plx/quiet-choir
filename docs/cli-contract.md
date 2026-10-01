@@ -6,9 +6,9 @@ contract, including argument parsing errors. Request human help without `--json`
 `npm run --silent cli -- …` when invoking through npm; quiet-choir cannot suppress its parent
 process's banner.
 
-Success documents retain their shapes: execute returns a run plus its absolute `stateDir`, inspect
-returns a run with current ownership diagnostics, validate returns workflow metadata, typecheck
-returns its compiler result, and check-resume returns a compatible comparison in `check`.
+Success documents retain their shapes, except for the run commands described below: inspect returns
+a run with current ownership diagnostics, validate returns workflow metadata, typecheck returns its
+compiler result, and check-resume returns a compatible comparison in `check`.
 `inspect --json --summary` returns the compact dashboard, and `workflow list --json` returns
 `{kind, ok, stateDir, runs, warnings}`. `list --all` discovers registered XDG projects without
 imports; rows include `cwd` and `stateDir`. `execute --resume --run-id ID` may omit FILE and use
@@ -19,10 +19,61 @@ run ends as suspended). It does not add an error document for an observed failur
 watcher emits an error document and leaves the observed run untouched. See
 [run observability](observability.md) for polling, stale detection, and partial usage. Non-watching
 inspect exits 0 for any readable checkpoint status, including `failed`, `cancelled`, and `running`.
-`workflow pending --json` returns `{kind:"workflow.pending.result", ok, pending}`,
-`workflow answer --json` returns `{kind:"workflow.answer.result", ok, delivery}`, and a suspension
-returns
-`{kind:"workflow.run.suspended", ok:true, exitCode:75, runId, stateDir, pending, resumeCommand, run}`.
+`workflow pending --json` returns `{kind:"workflow.pending.result", ok, pending}`, and
+`workflow answer --json` without `--resume` returns `{kind:"workflow.answer.result", ok, delivery}`.
+
+## Run results of execute, resume and answer --resume
+
+These three commands print a compact, constant-shape result by default, so an agent session reads
+the status and output of a long run without its checkpoint. A run that completes returns
+
+```json
+{
+  "kind": "workflow.run.result",
+  "ok": true,
+  "exitCode": 0,
+  "runId": "...",
+  "stateDir": "...",
+  "status": "completed",
+  "output": {},
+  "usage": { "costUsd": 0.18, "attempts": 180, "undercounted": false },
+  "counts": {
+    "total": 180,
+    "completed": 180,
+    "running": 0,
+    "failed": 0,
+    "cancelled": 0,
+    "settled-failed": 0,
+    "superseded": 0,
+    "waiting": 0,
+    "withdrawn": 0
+  },
+  "rootCause": null,
+  "warnings": []
+}
+```
+
+`output` is the run's output unchanged. `usage` sums the recorded agent attempts: `costUsd` is the
+harness-reported estimate (null when none was reported) and `undercounted` is true when the cost or
+attempt totals may be low, because of legacy checkpoints or attempts with unknown cost or tokens.
+`counts` is the step total by status, `rootCause` the failing effect or null, and `warnings` the
+run's warnings, de-duplicated and capped at 20 followed by a note that says how many more exist.
+
+A suspension (exit 75) returns
+`{kind:"workflow.run.suspended", ok:true, exitCode:75, runId, stateDir, pending, resumeCommand, summary}`,
+where `summary` is the same projection (`runId`, `stateDir`, `status`, `output`, `usage`, `counts`,
+`rootCause`, `warnings`) and each `pending` entry keeps its `answerCommand`.
+
+`--full` prints the whole record instead, exactly as earlier releases did: `{...run, stateDir}` for
+a successful run (no `kind` or `ok`; `answer --resume --full` now includes `stateDir` too), and the
+suspension and failure documents with `run` in place of `summary`. Use `workflow inspect` to read a
+saved run later. `--full` is detected from argv before parsing, so a failure that occurs before
+argument parsing completes honours it as well. The `--json` alias of `answer`'s `--value` is
+unaffected: pass `--json VALUE --full`.
+
+`execute --dry-run` documents are not compacted: a rehearsal deletes its temporary state, so the
+embedded `run` is the only copy. This section applies to success and suspension documents of the
+three commands and to their failure documents; every other command keeps its shapes.
 
 `workflow unlock ID [--force-remote] --json` clears an abandoned run lock without importing workflow
 code and returns `{kind:"workflow.unlock.result", ok:true, runId, stateDir, forceRemote, locks}`.
@@ -45,16 +96,18 @@ and settled agent failures. See [workflow rehearsal](rehearsal.md).
 
 Failures have these fields:
 
-| Field                         | Meaning                                                                                                                 |
-| ----------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| `kind`, `ok`, `exitCode`      | `"workflow.error"`, `false`, and the process exit code                                                                  |
-| `error.code`, `error.message` | Stable code and diagnostic naming the root effect when available                                                        |
-| `error.stepId`                | Root failing effect, or null for a body failure or interruption; never an aborted sibling                               |
-| `error.details`               | Structured context: lock PID/host, schema issues, input source/position, compatibility comparison, or available run IDs |
-| `runId`, `stateDir`           | Requested/generated ID and absolute storage directory when known; otherwise null                                        |
-| `status`, `run`               | Actual saved checkpoint status and record, or null when unavailable                                                     |
-| `failedSteps`                 | Saved failed/cancelled steps with ID, kind, attempts, and error                                                         |
-| `diagnostics`                 | Compiler diagnostics, or an empty array                                                                                 |
+| Field                         | Meaning                                                                                                                  |
+| ----------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| `kind`, `ok`, `exitCode`      | `"workflow.error"`, `false`, and the process exit code                                                                   |
+| `error.code`, `error.message` | Stable code and diagnostic naming the root effect when available                                                         |
+| `error.stepId`                | Root failing effect, or null for a body failure or interruption; never an aborted sibling                                |
+| `error.details`               | Structured context: lock PID/host, schema issues, input source/position, compatibility comparison, or available run IDs  |
+| `runId`, `stateDir`           | Requested/generated ID and absolute storage directory when known; otherwise null                                         |
+| `status`                      | Actual saved checkpoint status, or null when unavailable                                                                 |
+| `summary`                     | execute, resume and answer without `--full`: the compact run result, or null when unavailable                            |
+| `run`                         | Saved record, or null when unavailable. Every other command, a `--dry-run` failure, or `--full` on execute/resume/answer |
+| `failedSteps`                 | Saved failed/cancelled steps with ID, kind, attempts, and error                                                          |
+| `diagnostics`                 | Compiler diagnostics, or an empty array                                                                                  |
 
 The error codes map to numeric exits in one CLI table:
 

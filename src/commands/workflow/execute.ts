@@ -12,6 +12,7 @@ import { resolve } from 'node:path';
 import { Args, Flags, type Interfaces } from '@oclif/core';
 
 import { WorkflowCommand } from '../../cli/workflow-command.js';
+import { requestedFull } from '../../cli/workflow-errors.js';
 import { formatTypecheckDiagnostic } from '../../cli/presentation.js';
 import {
   readHarnessSelection,
@@ -54,6 +55,7 @@ interface WorkflowExecuteFlags {
   readonly resume: boolean | undefined;
   readonly 'state-dir': string | undefined;
   readonly json: boolean | undefined;
+  readonly full: boolean | undefined;
   readonly policy: string[] | undefined;
   readonly 'policy-reset': boolean | undefined;
   readonly 'allow-model-override': boolean | undefined;
@@ -187,8 +189,11 @@ export default class WorkflowExecute extends WorkflowCommand {
         'Runs container; defaults to environment, legacy run discovery, then project XDG state',
     }),
     json: Flags.boolean({
-      description: 'Print the run record or structured error as JSON',
+      description: 'Print the run result or structured error as JSON; --full for the whole record',
       default: false,
+    }),
+    full: Flags.boolean({
+      description: 'With --json, print the full run record instead of the compact result',
     }),
     profile: Flags.string({
       description: 'Named limit override, e.g. scout.maxTurns=50; repeatable and sticky on resume',
@@ -212,6 +217,10 @@ export default class WorkflowExecute extends WorkflowCommand {
 
   public static override readonly summary =
     'Execute or resume a typed workflow with durable checkpoints';
+
+  protected override compactRunDocuments(): boolean {
+    return !requestedFull(this.argv);
+  }
 
   public async run(): Promise<void> {
     const { args, flags } = await this.parse(WorkflowExecute);
@@ -366,7 +375,7 @@ export default class WorkflowExecute extends WorkflowCommand {
       }
       this.outputSavedCompletion(
         result.rehearsal === undefined
-          ? { ...result.run, stateDir }
+          ? this.runResult(result.run, stateDir)
           : { ...result.rehearsal, ok: true, run: result.run },
         `Run ${result.run.id} ${result.run.status}.\n${JSON.stringify(result.run.output, null, 2)}`,
       );

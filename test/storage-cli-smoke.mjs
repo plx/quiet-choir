@@ -86,8 +86,16 @@ try {
     7,
   );
   assert.equal(
-    success(other, ['workflow', 'execute', '--resume', '--run-id', 'default', '--state-dir', state])
-      .document.cwd,
+    success(other, [
+      'workflow',
+      'execute',
+      '--resume',
+      '--run-id',
+      'default',
+      '--state-dir',
+      state,
+      '--full',
+    ]).document.cwd,
     realpathSync(project),
   );
 

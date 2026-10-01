@@ -38,7 +38,7 @@ export default defineWorkflow({name:'commands',version:'1',input:z.object({}),ou
  return {code:red.code,n:parsed.n,content:snapshot.content};
 }});`,
   );
-  const failed = document(1, 'execute', file, '--run-id', 'commands', '--json');
+  const failed = document(1, 'execute', file, '--run-id', 'commands', '--json', '--full');
   assert.equal(failed.run.steps.test.status, 'completed');
   assert.equal(failed.run.steps.test.output.code, 3);
   writeFileSync(join(root, 'out.txt'), 'external change');

@@ -55,7 +55,7 @@ try {
  return merged.commit;
 }});`,
   );
-  const failed = json(1, 'execute', workflow, '--run-id', 'worktree');
+  const failed = json(1, 'execute', workflow, '--run-id', 'worktree', '--full');
   assert.equal(failed.run.steps.integrate.status, 'completed');
   assert.equal(failed.run.steps.edit.worktree.files[0].path, 'file.txt');
   const resumed = json(0, 'resume', 'worktree');
@@ -78,7 +78,7 @@ try {
     workflow,
     `${header}export default defineWorkflow({name:'failed-cache',version:'1',input:z.object({}),output:z.null(),async run(ctx){const tree=await ctx.worktree('cache');await ctx.exec('fail',[${JSON.stringify(process.execPath)},'-e',"require('node:fs').writeFileSync('partial','unfinished');process.exit(1)"],{worktree:tree});return null;}});`,
   );
-  const abandoned = json(1, 'execute', workflow, '--run-id', 'failed-cache');
+  const abandoned = json(1, 'execute', workflow, '--run-id', 'failed-cache', '--full');
   const cache = abandoned.run.steps.fail.worktree.path;
   assert.equal(existsSync(join(cache, 'partial')), true);
   rmSync(workflow);
