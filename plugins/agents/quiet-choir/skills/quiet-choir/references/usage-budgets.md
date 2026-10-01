@@ -26,13 +26,14 @@ running agent attempts `interrupted`; their actual end time and unreported spend
 retry is another attempt. Replaying one is not a new charge, and copied fork history is excluded
 from the target's local total.
 
-Totals are sums of known portions. `unknownUsageAttempts`, `unknownCostAttempts`, `unknownTokens`
-and outcomes explain gaps. A wholly unknown metric is null; no attempts gives zero. Model-group
-attempt counts can overlap when one call used several models. `(unknown)` is an explicit group.
-Legacy history fallback sets `undercounted` and follows the kind recorded with each redefinition; an
-attempt whose earlier kind is unrecorded is excluded from totals but still counted in
-`legacyAttempts`. `legacyTokenAttempts` warns that older input counts retain provider-specific
-meanings. This is not an invoice, price calculator or subagent reconciler.
+Totals are sums of known portions. `unknownUsageAttempts`, `unknownTokenAttempts` (no input or
+output count), `unknownCostAttempts`, `unknownTokens` and outcomes explain gaps. A wholly unknown
+metric is null; no attempts gives zero. Model-group attempt counts can overlap when one call used
+several models. `(unknown)` is an explicit group. Legacy history fallback sets `undercounted` and
+follows the kind recorded with each redefinition; an attempt whose earlier kind is unrecorded is
+excluded from totals but still counted in `legacyAttempts`. `legacyTokenAttempts` warns that older
+input counts retain provider-specific meanings. This is not an invoice, price calculator or subagent
+reconciler.
 
 ## Gate new work
 

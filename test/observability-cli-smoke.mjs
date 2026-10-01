@@ -190,6 +190,20 @@ export default defineWorkflow({ name:'observe-cli', version:'1', input:z.object(
   assert.match(listed.stderr, /Skipped broken/);
   assert.match(run(['list'], false).stdout, /ID {2}WORKFLOW {2}STATUS/);
   const all = run(['list']).value.runs;
+  for (const entry of all) {
+    assert.equal(entry.steps, undefined, 'default list rows are compact');
+    assert.equal(typeof entry.usage.unknownTokenAttempts, 'number');
+    assert.equal(entry.usage.byHarness, undefined);
+  }
+  const full = run(['list', '--full']).value.runs;
+  assert.deepEqual(
+    full.map((entry) => entry.id),
+    all.map((entry) => entry.id),
+  );
+  assert.ok(
+    full.every((entry) => Array.isArray(entry.steps)),
+    '--full restores run summaries',
+  );
   assert.deepEqual(
     all.map((entry) => entry.updatedAt),
     all

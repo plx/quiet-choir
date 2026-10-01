@@ -135,6 +135,7 @@ it('persists resolved request diagnostics, monotonic attempt timing, and validat
   expect(summarizeRun(run, unlocked).usage).toMatchObject({
     attempts: 3,
     incompleteAttempts: 0,
+    unknownTokenAttempts: 0,
     inputTokens: 23,
     outputTokens: 9,
   });

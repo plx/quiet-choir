@@ -106,6 +106,30 @@ export default defineWorkflow({
   const validated = cli('workflow', 'validate', workflow, '--json');
   assert.equal(validated.status, 0, validated.stderr);
   assert.equal(JSON.parse(validated.stdout).workflow.name, 'smoke');
+  const optionPaths = (value, path = 'workflow') =>
+    value.harnesses
+      .flatMap((entry, i) => ('options' in entry ? [`${path}.harnesses[${String(i)}]`] : []))
+      .concat(
+        value.children.flatMap((child, i) => optionPaths(child, `${path}.children[${String(i)}]`)),
+      );
+  const validatedWorkflow = JSON.parse(validated.stdout).workflow;
+  assert.deepEqual(
+    optionPaths(validatedWorkflow),
+    [],
+    'validate --json omits harness option schemas',
+  );
+  // Measured: about 3.7 KB without option schemas (about 12 KB with them); the capability manifest
+  // is most of the remainder.
+  assert.ok(
+    Buffer.byteLength(validated.stdout) < 4096,
+    `validate --json should stay under 4 KB, was ${String(Buffer.byteLength(validated.stdout))}`,
+  );
+  const withSchemas = cli('workflow', 'validate', workflow, '--json', '--harness-schemas');
+  assert.equal(withSchemas.status, 0, withSchemas.stderr);
+  const schemaHarnesses = JSON.parse(withSchemas.stdout).workflow.harnesses;
+  assert.ok(schemaHarnesses.length > 0);
+  for (const entry of schemaHarnesses)
+    assert.equal(typeof entry.options, 'object', `${entry.name} options restored`);
   assert.equal(existsSync(effects), false, 'Validation must not run the workflow body');
 
   const badInput = cli(

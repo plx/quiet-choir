@@ -97,15 +97,18 @@ called in a subdirectory. Its launch directory is the base for relative paths, t
 Inspection does not import the workflow or take the writer lock. Each read sees a persisted
 checkpoint plus current OS ownership observations, not the live JavaScript stack. Text is a
 dashboard; `--json --summary` returns the same compact progress, status counts, ordered
-active/problem steps, resolved limits, root cause, reported usage, and recent logs. `-v` shows saved
-stacks. For embedding, `await readRun({ runId, cwd, stateDir })` returns the validated checkpoint
-alone; `inspectRunOwnership({ runId, cwd, stateDir })` returns the separate current ownership view.
-Like `runWorkflow`, it resolves explicit options, then `QUIET_CHOIR_STATE_DIR`, an existing run's
-legacy location, and the external XDG project default. Relative state paths resolve against `cwd`
-(default: `process.cwd()`). `resolveStateDir({ cwd, stateDir, runId })` returns the absolute
-directory; include `runId` to discover its legacy location. A missing CLI inspection names that
-directory and lists the run IDs present; embedded `readRun` retains the filesystem error's
-`code: 'ENOENT'`.
+active/problem steps, resolved limits, root cause, reported usage, recent logs, the completed run's
+`output` (null otherwise) and an `agents` roll-up (`total`, `byRequest`, and the last 50 calls with
+harness, requested model, effort, profile, elapsed time and cost; the model is never assumed
+effective). Text prints a completed command on one line and the last 20 completed agent calls; `-v`
+restores two-line commands with absolute argv and cwd, all recent agent rows and saved stacks. For
+embedding, `await readRun({ runId, cwd, stateDir })` returns the validated checkpoint alone;
+`inspectRunOwnership({ runId, cwd, stateDir })` returns the separate current ownership view. Like
+`runWorkflow`, it resolves explicit options, then `QUIET_CHOIR_STATE_DIR`, an existing run's legacy
+location, and the external XDG project default. Relative state paths resolve against `cwd` (default:
+`process.cwd()`). `resolveStateDir({ cwd, stateDir, runId })` returns the absolute directory;
+include `runId` to discover its legacy location. A missing CLI inspection names that directory and
+lists the run IDs present; embedded `readRun` retains the filesystem error's `code: 'ENOENT'`.
 
 Current checkpoints combine `<stateDir>/<runId>/run.json` and `journal.jsonl`; use the reader, since
 the snapshot alone can lag. Ownership lives in `<runId>/lock/`. Migrated runs also retain a legacy
@@ -198,9 +201,11 @@ writes and is not a lossless event stream. Normal inspect still exits 0.
 
 List sorts newest `updatedAt` first and supports running/failed/completed/cancelled/stale filters.
 Unreadable files are skipped with stderr warnings. JSON is
-`{kind:'workflow.list.result', ok:true, stateDir, runs, warnings}`, with summary objects in `runs`.
-A missing directory produces an empty list. Neither command imports source, takes the writer lock,
-or performs recovery.
+`{kind:'workflow.list.result', ok:true, stateDir, runs, warnings}`. Each row is compact: `id`,
+`workflow`, `status`, `recordedStatus`, `counts`, `updatedAt`, `ownership`, `nextWakeAt`, `cwd`,
+`stateDir`, `warnings` and `usage` totals; `--full` returns whole summary objects. A missing
+directory produces an empty list. Neither command imports source, takes the writer lock, or performs
+recovery.
 
 ## Phases and logs
 
@@ -289,9 +294,10 @@ Usage is computed by `summarizeUsage(run)`, with one entry per local agent attem
 executions. Replays count once; copied fork attempts are excluded. Full JSON inspection adds
 `usageSummary`; compact JSON retains `usage`. Outcomes include interrupted agent attempts after
 resume. Known values are summed, all-unknown stays null and no attempts totals zero.
-`unknownUsageAttempts`, `unknownCostAttempts` and `unknownTokens` identify missing measurements.
-Legacy fallback warns about undercounting and historical token semantics. Harness/model groups show
-where known spend occurred; requested aliases are not assumed effective.
+`unknownUsageAttempts`, `unknownTokenAttempts`, `unknownCostAttempts` and `unknownTokens` identify
+missing measurements; the headline says tokens are complete when only cost is unreported. Legacy
+fallback warns about undercounting and historical token semantics. Harness/model groups show where
+known spend occurred; requested aliases are not assumed effective.
 
 A run stopped by `RunBudgetExceededError` remains failed even if its body caught the refusal.
 `budgetStop` identifies the refused effect and limit; that refusal created no new attempt. Inspect

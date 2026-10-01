@@ -82,8 +82,10 @@ Missing required input fails before a new run record or agent call; returning `{
 ordinary successful output and should not replace input validation.
 
 `workflow validate FILE --json` includes input/output JSON Schemas, descriptions, phases, profiles,
-capabilities and a declared child tree. Recursive declarations end in `recursive: true` reference
-nodes. Inline children have `entrypoint: null` when no source entrypoint is known.
+capabilities and a declared child tree, without each harness's option JSON Schema (pass
+`--harness-schemas` to include them; `list-defs --json` follows the same rule). Recursive
+declarations end in `recursive: true` reference nodes. Inline children have `entrypoint: null` when
+no source entrypoint is known.
 
 After saving the reusable review recipe in your trusted `workflows` directory:
 

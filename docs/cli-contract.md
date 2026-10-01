@@ -9,10 +9,15 @@ process's banner.
 Success documents retain their shapes, except for the run commands described below: inspect returns
 a run with current ownership diagnostics, validate returns workflow metadata, typecheck returns its
 compiler result, and check-resume returns a compatible comparison in `check`.
-`inspect --json --summary` returns the compact dashboard, and `workflow list --json` returns
-`{kind, ok, stateDir, runs, warnings}`. `list --all` discovers registered XDG projects without
-imports; rows include `cwd` and `stateDir`. `execute --resume --run-id ID` may omit FILE and use
-stored launch paths, as does `resume ID`. A supplied different FILE is refused before import. See
+`inspect --json --summary` returns the compact dashboard, including the completed run's `output`
+(null otherwise) and an `agents` roll-up. `workflow list --json` returns
+`{kind, ok, stateDir, runs, warnings}` with compact rows: `id`, `workflow`, `status`,
+`recordedStatus`, `counts`, `updatedAt`, `ownership`, `nextWakeAt`, `cwd`, `stateDir`, `warnings`
+and a six-field `usage`; `--full` restores whole run summaries. `validate --json` and
+`list-defs --json` omit each `harnesses[].options` JSON Schema, at every depth of `children`, unless
+`--harness-schemas` is given. `list --all` discovers registered XDG projects without imports; rows
+include `cwd` and `stateDir`. `execute --resume --run-id ID` may omit FILE and use stored launch
+paths, as does `resume ID`. A supplied different FILE is refused before import. See
 [storage](storage.md). `inspect --watch --json` emits JSONL per checkpoint/ownership change, ending
 with a snapshot and exit 0/1/75/130/3 for completed/failed/suspended/cancelled/stale (an interrupted
 run ends as suspended). It does not add an error document for an observed failure. An interrupted

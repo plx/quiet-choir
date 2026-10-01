@@ -96,6 +96,9 @@ function totals(values: readonly Entry[]): UsageTotals {
     unknownUsageAttempts: values.filter(
       ({ usage }) => !usage || usage.completeness === 'unavailable',
     ).length,
+    unknownTokenAttempts: values.filter(
+      ({ usage }) => usage?.inputTokens == null || usage.outputTokens == null,
+    ).length,
     unknownCostAttempts: values.filter(({ usage }) => usage?.costUsd == null).length,
     outcomes,
     inputTokens: sum((usage) => usage.inputTokens),

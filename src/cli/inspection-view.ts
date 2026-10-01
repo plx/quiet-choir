@@ -1,4 +1,5 @@
 import type { InspectionStatus, RunSummary } from '../workflow/loader/inspection.js';
+import type { ExecSummary } from '../workflow/runtime/exec-model.js';
 
 /** Human units for elapsed time and call limits. @internal */
 function duration(ms: number): string {
@@ -33,10 +34,61 @@ export function parseWatchInterval(value: string): number {
   return ms;
 }
 
-function cost(run: RunSummary): string {
+type CostUsage = Pick<
+  RunSummary['usage'],
+  | 'attempts'
+  | 'costUsd'
+  | 'inputTokens'
+  | 'outputTokens'
+  | 'unknownTokenAttempts'
+  | 'unknownCostAttempts'
+>;
+
+/** Totals plus an honest note: missing tokens are partial, a cost-only gap says tokens are complete. */
+function cost(run: { readonly usage: CostUsage }): string {
   const u = run.usage;
-  return `${u.costUsd === null ? 'unknown cost' : `$${u.costUsd.toFixed(4)}`}, ${u.inputTokens === null ? '?' : String(u.inputTokens)} in / ${u.outputTokens === null ? '?' : String(u.outputTokens)} out tokens${u.incompleteAttempts ? ` (partial; ${String(u.incompleteAttempts)}/${String(u.attempts)} attempts missing usage)` : ''}`;
+  const attempts = String(u.attempts);
+  const note =
+    u.unknownTokenAttempts > 0
+      ? ` (partial; ${String(u.unknownTokenAttempts)}/${attempts} attempts without token usage${u.unknownCostAttempts > 0 ? `; cost unreported for ${String(u.unknownCostAttempts)}/${attempts}` : ''})`
+      : u.unknownCostAttempts > 0
+        ? ` (tokens complete; cost unreported for ${String(u.unknownCostAttempts)}/${attempts} attempts)`
+        : '';
+  return `${u.costUsd === null ? 'unknown cost' : `$${u.costUsd.toFixed(4)}`}, ${u.inputTokens === null ? '?' : String(u.inputTokens)} in / ${u.outputTokens === null ? '?' : String(u.outputTokens)} out tokens${note}`;
 }
+
+const maxShellLabel = 60;
+const maxSubcommandLabel = 40;
+
+/** Short command label: program basename plus a bare subcommand, or the first shell line. */
+function commandLabel(command: ExecSummary['command']): string {
+  if ('shell' in command) {
+    const first = command.shell.split(/\r?\n/u)[0] ?? '';
+    return `[SHELL] ${first.length > maxShellLabel ? `${first.slice(0, maxShellLabel - 1)}\u2026` : first}`;
+  }
+  const program = /[^\\/]+(?=[\\/]*$)/u.exec(command[0])?.[0] ?? command[0];
+  const next = command[1];
+  return next !== undefined &&
+    !next.startsWith('-') &&
+    !/[\s/]/u.test(next) &&
+    next.length <= maxSubcommandLabel
+    ? `${program} ${next}`
+    : program;
+}
+
+function agentLine(row: RunSummary['agents']['recent'][number]): string {
+  return `${row.status === 'completed' ? '' : `${row.status} `}${row.id}  ${row.harness} ${row.model ?? '(native model)'} effort ${row.effort ?? '-'}${row.profile === null ? '' : ` profile ${row.profile}`}${row.elapsedMs === null ? '' : `  ${duration(row.elapsedMs)}`}  ${row.costUsd === null ? 'unknown cost' : `$${row.costUsd.toFixed(4)}`}`;
+}
+
+/** Statuses whose steps already print in full in the step list. */
+const listedStatuses: readonly string[] = [
+  'running',
+  'failed',
+  'cancelled',
+  'settled-failed',
+  'waiting',
+];
+const maxCompletedAgentLines = 20;
 
 function owner(run: RunSummary): string {
   const value = run.ownership.owner;
@@ -90,6 +142,12 @@ export function formatRunSummary(run: RunSummary, verbose = false): string {
       lines.push(
         `Integration ${step.id}: base ${step.merge.base}, target ${step.merge.ref}, commit ${step.merge.result?.commit ?? 'pending'}${step.merge.result?.conflicts.length ? `; ${String(step.merge.result.conflicts.length)} conflicts` : ''}`,
       );
+    if (step.exec && !verbose && !step.worktree && !step.merge && step.status === 'completed') {
+      lines.push(
+        `${step.status} ${step.id}  ${commandLabel(step.exec.command)}${step.elapsedMs === null ? '' : `  ${duration(step.elapsedMs)}`}${step.rootCause ? ' [root cause]' : ''}`,
+      );
+      continue;
+    }
     if (step.exec) {
       const command = step.exec.command;
       lines.push(
@@ -125,6 +183,16 @@ export function formatRunSummary(run: RunSummary, verbose = false): string {
     lines.push(
       `${step.status} ${step.id}  ${request ? `${request.harness} ${request.model ?? '(native model)'}` : label}${step.elapsedMs === null ? '' : `  ${duration(step.elapsedMs)} elapsed`}${limits ? `; ${limits}` : ''}${step.rootCause ? ' [root cause]' : ''}${step.error ? `  ${step.error}` : ''}`,
     );
+  }
+  if (run.agents.total > 0) {
+    lines.push(`Agents: ${String(run.agents.total)} steps`);
+    for (const group of run.agents.byRequest)
+      lines.push(
+        `  ${group.harness} ${group.model ?? '(native model)'} effort ${group.effort ?? '-'} profile ${group.profile ?? '-'}: ${String(group.steps)} steps, ${group.costUsd === null ? 'unknown cost' : `$${group.costUsd.toFixed(4)}`}`,
+      );
+    const settled = run.agents.recent.filter((row) => !listedStatuses.includes(row.status));
+    for (const row of verbose ? settled : settled.slice(-maxCompletedAgentLines))
+      lines.push(agentLine(row));
   }
   if (run.interruptedBy)
     lines.push(`Interrupted at ${run.interruptedBy.at}: ${run.interruptedBy.reason} (resumable)`);

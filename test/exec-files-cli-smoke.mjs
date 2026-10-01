@@ -51,6 +51,8 @@ export default defineWorkflow({name:'commands',version:'1',input:z.object({}),ou
   assert.match(inspected.stdout, /\[SHELL\]/u);
   const summary = document(0, 'inspect', 'commands', '--summary', '--json');
   assert.equal(summary.usage.attempts, 0);
+  assert.deepEqual(summary.output, resumed.output);
+  assert.equal(summary.agents.total, 0);
   const preview = join(root, 'preview.mts');
   writeFileSync(
     preview,

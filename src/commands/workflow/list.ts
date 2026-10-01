@@ -4,13 +4,14 @@ import { Flags, type Interfaces } from '@oclif/core';
 import { WorkflowCommand } from '../../cli/workflow-command.js';
 import { formatRunList } from '../../cli/inspection-view.js';
 import { WorkflowExecutor } from '../../workflow/loader/executor.js';
-import type { InspectionStatus } from '../../workflow/loader/inspection.js';
+import { toRunListRow, type InspectionStatus } from '../../workflow/loader/inspection.js';
 
 interface WorkflowListFlags {
   readonly all: boolean | undefined;
   readonly 'state-dir': string | undefined;
   readonly status: InspectionStatus | undefined;
   readonly json: boolean | undefined;
+  readonly full: boolean | undefined;
 }
 
 export default class WorkflowList extends WorkflowCommand {
@@ -29,6 +30,10 @@ export default class WorkflowList extends WorkflowCommand {
     json: Flags.boolean({
       description: 'Print runs and unreadable-checkpoint warnings as JSON',
       default: false,
+    }),
+    full: Flags.boolean({
+      description: 'With --json, print full run summaries instead of compact rows',
+      dependsOn: ['json'],
     }),
   };
   public static override readonly summary =
@@ -57,7 +62,10 @@ export default class WorkflowList extends WorkflowCommand {
     if (!result.ok) this.failResult(result);
     if (result.kind === 'workflow.list.result') {
       for (const warning of result.warnings) this.logToStderr(`Warning: ${warning}`);
-      this.output(result, formatRunList(result.runs, flags.all ?? false));
+      this.output(
+        flags.full ? result : { ...result, runs: result.runs.map(toRunListRow) },
+        formatRunList(result.runs, flags.all ?? false),
+      );
     }
   }
 }
