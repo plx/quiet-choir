@@ -1,5 +1,5 @@
 {
-  "capturedAt": "2026-10-01T01:46:49.404Z",
+  "capturedAt": "2026-10-01T04:26:38.270Z",
   "transport": "local fake APIs and dummy keys; no inference",
   "cases": [
     {
@@ -25,6 +25,23 @@
       "outsideReadDenied": true,
       "addedDirectoryReadAllowed": true,
       "protectedSettingsWriteDenied": true
+    },
+    {
+      "name": "codex-instructions-none",
+      "version": "codex-cli 0.157.1",
+      "explicitProviderReachedLocalApi": true,
+      "userInstructionsReachedRequest": false,
+      "projectInstructionsReachedRequest": false,
+      "userSkillReachedRequest": false,
+      "realCodexHomeUnchanged": true,
+      "authJsonUnchanged": true
+    },
+    {
+      "name": "codex-instructions-native",
+      "version": "codex-cli 0.157.1",
+      "userInstructionsReachedRequest": true,
+      "projectInstructionsReachedRequest": true,
+      "userSkillReachedRequest": true
     },
     {
       "name": "codex-restricted",

@@ -1,6 +1,6 @@
 // Opt-in native CLI regression. Fresh homes, dummy keys, and local fake APIs only.
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { CliHarness } from '../dist/index.js';
@@ -25,6 +25,11 @@ const markers = {
   projectAgents: 'PROJECT_AGENTS_MARKER',
   userSkill: 'USER_SKILL_MARKER',
 };
+// Inert credentials: the fixture provider authenticates through env_key, so Codex never uses them.
+// They exercise the private CODEX_HOME copy and write-back of instructions: 'none'.
+const authJson = `${JSON.stringify({ OPENAI_API_KEY: 'sk-local-fixture-auth' })}\n`;
+const listing = async (directory) =>
+  (await readdir(directory, { recursive: true })).map(String).sort();
 
 // extras.prepare({ home, project, config }) adjusts the Codex instruction layout; extras.subdir
 // runs the call from a directory below the project.
@@ -98,6 +103,8 @@ async function execute(provider, name, options = {}, tool, extras = {}) {
     join(config, 'config.toml'),
     'model_provider = "nonexistent-inherited-provider"\n',
   );
+  if (provider === 'codex') await writeFile(join(config, 'auth.json'), authJson, { mode: 0o600 });
+  let configBefore;
   const bodies = [];
   const api = await fakeApi(`${provider}-text-success`, {
     onRequest: (request) => {
@@ -164,7 +171,7 @@ async function execute(provider, name, options = {}, tool, extras = {}) {
   let invocation;
   try {
     const plan = new CliHarness().plan(request);
-    invocation = await materializeInvocation(plan, request);
+    invocation = await materializeInvocation(plan, request, { codexHome: config });
     if (provider === 'claude') {
       const format = invocation.args.indexOf('--output-format');
       invocation.args[format + 1] = 'stream-json';
@@ -182,12 +189,14 @@ async function execute(provider, name, options = {}, tool, extras = {}) {
       killGraceMs: 1000,
       signal: new AbortController().signal,
     });
+    // After the version probe, which runs against the real home as harness metadata does.
+    configBefore = await listing(config);
     const result = await runProcess({
       binary: provider,
       args: invocation.args,
       cwd,
       input: plan.stdin,
-      env: environment,
+      env: { ...environment, ...invocation.env },
       inheritEnv: false,
       timeoutMs: 30_000,
       maxOutputBytes: 4 * 1024 * 1024,
@@ -211,7 +220,14 @@ async function execute(provider, name, options = {}, tool, extras = {}) {
       return '';
     });
     const savedSettings = await readFile(join(project, '.claude', 'settings.json'), 'utf8');
+    const warnings = await invocation.settle();
     return {
+      plan,
+      warnings,
+      configUnchanged: JSON.stringify(await listing(config)) === JSON.stringify(configBefore),
+      configDiff: (await listing(config)).filter((name) => !configBefore.includes(name)),
+      authUnchanged:
+        provider !== 'codex' || (await readFile(join(config, 'auth.json'), 'utf8')) === authJson,
       init,
       hooks,
       bodies,
@@ -311,9 +327,47 @@ try {
   }
   if (providers.includes('codex')) {
     const reached = (run, marker) => JSON.stringify(run.bodies).includes(marker);
+    // instructions: 'none' (#130): a private CODEX_HOME holding only auth.json, and
+    // project_doc_max_bytes=0. Asserted, because quiet-choir promises this boundary.
+    const none = await execute('codex', 'codex-instructions-none', { instructions: 'none' });
+    assert.equal(none.plan.codexHome, 'private');
+    assert(none.plan.argv.includes('project_doc_max_bytes=0'));
+    assert(!reached(none, markers.userAgents), 'user AGENTS.md reached a none call');
+    assert(!reached(none, markers.projectAgents), 'project AGENTS.md reached a none call');
+    assert(!reached(none, markers.userSkill), 'a user skill reached a none call');
+    assert(
+      none.configUnchanged,
+      `a none call wrote to the real CODEX_HOME: ${JSON.stringify(none.configDiff)}`,
+    );
+    assert(none.authUnchanged, 'a none call changed auth.json');
+    assert.deepEqual(none.warnings, []);
+    report.cases.push({
+      name: 'codex-instructions-none',
+      version: none.version,
+      explicitProviderReachedLocalApi: none.apiCalls > 0,
+      userInstructionsReachedRequest: false,
+      projectInstructionsReachedRequest: false,
+      userSkillReachedRequest: false,
+      realCodexHomeUnchanged: true,
+      authJsonUnchanged: true,
+    });
+    const native = await execute('codex', 'codex-instructions-native', { instructions: 'native' });
+    assert.equal(native.plan.codexHome, undefined);
+    assert(reached(native, markers.userAgents), 'user AGENTS.md missed a native call');
+    assert(reached(native, markers.projectAgents), 'project AGENTS.md missed a native call');
+    report.cases.push({
+      name: 'codex-instructions-native',
+      version: native.version,
+      userInstructionsReachedRequest: true,
+      projectInstructionsReachedRequest: true,
+      userSkillReachedRequest: reached(native, markers.userSkill),
+    });
     const codex = await execute('codex', 'codex-restricted');
-    // Recorded, not asserted: a change in Codex's native instruction loading shows up as a
-    // fixture diff, and quiet-choir's metadata warning and doctor text describe these results.
+    // Unset matches 'native'; Codex's native loading is the documented default.
+    assert(reached(codex, markers.userAgents), 'user AGENTS.md missed an unset call');
+    assert(reached(codex, markers.projectAgents), 'project AGENTS.md missed an unset call');
+    // The layout details below are recorded, not asserted: a change in Codex's native instruction
+    // loading shows up as a fixture diff, and the metadata warning and doctor text describe them.
     report.cases.push({
       name: 'codex-restricted',
       version: codex.version,
