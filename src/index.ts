@@ -172,6 +172,7 @@ export {
   RunInterruptedError,
   WorkflowInputError,
   RunRefusedError,
+  StepIdentityChangedError,
   isValidRunId,
 } from './workflow/runtime/run-errors.js';
 export type { CliErrorCode } from './workflow/runtime/run-errors.js';

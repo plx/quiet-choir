@@ -1,6 +1,7 @@
 import {
   appendFile,
   mkdir,
+  readdir,
   mkdtemp,
   readFile,
   realpath,
@@ -19,6 +20,7 @@ import { WorkflowExecutor } from '../src/workflow/loader/executor.js';
 import { analyzeTypecheckEntrypoint } from '../src/workflow/typecheck/plan.js';
 import { readRun } from '../src/index.js';
 import { lockRun } from '../src/workflow/runtime/store.js';
+import { workflowExitCodes } from '../src/cli/workflow-errors.js';
 
 const repository = dirname(dirname(fileURLToPath(import.meta.url)));
 let root: string;
@@ -61,6 +63,22 @@ async function validate(entrypoint = file) {
   });
   if (result.kind !== 'workflow.validate.result') throw new Error(JSON.stringify(result));
   return result;
+}
+/** Every checkpoint file of a run, by name, so a refusal can prove it wrote nothing. */
+async function runFiles(runId: string): Promise<Record<string, string>> {
+  const directory = join(stateDir, runId);
+  const names = (await readdir(directory, { recursive: true, withFileTypes: true }))
+    .filter((entry) => entry.isFile())
+    .map((entry) => join(entry.parentPath, entry.name))
+    .sort();
+  return Object.fromEntries(
+    await Promise.all(
+      names.map(async (name): Promise<[string, string]> => [
+        name.slice(directory.length + 1),
+        await readFile(name, 'utf8'),
+      ]),
+    ),
+  );
 }
 beforeEach(async () => {
   root = await mkdtemp(join(tmpdir(), 'choir-loader-replay-'));
@@ -174,10 +192,15 @@ describe('source-aware loader recovery', { timeout: 120_000 }, () => {
     expect(await readFile(join(stateDir, 'source', 'run.json'), 'utf8')).toBe(before);
   });
 
-  it('repairs an unfinished callback, and does not let accepted code changes bypass completed-step checks', async () => {
-    await writeFile(file, source('() => { throw new Error("bug"); }'));
+  it('repairs an unfinished callback without a live preflight call, and refuses an edited completed callback without changes', async () => {
+    const counter = join(root, 'counter');
+    const prefix = "import { appendFileSync } from 'node:fs';\n";
+    const counted = (body: string) =>
+      `() => { appendFileSync(new URL('./counter', import.meta.url), 'run\\n'); ${body} }`;
+    await writeFile(file, prefix + source(counted('throw new Error("bug");')));
     expect(await execute('source')).toMatchObject({ ok: false });
-    await writeFile(file, source('() => { return "fixed"; }'));
+    expect(await readFile(counter, 'utf8')).toBe('run\n');
+    await writeFile(file, prefix + source(counted('return "fixed";')));
     expect(await execute('source', { resume: true })).toMatchObject({
       ok: false,
       message: expect.stringContaining('workflow.ts') as unknown,
@@ -186,14 +209,137 @@ describe('source-aware loader recovery', { timeout: 120_000 }, () => {
       ok: true,
       run: { output: 'fixed' },
     });
+    // The preflight stubs the unfinished callback; only the real resume runs it.
+    expect(await readFile(counter, 'utf8')).toBe('run\nrun\n');
     const fixed = await readRun({ stateDir, runId: 'source' });
     expect(fixed.codeChanges?.[0]?.files).toEqual(['workflow.ts']);
     expect(fixed.steps['effect']?.redefinitions).toHaveLength(1);
-    await writeFile(file, source('() => { return "other"; }'));
-    expect(await execute('source', { resume: true, acceptCodeChange: true })).toMatchObject({
+
+    await writeFile(file, prefix + source(counted('return "other";')));
+    const plain = await execute('source', { resume: true });
+    expect(plain).toMatchObject({ ok: false, code: 'run.incompatible' });
+    const plainMessage = plain.ok ? '' : plain.message;
+    expect(plainMessage.indexOf('--fork-from source')).toBeGreaterThanOrEqual(0);
+    expect(plainMessage.indexOf('--fork-from source')).toBeLessThan(
+      plainMessage.indexOf('--accept-code-change'),
+    );
+    expect(plainMessage).toContain('--dry-run --resume --accept-code-change');
+    const bytes = await runFiles('source');
+    const refused = await execute('source', { resume: true, acceptCodeChange: true });
+    expect(refused).toMatchObject({
       ok: false,
+      code: 'run.incompatible',
       message: expect.stringContaining('callback changed on a completed step') as unknown,
+      details: { divergent: [{ stepId: 'effect', components: ['callback'] }] },
     });
+    if (refused.ok) throw new Error('expected a refusal');
+    expect(workflowExitCodes[refused.code]).toBe(3);
+    expect(refused.message).not.toContain('re-finalize');
+    expect(await runFiles('source')).toEqual(bytes);
+    const kept = await readRun({ stateDir, runId: 'source' });
+    expect(kept).toMatchObject({ status: 'completed', output: 'fixed' });
+    expect(kept.workflow.fingerprint).toBe(fixed.workflow.fingerprint);
+    expect(kept.codeChanges).toHaveLength(1);
+    expect(await readFile(counter, 'utf8')).toBe('run\nrun\n');
+  });
+
+  it('refuses an accepted resume whose completed agent step changed, leaving the suspended run intact', async () => {
+    const ops = join(root, 'ops.workflow.ts');
+    const opsSource = (
+      prompt: string,
+    ) => `import { defineWorkflow, z } from ${JSON.stringify(join(repository, 'src/index.js'))};
+export default defineWorkflow({ name: 'ops', version: '1', input: z.null(), output: z.string(), async run(ctx) {
+const scan = await ctx.claude.text('scan', { prompt: ${JSON.stringify(prompt)} });
+const approved = await ctx.ask('approve', { prompt: 'Approve?', schema: z.boolean() });
+return approved ? scan.output : 'rejected';
+}});`;
+    const harness = {
+      kind: 'fixture' as const,
+      config: {},
+      fixtures: { version: 1 as const, calls: [], unmatched: 'synthesize' as const },
+    };
+    await writeFile(ops, opsSource('scan the repository'));
+    const first = await executor().execute({
+      kind: 'workflow.execute',
+      typecheck: plan(ops),
+      runId: 'ops2',
+      stateDir,
+      cwd: root,
+      input: null,
+      resume: false,
+      harness,
+    });
+    expect(first).toMatchObject({ ok: true, run: { status: 'suspended' } });
+    const saved = await readRun({ stateDir, runId: 'ops2' });
+    await writeFile(ops, opsSource('scan the repository carefully'));
+    const bytes = await runFiles('ops2');
+    const resume = (extra: object = {}) =>
+      executor().execute({
+        kind: 'workflow.resume',
+        runId: 'ops2',
+        stateDir,
+        harness,
+        acceptCodeChange: true,
+        ...extra,
+      });
+    const refused = await resume();
+    if (refused.ok) throw new Error(JSON.stringify(refused));
+    expect(refused.code).toBe('run.incompatible');
+    expect(workflowExitCodes[refused.code]).toBe(3);
+    const details = refused.details as {
+      divergent: { stepId: string; components: string[] }[];
+      next: string[][];
+    };
+    expect(details.divergent[0]?.stepId).toBe('scan');
+    expect(details.divergent[0]?.components).toContain('prompt');
+    const next = details.next[0] ?? [];
+    const flags = next.slice(next.indexOf('--fork-from'), next.indexOf('--fork-from') + 6);
+    expect(flags).toEqual(['--fork-from', 'ops2', '--reuse', 'matching', '--invalidate', 'scan']);
+    expect(next.slice(0, 4)).toEqual(['quiet-choir', 'workflow', 'execute', await realpath(ops)]);
+    expect(next.slice(-4)).toEqual(['--run-id', '<NEW_RUN_ID>', '--state-dir', stateDir]);
+    expect(refused.message).toContain('--fork-from ops2 --reuse matching --invalidate scan');
+    expect(refused.message).not.toContain('re-finalize');
+    expect(await runFiles('ops2')).toEqual(bytes);
+    const kept = await readRun({ stateDir, runId: 'ops2' });
+    expect(kept.status).toBe('suspended');
+    expect(kept.workflow.fingerprint).toBe(saved.workflow.fingerprint);
+    expect(kept.codeChanges?.length ?? 0).toBe(saved.codeChanges?.length ?? 0);
+    expect(kept.steps['approve']?.status).toBe('waiting');
+
+    const preview = await resume({ dryRun: true });
+    expect(preview).toMatchObject({ ok: false, code: refused.code, message: refused.message });
+    expect(preview.ok ? null : preview.details).toEqual(refused.details);
+    expect(await runFiles('ops2')).toEqual(bytes);
+
+    const check = await executor().execute({
+      kind: 'workflow.check-resume',
+      typecheck: plan(ops),
+      runId: 'ops2',
+      stateDir,
+      cwd: root,
+      acceptCodeChange: true,
+    });
+    expect(check).toMatchObject({
+      ok: true,
+      check: {
+        canAcceptCodeChange: true,
+        message: expect.stringContaining('--dry-run --resume --accept-code-change') as unknown,
+      },
+    });
+
+    const forked = await executor().execute({
+      kind: 'workflow.execute',
+      typecheck: plan(ops),
+      runId: 'ops4',
+      stateDir,
+      cwd: root,
+      resume: false,
+      harness,
+      forkFrom: { runId: 'ops2', reuse: 'matching', invalidate: ['scan'] },
+    });
+    expect(forked).toMatchObject({ ok: true, run: { status: 'suspended' } });
+    expect((await readRun({ stateDir, runId: 'ops4' })).steps['scan']?.reusedFrom).toBeUndefined();
+    expect(await runFiles('ops2')).toEqual(bytes);
   });
 
   it('re-finalizes a tail validation failure and surfaces the recovery hint', async () => {
@@ -224,13 +370,19 @@ describe('source-aware loader recovery', { timeout: 120_000 }, () => {
   });
 
   it('reports source changes on a completed run instead of silently returning stale final output', async () => {
+    const prefix = "import { appendFileSync } from 'node:fs';\n";
+    const callback = `() => { appendFileSync(new URL('./effects', import.meta.url), 'effect\\n'); return 'one'; }`;
+    await writeFile(file, prefix + source(callback));
     await execute('source');
-    await writeFile(file, source(undefined, '1', 'return `${value}-new`;'));
+    await writeFile(file, prefix + source(callback, '1', 'return `${value}-new`;'));
     expect(await execute('source', { resume: true })).toMatchObject({ ok: false });
     expect(await execute('source', { resume: true, acceptCodeChange: true })).toMatchObject({
       ok: true,
       run: { output: 'one-new' },
     });
+    // A tail-only fix re-finalizes with zero repeated effects.
+    expect(await readFile(join(root, 'effects'), 'utf8')).toBe('effect\n');
+    expect((await readRun({ stateDir, runId: 'source' })).codeChanges).toHaveLength(1);
   });
 
   it('hashes external workflow sources independently of where the checkout was copied', async () => {

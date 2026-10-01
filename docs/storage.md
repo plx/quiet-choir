@@ -137,6 +137,12 @@ then records current identities. It does not invent old attempt timing or callba
 attempt counts are retained. A changed original step still refuses reuse. A completed migrated run
 subsequently takes the ordinary completed fast path.
 
+An accepted code change on any format writes `codeChanges`, the new `workflow` fingerprint and a
+cleared `output` before the body replays. The CLI therefore replays the accepted body against a
+disposable copy first; when the copy meets a changed completed step, `--accept-code-change` refuses
+with `run.incompatible` and the checkpoint keeps its bytes, status, fingerprint, output and
+`codeChanges`. See [ADR 0006](decisions/0006-code-change-recovery.md).
+
 Format 1 stored only an aggregate code/schema fingerprint. If it differs, explicit
 `--accept-code-change` is required, while name, version, cwd, input, and original step checks remain
 in force. Older CLI source hashing included absolute paths and engine files, so an engine upgrade

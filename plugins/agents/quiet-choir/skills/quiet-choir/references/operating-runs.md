@@ -75,7 +75,9 @@ node "$QC_CHECKOUT/bin/run.js" workflow pending --state-dir "$QC_RUNS" --json
 Check `codeChanged` before asking the human to review possibly stale context. `true` means saved
 source bytes changed; `null` means paths were not recorded. Resolve code compatibility with
 `check-resume FILE --run-id RUN` first when needed. Intentional `--accept-code-change` still cannot
-change a question's fingerprint or reuse approval for a different subject.
+change a question's fingerprint or reuse approval for a different subject. When the edit changed a
+step that already completed, it refuses with `run.incompatible` and leaves the question waiting;
+follow `error.details.next` to fork instead.
 
 For `audience: human`, present the question and details to the human through the host's question UI.
 Do not choose an answer yourself or invent `human:` attribution. In a Claude Code host exposing
@@ -162,8 +164,10 @@ process and must not drive automatic killing. Escaped/unregistered descendants m
 investigation. External mutations remain in place after cancellation.
 
 For code/schema edits use [acceptance or fork recovery](durability.md#choose-a-recovery-path);
-`--resume --accept-code-change` retains per-step compatibility checks. Inspect the actual saved
-checkpoint after storage failure, since an uncheckpointed action can repeat.
+`--resume --accept-code-change` retains per-step compatibility checks and refuses, without changing
+the run, when a completed step changed; preview it with `--dry-run --resume --accept-code-change`
+and follow `error.details.next` to fork. Inspect the actual saved checkpoint after storage failure,
+since an uncheckpointed action can repeat.
 
 For parked deadlines and polls, use [workflow tick](waits.md#operate-a-parked-run); pending JSON
 includes their progress. `tick --json` reports resumed outcomes, skipped reasons and an observed

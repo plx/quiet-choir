@@ -120,7 +120,8 @@ export default class WorkflowExecute extends WorkflowCommand {
         'Rehearse with synthesized/fixture agent outputs and temporary checkpoints; local callbacks run for real',
     }),
     'stub-steps': Flags.string({
-      description: 'Synthesize selected local steps by ID glob; repeatable',
+      description:
+        'Synthesize selected local steps, file effects and poll waits by ID glob; repeatable',
       multiple: true,
       dependsOn: ['dry-run'],
     }),
@@ -161,7 +162,8 @@ export default class WorkflowExecute extends WorkflowCommand {
       dependsOn: ['fork-from'],
     }),
     'accept-code-change': Flags.boolean({
-      description: 'Accept and record source/schema changes; keep step checks',
+      description:
+        'Accept and record source/schema changes; keep step checks. Refuses without changes when a completed step changed; preview with --dry-run',
       dependsOn: ['resume'],
     }),
     'strict-replay': Flags.boolean({

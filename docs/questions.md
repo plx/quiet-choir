@@ -79,7 +79,8 @@ code. `codeChanged` compares stored source bytes and is null for embedded record
 paths. It is an early drift hint, not a compatibility guarantee. Check changed code before asking a
 human to review stale context. `resume RUN` uses the stored absolute entrypoint, compiler
 configuration, and run cwd; code still passes the usual load and compatibility gates. Use
-`--accept-code-change` for an intentional compatible edit. Existing records without launch metadata
+`--accept-code-change` for an intentional compatible edit; it refuses without changes, leaving the
+question waiting, when the edit changed a completed step. Existing records without launch metadata
 still use `execute FILE --resume --run-id RUN`. Harness configuration and admission overrides are
 invocation choices, not saved authentication; provide the same fixture/native selection as needed.
 

@@ -50,7 +50,8 @@ export default class WorkflowResume extends WorkflowCommand {
     }),
     json: Flags.boolean({ description: 'Print the result or structured error as JSON' }),
     'accept-code-change': Flags.boolean({
-      description: 'Record source/schema acceptance; retain question and step identity checks',
+      description:
+        'Record source/schema acceptance; retain question and step identity checks. Refuses without changes when a completed step changed',
     }),
     'allow-harness-change': Flags.boolean({
       description: 'Accept saved effects from another harness kind',

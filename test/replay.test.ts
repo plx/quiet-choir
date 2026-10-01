@@ -10,11 +10,14 @@ import {
   defineWorkflow,
   readRun,
   runWorkflow,
+  StepIdentityChangedError,
+  WorkflowRunError,
   z,
   type Harness,
   type RunOptions,
   type WorkflowContext,
 } from '../src/index.js';
+import { findStepIdentityChange } from '../src/workflow/runtime/run-errors.js';
 import { lockRun } from '../src/workflow/runtime/store.js';
 
 let stateDir: string;
@@ -304,14 +307,22 @@ it('rejects edited completed callbacks on accepted resume and runs them live in 
   });
   await expect(runWorkflow(definition, options())).rejects.toThrow('tail');
   callback = () => 'two';
-  await expect(
-    runWorkflow(definition, {
-      ...options(),
-      resume: true,
-      fingerprint: 'code-2',
-      acceptCodeChange: true,
-    }),
-  ).rejects.toThrow('callback changed on a completed step');
+  const rejected = await runWorkflow(definition, {
+    ...options(),
+    resume: true,
+    fingerprint: 'code-2',
+    acceptCodeChange: true,
+  }).catch((error: unknown) => error);
+  expect(rejected).toBeInstanceOf(WorkflowRunError);
+  expect((rejected as Error).message).toContain('callback changed on a completed step');
+  expect((rejected as Error).message).toContain(
+    '--fork-from RUN --reuse matching --invalidate local',
+  );
+  const change = findStepIdentityChange(rejected);
+  expect(change).toBeInstanceOf(StepIdentityChangedError);
+  expect(change).toMatchObject({ stepId: 'local', components: ['callback'], status: 'completed' });
+  expect(findStepIdentityChange(new AggregateError([new Error('x'), change]))).toBe(change);
+  expect(findStepIdentityChange(new Error('plain'))).toBeUndefined();
   const forked = await runWorkflow(
     {
       ...definition,

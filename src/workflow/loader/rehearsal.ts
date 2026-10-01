@@ -99,7 +99,7 @@ export class RehearsalHarness extends FixtureHarness {
   private readonly stubbedSteps = new Set<string>();
   private readonly skippedSleeps = new Set<string>();
   private readonly warnings = new Set<string>([
-    'Local callbacks, file effects, and workflow top-level code run for real. Temporary checkpoints do not roll back filesystem or external effects; use --stub-steps for selected local effects.',
+    'Local callbacks, file effects, poll observers, and workflow top-level code run for real. Temporary checkpoints do not roll back filesystem or external effects; use --stub-steps for selected local effects and poll observers (a stubbed poll completes with a synthesized value).',
     'The nominal Claude ceiling covers only attempted calls on the rehearsed path. One-item synthesized arrays can understate fan-out; Codex calls are counted, not priced. CLI budget limits can overshoot on a final turn.',
   ]);
   public constructor(

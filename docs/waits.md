@@ -179,9 +179,10 @@ finish: a longer agent call is interrupted at the deadline and restarted by the 
 
 `workflow pending --json` returns legacy question projections and general waits distinguished by
 `kind: "wait"`, including deadline, next check, count, last note, optional signal, and answer
-command. A dry-run skips timing-only waits and performs a poll's initial read-only observation;
-unresolved external waits suspend. Rehearsals never fabricate signals and do not invoke notification
-commands.
+command. A dry-run skips timing-only waits and performs a poll's initial read-only observation,
+unless a `--stub-steps` pattern matches the wait ID: then the observer never runs and the wait
+completes with a synthesized value parsed by the poll schema. Unresolved external waits suspend.
+Rehearsals never fabricate signals and do not invoke notification commands.
 
 ## Operator notifications
 

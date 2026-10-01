@@ -106,11 +106,11 @@ heuristic; explicit settled outcomes prevent the branch from changing in the fir
 
 ## Choose a recovery path
 
-| Path                            | What stays fixed and what can change                                                                                              |
-| ------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| `--resume`                      | Same run, source/schema identity, name/version, engine, cwd, and validated input; unfinished work retries                         |
-| `--resume --accept-code-change` | Explicitly waive only source/run-schema changes; keep name/version, engine, cwd, input, terminal-step identity, and replay checks |
-| `--fork-from OLD`               | New run, same workflow name; source/version/input may change, terminal outcomes are copied only when their identity matches       |
+| Path                            | What stays fixed and what can change                                                                                                                                                    |
+| ------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--resume`                      | Same run, source/schema identity, name/version, engine, cwd, and validated input; unfinished work retries                                                                               |
+| `--resume --accept-code-change` | Explicitly waive only source/run-schema changes; keep name/version, engine, cwd, input, terminal-step identity, and replay checks; refuse without changes when a completed step changed |
+| `--fork-from OLD`               | New run, same workflow name; source/version/input may change, terminal outcomes are copied only when their identity matches                                                             |
 
 Forks default to `--reuse prefix`: consume source steps in first-use `seq` order, stopping reuse at
 the first missing, changed, unfinished, skipped, or invalidated effect. All later effects run live.
@@ -130,7 +130,9 @@ node "$QC_CHECKOUT/bin/run.js" workflow check-resume review.workflow.ts \
 node "$QC_CHECKOUT/bin/run.js" workflow execute review.workflow.ts \
   --run-id review-2 --state-dir "$qc_state_dir" --fork-from review-1 \
   --invalidate 'report/**'
-# Alternatively, explicitly accept a tail fix on the original run:
+# Alternatively, explicitly accept a tail fix on the original run, previewing it first:
+node "$QC_CHECKOUT/bin/run.js" workflow execute review.workflow.ts \
+  --run-id review-1 --state-dir "$qc_state_dir" --dry-run --resume --accept-code-change --json
 node "$QC_CHECKOUT/bin/run.js" workflow execute review.workflow.ts \
   --run-id review-1 --state-dir "$qc_state_dir" --resume --accept-code-change
 ```
@@ -142,7 +144,8 @@ differences, whether code acceptance is possible, and whether a failed run has o
 outcomes. Exit 0 means the run-level gates pass; exit 3 means incompatibility or a read refusal;
 exit 4 means a loading failure. Add `--accept-code-change` to check that mode. It does not predict
 dynamically constructed steps, step compatibility, or replay order, and a concurrent writer can
-change state after the check.
+change state after the check. For a completed run its message lists the fork first; preview step
+checks with `execute --dry-run --resume --accept-code-change`.
 
 A fork never modifies its source checkpoint. `--fork-state-dir` selects alternate source storage;
 omitting `--input` inherits source input, while explicit input is validated for the new run. Forks
@@ -158,11 +161,19 @@ Each use of `--accept-code-change` that actually changes code, schemas, or files
 `codeChanges` with old/new fingerprints, changed files, components, and time, even if execution
 later fails; an accepted resume with nothing changed leaves `codeChanges` untouched. It runs the
 body even for a previously completed run, first clearing any stale output so a failed
-re-finalization never reports a prior result. A fixed unfinished callback can execute again; a
-changed completed callback still fails its step check. If only the body tail/output validation
-failed, a tail-only fix can finish with zero repeated effects. `recoveryHint` and CLI errors
-identify this case, subject to step checks. The accepted source becomes the basis for later strict
-resumes.
+re-finalization never reports a prior result. A fixed unfinished callback can execute again. A
+changed completed step (callback, prompt, input, schema, options) can never be reused, so the CLI
+first replays the accepted body against a disposable copy, with fixtures off and every unfinished
+local step, file effect, poll observer and command stubbed. If the copy meets such a step, the
+command refuses with `run.incompatible` (exit 3) and changes nothing: status, fingerprint, output,
+`codeChanges` and waiting questions stay as they were. `error.details.divergent` names the step and
+its changed components, and `error.details.next` holds the replacement command,
+`quiet-choir workflow execute FILE --fork-from RUN --reuse matching --invalidate STEP --run-id <NEW_RUN_ID> --state-dir DIR`.
+`--dry-run --resume --accept-code-change` returns the same refusal. Any other preflight outcome lets
+the real resume proceed; the check is a lock-free snapshot, and the workflow body (not its
+unfinished callbacks) runs once more. If only the body tail/output validation failed, a tail-only
+fix can finish with zero repeated effects. `recoveryHint` and CLI errors identify this case, subject
+to step checks. The accepted source becomes the basis for later strict resumes.
 
 Local callback identity uses the loaded function's `toString()` plus optional `version`. Under the
 CLI's tsx loader, comment/formatting-only callback edits preserve that source string; logic changes
