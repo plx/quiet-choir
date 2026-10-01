@@ -17,6 +17,15 @@
   no longer strands a resumed run. The real argv is still executed and recorded. A resumed run whose
   `guard/baseline` completed under an earlier build refuses once with `command, helper changed` and
   needs a new run. Other exec steps keep their digests; no `formatVersion` bump.
+- Built-in step identity (fix; identity change): `ctx.now` and `decision.choose` steps are
+  fingerprinted on an explicit version (`now/1`, `decision/1`) instead of the text of quiet-choir's
+  own callback, so refactoring quiet-choir or changing the loader no longer strands a resumed run. A
+  resumed run whose `ctx.now` step completed under an earlier build refuses once with
+  `callback, version changed on a completed step`, and one whose `decision.choose` completed refuses
+  once with `callback changed on a completed step`; either needs a new run or a fork
+  (`--fork-from RUN --reuse matching --invalidate STEP`). Unfinished steps adopt the new identity.
+  User `ctx.step` identities and all other digests are unchanged, and
+  `test/builtin-identity.test.ts` pins the new digests. No `formatVersion` bump.
 - Harness isolation (feature; the default is unchanged): Codex calls accept
   `instructions: 'native' | 'none'` (new `CodexOptions.instructions`). `'none'` runs the child
   against a private temporary `CODEX_HOME` holding only a 0600 copy of the real `auth.json` and adds
