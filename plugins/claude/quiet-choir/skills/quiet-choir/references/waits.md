@@ -20,6 +20,7 @@ Each sleep/poll/wait creates one wait record. `now` creates one local step. Wait
 original timing, signal presentation/schema/subject, poll input/schema/spacing, and observer source.
 Captured values still belong in poll input. Waiting identities cannot change; use revision-specific
 IDs and immutable subjects. Never derive changing sleep durations from a body `Date.now()`.
+`observeTimeoutMs` is policy, not identity, and may change on resume.
 
 `observe({ signal, idempotencyKey, attempt })` returns `{ done: true, value }` or
 `{ done: false, note? }`. Zod validates/project terminal values. `every` is a positive integer
@@ -27,12 +28,18 @@ interval or `{ initialMs, maxMs, factor? }`, with factor default two. `ctx.poll`
 or deadline; `ctx.wait` may be unbounded. Progress overwrites checks/nextCheckAt/last note (16 KiB
 limit); naps do not save. A thrown observation fails the invocation and can be retried on explicit
 resume. Body-execution diagnostics can still grow across resumes; there is no history compaction.
+Honor the observation `signal`: it aborts on run cancellation, when the deadline passes during the
+observation (the wait resolves by deadline with the last note), and after `observeTimeoutMs`
+(positive integer, default 60 s, never past the deadline), which fails the wait like a throw. An
+observer that ignores its aborted signal is abandoned after a 2 s grace, also when the run closes,
+with a `waitWarnings` run warning.
 
 Outcomes are discriminated by `by`: signal has value/at/actor, poll has value/at/checks, deadline
 has at/note. A valid signal timestamped at or before the deadline wins first, then a terminal poll,
-then deadline. The first check after a missed deadline still performs one final poll. Late signals
-lose; late final polls can win. Recorded winners replay without rechecking. Signal timestamps trust
-the filesystem writer. Never use `Promise.race` over durable operations: replay can choose another
+then deadline. The first check after a missed deadline still performs one final poll, bounded by
+`observeTimeoutMs` (60 s default); if it does not finish, the deadline wins. Late signals lose; late
+final polls can win. Recorded winners replay without rechecking. Signal timestamps trust the
+filesystem writer. Never use `Promise.race` over durable operations: replay can choose another
 branch. Use one multi-source wait. See the
 [tested file-polling recipe](patterns.md#polling-and-deadlines).
 

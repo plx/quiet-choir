@@ -22,7 +22,11 @@ eligible signal wins before a poll, then deadline. A missed deadline still permi
 current-state poll; the winner commits before its promise resolves and is never re-evaluated on
 replay. A signal delivered after the pinned deadline is quarantined like any other invalid delivery,
 since the deadline is fixed and the late answer can never become eligible. Polls perform read-only
-observations under the nested-operation guard. Timer naps never save state.
+observations under the nested-operation guard. Timer naps never save state. Each observation has its
+own signal, aborted on cancellation, at the deadline (the wait resolves by deadline) and after the
+`observeTimeoutMs` policy (the wait fails like a throw); one that ignores it is abandoned after a
+fixed real-time grace with a persisted `waitWarnings` entry, so a hung observer holds a run or its
+close at most one grace past its deadline or timeout.
 
 Quiescent waits suspend without unwinding or cancelling siblings. Waits due within 1000 ms stay
 live; explicit block mode keeps all waits live. Run-level nextWakeAt is derived from open registered

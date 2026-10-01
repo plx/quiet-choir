@@ -256,6 +256,7 @@ export function summarizeRun(
       ...(run.replayWarnings ?? []),
       ...(run.harnessWarnings ?? []),
       ...(run.worktreeWarnings ?? []),
+      ...(run.waitWarnings ?? []),
       ...(ownership.warning ? [ownership.warning] : []),
     ],
   };

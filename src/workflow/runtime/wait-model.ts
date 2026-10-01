@@ -38,7 +38,19 @@ export interface PollSource<T, N extends JsonValue = JsonValue> {
   readonly schema: z.ZodType<T>;
   /** Minimum spacing, not a guarantee of scheduler latency. */
   readonly every: PollInterval;
-  /** Read external state without writes or nested workflow operations. */
+  /**
+   * Upper bound, in milliseconds, for one observation: a positive integer. When it elapses before
+   * the wait's deadline, the observation's `signal` aborts and the wait fails as if `observe` had
+   * thrown. It defaults to 60 seconds and never runs past the deadline, where the signal also
+   * aborts and the wait resolves by `deadline`. It is execution policy, not identity: it is not
+   * persisted and may change on resume.
+   */
+  readonly observeTimeoutMs?: number;
+  /**
+   * Read external state without writes or nested workflow operations. Honor `context.signal`: an
+   * observation that ignores its aborted signal is abandoned after a short grace, with a run
+   * warning.
+   */
   readonly observe: NoInfer<
     (
       context: StepContext,

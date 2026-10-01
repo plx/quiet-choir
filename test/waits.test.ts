@@ -9,10 +9,14 @@ import {
   runWorkflow,
   writeAnswer,
   listPending,
+  RunInterruptedError,
   z,
   type WorkflowClock,
   type PollOptions,
 } from '../src/index.js';
+import { RunActivity } from '../src/workflow/runtime/activity.js';
+import { RunQuestions } from '../src/workflow/runtime/questions.js';
+import type { RunRecord } from '../src/workflow/runtime/store.js';
 
 class Clock implements WorkflowClock {
   public time = 1_800_000_000_000;
@@ -544,3 +548,383 @@ it('lets a rehearsal stub replace a poll observer with a schema-checked terminal
   expect(schemas).toEqual(['ready', 'live']);
   expect(observed).toBe(1);
 });
+
+/** Collect unhandled rejections for the duration of `action`, after one more macrotask. */
+async function unhandledDuring(action: () => Promise<void>): Promise<unknown[]> {
+  const unhandled: unknown[] = [];
+  const onUnhandled = (reason: unknown): void => {
+    unhandled.push(reason);
+  };
+  process.on('unhandledRejection', onUnhandled);
+  try {
+    await action();
+    await delay(20);
+  } finally {
+    process.off('unhandledRejection', onUnhandled);
+  }
+  return unhandled;
+}
+
+/** An observer outcome that only settles, by rejecting, when its signal aborts. */
+function rejectOnAbort(signal: AbortSignal): Promise<{ done: true; value: null }> {
+  return new Promise((_resolve, reject) => {
+    signal.addEventListener(
+      'abort',
+      () => {
+        reject(signal.reason instanceof Error ? signal.reason : new Error('aborted'));
+      },
+      { once: true },
+    );
+  });
+}
+
+it('aborts a pending observation at the wait deadline and keeps the last note', async () => {
+  let checks = 0;
+  let captured: AbortSignal | undefined;
+  const definition = defineWorkflow({
+    name: 'deadline-abort',
+    version: '1',
+    input: z.null(),
+    output: z.unknown(),
+    run: (ctx) =>
+      ctx.poll('ready', {
+        input: null,
+        schema: z.null(),
+        every: 50,
+        timeoutMs: 300,
+        observeTimeoutMs: 10_000,
+        observe: ({ signal }) => {
+          if (++checks === 1) return Promise.resolve({ done: false as const, note: { n: 1 } });
+          captured = signal;
+          return rejectOnAbort(signal);
+        },
+      }),
+  });
+  let elapsed = 0;
+  let run: Awaited<ReturnType<typeof runWorkflow>> | undefined;
+  const unhandled = await unhandledDuring(async () => {
+    const started = Date.now();
+    run = await runWorkflow(definition, { stateDir, runId: 'deadline-abort', input: null });
+    elapsed = Date.now() - started;
+  });
+  const deadline = run?.steps['ready']?.wait?.deadline ?? Number.POSITIVE_INFINITY;
+  expect(run?.output).toMatchObject({ by: 'deadline', note: { n: 1 } });
+  expect((run?.output as { at: number }).at).toBeGreaterThanOrEqual(deadline);
+  expect(checks).toBe(2);
+  expect(captured?.aborted).toBe(true);
+  expect(elapsed).toBeLessThan(2000);
+  expect(run?.warnings).toBeUndefined();
+  expect(unhandled).toEqual([]);
+});
+
+it(
+  'abandons an observer that ignores its aborted signal after a bounded grace with a run warning',
+  // measured: 2.3 s alone, 2.4 s in the full coverage run (300 ms deadline + fixed 2 s grace)
+  { timeout: 10_000 },
+  async () => {
+    let checks = 0;
+    const definition = defineWorkflow({
+      name: 'abandon',
+      version: '1',
+      input: z.null(),
+      output: z.unknown(),
+      run: (ctx) =>
+        ctx.poll('ready', {
+          input: null,
+          schema: z.null(),
+          every: 50,
+          timeoutMs: 300,
+          observe: () =>
+            ++checks === 1
+              ? Promise.resolve({ done: false as const, note: { n: 1 } })
+              : new Promise<never>(() => undefined),
+        }),
+    });
+    const options = { stateDir, runId: 'abandon', input: null };
+    let elapsed = 0;
+    let run: Awaited<ReturnType<typeof runWorkflow>> | undefined;
+    const unhandled = await unhandledDuring(async () => {
+      const started = Date.now();
+      run = await runWorkflow(definition, options);
+      elapsed = Date.now() - started;
+    });
+    const warning =
+      'Poll observer for wait ready did not settle within 2000ms after its signal was aborted (deadline); abandoned.';
+    expect(run?.output).toMatchObject({ by: 'deadline', note: { n: 1 } });
+    expect(elapsed).toBeGreaterThanOrEqual(2000);
+    expect(elapsed).toBeLessThan(4000);
+    expect(run?.warnings).toEqual([warning]);
+    expect((await readRun(options)).waitWarnings).toEqual([warning]);
+    expect(unhandled).toEqual([]);
+  },
+);
+
+it.each([
+  ['a plain abort', new Error('stop'), 'cancelled'],
+  ['a RunInterruptedError', new RunInterruptedError('Worker shutting down.'), 'suspended'],
+] as const)(
+  'interrupting a run with a signal-ignoring observer returns within the grace (%s)',
+  // measured: 2.1 s alone, 2.1 s in the full coverage run (the fixed 2 s observer grace)
+  { timeout: 10_000 },
+  async (_name, reason, status) => {
+    let checks = 0;
+    let entered!: () => void;
+    const hung = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    let captured: AbortSignal | undefined;
+    const definition = defineWorkflow({
+      name: 'interrupt-hung',
+      version: '1',
+      input: z.null(),
+      output: z.unknown(),
+      run: (ctx) =>
+        ctx.poll('ready', {
+          input: null,
+          schema: z.null(),
+          every: 50,
+          timeoutMs: 60_000,
+          observe: ({ signal }) => {
+            if (++checks === 1) return Promise.resolve({ done: false as const });
+            captured = signal;
+            entered();
+            return new Promise<never>(() => undefined);
+          },
+        }),
+    });
+    const controller = new AbortController();
+    const options = { stateDir, runId: `interrupt-${status}`, input: null };
+    const running = runWorkflow(definition, { ...options, signal: controller.signal });
+    await hung;
+    const started = Date.now();
+    controller.abort(reason);
+    await expect(running).rejects.toThrow();
+    const elapsed = Date.now() - started;
+    expect(elapsed).toBeLessThan(4000);
+    expect(captured?.aborted).toBe(true);
+    const saved = await readRun(options);
+    expect(saved.status).toBe(status);
+    if (status === 'suspended') expect(saved.interruptedBy?.reason).toBe('Worker shutting down.');
+    expect(saved.waitWarnings).toEqual([
+      'Poll observer for wait ready did not settle within 2000ms after its signal was aborted (run cancelled); abandoned.',
+    ]);
+    expect(saved.steps['ready']?.wait?.checks).toBe(2);
+  },
+);
+
+it('fails a wait whose observation exceeds observeTimeoutMs before the deadline', async () => {
+  let captured: AbortSignal | undefined;
+  const definition = defineWorkflow({
+    name: 'observe-timeout',
+    version: '1',
+    input: z.null(),
+    output: z.unknown(),
+    run: (ctx) =>
+      ctx.poll('ready', {
+        input: null,
+        schema: z.null(),
+        every: 50,
+        timeoutMs: 10_000,
+        observeTimeoutMs: 200,
+        observe: ({ signal }) => {
+          captured = signal;
+          return rejectOnAbort(signal);
+        },
+      }),
+  });
+  const options = { stateDir, runId: 'observe-timeout', input: null };
+  const started = Date.now();
+  await expect(runWorkflow(definition, options)).rejects.toThrow(
+    'Wait ready: poll observation did not settle within observeTimeoutMs (200ms).',
+  );
+  expect(Date.now() - started).toBeLessThan(2000);
+  expect(captured?.aborted).toBe(true);
+  const saved = await readRun(options);
+  expect(saved.status).toBe('failed');
+  expect(saved.steps['ready']?.error).toContain('observeTimeoutMs');
+  expect(saved.waitWarnings).toBeUndefined();
+});
+
+it('bounds the final check after a missed deadline and then resolves by deadline', async () => {
+  let captured: AbortSignal | undefined;
+  const definition = defineWorkflow({
+    name: 'final-check',
+    version: '1',
+    input: z.number(),
+    output: z.unknown(),
+    run: (ctx, deadline) =>
+      ctx.poll('ready', {
+        input: null,
+        schema: z.null(),
+        every: 50,
+        deadline,
+        observeTimeoutMs: 100,
+        observe: ({ signal }) => {
+          captured = signal;
+          return rejectOnAbort(signal);
+        },
+      }),
+  });
+  const started = Date.now();
+  const run = await runWorkflow(definition, {
+    stateDir,
+    runId: 'final-check',
+    input: started - 1000,
+  });
+  expect(run.output).toMatchObject({ by: 'deadline', note: null });
+  expect(run.steps['ready']?.wait?.checks).toBe(1);
+  expect(captured?.aborted).toBe(true);
+  expect(Date.now() - started).toBeLessThan(2000);
+});
+
+it('keeps observeTimeoutMs out of wait identity and validates it', async () => {
+  const clock = new Clock();
+  let ready = false;
+  const definition = (observeTimeoutMs: number) =>
+    defineWorkflow({
+      name: 'observe-policy',
+      version: '1',
+      input: z.null(),
+      output: z.unknown(),
+      run: (ctx) =>
+        ctx.poll('ready', {
+          input: null,
+          schema: z.null(),
+          every: 30_000,
+          timeoutMs: 600_000,
+          observeTimeoutMs,
+          observe: () =>
+            Promise.resolve(
+              ready ? { done: true as const, value: null } : { done: false as const },
+            ),
+        }),
+    });
+  const options = { stateDir, runId: 'observe-policy', input: null, clock };
+  const first = await runWorkflow(definition(1_000), options);
+  expect(first.status).toBe('suspended');
+  const request = first.steps['ready']?.wait?.request.poll;
+  expect(Object.keys(request ?? {}).sort()).toEqual(['every', 'input', 'observe', 'schema']);
+  expect(await readFile(join(stateDir, 'observe-policy', 'run.json'), 'utf8')).not.toContain(
+    'observeTimeoutMs',
+  );
+  const fingerprint = first.steps['ready']?.fingerprint;
+  clock.time += 31_000;
+  ready = true;
+  const resumed = await runWorkflow(definition(5_000), { ...options, resume: true });
+  expect(resumed.output).toMatchObject({ by: 'poll', value: null, checks: 2 });
+  expect(resumed.steps['ready']?.fingerprint).toBe(fingerprint);
+  for (const [index, invalid] of [0, 1.5].entries())
+    await expect(
+      runWorkflow(definition(invalid), { ...options, runId: `invalid-${String(index)}` }),
+    ).rejects.toThrow('Poll observeTimeoutMs must be a positive integer.');
+});
+
+/** A bare RunQuestions over an in-memory record, for close() paths the runner rarely reaches. */
+function bareQuestions(save: () => Promise<void>): {
+  questions: RunQuestions;
+  warnings: string[];
+  record: RunRecord;
+} {
+  const warnings: string[] = [];
+  const record = { id: 'bare', cwd: stateDir, steps: {} } as unknown as RunRecord;
+  const questions = new RunQuestions({
+    record,
+    stateDir,
+    activity: new RunActivity(),
+    save,
+    beforeLive: () => Promise.resolve(),
+    nextSeq: () => 0,
+    warn: (message) => {
+      warnings.push(message);
+    },
+    emit: () => undefined,
+    fail: () => undefined,
+  });
+  return { questions, warnings, record };
+}
+
+it(
+  'close() aborts an in-flight observation and abandons it after the grace',
+  // measured: 2.0 s alone, 2.0 s in the full coverage run (the fixed 2 s observer grace)
+  { timeout: 10_000 },
+  async () => {
+    const { questions, warnings, record } = bareQuestions(() => Promise.resolve());
+    let entered!: () => void;
+    const hung = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    let captured: AbortSignal | undefined;
+    void questions.wait(
+      'w',
+      {
+        timeoutMs: 60_000,
+        poll: {
+          input: null,
+          schema: z.null(),
+          every: 50,
+          observe: ({ signal }) => {
+            captured = signal;
+            entered();
+            return new Promise<never>(() => undefined);
+          },
+        },
+      },
+      null,
+      new AbortController().signal,
+    );
+    await hung;
+    const started = Date.now();
+    await questions.close();
+    expect(Date.now() - started).toBeLessThan(4000);
+    expect(captured?.aborted).toBe(true);
+    expect(warnings).toEqual([
+      'Poll observer for wait w did not settle within 2000ms after its signal was aborted (run closing); abandoned.',
+    ]);
+    expect(record.steps['w']?.status).toBe('waiting');
+    // A second close is the same settled promise and records nothing new.
+    await questions.close();
+    expect(warnings).toHaveLength(1);
+  },
+);
+
+it(
+  'close() abandons a scan stalled outside the observer after a backstop',
+  // measured: 2.3 s alone, 2.3 s in the full coverage run (2 s grace + 250 ms close margin)
+  { timeout: 10_000 },
+  async () => {
+    let saves = 0;
+    let stalled!: () => void;
+    const stall = new Promise<void>((resolve) => {
+      stalled = resolve;
+    });
+    const { questions, warnings } = bareQuestions(() => {
+      // The first save opens the wait; the second, recording progress, never settles.
+      if (++saves === 1) return Promise.resolve();
+      stalled();
+      return new Promise<never>(() => undefined);
+    });
+    void questions.wait(
+      'w',
+      {
+        timeoutMs: 60_000,
+        poll: {
+          input: null,
+          schema: z.null(),
+          every: 50,
+          observe: () => Promise.resolve({ done: false as const }),
+        },
+      },
+      null,
+      new AbortController().signal,
+    );
+    await stall;
+    const started = Date.now();
+    await questions.close();
+    const elapsed = Date.now() - started;
+    expect(elapsed).toBeGreaterThanOrEqual(2000);
+    expect(elapsed).toBeLessThan(4000);
+    expect(warnings).toEqual([
+      'Wait scan did not settle within 2250ms of the run closing; abandoned.',
+    ]);
+  },
+);

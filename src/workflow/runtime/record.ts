@@ -282,6 +282,8 @@ export interface RunRecord {
   worktrees?: WorktreeLedger;
   /** Nonfatal isolation and cache cleanup diagnostics. */
   worktreeWarnings?: string[];
+  /** Nonfatal poll-observer abandonment diagnostics, deduplicated and capped at 20. */
+  waitWarnings?: string[];
   /** Earliest parked deadline/poll; null when only an external signal can wake the run. */
   nextWakeAt?: number | null;
   /** Source launch metadata for resume by ID; absent for older and embedded runs. */
@@ -593,6 +595,7 @@ const recordFieldsSchema = z.object({
     .optional(),
   worktrees: worktreeLedgerSchema.optional(),
   worktreeWarnings: z.array(z.string()).optional(),
+  waitWarnings: z.array(z.string()).optional(),
   nextWakeAt: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).nullable().optional(),
   launch: workflowLaunchSchema.optional(),
   seq: z.number().int().nonnegative().optional(),

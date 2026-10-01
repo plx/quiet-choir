@@ -34,6 +34,46 @@ const outcomeSchema: z.ZodType<Outcome> = z.discriminatedUnion('by', [
   }),
   z.object({ by: z.literal('deadline'), at: z.number().int().nonnegative(), note: z.json() }),
 ]);
+/** Default upper bound for one poll observation when the poll sets no observeTimeoutMs. */
+const defaultObserveTimeoutMs = 60_000;
+/**
+ * Real-time grace for an observation to settle after its signal aborts, mirroring the runner's
+ * transcriptSettleMs. It bounds process-local settling, so it never uses the workflow clock: a
+ * manual fake clock would otherwise hang close().
+ */
+const observerSettleMs = 2000;
+/** Extra real time close() allows beyond the observer grace before it abandons a stalled scan. */
+const closeMarginMs = 250;
+/** Why an in-flight observation's signal was aborted. */
+type Interruption = 'deadline' | 'observeTimeoutMs' | 'run cancelled' | 'run closing';
+interface Inflight {
+  readonly interrupt: (reason: Interruption) => void;
+}
+type Observed =
+  | { readonly kind: 'settled'; readonly observation: Promise<unknown> }
+  | { readonly kind: 'cancelled' }
+  | { readonly kind: 'closed' }
+  | { readonly kind: 'deadline' }
+  | { readonly kind: 'observeTimeoutMs' };
+
+/** Wait real time for a promise to settle; true when it settled within the bound. */
+async function settlesWithin(promise: Promise<unknown>, milliseconds: number): Promise<boolean> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise.then(
+        () => true,
+        () => true,
+      ),
+      new Promise<boolean>((resolve) => {
+        timer = setTimeout(resolve, milliseconds, false);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 interface Waiter {
   readonly sources: WaitSources;
   readonly signal: AbortSignal;
@@ -51,6 +91,8 @@ interface QuestionDependencies {
   readonly save: () => Promise<void>;
   readonly beforeLive: (id: string, step: StepRecord) => Promise<void>;
   readonly nextSeq: () => number;
+  /** Record a nonfatal run warning, such as an abandoned poll observation. */
+  readonly warn: (message: string) => void;
   /** Run one poll observation for the wait `id`; rehearsal may replace it with a stub. */
   readonly observe?: (
     id: string,
@@ -74,7 +116,11 @@ export class RunQuestions {
   readonly #timer = new AbortController();
   #pump: Promise<void> | undefined;
   #scan: Promise<void> | undefined;
+  #inflight: Inflight | undefined;
+  #closing: Promise<void> | undefined;
   #closed = false;
+  /** Set once close() returns; an abandoned scan must not touch the record after that. */
+  #released = false;
   #draining = false;
 
   public constructor(deps: QuestionDependencies) {
@@ -333,6 +379,7 @@ export class RunQuestions {
         try {
           await this.#check(id, step, waiter);
         } catch (error) {
+          if (this.#released) return;
           this.#waiters.delete(id);
           waiter.dispose();
           step.error = error instanceof Error ? error.message : String(error);
@@ -340,7 +387,7 @@ export class RunQuestions {
           activity.touch();
         }
       }
-      this.#updateWake();
+      if (!this.#released) this.#updateWake();
     } finally {
       finish();
     }
@@ -401,10 +448,15 @@ export class RunQuestions {
       return undefined;
     }
   }
+  /** Read #closed afresh after an await; close() can set it while a check is suspended. */
+  #isClosed(): boolean {
+    return this.#closed;
+  }
   async #check(id: string, step: StepRecord, waiter: Waiter): Promise<void> {
     const progress = step.wait;
     if (!progress) return;
     let signal = await this.#signal(id, step, waiter);
+    if (this.#isClosed()) return;
     if (signal) {
       await this.#complete(id, step, waiter, signal.outcome, signal);
       return;
@@ -416,22 +468,26 @@ export class RunQuestions {
         (this.#deps.skipTimers === true && !waiter.sources.poll && !waiter.sources.signal));
     const poll = waiter.sources.poll;
     if (poll && (expired || progress.nextCheckAt === null || now >= progress.nextCheckAt)) {
-      const context: StepContext = {
-        reportUsage: () => {
-          throw new Error(
-            'Usage reporting is only available inside an active local step callback.',
-          );
-        },
-        cwd: this.#deps.record.cwd,
-        signal: waiter.signal,
-        idempotencyKey: `${this.#deps.record.id}/${id}`,
-        attempt: 1,
-      };
       waiter.signal.throwIfAborted();
       progress.checks++;
-      const result = await (this.#deps.observe
-        ? this.#deps.observe(id, poll, context)
-        : poll.observe(context));
+      const observed = await this.#observe(id, poll, progress.deadline, waiter);
+      if (this.#isClosed() || observed.kind === 'closed') return;
+      if (observed.kind === 'cancelled')
+        throw waiter.signal.reason instanceof CancelledError
+          ? waiter.signal.reason
+          : new CancelledError(null, waiter.signal.reason);
+      if (observed.kind === 'deadline') {
+        // The deadline passed during the observation: the same result as between checks.
+        const at = clockNow(this.#clock);
+        await this.#complete(id, step, waiter, { by: 'deadline', at, note: progress.note });
+        return;
+      }
+      // Failing like a thrown observer keeps the documented fail-on-throw behavior.
+      if (observed.kind === 'observeTimeoutMs') throw this.#observeTimeout(id, poll);
+      const result = (await observed.observation) as Awaited<
+        ReturnType<PollSource<unknown>['observe']>
+      >;
+      if (this.#isClosed()) return;
       if (
         (result as unknown) === null ||
         typeof result !== 'object' ||
@@ -439,6 +495,7 @@ export class RunQuestions {
       )
         throw new Error(`Wait ${id}: observe must return {done:true,value} or {done:false,note?}.`);
       signal = await this.#signal(id, step, waiter);
+      if (this.#isClosed()) return;
       if (signal) {
         await this.#complete(id, step, waiter, signal.outcome, signal);
         return;
@@ -468,6 +525,130 @@ export class RunQuestions {
     } else if (expired) {
       await this.#complete(id, step, waiter, { by: 'deadline', at: now, note: progress.note });
     }
+  }
+  /**
+   * Run one observation under its own signal, which aborts when the run scope aborts, when the
+   * time limit passes (the wait deadline, or observeTimeoutMs), or when the run closes. After an
+   * abort the observer gets a bounded real-time grace to settle; one that ignores its signal is
+   * abandoned with a run warning, and its promise keeps a handler so it never surfaces unhandled.
+   */
+  async #observe(
+    id: string,
+    poll: PollSource<unknown>,
+    deadline: number | null,
+    waiter: Waiter,
+  ): Promise<Observed> {
+    const controller = new AbortController();
+    const timer = new AbortController();
+    let interrupted: Interruption | undefined;
+    let resolveInterruption!: (reason: Interruption) => void;
+    const interruption = new Promise<Interruption>((resolve) => {
+      resolveInterruption = resolve;
+    });
+    const interrupt = (reason: Interruption, cause: unknown): void => {
+      if (interrupted) return;
+      interrupted = reason;
+      controller.abort(cause);
+      resolveInterruption(reason);
+    };
+    const forward = (): void => {
+      interrupt('run cancelled', waiter.signal.reason);
+    };
+    this.#inflight = {
+      interrupt: (reason) => {
+        interrupt(reason, new Error(`Wait ${id}: the run is closing; poll observation aborted.`));
+      },
+    };
+    waiter.signal.addEventListener('abort', forward, { once: true });
+    const started = clockNow(this.#clock);
+    const limitMs = poll.observeTimeoutMs ?? defaultObserveTimeoutMs;
+    const context: StepContext = {
+      reportUsage: () => {
+        throw new Error('Usage reporting is only available inside an active local step callback.');
+      },
+      cwd: this.#deps.record.cwd,
+      signal: controller.signal,
+      idempotencyKey: `${this.#deps.record.id}/${id}`,
+      attempt: 1,
+    };
+    const observation = (async () =>
+      this.#deps.observe ? this.#deps.observe(id, poll, context) : poll.observe(context))();
+    void observation.catch(() => undefined);
+    const settled = observation.then(
+      () => 'settled' as const,
+      () => 'settled' as const,
+    );
+    const limit = this.#limit(started, deadline, limitMs, timer.signal).then(
+      () => 'limit' as const,
+      // An aborted limit timer never decides the race.
+      () => new Promise<never>(() => undefined),
+    );
+    try {
+      const winner = await Promise.race([settled, interruption, limit]);
+      if (winner === 'settled') return { kind: 'settled', observation };
+      timer.abort();
+      if (winner === 'limit') {
+        // Once the clock reaches the deadline the deadline wins, even over observeTimeoutMs.
+        const late = deadline !== null && clockNow(this.#clock) >= deadline;
+        interrupt(
+          late ? 'deadline' : 'observeTimeoutMs',
+          late
+            ? new Error(`Wait ${id}: the deadline passed during the poll observation.`)
+            : this.#observeTimeout(id, poll),
+        );
+      }
+      const reason = interrupted ?? 'run closing';
+      if (!(await settlesWithin(observation, observerSettleMs)))
+        this.#deps.warn(
+          `Poll observer for wait ${id} did not settle within ${String(observerSettleMs)}ms after its signal was aborted (${reason}); abandoned.`,
+        );
+      // An honoring observer's outcome after cancellation keeps its existing handling.
+      else if (reason === 'run cancelled') return { kind: 'settled', observation };
+      if (reason === 'run cancelled') return { kind: 'cancelled' };
+      if (reason === 'run closing') return { kind: 'closed' };
+      return { kind: reason };
+    } finally {
+      timer.abort();
+      waiter.signal.removeEventListener('abort', forward);
+      this.#inflight = undefined;
+    }
+  }
+  /**
+   * Resolve when the observation's time limit passes, measured with the workflow clock: the earlier
+   * of the deadline (when still ahead) and observeTimeoutMs from the start of the observation.
+   */
+  async #limit(
+    started: number,
+    deadline: number | null,
+    limitMs: number,
+    signal: AbortSignal,
+  ): Promise<void> {
+    // Arm the clock timer only after one real macrotask: an observation that settles promptly never
+    // touches it, so an automatic test clock (whose sleep advances time at once) does not move.
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    const bound = deadline !== null && deadline > started ? deadline : null;
+    for (;;) {
+      signal.throwIfAborted();
+      const now = clockNow(this.#clock);
+      if (bound !== null && now >= bound) return;
+      if (now - started >= limitMs) return;
+      // Loop rather than trust one sleep: a timer may fire marginally before the clock agrees.
+      const remaining = Math.min(
+        limitMs - (now - started),
+        bound === null ? Number.POSITIVE_INFINITY : bound - now,
+      );
+      await this.#clock.sleep(Math.max(1, remaining), signal);
+    }
+  }
+  #observeTimeout(id: string, poll: PollSource<unknown>): Error {
+    const limit =
+      poll.observeTimeoutMs === undefined
+        ? `${String(defaultObserveTimeoutMs)}ms, the default`
+        : `${String(poll.observeTimeoutMs)}ms`;
+    return Object.assign(
+      new Error(`Wait ${id}: poll observation did not settle within observeTimeoutMs (${limit}).`),
+      { code: 'QUIET_CHOIR_POLL_OBSERVE_TIMEOUT' },
+    );
   }
   async #complete(
     id: string,
@@ -510,13 +691,31 @@ export class RunQuestions {
     this.#timer.abort();
     this.#deps.activity.touch();
   }
-  public async close(): Promise<void> {
+  /** Stop polling and drain the scan, abandoning an observer that ignores its signal. */
+  public close(): Promise<void> {
+    this.#closing ??= this.#close();
+    return this.#closing;
+  }
+  async #close(): Promise<void> {
     this.#closed = true;
     this.#timer.abort();
+    this.#inflight?.interrupt('run closing');
+    let backstop: ReturnType<typeof setTimeout> | undefined;
     try {
-      await this.#scan;
-      await this.#pump?.catch(() => undefined);
+      // #check bounds an aborted observation to the grace itself; this only covers other stalls.
+      const drained = await Promise.race([
+        Promise.allSettled([this.#scan, this.#pump]).then(() => true),
+        new Promise<boolean>((resolve) => {
+          backstop = setTimeout(resolve, observerSettleMs + closeMarginMs, false);
+        }),
+      ]);
+      if (!drained)
+        this.#deps.warn(
+          `Wait scan did not settle within ${String(observerSettleMs + closeMarginMs)}ms of the run closing; abandoned.`,
+        );
     } finally {
+      clearTimeout(backstop);
+      this.#released = true;
       this.#updateWake();
       for (const waiter of this.#waiters.values()) waiter.dispose();
       this.#waiters.clear();

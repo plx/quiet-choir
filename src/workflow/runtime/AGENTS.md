@@ -101,11 +101,13 @@ Waits pin timing/source identity, persist one winner, and never checkpoint timer
 an eligible signal precedes the poll, then deadline; after a missed deadline give the poll one final
 check. A signal timestamped after the pinned deadline is quarantined like an invalid delivery, since
 the deadline can never move to admit it, and tick must not keep rewaking the run over it. Poll
-observers run under the nested-operation guard. Due-within-1000ms waits remain active; long waits
-park under the same quiescence contract as questions. Error draining stops new checks without
-aborting active siblings. Tick must claim the ordinary writer before importing source and transfer
-that ownership to the runtime. See
-[ADR 0020](../../../docs/decisions/0020-durable-waits-and-tick.md).
+observers run under the nested-operation guard, each with its own signal aborted on cancellation,
+the deadline, `observeTimeoutMs` (policy, never identity) or close; an observer ignoring it is
+abandoned after a real-time grace with a `waitWarnings` entry, and an abandoned scan never writes
+after close() returns. Due-within-1000ms waits remain active; long waits park under the same
+quiescence contract as questions. Error draining stops new checks without aborting active siblings.
+Tick must claim the ordinary writer before importing source and transfer that ownership to the
+runtime. See [ADR 0020](../../../docs/decisions/0020-durable-waits-and-tick.md).
 
 Exec depends on ProcessRunner, never a native spawn import. It shares durable registration with
 agents but never their admission slots, grants, or usage. Keep command/cwd/env/input/exit contract
