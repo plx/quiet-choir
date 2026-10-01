@@ -311,6 +311,8 @@ source-free cleanup, read [worktrees](worktrees.md).
 **Rule:** if the body does not branch on an observation, it is not a step. Use `ctx.now` for a
 recorded clock anchor and `ctx.poll` for read-only readiness checks. This example reads an absolute
 status file containing `pending`, `success`, or `failure`; have its producer replace it atomically.
+Its `onError` policy tolerates up to three consecutive `ENOENT` errors from a producer that deletes
+and rewrites the file instead, and fails at once on anything else.
 Use `ctx.step` for a snapshot or a selection over changing state, with an occurrence ID derived from
 replayed data. An incomplete collection is an error, never “no work left.”
 
@@ -321,9 +323,11 @@ import { readFile } from 'node:fs/promises';
 import { defineWorkflow, z } from '../../src/index.js';
 
 const Terminal = z.enum(['success', 'failure']);
+// A producer that deletes and rewrites the file can briefly leave it missing.
+const missing = (error: unknown) => (error as { code?: unknown }).code === 'ENOENT';
 export default defineWorkflow({
   name: 'polling',
-  version: '2',
+  version: '3',
   input: z.object({ file: z.string(), ms: z.int().min(1).max(60_000) }),
   output: z.enum(['success', 'failure', 'timeout']),
   async run(ctx, input) {
@@ -333,6 +337,7 @@ export default defineWorkflow({
       schema: Terminal,
       deadline,
       every: 100,
+      onError: { tolerate: 3, classify: (error) => (missing(error) ? 'transient' : 'fatal') },
       async observe({ signal }) {
         const state = (await readFile(input.file, { encoding: 'utf8', signal })).trim();
         if (state === 'success' || state === 'failure') return { done: true, value: state };
