@@ -177,3 +177,29 @@ it('refuses a dead owner whose recoverer is on another host after the stuck dead
   );
   expect(await readdir(lockPath)).toEqual(['owner.json', 'recovery.json']);
 });
+
+it('refuses to release a lock whose owner changed, and a later acquire still never hangs', async () => {
+  const release = await acquireWorktreeAdminLock(common, { signal });
+  const replaced = { pid: process.pid, host: hostname(), token: randomUUID(), osStartTime: null };
+  await writeFile(join(lockPath, 'owner.json'), JSON.stringify(replaced));
+  await expect(release()).rejects.toThrow(`${lockPath} ownership was lost`);
+  expect(JSON.parse(await readFile(join(lockPath, 'owner.json'), 'utf8'))).toEqual(replaced);
+  // The replacement names this process under a token it does not hold, so it is reclaimed.
+  const again = await acquireWorktreeAdminLock(common, { signal, stuckAfterMs: 0 });
+  await again();
+  await expectNoResidue();
+});
+
+it('waits for a live recoverer without a stuck deadline', async () => {
+  // A dead owner whose lock the (live) parent of this test process is recovering.
+  await plant({ pid: deadPid() }, { pid: process.ppid });
+  const controller = new AbortController();
+  const reason = new Error('stop waiting');
+  setTimeout(() => {
+    controller.abort(reason);
+  }, 100);
+  await expect(
+    acquireWorktreeAdminLock(common, { signal: controller.signal, stuckAfterMs: 0 }),
+  ).rejects.toBe(reason);
+  expect(await readdir(lockPath)).toEqual(['owner.json', 'recovery.json']);
+});
