@@ -29,6 +29,8 @@ export interface UsageTotals {
   readonly incompleteAttempts: number;
   /** Attempts for which no usage measurements were available. */
   readonly unknownUsageAttempts: number;
+  /** Attempts without a reported input or output token count; cost gaps are counted separately. */
+  readonly unknownTokenAttempts: number;
   /** Attempts without a reported cost; null is never interpreted as free. */
   readonly unknownCostAttempts: number;
   /** Last observed outcomes, including interrupted attempts recovered on resume. */
