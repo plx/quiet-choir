@@ -9,6 +9,7 @@ import type {
   AgentProfile,
   CapabilityManifest,
   ProfileOverride,
+  RedactedControl,
   ResolvedProfile,
 } from './profiles-model.js';
 import { digest, jsonValue } from './json.js';
@@ -302,7 +303,7 @@ export function resolveCapabilities(definition: {
   };
 }
 
-/** Validate capability declarations and expose a manifest with environment names and digests only. */
+/** Validate capability declarations and expose the public manifest: environment, settings, MCP servers, subagents, system prompts and Codex config appear as names and digests only. */
 export function capabilityManifest(definition: {
   readonly defaults?: AgentDefaults;
   readonly profiles?: Readonly<Record<string, AgentProfile>>;
@@ -440,6 +441,10 @@ export function resolveProfileCall(
   return { profile, options: resolved };
 }
 
+const redactedControlSchema = z.strictObject({
+  sha256: z.string().regex(/^[a-f0-9]{64}$/u),
+  keys: z.array(z.string()).optional(),
+});
 const resolvedProfileSchema = z.strictObject({
   ...fields,
   harnessAccess: z.record(z.string(), z.enum(['none', 'read', 'write', 'exec'])).optional(),
@@ -447,6 +452,20 @@ const resolvedProfileSchema = z.strictObject({
   name: nameSchema,
   environment: z
     .object({ claude: environmentSummarySchema, codex: environmentSummarySchema })
+    .optional(),
+  redacted: z
+    .strictObject({
+      claude: z
+        .strictObject({
+          settings: redactedControlSchema.optional(),
+          mcpServers: redactedControlSchema.optional(),
+          agents: redactedControlSchema.optional(),
+          systemPrompt: redactedControlSchema.optional(),
+          appendSystemPrompt: redactedControlSchema.optional(),
+        })
+        .optional(),
+      codex: z.strictObject({ config: redactedControlSchema.optional() }).optional(),
+    })
     .optional(),
   access: z.enum(['none', 'read', 'write', 'exec']),
   claudeAccess: z.enum(['none', 'read', 'write', 'exec']),
@@ -465,12 +484,59 @@ export const capabilityManifestSchema = z.strictObject({
   requiredGrants: z.array(nameSchema),
 });
 
-/** Snapshot for checkpoints and CLI diagnostics; live execution retains its private environment edits. @internal */
+const redactedClaudeControls = [
+  'settings',
+  'mcpServers',
+  'agents',
+  'systemPrompt',
+  'appendSystemPrompt',
+] as const;
+const redactedCodexControls = ['config'] as const;
+
+/** Move raw free-form controls out of one harness's options into names and digests. */
+function redactControls(
+  controls: Record<string, unknown>,
+  fields: readonly string[],
+): Record<string, RedactedControl> {
+  const redacted: Record<string, RedactedControl> = {};
+  for (const field of fields) {
+    if (!Object.hasOwn(controls, field)) continue;
+    const value = controls[field];
+    Reflect.deleteProperty(controls, field);
+    if (value === undefined) continue;
+    redacted[field] =
+      typeof value === 'object' && value !== null
+        ? { sha256: digest(value), keys: Object.keys(value).sort() }
+        : { sha256: digest(value) };
+  }
+  return redacted;
+}
+
+/**
+ * Snapshot for checkpoints and CLI diagnostics; live execution retains its private values. Drops
+ * environment values (names and a digest stay in `environment`) and moves Claude settings, MCP
+ * servers, subagents, system prompts and Codex config into `redacted` as digests with top-level
+ * names. Safe to apply to its own output. @internal
+ */
 export function publicCapabilityManifest(manifest: CapabilityManifest): CapabilityManifest {
   const result = structuredClone(manifest);
   for (const profile of [result.defaults, ...Object.values(result.profiles)]) {
     Reflect.deleteProperty(profile.claude, 'env');
     Reflect.deleteProperty(profile.codex, 'env');
+    const claude = redactControls(profile.claude, redactedClaudeControls);
+    const codex = redactControls(profile.codex, redactedCodexControls);
+    if (Object.keys(claude).length > 0 || Object.keys(codex).length > 0)
+      Object.assign(profile, {
+        redacted: {
+          ...profile.redacted,
+          ...(Object.keys(claude).length > 0
+            ? { claude: { ...profile.redacted?.claude, ...claude } }
+            : {}),
+          ...(Object.keys(codex).length > 0
+            ? { codex: { ...profile.redacted?.codex, ...codex } }
+            : {}),
+        },
+      });
     for (const controls of Object.values(profile.harnesses ?? {}))
       Reflect.deleteProperty(controls, 'env');
     for (const controls of Object.values(profile.harnessCapabilities ?? {}))
