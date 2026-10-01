@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { workflowErrorDocument } from '../src/cli/workflow-errors.js';
+import { requestedFull, workflowErrorDocument } from '../src/cli/workflow-errors.js';
 import { countSteps, summarizeRun } from '../src/workflow/loader/inspection.js';
 import { workflowFailure } from '../src/workflow/loader/failure.js';
 import { summarizeRunResult } from '../src/workflow/loader/run-result.js';
@@ -219,5 +219,13 @@ describe('workflowErrorDocument', () => {
     expect(document).toHaveProperty('run', failure.run);
     expect(document).toHaveProperty('rehearsal', rehearsal);
     expect(document).not.toHaveProperty('summary');
+  });
+});
+
+describe('requestedFull', () => {
+  it('detects --full before the argument separator only', () => {
+    expect(requestedFull(['run', '--json', '--full'])).toBe(true);
+    expect(requestedFull(['run', '--json'])).toBe(false);
+    expect(requestedFull(['run', '--', '--full'])).toBe(false);
   });
 });
