@@ -868,6 +868,7 @@ describe('pending command exit and error codes', () => {
     nextCheckAt: 2_000,
     checks: 3,
     note: null,
+    lastError: null,
     signal: null,
     rejections: [],
     codeChanged: null,
@@ -889,6 +890,35 @@ describe('pending command exit and error codes', () => {
     );
     expect(output.stdout).toContain('run-a approve [human] Ship it?');
     expect(output.stdout).toContain('run-b poll [wait] checks=3 nextCheckAt=2000 deadline=5000');
+  });
+
+  it('renders the latest tolerated observation error of a wait as text and JSON', async () => {
+    const stateDir = await stateDirectory();
+    const tolerated: PendingOperation = {
+      ...wait,
+      note: { state: 'pending' },
+      lastError: { message: 'HTTP 502: Bad Gateway', consecutive: 2, at: 1_500 },
+    };
+    vi.spyOn(WorkflowExecutor.prototype, 'execute').mockResolvedValue({
+      kind: 'workflow.pending.result',
+      ok: true,
+      pending: [tolerated, wait],
+    });
+    const text = await captureCommand(WorkflowPending, ['--state-dir', stateDir]);
+    expect(text.stdout).toBe(
+      [
+        'run-b poll [wait] checks=3 nextCheckAt=2000 deadline=5000',
+        '  {"state":"pending"}',
+        '  lastError (consecutive=2): HTTP 502: Bad Gateway',
+        'run-b poll [wait] checks=3 nextCheckAt=2000 deadline=5000',
+      ].join('\n'),
+    );
+    const json = await captureCommand(WorkflowPending, ['--state-dir', stateDir, '--json']);
+    const document = JSON.parse(json.stdout) as { pending: { lastError: unknown }[] };
+    expect(document.pending.map((item) => item.lastError)).toEqual([
+      { message: 'HTTP 502: Bad Gateway', consecutive: 2, at: 1_500 },
+      null,
+    ]);
   });
 
   it('renders the pending result as JSON', async () => {

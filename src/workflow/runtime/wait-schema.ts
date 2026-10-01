@@ -47,6 +47,13 @@ export const waitRecordSchema: z.ZodType<WaitRecord> = z.object({
   checks: epoch,
   note: z.json(),
   notifiedAt: epoch.nullable(),
+  lastError: z
+    .object({
+      message: z.string().max(4096),
+      consecutive: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER),
+      at: epoch,
+    })
+    .exactOptional(),
 });
 
 /** Normalize dependencies before recording or comparing a wait identity. @internal */
@@ -79,6 +86,19 @@ export function waitRequest(sources: WaitSources): {
     !(Number.isSafeInteger(observeTimeoutMs) && (observeTimeoutMs as number) > 0)
   )
     throw new Error('Poll observeTimeoutMs must be a positive integer.');
+  // onError is policy too: validated here, never part of the request, so it may change on resume.
+  const onError = poll?.onError as unknown;
+  if (onError !== undefined) {
+    if (onError === null || typeof onError !== 'object' || Array.isArray(onError))
+      throw new Error('Poll onError must be an object.');
+    const { tolerate, classify, retryAfterMs } = onError as Record<string, unknown>;
+    if (!(Number.isSafeInteger(tolerate) && (tolerate as number) > 0))
+      throw new Error('Poll onError.tolerate must be a positive integer.');
+    if (classify !== undefined && typeof classify !== 'function')
+      throw new Error('Poll onError.classify must be a function.');
+    if (retryAfterMs !== undefined && typeof retryAfterMs !== 'function')
+      throw new Error('Poll onError.retryAfterMs must be a function.');
+  }
   const every = poll?.every;
   const request = requestSchema.parse(
     jsonValue(

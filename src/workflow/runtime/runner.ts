@@ -54,6 +54,7 @@ import type {
   WaitOutcome,
   PollOptions,
   PollOutcome,
+  PollSource,
   SignalOutcome,
   DeadlineOutcome,
 } from './wait-model.js';
@@ -2533,6 +2534,8 @@ export async function runWorkflow<
         if (stub !== undefined) return Promise.resolve({ done: true, value: stub.output });
         return inEffect.run('poll', () => source.observe(context));
       },
+      isFatal: (error) => origins.isFatal(error),
+      guard: (action) => inEffect.run('poll', action),
       save,
       emit: (type, id, step) => {
         emit(
@@ -2755,7 +2758,8 @@ export async function runWorkflow<
         waitOperation(
           id,
           {
-            poll: settings,
+            // PollContext<N> narrows previous.note for the author; the runtime passes stored JSON.
+            poll: settings as PollSource<unknown>,
             ...(settings.timeoutMs === undefined ? {} : { timeoutMs: settings.timeoutMs }),
             ...(settings.deadline === undefined ? {} : { deadline: settings.deadline }),
           },

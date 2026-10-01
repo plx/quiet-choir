@@ -17,7 +17,7 @@ import {
 import { RunActivity } from '../src/workflow/runtime/activity.js';
 import { RunQuestions } from '../src/workflow/runtime/questions.js';
 import { stepIdentity } from '../src/workflow/runtime/identity.js';
-import { digest } from '../src/workflow/runtime/json.js';
+import { digest, jsonValue } from '../src/workflow/runtime/json.js';
 import { waitRequest } from '../src/workflow/runtime/wait-schema.js';
 import type { WaitSources } from '../src/workflow/runtime/wait-model.js';
 import type { RunRecord } from '../src/workflow/runtime/store.js';
@@ -826,9 +826,11 @@ it('keeps observeTimeoutMs out of wait identity and validates it', async () => {
 it('keeps the persisted request and identity of an existing observer-form poll', () => {
   // new Function keeps the observer's source text out of the test transform, so the golden values
   // below (computed before poll policy options existed) stay stable across esbuild/vitest bumps.
-  const observe = new Function('return async () => ({ done: false })')() as NonNullable<
+  // eslint-disable-next-line @typescript-eslint/no-implied-eval -- fixed source, see above
+  const build = new Function('return async () => ({ done: false })') as () => NonNullable<
     WaitSources['poll']
   >['observe'];
+  const observe = build();
   const poll = {
     input: { pr: 128 },
     schema: z.object({ passed: z.boolean() }),
@@ -839,7 +841,9 @@ it('keeps the persisted request and identity of an existing observer-form poll',
     const { request } = waitRequest(sources);
     return {
       request: JSON.stringify(request),
-      fingerprint: digest(stepIdentity({ kind: 'wait', request, signal: null })),
+      fingerprint: digest(
+        stepIdentity({ kind: 'wait', request: jsonValue(request), signal: null }),
+      ),
     };
   };
   const expected = {
@@ -870,7 +874,7 @@ it('keeps the persisted request and identity of an existing observer-form poll',
         ...poll,
         observeTimeoutMs: 5_000,
         onError: { tolerate: 3, classify: () => 'transient', retryAfterMs: () => null },
-      } as NonNullable<WaitSources['poll']>,
+      },
     }),
   ).toEqual(expected);
 });

@@ -234,6 +234,7 @@ export async function pendingOperations(
         nextCheckAt: step.wait.nextCheckAt,
         checks: step.wait.checks,
         note: structuredClone(step.wait.note),
+        lastError: step.wait.lastError ? structuredClone(step.wait.lastError) : null,
         signal: step.question ? structuredClone(step.question.request) : null,
         rejections: structuredClone(step.question?.rejections ?? []),
         codeChanged,
