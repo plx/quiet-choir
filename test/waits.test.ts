@@ -619,7 +619,7 @@ it('aborts a pending observation at the wait deadline and keeps the last note', 
 
 it(
   'abandons an observer that ignores its aborted signal after a bounded grace with a run warning',
-  // measured: 2.3 s alone (the 300 ms deadline plus the fixed 2 s observer grace)
+  // measured: 2.3 s alone, 2.4 s in the full coverage run (300 ms deadline + fixed 2 s grace)
   { timeout: 10_000 },
   async () => {
     let checks = 0;
@@ -664,7 +664,7 @@ it.each([
   ['a RunInterruptedError', new RunInterruptedError('Worker shutting down.'), 'suspended'],
 ] as const)(
   'interrupting a run with a signal-ignoring observer returns within the grace (%s)',
-  // measured: 2.1 s alone (the fixed 2 s observer grace after the abort)
+  // measured: 2.1 s alone, 2.1 s in the full coverage run (the fixed 2 s observer grace)
   { timeout: 10_000 },
   async (_name, reason, status) => {
     let checks = 0;
@@ -845,7 +845,7 @@ function bareQuestions(save: () => Promise<void>): {
 
 it(
   'close() aborts an in-flight observation and abandons it after the grace',
-  // measured: 2.0 s alone (the fixed 2 s observer grace)
+  // measured: 2.0 s alone, 2.0 s in the full coverage run (the fixed 2 s observer grace)
   { timeout: 10_000 },
   async () => {
     const { questions, warnings, record } = bareQuestions(() => Promise.resolve());
@@ -889,7 +889,7 @@ it(
 
 it(
   'close() abandons a scan stalled outside the observer after a backstop',
-  // measured: 2.3 s alone (the 2 s observer grace plus the 250 ms close margin)
+  // measured: 2.3 s alone, 2.3 s in the full coverage run (2 s grace + 250 ms close margin)
   { timeout: 10_000 },
   async () => {
     let saves = 0;
