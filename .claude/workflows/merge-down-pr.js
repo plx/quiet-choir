@@ -938,7 +938,8 @@ If that JSON contains "done":false, run the exact same command again; repeat unt
 ${RELAY_RULES} The only id is "await": relay the output of the last run.`;
 
 async function waitForGate(sha, since, codex) {
-  const flags = `--sha ${sha} --since ${since} --codex ${codex ? 'required' : 'skip'} --max-seconds 540`;
+  // --stale-grace: GitHub may still report the pre-push head for a short while after publish.
+  const flags = `--sha ${sha} --since ${since} --codex ${codex ? 'required' : 'skip'} --stale-grace 90 --max-seconds 540`;
   for (let attempt = 1; attempt <= 3; attempt++) {
     const label = `await r${record.rounds}.${attempt}`;
     const gate = (await clerk(label, 'Gate', [step('await', 'await', flags)], AWAIT_LOOP)).await;
