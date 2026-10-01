@@ -41,8 +41,10 @@ const markerSchema = z.object({
   osStartTime: z.string().nullable().optional(),
 });
 
-type Owner = z.infer<typeof ownerSchema>;
-type Marker = z.infer<typeof markerSchema>;
+/** A lock owner's `owner.json`. Shared with the worktree administration lock. @internal */
+export type Owner = z.infer<typeof ownerSchema>;
+/** A recoverer's `recovery.json`. Shared with the worktree administration lock. @internal */
+export type Marker = z.infer<typeof markerSchema>;
 type Liveness = 'alive' | 'dead' | 'unknown' | 'remote';
 
 interface RecordedIdentity {
@@ -51,8 +53,8 @@ interface RecordedIdentity {
   readonly osStartTime?: string | null | undefined;
 }
 
-/** Local liveness of the process that wrote an owner or recovery record. */
-function liveness(identity: RecordedIdentity): Liveness {
+/** Local liveness of the process that wrote an owner or recovery record. @internal */
+export function liveness(identity: RecordedIdentity): Liveness {
   if (identity.host !== hostname()) return 'remote';
   return localLiveness(identity);
 }
@@ -74,7 +76,8 @@ function localLiveness(identity: RecordedIdentity): Exclude<Liveness, 'remote'> 
   return 'alive';
 }
 
-function ownerState(owner: Owner): Liveness | 'released' {
+/** An owner's liveness, or `released` when it handed its lock to recovery. @internal */
+export function ownerState(owner: Owner): Liveness | 'released' {
   if (owner.host !== hostname()) return 'remote';
   if (owner.released) return 'released';
   return liveness(owner);
@@ -98,16 +101,17 @@ function parseStray(
   return { pid: Number(match[1]), kind: match[2] === 'gone' ? 'gone' : 'tmp' };
 }
 
-async function readOwner(lockPath: string): Promise<Owner> {
+/** Parse a lock's `owner.json`; errors keep their errno. @internal */
+export async function readOwner(lockPath: string): Promise<Owner> {
   return ownerSchema.parse(JSON.parse(await readFile(join(lockPath, 'owner.json'), 'utf8')));
 }
 
 /**
  * Read the owner of a lock that another process may be retiring. A lock retired between two looks
  * may already be gone, or replaced by a complete new one, so a missing `owner.json` in a present
- * lock is judged only after repeated looks; `gone` means no lock is there now.
+ * lock is judged only after repeated looks; `gone` means no lock is there now. @internal
  */
-async function readContended(lockPath: string): Promise<Owner | 'gone'> {
+export async function readContended(lockPath: string): Promise<Owner | 'gone'> {
   let missing: unknown;
   for (let look = 0; look < 3; look++) {
     try {
@@ -121,7 +125,8 @@ async function readContended(lockPath: string): Promise<Owner | 'gone'> {
   throw missing;
 }
 
-async function readMarker(path: string): Promise<Marker> {
+/** Parse a `recovery.json` marker; errors keep their errno. @internal */
+export async function readMarker(path: string): Promise<Marker> {
   return markerSchema.parse(JSON.parse(await readFile(path, 'utf8')));
 }
 
@@ -289,11 +294,13 @@ export interface RunLockOptions {
   readonly cwd?: string;
 }
 
-function isErrno(error: unknown, code: string): boolean {
+/** Whether `error` is a Node system error with this errno code. @internal */
+export function isErrno(error: unknown, code: string): boolean {
   return error instanceof Error && 'code' in error && error.code === code;
 }
 
-async function lockGone(lockPath: string): Promise<boolean> {
+/** Whether no lock directory exists at `lockPath` now. @internal */
+export async function lockGone(lockPath: string): Promise<boolean> {
   try {
     await lstat(lockPath);
     return false;
@@ -361,9 +368,12 @@ export async function lockRun(
 /**
  * Publish a complete lock in one rename: a private sibling directory already holding a durable
  * `owner.json` replaces an absent (or empty, older-build) lock path. `contended` means another
- * lock is there; the tmp directory never outlives this call unless it became the lock.
+ * lock is there; the tmp directory never outlives this call unless it became the lock. @internal
  */
-async function publishLock(lockPath: string, owner: Owner): Promise<'published' | 'contended'> {
+export async function publishLock(
+  lockPath: string,
+  owner: Owner,
+): Promise<'published' | 'contended'> {
   const temporary = siblingPath(lockPath, 'tmp');
   let published = false;
   try {
@@ -411,9 +421,9 @@ async function carries(
 /**
  * Move a verified lock out of the way in one rename, check that the tombstone is the lock that was
  * verified, then delete it. A mismatch renames it back and throws `mismatch()`; a tombstone that a
- * new owner is already sweeping counts as retired. The rename and removal keep their errno.
+ * new owner is already sweeping counts as retired. The rename and removal keep their errno. @internal
  */
-async function retire(
+export async function retire(
   lockPath: string,
   expected: { readonly owner: string | null; readonly recovery?: string | null },
   mismatch: () => Error,
@@ -431,8 +441,8 @@ async function retire(
   await rm(tombstone, { recursive: true, force: true });
 }
 
-/** Best effort: remove this lock's stray tombstones and dead creators' publish directories. */
-async function sweepStrays(lockPath: string): Promise<void> {
+/** Best effort: remove this lock's stray tombstones and dead creators' publish directories. @internal */
+export async function sweepStrays(lockPath: string): Promise<void> {
   const directory = dirname(lockPath);
   const name = basename(lockPath);
   let entries: string[];
@@ -479,8 +489,12 @@ async function publishMarker(
 /**
  * Take `recovery.json` aside and keep it only if it still carries `token`; otherwise put it back
  * (leaving it aside if a new marker appeared meanwhile). `missing` means there was none to take.
+ * @internal
  */
-async function takeMarker(lockPath: string, token: string): Promise<'taken' | 'kept' | 'missing'> {
+export async function takeMarker(
+  lockPath: string,
+  token: string,
+): Promise<'taken' | 'kept' | 'missing'> {
   const current = join(lockPath, 'recovery.json');
   const aside = join(lockPath, `recovery.${randomUUID()}.stale`);
   try {
@@ -511,33 +525,19 @@ async function takeMarker(lockPath: string, token: string): Promise<'taken' | 'k
 
 /**
  * Win the right to recover a dead or released lock: publish our marker, or reclaim a dead
- * recoverer's marker. Refuses while a live, unknown, remote or unreadable marker holds it; `retry`
- * means the lock or marker changed underneath and the acquire loop should look again.
+ * recoverer's marker. Refuses with `inProgress(existing, cause)` while a live, unknown, remote or
+ * unreadable (`existing` undefined) marker holds it; `retry` means the lock or marker changed
+ * underneath and the acquire loop should look again. @internal
  */
-async function claimRecovery(
-  runId: string,
+export async function claimRecovery(
   lockPath: string,
   marker: Marker,
   changed: () => Error,
-  unlock: string,
+  inProgress: (existing: Marker | undefined, cause?: unknown) => Error,
 ): Promise<'claimed' | 'retry'> {
   const published = await publishMarker(lockPath, marker);
   if (published === 'published') return 'claimed';
   if (published === 'gone') return 'retry';
-  const inProgress = (existing: Marker | undefined, cause?: unknown): RunRefusedError =>
-    new RunRefusedError(
-      'run.locked',
-      runId,
-      `Run ${runId} lock recovery is in progress; retry, or ${
-        existing === undefined
-          ? `clear the damaged marker in ${lockPath} with ${unlock}`
-          : existing.host === hostname()
-            ? `once recoverer PID ${String(existing.pid)} on ${existing.host} is gone, clear it with ${unlock}`
-            : `once recoverer PID ${String(existing.pid)} on ${existing.host} is gone, clear it with ${unlock} --force-remote (only if ${existing.host} is this machine under an old name or is permanently gone)`
-      }.`,
-      existing === undefined ? { lockPath } : { lockPath, pid: existing.pid, host: existing.host },
-      cause === undefined ? undefined : { cause },
-    );
   let existing: Marker;
   try {
     existing = await readMarker(join(lockPath, 'recovery.json'));
@@ -582,6 +582,20 @@ async function acquireLock(
     );
   const lost = (): Error => new Error(`Run ${runId} lock ownership was lost.`);
   const unlock = unlockCommand(stateDir, runId);
+  const inProgress = (existing: Marker | undefined, cause?: unknown): RunRefusedError =>
+    new RunRefusedError(
+      'run.locked',
+      runId,
+      `Run ${runId} lock recovery is in progress; retry, or ${
+        existing === undefined
+          ? `clear the damaged marker in ${lockPath} with ${unlock}`
+          : existing.host === hostname()
+            ? `once recoverer PID ${String(existing.pid)} on ${existing.host} is gone, clear it with ${unlock}`
+            : `once recoverer PID ${String(existing.pid)} on ${existing.host} is gone, clear it with ${unlock} --force-remote (only if ${existing.host} is this machine under an old name or is permanently gone)`
+      }.`,
+      existing === undefined ? { lockPath } : { lockPath, pid: existing.pid, host: existing.host },
+      cause === undefined ? undefined : { cause },
+    );
   for (let attempt = 0; attempt < 3; attempt++) {
     if ((await publishLock(lockPath, owner)) === 'contended') {
       let previous;
@@ -617,7 +631,7 @@ async function acquireLock(
         osStartTime: owner.osStartTime,
         token: randomUUID(),
       };
-      if ((await claimRecovery(runId, lockPath, marker, changed, unlock)) === 'retry') continue;
+      if ((await claimRecovery(lockPath, marker, changed, inProgress)) === 'retry') continue;
       let retired = false;
       try {
         const current = await readOwner(lockPath);
