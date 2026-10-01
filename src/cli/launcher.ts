@@ -98,25 +98,39 @@ export function processLauncherProbe(development: boolean): LauncherProbe {
   };
 }
 
-let current: CommandLauncher | undefined;
-let currentSpawn: CommandLauncher | undefined;
+/**
+ * Launchers detected by `launchCli`, kept on `globalThis` under a registered symbol: in development
+ * mode oclif loads command modules through its own TypeScript loader, a second instance of this
+ * module, which must still see what `launchCli` recorded.
+ */
+const launchers = Symbol.for('quiet-choir.cli.launchers');
+
+interface LauncherState {
+  command?: CommandLauncher | undefined;
+  spawn?: CommandLauncher | undefined;
+}
+
+function state(): LauncherState {
+  const holder = globalThis as unknown as Record<symbol, LauncherState | undefined>;
+  return (holder[launchers] ??= {});
+}
 
 /** Record the launcher of this CLI process; only `launchCli` sets it. @internal */
 export function setCommandLauncher(launcher: CommandLauncher | undefined): void {
-  current = launcher;
+  state().command = launcher;
 }
 
 /** The detected launcher, or undefined (the runtime default) outside a launched CLI. @internal */
 export function commandLauncher(): CommandLauncher | undefined {
-  return current;
+  return state().command;
 }
 
 /** Record the spawn launcher of this CLI process; only `launchCli` sets it. @internal */
 export function setSpawnLauncher(launcher: CommandLauncher | undefined): void {
-  currentSpawn = launcher;
+  state().spawn = launcher;
 }
 
 /** The detected spawn launcher, or undefined outside a launched CLI or without a script path. @internal */
 export function spawnLauncher(): CommandLauncher | undefined {
-  return currentSpawn;
+  return state().spawn;
 }

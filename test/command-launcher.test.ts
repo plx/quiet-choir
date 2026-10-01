@@ -139,6 +139,25 @@ describe('detectSpawnLauncher', () => {
     expect(detectSpawnLauncher(probe(overrides))).toEqual(expected);
   });
 
+  it('is shared with a second module instance through a registered global symbol', () => {
+    // Development mode loads command modules as another instance of launcher.ts.
+    const shared = (
+      globalThis as unknown as Record<symbol, { spawn?: unknown; command?: unknown }>
+    )[Symbol.for('quiet-choir.cli.launchers')];
+    try {
+      setSpawnLauncher([node, checkout]);
+      setCommandLauncher([node, checkout]);
+      const state = (
+        globalThis as unknown as Record<symbol, { spawn?: unknown; command?: unknown }>
+      )[Symbol.for('quiet-choir.cli.launchers')];
+      expect(state).toEqual({ spawn: [node, checkout], command: [node, checkout] });
+      expect(shared === undefined || shared === state).toBe(true);
+    } finally {
+      setSpawnLauncher(undefined);
+      setCommandLauncher(undefined);
+    }
+  });
+
   it('is recorded separately from the command launcher', () => {
     try {
       expect(spawnLauncher()).toBeUndefined();

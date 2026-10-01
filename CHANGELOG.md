@@ -14,7 +14,10 @@
   the wait: start then stops the runner and fails with the new code `start.timeout` (exit 124); a
   runner that exits without a record or a readable document is the new `start.exited` (exit 70). The
   public `CliErrorCode` type gains both. The skill golden path shrinks to `cd`, `validate`, `start`
-  and `inspect`. See [ADR 0036](docs/decisions/0036-detached-start.md).
+  and `inspect`. See [ADR 0036](docs/decisions/0036-detached-start.md). Fix: in development mode
+  (`npm run cli:dev`) emitted commands now carry the detected `[node, tsx flags, bin/dev.js]`
+  launcher instead of falling back to `quiet-choir`, because the detected launchers are now shared
+  with the command modules that oclif loads as a second module instance.
 - Sticky launch policy (one contract change; additive storage field, no identity or format change):
   each execution records `launch.policy` — the harness kind, each `--harness` fixture file by
   absolute path with its SHA-256, and the wait mode — and never any `--harness-config` value.
