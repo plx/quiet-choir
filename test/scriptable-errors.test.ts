@@ -12,6 +12,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+import { isCliErrorCode } from '../src/workflow/runtime/run-errors.js';
 import {
   defineWorkflow,
   isValidRunId,
@@ -267,6 +268,30 @@ it('renders explicit empty context for pre-run failures and reserves exit 1 for 
     ['workflow.failed', 1],
   ]);
   expect(workflowExitCodes['workflow.storage']).toBe(74);
+});
+
+it('maps the workflow start codes to their own exits and recognizes every code', () => {
+  expect(workflowExitCodes['start.timeout']).toBe(124);
+  expect(workflowExitCodes['start.exited']).toBe(70);
+  for (const exit of [124, 70])
+    expect(Object.values(workflowExitCodes).filter((code) => code === exit)).toHaveLength(1);
+  for (const code of Object.keys(workflowExitCodes)) expect(isCliErrorCode(code)).toBe(true);
+  for (const value of ['start.unknown', 'toString', 42, null])
+    expect(isCliErrorCode(value)).toBe(false);
+  const launch = {
+    runId: 'r',
+    pid: 7,
+    log: '/s/r/launch/1.log',
+    result: '/s/r/launch/1.result.json',
+    exitCode: null,
+    signal: 'SIGKILL',
+  };
+  expect(
+    workflowErrorDocument(workflowFailure('start.exited', 'Runner exited.', { launch })),
+  ).toMatchObject({ exitCode: 70, runId: null, launch });
+  expect(workflowErrorDocument(workflowFailure('usage.flag', 'Bad flag.'))).not.toHaveProperty(
+    'launch',
+  );
 });
 
 // measured: 0.5 s alone, 1.9-3.6 s in local full coverage runs, 6.0 s on the Node 22.13 CI leg

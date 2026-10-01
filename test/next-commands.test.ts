@@ -155,6 +155,13 @@ describe('failureNextCommands', () => {
       { code: 'workflow.interrupted', run: run({ status: 'cancelled' }) },
       [],
     ],
+    [
+      'start.timeout after the stopped runner saved a resumable suspension',
+      { code: 'start.timeout', run: run({ status: 'suspended' }) },
+      [resume()],
+    ],
+    ['start.timeout without a record', { code: 'start.timeout', run: null, runId: null }, []],
+    ['start.exited', { code: 'start.exited', run: null, runId: null }, []],
     ['run.orphans', { code: 'run.orphans' }, [resume('--kill-orphans')]],
     [
       'run.orphans of an embedded run',

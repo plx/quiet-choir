@@ -242,6 +242,7 @@ export function failureNextCommands(context: FailureNextContext): NextCommand[] 
   switch (code) {
     case 'workflow.failed':
     case 'workflow.interrupted':
+    case 'start.timeout':
       return run && (run.status === 'failed' || run.status === 'suspended')
         ? runNextCommands(run, run.status, stateDir, launcher)
         : [];

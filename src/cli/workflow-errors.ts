@@ -27,6 +27,8 @@ export const workflowExitCodes = {
   'workflow.failed': 1,
   'workflow.interrupted': 130,
   'workflow.storage': 74,
+  'start.timeout': 124,
+  'start.exited': 70,
 } as const satisfies Record<CliErrorCode, number>;
 
 /** A CLI-local carrier for an executor's plain-data failure. @internal */
@@ -73,6 +75,7 @@ export function workflowErrorDocument(
       ? { summary: failure.run && summarizeRunResult(failure.run, failure.stateDir) }
       : { run: failure.run }),
     ...(failure.rehearsal === undefined ? {} : { rehearsal: failure.rehearsal }),
+    ...(failure.launch === undefined ? {} : { launch: failure.launch }),
   };
 }
 
