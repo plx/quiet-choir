@@ -1339,6 +1339,9 @@ it('passes the persisted previous note and check count to each observation', asy
   ).rejects.toThrow('Poll note exceeds 16 KiB');
 });
 
+/** An observation that always fails, typed to fit any poll. */
+const rejectFlaky = (): Promise<never> => Promise.reject(new Error('flaky'));
+
 it('never tolerates authoring errors, and guards classify and retryAfterMs like observers', async () => {
   const onError = { tolerate: 3 };
   interface Options {
@@ -1441,7 +1444,7 @@ it('never tolerates authoring errors, and guards classify and retryAfterMs like 
                       return null;
                     },
                   },
-                  observe: () => Promise.reject(new Error('flaky')),
+                  observe: rejectFlaky,
                 }),
             }),
             options,
