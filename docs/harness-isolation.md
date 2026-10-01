@@ -17,7 +17,7 @@ See [worktree isolation](worktrees.md).
 | Provider | Restricted invocation                 | Remaining dependencies                                                                                                                                                                                                         |
 | -------- | ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | Claude   | `--restricted --strict-mcp-config`    | Authentication, managed settings/policy, built-ins, and explicit opt-ins                                                                                                                                                       |
-| Codex    | `--ignore-user-config --ignore-rules` | Authentication through `CODEX_HOME`, managed/system layers, user `CODEX_HOME/AGENTS.md` or `AGENTS.override.md`, `CODEX_HOME/skills`, project `AGENTS.md`/`AGENTS.override.md` from the Git root to `cwd`, and explicit config |
+| Codex    | `--ignore-user-config --ignore-rules` | Authentication through `CODEX_HOME`, managed/system layers, user `CODEX_HOME/AGENTS.md` or `AGENTS.override.md`, `CODEX_HOME/skills`, project `AGENTS.md`/`AGENTS.override.md` from the Git root to `cwd`, and explicit config. With `instructions: 'none'`: authentication (a private copy of `auth.json`), managed/system layers and explicit config only |
 
 Claude suppresses user/project/local settings, their hooks, discovered MCP servers, project
 instructions, user plugins/skills, and auto-memory. Built-in components can remain. Explicit
@@ -50,7 +50,43 @@ workflow. Codex harness metadata records these files as paths and SHA-256 digest
 and again if they change on resume, and `workflow doctor` names them. Detection runs on the first
 live Codex call of each run, from that call's `cwd`, so project files reached from other directories
 are not re-detected, and inherit-mode config keys such as `project_doc_max_bytes` are not modelled.
-Removing these files is a possible opt-in mode, tracked in issue #130.
+
+Instruction-free Codex calls. Set `instructions: 'none'` on a Codex call, in a profile's `codex`
+options or in `defaults.codex` to run without these files. The adapter adds
+`--config project_doc_max_bytes=0`, which stops project `AGENTS.md`/`AGENTS.override.md` loading,
+and runs the child against a private temporary `CODEX_HOME` (mode 0700) that holds only a 0600 copy
+of the real `auth.json`. Nothing else is copied: no `AGENTS.md`, skills, plugins, memories or
+`config.toml`. The directory is removed after success, failure and cancellation. The real home is
+the one the child would otherwise use, so `env.set.CODEX_HOME` still selects where authentication
+comes from. When Codex refreshes its token during the call, the refreshed `auth.json` is written
+back to the real home atomically (temporary file in the same directory, fsync, rename, original
+mode) under a lock file in `os.tmpdir()`, and only while the real file still equals the copy. If
+another process changed it meanwhile, the file with the later `last_refresh` wins and the call
+records a warning that names the path, never the contents. A missing `auth.json` (API-key or
+`env_key` providers) gives an empty private home and nothing is written back; a torn copy left by a
+killed child is never written back.
+
+The trade-off: results no longer depend on who runs the workflow, but calls lose guidance users may
+expect from their own or the project's `AGENTS.md`, user skills and memories. Supply instructions
+deliberately through the prompt or explicit, fingerprinted `config` such as `developer_instructions`.
+`'none'` requires restricted isolation and is rejected with `inherit`: inherit loads `config.toml`,
+which can carry instructions of its own and which the private home deliberately omits. The mode also
+owns the `project_doc_max_bytes` config key. Custom providers still need explicit `config`, as in
+any restricted call. `instructions` is not a capability control: it removes context and grants
+nothing, so call sites may set it under `strictProfiles`. `'none'` enters step identity, while
+`'native'` (the default) and unset fingerprint identically, so existing runs keep their identities.
+Codex steps record the resolved value as `request.instructions`, `workflow inspect` lists `no native
+instructions` among a step's limits, and dry-run call plans carry `codexHome: 'private'` next to the
+argv. The restricted default is unchanged; making `'none'` the default is a separate decision. See
+[ADR 0031](decisions/0031-private-codex-home-for-instruction-free-calls.md).
+
+Limitations: the lock coordinates quiet-choir processes that share a temporary directory. A plain
+`codex` run refreshing the same `auth.json` at the same moment is covered only by the
+compare-and-swap re-read. Credentials Codex keeps in the OS keyring instead of `auth.json` are not
+copied, and that setup is unverified. Codex writes its own state files into each private home, so
+every call starts with a fresh installation ID. Metadata detection still describes the real home
+from the first Codex call of a run, so a workflow that uses only `'none'` still gets the user-level
+warning; `request.instructions` records what each call actually did.
 
 Neither mode confines the workflow's TypeScript, local callbacks, or `ctx.exec`. OS sandbox
 selection and tool grants remain separate controls. Custom harnesses must enforce the resolved mode
@@ -98,10 +134,14 @@ denial and `addDirs` restoration, protected settings-write denial, and Codex's e
 override. For restricted Codex it also records, without asserting, whether canaries in a user
 `AGENTS.md`, a user skill description and a project `AGENTS.md` reach the request body
 (`userInstructionsReachedRequest`, `projectInstructionsReachedRequest` and
-`userSkillReachedRequest`, all true on 0.157.1), how `AGENTS.override.md` replaces `AGENTS.md`, that
+`userSkillReachedRequest`, all true on 0.157.1, and the same with an explicit `instructions:
+'native'`), how `AGENTS.override.md` replaces `AGENTS.md`, that
 discovery runs from the Git root down to `cwd`, and that an empty user-level override falls back to
 `AGENTS.md` while an empty project-level one does not. A change in Codex then shows as a fixture
-diff. No upstream inference occurs. The sanitized report is in
+diff. It asserts that with `instructions: 'none'` none of the three canaries reaches the request,
+the call still reaches the explicit provider, and the real `CODEX_HOME` listing and `auth.json` stay
+unchanged. A probe on 0.157.1 showed that `project_doc_max_bytes=0` (spelled `--config` or `-c`)
+removes only the project canary; the private home removes the user file and skill. No upstream inference occurs. The sanitized report is in
 [`test/fixtures/harness-isolation-results.json`](../test/fixtures/harness-isolation-results.json).
 
 Earlier zero-cost OAuth probes on the same Claude version reached invalid-model responses with

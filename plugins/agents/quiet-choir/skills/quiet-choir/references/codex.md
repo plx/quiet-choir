@@ -20,6 +20,7 @@ These are resolved through the shared profile/grant rules.
 | `harnessProfile`  | Native Codex profile (`--profile`); `profile` still selects a quiet-choir role; requires an inherited role, since restricted isolation skips the `config.toml` that defines profiles |
 | `config`          | JSON values rendered as TOML per dotted key; rejects null and aliases of owned controls                                                                                              |
 | `images`          | Regular files resolved against effect cwd; contents fingerprinted, snapshotted before launch and re-hashed on resume (keep readable)                                                 |
+| `instructions`    | `'native'` (default) or `'none'`: a private `CODEX_HOME` with only `auth.json` plus `project_doc_max_bytes=0`, so no user or project `AGENTS.md`, skills or memories; restricted only |
 
 Effort omission uses native defaults under the selected configuration mode. Set it explicitly for
 repeatable cost expectations. Model-specific support remains native CLI behavior. Capability
@@ -60,6 +61,10 @@ files; isolate overlapping targets, concurrent runners, and retries unsafe on pa
 `AGENTS.override.md`), `CODEX_HOME/skills` descriptions, and project `AGENTS.md` or
 `AGENTS.override.md` from the Git root down to `cwd`, plus managed layers. Metadata records these
 files as paths and digests, the run warns about user-level ones, and `workflow doctor` names them.
+Set `instructions: 'none'` to run a call without them: the child gets a private temporary
+`CODEX_HOME` holding only a copy of `auth.json` (a refreshed token is written back under a lock) and
+`--config project_doc_max_bytes=0`. It is rejected with `inherit`, enters identity only as `'none'`,
+and drops guidance users may expect; pass needed instructions in the prompt or explicit `config`.
 Custom providers need explicit `config` or an inherited role. Authentication still uses
 `CODEX_HOME`. See [harness isolation](harness-isolation.md); the workflow's own TypeScript remains
 outside this boundary.

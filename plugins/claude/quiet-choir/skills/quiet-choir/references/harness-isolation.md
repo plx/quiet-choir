@@ -17,7 +17,7 @@ See [worktree isolation](worktrees.md).
 | Provider | Restricted invocation                 | Remaining dependencies                                                                                                                                                                                                         |
 | -------- | ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | Claude   | `--restricted --strict-mcp-config`    | Authentication, managed settings/policy, built-ins, and explicit opt-ins                                                                                                                                                       |
-| Codex    | `--ignore-user-config --ignore-rules` | Authentication through `CODEX_HOME`, managed/system layers, user `CODEX_HOME/AGENTS.md` or `AGENTS.override.md`, `CODEX_HOME/skills`, project `AGENTS.md`/`AGENTS.override.md` from the Git root to `cwd`, and explicit config |
+| Codex    | `--ignore-user-config --ignore-rules` | Authentication through `CODEX_HOME`, managed/system layers, user `CODEX_HOME/AGENTS.md` or `AGENTS.override.md`, `CODEX_HOME/skills`, project `AGENTS.md`/`AGENTS.override.md` from the Git root to `cwd`, and explicit config. With `instructions: 'none'`: authentication (a private copy of `auth.json`), managed/system layers and explicit config only |
 
 Claude suppresses user/project/local settings, their hooks, discovered MCP servers, project
 instructions, user plugins/skills, and auto-memory. Built-in components can remain. Explicit
@@ -50,7 +50,24 @@ workflow. Codex harness metadata records these files as paths and SHA-256 digest
 and again if they change on resume, and `workflow doctor` names them. Detection runs on the first
 live Codex call of each run, from that call's `cwd`, so project files reached from other directories
 are not re-detected, and inherit-mode config keys such as `project_doc_max_bytes` are not modelled.
-Removing these files is a possible opt-in mode, tracked in issue #130.
+
+Set Codex `instructions: 'none'` (on a call, a profile's `codex` options or `defaults.codex`) to run
+without these files. The adapter adds `--config project_doc_max_bytes=0`, which stops project
+`AGENTS.md` loading, and runs the child against a private temporary `CODEX_HOME` holding only a
+0600 copy of the real `auth.json`, removed after every outcome. A token refreshed during the call is
+written back to the real `auth.json` atomically under a lock, and only if the real file is unchanged;
+when another process changed it meanwhile, the later `last_refresh` wins and the call warns (paths,
+never contents). The trade-off: results stop depending on who runs the workflow, but calls lose
+guidance users may expect from their own or the project's `AGENTS.md`, skills and memories. Supply
+instructions deliberately through the prompt or explicit `config` such as `developer_instructions`.
+`'none'` requires restricted isolation and is rejected with `inherit`, whose `config.toml` can carry
+instructions of its own; it also owns the `project_doc_max_bytes` config key. Custom providers still
+need explicit `config`. It grants nothing, so call sites may set it under `strictProfiles`. `'none'`
+enters step identity; `'native'` (the default) and unset fingerprint identically. Steps record
+`request.instructions`, inspect shows `no native instructions`, and dry-run plans show
+`codexHome: 'private'`. The restricted default is unchanged; making `'none'` the default is a
+separate decision. The lock covers quiet-choir processes sharing a temporary directory, not a
+concurrent plain `codex` run, and keyring-stored credentials are not copied.
 
 Neither mode confines the workflow's TypeScript, local callbacks, or `ctx.exec`. OS sandbox
 selection and tool grants remain separate controls. Custom harnesses must enforce the resolved mode
@@ -95,7 +112,8 @@ Claude 2.1.283 and Codex 0.157.1 were checked using fresh homes, dummy credentia
 APIs. The tests verified inherited hook suppression, explicit opt-ins, file boundaries, and Codex
 provider configuration. For restricted Codex they also recorded that user and project `AGENTS.md`
 and user skill descriptions reach the request, how `AGENTS.override.md` takes precedence, and that
-discovery runs from the Git root down to `cwd`. Earlier zero-cost invalid-model probes support
+discovery runs from the Git root down to `cwd`. With `instructions: 'none'` none of them reached the
+request and the real `CODEX_HOME` stayed unchanged. Earlier zero-cost invalid-model probes support
 retained Claude subscription authentication; they are not successful inference or fresh
 account-availability checks. Managed policy and future native versions can change the effective
 boundary.
