@@ -1,4 +1,13 @@
-import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  realpath,
+  rename,
+  rm,
+  symlink,
+  writeFile,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -17,6 +26,7 @@ import {
 import * as store from '../src/workflow/runtime/store.js';
 import { lockRun } from '../src/workflow/runtime/store.js';
 import { readRequiredRun } from '../src/workflow/runtime/read-required-run.js';
+import { OrphanProcessesError } from '../src/workflow/runtime/process-registry.js';
 import { workflowFailure } from '../src/workflow/loader/failure.js';
 import { WorkflowExecutor } from '../src/workflow/loader/executor.js';
 import { analyzeTypecheckEntrypoint } from '../src/workflow/typecheck/plan.js';
@@ -487,3 +497,99 @@ export default defineWorkflow({
     delete hooks.choirStepWaiting;
   }
 });
+
+// measured: see the comment at the timeout (real compiler passes)
+it(
+  'puts runnable next entries on failed, orphaned, dry-run and moved-entrypoint failures',
+  { timeout: 30_000 },
+  async () => {
+    const root = join(stateDir, 'workflow-next');
+    await mkdir(root);
+    await writeFile(join(root, 'package.json'), '{"type":"module"}');
+    await symlink(join(projectRoot, 'node_modules'), join(root, 'node_modules'));
+    const file = join(root, 'workflow.ts');
+    await writeFile(
+      file,
+      `import { z } from 'zod';
+import { defineWorkflow } from ${JSON.stringify(join(projectRoot, 'src/workflow/runtime/model.js'))};
+export default defineWorkflow({
+  name: 'next-entries', version: '1', input: z.null(), output: z.string(),
+  run: (ctx) => ctx.step('flaky', { input: null, schema: z.string(), run: () => { throw new Error('flaky failed'); } }),
+});`,
+    );
+    const analysis = analyzeTypecheckEntrypoint(file, projectRoot);
+    if (!analysis.ok) throw new Error(analysis.error.message);
+    const runs = join(stateDir, 'state');
+    const launcher = ['/x/node', '/y/run.js'];
+    const executor = new WorkflowExecutor({ logger: { log: vi.fn() }, commandLauncher: launcher });
+    const resume = (...flags: string[]) => [
+      ...launcher,
+      'workflow',
+      'resume',
+      'next-run',
+      '--state-dir',
+      runs,
+      ...flags,
+    ];
+    const failed = await executor.execute({
+      kind: 'workflow.execute',
+      typecheck: analysis.plan,
+      runId: 'next-run',
+      stateDir: runs,
+      cwd: root,
+      resume: false,
+      input: null,
+    });
+    if (failed.ok) throw new Error('expected a failure');
+    expect(failed.code).toBe('workflow.failed');
+    expect(failed.next?.map((entry) => entry.argv)).toEqual([resume()]);
+    expect(workflowErrorDocument(failed)).toMatchObject({ next: [{ argv: resume() }] });
+
+    const rehearsal = await executor.execute({
+      kind: 'workflow.execute',
+      typecheck: analysis.plan,
+      runId: 'next-run',
+      stateDir: runs,
+      cwd: root,
+      resume: true,
+      dryRun: true,
+    });
+    if (rehearsal.ok) throw new Error('expected a rehearsal failure');
+    expect(rehearsal.next).toBeUndefined();
+    expect(workflowErrorDocument(rehearsal)).toMatchObject({ next: [] });
+
+    vi.mocked(lockRun).mockRejectedValueOnce(new OrphanProcessesError('next-run', []));
+    const orphans = await executor.execute({
+      kind: 'workflow.resume',
+      runId: 'next-run',
+      stateDir: runs,
+    });
+    if (orphans.ok) throw new Error('expected an orphan refusal');
+    expect(orphans.code).toBe('run.orphans');
+    expect(orphans.next?.[0]?.argv).toEqual(resume('--kill-orphans'));
+
+    const stored = await realpath(file);
+    await rename(root, `${root}-moved`);
+    const moved = await executor.execute({
+      kind: 'workflow.resume',
+      runId: 'next-run',
+      stateDir: runs,
+    });
+    if (moved.ok) throw new Error('expected a refusal');
+    expect(moved.code).toBe('run.incompatible');
+    expect(workflowExitCodes[moved.code]).toBe(3);
+    expect(moved.details).toEqual({ storedEntrypoint: stored, reason: 'entrypoint_missing' });
+    expect(moved.next?.[0]?.argv).toEqual([
+      ...launcher,
+      'workflow',
+      'execute',
+      '<ENTRYPOINT>',
+      '--fork-from',
+      'next-run',
+      '--run-id',
+      '<NEW_RUN_ID>',
+      '--state-dir',
+      runs,
+    ]);
+  },
+);
