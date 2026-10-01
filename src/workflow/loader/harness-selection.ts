@@ -10,6 +10,7 @@ import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { z } from 'zod';
 import { CliHarness, type CliHarnessOptions } from '../../harnesses/cli.js';
+import { digest } from '../runtime/json.js';
 import { parseHarnessFixtures, type HarnessFixtures } from '../../harnesses/fixture.js';
 
 /** Serializable harness selection; fixtures are validated before workflow import. @internal */
@@ -121,6 +122,23 @@ export async function readHarnessSelection(
       'Register adapter packages in defineWorkflow({ harnesses }), not through module: loading.',
     );
   throw new Error('--harness must be cli or fixture:<file>.');
+}
+
+/**
+ * SHA-256 of the CLI harness configuration a selection applies, recorded as
+ * `RunRecord.harness.configDigest` and compared on resume. It covers the legacy `CliHarnessOptions`
+ * fields (binary paths as `readHarnessSelection` resolved them, output limits, `scrubEnv`) and the
+ * `harnesses.<name>` configurations. It excludes `killGraceMs` (termination policy, not output),
+ * the selection kind (recorded and checked separately), and fixtures. An absent selection digests
+ * like the default `{ kind: 'cli', config: {} }`; key order never matters. Uses the same canonical
+ * `digest()` as environment summaries and step identities. @internal
+ */
+export function harnessConfigDigest(selection?: HarnessSelection): string {
+  // digest() omits undefined members, so this drops killGraceMs without a second canonical form.
+  return digest({
+    config: { ...selection?.config, killGraceMs: undefined },
+    configurations: selection?.configurations ?? {},
+  });
 }
 
 /** Construct only operator-selected adapters; declared custom factories stay lazy in the runtime. @internal */

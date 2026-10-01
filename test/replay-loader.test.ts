@@ -21,6 +21,7 @@ import { analyzeTypecheckEntrypoint } from '../src/workflow/typecheck/plan.js';
 import { readRun } from '../src/index.js';
 import { lockRun } from '../src/workflow/runtime/store.js';
 import { workflowExitCodes } from '../src/cli/workflow-errors.js';
+import { harnessConfigDigest } from '../src/workflow/loader/harness-selection.js';
 
 const repository = dirname(dirname(fileURLToPath(import.meta.url)));
 let root: string;
@@ -392,6 +393,100 @@ return approved ? scan.output : 'rejected';
     await writeFile(join(other, 'workflow.ts'), source());
     expect((await validate(join(other, 'workflow.ts'))).workflow.fingerprint).toBe(
       (await validate()).workflow.fingerprint,
+    );
+  });
+
+  it('refuses a resume or answer --resume under a changed harness configuration unless allowed', async () => {
+    const ops = join(root, 'ops.ts');
+    await writeFile(
+      ops,
+      `import { defineWorkflow, z } from ${JSON.stringify(join(repository, 'src/index.js'))};
+export default defineWorkflow({ name: 'ops', version: '1', input: z.null(), output: z.string(), async run(ctx) {
+const scan = await ctx.claude.text('scan', { prompt: 'scan' });
+const approved = await ctx.ask('approve', { prompt: 'Approve?', schema: z.boolean() });
+return approved ? scan.output : 'rejected';
+}});`,
+    );
+    const fixtures = { version: 1 as const, calls: [], unmatched: 'synthesize' as const };
+    const started = { kind: 'fixture' as const, config: { maxOutputBytes: 4096 }, fixtures };
+    const changed = { kind: 'fixture' as const, config: {}, fixtures };
+    const start = async (runId: string) => {
+      expect(
+        await executor().execute({
+          kind: 'workflow.execute',
+          typecheck: plan(ops),
+          runId,
+          stateDir,
+          cwd: root,
+          input: null,
+          resume: false,
+          harness: started,
+        }),
+      ).toMatchObject({ ok: true, run: { status: 'suspended' } });
+      expect((await readRun({ stateDir, runId })).harness?.configDigest).toBe(
+        harnessConfigDigest(started),
+      );
+    };
+    const answer = (runId: string, extra: object = {}) =>
+      executor().execute({
+        kind: 'workflow.answer',
+        runId,
+        stateDir,
+        stepId: 'approve',
+        value: true,
+        resume: true,
+        harness: changed,
+        ...extra,
+      });
+
+    await start('config');
+    const bytes = await runFiles('config');
+    const refused = await executor().execute({
+      kind: 'workflow.resume',
+      runId: 'config',
+      stateDir,
+      harness: changed,
+    });
+    if (refused.ok) throw new Error(JSON.stringify(refused));
+    expect(refused.code).toBe('run.incompatible');
+    expect(workflowExitCodes[refused.code]).toBe(3);
+    expect(refused.details).toEqual({
+      previousConfigDigest: harnessConfigDigest(started),
+      requestedConfigDigest: harnessConfigDigest(changed),
+    });
+    expect(await runFiles('config')).toEqual(bytes);
+    // The same configuration, in any key order, resumes normally (and parks on the question).
+    expect(
+      await executor().execute({
+        kind: 'workflow.resume',
+        runId: 'config',
+        stateDir,
+        harness: { ...started, config: { maxOutputBytes: 4096 } },
+      }),
+    ).toMatchObject({ ok: true, run: { status: 'suspended' } });
+    // answer --resume delivers the answer, then the resume is refused like any other.
+    expect(await answer('config')).toMatchObject({ ok: false, code: 'run.incompatible' });
+    expect((await readRun({ stateDir, runId: 'config' })).status).toBe('suspended');
+    expect(
+      await executor().execute({
+        kind: 'workflow.resume',
+        runId: 'config',
+        stateDir,
+        harness: changed,
+        allowHarnessConfigChange: true,
+      }),
+    ).toMatchObject({ ok: true, run: { status: 'completed' } });
+    expect((await readRun({ stateDir, runId: 'config' })).harness?.configDigest).toBe(
+      harnessConfigDigest(changed),
+    );
+
+    await start('answered');
+    expect(await answer('answered', { allowHarnessConfigChange: true })).toMatchObject({
+      ok: true,
+      run: { status: 'completed' },
+    });
+    expect((await readRun({ stateDir, runId: 'answered' })).harness?.configDigest).toBe(
+      harnessConfigDigest(changed),
     );
   });
 });

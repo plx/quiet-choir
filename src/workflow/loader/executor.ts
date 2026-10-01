@@ -13,7 +13,7 @@ import { lstat, realpath } from 'node:fs/promises';
 import { join } from 'node:path';
 import { WorkflowNotifications } from './notifications.js';
 import { fixturesFromRun } from './fixtures.js';
-import { selectedAdapters } from './harness-selection.js';
+import { harnessConfigDigest, selectedAdapters } from './harness-selection.js';
 import { FixtureHarness } from '../../harnesses/fixture.js';
 import { RehearsalHarness, rehearsalState } from './rehearsal.js';
 import {
@@ -241,6 +241,9 @@ export class WorkflowExecutor implements Executor<
             runId: plan.runId,
             stateDir: plan.stateDir,
             ...(plan.harness === undefined ? {} : { harness: plan.harness }),
+            ...(plan.allowHarnessConfigChange === undefined
+              ? {}
+              : { allowHarnessConfigChange: plan.allowHarnessConfigChange }),
           });
         return { kind: 'workflow.answer.result', ok: true, delivery };
       }
@@ -467,6 +470,15 @@ export class WorkflowExecutor implements Executor<
         ...(this.#options.store === undefined ? {} : { store: this.#options.store }),
         ...(rehearsal === undefined ? {} : { rehearsal: rehearsal.hooks }),
         allowHarnessChange: rehearsal !== undefined || (plan.allowHarnessChange ?? false),
+        // Only a live CLI execution knows its configuration: a rehearsal ignores it, and an injected
+        // fallback harness carries its own. The accepted-replay preflight needs no check, because
+        // this call refuses before it changes the checkpoint.
+        ...(plan.dryRun || this.#options.harness !== undefined
+          ? {}
+          : {
+              harnessConfigDigest: harnessConfigDigest(plan.harness),
+              allowHarnessConfigChange: plan.allowHarnessConfigChange ?? false,
+            }),
         ...(plan.killOrphans === undefined ? {} : { killOrphans: plan.killOrphans }),
         ...(this.#options.processSupervisor === undefined
           ? {}

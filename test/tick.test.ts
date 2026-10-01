@@ -25,6 +25,8 @@ import type { WorkflowFailure } from '../src/workflow/loader/failure.js';
 import { FileRunStore, readRun, writeAnswer, type WorkflowClock } from '../src/index.js';
 import { countCompletedSteps } from '../src/workflow/runtime/recovery-decision.js';
 import { inspectRun } from '../src/workflow/loader/inspection.js';
+import { harnessConfigDigest } from '../src/workflow/loader/harness-selection.js';
+import type { CliHarnessOptions } from '../src/harnesses/cli.js';
 
 const project = dirname(dirname(fileURLToPath(import.meta.url)));
 const roots: string[] = [];
@@ -62,7 +64,12 @@ async function fixture(
   kind:
     'due' | 'future' | 'signal' | 'failure' | 'agent' | 'cancel' | 'versioned' | 'gated' = 'due',
   notify: boolean | 'fail' = false,
-  shared: { readonly stateDir?: string; readonly runId?: string } = {},
+  shared: {
+    readonly stateDir?: string;
+    readonly runId?: string;
+    /** CLI harness configuration the agent run starts with; the default otherwise. */
+    readonly harnessConfig?: CliHarnessOptions;
+  } = {},
 ) {
   const runId = shared.runId ?? 'run';
   const root = await mkdtemp(join(tmpdir(), 'choir-tick-'));
@@ -138,7 +145,7 @@ export default defineWorkflow({ name: 'tick',
     input: null,
     ...(notify ? { notifyCommand } : {}),
     ...(kind === 'agent'
-      ? { harness: { kind: 'cli' as const, config: {} }, grants: ['exec'] }
+      ? { harness: { kind: 'cli' as const, config: shared.harnessConfig ?? {} }, grants: ['exec'] }
       : {}),
   };
   const first = await new WorkflowExecutor({
@@ -496,20 +503,80 @@ export default defineWorkflow({ name: 'debounce', version: '1', input: z.null(),
     expect((await readRun(failing.plan)).status).toBe('completed');
   });
 
-  it('carries a supplied --harness-config into the resumed CLI run', async () => {
-    const f = await fixture('agent');
+  it('carries a matching --harness-config into the resumed CLI run', async () => {
     const claudeBinary = join(project, 'test/bin/fake-claude.mjs');
-    expect(
-      await tick.execute({
-        ...f.tickPlan,
-        harness: { kind: 'cli', config: { claudeBinary } },
-      }),
-    ).toMatchObject({
+    const f = await fixture('agent', false, { harnessConfig: { claudeBinary } });
+    const harness = { kind: 'cli' as const, config: { claudeBinary } };
+    expect((await readRun(f.plan)).harness?.configDigest).toBe(harnessConfigDigest(harness));
+    expect(await tick.execute({ ...f.tickPlan, harness })).toMatchObject({
       ok: true,
       resumed: [{ runId: 'run', outcome: 'completed' }],
       skipped: [],
       exitCode: 0,
     });
+    const capture = JSON.parse(await readFile(f.agentLog, 'utf8')) as Record<string, unknown>;
+    expect(capture).toMatchObject({ harness: 'claude', scenario: 'claude-text-success' });
+  });
+
+  it('refuses a tick under a different --harness-config unless the change is allowed', async () => {
+    const claudeBinary = join(project, 'test/bin/fake-claude.mjs');
+    const f = await fixture('agent', false, { harnessConfig: { claudeBinary } });
+    const bytes = await runBytes(f.stateDir, 'run');
+    // No --harness-config means the default configuration, which this run was not started with.
+    expect(oneEntryPerRun(await tick.execute(f.tickPlan))).toEqual({
+      kind: 'workflow.tick.result',
+      ok: true,
+      resumed: [
+        {
+          runId: 'run',
+          outcome: 'incompatible',
+          message: expect.stringContaining('--allow-harness-config-change') as unknown,
+        },
+      ],
+      skipped: [],
+      observed: 0,
+      exitCode: 1,
+    });
+    expect(await runBytes(f.stateDir, 'run')).toEqual(bytes);
+    expect((await readRun(f.plan)).status).toBe('suspended');
+    await expect(stat(f.agentLog)).rejects.toMatchObject({ code: 'ENOENT' });
+    // Another binary path is another configuration, accepted only with the override.
+    const other = join(f.root, 'other-claude.mjs');
+    await symlink(claudeBinary, other);
+    const changed = { kind: 'cli' as const, config: { claudeBinary: other } };
+    expect(oneEntryPerRun(await tick.execute({ ...f.tickPlan, harness: changed }))).toMatchObject({
+      resumed: [{ runId: 'run', outcome: 'incompatible' }],
+      exitCode: 1,
+    });
+    await expect(stat(f.agentLog)).rejects.toMatchObject({ code: 'ENOENT' });
+    expect(
+      oneEntryPerRun(
+        await tick.execute({ ...f.tickPlan, harness: changed, allowHarnessConfigChange: true }),
+      ),
+    ).toMatchObject({ resumed: [{ runId: 'run', outcome: 'completed' }], exitCode: 0 });
+    const capture = JSON.parse(await readFile(f.agentLog, 'utf8')) as Record<string, unknown>;
+    expect(capture).toMatchObject({ harness: 'claude', scenario: 'claude-text-success' });
+    expect((await readRun(f.plan)).harness?.configDigest).toBe(harnessConfigDigest(changed));
+  });
+
+  it('ticks a run started with the default configuration without a --harness-config', async () => {
+    const f = await fixture('agent');
+    expect((await readRun(f.plan)).harness?.configDigest).toBe(harnessConfigDigest());
+    // The default configuration finds claude on PATH; point that at the fake binary.
+    const bin = join(f.root, 'bin');
+    await mkdir(bin);
+    await symlink(join(project, 'test/bin/fake-claude.mjs'), join(bin, 'claude'));
+    const path = process.env['PATH'];
+    process.env['PATH'] = `${bin}:${path ?? ''}`;
+    try {
+      expect(oneEntryPerRun(await tick.execute(f.tickPlan))).toMatchObject({
+        resumed: [{ runId: 'run', outcome: 'completed' }],
+        exitCode: 0,
+      });
+    } finally {
+      if (path === undefined) delete process.env['PATH'];
+      else process.env['PATH'] = path;
+    }
     const capture = JSON.parse(await readFile(f.agentLog, 'utf8')) as Record<string, unknown>;
     expect(capture).toMatchObject({ harness: 'claude', scenario: 'claude-text-success' });
   });

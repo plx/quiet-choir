@@ -29,6 +29,7 @@ interface TickFlags {
   readonly 'claim-margin': string | undefined;
   readonly 'max-runs': number | undefined;
   readonly 'harness-config': string | undefined;
+  readonly 'allow-harness-config-change': boolean | undefined;
   readonly json: boolean | undefined;
 }
 
@@ -61,7 +62,11 @@ export default class WorkflowTick extends WorkflowCommand {
     }),
     'harness-config': Flags.string({
       description:
-        'CliHarness configuration JSON or @file for resumed CLI runs; not stored in the checkpoint',
+        'CliHarness configuration JSON or @file for resumed CLI runs; must match the configuration each run last executed with (omitted means the default)',
+    }),
+    'allow-harness-config-change': Flags.boolean({
+      description:
+        'Accept a --harness-config different from the one a run last executed with; applies to every run this tick resumes, so pair it with --run',
     }),
     json: Flags.boolean({ description: 'Print one structured tick result' }),
   };
@@ -108,6 +113,9 @@ export default class WorkflowTick extends WorkflowCommand {
       ...(flags.run === undefined ? {} : { runId: flags.run }),
       ...(flags['max-runs'] === undefined ? {} : { maxRuns: flags['max-runs'] }),
       ...(harness === undefined ? {} : { harness }),
+      ...(flags['allow-harness-config-change'] === undefined
+        ? {}
+        : { allowHarnessConfigChange: flags['allow-harness-config-change'] }),
       watch: flags.watch ?? false,
       timeoutMs,
       ...(claimMarginMs === undefined ? {} : { claimMarginMs }),
