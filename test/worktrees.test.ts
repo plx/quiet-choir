@@ -31,7 +31,7 @@ import {
   type ProcessRunner,
 } from '../src/index.js';
 import { WorktreeGit } from '../src/worktrees/git.js';
-import { RunWorktrees } from '../src/workflow/runtime/worktrees.js';
+import { RunWorktrees, cleanupAdminWait } from '../src/workflow/runtime/worktrees.js';
 import { repairWorktreeRegistrations } from '../src/workflow/runtime/worktree-recovery.js';
 import { cleanWorktrees } from '../src/workflow/runtime/worktree-clean.js';
 import { testInvocation } from './harness-invocation.js';
@@ -1915,4 +1915,31 @@ it('clean recovers the administration lock of a holder killed while it waits', a
   expect(started.map(({ verb }) => verb)).toEqual(['list', 'remove']);
   for (const { at } of started) expect(at).toBeGreaterThanOrEqual(killed);
   expect(await readdir(join(common, 'quiet-choir'))).toEqual([]);
+});
+
+it('clean warns instead of hanging when another process holds the administration lock too long', async () => {
+  const path = await runWithCache('clean-bounded');
+  const common = await realpath(join(repo, '.git'));
+  const holder = holdAdminLock(common, 'forever');
+  await holder.held;
+  const original = cleanupAdminWait.ms;
+  cleanupAdminWait.ms = 200;
+  try {
+    const started: { verb: string; at: number }[] = [];
+    const result = await cleanWorktrees(
+      { runId: 'clean-bounded', stateDir },
+      timestampingRunner(started),
+    );
+    expect(result.directories).toEqual([]);
+    expect(result.warnings).toHaveLength(1);
+    expect(result.warnings[0]).toContain(
+      `Timed out waiting for the worktree administration lock at ${join(common, 'quiet-choir', 'worktree-admin.lock')}`,
+    );
+    expect(started.map(({ verb }) => verb)).not.toContain('remove');
+  } finally {
+    cleanupAdminWait.ms = original;
+    holder.child.kill('SIGKILL');
+    await holder.exited;
+  }
+  expect(await readdir(path).then(() => true)).toBe(true);
 });

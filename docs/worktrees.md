@@ -151,10 +151,11 @@ memory; then each takes the repository lock `<common Git dir>/quiet-choir/worktr
 which excludes every other quiet-choir process using that repository, whatever its state directory
 or linked checkout. So `workflow clean` and live runs serialize against each other. The lock reuses
 the run lock's crash-atomic design: a dead or crashed owner's lock is recovered automatically, and a
-live owner is waited on (the wait ends only with cancellation). An owner on another host, or one
-whose liveness or metadata cannot be verified, fails the attempt after about 30 s with the lock path
-to remove once no quiet-choir process on any machine sharing the repository is administering it. Git
-commands run outside quiet-choir, such as a manual `git worktree add`, are not serialized. See
+live owner is waited on (the wait ends only with cancellation, except that cleanup's wait is bounded
+at 30 s and then reports a warning). An owner on another host, or one whose liveness or metadata
+cannot be verified, fails the attempt after about 30 s with the lock path to remove once no
+quiet-choir process on any machine sharing the repository is administering it. Git commands run
+outside quiet-choir, such as a manual `git worktree add`, are not serialized. See
 [ADR 0032](decisions/0032-interprocess-worktree-administration-lock.md).
 
 A hard kill can still interrupt Git while it writes a new worktree's `commondir` file. An empty file

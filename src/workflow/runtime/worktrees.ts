@@ -21,7 +21,7 @@ import { CheckpointError } from './checkpoint.js';
 import { ConfigurationError } from './configuration-error.js';
 import { filePath } from './files.js';
 import { repairWorktreeRegistrations } from './worktree-recovery.js';
-import { acquireWorktreeAdminLock } from './worktree-admin-lock.js';
+import { acquireWorktreeAdminLock, worktreeAdminLockPath } from './worktree-admin-lock.js';
 
 function within(root: string, path: string): boolean {
   const part = relative(root, path);
@@ -103,6 +103,28 @@ export async function administer<T>(
     return result;
   } finally {
     release();
+  }
+}
+
+/**
+ * How long cleanup waits for the administration lock before warning instead. Unlike a live
+ * attempt, cleanup has no caller to cancel it, so another process's stuck holder must not hang it.
+ * Mutable only so tests can shorten it. @internal
+ */
+export const cleanupAdminWait = { ms: 30_000 };
+
+/** `administer` for cleanup: the lock wait is bounded and a timeout reads as a plain message. */
+async function administerBounded<T>(commonGitDir: string, work: () => Promise<T>): Promise<T> {
+  const signal = AbortSignal.timeout(cleanupAdminWait.ms);
+  try {
+    return await administer(commonGitDir, signal, work);
+  } catch (error) {
+    if (signal.aborted && error === signal.reason)
+      throw new Error(
+        `Timed out waiting for the worktree administration lock at ${worktreeAdminLockPath(commonGitDir)}`,
+        { cause: error },
+      );
+    throw error;
   }
 }
 
@@ -697,7 +719,7 @@ export class RunWorktrees {
           idempotencyKey: `${this.record.id}/${cache.stepId}`,
         });
         const key = await this.adminKey(ledger, invocation);
-        const registered = await administer(key, invocation.signal, () =>
+        const registered = await administerBounded(key, () =>
           this.driver().run(ledger.repo, ['worktree', 'list', '--porcelain', '-z'], invocation, {
             timeoutMs: 10_000,
           }),
@@ -715,7 +737,7 @@ export class RunWorktrees {
           cache.state = 'removed';
           continue;
         }
-        await administer(key, invocation.signal, () =>
+        await administerBounded(key, () =>
           this.driver().run(
             ledger.repo,
             ['worktree', 'remove', '--force', cache.path],

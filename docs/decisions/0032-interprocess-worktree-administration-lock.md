@@ -45,7 +45,9 @@ an error. Two runs administering one repository is normal, so this lock waits:
 - A live local owner, or a live recoverer, is waited on with jittered backoff (about 5 ms, doubling
   to 200 ms). The wait has no bound, matching the in-process queue it extends, because
   `worktree add` on a large checkout can legitimately take long; it ends on the caller's abort
-  signal, which rejects with the signal's reason and leaves no publish directory behind.
+  signal, which rejects with the signal's reason and leaves no publish directory behind. Cache
+  cleanup has no caller to cancel it, so its wait is bounded at 30 s and a timeout becomes an
+  ordinary cleanup warning naming the lock path.
 - A holder this host cannot judge (an owner or recoverer on another host, an unknown liveness, or
   unreadable metadata) is polled until a stuck deadline of 30 s, then the attempt fails with a plain
   `Error` naming the lock path, the holder's PID and host when known, and the remedy: remove the
