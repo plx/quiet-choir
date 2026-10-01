@@ -26,7 +26,10 @@ observations under the nested-operation guard. Timer naps never save state. Each
 own signal, aborted on cancellation, at the deadline (the wait resolves by deadline) and after the
 `observeTimeoutMs` policy (the wait fails like a throw); one that ignores it is abandoned after a
 fixed real-time grace with a persisted `waitWarnings` entry, so a hung observer holds a run or its
-close at most one grace past its deadline or timeout.
+close at most one grace past its deadline or timeout. One wait also stores the latest tolerated
+observation error and its consecutive count; observers receive the previous note and check count;
+and an opt-in `onError` policy, which is not identity, tolerates a bounded number of consecutive
+observation errors without ever tolerating cancellation or authoring errors.
 
 Quiescent waits suspend without unwinding or cancelling siblings. Waits due within 1000 ms stay
 live; explicit block mode keeps all waits live. Run-level nextWakeAt is derived from open registered

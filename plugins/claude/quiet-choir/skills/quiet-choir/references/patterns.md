@@ -312,9 +312,9 @@ source-free cleanup, read [worktrees](worktrees.md).
 recorded clock anchor and `ctx.poll` for read-only readiness checks. This example reads an absolute
 status file containing `pending`, `success`, or `failure`; have its producer replace it atomically.
 Its `onError` policy tolerates up to three consecutive `ENOENT` errors from a producer that deletes
-and rewrites the file instead, and fails at once on anything else.
-Use `ctx.step` for a snapshot or a selection over changing state, with an occurrence ID derived from
-replayed data. An incomplete collection is an error, never “no work left.”
+and rewrites the file instead, and fails at once on anything else. Use `ctx.step` for a snapshot or
+a selection over changing state, with an occurrence ID derived from replayed data. An incomplete
+collection is an error, never “no work left.”
 
 <!-- skills-check: example pattern-polling -->
 

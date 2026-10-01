@@ -20,19 +20,35 @@ Each sleep/poll/wait creates one wait record. `now` creates one local step. Wait
 original timing, signal presentation/schema/subject, poll input/schema/spacing, and observer source.
 Captured values still belong in poll input. Waiting identities cannot change; use revision-specific
 IDs and immutable subjects. Never derive changing sleep durations from a body `Date.now()`.
-`observeTimeoutMs` is policy, not identity, and may change on resume.
+`observeTimeoutMs` and `onError` are policy, not identity, and may change on resume.
 
-`observe({ signal, idempotencyKey, attempt })` returns `{ done: true, value }` or
+`observe({ signal, idempotencyKey, attempt, previous })` returns `{ done: true, value }` or
 `{ done: false, note? }`. Zod validates/project terminal values. `every` is a positive integer
 interval or `{ initialMs, maxMs, factor? }`, with factor default two. `ctx.poll` requires timeoutMs
 or deadline; `ctx.wait` may be unbounded. Progress overwrites checks/nextCheckAt/last note (16 KiB
-limit); naps do not save. A thrown observation fails the invocation and can be retried on explicit
-resume. Body-execution diagnostics can still grow across resumes; there is no history compaction.
-Honor the observation `signal`: it aborts on run cancellation, when the deadline passes during the
-observation (the wait resolves by deadline with the last note), and after `observeTimeoutMs`
-(positive integer, default 60 s, never past the deadline), which fails the wait like a throw. An
-observer that ignores its aborted signal is abandoned after a 2 s grace, also when the run closes,
-with a `waitWarnings` run warning.
+limit); naps do not save. By default a thrown observation fails the invocation and can be retried on
+explicit resume; tick never retries failed runs. Body-execution diagnostics can still grow across
+resumes; there is no history compaction. Honor the observation `signal`: it aborts on run
+cancellation, when the deadline passes during the observation (the wait resolves by deadline with
+the last note), and after `observeTimeoutMs` (positive integer, default 60 s, never past the
+deadline), which fails the wait like a throw. An observer that ignores its aborted signal is
+abandoned after a 2 s grace, also when the run closes, with a `waitWarnings` run warning.
+
+`previous` holds the persisted progress before this check: `note` (null on the first check),
+`checks` (0 on the first check, tolerated errors included) and `openedAt`. It survives suspend, tick
+and resume, so keep debounce flags and other timestamps in the note, not in closures. It is frozen;
+`N` is not inferred from returned notes, so narrow or parse `previous.note` (for example with Zod).
+
+`onError: { tolerate, classify?, retryAfterMs? }` tolerates transient observation errors. Candidates
+are a rejected observation and an `observeTimeoutMs` expiry (code
+`QUIET_CHOIR_POLL_OBSERVE_TIMEOUT`). `classify` returns `'transient'` (the default) or `'fatal'`. A
+tolerated error counts as a check, keeps the note and sets the wait's `lastError` (`message`,
+`consecutive`, `at`); the next check uses normal spacing or `retryAfterMs` (a finite number of at
+least 0; null keeps spacing). Error `tolerate + 1` in a row, a `'fatal'` result or a throwing
+callback fails the wait. A success resets the count, which persists across resumes. The deadline
+still wins, including on the final check. The callbacks are guarded like observers. Never tolerated:
+run cancellation or interruption, context-operation violations, wrong `observe` result shape,
+terminal schema failures, and invalid or oversized notes.
 
 Outcomes are discriminated by `by`: signal has value/at/actor, poll has value/at/checks, deadline
 has at/note. A valid signal timestamped at or before the deadline wins first, then a terminal poll,
@@ -51,9 +67,10 @@ process. `--wait-mode block` on execute/resume (or RunOptions.waitMode) keeps al
 saved sleeps replay; unfinished old sleep records retain the previous blocking path.
 
 `workflow pending --json` includes general waits with kind=wait, deadline, nextCheckAt, checks,
-note, and an optional signal/answer command. `nextWakeAt` is the earliest deadline/check, null for
-pure signals. Use `workflow answer` for an external signal, then tick when due. Human signals still
-need human routing; an agent cannot supply human approval on its own authority.
+note, lastError (latest tolerated error or null), and an optional signal/answer command.
+`nextWakeAt` is the earliest deadline/check, null for pure signals. Use `workflow answer` for an
+external signal, then tick when due. Human signals still need human routing; an agent cannot supply
+human approval on its own authority.
 
 ```sh
 node "$QC_CHECKOUT/bin/run.js" workflow tick --state-dir "$QC_RUNS" --json

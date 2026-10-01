@@ -2,6 +2,22 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- Waits (feature; the default is unchanged): a poll may set
+  `onError: { tolerate, classify?, retryAfterMs? }` to tolerate up to `tolerate` consecutive
+  observation errors (rejections and `observeTimeoutMs` expiries) instead of failing the wait. A
+  tolerated error counts as a check, keeps the note, and is recorded as the new optional
+  `WaitRecord.lastError` (`{ message, consecutive, at }`), shown as `PendingWait.lastError` (null
+  when absent) by `workflow pending` and its `--json`. A success clears it, the count persists
+  across resumes, and the deadline still wins. Run cancellation, context-operation violations, wrong
+  result shapes, terminal schema failures and note errors are never tolerated. `onError` is policy,
+  not wait identity, so existing polls keep their identities. Observers now receive
+  `PollContext.previous` (`note`, `checks`, `openedAt`, as persisted before the check), so debounce
+  state survives suspend and tick. New public types: `PollContext`, `PollErrorPolicy`, `WaitError`.
+  The additive `lastError` field needs no `formatVersion` bump, following `waitWarnings` and
+  `interruptedBy`: an older build that rewrites the record drops it, losing only the diagnostic and
+  resetting the consecutive count. The polling recipe tolerates a briefly missing status file and is
+  now version `'3'`.
+
 - Waits (behavior change): each poll observation now gets its own `signal`, which aborts when the
   run is cancelled or interrupted, when the wait deadline passes during the observation, and when
   the new `PollSource.observeTimeoutMs` elapses (a positive integer, default 60 s, never past a
