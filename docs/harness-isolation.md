@@ -104,7 +104,8 @@ restore a scrubbed name. A name cannot be both set and unset; `__proto__` assign
 before parsing. `QUIET_CHOIR_RUN_ID`, `QUIET_CHOIR_STEP_ID`, `QUIET_CHOIR_ATTEMPT`, and
 `QUIET_CHOIR_IDEMPOTENCY_KEY` are reserved for engine call metadata. Normalized edits enter
 identity; diagnostics and saved capability manifests contain only their names and SHA-256 digest.
-Keep rotating secrets in the inherited environment.
+Settings, MCP servers, agents, system prompts and Codex config are likewise reduced to digests and
+names. Keep rotating secrets in the inherited environment.
 
 Both modes scrub `CLAUDECODE`, Claude child/session/entrypoint/attended/messaging/executable
 variables, `CLAUDE_PID`, `CLAUDE_EFFORT`, `AI_AGENT`, `TRACEPARENT`, and the experimental
