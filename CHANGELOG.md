@@ -2,6 +2,16 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- Worktree administration (behaviour change; no identity or storage-format change): Git
+  `worktree add`, `list` and `remove` (and the interrupted-registration repair) are now serialized
+  per repository across processes, not only within one process. Each command takes a new lock
+  directory, `<common Git dir>/quiet-choir/worktree-admin.lock`, inside the repository's common Git
+  directory, so `workflow clean`, live runs and runs from different linked checkouts or state
+  directories no longer race on Git's worktree metadata. The lock reuses the run lock's crash-atomic
+  protocol: a dead owner's lock is recovered automatically and a live owner is waited on until
+  cancellation. An owner on another host, or one whose liveness or metadata cannot be verified,
+  fails the attempt after about 30 s with the lock path to remove. Git commands run outside
+  quiet-choir are not serialized. See ADR 0032.
 - Child frames (behaviour change; no identity change): a successful completion now marks every child
   frame it never reached that is still `running`, `suspended`, `failed` or `cancelled` with the new
   terminal status `superseded`, like unvisited unfinished steps. `finishedAt` is the supersession

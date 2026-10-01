@@ -11,7 +11,10 @@ export interface MergeRuntime {
   save(): Promise<void>;
   pin(ref: string, commit: string): Promise<void>;
   ref(key: string): string;
-  /** Run a command that enumerates worktrees without racing another worktree add. */
+  /**
+   * Run a command that enumerates worktrees without racing another worktree add, in this process or
+   * another quiet-choir process using the same repository.
+   */
   administer<T>(work: () => Promise<T>): Promise<T>;
   commit(tree: string, parents: readonly string[], message: string, date: string): Promise<string>;
 }

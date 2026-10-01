@@ -9,6 +9,7 @@ import {
   mkdir,
   mkdtemp,
   readFile,
+  readdir,
   realpath,
   rm,
   symlink,
@@ -30,9 +31,11 @@ import {
   type ProcessRunner,
 } from '../src/index.js';
 import { WorktreeGit } from '../src/worktrees/git.js';
-import { RunWorktrees } from '../src/workflow/runtime/worktrees.js';
+import { RunWorktrees, cleanupAdminWait } from '../src/workflow/runtime/worktrees.js';
 import { repairWorktreeRegistrations } from '../src/workflow/runtime/worktree-recovery.js';
+import { cleanWorktrees } from '../src/workflow/runtime/worktree-clean.js';
 import { testInvocation } from './harness-invocation.js';
+import { holdAdminLock } from './worktree-admin-holder.js';
 
 // Every test drives real Git processes. measured: 0.4-1.5 s per case on the CI legs, up to 1.3 s
 // alone and 3.1 s in local full coverage runs on a loaded machine (dominated by Git processes).
@@ -1841,4 +1844,102 @@ it('serializes sibling Git registrations while retaining concurrent isolated eff
   expect(result.output).toEqual(['done', 'done']);
   expect(invoke).toHaveBeenCalledTimes(2);
   expect(maximum).toBe(1);
+});
+
+/** A finished run with one kept cache for `workflow clean` to remove. */
+async function runWithCache(runId: string): Promise<string> {
+  const workflow = defineWorkflow({
+    name: runId,
+    version: '1',
+    input: z.null(),
+    output: z.null(),
+    async run(ctx) {
+      await ctx.worktree('cache');
+      return null;
+    },
+  });
+  const run = await runWorkflow(workflow, {
+    ...options(runId),
+    input: null,
+    worktrees: { root, keep: 'all' },
+  });
+  const [cache] = Object.values(run.worktrees?.caches ?? {});
+  assert(cache);
+  return cache.path;
+}
+
+/** Forwards to real Git, timestamping each worktree administration command as it starts. */
+function timestampingRunner(started: { verb: string; at: number }[]): ProcessRunner {
+  return {
+    run(request, invocation) {
+      const command: readonly string[] = 'shell' in request.command ? [] : request.command;
+      const at = command.indexOf('worktree');
+      const verb = at < 0 ? undefined : command[at + 1];
+      if (verb !== undefined) started.push({ verb, at: Date.now() });
+      return processRunner.run(request, invocation);
+    },
+  };
+}
+
+it('clean waits for another process holding the repository administration lock', async () => {
+  const path = await runWithCache('clean-waits');
+  const holder = holdAdminLock(await realpath(join(repo, '.git')), 300);
+  await holder.held;
+  const started: { verb: string; at: number }[] = [];
+  const result = await cleanWorktrees(
+    { runId: 'clean-waits', stateDir },
+    timestampingRunner(started),
+  );
+  const released = await holder.released;
+  expect(result).toMatchObject({ directories: [path], warnings: [] });
+  expect(started.map(({ verb }) => verb)).toEqual(['list', 'remove']);
+  for (const { at } of started) expect(at).toBeGreaterThanOrEqual(released);
+  expect((await holder.exited).code).toBe(0);
+});
+
+it('clean recovers the administration lock of a holder killed while it waits', async () => {
+  const path = await runWithCache('clean-recovers');
+  const common = await realpath(join(repo, '.git'));
+  const holder = holdAdminLock(common, 'forever');
+  await holder.held;
+  const started: { verb: string; at: number }[] = [];
+  const cleaning = cleanWorktrees(
+    { runId: 'clean-recovers', stateDir },
+    timestampingRunner(started),
+  );
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  const killed = Date.now();
+  holder.child.kill('SIGKILL');
+  expect((await holder.exited).signal).toBe('SIGKILL');
+  expect(await cleaning).toMatchObject({ directories: [path], warnings: [] });
+  expect(started.map(({ verb }) => verb)).toEqual(['list', 'remove']);
+  for (const { at } of started) expect(at).toBeGreaterThanOrEqual(killed);
+  expect(await readdir(join(common, 'quiet-choir'))).toEqual([]);
+});
+
+it('clean warns instead of hanging when another process holds the administration lock too long', async () => {
+  const path = await runWithCache('clean-bounded');
+  const common = await realpath(join(repo, '.git'));
+  const holder = holdAdminLock(common, 'forever');
+  await holder.held;
+  const original = cleanupAdminWait.ms;
+  cleanupAdminWait.ms = 200;
+  try {
+    const started: { verb: string; at: number }[] = [];
+    const result = await cleanWorktrees(
+      { runId: 'clean-bounded', stateDir },
+      timestampingRunner(started),
+    );
+    expect(result.directories).toEqual([]);
+    expect(result.warnings).toHaveLength(1);
+    expect(result.warnings[0]).toContain(
+      `Timed out waiting for the worktree administration lock at ${join(common, 'quiet-choir', 'worktree-admin.lock')}`,
+    );
+    expect(started.map(({ verb }) => verb)).not.toContain('remove');
+  } finally {
+    cleanupAdminWait.ms = original;
+    holder.child.kill('SIGKILL');
+    await holder.exited;
+  }
+  expect(await readdir(path).then(() => true)).toBe(true);
 });

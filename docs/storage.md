@@ -122,6 +122,29 @@ resume recovers. An older build's `recovery/` directory is ignored. A lock that 
 `workflow unlock RUN`, never by deleting the directory; see
 [process ownership](process-lifecycle.md).
 
+### Worktree administration lock
+
+Opt-in [worktree isolation](worktrees.md) keeps one more lock, outside the state directory: Git
+worktree administration is serialized per repository by a lock in the repository's common Git
+directory, the only location that every process administering that repository shares (runs started
+from different linked checkouts, or with different `--state-dir` values, have different state
+directories).
+
+```text
+<common Git dir>/                    # for example <repo>/.git
+  quiet-choir/                       # 0700; Git ignores unknown entries here
+    worktree-admin.lock/             # published whole by one rename
+      owner.json                     # { pid, host, token, osStartTime }
+      recovery.json                  # only while a recoverer claims a dead owner's lock
+    worktree-admin.lock.<pid>.<uuid>.tmp/   # an acquire's publish directory; swept once its PID is dead
+    worktree-admin.lock.<pid>.<uuid>.gone/  # a released or recovered lock's tombstone; swept
+```
+
+It changes hands exactly like a run lock (same owner, marker, tombstone and sweep rules), but it is
+held only around each Git administration command and a contender waits instead of refusing. It
+records no child processes and changes no storage format. See
+[ADR 0032](decisions/0032-interprocess-worktree-administration-lock.md).
+
 ## Legacy records
 
 Flat format-6 records migrate automatically on their first compatible resume. The original bytes
