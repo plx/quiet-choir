@@ -814,6 +814,32 @@ const SCENARIOS = {
       assert.ok(child.args.standingNotes.some((n) => /\[a2\] the quality job/.test(n)));
     },
   },
+  'hands a justified deviation to the landing review instead of blocking': {
+    world: { issues: { 102: {} } },
+    agents: {
+      impl: () =>
+        IMPL_DONE({
+          criteria: [
+            { id: 'a1', status: 'done', commit: 'aaaaaaa', evidence: 't' },
+            {
+              id: 'a2',
+              status: 'deviation',
+              commit: 'aaaaaaa',
+              evidence: 'measured 3.9 KB, not under 3 KB: the rest is #999 scope (follow-up f1)',
+            },
+          ],
+        }),
+    },
+    check({ result, calls }) {
+      assert.equal(result.status, 'landed');
+      assert.deepEqual(
+        result.deviations.map((c) => c.id),
+        ['a2'],
+      );
+      const child = calls.find((c) => c.label === 'workflow:merge-down-pr');
+      assert.ok(child.args.standingNotes.some((n) => /deliberate deviations.*\[a2\]/.test(n)));
+    },
+  },
   'files implementer follow-ups under the follow-up epic, not the burned-down one': {
     world: { issues: { 102: {} } },
     agents: {
