@@ -139,8 +139,11 @@ export interface LaunchPolicy {
      * `name=fixture:<file>`.
      */
     readonly fixtures?: readonly {
+      /** Harness name of a `name=fixture:<file>` selection; absent for the global fixture. */
       readonly name?: string;
+      /** Absolute path of the fixture file. */
       readonly path: string;
+      /** SHA-256 of the file's bytes when the run last executed. */
       readonly sha256: string;
     }[];
   };
