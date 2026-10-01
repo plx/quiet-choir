@@ -2,6 +2,20 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- Run command results (contract break; no identity or storage-format change): `workflow execute`,
+  `resume` and `answer --resume` print a bounded result with `--json` instead of the whole run
+  record. Success is
+  `{kind:"workflow.run.result", ok:true, exitCode:0, runId, stateDir, status, output, usage:{costUsd, attempts, undercounted}, counts, rootCause, warnings}`
+  (`warnings` capped at 20 plus an overflow note). The suspension document (exit 75) and the failure
+  document carry the same projection under a new `summary` key and no longer carry `run`; the
+  suspension keeps `pending[].answerCommand` and `resumeCommand`. A new `--full` flag on the three
+  commands restores the earlier documents with `run`, and success as `{...run, stateDir}` with no
+  `kind` or `ok`. `answer --resume` success now includes `stateDir` (and is the same
+  `{...run, stateDir}` under `--full`). The `answer.invalid` document drops from about 20 KB to
+  about 1 KB. Scripts that read `steps`, `executions` or `run.*` from these commands must pass
+  `--full` or use the envelope or `workflow inspect`. Unchanged: `execute --dry-run` documents,
+  `answer` without `--resume`, human output, and the failure documents of every other command. See
+  ADR 0034.
 - Capability manifests (behaviour change; no identity or storage-format change): checkpoints,
   `workflow validate --json` and the record `check-resume` prints no longer contain Claude
   `settings`, `mcpServers`, `agents` (descriptions and prompts), `systemPrompt`,

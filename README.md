@@ -605,19 +605,22 @@ workflow code. A missing run reports the absolute storage directory and availabl
 `--state-dir PATH` for alternate storage. With `--json`, validate, execute, inspect, typecheck, and
 check-resume emit exactly one JSON document on stdout, including argument and execution errors.
 `inspect --watch --json` is the JSONL exception; `--summary` selects its compact dashboard data.
-Success keeps the existing result shape: a run record for execute/inspect (plus current `ownership`
-for inspect), metadata for validate, a compiler result for typecheck, and `{kind, ok, check}` for a
+Success has one shape per command: a compact result for execute, resume and `answer --resume`
+(`{kind:"workflow.run.result", ok, exitCode, runId, stateDir, status, output, usage, counts, rootCause, warnings}`;
+pass `--full` for the whole run record plus `stateDir`), a run record plus current `ownership` for
+inspect, metadata for validate, a compiler result for typecheck, and `{kind, ok, check}` for a
 compatible check-resume. Workflow `console.log` and `process.stdout.write` output during import and
 execution is redirected to stderr; execution logs and `Run ID:` remain there. Use
 `npm run --silent cli -- … --json` to suppress npm's own banner.
 
 Failures include
-`{kind:"workflow.error", ok:false, exitCode, error:{code,message,stepId,details}, runId,stateDir,status,failedSteps,diagnostics,run}`.
-The run is the actual saved record or null; generated IDs are included. `error.stepId` identifies
-the root failing effect, not a cancelled sibling; body errors and interrupts use null. Run IDs are
-validated before typechecking or importing workflow code. `--input` accepts inline JSON,
-`@path/to/input.json`, or `-` for stdin; parse errors name their source and zero-based character
-position. See [CLI contract](docs/cli-contract.md).
+`{kind:"workflow.error", ok:false, exitCode, error:{code,message,stepId,details}, runId,stateDir,status,failedSteps,diagnostics,summary}`.
+For execute, resume and answer, `summary` is the compact result of the saved run or null, and `run`
+(the actual saved record or null) replaces it under `--full` and in every other command's failure;
+generated IDs are included. `error.stepId` identifies the root failing effect, not a cancelled
+sibling; body errors and interrupts use null. Run IDs are validated before typechecking or importing
+workflow code. `--input` accepts inline JSON, `@path/to/input.json`, or `-` for stdin; parse errors
+name their source and zero-based character position. See [CLI contract](docs/cli-contract.md).
 
 Validate reports the same full source/schema/engine fingerprint that a new run stores.
 `workflow check-resume FILE --run-id ID --json` reports run compatibility and changed components

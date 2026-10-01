@@ -57,9 +57,10 @@ after active work drains. Real cancellation still cancels the run (CLI exit 130)
 not send a cancellation signal.
 
 The CLI exits **75** with `kind: "workflow.run.suspended"`, `runId`, `stateDir`, `pending`,
-`resumeCommand`, and the saved `run`. Pending entries include presentation, schema, fingerprint,
-rejections, and an `answerCommand` argument vector. Exit 75 stops `&&` chains. The lock is released
-after saving suspension and draining owned writes/children.
+`resumeCommand`, and a compact `summary` of the saved run (the whole `run` with `--full`). Pending
+entries include presentation, schema, fingerprint, rejections, and an `answerCommand` argument
+vector. Exit 75 stops `&&` chains. The lock is released after saving suspension and draining owned
+writes/children.
 
 ```sh
 quiet-choir workflow pending --state-dir /absolute/runs --json

@@ -11,12 +11,15 @@ run/attempt so a recovery does not overwrite failure evidence. A machine reboot 
 processes; there is no scheduler.
 
 `--json` writes one completion, suspension, or failure document to stdout; logs and workflow console
-output go to stderr. A failure document has `ok:false`, `exitCode`,
+output go to stderr. Execute, resume and `answer --resume` print a compact result by default
+(`runId`, `stateDir`, `status`, `output`, `usage`, `counts`, `rootCause`, `warnings`; a suspension
+adds `pending` and `resumeCommand`, and the same fields sit under `summary`); `--full` prints the
+whole run record instead. A failure document has `ok:false`, `exitCode`,
 `error:{code,message,stepId,details}`, `runId`, `stateDir`, `diagnostics`, and the last readable
-`run` (possibly null). Typecheck diagnostics are top-level, not inside `error`. A process killed
-before it can report may leave an empty file. An initial missing record can mean loading is still
-underway or a pre-record failure; inspect the log, result document, and observed runner before
-deciding which.
+`summary` (possibly null), or `run` under `--full` and for other commands. Typecheck diagnostics are
+top-level, not inside `error`. A process killed before it can report may leave an empty file. An
+initial missing record can mean loading is still underway or a pre-record failure; inspect the log,
+result document, and observed runner before deciding which.
 
 ## Poll the saved state
 

@@ -150,13 +150,18 @@ compiler configuration. See the
 - `--state-dir PATH` selects a runs container, resolving relative paths against the launch cwd.
   Without it, environment, legacy-run, and external project defaults apply as described above.
 - `--json` on execute/inspect/validate/typecheck/check-resume writes exactly one JSON line to
-  stdout, including failures and argument errors. Execute returns its run record plus `stateDir`;
-  inspect adds current `ownership`; validate returns `{kind, ok, entrypoint, workflow}`; typecheck
-  returns its compiler result. Failures use
-  `{kind:"workflow.error",ok:false,exitCode,error:{code,message,stepId,details}, runId,stateDir,status,failedSteps,diagnostics,run}`.
-  `run` is the actual saved record or null. `error.stepId` identifies the root effect; body failures
-  and interrupts use null. Generated IDs are included, so no follow-up inspect is needed to recover
-  the ID or failed record.
+  stdout, including failures and argument errors. Execute, resume and `answer --resume` return a
+  compact
+  `{kind:"workflow.run.result",ok:true,exitCode:0,runId,stateDir,status,output,usage,counts,rootCause,warnings}`
+  (`usage` is `{costUsd,attempts,undercounted}`); add `--full` for the whole run record plus
+  `stateDir`. A suspension (exit 75) has `pending` (with each `answerCommand`), `resumeCommand` and
+  a `summary` of the same shape, or `run` under `--full`. Inspect adds current `ownership`; validate
+  returns `{kind, ok, entrypoint, workflow}`; typecheck returns its compiler result. Failures use
+  `{kind:"workflow.error",ok:false,exitCode,error:{code,message,stepId,details}, runId,stateDir,status,failedSteps,diagnostics,summary}`
+  for execute, resume and answer, and `run` (the actual saved record or null) for other commands,
+  `--dry-run`, or `--full`. `error.stepId` identifies the root effect; body failures and interrupts
+  use null. Generated IDs are included, so no follow-up inspect is needed to recover the ID or the
+  failed result.
 - Use `npm run --silent cli -- … --json` to suppress npm's banner when piping. Workflow console and
   `process.stdout.write` output during import/execution is redirected to stderr along with logs.
 - Validate's `workflow.fingerprint` is the same full source/schema/engine fingerprint stored by

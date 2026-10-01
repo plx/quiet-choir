@@ -70,3 +70,5 @@ part of the documentation.
 - [0032: Interprocess worktree administration lock](0032-interprocess-worktree-administration-lock.md)
 
 - [0033: Redact free-form controls from public capability manifests](0033-redact-free-form-controls-from-public-manifests.md)
+
+- [0034: Compact results for the run commands, the full record behind --full](0034-compact-run-command-results.md)
