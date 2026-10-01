@@ -45,14 +45,44 @@ const fail = (message) => {
 // ---------------------------------------------------------------------------------------------
 // Process helpers
 
+// Reads that are safe to repeat: a transient network failure on one of them (a connection reset
+// in the middle of a 140-call survey once blocked a whole run) is retried with backoff. Writes
+// are never retried here: a lost response to a create or a comment could duplicate it.
+const READ_VERBS = new Set(['view', 'list', 'checks', 'status', 'diff']);
+const WRITE_FLAGS = new Set(['-X', '--method', '-f', '-F', '--field', '--raw-field', '--input']);
+const TRANSIENT =
+  /connection reset|ECONNRESET|ETIMEDOUT|unexpected EOF|i\/o timeout|TLS handshake timeout|timeout awaiting|\b50[234]\b|Bad Gateway|Service Unavailable|Gateway Timeout|temporarily unavailable|secondary rate limit|could not resolve host|network is unreachable/i;
+export function isRetryableRead(cmd, args) {
+  if (cmd === 'gh') {
+    if (args[0] === 'api') return !args.some((a) => WRITE_FLAGS.has(a));
+    return ['issue', 'pr', 'repo', 'run', 'label'].includes(args[0]) && READ_VERBS.has(args[1]);
+  }
+  if (cmd === 'git') {
+    const verb = args[0] === '-C' ? args[2] : args[0];
+    return verb === 'fetch' || verb === 'ls-remote';
+  }
+  return false;
+}
+const pause = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+
 function run(cmd, args, { cwd, input, env, allowFail = false } = {}) {
-  const r = spawnSync(cmd, args, {
-    cwd,
-    input,
-    env: env ? { ...process.env, ...env } : process.env,
-    encoding: 'utf8',
-    maxBuffer: 512 * 1024 * 1024,
-  });
+  const spawn = () =>
+    spawnSync(cmd, args, {
+      cwd,
+      input,
+      env: env ? { ...process.env, ...env } : process.env,
+      encoding: 'utf8',
+      maxBuffer: 512 * 1024 * 1024,
+    });
+  let r = spawn();
+  if (r.status !== 0 && !r.error && isRetryableRead(cmd, args)) {
+    for (const delay of [2000, 5000, 10000]) {
+      if (!TRANSIENT.test(`${r.stderr ?? ''}\n${r.stdout ?? ''}`)) break;
+      pause(delay);
+      r = spawn();
+      if (r.status === 0 || r.error) break;
+    }
+  }
   if (r.error) throw r.error;
   if (r.status !== 0 && !allowFail) {
     const detail = (r.stderr || r.stdout || '').trim().slice(-2000);
