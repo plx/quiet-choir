@@ -225,6 +225,7 @@ describe('dry-run documents', () => {
     warnings: [],
     calls: [],
     commands: [],
+    merges: [],
     replays: [],
     nominalClaudeCeilingUsd: 0,
   } as unknown as RehearsalReport;

@@ -2,7 +2,8 @@
 
 ## Status
 
-Accepted. Amended by #147 (command fixtures and typed fixture failures).
+Accepted. Amended by #147 (command fixtures and typed fixture failures) and #148 (synthesized
+worktree isolation).
 
 ## Context
 
@@ -90,3 +91,48 @@ A fixture `error` rule may carry `kind` (an `ErrorKind`). The call then rejects 
 `HarnessError` of that kind whose message is the unchanged `Step <id>: <error>` text, so `retry.on`,
 `StepError.kind` and kind-based branches can be rehearsed while kindless rules behave exactly as
 before. Export still writes agent error rules without `kind`.
+
+## Amendment: synthesized worktree isolation (#148)
+
+Rehearsal refused every worktree effect with a `ConfigurationError`, so a ticket or merge workflow,
+which always isolates, could not be previewed before paid work, and its isolated calls never
+appeared in the report.
+
+Dry-run now synthesizes the two Git effects whose real outcome is predictable without writing to the
+repository: an agent call with fresh isolation (`'worktree'`, `worktree: true` or
+`{ kind: 'worktree', base }`), and `ctx.merge` when every input is a change with `commit: null`. The
+call is planned in an absolute placeholder directory that mirrors the real cache layout
+(`<root>/<runId>-dry-run/<attempt digest>/<relative cwd>`) and is never created; it records
+`step.worktree` in the temporary checkpoint, returns `{ base, commit: null, ref: null, files: [] }`
+and runs no `worktrees.setup`. The merge returns `{ commit, merged: [], conflicts: [] }`, the result
+a real integration of unchanged inputs computes, with `commit` the existing target branch or `HEAD`.
+Step identity and dependencies are unchanged, so fingerprints match the real run. The pure replay
+decision gains a `rehearsalSynthesized` fact and refuses `rehearsal-git` only without it; a
+`worktree` effect is refused regardless.
+
+The base is read, never written. Under rehearsal `RunWorktrees` refuses every Git command with an
+internal error, and synthesis runs Git only through a read-only driver that refuses anything but
+`rev-parse` before it reaches the process runner. Resolution is memoized per run and revision. A
+resolvable repository with an unresolvable base, no committed `HEAD`, a cache root inside the
+checkout, or an isolated `cwd` outside it fails with the real run's configuration error, since
+rehearsal exists to surface those. Without a process runner, outside a Git working tree, or when the
+runner answers with nothing, a placeholder of forty zeros stands in, with a warning. A dry-run
+resume of an interrupted real attempt reuses its recorded base. The report marks each synthesized
+call with `worktree: { synthesized: true, base, baseSource }`, lists `merges`, and warns once that
+synthesized trees are unchanged.
+
+Routing (#308): the CLI now passes the real process runner as `RunOptions.processRunner` and the
+rehearsal's synthesizing runner as `RunOptions.execRunner`, the same split `--harness fixture` uses.
+`ctx.exec`, including `guardFile` helpers, still never spawns under dry-run; the only process a
+dry-run may start is that read-only `git rev-parse`. Later command routes (`StepContext.exec`,
+command polls) should follow `execRunner`. An embedder that passes `rehearsal` hooks with a
+synthesizing `processRunner`, as the CLI did before, now gets placeholder bases instead of a
+refusal.
+
+Still refused, with a message that names what dry-run synthesizes: `ctx.worktree`, any effect
+isolated on a handle (agent, exec or step), and a merge with a handle input or a captured commit,
+which reaches rehearsal only from a dry-run resume or fork of a real run. Synthesizing an
+integration over real commits would misreport `merged` and `conflicts`, and computing it writes
+objects. A branch on a captured change takes the unchanged path in rehearsal. The CLI also prints
+the rehearsal warnings and summary on the failure path; the failure document keeps its shape, and,
+as before (#276), a dry-run failure carries no resume advice.

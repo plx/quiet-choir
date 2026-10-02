@@ -655,9 +655,15 @@ export class WorkflowExecutor implements Executor<WorkflowExecutorPlan, Workflow
           ? {}
           : { harnessConfigurations: selection.configurations }),
         stateDir: previewState?.stateDir ?? plan.stateDir,
-        processRunner:
-          rehearsal?.processRunner ?? this.#options.processRunner ?? new NodeProcessRunner(),
-        ...(execRunner === undefined ? {} : { execRunner }),
+        // Under --dry-run, commands go to the rehearsal's synthesizing execRunner, as fixture exec
+        // rules do under --harness fixture, while the real runner serves worktree Git (#148, #308).
+        // Rehearsal Git is read-only: the runtime refuses every command except rev-parse.
+        processRunner: this.#options.processRunner ?? new NodeProcessRunner(),
+        ...(rehearsal === undefined
+          ? execRunner === undefined
+            ? {}
+            : { execRunner }
+          : { execRunner: rehearsal.processRunner }),
         ...(effectiveWaitMode === undefined ? {} : { waitMode: effectiveWaitMode }),
         ...(this.#options.store === undefined ? {} : { store: this.#options.store }),
         ...(this.#options.commandLauncher === undefined

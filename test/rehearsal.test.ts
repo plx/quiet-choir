@@ -1,6 +1,6 @@
-import { mkdtemp, readFile, readdir, realpath, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import childProcess from 'node:child_process';
 import { syncBuiltinESMExports } from 'node:module';
@@ -20,7 +20,12 @@ import {
   type BuiltinHarnessRequestInput as HarnessRequestInput,
   type WorkflowContext,
   type CodexOptions,
+  NodeProcessRunner,
+  type ProcessRunner,
 } from '../src/index.js';
+import { ThresholdLogger } from '../src/application/execution.js';
+import { WorkflowExecutor } from '../src/workflow/loader/executor.js';
+import { analyzeTypecheckEntrypoint } from '../src/workflow/typecheck/plan.js';
 import { RehearsalHarness, rehearsalState } from '../src/workflow/loader/rehearsal.js';
 import { fixturesFromRun } from '../src/workflow/loader/fixtures.js';
 import { readHarnessSelection } from '../src/workflow/loader/harness-selection.js';
@@ -1026,5 +1031,109 @@ it('selects a shipped fake CLI envelope by prompt pattern and logs its original 
     schema: null,
     stepId: 'call',
     version: '2.1.283',
+  });
+});
+
+// One case type-checks a workflow module that imports the engine source. measured: 1.4 s alone; the
+// sibling exec-fixtures executor suite budgets 40 s for the same loader compile on CI's slowest leg.
+describe('dry-run worktree synthesis through the executor', { timeout: 40_000 }, () => {
+  it('sends ctx.exec to the synthesizing runner and only read-only Git to the injected runner', async () => {
+    const root = await realpath(await mkdtemp(join(tmpdir(), 'choir-rehearsal-worktrees-')));
+    roots.push(root);
+    const git = (...args: string[]) =>
+      childProcess
+        .execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@localhost', ...args], {
+          cwd: root,
+          encoding: 'utf8',
+        })
+        .trim();
+    git('init', '-q');
+    const repository = dirname(dirname(fileURLToPath(import.meta.url)));
+    await writeFile(join(root, 'package.json'), '{"type":"module"}');
+    await writeFile(join(root, '.gitignore'), 'node_modules\nstate\n');
+    await symlink(join(repository, 'node_modules'), join(root, 'node_modules'));
+    const file = join(root, 'workflow.ts');
+    await writeFile(
+      file,
+      `import { defineWorkflow, z } from ${JSON.stringify(join(repository, 'src/index.js'))};
+export default defineWorkflow({
+  name: 'dry-worktrees', version: '1', input: z.null(), output: z.string(),
+  async run(ctx) {
+    await ctx.exec('probe', ['qc-never-spawned', 'status']);
+    const edit = await ctx.codex.text('edit', { prompt: 'edit', isolation: 'worktree' });
+    if (!edit.worktree) throw new Error('missing change');
+    return (await ctx.merge('integrate', [edit.worktree])).commit;
+  },
+});
+`,
+    );
+    git('add', '--all');
+    git('commit', '-qm', 'baseline');
+    const head = git('rev-parse', 'HEAD');
+    const analysis = analyzeTypecheckEntrypoint(file, root);
+    if (!analysis.ok) throw new Error('invalid workflow fixture');
+    const commands: string[][] = [];
+    const native = new NodeProcessRunner();
+    const spy: ProcessRunner = {
+      run: (request, invocation) => {
+        commands.push(Array.isArray(request.command) ? [...(request.command as string[])] : []);
+        return native.run(request, invocation);
+      },
+    };
+    const result = await new WorkflowExecutor({
+      logger: new ThresholdLogger('silent', () => undefined),
+      processRunner: spy,
+    }).execute({
+      kind: 'workflow.execute',
+      typecheck: analysis.plan,
+      runId: 'dry',
+      stateDir: join(root, 'state'),
+      cwd: root,
+      input: null,
+      resume: false,
+      harness: { kind: 'cli', config: {} },
+      dryRun: true,
+    });
+    if (result.kind !== 'workflow.run.result' || !result.rehearsal)
+      throw new Error(JSON.stringify(result));
+    expect(result.run.output).toBe(head);
+    // The command never reached the injected runner; Git did, and only for rev-parse.
+    expect(commands.length).toBeGreaterThan(0);
+    for (const argv of commands) {
+      expect(argv[0]).toBe('git');
+      expect(argv[argv.indexOf('-C') + 2]).toBe('rev-parse');
+    }
+    expect(result.rehearsal.commands).toEqual([
+      expect.objectContaining({ stepId: 'probe', outputSource: 'synthesized' }),
+    ]);
+    expect(result.rehearsal.calls).toEqual([
+      expect.objectContaining({
+        stepId: 'edit',
+        plan: expect.objectContaining({ argv: expect.any(Array) as unknown }) as unknown,
+        worktree: { synthesized: true, base: head, baseSource: 'resolved' },
+      }),
+    ]);
+    expect(result.rehearsal.calls[0]?.cwd).not.toBe(root);
+    expect(result.rehearsal.merges).toEqual([
+      {
+        stepId: 'integrate',
+        synthesized: true,
+        commit: head,
+        inputs: 1,
+        target: 'ref',
+        baseSource: 'resolved',
+      },
+    ]);
+    expect(result.rehearsal.warnings).toContainEqual(
+      expect.stringContaining('Worktree effects are synthesized'),
+    );
+    expect(git('for-each-ref', '--format=%(refname)')).toBe(
+      'refs/heads/' + git('branch', '--show-current'),
+    );
+    expect(
+      git('worktree', 'list', '--porcelain')
+        .split('\n')
+        .filter((line) => line.startsWith('worktree ')),
+    ).toHaveLength(1);
   });
 });

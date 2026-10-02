@@ -39,6 +39,26 @@ export interface RehearsalCall {
     | null;
   error: string | null;
   limits: ExecutionPolicy | null;
+  /**
+   * The synthesized worktree isolation of a fresh isolated call, or null for an ordinary call. Its
+   * `cwd` is a placeholder that is never created.
+   */
+  readonly worktree: {
+    readonly synthesized: true;
+    readonly base: string;
+    readonly baseSource: 'resolved' | 'recorded' | 'placeholder';
+  } | null;
+}
+/** One `ctx.merge` of unchanged changes, answered with the no-op integration. @internal */
+export interface RehearsalMerge {
+  readonly stepId: string;
+  readonly synthesized: true;
+  /** The target's current commit, or forty zeros outside a Git working tree. */
+  readonly commit: string;
+  /** Number of merged inputs. */
+  readonly inputs: number;
+  readonly target: 'ref' | 'checkout' | 'branch';
+  readonly baseSource: 'resolved' | 'placeholder';
 }
 /** One command reaching the rehearsal process runner, answered by a rule or synthesized. @internal */
 export interface RehearsalCommand {
@@ -57,6 +77,8 @@ export interface RehearsalReport {
   readonly kind: 'workflow.rehearsal';
   readonly calls: readonly RehearsalCall[];
   readonly commands: readonly RehearsalCommand[];
+  /** Synthesized merges, in completion order. */
+  readonly merges: readonly RehearsalMerge[];
   readonly replays: readonly { stepId: string; kind: string }[];
   readonly harnessCounts: Readonly<Record<string, number>>;
   /** Compatibility counts for the two original native clients. */
@@ -128,6 +150,9 @@ export class RehearsalHarness extends FixtureHarness {
       });
     },
   };
+  private readonly merges: RehearsalMerge[] = [];
+  /** Synthesized isolation by `stepId` and attempt, recorded before the call is invoked. */
+  private readonly isolations = new Map<string, NonNullable<RehearsalCall['worktree']>>();
   private readonly replays: string[] = [];
   private readonly stubbedSteps = new Set<string>();
   private readonly skippedSleeps = new Set<string>();
@@ -176,6 +201,8 @@ export class RehearsalHarness extends FixtureHarness {
       plan: null,
       limits: null,
       error: null,
+      worktree:
+        this.isolations.get(JSON.stringify([request.call.stepId, request.call.attempt])) ?? null,
     };
     this.calls.push(call);
     try {
@@ -222,6 +249,30 @@ export class RehearsalHarness extends FixtureHarness {
         this.warnings.add(
           `Step ${id}: custom Zod refinements cannot be expressed in JSON Schema; fixture/synthesized values still undergo the original validation.`,
         );
+    },
+    onWorktree: (event) => {
+      this.warnings.add(
+        'Worktree effects are synthesized: isolated calls are planned in a placeholder directory that is never created, report unchanged trees and run no worktrees.setup, and merges integrate nothing. A branch on a captured change can differ from a real run.',
+      );
+      if (event.baseSource === 'placeholder')
+        this.warnings.add(
+          `Step ${event.stepId}: the workflow cwd is not in a Git working tree, so a placeholder commit stands in for the base; a real run fails with a configuration error.`,
+        );
+      if (event.kind === 'isolation')
+        this.isolations.set(JSON.stringify([event.stepId, event.attempt]), {
+          synthesized: true,
+          base: event.base,
+          baseSource: event.baseSource,
+        });
+      else
+        this.merges.push({
+          stepId: event.stepId,
+          synthesized: true,
+          commit: event.commit,
+          inputs: event.inputs,
+          target: event.target,
+          baseSource: event.baseSource,
+        });
     },
   };
   public observe(event: WorkflowEvent): void {
@@ -278,6 +329,7 @@ export class RehearsalHarness extends FixtureHarness {
       kind: 'workflow.rehearsal',
       calls: this.calls,
       commands: this.commands,
+      merges: this.merges,
       replays: replayed,
       harnessCounts: Object.fromEntries(
         [...new Set(this.calls.map((call) => call.harness))].map((name) => [

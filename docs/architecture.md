@@ -120,9 +120,10 @@ outcome: refuse, replay, reuse a fork step, redefine, or run fresh. Terminal ide
 immutable: a completed or settled-failed step replays only under the same kind and fingerprint.
 Questions and waits are never redefined, even while unfinished. An original format-one step migrates
 only on an exact old-fingerprint match, and never for a terminal agent step, whose isolation mode
-was never pinned. Dry-run refuses Git effects after terminal replay but before fork reuse. Fork
-reuse is considered only for an absent step in a forked run, and the source lookup runs only when
-the decision reaches it. For default prefix reuse, the same module's `forkPrefixBlockers` lists the
+was never pinned. Dry-run refuses Git effects it does not synthesize (anything but a fresh isolated
+agent call or a merge of unchanged changes) after terminal replay but before fork reuse. Fork reuse
+is considered only for an absent step in a forked run, and the source lookup runs only when the
+decision reaches it. For default prefix reuse, the same module's `forkPrefixBlockers` lists the
 steps that keep a fork from reusing one: source steps that settled before its source launch and were
 not reused, and live fork steps that settled before its request, skipping sibling named-map items. A
 strict healed divergence permits terminal replay and fork reuse but stops before the next live
@@ -195,7 +196,8 @@ later native implementation without changing the command contract.
 The CLI executor selects native or fixture adapters through plain-data plans. Dry-run uses the
 native pure argument planner, fixture/synthesized outputs, and temporary checkpoint storage; resume
 copies source record data without acquiring its owner lock. Core rehearsal hooks preserve local
-identity while optionally replacing callbacks and skipping durable sleeps. Call metadata and
+identity while optionally replacing callbacks, skipping durable sleeps, and synthesizing fresh
+worktree isolation and unchanged merges with read-only `git rev-parse` only. Call metadata and
 harness-kind provenance live outside semantic fingerprints. See [workflow rehearsal](rehearsal.md)
 and [ADR 0016](decisions/0016-workflow-rehearsal.md).
 

@@ -21,6 +21,12 @@ import type {
   AgentTranscriptWriter,
 } from './agent-stream-model.js';
 import { RunWorktrees, type WorktreeLease } from './worktrees.js';
+import {
+  WorktreeRehearsal,
+  canSynthesizeIsolation,
+  canSynthesizeMerge,
+  type RehearsalWorktreeEvent,
+} from './worktree-rehearsal.js';
 import { isolationIdentity } from './worktree-identity.js';
 import {
   worktreeChangeSchema,
@@ -316,12 +322,17 @@ export interface RunOptions extends WorkflowCodeOptions {
   readonly maxRunAgentAttempts?: number | null;
   /** Runtime-owned checkout cache and dependency provisioning policy. */
   readonly worktrees?: WorktreePolicy;
-  /** Process integration for durable exec and worktree Git operations; the core never spawns. */
+  /**
+   * Process integration for durable exec and worktree Git operations; the core never spawns. Under
+   * `rehearsal` it serves only the read-only `git rev-parse` that resolves a synthesized base;
+   * every other Git command is refused before it reaches the runner.
+   */
   readonly processRunner?: ProcessRunner;
   /**
    * Process integration for `ctx.exec` and `ctx.exec.json` effects only, including `guardFile`'s
    * helper commands; defaults to `processRunner`. Worktree Git operations always use
-   * `processRunner`. The CLI sets it to answer commands from fixture exec rules.
+   * `processRunner`. The CLI sets it to answer commands from fixture exec rules, and under
+   * `--dry-run` to the rehearsal's synthesizing runner.
    */
   readonly execRunner?: ProcessRunner;
   /** Wall clock and cancellable timer used by now, waits, and legacy sleeps. */
@@ -396,6 +407,46 @@ export interface RunOptions extends WorkflowCodeOptions {
       | undefined;
     /** Observe original schemas for diagnostics unavailable in JSON Schema. */
     readonly onSchema?: (stepId: string, schema: z.ZodType) => void;
+    /**
+     * Observe a synthesized worktree effect. A fresh isolated agent call is reported before its
+     * harness is invoked; a merge of unchanged changes is reported when it completes.
+     */
+    readonly onWorktree?: (
+      event:
+        | {
+            /** A fresh isolated agent call planned without a worktree. */
+            readonly kind: 'isolation';
+            /** Fully qualified step ID. */
+            readonly stepId: string;
+            /** Attempt number. */
+            readonly attempt: number;
+            /** The base commit a real run would pin, or forty zeros outside a Git working tree. */
+            readonly base: string;
+            /**
+             * `resolved` by a read-only `git rev-parse`, `recorded` by an earlier attempt of a
+             * resumed run, or a `placeholder` outside a Git working tree.
+             */
+            readonly baseSource: 'resolved' | 'recorded' | 'placeholder';
+            /** Absolute placeholder directory the call is planned in; it is never created. */
+            readonly cwd: string;
+          }
+        | {
+            /** A merge of unchanged changes, answered with the no-op integration. */
+            readonly kind: 'merge';
+            /** Fully qualified step ID. */
+            readonly stepId: string;
+            /** Attempt number. */
+            readonly attempt: number;
+            /** The target's current commit, or forty zeros outside a Git working tree. */
+            readonly commit: string;
+            /** Number of merged inputs. */
+            readonly inputs: number;
+            /** The merge target kind. */
+            readonly target: 'ref' | 'checkout' | 'branch';
+            /** `resolved` by a read-only `git rev-parse`, or a `placeholder`. */
+            readonly baseSource: 'resolved' | 'placeholder';
+          },
+    ) => void;
   };
   /** Cancellation signal, forwarded to all active effects. */
   readonly signal?: AbortSignal;
@@ -1264,7 +1315,27 @@ export async function runWorkflow<
       save,
       processInvocation,
       signal,
+      options.rehearsal !== undefined,
     );
+    // Dry-run synthesizes fresh isolation and unchanged merges with read-only rev-parse only.
+    const rehearsalWorktrees =
+      options.rehearsal === undefined
+        ? undefined
+        : new WorktreeRehearsal(
+            record,
+            options.processRunner,
+            options.worktrees ?? {},
+            save,
+            processInvocation,
+            signal,
+          );
+    const notifyWorktree = (event: RehearsalWorktreeEvent): void => {
+      try {
+        options.rehearsal?.onWorktree?.(event);
+      } catch {
+        /* An observer cannot change the rehearsal. */
+      }
+    };
 
     /** Worktree isolation an effect runs inside; `agent` marks an agent call. */
     interface EffectIsolation {
@@ -1304,6 +1375,11 @@ export async function runWorkflow<
       readonly legacyDependencies?: JsonValue;
       readonly exec?: ExecSummary;
       readonly isolation?: EffectIsolation;
+      /**
+       * Under rehearsal, the effect is synthesized instead of touching Git: a fresh isolated agent
+       * call, or a merge of unchanged changes. Omitted means false.
+       */
+      readonly rehearsalSynthesized?: boolean;
     }
 
     async function effect<T, TMode extends ErrorMode = 'throw'>(
@@ -1446,6 +1522,7 @@ export async function runWorkflow<
           ),
         rehearsal: options.rehearsal !== undefined,
         isolated: isolation !== undefined,
+        rehearsalSynthesized: spec.rehearsalSynthesized === true,
         strictHealedDivergence: strictHealedDivergence !== undefined,
       };
       const decision = decideReplay(replayInput);
@@ -1706,7 +1783,19 @@ export async function runWorkflow<
                   idempotencyKey: `${record.id}/${id}`,
                   attempt: step.attempts,
                 };
-                if (isolation)
+                if (isolation && rehearsalWorktrees) {
+                  // decideReplay refused every unsynthesized isolation under rehearsal.
+                  const synthesized = await rehearsalWorktrees.isolate(
+                    id,
+                    isolation.value,
+                    isolation.cwd,
+                    context,
+                    step,
+                    attemptRecord,
+                  );
+                  lease = synthesized.lease;
+                  notifyWorktree(synthesized.event);
+                } else if (isolation)
                   lease = await worktrees.prepare(
                     id,
                     isolation.value,
@@ -2525,7 +2614,11 @@ export async function runWorkflow<
             legacyDependencies: legacyRequest,
             ...(isolation === undefined
               ? {}
-              : { isolation: { value: isolation, cwd: request.cwd, agent: true } }),
+              : {
+                  isolation: { value: isolation, cwd: request.cwd, agent: true },
+                  rehearsalSynthesized:
+                    rehearsalWorktrees !== undefined && canSynthesizeIsolation(isolation),
+                }),
           });
           return select(result);
         });
@@ -2871,8 +2964,29 @@ export async function runWorkflow<
             dependencies,
             schema: mergeResultSchema,
             execution: resolvePolicy(id, 'step', {}, {}, [], matchedPolicy),
-            action: (context, step, attempt, releaseAfterSave) =>
-              worktrees.merge(id, inputs, checked, context, step, attempt, releaseAfterSave),
+            ...(rehearsalWorktrees && canSynthesizeMerge(inputs)
+              ? {
+                  rehearsalSynthesized: true,
+                  action: async (context: StepContext) => {
+                    const synthesized = await rehearsalWorktrees.merge(
+                      id,
+                      inputs.flatMap((input) => ('id' in input ? [] : [input])),
+                      checked,
+                      context,
+                    );
+                    notifyWorktree(synthesized.event);
+                    return synthesized.result;
+                  },
+                }
+              : {
+                  action: (
+                    context: StepContext,
+                    step: StepRecord,
+                    attempt: AttemptRecord,
+                    releaseAfterSave: (release: () => void) => void,
+                  ) =>
+                    worktrees.merge(id, inputs, checked, context, step, attempt, releaseAfterSave),
+                }),
           });
         });
       },

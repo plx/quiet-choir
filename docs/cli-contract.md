@@ -157,15 +157,18 @@ owner still holds the run at the deadline; the owner then force-kills its groups
 usually leaving `running` for tick's stale recovery. The cancelled owner itself exits 130 with
 `workflow.interrupted` and a saved `cancelled` status, which tick observes and never resumes.
 
-`execute --dry-run --json` returns a `workflow.rehearsal` document with `ok:true`, calls, commands
-(each with `outputSource`, the matched exec `fixtureIndex` or null, and `error`), replays, provider
-counts, nominal Claude ceiling, `staleExecFixtures`, warnings, and its in-memory run record.
-Failures retain the usual error document and exits, adding `rehearsal` and `error.stack`. Temporary
-state has already been removed on normal exit; dry-run never overwrites the requested/default state
-directory. `workflow fixtures ID --json` returns version-1 fixture JSON from a completed run: its
-agent outputs and settled agent failures, and its completed command results as `exec` rules with
-environment and stdin digests only, plus `"commands": "fixture"` when there is at least one. See
-[workflow rehearsal](rehearsal.md).
+`execute --dry-run --json` returns a `workflow.rehearsal` document with `ok:true`, calls (each with
+`worktree`, `{synthesized: true, base, baseSource}` for a synthesized isolated call or null),
+commands (each with `outputSource`, the matched exec `fixtureIndex` or null, and `error`), `merges`
+(synthesized `ctx.merge` effects with `stepId`, `synthesized`, `commit`, `inputs`, `target` and
+`baseSource`), replays, provider counts, nominal Claude ceiling, `staleExecFixtures`, warnings, and
+its in-memory run record. Failures retain the usual error document and exits, adding `rehearsal` and
+`error.stack`; the rehearsal warnings and `Rehearsal: ...` stderr summary are printed on both paths.
+Temporary state has already been removed on normal exit; dry-run never overwrites the
+requested/default state directory. `workflow fixtures ID --json` returns version-1 fixture JSON from
+a completed run: its agent outputs and settled agent failures, and its completed command results as
+`exec` rules with environment and stdin digests only, plus `"commands": "fixture"` when there is at
+least one. See [workflow rehearsal](rehearsal.md).
 
 Failures have these fields:
 

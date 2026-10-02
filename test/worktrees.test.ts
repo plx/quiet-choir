@@ -6,6 +6,7 @@ import { formatRunSummary } from '../src/cli/inspection-view.js';
 import assert from 'node:assert/strict';
 import {
   appendFile,
+  lstat,
   mkdir,
   mkdtemp,
   readFile,
@@ -29,9 +30,15 @@ import {
   type WorktreeHandle,
   type WorktreeLedger,
   type ProcessRunner,
+  type RunOptions,
+  type WorkflowContext,
 } from '../src/index.js';
 import { WorktreeGit } from '../src/worktrees/git.js';
-import { RunWorktrees, cleanupAdminWait } from '../src/workflow/runtime/worktrees.js';
+import {
+  RunWorktrees,
+  cleanupAdminWait,
+  defaultWorktreeRoot,
+} from '../src/workflow/runtime/worktrees.js';
 import { repairWorktreeRegistrations } from '../src/workflow/runtime/worktree-recovery.js';
 import { cleanWorktrees } from '../src/workflow/runtime/worktree-clean.js';
 import { testInvocation } from './harness-invocation.js';
@@ -1069,30 +1076,316 @@ it('never advances a shared snapshot for a rejected structured response and pres
   expect(result.steps['read']?.worktree?.commit).toBeNull();
 });
 
-it('explains dry-run isolation before invoking Git or the agent', async () => {
-  const runGit = vi.fn<ProcessRunner['run']>(() => {
-    throw new Error('unexpected Git');
-  });
-  const invoke = vi.fn<Harness['invoke']>(() => Promise.resolve(response));
+/** A runner that records each Git subcommand (the words after `-C cwd`) before running it. */
+function spyRunner() {
+  const commands: string[][] = [];
+  const runner: ProcessRunner = {
+    run: (request, invocation) => {
+      const argv = Array.isArray(request.command) ? [...(request.command as string[])] : [];
+      commands.push(argv.slice(argv.indexOf('-C') + 2));
+      return processRunner.run(request, invocation);
+    },
+  };
+  return { runner, commands };
+}
+type WorktreeEvent = Parameters<NonNullable<NonNullable<RunOptions['rehearsal']>['onWorktree']>>[0];
+async function exists(path: string): Promise<boolean> {
+  return lstat(path).then(
+    () => true,
+    () => false,
+  );
+}
+
+it('synthesizes isolated calls and their merge under dry-run with read-only rev-parse only', async () => {
+  const head = await command('rev-parse', 'HEAD');
+  const refs = await command('for-each-ref');
+  const registered = await command('worktree', 'list', '--porcelain');
   const workflow = defineWorkflow({
     name: 'dry-worktree',
     version: '1',
     input: z.null(),
     output: z.string(),
     async run(ctx) {
-      return ctx.codex.value('edit', { prompt: 'edit', isolation: 'worktree' });
+      const [one, two] = await Promise.all(
+        ['one', 'two'].map((id) => ctx.codex.text(id, { prompt: id, isolation: 'worktree' })),
+      );
+      if (!one?.worktree || !two?.worktree) throw new Error('missing synthesized change');
+      const merged = await ctx.merge('integrate', [one.worktree, two.worktree]);
+      return JSON.stringify({ change: one.worktree, merged });
     },
   });
-  await expect(
-    runWorkflow(workflow, {
-      ...options('dry-worktree'),
+  for (const [runId, policy] of [
+    ['explicit', { root }],
+    ['default', {}],
+  ] as const) {
+    const spy = spyRunner();
+    const cwds: string[] = [];
+    const events: WorktreeEvent[] = [];
+    const invoke = vi.fn<Harness['invoke']>((request) => {
+      cwds.push(request.cwd);
+      return Promise.resolve(response);
+    });
+    const run = await runWorkflow(workflow, {
+      ...options(runId),
+      worktrees: policy,
+      input: null,
+      rehearsal: { onWorktree: (event) => events.push(event) },
+      harness: { kind: 'dry-run', invoke },
+      processRunner: spy.runner,
+    });
+    expect(JSON.parse(run.output ?? 'null')).toEqual({
+      change: { base: head, commit: null, ref: null, files: [] },
+      merged: { commit: head, merged: [], conflicts: [] },
+    });
+    // Only rev-parse ran, and concurrent calls shared one repository and HEAD resolution.
+    expect(spy.commands.every((args) => args[0] === 'rev-parse')).toBe(true);
+    expect(spy.commands.filter((args) => args.includes('--show-toplevel'))).toHaveLength(1);
+    expect(spy.commands.filter((args) => args.includes('HEAD^{commit}'))).toHaveLength(1);
+    const cacheRoot = 'root' in policy ? root : defaultWorktreeRoot(repo);
+    expect(cwds).toHaveLength(2);
+    for (const cwd of cwds) {
+      expect(cwd.startsWith(join(cacheRoot, `${runId}-dry-run`))).toBe(true);
+      expect(await exists(cwd)).toBe(false);
+    }
+    expect(await exists(cacheRoot)).toBe(false);
+    // The two isolated calls race; the merge is reported last.
+    const order = (event: WorktreeEvent) => `${event.kind === 'merge' ? 'z' : 'a'}${event.stepId}`;
+    expect(events.sort((a, b) => order(a).localeCompare(order(b)))).toEqual([
+      ...['one', 'two'].map(
+        (stepId): unknown =>
+          expect.objectContaining({
+            kind: 'isolation',
+            stepId,
+            attempt: 1,
+            base: head,
+            baseSource: 'resolved',
+          }) as unknown,
+      ),
+      {
+        kind: 'merge',
+        stepId: 'integrate',
+        attempt: 1,
+        commit: head,
+        inputs: 2,
+        target: 'ref',
+        baseSource: 'resolved',
+      },
+    ]);
+    const record = await readRun({ stateDir, runId });
+    expect(record.worktrees).toBeUndefined();
+    const step = record.steps['one']?.worktree;
+    expect(step).toEqual({
+      base: head,
+      path: expect.stringContaining(`${runId}-dry-run`) as unknown,
+      handleId: null,
+      commit: null,
+      ref: null,
+      files: [],
+    });
+    // The workflow cwd is the repository root, so the call runs at the attempt directory itself.
+    expect(cwds).toContain(step?.path);
+  }
+  expect(await command('for-each-ref')).toBe(refs);
+  expect(await command('worktree', 'list', '--porcelain')).toBe(registered);
+});
+
+it('uses a labelled placeholder base outside a Git working tree', async () => {
+  const plain = join(directory, 'plain');
+  await mkdir(plain);
+  const spy = spyRunner();
+  const events: WorktreeEvent[] = [];
+  const cwds: string[] = [];
+  const workflow = defineWorkflow({
+    name: 'dry-plain',
+    version: '1',
+    input: z.null(),
+    output: z.string(),
+    async run(ctx) {
+      const edit = await ctx.codex.text('edit', { prompt: 'edit', isolation: 'worktree' });
+      if (!edit.worktree) throw new Error('missing synthesized change');
+      return (await ctx.merge('integrate', [edit.worktree])).commit;
+    },
+  });
+  const run = await runWorkflow(workflow, {
+    runId: 'plain',
+    cwd: plain,
+    stateDir,
+    input: null,
+    rehearsal: { onWorktree: (event) => events.push(event) },
+    harness: {
+      kind: 'dry-run',
+      invoke: (request) => {
+        cwds.push(request.cwd);
+        return Promise.resolve(response);
+      },
+    },
+    processRunner: spy.runner,
+  });
+  const placeholder = '0'.repeat(40);
+  expect(run.output).toBe(placeholder);
+  expect(spy.commands).toEqual([['rev-parse', '--show-toplevel']]);
+  expect(events).toEqual([
+    expect.objectContaining({ kind: 'isolation', base: placeholder, baseSource: 'placeholder' }),
+    expect.objectContaining({ kind: 'merge', commit: placeholder, baseSource: 'placeholder' }),
+  ]);
+  expect(cwds[0]?.startsWith(join(defaultWorktreeRoot(plain), 'plain-dry-run'))).toBe(true);
+  expect(await exists(defaultWorktreeRoot(plain))).toBe(false);
+});
+
+it('reproduces the real configuration error for an unresolvable base under dry-run', async () => {
+  const invoke = vi.fn<Harness['invoke']>(() => Promise.resolve(response));
+  const workflow = defineWorkflow({
+    name: 'dry-base',
+    version: '1',
+    input: z.null(),
+    output: z.string(),
+    async run(ctx) {
+      return ctx.codex.value('edit', {
+        prompt: 'edit',
+        isolation: { kind: 'worktree', base: 'missing-ref' },
+      });
+    },
+  });
+  const failure: unknown = await runWorkflow(workflow, {
+    ...options('dry-base'),
+    input: null,
+    rehearsal: {},
+    harness: { kind: 'dry-run', invoke },
+  }).catch((error: unknown) => error);
+  expect((failure as Error).cause).toBeInstanceOf(ConfigurationError);
+  expect((failure as Error).message).toContain(
+    'Worktree isolation cannot resolve base missing-ref to a commit.',
+  );
+  expect(invoke).not.toHaveBeenCalled();
+  expect(await exists(root)).toBe(false);
+});
+
+it.each([
+  ['a cache root inside the checkout', { worktrees: { root: 'caches' } }, {}, 'worktrees.root'],
+  ['an isolated cwd outside the repository', {}, { cwd: '..' }, 'Isolated cwd must be inside'],
+])(
+  'reproduces the real configuration error for %s under dry-run',
+  async (_name, run, call, text) => {
+    const invoke = vi.fn<Harness['invoke']>(() => Promise.resolve(response));
+    const workflow = defineWorkflow({
+      name: 'dry-config',
+      version: '1',
+      input: z.null(),
+      output: z.string(),
+      async run(ctx) {
+        return ctx.codex.value('edit', { prompt: 'edit', isolation: 'worktree', ...call });
+      },
+    });
+    const failure: unknown = await runWorkflow(workflow, {
+      ...options('dry-config'),
+      ...run,
       input: null,
       rehearsal: {},
       harness: { kind: 'dry-run', invoke },
-      processRunner: { run: runGit },
-    }),
-  ).rejects.toThrow('fixture harness in a temporary repository');
-  expect(runGit).not.toHaveBeenCalled();
+    }).catch((error: unknown) => error);
+    expect((failure as Error).cause).toBeInstanceOf(ConfigurationError);
+    expect((failure as Error).message).toContain(text);
+    expect(invoke).not.toHaveBeenCalled();
+  },
+);
+
+it('merges into an existing branch target and reuses a recorded base under dry-run', async () => {
+  const base = await command('rev-parse', 'HEAD');
+  await command('branch', 'target');
+  await writeFile(join(repo, 'file.txt'), 'moved\n');
+  const moved = await commit('moved');
+  await command('checkout', '-q', 'target');
+  const events: WorktreeEvent[] = [];
+  const workflow = defineWorkflow({
+    name: 'dry-branch',
+    version: '1',
+    input: z.null(),
+    output: z.string(),
+    async run(ctx) {
+      const edit = await ctx.codex.text('edit', { prompt: 'edit', isolation: 'worktree' });
+      if (!edit.worktree) throw new Error('missing synthesized change');
+      return (await ctx.merge('integrate', [edit.worktree], { target: { branch: 'master-x' } }))
+        .commit;
+    },
+  });
+  await command('branch', 'master-x', moved);
+  // An interrupted real attempt recorded its base; a dry-run resume keeps it.
+  let fail = true;
+  const invoke = vi.fn<Harness['invoke']>(() =>
+    fail ? Promise.reject(new Error('interrupted')) : Promise.resolve(response),
+  );
+  await expect(
+    runWorkflow(workflow, { ...options('dry-branch'), input: null, harness: { invoke } }),
+  ).rejects.toThrow('interrupted');
+  expect((await readRun({ stateDir, runId: 'dry-branch' })).steps['edit']?.worktree?.base).toBe(
+    base,
+  );
+  fail = false;
+  const run = await runWorkflow(workflow, {
+    ...options('dry-branch'),
+    resume: true,
+    rehearsal: { onWorktree: (event) => events.push(event) },
+    harness: { kind: 'dry-run', invoke },
+    allowHarnessChange: true,
+  });
+  expect(run.output).toBe(moved);
+  expect(events).toEqual([
+    expect.objectContaining({ kind: 'isolation', base, baseSource: 'recorded' }),
+    expect.objectContaining({ kind: 'merge', commit: moved, target: 'branch' }),
+  ]);
+});
+
+it.each([
+  ['ctx.worktree', (ctx: WorkflowContext) => ctx.worktree('cache')],
+  [
+    'exec on a handle',
+    (ctx: WorkflowContext, handle: WorktreeHandle) =>
+      ctx.exec('probe', ['true'], { worktree: handle }),
+  ],
+  [
+    'a local step on a handle',
+    (ctx: WorkflowContext, handle: WorktreeHandle) =>
+      ctx.step('local', { input: null, schema: z.null(), worktree: handle, run: () => null }),
+  ],
+  [
+    'an agent on a handle',
+    (ctx: WorkflowContext, handle: WorktreeHandle) =>
+      ctx.codex.text('edit', { prompt: 'edit', isolation: handle }),
+  ],
+  [
+    'a merge of a captured commit',
+    (ctx: WorkflowContext, handle: WorktreeHandle) =>
+      ctx.merge('integrate', [
+        { base: handle.base, commit: handle.base, ref: 'refs/x', files: [] },
+      ]),
+  ],
+])('still refuses %s under dry-run before any Git', async (_name, body) => {
+  const spy = spyRunner();
+  const invoke = vi.fn<Harness['invoke']>(() => Promise.resolve(response));
+  const handle = { id: 'foreign', path: join(directory, 'handle'), base: 'a'.repeat(40) };
+  const workflow = defineWorkflow({
+    name: 'dry-refused',
+    version: '1',
+    input: z.null(),
+    output: z.null(),
+    async run(ctx) {
+      await body(ctx, handle);
+      return null;
+    },
+  });
+  const failure: unknown = await runWorkflow(workflow, {
+    ...options('dry-refused'),
+    input: null,
+    rehearsal: {},
+    harness: { kind: 'dry-run', invoke },
+    processRunner: spy.runner,
+  }).catch((error: unknown) => error);
+  expect((failure as Error).cause).toBeInstanceOf(ConfigurationError);
+  expect((failure as Error).message).toContain(
+    'Dry-run does not simulate this Git worktree effect',
+  );
+  expect((failure as Error).message).toContain('fixture harness in a temporary repository');
+  expect(spy.commands).toEqual([]);
   expect(invoke).not.toHaveBeenCalled();
 });
 

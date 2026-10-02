@@ -23,9 +23,32 @@ import { filePath } from './files.js';
 import { repairWorktreeRegistrations } from './worktree-recovery.js';
 import { acquireWorktreeAdminLock, worktreeAdminLockPath } from './worktree-admin-lock.js';
 
-function within(root: string, path: string): boolean {
+/** Whether `path` is `root` or inside it, lexically. @internal */
+export function within(root: string, path: string): boolean {
   const part = relative(root, path);
   return part === '' || (!isAbsolute(part) && part !== '..' && !part.startsWith(`..${sep}`));
+}
+
+/**
+ * The configuration error message for a base that does not resolve to a commit. Shared with dry-run
+ * rehearsal so a rehearsal reports exactly what the real run would. @internal
+ */
+export function unresolvedBaseMessage(base: WorktreeBase | undefined): string {
+  const revision = base === undefined ? 'HEAD' : typeof base === 'string' ? base : base.commit;
+  return base === undefined
+    ? `Worktree isolation cannot resolve base ${revision} to a commit; the repository has no committed HEAD.`
+    : `Worktree isolation cannot resolve base ${revision} to a commit.`;
+}
+
+/** The configuration error message for an isolated cwd outside the repository. @internal */
+export const isolatedCwdOutsideMessage = 'Isolated cwd must be inside the source repository.';
+
+/** The configuration error message for a cache root inside the source checkout. @internal */
+export const rootInsideCheckoutMessage = 'worktrees.root must be outside the source checkout.';
+
+/** The default cache container for a repository, outside the checkout. @internal */
+export function defaultWorktreeRoot(repo: string): string {
+  return join(dirname(defaultStateDir(repo)), 'worktrees');
 }
 
 /** One handle cannot be prepared again until its prior outcome has committed. @internal */
@@ -152,6 +175,11 @@ export class RunWorktrees {
     private readonly save: () => Promise<void>,
     private readonly invocation: (id: string, context: StepContext) => HarnessInvocation,
     private readonly runSignal?: AbortSignal,
+    /**
+     * A dry-run rehearsal synthesizes isolation instead (`worktree-rehearsal.ts`), so every Git
+     * command here is refused before it reaches the runner.
+     */
+    private readonly rehearsal = false,
   ) {
     this.git = runner === undefined ? undefined : new WorktreeGit(runner);
     if (policy.keep !== undefined && !['all', 'failed', 'none'].includes(policy.keep))
@@ -166,6 +194,8 @@ export class RunWorktrees {
   }
 
   private driver(): WorktreeGit {
+    // An internal guard, not a configuration error: replay decisions refuse these effects first.
+    if (this.rehearsal) throw new Error('Dry-run rehearsal never runs worktree Git commands.');
     if (!this.git)
       throw new ConfigurationError(
         'Worktree isolation requires RunOptions.processRunner (for example, NodeProcessRunner).',
@@ -252,15 +282,13 @@ export class RunWorktrees {
       // Canonicalize the parent before checking containment; a symlink cannot hide a nested cache.
       const requestedRoot = await filePath(
         this.record.cwd,
-        this.policy.root ?? join(dirname(defaultStateDir(repo)), 'worktrees'),
+        this.policy.root ?? defaultWorktreeRoot(repo),
         true,
       );
-      if (within(repo, requestedRoot))
-        throw new ConfigurationError('worktrees.root must be outside the source checkout.');
+      if (within(repo, requestedRoot)) throw new ConfigurationError(rootInsideCheckoutMessage);
       await mkdir(requestedRoot, { recursive: true, mode: 0o700 });
       const root = await realpath(requestedRoot);
-      if (within(repo, root))
-        throw new ConfigurationError('worktrees.root must be outside the source checkout.');
+      if (within(repo, root)) throw new ConfigurationError(rootInsideCheckoutMessage);
       const status = await git.text(
         repo,
         ['status', '--porcelain', '--untracked-files=normal'],
@@ -310,12 +338,7 @@ export class RunWorktrees {
       );
     } catch (cause) {
       if (cause instanceof CheckpointError || invocation.signal.aborted) throw cause;
-      throw new ConfigurationError(
-        base === undefined
-          ? `Worktree isolation cannot resolve base ${revision} to a commit; the repository has no committed HEAD.`
-          : `Worktree isolation cannot resolve base ${revision} to a commit.`,
-        { cause },
-      );
+      throw new ConfigurationError(unresolvedBaseMessage(base), { cause });
     }
   }
 
@@ -440,8 +463,7 @@ export class RunWorktrees {
     logicalCwd: string,
   ): Promise<string> {
     const canonical = await realpath(logicalCwd);
-    if (!within(ledger.repo, canonical))
-      throw new ConfigurationError('Isolated cwd must be inside the source repository.');
+    if (!within(ledger.repo, canonical)) throw new ConfigurationError(isolatedCwdOutsideMessage);
     return resolve(path, relative(ledger.repo, canonical));
   }
 
