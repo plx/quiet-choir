@@ -281,6 +281,7 @@ it('records queued cancellation without invocation and retains the original run 
     stepId: null,
     error: 'operator stop',
     errorKind: null,
+    effect: null,
   });
   expect(events.filter((event) => event.type === 'agent.admitted')).toHaveLength(0);
   expect(

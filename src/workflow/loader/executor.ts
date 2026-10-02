@@ -712,9 +712,13 @@ export class WorkflowExecutor implements Executor<WorkflowExecutorPlan, Workflow
                   : stage;
       return workflowFailure(
         code,
-        // A divergence refusal must not advertise the path it refused.
-        run?.recoveryHint && !isDivergenceRefusal(error) && !message.includes('re-finalize')
-          ? `${message} ${run.recoveryHint}`
+        // Only this invocation's saved failure carries its hint, never a dry-run, and a divergence
+        // refusal must not advertise the path it refused.
+        error instanceof WorkflowRunError &&
+          error.run.recoveryHint &&
+          !('dryRun' in plan && plan.dryRun) &&
+          !isDivergenceRefusal(error)
+          ? `${message} ${error.run.recoveryHint}`
           : message,
         {
           ...context,

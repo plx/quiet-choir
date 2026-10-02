@@ -67,6 +67,7 @@ import { RunObservations, errorStack, requestSummary } from './observability.js'
 import type { PhaseInfo, PhaseOptions, RequestSummary, RunEvent } from './observability-model.js';
 import {
   isValidRunId,
+  ReplayDivergenceError,
   runIdMessage,
   RunInterruptedError,
   RunRefusedError,
@@ -139,7 +140,8 @@ import { ExecutionScopes } from './scopes.js';
 import { NameScopes } from './names.js';
 import { bindContext } from './context.js';
 import { stepError, errorKind } from './step-error.js';
-import { ConfigurationError } from './configuration-error.js';
+import { ConfigurationError, GrantRequiredError } from './configuration-error.js';
+import { chooseRecoveryHint, type RecoveryCause } from './recovery-hint.js';
 import { classifyAttemptFailure } from './attempt-failure.js';
 import {
   decideReplay,
@@ -970,7 +972,7 @@ export async function runWorkflow<
       seq: step.seq ?? 0,
     }));
     const healed = new Set<string>();
-    let strictHealedDivergence: Error | undefined;
+    let strictHealedDivergence: ReplayDivergenceError | undefined;
     let divergenceReported = false;
     record.profileOverrides = profileOverrides;
     record.grants = grants;
@@ -1020,12 +1022,15 @@ export async function runWorkflow<
     const origins = new FailureOrigins();
     const visitedMaps = new Set<string>();
     const maps = (record.maps ??= {});
+    // `effect` is the call-site effect kind (the harness for an agent call), or null for a scope,
+    // phase, map or child operation; a failure before the step has a record reports it.
     function launch<T>(
       id: string,
+      effect: string | null,
       work: () => T | PromiseLike<T>,
-      effectOperation = true,
       waiting = false,
     ): Promise<T> {
+      const effectOperation = effect !== null;
       const finish =
         effectOperation && !waiting
           ? activity.begin()
@@ -1048,7 +1053,7 @@ export async function runWorkflow<
               !(error instanceof CheckpointError)
             ) {
               origins.markFatal(error);
-              if (typeof id === 'string') origins.remember(error, id);
+              origins.remember(error, id, effect);
             }
             throw error;
           } finally {
@@ -1097,7 +1102,7 @@ export async function runWorkflow<
       used,
       isInEffect: () => !!inEffect.getStore(),
       context: () => context,
-      launch,
+      launch: (id, work, effect) => launch(id, effect, work),
       save,
       isolatePhase: (body) => observations.isolate(body),
       emit: (type, id, child) => {
@@ -1209,7 +1214,9 @@ export async function runWorkflow<
           ].join(' and ');
           const warning = `Replay divergence before live step ${id}: ${unvisited} have not been visited. Order is a concurrency heuristic; restore the replay path or fork a new run.`;
           replayWarnings.push(warning);
-          const failure = options.strictReplay ? new Error(warning) : undefined;
+          const failure = options.strictReplay
+            ? new ReplayDivergenceError('before-live', warning)
+            : undefined;
           if (failure) controller.abort(failure);
           await save();
           emit('replay.divergence', id, step, { message: warning, skippedStepIds: skipped });
@@ -1273,6 +1280,8 @@ export async function runWorkflow<
       // Rebind first, before any await, so the phase default reads observations.phase at entry.
       const { id, kind, schema, execution, action, local, onError, legacyDependencies, isolation } =
         spec;
+      // The call-site label a failure reports: the harness for an agent step, otherwise its kind.
+      const effectLabel = (kind === 'agent' ? spec.request?.harness : undefined) ?? kind;
       const requestedIdentity = spec.identity;
       const observedExec = spec.exec;
       const wakeAt = spec.wakeAt === undefined ? null : spec.wakeAt;
@@ -1511,7 +1520,7 @@ export async function runWorkflow<
           )
             throw cause;
           const cancelled = cancellationError(signal, cause);
-          origins.remember(cancelled, id);
+          origins.remember(cancelled, id, effectLabel);
           step.status = 'cancelled';
           step.cancelledBy = cancelled.cancelledBy;
           step.error = cancelled.message;
@@ -1735,7 +1744,7 @@ export async function runWorkflow<
                 onError,
               });
               const error = classification.scoped ? cancellationError(signal, cause) : cause;
-              origins.remember(error, id);
+              origins.remember(error, id, effectLabel);
               const outcome = stepError(error, step.attempts);
               step.status = classification.status;
               if (error instanceof CancelledError) step.cancelledBy = error.cancelledBy;
@@ -1807,7 +1816,7 @@ export async function runWorkflow<
                 if (signal.reason instanceof CheckpointError) throw error;
                 if (errorKind(cause) !== 'cancelled') throw cause;
                 const cancelled = cancellationError(signal, cause);
-                origins.remember(cancelled, id);
+                origins.remember(cancelled, id, effectLabel);
                 step.status = 'cancelled';
                 step.cancelledBy = cancelled.cancelledBy;
                 step.error = cancelled.message;
@@ -1886,7 +1895,8 @@ export async function runWorkflow<
                 healed.add(id);
                 const warning = `Healed step ${id} now succeeded; later recorded steps (${later.join(', ')}) may depend on its earlier failure. Use onError: return for durable fallback decisions.`;
                 replayWarnings.push(warning);
-                if (options.strictReplay) strictHealedDivergence = new Error(warning);
+                if (options.strictReplay)
+                  strictHealedDivergence = new ReplayDivergenceError('healed', warning);
                 await save();
                 emit('replay.divergence', id, step, {
                   message: warning,
@@ -1947,7 +1957,7 @@ export async function runWorkflow<
     ): Promise<T | ExecResult> {
       const id = names.qualify(leaf);
       const phase = observations.phase;
-      return launch(id, async () => {
+      return launch(id, 'exec', async () => {
         if (schema !== null && !(schema instanceof z.ZodType))
           throw new Error('exec.json requires a Zod schema.');
         // Strip the built-in helper's identity before the strict option schema sees the settings.
@@ -2037,7 +2047,7 @@ export async function runWorkflow<
       ): Promise<TResult> {
         const id = names.qualify(leaf);
         const phase = observations.phase;
-        return launch(id, async () => {
+        return launch(id, harness, async () => {
           let request: HarnessRequestInput<ClaudeOptions & CodexOptions>;
           let schema: z.ZodType<T>;
           let execution: AttemptPolicy;
@@ -2533,7 +2543,7 @@ export async function runWorkflow<
     const map = createMap({
       isClosed: () => closed,
       isInEffect: () => inEffect.getStore() !== undefined,
-      launch,
+      launch: (id, work, effect) => launch(id, effect, work),
       scopes,
       names,
       operations,
@@ -2599,7 +2609,7 @@ export async function runWorkflow<
           if (closed) throw new Error('Workflow is closed; await all workflow operations.');
           return observations.checkPhase(title, options);
         });
-        return launch(`phase: ${title}`, () => observations.scoped(info, bodyOrOptions), false);
+        return launch(`phase: ${title}`, null, () => observations.scoped(info, bodyOrOptions));
       }
       observe(() => {
         observations.setPhase(title, bodyOrOptions);
@@ -2652,6 +2662,7 @@ export async function runWorkflow<
       const id = names.qualify(leaf);
       return launch(
         id,
+        'ask',
         async () => {
           if (inEffect.getStore())
             throw new Error(
@@ -2676,7 +2687,6 @@ export async function runWorkflow<
           return registered.answer;
         },
         true,
-        true,
       );
     };
     function waitOperation<T>(
@@ -2688,6 +2698,7 @@ export async function runWorkflow<
       const id = names.qualify(leaf);
       return launch(
         id,
+        'wait',
         async () => {
           if (inEffect.getStore())
             throw new Error(
@@ -2711,7 +2722,6 @@ export async function runWorkflow<
           return project(await registered.answer);
         },
         true,
-        true,
       );
     }
     const context: WorkflowContext = {
@@ -2721,7 +2731,7 @@ export async function runWorkflow<
       readFile: (leaf, path, settings = {}) => {
         const id = names.qualify(leaf);
         const phase = observations.phase;
-        return launch(id, async () => {
+        return launch(id, 'read-file', async () => {
           const checked = readFileOptionsSchema.parse(settings);
           const target = await filePath(cwd, path, checked.allowOutsideCwd);
           return effect<ReadFileResult>({
@@ -2747,7 +2757,7 @@ export async function runWorkflow<
       writeFile: (leaf, path, content, settings = {}) => {
         const id = names.qualify(leaf);
         const phase = observations.phase;
-        return launch(id, async () => {
+        return launch(id, 'write-file', async () => {
           const checked = writeFileOptionsSchema.parse(settings);
           if (typeof content !== 'string') throw new Error('File content must be a string.');
           const target = await filePath(cwd, path, checked.allowOutsideCwd);
@@ -2776,7 +2786,7 @@ export async function runWorkflow<
       },
       merge: (leaf, changes, settings = {}) => {
         const id = names.qualify(leaf);
-        return launch(id, () => {
+        return launch(id, 'merge', () => {
           const checked = mergeOptionsSchema.parse(settings) as MergeOptions;
           const inputs = z
             .array(z.union([worktreeChangeSchema, worktreeHandleSchema]))
@@ -2804,7 +2814,7 @@ export async function runWorkflow<
       },
       worktree: (leaf, settings = {}) => {
         const id = names.qualify(leaf);
-        return launch(id, () => {
+        return launch(id, 'worktree', () => {
           const parsed = worktreeCreateSchema.parse(settings);
           return effect({
             id,
@@ -2877,17 +2887,13 @@ export async function runWorkflow<
       },
       id: stepId,
       scope: (prefix, action) =>
-        launch(
-          'scope',
-          () => {
-            const path = scopeEntry(() => {
-              if (typeof action !== 'function') throw new Error('Scope requires a callback.');
-              return names.prefix(prefix);
-            });
-            return names.run(path, action);
-          },
-          false,
-        ),
+        launch('scope', null, () => {
+          const path = scopeEntry(() => {
+            if (typeof action !== 'function') throw new Error('Scope requires a callback.');
+            return names.prefix(prefix);
+          });
+          return names.run(path, action);
+        }),
       within: (prefix) =>
         bindContext(
           context,
@@ -2901,7 +2907,7 @@ export async function runWorkflow<
         step: StepDefinition<T> & { readonly onError?: TMode | undefined },
       ): Promise<EffectResult<T, TMode>> => {
         const id = names.qualify(leaf);
-        return launch(id, () =>
+        return launch(id, 'step', () =>
           effect<T, TMode>({
             id,
             kind: 'step',
@@ -2943,7 +2949,7 @@ export async function runWorkflow<
                 throw new Error(`Step ${id}: Sleep duration must be finite and nonnegative.`);
             },
           );
-        return launch(id, () => {
+        return launch(id, 'sleep', () => {
           if (
             !Number.isFinite(milliseconds) ||
             milliseconds < 0 ||
@@ -3078,14 +3084,16 @@ export async function runWorkflow<
             maps[id]?.items.some((item) => item.status === 'completed')),
       );
       if (missingMaps.length)
-        throw new Error(
+        throw new ReplayDivergenceError(
+          'skipped-maps',
           `Replay skipped settled maps (${missingMaps.join(', ')}); workflow control flow changed.`,
         );
       const missing = Object.entries(record.steps)
         .filter(([id, step]) => !used.has(id) && isTerminalStep(step))
         .map(([id]) => id);
       if (missing.length)
-        throw new Error(
+        throw new ReplayDivergenceError(
+          'skipped-steps',
           `Replay skipped recorded steps (${missing.join(', ')}); workflow control flow changed.${healed.size ? ` Healed steps: ${[...healed].join(', ')}.` : ''}`,
         );
       const superseded = Object.entries(record.steps).filter(
@@ -3147,7 +3155,7 @@ export async function runWorkflow<
           errorKind(origins.find(caught).error) === 'cancelled');
       const error: unknown = interrupted ? options.signal.reason : caught;
       record.rootCause = interrupted
-        ? { stepId: null, error: message(error), errorKind: null }
+        ? { stepId: null, error: message(error), errorKind: null, effect: null }
         : origins.root(error, errorKind);
       // Body failures stop new launches but preserve in-flight work. Only explicit cancellation
       // or checkpoint failure aborts a scope; draining here does not send a signal.
@@ -3186,9 +3194,18 @@ export async function runWorkflow<
       record.status = interrupted || error instanceof CancelledError ? 'cancelled' : 'failed';
       children.finish(record.status, message(error));
       record.error = message(error);
-      if (hasTerminalOutcomes(record))
-        record.recoveryHint =
-          'All recorded work has terminal outcomes, including settled map items. Fix the workflow tail/output and use --resume --accept-code-change to re-finalize; unchanged identities reuse their results.';
+      // ADR 0006: the hint follows the typed cause, never the message text.
+      const recoveryHint = chooseRecoveryHint({
+        cause: recoveryCause([origins.find(error).error, error], record),
+        rehearsal: options.rehearsal !== undefined,
+        recordedWork:
+          Object.keys(record.steps).length > 0 || Object.keys(record.maps ?? {}).length > 0,
+        allTerminal: hasTerminalOutcomes(record),
+        sourceChanged: (compatibility?.changed.length ?? 0) > 0,
+        runId: record.id,
+      });
+      if (recoveryHint === undefined) delete record.recoveryHint;
+      else record.recoveryHint = recoveryHint;
       warnUnmatched();
       const failed = observations.lifecycle(
         record.status === 'cancelled' ? 'run.cancelled' : 'run.failed',
@@ -3240,4 +3257,38 @@ export async function runWorkflow<
     throw cause;
   }
   return outcome.run;
+}
+
+/**
+ * Classify a failure for recovery advice from error classes and the saved record, never from
+ * message text. It searches the given errors' cause chains and aggregate members, and the first
+ * matching rule wins: grant, divergence, other configuration, cancelled run, recorded effect
+ * failure, then authoring.
+ */
+function recoveryCause(errors: readonly unknown[], record: RunRecord): RecoveryCause {
+  const seen = new Set<unknown>();
+  const found: Error[] = [];
+  const visit = (error: unknown): void => {
+    if (!(error instanceof Error) || seen.has(error)) return;
+    seen.add(error);
+    found.push(error);
+    visit(error.cause);
+    if (error instanceof AggregateError && Array.isArray(error.errors))
+      for (const member of error.errors as unknown[]) visit(member);
+  };
+  for (const error of errors) visit(error);
+  const grant = found.find((error) => error instanceof GrantRequiredError);
+  if (grant) return { kind: 'grant', profile: grant.profile, access: grant.access };
+  if (
+    found.some(
+      (error) =>
+        error instanceof ReplayDivergenceError || error instanceof StepIdentityChangedError,
+    )
+  )
+    return { kind: 'divergence' };
+  if (found.some((error) => error instanceof ConfigurationError)) return { kind: 'configuration' };
+  if (record.status === 'cancelled') return { kind: 'cancelled' };
+  const stepId = record.rootCause?.stepId;
+  if (stepId != null && record.steps[stepId]?.status === 'failed') return { kind: 'effect' };
+  return { kind: 'authoring' };
 }

@@ -1,4 +1,5 @@
-import { WorkflowRunError } from '../src/index.js';
+import { ConfigurationError, WorkflowRunError } from '../src/index.js';
+import { GrantRequiredError } from '../src/workflow/runtime/configuration-error.js';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -206,6 +207,54 @@ it.each(['fixer', 'write', 'exec', 'all'])(
     expect((await readRun(setup())).capabilities?.requiredGrants).toEqual(['fixer']);
   },
 );
+
+it('advises a grant, not a code change, for a grant failure and names the agent harness', async () => {
+  const invoke = vi.fn<Harness['invoke']>().mockResolvedValue(reply);
+  const definition = defineWorkflow({
+    ...base,
+    async run(ctx) {
+      await ctx.step('prepare', { input: null, schema: z.string(), run: () => 'ready' });
+      return (await ctx.claude.text('edit', { prompt: 'x', profile: 'edit' })).output;
+    },
+  });
+  const error: unknown = await runWorkflow(definition, { ...setup(), harness: { invoke } }).catch(
+    (cause: unknown) => cause,
+  );
+  expect(error).toBeInstanceOf(WorkflowRunError);
+  const failure = error as WorkflowRunError;
+  expect(failure.message).toMatch(/^Step edit \(claude\) failed:/u);
+  expect(failure.message).toContain('--grant edit');
+  expect(failure.message).not.toContain('accept-code-change');
+  let grant: unknown = failure;
+  while (grant instanceof Error && !(grant instanceof GrantRequiredError)) grant = grant.cause;
+  expect(grant).toBeInstanceOf(GrantRequiredError);
+  expect(grant).toBeInstanceOf(ConfigurationError);
+  expect(grant).toMatchObject({ profile: 'edit', access: 'write' });
+  const saved = await readRun(setup());
+  expect(saved.steps['edit']).toBeUndefined();
+  expect(saved.rootCause).toMatchObject({ stepId: 'edit', effect: 'claude' });
+  expect(saved.recoveryHint).toContain('--resume --grant edit');
+  expect(saved.recoveryHint).not.toContain('accept-code-change');
+  expect(invoke).not.toHaveBeenCalled();
+});
+
+it('saves no recovery hint for a grant failure on the first effect', async () => {
+  const definition = defineWorkflow({
+    ...base,
+    async run(ctx) {
+      return (await ctx.claude.text('edit', { prompt: 'x', profile: 'edit' })).output;
+    },
+  });
+  const error: unknown = await runWorkflow(definition, {
+    ...setup(),
+    harness: { invoke: vi.fn<Harness['invoke']>().mockResolvedValue(reply) },
+  }).catch((cause: unknown) => cause);
+  expect(error).toBeInstanceOf(WorkflowRunError);
+  // The message itself still carries the grant advice; there is nothing recorded to resume.
+  expect((error as Error).message).toMatch(/^Step edit \(claude\) failed:.*--grant edit/u);
+  expect((error as Error).message).not.toContain('(unknown)');
+  expect((await readRun(setup())).recoveryHint).toBeUndefined();
+});
 
 it('pins named grants to capabilities across explicit source acceptance', async () => {
   const profiles: Record<string, AgentProfile> = { fixer: { extends: 'edit' } };

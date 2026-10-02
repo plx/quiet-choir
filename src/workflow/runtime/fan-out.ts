@@ -13,6 +13,13 @@ export interface RootCause {
    * readers fall back to the root step's last attempt.
    */
   readonly errorKind?: ErrorKind | null;
+  /**
+   * Call-site effect kind of the root step: the harness name for an agent call, otherwise the step
+   * kind (such as `step`, `exec` or `read-file`). It names the effect even when the failure came
+   * before the step had a record. Null for a body failure or an interruption; absent in records
+   * written before this field.
+   */
+  readonly effect?: string | null;
 }
 
 /** A mapper failure with its input position and optional effect identity. */
@@ -112,17 +119,19 @@ export class FailureOrigins {
       (error instanceof Error && error.cause !== undefined && this.isFatal(error.cause, visited))
     );
   }
-  private readonly failures: { error: unknown; stepId: string }[] = [];
+  private readonly failures: { error: unknown; stepId: string; effect: string }[] = [];
 
-  public remember(error: unknown, stepId: string): void {
+  /** Attribute an error to its effect; `effect` is the call-site label RootCause reports. */
+  public remember(error: unknown, stepId: string, effect: string): void {
     if (!this.failures.some((failure) => Object.is(failure.error, error)))
-      this.failures.push({ error, stepId });
+      this.failures.push({ error, stepId, effect });
   }
 
+  /** The original error and effect behind a failure; `effect` is the remembered call-site label. */
   public find(
     error: unknown,
     visited = new Set<unknown>(),
-  ): { error: unknown; stepId: string | null } {
+  ): { error: unknown; stepId: string | null; effect?: string } {
     if (visited.has(error)) return { error, stepId: null };
     visited.add(error);
     const known = this.failures.find((failure) => Object.is(failure.error, error));
@@ -131,7 +140,15 @@ export class FailureOrigins {
       const first =
         error.failures.find((failure) => !(failure.error instanceof CancelledError)) ??
         error.failures[0];
-      if (first) return { error: first.error, stepId: first.stepId };
+      if (first) {
+        // The mapper may have wrapped the remembered error, so its label comes from the cause chain.
+        const effect = first.stepId === null ? undefined : this.find(first.error, visited).effect;
+        return {
+          error: first.error,
+          stepId: first.stepId,
+          ...(effect === undefined ? {} : { effect }),
+        };
+      }
     }
     if (error instanceof Error && error.cause !== undefined) {
       const cause = this.find(error.cause, visited);
@@ -150,6 +167,7 @@ export class FailureOrigins {
       stepId: origin.stepId,
       error: errorMessage(origin.error),
       errorKind: origin.stepId === null ? null : classify(origin.error),
+      effect: origin.stepId === null ? null : (origin.effect ?? null),
     };
   }
 }
