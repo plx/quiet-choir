@@ -234,10 +234,12 @@ describe('StartWorkflowExecutor', () => {
 
   it('reports the record of a runner it stopped, with a resume entry when it saved one', async () => {
     // The fake runner "saves" a record on SIGTERM, as the real one saves an interrupted suspension.
+    // The start timeout must outlast the child's startup: under load, Node can take well over
+    // 100 ms to install the SIGTERM handler, and a runner stopped before that saves nothing.
     const script = `process.on('SIGTERM', () => { require('fs').writeFileSync(process.argv[1], JSON.stringify({ status: 'suspended', ownerPid: null })); process.exit(130); }); ${forever}`;
     const supervisor = new ProcessSupervisor();
     const failure = failed(
-      await executor({ processSupervisor: supervisor }).execute(plan(script, { timeoutMs: 100 })),
+      await executor({ processSupervisor: supervisor }).execute(plan(script, { timeoutMs: 2_000 })),
     );
     expect(failure).toMatchObject({
       code: 'start.timeout',
