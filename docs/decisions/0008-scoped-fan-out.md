@@ -95,3 +95,9 @@ keys, version and cwd stay strict, because they describe what the saved outcomes
 not how. A journal saved before components existed cannot be split (the old mapper source is not
 stored), so any change to it after a commit keeps the unnamed refusal and fork advice. The decision
 is the pure `decideSettledMapReplay` in `replay-decision.ts`.
+
+Only the mapper function's own source is hashed, so a thin mapper such as
+`(item) => handle(ctx, item)` keeps edits to `handle` out of map identity and needs no acceptance.
+Committed items keep their saved outcomes, and leaf step identity checks still apply to items that
+run again. Bump `version` to make a helper edit change identity (see
+[ADR 0009](0009-scoped-step-ids.md)).
