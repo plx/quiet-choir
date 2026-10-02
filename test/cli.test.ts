@@ -850,6 +850,31 @@ describe('resume command exit and error codes', () => {
     },
   );
 
+  it('forwards strictReplay only when --strict-replay is given', async () => {
+    const stateDir = await stateDirectory();
+    const execute = vi.spyOn(WorkflowExecutor.prototype, 'execute').mockResolvedValue({
+      kind: 'workflow.run.result',
+      ok: true,
+      run: runRecord,
+    });
+    const strict = await captureCommand(WorkflowResume, [
+      'test-run',
+      '--state-dir',
+      stateDir,
+      '--strict-replay',
+    ]);
+    expect(strict.error).toBeUndefined();
+    expect(execute.mock.calls[0]?.[0]).toMatchObject({
+      kind: 'workflow.resume',
+      runId: 'test-run',
+      strictReplay: true,
+    });
+    const plain = await captureCommand(WorkflowResume, ['test-run', '--state-dir', stateDir]);
+    expect(plain.error).toBeUndefined();
+    expect(execute.mock.calls[1]?.[0]).toMatchObject({ kind: 'workflow.resume' });
+    expect(execute.mock.calls[1]?.[0]).not.toHaveProperty('strictReplay');
+  });
+
   it('exits 0 and renders a completed run', async () => {
     const stateDir = await stateDirectory();
     vi.spyOn(WorkflowExecutor.prototype, 'execute').mockResolvedValue({

@@ -2,7 +2,7 @@ import { parseRunBudget, runBudgetFlags } from '../../cli/run-budget.js';
 import type { RunBudgetPolicy } from '../../workflow/runtime/run-budget.js';
 import { Args, Flags, type Interfaces } from '@oclif/core';
 import { WorkflowCommand } from '../../cli/workflow-command.js';
-import { eventsFlag } from '../../cli/execute-flags.js';
+import { eventsFlag, executeFlags } from '../../cli/execute-flags.js';
 import { requestedFull } from '../../cli/workflow-errors.js';
 import { WorkflowExecutor } from '../../workflow/loader/executor.js';
 import {
@@ -34,6 +34,7 @@ export default class WorkflowResume extends WorkflowCommand {
     readonly 'notify-command': string | undefined;
     readonly events: string | undefined;
     readonly 'wait-mode': 'suspend' | 'block' | undefined;
+    readonly 'strict-replay': boolean | undefined;
   }> = {
     'max-child-depth': Flags.integer({
       min: 0,
@@ -74,6 +75,7 @@ export default class WorkflowResume extends WorkflowCommand {
     'kill-orphans': Flags.boolean({
       description: 'Recover identity-confirmed orphan children before resuming',
     }),
+    'strict-replay': executeFlags['strict-replay'],
     harness: Flags.string({
       description:
         'cli, fixture:<file>, or name=fixture:<file>; repeatable. Omitted uses the selection the run last executed with (default cli)',
@@ -132,6 +134,7 @@ export default class WorkflowResume extends WorkflowCommand {
       allowHarnessChange: flags['allow-harness-change'] ?? false,
       allowHarnessConfigChange: flags['allow-harness-config-change'] ?? false,
       killOrphans: flags['kill-orphans'] ?? false,
+      ...(flags['strict-replay'] === undefined ? {} : { strictReplay: flags['strict-replay'] }),
     });
     if (!result.ok) {
       for (const diagnostic of result.diagnostics)

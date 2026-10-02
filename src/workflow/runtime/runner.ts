@@ -146,6 +146,7 @@ import { classifyAttemptFailure } from './attempt-failure.js';
 import {
   decideReplay,
   forkReuseValid,
+  healedDependents,
   legacyKind,
   replayRefusalMessage,
   type ReplayInput,
@@ -967,9 +968,32 @@ export async function runWorkflow<
         (highest, entry) => Math.max(highest, entry.seq ?? 0),
         0,
       ) + 1;
+    // The run's settlement counter: each terminal step settlement increments it, and each live
+    // launch is stamped with its current value (ADR 0007). Derived like nextSeq, so the record
+    // format is unchanged; any later launch reads at least every persisted stamp.
+    let settlements = Object.values(record.steps).reduce(
+      (highest, step) =>
+        Math.max(highest, step.launchStamp ?? 0, step.settleStamp ?? 0, step.failureStamp ?? 0),
+      0,
+    );
+    // Stamps taken when the body requests an effect, before any awaited preparation; read and
+    // removed when the effect reaches its record.
+    const launchStamps = new Map<string, number>();
+    const takeLaunchStamp = (id: string): number => {
+      const stamp = launchStamps.get(id) ?? settlements;
+      launchStamps.delete(id);
+      return stamp;
+    };
+    const settle = (step: StepRecord): number => {
+      settlements += 1;
+      step.settleStamp = settlements;
+      return settlements;
+    };
+    // What earlier executions observed; the healed check must not see this run's relaunches.
     const priorSequence = Object.entries(record.steps).map(([id, step]) => ({
       id,
       seq: step.seq ?? 0,
+      launchStamp: step.launchStamp,
     }));
     const healed = new Set<string>();
     let strictHealedDivergence: ReplayDivergenceError | undefined;
@@ -1031,6 +1055,8 @@ export async function runWorkflow<
       waiting = false,
     ): Promise<T> {
       const effectOperation = effect !== null;
+      // Synchronous with the body's request, so a same-tick sibling's later failure stamps after it.
+      if (effectOperation) launchStamps.set(id, settlements);
       const finish =
         effectOperation && !waiting
           ? activity.begin()
@@ -1282,6 +1308,7 @@ export async function runWorkflow<
         spec;
       // The call-site label a failure reports: the harness for an agent step, otherwise its kind.
       const effectLabel = (kind === 'agent' ? spec.request?.harness : undefined) ?? kind;
+      const launchStamp = takeLaunchStamp(id);
       const requestedIdentity = spec.identity;
       const observedExec = spec.exec;
       const wakeAt = spec.wakeAt === undefined ? null : spec.wakeAt;
@@ -1449,11 +1476,15 @@ export async function runWorkflow<
         return output;
       }
       const wasFailed = prior?.status === 'failed';
+      // Captured before this execution can mutate the prior record.
+      const priorFailureStamp = prior?.failureStamp;
       if (outcome.kind === 'reuse-fork' && forkedFrom) {
         const { candidate } = outcome;
         const copied: StepRecord = {
           ...structuredClone(candidate),
           seq: nextSeq++,
+          // The source run's stamps belong to its own clock; stamp the copy in this run.
+          launchStamp,
           reusedFrom: {
             runId: forkedFrom.runId,
             stateDir: forkedFrom.stateDir,
@@ -1462,6 +1493,8 @@ export async function runWorkflow<
             at: new Date().toISOString(),
           },
         };
+        delete copied.failureStamp;
+        settle(copied);
         attributeFrame(copied);
         Object.defineProperty(record.steps, id, {
           value: copied,
@@ -1526,11 +1559,13 @@ export async function runWorkflow<
           step.error = cancelled.message;
           step.errorStack = errorStack(cancelled);
           step.finishedAt = new Date().toISOString();
+          settle(step);
           if (await trySave()) emit('step.cancelled', id, step);
           throw cancelled;
         }
         try {
           if (attempt === 1) {
+            step.launchStamp = launchStamp;
             if (redefined) {
               (step.redefinitions ??= []).push({
                 fingerprint: step.fingerprint,
@@ -1799,9 +1834,16 @@ export async function runWorkflow<
               if (classification.settle) {
                 step.status = 'settled-failed';
                 step.settledError = outcome;
+                settle(step);
                 if (!(await trySave())) throw error;
                 emit('step.settled', id, step);
                 return replay(step);
+              }
+              if (!classification.retry) {
+                // Terminal: stamped before the save that persists the status. A failure saved
+                // between retries carries no new stamp, so a crash in backoff stays conservative.
+                const stamp = settle(step);
+                if (step.status === 'failed') step.failureStamp ??= stamp;
               }
               if (await trySave())
                 emit(classification.scoped ? 'step.cancelled' : 'step.failed', id, step);
@@ -1823,6 +1865,7 @@ export async function runWorkflow<
                 step.errorStack = errorStack(cancelled);
                 step.finishedAt = new Date().toISOString();
                 step.durationMs = Math.max(0, Math.round(performance.now() - attemptStarted));
+                settle(step);
                 // The completed failed attempt remains history; cancellation interrupted its backoff.
                 if (await trySave()) emit('step.cancelled', id, step);
                 throw cancelled;
@@ -1831,6 +1874,8 @@ export async function runWorkflow<
             }
             step.status = 'completed';
             attemptRecord.status = 'completed';
+            settle(step);
+            delete step.failureStamp;
             if (agent) {
               delete attemptRecord.response;
               delete attemptRecord.responseTruncated;
@@ -1888,9 +1933,10 @@ export async function runWorkflow<
                   },
             );
             if (wasFailed && !healed.has(id)) {
-              const later = priorSequence
-                .filter((other) => other.seq > (step.seq ?? 0))
-                .map((other) => other.id);
+              const later = healedDependents(
+                { id, seq: step.seq ?? 0, failureStamp: priorFailureStamp },
+                priorSequence,
+              );
               if (later.length) {
                 healed.add(id);
                 const warning = `Healed step ${id} now succeeded; later recorded steps (${later.join(', ')}) may depend on its earlier failure. Use onError: return for durable fallback decisions.`;
@@ -2648,6 +2694,7 @@ export async function runWorkflow<
       },
       beforeLive,
       nextSeq: () => nextSeq++,
+      launchStamp: takeLaunchStamp,
       warn: (message) => {
         // Persisted by the next completion, failure or suspension save; bounded like worktrees.
         record.waitWarnings = [...new Set([...(record.waitWarnings ?? []), message])].slice(-20);

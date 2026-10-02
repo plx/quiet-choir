@@ -106,6 +106,12 @@ interface QuestionDependencies {
   readonly save: () => Promise<void>;
   readonly beforeLive: (id: string, step: StepRecord) => Promise<void>;
   readonly nextSeq: () => number;
+  /**
+   * Take the run's launch stamp for `id`: the settlement counter when the body requested it. A
+   * live question or wait records it as `launchStamp`, so the healed-step check need not fall back
+   * to `seq` order for it.
+   */
+  readonly launchStamp: (id: string) => number;
   /** Record a nonfatal run warning, such as an abandoned poll observation. */
   readonly warn: (message: string) => void;
   /** Run one poll observation for the wait `id`; rehearsal may replace it with a stub. */
@@ -210,6 +216,7 @@ export class RunQuestions {
     kind: 'ask' | 'wait',
   ): Promise<{ answer: Promise<JsonValue> }> {
     const { record, activity, save, emit } = this.#deps;
+    const launchStamp = this.#deps.launchStamp(id);
     const finish = activity.begin();
     try {
       signal.throwIfAborted();
@@ -279,6 +286,7 @@ export class RunQuestions {
         notifiedAt: null,
       };
       step.error = null;
+      step.launchStamp = launchStamp;
       await this.#deps.beforeLive(id, step);
       Object.defineProperty(record.steps, id, {
         value: step,

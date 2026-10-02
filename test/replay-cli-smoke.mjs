@@ -198,8 +198,38 @@ process.stdin.on('end', () => { appendFileSync(process.env.QC_REPLAY_CALLS, prom
   assert.equal(comment.steps.local.reusedFrom.runId, 'tail');
   assert.equal(readFileSync(calls, 'utf8'), callsBefore);
   assert.equal(readFileSync(effects, 'utf8'), effectsBefore);
+
+  // A Promise.all sibling launched with a failing step does not depend on its failure, so
+  // `workflow resume --strict-replay` heals the step and completes.
+  const help = cli('resume', '--help');
+  assert.equal(help.status, 0, help.stderr);
+  assert.match(help.stdout, /--strict-replay/u);
+  const fanIn = join(root, 'fan-in.ts');
+  writeFileSync(
+    fanIn,
+    `import { existsSync } from 'node:fs';
+import { defineWorkflow, z } from 'quiet-choir';
+const local = (id: string) => ({ input: null, schema: z.string(), run: () => {
+  if (id === 'impl' && !existsSync('healed')) throw new Error('impl failed');
+  return id;
+} });
+export default defineWorkflow({ name: 'fan-in', version: '1', input: z.object({}), output: z.string(), async run(ctx) {
+  const [impl] = await Promise.all([ctx.step('impl', local('impl')), ctx.step('followups', local('followups'))]);
+  return impl + (await ctx.step('ship', local('ship')));
+}});`,
+  );
+  const broken = cli('execute', fanIn, '--state-dir', state, '--run-id', 'fan-in');
+  assert.equal(broken.status, 1, broken.stderr);
+  assert.match(broken.stderr, /impl failed/u);
+  writeFileSync(join(root, 'healed'), '');
+  const strict = cli('resume', 'fan-in', '--state-dir', state, '--strict-replay', '--json');
+  assert.equal(strict.status, 0, strict.stderr);
+  const healed = JSON.parse(strict.stdout);
+  assert.equal(healed.status, 'completed', strict.stdout);
+  assert.equal(healed.output, 'implship');
+  assert.deepEqual(healed.warnings, []);
   console.log(
-    'PASS CLI fork prefix/matching/invalidation, immutable source, canonical hash, check-resume, zero-effect re-finalization, and divergent accept refusal',
+    'PASS CLI fork prefix/matching/invalidation, immutable source, canonical hash, check-resume, zero-effect re-finalization, divergent accept refusal, and strict workflow resume after a healed fan-in',
   );
 } finally {
   rmSync(root, { recursive: true, force: true });

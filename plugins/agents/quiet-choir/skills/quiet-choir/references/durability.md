@@ -109,11 +109,25 @@ Terminal steps are `completed` successes or `settled-failed` outcomes explicitly
 record is retryable; a settled failure is a saved branch decision. Invalidate it in a new prefix
 fork to request another attempt. See [failure handling](workflow-authoring.md#failure-handling).
 
-When a previously failed step succeeds and later recorded steps exist, `replay.divergence` warns
-immediately, names the healed step and later IDs, and saves the warning. `--strict-replay` then
-stops before the next live effect, while permitting terminal replay. Concurrent work already in
-flight can still finish. The end-of-run skipped-path error also names healed steps. This is a
-heuristic; explicit settled outcomes prevent the branch from changing in the first place.
+When a previously failed step succeeds, the runner looks for recorded steps that may depend on its
+earlier failure: those launched at or after that failure settled. Each step record carries
+`launchStamp` (a run-level settlement counter's value when the body requested the effect),
+`settleStamp` (the counter after its latest terminal settlement) and `failureStamp` (the stamp of
+its first terminal failure since it last completed). A step is flagged when its `launchStamp` is at
+least the healed step's `failureStamp`, so a `Promise.all` sibling launched in the same tick as the
+failing step is not flagged, whichever settled first. If any are flagged, `replay.divergence` warns
+immediately, names the healed step and those IDs, and saves the warning. `--strict-replay` then
+stops before the next live effect, while permitting terminal replay;
+`workflow resume RUN --strict-replay` and `execute --resume --strict-replay` are equivalent.
+Concurrent work already in flight can still finish. The end-of-run skipped-path error also names
+healed steps.
+
+The rule is a watermark, not proof of dependence: a step launched after the failure by unrelated
+control flow (for example, a step started when another sibling completed after the failure had
+settled) is still flagged, and the earliest failure is kept across repeated failures. Records
+without stamps (checkpoints written before them, or a failure saved between retries) fall back per
+pair to launch order: a step with a higher `seq` is flagged. Explicit settled outcomes prevent the
+branch from changing in the first place.
 
 ## Choose a recovery path
 
