@@ -80,3 +80,5 @@ part of the documentation.
 - [0037: A compact JSONL event stream behind --events](0037-compact-event-stream.md)
 
 - [0038: A code-free event follower derived from the run record](0038-code-free-event-follower.md)
+
+- [0039: Cancel a live run through a token-bound request](0039-cancel-a-live-run-through-a-token-bound-request.md)

@@ -1,7 +1,7 @@
 # 0029: Persist external interruptions as resumable suspensions
 
 - Status: accepted
-- Issue: #199
+- Issue: #199; amended by #288 (`workflow cancel`, ADR 0039)
 
 ## Context
 
@@ -65,4 +65,7 @@ finish. `inspect --watch` on an interrupted run ends as suspended with exit 75, 
 that fires between tick's stale-recovery save and the runtime opening the run can leave a `running`
 record, which the next tick counts as another stale recovery; the claim margin makes that rare.
 There is still no operator `workflow cancel` (#142), so a run someone interrupted on purpose is
-resumed by the next tick. See [waits](../waits.md) and the [CLI contract](../cli-contract.md).
+resumed by the next tick. (Amended by
+[ADR 0039](0039-cancel-a-live-run-through-a-token-bound-request.md): `workflow cancel` now ends a
+live local run as `cancelled` through a request bound to its owner's lock token; a plain signal
+still suspends.) See [waits](../waits.md) and the [CLI contract](../cli-contract.md).

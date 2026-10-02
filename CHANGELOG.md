@@ -2,6 +2,20 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- `workflow cancel RUN [--force] [--timeout 30s] [--json] [--state-dir DIR]` ends a live local run
+  as `cancelled`, which tick observes and never resumes (ADR 0039; amends ADR 0029, under which a
+  plain signal saves a resumable suspension). It signals only a lock owner on this host that is
+  alive and still has its recorded OS start time: it writes `cancel.json` bound to that owner's lock
+  token, re-verifies the owner, sends one SIGINT to its PID, and waits. The owner's executor turns
+  that interruption into a cancellation; the owner exits 130. Success returns
+  `{kind: 'workflow.cancel.result', ok, runId, stateDir, status, signalsSent, owner}`; a run that
+  already ended is a no-op. A foreign, dead, released or unverifiable owner is refused with
+  `run.locked` (exit 3), and an unfinished run with no live owner with the new error code
+  `run.unowned` (exit 3), which also reports an owner that exited without saving `cancelled`. The
+  bounded wait ends with `watch.timeout` (exit 79) and the last saved status; `--force` then sends a
+  second SIGINT to the same verified owner. A stale request never cancels a later execution.
+  `RunOwnership.owner` and `RunLockView.owner` (and so `inspect --json`) gain `osStartTime`; the
+  `inspect` text output is unchanged. `WorkflowExecutorOptions` gains `sendSignal`.
 - Run and delivery state in `workflow pending`, and structured `answer.invalid` issues (behavior
   change in the default `workflow pending` listing; no identity or checkpoint format change):
   `pending` now hides rows whose answer is already queued and rows of `failed`, `cancelled` or

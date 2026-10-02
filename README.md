@@ -168,14 +168,19 @@ disjoint files; isolate overlapping writers or commands that observe concurrent 
 removes owned caches and optionally pins without importing source.
 `workflow unlock RUN [--force-remote] [--json]` clears an abandoned run lock without importing
 source; it refuses while an owner, recoverer or recorded child is alive or unverifiable (see
-[process ownership](docs/process-lifecycle.md)). `workflow start FILE [execute flags] [--json]` runs
-`workflow execute` as a detached background runner and returns the run ID once the run's record
-exists, so an immediate `workflow inspect` reads it; a failure before the record exists (such as a
-type error) is reported with the runner's error and no run ID. The runner's result document and log
-are kept owner-only under `<state>/<run>/launch/`, and `--start-timeout` (default 60s) bounds the
-wait (see [workflow start](docs/cli-contract.md#workflow-start)). `workflow events RUN --follow`
-prints the run's compact event lines from its record, without importing the workflow, and exits with
-the watch codes when the run ends (see [event follower](docs/cli-contract.md#event-follower)).
+[process ownership](docs/process-lifecycle.md)). `workflow cancel RUN [--force] [--timeout 30s]`
+ends a live local run as `cancelled`, which tick never resumes: it signals only a live owner on this
+host whose recorded OS start time still matches, and refuses with exit 3 otherwise (a plain signal
+saves a resumable suspension instead; see
+[ADR 0039](docs/decisions/0039-cancel-a-live-run-through-a-token-bound-request.md)).
+`workflow start FILE [execute flags] [--json]` runs `workflow execute` as a detached background
+runner and returns the run ID once the run's record exists, so an immediate `workflow inspect` reads
+it; a failure before the record exists (such as a type error) is reported with the runner's error
+and no run ID. The runner's result document and log are kept owner-only under
+`<state>/<run>/launch/`, and `--start-timeout` (default 60s) bounds the wait (see
+[workflow start](docs/cli-contract.md#workflow-start)). `workflow events RUN --follow` prints the
+run's compact event lines from its record, without importing the workflow, and exits with the watch
+codes when the run ends (see [event follower](docs/cli-contract.md#event-follower)).
 
 `object()` and `text()` results contain `output`, native `sessionId`, and reported token/cost
 `usage`. Native session IDs are for correlation only: `CliHarness` uses Claude
@@ -642,16 +647,16 @@ Inherited `--log-level trace|debug|info|warn|error|fatal|silent` and `-v, --verb
 command name and are mutually exclusive. Configuration commands remain explicit stubs (exit 2);
 layered project/user settings are deferred.
 
-| Exit | Meaning                                                                                                                                                                                                                                |
-| ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 0    | Success. Inspect accepts any readable status; check `.status`. After a first signal, only a saved execute/resume completion or a delivered `workflow answer` exits 0.                                                                  |
-| 1    | `workflow.failed`: execution failed and the failure checkpoint was saved. Fix and resume. A saved `failed` run reports this even when a signal arrived.                                                                                |
-| 2    | `answer.invalid` for invalid answers, or `usage.*`: invalid flags, misplaced flags, omitted/nonexistent/unsupported FILE, invalid run ID, invalid input JSON/file/schema, or resume without an ID. No execution checkpoint is written. |
-| 3    | `answer.conflict` for duplicate/closed questions, or `run.*`: existing/missing/locked/unreadable run, incompatible resume, changed input, or surviving/unverified child processes (`run.orphans`). No workflow body runs.              |
-| 4    | `load.*`: typecheck, import, or workflow-definition failure. No execution checkpoint is written.                                                                                                                                       |
-| 74   | `workflow.storage`: saving, process registration, or releasing ownership failed. Inspect the reported saved state; it can still be `running`, `completed`, or absent.                                                                  |
-| 75   | Saved suspension: `workflow.run.suspended` with pending waits and answer/resume commands. A saved suspension stands even when a signal arrived.                                                                                        |
-| 130  | `workflow.interrupted`: SIGINT/SIGTERM/SIGHUP. A first signal saves a resumable `suspended` run (`interruptedBy`) when possible. A second kills tracked groups at once and reports the last readable checkpoint, maybe `running`.      |
+| Exit | Meaning                                                                                                                                                                                                                                                                                    |
+| ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 0    | Success. Inspect accepts any readable status; check `.status`. After a first signal, only a saved execute/resume completion or a delivered `workflow answer` exits 0.                                                                                                                      |
+| 1    | `workflow.failed`: execution failed and the failure checkpoint was saved. Fix and resume. A saved `failed` run reports this even when a signal arrived.                                                                                                                                    |
+| 2    | `answer.invalid` for invalid answers, or `usage.*`: invalid flags, misplaced flags, omitted/nonexistent/unsupported FILE, invalid run ID, invalid input JSON/file/schema, or resume without an ID. No execution checkpoint is written.                                                     |
+| 3    | `answer.conflict` for duplicate/closed questions, or `run.*`: existing/missing/locked/unreadable run, incompatible resume, changed input, surviving/unverified child processes (`run.orphans`), or a `workflow cancel` that found no live owner (`run.unowned`). No workflow body runs.    |
+| 4    | `load.*`: typecheck, import, or workflow-definition failure. No execution checkpoint is written.                                                                                                                                                                                           |
+| 74   | `workflow.storage`: saving, process registration, or releasing ownership failed. Inspect the reported saved state; it can still be `running`, `completed`, or absent.                                                                                                                      |
+| 75   | Saved suspension: `workflow.run.suspended` with pending waits and answer/resume commands. A saved suspension stands even when a signal arrived.                                                                                                                                            |
+| 130  | `workflow.interrupted`: SIGINT/SIGTERM/SIGHUP. A first signal saves a resumable `suspended` run (`interruptedBy`) when possible. A second kills tracked groups at once and reports the last readable checkpoint, maybe `running`. An owner stopped by `workflow cancel` saves `cancelled`. |
 
 `npm run check` includes formatting, lint, strict typechecking, tests with coverage gates, build,
 compiled CLI smoke tests, TypeDoc validation, and package checks. No automated test calls a paid

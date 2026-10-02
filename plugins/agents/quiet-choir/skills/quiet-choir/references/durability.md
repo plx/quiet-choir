@@ -391,7 +391,9 @@ drains active work, saves a resumable run status `suspended` with `nextWakeAt` =
 `interruptedBy: {reason, at}` (no `rootCause`), and exits 130; the next tick or `resume` continues
 from completed steps. Tick's own --timeout interrupts the same way. An embedder opts in by aborting
 `RunOptions.signal` with `RunInterruptedError`; any other abort reason, or a workflow-scoped
-`CancelledError`, saves `cancelled`. stderr prints “Send again to force.” Cancelled steps record
+`CancelledError`, saves `cancelled`. To end a live run on purpose use `workflow cancel RUN`, which
+signals only its identity-verified local owner and makes it save `cancelled` (see
+[operating runs](operating-runs.md)). stderr prints “Send again to force.” Cancelled steps record
 `cancelledBy`; inspect `rootCause` to identify an initiating failure instead of reading cancellation
 messages as independent root failures. A second signal synchronously SIGKILLs every tracked group,
 then exits 130 without awaiting writes; the lock and an older `running` record can remain. EIO/EPIPE
