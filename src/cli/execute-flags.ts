@@ -162,7 +162,8 @@ export const executeFlags: Interfaces.FlagInput<WorkflowExecuteFlags> = {
     dependsOn: ['resume'],
   }),
   'strict-replay': Flags.boolean({
-    description: 'Fail before live work that skips earlier completed steps',
+    description:
+      'Fail before live work after a replay divergence (skipped earlier completed steps or a healed failure)',
   }),
   input: Flags.string({
     description:
