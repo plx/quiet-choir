@@ -15,11 +15,17 @@ import {
   z,
   type AgentResult,
   type ErrorKind,
+  type ErrorMode,
+  type ExecResult,
+  type ExecStepError,
   type Harness,
   type HarnessRequest,
+  type ProcessRunner,
+  type ReadFileResult,
   type Settled,
   type WorkflowContext,
   type WorkflowEvent,
+  type WriteFileResult,
 } from '../src/index.js';
 import { errorKind } from '../src/workflow/runtime/step-error.js';
 
@@ -431,6 +437,118 @@ it('keeps error mode in identity and preserves terminal failures during forks', 
       { ...options(), resume: true, allowHarnessChange: true },
     ),
   ).rejects.toThrow('Replay skipped recorded steps (ask)');
+});
+
+it('reuses settled exec and readFile outcomes in a fork and reruns an invalidated command live', async () => {
+  await writeFile(join(stateDir, 'big'), '12345');
+  let code = 1;
+  const run = vi.fn<ProcessRunner['run']>(() =>
+    Promise.resolve({
+      code,
+      signal: null,
+      stdout: '',
+      stderr: '',
+      truncated: false,
+      durationMs: 1,
+    }),
+  );
+  let broken = true;
+  const definition = workflow(async (ctx) => {
+    const read = await ctx.readFile('read', 'big', { maxBytes: 4, onError: 'return' });
+    const tested = await ctx.exec('test', ['npm', 'test'], { onError: 'return' });
+    const verdict = await ctx.step('after', {
+      input: [read.ok, tested.ok],
+      schema: z.string(),
+      run: () => `${String(read.ok)}/${String(tested.ok)}`,
+    });
+    if (broken) throw new Error('tail');
+    return verdict;
+  });
+  const settings = { ...options(), cwd: stateDir };
+  await expect(runWorkflow(definition, { ...settings, processRunner: { run } })).rejects.toThrow(
+    'tail',
+  );
+  const before = await readFile(join(stateDir, 'outcomes', 'run.json'), 'utf8');
+  // Both effects would now succeed live; the fork must reuse the settled outcomes instead.
+  await writeFile(join(stateDir, 'big'), '1234');
+  code = 0;
+  broken = false;
+  run.mockClear();
+  const fork = await runWorkflow(definition, {
+    ...settings,
+    runId: 'fork',
+    processRunner: { run },
+    forkFrom: { runId: 'outcomes' },
+  });
+  expect(fork.output).toBe('false/false');
+  for (const id of ['read', 'test', 'after'])
+    expect(fork.steps[id]?.reusedFrom).toMatchObject({ runId: 'outcomes', stepId: id });
+  expect(fork.steps['test']).toMatchObject({
+    status: 'settled-failed',
+    settledError: { kind: 'process', code: 1 },
+  });
+  expect(run).not.toHaveBeenCalled();
+  expect(await readFile(join(stateDir, 'outcomes', 'run.json'), 'utf8')).toBe(before);
+  const invalidated = await runWorkflow(definition, {
+    ...settings,
+    runId: 'invalidated',
+    processRunner: { run },
+    forkFrom: { runId: 'outcomes', invalidate: ['test'] },
+  });
+  expect(run).toHaveBeenCalledTimes(1);
+  expect(invalidated.output).toBe('false/true');
+  expect(invalidated.steps['read']?.reusedFrom?.runId).toBe('outcomes');
+  expect(invalidated.steps['test']).toMatchObject({ status: 'completed' });
+  expect(invalidated.steps['test']?.reusedFrom).toBeUndefined();
+  expect(invalidated.steps['after']?.reusedFrom).toBeUndefined();
+});
+
+it('types settled exec, exec.json, readFile and writeFile results by error mode', () => {
+  // Compile-time checks: typecheck rejects a wrong overload; the body is never run.
+  const check = (ctx: WorkflowContext, mode: ErrorMode) => {
+    const schema = z.object({ passed: z.boolean() });
+    expectTypeOf(ctx.exec('a', ['x'], { onError: 'return' })).toEqualTypeOf<
+      Promise<Settled<ExecResult, ExecStepError>>
+    >();
+    expectTypeOf(ctx.exec('a', ['x'])).toEqualTypeOf<Promise<ExecResult>>();
+    expectTypeOf(ctx.exec('a', ['x'], { onError: 'throw' })).toEqualTypeOf<Promise<ExecResult>>();
+    expectTypeOf(ctx.exec('a', ['x'], { okExitCodes: 'any' })).toEqualTypeOf<Promise<ExecResult>>();
+    expectTypeOf(ctx.exec('a', ['x'], { onError: mode })).toEqualTypeOf<
+      Promise<ExecResult | Settled<ExecResult, ExecStepError>>
+    >();
+    expectTypeOf(ctx.exec.json('j', ['x'], { schema, onError: 'return' })).toEqualTypeOf<
+      Promise<Settled<{ passed: boolean }, ExecStepError>>
+    >();
+    expectTypeOf(ctx.exec.json('j', ['x'], { schema })).toEqualTypeOf<
+      Promise<{ passed: boolean }>
+    >();
+    expectTypeOf(ctx.exec.json('j', ['x'], { schema, onError: 'throw' })).toEqualTypeOf<
+      Promise<{ passed: boolean }>
+    >();
+    expectTypeOf(ctx.readFile('r', 'f', { onError: 'return' })).toEqualTypeOf<
+      Promise<Settled<ReadFileResult>>
+    >();
+    expectTypeOf(ctx.readFile('r', 'f')).toEqualTypeOf<Promise<ReadFileResult>>();
+    expectTypeOf(ctx.readFile('r', 'f', { maxBytes: 4, onError: 'throw' })).toEqualTypeOf<
+      Promise<ReadFileResult>
+    >();
+    expectTypeOf(ctx.writeFile('w', 'f', 'c', { onError: 'return' })).toEqualTypeOf<
+      Promise<Settled<WriteFileResult>>
+    >();
+    expectTypeOf(ctx.writeFile('w', 'f', 'c')).toEqualTypeOf<Promise<WriteFileResult>>();
+    expectTypeOf(ctx.writeFile('w', 'f', 'c', { ifMatch: null, onError: 'throw' })).toEqualTypeOf<
+      Promise<WriteFileResult>
+    >();
+    // @ts-expect-error onError takes only 'throw' or 'return'.
+    void ctx.exec('a', ['x'], { onError: 'ignore' });
+    // @ts-expect-error onError takes only 'throw' or 'return'.
+    void ctx.exec.json('j', ['x'], { schema, onError: 'settle' });
+    // @ts-expect-error onError takes only 'throw' or 'return'.
+    void ctx.readFile('r', 'f', { onError: 'drain' });
+    // @ts-expect-error onError takes only 'throw' or 'return'.
+    void ctx.writeFile('w', 'f', 'c', { onError: 'abort' });
+  };
+  expect(check).toBeTypeOf('function');
 });
 
 it.each([false, true])(
