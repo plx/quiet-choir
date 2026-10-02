@@ -224,6 +224,21 @@ export interface UnlockWorkflowPlan extends ExecutionPlan {
   readonly forceRemote: boolean;
 }
 
+/**
+ * Plain-data request to end a live local run as `cancelled`: verify that its lock owner is a live
+ * process on this host with the recorded birth identity, leave a cancel request bound to that
+ * owner's lock token, signal it, and wait up to `timeoutMs` for the run to end. `force` sends a
+ * second signal when the same owner is still there at the deadline.
+ */
+export interface CancelWorkflowPlan extends ExecutionPlan {
+  readonly kind: 'workflow.cancel';
+  readonly runId: string;
+  readonly stateDir: string;
+  readonly force: boolean;
+  /** Milliseconds to wait for the run to end after each signal: an integer from 1 to 2147483647. */
+  readonly timeoutMs: number;
+}
+
 /** The outcome of a workflow command, without live schemas or loaded modules. */
 export type WorkflowCommandResult = ExecutionResult &
   (
@@ -241,6 +256,25 @@ export type WorkflowCommandResult = ExecutionResult &
         readonly forceRemote: boolean;
         /** Every lock found, primary first; empty when the run was not locked. */
         readonly locks: readonly UnlockedLock[];
+      }
+    | {
+        readonly kind: 'workflow.cancel.result';
+        readonly ok: true;
+        readonly runId: string;
+        readonly stateDir: string;
+        /**
+         * The run's saved terminal status: `cancelled` when the cancel took effect, `completed` or
+         * `failed` when the run ended first, or the status it already had (with no signal sent).
+         */
+        readonly status: 'completed' | 'failed' | 'cancelled';
+        /** SIGINTs sent to the owner: 0 for a run that had already ended, 2 only under `force`. */
+        readonly signalsSent: 0 | 1 | 2;
+        /** The verified owner that was signalled, or null when none was. */
+        readonly owner: {
+          readonly pid: number;
+          readonly host: string;
+          readonly osStartTime: string;
+        } | null;
       }
     | WorkflowFailure
     | {

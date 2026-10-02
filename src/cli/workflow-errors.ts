@@ -27,6 +27,7 @@ export const workflowExitCodes = {
   'run.input_changed': 3,
   'run.unreadable': 3,
   'run.orphans': 3,
+  'run.unowned': 3,
   'load.typecheck': 4,
   'load.import': 4,
   'load.definition': 4,

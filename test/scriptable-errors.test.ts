@@ -294,6 +294,23 @@ it('maps the workflow start codes to their own exits and recognizes every code',
   );
 });
 
+it('refuses an unowned cancel with exit 3, like the other run refusals', () => {
+  expect(isCliErrorCode('run.unowned')).toBe(true);
+  expect(workflowExitCodes['run.unowned']).toBe(3);
+  expect(
+    workflowErrorDocument(
+      workflowFailure('run.unowned', 'Run r1 is suspended and no process owns it.', {
+        runId: 'r1',
+        details: { reason: 'unlocked', signalsSent: 0, forced: false },
+      }),
+    ),
+  ).toMatchObject({
+    ok: false,
+    exitCode: 3,
+    error: { code: 'run.unowned', details: { reason: 'unlocked' } },
+  });
+});
+
 it('gives the watch bounds their own exits, distinct from stale, suspended and interrupted', () => {
   expect(workflowExitCodes['watch.timeout']).toBe(79);
   expect(workflowExitCodes['watch.record_not_created']).toBe(66);
