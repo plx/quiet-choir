@@ -1,5 +1,5 @@
 import { brandError, isBranded } from './error-brand.js';
-import type { StepError } from './model.js';
+import type { ErrorKind, StepError } from './model.js';
 
 /** Attribution for the first failure that ended a run. */
 export interface RootCause {
@@ -7,6 +7,12 @@ export interface RootCause {
   readonly stepId: string | null;
   /** Original explanation, separate from cancellation diagnostics. */
   readonly error: string;
+  /**
+   * Classified kind of the root effect's failure, as saved on its last attempt. Null for a body
+   * failure, a run-level failure or an interruption. Absent in records written before this field;
+   * readers fall back to the root step's last attempt.
+   */
+  readonly errorKind?: ErrorKind | null;
 }
 
 /** A mapper failure with its input position and optional effect identity. */
@@ -134,9 +140,17 @@ export class FailureOrigins {
     return { error, stepId: null };
   }
 
-  public root(error: unknown): RootCause {
+  /**
+   * Attribute a run's failure. `classify` is the runtime's error classifier, passed in because
+   * step-error.ts imports this module.
+   */
+  public root(error: unknown, classify: (error: unknown) => ErrorKind): RootCause {
     const origin = this.find(error);
-    return { stepId: origin.stepId, error: errorMessage(origin.error) };
+    return {
+      stepId: origin.stepId,
+      error: errorMessage(origin.error),
+      errorKind: origin.stepId === null ? null : classify(origin.error),
+    };
   }
 }
 

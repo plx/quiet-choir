@@ -1,6 +1,7 @@
 import type { RunRecord } from '../runtime/store.js';
 import { summarizeUsage } from '../runtime/usage-summary.js';
 import type { JsonValue } from '../runtime/model.js';
+import { rootCauseSummary, type RootCauseSummary } from './failure-kind.js';
 import { countSteps, type RunSummary } from './inspection.js';
 
 /** At most this many warnings appear in a compact run result; one overflow note follows. */
@@ -24,7 +25,8 @@ export interface RunResultSummary {
     readonly undercounted: boolean;
   };
   readonly counts: RunSummary['counts'];
-  readonly rootCause: RunRecord['rootCause'] | null;
+  /** The first failure with its classified kind; the kind is null for a body failure. */
+  readonly rootCause: RootCauseSummary | null;
   readonly warnings: readonly string[];
 }
 
@@ -69,7 +71,7 @@ export function summarizeRunResult(run: ResultRun, stateDir: string | null): Run
       undercounted: usage.undercounted || usage.incompleteAttempts > 0,
     },
     counts: countSteps(run),
-    rootCause: run.rootCause ?? null,
+    rootCause: rootCauseSummary(run),
     warnings: resultWarnings(run),
   };
 }

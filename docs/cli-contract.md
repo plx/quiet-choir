@@ -75,8 +75,10 @@ the status and output of a long run without its checkpoint. A run that completes
 `output` is the run's output unchanged. `usage` sums the recorded agent attempts: `costUsd` is the
 harness-reported estimate (null when none was reported) and `undercounted` is true when the cost or
 attempt totals may be low, because of legacy checkpoints or attempts with unknown cost or tokens.
-`counts` is the step total by status, `rootCause` the failing effect or null, and `warnings` the
-run's warnings, de-duplicated and capped at 20 followed by a note that says how many more exist.
+`counts` is the step total by status, `rootCause` the failing effect as `{stepId, error, errorKind}`
+(`errorKind` is null for a body failure and for a record from before the kind was stored without an
+attempt to read it from) or null, and `warnings` the run's warnings, de-duplicated and capped at 20
+followed by a note that says how many more exist.
 
 A suspension (exit 75) returns
 `{kind:"workflow.run.suspended", ok:true, exitCode:75, runId, stateDir, pending, resumeCommand, summary}`,
@@ -115,20 +117,20 @@ and settled agent failures. See [workflow rehearsal](rehearsal.md).
 
 Failures have these fields:
 
-| Field                         | Meaning                                                                                                                                               |
-| ----------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `kind`, `ok`, `exitCode`      | `"workflow.error"`, `false`, and the process exit code                                                                                                |
-| `error.code`, `error.message` | Stable code and diagnostic naming the root effect when available                                                                                      |
-| `error.stepId`                | Root failing effect, or null for a body failure or interruption; never an aborted sibling                                                             |
-| `error.details`               | Structured context: lock PID/host, schema issues, input source/position, compatibility comparison, or available run IDs                               |
-| `runId`, `stateDir`           | Requested/generated ID and absolute storage directory when known; otherwise null                                                                      |
-| `status`                      | Actual saved checkpoint status, or null when unavailable                                                                                              |
-| `summary`                     | execute, resume and answer without `--full`, and inspect with `--summary`: the compact run result, or null when unavailable                           |
-| `run`                         | Saved record, or null when unavailable. Every other command, inspect without `--summary`, a `--dry-run` failure, or `--full` on execute/resume/answer |
-| `failedSteps`                 | Saved failed/cancelled steps with ID, kind, attempts, and error                                                                                       |
-| `diagnostics`                 | Compiler diagnostics, or an empty array                                                                                                               |
-| `next`                        | Runnable follow-ups `{why, argv}`, or an empty array; see [next commands](#next-commands)                                                             |
-| `launch`                      | `workflow start` only: `{runId, pid, log, result, exitCode, signal}`; see [workflow start](#workflow-start)                                           |
+| Field                         | Meaning                                                                                                                                                                 |
+| ----------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `kind`, `ok`, `exitCode`      | `"workflow.error"`, `false`, and the process exit code                                                                                                                  |
+| `error.code`, `error.message` | Stable code and diagnostic naming the root effect when available                                                                                                        |
+| `error.stepId`                | Root failing effect, or null for a body failure or interruption; never an aborted sibling                                                                               |
+| `error.details`               | Structured context: lock PID/host, schema issues, input source/position, compatibility comparison, or available run IDs; `{errorKind, retryable}` for `workflow.failed` |
+| `runId`, `stateDir`           | Requested/generated ID and absolute storage directory when known; otherwise null                                                                                        |
+| `status`                      | Actual saved checkpoint status, or null when unavailable                                                                                                                |
+| `summary`                     | execute, resume and answer without `--full`, and inspect with `--summary`: the compact run result, or null when unavailable                                             |
+| `run`                         | Saved record, or null when unavailable. Every other command, inspect without `--summary`, a `--dry-run` failure, or `--full` on execute/resume/answer                   |
+| `failedSteps`                 | Saved failed/cancelled steps with ID, kind, attempts, error, `errorKind` (last attempt, or null) and `retryable` (the kind is `rate-limit`, `overloaded` or `timeout`)  |
+| `diagnostics`                 | Compiler diagnostics, or an empty array                                                                                                                                 |
+| `next`                        | Runnable follow-ups `{why, argv}`, or an empty array; see [next commands](#next-commands)                                                                               |
+| `launch`                      | `workflow start` only: `{runId, pid, log, result, exitCode, signal}`; see [workflow start](#workflow-start)                                                             |
 
 The error codes map to numeric exits in one CLI table:
 

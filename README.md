@@ -395,11 +395,11 @@ Pass `{ onError: 'abort' }` to cancel just that map's subtree after a failure. C
 allows later workflow steps, and a caught inner-map failure leaves other outer branches running.
 `ctx.signal` and each effect's signal refer to the current scope. Run interruption still cancels all
 scopes. Interrupted effects have status `cancelled` and `cancelledBy`; the initiating effect stays
-`failed`. Inspect `rootCause: { stepId, error }` for the run's cause; handled failures leave
-`rootCause` null in a completed run. Ctrl-C (or SIGTERM/SIGHUP) is not a failure: it drains, saves a
-resumable `suspended` run with `interruptedBy: { reason, at }` and no root cause, and exits 130; the
-next `workflow tick` or `resume` continues it. An explicit or workflow-scoped cancellation saves
-`cancelled`.
+`failed`. Inspect `rootCause: { stepId, error, errorKind }` for the run's cause; handled failures
+leave `rootCause` null in a completed run. Ctrl-C (or SIGTERM/SIGHUP) is not a failure: it drains,
+saves a resumable `suspended` run with `interruptedBy: { reason, at }` and no root cause, and exits
+130; the next `workflow tick` or `resume` continues it. An explicit or workflow-scoped cancellation
+saves `cancelled`.
 
 Use an explicitly named settled map to retain every item's outcome, including mapper-body errors:
 

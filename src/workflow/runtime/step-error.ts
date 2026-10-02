@@ -27,6 +27,18 @@ export const errorKindSchema = z.enum([
 export const transientErrorKinds = ['rate-limit', 'overloaded', 'timeout'] as const;
 
 /**
+ * Whether a failure of this kind is worth retrying later: membership in
+ * {@link transientErrorKinds}. A missing kind is not transient. This is the single membership test
+ * behind the `'transient'` retry filter and the `retryable` flag in failure documents.
+ * @internal
+ */
+export function isTransientErrorKind(kind: ErrorKind | null | undefined): boolean {
+  if (kind === null || kind === undefined) return false;
+  const transient: readonly ErrorKind[] = transientErrorKinds;
+  return transient.includes(kind);
+}
+
+/**
  * Validation for one `retry.on` entry: any error kind, or the `'transient'` alias. The alias is a
  * filter, never a kind: saved failures and attempt kinds keep using {@link errorKindSchema}.
  * @internal

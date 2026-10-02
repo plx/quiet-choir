@@ -114,7 +114,11 @@ it('drains by default, stops scheduling promptly, and replays finished siblings 
   });
   const first = await readRun(options());
   expect(first.steps['item/1']?.status).toBe('completed');
-  expect(first.rootCause).toEqual({ stepId: 'item/0', error: 'primary failed' });
+  expect(first.rootCause).toEqual({
+    stepId: 'item/0',
+    error: 'primary failed',
+    errorKind: 'unknown',
+  });
   broken = false;
   expect((await runWorkflow(definition, { ...options(), resume: true })).output).toEqual([
     0, 1, 2, 3,
@@ -267,7 +271,7 @@ it('drains Promise.all siblings without a signal and records the actual root cau
   await expect(result).rejects.toThrow('first cause');
   expect(await readRun(options())).toMatchObject({
     status: 'failed',
-    rootCause: { stepId: 'failure', error: 'first cause' },
+    rootCause: { stepId: 'failure', error: 'first cause', errorKind: 'unknown' },
     steps: { writer: { status: 'completed', output: 'finished' } },
   });
 });
@@ -313,7 +317,7 @@ it('refuses new launches after a body rejection while started effects checkpoint
   const saved = await readRun(options());
   expect(saved).toMatchObject({
     status: 'failed',
-    rootCause: { stepId: 'failure', error: 'first cause' },
+    rootCause: { stepId: 'failure', error: 'first cause', errorKind: 'unknown' },
     steps: { a: { status: 'completed', output: 'a' } },
   });
   // The closed workflow refused the active mapper's next launch, so it never started.
@@ -452,7 +456,7 @@ it('resumes an interrupted settled map without rerunning committed items', async
   const first = await readRun(options());
   expect(first).toMatchObject({
     status: 'cancelled',
-    rootCause: { stepId: null, error: 'Workflow interrupted.' },
+    rootCause: { stepId: null, error: 'Workflow interrupted.', errorKind: null },
     steps: { 'item/1': { status: 'cancelled', cancelledBy: null } },
   });
   expect(first.maps?.['items']?.items.map((item) => item.status)).toEqual(['completed', 'running']);
@@ -482,7 +486,7 @@ it('retains completed work from a signal-ignoring callback after a run interrupt
   await rejected;
   expect(await readRun(options())).toMatchObject({
     status: 'cancelled',
-    rootCause: { stepId: null, error: 'Workflow interrupted.' },
+    rootCause: { stepId: null, error: 'Workflow interrupted.', errorKind: null },
     steps: { late: { status: 'completed', output: 'committed' } },
   });
   expect((await runWorkflow(definition, { ...options(), resume: true })).output).toBe('committed');
@@ -833,7 +837,11 @@ it('records cancellation during retry backoff without overwriting the failed att
     }),
   ).rejects.toThrow('primary cause');
   const record = await readRun(options());
-  expect(record.rootCause).toEqual({ stepId: 'primary', error: 'primary cause' });
+  expect(record.rootCause).toEqual({
+    stepId: 'primary',
+    error: 'primary cause',
+    errorKind: 'unknown',
+  });
   expect(record.steps['backoff']).toMatchObject({
     status: 'cancelled',
     cancelledBy: 'primary',
@@ -843,4 +851,38 @@ it('records cancellation during retry backoff without overwriting the failed att
   });
   expect(events).toContain('step.cancelled:backoff');
   expect(retried).toHaveBeenCalledTimes(1);
+});
+
+it("records the root step's classified kind when a map failure surfaces through FanOutError", async () => {
+  const slow = Object.assign(new Error('slow'), { code: 'ETIMEDOUT' });
+  const definition = workflow((ctx) =>
+    ctx.map([0, 1], 2, (index) =>
+      ctx.step(`item/${String(index)}`, {
+        input: index,
+        schema: z.number(),
+        retry: { maxAttempts: 1 },
+        run: async () => {
+          await delay(index * 20);
+          throw slow;
+        },
+      }),
+    ),
+  );
+  const error: unknown = await runWorkflow(definition, options()).catch((cause: unknown) => cause);
+  expect(error).toBeInstanceOf(WorkflowRunError);
+  if (!(error instanceof WorkflowRunError)) throw error;
+  expect(error.cause).toBeInstanceOf(FanOutError);
+  const saved = await readRun(options());
+  expect(saved.rootCause).toEqual({ stepId: 'item/0', error: 'slow', errorKind: 'timeout' });
+  expect(saved.steps['item/0']?.attemptHistory?.at(-1)?.errorKind).toBe('timeout');
+});
+
+it('records a null kind for a failure of the workflow body itself', async () => {
+  const error: unknown = await runWorkflow(
+    workflow(() => Promise.reject(new Error('body bug'))),
+    options(),
+  ).catch((cause: unknown) => cause);
+  expect(error).toBeInstanceOf(WorkflowRunError);
+  const saved = await readRun(options());
+  expect(saved.rootCause).toEqual({ stepId: null, error: 'body bug', errorKind: null });
 });

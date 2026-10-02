@@ -236,10 +236,12 @@ a null `stepId`, except `run.failed` can name the root effect. Debug lines inclu
 ID, and event type. Notification data is copied; observer mutation or failure cannot invalidate
 committed work, and observer promises are not awaited.
 
-`rootCause` uses error identity and cause chains, not message matching. It attributes diagnostics;
-it never decides durable error handling. Explicitly cancelled siblings keep `status: 'cancelled'`,
-while valid late callback results still commit as completed. Run interrupts have no root effect; a
-marked interruption saves no `rootCause` or `error` at all, only `interruptedBy`. `WorkflowRunError`
+`rootCause` is `{ stepId, error, errorKind }`: `errorKind` is the classified kind of the root
+effect's failure, null for a body failure, and absent in records from before the field. It uses
+error identity and cause chains, not message matching. It attributes diagnostics; it never decides
+durable error handling. Explicitly cancelled siblings keep `status: 'cancelled'`, while valid late
+callback results still commit as completed. Run interrupts have no root effect; a marked
+interruption saves no `rootCause` or `error` at all, only `interruptedBy`. `WorkflowRunError`
 exposes `runId`, `stepId`, saved `run`, and original `cause`, with a message such as
 `Step word/1 (claude) failed: …`. `-v` on execute or inspect prints the stored stack/cause chain.
 

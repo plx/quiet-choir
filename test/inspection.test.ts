@@ -124,6 +124,12 @@ it('shows all status counts, first-use order, phase progress, limits, root cause
   expect(summary.phase).toEqual({ title: 'verify', total: 3, completed: 1, running: 0 });
   expect(summary.steps.map((step) => step.id)).toEqual(['b-settled', 'a-root']);
   expect(summary.steps[1]?.rootCause).toBe(true);
+  expect(summary.steps.map((step) => step.errorKind)).toEqual(['unknown', 'unknown']);
+  expect(summary.rootCause).toEqual({
+    stepId: 'a-root',
+    error: 'root issue',
+    errorKind: 'unknown',
+  });
   expect(summary.usage).toMatchObject({
     attempts: 2,
     incompleteAttempts: 2,
@@ -133,12 +139,95 @@ it('shows all status counts, first-use order, phase progress, limits, root cause
   });
   const text = formatRunSummary(summary, true);
   expect(text).toContain('Phase: verify 1/3 (0 running)');
-  expect(text).toContain('Root cause (a-root): root issue');
+  expect(text).toContain('Root cause (a-root, unknown): root issue');
+  expect(text).toMatch(/^failed a-root .* \[unknown\] \[root cause\]/mu);
   expect(text).toContain('per-call timeout 5m00s');
   expect(text).toContain('partial; 1/2 attempts without token usage; cost unreported for 2/2');
   expect(text).toContain('inspection.test.ts');
   expect(text).not.toMatch(/^null$/m);
   expect(formatRunList([summary])).toContain('inspect@1  failed');
+});
+
+it('carries the last attempt kind on failed, settled-failed and cancelled step rows only', () => {
+  const failed = (
+    status: StepRecord['status'],
+    kinds: NonNullable<AttemptRecord['errorKind']>[],
+  ): StepRecord => ({
+    kind: 'agent',
+    harness: 'claude',
+    fingerprint: 'f',
+    status,
+    attempts: kinds.length || 1,
+    output: null,
+    error: status === 'completed' || status === 'running' ? null : 'failed',
+    wakeAt: null,
+    ...(kinds.length
+      ? {
+          attemptHistory: kinds.map((errorKind, index) => ({
+            attempt: index + 1,
+            status: 'failed',
+            errorKind,
+          })) as unknown as AttemptRecord[],
+        }
+      : {}),
+  });
+  const run: RunRecord = {
+    ...record(),
+    status: 'failed',
+    steps: {
+      done: failed('completed', []),
+      busy: failed('failed', ['unknown', 'overloaded']),
+      handled: failed('settled-failed', ['rate-limit']),
+      sibling: failed('cancelled', ['cancelled']),
+      active: failed('running', ['timeout']),
+      fresh: failed('running', []),
+    },
+    rootCause: { stepId: 'busy', error: 'failed', errorKind: 'overloaded' },
+  };
+  const summary = summarizeRun(run, unlocked);
+  expect(Object.fromEntries(summary.steps.map((step) => [step.id, step.errorKind]))).toEqual({
+    busy: 'overloaded',
+    handled: 'rate-limit',
+    sibling: 'cancelled',
+    // A running retry has the previous attempt's kind; a step with no attempt has none.
+    active: 'timeout',
+    fresh: null,
+  });
+  const text = formatRunSummary(summary, true);
+  expect(text).toContain('[overloaded] [root cause]');
+  expect(text).toContain('Root cause (busy, overloaded): failed');
+});
+
+it('normalizes the root cause of a record without a stored kind from the root step', () => {
+  const run: RunRecord = {
+    ...record(),
+    status: 'failed',
+    steps: {
+      ask: {
+        kind: 'agent',
+        harness: 'claude',
+        fingerprint: 'f',
+        status: 'failed',
+        attempts: 1,
+        output: null,
+        error: 'denied',
+        wakeAt: null,
+        attemptHistory: [
+          { attempt: 1, status: 'failed', errorKind: 'authentication' },
+        ] as unknown as AttemptRecord[],
+      },
+    },
+    rootCause: { stepId: 'ask', error: 'denied' },
+  };
+  expect(summarizeRun(run, unlocked).rootCause).toEqual({
+    stepId: 'ask',
+    error: 'denied',
+    errorKind: 'authentication',
+  });
+  expect(
+    summarizeRun({ ...run, rootCause: { stepId: null, error: 'bug' } }, unlocked).rootCause,
+  ).toEqual({ stepId: null, error: 'bug', errorKind: null });
+  expect(summarizeRun(record(), unlocked).rootCause).toBeNull();
 });
 
 it('shows an interrupted suspension as resumable and watches it as suspended', () => {

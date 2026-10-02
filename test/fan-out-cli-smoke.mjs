@@ -221,7 +221,7 @@ export default defineWorkflow({name:'fanout-cli',version:'1',input:z.object({pre
   }
   const inspected = cli('inspect', 'abort', '--state-dir', state);
   assert.equal(inspected.status, 0, inspected.stderr);
-  assert.match(inspected.stdout, /Root cause \(ci\):.*CI failed/);
+  assert.match(inspected.stdout, /Root cause \(ci, unknown\):.*CI failed/);
   await interrupt('interrupt-agent', false);
   await interrupt('interrupt-sleep', true);
   console.log(

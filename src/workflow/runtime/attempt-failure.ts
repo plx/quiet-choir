@@ -8,7 +8,7 @@
  */
 import type { ErrorKind, ErrorMode } from './model.js';
 import { ConfigurationError } from './configuration-error.js';
-import { errorKind, transientErrorKinds } from './step-error.js';
+import { errorKind, isTransientErrorKind } from './step-error.js';
 
 /** Facts about one failed attempt, all gathered by the runner before classification. @internal */
 export interface AttemptFailureInput {
@@ -90,6 +90,5 @@ export function classifyAttemptFailure(input: AttemptFailureInput): AttemptFailu
 
 function retries(retryOn: AttemptFailureInput['retryOn'], kind: ErrorKind): boolean {
   if (retryOn === undefined) return kind !== 'invalid-request';
-  const transient: readonly ErrorKind[] = transientErrorKinds;
-  return retryOn.includes(kind) || (retryOn.includes('transient') && transient.includes(kind));
+  return retryOn.includes(kind) || (retryOn.includes('transient') && isTransientErrorKind(kind));
 }

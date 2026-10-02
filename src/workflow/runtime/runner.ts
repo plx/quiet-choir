@@ -3147,8 +3147,8 @@ export async function runWorkflow<
           errorKind(origins.find(caught).error) === 'cancelled');
       const error: unknown = interrupted ? options.signal.reason : caught;
       record.rootCause = interrupted
-        ? { stepId: null, error: message(error) }
-        : origins.root(error);
+        ? { stepId: null, error: message(error), errorKind: null }
+        : origins.root(error, errorKind);
       // Body failures stop new launches but preserve in-flight work. Only explicit cancellation
       // or checkpoint failure aborts a scope; draining here does not send a signal.
       questions.drain();

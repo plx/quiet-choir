@@ -475,7 +475,7 @@ export default defineWorkflow({
       expect(result.message).toContain('application failure');
       expect(workflowErrorDocument(result)).toMatchObject({
         exitCode: 1,
-        error: { code: 'workflow.failed' },
+        error: { code: 'workflow.failed', details: { errorKind: null, retryable: false } },
         status: 'failed',
         run: { status: 'failed', error: 'application failure' },
       });
@@ -536,7 +536,7 @@ export default defineWorkflow({
     expect(result.message).toBe('Workflow interrupted by SIGTERM.');
     expect(workflowErrorDocument(result)).toMatchObject({
       exitCode: 130,
-      error: { code: 'workflow.interrupted' },
+      error: { code: 'workflow.interrupted', details: null },
       status: 'suspended',
       run: {
         status: 'suspended',

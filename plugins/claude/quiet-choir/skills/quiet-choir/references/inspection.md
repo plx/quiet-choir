@@ -182,9 +182,9 @@ imports trusted source but does not call its body. Unlike inspection alone, it c
 source files and schemas.
 
 A `settled-failed` step is terminal: `settledError` saves `message`, `kind`, and total `attempts`.
-Failed `attemptHistory` entries retain `errorKind`. A run may complete with settled failures.
-`step.settled` follows a committed outcome; `replay.divergence` can include `healedStepId` and later
-`skippedStepIds`.
+Failed `attemptHistory` entries retain `errorKind`, and failure documents and summaries now surface
+it (see below). A run may complete with settled failures. `step.settled` follows a committed
+outcome; `replay.divergence` can include `healedStepId` and later `skippedStepIds`.
 
 ## Watching and listing
 
@@ -258,8 +258,18 @@ A failed run can have completed sibling effects. Those effects replay on a compa
 uncheckpointed external action may repeat. Failed agent attempts retain available
 session/usage/response/validation evidence and private transcript receipts. A capped transcript can
 be incomplete, and abandoned output is not guaranteed. Run-level failures (for example final schema
-validation) need not imply any step failed. Start from `rootCause: { stepId, error }`, also shown by
-human inspection. Attribution uses error identity/cause chains, not message matching.
+validation) need not imply any step failed. Start from `rootCause: { stepId, error, errorKind }`,
+also shown by human inspection. `errorKind` is the root effect's classified kind (its last
+attempt's), null for a body or run-level failure and for an interruption, and absent in records
+written before the field: `inspect` and the compact result then fall back to the root step's last
+attempt. Failure documents add `errorKind` and `retryable` to every `failedSteps[]` entry, and
+`error.details` is `{ errorKind, retryable }` for `workflow.failed` (null kind and
+`retryable: false` for a body failure; `workflow.interrupted` keeps `details: null`). `retryable` is
+true exactly when the kind is transient: `rate-limit`, `overloaded` or `timeout`, the set
+`retry.on: ['transient']` stands for. It is a classification, not a promise that a retry will
+succeed. `inspect --summary` step rows carry `errorKind` (the last attempt's kind, null for a step
+without a failed attempt), and the text view prints `[<kind>]` on the step line and
+`Root cause (<step>, <kind>)`. Attribution uses error identity/cause chains, not message matching.
 `WorkflowRunError` names the root step/kind and exposes `runId`, `stepId`, saved `run`, and original
 `cause`; `-v` prints the saved stack. A map's initiating step stays `failed`; an interrupted sibling
 is `cancelled`, with a distinct cancellation message and `cancelledBy` set to the initiating step ID

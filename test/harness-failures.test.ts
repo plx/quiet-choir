@@ -138,6 +138,10 @@ describe('captured exit-1 failures', () => {
         expect(saved.steps['agent']?.error).toBe(error.message);
         expect(saved.steps['agent']?.failedAttempts).toHaveLength(resume ? 2 : 1);
         expect(saved.steps['agent']?.attemptHistory?.at(-1)?.errorKind).toBe(capture.expected.kind);
+        expect(saved.rootCause).toMatchObject({
+          stepId: 'agent',
+          errorKind: capture.expected.kind,
+        });
         expect(saved.steps['agent']?.failedAttempts?.at(-1)).toEqual({
           attempt: resume ? 2 : 1,
           sessionId: error.sessionId,

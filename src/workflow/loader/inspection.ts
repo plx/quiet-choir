@@ -18,10 +18,11 @@ import { classifyRecovery } from '../runtime/recovery-decision.js';
 import { brandError, isBranded } from '../runtime/error-brand.js';
 import { RunRefusedError, type CliErrorCode } from '../runtime/run-errors.js';
 import type { RequestSummary, RunEvent, UsageSummary } from '../runtime/observability-model.js';
-import type { JsonValue } from '../runtime/model.js';
+import type { ErrorKind, JsonValue } from '../runtime/model.js';
 import type { ChildRecord } from '../runtime/child-model.js';
 import type { CommandLauncher } from '../runtime/commands.js';
 import { runNextCommands, type NextCommand } from './next-commands.js';
+import { rootCauseSummary, stepErrorKind, type RootCauseSummary } from './failure-kind.js';
 
 /** Inspection states are derived; stale never overwrites the checkpoint status. @internal */
 export type InspectionStatus = RunRecord['status'] | 'stale';
@@ -120,9 +121,11 @@ export interface RunSummary {
       (WorktreeStep & { readonly directoryState: 'present' | 'missing' | 'removed' }) | null;
     readonly merge: StepRecord['merge'] | null;
     readonly error: string | null;
+    /** Kind of the step's last attempt failure; null without a failed attempt. */
+    readonly errorKind: ErrorKind | null;
     readonly rootCause: boolean;
   }[];
-  readonly rootCause: RunRecord['rootCause'];
+  readonly rootCause: RootCauseSummary | null;
   readonly error: string | null;
   readonly errorStack: string | null;
   /** The workflow's output once the recorded status is completed; null otherwise. */
@@ -426,9 +429,10 @@ export function summarizeRun(
           : null,
         merge: step.merge ?? null,
         error: step.error,
+        errorKind: stepErrorKind(step),
         rootCause: run.rootCause?.stepId === id,
       })),
-    rootCause: run.rootCause ?? null,
+    rootCause: rootCauseSummary(run),
     error: run.error,
     errorStack: run.errorStack ?? null,
     output: run.status === 'completed' ? run.output : null,

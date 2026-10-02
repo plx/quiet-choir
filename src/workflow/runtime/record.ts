@@ -703,7 +703,14 @@ const recordFieldsSchema = z.object({
   status: z.enum(['running', 'completed', 'failed', 'cancelled', 'suspended']),
   error: z.string().nullable(),
   steps: stepsSchema,
-  rootCause: z.object({ stepId: z.string().nullable(), error: z.string() }).nullable().optional(),
+  rootCause: z
+    .object({
+      stepId: z.string().nullable(),
+      error: z.string(),
+      errorKind: errorKindSchema.nullable().optional(),
+    })
+    .nullable()
+    .optional(),
   maps: z
     .record(
       z.string(),

@@ -277,7 +277,11 @@ it('records queued cancellation without invocation and retains the original run 
   expect(Object.values(record.steps).every((step) => step.error === 'Workflow cancelled.')).toBe(
     true,
   );
-  expect(record.rootCause).toEqual({ stepId: null, error: 'operator stop' });
+  expect(record.rootCause).toEqual({
+    stepId: null,
+    error: 'operator stop',
+    errorKind: null,
+  });
   expect(events.filter((event) => event.type === 'agent.admitted')).toHaveLength(0);
   expect(
     events.filter((event) => event.type === 'agent.queued').map((event) => event.waitedMs),

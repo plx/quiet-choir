@@ -2,6 +2,16 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- `errorKind` and `retryable` in failure output (additive; no identity or checkpoint format change):
+  `rootCause` gains an optional `errorKind`, the root effect's classified kind, null for a body
+  failure or interruption. Failure documents add `errorKind` and `retryable` to each `failedSteps[]`
+  entry, and `error.details` is `{ errorKind, retryable }` for `workflow.failed` instead of null.
+  `retryable` is true for `rate-limit`, `overloaded` and `timeout`, the set
+  `retry.on: ['transient']` stands for. The compact run result's `rootCause`, the
+  `inspect --summary` rootCause and its step rows carry the kind, and the text view prints
+  `[<kind>]` and `Root cause (step, kind)`. Records written before this change still load, inspect
+  and resume; summaries fall back to the root step's last attempt, and the stored record is not
+  rewritten. `RootCause` (public type) gains the optional field.
 - Failure kinds and a transient retry alias (behavior change for `retry` without `on`; no identity
   or checkpoint format change): `ErrorKind` gains `invalid-request` (HTTP 400/404/422, an unknown
   model or an invalid effort or option) and `overloaded` (HTTP 500/502/503/529). `retry.on` accepts

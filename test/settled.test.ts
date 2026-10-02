@@ -353,7 +353,7 @@ it('fails without settling an AbortError when the run signal was not aborted', a
   });
   expect(saved).toMatchObject({
     status: 'failed',
-    rootCause: { stepId: 'cancel', error: 'cancelled' },
+    rootCause: { stepId: 'cancel', error: 'cancelled', errorKind: 'cancelled' },
   });
 });
 
