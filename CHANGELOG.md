@@ -2,6 +2,20 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- `ctx.poll` (and `ctx.wait`'s `poll` source) has a command form (#151; amends ADR 0020):
+  `{ input, schema, every, timeoutMs | deadline, command, output, done, commandOptions?, live? }`.
+  Each check runs `command` through the run's process runner like an observer's `context.exec.json`,
+  owned by the wait for orphan recovery and stopped with the observation's signal, with
+  `observeTimeoutMs` as its timeout; `done(output, previous)` decides the outcome and must be pure.
+  A failing command is an `ExecError` (`process`, `output-limit` or `schema`) that the poll's
+  `onError` may tolerate. Under `--dry-run` each check is synthesized from `output` or answered by
+  an exec fixture rule, listed in `commands` under the wait ID, and `live: true` runs it for real.
+  New public types `CommandPollSource`, `CommandPollOptions` and `PollCommandExecOptions`;
+  `WaitSources.poll` accepts either form; `PollSource` gains `command?: never`; `PollRequest` gains
+  optional `command` (the prepared `ExecSummary` and the `output` JSON Schema, with `observe`
+  holding `done`'s digest); `PendingWait` and `workflow pending` rows gain `command`. The command
+  and its options are validated when the wait opens. Observer-form requests and identities are
+  unchanged.
 - Step callbacks and poll observers can run commands through `context.exec(argv, options?)` and
   `context.exec.json(argv, { schema })` (#150; amends ADR 0027 and ADR 0016). They take `ctx.exec`'s
   command and options without an ID, `worktree` or `retry`, go through `RunOptions.execRunner` (or

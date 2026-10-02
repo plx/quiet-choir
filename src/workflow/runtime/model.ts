@@ -29,6 +29,7 @@ import type {
   WaitSources,
   WaitOutcome,
   PollOptions,
+  CommandPollOptions,
   PollOutcome,
   DeadlineOutcome,
 } from './wait-model.js';
@@ -521,7 +522,19 @@ export interface WorkflowContext<
   wait<const S extends WaitSources>(id: string, sources: S): Promise<WaitOutcome<S>>;
   /** Wait until a fixed epoch timestamp, suspending when quiescent unless due shortly. */
   sleepUntil(id: string, epochMs: number): Promise<null>;
-  /** Poll changing state with a pinned finite deadline and one bounded progress record. */
+  /**
+   * Poll changing state with a pinned finite deadline and one bounded progress record. This form
+   * runs one command per check through the run's process runner: its JSON stdout is validated with
+   * `output` and `done(output, previous)` decides the outcome.
+   */
+  poll<T, O, N extends JsonValue = JsonValue>(
+    id: string,
+    options: CommandPollOptions<T, O, N>,
+  ): Promise<PollOutcome<T> | DeadlineOutcome>;
+  /**
+   * Poll with a read-only observer callback. Declared last, so a mistake in an observer poll is
+   * reported against this form.
+   */
   poll<T, N extends JsonValue = JsonValue>(
     id: string,
     options: PollOptions<T, N>,

@@ -7,6 +7,7 @@ import {
   assertCompleted,
   defineWorkflow,
   listPending,
+  NodeProcessRunner,
   readRun,
   runWorkflow,
   writeAnswer,
@@ -258,6 +259,64 @@ describe('workflow.pending through the executor', () => {
     ]);
     // A failed run's queued row would be resumable; an unanswered one has no next entry.
     expect(all.pending.find((r) => r.runId === 'failed')?.next).toEqual([]);
+  });
+
+  it('projects a command poll argv into its wait row and null for other waits', async () => {
+    const command = [
+      process.execPath,
+      '-e',
+      'process.stdout.write(JSON.stringify({ ready: false }))',
+    ];
+    const polls = defineWorkflow({
+      name: 'polls',
+      version: '1',
+      input: z.null(),
+      output: z.unknown(),
+      run: (ctx: WorkflowContext) =>
+        Promise.all([
+          ctx.poll('ci', {
+            input: null,
+            schema: z.literal(true),
+            every: 600_000,
+            timeoutMs: 3_600_000,
+            command: command as [string, ...string[]],
+            output: z.object({ ready: z.boolean() }),
+            done: (output) =>
+              output.ready ? { done: true, value: true as const } : { done: false },
+          }),
+          ctx.poll('observed', {
+            input: null,
+            schema: z.literal(true),
+            every: 600_000,
+            timeoutMs: 3_600_000,
+            observe: () => Promise.resolve({ done: false as const }),
+          }),
+          ctx.sleep('nap', 3_600_000),
+        ]),
+    });
+    const run = await runWorkflow(polls, {
+      stateDir: runs,
+      runId: 'polls',
+      input: null,
+      cwd: runs,
+      processRunner: new NodeProcessRunner(),
+    });
+    expect(run.status).toBe('suspended');
+    const listed = await pending();
+    if (listed.kind !== 'workflow.pending.result') throw new Error('Expected a pending result.');
+    expect(
+      new Map(listed.pending.map((row) => [row.stepId, 'kind' in row ? row.command : 'question'])),
+    ).toEqual(
+      new Map([
+        ['ci', command],
+        ['observed', null],
+        ['nap', null],
+      ]),
+    );
+    expect(listed.pending.find((row) => row.stepId === 'ci')).toMatchObject({
+      checks: 1,
+      delivery: null,
+    });
   });
 
   it('lists a block-mode running run with an unanswered question by default', async () => {

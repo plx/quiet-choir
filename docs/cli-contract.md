@@ -49,7 +49,9 @@ accepts no answer. Delivery is advisory: while an owner is consuming the file a 
 for a moment, and `answer` stays the authoritative first-answer check. `next` follows the
 [next commands](#next-commands) shape: a queued row of a suspended or failed run that has launch
 metadata gets one `resume` entry (repeating the run's recorded launch policy) so the owner ingests
-the answer; every other row gets `[]`, because a running owner ingests the answer itself.
+the answer; every other row gets `[]`, because a running owner ingests the answer itself. A wait row
+(`kind: "wait"`) also has `command`: the argv or `{ shell }` a
+[command poll](waits.md#command-polls) runs on each check, or null for any other wait.
 
 By default `pending` lists only rows that still need an answer: it hides rows whose delivery is
 `queued` and rows of `failed`, `cancelled` or `completed` runs, and reports how many it hid in

@@ -6,6 +6,8 @@ import type { QuestionRequest } from './question-model.js';
 import type { JsonValue } from './model.js';
 import type { WaitRecord, WaitRequest, WaitSources } from './wait-model.js';
 import { MAX_EPOCH_MS } from './clock.js';
+import { execSummarySchema } from './exec-schema.js';
+import type { PollCommandIdentity } from './poll-command.js';
 
 const epoch = z.number().int().min(0).max(MAX_EPOCH_MS);
 const duration = z.number().min(0).max(MAX_EPOCH_MS);
@@ -30,6 +32,8 @@ const requestSchema = z
         schema: z.json(),
         every: everySchema,
         observe: z.string().regex(/^[a-f0-9]{64}$/u),
+        // Only a command poll has it, so an observer poll's request and identity are unchanged.
+        command: z.object({ exec: execSummarySchema, output: z.json() }).exactOptional(),
       })
       .nullable(),
   })
@@ -56,8 +60,15 @@ export const waitRecordSchema: z.ZodType<WaitRecord> = z.object({
     .exactOptional(),
 });
 
-/** Normalize dependencies before recording or comparing a wait identity. @internal */
-export function waitRequest(sources: WaitSources): {
+/**
+ * Normalize dependencies before recording or comparing a wait identity. A command poll also needs
+ * its prepared command identity (see `commandPollIdentity`), which takes an asynchronous cwd lookup.
+ * @internal
+ */
+export function waitRequest(
+  sources: WaitSources,
+  command?: PollCommandIdentity,
+): {
   request: WaitRequest;
   question: QuestionRequest | undefined;
 } {
@@ -73,11 +84,18 @@ export function waitRequest(sources: WaitSources): {
   if (sources.timeoutMs !== undefined) duration.parse(sources.timeoutMs);
   if (sources.deadline !== undefined) epoch.parse(sources.deadline);
   const poll = sources.poll;
-  if (
-    poll !== undefined &&
-    ((poll as unknown) === null || typeof poll !== 'object' || typeof poll.observe !== 'function')
-  )
-    throw new Error('Poll source requires an observe callback.');
+  if (poll !== undefined && ((poll as unknown) === null || typeof poll !== 'object'))
+    throw new Error('Poll source must be an object.');
+  // Read the callbacks as plain values: a JavaScript caller may pass either, both or neither.
+  const callbacks = poll as
+    { readonly observe?: unknown; readonly command?: unknown; readonly done?: unknown } | undefined;
+  const commandForm = callbacks?.command !== undefined;
+  if (commandForm && callbacks.observe !== undefined)
+    throw new Error('Poll source takes an observe callback or a command, not both.');
+  if (callbacks !== undefined && !commandForm && typeof callbacks.observe !== 'function')
+    throw new Error('Poll source requires an observe callback or a command.');
+  if (commandForm && command === undefined)
+    throw new Error('Command poll identity must be prepared before its wait request.');
   // observeTimeoutMs is execution policy: it is validated here but deliberately kept out of the
   // request below, so it never enters wait identity and may change on resume.
   const observeTimeoutMs = poll?.observeTimeoutMs as unknown;
@@ -119,7 +137,13 @@ export function waitRequest(sources: WaitSources): {
                         maxMs: every?.maxMs,
                         factor: every?.factor ?? 2,
                       },
-                observe: digest(Function.prototype.toString.call(poll.observe)),
+                // A command poll records done's source where an observer poll records observe's.
+                observe: digest(
+                  Function.prototype.toString.call(
+                    commandForm ? callbacks.done : callbacks?.observe,
+                  ),
+                ),
+                ...(commandForm && command !== undefined ? { command } : {}),
               },
       },
       'Wait sources',

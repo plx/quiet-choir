@@ -13,13 +13,15 @@ import type { JsonValue } from './model.js';
 import type { RunRecord, StepRecord } from './store.js';
 import { clockNow, MAX_EPOCH_MS, SHORT_WAIT_MS, systemClock } from './clock.js';
 import { waitNote, waitRequest } from './wait-schema.js';
-import type {
-  PollContext,
-  PollSource,
-  WaitRecord,
-  WaitSources,
-  WorkflowClock,
-} from './wait-model.js';
+import {
+  commandPollIdentity,
+  defaultObserveTimeoutMs,
+  isCommandPoll,
+  observePoll,
+  type AnyPollSource,
+  type PollObservation,
+} from './poll-command.js';
+import type { PollContext, WaitRecord, WaitSources, WorkflowClock } from './wait-model.js';
 
 type Outcome =
   | { by: 'signal'; value: JsonValue; at: number; actor: string | null }
@@ -40,8 +42,6 @@ const outcomeSchema: z.ZodType<Outcome> = z.discriminatedUnion('by', [
   }),
   z.object({ by: z.literal('deadline'), at: z.number().int().nonnegative(), note: z.json() }),
 ]);
-/** Default upper bound for one poll observation when the poll sets no observeTimeoutMs. */
-const defaultObserveTimeoutMs = 60_000;
 /**
  * Real-time grace for an observation to settle after its signal aborts, mirroring the runner's
  * transcriptSettleMs. It bounds process-local settling, so it never uses the workflow clock: a
@@ -115,11 +115,7 @@ interface QuestionDependencies {
   /** Record a nonfatal run warning, such as an abandoned poll observation. */
   readonly warn: (message: string) => void;
   /** Run one poll observation for the wait `id`; rehearsal may replace it with a stub. */
-  readonly observe?: (
-    id: string,
-    source: PollSource<unknown>,
-    context: PollContext,
-  ) => ReturnType<PollSource<unknown>['observe']>;
+  readonly observe?: (id: string, source: AnyPollSource, context: PollContext) => PollObservation;
   /** Whether an error is an authoring violation that must fail the run; never tolerated. */
   readonly isFatal?: (error: unknown) => boolean;
   /** Run a poll error-policy callback under the same guard as an observer. */
@@ -220,7 +216,12 @@ export class RunQuestions {
     const finish = activity.begin();
     try {
       signal.throwIfAborted();
-      const { request, question } = waitRequest(sources);
+      // A command poll's identity includes its prepared command, which needs the canonical cwd.
+      const command =
+        sources.poll !== undefined && isCommandPoll(sources.poll)
+          ? await commandPollIdentity(sources.poll, record.cwd)
+          : undefined;
+      const { request, question } = waitRequest(sources, command);
       const identity = stepIdentity(
         kind === 'ask'
           ? { kind: 'ask', ...(jsonValue(question) as Record<string, JsonValue>) }
@@ -515,7 +516,7 @@ export class RunQuestions {
         await this.#complete(id, step, waiter, { by: 'deadline', at, note: progress.note });
         return;
       }
-      let result: Awaited<ReturnType<PollSource<unknown>['observe']>>;
+      let result: Awaited<PollObservation>;
       try {
         // An expiry fails like a thrown observer, so the same onError policy applies to it.
         if (observed.kind === 'observeTimeoutMs') throw this.#observeTimeout(id, poll);
@@ -530,7 +531,9 @@ export class RunQuestions {
         typeof result !== 'object' ||
         typeof result.done !== 'boolean'
       )
-        throw new Error(`Wait ${id}: observe must return {done:true,value} or {done:false,note?}.`);
+        throw new Error(
+          `Wait ${id}: ${isCommandPoll(poll) ? 'done' : 'observe'} must return {done:true,value} or {done:false,note?}.`,
+        );
       // A successful observation resets the consecutive error count.
       delete progress.lastError;
       signal = await this.#signal(id, step, waiter);
@@ -575,7 +578,7 @@ export class RunQuestions {
     id: string,
     step: StepRecord,
     waiter: Waiter,
-    poll: PollSource<unknown>,
+    poll: AnyPollSource,
     progress: WaitRecord,
     error: unknown,
   ): Promise<void> {
@@ -642,7 +645,7 @@ export class RunQuestions {
    */
   async #observe(
     id: string,
-    poll: PollSource<unknown>,
+    poll: AnyPollSource,
     deadline: number | null,
     waiter: Waiter,
     previous: PollContext['previous'],
@@ -684,7 +687,7 @@ export class RunQuestions {
       previous,
     };
     const observation = (async () =>
-      this.#deps.observe ? this.#deps.observe(id, poll, context) : poll.observe(context))();
+      this.#deps.observe ? this.#deps.observe(id, poll, context) : observePoll(poll, context))();
     void observation.catch(() => undefined);
     const settled = observation.then(
       () => 'settled' as const,
@@ -752,7 +755,7 @@ export class RunQuestions {
       await this.#clock.sleep(Math.max(1, remaining), signal);
     }
   }
-  #observeTimeout(id: string, poll: PollSource<unknown>): Error {
+  #observeTimeout(id: string, poll: AnyPollSource): Error {
     const limit =
       poll.observeTimeoutMs === undefined
         ? `${String(defaultObserveTimeoutMs)}ms, the default`

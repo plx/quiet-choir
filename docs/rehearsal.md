@@ -15,21 +15,22 @@ node bin/run.js workflow execute examples/duet.workflow.ts \
 
 `--dry-run` invokes no Claude/Codex executable, version discovery, or OS owner-identity probe. The
 only processes it may start are a read-only `git rev-parse` that resolves the base of an isolated
-call or merge (see [worktree isolation](#worktree-isolation)) and a poll observer's command with
-`live: true`. Checkpoint files live in a private temporary directory removed when the executor
-finishes. The normal/default state directory is not created. Typechecking/importing still run
-normally. **Local callbacks and top-level workflow code execute for real.** Temporary checkpoints do
-not undo their filesystem, subprocess, network, or external effects. Stub named local effects when
-needed: `--stub-steps 'publish/**' --stub-steps 'notify/*'`. These patterns match fully qualified
-IDs; `*` stays within a segment and `**` crosses segments. Matched callbacks, file reads/writes and
-poll observers receive synthesized results through their original Zod validation (a matched poll
-completes without calling its observer); unmatched callbacks run normally. Commands (`ctx.exec`)
-never spawn: they are synthesized from their schema unless the fixture file has a matching exec rule
-(see [command fixtures](#command-fixtures)). The same holds for commands a local callback or poll
-observer runs through `context.exec`, except that an observer may pass `live: true` to keep a
-read-only check real, such as the initial observation of a wait. `live` is refused in a step
-callback. Durable sleeps complete immediately. Rehearsal preserves capability/profile validation and
-still requires declared grants.
+call or merge (see [worktree isolation](#worktree-isolation)) and a `live: true` command of a poll
+observer or command poll. Checkpoint files live in a private temporary directory removed when the
+executor finishes. The normal/default state directory is not created. Typechecking/importing still
+run normally. **Local callbacks and top-level workflow code execute for real.** Temporary
+checkpoints do not undo their filesystem, subprocess, network, or external effects. Stub named local
+effects when needed: `--stub-steps 'publish/**' --stub-steps 'notify/*'`. These patterns match fully
+qualified IDs; `*` stays within a segment and `**` crosses segments. Matched callbacks, file
+reads/writes and poll observers receive synthesized results through their original Zod validation (a
+matched poll completes without calling its observer); unmatched callbacks run normally. Commands
+(`ctx.exec`) never spawn: they are synthesized from their schema unless the fixture file has a
+matching exec rule (see [command fixtures](#command-fixtures)). The same holds for commands a local
+callback or poll observer runs through `context.exec`, and for each check of a
+[command poll](waits.md#command-polls), whose output is synthesized from its `output` schema, except
+that an observer or a command poll may pass `live: true` to keep a read-only check real, such as the
+initial observation of a wait. `live` is refused in a step callback. Durable sleeps complete
+immediately. Rehearsal preserves capability/profile validation and still requires declared grants.
 
 ## Fixtures
 
@@ -205,11 +206,12 @@ report contains:
 - `replays`: reused effect IDs/kinds. Their full original prompts were never saved, so they do not
   appear as new live calls. A completed-run preview lists all reused terminal effects.
 - `commands`: commands that reached the rehearsal runner, with step ID, `parentStepId` (the step or
-  wait whose callback or observer ran it through `context.exec`, or null for `ctx.exec`), command,
-  cwd, whether it is structured, output source (`fixture`, `synthesized`, or `live` for an
-  observer's `live: true` command that ran for real), the matched index in the file's `exec` array
-  (or null), and `error`, the refusal of an unmatched command under `commands: "fixture"` (such an
-  entry has output source `fixture` and index null).
+  wait whose callback or observer ran it through `context.exec`, the wait of a command poll's check,
+  or null for `ctx.exec`), command, cwd, whether it is structured, output source (`fixture`,
+  `synthesized`, or `live` for an observer's or command poll's `live: true` command that ran for
+  real), the matched index in the file's `exec` array (or null), and `error`, the refusal of an
+  unmatched command under `commands: "fixture"` (such an entry has output source `fixture` and index
+  null).
 - `staleExecFixtures`: indices of exec rules that matched no command, with a warning when any exist.
   A resume preview reports rules for replayed steps as stale.
 - `harnessCounts` (`providerCounts` retains built-in compatibility counts),
@@ -287,17 +289,17 @@ The root entry point exports `FixtureHarness`, `parseHarnessFixtures`, `HarnessF
 `runWorkflow` for durable fixture execution; `FixtureHarness` answers agent calls only. To answer
 commands, pass your own `ProcessRunner` as `RunOptions.execRunner`, which `ctx.exec` and
 `context.exec` use instead of `processRunner` while worktree Git keeps `processRunner`. A
-`context.exec` request has `nested: true`; under `RunOptions.rehearsal` an observer's `live: true`
-command goes to `processRunner`. With `RunOptions.rehearsal`, the runtime uses `processRunner` only
-for the read-only `git rev-parse` of synthesized isolation, and `rehearsal.onWorktree` observes each
-synthesized isolated call and merge; a `processRunner` that spawns nothing yields placeholder bases.
-`HarnessRequest.call` carries `runId`, `stepId`, cumulative `attempt`, and stable
-`idempotencyKey: runId/stepId`; it is attached inside the effect after fingerprinting.
-`HarnessRequestInput` is the identity-free input accepted by `CliHarness.plan()` and direct adapter
-calls. Planning image calls requires `imageAttachments` containing the already captured bytes;
-normal runtime/direct execution captures them before planning. A plan is JSON data and creates no
-files or processes. Actual invocation materializes only its indexed artifact references, then cleans
-them up.
+`context.exec` request, including a command poll's check, has `nested: true`; under
+`RunOptions.rehearsal` an observer's or command poll's `live: true` command goes to `processRunner`.
+With `RunOptions.rehearsal`, the runtime uses `processRunner` only for the read-only `git rev-parse`
+of synthesized isolation, and `rehearsal.onWorktree` observes each synthesized isolated call and
+merge; a `processRunner` that spawns nothing yields placeholder bases. `HarnessRequest.call` carries
+`runId`, `stepId`, cumulative `attempt`, and stable `idempotencyKey: runId/stepId`; it is attached
+inside the effect after fingerprinting. `HarnessRequestInput` is the identity-free input accepted by
+`CliHarness.plan()` and direct adapter calls. Planning image calls requires `imageAttachments`
+containing the already captured bytes; normal runtime/direct execution captures them before
+planning. A plan is JSON data and creates no files or processes. Actual invocation materializes only
+its indexed artifact references, then cleans them up.
 
 Native CLI attempts receive `QUIET_CHOIR_RUN_ID`, `QUIET_CHOIR_STEP_ID`, `QUIET_CHOIR_ATTEMPT`, and
 `QUIET_CHOIR_IDEMPOTENCY_KEY` environment variables. These are routing/diagnostic metadata, not

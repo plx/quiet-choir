@@ -68,6 +68,7 @@ import { prepareLegacyReplay } from './legacy.js';
 import { RunActivity } from './activity.js';
 import { FileRunStore, type RunStore } from './run-store.js';
 import { RunQuestions } from './questions.js';
+import { observePoll, type AnyPollSource } from './poll-command.js';
 import { clockNow, systemClock } from './clock.js';
 import type {
   WorkflowClock,
@@ -75,8 +76,8 @@ import type {
   WaitSources,
   WaitOutcome,
   PollOptions,
+  CommandPollOptions,
   PollOutcome,
-  PollSource,
   SignalOutcome,
   DeadlineOutcome,
 } from './wait-model.js';
@@ -2856,7 +2857,8 @@ export async function runWorkflow<
         });
         return inEffect.run('poll', async () => {
           try {
-            return await source.observe({ ...context, exec: innerExec.exec });
+            // A command poll runs its command through this same exec, then calls done.
+            return await observePoll(source, { ...context, exec: innerExec.exec });
           } finally {
             await innerExec.close(
               new Error(`Wait ${id}: its observation settled; inner command terminated.`),
@@ -3137,12 +3139,16 @@ export async function runWorkflow<
       wait: <const S extends WaitSources>(id: string, sources: S) =>
         waitOperation(id, sources, (outcome) => outcome as WaitOutcome<S>),
       sleepUntil: (id, deadline) => waitOperation(id, { deadline }, () => null),
-      poll: <T, N extends JsonValue = JsonValue>(id: string, settings: PollOptions<T, N>) =>
+      // Cast: one implementation serves the observer and command overloads.
+      poll: <T, N extends JsonValue = JsonValue>(
+        id: string,
+        settings: PollOptions<T, N> | CommandPollOptions<T, unknown, N>,
+      ) =>
         waitOperation(
           id,
           {
             // PollContext<N> narrows previous.note for the author; the runtime passes stored JSON.
-            poll: settings as PollSource<unknown>,
+            poll: settings as AnyPollSource,
             ...(settings.timeoutMs === undefined ? {} : { timeoutMs: settings.timeoutMs }),
             ...(settings.deadline === undefined ? {} : { deadline: settings.deadline }),
           },

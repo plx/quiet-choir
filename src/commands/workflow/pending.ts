@@ -45,7 +45,7 @@ export default class WorkflowPending extends WorkflowCommand {
       const rows = result.pending.map((q) => {
         const head =
           'kind' in q
-            ? `${q.runId} ${q.stepId} [wait] checks=${String(q.checks)} nextCheckAt=${String(q.nextCheckAt)} deadline=${String(q.deadline)}${q.signal ? ` ${q.signal.prompt}` : ''}`
+            ? `${q.runId} ${q.stepId} [wait] checks=${String(q.checks)} nextCheckAt=${String(q.nextCheckAt)} deadline=${String(q.deadline)}${q.command ? ` command=${JSON.stringify(q.command)}` : ''}${q.signal ? ` ${q.signal.prompt}` : ''}`
             : `${q.runId} ${q.stepId} [${q.audience}] ${q.prompt}${q.codeChanged ? ' (source changed; check resume before requesting a decision)' : ''}`;
         const marks = `${q.delivery?.state === 'queued' ? ` (answer queued${q.delivery.by === null ? '' : ` by ${q.delivery.by}`}${q.delivery.at === null ? '' : ` at ${q.delivery.at}`})` : ''}${q.runStatus === 'running' || q.runStatus === 'suspended' ? '' : ` [run ${q.runStatus}]`}`;
         const detail =

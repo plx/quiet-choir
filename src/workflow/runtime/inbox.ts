@@ -285,6 +285,7 @@ export async function pendingOperations(
         note: structuredClone(step.wait.note),
         lastError: step.wait.lastError ? structuredClone(step.wait.lastError) : null,
         signal: step.question ? structuredClone(step.question.request) : null,
+        command: structuredClone(step.wait.request.poll?.command?.exec.command ?? null),
         rejections: structuredClone(step.question?.rejections ?? []),
         codeChanged,
         answerCommand,

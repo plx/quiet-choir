@@ -146,7 +146,7 @@ API key is required. See [harness isolation](docs/harness-isolation.md). The sou
 | `ctx.now(id)`                                                 | Record a stable clock anchor for replay                                       |
 | `ctx.wait(id, sources)`                                       | Resolve a signal, read-only poll, or deadline in one record                   |
 | `ctx.sleepUntil(id, epochMs)`                                 | Wait until a fixed deadline; long waits suspend                               |
-| `ctx.poll(id, options)`                                       | Poll with a schema, spacing, and finite deadline                              |
+| `ctx.poll(id, options)`                                       | Poll an observer or a command, with a schema, spacing, and finite deadline    |
 | `ctx.sleep(id, milliseconds)`                                 | Persist a wake time and wait only the remaining time after resume             |
 
 Long waits suspend at quiescence without cancelling siblings; waits due within 1000 ms stay live.

@@ -972,6 +972,7 @@ describe('pending command exit and error codes', () => {
     note: null,
     lastError: null,
     signal: null,
+    command: null,
     rejections: [],
     codeChanged: null,
     answerCommand: null,
@@ -985,7 +986,7 @@ describe('pending command exit and error codes', () => {
     const execute = vi.spyOn(WorkflowExecutor.prototype, 'execute').mockResolvedValue({
       kind: 'workflow.pending.result',
       ok: true,
-      pending: [question, wait],
+      pending: [question, wait, { ...wait, stepId: 'ci', command: ['gh', 'pr', 'checks', '1'] }],
       hidden: 0,
     });
     const output = await captureCommand(WorkflowPending, ['--state-dir', stateDir]);
@@ -996,6 +997,10 @@ describe('pending command exit and error codes', () => {
     );
     expect(output.stdout).toContain('run-a approve [human] Ship it?');
     expect(output.stdout).toContain('run-b poll [wait] checks=3 nextCheckAt=2000 deadline=5000');
+    // A command poll's row names the command it runs on each check.
+    expect(output.stdout).toContain(
+      'run-b ci [wait] checks=3 nextCheckAt=2000 deadline=5000 command=["gh","pr","checks","1"]',
+    );
   });
 
   it('renders the latest tolerated observation error of a wait as text and JSON', async () => {

@@ -14,10 +14,12 @@ stale HTTP caching. Reconciled/conditional writes belong in `ctx.step`.
 | Relative delay pinned once             | `await ctx.sleep('pause', 60_000)`                                         |
 | Absolute time from input/recorded data | `await ctx.sleepUntil('release-at', deadline)`                             |
 | Read-only readiness with a time bound  | `ctx.poll(id, { input, schema, every, observe, timeoutMs })` or `deadline` |
+| Readiness that one command reports     | `ctx.poll(id, { input, schema, every, command, output, done, timeoutMs })` |
 | Competing readiness sources            | `ctx.wait(id, { signal?, poll?, timeoutMs?, deadline? })`                  |
 
 Each sleep/poll/wait creates one wait record. `now` creates one local step. Wait identity includes
 original timing, signal presentation/schema/subject, poll input/schema/spacing, and observer source.
+A command poll fingerprints its prepared command, `output` schema and `done` source instead.
 Captured values still belong in poll input. Waiting identities cannot change; use revision-specific
 IDs and immutable subjects. Never derive changing sleep durations from a body `Date.now()`.
 `observeTimeoutMs` and `onError` are policy, not identity, and may change on resume.
@@ -40,6 +42,58 @@ runner, are owned by the wait for orphan recovery, stop with the observation sig
 synthesized or fixture-answered under rehearsal like `ctx.exec`; `{ live: true }` keeps a read-only
 one real under `--dry-run`. They are not durable: every check runs them again. See
 [commands inside a callback or observer](commands-files.md#commands-inside-a-callback-or-observer).
+
+### Command polls
+
+When the whole check is one command, declare it instead of an observer:
+`{ command, output, done, commandOptions?, live? }` beside `input`, `schema`, `every` and the time
+bound. Each check runs `command` (argv or `{ shell }`) like an observer's
+`context.exec.json(command, { schema: output })`: owned by the wait, stopped with the observation
+signal, rehearsed and fixture-answered, with `observeTimeoutMs` (default 60 s) as its timeout. Then
+`done(output, previous)` returns `{ done: true, value }` or `{ done: false, note? }`. `done` must be
+pure: no context, no context operations, debounce state in the note. `commandOptions` takes `cwd`,
+`env`, `inheritEnv`, `input`, `okExitCodes` and `maxOutputBytes` (no `timeoutMs` or `onError`). A
+failing exit, output over the cap or stdout not matching `output` throws an `ExecError` (kind
+`process`, `output-limit` or `schema`, 1024-character tails) that `onError` may tolerate; `classify`
+can read `error.diagnostics.code`. Identity adds `poll.command` (the prepared command with canonical
+cwd, env and stdin digests and exit codes, plus the `output` JSON Schema), and `poll.observe`
+digests `done`; `live`, `observeTimeoutMs`, `onError` and `maxOutputBytes` are policy. The command
+is validated when the wait opens. Under `--dry-run` each check is synthesized from `output` and
+listed in `commands` under the wait ID; `live: true` runs it for real. `workflow pending` shows the
+command. In `ctx.wait`, `done`'s output is `unknown`; `ctx.poll` infers it.
+
+```ts
+import { defineWorkflow, z } from 'quiet-choir';
+
+const checks = z.array(z.object({ name: z.string(), bucket: z.string() }));
+const seen = z.object({ green: z.boolean() }).nullable();
+
+export default defineWorkflow({
+  name: 'await-ci',
+  version: '1',
+  input: z.object({ pr: z.number().int() }),
+  output: z.unknown(),
+  run: (ctx, input) =>
+    ctx.poll('ci', {
+      input,
+      schema: z.enum(['pass', 'fail']),
+      every: { initialMs: 30_000, maxMs: 120_000 },
+      timeoutMs: 3_600_000,
+      command: ['gh', 'pr', 'checks', String(input.pr), '--json', 'name,bucket'],
+      output: checks,
+      // gh exits 8 while checks are pending; that is data, not a failure.
+      commandOptions: { okExitCodes: [0, 8] },
+      done: (output, previous) => {
+        if (output.some((check) => ['fail', 'cancel'].includes(check.bucket)))
+          return { done: true, value: 'fail' };
+        const green = output.every((check) => ['pass', 'skipping'].includes(check.bucket));
+        // Debounce: report pass only on the second green check in a row.
+        if (green && seen.parse(previous.note)?.green) return { done: true, value: 'pass' };
+        return { done: false, note: { green } };
+      },
+    }),
+});
+```
 
 `previous` holds the persisted progress before this check: `note` (null on the first check),
 `checks` (0 on the first check, tolerated errors included) and `openedAt`. It survives suspend, tick
@@ -74,10 +128,10 @@ process. `--wait-mode block` on execute/resume (or RunOptions.waitMode) keeps al
 saved sleeps replay; unfinished old sleep records retain the previous blocking path.
 
 `workflow pending --json` includes general waits with kind=wait, deadline, nextCheckAt, checks,
-note, lastError (latest tolerated error or null), and an optional signal/answer command.
-`nextWakeAt` is the earliest deadline/check, null for pure signals. Use `workflow answer` for an
-external signal, then tick when due. Human signals still need human routing; an agent cannot supply
-human approval on its own authority.
+note, lastError (latest tolerated error or null), command (a command poll's command or null), and an
+optional signal/answer command. `nextWakeAt` is the earliest deadline/check, null for pure signals.
+Use `workflow answer` for an external signal, then tick when due. Human signals still need human
+routing; an agent cannot supply human approval on its own authority.
 
 ```sh
 node "$QC_CHECKOUT/bin/run.js" workflow tick --state-dir "$QC_RUNS" --json
