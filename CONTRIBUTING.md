@@ -20,7 +20,11 @@ fails when any upstream original or batch `LICENSE` differs from its hash in `so
 and also fails until `apiSnapshot.sha256` in every batch matches `src/workflow/runtime/model.ts`;
 never record a commit. The six ports are release-notes, project-bootstrap, test-gap-filler,
 incident-investigation, sdlc-orchestrator and bug-hunt; see
-[the batch policy](comparisons/README.md#regression-and-snapshot-policy).
+[the batch policy](comparisons/README.md#regression-and-snapshot-policy). Then `durability:check`
+runs the durability lint that `workflow validate` runs
+([ADR 0041](docs/decisions/0041-static-durability-lint.md)) over every `examples/` and ported
+Workflow Lab workflow, and fails on any finding, type error or `// quiet-choir-ignore` comment
+without a reason.
 
 `test:cli` first runs `test/cli-smoke-runner.test.mjs` (the runner's own `node:test` checks) and
 then `scripts/run-cli-smokes.mjs`, which runs every `test/*smoke.mjs` against the built CLI, four at

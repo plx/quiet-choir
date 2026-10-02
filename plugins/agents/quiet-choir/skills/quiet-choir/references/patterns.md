@@ -689,27 +689,96 @@ rehearsal.
 
 The original prototype made several of these fail only during replay. Current guards and APIs catch
 or support more cases; the table describes the current runtime, not the old failure modes.
-[Inspection](inspection.md#match-a-symptom-to-its-next-action) covers exact error templates.
+[Inspection](inspection.md#match-a-symptom-to-its-next-action) covers exact error templates. Rows
+marked with a rule code are also reported before the run by the [durability lint](#durability-lint).
 
-| Tempting code                                                                   | Current consequence                                                                                                               | Use instead                                                                                                                                                         |
-| ------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Catch a throwing durable call, then select a fallback or sentinel               | The failed call can heal on resume and change a completed branch/input                                                            | [Latch](#latch-an-outcome) with `onError:'return'`, or fail and resume                                                                                              |
-| Retry by incrementing IDs (`ask/0`, `ask/1`)                                    | An earlier call can heal and bypass later recorded effects                                                                        | Same-ID `retry` as in [latch](#latch-an-outcome)                                                                                                                    |
-| Catch a map and assume its failure is a durable quorum decision                 | Catching no longer poisons the whole run, but replay can change an unjournaled decision                                           | [Tolerant panel](#failure-tolerant-panel); use [drain](#cross-harness-fan-outfan-in) for retryable failure                                                          |
-| Race durable calls with `Promise.race`                                          | Replay completion order can choose another branch; losing effects still need ownership/draining                                   | [Use one wait](#polling-and-deadlines) for readiness/deadlines, or an agent `timeoutMs` with `onError:'return'` for timeout decisions; do not race durable branches |
-| Compute a sleep duration/deadline from a live body `Date.now()`                 | A later execution changes its dependency/identity                                                                                 | [Recorded clock and polling](#polling-and-deadlines)                                                                                                                |
-| Read time/env/files/git diff in the body and place them in prompts              | Replay sees changed inputs despite unchanged workflow input                                                                       | Record the read in a local step, as in [polling](#polling-and-deadlines), then build prompts from saved values                                                      |
-| Supply undefined data indiscriminately                                          | Undefined object members are omitted; roots, array elements/holes, classes, and non-JSON values still fail                        | [Small JSON extraction](#work-then-extract); filter arrays or use null deliberately                                                                                 |
-| Use unrepresentable schemas (`z.void`, `z.undefined`, dates/bigints/transforms) | Call-time JSON Schema conversion can fail even after top-level `validate`                                                         | [Work, then extract](#work-then-extract) with JSON shapes and string dates; [rehearse](#rehearse-for-free) the reached path                                         |
-| Ban all Codex `.optional()` fields or assume strict mode accepts them unchanged | Default compat now encodes optionals/arrays/records; strict mode still has narrower wire rules                                    | The [flat extraction schema](#work-then-extract) and [current Codex schema rules](codex.md#structured-output-and-protocol)                                          |
-| Return a wider type than the schema                                             | Schema-first typing now rejects wider callbacks before import; local validation still matters                                     | [Typed extraction](#work-then-extract) and [rehearsal](#rehearse-for-free); use the actual output schema, not casts                                                 |
-| Start `void` chains or ignore a durable promise                                 | Owned operations drain, ignored failures reject, and new operations after closure are refused; unowned async chains remain unsafe | Await each stage as in the [per-item pipeline](#per-item-pipeline)                                                                                                  |
-| Raise limits by changing completed semantic inputs/model/tool grants            | Limits/retry are now policy; semantic changes still invalidate terminal identity                                                  | Keep the [bounded loop](#bounded-reviewrevise), raise authorized sticky limits, and use [fork reuse](#salvage-an-old-run) for semantic edits                        |
-| Run parallel editing calls in one checkout                                      | Filesystem edits race and checkpoints cannot roll them back                                                                       | [Worktree per item](#worktree-per-item), with explicit ownership and grants                                                                                         |
+| Tempting code                                                                               | Current consequence                                                                                                               | Use instead                                                                                                                                                         |
+| ------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Catch a throwing durable call, then select a fallback or sentinel                           | The failed call can heal on resume and change a completed branch/input                                                            | [Latch](#latch-an-outcome) with `onError:'return'`, or fail and resume                                                                                              |
+| Retry by incrementing IDs (`ask/0`, `ask/1`)                                                | An earlier call can heal and bypass later recorded effects                                                                        | Same-ID `retry` as in [latch](#latch-an-outcome)                                                                                                                    |
+| Catch a map and assume its failure is a durable quorum decision                             | Catching no longer poisons the whole run, but replay can change an unjournaled decision                                           | [Tolerant panel](#failure-tolerant-panel); use [drain](#cross-harness-fan-outfan-in) for retryable failure                                                          |
+| Race durable calls with `Promise.race` ([QC004](#qc004))                                    | Replay completion order can choose another branch; losing effects still need ownership/draining                                   | [Use one wait](#polling-and-deadlines) for readiness/deadlines, or an agent `timeoutMs` with `onError:'return'` for timeout decisions; do not race durable branches |
+| Compute a sleep duration/deadline from a live body `Date.now()` ([QC002](#qc002))           | A later execution changes its dependency/identity                                                                                 | [Recorded clock and polling](#polling-and-deadlines)                                                                                                                |
+| Read time/env/files/git diff in the body and place them in prompts ([QC002](#qc002))        | Replay sees changed inputs despite unchanged workflow input                                                                       | Record the read in a local step, as in [polling](#polling-and-deadlines), then build prompts from saved values                                                      |
+| Supply undefined data indiscriminately                                                      | Undefined object members are omitted; roots, array elements/holes, classes, and non-JSON values still fail                        | [Small JSON extraction](#work-then-extract); filter arrays or use null deliberately                                                                                 |
+| Use unrepresentable schemas (`z.void`, `z.undefined`, dates/bigints/transforms)             | Call-time JSON Schema conversion can fail even after top-level `validate`                                                         | [Work, then extract](#work-then-extract) with JSON shapes and string dates; [rehearse](#rehearse-for-free) the reached path                                         |
+| Ban all Codex `.optional()` fields or assume strict mode accepts them unchanged             | Default compat now encodes optionals/arrays/records; strict mode still has narrower wire rules                                    | The [flat extraction schema](#work-then-extract) and [current Codex schema rules](codex.md#structured-output-and-protocol)                                          |
+| Return a wider type than the schema                                                         | Schema-first typing now rejects wider callbacks before import; local validation still matters                                     | [Typed extraction](#work-then-extract) and [rehearsal](#rehearse-for-free); use the actual output schema, not casts                                                 |
+| Start `void` chains or ignore a durable promise ([QC001](#qc001))                           | Owned operations drain, ignored failures reject, and new operations after closure are refused; unowned async chains remain unsafe | Await each stage as in the [per-item pipeline](#per-item-pipeline)                                                                                                  |
+| Call `ctx.step`/`ctx.exec` inside a step `run` or a poll `observe`/`done` ([QC003](#qc003)) | The runtime rejects the nested durable call when the callback runs, after earlier effects already ran                             | The callback's own `context.exec`/`context.exec.json`, or move the call into the workflow body                                                                      |
+| Reuse a literal effect ID, or put one in a loop ([QC005](#qc005))                           | `Duplicate step ID` at the second use                                                                                             | Unique IDs, `ctx.id(...)` per item, `ctx.within`/`ctx.scope`, or a named `ctx.map` as in the [per-item pipeline](#per-item-pipeline)                                |
+| Fan out with the positional `ctx.map(items, n, mapper)` ([QC006](#qc006))                   | Deprecated; mappers share one unscoped ID namespace                                                                               | The named `ctx.map(id, items, { concurrency }, mapper)`                                                                                                             |
+| Raise limits by changing completed semantic inputs/model/tool grants                        | Limits/retry are now policy; semantic changes still invalidate terminal identity                                                  | Keep the [bounded loop](#bounded-reviewrevise), raise authorized sticky limits, and use [fork reuse](#salvage-an-old-run) for semantic edits                        |
+| Run parallel editing calls in one checkout                                                  | Filesystem edits race and checkpoints cannot roll them back                                                                       | [Worktree per item](#worktree-per-item), with explicit ownership and grants                                                                                         |
 
 For a tail-only code fix, first inspect what completed, then use explicit code acceptance or a fork.
 A new ID alone repays agent calls; it does not imply salvage. Never treat paid effects as rolled
 back because a checkpoint or schema validation failed.
+
+### Durability lint
+
+`workflow validate` runs a static lint after a clean type check and fails with exit 4
+(`load.typecheck`) on any finding. `execute`, `resume`, `answer --resume`, `tick`, `check-resume`
+and the runner behind `start` (in its log) print the same findings as warnings and continue;
+`list-defs` lists such definitions and warns when it validates them. Each finding is
+`path:line:col - error QCnnn: message` on stderr, or a
+`{rule, category, file, line, column, message}` entry in the JSON `diagnostics`. Receivers are
+resolved by type, so a renamed context parameter is still checked and an unrelated object with a
+`step` method is not.
+
+#### QC001
+
+An effect, `ctx.scope` or `ctx.phase(title, body)` promise that is discarded: `void`ed or left as a
+statement, also through `.then`/`.catch`/`.finally`. The runtime drains it and fails the run if it
+rejects, but the workflow never sees its result. Await it, or collect it in `Promise.all`.
+
+#### QC002
+
+`Date.now()`, an argument-less `new Date()` or `Date()`, `Math.random()`, `performance.now()`,
+`crypto.randomUUID()`, `process.env` or an `fs` `*Sync` call in the workflow body, outside a step
+`run`, a poll `observe`/`done` and a poll `onError` callback. Use `ctx.now`, `ctx.readFile`,
+`ctx.exec` or a `ctx.step`, or pass the value as workflow input.
+
+#### QC003
+
+A durable call (`ctx.step`, `ctx.exec`, an agent call and the other effects) lexically inside a step
+`run`, a poll `observe`/`done` or a poll `onError` callback. Use the callback's `context.exec`, or
+move the call into the body.
+
+#### QC004
+
+`Promise.race` or `Promise.any` over durable calls, directly or through a variable or an array built
+from them. Use one [`ctx.wait`](#polling-and-deadlines) for a durable choice.
+
+#### QC005
+
+A literal effect ID (a string or plain template literal) on the root context (`ctx`, `ctx.claude`,
+`ctx.codex`, `ctx.agent(name)`, `ctx.exec`, `ctx.exec.json`) used twice in one ID namespace, or
+inside a loop: `for`, `while`, `do`, an array callback (`map`, `forEach`, `reduce`, ...),
+`Array.from` with a mapper, or a positional `ctx.map` mapper. The workflow function, a `ctx.scope`
+callback, a named-map mapper and a child workflow each start a namespace. Reuse in different
+branches of one `if`/`else`, `?:` or `switch`, or in an `if` branch that ends in `return`/`throw`
+versus code after it, is not reported. Use `ctx.id(...)`, `ctx.within`, `ctx.scope` or a named map.
+
+#### QC006
+
+The deprecated positional `ctx.map(items, concurrency, mapper)`. Use the named form
+`ctx.map(id, items, { concurrency }, mapper)`.
+
+#### Suppress a finding
+
+Put `// quiet-choir-ignore QC002 <reason>` (several rules: `QC002, QC005`) on its own line directly
+before the reported line. It silences only the listed rules for findings that start on the next
+line. The engine accepts a missing reason; this repository's `npm run durability:check` requires
+one.
+
+#### Limitations
+
+The lint is lexical and per function. It does not follow helpers across calls, so a hazard inside a
+function called from a callback is judged where it is written. It does not check literal `ctx.scope`
+or `ctx.within` prefixes inside loops, IDs on a `ctx.within(...)` context, or reads through
+`fs/promises` and `child_process`. Runtime guards still catch duplicate IDs and nested effects when
+they execute.
 
 ## Workflow Lab acceptance recipes
 

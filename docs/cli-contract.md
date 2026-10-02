@@ -7,39 +7,39 @@ contract, including argument parsing errors. Request human help without `--json`
 process's banner.
 
 Success documents retain their shapes, except for the run commands described below: inspect returns
-a run with current ownership diagnostics, validate returns workflow metadata, typecheck returns its
-compiler result, and check-resume returns a compatible comparison in `check`.
-`inspect --json --summary` returns the compact dashboard, including the completed run's `output`
-(null otherwise) and an `agents` roll-up. `workflow list --json` returns
-`{kind, ok, stateDir, runs, warnings}` with compact rows: `id`, `workflow`, `status`,
-`recordedStatus`, `counts`, `updatedAt`, `ownership`, `nextWakeAt`, `cwd`, `stateDir`, `warnings`
-and a six-field `usage`; `--full` restores whole run summaries. `validate --json` and
-`list-defs --json` omit each `harnesses[].options` JSON Schema, at every depth of `children`, unless
-`--harness-schemas` is given. `list --all` discovers registered XDG projects without imports; rows
-include `cwd` and `stateDir`. `execute --resume --run-id ID` may omit FILE and use stored launch
-paths, as does `resume ID`. A supplied different FILE is refused before import. See
-[storage](storage.md). `inspect --watch --json` emits JSONL per checkpoint/ownership change, ending
-with a snapshot and exit 0/1/75/130/3 for completed/failed/suspended/cancelled/stale (an interrupted
-run ends as suspended). It does not add an error document for an observed failure. An interrupted
-watcher emits an error document and leaves the observed run untouched. Three opt-in flags bound the
-watch for hosts with time limits. `--timeout DURATION` is measured from the first successful read: a
-run still running then ends the watch with `watch.timeout` (exit 79), whose error document carries
-the last observed `status` (`running`) and `details.timeoutMs`; the run keeps running.
-`--wait-created DURATION` is measured from the start of the watch: until the first successful read,
-a missing record is retried at the interval instead of failing with `run.not_found` (exit 3), and
-when the bound expires the watch fails with `watch.record_not_created` (exit 66), `status: null` and
-`details.waitCreatedMs`. A record that disappears after it was read stays `run.not_found`. Both take
-`ms`, `s`, `m` or `h` durations up to 2147483647 ms and sleep at most until their deadline, then
-read once more, so a run that finishes at the deadline is reported as finished and the watch ends
-within one read after it. `--final` prints only the final snapshot, or only the error document on a
-bound, an interrupt or a missing record. With `--summary`, inspect error documents carry the compact
-`summary` instead of the whole `run`. 79 is the first exit after the sysexits block and has no
-meaning in sh, Node, `timeout(1)` or xargs; 124 stays `start.timeout`, so a host can tell "runner
-stopped without a record" from "run still running". See [run observability](observability.md) for
-polling, stale detection, and partial usage. Non-watching inspect exits 0 for any readable
-checkpoint status, including `failed`, `cancelled`, and `running`. `workflow pending --json` returns
-`{kind:"workflow.pending.result", ok, pending, hidden}`, and `workflow answer --json` without
-`--resume` returns `{kind:"workflow.answer.result", ok, delivery}`.
+a run with current ownership diagnostics, validate returns workflow metadata with `diagnostics: []`
+(see [durability lint](#durability-lint)), typecheck returns its compiler result, and check-resume
+returns a compatible comparison in `check`. `inspect --json --summary` returns the compact
+dashboard, including the completed run's `output` (null otherwise) and an `agents` roll-up.
+`workflow list --json` returns `{kind, ok, stateDir, runs, warnings}` with compact rows: `id`,
+`workflow`, `status`, `recordedStatus`, `counts`, `updatedAt`, `ownership`, `nextWakeAt`, `cwd`,
+`stateDir`, `warnings` and a six-field `usage`; `--full` restores whole run summaries.
+`validate --json` and `list-defs --json` omit each `harnesses[].options` JSON Schema, at every depth
+of `children`, unless `--harness-schemas` is given. `list --all` discovers registered XDG projects
+without imports; rows include `cwd` and `stateDir`. `execute --resume --run-id ID` may omit FILE and
+use stored launch paths, as does `resume ID`. A supplied different FILE is refused before import.
+See [storage](storage.md). `inspect --watch --json` emits JSONL per checkpoint/ownership change,
+ending with a snapshot and exit 0/1/75/130/3 for completed/failed/suspended/cancelled/stale (an
+interrupted run ends as suspended). It does not add an error document for an observed failure. An
+interrupted watcher emits an error document and leaves the observed run untouched. Three opt-in
+flags bound the watch for hosts with time limits. `--timeout DURATION` is measured from the first
+successful read: a run still running then ends the watch with `watch.timeout` (exit 79), whose error
+document carries the last observed `status` (`running`) and `details.timeoutMs`; the run keeps
+running. `--wait-created DURATION` is measured from the start of the watch: until the first
+successful read, a missing record is retried at the interval instead of failing with `run.not_found`
+(exit 3), and when the bound expires the watch fails with `watch.record_not_created` (exit 66),
+`status: null` and `details.waitCreatedMs`. A record that disappears after it was read stays
+`run.not_found`. Both take `ms`, `s`, `m` or `h` durations up to 2147483647 ms and sleep at most
+until their deadline, then read once more, so a run that finishes at the deadline is reported as
+finished and the watch ends within one read after it. `--final` prints only the final snapshot, or
+only the error document on a bound, an interrupt or a missing record. With `--summary`, inspect
+error documents carry the compact `summary` instead of the whole `run`. 79 is the first exit after
+the sysexits block and has no meaning in sh, Node, `timeout(1)` or xargs; 124 stays `start.timeout`,
+so a host can tell "runner stopped without a record" from "run still running". See
+[run observability](observability.md) for polling, stale detection, and partial usage. Non-watching
+inspect exits 0 for any readable checkpoint status, including `failed`, `cancelled`, and `running`.
+`workflow pending --json` returns `{kind:"workflow.pending.result", ok, pending, hidden}`, and
+`workflow answer --json` without `--resume` returns `{kind:"workflow.answer.result", ok, delivery}`.
 
 Each `pending` row keeps the question or wait fields and adds `runStatus` (the owning run's
 checkpoint status), `delivery` and `next`. `delivery` is `{state, at, by}`: `state` is `queued` when
@@ -176,20 +176,20 @@ least one. See [workflow rehearsal](rehearsal.md).
 
 Failures have these fields:
 
-| Field                         | Meaning                                                                                                                                                                 |
-| ----------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `kind`, `ok`, `exitCode`      | `"workflow.error"`, `false`, and the process exit code                                                                                                                  |
-| `error.code`, `error.message` | Stable code and diagnostic naming the root effect when available                                                                                                        |
-| `error.stepId`                | Root failing effect, or null for a body failure or interruption; never an aborted sibling                                                                               |
-| `error.details`               | Structured context: lock PID/host, schema issues, input source/position, compatibility comparison, or available run IDs; `{errorKind, retryable}` for `workflow.failed` |
-| `runId`, `stateDir`           | Requested/generated ID and absolute storage directory when known; otherwise null                                                                                        |
-| `status`                      | Actual saved checkpoint status, or null when unavailable                                                                                                                |
-| `summary`                     | execute, resume and answer without `--full`, and inspect with `--summary`: the compact run result, or null when unavailable                                             |
-| `run`                         | Saved record, or null when unavailable. Every other command, inspect without `--summary`, a `--dry-run` failure, or `--full` on execute/resume/answer                   |
-| `failedSteps`                 | Saved failed/cancelled steps with ID, kind, attempts, error, `errorKind` (last attempt, or null) and `retryable` (the kind is `rate-limit`, `overloaded` or `timeout`)  |
-| `diagnostics`                 | Compiler diagnostics, or an empty array                                                                                                                                 |
-| `next`                        | Runnable follow-ups `{why, argv}`, or an empty array; see [next commands](#next-commands)                                                                               |
-| `launch`                      | `workflow start` only: `{runId, pid, log, result, exitCode, signal}`; see [workflow start](#workflow-start)                                                             |
+| Field                         | Meaning                                                                                                                                                                                                                                                                           |
+| ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `kind`, `ok`, `exitCode`      | `"workflow.error"`, `false`, and the process exit code                                                                                                                                                                                                                            |
+| `error.code`, `error.message` | Stable code and diagnostic naming the root effect when available                                                                                                                                                                                                                  |
+| `error.stepId`                | Root failing effect, or null for a body failure or interruption; never an aborted sibling                                                                                                                                                                                         |
+| `error.details`               | Structured context: lock PID/host, schema issues, input source/position, compatibility comparison, or available run IDs; `{errorKind, retryable}` for `workflow.failed`                                                                                                           |
+| `runId`, `stateDir`           | Requested/generated ID and absolute storage directory when known; otherwise null                                                                                                                                                                                                  |
+| `status`                      | Actual saved checkpoint status, or null when unavailable                                                                                                                                                                                                                          |
+| `summary`                     | execute, resume and answer without `--full`, and inspect with `--summary`: the compact run result, or null when unavailable                                                                                                                                                       |
+| `run`                         | Saved record, or null when unavailable. Every other command, inspect without `--summary`, a `--dry-run` failure, or `--full` on execute/resume/answer                                                                                                                             |
+| `failedSteps`                 | Saved failed/cancelled steps with ID, kind, attempts, error, `errorKind` (last attempt, or null) and `retryable` (the kind is `rate-limit`, `overloaded` or `timeout`)                                                                                                            |
+| `diagnostics`                 | Compiler diagnostics (`category`, `code`, `filePath`, `line`, `column`, `message`, `relatedInformation`), or the [durability lint](#durability-lint) entries of a failed validate (`rule`, `category`, `file`, `line`, `column`, `message`); never both; otherwise an empty array |
+| `next`                        | Runnable follow-ups `{why, argv}`, or an empty array; see [next commands](#next-commands)                                                                                                                                                                                         |
+| `launch`                      | `workflow start` only: `{runId, pid, log, result, exitCode, signal}`; see [workflow start](#workflow-start)                                                                                                                                                                       |
 
 The error codes map to numeric exits in one CLI table:
 
@@ -254,6 +254,36 @@ directory. A resume whose stored entrypoint no longer exists (a moved checkout o
 `run.incompatible` (exit 3) with `details: {storedEntrypoint, reason:"entrypoint_missing"}`; fork
 from the new location. Storage resolves explicit options, environment, existing legacy runs, then
 the external XDG project default; relative explicit paths resolve against the launch directory.
+
+## Durability lint
+
+After a type check with no errors, the loader runs a static durability lint (rules QC001-QC006,
+[ADR 0041](decisions/0041-static-durability-lint.md); rule reference in the skill's
+`references/patterns.md`, "Durability lint") over the workflow file and the local modules it
+imports, never quiet-choir's own sources or `node_modules`.
+
+- `workflow validate` fails on any finding with `load.typecheck` (exit 4) before importing the
+  module. The message starts with "Workflow durability lint failed: N finding(s)" and names the
+  suppression comment. Each finding is a `diagnostics` entry
+  `{rule, category: "error", file, line, column, message}` with an absolute `file` and 1-based
+  `line` and `column`. Human output prints `path:line:col - error QCnnn: message` to stderr, with
+  `path` relative to the working directory. Compiler and lint entries share this array and are told
+  apart by `rule` versus `code` and `filePath`. They never mix, because the lint runs only after a
+  clean type check: a type error keeps the existing compiler diagnostics and skips the lint. A
+  successful `validate --json` has `diagnostics: []`.
+- `workflow execute`, `resume`, `answer --resume`, `tick`, `check-resume` and the runner behind
+  `workflow start` (in its log) write each finding as a
+  `[warn] path:line:col - warning QCnnn: message` log line on stderr and continue;
+  `--log-level error` hides them. JSON documents are unchanged.
+- `workflow list-defs`, and execution by registry name through it, validate each definition with the
+  lint as a warning: definitions with findings are still listed and runnable, and the warnings are
+  logged when a definition is validated, not when it is served from the definition cache. The listed
+  definitions carry no `diagnostics` field, so fresh and cached entries are identical. Use
+  `workflow validate` as the gate.
+- `workflow typecheck`, `configuration doctor --workflow` and `runWorkflow` do not lint.
+- A `// quiet-choir-ignore QC002 <reason>` comment (several rules: `QC002, QC005`) on its own line
+  directly before the reported line silences the listed rules for findings that start on that line.
+  The CLI accepts a missing reason; this repository's `npm run durability:check` requires one.
 
 ## Workflow start
 
