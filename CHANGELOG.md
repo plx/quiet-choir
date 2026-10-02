@@ -2,6 +2,16 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- `ctx.merge` can set the integration commit's message and author (#153; amends ADR 0022):
+  `MergeOptions.commit` (new public type `MergeCommitOptions`) takes `{ message, author? }`, where
+  `author` is `'quiet-choir'` (default), `'git-config'` (`git var GIT_AUTHOR_IDENT` and
+  `GIT_COMMITTER_IDENT` from git config; a failure fails the step) or `{ name, email }`. The message
+  goes on the squash commit or the last clean integrate commit; the identity applies to every commit
+  the merge creates. It is resolved once and recorded in the new optional `MergePreparation.commit`
+  (new public type `MergeIdentity`), so a retry or resume reproduces the same commit ID. A no-op
+  merge ignores it. Merges without `commit` keep the `quiet-choir <quiet-choir@localhost>` identity,
+  their generated messages and their step identity digest. docs/worktrees.md has a new "Open a PR
+  from an isolated change" recipe that pushes `result.commit` with `--force-with-lease`.
 - Worktree policy can be declared on the root workflow definition (#152; amends ADR 0022 and ADR
   0035): `defineWorkflow({ worktrees: { setup, keep, root, captureExclude } })`, validated when the
   workflow loads (`workflow validate`), outside step identity, and ignored on child definitions.

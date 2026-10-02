@@ -1,8 +1,73 @@
 import { commitId, mergeTreeOutput, type WorktreeGit } from '../../worktrees/git.js';
 import type { HarnessInvocation } from './model.js';
 import type { StepRecord } from './record.js';
-import type { MergeOptions, MergeResult, WorktreeChange } from './worktree-model.js';
-import type { WorktreeLedger } from './worktree-schema.js';
+import type {
+  MergeCommitOptions,
+  MergeOptions,
+  MergeResult,
+  WorktreeChange,
+} from './worktree-model.js';
+import type { MergeIdentity, MergePreparation, WorktreeLedger } from './worktree-schema.js';
+import { identitySchema } from './worktree-schema.js';
+
+/** Author and committer of a created commit. @internal */
+export interface CommitIdentity {
+  readonly author: MergeIdentity;
+  readonly committer: MergeIdentity;
+}
+const quietChoir: MergeIdentity = { name: 'quiet-choir', email: 'quiet-choir@localhost' };
+/** The identity of snapshot commits and of merges without `MergeOptions.commit`. @internal */
+export const fixedIdentity: CommitIdentity = { author: quietChoir, committer: quietChoir };
+
+/**
+ * Parse `git var GIT_*_IDENT` output (`Name <email> 1790737520 -0500`), dropping the timestamp and
+ * zone, and validate it with the same rules as an explicit author; null when either fails. Pure.
+ * @internal
+ */
+export function parseIdent(output: string): MergeIdentity | null {
+  const match = /^(.+) <([^<>]*)> \d+ [+-]\d{4}$/u.exec(output.replace(/\r?\n$/u, ''));
+  if (!match) return null;
+  const parsed = identitySchema.safeParse({ name: match[1], email: match[2] });
+  return parsed.success ? parsed.data : null;
+}
+
+async function configIdent(
+  runtime: MergeRuntime,
+  variable: 'GIT_AUTHOR_IDENT' | 'GIT_COMMITTER_IDENT',
+  invocation: HarnessInvocation,
+): Promise<MergeIdentity> {
+  const result = await runtime.git.run(runtime.ledger.repo, ['var', variable], invocation, {
+    codes: [0, 1, 128],
+  });
+  const ident = result.code === 0 ? parseIdent(result.stdout) : null;
+  if (!ident)
+    throw new Error(
+      `Merge commit author from git config is unavailable: ${
+        result.code === 0
+          ? `git var ${variable} printed an unusable identity`
+          : result.stderr.trim() || `git var ${variable} exited ${String(result.code)}`
+      }`,
+    );
+  return ident;
+}
+
+/** Resolve the requested message and identity once, before anything is committed. */
+async function resolveCommit(
+  runtime: MergeRuntime,
+  commit: MergeCommitOptions,
+  invocation: HarnessInvocation,
+): Promise<NonNullable<MergePreparation['commit']>> {
+  const author = commit.author ?? 'quiet-choir';
+  if (author === 'quiet-choir') return { message: commit.message, ...fixedIdentity };
+  if (author === 'git-config')
+    return {
+      message: commit.message,
+      author: await configIdent(runtime, 'GIT_AUTHOR_IDENT', invocation),
+      committer: await configIdent(runtime, 'GIT_COMMITTER_IDENT', invocation),
+    };
+  const explicit = { name: author.name, email: author.email };
+  return { message: commit.message, author: explicit, committer: explicit };
+}
 
 /** Git/storage operations supplied by the run owner while holding integration/handle locks. @internal */
 export interface MergeRuntime {
@@ -16,7 +81,14 @@ export interface MergeRuntime {
    * another quiet-choir process using the same repository.
    */
   administer<T>(work: () => Promise<T>): Promise<T>;
-  commit(tree: string, parents: readonly string[], message: string, date: string): Promise<string>;
+  /** Create a commit object; `identity` replaces the fixed quiet-choir author and committer. */
+  commit(
+    tree: string,
+    parents: readonly string[],
+    message: string,
+    date: string,
+    identity?: CommitIdentity,
+  ): Promise<string>;
 }
 
 async function revision(
@@ -113,6 +185,11 @@ export async function integrate(
       )
         throw new Error('Merge input commit is unavailable in this repository.');
     }
+    // Only a merge that can create a commit resolves an identity, so a no-op never runs git var.
+    const commit =
+      options.commit && changes.some((change) => change.commit !== null)
+        ? await resolveCommit(runtime, options.commit, invocation)
+        : undefined;
     prepared = {
       base,
       ref,
@@ -121,6 +198,7 @@ export async function integrate(
       changes: structuredClone(changes),
       checkoutBranch: kind === 'checkout' ? await checkoutBranch(runtime, invocation) : null,
       date,
+      ...(commit ? { commit } : {}),
     };
     step.merge = prepared;
     await runtime.save();
@@ -131,6 +209,9 @@ export async function integrate(
     const merged: string[] = [],
       conflicts: { commit: string; files: string[] }[] = [];
     const strategy = options.strategy ?? 'rebase';
+    const custom = prepared.commit;
+    const identity = custom && { author: custom.author, committer: custom.committer };
+    let last: { tree: string; parents: string[] } | undefined;
     for (const change of prepared.changes) {
       if (!change.commit) continue;
       let ours = current;
@@ -145,6 +226,7 @@ export async function integrate(
           [change.base],
           `quiet-choir merge base ${id}`,
           prepared.date,
+          identity,
         );
       }
       const result = await git.run(
@@ -162,11 +244,16 @@ export async function integrate(
           );
         continue;
       }
+      last = {
+        tree: parsed.tree,
+        parents: strategy === 'merge' ? [...new Set([current, change.commit])] : [current],
+      };
       current = await runtime.commit(
-        parsed.tree,
-        strategy === 'merge' ? [...new Set([current, change.commit])] : [current],
+        last.tree,
+        last.parents,
         `quiet-choir integrate ${id}: ${change.commit}`,
         prepared.date,
+        identity,
       );
       merged.push(change.commit);
     }
@@ -177,8 +264,20 @@ export async function integrate(
       current = await runtime.commit(
         tree,
         [prepared.base],
-        `quiet-choir squash ${id}`,
+        custom?.message ?? `quiet-choir squash ${id}`,
         prepared.date,
+        identity,
+      );
+    } else if (custom && last) {
+      // Which input is the last clean one is only known after the loop (later inputs may
+      // conflict), so the final commit is recreated with the same tree and parents and the
+      // requested message; the generated-message commit it replaces stays unreferenced.
+      current = await runtime.commit(
+        last.tree,
+        last.parents,
+        custom.message,
+        prepared.date,
+        identity,
       );
     }
     prepared.result = { commit: current, merged, conflicts };

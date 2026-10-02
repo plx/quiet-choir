@@ -92,3 +92,13 @@ worktree warning naming the step, link and target. It is a warning, not a refusa
 can be intentional, and the target is never followed. A run's cache root stays pinned on first use;
 a different requested root on a later execution now adds a warning naming both paths instead of
 being ignored silently.
+
+## Amendment: caller-supplied merge commit message and identity (#153, 2026-10-02)
+
+Merge commits may take a caller-supplied message and identity (`MergeOptions.commit`). The identity
+(`quiet-choir`, an explicit name and email, or `git var` output from git config, with the timestamp
+dropped) is resolved once while the merge is prepared and recorded in `MergePreparation.commit`
+before any commit is made, so retries and resumes reproduce the same commit IDs; it is never re-read
+from git config. The message goes on the final commit only. The requested form enters step identity
+only when supplied, so existing merge digests are unchanged. Snapshot commits keep the fixed
+`quiet-choir` identity.

@@ -3063,6 +3063,16 @@ export async function runWorkflow<
             strategy: checked.strategy ?? 'rebase',
             onConflict: checked.onConflict ?? 'report',
             target: checked.target ?? 'ref',
+            // Present only when requested, so merges without it keep their identity. The author
+            // stays as requested ('git-config' is resolved when the merge is prepared).
+            ...(checked.commit
+              ? {
+                  commit: {
+                    message: checked.commit.message,
+                    author: checked.commit.author ?? 'quiet-choir',
+                  },
+                }
+              : {}),
           });
           return effect({
             id,
