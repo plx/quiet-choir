@@ -318,6 +318,12 @@ export interface RunOptions extends WorkflowCodeOptions {
   readonly worktrees?: WorktreePolicy;
   /** Process integration for durable exec and worktree Git operations; the core never spawns. */
   readonly processRunner?: ProcessRunner;
+  /**
+   * Process integration for `ctx.exec` and `ctx.exec.json` effects only, including `guardFile`'s
+   * helper commands; defaults to `processRunner`. Worktree Git operations always use
+   * `processRunner`. The CLI sets it to answer commands from fixture exec rules.
+   */
+  readonly execRunner?: ProcessRunner;
   /** Wall clock and cancellable timer used by now, waits, and legacy sleeps. */
   readonly clock?: WorkflowClock;
   /** Suspend when quiescent by default; block keeps waits in this process. Waits due within one second stay live. */
@@ -2057,7 +2063,7 @@ export async function runWorkflow<
           execution,
           action: (context) =>
             executeCommand(
-              options.processRunner,
+              options.execRunner ?? options.processRunner,
               {
                 command: prepared.summary.command,
                 cwd: prepared.settings.worktree === undefined ? prepared.summary.cwd : context.cwd,

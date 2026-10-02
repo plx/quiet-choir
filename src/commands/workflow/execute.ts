@@ -193,7 +193,7 @@ export default class WorkflowExecute extends WorkflowCommand {
         this.logToStderr(`Warning: ${warning}`);
       if (result.rehearsal)
         this.logToStderr(
-          `Rehearsal: ${String(result.rehearsal.calls.length)} calls; ${String(result.rehearsal.commands.length)} synthesized commands; nominal Claude ceiling $${String(result.rehearsal.nominalClaudeCeilingUsd)}; ${String(result.rehearsal.replays.length)} replayed effects.`,
+          `Rehearsal: ${String(result.rehearsal.calls.length)} calls; ${String(result.rehearsal.commands.filter((entry) => entry.outputSource === 'synthesized').length)} synthesized and ${String(result.rehearsal.commands.filter((entry) => entry.outputSource === 'fixture').length)} fixture commands; nominal Claude ceiling $${String(result.rehearsal.nominalClaudeCeilingUsd)}; ${String(result.rehearsal.replays.length)} replayed effects.`,
         );
       for (const warning of result.run.warnings ?? []) this.logToStderr(`Warning: ${warning}`);
       if (result.run.status === 'suspended') {

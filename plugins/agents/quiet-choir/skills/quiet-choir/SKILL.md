@@ -104,10 +104,11 @@ same run after delivery.
 - Resume with the same run ID, launch directory, state directory, name, version, and input. Omit
   `--input` to reuse saved input. Source/schema edits need explicit acceptance or a fork; native
   session IDs cannot resume the workflow.
-- Rehearse agent work with `--dry-run --json`. Commands are synthesized; files/local
-  callbacks/imports still run unless a step is explicitly stubbed. For worktree effects, use a
-  fixture harness in a temporary repository instead: dry-run cannot simulate Git isolation. Native
-  calls retain native authentication and default to restricted configuration; see
+- Rehearse agent work with `--dry-run --json`. Commands are synthesized unless the fixture file has
+  exec rules (`workflow fixtures RUN` exports them from a real run); files/local callbacks/imports
+  still run unless a step is explicitly stubbed. For worktree effects, use a fixture harness in a
+  temporary repository instead: dry-run cannot simulate Git isolation. Native calls retain native
+  authentication and default to restricted configuration; see
   [harness isolation](references/harness-isolation.md).
 - Effects are at least once. Pass `idempotencyKey` to systems that support deduplication; native
   CLIs do not deduplicate edits with it. Checkpoints cannot undo mutations.

@@ -2,6 +2,21 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- Fixture files can answer commands (#147; amends ADR 0016). A new optional `exec` array holds
+  first-match command rules (public `FixtureExecCall` type) filtered by step glob, exact
+  `argvPrefix`, `envSha256`, `inputSha256`, `attempt` and per-rule `occurrence`, each answering with
+  `json` or `stdout` plus optional `stderr` and `code`. `--dry-run` uses a matching rule instead of
+  synthesis, and `--harness fixture` answers matched commands without spawning through the new
+  `RunOptions.execRunner` (worktree Git keeps `processRunner`). With `"commands": "fixture"` an
+  unmatched command fails at its step as a configuration error naming the argv, also under
+  `--dry-run`; named per-harness fixture files cannot carry `exec` or `commands`. Dry-run `commands`
+  entries now carry `outputSource`, `fixtureIndex` and `error`, the report adds `staleExecFixtures`
+  with a warning, and the synthesis warning appears only when a command was synthesized.
+  `workflow fixtures` also exports completed command results as exec rules with environment and
+  stdin digests only, and sets `commands: "fixture"` when it does; runs without commands export as
+  before. A fixture `error` rule accepts an optional `kind` (an `ErrorKind`) and then rejects with a
+  `HarnessError` of that kind and the same message, so `retry.on` and `StepError.kind` can be
+  rehearsed.
 - Settled maps name the changed fingerprint component and accept mapper-only edits under
   `--accept-code-change` (#146; amends ADR 0006, ADR 0008 and ADR 0009). A map journal now also
   saves per-component digests (`items`, `mapper`, `version`, `cwd`, and `keys` for a named map) in

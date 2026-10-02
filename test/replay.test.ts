@@ -286,7 +286,9 @@ const stageIds = (stages: string[], indexes = mapItems.map((_, index) => index))
   indexes.flatMap((index) => stages.map((stage) => `review/${String(index)}/${stage}`)).sort();
 
 // measured: 1.6-1.9 s alone, 3.0 s in a full coverage run (load average 11 on 16 cores); a sequential
-// loop passed the 5 s default at iteration 15 under the gate. CPU-bound: 40 runs saving per step.
+// loop passed the 5 s default at iteration 15 under the gate. CI: 3.9 s on Node 26, 6.7 s on Node 24
+// with coverage, and 11.7 s on the Node 22.13 leg, which flaked the old 10 s value on main and on
+// #309. CPU-bound: 40 runs saving per step.
 it('reuses every step of an unchanged concurrent named map whatever the source schedule', async () => {
   const definition = reviewMap({});
   // Twenty independent source/fork pairs, run side by side: each source gets its own schedule.
@@ -309,7 +311,7 @@ it('reuses every step of an unchanged concurrent named map whatever the source s
     expect(reusedIds(fork)).toEqual(stageIds(['s1', 's2', 's3']));
     expect(fork.forkedFrom).toMatchObject({ cursor: 36, reuseClosed: false });
   }
-}, 10_000);
+}, 30_000);
 
 it('re-runs only the edited stage of a named map, and a root step after the map', async () => {
   const { harness, live } = delayedFixture();
