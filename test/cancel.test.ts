@@ -269,10 +269,13 @@ describe('workflow cancel waits', () => {
     await suspendedRun();
     // An embedder that honours its interruption by suspending: the lock goes, the record stays.
     const release = await lockRun(stateDir, 'run-1');
+    let released: Promise<void> | undefined;
     const sendSignal = vi.fn(() => {
-      void release();
+      released = release();
     });
     const failure = failed(await cancel(sendSignal));
+    // Cancel sees the primary lock go; the guard release may still be finishing.
+    await released;
     expect(failure.code).toBe('run.unowned');
     expect(failure.details).toEqual({
       reason: 'owner-exited',
@@ -429,7 +432,9 @@ async function lockToken(runId = 'run-1'): Promise<string> {
 
 const interrupt = () => new RunInterruptedError('Workflow interrupted by SIGINT.');
 
-// measured: pending; these cases type-check and import a workflow module several times.
+// measured: about 1 s per case alone; the whole file took 39 s in a full coverage run on a loaded
+// machine, dominated by these cases' tsImport compiles (each type-checks and imports the workflow
+// once or twice).
 describe('cancelling a live execution', { timeout: 60_000 }, () => {
   it('ends the run cancelled, and the next tick observes it instead of resuming it', async () => {
     const f = await workflowFixture();

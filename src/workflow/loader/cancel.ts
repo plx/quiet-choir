@@ -239,7 +239,7 @@ export async function cancelRun(
         'watch.timeout',
         forced
           ? `Run ${runId} is still ${status} ${String(timeoutMs)}ms after a forced second SIGINT to PID ${String(owner.pid)}; the owner is still alive.`
-          : `Run ${runId} is still ${status} ${String(timeoutMs)}ms after SIGINT to PID ${String(owner.pid)}; the cancel request stays in place for the owner, and the run keeps running. Retry with --force to send a second signal.`,
+          : `Run ${runId} is still ${status} ${String(timeoutMs)}ms after SIGINT to PID ${String(owner.pid)}; the cancel request stays in place for the owner, and the run keeps running. Another SIGINT, such as a repeated cancel, is the owner's second signal and force-kills its process groups.`,
         {
           runId,
           stateDir,
