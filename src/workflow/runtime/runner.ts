@@ -1309,6 +1309,8 @@ export async function runWorkflow<
       // The call-site label a failure reports: the harness for an agent step, otherwise its kind.
       const effectLabel = (kind === 'agent' ? spec.request?.harness : undefined) ?? kind;
       const launchStamp = takeLaunchStamp(id);
+      // Captured with the ID's naming context: sibling named-map items are independent for fork reuse.
+      const mapItems = names.items;
       const requestedIdentity = spec.identity;
       const observedExec = spec.exec;
       const wakeAt = spec.wakeAt === undefined ? null : spec.wakeAt;
@@ -1417,16 +1419,24 @@ export async function runWorkflow<
             },
           }),
         forkedFrom: forkedFrom !== undefined,
-        // Called at most once, only when decideReplay reaches fork reuse: it moves the cursor.
+        // Called at most once, only when decideReplay reaches fork reuse. Prefix reuse reads the
+        // copies already in record.steps, so a reused copy is inserted before the next await.
         forkCandidate: () =>
           forkedFrom &&
-          reuseCandidate(forkedFrom, forkSource, id, kind, stepFingerprint, (sourceStep) =>
-            forkReuseValid(
-              kind,
-              onError,
-              sourceStep,
-              (output) => schema.safeParse(structuredClone(output)).success,
-            ),
+          reuseCandidate(
+            forkedFrom,
+            forkSource,
+            id,
+            kind,
+            stepFingerprint,
+            (sourceStep) =>
+              forkReuseValid(
+                kind,
+                onError,
+                sourceStep,
+                (output) => schema.safeParse(structuredClone(output)).success,
+              ),
+            { launchStamp, mapItems, target: record.steps },
           ),
         rehearsal: options.rehearsal !== undefined,
         isolated: isolation !== undefined,

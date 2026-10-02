@@ -11,6 +11,7 @@ import {
   type WorkflowEvent,
   ConfigurationError,
   defineWorkflow,
+  FixtureHarness,
   readRun,
   runWorkflow,
   StepIdentityChangedError,
@@ -109,7 +110,8 @@ it('forks the unchanged launch prefix, records differences/provenance, and never
     invalidate: [],
     differences: ['version', 'code', 'input'],
     cursor: 1,
-    reuseClosed: true,
+    // A miss no longer closes reuse for the whole fork; `write` ran live because `review` did.
+    reuseClosed: false,
   });
   expect(Object.values(fork.steps).map((step) => step.seq)).toEqual([1, 2, 3]);
   expect(await readFile(join(stateDir, 'source', 'run.json'), 'utf8')).toBe(before);
@@ -156,7 +158,7 @@ it('supports matching reuse and explicit invalidation globs, while prefix misses
   expect(invoke).toHaveBeenCalledTimes(1);
 });
 
-it('closes prefix reuse synchronously when concurrent launches encounter a miss', async () => {
+it('keeps same-tick concurrent siblings reusable after a prefix miss', async () => {
   const invoke = vi.fn<Harness['invoke']>().mockResolvedValue(reply);
   let edited = false;
   const definition = workflow(async (ctx) => {
@@ -173,8 +175,11 @@ it('closes prefix reuse synchronously when concurrent launches encounter a miss'
     harness: { invoke },
     forkFrom: { runId: 'source' },
   });
-  expect(invoke).toHaveBeenCalledTimes(3);
-  expect(Object.values(fork.steps).every((step) => step.reusedFrom === undefined)).toBe(true);
+  // b and c launched before a settled in the source, so a's miss is not their cause.
+  expect(invoke.mock.calls.map(([request]) => request.options.prompt)).toEqual(['changed']);
+  expect(fork.steps['a']?.reusedFrom).toBeUndefined();
+  expect(fork.steps['b']?.reusedFrom).toBeDefined();
+  expect(fork.steps['c']?.reusedFrom).toBeDefined();
 });
 
 it.each(['failed', 'running'] as const)('never copies a %s source record', async (status) => {
@@ -238,6 +243,222 @@ it.each(['unchanged', 'changed', 'missing'] as const)(
     expect(result.steps['a']?.reusedFrom).toBeDefined();
     if (state !== 'unchanged')
       expect(result.warnings?.[0]).toContain('remaining effects will execute live');
+  },
+);
+
+/** A fixture harness with 0-4 ms of random latency, recording every live step ID. */
+function delayedFixture(fail: (stepId: string) => boolean = () => false) {
+  const fixture = new FixtureHarness({ version: 1, calls: [{ step: '**', text: 'ok' }] });
+  const live: string[] = [];
+  const harness: Harness = {
+    async invoke(request, invocation) {
+      live.push(request.call.stepId);
+      await new Promise((resolve) => setTimeout(resolve, Math.random() * 4));
+      if (fail(request.call.stepId)) throw new Error(`${request.call.stepId} failed`);
+      return fixture.invoke(request, invocation);
+    },
+  };
+  return { harness, live };
+}
+const reusedIds = (record: RunRecord): string[] =>
+  Object.entries(record.steps)
+    .filter(([, step]) => step.reusedFrom !== undefined)
+    .map(([id]) => id)
+    .sort();
+const mapItems = Array.from({ length: 12 }, (_, index) => `item ${String(index)}`);
+/** A 12x3 named map at concurrency 6, optionally followed by a root step over its results. */
+function reviewMap(state: { edited?: boolean; pause?: boolean; summary?: boolean }) {
+  return workflow(async (ctx) => {
+    const results = await ctx.map('review', mapItems, { concurrency: 6 }, async (item, index) => {
+      if (state.pause && index >= 6) throw new Error('pause');
+      const s1 = await ctx.claude.text('s1', { prompt: `s1 ${item}` });
+      const s2 = await ctx.claude.text('s2', { prompt: `s2 ${s1.output}` });
+      return (
+        await ctx.claude.text('s3', { prompt: `s3${state.edited ? ' v2' : ''} ${s2.output}` })
+      ).output;
+    });
+    if (state.summary)
+      await ctx.step('summary', { input: results, schema: z.number(), run: () => results.length });
+    return 'done';
+  });
+}
+const stageIds = (stages: string[], indexes = mapItems.map((_, index) => index)) =>
+  indexes.flatMap((index) => stages.map((stage) => `review/${String(index)}/${stage}`)).sort();
+
+it('reuses every step of an unchanged concurrent named map whatever the source schedule', async () => {
+  const { harness, live } = delayedFixture();
+  const definition = reviewMap({});
+  for (let iteration = 0; iteration < 20; iteration++) {
+    const sourceId = `source-${String(iteration)}`;
+    await runWorkflow(definition, { ...options(sourceId), harness });
+    live.length = 0;
+    const fork = await runWorkflow(definition, {
+      ...options(`fork-${String(iteration)}`),
+      harness,
+      forkFrom: { runId: sourceId },
+    });
+    expect(live).toEqual([]);
+    expect(reusedIds(fork)).toEqual(stageIds(['s1', 's2', 's3']));
+    expect(fork.forkedFrom).toMatchObject({ cursor: 36, reuseClosed: false });
+  }
+});
+
+it('re-runs only the edited stage of a named map, and a root step after the map', async () => {
+  const { harness, live } = delayedFixture();
+  const state = { edited: false, summary: true };
+  const definition = reviewMap(state);
+  await runWorkflow(definition, { ...options(), harness });
+  const source = await readRun(options());
+  live.length = 0;
+  state.edited = true;
+  const fork = await runWorkflow(definition, {
+    ...options('fork'),
+    harness,
+    forkFrom: { runId: 'source' },
+  });
+  expect(live.sort()).toEqual(stageIds(['s3']));
+  expect(reusedIds(fork)).toEqual(stageIds(['s1', 's2']));
+  // The summary's input is unchanged, but it was launched after the edited stage settled.
+  expect(fork.steps['summary']?.fingerprint).toBe(source.steps['summary']?.fingerprint);
+  expect(fork.steps['summary']?.reusedFrom).toBeUndefined();
+  expect(fork.steps['summary']?.status).toBe('completed');
+});
+
+it.each([
+  ['a failed implementer', false],
+  ['a completed implementer and a later check', true],
+])(
+  'reuses an independent same-tick side effect after invalidating %s',
+  async (_name, completed) => {
+    let followups = 0;
+    let checks = 0;
+    const source = delayedFixture((stepId) => !completed && stepId === 'fix/1/impl');
+    const definition = workflow(async (ctx) => {
+      for (const id of ['load', 'plan', 'branch', 'context', 'tests', 'prompt'])
+        await ctx.step(id, { input: null, schema: z.string(), run: () => id });
+      await Promise.all([
+        ctx.claude.text('fix/1/impl', { prompt: 'implement' }),
+        ctx.step('fix/1/followups', { input: null, schema: z.number(), run: () => ++followups }),
+      ]);
+      await ctx.step('fix/1/check', { input: null, schema: z.number(), run: () => ++checks });
+      return 'done';
+    });
+    if (completed) await runWorkflow(definition, { ...options(), harness: source.harness });
+    else
+      await expect(
+        runWorkflow(definition, { ...options(), harness: source.harness }),
+      ).rejects.toThrow(WorkflowRunError);
+    expect(followups).toBe(1);
+    const { harness, live } = delayedFixture();
+    const fork = await runWorkflow(definition, {
+      ...options('fork'),
+      harness,
+      forkFrom: { runId: 'source', invalidate: ['fix/1/impl*'] },
+    });
+    expect(live).toEqual(['fix/1/impl']);
+    expect(followups).toBe(1);
+    expect(fork.steps['fix/1/followups']?.reusedFrom).toMatchObject({
+      runId: 'source',
+      stepId: 'fix/1/followups',
+    });
+    expect(fork.steps['fix/1/impl']?.reusedFrom).toBeUndefined();
+    // The check was launched after the implementer settled in the source: a real dependent.
+    expect(fork.steps['fix/1/check']?.reusedFrom).toBeUndefined();
+    expect(checks).toBe(completed ? 2 : 1);
+    expect(reusedIds(fork)).toEqual(
+      ['branch', 'context', 'fix/1/followups', 'load', 'plan', 'prompt', 'tests'].sort(),
+    );
+  },
+);
+
+it('treats sibling items of nested named maps as independent, through a within view', async () => {
+  const { harness, live } = delayedFixture();
+  let edited = false;
+  // Sequential items, so each later item's first stage launches after an earlier item's edit.
+  const definition = workflow(async (ctx) => {
+    await ctx.map('outer', ['a', 'b'], { concurrency: 1, key: (key) => key }, (outer) =>
+      ctx.map('inner', ['x', 'y'], { concurrency: 1, key: (key) => key }, async (inner) => {
+        const view = ctx.within('w');
+        await view.claude.text('s1', { prompt: `${outer}${inner}` });
+        return (await view.claude.text('s2', { prompt: edited ? 'changed' : 's2' })).output;
+      }),
+    );
+    return 'done';
+  });
+  await runWorkflow(definition, { ...options(), harness });
+  live.length = 0;
+  edited = true;
+  const fork = await runWorkflow(definition, {
+    ...options('fork'),
+    harness,
+    forkFrom: { runId: 'source' },
+  });
+  const leaves = (stage: string) =>
+    ['a/inner/x', 'a/inner/y', 'b/inner/x', 'b/inner/y'].map((item) => `outer/${item}/w/${stage}`);
+  expect(live).toEqual(leaves('s2'));
+  expect(reusedIds(fork)).toEqual(leaves('s1'));
+});
+
+it('re-runs a sequential chain from its changed step', async () => {
+  const { harness, live } = delayedFixture();
+  let edited = false;
+  const definition = workflow(async (ctx) => {
+    for (const id of ['a1', 'a2', 'a3', 'a4'])
+      await ctx.claude.text(id, { prompt: edited && id === 'a2' ? 'changed' : id });
+    return 'done';
+  });
+  await runWorkflow(definition, { ...options(), harness });
+  live.length = 0;
+  edited = true;
+  const fork = await runWorkflow(definition, {
+    ...options('fork'),
+    harness,
+    forkFrom: { runId: 'source' },
+  });
+  expect(live).toEqual(['a2', 'a3', 'a4']);
+  expect(reusedIds(fork)).toEqual(['a1']);
+});
+
+it.each(['current', 'legacy open', 'legacy closed'] as const)(
+  'keeps reuse progress when a %s fork target resumes',
+  async (provenance) => {
+    const { harness, live } = delayedFixture();
+    const state = { edited: false, pause: false };
+    const definition = reviewMap(state);
+    await runWorkflow(definition, { ...options(), harness });
+    live.length = 0;
+    state.edited = true;
+    state.pause = true;
+    await expect(
+      runWorkflow(definition, { ...options('fork'), harness, forkFrom: { runId: 'source' } }),
+    ).rejects.toThrow('pause');
+    const first = [...live];
+    expect(first.sort()).toEqual(stageIds(['s3'], [0, 1, 2, 3, 4, 5]));
+    if (provenance !== 'current') {
+      // A record saved by an older build: cursor was a launch-order position.
+      const saved = await readRun(options('fork'));
+      if (!saved.forkedFrom) throw new Error('missing provenance');
+      saved.forkedFrom.cursor = 1;
+      saved.forkedFrom.reuseClosed = provenance === 'legacy closed';
+      await writeFile(join(stateDir, 'fork', 'run.json'), JSON.stringify(saved));
+    }
+    state.pause = false;
+    live.length = 0;
+    const resumed = await runWorkflow(definition, {
+      ...options('fork'),
+      harness,
+      resume: true,
+    });
+    const rest = [6, 7, 8, 9, 10, 11];
+    expect(resumed.status).toBe('completed');
+    if (provenance === 'legacy closed') {
+      expect(live.sort()).toEqual(stageIds(['s1', 's2', 's3'], rest));
+      expect(reusedIds(resumed)).toEqual(stageIds(['s1', 's2'], [0, 1, 2, 3, 4, 5]));
+      expect(resumed.warnings ?? []).toEqual([]);
+    } else {
+      expect(live.sort()).toEqual(stageIds(['s3'], rest));
+      expect(reusedIds(resumed)).toEqual(stageIds(['s1', 's2']));
+    }
   },
 );
 

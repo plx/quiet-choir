@@ -1,11 +1,14 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { validateStepId } from './identity.js';
 import { createHash } from 'node:crypto';
+import type { MapItemScope } from './replay-decision.js';
 
 /** A lexical context binding and its nested bindings. @internal */
 export interface NameFrame {
   readonly path: string;
   readonly bindings: readonly symbol[];
+  /** The named-map items enclosing this frame, outermost first; fork reuse treats siblings as independent. */
+  readonly items: readonly MapItemScope[];
 }
 
 /** Prefixes are captured at invocation; there are no call-order counters. @internal */
@@ -13,6 +16,10 @@ export class NameScopes {
   private readonly storage = new AsyncLocalStorage<NameFrame>();
   public get path(): string {
     return this.storage.getStore()?.path ?? '';
+  }
+  /** The named-map items enclosing the current invocation, captured with its ID prefix. */
+  public get items(): readonly MapItemScope[] {
+    return this.storage.getStore()?.items ?? [];
   }
   public qualify(leaf: string): string {
     // Preserve invalid runtime values for the tracked validator instead of coercing them into IDs.
@@ -38,13 +45,22 @@ export class NameScopes {
     validateStepId(id, { scope: this.path, leaf });
     return `${id}/`;
   }
-  public run<T>(path: string, action: () => T): T {
-    return this.storage.run({ path, bindings: this.storage.getStore()?.bindings ?? [] }, action);
+  /** Run under a path, or enter a named-map item under its prefix; other items carry over. */
+  public run<T>(scope: string | MapItemScope, action: () => T): T {
+    const current = this.storage.getStore();
+    const items = current?.items ?? [];
+    return this.storage.run(
+      typeof scope === 'string'
+        ? { path: scope, bindings: current?.bindings ?? [], items }
+        : { path: scope.item, bindings: current?.bindings ?? [], items: [...items, scope] },
+      action,
+    );
   }
   public bind(prefix: string): NameFrame {
     return {
       path: this.prefix(prefix),
       bindings: [...(this.storage.getStore()?.bindings ?? []), Symbol(prefix)],
+      items: this.items,
     };
   }
   public bound<T>(frame: NameFrame, action: () => T): T {

@@ -9,9 +9,10 @@ fingerprint; an embedded caller must supply its own. Local effects also hash cal
 version, without claiming to capture closed-over values; built-in helpers (`ctx.now`,
 `decision.choose`) use the internal `identity: 'version'` instead, so their identity is a versioned
 constant (`now/1`, `decision/1`) with no callback text. Explicit code acceptance retains completed
-step checks. Fork sources are read-only; prefix reuse must close synchronously on a miss, before
-awaits allow concurrent launches. `replay-decision.ts` is the single place the replay and
-redefinition rules are encoded. See
+step checks. Fork sources are read-only. Prefix reuse is causal: it reads the reused copies and live
+settlements already in the target, so a reused copy must be inserted synchronously after the
+decision, before awaits allow concurrent launches; named-map items are independent of their
+siblings. `replay-decision.ts` is the single place the replay and redefinition rules are encoded. See
 [ADR 0006](../../../docs/decisions/0006-code-change-recovery.md).
 
 An effect can succeed externally before its checkpoint commits. Preserve the at-least-once contract

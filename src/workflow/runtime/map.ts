@@ -9,6 +9,7 @@ import {
 } from './fan-out.js';
 import type { ExecutionScopes } from './scopes.js';
 import type { NameScopes } from './names.js';
+import type { MapItemScope } from './replay-decision.js';
 import type { OperationTracker } from './tracking.js';
 import { errorKind, stepError } from './step-error.js';
 import type {
@@ -146,7 +147,8 @@ export function createMap(dependencies: MapDependencies): WorkflowContext['map']
         if (!['abort', 'drain', 'settle'].includes(policy))
           throw validationError('Map onError must be abort, drain, or settle.');
         let journalId: string | undefined;
-        let itemPaths: string[] | undefined;
+        // Named-map items are declared independent; fork prefix reuse reads them (ADR 0006).
+        let itemPaths: MapItemScope[] | undefined;
         let keys: string[] | undefined;
         try {
           if (named) {
@@ -173,7 +175,8 @@ export function createMap(dependencies: MapDependencies): WorkflowContext['map']
               seen.add(value);
               return value;
             });
-            itemPaths = keys.map((key) => `${prefix}${key}/`);
+            const items = new Set(keys.map((key) => `${prefix}${key}/`));
+            itemPaths = [...items].map((item) => ({ map: prefix, item, items }));
             journalId = names.qualify(first);
           } else if (settings.onError === 'settle') {
             const id = (settings as SettledMapOptions).id;
