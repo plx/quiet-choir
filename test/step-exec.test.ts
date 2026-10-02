@@ -66,7 +66,7 @@ function poll<T>(
   id: string,
   schema: z.ZodType<T>,
   observe: PollSource<T>['observe'],
-  extra: { readonly onError?: PollErrorPolicy } = {},
+  extra: { readonly onError?: PollErrorPolicy; readonly observeTimeoutMs?: number } = {},
 ) {
   return ctx.poll(id, { input: null, schema, every: 1, timeoutMs: 60_000, observe, ...extra });
 }
@@ -459,6 +459,35 @@ describe('poll observers', () => {
     ]);
     expect(seen.every(({ request }) => request.nested === true)).toBe(true);
     expect(Object.keys(run.steps)).toEqual(['pr-merged']);
+  });
+
+  it('stops an inner command when observeTimeoutMs aborts the observation', async () => {
+    const pidFile = join(cwd, 'pid');
+    const failure = await runWorkflow(
+      definition((ctx) =>
+        poll(
+          ctx,
+          'slow',
+          z.null(),
+          async (context) => {
+            const hanging = context.exec(
+              node(
+                `require('node:fs').writeFileSync(${JSON.stringify(pidFile)}, String(process.pid));setInterval(() => {}, 1000)`,
+              ),
+            );
+            await hanging;
+            return { done: true, value: null };
+          },
+          { observeTimeoutMs: 1500 },
+        ),
+      ),
+      { ...setup(), processRunner: new NodeProcessRunner(), waitMode: 'block' },
+    ).catch((error: unknown) => error);
+    expect(String(failure)).toContain('observeTimeoutMs');
+    // The child writes its PID within milliseconds; only a stalled machine could abort it first,
+    // and then it never ran long enough to matter.
+    const pid = await readFile(pidFile, 'utf8').catch(() => null);
+    if (pid !== null) expect(() => process.kill(Number(pid), 0)).toThrow();
   });
 
   it('uses execRunner for live outside a rehearsal and never spawns in an accepted-change preflight', async () => {

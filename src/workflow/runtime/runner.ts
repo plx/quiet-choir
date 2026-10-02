@@ -1838,15 +1838,14 @@ export async function runWorkflow<
                   }
                 }
                 // Inner commands share the attempt signal and stop when the callback settles.
-                const inner = new AbortController();
                 const actionCwd = lease ? lease.cwd : cwd;
                 const innerExec = stepExec({
                   owner: { kind: 'step', id },
                   cwd: actionCwd,
                   attempt: step.attempts,
-                  signal: AbortSignal.any([signal, inner.signal]),
+                  signal,
                   options: stepExecOptionsSchema,
-                  active: () => reporting && !closed,
+                  active: () => !closed,
                 });
                 try {
                   return await action(
@@ -1861,10 +1860,9 @@ export async function runWorkflow<
                   );
                 } finally {
                   reporting = false;
-                  inner.abort(
+                  await innerExec.close(
                     new Error(`Step ${id}: its callback settled; inner command terminated.`),
                   );
-                  await innerExec.close();
                 }
               });
               if (transcript) {
@@ -2115,11 +2113,8 @@ export async function runWorkflow<
     ): StepExecHandle {
       return createStepExec({
         ...binding,
-        invocation: () =>
-          processInvocation(binding.owner.id, {
-            signal: binding.signal,
-            attempt: binding.attempt,
-          }),
+        invocation: (signal) =>
+          processInvocation(binding.owner.id, { signal, attempt: binding.attempt }),
         runner: (live) =>
           live && options.rehearsal !== undefined
             ? options.processRunner
@@ -2851,25 +2846,21 @@ export async function runWorkflow<
         if (stub !== undefined) return Promise.resolve({ done: true, value: stub.output });
         // Inner commands stop with the observation's own signal (deadline, observeTimeoutMs,
         // cancellation) and when the observation settles.
-        const inner = new AbortController();
-        let active = true;
         const innerExec = stepExec({
           owner: { kind: 'wait', id },
           cwd: context.cwd,
           attempt: context.attempt,
-          signal: AbortSignal.any([context.signal, inner.signal]),
+          signal: context.signal,
           options: pollExecOptionsSchema,
-          active: () => active && !closed,
+          active: () => !closed,
         });
         return inEffect.run('poll', async () => {
           try {
             return await source.observe({ ...context, exec: innerExec.exec });
           } finally {
-            active = false;
-            inner.abort(
+            await innerExec.close(
               new Error(`Wait ${id}: its observation settled; inner command terminated.`),
             );
-            await innerExec.close();
           }
         });
       },

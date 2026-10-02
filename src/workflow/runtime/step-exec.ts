@@ -27,12 +27,12 @@ export interface StepExecDependencies {
   readonly cwd: string;
   /** The parent attempt, used for a returned failure's `attempts`. */
   readonly attempt: number;
-  /** Aborted when the parent is cancelled or settles; the child is stopped with it. */
+  /** The parent's signal; a child is stopped when it aborts or when the handle closes. */
   readonly signal: AbortSignal;
   /** Strict option schema: the step variant rejects `live`, the poll variant accepts it. */
   readonly options: z.ZodType;
-  /** Ownership of the child under the parent's ID and attempt. */
-  readonly invocation: () => HarnessInvocation;
+  /** Ownership of the child under the parent's ID and attempt, cancelled by `signal`. */
+  readonly invocation: (signal: AbortSignal) => HarnessInvocation;
   /** The runner for a call; `live` is true only for an observer's `live: true`. */
   readonly runner: (live: boolean) => ProcessRunner | undefined;
   /** Whether the callback or observation is still running. */
@@ -44,14 +44,26 @@ export interface StepExecDependencies {
 /**
  * Build the non-durable `context.exec` of a step callback or poll observer. Every call writes no
  * checkpoint: it prepares the command like `ctx.exec`, marks the request `nested`, and runs it
- * under the parent's invocation. Calls still running when the parent settles are aborted, and
- * {@link StepExecHandle.close} waits for them to finish.
+ * under the parent's invocation. {@link StepExecHandle.close} refuses later calls, aborts calls
+ * still running and waits for them to finish.
  * @internal
  */
 export function createStepExec(dependencies: StepExecDependencies): StepExecHandle {
   const pending = new Set<Promise<unknown>>();
+  let closed = false;
+  // Created on the first call, so a callback that never runs a command costs no signal.
+  let controller: AbortController | undefined;
+  let combined: AbortSignal | undefined;
+  const scope: CallScope = {
+    active: () => !closed && dependencies.active(),
+    signal: () => {
+      controller ??= new AbortController();
+      combined ??= AbortSignal.any([dependencies.signal, controller.signal]);
+      return combined;
+    },
+  };
   const run = (command: Command, options: unknown, schema: z.ZodType | null): Promise<unknown> => {
-    const call = execute(dependencies, command, options, schema);
+    const call = execute(dependencies, scope, command, options, schema);
     pending.add(call);
     // A command the callback never awaited is terminated when the parent settles; its rejection is
     // expected, so it never surfaces as unhandled.
@@ -76,7 +88,9 @@ export function createStepExec(dependencies: StepExecDependencies): StepExecHand
   });
   return {
     exec,
-    close: async () => {
+    close: async (reason) => {
+      closed = true;
+      controller?.abort(reason);
       await Promise.allSettled([...pending]);
     },
   };
@@ -85,8 +99,13 @@ export function createStepExec(dependencies: StepExecDependencies): StepExecHand
 /** A bound `context.exec` and the drain of its calls. @internal */
 export interface StepExecHandle {
   readonly exec: StepExecFunction;
-  /** Resolve once every call made through `exec` has settled. */
-  readonly close: () => Promise<void>;
+  /** Refuse further calls, abort running ones with `reason`, and wait until all have settled. */
+  readonly close: (reason: Error) => Promise<void>;
+}
+
+interface CallScope {
+  readonly active: () => boolean;
+  readonly signal: () => AbortSignal;
 }
 
 function label({ owner }: StepExecDependencies): string {
@@ -95,15 +114,17 @@ function label({ owner }: StepExecDependencies): string {
 
 async function execute(
   dependencies: StepExecDependencies,
+  scope: CallScope,
   command: Command,
   options: unknown,
   schema: z.ZodType | null,
 ): Promise<unknown> {
-  if (!dependencies.active())
+  if (!scope.active())
     throw new Error(
       `${label(dependencies)}: context.exec must be called while its ${dependencies.owner.kind === 'step' ? 'callback' : 'poll observation'} is active.`,
     );
-  dependencies.signal.throwIfAborted();
+  const signal = scope.signal();
+  signal.throwIfAborted();
   const raw: unknown = options ?? {};
   const fields =
     schema !== null && raw !== null && typeof raw === 'object'
@@ -132,17 +153,19 @@ async function execute(
     schema === null ? null : schemaJson(outputSchema),
     true,
   );
+  // The parent may have settled while the command was prepared: never start it then.
+  signal.throwIfAborted();
   try {
     const value = await executeCommand(
       dependencies.runner(live),
       request,
-      dependencies.invocation(),
+      dependencies.invocation(signal),
       prepared.summary.okExitCodes,
       schema,
     );
     return onError === 'return' ? { ok: true, value } : value;
   } catch (error) {
-    if (onError !== 'return' || !settles(error, dependencies.signal)) throw error;
+    if (onError !== 'return' || !settles(error, signal)) throw error;
     const failure: ExecStepError = {
       ...stepError(error, dependencies.attempt),
       ...(error instanceof ExecError ? execFailureFields(error) : {}),
