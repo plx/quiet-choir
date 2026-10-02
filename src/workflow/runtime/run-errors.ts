@@ -5,8 +5,10 @@ import type { RunRecord } from './store.js';
 /**
  * Stable machine-readable workflow command failures; numeric exits belong to the CLI.
  *
- * `watch.timeout` means a bounded `workflow inspect --watch --timeout` stopped watching while the
- * run was still running; the run itself keeps running. `watch.record_not_created` means a
+ * `watch.timeout` means a bounded wait (`workflow inspect --watch --timeout`, `workflow events
+ * --follow --timeout` or `workflow cancel --timeout`) stopped while the run had not ended; the run
+ * itself keeps running. `run.unowned` means `workflow cancel` found no live local process owning a
+ * run that has not ended, so there was nothing to signal. `watch.record_not_created` means a
  * `--wait-created` watch never saw the run's record appear within its bound.
  */
 export type CliErrorCode =
@@ -27,6 +29,7 @@ export type CliErrorCode =
   | 'run.input_changed'
   | 'run.unreadable'
   | 'run.orphans'
+  | 'run.unowned'
   | 'load.typecheck'
   | 'load.import'
   | 'load.definition'
@@ -56,6 +59,7 @@ const cliErrorCodes: Readonly<Record<CliErrorCode, true>> = {
   'run.input_changed': true,
   'run.unreadable': true,
   'run.orphans': true,
+  'run.unowned': true,
   'load.typecheck': true,
   'load.import': true,
   'load.definition': true,

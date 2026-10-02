@@ -17,6 +17,7 @@ const expectedCommands = [
   'configuration:set',
   'info:version',
   'workflow:answer',
+  'workflow:cancel',
   'workflow:check-resume',
   'workflow:clean',
   'workflow:events',

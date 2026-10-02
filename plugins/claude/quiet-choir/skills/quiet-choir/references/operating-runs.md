@@ -87,20 +87,20 @@ stream. Interrupting a watcher stops observation, not the workflow. List/summary
 ownership; full-record `.status` remains the last saved status. Use
 [triage](inspection.md#classify-and-act) to interpret it.
 
-| CLI exit | Meaning                                                                                                                                     |
-| -------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| 0        | Command succeeded; ordinary inspect only guarantees a readable record                                                                       |
-| 1        | Workflow execution failed                                                                                                                   |
-| 2        | Invalid answer (`answer.invalid`), or usage/input error: flags, missing entrypoint, run ID, input JSON/schema                               |
-| 3        | Answer conflict (`answer.conflict`), or run refusal: existing/missing/unreadable/locked run, incompatible resume, changed input, or orphans |
-| 4        | Workflow typecheck, import, or definition failure                                                                                           |
-| 75       | Saved suspension; deliver answers and resume the same run                                                                                   |
-| 66       | `inspect --watch --wait-created`: no record appeared within the bound (`watch.record_not_created`)                                          |
-| 70       | `workflow start`: the runner exited without a record or a readable result document (`start.exited`)                                         |
-| 74       | Checkpoint/storage failure                                                                                                                  |
-| 79       | `inspect --watch --timeout`: the run was still running at the bound and keeps running (`watch.timeout`)                                     |
-| 130      | Interruption (SIGINT/SIGTERM/SIGHUP) saved a resumable suspension, or interrupted watch; tick or resume continues the run                   |
-| 124      | `workflow start`: no record owned by the runner within `--start-timeout`; the runner was stopped (`start.timeout`)                          |
+| CLI exit | Meaning                                                                                                                                                                                                                                    |
+| -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 0        | Command succeeded; ordinary inspect only guarantees a readable record                                                                                                                                                                      |
+| 1        | Workflow execution failed                                                                                                                                                                                                                  |
+| 2        | Invalid answer (`answer.invalid`), or usage/input error: flags, missing entrypoint, run ID, input JSON/schema                                                                                                                              |
+| 3        | Answer conflict (`answer.conflict`), or run refusal: existing/missing/unreadable/locked run, incompatible resume, changed input, or orphans                                                                                                |
+| 4        | Workflow typecheck, import, or definition failure                                                                                                                                                                                          |
+| 75       | Saved suspension; deliver answers and resume the same run                                                                                                                                                                                  |
+| 66       | `inspect --watch --wait-created`: no record appeared within the bound (`watch.record_not_created`)                                                                                                                                         |
+| 70       | `workflow start`: the runner exited without a record or a readable result document (`start.exited`)                                                                                                                                        |
+| 74       | Checkpoint/storage failure                                                                                                                                                                                                                 |
+| 79       | `inspect --watch --timeout`, `events --follow --timeout` or `cancel --timeout`: the run had not ended at the bound and keeps running (`watch.timeout`)                                                                                     |
+| 130      | Interruption (SIGINT/SIGTERM/SIGHUP) saved a resumable suspension, or interrupted watch; tick or resume continues the run. A run owner stopped by `workflow cancel` exits 130 too, with a saved `cancelled` status that tick never resumes |
+| 124      | `workflow start`: no record owned by the runner within `--start-timeout`; the runner was stopped (`start.timeout`)                                                                                                                         |
 
 Use stable `error.code` for automation. Put flags after the command
 (`workflow execute FILE --json`).
@@ -184,11 +184,11 @@ cat "$QC_RUNS/first/lock/owner.json"
 
 The lock can be absent; `cat` then failing is expected. `updatedAt` is not a heartbeat. A long agent
 call or sleep may produce no checkpoint changes. Compare sleep `wakeAt` (epoch milliseconds) with
-the current clock and inspect logs. A live owner means wait or intentionally cancel the runner; a
-foreign-host owner needs investigation on that host. Missing/incomplete `owner.json` in a lock is
-damage or an older build's interrupted acquire. Never delete lock directories by hand, and do not
-clear a lock on age alone. When resume refuses an abandoned lock with `run.locked`, clear it with
-the command its message prints:
+the current clock and inspect logs. A live owner means wait or intentionally cancel the run with
+`workflow cancel` (below); a foreign-host owner needs investigation on that host. Missing/incomplete
+`owner.json` in a lock is damage or an older build's interrupted acquire. Never delete lock
+directories by hand, and do not clear a lock on age alone. When resume refuses an abandoned lock
+with `run.locked`, clear it with the command its message prints:
 
 ```sh
 node "$QC_CHECKOUT/bin/run.js" workflow unlock first --state-dir "$QC_RUNS" --json
@@ -218,6 +218,24 @@ records refuse recovery and remain for investigation; compare recorded identity 
 information on the owning host. A broad `pgrep` match alone cannot establish which run owns a
 process and must not drive automatic killing. Escaped/unregistered descendants may need manual
 investigation. External mutations remain in place after cancellation.
+
+To stop a live run on purpose, do not `kill` the owner PID: since a first signal saves a resumable
+suspension, the next tick would resume it. Use cancel, which signals only a live owner on this host
+whose recorded OS start time still matches, and waits for the run to end:
+
+```sh
+node "$QC_CHECKOUT/bin/run.js" workflow cancel first --state-dir "$QC_RUNS" --json
+```
+
+It exits 0 with `{kind: "workflow.cancel.result", status, signalsSent, owner}` once the run is
+`cancelled` (or `completed`/`failed` if it ended first; a run that already ended is a no-op with
+`signalsSent: 0`). It refuses without signalling: `run.locked` (exit 3) for a foreign, dead,
+released or unverifiable owner, and `run.unowned` (exit 3) for an unfinished run no process owns. An
+owner that exits without saving `cancelled` (an embedder, or a forced kill) is also `run.unowned`
+with `details.reason: "owner-exited"`; tick may resume that run. After `--timeout` (default 30s) it
+exits 79 with the last saved `status`; `--force` then sends one more SIGINT to the same verified
+owner, which force-kills its groups and can leave `running` for stale recovery. Cancelling a run
+that tick is executing stops that tick pass.
 
 For code/schema edits use [acceptance or fork recovery](durability.md#choose-a-recovery-path);
 `--resume --accept-code-change` retains per-step compatibility checks and refuses, without changing

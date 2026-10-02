@@ -96,6 +96,16 @@ export function runInboxPath(stateDir: string, runId: string): string {
     : join(runDirectory(stateDir, runId), 'inbox');
 }
 
+/**
+ * The run's pending `workflow cancel` request. It follows {@link runInboxPath}'s legacy rule, so a run
+ * with a flat checkpoint keeps the request beside it as `<runId>.cancel.json`. @internal
+ */
+export function runCancelRequestPath(stateDir: string, runId: string): string {
+  return existsSync(legacyRunPath(stateDir, runId))
+    ? join(resolve(stateDir), `${runId}.cancel.json`)
+    : join(runDirectory(stateDir, runId), 'cancel.json');
+}
+
 /** Create private storage and a non-overwriting ignore file; register default projects. @internal */
 export async function prepareStateDirectory(stateDir: string, cwd?: string): Promise<void> {
   await createStorageDirectory(stateDir);

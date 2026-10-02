@@ -78,7 +78,9 @@ single place the ownership recovery and crash-loop rules are encoded; tick write
 completion. An interrupt whose run-signal reason is a `RunInterruptedError` saves `suspended` with
 `nextWakeAt` now and `interruptedBy` after the ordinary drain, keeps `staleRecovery`, and still
 rejects; every other abort keeps `cancelled`, and a new execution clears `interruptedBy` (ADR 0029).
-See [ADR 0015](../../../docs/decisions/0015-observe-runs-without-changing-effect-identity.md).
+The runtime never reads cancel requests: the loader turns a `RunInterruptedError` into an unmarked
+abort only for a `workflow cancel` request bound to its current lock token (ADR 0039). See
+[ADR 0015](../../../docs/decisions/0015-observe-runs-without-changing-effect-identity.md).
 
 Questions pin their full identity even while waiting. Registration, non-question effects, and
 checkpoint writes count as active; a promise blocked on an external answer does not. Suspend only

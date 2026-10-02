@@ -144,6 +144,11 @@ export interface RunLockView {
     readonly host: string;
     /** Current local liveness or a state that prevents ordinary automatic reclamation. */
     readonly state: 'alive' | 'dead' | 'unknown' | 'remote' | 'released';
+    /**
+     * The owner's recorded OS birth identity (compared with the live process to detect PID reuse),
+     * or null when the writer did not record one.
+     */
+    readonly osStartTime: string | null;
   } | null;
   /**
    * The recovery marker (`recovery.json`) of a process reclaiming this lock, or null. A dead
@@ -176,6 +181,11 @@ export interface RunOwnership {
     readonly host: string;
     /** Current local liveness or a state that prevents ordinary automatic reclamation. */
     readonly state: 'alive' | 'dead' | 'unknown' | 'remote' | 'released';
+    /**
+     * The owner's recorded OS birth identity (compared with the live process to detect PID reuse),
+     * or null when the writer did not record one.
+     */
+    readonly osStartTime: string | null;
   } | null;
   /** Child/group records, including unverifiable entries. */
   readonly processes: readonly HarnessProcessInspection[];
@@ -212,7 +222,12 @@ async function inspectLock(
       const value = await readContended(path);
       // Retired between the listing and the read: there is no lock to report.
       if (value === 'gone') return undefined;
-      owner = { pid: value.pid, host: value.host, state: ownerState(value) };
+      owner = {
+        pid: value.pid,
+        host: value.host,
+        state: ownerState(value),
+        osStartTime: value.osStartTime ?? null,
+      };
     } catch (error) {
       warnings.push(`owner.json: ${message(error)}`);
     }
@@ -248,7 +263,7 @@ export async function inspectRunOwnership(options: ReadRunOptions): Promise<RunO
     const processes = await inspectProcesses(lockPath, options.runId, owner.token);
     return {
       locked: true,
-      owner: { pid: owner.pid, host: owner.host, state },
+      owner: { pid: owner.pid, host: owner.host, state, osStartTime: owner.osStartTime ?? null },
       processes:
         state === 'remote'
           ? processes.map((entry) => ({

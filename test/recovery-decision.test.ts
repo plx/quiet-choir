@@ -29,7 +29,7 @@ function lock(
   return {
     kind,
     path: `/state/${kind}`,
-    owner: owner === null ? null : { pid: 4242, host: 'here', state: owner },
+    owner: owner === null ? null : { pid: 4242, host: 'here', state: owner, osStartTime: null },
     recovery: recovery === null ? null : { pid: 4343, host: 'here', state: recovery },
   };
 }
@@ -42,7 +42,7 @@ function ownership(
 ): RunOwnership {
   return {
     locked: true,
-    owner: owner === null ? null : { pid: 4242, host: 'here', state: owner },
+    owner: owner === null ? null : { pid: 4242, host: 'here', state: owner, osStartTime: null },
     processes:
       processes === 'none'
         ? []
@@ -116,7 +116,7 @@ describe('classifyRecovery', () => {
   it('holds a run whose guard alone is locked by a live owner, and frees one without locks', () => {
     const guardOnly: RunOwnership = {
       locked: true,
-      owner: { pid: 4242, host: 'here', state: 'dead' },
+      owner: { pid: 4242, host: 'here', state: 'dead', osStartTime: null },
       processes: [],
       locks: [lock('primary', 'dead'), lock('guard', 'alive')],
     };
@@ -133,12 +133,15 @@ describe('classifyRecovery', () => {
 
   it('falls back to the top-level owner when the observation has no per-lock view', () => {
     const base = { locked: true, processes: [], locks: [] } as const;
-    expect(classifyRecovery({ ...base, owner: { pid: 1, host: 'h', state: 'dead' } })).toBe(
-      'reclaimable',
-    );
-    expect(classifyRecovery({ ...base, owner: { pid: 1, host: 'h', state: 'alive' } })).toBe(
-      'held',
-    );
+    expect(
+      classifyRecovery({ ...base, owner: { pid: 1, host: 'h', state: 'dead', osStartTime: null } }),
+    ).toBe('reclaimable');
+    expect(
+      classifyRecovery({
+        ...base,
+        owner: { pid: 1, host: 'h', state: 'alive', osStartTime: null },
+      }),
+    ).toBe('held');
   });
 
   it('holds an unreadable lock even with a warning and no processes', () => {
