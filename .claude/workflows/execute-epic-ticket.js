@@ -764,13 +764,28 @@ async function implementTicket(plan) {
     !r ||
     !r.checkPassed ||
     plan.acceptance.some((c) => !SETTLED.has(r.criteria.find((x) => x.id === c.id)?.status));
+  let followedUp = false;
   if (unfinished(result) && tierName === 'mechanic') {
     log('mechanic left work unfinished or checks failing; escalating to the surgeon tier');
+    followedUp = true;
     tierName = 'surgeon';
     result = await implement(
       plan,
       TIER.surgeon,
       `\nA previous attempt (notes: ${JSON.stringify(result?.notes ?? [])}; criteria: ${JSON.stringify(result?.criteria ?? [])}) left work unfinished or the check suite failing; the newest impl-*.log in ${DIR} has the last check output. Finish the job.`,
+    );
+  }
+  // A large ticket can exhaust the surgeon's turns with the work committed but the gate unconfirmed
+  // (#140: the check was still running when the report was due). One finishing round carries the
+  // previous report forward, so its deviations and notes survive into the PR body. The escalation
+  // above already was the follow-up round for a mechanic; one follow-up per ticket.
+  if (unfinished(result) && result && !followedUp) {
+    log('implementer reported open criteria or no passing check; one finishing round');
+    const previous = result;
+    result = await implement(
+      plan,
+      TIER[tierName],
+      `\nA previous attempt committed work on the branch and reported:\n${JSON.stringify({ checkPassed: previous.checkPassed, criteria: previous.criteria, deviations: previous.deviations, followups: previous.followups, notes: previous.notes }, null, 1)}\nFinish only what is still open (and fix what the check finds); don't redo settled work. Run the check in the foreground, as a single shell call with a timeout of at least 45 minutes, never in the background: checkPassed must come from a check that has printed its result. In your report, carry the previous deviations, followups and notes forward (updated if they changed) together with your own.`,
     );
   }
   record.implementer = { tier: tierName, rounds: implRound };

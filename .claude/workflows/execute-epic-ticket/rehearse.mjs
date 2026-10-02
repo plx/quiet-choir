@@ -783,9 +783,48 @@ const SCENARIOS = {
           ],
         }),
     },
-    check({ result }) {
+    check({ result, calls }) {
       assert.equal(result.status, 'blocked');
       assert.match(result.blocked.reason, /a2 \(partial/);
+      assert.deepEqual(
+        calls.filter((c) => c.label?.startsWith('impl-')).map((c) => c.label),
+        ['impl-1', 'impl-2'],
+        'one follow-up round (the escalation), then block',
+      );
+    },
+  },
+  'gives a surgeon whose check was still running one finishing round': {
+    world: { issues: { 102: {} } },
+    agents: {
+      plan: () => {
+        const p = PLAN_READY(102);
+        p.plan.complexity = 'subtle';
+        return p;
+      },
+      impl: ({ n, prompt }) => {
+        if (n === 1) {
+          return IMPL_DONE({
+            checkPassed: false,
+            criteria: [
+              { id: 'a1', status: 'done', commit: 'aaaaaaa', evidence: 't' },
+              { id: 'a2', status: 'partial', commit: 'aaaaaaa', evidence: 'gate still running' },
+            ],
+            deviations: ['formatter lives in its own pure module'],
+          });
+        }
+        assert.match(prompt, /formatter lives in its own pure module/, 'previous report carried');
+        assert.match(prompt, /in the foreground/);
+        return IMPL_DONE({ deviations: ['formatter lives in its own pure module'] });
+      },
+    },
+    check({ result, calls }) {
+      assert.equal(result.status, 'landed');
+      assert.equal(result.implementer.tier, 'surgeon');
+      assert.equal(result.implementer.rounds, 2);
+      assert.deepEqual(
+        calls.filter((c) => c.label?.startsWith('impl-')).map((c) => c.model),
+        ['opus', 'opus'],
+      );
     },
   },
   'hands criteria that need the PR to the landing review instead of blocking': {
