@@ -123,10 +123,11 @@ Concurrent work already in flight can still finish. The end-of-run skipped-path 
 healed steps.
 
 The rule is a watermark, not proof of dependence: a step launched after the failure by unrelated
-control flow (for example after another sibling completed) is still flagged, and the earliest
-failure is kept across repeated failures. Records without stamps (checkpoints written before them,
-or a failure saved between retries) fall back per pair to launch order: a step with a higher `seq`
-is flagged. Explicit settled outcomes prevent the branch from changing in the first place.
+control flow (for example, a step started when another sibling completed after the failure had
+settled) is still flagged, and the earliest failure is kept across repeated failures. Records
+without stamps (checkpoints written before them, or a failure saved between retries) fall back per
+pair to launch order: a step with a higher `seq` is flagged. Explicit settled outcomes prevent the
+branch from changing in the first place.
 
 ## Choose a recovery path
 
