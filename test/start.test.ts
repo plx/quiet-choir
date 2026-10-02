@@ -225,8 +225,10 @@ describe('StartWorkflowExecutor', () => {
   });
 
   it('escalates to SIGKILL when the runner ignores SIGTERM past the grace', async () => {
+    // As in the next test, the timeout must outlast the child's startup: a SIGTERM sent before
+    // Node installs the ignoring handler kills it outright, and the launch reports SIGTERM.
     const stubborn = `process.on('SIGTERM', () => {}); ${forever}`;
-    const failure = failed(await executor().execute(plan(stubborn, { timeoutMs: 150 })));
+    const failure = failed(await executor().execute(plan(stubborn, { timeoutMs: 2_000 })));
     expect(failure.code).toBe('start.timeout');
     expect(failure.launch?.signal).toBe('SIGKILL');
     expect(pidState(failure.launch?.pid ?? 0)).toBe('dead');
