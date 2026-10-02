@@ -69,6 +69,11 @@ export interface ExecuteWorkflowPlan extends ExecutionPlan {
    */
   readonly inheritHarness?: boolean;
   readonly notifyCommand?: string;
+  /**
+   * Append one compact JSON line per step, phase, log, wait and run event: an absolute file path,
+   * or `-` for the executor's `eventsStdout` writer. Per invocation; never saved with the run.
+   */
+  readonly events?: string;
   readonly typecheck: TypecheckPlan;
   readonly runId: string;
   readonly stateDir: string;
@@ -109,6 +114,8 @@ export interface AnswerWorkflowPlan extends ExecutionPlan {
   readonly waitMode?: 'suspend' | 'block';
   /** For `resume`: accept a harness configuration different from the run's recorded one. */
   readonly allowHarnessConfigChange?: boolean;
+  /** For `resume`: the event stream of that execution, as on `workflow.execute`. */
+  readonly events?: string;
 }
 
 /** Read every waiting question without importing workflow code. */

@@ -94,25 +94,46 @@ ceiling. quiet-choir now offers sticky run-wide gates on reported cost and agent
 with unknown cost are not counted toward the cost gate. The per-call Claude USD limit still applies,
 and there is still no run-wide token ceiling.
 
-## Launch in the background from Claude Code
+## Drive a run from Claude Code
 
-To wait for a run without polling, start it and a bounded watch in one Bash call with
-`run_in_background: true`. Claude Code notifies you when that command exits; read its output then
-instead of checking in a loop. Give the watch a `--timeout` shorter than the background task's own
+To follow a run without polling, launch it and a bounded watch in one Bash call with
+`run_in_background: true`, and follow its events file with the Monitor tool. Claude Code notifies
+you when the background command exits, and Monitor notifies you for each matching event line. Do not
+wrap the launch in `nohup` or `&`: the Bash task would end at once, and its exit notification would
+no longer mean the run finished. Give the watch a `--timeout` shorter than the background task's own
 timeout (`8m` below is only an example), so the watch reports before the host stops it.
+
+<!-- skills-check: example claude-launch -->
 
 ```sh
 cd "$QC_TARGET" || exit 1
 node "$QC_CHECKOUT/bin/run.js" workflow start "$QC_WORKFLOW" \
-  --run-id review-42 --state-dir "$QC_RUNS" --input '{}' --json &&
+  --run-id review-42 --state-dir "$QC_RUNS" --input '{}' \
+  --events "$QC_RUNS/review-42.events.jsonl" --json &&
   node "$QC_CHECKOUT/bin/run.js" workflow inspect review-42 --state-dir "$QC_RUNS" \
     --watch --final --json --summary --timeout 8m
 ```
 
-`--final` makes the watch print one line. Read the **last stdout line**, not only the exit: a
-document with `kind: "workflow.error"` is a failure, so branch on its `error.code`; otherwise it is
-the watch's final snapshot, so branch on its `status`. A snapshot or failure that has a runnable
-follow-up lists it in `next`; for 79 and 66, `next` is empty, so use the table below.
+`--events FILE` appends one JSON line of at most 512 bytes per step, phase, log, wait and run event,
+such as `{"t":"…","run":"review-42","ev":"step.failed","step":"review/2","attempt":1,"ms":5120}`.
+The file is created owner-only, and an existing file keeps its mode, so use a new path or one under
+an owner-only `$QC_RUNS`. Then start Monitor on that file with a `timeout_ms` (re-arm it the same
+way if it expires before the run ends). The filter passes step failures, settled failures, opened
+questions and every terminal run state; `-n +1` replays lines written before Monitor started, and
+`-F` waits for a file that does not exist yet.
+
+<!-- skills-check: example claude-monitor -->
+
+```sh
+tail -n +1 -F "$QC_RUNS/review-42.events.jsonl" |
+  grep --line-buffered -E '"ev":"(step\.failed|step\.settled|wait\.opened|run\.(completed|failed|cancelled|suspended))"'
+```
+
+When the background task's completion notification arrives, stop the monitor with TaskStop and read
+the task's output. `--final` makes the watch print one line. Read the **last stdout line**, not only
+the exit: a document with `kind: "workflow.error"` is a failure, so branch on its `error.code`;
+otherwise it is the watch's final snapshot, so branch on its `status`. A snapshot or failure that
+has a runnable follow-up lists it in `next`; for 79 and 66, `next` is empty, so use the table below.
 
 | Exit | Meaning                                                                                                       |
 | ---- | ------------------------------------------------------------------------------------------------------------- |
@@ -126,7 +147,16 @@ follow-up lists it in `next`; for 79 and 66, `next` is empty, so use the table b
 
 `workflow start`'s own failures end the `&&` chain before the watch runs, so the last line is then
 start's error document: a usage error (2), `run.exists` (3), a type or import error (4),
-`start.exited` (70) or `start.timeout` (124). That is why the exit alone is not enough. See
+`start.exited` (70) or `start.timeout` (124). That is why the exit alone is not enough.
+
+On 75, map each entry of the snapshot's `pending[]` to an AskUserQuestion question, then relaunch in
+the background the same way, with the answer and a new bounded watch, and re-arm Monitor:
+`workflow answer review-42 STEP --json 'VALUE' --resume --events "$QC_RUNS/review-42.events.jsonl"`
+chained with `&&` to the same `inspect … --watch --final --json --summary --timeout 8m`. On answer,
+`--json VALUE` is the answer and also requests JSON output, so a refused answer is the last line.
+The events file is not saved with the run, so pass `--events` again to every `answer --resume`,
+`resume` and `tick`; the stream then continues in the same file, and a resume never repeats a line
+for work that earlier executions already finished. See
 [operating a run](references/operating-runs.md) for the suspended-run loop and recovery.
 
 <!-- /skills-difference: claude-host -->

@@ -2,6 +2,7 @@ import { parseRunBudget, runBudgetFlags } from '../../cli/run-budget.js';
 import type { RunBudgetPolicy } from '../../workflow/runtime/run-budget.js';
 import { Args, Flags, type Interfaces } from '@oclif/core';
 import { WorkflowCommand } from '../../cli/workflow-command.js';
+import { eventsFlag } from '../../cli/execute-flags.js';
 import { requestedFull } from '../../cli/workflow-errors.js';
 import { WorkflowExecutor } from '../../workflow/loader/executor.js';
 import {
@@ -31,6 +32,7 @@ export default class WorkflowResume extends WorkflowCommand {
     readonly harness: string[] | undefined;
     readonly 'harness-config': string | undefined;
     readonly 'notify-command': string | undefined;
+    readonly events: string | undefined;
     readonly 'wait-mode': 'suspend' | 'block' | undefined;
   }> = {
     'max-child-depth': Flags.integer({
@@ -43,6 +45,7 @@ export default class WorkflowResume extends WorkflowCommand {
       description: 'Best-effort sh -c hook receiving event JSON on stdin',
       env: 'QUIET_CHOIR_NOTIFY_COMMAND',
     }),
+    events: eventsFlag(),
 
     'wait-mode': Flags.option({ options: ['suspend', 'block'] as const })({
       description:
@@ -88,6 +91,7 @@ export default class WorkflowResume extends WorkflowCommand {
   }
 
   public async run(): Promise<void> {
+    this.refuseEventsStdoutWithJson();
     const { args, flags } = await this.parse(WorkflowResume);
     const stateDir = this.runContext(args.runId, flags['state-dir']);
     this.logToStderr(`Run ID: ${args.runId}\nState directory: ${stateDir}`);
@@ -103,11 +107,13 @@ export default class WorkflowResume extends WorkflowCommand {
     } catch (error) {
       this.fail('usage.flag', error instanceof Error ? error.message : String(error));
     }
+    const events = this.eventsOptions(flags.events);
     const executor = new WorkflowExecutor({
       logger: this.createExecutionLogger(flags),
       commandLauncher: this.commandLauncher,
       signal: this.signal,
       processSupervisor: this.processSupervisor,
+      ...events.executor,
     });
     const result = await executor.execute({
       kind: 'workflow.resume',
@@ -116,6 +122,7 @@ export default class WorkflowResume extends WorkflowCommand {
         : { maxChildDepth: flags['max-child-depth'] }),
       ...runBudget,
       ...(flags['notify-command'] === undefined ? {} : { notifyCommand: flags['notify-command'] }),
+      ...events.plan,
       ...(flags['wait-mode'] === undefined ? {} : { waitMode: flags['wait-mode'] }),
       runId: args.runId,
       stateDir: stateDir,

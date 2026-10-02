@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { mkdtemp, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -33,6 +33,56 @@ async function moduleExample(skillRoot, id, directory) {
     ),
   );
   return tsImport(pathToFileURL(file).href, import.meta.url);
+}
+/** Run the claude-launch and claude-monitor fences verbatim against first.workflow.mts. */
+async function claudeRecipe(skillRoot, directory, target, state, env) {
+  const launched = command('sh', ['-c', await example(skillRoot, 'SKILL.md', 'claude-launch')], {
+    cwd: directory,
+    env,
+  });
+  const last = JSON.parse(launched.trim().split('\n').at(-1));
+  assert.equal(last.id, 'review-42');
+  assert.equal(last.status, 'completed', launched);
+  assert.deepEqual(last.output, { message: 'Hello from a durable local step.' });
+  const events = join(state, 'review-42.events.jsonl');
+  const monitor = spawn('sh', ['-c', await example(skillRoot, 'SKILL.md', 'claude-monitor')], {
+    cwd: directory,
+    env,
+    detached: true,
+    stdio: ['ignore', 'pipe', 'inherit'],
+  });
+  let output = '';
+  monitor.stdout.setEncoding('utf8').on('data', (chunk) => {
+    output += chunk;
+  });
+  try {
+    for (let tries = 0; tries < 1200 && !output.includes('"ev":"run.completed"'); tries++)
+      await delay(50);
+  } finally {
+    try {
+      process.kill(-monitor.pid, 'SIGTERM');
+    } catch {
+      /* Already gone. */
+    }
+  }
+  const matched = output
+    .split('\n')
+    .filter(Boolean)
+    .map((line) => JSON.parse(line));
+  assert.deepEqual(
+    matched.map((line) => line.ev),
+    ['run.completed'],
+    output,
+  );
+  assert.equal(matched[0].run, 'review-42');
+  assert.equal((await stat(events)).mode & 0o777, 0o600);
+  const lines = (await readFile(events, 'utf8')).trim().split('\n');
+  for (const line of lines) assert.ok(Buffer.byteLength(line) <= 512, line);
+  assert.deepEqual(
+    lines.map((line) => JSON.parse(line).ev),
+    ['run.started', 'step.completed', 'run.completed'],
+  );
+  assert.equal(command('git', ['status', '--porcelain'], { cwd: target }), '');
 }
 try {
   for (const [index, pkg] of packages.entries()) {
@@ -103,6 +153,8 @@ try {
       counts: { completed: 1 },
       open: [],
     });
+    // Only the Claude package documents the run_in_background launch and its Monitor filter.
+    if (pkg === packages[1]) await claudeRecipe(skillRoot, directory, target, state, env);
 
     const { loggingHarness } = await moduleExample(skillRoot, 'logging-harness', directory);
     const { resumeOrStart } = await moduleExample(skillRoot, 'resume-or-start', directory);
@@ -215,7 +267,9 @@ try {
     }
     assert.equal(warnings.length, 1);
     assert.equal(command('git', ['status', '--porcelain'], { cwd: target }), '');
-    console.log(`${pkg}: documented golden path, jq, logging, and resume recipes passed`);
+    console.log(
+      `${pkg}: documented golden path, ${pkg === packages[1] ? 'Claude launch and Monitor, ' : ''}jq, logging, and resume recipes passed`,
+    );
   }
 } finally {
   await rm(root, { recursive: true, force: true });

@@ -1,5 +1,6 @@
 import { Args, Flags, type Interfaces } from '@oclif/core';
 import { WorkflowCommand } from '../../cli/workflow-command.js';
+import { eventsFlag } from '../../cli/execute-flags.js';
 import { requestedFull } from '../../cli/workflow-errors.js';
 import { WorkflowExecutor } from '../../workflow/loader/executor.js';
 import {
@@ -27,6 +28,7 @@ export default class WorkflowAnswer extends WorkflowCommand {
     readonly 'harness-config': string | undefined;
     readonly 'wait-mode': 'suspend' | 'block' | undefined;
     readonly 'allow-harness-config-change': boolean | undefined;
+    readonly events: string | undefined;
   }> = {
     'state-dir': Flags.directory({
       description:
@@ -60,6 +62,7 @@ export default class WorkflowAnswer extends WorkflowCommand {
         'Wait mode for --resume; omitted uses the mode the run last executed with (default suspend)',
       dependsOn: ['resume'],
     }),
+    events: eventsFlag({ dependsOn: ['resume'] }),
   };
   public static override readonly summary =
     'Validate and deliver an answer without taking the run lock';
@@ -68,6 +71,7 @@ export default class WorkflowAnswer extends WorkflowCommand {
   }
 
   public async run(): Promise<void> {
+    this.refuseEventsStdoutWithJson();
     const { args, flags } = await this.parse(WorkflowAnswer);
     const stateDir = this.runContext(args.runId, flags['state-dir']);
     let value: JsonValue;
@@ -88,11 +92,13 @@ export default class WorkflowAnswer extends WorkflowCommand {
         this.fail('usage.flag', error instanceof Error ? error.message : String(error));
       }
     }
+    const events = this.eventsOptions(flags.events);
     const executor = new WorkflowExecutor({
       logger: this.createExecutionLogger(flags),
       commandLauncher: this.commandLauncher,
       signal: this.signal,
       processSupervisor: this.processSupervisor,
+      ...events.executor,
     });
     const result = await executor.execute({
       kind: 'workflow.answer',
@@ -104,6 +110,7 @@ export default class WorkflowAnswer extends WorkflowCommand {
       ...(flags.by === undefined ? {} : { by: flags.by }),
       ...(harness === undefined ? {} : { harness, inheritHarness: flags.harness === undefined }),
       ...(flags['wait-mode'] === undefined ? {} : { waitMode: flags['wait-mode'] }),
+      ...events.plan,
       ...(flags['allow-harness-config-change'] === undefined
         ? {}
         : { allowHarnessConfigChange: flags['allow-harness-config-change'] }),

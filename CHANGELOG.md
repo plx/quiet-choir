@@ -2,6 +2,20 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- Compact event stream (additive flag; no identity or storage change): `--events FILE|-` on
+  `workflow execute`, `start`, `resume`, `tick` and `answer --resume` appends one JSON line per
+  `run.*`, `step.completed`, `step.failed`, `step.settled`, `wait.opened`, `phase` and `log` event,
+  shaped `{t, run, ev, step, attempt, harness, ms, costUsd, phase, msg}` with absent fields omitted,
+  `msg` truncated near 200 bytes and every line at most 512 bytes. Replay echoes are dropped, so a
+  resume that appends to the same file adds only new transitions. The file is created owner-only and
+  flushed per line, so `tail -F | grep --line-buffered` sees a line as soon as it is emitted; an
+  open or write failure is one warning and never changes the outcome or exit code. The flag is not
+  saved with the run. `--events -` writes the lines to stdout and moves workflow console output and
+  the human result to stderr; this redirect happens only when the flag is used. `--events -` with
+  `--json`, and `workflow start --events -`, are refused with `usage.flag` (exit 2). The Claude
+  skill's background section becomes "Drive a run from Claude Code": `start --events` plus a bounded
+  watch under `run_in_background`, a Monitor filter on the events file, and the answer loop on
+  exit 75. See [ADR 0037](docs/decisions/0037-compact-event-stream.md).
 - Bounded `inspect --watch` (additive flags; two new error codes; one small contract change):
   `--timeout DURATION` stops a watch whose run is still running that long after the first successful
   read, with the new code `watch.timeout` (exit 79), the last observed `status` (`running`) and

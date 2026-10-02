@@ -257,6 +257,23 @@ directory of a pre-record failure has no `run.json`, so `list` and `inspect` ign
 the same ID uses the next `n`. See [ADR 0036](decisions/0036-detached-start.md). Detached sessions
 are POSIX behaviour; Windows is not covered.
 
+## Event stream
+
+`--events FILE|-` is accepted by `workflow execute`, `start`, `resume`, `tick` and, with `--resume`,
+`answer` (without `--resume` it is a usage error). FILE resolves against the launch directory and
+receives one JSON line of at most 512 bytes per step, phase, log, wait and run event, appended to an
+owner-only file; see [run observability](observability.md#event-stream) for the fields, the event
+set and the replay rule. A sink that cannot open or write its file warns once on stderr and never
+changes the result document or the exit code. The flag is not saved with the run.
+
+`-` writes the lines to stdout, which then carries only event lines: workflow console output and the
+human result go to stderr, as under `--json`. `--events -` (or `--events=-`) together with JSON
+output is refused with `usage.flag` (exit 2) before any run work, because `--json` reserves stdout
+for the result document; this includes answer's `--json VALUE` form. `workflow start --events -` is
+always refused with `usage.flag`, because the runner's stdout is the launch result file; start
+passes `--events FILE` to its runner unchanged. `--events FILE` with `--json` leaves the stdout
+document exactly as it is without the flag.
+
 ## Next commands
 
 Every failure document has a top-level `next` array, and `inspect --json --summary` (and

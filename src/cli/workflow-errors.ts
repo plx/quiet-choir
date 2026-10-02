@@ -94,6 +94,19 @@ export function requestedJson(argv: readonly string[]): boolean {
     .some((arg) => arg === '--json' || arg.startsWith('--json='));
 }
 
+/**
+ * Detect `--events -` or `--events=-` before a literal `--`, even when parsing the rest of argv
+ * fails: stdout then carries only event lines. A path that merely starts with `-` does not count.
+ * @internal
+ */
+export function requestedEventsStdout(argv: readonly string[]): boolean {
+  const beforeSeparator = argv.indexOf('--');
+  const args = argv.slice(0, beforeSeparator === -1 ? undefined : beforeSeparator);
+  return args.some(
+    (arg, index) => arg === '--events=-' || (arg === '--events' && args[index + 1] === '-'),
+  );
+}
+
 /** Detect `--full` even when parsing the rest of argv fails. @internal */
 export function requestedFull(argv: readonly string[]): boolean {
   const beforeSeparator = argv.indexOf('--');

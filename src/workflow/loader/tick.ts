@@ -37,6 +37,8 @@ export interface TickWorkflowsPlan extends ExecutionPlan {
   readonly claimMarginMs?: number;
   readonly maxRuns?: number;
   readonly notifyCommand?: string;
+  /** The event stream every resume of this tick appends to, as on `workflow.execute`. */
+  readonly events?: string;
   /**
    * CLI harness configuration for resumed CLI runs; omitted means the default configuration. A run
    * records a digest of the configuration it last executed with, and a resume under a different one
@@ -475,6 +477,7 @@ export class TickWorkflowExecutor implements Executor<
                 // Suspend for this execution only: blocking one run's waits would hold the batch.
                 waitModeOnce: 'suspend',
                 ...(plan.notifyCommand === undefined ? {} : { notifyCommand: plan.notifyCommand }),
+                ...(plan.events === undefined ? {} : { events: plan.events }),
                 ...resumeHarness(plan, run, this.options.harness !== undefined),
                 ...(plan.allowHarnessConfigChange === undefined
                   ? {}

@@ -12,6 +12,7 @@ import type { ProcessRunner } from '../runtime/exec-model.js';
 import { lstat, realpath, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { WorkflowNotifications } from './notifications.js';
+import { WorkflowEventLog, type EventLogTarget } from './events.js';
 import { fixturesFromRun } from './fixtures.js';
 import {
   harnessConfigDigest,
@@ -97,6 +98,11 @@ export interface WorkflowExecutorOptions {
    * The CLI detects them from its own invocation; omitted means `['quiet-choir']`.
    */
   readonly commandLauncher?: CommandLauncher | undefined;
+  /**
+   * The writer for a plan's `events: '-'`. The CLI passes its reserved stdout here, so the executor
+   * never writes to `process.stdout` itself; a `-` plan without it is a usage error.
+   */
+  readonly eventsStdout?: Extract<EventLogTarget, { readonly write: unknown }>['write'];
 }
 
 /** Every plain-data plan the workflow executor accepts. */
@@ -145,6 +151,7 @@ export class WorkflowExecutor implements Executor<WorkflowExecutorPlan, Workflow
     let unregister: (() => void) | undefined;
     let rehearsal: RehearsalHarness | undefined;
     let notifications: WorkflowNotifications | undefined;
+    let events: WorkflowEventLog | undefined;
     let previewState: Awaited<ReturnType<typeof rehearsalState>> | undefined;
     let harness = this.#options.harness;
     let stage: CliErrorCode = 'load.typecheck';
@@ -272,6 +279,7 @@ export class WorkflowExecutor implements Executor<WorkflowExecutorPlan, Workflow
             ...(plan.allowHarnessConfigChange === undefined
               ? {}
               : { allowHarnessConfigChange: plan.allowHarnessConfigChange }),
+            ...(plan.events === undefined ? {} : { events: plan.events }),
           });
         return { kind: 'workflow.answer.result', ok: true, delivery };
       }
@@ -439,6 +447,16 @@ export class WorkflowExecutor implements Executor<WorkflowExecutorPlan, Workflow
             ? {}
             : { processSupervisor: this.#options.processSupervisor }),
         });
+      if (plan.events !== undefined) {
+        const stdout = this.#options.eventsStdout;
+        if (plan.events === '-' && stdout === undefined)
+          throw new Error('--events - needs a stdout writer; give --events a file path.');
+        events = new WorkflowEventLog({
+          target: plan.events === '-' && stdout ? { write: stdout } : { path: plan.events },
+          logger: this.#options.logger,
+        });
+        events.open();
+      }
       const adapters = plan.dryRun ? {} : selectedAdapters(selection, harness);
       const declaredNames = new Set<string>(['claude', 'codex']);
       const pendingDeclarations = [definition as unknown as WorkflowDeclaration];
@@ -550,6 +568,7 @@ export class WorkflowExecutor implements Executor<WorkflowExecutorPlan, Workflow
         onEvent: (event) => {
           rehearsal?.observe(event);
           notifications?.observe(event);
+          events?.observe(event);
           const observational = event.type === 'phase' || event.type === 'log';
           const agentProgress =
             event.type === 'agent.started' ||
@@ -667,6 +686,7 @@ export class WorkflowExecutor implements Executor<WorkflowExecutorPlan, Workflow
         },
       );
     } finally {
+      events?.close();
       await notifications?.flush();
       unregister?.();
       await previewState?.dispose();
