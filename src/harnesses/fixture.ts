@@ -1,16 +1,18 @@
 import { z } from 'zod';
 import type {
   AgentUsage,
+  ErrorKind,
   Harness,
   HarnessInvocation,
   HarnessRequest,
   HarnessResponse,
   JsonValue,
 } from '../harness-kit.js';
-import { ConfigurationError } from '../harness-kit.js';
+import { ConfigurationError, HarnessError } from '../harness-kit.js';
 import { jsonValue } from '../harness-kit.js';
 import { matchesStepGlob } from '../harness-kit.js';
 import { synthesizeOutput } from './synthesize.js';
+import { errorKindSchema } from '../workflow/runtime/step-error.js';
 
 /** One first-match fixture rule; exactly one of output, text, or error must be present. */
 export interface FixtureCall {
@@ -26,8 +28,44 @@ export interface FixtureCall {
   readonly text?: string;
   /** Simulated invocation failure. */
   readonly error?: string;
+  /**
+   * Failure category for `error`, so `retry.on` and branches on `error.kind` can be rehearsed. The
+   * call then rejects with a {@link HarnessError} of this kind; without it the failure is `unknown`.
+   * Requires `error`.
+   */
+  readonly kind?: ErrorKind;
   /** Optional measurements; missing values become null. */
   readonly usage?: Partial<AgentUsage>;
+}
+
+/**
+ * One first-match command rule for `ctx.exec` and `ctx.exec.json`; exactly one of `json` or
+ * `stdout` must be present. Every filter that is present must hold.
+ */
+export interface FixtureExecCall {
+  /** Step-ID glob: * stays within a segment; ** crosses segments. */
+  readonly step: string;
+  /** Leading argv elements, compared exactly; a rule with a prefix never matches a shell command. */
+  readonly argvPrefix?: readonly [string, ...string[]];
+  /** SHA-256 of the explicit environment overlay, as recorded in the step's exec summary. */
+  readonly envSha256?: string;
+  /** SHA-256 of stdin, as recorded in the step's exec summary. */
+  readonly inputSha256?: string;
+  /** Restrict this rule to a cumulative one-based attempt. */
+  readonly attempt?: number;
+  /**
+   * Restrict this rule to the nth distinct step ID (one-based) that meets its step, argv and digest
+   * filters in this process. Retries of one step keep their occurrence.
+   */
+  readonly occurrence?: number;
+  /** Structured stdout, serialized as JSON and parsed by the step's own schema. */
+  readonly json?: JsonValue;
+  /** Raw stdout text. */
+  readonly stdout?: string;
+  /** Raw stderr text, default empty. */
+  readonly stderr?: string;
+  /** Exit code, default 0; checked against the step's `okExitCodes` like a real exit. */
+  readonly code?: number;
 }
 
 /** Portable, versioned agent fixtures, exportable from completed run records. */
@@ -38,15 +76,25 @@ export interface HarnessFixtures {
   readonly calls: readonly FixtureCall[];
   /** Missing calls fail by default, or receive a deterministic schema sample. */
   readonly unmatched?: 'error' | 'synthesize';
+  /** Command rules in first-match order, for `ctx.exec` effects. */
+  readonly exec?: readonly FixtureExecCall[];
+  /**
+   * `fixture` fails a command that no exec rule matches, at its step, instead of synthesizing it
+   * (under `--dry-run`) or running it (under `--harness fixture`).
+   */
+  readonly commands?: 'fixture';
 }
+
+const stepGlob = z
+  .string()
+  .min(1)
+  .max(200)
+  .regex(/^[a-zA-Z0-9*][a-zA-Z0-9._:/*-]*$/u);
+const sha256 = z.string().regex(/^[a-f0-9]{64}$/u);
 
 const rule = z
   .object({
-    step: z
-      .string()
-      .min(1)
-      .max(200)
-      .regex(/^[a-zA-Z0-9*][a-zA-Z0-9._:/*-]*$/u),
+    step: stepGlob,
     harness: z
       .string()
       .regex(/^[a-z][a-z0-9-]{0,31}$/u)
@@ -56,6 +104,7 @@ const rule = z
     output: z.json().optional(),
     text: z.string().optional(),
     error: z.string().min(1).optional(),
+    kind: errorKindSchema.optional(),
     usage: z
       .object({
         inputTokens: z.number().nonnegative().nullable().optional(),
@@ -80,6 +129,26 @@ const rule = z
   .refine(
     (value) => ['output', 'text', 'error'].filter((key) => Object.hasOwn(value, key)).length === 1,
     'Exactly one of output, text, or error is required.',
+  )
+  .refine((value) => value.kind === undefined || value.error !== undefined, 'kind requires error.');
+
+const execRule = z
+  .object({
+    step: stepGlob,
+    argvPrefix: z.tuple([z.string()], z.string()).optional(),
+    envSha256: sha256.optional(),
+    inputSha256: sha256.optional(),
+    attempt: z.number().int().positive().optional(),
+    occurrence: z.number().int().positive().optional(),
+    json: z.json().optional(),
+    stdout: z.string().optional(),
+    stderr: z.string().optional(),
+    code: z.number().int().min(0).max(255).optional(),
+  })
+  .strict()
+  .refine(
+    (value) => ['json', 'stdout'].filter((key) => Object.hasOwn(value, key)).length === 1,
+    'Exactly one of json or stdout is required.',
   );
 
 /** Validate untrusted fixture data before importing or executing workflow code. */
@@ -89,6 +158,8 @@ export function parseHarnessFixtures(value: unknown): HarnessFixtures {
       version: z.literal(1),
       calls: z.array(rule),
       unmatched: z.enum(['error', 'synthesize']).optional(),
+      exec: z.array(execRule).optional(),
+      commands: z.literal('fixture').optional(),
     })
     .strict()
     .parse(jsonValue(value)) as HarnessFixtures;
@@ -128,8 +199,22 @@ export class FixtureHarness implements Harness {
           `No fixture matches step ${request.call.stepId} (${request.harness}, attempt ${String(request.call.attempt)}).`,
         ),
       );
-    if (fixture?.error !== undefined)
-      return Promise.reject(new Error(`Step ${request.call.stepId}: ${fixture.error}`));
+    if (fixture?.error !== undefined) {
+      const message = `Step ${request.call.stepId}: ${fixture.error}`;
+      if (fixture.kind === undefined) return Promise.reject(new Error(message));
+      const error = new HarnessError({
+        harness: request.harness,
+        kind: fixture.kind,
+        exit: { code: 0, signal: null },
+        failure: null,
+        reason: fixture.error,
+        stderr: '',
+        stdout: '',
+      });
+      // The same text as a kindless rule, so settled messages and their export stay identical.
+      error.message = message;
+      return Promise.reject(error);
+    }
     return Promise.resolve({
       text:
         fixture?.text ??

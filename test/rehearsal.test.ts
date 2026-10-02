@@ -409,6 +409,81 @@ describe('rehearsal configuration failures', () => {
   });
 });
 
+describe('typed fixture error kinds', () => {
+  const retried = (on: readonly ('timeout' | 'rate-limit')[]) =>
+    workflow(
+      async (ctx) =>
+        (await ctx.claude.text('x', { prompt: 'p', retry: { maxAttempts: 2, delayMs: 1, on } }))
+          .output,
+    );
+
+  it('retries a timeout error rule under retry.on timeout and records its kind', async () => {
+    const options = await setup();
+    const harness = new FixtureHarness({
+      version: 1,
+      calls: [
+        { step: 'x', attempt: 1, error: 'slow', kind: 'timeout' },
+        { step: 'x', text: 'ok' },
+      ],
+    });
+    const result = await runWorkflow(retried(['timeout']), { ...options, harness });
+    expect(result.output).toBe('ok');
+    expect(result.steps['x']?.attemptHistory?.[0]).toMatchObject({
+      errorKind: 'timeout',
+      error: 'Step x: slow',
+    });
+  });
+
+  it('settles a kinded error rule with its kind and the unchanged message', async () => {
+    const options = await setup();
+    const harness = new FixtureHarness({
+      version: 1,
+      calls: [{ step: 'x', error: 'slow', kind: 'timeout' }],
+    });
+    const result = await runWorkflow(
+      workflow(async (ctx) => {
+        const settled = await ctx.claude.text('x', { prompt: 'p', onError: 'return' });
+        return settled.ok ? settled.value.output : `${settled.error.kind}|${settled.error.message}`;
+      }),
+      { ...options, harness },
+    );
+    expect(result.output).toBe('timeout|Step x: slow');
+    expect(result.steps['x']?.settledError).toMatchObject({
+      kind: 'timeout',
+      message: 'Step x: slow',
+    });
+    expect(fixturesFromRun(result).calls).toEqual([
+      { step: 'x', harness: 'claude', error: 'slow' },
+    ]);
+  });
+
+  it('does not retry a kind that retry.on leaves out', async () => {
+    const options = await setup();
+    const harness = new FixtureHarness({
+      version: 1,
+      calls: [
+        { step: 'x', attempt: 1, error: 'slow', kind: 'timeout' },
+        { step: 'x', text: 'ok' },
+      ],
+    });
+    await expect(runWorkflow(retried(['rate-limit']), { ...options, harness })).rejects.toThrow(
+      'Step x: slow',
+    );
+    const step = (await readRun(options)).steps['x'];
+    expect(step?.attempts).toBe(1);
+    expect(step?.attemptHistory?.[0]?.errorKind).toBe('timeout');
+  });
+
+  it('rejects a kind without an error and an unknown kind', () => {
+    expect(() =>
+      parseHarnessFixtures({ version: 1, calls: [{ step: 'x', text: 'ok', kind: 'timeout' }] }),
+    ).toThrow('kind requires error');
+    expect(() =>
+      parseHarnessFixtures({ version: 1, calls: [{ step: 'x', error: 'e', kind: 'slow' }] }),
+    ).toThrow();
+  });
+});
+
 describe('deterministic synthesis', () => {
   it('fills enums, minimums, nullable values, escaped pointers, bounded arrays, and tuples', () => {
     const schema = z.object({
