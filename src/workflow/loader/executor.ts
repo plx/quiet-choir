@@ -28,7 +28,13 @@ import {
   type PreflightRunOptions,
 } from './code-change-preflight.js';
 import { jsonValue } from '../runtime/json.js';
-import { inspectRun, listRuns, watchRun, type RunInspection } from './inspection.js';
+import {
+  inspectRun,
+  listRuns,
+  WatchBoundError,
+  watchRun,
+  type RunInspection,
+} from './inspection.js';
 import { workflowFailure } from './failure.js';
 import { failureNextCommands } from './next-commands.js';
 import type { CommandLauncher } from '../runtime/commands.js';
@@ -602,8 +608,10 @@ export class WorkflowExecutor implements Executor<WorkflowExecutorPlan, Workflow
               this.#options.commandLauncher,
             )
           : thrown;
+      // A bounded watch reports what it observed: re-reading could attach a record created after
+      // the deadline, or a newer status than the one the watch timed out on.
       const run =
-        thrown instanceof WorkflowRunError
+        thrown instanceof WorkflowRunError || thrown instanceof WatchBoundError
           ? thrown.run
           : context.runId && context.stateDir && isValidRunId(context.runId)
             ? await readRun({ runId: context.runId, stateDir: context.stateDir }).catch(() => null)
@@ -627,7 +635,9 @@ export class WorkflowExecutor implements Executor<WorkflowExecutorPlan, Workflow
               : 'workflow.failed'
             : this.#options.signal?.aborted
               ? 'workflow.interrupted'
-              : error instanceof RunRefusedError || error instanceof WorkflowInputError
+              : error instanceof RunRefusedError ||
+                  error instanceof WorkflowInputError ||
+                  error instanceof WatchBoundError
                 ? error.code
                 : error instanceof WorkflowDefinitionError
                   ? 'load.definition'
@@ -649,7 +659,9 @@ export class WorkflowExecutor implements Executor<WorkflowExecutorPlan, Workflow
               }),
           stepId: error instanceof WorkflowRunError ? error.stepId : null,
           details:
-            error instanceof RunRefusedError || error instanceof WorkflowInputError
+            error instanceof RunRefusedError ||
+            error instanceof WorkflowInputError ||
+            error instanceof WatchBoundError
               ? error.details
               : null,
         },

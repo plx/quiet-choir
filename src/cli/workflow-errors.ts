@@ -2,7 +2,12 @@ import type { CliErrorCode } from '../workflow/runtime/run-errors.js';
 import type { WorkflowFailure } from '../workflow/loader/failure.js';
 import { summarizeRunResult } from '../workflow/loader/run-result.js';
 
-/** The single numeric exit policy for workflow commands. Exit 75 reports suspension outside this failure table. @internal */
+/**
+ * The single numeric exit policy for workflow commands. Exit 75 reports suspension outside this
+ * failure table, and `inspect --watch` takes its snapshot exits from `watchExitCodes`. The watch
+ * bounds use 79 (the first exit after the sysexits block, free in sh, Node, timeout(1) and xargs)
+ * and 66 (EX_NOINPUT: the record the watch reads never appeared). @internal
+ */
 export const workflowExitCodes = {
   'answer.invalid': 2,
   'answer.conflict': 3,
@@ -29,6 +34,8 @@ export const workflowExitCodes = {
   'workflow.storage': 74,
   'start.timeout': 124,
   'start.exited': 70,
+  'watch.timeout': 79,
+  'watch.record_not_created': 66,
 } as const satisfies Record<CliErrorCode, number>;
 
 /** A CLI-local carrier for an executor's plain-data failure. @internal */

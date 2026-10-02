@@ -15,6 +15,8 @@ import {
 } from '../runtime/store.js';
 import { summarizeUsage } from '../runtime/usage-summary.js';
 import { classifyRecovery } from '../runtime/recovery-decision.js';
+import { brandError, isBranded } from '../runtime/error-brand.js';
+import { RunRefusedError, type CliErrorCode } from '../runtime/run-errors.js';
 import type { RequestSummary, RunEvent, UsageSummary } from '../runtime/observability-model.js';
 import type { JsonValue } from '../runtime/model.js';
 import type { ChildRecord } from '../runtime/child-model.js';
@@ -526,28 +528,121 @@ export async function listRuns(options: {
   return { stateDir, runs, warnings };
 }
 
-/** Deliver one snapshot per stored/ownership change; elapsed time alone is not a JSONL change. @internal */
+/**
+ * A bounded watch stopped before the run reached a terminal status: `watch.timeout` carries the
+ * last observed record (still running, never touched), and `watch.record_not_created` carries no
+ * record because none appeared. @internal
+ */
+export class WatchBoundError extends Error {
+  static {
+    brandError(this, 'WatchBoundError');
+  }
+
+  /** Recognize an instance from any quiet-choir module instance. */
+  public static override [Symbol.hasInstance](value: unknown): value is WatchBoundError {
+    return isBranded(this, value);
+  }
+
+  public constructor(
+    /** Which bound expired. */
+    public readonly code: Extract<CliErrorCode, `watch.${string}`>,
+    /** The watched run. */
+    public readonly runId: string,
+    message: string,
+    /** The expired bound, as `{ timeoutMs }` or `{ waitCreatedMs }`. */
+    public readonly details: { readonly timeoutMs: number } | { readonly waitCreatedMs: number },
+    /** The last observed record; null when none was ever read. */
+    public readonly run: RunRecord | null,
+    options?: ErrorOptions,
+  ) {
+    super(message, options);
+    this.name = 'WatchBoundError';
+  }
+}
+
+/** Milliseconds a timer can wait: a safe integer from 1 to 2^31 - 1. */
+function validWatchDuration(value: number): boolean {
+  return Number.isSafeInteger(value) && value >= 1 && value <= 2_147_483_647;
+}
+
+/** Bounds of a watch; both are opt-in and measured on a monotonic clock. @internal */
+export interface WatchRunOptions extends InspectRunOptions {
+  readonly intervalMs: number;
+  /** Fail with `watch.timeout` when still running this long after the first successful read. */
+  readonly timeoutMs?: number | undefined;
+  /** Retry `run.not_found` until this long after the watch starts, before the first read only. */
+  readonly waitCreatedMs?: number | undefined;
+}
+
+/**
+ * Deliver one snapshot per stored/ownership change; elapsed time alone is not a JSONL change.
+ * Each bound sleeps at most until its deadline and reads once more there, so a run that finishes
+ * at the deadline is reported as finished and the watch ends within one read after it. @internal
+ */
 export async function watchRun(
-  options: InspectRunOptions & { readonly intervalMs: number },
+  options: WatchRunOptions,
   onChange: (value: RunInspection) => void,
   signal?: AbortSignal,
 ): Promise<RunInspection> {
-  if (
-    !Number.isSafeInteger(options.intervalMs) ||
-    options.intervalMs < 1 ||
-    options.intervalMs > 2_147_483_647
-  )
+  if (!validWatchDuration(options.intervalMs))
     throw new Error('Watch interval must be 1ms to 2147483647ms.');
+  if (options.timeoutMs !== undefined && !validWatchDuration(options.timeoutMs))
+    throw new Error('Watch timeout must be 1ms to 2147483647ms.');
+  if (options.waitCreatedMs !== undefined && !validWatchDuration(options.waitCreatedMs))
+    throw new Error('Watch wait-created bound must be 1ms to 2147483647ms.');
+  const sleep = (deadline: number | undefined): Promise<void> =>
+    delay(
+      deadline === undefined
+        ? options.intervalMs
+        : Math.max(1, Math.min(options.intervalMs, Math.ceil(deadline - performance.now()))),
+      undefined,
+      signal ? { signal } : {},
+    );
+  const { timeoutMs, waitCreatedMs } = options;
+  const startedAt = performance.now();
+  let finishBy: number | undefined;
   let prior: string | undefined;
   for (;;) {
     signal?.throwIfAborted();
-    const current = await inspectRun(options);
+    let current: RunInspection;
+    try {
+      current = await inspectRun(options);
+    } catch (error) {
+      // Only a record that was never seen may still be on its way; a later not_found stays one.
+      if (
+        waitCreatedMs === undefined ||
+        prior !== undefined ||
+        !(error instanceof RunRefusedError && error.code === 'run.not_found')
+      )
+        throw error;
+      const createdBy = startedAt + waitCreatedMs;
+      if (performance.now() >= createdBy)
+        throw new WatchBoundError(
+          'watch.record_not_created',
+          options.runId,
+          `Run ${options.runId} was not created within ${String(waitCreatedMs)}ms. ${error.message}`,
+          { waitCreatedMs },
+          null,
+          { cause: error },
+        );
+      await sleep(createdBy);
+      continue;
+    }
+    if (timeoutMs !== undefined) finishBy ??= performance.now() + timeoutMs;
     const key = digest({ run: current.run, ownership: current.ownership });
     if (key !== prior) {
       onChange(current);
       prior = key;
     }
     if (current.summary.status !== 'running') return current;
-    await delay(options.intervalMs, undefined, signal ? { signal } : {});
+    if (timeoutMs !== undefined && finishBy !== undefined && performance.now() >= finishBy)
+      throw new WatchBoundError(
+        'watch.timeout',
+        options.runId,
+        `Run ${options.runId} is still running after ${String(timeoutMs)}ms of watching; the watch stopped and the run keeps running.`,
+        { timeoutMs },
+        current.run,
+      );
+    await sleep(finishBy);
   }
 }

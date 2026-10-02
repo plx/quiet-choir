@@ -294,6 +294,31 @@ it('maps the workflow start codes to their own exits and recognizes every code',
   );
 });
 
+it('gives the watch bounds their own exits, distinct from stale, suspended and interrupted', () => {
+  expect(workflowExitCodes['watch.timeout']).toBe(79);
+  expect(workflowExitCodes['watch.record_not_created']).toBe(66);
+  for (const exit of [79, 66])
+    expect(Object.values(workflowExitCodes).filter((code) => code === exit)).toHaveLength(1);
+  for (const reserved of [1, 2, 3, 4, 70, 74, 75, 124, 130])
+    for (const code of ['watch.timeout', 'watch.record_not_created'] as const)
+      expect(workflowExitCodes[code]).not.toBe(reserved);
+  expect(isCliErrorCode('watch.timeout')).toBe(true);
+  expect(isCliErrorCode('watch.record_not_created')).toBe(true);
+  expect(isCliErrorCode('watch.unknown')).toBe(false);
+  expect(
+    workflowErrorDocument(
+      workflowFailure('watch.record_not_created', 'Run late was not created within 300ms.', {
+        runId: 'late',
+        details: { waitCreatedMs: 300 },
+      }),
+    ),
+  ).toMatchObject({
+    exitCode: 66,
+    status: null,
+    error: { code: 'watch.record_not_created', details: { waitCreatedMs: 300 } },
+  });
+});
+
 // measured: 0.5 s alone, 1.9-3.6 s in local full coverage runs, 6.0 s on the Node 22.13 CI leg
 // (real compiler passes)
 it(
