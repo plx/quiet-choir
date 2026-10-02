@@ -129,6 +129,10 @@ describe('durability lint', () => {
     expect(found('renamed-context')).toEqual(['QC005@11', 'QC002@13']);
   });
 
+  it('resolves the context through a local type alias', () => {
+    expect(found('aliased-context')).toEqual(['QC005@13', 'QC002@15']);
+  });
+
   it('silences exactly the rules a suppression comment names, on the next line only', () => {
     expect(found('suppression')).toEqual(['QC002@12']);
     // A comment naming another rule silences nothing; one listing the rule among others, or

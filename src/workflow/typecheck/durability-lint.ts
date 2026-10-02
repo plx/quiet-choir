@@ -346,14 +346,16 @@ class DurabilityLinter {
   #isWorkflowContext(node: ts.Node): boolean {
     try {
       const type = this.#checker.getTypeAtLocation(node);
-      const symbol = type.aliasSymbol ?? type.getSymbol();
-      return (
-        symbol?.getName() === 'WorkflowContext' &&
-        (symbol.declarations ?? []).some(
-          (declaration) =>
-            ts.isInterfaceDeclaration(declaration) &&
-            isRuntimeFile(declaration.getSourceFile().fileName),
-        )
+      // A local `type Context = WorkflowContext` has its own aliasSymbol, but the type's symbol
+      // still resolves to the interface, so accept either.
+      return [type.aliasSymbol, type.getSymbol()].some(
+        (symbol) =>
+          symbol?.getName() === 'WorkflowContext' &&
+          (symbol.declarations ?? []).some(
+            (declaration) =>
+              ts.isInterfaceDeclaration(declaration) &&
+              isRuntimeFile(declaration.getSourceFile().fileName),
+          ),
       );
     } catch {
       return false;
