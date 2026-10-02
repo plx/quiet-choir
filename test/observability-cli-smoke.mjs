@@ -1,8 +1,16 @@
-import { readRunSync } from '../dist/workflow/runtime/store.js';
+import { readRunSync, writeRun } from '../dist/workflow/runtime/store.js';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
-import { existsSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -110,6 +118,52 @@ export default defineWorkflow({ name:'observe-cli', version:'1', input:z.object(
   const invalid = run(['inspect', 'good', '--watch', '--interval', '0s']);
   assert.equal(invalid.status, 2);
   assert.equal(invalid.value.error.code, 'usage.flag');
+  for (const flags of [['--final'], ['--timeout', '1s'], ['--wait-created', '1s']]) {
+    const unwatched = run(['inspect', 'good', ...flags]);
+    assert.equal(unwatched.status, 2, unwatched.stdout);
+    assert.equal(unwatched.value.error.code, 'usage.flag');
+  }
+  const badBound = run(['inspect', 'good', '--watch', '--timeout', '10']);
+  assert.equal(badBound.status, 2, badBound.stdout);
+  assert.match(badBound.value.error.message, /--timeout must be a positive duration/);
+  const help = run(['inspect', '--help'], false);
+  assert.equal(help.status, 0, help.stderr);
+  for (const exit of [/suspended \(75\)/, /exit 79 \(watch\.timeout\)/, /exit 66/])
+    assert.match(help.stdout.replace(/\s+/g, ' '), exit);
+
+  // --wait-created waits for a record written later, then streams it. The record is written
+  // directly, not by executing a workflow, so the bound never depends on typecheck time.
+  const late = start([
+    'inspect',
+    'late',
+    '--watch',
+    '--wait-created',
+    '10s',
+    '--summary',
+    '--interval',
+    '20ms',
+  ]);
+  await delay(1000);
+  mkdirSync(join(state, 'late'), { recursive: true });
+  await writeRun(state, { ...saved('good'), id: 'late' });
+  const lateWatch = await late.closed;
+  assert.equal(lateWatch.code, 0, lateWatch.stderr);
+  const lateSnapshots = lateWatch.stdout
+    .trim()
+    .split('\n')
+    .map((line) => JSON.parse(line));
+  assert.ok(lateSnapshots.length >= 1, lateWatch.stdout);
+  assert.ok(lateSnapshots.every((entry) => entry.id === 'late' && entry.status === 'completed'));
+  const never = run(['inspect', 'never', '--watch', '--wait-created', '300ms']);
+  assert.equal(never.status, 66, never.stderr);
+  assert.equal(never.value.exitCode, 66);
+  assert.equal(never.value.error.code, 'watch.record_not_created');
+  assert.equal(never.value.status, null);
+  assert.equal(never.value.error.details.waitCreatedMs, 300);
+  assert.match(never.value.error.message, /not created within 300ms\. Run never not found in /);
+  const missingNow = run(['inspect', 'never', '--watch']);
+  assert.equal(missingNow.status, 3, missingNow.stderr);
+  assert.equal(missingNow.value.error.code, 'run.not_found');
 
   writeFileSync(repaired, 'fixed');
   const resumed = run([
@@ -141,7 +195,37 @@ export default defineWorkflow({ name:'observe-cli', version:'1', input:z.object(
   const interrupted = start(execute('interrupted', 'wait'));
   await until(() => active('interrupted'), 'interrupt workflow started');
   const watching = start(['inspect', 'interrupted', '--watch', '--summary', '--interval', '20ms']);
+  const finalOnly = start([
+    'inspect',
+    'interrupted',
+    '--watch',
+    '--final',
+    '--summary',
+    '--interval',
+    '20ms',
+  ]);
   await until(() => watching.output.stdout.includes('"status":"running"'), 'watch first snapshot');
+  // A bounded watch of the still-running run stops with watch.timeout (79), not stale or
+  // suspended, and reports the last observed status; --final prints only that error document.
+  const bounded = ['inspect', 'interrupted', '--watch', '--summary', '--timeout', '1s'];
+  const [timedOut, timedOutFinal] = await Promise.all([
+    start([...bounded, '--interval', '20ms']).closed,
+    start([...bounded, '--final', '--interval', '20ms']).closed,
+  ]);
+  for (const result of [timedOut, timedOutFinal]) {
+    assert.equal(result.code, 79, result.stderr);
+    const document = JSON.parse(result.stdout.trim().split('\n').at(-1));
+    assert.equal(document.kind, 'workflow.error');
+    assert.equal(document.exitCode, 79);
+    assert.equal(document.error.code, 'watch.timeout');
+    assert.equal(document.error.details.timeoutMs, 1000);
+    assert.equal(document.status, 'running');
+    assert.equal(document.run, undefined, '--summary compacts the error document');
+    assert.equal(document.summary.status, 'running');
+  }
+  assert.ok(JSON.parse(timedOut.stdout.trim().split('\n')[0]).status === 'running');
+  assert.equal(timedOutFinal.stdout.trim().split('\n').length, 1, timedOutFinal.stdout);
+  assert.equal(saved('interrupted').status, 'running', 'a timed-out watch leaves the run alone');
   interrupted.child.kill('SIGINT');
   const cancelled = await interrupted.closed;
   assert.equal(cancelled.code, 130, cancelled.stderr);
@@ -151,9 +235,16 @@ export default defineWorkflow({ name:'observe-cli', version:'1', input:z.object(
     .trim()
     .split('\n')
     .map((line) => JSON.parse(line));
+  assert.ok(snapshots.length >= 2, watched.stdout);
   assert.equal(snapshots.at(-1).status, 'suspended');
   assert.match(snapshots.at(-1).interruptedBy.reason, /Workflow interrupted by SIGINT/);
   assert.ok(snapshots.every((entry) => entry.id === 'interrupted'));
+  // --final waited through the same changes but printed only the last snapshot.
+  const finalWatched = await finalOnly.closed;
+  assert.equal(finalWatched.code, 75, finalWatched.stderr);
+  const finalLines = finalWatched.stdout.trim().split('\n');
+  assert.equal(finalLines.length, 1, finalWatched.stdout);
+  assert.equal(JSON.parse(finalLines[0]).status, 'suspended');
   const cancelledRun = saved('interrupted');
   assert.equal(cancelledRun.status, 'suspended');
   assert.equal(cancelledRun.executions[0].outcome, 'suspended');
@@ -212,7 +303,7 @@ export default defineWorkflow({ name:'observe-cli', version:'1', input:z.object(
       .reverse(),
   );
   console.log(
-    'Observability CLI smoke passed: phases, history, dashboard, list, watch exits, SIGINT, stale owner.',
+    'Observability CLI smoke passed: phases, history, dashboard, list, watch exits and bounds, SIGINT, stale owner.',
   );
 } finally {
   for (const child of children) child.kill('SIGKILL');
