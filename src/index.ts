@@ -207,6 +207,7 @@ export type {
 } from './workflow/runtime/question-model.js';
 export { writeAnswer, listPending, AnswerError } from './workflow/runtime/inbox.js';
 export type {
+  AnswerIssue,
   WriteAnswerOptions,
   AnswerDelivery,
   ListPendingOptions,
@@ -235,6 +236,9 @@ export type {
   WaitRecord,
   PendingWait,
   PendingOperation,
+  PendingDelivery,
+  PendingRunState,
+  PendingListing,
 } from './workflow/runtime/wait-model.js';
 
 export { NodeProcessRunner } from './processes/runner.js';

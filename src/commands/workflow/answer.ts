@@ -78,7 +78,12 @@ export default class WorkflowAnswer extends WorkflowCommand {
     try {
       value = jsonValue(JSON.parse(flags.value));
     } catch (error) {
-      this.fail('answer.invalid', error instanceof Error ? error.message : String(error));
+      const message = (error instanceof Error ? error.message : String(error))
+        .replace(/\s+/gu, ' ')
+        .trim();
+      this.fail('answer.invalid', message, {
+        issues: [{ code: 'answer_not_json', path: [], message }],
+      });
     }
     let harness: HarnessSelection | undefined;
     if (flags.resume) {

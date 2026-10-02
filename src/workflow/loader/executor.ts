@@ -68,7 +68,8 @@ import type { RunStore } from '../runtime/run-store.js';
 import type { WorkflowClock } from '../runtime/wait-model.js';
 import { TypeScriptExecutor } from '../typecheck/typescript-executor.js';
 import { fingerprintSources, workflowLaunch } from './source.js';
-import { AnswerError, listPending, writeAnswer } from '../runtime/inbox.js';
+import { AnswerError, listPendingRuns, writeAnswer } from '../runtime/inbox.js';
+import { selectPendingRows } from './pending-listing.js';
 import { canonicalCwd, compareResume, workflowSnapshot } from '../runtime/compatibility.js';
 import type {
   ExecuteWorkflowPlan,
@@ -253,21 +254,24 @@ export class WorkflowExecutor implements Executor<WorkflowExecutorPlan, Workflow
       }
       if (plan.kind === 'workflow.pending') {
         stage = 'run.unreadable';
+        const selections = await Promise.all(
+          [...new Set([plan.stateDir, ...(plan.additionalStateDirs ?? [])])].map(async (stateDir) =>
+            selectPendingRows(
+              await listPendingRuns({
+                stateDir,
+                ...(this.#options.commandLauncher === undefined
+                  ? {}
+                  : { commandLauncher: this.#options.commandLauncher }),
+              }),
+              { all: plan.all ?? false, stateDir, launcher: this.#options.commandLauncher },
+            ),
+          ),
+        );
         return {
           kind: 'workflow.pending.result',
           ok: true,
-          pending: (
-            await Promise.all(
-              [...new Set([plan.stateDir, ...(plan.additionalStateDirs ?? [])])].map((stateDir) =>
-                listPending({
-                  stateDir,
-                  ...(this.#options.commandLauncher === undefined
-                    ? {}
-                    : { commandLauncher: this.#options.commandLauncher }),
-                }),
-              ),
-            )
-          ).flat(),
+          pending: selections.flatMap((selection) => selection.pending),
+          hidden: selections.reduce((total, selection) => total + selection.hidden, 0),
         };
       }
       if (plan.kind === 'workflow.answer') {
@@ -737,7 +741,9 @@ export class WorkflowExecutor implements Executor<WorkflowExecutorPlan, Workflow
                   error instanceof WorkflowInputError ||
                   error instanceof WatchBoundError
                 ? error.details
-                : null,
+                : error instanceof AnswerError && error.reason === 'invalid'
+                  ? { issues: jsonValue(error.issues) }
+                  : null,
         },
       );
     } finally {

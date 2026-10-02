@@ -110,6 +110,25 @@ export default defineConfig(
     },
   },
   {
+    // The pending row selection: a pure function of listed rows and recorded launches.
+    files: ['src/workflow/loader/pending-listing.ts'],
+    rules: {
+      '@typescript-eslint/no-restricted-imports': [
+        'error',
+        {
+          patterns: [
+            {
+              group: ['node:*', ...builtinModules, './**', '../**', '!./next-commands.js'],
+              allowTypeImports: true,
+              message:
+                'The pending row selection must stay free of I/O: import values only from ./next-commands.js; everything else must be import type.',
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
     // The event line formatter and the record follower's derivation: no I/O, clock or store, so
     // `--events` and `workflow events` share one pure line shape.
     files: ['src/workflow/loader/event-line.ts', 'src/workflow/loader/event-follow.ts'],
