@@ -196,16 +196,26 @@ Put flags after the command name, for example `workflow inspect first --json`.
 `configuration doctor --json` runs five checks for each installed harness: tested version range,
 exact adapter argv with a zero-inference 404/400 rejection, hidden flags, enum drift and inherited
 Codex model/effort/profile. Use `--harness claude|codex|all` (default all), executable overrides
-`--claude-binary`/`--codex-binary`, and optional `--codex-home`/`--codex-profile`. Reports are
-emitted on both pass (exit 0) and drift (exit 1). Auth/transport failures, stderr warnings and any
-measured spend fail. Untested versions skip the exact-argv probe. Current tested bounds are Claude
-2.1.283 and Codex 0.157.1. Codex's argv probe uses private temporary copies of config/auth and an
+`--claude-binary`/`--codex-binary`, and optional `--codex-home`/`--codex-profile`. Each check has
+`status` `pass`, `warn` or `fail`. A version inside the tested range passes; an untested patch of
+the same major.minor warns; another major.minor, an unparseable or prerelease version, a nonzero
+exit and process warnings fail. The exact-argv probe runs whenever `--version` answered, whatever
+the grade. Reports carry `verdict` (`ok`, `usable-with-warnings`, `blocked`) and `warnings`; text
+output ends with a verdict line and the next command, and the exit is 1 only when blocked, so a
+warning exits 0. `--strict` turns an untested patch version into a failure. Auth/transport failures,
+stderr warnings and any measured spend fail. The Claude probe caps spend (`maxBudgetUsd 0.01`,
+nonexistent model); the Codex probe (invalid effort) has no cost cap and `zeroInference` is judged
+after the call, so an untested CLI that stopped rejecting bad input could run one tiny inference.
+Current tested bounds are Claude 2.1.283 and Codex 0.157.1; to widen them, run
+`npm run build && npm run test:contract` from a checkout, review the captures, then raise
+`testedHarnessVersions`. Codex's argv probe uses private temporary copies of config/auth and an
 empty native profile; selected user/profile defaults are inspected separately, without printing
 secrets. Project/managed layers can override those defaults. Exported `probeHarnessContracts`
 supports CI. `harnesses` in run metadata and inspect records first live-use binary/version; version
-drift warns on resume without invalidating completed results. Only `configuration get/set` remain
-stubs. See [durability](durability.md) before recovery and [inspection](inspection.md) for saved
-status.
+drift warns on resume without invalidating completed results, and a run on an untested version
+records one `harnessWarnings` entry naming `configuration doctor`. Only `configuration get/set`
+remain stubs. See [durability](durability.md) before recovery and [inspection](inspection.md) for
+saved status.
 
 ## Execution policy flags
 

@@ -2,6 +2,22 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- `configuration doctor` grades each harness version against the tested range instead of one pinned
+  version, always runs the exact-argv probe once `--version` answered, and exits 1 only when blocked
+  (ADR 0040; amends ADR 0011). A version inside `testedHarnessVersions` passes; an untested patch of
+  the same major.minor warns (`WARN`, exit 0, verdict `usable-with-warnings`); another major.minor,
+  an unparseable or prerelease version, a nonzero exit and process warnings fail. Before, any
+  untested version failed and skipped the probe, so `zeroInference` was false; now the probe's own
+  result and `zeroInference` are reported whatever the version grade, and a probe is skipped only
+  when the binary did not answer `--version`. New public fields: `DoctorCheck.status` (`pass`,
+  `warn`, `fail`), `DoctorReport.verdict` (`ok`, `usable-with-warnings`, `blocked`),
+  `DoctorReport.warnings` and `DoctorOptions.strict`; code that builds a `DoctorReport` by hand must
+  supply the first three. `ok` is now `verdict !== 'blocked'`. The new `--strict` flag treats an
+  untested patch version as a failure (exit 1). Text output prints `PASS`/`WARN`/`FAIL` per check
+  and ends with a verdict line naming the next command; the `--workflow` registry report carries the
+  same fields. Probing an untested CLI is no longer gated: the Codex probe has no cost cap, which
+  the docs record as a residual risk. `workflow execute` also records one `harnessWarnings` entry,
+  naming `configuration doctor`, when `CliHarness` discovers a version outside the tested range.
 - `workflow cancel RUN [--force] [--timeout 30s] [--json] [--state-dir DIR]` ends a live local run
   as `cancelled`, which tick observes and never resumes (ADR 0039; amends ADR 0029, under which a
   plain signal saves a resumable suspension). It signals only a lock owner on this host that is
