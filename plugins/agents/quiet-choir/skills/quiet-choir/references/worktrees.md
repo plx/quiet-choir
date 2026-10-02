@@ -113,16 +113,18 @@ reused from the source run. Cleaning a fork never removes source-owned caches or
 `ctx.merge(id, changes, options?)` integrates changes or shared handles in input order. Shared
 handles are resolved to saved snapshots under their locks before integration starts. Options are:
 
-| Option                 | Behavior                                                                            |
-| ---------------------- | ----------------------------------------------------------------------------------- |
-| `strategy: 'rebase'`   | Default: apply each snapshot's net change onto the preceding clean result           |
-| `strategy: 'merge'`    | Preserve source commits as merge parents                                            |
-| `strategy: 'squash'`   | Publish one final commit parented on the starting commit                            |
-| `onConflict: 'report'` | Default: record conflicting inputs, skip them, and continue with other inputs       |
-| `onConflict: 'fail'`   | Reject without publishing the integration target                                    |
-| `target: 'ref'`        | Default: publish a run-owned ref; leave the source checkout unchanged               |
-| `target: { branch }`   | Create/update an unoccupied local branch; refuse a branch checked out anywhere      |
-| `target: 'checkout'`   | Explicitly fast-forward the source checkout; refuse dirty state or a changed target |
+| Option                 | Behavior                                                                                |
+| ---------------------- | --------------------------------------------------------------------------------------- |
+| `strategy: 'rebase'`   | Default: apply each snapshot's net change onto the preceding clean result               |
+| `strategy: 'merge'`    | Preserve source commits as merge parents                                                |
+| `strategy: 'squash'`   | Publish one final commit parented on the starting commit                                |
+| `onConflict: 'report'` | Default: record conflicting inputs, skip them, and continue with other inputs           |
+| `onConflict: 'fail'`   | Reject without publishing the integration target                                        |
+| `target: 'ref'`        | Default: publish a run-owned ref; leave the source checkout unchanged                   |
+| `target: { branch }`   | Create/update an unoccupied local branch; refuse a branch checked out anywhere          |
+| `target: 'checkout'`   | Explicitly fast-forward the source checkout; refuse dirty state or a changed target     |
+| `commit: { message }`  | Message of the final commit; intermediate commits keep generated messages               |
+| `commit.author`        | `'quiet-choir'` (default), `'git-config'` or `{ name, email }` for every created commit |
 
 The result is `{ commit, merged, conflicts: [{ commit, files }] }`. `commit` always names the last
 clean integrated tree, never a tree containing conflict markers. Conflict path lists can be empty
@@ -132,9 +134,58 @@ resolved inputs, and computed result are checkpointed so retries do not silently
 `HEAD`. Publishing a branch compares its old value; a resumed publication recognizes its
 already-published result. External repository writers still need coordination.
 
+`commit` gives the integration commits a message and identity, so a published branch can back a pull
+request. The message replaces the generated one on the final commit: the squash commit, or the last
+clean integrate commit for `rebase` and `merge`. Intermediate commits keep their generated
+`quiet-choir integrate` messages. The author applies to every commit the merge creates, as both
+author and committer. `'quiet-choir'` is `quiet-choir <quiet-choir@localhost>`. `'git-config'` runs
+`git var GIT_AUTHOR_IDENT` and `git var GIT_COMMITTER_IDENT` in the repository. quiet-choir strips
+every `GIT_*` variable from git's environment, so the identity comes from `user.name` and
+`user.email` in git config, never from `GIT_AUTHOR_NAME` in the parent process. If git cannot
+produce an identity the step fails; there is no fallback to `quiet-choir`. The identity is resolved
+once, when the merge is prepared, and recorded with the target and commit date, so a retry or resume
+reproduces the same commit ID even after git config changes. An empty message, or a name or email
+with a newline, NUL or angle bracket, is rejected before anything is prepared. When nothing merges
+(unchanged inputs, or every input conflicted) no commit is created and `commit` has no effect.
+Supplying `commit` changes the step identity; merges without it keep theirs. Snapshot commits of
+isolated attempts always keep the fixed `quiet-choir` identity.
+
 Git's [merge-tree protocol](https://git-scm.com/docs/git-merge-tree/2.38.0) computes integration
 without an index or worktree. Explicit checkout publication uses a fast-forward-only merge with
 [ignored-file overwrite disabled](https://git-scm.com/docs/git-merge/2.38.0#Documentation/git-merge.txt---no-overwrite-ignore).
+
+### Open a PR from an isolated change
+
+Integrate into a branch with `commit`, then push `result.commit` in one `ctx.exec`:
+
+<!-- skills-check: fragment; reason: Inside a workflow with ctx and an editor profile declared and granted. -->
+
+```ts
+const tree = await ctx.worktree('ticket');
+await ctx.claude.text('fix', { prompt: 'Fix #42.', profile: 'editor', isolation: tree });
+const result = await ctx.merge('integrate', [tree], {
+  strategy: 'squash',
+  target: { branch: 'ticket-42' },
+  commit: { message: 'Fix #42', author: 'git-config' },
+});
+if (result.merged.length)
+  await ctx.exec('push', [
+    'git',
+    'push',
+    'origin',
+    `${result.commit}:refs/heads/ticket-42`,
+    '--force-with-lease=refs/heads/ticket-42:',
+  ]);
+```
+
+The published branch is exactly the recorded `result.commit`, so nothing rewrites it after the
+merge. `--force-with-lease=refs/heads/<branch>:<expected>` refuses to move a remote branch that does
+not hold `<expected>`; leave `<expected>` empty when the remote branch must not exist yet, and pass
+the commit you last pushed when updating it. Like every `ctx.exec`, the push is at least once: it
+can run again if the run stops after the push but before its checkpoint. Pushing the same commit
+again with the empty lease, after it succeeded, exits 0 and prints `Everything up-to-date` (checked
+against a local bare repository). Open the PR itself (for example `gh pr create`) with another
+ordinary `ctx.exec`; quiet-choir has no PR helper.
 
 ## Cache policy and cleanup
 
