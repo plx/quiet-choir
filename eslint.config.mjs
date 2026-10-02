@@ -168,5 +168,30 @@ export default defineConfig(
       ],
     },
   },
+  {
+    // The durability lint (ADR 0041): a pure function of a compiler program. It may import the
+    // TypeScript compiler API; everything else must be `import type`.
+    files: ['src/workflow/typecheck/durability-lint.ts'],
+    rules: {
+      '@typescript-eslint/no-restricted-imports': [
+        'error',
+        {
+          patterns: [
+            {
+              group: ['node:*', ...builtinModules, './**', '../**'],
+              allowTypeImports: true,
+              message:
+                'The durability lint must stay free of I/O: import values only from typescript; everything else must be import type.',
+            },
+          ],
+        },
+      ],
+      'no-restricted-globals': [
+        'error',
+        { name: 'process', message: 'The durability lint must not read the process.' },
+        { name: 'Date', message: 'The durability lint must not read the clock.' },
+      ],
+    },
+  },
   prettier,
 );

@@ -14,7 +14,7 @@ import { Args, type Interfaces } from '@oclif/core';
 
 import { WorkflowCommand } from '../../cli/workflow-command.js';
 import { requestedFull } from '../../cli/workflow-errors.js';
-import { formatTypecheckDiagnostic } from '../../cli/presentation.js';
+import { formatWorkflowDiagnostic } from '../../cli/presentation.js';
 import {
   readHarnessSelection,
   type HarnessSelection,
@@ -188,7 +188,7 @@ export default class WorkflowExecute extends WorkflowCommand {
     });
     if (!result.ok) {
       for (const diagnostic of result.diagnostics) {
-        this.logToStderr(formatTypecheckDiagnostic(diagnostic, process.cwd()));
+        this.logToStderr(formatWorkflowDiagnostic(diagnostic, process.cwd()));
       }
       if (result.rehearsal) this.rehearsalSummary(result.rehearsal);
       this.failResult(result);

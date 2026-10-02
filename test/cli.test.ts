@@ -255,6 +255,7 @@ describe('workflow lifecycle command adapters', () => {
       kind: 'workflow.validate.result',
       ok: true,
       entrypoint: file,
+      diagnostics: [],
       workflow: {
         harnesses: [],
         name: 'test',

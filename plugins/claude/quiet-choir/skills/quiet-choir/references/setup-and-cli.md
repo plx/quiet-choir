@@ -85,8 +85,8 @@ errors, and answers; keep them private. See
 | Command after `npm run cli --`           | Behavior                                                                                                  |
 | ---------------------------------------- | --------------------------------------------------------------------------------------------------------- |
 | `workflow typecheck FILE`                | Compiler analysis only; does not import the workflow                                                      |
-| `workflow validate FILE`                 | Typechecks and imports, checks the default export and input/output schema conversion; does not call `run` |
-| `workflow execute FILE`                  | Typechecks, imports, and executes or resumes                                                              |
+| `workflow validate FILE`                 | Typechecks, lints (QC findings exit 4), imports, checks the export and I/O schema conversion; skips `run` |
+| `workflow execute FILE`                  | Typechecks, warns about durability lint findings, imports, and executes or resumes                        |
 | `workflow start FILE`                    | Launches execute detached; returns once the run record exists                                             |
 | `workflow check-resume FILE --run-id ID` | Typechecks/imports and compares run gates without a writer lock or workflow-body execution                |
 | `workflow fixtures RUN_ID`               | Export agent outputs and settled agent failures as reusable fixture JSON without importing source         |
@@ -106,7 +106,12 @@ compiler flags; JSON contains `compilerOptions` (under `error.details` on failur
 defaults can block an unchanged in-flight resume before its body runs; fix the source and use
 explicit code-change recovery. A project's own options still apply when a tsconfig exists.
 `validate`, `check-resume`, and `execute` run module top-level code on import, even for completed
-resumes. `validate` cannot check step schemas/options constructed inside `run`.
+resumes. `validate` cannot check step schemas/options constructed inside `run`. After a clean type
+check it runs the [durability lint](patterns.md#durability-lint) (QC001–QC006) before importing: any
+finding fails with exit 4 (`load.typecheck`) and prints `path:line:col - error QCnnn: message`. A
+`// quiet-choir-ignore QCnnn <reason>` line directly before the reported line silences that rule
+there. `execute`, `start`, `resume`, `tick` and `check-resume` print the findings as `warning QCnnn`
+log lines and run; `list-defs` lists such definitions and warns.
 
 From the checkout, using a fresh absolute state directory:
 
@@ -159,7 +164,10 @@ loads its saved entrypoint and compiler configuration. See the
   (`usage` is `{costUsd,attempts,undercounted}`); add `--full` for the whole run record plus
   `stateDir`. A suspension (exit 75) has `pending` (with each `answerCommand`), `resumeCommand` and
   a `summary` of the same shape, or `run` under `--full`. Inspect adds current `ownership`; validate
-  returns `{kind, ok, entrypoint, workflow}`; typecheck returns its compiler result. Failures use
+  returns `{kind, ok, entrypoint, diagnostics: [], workflow}`; typecheck returns its compiler
+  result. A failure's `diagnostics` holds compiler entries (`code`, `filePath`) or, from a validate
+  that the lint failed, `{rule, category, file, line, column, message}` entries; never both.
+  Failures use
   `{kind:"workflow.error",ok:false,exitCode,error:{code,message,stepId,details}, runId,stateDir,status,failedSteps,diagnostics,next,summary}`
   for execute, resume and answer, and `run` (the actual saved record or null) for other commands,
   `--dry-run`, or `--full`. `error.stepId` identifies the root effect; body failures and interrupts

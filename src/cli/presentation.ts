@@ -1,7 +1,11 @@
 import { relative } from 'node:path';
 
 import type { StubResult } from '../application/stub.js';
-import type { TypecheckDiagnosticDetails } from '../workflow/typecheck/model.js';
+import {
+  formatDurabilityDiagnostic,
+  type DurabilityDiagnostic,
+  type TypecheckDiagnosticDetails,
+} from '../workflow/typecheck/model.js';
 import { formatArgv, type NextCommand } from '../workflow/loader/next-commands.js';
 
 /** Render a placeholder execution result for a human. */
@@ -24,6 +28,19 @@ export function formatTypecheckDiagnostic(
         } - `;
 
   return `${location}${diagnostic.category} TS${String(diagnostic.code)}: ${diagnostic.message}`;
+}
+
+/**
+ * Render one entry of a failure's `diagnostics` for a human: a durability lint diagnostic (it has
+ * `rule`) as `path:line:col - <category> QCnnn: message`, a compiler diagnostic as before.
+ */
+export function formatWorkflowDiagnostic(
+  diagnostic: TypecheckDiagnosticDetails | DurabilityDiagnostic,
+  workingDirectory: string,
+): string {
+  return 'rule' in diagnostic
+    ? formatDurabilityDiagnostic(diagnostic, workingDirectory)
+    : formatTypecheckDiagnostic(diagnostic, workingDirectory);
 }
 
 /** One `Next: <shell-quoted argv>  (why)` line per runnable follow-up. @internal */

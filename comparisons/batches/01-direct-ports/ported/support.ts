@@ -96,6 +96,7 @@ export function createPort(ctx: WorkflowContext) {
     tasks: T,
   ): Promise<{ [K in keyof T]: Awaited<ReturnType<T[K]>> }> {
     const path = id(site);
+    // quiet-choir-ignore QC006 direct port keeps legacy positional map IDs and journals that verification.json records
     const results = await ctx.map(tasks, 8, (task, index) =>
       within(`${path}/${index}`, async () => task()),
     );
@@ -120,6 +121,7 @@ export function createPort(ctx: WorkflowContext) {
     ...stages: Stage<unknown, unknown, unknown>[]
   ): Promise<unknown[]> {
     const path = id(site);
+    // quiet-choir-ignore QC006 direct port keeps legacy positional map IDs and journals that verification.json records
     return ctx.map(items, 8, (item, index) =>
       within(`${path}/${index}`, async () => {
         let value = item;

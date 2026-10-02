@@ -69,7 +69,7 @@ export default defineWorkflow({ name:'json', version:'1',
   async run(ctx, input) {
     console.log('body stdout');
     if (input.mode === 'sleep') await ctx.sleep('wait', 60_000);
-    if (input.mode === 'stuck') await ctx.step('wait', { input:null, schema:z.null(), run:()=>{ process.stderr.write('stuck started\\n'); return new Promise<null>(()=>{ setInterval(()=>{},1000); }); } });
+    else if (input.mode === 'stuck') await ctx.step('wait', { input:null, schema:z.null(), run:()=>{ process.stderr.write('stuck started\\n'); return new Promise<null>(()=>{ setInterval(()=>{},1000); }); } });
     return ctx.step('result', { input:input.value, schema:z.number(), run:()=>{
       if (input.mode === 'fail') throw new Error('original failure');
       if (input.mode === 'storage') rmSync(${JSON.stringify(state)}, { recursive:true });

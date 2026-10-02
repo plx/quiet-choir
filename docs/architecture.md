@@ -189,7 +189,10 @@ not object identity. See [ADR 0028](decisions/0028-brand-public-errors-across-mo
 The workflow typecheck executor currently embeds the stable TypeScript 6 compiler API as a runtime
 dependency. The repository itself builds with the native TypeScript 7 compiler; TypeScript 7.0's
 programmatic API is explicitly unstable. Keeping the compiler behind the executor boundary allows a
-later native implementation without changing the command contract.
+later native implementation without changing the command contract. After a clean type check the
+loader runs the pure durability lint (`src/workflow/typecheck/durability-lint.ts`) on the same
+program, before import: findings fail `workflow validate` and are logged as warnings by every other
+loading command (see [ADR 0041](decisions/0041-static-durability-lint.md)).
 
 ## Rehearsal
 

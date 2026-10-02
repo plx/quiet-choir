@@ -84,3 +84,5 @@ part of the documentation.
 - [0039: Cancel a live run through a token-bound request](0039-cancel-a-live-run-through-a-token-bound-request.md)
 
 - [0040: Grade harness versions against a tested range](0040-grade-harness-versions-against-a-tested-range.md)
+
+- [0041: Static durability lint at load time](0041-static-durability-lint.md)

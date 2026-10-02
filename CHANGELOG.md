@@ -2,6 +2,25 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- `workflow validate` runs a static durability lint after a clean type check (#154; ADR 0041). Rules
+  QC001-QC006 report a discarded effect promise, a nondeterministic read in the workflow body
+  (`Date.now()`, `new Date()`, `Math.random()`, `performance.now()`, `crypto.randomUUID`,
+  `process.env`, `fs` `*Sync`), a durable call inside a step `run` or poll
+  `observe`/`done`/`onError` callback, `Promise.race`/`any` over durable calls, a literal effect ID
+  reused or repeated in a loop on the root context, and the deprecated positional `ctx.map`.
+  Receivers resolve by type, and the callback `context.exec`, `ctx.exec` with `onError: 'return'`
+  and the command form of `ctx.poll` are not flagged. Any finding fails `validate` with
+  `load.typecheck` (exit 4) before import, printing `path:line:col - error QCnnn: message`;
+  `validate --json` failures carry `{rule, category, file, line, column, message}` entries in the
+  existing `diagnostics` array, and a successful validate result now has `diagnostics: []`.
+  `execute`, `resume`, `answer --resume`, `start`'s runner, `tick` and `check-resume` log the
+  findings as `warning QCnnn` lines and run; `list-defs` and execution by name list and run such
+  definitions and warn when they validate them. `// quiet-choir-ignore QCnnn <reason>` on the line
+  before a finding silences that rule there. `WorkflowFailure.diagnostics` widens to compiler or
+  durability diagnostics, and `ValidateWorkflowPlan` gains optional
+  `durabilityLint: 'error' | 'warn'`. The new `npm run durability:check` (in `npm run check` and CI)
+  keeps `examples/` and the Workflow Lab ports lint-clean; Batch 01's positional maps carry reasoned
+  QC006 suppressions.
 - `ctx.merge` can set the integration commit's message and author (#153; amends ADR 0022):
   `MergeOptions.commit` (new public type `MergeCommitOptions`) takes `{ message, author? }`, where
   `author` is `'quiet-choir'` (default), `'git-config'` (`git var GIT_AUTHOR_IDENT` and
