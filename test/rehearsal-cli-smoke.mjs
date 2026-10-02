@@ -286,8 +286,59 @@ export default defineWorkflow({name:'rehearsal-cli',version:'1',input:z.object({
   assert.equal(accepted.status, 0, accepted.stderr);
   assert.equal(accepted.value.calls.length, 1);
   assert.equal(readFileSync(join(state, 'partial', 'run.json'), 'utf8'), partialBytes);
+  // Exec results export as digest-keyed exec rules and replay the same branch under --dry-run.
+  const execFile = join(root, 'exec-workflow.ts');
+  writeFileSync(
+    execFile,
+    `import { defineWorkflow, z } from ${JSON.stringify(join(project, 'dist/index.js'))};
+export default defineWorkflow({name:'rehearsal-exec',version:'1',input:z.null(),output:z.string(),async run(ctx){
+  const probe = await ctx.exec('probe', [${JSON.stringify(process.execPath)}, '-e', "let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>console.log(d.length>0?'real':'empty'))"], { input: 'smoke-stdin-secret' });
+  return probe.stdout.trim();
+}});`,
+  );
+  const execSource = run([
+    'execute',
+    execFile,
+    '--run-id',
+    'exec-source',
+    '--input',
+    'null',
+    '--full',
+  ]);
+  assert.equal(execSource.status, 0, execSource.stderr);
+  assert.equal(execSource.value.output, 'real');
+  const execExport = run(['fixtures', 'exec-source']);
+  assert.equal(execExport.status, 0, execExport.stderr);
+  assert.equal(execExport.value.commands, 'fixture');
+  assert.deepEqual(
+    execExport.value.exec.map((rule) => [rule.step, rule.stdout, rule.inputSha256.length]),
+    [['probe', 'real\n', 64]],
+  );
+  assert(!execExport.stdout.includes('smoke-stdin-secret'), 'export leaked stdin');
+  writeFileSync(join(root, 'export-exec.json'), JSON.stringify(execExport.value));
+  const execReplay = run([
+    'execute',
+    execFile,
+    '--run-id',
+    'exec-replay',
+    '--input',
+    'null',
+    '--dry-run',
+    '--harness',
+    'fixture:export-exec.json',
+  ]);
+  assert.equal(execReplay.status, 0, execReplay.stderr);
+  assert.equal(execReplay.value.run.output, 'real');
+  assert.deepEqual(
+    execReplay.value.commands.map((entry) => [
+      entry.stepId,
+      entry.outputSource,
+      entry.fixtureIndex,
+    ]),
+    [['probe', 'fixture', 0]],
+  );
   console.log(
-    'Rehearsal CLI: dry-run, fixtures/config/export, named late failures, process-free preview, and harness guards passed.',
+    'Rehearsal CLI: dry-run, fixtures/config/export, exec fixture export and replay, named late failures, process-free preview, and harness guards passed.',
   );
 } finally {
   rmSync(root, { recursive: true, force: true });
