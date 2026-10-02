@@ -26,7 +26,42 @@ export type CliErrorCode =
   | 'load.definition'
   | 'workflow.failed'
   | 'workflow.interrupted'
-  | 'workflow.storage';
+  | 'workflow.storage'
+  | 'start.timeout'
+  | 'start.exited';
+
+const cliErrorCodes: Readonly<Record<CliErrorCode, true>> = {
+  'answer.invalid': true,
+  'answer.conflict': true,
+  'usage.flag': true,
+  'usage.file_not_found': true,
+  'usage.entrypoint': true,
+  'usage.run_id': true,
+  'usage.input_json': true,
+  'usage.input_file': true,
+  'usage.input_schema': true,
+  'usage.resume_requires_run_id': true,
+  'run.exists': true,
+  'run.not_found': true,
+  'run.locked': true,
+  'run.incompatible': true,
+  'run.input_changed': true,
+  'run.unreadable': true,
+  'run.orphans': true,
+  'load.typecheck': true,
+  'load.import': true,
+  'load.definition': true,
+  'workflow.failed': true,
+  'workflow.interrupted': true,
+  'workflow.storage': true,
+  'start.timeout': true,
+  'start.exited': true,
+};
+
+/** Whether a string read from another process's document is a known {@link CliErrorCode}. @internal */
+export function isCliErrorCode(value: unknown): value is CliErrorCode {
+  return typeof value === 'string' && Object.hasOwn(cliErrorCodes, value);
+}
 
 /** A run cannot start with the requested checkpoint or ownership. */
 export class RunRefusedError extends Error {

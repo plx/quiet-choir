@@ -114,6 +114,7 @@ Failures have these fields:
 | `failedSteps`                 | Saved failed/cancelled steps with ID, kind, attempts, and error                                                          |
 | `diagnostics`                 | Compiler diagnostics, or an empty array                                                                                  |
 | `next`                        | Runnable follow-ups `{why, argv}`, or an empty array; see [next commands](#next-commands)                                |
+| `launch`                      | `workflow start` only: `{runId, pid, log, result, exitCode, signal}`; see [workflow start](#workflow-start)              |
 
 The error codes map to numeric exits in one CLI table:
 
@@ -123,9 +124,11 @@ The error codes map to numeric exits in one CLI table:
 | 2    | `usage.flag`, `usage.file_not_found`, `usage.entrypoint`, `usage.run_id`, `usage.input_json`, `usage.input_file`, `usage.input_schema`, `usage.resume_requires_run_id`, `answer.invalid` (the answer was not written) | Correct arguments/input. No execution checkpoint was written.                                                            |
 | 3    | `run.exists`, `run.not_found`, `run.locked`, `run.incompatible`, `run.input_changed`, `run.unreadable`, `run.orphans`, `answer.conflict` (the question is not waiting or already has a delivery)                      | Correct run/storage selection, wait for the owner, or explicitly resolve compatibility/ownership. No workflow body ran.  |
 | 4    | `load.typecheck`, `load.import`, `load.definition`                                                                                                                                                                    | Fix trusted source or its definition. No execution checkpoint was written.                                               |
+| 70   | `start.exited`                                                                                                                                                                                                        | The `workflow start` runner exited without a record or a readable result document; read `launch.log`.                    |
 | 74   | `workflow.storage`                                                                                                                                                                                                    | Inspect saved state and fix storage/ownership before deciding how to resume. External effects may already have happened. |
 | 75   | `workflow.run.suspended`                                                                                                                                                                                              | Saved suspension with pending waits; answer questions, deliver signals, or tick when due.                                |
 | 130  | `workflow.interrupted`                                                                                                                                                                                                | A first signal saved a resumable `suspended` run; the next tick or `resume` continues it.                                |
+| 124  | `start.timeout`                                                                                                                                                                                                       | `workflow start` stopped a runner that owned no record within `--start-timeout`; read `launch.log`.                      |
 
 Typechecking and import are distinct from workflow execution. Imports can have arbitrary side
 effects; no exit status promises to undo them. Run-ID and input-JSON validation happen before
@@ -175,6 +178,69 @@ directory. A resume whose stored entrypoint no longer exists (a moved checkout o
 from the new location. Storage resolves explicit options, environment, existing legacy runs, then
 the external XDG project default; relative explicit paths resolve against the launch directory.
 
+## Workflow start
+
+`workflow start FILE [execute flags] [--start-timeout DURATION] [--json]` launches
+`workflow execute` as a detached runner and returns once the run's record exists. It accepts
+execute's flags except `--resume`, `--kill-orphans`, `--accept-code-change`, `--dry-run`,
+`--stub-steps` and `--full`, which do not create a new persisted run. The run ID is generated when
+`--run-id` is absent and the state directory is resolved as for execute, both before the runner
+starts; start passes the rest of its argv through unchanged, appends `--run-id` and `--state-dir`
+when absent, and always appends `--json`. The runner is
+`[node, realpath(bin/run.js), "workflow", "execute", …]` (development mode keeps the tsx loader
+flags), never a PATH lookup, in its own session with stdin from `/dev/null`. Its stdout and stderr
+go to `<stateDir>/<runId>/launch/<n>.result.json` and `<n>.log`, created exclusively for the
+smallest free `n` (0600 files, 0700 directories); `--input -` is read by start and passed as
+`--input @<n>.input.json`.
+
+Readiness: start polls every 50 ms. While the runner lives, start succeeds once the record is
+readable and the run lock's owner is the runner's PID; another process's lock does not count. After
+the runner exits, a readable record counts when its document is a success (a fast completion or
+suspension) or a failure other than `run.exists` and `run.locked`. Success (exit 0) is
+
+```json
+{
+  "kind": "workflow.start.result",
+  "ok": true,
+  "exitCode": 0,
+  "runId": "x",
+  "stateDir": "/abs/runs",
+  "pid": 12345,
+  "status": "running",
+  "log": "/abs/runs/x/launch/1.log",
+  "result": "/abs/runs/x/launch/1.result.json",
+  "next": [
+    {
+      "why": "...",
+      "argv": ["...", "workflow", "inspect", "x", "--state-dir", "/abs/runs", "--json", "--summary"]
+    }
+  ]
+}
+```
+
+`status` is the saved status when start returned: `running`, or `completed`, `failed` or `suspended`
+when the runner already finished. `next` holds `inspect --json --summary` and `inspect --watch`
+entries. The text form prints `Started run ID (runner PID n, status s).` with `Log:`, `Result:` and
+`Next:` lines. The runner's own exit and document stay in the result file.
+
+Failures use the ordinary `workflow.error` document with an added `launch` field
+`{runId, pid, log, result, exitCode, signal}`: the run ID passed to the runner, its PID (null when
+it never spawned), the evidence paths, and how it exited (null while it was still running). A
+failure before the record exists, such as `load.typecheck` (exit 4) or a `usage.*` refusal (exit 2),
+carries the runner's error, diagnostics and `next`, the exit code of that error, and top-level
+`runId: null`, so no run is reported as started. Top-level `runId` is set only when a record is
+readable. An existing run (`run.json` or a legacy flat checkpoint) is refused with `run.exists`
+(exit 3) before anything is launched, without `launch`. Without an owned record within
+`--start-timeout` (default `60s`), start sends SIGTERM to the runner's process group, waits
+`--kill-grace-ms` (default 3000) plus 2 s for it to save, sends SIGKILL if needed, and fails with
+`start.timeout` (exit 124). A runner that exits without a record or a readable document is
+`start.exited` (exit 70). A first signal to start stops the runner the same way and reports
+`workflow.interrupted` (exit 130); a second one kills it at once. A runner that had saved a record
+leaves a resumable suspension, reported with its `runId` and a resume entry in `next`. The launch
+directory of a pre-record failure has no `run.json`, so `list` and `inspect` ignore it; a retry with
+the same ID uses the next `n`. See [ADR 0036](decisions/0036-detached-start.md). Detached sessions
+are POSIX behaviour; Windows is not covered.
+
 ## Next commands
 
 Every failure document has a top-level `next` array, and `inspect --json --summary` (and
@@ -187,6 +253,7 @@ placeholders. Text inspect and human failure messages print each entry as
 | ----------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
 | `workflow.failed` with a saved failed run       | `resume RUN --state-dir DIR`                                                                          |
 | `workflow.interrupted` with a saved suspension  | as for a suspended summary                                                                            |
+| `start.timeout` with a saved suspension         | as for a suspended summary                                                                            |
 | `run.orphans`                                   | `resume RUN --state-dir DIR --kill-orphans`                                                           |
 | `run.incompatible`, code or schema change only  | `resume … --accept-code-change` (unless the run completed), then a fork                               |
 | `run.incompatible`, other run-level changes     | a fork from the stored entrypoint; none when the workflow name changed or for a legacy checkpoint     |

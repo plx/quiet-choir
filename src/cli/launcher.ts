@@ -59,6 +59,24 @@ export function detectCommandLauncher(probe: LauncherProbe): CommandLauncher {
   return [probe.execPath, ...(probe.development ? probe.execArgv : []), script];
 }
 
+/**
+ * The program words that spawn this CLI as a child process: always
+ * `[execPath, ...(development ? execArgv : []), realpath(argv1)]`, never the bare `quiet-choir`
+ * PATH word. Spawning Node directly needs no PATH lookup, keeps development loader flags, and makes
+ * the child's PID the PID of the CLI process itself (a shell shim would put another process in
+ * between). Undefined when `argv1` is missing or cannot be resolved. @internal
+ */
+export function detectSpawnLauncher(probe: LauncherProbe): CommandLauncher | undefined {
+  if (!probe.argv1) return undefined;
+  let script: string;
+  try {
+    script = probe.realpath(probe.argv1);
+  } catch {
+    return undefined;
+  }
+  return [probe.execPath, ...(probe.development ? probe.execArgv : []), script];
+}
+
 /** Probe the current process. @internal */
 export function processLauncherProbe(development: boolean): LauncherProbe {
   return {
@@ -80,14 +98,39 @@ export function processLauncherProbe(development: boolean): LauncherProbe {
   };
 }
 
-let current: CommandLauncher | undefined;
+/**
+ * Launchers detected by `launchCli`, kept on `globalThis` under a registered symbol: in development
+ * mode oclif loads command modules through its own TypeScript loader, a second instance of this
+ * module, which must still see what `launchCli` recorded.
+ */
+const launchers = Symbol.for('quiet-choir.cli.launchers');
+
+interface LauncherState {
+  command?: CommandLauncher | undefined;
+  spawn?: CommandLauncher | undefined;
+}
+
+function state(): LauncherState {
+  const holder = globalThis as unknown as Record<symbol, LauncherState | undefined>;
+  return (holder[launchers] ??= {});
+}
 
 /** Record the launcher of this CLI process; only `launchCli` sets it. @internal */
 export function setCommandLauncher(launcher: CommandLauncher | undefined): void {
-  current = launcher;
+  state().command = launcher;
 }
 
 /** The detected launcher, or undefined (the runtime default) outside a launched CLI. @internal */
 export function commandLauncher(): CommandLauncher | undefined {
-  return current;
+  return state().command;
+}
+
+/** Record the spawn launcher of this CLI process; only `launchCli` sets it. @internal */
+export function setSpawnLauncher(launcher: CommandLauncher | undefined): void {
+  state().spawn = launcher;
+}
+
+/** The detected spawn launcher, or undefined outside a launched CLI or without a script path. @internal */
+export function spawnLauncher(): CommandLauncher | undefined {
+  return state().spawn;
 }

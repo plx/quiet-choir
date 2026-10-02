@@ -3,12 +3,29 @@
 ## Launch and keep the result
 
 Use the [golden path](../SKILL.md#run-a-first-workflow-against-a-project) with absolute paths and a
-fresh run ID. Long foreground jobs can outlast the host tool's timeout; `nohup`, redirected stdin,
-and separate result/log files let the runner continue after that command returns. Save the PID as a
-diagnostic, not as durable proof of ownership. `nohup` handles terminal hangup at launch; direct
-SIGINT/SIGTERM still interrupt (a resumable `suspended` save, exit 130). Use one pair of files per
-run/attempt so a recovery does not overwrite failure evidence. A machine reboot still stops local
-processes; there is no scheduler.
+fresh run ID. `workflow start FILE [execute flags]` runs `workflow execute` as a detached runner
+(its own session, stdin from `/dev/null`), so the run continues after the command and the host's
+tool call return. It generates a run ID unless `--run-id` is given, and returns only when the run's
+record exists and is owned by that runner, or when the runner already finished; `inspect` right
+after it never sees `run.not_found`. Success is
+`{kind:"workflow.start.result", ok:true, exitCode:0, runId, stateDir, pid, status, log, result, next}`:
+`status` is the saved status at return (usually `running`), `next` holds an
+`inspect --json --summary` and an `inspect --watch` entry, and the PID is a diagnostic, not durable
+proof of ownership. Direct SIGINT/SIGTERM to the runner still interrupt it into a resumable
+`suspended` save. A machine reboot stops local processes; there is no scheduler.
+
+The runner writes its final JSON document to `<stateDir>/<runId>/launch/<n>.result.json` and its
+stderr to `<n>.log` (with `--input -`, start saves stdin as `<n>.input.json`), each file 0600 in a
+0700 directory, and `n` grows per attempt so a retry never overwrites earlier evidence. A failure
+before the record exists (a type error, a `usage.*` refusal) exits with the runner's code and error
+document, with top-level `runId: null` and a `launch` field
+(`{runId, pid, log, result, exitCode, signal}`); the log keeps the compiler output. When no owned
+record appears within `--start-timeout` (default 60s), start stops the runner (SIGTERM, then SIGKILL
+after `--kill-grace-ms` plus 2 s) and fails with `start.timeout` (exit 124); a runner that exits
+without a record or a readable document is `start.exited` (exit 70). An interrupted start stops its
+runner the same way (exit 130), so start never leaves an unreported runner; if the runner had
+already saved a record, the failure carries its `runId` and a resume entry in `next`. An existing
+run is refused with `run.exists` before anything is launched.
 
 `--json` writes one completion, suspension, or failure document to stdout; logs and workflow console
 output go to stderr. Execute, resume and `answer --resume` print a compact result by default
@@ -17,9 +34,8 @@ adds `pending` and `resumeCommand`, and the same fields sit under `summary`); `-
 whole run record instead. A failure document has `ok:false`, `exitCode`,
 `error:{code,message,stepId,details}`, `runId`, `stateDir`, `diagnostics`, and the last readable
 `summary` (possibly null), or `run` under `--full` and for other commands, plus `next` (see below).
-Typecheck diagnostics are top-level, not inside `error`. A process killed before it can report may
-leave an empty file. An initial missing record can mean loading is still underway or a pre-record
-failure; inspect the log, result document, and observed runner before deciding which.
+Typecheck diagnostics are top-level, not inside `error`. A runner killed before it can report may
+leave an empty result file; read its log and `inspect` the run.
 
 ## Follow `next`
 
@@ -77,8 +93,10 @@ it.
 | 3        | Answer conflict (`answer.conflict`), or run refusal: existing/missing/unreadable/locked run, incompatible resume, changed input, or orphans |
 | 4        | Workflow typecheck, import, or definition failure                                                                                           |
 | 75       | Saved suspension; deliver answers and resume the same run                                                                                   |
+| 70       | `workflow start`: the runner exited without a record or a readable result document (`start.exited`)                                         |
 | 74       | Checkpoint/storage failure                                                                                                                  |
 | 130      | Interruption (SIGINT/SIGTERM/SIGHUP) saved a resumable suspension, or interrupted watch; tick or resume continues the run                   |
+| 124      | `workflow start`: no record owned by the runner within `--start-timeout`; the runner was stopped (`start.timeout`)                          |
 
 Use stable `error.code` for automation. Put flags after the command
 (`workflow execute FILE --json`).

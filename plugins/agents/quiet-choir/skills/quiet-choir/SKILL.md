@@ -22,27 +22,21 @@ see [setup](references/setup-and-cli.md#run-against-another-project).
 Set `QC_CHECKOUT`, `QC_TARGET`, `QC_WORKFLOW`, and `QC_RUNS` to absolute paths: a built runtime
 checkout, the target project, a trusted workflow file, and a state directory **outside the target
 worktree**. Start with the local-only workflow below, which accepts `{}` and makes no paid calls.
-Use a fresh run ID for another independent run; retain these paths for inspection and recovery. The
-redirected result and log can hold plaintext workflow output. `umask 077` affects only new paths, so
-the recipe also tightens an existing `$QC_RUNS` and recreates the output files, keeping them
-owner-only like the 0600 checkpoints.
+Use a fresh run ID for each run; retain these paths for inspection and recovery. `workflow start`
+runs the workflow in the background and returns once its record exists, so the `inspect` after it
+reads the run; a failure before that (such as a type error) is reported by `start` itself. The
+runner's result document and log go to `$QC_RUNS/first/launch/`, owner-only, and can hold plaintext
+workflow output. `start` creates a missing `$QC_RUNS` owner-only but does not repair an existing
+directory's permissions, so use a new or owner-only one.
 
 <!-- skills-check: example golden-path -->
 
 ```sh
-umask 077
-mkdir -m 700 -p "$QC_RUNS"
-chmod 700 "$QC_RUNS" || exit 1
 cd "$QC_TARGET" || exit 1
 node "$QC_CHECKOUT/bin/run.js" workflow validate "$QC_WORKFLOW" --json || exit 1
-rm -f "$QC_RUNS/first.result.json" "$QC_RUNS/first.log" || exit 1
-nohup node "$QC_CHECKOUT/bin/run.js" workflow execute "$QC_WORKFLOW" \
-  --run-id first --state-dir "$QC_RUNS" --input '{}' --json \
-  >"$QC_RUNS/first.result.json" 2>"$QC_RUNS/first.log" < /dev/null &
-qc_runner_pid=$!
-printf 'Runner PID: %s; log: %s/first.log\n' "$qc_runner_pid" "$QC_RUNS"
-node "$QC_CHECKOUT/bin/run.js" workflow inspect first --state-dir "$QC_RUNS" --json --summary \
-  || printf 'Record may still be loading; inspect again and read first.log.\n' >&2
+node "$QC_CHECKOUT/bin/run.js" workflow start "$QC_WORKFLOW" \
+  --run-id first --state-dir "$QC_RUNS" --input '{}' --json || exit 1
+node "$QC_CHECKOUT/bin/run.js" workflow inspect first --state-dir "$QC_RUNS" --json --summary
 ```
 
 Save this as `first.workflow.mts` outside the target worktree; replace its import with the absolute
@@ -68,9 +62,9 @@ export default defineWorkflow({
 });
 ```
 
-Read [operating a run](references/operating-runs.md) next: startup can precede the first checkpoint;
-inspection's exit 0 means it read a record, not that the workflow completed. Use saved `status` and
-ownership to decide whether to wait, recover, or inspect a failure.
+Read [operating a run](references/operating-runs.md) next: inspection's exit 0 means it read a
+record, not that the workflow completed. Use saved `status` and ownership to decide whether to wait,
+recover, or inspect a failure.
 
 <!-- skills-difference: claude-host -->
 

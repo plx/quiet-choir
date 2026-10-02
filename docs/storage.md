@@ -63,6 +63,9 @@ retains typechecking, code/schema checks, grants, and step identity validation.
       lock.<pid>.<uuid>.tmp/         # an acquire's publish directory; swept once its PID is dead
       lock.<pid>.<uuid>.gone/        # a released or recovered lock's tombstone; swept
       inbox/                         # exclusive answer deliveries
+      launch/<n>.log                 # workflow start: the runner's stderr (0600)
+      launch/<n>.result.json         # workflow start: the runner's final JSON document (0600)
+      launch/<n>.input.json          # workflow start --input -: the stdin input (0600)
       attempts/<sha256-full-step-id>/<attempt>.<provider>.jsonl
       artifacts/<encoded-id>--<hash>/<attempt>/
       worktrees/                     # reserved; no automatic checkout creation
@@ -75,6 +78,11 @@ their bytes need not be fsynced and are never replay inputs. Native transcripts 
 `attempts/` layout, caps, and retention described in [agent streaming](agent-streaming.md). Opt-in
 [worktree isolation](worktrees.md) uses its own recorded cache root and pinned Git refs; the default
 root stays outside the checkout.
+
+`workflow start` allocates the smallest free `n` exclusively, so a retry never overwrites an earlier
+launch's evidence. A launch that failed before the record existed (for example a type error) leaves
+`<runId>/launch/` without `run.json`; `list` and `inspect` ignore it, and the log keeps the only
+copy of the compiler output. Remove it by hand when it is no longer needed.
 
 Run records, journals, owners, and answers use 0600; new directories use 0700. Existing permissions
 are not repaired. State includes plaintext input, outputs, prompts/previews, and answers. Moving it

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { chmod, mkdtemp, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -57,39 +57,39 @@ try {
       QC_WORKFLOW: workflow,
       QC_RUNS: state,
     };
-    // A reused, previously exposed state directory and outputs must end up owner-only too.
-    await mkdir(state);
-    await chmod(state, 0o755);
-    for (const name of ['first.result.json', 'first.log']) {
-      await writeFile(join(state, name), 'stale');
-      await chmod(join(state, name), 0o644);
-    }
     const launch = command('sh', ['-c', await example(skillRoot, 'SKILL.md', 'golden-path')], {
       cwd: directory,
       env,
     });
+    const [validated, started, inspected] = launch
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line));
+    assert.equal(started.kind, 'workflow.start.result');
+    assert.equal(started.ok, true);
+    assert.equal(started.runId, 'first');
+    // inspect ran right after start and read the record (the golden path exits 0 only then).
+    assert.equal(inspected.id, 'first');
+    // start creates the missing state directory and its launch files owner-only.
+    const launchDir = join(state, 'first', 'launch');
     assert.equal((await stat(state)).mode & 0o777, 0o700);
-    assert.equal((await stat(join(state, 'first.result.json'))).mode & 0o777, 0o600);
-    assert.equal((await stat(join(state, 'first.log'))).mode & 0o777, 0o600);
+    assert.equal((await stat(launchDir)).mode & 0o777, 0o700);
+    assert.equal(started.result, join(launchDir, '1.result.json'));
+    assert.equal(started.log, join(launchDir, '1.log'));
+    assert.equal((await stat(started.result)).mode & 0o777, 0o600);
+    assert.equal((await stat(started.log)).mode & 0o777, 0o600);
     let saved;
     for (let tries = 0; tries < 300; tries++) {
-      try {
-        saved = JSON.parse(await readFile(join(state, 'first', 'run.json'), 'utf8'));
-      } catch (error) {
-        if (error.code !== 'ENOENT') throw error;
-      }
-      if (saved && saved.status !== 'running') break;
+      saved = JSON.parse(await readFile(join(state, 'first', 'run.json'), 'utf8'));
+      if (saved.status !== 'running') break;
       await delay(100);
     }
-    assert.equal(saved?.status, 'completed', await readFile(join(state, 'first.log'), 'utf8'));
+    assert.equal(saved?.status, 'completed', await readFile(started.log, 'utf8'));
     assert.equal(
       saved.cwd,
       await import('node:fs/promises').then(({ realpath }) => realpath(target)),
     );
-    assert.equal(
-      JSON.parse(launch.split('\n')[0]).workflow.fingerprint,
-      saved.workflow.fingerprint,
-    );
+    assert.equal(validated.workflow.fingerprint, saved.workflow.fingerprint);
     assert.equal(saved.output.message, 'Hello from a durable local step.');
     assert.equal(command('git', ['status', '--porcelain'], { cwd: target }), '');
     const summary = command(

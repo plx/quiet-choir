@@ -168,7 +168,12 @@ disjoint files; isolate overlapping writers or commands that observe concurrent 
 removes owned caches and optionally pins without importing source.
 `workflow unlock RUN [--force-remote] [--json]` clears an abandoned run lock without importing
 source; it refuses while an owner, recoverer or recorded child is alive or unverifiable (see
-[process ownership](docs/process-lifecycle.md)).
+[process ownership](docs/process-lifecycle.md)). `workflow start FILE [execute flags] [--json]` runs
+`workflow execute` as a detached background runner and returns the run ID once the run's record
+exists, so an immediate `workflow inspect` reads it; a failure before the record exists (such as a
+type error) is reported with the runner's error and no run ID. The runner's result document and log
+are kept owner-only under `<state>/<run>/launch/`, and `--start-timeout` (default 60s) bounds the
+wait (see [workflow start](docs/cli-contract.md#workflow-start)).
 
 `object()` and `text()` results contain `output`, native `sessionId`, and reported token/cost
 `usage`. Native session IDs are for correlation only: `CliHarness` uses Claude
