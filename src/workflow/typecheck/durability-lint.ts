@@ -424,16 +424,12 @@ class DurabilityLinter {
           return state;
         }
         if (this.#quietChoir(parent)) return state;
-        const callee = skipParentheses(parent.expression);
-        if (ts.isPropertyAccessExpression(callee)) {
-          if (iterationMethods.has(callee.name.text)) return { ...state, loop: true };
-          const target = skipParentheses(callee.expression);
-          if (
-            callee.name.text === 'from' &&
-            ts.isIdentifier(target) &&
-            target.text === 'Array' &&
-            index === 1
-          )
+        // Only a standard-library iteration method or Array.from repeats its callback: a custom
+        // method of the same name, or an unresolved (any-typed) receiver, is not a loop.
+        const info = this.#resolve(parent);
+        if (info && this.#isDefaultLibrary(info.declaration)) {
+          if (iterationMethods.has(info.member)) return { ...state, loop: true };
+          if (info.owner === 'ArrayConstructor' && info.member === 'from' && index === 1)
             return { ...state, loop: true };
         }
       }

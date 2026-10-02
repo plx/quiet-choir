@@ -119,6 +119,12 @@ describe('durability lint', () => {
     expect(found('qc005-forms')).toEqual(['QC005@13', 'QC005@17', 'QC005@22']);
   });
 
+  it('treats a callback as a loop only for standard-library iteration APIs', () => {
+    // Array map and forEach, Set forEach and Array.from report; a user-defined class or object
+    // map(), and a structurally typed receiver, call their callback once and are clean.
+    expect(found('iteration-resolution')).toEqual(['QC005@29', 'QC005@30', 'QC005@31', 'QC005@32']);
+  });
+
   it('resolves the context by type, whatever the parameter is called', () => {
     expect(found('renamed-context')).toEqual(['QC005@11', 'QC002@13']);
   });
