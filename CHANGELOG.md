@@ -2,6 +2,19 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- Settled maps name the changed fingerprint component and accept mapper-only edits under
+  `--accept-code-change` (#146; amends ADR 0006, ADR 0008 and ADR 0009). A map journal now also
+  saves per-component digests (`items`, `mapper`, `version`, `cwd`, and `keys` for a named map) in
+  the new optional `MapRecord.components` (public `MapComponents` type); the aggregate fingerprint
+  is unchanged, so existing journals still replay, and a matching one gets components backfilled. A
+  change after an item committed is refused with `(changed: ...)` in the message. A mapper-only
+  change suggests `--accept-code-change` and the thin-mapper idiom (`(item) => handle(ctx, item)`);
+  under `acceptCodeChange` it is accepted: committed items keep their saved outcomes, unfinished
+  items run with the new mapper, and `codeChanges` gains an entry with the new optional
+  `CodeChange.map` field, `components: ['mapper']` and the map's old and new fingerprints. Items,
+  keys, version and cwd stay strict. A journal saved before components keeps the refusal and says
+  the changed component is unknown. The saved `recoveryHint` suggests `--accept-code-change` only
+  for a mapper-only change, and `workflow inspect` prints the last five accepted code changes.
 - Default fork reuse (`--reuse prefix`) is now causal instead of closing at the first miss (#145;
   amends ADR 0006). A matching terminal source step is copied when every source step that had
   settled before it launched was copied too, and no step that ran live in the fork settled before

@@ -195,23 +195,26 @@ prefix miss), and `cursor` counts the steps prefix reuse copied.
 
 Each use of `--accept-code-change` that actually changes code, schemas, or files records
 `codeChanges` with old/new fingerprints, changed files, components, and time, even if execution
-later fails; an accepted resume with nothing changed leaves `codeChanges` untouched. It runs the
-body even for a previously completed run, first clearing any stale output so a failed
-re-finalization never reports a prior result. A fixed unfinished callback can execute again. A
-changed completed step (callback, prompt, input, schema, options) can never be reused, so the CLI
-first replays the accepted body against a disposable copy, with fixtures off and every unfinished
-local step, file effect, poll observer and command stubbed. If the copy meets such a step, the
-command refuses with `run.incompatible` (exit 3) and changes nothing: status, fingerprint, output,
-`codeChanges` and waiting questions stay as they were. `error.details.divergent` names the step and
-its changed components, and `error.details.next` holds the replacement command,
+later fails; an accepted resume with nothing changed leaves `codeChanges` untouched. A settled map
+that accepts a mapper-only change adds its own entry (`map` names the journal, `from`/`to` are map
+fingerprints, `files` is empty, `components` is `['mapper']`) once, independently of the run-level
+entry, so a map entry can appear when nothing changed at run level. It runs the body even for a
+previously completed run, first clearing any stale output so a failed re-finalization never reports
+a prior result. A fixed unfinished callback can execute again. A changed completed step (callback,
+prompt, input, schema, options) can never be reused, so the CLI first replays the accepted body
+against a disposable copy, with fixtures off and every unfinished local step, file effect, poll
+observer and command stubbed. If the copy meets such a step, the command refuses with
+`run.incompatible` (exit 3) and changes nothing: status, fingerprint, output, `codeChanges` and
+waiting questions stay as they were. `error.details.divergent` names the step and its changed
+components, and `error.details.next` holds the replacement command,
 `quiet-choir workflow execute FILE --fork-from RUN --reuse matching --invalidate STEP --run-id <NEW_RUN_ID> --state-dir DIR`.
 `--dry-run --resume --accept-code-change` returns the same refusal. Any other preflight outcome lets
 the real resume proceed; the check is a lock-free snapshot, and the workflow body (not its
 unfinished callbacks) runs once more. If only the body tail/output validation failed, a tail-only
 fix can finish with zero repeated effects. `recoveryHint` and CLI errors identify this case, subject
-to step checks. The hint follows the typed failure cause: a grant, replay-divergence or effect
-failure gets its own advice instead, and a run with nothing recorded or a dry-run gets none. The
-accepted source becomes the basis for later strict resumes.
+to step checks. The hint follows the typed failure cause: a grant, replay-divergence, settled-map
+change or effect failure gets its own advice instead, and a run with nothing recorded or a dry-run
+gets none. The accepted source becomes the basis for later strict resumes.
 
 Local callback identity uses the loaded function's `toString()` plus optional `version`. Under the
 CLI's tsx loader, comment/formatting-only callback edits preserve that source string; logic changes
@@ -242,13 +245,23 @@ item from committing.
 Named-map identity includes item inputs, resolved keys, original mapper source, optional version,
 and cwd; it excludes concurrency. Changing identity after any item committed, duplicating a journal
 ID, or skipping a recorded terminal map fails replay; a skipped map also triggers the pre-live
-divergence check. Explicit code acceptance does not bypass these checks. Inputs/results must be
-lossless JSON, and captured dependencies belong in items or the explicit version. Items are
-snapshotted when `ctx.map` is called; settled mappers receive JSON copies of the fingerprinted
-snapshot, so later caller edits cannot change the processed items. Full IDs stay run-unique; named
-maps prefix each item as `mapId/key/`. The deprecated positional form still uses an explicit
-`options.id` journal without adding an item prefix. Forks start fresh map journals and apply their
-normal per-step reuse/invalidation rules, so mapper-body outcomes are re-evaluated in the new run.
+divergence check. The journal also saves one digest per component (`items`, `keys`, `mapper`,
+`version`, `cwd`), so the refusal names what changed. Explicit code acceptance
+(`--accept-code-change`, `acceptCodeChange: true`) accepts a change to the `mapper` component only:
+completed items keep their journaled outcomes and owned step claims, unfinished items run with the
+new mapper, and `codeChanges` records the map. A change to items, keys, version or cwd is still
+refused, with fork advice. A journal saved before per-component digests cannot name what changed, so
+any change to it after a commit is refused. Only the mapper function's own source is hashed: a thin
+mapper such as `(item) => handle(ctx, item)` keeps edits to `handle` out of map identity, with no
+acceptance needed. Either way completed items keep the outcomes the old code produced, and leaf step
+identity checks still apply to items that run again. To make a helper edit change map identity, bump
+`version`; after a commit that means a fork. Inputs/results must be lossless JSON, and captured
+dependencies belong in items or the explicit version. Items are snapshotted when `ctx.map` is
+called; settled mappers receive JSON copies of the fingerprinted snapshot, so later caller edits
+cannot change the processed items. Full IDs stay run-unique; named maps prefix each item as
+`mapId/key/`. The deprecated positional form still uses an explicit `options.id` journal without
+adding an item prefix. Forks start fresh map journals and apply their normal per-step
+reuse/invalidation rules, so mapper-body outcomes are re-evaluated in the new run.
 
 ## At-least-once effects
 

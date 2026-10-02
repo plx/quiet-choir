@@ -36,11 +36,13 @@ these attempt rules are encoded. See
 [ADR 0007](../../../docs/decisions/0007-durable-failure-outcomes.md).
 
 Settled maps require explicit journal IDs. Each committed item owns its leaf and nested-map IDs;
-replay must claim those identities without re-executing the mapper. Drain and check ignored
-operation failures before committing an item. Cancellation, storage, configuration, and authoring
-guards must never become settled map data. Error identity/cause tracking attributes diagnostics
-only; it does not infer durable handling. See
-[ADR 0008](../../../docs/decisions/0008-scoped-fan-out.md).
+replay must claim those identities without re-executing the mapper. Keep the aggregate map
+fingerprint byte-identical; per-component digests sit beside it, and after a commit only a
+mapper-only change under explicit acceptance is accepted (`decideSettledMapReplay`), recorded in
+`codeChanges` synchronously before the journal save. Drain and check ignored operation failures
+before committing an item. Cancellation, storage, configuration, and authoring guards must never
+become settled map data. Error identity/cause tracking attributes diagnostics only; it does not
+infer durable handling. See [ADR 0008](../../../docs/decisions/0008-scoped-fan-out.md).
 
 Names are captured at invocation, before policy resolution or asynchronous work. Scope and named-map
 prefixes compose explicit leaves; never allocate IDs from completion-order counters. Keep naming

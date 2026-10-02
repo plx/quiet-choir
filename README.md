@@ -424,8 +424,10 @@ cwd define its identity; concurrency can change on resume. Inputs and results mu
 The map snapshots `items` when called; settled mappers receive JSON copies of that snapshot. Put
 captured dependencies in items or bump `version`. Resume skips each committed mapper and its owned
 effects and returns the saved outcome, so an ordinary mapper-body failure cannot heal and change a
-downstream fingerprint. Incomplete items execute again. Forks start fresh map journals and use the
-normal per-step reuse rules.
+downstream fingerprint. Incomplete items execute again. A change after an item committed is refused
+with the changed component named; `--accept-code-change` accepts a mapper-only change, keeping
+committed outcomes and running unfinished items with the new mapper. Forks start fresh map journals
+and use the normal per-step reuse rules.
 
 ## Durable commands and files
 
