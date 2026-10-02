@@ -2,6 +2,24 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- `workflow events` and the `/quiet-choir:run` Claude plugin command (additive command and plugin
+  file; no identity or storage change): `workflow events RUN [--follow]` prints a run's `--events`
+  lines derived from its persisted record, without importing the workflow, through the same
+  formatter as `--events` (one line shape, at most 512 bytes). It covers run lifecycle, phase and
+  log entries, settled attempts (`step.completed`, `step.failed`, `step.settled`) and opened
+  questions; fields the record cannot supply are omitted, and `ms` is the recorded duration. Lines
+  are deduplicated by identity, so the 500-event cap neither repeats nor hides newer lines, though a
+  very long run can evict phase and log payloads before a slow follower reads them. `--follow`
+  starts at the current end (`--from-start` replays the record first), exits with the watch codes
+  (0, 1, 75, 130, 3) and accepts the watch's `--interval`, `--timeout` (79) and `--wait-created`
+  (66); `--after-execution N` waits for a later execution, for following a resume. `watchRun` gains
+  an optional `done` predicate. The Claude plugin adds `commands/run.md`, which rehearses, launches
+  with `run_in_background`, follows with Monitor and answers questions; its manifest description now
+  names the command. `skills:check` validates `commands/*.md` (frontmatter, links, fences, no
+  `$ARGUMENTS` in shell fences) and lets the two manifests differ in `description` only, and the
+  skills smoke runs every command shell block. The Claude skill's answer loop now lists questions
+  with `workflow pending`, because the watch snapshot has no `pending[]`. See
+  [ADR 0038](docs/decisions/0038-code-free-event-follower.md).
 - Compact event stream (additive flag; no identity or storage change): `--events FILE|-` on
   `workflow execute`, `start`, `resume`, `tick` and `answer --resume` appends one JSON line per
   `run.*`, `step.completed`, `step.failed`, `step.settled`, `wait.opened`, `phase` and `log` event,

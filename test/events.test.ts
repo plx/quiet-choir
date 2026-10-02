@@ -16,6 +16,9 @@ import {
   type EventLine,
 } from '../src/workflow/loader/events.js';
 import type { WorkflowEvent } from '../src/workflow/runtime/runner.js';
+import { formatEventFields } from '../src/workflow/loader/event-line.js';
+import { recordEventLines } from '../src/workflow/loader/event-follow.js';
+import type { AttemptRecord, RunRecord } from '../src/workflow/runtime/record.js';
 import { WorkflowExecutor } from '../src/workflow/loader/executor.js';
 import { analyzeTypecheckEntrypoint } from '../src/workflow/typecheck/plan.js';
 import type { AgentUsage } from '../src/workflow/runtime/model.js';
@@ -281,6 +284,192 @@ describe('formatEventLine', () => {
     expect(parsed?.step).toContain('…');
     const short = line(event({ type: 'step.failed', stepId: 'a'.repeat(300), message: 'm' }));
     expect(short?.step).toBe('a'.repeat(300));
+  });
+});
+
+describe('shared formatter', () => {
+  // The same transitions as the runner emits them live and as a follower reads them back from the
+  // record: one formatter produces both lines.
+  const run: RunRecord = {
+    formatVersion: 7,
+    id: 'r1',
+    workflow: { name: 'w', version: '1', fingerprint: null },
+    cwd: '/',
+    input: null,
+    output: null,
+    status: 'failed',
+    error: 'Step a failed',
+    createdAt: at(0),
+    updatedAt: at(90),
+    executions: [
+      {
+        n: 1,
+        pid: 1,
+        startedAt: at(0),
+        endedAt: at(90),
+        outcome: 'failed',
+        error: 'Step a failed',
+        errorStack: null,
+      },
+    ],
+    events: [
+      {
+        at: at(0),
+        execution: 1,
+        type: 'run.started',
+        phase: null,
+        total: null,
+        message: null,
+        data: null,
+        stepId: null,
+      },
+      {
+        at: at(5),
+        execution: 1,
+        type: 'log',
+        phase: 'review',
+        total: null,
+        message: 'Scanning',
+        data: { count: 2 },
+        stepId: null,
+      },
+      {
+        at: at(90),
+        execution: 1,
+        type: 'run.failed',
+        phase: 'review',
+        total: null,
+        message: 'Step a failed',
+        data: null,
+        stepId: 'a',
+      },
+    ],
+    steps: {
+      a: {
+        kind: 'codex',
+        fingerprint: 'f',
+        status: 'failed',
+        phase: 'review',
+        attempts: 1,
+        output: null,
+        error: 'boom',
+        wakeAt: null,
+        attemptHistory: [
+          {
+            attempt: 1,
+            fingerprint: 'f',
+            startedAt: at(10),
+            finishedAt: at(40),
+            durationMs: 30,
+            status: 'failed',
+            error: 'boom',
+            execution: 1,
+          } as AttemptRecord,
+        ],
+      },
+      b: {
+        kind: 'claude',
+        fingerprint: 'f',
+        status: 'completed',
+        phase: 'review',
+        attempts: 1,
+        output: null,
+        error: null,
+        wakeAt: null,
+        attemptHistory: [
+          {
+            attempt: 1,
+            fingerprint: 'f',
+            startedAt: at(20),
+            finishedAt: at(50),
+            durationMs: 30,
+            status: 'completed',
+            error: null,
+            execution: 1,
+            usage: { inputTokens: 1, outputTokens: 1, costUsd: 0.5 },
+          } as AttemptRecord,
+        ],
+      },
+    },
+  };
+  const usage = { inputTokens: 1, outputTokens: 1, costUsd: 0.5 };
+  const live: WorkflowEvent[] = [
+    event({ type: 'run.started', stepId: null, at: at(0), message: 'Run started.' }),
+    event({
+      type: 'log',
+      stepId: null,
+      at: at(5),
+      phase: 'review',
+      message: 'Scanning',
+      data: { count: 2 },
+    }),
+    event({ type: 'step.started', stepId: 'a', at: at(10), phase: 'review' }),
+    event({ type: 'agent.started', stepId: 'a', at: at(10), harness: 'codex' }),
+    event({ type: 'step.started', stepId: 'b', at: at(20), phase: 'review' }),
+    event({ type: 'agent.started', stepId: 'b', at: at(20), harness: 'claude' }),
+    event({ type: 'step.failed', stepId: 'a', at: at(40), phase: 'review', attempt: 1 }),
+    event({ type: 'step.completed', stepId: 'b', at: at(50), phase: 'review', usage }),
+    event({
+      type: 'run.failed',
+      stepId: 'a',
+      at: at(90),
+      phase: 'review',
+      message: 'Step a failed',
+    }),
+  ];
+
+  it('gives live events and record entries the same lines, key order and field set', () => {
+    const memory = new EventLineMemory();
+    const fromLive = live
+      .map((input) => formatEventLine(input, memory))
+      .filter((text): text is string => text !== null);
+    const fromRecord = recordEventLines(run, null, 'all').lines;
+    expect(fromLive.map((text) => (JSON.parse(text) as EventLine).ev)).toEqual([
+      'run.started',
+      'log',
+      'step.failed',
+      'step.completed',
+      'run.failed',
+    ]);
+    // The durations line up here by construction; in general `ms` is process-observed live and
+    // the recorded attempt or execution duration in the record (documented under the field).
+    expect(fromRecord).toEqual(fromLive);
+    for (const text of [...fromLive, ...fromRecord]) {
+      expect(Buffer.byteLength(text)).toBeLessThanOrEqual(EVENT_LINE_MAX_BYTES);
+      const parsed = JSON.parse(text) as Record<string, unknown>;
+      const order = [
+        't',
+        'run',
+        'ev',
+        'step',
+        'attempt',
+        'harness',
+        'ms',
+        'costUsd',
+        'phase',
+        'msg',
+      ];
+      const keys = Object.keys(parsed);
+      expect(keys).toEqual(order.filter((key) => keys.includes(key)));
+    }
+  });
+
+  it('formats raw fields with omission and the attempt rule in one place', () => {
+    expect(
+      formatEventFields({
+        t: at(0),
+        run: 'r1',
+        ev: 'step.completed',
+        step: '',
+        attempt: 2,
+        costUsd: null,
+        phase: '',
+        msg: '',
+      }),
+    ).toBe(`{"t":"${at(0)}","run":"r1","ev":"step.completed"}`);
+    expect(
+      JSON.parse(formatEventFields({ t: at(0), run: 'r1', ev: 'step.settled', attempt: 2 })),
+    ).toMatchObject({ attempt: 2 });
   });
 });
 

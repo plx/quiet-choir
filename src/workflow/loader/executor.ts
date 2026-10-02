@@ -13,6 +13,7 @@ import { lstat, realpath, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { WorkflowNotifications } from './notifications.js';
 import { WorkflowEventLog, type EventLogTarget } from './events.js';
+import { recordEventLines, type EventFollowCursor } from './event-follow.js';
 import { fixturesFromRun } from './fixtures.js';
 import {
   harnessConfigDigest,
@@ -74,6 +75,7 @@ import type {
   CheckResumePlan,
   InspectWorkflowPlan,
   WatchWorkflowPlan,
+  EventsWorkflowPlan,
   ListWorkflowsPlan,
   ValidateWorkflowPlan,
   WorkflowCommandResult,
@@ -103,6 +105,8 @@ export interface WorkflowExecutorOptions {
    * never writes to `process.stdout` itself; a `-` plan without it is a usage error.
    */
   readonly eventsStdout?: Extract<EventLogTarget, { readonly write: unknown }>['write'];
+  /** Receives each line of a `workflow.events` plan, without its newline, as soon as it is derived. */
+  readonly onEventLine?: (line: string) => void;
 }
 
 /** Every plain-data plan the workflow executor accepts. */
@@ -113,6 +117,7 @@ export type WorkflowExecutorPlan =
   | InspectWorkflowPlan
   | CheckResumePlan
   | WatchWorkflowPlan
+  | EventsWorkflowPlan
   | ListWorkflowsPlan
   | ResumeWorkflowPlan
   | AnswerWorkflowPlan
@@ -295,6 +300,49 @@ export class WorkflowExecutor implements Executor<WorkflowExecutorPlan, Workflow
           ok: true,
           ...(await listRuns({ ...plan, commandLauncher: this.#options.commandLauncher })),
         };
+      }
+      if (plan.kind === 'workflow.events') {
+        stage = 'run.unreadable';
+        const { start } = plan;
+        if (!plan.follow && start === 'end')
+          return workflowFailure(
+            'usage.flag',
+            'Printing events without following starts from the record start or an execution.',
+            context,
+          );
+        const after = typeof start === 'object' ? start.afterExecution : undefined;
+        let cursor: EventFollowCursor | null = null;
+        const emit = (value: RunInspection): void => {
+          const derived = recordEventLines(value.run, cursor, start);
+          cursor = derived.cursor;
+          this.#options.logger.log(
+            'debug',
+            `Events: read run ${value.run.id} (${value.summary.status}, execution ${String(value.summary.execution)}); ${String(derived.lines.length)} new lines.`,
+          );
+          for (const line of derived.lines) this.#options.onEventLine?.(line);
+        };
+        const options = {
+          runId: plan.runId,
+          stateDir: plan.stateDir,
+          commandLauncher: this.#options.commandLauncher,
+        };
+        const inspection = plan.follow
+          ? await watchRun(
+              {
+                ...options,
+                intervalMs: plan.intervalMs,
+                timeoutMs: plan.timeoutMs,
+                waitCreatedMs: plan.waitCreatedMs,
+                done: (value) =>
+                  value.summary.status !== 'running' &&
+                  (after === undefined || (value.summary.execution ?? 0) > after),
+              },
+              emit,
+              this.#options.signal,
+            )
+          : await inspectRun(options);
+        if (!plan.follow) emit(inspection);
+        return { kind: 'workflow.run.result', ok: true, ...inspection };
       }
       if (plan.kind === 'workflow.inspect' || plan.kind === 'workflow.watch') {
         stage = 'run.unreadable';

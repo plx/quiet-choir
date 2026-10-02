@@ -572,6 +572,11 @@ export interface WatchRunOptions extends InspectRunOptions {
   readonly timeoutMs?: number | undefined;
   /** Retry `run.not_found` until this long after the watch starts, before the first read only. */
   readonly waitCreatedMs?: number | undefined;
+  /**
+   * Whether a snapshot ends the watch; omitted means any status other than `running`. A follower
+   * of a resume passes a stricter test so an earlier execution's terminal status does not end it.
+   */
+  readonly done?: ((value: RunInspection) => boolean) | undefined;
 }
 
 /**
@@ -634,12 +639,14 @@ export async function watchRun(
       onChange(current);
       prior = key;
     }
-    if (current.summary.status !== 'running') return current;
+    if (options.done ? options.done(current) : current.summary.status !== 'running') return current;
     if (timeoutMs !== undefined && finishBy !== undefined && performance.now() >= finishBy)
       throw new WatchBoundError(
         'watch.timeout',
         options.runId,
-        `Run ${options.runId} is still running after ${String(timeoutMs)}ms of watching; the watch stopped and the run keeps running.`,
+        current.summary.status === 'running'
+          ? `Run ${options.runId} is still running after ${String(timeoutMs)}ms of watching; the watch stopped and the run keeps running.`
+          : `Run ${options.runId} is ${current.summary.status} and no later execution finished within ${String(timeoutMs)}ms of watching; the watch stopped.`,
         { timeoutMs },
         current.run,
       );

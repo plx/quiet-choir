@@ -108,5 +108,25 @@ export default defineConfig(
       ],
     },
   },
+  {
+    // The event line formatter and the record follower's derivation: no I/O, clock or store, so
+    // `--events` and `workflow events` share one pure line shape.
+    files: ['src/workflow/loader/event-line.ts', 'src/workflow/loader/event-follow.ts'],
+    rules: {
+      '@typescript-eslint/no-restricted-imports': [
+        'error',
+        {
+          patterns: [
+            {
+              group: ['node:*', ...builtinModules, './**', '../**', '!./event-line.js'],
+              allowTypeImports: true,
+              message:
+                'Event line modules must stay free of I/O: import values only from ./event-line.js; everything else must be import type.',
+            },
+          ],
+        },
+      ],
+    },
+  },
   prettier,
 );

@@ -8,7 +8,7 @@
     {
       "name": "quiet-choir",
       "source": "./plugins/claude/quiet-choir",
-      "description": "Reference for authoring, running, inspecting, and resuming quiet-choir workflows."
+      "description": "Reference skill and /quiet-choir:run command for authoring, running, following, and resuming quiet-choir workflows."
     }
   ]
 }

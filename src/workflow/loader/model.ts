@@ -5,6 +5,7 @@ import type { RehearsalReport } from './rehearsal.js';
 import type { HarnessSelection } from './harness-selection.js';
 import type { WorkflowFailure } from './failure.js';
 import type { InspectionStatus, RunSummary } from './inspection.js';
+import type { EventFollowStart } from './event-follow.js';
 import type { AgentLimits } from '../runtime/agent-limiter.js';
 import type { RunOwnership } from '../runtime/store.js';
 import type { ProfileOverride } from '../runtime/profiles-model.js';
@@ -165,6 +166,30 @@ export interface WatchWorkflowPlan extends ExecutionPlan {
    * with `watch.record_not_created`. Applies only before the first successful read; omitted means
    * a missing record fails at once.
    */
+  readonly waitCreatedMs?: number;
+}
+
+/**
+ * Print or follow a run's compact event lines, derived from its persisted record without importing
+ * workflow code. Lines go to the executor's `onEventLine` writer.
+ */
+export interface EventsWorkflowPlan extends ExecutionPlan {
+  readonly kind: 'workflow.events';
+  readonly runId: string;
+  readonly stateDir: string;
+  /** Keep polling until the run is terminal; otherwise print the current lines once. */
+  readonly follow: boolean;
+  /**
+   * `end` (follow only) prints nothing from the first read, `all` prints the whole record first,
+   * and `afterExecution` prints only entries of later executions and, when following, waits for a
+   * terminal status of one of them.
+   */
+  readonly start: EventFollowStart;
+  /** Polling interval while following. */
+  readonly intervalMs: number;
+  /** As on `workflow.watch`: stop with `watch.timeout` this long after the first read. */
+  readonly timeoutMs?: number;
+  /** As on `workflow.watch`: wait this long for a missing record before `watch.record_not_created`. */
   readonly waitCreatedMs?: number;
 }
 

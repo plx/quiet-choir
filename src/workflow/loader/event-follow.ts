@@ -1,0 +1,259 @@
+import type { JsonValue } from '../runtime/model.js';
+import type { RunEvent } from '../runtime/observability-model.js';
+import type { AttemptRecord, RunRecord, StepRecord } from '../runtime/record.js';
+import { eventMessage, formatEventFields, type EventLineFields } from './event-line.js';
+
+/**
+ * Where a follower starts: `end` treats the first record it reads as already printed, `all`
+ * prints everything in that record, and `afterExecution` prints only what executions after `n`
+ * recorded, on every read. @internal
+ */
+export type EventFollowStart = 'end' | 'all' | { readonly afterExecution: number };
+
+/**
+ * What a follower has already accounted for: the identity keys of every line derivable from the
+ * last record it read, printed or deliberately skipped. Pruned to that record on each read, so it
+ * stays proportional to the record. @internal
+ */
+export interface EventFollowCursor {
+  readonly seen: ReadonlySet<string>;
+}
+
+interface Candidate {
+  readonly key: string;
+  readonly fields: EventLineFields;
+  /** Body execution that produced the entry; undefined when the record cannot tell. */
+  readonly execution: number | undefined;
+  /** Sort position among entries with the same time: run.started first, terminal run last. */
+  readonly rank: number;
+}
+
+const runTerminal = new Set<RunEvent['type']>([
+  'run.completed',
+  'run.failed',
+  'run.cancelled',
+  'run.suspended',
+]);
+const agentKinds = new Set<StepRecord['kind']>(['agent', 'claude', 'codex']);
+
+/** Sort object keys recursively, as the runtime's canonical JSON does for live event data. */
+function canonical(value: JsonValue): JsonValue {
+  if (value === null || typeof value !== 'object') return value;
+  if (Array.isArray(value)) return value.map(canonical);
+  const result: Record<string, JsonValue> = {};
+  for (const key of Object.keys(value).sort()) {
+    const item = value[key];
+    if (item !== undefined)
+      Object.defineProperty(result, key, {
+        value: canonical(item),
+        enumerable: true,
+        configurable: true,
+        writable: true,
+      });
+  }
+  return result;
+}
+
+function time(at: string): number {
+  const parsed = Date.parse(at);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+/** The execution running at `at`: the latest one that started at or before it. */
+function executionAt(record: RunRecord, at: string): number | undefined {
+  const moment = time(at);
+  let found: number | undefined;
+  for (const execution of record.executions ?? [])
+    if (time(execution.startedAt) <= moment) found = execution.n;
+  return found;
+}
+
+/** The message `--events` writes for a run event; omitted when the record cannot supply it. */
+function runMessage(record: RunRecord, event: RunEvent): string | undefined {
+  const latest = record.executions?.at(-1)?.n;
+  switch (event.type) {
+    case 'run.started':
+      return 'Run started.';
+    case 'run.completed':
+      return 'Run completed.';
+    case 'run.suspended':
+      // Only the latest execution's interruption is recorded; an older one is unknowable.
+      if (event.execution !== latest) return undefined;
+      return record.interruptedBy
+        ? `Run interrupted; resumable: ${record.interruptedBy.reason}`
+        : 'Run suspended for external conditions.';
+    default:
+      return eventMessage(event);
+  }
+}
+
+function runEventCandidates(record: RunRecord): Candidate[] {
+  const occurrences = new Map<string, number>();
+  const executions = new Map((record.executions ?? []).map((entry) => [entry.n, entry]));
+  const latest = record.executions?.at(-1)?.n;
+  return (record.events ?? []).map((event) => {
+    const base = JSON.stringify([
+      event.execution,
+      event.at,
+      event.type,
+      event.message,
+      event.data,
+      event.phase,
+      event.frame ?? null,
+    ]);
+    const occurrence = (occurrences.get(base) ?? 0) + 1;
+    occurrences.set(base, occurrence);
+    const terminal = runTerminal.has(event.type);
+    const execution = executions.get(event.execution);
+    const ms =
+      terminal && execution?.endedAt
+        ? Math.max(0, time(execution.endedAt) - time(execution.startedAt))
+        : undefined;
+    return {
+      key: `run\u0000${base}\u0000${String(occurrence)}`,
+      execution: event.execution,
+      rank: event.type === 'run.started' ? 0 : terminal ? (event.execution === latest ? 3 : 2) : 1,
+      fields: {
+        t: event.at,
+        run: record.id,
+        ev: event.type,
+        step: event.stepId,
+        ms,
+        phase: event.phase,
+        msg: runMessage(record, event),
+      },
+    };
+  });
+}
+
+function stepCandidates(record: RunRecord, id: string, step: StepRecord): Candidate[] {
+  // A fork copies reused records; `--events` drops them as step.reused, so the follower does too.
+  if (step.reusedFrom) return [];
+  const harness = agentKinds.has(step.kind) ? (step.harness ?? step.kind) : undefined;
+  const common = { run: record.id, step: id, harness, phase: step.phase };
+  const result: Candidate[] = [];
+  const history: readonly AttemptRecord[] = step.attemptHistory ?? [];
+  history.forEach((attempt, index) => {
+    if (attempt.finishedAt === null) return;
+    if (attempt.status === 'completed')
+      result.push({
+        key: `attempt\u0000${id}\u0000${String(attempt.attempt)}\u0000completed`,
+        execution: attempt.execution,
+        rank: 1,
+        fields: {
+          ...common,
+          t: attempt.finishedAt,
+          ev: 'step.completed',
+          ms: attempt.durationMs ?? undefined,
+          costUsd: attempt.usage?.costUsd,
+        },
+      });
+    else if (attempt.status === 'failed') {
+      // The runner writes only step.settled for the final attempt of a settled failure.
+      const settled = step.status === 'settled-failed' && index === history.length - 1;
+      result.push({
+        key: `attempt\u0000${id}\u0000${String(attempt.attempt)}\u0000${settled ? 'settled' : 'failed'}`,
+        execution: attempt.execution,
+        rank: 1,
+        fields: {
+          ...common,
+          t: attempt.finishedAt,
+          ev: settled ? 'step.settled' : 'step.failed',
+          attempt: attempt.attempt,
+          ms: attempt.durationMs ?? undefined,
+        },
+      });
+    }
+    // Cancelled and interrupted attempts write nothing, as --events drops step.cancelled.
+  });
+  // Waits, questions and older records settle without attempt history.
+  const finishedAt = step.finishedAt;
+  if (!history.length && finishedAt) {
+    const ev =
+      step.status === 'completed'
+        ? 'step.completed'
+        : step.status === 'settled-failed'
+          ? 'step.settled'
+          : step.status === 'failed'
+            ? 'step.failed'
+            : undefined;
+    if (ev)
+      result.push({
+        key: `step\u0000${id}\u0000${ev}\u0000${finishedAt}`,
+        execution: executionAt(record, finishedAt),
+        rank: 1,
+        fields: {
+          ...common,
+          t: finishedAt,
+          ev,
+          attempt: step.attempts,
+          ms: step.durationMs ?? undefined,
+        },
+      });
+  }
+  const notifiedAt = step.wait?.notifiedAt;
+  if (step.question && typeof notifiedAt === 'number' && Number.isFinite(notifiedAt)) {
+    const t = new Date(notifiedAt).toISOString();
+    result.push({
+      key: `wait\u0000${id}\u0000${String(notifiedAt)}`,
+      execution: executionAt(record, t),
+      rank: 1,
+      fields: {
+        ...common,
+        harness: undefined,
+        t,
+        ev: 'wait.opened',
+        msg: eventMessage({
+          type: 'wait.opened',
+          data: { question: canonical(step.question.request as unknown as JsonValue) },
+        }),
+      },
+    });
+  }
+  return result;
+}
+
+/**
+ * Derive `--events` lines from a persisted run record, for a follower that never imports the
+ * workflow. Sources: every `record.events` entry (run lifecycle, phase, log); every settled step
+ * attempt (`step.completed`, `step.failed`, and `step.settled` for the final attempt of a settled
+ * failure); and every question that notified (`wait.opened`). Fork-reused steps and cancelled or
+ * interrupted attempts write nothing, and fields the record cannot supply are omitted. Lines are
+ * deduplicated by identity, not position, so eviction past the 500-event cap neither repeats nor
+ * hides newer lines. Each call returns the lines not yet accounted for in `cursor` (null on the
+ * first read), sorted by time with the latest execution's terminal run line last, and the cursor
+ * for the next call. @internal
+ */
+export function recordEventLines(
+  record: RunRecord,
+  cursor: EventFollowCursor | null,
+  start: EventFollowStart,
+): { readonly lines: readonly string[]; readonly cursor: EventFollowCursor } {
+  const candidates = [
+    ...runEventCandidates(record),
+    ...Object.entries(record.steps).flatMap(([id, step]) => stepCandidates(record, id, step)),
+  ];
+  const after = typeof start === 'object' ? start.afterExecution : undefined;
+  const print =
+    cursor === null && start === 'end'
+      ? []
+      : candidates
+          .map((candidate, order) => ({ candidate, order }))
+          .filter(
+            ({ candidate }) =>
+              !cursor?.seen.has(candidate.key) &&
+              (after === undefined ||
+                (candidate.execution !== undefined && candidate.execution > after)),
+          )
+          .sort(
+            (a, b) =>
+              Number(a.candidate.rank === 3) - Number(b.candidate.rank === 3) ||
+              time(a.candidate.fields.t) - time(b.candidate.fields.t) ||
+              a.candidate.rank - b.candidate.rank ||
+              a.order - b.order,
+          );
+  return {
+    lines: print.map(({ candidate }) => formatEventFields(candidate.fields)),
+    cursor: { seen: new Set(candidates.map((candidate) => candidate.key)) },
+  };
+}

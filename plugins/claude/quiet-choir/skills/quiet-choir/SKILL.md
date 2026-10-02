@@ -149,8 +149,11 @@ has a runnable follow-up lists it in `next`; for 79 and 66, `next` is empty, so 
 start's error document: a usage error (2), `run.exists` (3), a type or import error (4),
 `start.exited` (70) or `start.timeout` (124). That is why the exit alone is not enough.
 
-On 75, map each entry of the snapshot's `pending[]` to an AskUserQuestion question, then relaunch in
-the background the same way, with the answer and a new bounded watch, and re-arm Monitor:
+On 75, list the open questions with
+`node "$QC_CHECKOUT/bin/run.js" workflow pending --state-dir "$QC_RUNS" --json` (the snapshot names
+waiting steps, not their questions), map each `pending[]` entry of this run to an AskUserQuestion
+question, then relaunch in the background the same way, with the answer and a new bounded watch, and
+re-arm Monitor:
 `workflow answer review-42 STEP --json 'VALUE' --resume --events "$QC_RUNS/review-42.events.jsonl"`
 chained with `&&` to the same `inspect … --watch --final --json --summary --timeout 8m`. On answer,
 `--json VALUE` is the answer and also requests JSON output, so a refused answer is the last line.
@@ -158,6 +161,15 @@ The events file is not saved with the run, so pass `--events` again to every `an
 `resume` and `tick`; the stream then continues in the same file, and a resume never repeats a line
 for work that earlier executions already finished. See
 [operating a run](references/operating-runs.md) for the suspended-run loop and recovery.
+
+The plugin's `/quiet-choir:run WORKFLOW [--input JSON] [--run-id ID]` command packages this recipe:
+it rehearses, launches, follows and answers in one flow. To follow a run this session did not
+launch, or one started without `--events`, use
+`node "$QC_CHECKOUT/bin/run.js" workflow events RUN --state-dir "$QC_RUNS" --follow` with the same
+`grep` filter: it prints the same line shape from the run record without importing the workflow,
+starts from the current end (`--from-start` replays the record first), and exits with the watch
+codes above. After `answer --resume`, add `--after-execution N` with the suspended snapshot's
+`execution`, so the follower waits for the resumed execution instead of stopping on the old status.
 
 <!-- /skills-difference: claude-host -->
 

@@ -1,6 +1,7 @@
 import type { InspectionStatus, RunSummary } from '../workflow/loader/inspection.js';
 import type { ExecSummary } from '../workflow/runtime/exec-model.js';
 import { formatNextCommands } from './presentation.js';
+import { parseDuration } from './duration.js';
 
 /** Human units for elapsed time and call limits. @internal */
 function duration(ms: number): string {
@@ -33,6 +34,16 @@ export function parseWatchInterval(value: string): number {
       'Watch interval must be 1ms to 2147483647ms, with an ms, s, or m suffix (for example 2s).',
     );
   return ms;
+}
+
+/**
+ * A watch or follow bound (`--timeout`, `--wait-created`) in milliseconds, with the duration syntax
+ * and range of `tick --timeout`, or null when the value is not a positive duration of at most
+ * 2147483647ms. @internal
+ */
+export function parseWatchBound(value: string): number | null {
+  const ms = parseDuration(value);
+  return Number.isSafeInteger(ms) && ms >= 1 && ms <= 2_147_483_647 ? ms : null;
 }
 
 type CostUsage = Pick<

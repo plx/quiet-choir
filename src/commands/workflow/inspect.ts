@@ -1,7 +1,11 @@
 import { Args, Flags, type Interfaces } from '@oclif/core';
 import { WorkflowCommand } from '../../cli/workflow-command.js';
-import { formatRunSummary, parseWatchInterval, watchExitCodes } from '../../cli/inspection-view.js';
-import { parseDuration } from '../../cli/duration.js';
+import {
+  formatRunSummary,
+  parseWatchBound,
+  parseWatchInterval,
+  watchExitCodes,
+} from '../../cli/inspection-view.js';
 import { WorkflowExecutor } from '../../workflow/loader/executor.js';
 import type { RunInspection } from '../../workflow/loader/inspection.js';
 
@@ -113,8 +117,8 @@ export default class WorkflowInspect extends WorkflowCommand {
   /** A watch bound in milliseconds, with the same duration syntax and range as `tick --timeout`. */
   #bound(flag: 'timeout' | 'wait-created', value: string | undefined): number | undefined {
     if (value === undefined) return undefined;
-    const ms = parseDuration(value);
-    if (!Number.isSafeInteger(ms) || ms < 1 || ms > 2_147_483_647)
+    const ms = parseWatchBound(value);
+    if (ms === null)
       this.fail(
         'usage.flag',
         `--${flag} must be a positive duration such as 30s, 9m or 250ms (at most 2147483647ms).`,

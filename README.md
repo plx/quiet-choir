@@ -173,7 +173,9 @@ source; it refuses while an owner, recoverer or recorded child is alive or unver
 exists, so an immediate `workflow inspect` reads it; a failure before the record exists (such as a
 type error) is reported with the runner's error and no run ID. The runner's result document and log
 are kept owner-only under `<state>/<run>/launch/`, and `--start-timeout` (default 60s) bounds the
-wait (see [workflow start](docs/cli-contract.md#workflow-start)).
+wait (see [workflow start](docs/cli-contract.md#workflow-start)). `workflow events RUN --follow`
+prints the run's compact event lines from its record, without importing the workflow, and exits with
+the watch codes when the run ends (see [event follower](docs/cli-contract.md#event-follower)).
 
 `object()` and `text()` results contain `output`, native `sessionId`, and reported token/cost
 `usage`. Native session IDs are for correlation only: `CliHarness` uses Claude

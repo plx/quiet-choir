@@ -135,6 +135,37 @@ outcome and exit code are unchanged. The flag is per invocation and is not saved
 it again to every `resume`, `tick` and `answer --resume` that should continue the stream. It works
 with `--dry-run`, for rehearsing a filter. See [ADR 0037](decisions/0037-compact-event-stream.md).
 
+### Following a run without its events file
+
+`workflow events RUN [--follow]` prints the same lines for a run this process did not launch, or one
+started without `--events`. It reads the run record with the code-free reader `inspect` uses, never
+imports the workflow, and derives each line from what the record keeps:
+
+- **Run events.** Every entry of the record's event list (run lifecycle, `phase` and `log`) becomes
+  one line. `run.failed` carries its root step and error message.
+- **Step attempts.** Every completed attempt becomes `step.completed`, every failed one
+  `step.failed`, and the final attempt of a settled failure `step.settled`, as the runner emits
+  them. Cancelled and interrupted attempts write nothing, and fork-reused steps are skipped.
+  Questions and waits, which have no attempt history, settle from the step itself.
+- **Questions.** A question whose notification was recorded becomes `wait.opened` at that time, with
+  the question as `msg`.
+
+Fields the record cannot supply are omitted, not guessed. Live-only `agent.*` events are not
+persisted, so `harness` comes from the step's kind and registration rather than an agent event, and
+`ms` is the **recorded** attempt or execution duration, where `--events` measures time in its own
+process. `costUsd` appears on `step.completed` of an agent step that reported a cost. The message of
+an older execution's `run.suspended` is omitted, because only the latest interruption is recorded.
+
+The follower polls every two seconds by default (`--interval`). Several transitions that happen
+between two reads, including several attempts of one step, all appear on the next read, sorted by
+time with the latest execution's terminal run line last. Lines are deduplicated by identity (run
+event content and time, step and attempt, question and notification time), not by position, so a
+long run whose oldest entries are evicted neither repeats nor hides newer lines. The record keeps
+only the latest **500** run events: on a very long run, phase and log payloads can be evicted before
+a slow follower reads them, and those lines are then never printed. Step and question lines are not
+subject to that cap. See [the CLI contract](cli-contract.md#event-follower) for the flags and exit
+codes and [ADR 0038](decisions/0038-code-free-event-follower.md) for the design.
+
 ## Phases and logs
 
 ```ts

@@ -68,4 +68,5 @@ callback, beside rehearsal and the notification hook.
 - The stream is best effort. A crash can lose the event of a transition that was saved, and a line
   carries no step error text; the checkpoint and `inspect` remain the source of truth.
 - `WorkflowEvent`, the notification hook and the debug logger are unchanged. Adding a step error
-  message, failure categories or a `workflow events --follow` command is separate work.
+  message or failure categories is separate work; `workflow events --follow` followed in
+  [ADR 0038](0038-code-free-event-follower.md).

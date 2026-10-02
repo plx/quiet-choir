@@ -2,6 +2,6 @@
   {
     "file": "SKILL.md",
     "region": "claude-host",
-    "reason": "Claude's invocation, native Workflow comparison, and run_in_background/Monitor recipe apply only in the Claude package."
+    "reason": "Claude's invocation, native Workflow comparison, run_in_background/Monitor recipe, and the /quiet-choir:run command pointer apply only in the Claude package."
   }
 ]

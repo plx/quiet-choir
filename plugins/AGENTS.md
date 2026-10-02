@@ -6,7 +6,10 @@ conventions are expected to diverge. Consider both copies when the runtime contr
 
 Each installed plugin must stand alone. Bundle operational references inside its skill and use
 skill-relative links; repository-relative links outside the plugin break after installation. The
-plugins teach quiet-choir usage but do not install or contain the TypeScript runtime.
+plugins teach quiet-choir usage but do not install or contain the TypeScript runtime. The Claude
+package also ships a command (`commands/run.md`), which still calls an existing checkout; its shell
+blocks use exported `QC_*` variables, never `$ARGUMENTS` or `$1`, and `test/skills-cli-smoke.mjs`
+runs each of them.
 
 The general-agent package uses root `plugin.json` with the Agent Plugins schema; the Claude package
 uses `.claude-plugin/plugin.json`. Marketplace paths resolve from the repository root. See
