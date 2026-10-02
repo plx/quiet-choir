@@ -34,7 +34,12 @@ import {
   worktreeCreateSchema,
 } from './worktree-schema.js';
 import type { WorktreeIsolation, WorktreePolicy, MergeOptions } from './worktree-model.js';
-import type { ReadFileResult, WriteFileResult, WriteFileOptions } from './file-model.js';
+import type {
+  ReadFileOptions,
+  ReadFileResult,
+  WriteFileResult,
+  WriteFileOptions,
+} from './file-model.js';
 import {
   filePath,
   fileDigest,
@@ -49,7 +54,15 @@ import { executeCommand, prepareExec } from './exec.js';
 import { execIdentityKey, type InternalExecIdentity } from './exec-identity.js';
 import { execResultSchema } from './exec-schema.js';
 import { ExecError } from './exec-error.js';
-import type { Command, ExecOptions, ExecResult, ExecSummary, ProcessRunner } from './exec-model.js';
+import type {
+  Command,
+  ExecOptions,
+  ExecResult,
+  ExecFunction,
+  ExecStepError,
+  ExecSummary,
+  ProcessRunner,
+} from './exec-model.js';
 import { prepareLegacyReplay } from './legacy.js';
 import { RunActivity } from './activity.js';
 import { FileRunStore, type RunStore } from './run-store.js';
@@ -145,7 +158,7 @@ import { createMap, settledMapChange } from './map.js';
 import { ExecutionScopes } from './scopes.js';
 import { NameScopes } from './names.js';
 import { bindContext } from './context.js';
-import { stepError, errorKind } from './step-error.js';
+import { execFailureFields, stepError, errorKind } from './step-error.js';
 import { ConfigurationError, GrantRequiredError } from './configuration-error.js';
 import { chooseRecoveryHint, type RecoveryCause } from './recovery-hint.js';
 import { classifyAttemptFailure } from './attempt-failure.js';
@@ -1938,7 +1951,11 @@ export async function runWorkflow<
               if (classification.markFatal) origins.markFatal(error);
               if (classification.settle) {
                 step.status = 'settled-failed';
-                step.settledError = outcome;
+                // A settled command also keeps its exit code, signal, output tails and parsed JSON.
+                step.settledError =
+                  kind === 'exec' && error instanceof ExecError
+                    ? { ...outcome, ...execFailureFields(error) }
+                    : outcome;
                 settle(step);
                 if (!(await trySave())) throw error;
                 emit('step.settled', id, step);
@@ -2100,12 +2117,12 @@ export async function runWorkflow<
       };
     }
 
-    function exec<T>(
+    function exec<T, TMode extends ErrorMode>(
       leaf: string,
       command: Command,
       settings: ExecOptions,
       schema: z.ZodType<T> | null,
-    ): Promise<T | ExecResult> {
+    ): Promise<EffectResult<T, TMode, ExecStepError>> {
       const id = names.qualify(leaf);
       const phase = observations.phase;
       return launch(id, 'exec', async () => {
@@ -2119,15 +2136,19 @@ export async function runWorkflow<
             ? undefined
             : jsonValue(helperIdentity, `Step "${id}" exec identity`);
         const prepared = await prepareExec(command, publicSettings, cwd, schema !== null);
+        // The error mode is neither policy nor part of the summary; it enters identity only as 'return'.
+        const { onError: checkedOnError, ...policySettings } = prepared.settings;
+        const onError = checkedOnError as TMode | undefined;
         const execution = resolvePolicy(
           id,
           'exec',
-          prepared.settings,
+          policySettings,
           { timeoutMs: 300_000, maxOutputBytes: 1_048_576 },
           policy,
           matchedPolicy,
         );
-        const outputSchema = schema ?? execResultSchema;
+        // Plain exec is called with T = ExecResult and no schema.
+        const outputSchema = (schema ?? execResultSchema) as z.ZodType<T>;
         const jsonSchema = schemaJson(outputSchema);
         options.rehearsal?.onSchema?.(id, outputSchema);
         const summary = jsonValue(prepared.summary) as Record<string, JsonValue>;
@@ -2144,14 +2165,16 @@ export async function runWorkflow<
                 helper,
               }),
           schema: jsonSchema,
+          ...(onError === 'return' ? { onError } : {}),
         });
-        return effect<T | ExecResult>({
+        // The settled error of a command carries ExecStepError's process fields.
+        return effect<T, TMode>({
           id,
           kind: 'exec',
           schema: outputSchema,
           execution,
           action: (context) =>
-            executeCommand(
+            executeCommand<T>(
               options.execRunner ?? options.processRunner,
               {
                 command: prepared.summary.command,
@@ -2167,9 +2190,10 @@ export async function runWorkflow<
               processInvocation(id, context),
               prepared.summary.okExitCodes,
               schema,
-            ),
+            ) as Promise<T>,
           identity,
           phase,
+          ...(onError === undefined ? {} : { onError }),
           exec: prepared.summary,
           ...(prepared.settings.worktree === undefined
             ? {}
@@ -2885,13 +2909,19 @@ export async function runWorkflow<
       agent: (name: string) => client(name),
       workflow: children.invoke,
       cwd,
-      readFile: (leaf, path, settings = {}) => {
+      // Cast: TypeScript cannot match one generic implementation against the overload pair.
+      readFile: (<TMode extends ErrorMode = 'throw'>(
+        leaf: string,
+        path: string,
+        settings?: ReadFileOptions & { readonly onError?: TMode | undefined },
+      ): Promise<EffectResult<ReadFileResult, TMode>> => {
         const id = names.qualify(leaf);
         const phase = observations.phase;
         return launch(id, 'read-file', async () => {
-          const checked = readFileOptionsSchema.parse(settings);
+          const checked = readFileOptionsSchema.parse(settings ?? {});
           const target = await filePath(cwd, path, checked.allowOutsideCwd);
-          return effect<ReadFileResult>({
+          const onError = checked.onError as TMode | undefined;
+          return effect<ReadFileResult, TMode>({
             id,
             kind: 'read-file',
             schema: readFileResultSchema,
@@ -2906,19 +2936,30 @@ export async function runWorkflow<
               kind: 'read-file',
               path: target,
               schema: schemaJson(readFileResultSchema),
+              // Only 'return' enters identity, so existing reads keep their fingerprints.
+              ...(onError === 'return' ? { onError } : {}),
             }),
             phase,
+            ...(onError === undefined ? {} : { onError }),
           });
         });
-      },
-      writeFile: (leaf, path, content, settings = {}) => {
+      }) as WorkflowContext['readFile'],
+      writeFile: (<TMode extends ErrorMode = 'throw'>(
+        leaf: string,
+        path: string,
+        content: string,
+        settings?: WriteFileOptions & { readonly onError?: TMode | undefined },
+      ): Promise<EffectResult<WriteFileResult, TMode>> => {
         const id = names.qualify(leaf);
         const phase = observations.phase;
         return launch(id, 'write-file', async () => {
-          const checked = writeFileOptionsSchema.parse(settings);
+          const { onError: checkedOnError, ...checked } = writeFileOptionsSchema.parse(
+            settings ?? {},
+          );
           if (typeof content !== 'string') throw new Error('File content must be a string.');
           const target = await filePath(cwd, path, checked.allowOutsideCwd);
-          return effect<WriteFileResult>({
+          const onError = checkedOnError as TMode | undefined;
+          return effect<WriteFileResult, TMode>({
             id,
             kind: 'write-file',
             schema: writeFileResultSchema,
@@ -2936,11 +2977,14 @@ export async function runWorkflow<
               ifMatch: checked.ifMatch ?? null,
               createOnly: checked.ifMatch === null,
               schema: schemaJson(writeFileResultSchema),
+              // Only 'return' enters identity, so existing writes keep their fingerprints.
+              ...(onError === 'return' ? { onError } : {}),
             }),
             phase,
+            ...(onError === undefined ? {} : { onError }),
           });
         });
-      },
+      }) as WorkflowContext['writeFile'],
       merge: (leaf, changes, settings = {}) => {
         const id = names.qualify(leaf);
         return launch(id, 'merge', () => {
@@ -3006,19 +3050,25 @@ export async function runWorkflow<
         });
       },
       exec: Object.assign(
-        (id: string, command: Command, settings: ExecOptions = {}) =>
-          exec<never>(id, command, settings, null),
+        <TMode extends ErrorMode = 'throw'>(
+          id: string,
+          command: Command,
+          settings: ExecOptions & { readonly onError?: TMode | undefined } = {},
+        ) => exec<ExecResult, TMode>(id, command, settings, null),
         {
-          json: <T>(
+          json: <T, TMode extends ErrorMode = 'throw'>(
             id: string,
             command: Command,
-            settings: ExecOptions & { readonly schema: z.ZodType<T> },
-          ): Promise<T> => {
+            settings: ExecOptions & {
+              readonly schema: z.ZodType<T>;
+              readonly onError?: TMode | undefined;
+            },
+          ): Promise<EffectResult<T, TMode, ExecStepError>> => {
             const { schema, ...rest } = settings;
-            return exec(id, command, rest, schema) as Promise<T>;
+            return exec<T, TMode>(id, command, rest, schema);
           },
         },
-      ),
+      ) as ExecFunction,
       now: (id) =>
         context.step(id, {
           // Identified by NOW_STEP_VERSION, not callback text. Bump it only if ctx.now's recorded

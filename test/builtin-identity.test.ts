@@ -255,7 +255,7 @@ describe('version-identified steps', () => {
 describe('exec and file effect identity', () => {
   // Captured on the code before #149 added onError to these effects. Path-dependent components
   // (cwd, path) are compared against the digest of the canonical temporary path instead.
-  it.each<'throw' | undefined>([undefined])(
+  it.each<'throw' | undefined>([undefined, 'throw'])(
     'keeps exec, exec.json, readFile and writeFile identities with onError %j',
     async (mode) => {
       const dir = await realpath(await mkdtemp(join(tmpdir(), 'choir-effect-identity-')));

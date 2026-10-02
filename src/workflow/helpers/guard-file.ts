@@ -9,7 +9,10 @@ import { GUARD_PROGRAM_VERSION, guardProgram } from './guard-program.js';
 function guardStep<S extends z.ZodType>(
   schema: S,
   args: readonly string[],
-): readonly [Command, ExecOptions & InternalExecIdentity & { readonly schema: S }] {
+): readonly [
+  Command,
+  Omit<ExecOptions, 'onError'> & InternalExecIdentity & { readonly schema: S },
+] {
   return [
     [process.execPath, '--input-type=module', '-e', guardProgram, ...args],
     {

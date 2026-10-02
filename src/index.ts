@@ -253,6 +253,7 @@ export type {
   ProcessRunner,
   ExecSummary,
   ExecDiagnostics,
+  ExecStepError,
 } from './workflow/runtime/exec-model.js';
 
 export type {

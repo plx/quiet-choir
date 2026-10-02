@@ -31,6 +31,7 @@ export const execOptionsSchema = z.strictObject({
   timeoutMs: z.number().int().positive().max(2_147_483_647).optional(),
   maxOutputBytes: z.number().int().positive().max(2_147_483_647).optional(),
   retry: retryPolicySchema.optional(),
+  onError: z.enum(['throw', 'return']).optional(),
 });
 /** @internal */
 export const execResultSchema = z.object({

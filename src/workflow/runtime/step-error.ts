@@ -3,6 +3,7 @@ import { z } from 'zod';
 
 import { CancelledError } from './fan-out.js';
 import { HarnessError } from './harness-error.js';
+import type { ExecStepError } from './exec-model.js';
 import type { ErrorKind, StepError } from './model.js';
 
 /** Shared validation for retry filters and saved failures. @internal */
@@ -45,11 +46,19 @@ export function isTransientErrorKind(kind: ErrorKind | null | undefined): boolea
  */
 export const retryOnSchema = z.enum([...errorKindSchema.options, 'transient']);
 
-/** Checkpoint representation of a terminal failure. @internal */
+/**
+ * Checkpoint representation of a terminal failure. The optional process fields are filled only for
+ * a settled command ({@link execFailureFields}); the schema stays non-strict. @internal
+ */
 export const stepErrorSchema = z.object({
   message: z.string(),
   kind: errorKindSchema,
   attempts: z.number().int().positive(),
+  code: z.number().int().nullable().optional(),
+  signal: z.string().nullable().optional(),
+  stdoutTail: z.string().max(1024).optional(),
+  stderrTail: z.string().max(1024).optional(),
+  parsed: z.json().optional(),
 });
 
 /** Classify structured metadata, never guessed substrings of user-controlled error messages. @internal */
@@ -83,5 +92,23 @@ export function stepError(error: unknown, attempts: number): StepError {
     message: error instanceof Error ? error.message : String(error),
     kind: errorKind(error),
     attempts,
+  };
+}
+
+/**
+ * The process fields a settled command adds to its {@link StepError}: the exit code, signal and
+ * bounded output tails of an {@link ExecError}, and `parsed` when `exec.json` captured it.
+ * @internal
+ */
+export function execFailureFields(
+  error: ExecError,
+): Omit<ExecStepError, 'message' | 'kind' | 'attempts'> {
+  const { code, signal, stdoutTail, stderrTail } = error.diagnostics;
+  return {
+    code,
+    signal,
+    stdoutTail: stdoutTail.slice(-1024),
+    stderrTail: stderrTail.slice(-1024),
+    ...(error.parsed === undefined ? {} : { parsed: error.parsed }),
   };
 }

@@ -1,6 +1,14 @@
 import type { WorktreeHandle } from './worktree-model.js';
 import type { z } from 'zod';
-import type { HarnessInvocation, JsonValue, RetryPolicy } from './model.js';
+import type {
+  EffectResult,
+  ErrorMode,
+  HarnessInvocation,
+  JsonValue,
+  RetryPolicy,
+  Settled,
+  StepError,
+} from './model.js';
 
 /** Arguments run directly, or an explicitly requested operator-privileged shell. */
 export type Command =
@@ -30,6 +38,32 @@ export interface ExecOptions {
   readonly maxOutputBytes?: number;
   /** Explicit retries for commands safe to repeat. */
   readonly retry?: RetryPolicy;
+  /**
+   * Throw failures by default, or save the final failure as an {@link ExecStepError} and return
+   * it as `Settled`, so resume replays the same branch. Policy-free: not part of the summary.
+   */
+  readonly onError?: ErrorMode | undefined;
+}
+
+/**
+ * Saved failure of a settled command. The process fields come from the command's
+ * {@link ExecDiagnostics} and are absent when the failure carried none (for example a custom
+ * `ProcessRunner`'s plain error, or a record saved before these fields existed).
+ */
+export interface ExecStepError extends StepError {
+  /** Observed exit code, or null when the process did not exit normally. */
+  readonly code?: number | null;
+  /** Termination signal, or null on ordinary exit. */
+  readonly signal?: string | null;
+  /** Last 1024 characters of stdout. */
+  readonly stdoutTail?: string;
+  /** Last 1024 characters of stderr. */
+  readonly stderrTail?: string;
+  /**
+   * `exec.json` only: stdout parsed as JSON, when the output was complete, at most 16384 UTF-8
+   * bytes and valid JSON. Not validated against the success schema.
+   */
+  readonly parsed?: JsonValue;
 }
 
 /** Captured command result, checkpointed by plain exec. */
@@ -50,14 +84,30 @@ export interface ExecResult {
 
 /** Callable durable command API. */
 export interface ExecFunction {
+  /** Run once per durable ID and settle a failure; the saved outcome replays without the adapter. */
+  (
+    id: string,
+    command: Command,
+    options: ExecOptions & { readonly onError: 'return' },
+  ): Promise<Settled<ExecResult, ExecStepError>>;
   /** Run once per durable ID; completed results replay without invoking the adapter. */
-  (id: string, command: Command, options?: ExecOptions): Promise<ExecResult>;
-  /** Parse stdout, validate it, and checkpoint only the parsed value. */
+  <TMode extends ErrorMode = 'throw'>(
+    id: string,
+    command: Command,
+    options?: ExecOptions & { readonly onError?: TMode | undefined },
+  ): Promise<EffectResult<ExecResult, TMode, ExecStepError>>;
+  /** Parse and validate stdout, settling a failure as an {@link ExecStepError}. */
   json<T>(
     id: string,
     command: Command,
-    options: ExecOptions & { readonly schema: z.ZodType<T> },
-  ): Promise<T>;
+    options: ExecOptions & { readonly schema: z.ZodType<T>; readonly onError: 'return' },
+  ): Promise<Settled<T, ExecStepError>>;
+  /** Parse stdout, validate it, and checkpoint only the parsed value. */
+  json<T, TMode extends ErrorMode = 'throw'>(
+    id: string,
+    command: Command,
+    options: ExecOptions & { readonly schema: z.ZodType<T>; readonly onError?: TMode | undefined },
+  ): Promise<EffectResult<T, TMode, ExecStepError>>;
 }
 
 /** Normalized live request. Environment and input must never be copied into a checkpoint. */
