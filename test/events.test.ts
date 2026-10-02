@@ -471,10 +471,11 @@ export default defineWorkflow({ name: 'events', version: '1', input: z.null(), o
     };
   }
 
-  // measured: 1.7 s alone, three executions dominated by type checks and tsImport compiles
+  // measured: 1.7 s alone, 26.2 s in a full coverage run on a loaded machine (twice 20 s+; two
+  // executions dominated by full TypeScript type checks and tsImport compiles)
   it(
     'writes to the injected stdout writer and to an appended file',
-    { timeout: 20_000 },
+    { timeout: 80_000 },
     async () => {
       const plan = workflow();
       const lines: string[] = [];
