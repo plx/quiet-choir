@@ -1,6 +1,7 @@
 // Shared by test/step-exec-lifecycle.test.ts and its forked child: one local step whose callback
-// runs an inner command through context.exec. Until the `resumed` file exists the command writes
-// its PID to `ready` and hangs, so a SIGKILLed runner leaves it behind as an orphan.
+// runs an inner command through context.exec, and one command poll. Until the `resumed` file exists
+// each command writes its PID to `ready` and hangs, so a SIGKILLed runner leaves it behind as an
+// orphan.
 import { existsSync } from 'node:fs';
 import { defineWorkflow, z } from '../src/index.js';
 
@@ -22,4 +23,37 @@ export const lifecycle = defineWorkflow({
         return (await context.exec([process.execPath, '-e', script])).stdout;
       },
     }),
+});
+
+// done's source text is wait identity, and tsx (the forked runner) and vitest (the resume) print
+// a callback's source differently, so build it from fixed text that both see the same way.
+// eslint-disable-next-line @typescript-eslint/no-implied-eval -- fixed source, see above
+const done = new Function('output', 'return { done: true, value: output };') as (
+  output: string,
+) => { done: true; value: string };
+
+/** The command poll's command decides by itself, so it stays the same on resume (it is identity). */
+export const pollLifecycle = defineWorkflow({
+  name: 'step-exec-poll-lifecycle',
+  version: '1',
+  input: z.object({ ready: z.string(), resumed: z.string() }),
+  output: z.string(),
+  run: async (ctx, input) => {
+    const outcome = await ctx.poll('ci', {
+      input,
+      schema: z.string(),
+      every: 1,
+      timeoutMs: 600_000,
+      command: [
+        process.execPath,
+        '-e',
+        `const fs = require('node:fs');
+if (fs.existsSync(${JSON.stringify(input.resumed)})) process.stdout.write('"done"');
+else { fs.writeFileSync(${JSON.stringify(input.ready)}, String(process.pid)); setInterval(() => {}, 1000); }`,
+      ],
+      output: z.string(),
+      done,
+    });
+    return outcome.by === 'poll' ? outcome.value : 'deadline';
+  },
 });

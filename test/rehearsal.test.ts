@@ -1147,10 +1147,38 @@ export default defineWorkflow({
   });
 });
 
-// Same loader compile as the suite above; measured: 1.6 s alone for both cases.
+// Same loader compile as the suite above; measured: 4.9 s alone for the four cases.
 describe('dry-run commands from callbacks and observers', { timeout: 40_000 }, () => {
+  const innerRun = `async run(ctx, input) {
+    const snapshot = await ctx.exec.json('snapshot', ['gh', 'pr', 'view', '1', '--json', 'headRefOid'], {
+      schema: z.object({ headRefOid: z.string() }),
+    });
+    const ci = await ctx.poll('ci', {
+      input: null, schema: state, every: 1, timeoutMs: 60_000,
+      async observe(context) {
+        const live = input.live
+          ? (await context.exec.json(['gh', 'pr', 'view', '1', '--json', 'state'], { schema: state, live: true })).state
+          : 'none';
+        const view = await context.exec.json(['gh', 'pr', 'view', '1', '--json', 'statusCheckRollup'], { schema: state });
+        return { done: true, value: { state: live + '+' + view.state } };
+      },
+    });
+    const comment = await ctx.step('comment', {
+      input: null, schema: z.unknown(),
+      run: (context) => context.exec.json(['gh', 'pr', 'comment', '1', '--body', 'ok'], { schema: z.object({ url: z.string() }) }),
+    });
+    return { snapshot, ci, comment };
+  },`;
+  // A command poll: each check runs gh through the run's process runner, rehearsed like ctx.exec.
+  const commandPollRun = `run: (ctx, input) => ctx.poll('ci', {
+    input: null, schema: z.string(), every: 1, timeoutMs: 60_000,
+    command: ['gh', 'pr', 'checks', '1', '--json', 'state'],
+    output: state,
+    live: input.live,
+    done: (output) => ({ done: true, value: output.state }),
+  }),`;
   /** A workflow whose poll observer and step callback call gh through context.exec. */
-  async function project(): Promise<{ root: string; marker: string; file: string }> {
+  async function project(run = innerRun): Promise<{ root: string; marker: string; file: string }> {
     const root = await realpath(await mkdtemp(join(tmpdir(), 'choir-rehearsal-inner-')));
     roots.push(root);
     const repository = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -1171,34 +1199,15 @@ describe('dry-run commands from callbacks and observers', { timeout: 40_000 }, (
 const state = z.object({ state: z.string() });
 export default defineWorkflow({
   name: 'dry-inner', version: '1', input: z.object({ live: z.boolean() }), output: z.unknown(),
-  async run(ctx, input) {
-    const snapshot = await ctx.exec.json('snapshot', ['gh', 'pr', 'view', '1', '--json', 'headRefOid'], {
-      schema: z.object({ headRefOid: z.string() }),
-    });
-    const ci = await ctx.poll('ci', {
-      input: null, schema: state, every: 1, timeoutMs: 60_000,
-      async observe(context) {
-        const live = input.live
-          ? (await context.exec.json(['gh', 'pr', 'view', '1', '--json', 'state'], { schema: state, live: true })).state
-          : 'none';
-        const view = await context.exec.json(['gh', 'pr', 'view', '1', '--json', 'statusCheckRollup'], { schema: state });
-        return { done: true, value: { state: live + '+' + view.state } };
-      },
-    });
-    const comment = await ctx.step('comment', {
-      input: null, schema: z.unknown(),
-      run: (context) => context.exec.json(['gh', 'pr', 'comment', '1', '--body', 'ok'], { schema: z.object({ url: z.string() }) }),
-    });
-    return { snapshot, ci, comment };
-  },
+  ${run}
 });
 `,
     );
     return { root, marker, file };
   }
 
-  async function rehearse(live: boolean) {
-    const { root, marker, file } = await project();
+  async function rehearse(live: boolean, run = innerRun) {
+    const { root, marker, file } = await project(run);
     vi.stubEnv('PATH', `${join(root, 'bin')}:${process.env['PATH'] ?? ''}`);
     const analysis = analyzeTypecheckEntrypoint(file, root);
     if (!analysis.ok) throw new Error('invalid workflow fixture');
@@ -1282,5 +1291,34 @@ export default defineWorkflow({
     expect(result.run.output).toMatchObject({
       ci: { value: { state: expect.stringMatching(/^LIVE\+/u) as unknown } },
     });
+  });
+
+  it('rehearses a command poll without spawning gh and lists each check under the wait', async () => {
+    const { result, rehearsal, commands, spawned } = await rehearse(false, commandPollRun);
+    expect(spawned).toBeNull();
+    expect(commands.filter((argv) => argv[0] !== 'git')).toEqual([]);
+    const outcome = result.run.output as { by: string; checks: number };
+    expect(outcome).toMatchObject({ by: 'poll' });
+    expect(rehearsal.commands).toHaveLength(outcome.checks);
+    expect(rehearsal.commands).toEqual([
+      expect.objectContaining({
+        stepId: 'ci',
+        parentStepId: 'ci',
+        outputSource: 'synthesized',
+        command: ['gh', 'pr', 'checks', '1', '--json', 'state'],
+      }),
+    ]);
+  });
+
+  it('runs a command poll with live: true for real and reports it as live', async () => {
+    const { result, rehearsal, commands, spawned } = await rehearse(true, commandPollRun);
+    expect(spawned).toBe('pr checks 1 --json state\n');
+    expect(commands.filter((argv) => argv[0] !== 'git')).toEqual([
+      ['gh', 'pr', 'checks', '1', '--json', 'state'],
+    ]);
+    expect(rehearsal.commands).toEqual([
+      expect.objectContaining({ stepId: 'ci', parentStepId: 'ci', outputSource: 'live' }),
+    ]);
+    expect(result.run.output).toMatchObject({ by: 'poll', value: 'LIVE', checks: 1 });
   });
 });

@@ -485,6 +485,76 @@ export default defineWorkflow({ name: 'debounce', version: '1', input: z.null(),
     expect(await readFile(reads, 'utf8')).toBe('Completed\nCompleted\n');
   });
 
+  it('debounces a command poll in done on its previous note across a suspend and a tick', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'choir-tick-'));
+    roots.push(root);
+    await symlink(join(project, 'node_modules'), join(root, 'node_modules'));
+    await writeFile(join(root, 'package.json'), '{"type":"module"}');
+    const file = join(root, 'workflow.ts');
+    const status = join(root, 'status.txt');
+    const reads = join(root, 'reads.txt');
+    await writeFile(status, 'Completed');
+    // The command reports the status; done keeps the first sighting in the note, since each check
+    // runs in a fresh import.
+    const script = `const fs = require('node:fs'); const state = fs.readFileSync(${JSON.stringify(status)}, 'utf8'); fs.appendFileSync(${JSON.stringify(reads)}, state + '\\n'); process.stdout.write(JSON.stringify({ state }));`;
+    await writeFile(
+      file,
+      `
+import { z } from 'zod';
+import { defineWorkflow } from ${JSON.stringify(join(project, 'src/workflow/runtime/model.js'))};
+export default defineWorkflow({ name: 'debounce', version: '1', input: z.null(), output: z.unknown(),
+  run: (ctx) => ctx.poll('settled', {
+    input: null,
+    schema: z.literal('Completed'),
+    every: 30_000,
+    timeoutMs: 3_600_000,
+    command: [process.execPath, '-e', ${JSON.stringify(script)}],
+    output: z.object({ state: z.string() }),
+    done: ({ state }, previous) => {
+      const seen = z.object({ seenComplete: z.boolean() }).nullable().parse(previous.note);
+      if (state !== 'Completed') return { done: false, note: { seenComplete: false } };
+      return seen?.seenComplete ? { done: true, value: 'Completed' } : { done: false, note: { seenComplete: true } };
+    },
+  }),
+});
+`,
+    );
+    const analysis = analyzeTypecheckEntrypoint(file, root);
+    if (!analysis.ok) throw new Error(analysis.error.message);
+    const stateDir = join(root, 'state');
+    const first = await new WorkflowExecutor({ logger }).execute({
+      kind: 'workflow.execute',
+      typecheck: analysis.plan,
+      runId: 'run',
+      stateDir,
+      cwd: root,
+      resume: false,
+      input: null,
+    });
+    if (!first.ok) throw new Error(JSON.stringify(first));
+    expect(first).toMatchObject({ ok: true, run: { status: 'suspended' } });
+    expect((await readRun({ stateDir, runId: 'run' })).steps['settled']?.wait).toMatchObject({
+      checks: 1,
+      note: { seenComplete: true },
+    });
+    const futureClock: WorkflowClock = {
+      now: () => Date.now() + 120_000,
+      sleep: (ms, signal) => pastClock.sleep(ms, signal),
+    };
+    expect(
+      oneEntryPerRun(
+        await new TickWorkflowExecutor({ logger, clock: futureClock }).execute({
+          kind: 'workflow.tick',
+          runId: 'run',
+          stateDir,
+        }),
+      ),
+    ).toMatchObject({ resumed: [{ runId: 'run', outcome: 'completed' }], exitCode: 0 });
+    const run = await readRun({ stateDir, runId: 'run' });
+    expect(run.output).toMatchObject({ by: 'poll', value: 'Completed', checks: 2 });
+    expect(await readFile(reads, 'utf8')).toBe('Completed\nCompleted\n');
+  });
+
   it('limits batch resumes and keeps per-run failure separate from command failure', async () => {
     const f = await fixture('failure');
     const executor = new WorkflowExecutor({ logger, clock: pastClock });
