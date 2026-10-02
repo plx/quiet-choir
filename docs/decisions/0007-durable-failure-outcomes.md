@@ -3,7 +3,8 @@
 **Status:** Accepted. Extends ADR 0005/0006; supersedes their current checkpoint-format choice.
 Extended by [0008](0008-scoped-fan-out.md) for durable aggregate outcomes and scoped cancellation.
 Amended by #274 (invalid-request, overloaded and the transient retry alias). Amended by #144
-(healed-step dependents use launch and failure stamps, with a `seq` fallback).
+(healed-step dependents use launch and failure stamps, with a `seq` fallback). Amended by #149
+(commands and files take `onError: 'return'`; settled commands keep `ExecStepError` fields).
 
 ## Context
 
@@ -108,3 +109,41 @@ Omitting `on` now retries every non-fatal kind except `invalid-request`; an expl
 
 The checkpoint format does not change. Older records validate under the widened enums; records that
 contain the new kinds or the alias need this runtime, which the 0.0.0 prototype accepts.
+
+## Amendment: commands and files (#149)
+
+`ctx.exec`, `ctx.exec.json`, `ctx.readFile` and `ctx.writeFile` had no `onError`, so a caught
+command or file failure was not a durable decision: resume ran the effect live and could take the
+other branch. The only workaround, `okExitCodes: 'any'`, still threw on timeouts and signals and
+lost the exit code in json mode.
+
+The rule is now: every effect that can fail takes `onError: 'return'`. The four effects accept it
+with the same two overloads as agent calls and reuse the settled-failure path above unchanged:
+retries, fatal classification in `attempt-failure.ts`, terminal replay, and fork reuse and
+invalidation in `replay-decision.ts`. Cancellation, a missing process adapter (`ConfigurationError`)
+and checkpoint failures still reject and leave the step unfinished. Option and path validation still
+rejects before any step is recorded. A command timeout settles with kind `timeout`. File failures
+keep their current kinds (an oversized snapshot or an `ifMatch` conflict is `unknown`).
+
+`EffectResult` gains a defaulted error type parameter, so the commands return
+`Settled<T, ExecStepError>`. The public `ExecStepError` extends `StepError` with optional `code`,
+`signal`, `stdoutTail` and `stderrTail` (1024 characters each), copied from the `ExecError`
+diagnostics when the failure is an `ExecError`. For `ctx.exec.json` it also has `parsed`: stdout as
+raw JSON, when the output was not truncated, at most 16384 UTF-8 bytes and valid JSON. It is not
+validated against the success schema, because failure output rarely matches it, and a parse failure
+never replaces the original error. `ExecError` carries the same optional `parsed`. The fields are
+optional because a custom runner's plain error carries no process result and older records lack
+them. Only the runner's settle branch adds them, for exec steps; settled map items keep plain
+`StepError` values. `stepErrorSchema` stays non-strict and validates the new fields, so the record
+format does not change.
+
+`onError` enters the exec, read-file and write-file identities only when it is `'return'`. Omitting
+it and passing `'throw'` keep the identities and fingerprints of existing calls, which
+`test/builtin-identity.test.ts` pins against values captured before the change. Dropping `'return'`
+from a settled call is refused as an `onError` identity change. `onError` is neither execution
+policy nor part of the recorded `ExecSummary`.
+
+Child workflows and `ctx.merge` still have no `onError`: a child frame record has no terminal
+outcome of its own, so settling it needs its own record design (#170). `workflow fixtures` does not
+yet export a settled-failed command as a fixture rule (#306), so a `"commands": "fixture"` replay of
+such a run fails at that step.

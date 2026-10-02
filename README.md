@@ -357,7 +357,7 @@ use a new run, optionally a deliberate fork; code acceptance does not rename sav
 
 ## Failure handling
 
-Use `onError: 'return'` when a local or agent failure selects a fallback. It returns
+Use `onError: 'return'` when a local, agent, command or file failure selects a fallback. It returns
 `{ ok: true, value }` or `{ ok: false, error: { message, kind, attempts } }` and saves final
 failures as `settled-failed`. Those outcomes replay without another call. Throwing remains the
 default; a caught throwing call may heal and change the replay path. Cancellation still rejects.
@@ -432,10 +432,12 @@ and use the normal per-step reuse rules.
 ## Durable commands and files
 
 Use `ctx.exec` for direct argv commands and `ctx.exec.json` for schema-validated stdout. Commands
-have operator privileges; branch on actual test exits with `okExitCodes: 'any'`. The CLI supplies
-the process runner, while embedders inject `new NodeProcessRunner()`. `ctx.readFile` saves a bounded
-snapshot, `ctx.writeFile` publishes exact text with a hash-only receipt, and `guardFile` preserves a
-Git blob around one journaled mutation body. See [contracts and limits](docs/command-effects.md) and
+have operator privileges. Branch on a failed test with `onError: 'return'`, which saves the failed
+exit, signal or timeout, with its exit code and output tails, as a `Settled` result that replays on
+resume. A caught throwing command reruns on resume instead. The CLI supplies the process runner,
+while embedders inject `new NodeProcessRunner()`. `ctx.readFile` saves a bounded snapshot,
+`ctx.writeFile` publishes exact text with a hash-only receipt, and `guardFile` preserves a Git blob
+around one journaled mutation body. See [contracts and limits](docs/command-effects.md) and
 [verified recipes](plugins/agents/quiet-choir/skills/quiet-choir/references/patterns.md#commands-and-test-verdicts).
 
 ## Durable questions

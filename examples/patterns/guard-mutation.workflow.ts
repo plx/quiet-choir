@@ -11,8 +11,8 @@ export default defineWorkflow({
       'mutation',
       input.file,
       async () => {
-        const result = await ctx.exec('test', input.argv, { okExitCodes: 'any' });
-        return result.code;
+        const result = await ctx.exec('test', input.argv, { onError: 'return' });
+        return result.ok ? result.value.code : (result.error.code ?? null);
       },
       { version: JSON.stringify(input.argv) },
     );

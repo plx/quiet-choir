@@ -7,6 +7,7 @@ import { promisify } from 'node:util';
 import { afterEach, beforeEach, expect, it } from 'vitest';
 import {
   assertCompleted,
+  ExecError,
   writeAnswer,
   FixtureHarness,
   NodeProcessRunner,
@@ -541,6 +542,42 @@ it('replays durable command verdicts and gh JSON snapshots after a tail failure'
     );
     expect(calls).toBe(1);
   }
+});
+
+it('settles a command-verdict timeout and replays it without running the command again', async () => {
+  const verdict = (await import('../examples/patterns/command-verdict.workflow.js')).default;
+  let calls = 0;
+  const setup = {
+    ...options(),
+    runId: 'verdict-timeout',
+    input: { argv: ['fake', 'test'] as [string, ...string[]] },
+    processRunner: {
+      run: () => {
+        calls++;
+        return Promise.reject(
+          new ExecError('Command timed out.', 'timeout', {
+            code: null,
+            signal: 'SIGTERM',
+            stdout: 'partial',
+            stderr: '',
+            truncated: false,
+            durationMs: 1,
+          }),
+        );
+      },
+    },
+  };
+  const wrapped = tailFailure(verdict);
+  await expect(runWorkflow(wrapped, setup)).rejects.toThrow('Injected tail failure');
+  expect((await readRun(setup)).steps['prove']?.settledError).toMatchObject({
+    kind: 'timeout',
+    code: null,
+    signal: 'SIGTERM',
+    stdoutTail: 'partial',
+  });
+  const resumed = await runWorkflow(wrapped, { ...setup, resume: true });
+  expect(resumed.output).toEqual({ green: false, code: null });
+  expect(calls).toBe(1);
 });
 
 it('replays file publication and mutation-guard recipes without repeating mutations', async () => {

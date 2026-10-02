@@ -574,9 +574,11 @@ question becomes `withdrawn` when the body completes; normal failures retain wai
 
 ## Commands and test verdicts
 
-Run a trusted argv directly and branch on its actual exit code. Nonzero becomes durable data with
-`okExitCodes: 'any'`; timeout/cancellation still fail. These commands have operator privileges.
-Agent-proposed commands need approval bound to their saved plan before this call.
+Run a trusted argv directly and branch on its actual exit code. With `onError: 'return'`, a failed
+exit, signal or timeout becomes a settled result that replays on resume and keeps the exit code and
+output tails; cancellation still rejects. Do not `try/catch` instead: resume reruns a caught
+command. These commands have operator privileges. Agent-proposed commands need approval bound to
+their saved plan before this call.
 
 <!-- skills-check: example pattern-command-verdict -->
 
@@ -589,8 +591,9 @@ export default defineWorkflow({
   input: z.object({ argv: z.tuple([z.string().min(1)], z.string()) }),
   output: z.object({ green: z.boolean(), code: z.number().nullable() }),
   async run(ctx, input) {
-    const result = await ctx.exec('prove', input.argv, { okExitCodes: 'any' });
-    return { green: result.code === 0, code: result.code };
+    const result = await ctx.exec('prove', input.argv, { onError: 'return' });
+    if (result.ok) return { green: true, code: result.value.code };
+    return { green: false, code: result.error.code ?? null };
   },
 });
 ```
@@ -643,8 +646,8 @@ export default defineWorkflow({
       'mutation',
       input.file,
       async () => {
-        const result = await ctx.exec('test', input.argv, { okExitCodes: 'any' });
-        return result.code;
+        const result = await ctx.exec('test', input.argv, { onError: 'return' });
+        return result.ok ? result.value.code : (result.error.code ?? null);
       },
       { version: JSON.stringify(input.argv) },
     );
