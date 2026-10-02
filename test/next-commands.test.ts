@@ -4,6 +4,7 @@ import {
   failureNextCommands,
   formatArgv,
   maxAnswerEntries,
+  queuedNextCommands,
   runNextCommands,
   type FailureNextContext,
 } from '../src/workflow/loader/next-commands.js';
@@ -396,6 +397,30 @@ describe('launch policy on next entries', () => {
         details: compatibility(['code'], true),
       }),
     ).toEqual([resume('--accept-code-change'), fork(entrypoint)]);
+  });
+});
+
+describe('queuedNextCommands', () => {
+  it('resumes with the recorded launch policy behind the launcher', () => {
+    const policy = {
+      harness: { kind: 'fixture', fixtures: [{ path: '/p/f.json', sha256: 'a'.repeat(64) }] },
+      waitMode: 'block',
+    };
+    const queued = queuedNextCommands(
+      run({ status: 'suspended', launch: { entrypoint, tsconfig: null, policy } }),
+      stateDir,
+      launcher,
+    );
+    expect(queued).toEqual([
+      {
+        why: 'An answer is queued; resume the run so its owner ingests it.',
+        argv: resume('--harness', 'fixture:/p/f.json', '--wait-mode', 'block'),
+      },
+    ]);
+  });
+
+  it('offers nothing for an embedded run without launch metadata', () => {
+    expect(queuedNextCommands(run({ launch: undefined }), stateDir, launcher)).toEqual([]);
   });
 });
 

@@ -296,3 +296,32 @@ export interface PendingWait {
 
 /** A legacy question or a general signal/poll/deadline wait, inspected without importing code. */
 export type PendingOperation = PendingQuestion | PendingWait;
+
+/**
+ * Whether an answer is already queued for a row's question, as read from the run's inbox. It is
+ * advisory: while an owner consumes the file the state can briefly read `none`, and
+ * `writeAnswer` remains the authoritative first-answer check.
+ */
+export interface PendingDelivery {
+  /** `queued` when an inbox file exists for the question; `none` otherwise. */
+  readonly state: 'none' | 'queued';
+  /** Envelope delivery time (ISO 8601), or null when nothing is queued or the file is unreadable. */
+  readonly at: string | null;
+  /** Envelope author, or null when nothing is queued or the file is unreadable. */
+  readonly by: string | null;
+}
+
+/** Run and delivery state that {@link listPending} adds to each waiting row. */
+export interface PendingRunState {
+  /**
+   * Status of the run that owns the row, from its checkpoint. Spelled out, not `RunRecord['status']`,
+   * because this module's types are part of the bundle that workflow type checks load, which must
+   * not reach the store; a test keeps the two in step.
+   */
+  readonly runStatus: 'running' | 'suspended' | 'completed' | 'failed' | 'cancelled';
+  /** Inbox delivery state, or null for a poll or deadline wait that accepts no answer. */
+  readonly delivery: PendingDelivery | null;
+}
+
+/** A {@link PendingOperation} row as listed: with its run's status and its delivery state. */
+export type PendingListing = PendingOperation & PendingRunState;

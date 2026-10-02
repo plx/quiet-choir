@@ -74,20 +74,29 @@ quiet-choir workflow resume RUN --state-dir /absolute/runs --json
 ```
 
 `answer --json VALUE` takes the answer JSON and also selects JSON output (`--value VALUE` is an
-alias with human output). Invalid answers exit 2 (`answer.invalid`); an unknown, withdrawn,
-completed, or already delivered question exits 3 (`answer.conflict`). Successful delivery exits 0.
-`--resume` on `answer` combines delivery with resume and returns the resumed outcome. If resume
-fails, the delivery remains queued; run `resume` after fixing the cause, without answering again.
+alias with human output). Invalid answers exit 2 (`answer.invalid`) with `error.details.issues`, a
+list of `{code, path, message}` (`path` is `["approved"]` for a non-boolean `approved`; synthetic
+codes `answer_not_json`, `question_schema_invalid`, `answer_author` and `answer_too_large` have path
+`[]`), so a caller can re-ask for the right field; the library `AnswerError` carries the same
+`issues`. An unknown, withdrawn, completed, or already delivered question exits 3
+(`answer.conflict`). Successful delivery exits 0. `--resume` on `answer` combines delivery with
+resume and returns the resumed outcome. If resume fails, the delivery remains queued; run `resume`
+after fixing the cause, without answering again.
 
-`pending` and early answer validation read checkpoints without typechecking or importing workflow
-code. `codeChanged` compares stored source bytes and is null for embedded records without source
-paths. It is an early drift hint, not a compatibility guarantee. Check changed code before asking a
-human to review stale context. `resume RUN` uses the stored absolute entrypoint, compiler
-configuration, and run cwd; code still passes the usual load and compatibility gates. Use
-`--accept-code-change` for an intentional compatible edit; it refuses without changes, leaving the
-question waiting, when the edit changed a completed step. Existing records without launch metadata
-still use `execute FILE --resume --run-id RUN`. Harness configuration and admission overrides are
-invocation choices, not saved authentication; provide the same fixture/native selection as needed.
+`pending` lists only rows still awaiting an answer: a row whose answer is already queued, and rows
+of failed, cancelled or completed runs, are hidden (counted in `hidden`); `pending --all` lists
+them. Each row carries `runStatus`, `delivery` (`{state: "none" | "queued", at, by}`, null for a
+poll or deadline wait) and `next`, a resume command for a queued row of a suspended or failed run.
+The library `listPending` stays unfiltered. `pending` and early answer validation read checkpoints
+without typechecking or importing workflow code. `codeChanged` compares stored source bytes and is
+null for embedded records without source paths. It is an early drift hint, not a compatibility
+guarantee. Check changed code before asking a human to review stale context. `resume RUN` uses the
+stored absolute entrypoint, compiler configuration, and run cwd; code still passes the usual load
+and compatibility gates. Use `--accept-code-change` for an intentional compatible edit; it refuses
+without changes, leaving the question waiting, when the edit changed a completed step. Existing
+records without launch metadata still use `execute FILE --resume --run-id RUN`. Harness
+configuration and admission overrides are invocation choices, not saved authentication; provide the
+same fixture/native selection as needed.
 
 A `--dry-run` rehearsal also stops at unanswered questions; it never fabricates human approval. Its
 suspended document includes a `rehearsal` report and null `stateDir`, `resumeCommand`, and

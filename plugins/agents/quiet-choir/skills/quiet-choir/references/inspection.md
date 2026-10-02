@@ -155,7 +155,9 @@ model's answer is at `steps[stepId].output.output`.
 
 An ask step stores `question.request`, `askedAt`, `resolution`, and bounded `rejections`; its
 statuses are waiting/completed/withdrawn. Its one registration has no adapter attempt-history
-entries. Waiting questions are visible in summary/list counts and `workflow pending`.
+entries. Waiting questions are visible in summary/list counts and in `workflow pending`, which by
+default hides those of failed, cancelled or completed runs and those with an answer already queued;
+`workflow pending --all` lists every one.
 
 Current records include run `policy`, `allowModelOverride`, and `policyWarnings`. Each step has
 component `identity` hashes and `attemptHistory`: each attempt records its fingerprint, resolved

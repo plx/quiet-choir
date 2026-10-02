@@ -16,8 +16,23 @@ import { readRun, listRunIds, type RunRecord } from './store.js';
 import { isValidRunId, runIdMessage } from './run-errors.js';
 import { answerEnvelopeSchema, validateAnswerAuthor } from './question-schema.js';
 import type { JsonValue } from './model.js';
-import type { PendingOperation } from './wait-model.js';
+import type { PendingDelivery, PendingListing, PendingOperation } from './wait-model.js';
 import { workflowArgv, type CommandLauncher } from './commands.js';
+
+/**
+ * One reason an answer was refused as invalid. Zod issues are normalized to this shape so the
+ * contract does not depend on Zod internals; a refusal that has no schema path uses a synthetic
+ * `code` (`answer_not_json`, `question_schema_invalid`, `answer_author`, `answer_too_large`) and a
+ * path of `[]`.
+ */
+export interface AnswerIssue {
+  /** Zod issue code, or one of the synthetic codes named above. */
+  readonly code: string;
+  /** Location in the answer value, as object keys and array indexes; empty for the root. */
+  readonly path: readonly (string | number)[];
+  /** One-line explanation. */
+  readonly message: string;
+}
 
 /** A rejected delivery: invalid input is exit 2, a closed/already answered question is exit 3. */
 export class AnswerError extends Error {
@@ -32,11 +47,29 @@ export class AnswerError extends Error {
 
   /** Distinguishes validation from first-answer or lifecycle conflicts. */
   public readonly reason: 'invalid' | 'conflict';
-  public constructor(reason: 'invalid' | 'conflict', message: string) {
+  /** Why an `invalid` answer was refused; empty for a conflict. */
+  public readonly issues: readonly AnswerIssue[];
+  public constructor(
+    reason: 'invalid' | 'conflict',
+    message: string,
+    issues: readonly AnswerIssue[] = [],
+  ) {
     super(message);
     this.name = 'AnswerError';
     this.reason = reason;
+    this.issues = issues;
   }
+}
+
+/** Collapse whitespace runs, including newlines, so a message stays on one line. */
+function oneLine(text: string): string {
+  return text.replace(/\s+/gu, ' ').trim();
+}
+
+/** An invalid-answer refusal with one synthetic issue at the root. */
+function syntheticInvalid(code: string, error: unknown): AnswerError {
+  const message = oneLine(error instanceof Error ? error.message : String(error));
+  return new AnswerError('invalid', message, [{ code, path: [], message }]);
 }
 
 /** A lock-free delivery to a question already present in a checkpoint. */
@@ -115,35 +148,50 @@ export async function writeAnswer(options: WriteAnswerOptions): Promise<AnswerDe
       'conflict',
       `Question ${options.stepId} is not waiting in run ${run.id}.`,
     );
-  let value: JsonValue;
   const by = options.by ?? 'agent:unspecified';
+  let value: JsonValue;
   try {
     value = jsonValue(options.value, 'Answer');
+  } catch (error) {
+    throw syntheticInvalid('answer_not_json', error);
+  }
+  let validator: z.ZodType;
+  try {
     const schema = step.question.request.schema;
     if (
       typeof schema !== 'boolean' &&
       (schema === null || Array.isArray(schema) || typeof schema !== 'object')
     )
       throw new Error('Stored question schema is not a JSON Schema object.');
-    z.fromJSONSchema(schema).parse(value);
-    validateAnswerAuthor(step.question.request.audience, by);
-    answerEnvelopeSchema.parse({
-      value,
-      by,
-      at: new Date().toISOString(),
-      questionFingerprint: step.fingerprint,
-    });
+    validator = z.fromJSONSchema(schema);
   } catch (error) {
-    throw new AnswerError('invalid', error instanceof Error ? error.message : String(error));
+    throw syntheticInvalid('question_schema_invalid', error);
   }
-  const serialized = JSON.stringify({
-    value,
-    by,
-    at: new Date().toISOString(),
-    questionFingerprint: step.fingerprint,
-  });
+  const parsed = validator.safeParse(value);
+  if (!parsed.success) {
+    const issues = parsed.error.issues.map((issue) => ({
+      code: issue.code,
+      path: issue.path.map((part) => (typeof part === 'symbol' ? String(part) : part)),
+      message: oneLine(issue.message),
+    }));
+    throw new AnswerError(
+      'invalid',
+      `Answer does not match the question schema: ${issues
+        .map((issue) => `${issue.path.length ? issue.path.join('.') : '(root)'}: ${issue.message}`)
+        .join('; ')}`,
+      issues,
+    );
+  }
+  const at = new Date().toISOString();
+  try {
+    validateAnswerAuthor(step.question.request.audience, by);
+    answerEnvelopeSchema.parse({ value, by, at, questionFingerprint: step.fingerprint });
+  } catch (error) {
+    throw syntheticInvalid('answer_author', error);
+  }
+  const serialized = JSON.stringify({ value, by, at, questionFingerprint: step.fingerprint });
   if (Buffer.byteLength(serialized) > 1_048_576)
-    throw new AnswerError('invalid', 'Answer envelope exceeds 1 MiB.');
+    throw syntheticInvalid('answer_too_large', new Error('Answer envelope exceeds 1 MiB.'));
   const path = answerPath(stateDir, run.id, options.stepId);
   for (const candidate of answerCandidates(stateDir, run.id, options.stepId)) {
     if (candidate === path) continue;
@@ -263,13 +311,68 @@ export interface ListPendingOptions extends StateDirectoryOptions {
   readonly commandLauncher?: CommandLauncher;
 }
 
-/** List parked questions, polls, and deadlines by reading state only; never imports code. */
-export async function listPending(options: ListPendingOptions = {}): Promise<PendingOperation[]> {
+/**
+ * Read a question's inbox delivery state. The first existing candidate file means `queued`; its
+ * time and author come from the envelope, and are null when the file is unreadable or malformed
+ * (a refused delivery is still in the way of a second answer). An owner consuming the file can make
+ * a row read `none` for a moment, so this is advisory.
+ */
+async function readDelivery(
+  stateDir: string,
+  runId: string,
+  stepId: string,
+): Promise<PendingDelivery> {
+  for (const candidate of answerCandidates(stateDir, runId, stepId)) {
+    let text: string;
+    try {
+      text = await readFile(candidate, 'utf8');
+    } catch (error) {
+      const code = error instanceof Error && 'code' in error ? error.code : undefined;
+      if (code === 'ENOENT' || code === 'ENOTDIR') continue;
+      return { state: 'queued', at: null, by: null };
+    }
+    try {
+      const envelope = answerEnvelopeSchema.safeParse(JSON.parse(text));
+      if (envelope.success) return { state: 'queued', at: envelope.data.at, by: envelope.data.by };
+    } catch {
+      // Not JSON: still queued, with no attribution.
+    }
+    return { state: 'queued', at: null, by: null };
+  }
+  return { state: 'none', at: null, by: null };
+}
+
+/** Every run's waiting rows with run and delivery state, one group per run that has any. @internal */
+export async function listPendingRuns(
+  options: ListPendingOptions = {},
+): Promise<{ run: RunRecord; pending: PendingListing[] }[]> {
   const stateDir = resolveStateDir(options);
-  const pending: PendingOperation[] = [];
+  const groups: { run: RunRecord; pending: PendingListing[] }[] = [];
   for (const runId of await listRunIds(stateDir)) {
     const run = await readRun({ stateDir, runId });
-    pending.push(...(await pendingOperations(run, stateDir, options.commandLauncher)));
+    const operations = await pendingOperations(run, stateDir, options.commandLauncher);
+    if (!operations.length) continue;
+    groups.push({
+      run,
+      pending: await Promise.all(
+        operations.map(async (operation) => ({
+          ...operation,
+          runStatus: run.status,
+          delivery: operation.answerCommand
+            ? await readDelivery(stateDir, run.id, operation.stepId)
+            : null,
+        })),
+      ),
+    });
   }
-  return pending;
+  return groups;
+}
+
+/**
+ * List parked questions, polls, and deadlines by reading state only; never imports code. Every
+ * waiting row is returned, whatever its run's status or delivery state, with that status and the
+ * inbox delivery state added.
+ */
+export async function listPending(options: ListPendingOptions = {}): Promise<PendingListing[]> {
+  return (await listPendingRuns(options)).flatMap((group) => group.pending);
 }

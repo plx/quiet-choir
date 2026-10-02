@@ -15,7 +15,8 @@ import type { JsonValue } from '../runtime/model.js';
 import type { PolicyOverride } from '../runtime/policy.js';
 import type { SuspendedRun } from '../runtime/runner.js';
 import type { RunRecord } from '../runtime/store.js';
-import type { PendingOperation } from '../runtime/wait-model.js';
+import type { PendingListing } from '../runtime/wait-model.js';
+import type { NextCommand } from './next-commands.js';
 import type { AnswerDelivery } from '../runtime/inbox.js';
 import type { ForkOptions, ResumeCheck, WorkflowIdentity } from '../runtime/replay-model.js';
 import type { TypecheckPlan } from '../typecheck/model.js';
@@ -124,6 +125,8 @@ export interface PendingWorkflowsPlan extends ExecutionPlan {
   readonly kind: 'workflow.pending';
   readonly additionalStateDirs?: readonly string[];
   readonly stateDir: string;
+  /** List answered rows and rows of failed, cancelled or completed runs too. */
+  readonly all?: boolean;
 }
 
 /** Read-only run-level compatibility inspection after checking/importing trusted source. */
@@ -243,7 +246,9 @@ export type WorkflowCommandResult = ExecutionResult &
     | {
         readonly kind: 'workflow.pending.result';
         readonly ok: true;
-        readonly pending: readonly PendingOperation[];
+        readonly pending: readonly (PendingListing & { readonly next: readonly NextCommand[] })[];
+        /** Rows the default filter left out; always 0 under `all`. */
+        readonly hidden: number;
       }
     | {
         readonly kind: 'workflow.answer.result';

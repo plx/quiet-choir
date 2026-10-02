@@ -128,6 +128,27 @@ export function runNextCommands(
   ];
 }
 
+/**
+ * The follow-up for a pending row whose answer is already queued: resume so the run's owner
+ * ingests it. A run without a stored entrypoint (an embedded run) cannot be resumed by ID and gets
+ * none. Callers pass only suspended or failed runs: a running owner ingests the answer itself.
+ * @internal
+ */
+export function queuedNextCommands(
+  run: RunRecord,
+  stateDir: string,
+  launcher?: CommandLauncher,
+): NextCommand[] {
+  return run.launch
+    ? [
+        {
+          why: 'An answer is queued; resume the run so its owner ingests it.',
+          argv: resume(launcher, run, run.id, stateDir),
+        },
+      ]
+    : [];
+}
+
 function record(value: JsonValue): Record<string, JsonValue> | undefined {
   return value !== null && typeof value === 'object' && !Array.isArray(value) ? value : undefined;
 }

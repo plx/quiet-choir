@@ -2,6 +2,20 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- Run and delivery state in `workflow pending`, and structured `answer.invalid` issues (behavior
+  change in the default `workflow pending` listing; no identity or checkpoint format change):
+  `pending` now hides rows whose answer is already queued and rows of `failed`, `cancelled` or
+  `completed` runs, and the result adds `hidden`, the count it left out; the new `--all` lists every
+  row. Each row gains `runStatus`, `delivery` (`{state: 'none' | 'queued', at, by}`, null for a poll
+  or deadline wait) and `next` (a `resume` entry repeating the run's launch policy for a queued row
+  of a suspended or failed run, otherwise empty). Running rows stay listed, so a `--wait-mode block`
+  question is visible. `listPending` still returns every row, now typed `PendingListing`
+  (`PendingOperation` plus `PendingRunState`, with `PendingDelivery`); `SuspendedRun.pending` is
+  unchanged. `AnswerError` gains `issues` (new public type `AnswerIssue`: `{code, path, message}`),
+  and `answer.invalid` carries it as `error.details.issues`, with `path: ['approved']` for a
+  non-boolean `approved` and the synthetic codes `answer_not_json`, `question_schema_invalid`,
+  `answer_author` and `answer_too_large` (path `[]`) for refusals with no schema location. Its
+  message is now one line.
 - Recovery hints by typed cause (behavior change in `recoveryHint` and failure messages; no identity
   or checkpoint format change): the saved `recoveryHint` now follows the failure's typed cause
   instead of always advertising `--resume --accept-code-change`. A missing grant suggests
