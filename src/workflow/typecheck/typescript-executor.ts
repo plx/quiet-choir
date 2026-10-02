@@ -7,6 +7,7 @@ import { jsonValue } from '../runtime/json.js';
 import type { JsonValue } from '../runtime/model.js';
 
 import type { ExecutionLogger, Executor } from '../../application/execution.js';
+import { lintDurability } from './durability-lint.js';
 import type {
   TypecheckDiagnostic,
   TypecheckDiagnosticCategory,
@@ -104,11 +105,13 @@ function compilerOptions(options: ts.CompilerOptions): Readonly<Record<string, J
 interface CompilerAnalysis {
   readonly compilerOptions: Readonly<Record<string, JsonValue>>;
   readonly diagnostics: readonly ts.Diagnostic[];
+  readonly program?: ts.Program;
   readonly sourceFiles: readonly string[];
 }
 
 function analyzeProgram(program: ts.Program): CompilerAnalysis {
   return {
+    program,
     compilerOptions: compilerOptions(program.getCompilerOptions()),
     diagnostics: ts.getPreEmitDiagnostics(program),
     sourceFiles: program
@@ -119,13 +122,19 @@ function analyzeProgram(program: ts.Program): CompilerAnalysis {
   };
 }
 
-function configuredDiagnostics(entrypoint: string, configPath: string): CompilerAnalysis {
+/**
+ * Build the type-check program for root files under a tsconfig: the config's compiler options and
+ * declaration files, with `rootNames` replacing its `files`/`include`. Returns the config read
+ * error instead when the file cannot be read. @internal
+ */
+export function configuredProgram(
+  rootNames: readonly string[],
+  configPath: string,
+): { readonly program: ts.Program } | { readonly error: ts.Diagnostic } {
   const configDirectory = dirname(configPath);
   const readResult = ts.readConfigFile(configPath, (filePath) => ts.sys.readFile(filePath));
 
-  if (readResult.error !== undefined) {
-    return { compilerOptions: {}, diagnostics: [readResult.error], sourceFiles: [] };
-  }
+  if (readResult.error !== undefined) return { error: readResult.error };
 
   const rawConfig = isRecord(readResult.config) ? readResult.config : {};
   const discoveredConfig = ts.parseJsonConfigFileContent(
@@ -138,7 +147,7 @@ function configuredDiagnostics(entrypoint: string, configPath: string): Compiler
   const entrypointConfig: Record<string, unknown> = {
     ...rawConfig,
     exclude: [],
-    files: [relative(configDirectory, entrypoint)],
+    files: rootNames.map((rootName) => relative(configDirectory, rootName)),
     include: [],
   };
   const parsedConfig = ts.parseJsonConfigFileContent(
@@ -148,7 +157,7 @@ function configuredDiagnostics(entrypoint: string, configPath: string): Compiler
     undefined,
     configPath,
   );
-  const rootNames = [
+  const programRoots = [
     ...new Set([
       ...parsedConfig.fileNames,
       ...discoveredConfig.fileNames.filter((filePath) => isDeclarationFile(filePath)),
@@ -164,10 +173,17 @@ function configuredDiagnostics(entrypoint: string, configPath: string): Compiler
     ...(parsedConfig.projectReferences === undefined
       ? {}
       : { projectReferences: parsedConfig.projectReferences }),
-    rootNames,
+    rootNames: programRoots,
   });
 
-  return analyzeProgram(program);
+  return { program };
+}
+
+function configuredDiagnostics(entrypoint: string, configPath: string): CompilerAnalysis {
+  const configured = configuredProgram([entrypoint], configPath);
+  if ('error' in configured)
+    return { compilerOptions: {}, diagnostics: [configured.error], sourceFiles: [] };
+  return analyzeProgram(configured.program);
 }
 
 function defaultDiagnostics(plan: TypecheckPlan): CompilerAnalysis {
@@ -195,12 +211,24 @@ function defaultDiagnostics(plan: TypecheckPlan): CompilerAnalysis {
   return analyzeProgram(program);
 }
 
+/** Options of a {@link TypeScriptExecutor}. */
+export interface TypeScriptExecutorOptions {
+  /**
+   * Run the durability lint (ADR 0041) on the same program after a type check without errors and
+   * return its findings as `durability`. Off by default, so `workflow typecheck` and doctor keep
+   * their output.
+   */
+  readonly durabilityLint?: boolean;
+}
+
 /** Type-checks workflow plans with the packaged stable TypeScript compiler API. */
 export class TypeScriptExecutor implements Executor<TypecheckPlan, TypecheckResult> {
   readonly #logger: ExecutionLogger;
+  readonly #durabilityLint: boolean;
 
-  public constructor(logger: ExecutionLogger) {
+  public constructor(logger: ExecutionLogger, options: TypeScriptExecutorOptions = {}) {
     this.#logger = logger;
+    this.#durabilityLint = options.durabilityLint === true;
   }
 
   public execute(plan: TypecheckPlan): Promise<TypecheckResult> {
@@ -217,6 +245,14 @@ export class TypeScriptExecutor implements Executor<TypecheckPlan, TypecheckResu
         ? configuredDiagnostics(plan.entrypoint, plan.configuration.path)
         : defaultDiagnostics(plan);
     const diagnostics = analysis.diagnostics.map(normalizeDiagnostic);
+    const ok = !diagnostics.some((diagnostic) => diagnostic.category === 'error');
+    const durability =
+      ok && this.#durabilityLint && analysis.program
+        ? lintDurability(analysis.program).map((finding) => ({
+            ...finding,
+            file: resolve(finding.file),
+          }))
+        : undefined;
 
     return Promise.resolve({
       compilerVersion: ts.version,
@@ -225,8 +261,9 @@ export class TypeScriptExecutor implements Executor<TypecheckPlan, TypecheckResu
       diagnostics,
       entrypoint: plan.entrypoint,
       kind: 'workflow.typecheck.result',
-      ok: !diagnostics.some((diagnostic) => diagnostic.category === 'error'),
+      ok,
       sourceFiles: analysis.sourceFiles,
+      ...(durability === undefined ? {} : { durability }),
     });
   }
 }
