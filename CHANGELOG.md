@@ -2,6 +2,21 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- Failure kinds and a transient retry alias (behavior change for `retry` without `on`; no identity
+  or checkpoint format change): `ErrorKind` gains `invalid-request` (HTTP 400/404/422, an unknown
+  model or an invalid effort or option) and `overloaded` (HTTP 500/502/503/529). `retry.on` accepts
+  `'transient'`, which stands for `rate-limit`, `overloaded` and `timeout`, in code, adapter
+  definitions, run options, `--policy` rules and saved policies; it is a filter, never a saved kind.
+  A `retry` with `on` omitted no longer retries `invalid-request` failures (it still retries
+  `unknown`, `overloaded`, `process` and the other non-fatal kinds); list `invalid-request` to keep
+  retrying it. `ProtocolFailure` gains an optional adapter-owned `kind`, and `HarnessError.kind`
+  takes `HarnessErrorDetails.kind`, then `failure.kind`, then the HTTP status. The built-in Codex
+  protocol layer classifies Codex's own `rate limit exceeded` terminal errors and rate-limit
+  reconnect notices as `rate-limit` and `invalid_request_error` as `invalid-request`; Claude Code's
+  `[claude-code:unrecognized_model]` stderr tag also gives `invalid-request`. The checked-in
+  captures now record their kind, plus two synthetic Claude 500/529 captures. Old records still
+  validate; records with the new kinds or the alias need this runtime. See the
+  [ADR 0007 amendment](docs/decisions/0007-durable-failure-outcomes.md).
 - `workflow events` and the `/quiet-choir:run` Claude plugin command (additive command and plugin
   file; no identity or storage change): `workflow events RUN [--follow]` prints a run's `--events`
   lines derived from its persisted record, without importing the workflow, through the same

@@ -105,7 +105,8 @@ function, `classifyAttemptFailure` in `src/workflow/runtime/attempt-failure.ts`.
 signal that is not the run's own checkpoint failure is a scope cancellation. Cancellation (including
 a callback's own `AbortError`), checkpoint failures and `ConfigurationError` are fatal, so they are
 never retried and never settled; `ConfigurationError` is also marked fatal so it never becomes
-settled map data. `retry.on` omitted retries every kind and `[]` disables retry, both bounded by
+settled map data. `retry.on` omitted retries every kind except `invalid-request`, the `'transient'`
+filter expands to `rate-limit`, `overloaded` and `timeout`, and `[]` disables retry, all bounded by
 `maxAttempts`. A failure settles only when it is not fatal, is exhausted or filtered out of retry,
 and the effect uses `onError: 'return'`. The runner gathers the facts, calls the function once and
 keeps saves, events, cancellation errors and backoff. An ESLint import guard keeps the module free

@@ -2,6 +2,7 @@
 
 **Status:** Accepted. Extends ADR 0005/0006; supersedes their current checkpoint-format choice.
 Extended by [0008](0008-scoped-fan-out.md) for durable aggregate outcomes and scoped cancellation.
+Amended by #274 (invalid-request, overloaded and the transient retry alias).
 
 ## Context
 
@@ -68,3 +69,34 @@ upcoming map settle mode (#43) can build on the same terminal failure representa
 
 [ADR 0020](0020-durable-waits-and-tick.md) adds one recorded winner among signal/poll/deadline
 sources. Races among arbitrary durable effects remain unsupported.
+
+## Amendment: invalid-request, overloaded and the transient alias (#274)
+
+Provider failures that need different responses all classified as `unknown`: a misspelled model or
+invalid effort (HTTP 400/404), an overloaded provider (500/529), and a Codex rate limit reported
+only as prose. `retry.on` therefore could not mean "transient failures only", and a `retry` without
+`on` retried a request that can never succeed.
+
+Two kinds join `ErrorKind`. `invalid-request` covers HTTP 400, 404 and 422; `overloaded` covers 500,
+502, 503 and 529. 408/504 stay `timeout`, 429 stays `rate-limit`, and other statuses stay `unknown`.
+
+`ProtocolFailure` gains an optional, adapter-owned `kind` for failures whose protocol metadata is
+insufficient. `HarnessError.kind` is `HarnessErrorDetails.kind`, else `failure.kind`, else the
+status and terminal-reason mapping. The prose exception lives in the built-in adapters' protocol
+layer (`src/harnesses/protocol.ts`), never in generic runtime code: Codex's own terminal errors that
+begin `rate limit exceeded`, and a notice-only failure whose last notice is a
+`Reconnecting... n/m (rate limit exceeded ...)` reconnect, are `rate-limit`; a Codex
+`invalid_request_error` and Claude Code's `[claude-code:unrecognized_model]` stderr tag are
+`invalid-request`. These are fixed prefixes that codex-cli and Claude Code print themselves
+(recorded on codex-cli 0.157.1 and Claude Code 2.1.283), so text quoted inside an unrelated error
+cannot change its kind; if the CLIs change the wording, classification degrades to `unknown`.
+`errorKind()` still trusts only structured kinds.
+
+`retry.on` accepts the alias `transient`, which stands for `rate-limit`, `overloaded` and `timeout`.
+It is a filter, not a kind: saved failures and attempt kinds never contain it, and resolved and
+persisted policies keep it unexpanded, so the expansion happens only in `classifyAttemptFailure`.
+Omitting `on` now retries every non-fatal kind except `invalid-request`; an explicit
+`on: ['invalid-request']` still retries it. Retry remains policy, so step identities do not change.
+
+The checkpoint format does not change. Older records validate under the widened enums; records that
+contain the new kinds or the alias need this runtime, which the 0.0.0 prototype accepts.
