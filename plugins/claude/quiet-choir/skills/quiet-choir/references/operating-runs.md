@@ -80,10 +80,12 @@ node "$QC_CHECKOUT/bin/run.js" workflow inspect first --state-dir "$QC_RUNS" --j
 
 Plain inspect exits 0 when it reads a record, including failed/cancelled/running records. Branch on
 `.status`, or use `--watch`: final completed exits 0, failed 1, suspended 75, cancelled 130,
-stale 3. JSON watch emits JSONL on changes; it is not a lossless event stream. Interrupting a
-watcher stops observation, not the workflow. List/summary derive `stale` from ownership; full-record
-`.status` remains the last saved status. Use [triage](inspection.md#classify-and-act) to interpret
-it.
+stale 3. A `--timeout` watch of a still-running run exits 79 (`watch.timeout`; the run continues),
+and a `--wait-created` watch whose record never appears exits 66 (`watch.record_not_created`).
+`--final` prints only the last line. JSON watch emits JSONL on changes; it is not a lossless event
+stream. Interrupting a watcher stops observation, not the workflow. List/summary derive `stale` from
+ownership; full-record `.status` remains the last saved status. Use
+[triage](inspection.md#classify-and-act) to interpret it.
 
 | CLI exit | Meaning                                                                                                                                     |
 | -------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -93,8 +95,10 @@ it.
 | 3        | Answer conflict (`answer.conflict`), or run refusal: existing/missing/unreadable/locked run, incompatible resume, changed input, or orphans |
 | 4        | Workflow typecheck, import, or definition failure                                                                                           |
 | 75       | Saved suspension; deliver answers and resume the same run                                                                                   |
+| 66       | `inspect --watch --wait-created`: no record appeared within the bound (`watch.record_not_created`)                                          |
 | 70       | `workflow start`: the runner exited without a record or a readable result document (`start.exited`)                                         |
 | 74       | Checkpoint/storage failure                                                                                                                  |
+| 79       | `inspect --watch --timeout`: the run was still running at the bound and keeps running (`watch.timeout`)                                     |
 | 130      | Interruption (SIGINT/SIGTERM/SIGHUP) saved a resumable suspension, or interrupted watch; tick or resume continues the run                   |
 | 124      | `workflow start`: no record owned by the runner within `--start-timeout`; the runner was stopped (`start.timeout`)                          |
 

@@ -183,9 +183,11 @@ Put flags after the command name, for example `workflow inspect first --json`.
 | 2    | `answer.invalid` for invalid answers, or `usage.*`: invalid flags, misplaced flags, omitted/nonexistent/unsupported FILE, invalid run ID, invalid input JSON/file/schema, or resume without an ID. No execution checkpoint is written.                                                                                              |
 | 3    | `answer.conflict` for duplicate/closed questions, or `run.*`: existing/missing/locked/unreadable run, incompatible resume, changed input, or surviving/unverified child processes (`run.orphans`). No workflow body runs.                                                                                                           |
 | 4    | `load.*`: typecheck, import, or workflow-definition failure. No execution checkpoint is written.                                                                                                                                                                                                                                    |
+| 66   | `watch.record_not_created`: `inspect --watch --wait-created` saw no record within the bound; check the run ID, `--state-dir` and whether the launch failed.                                                                                                                                                                         |
 | 70   | `start.exited`: the `workflow start` runner exited without a record or a readable result document; read its `launch.log`.                                                                                                                                                                                                           |
 | 74   | `workflow.storage`: saving, process registration, or releasing ownership failed. Inspect the reported saved state; it can still be `running`, `completed`, or absent.                                                                                                                                                               |
 | 75   | Saved suspension with pending waits; answer questions, deliver signals, or tick when due. A saved suspension stands even when a signal arrived.                                                                                                                                                                                     |
+| 79   | `watch.timeout`: `inspect --watch --timeout` stopped while the run was still running (`status` is the last observed one); the run continues, so start another bounded watch.                                                                                                                                                        |
 | 130  | `workflow.interrupted`: SIGINT/SIGTERM/SIGHUP. A first signal drains and saves a resumable `suspended` run with `interruptedBy` (tick or resume continues it); if that save fails, the exit is 74 instead. A second signal kills tracked groups immediately and reports the last readable checkpoint, which may still be `running`. |
 | 124  | `start.timeout`: `workflow start` saw no record owned by its runner within `--start-timeout` (default 60s) and stopped the runner; `runId` is set only if the runner saved a record.                                                                                                                                                |
 
@@ -245,9 +247,12 @@ in-memory process ownership only, since there is no workflow run to resume.
 
 For read-only monitoring, `workflow inspect ID` shows a dashboard, `--json --summary` gives its
 compact data, and `--watch --interval 2s` waits for a terminal/stale state. Watch JSON is JSONL per
-change, with final exits completed 0, failed 1, cancelled 130, stale 3.
-`workflow list --status stale --json` finds abandoned runs without importing source. See
-[inspection](inspection.md) for status filters, unknown owners, warnings, partial usage, and
+change, with final exits completed 0, failed 1, suspended 75, cancelled 130, stale 3. `--timeout 9m`
+stops a watch whose run is still running that long after the first read (exit 79, `watch.timeout`;
+the run keeps running), `--wait-created 30s` retries a record that does not exist yet (exit 66,
+`watch.record_not_created`, when it never appears), and `--final` prints only the last snapshot or
+error document. `workflow list --status stale --json` finds abandoned runs without importing source.
+See [inspection](inspection.md) for status filters, unknown owners, warnings, partial usage, and
 retention.
 
 Use [workflow tick](waits.md) for due stored entrypoints and bounded watching; --wait-mode block on
