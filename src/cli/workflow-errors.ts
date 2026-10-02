@@ -1,5 +1,6 @@
 import type { CliErrorCode } from '../workflow/runtime/run-errors.js';
 import type { WorkflowFailure } from '../workflow/loader/failure.js';
+import { failureKind, stepErrorKind } from '../workflow/loader/failure-kind.js';
 import { summarizeRunResult } from '../workflow/loader/run-result.js';
 
 /**
@@ -75,7 +76,13 @@ export function workflowErrorDocument(
     status: failure.run?.status ?? null,
     failedSteps: Object.entries(failure.run?.steps ?? {})
       .filter(([, step]) => step.status === 'failed' || step.status === 'cancelled')
-      .map(([id, step]) => ({ id, kind: step.kind, attempts: step.attempts, error: step.error })),
+      .map(([id, step]) => ({
+        id,
+        kind: step.kind,
+        attempts: step.attempts,
+        error: step.error,
+        ...failureKind(stepErrorKind(step)),
+      })),
     diagnostics: failure.diagnostics,
     next: failure.next ?? [],
     ...(compact

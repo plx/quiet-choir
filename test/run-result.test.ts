@@ -35,6 +35,17 @@ function step(status: StepRecord['status'], overrides: Partial<StepRecord> = {})
   };
 }
 
+/** A failed agent step whose last attempt carries `kind`. */
+function failedStep(kind: NonNullable<AttemptRecord['errorKind']>): StepRecord {
+  return step('failed', {
+    error: 'failed',
+    attemptHistory: [
+      { attempt: 1, status: 'failed', errorKind: 'unknown' },
+      { attempt: 2, status: 'failed', errorKind: kind },
+    ] as unknown as AttemptRecord[],
+  });
+}
+
 /** An agent step whose single attempt reported complete usage. */
 function agentStep(index: number): StepRecord {
   return step('completed', {
@@ -107,11 +118,53 @@ describe('summarizeRunResult', () => {
   });
 
   it('keeps a recorded root cause and a null state directory', () => {
-    const rootCause = { stepId: 'a', message: 'boom' };
-    const run = { ...base, status: 'failed', rootCause } as unknown as RunRecord;
+    const rootCause = { stepId: 'a', error: 'boom', errorKind: 'rate-limit' } as const;
+    const run: RunRecord = { ...base, status: 'failed', rootCause };
     const result = summarizeRunResult(run, null);
     expect(result.stateDir).toBeNull();
     expect(result.rootCause).toEqual(rootCause);
+  });
+
+  it('reports a null kind for a recorded body failure, even when steps ran', () => {
+    const run: RunRecord = {
+      ...base,
+      status: 'failed',
+      steps: { a: failedStep('timeout') },
+      rootCause: { stepId: null, error: 'bug', errorKind: null },
+    };
+    expect(summarizeRunResult(run, null).rootCause).toEqual({
+      stepId: null,
+      error: 'bug',
+      errorKind: null,
+    });
+  });
+
+  it('falls back to the root step last attempt for a record without a stored kind', () => {
+    const run: RunRecord = {
+      ...base,
+      status: 'failed',
+      steps: { a: failedStep('authentication') },
+      rootCause: { stepId: 'a', error: 'boom' },
+    };
+    expect(summarizeRunResult(run, null).rootCause).toEqual({
+      stepId: 'a',
+      error: 'boom',
+      errorKind: 'authentication',
+    });
+  });
+
+  it.each([
+    ['a body failure', { stepId: null, error: 'bug' }, {}],
+    ['a root step with no attempt history', { stepId: 'a', error: 'boom' }, { a: step('failed') }],
+    ['a root step missing from the record', { stepId: 'gone', error: 'boom' }, {}],
+  ])('has no kind without evidence for %s in an older record', (_name, rootCause, steps) => {
+    const run: RunRecord = { ...base, status: 'failed', steps, rootCause };
+    expect(summarizeRunResult(run, null).rootCause).toEqual({ ...rootCause, errorKind: null });
+  });
+
+  it('keeps rootCause null when the run has none', () => {
+    expect(summarizeRunResult({ ...base, rootCause: null }, null).rootCause).toBeNull();
+    expect(summarizeRunResult(base, null).rootCause).toBeNull();
   });
 
   it.each([

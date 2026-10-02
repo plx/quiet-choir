@@ -38,6 +38,7 @@ import {
   type RunInspection,
 } from './inspection.js';
 import { workflowFailure } from './failure.js';
+import { failureKind, rootCauseErrorKind } from './failure-kind.js';
 import { failureNextCommands } from './next-commands.js';
 import type { CommandLauncher } from '../runtime/commands.js';
 import { missingRunError, readRequiredRun } from '../runtime/read-required-run.js';
@@ -726,11 +727,13 @@ export class WorkflowExecutor implements Executor<WorkflowExecutorPlan, Workflow
               }),
           stepId: error instanceof WorkflowRunError ? error.stepId : null,
           details:
-            error instanceof RunRefusedError ||
-            error instanceof WorkflowInputError ||
-            error instanceof WatchBoundError
-              ? error.details
-              : null,
+            code === 'workflow.failed' && error instanceof WorkflowRunError
+              ? failureKind(rootCauseErrorKind(error.run))
+              : error instanceof RunRefusedError ||
+                  error instanceof WorkflowInputError ||
+                  error instanceof WatchBoundError
+                ? error.details
+                : null,
         },
       );
     } finally {

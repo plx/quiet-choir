@@ -298,7 +298,11 @@ it('drains late callback logs and keeps the original root cause by identity', as
     message: 'Step root (step) failed: same message',
   });
   const run = await readRun(options());
-  expect(run.rootCause).toEqual({ stepId: 'root', error: 'same message' });
+  expect(run.rootCause).toEqual({
+    stepId: 'root',
+    error: 'same message',
+    errorKind: 'unknown',
+  });
   expect(run.steps['late']?.status).toBe('completed');
   expect(run.events?.some((event) => event.message === 'late result')).toBe(true);
   expect(run.errorStack).toContain('same message');

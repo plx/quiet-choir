@@ -193,7 +193,7 @@ export function formatRunSummary(run: RunSummary, verbose = false): string {
             .join('.')
         : step.kind;
     lines.push(
-      `${step.status} ${step.id}  ${request ? `${request.harness} ${request.model ?? '(native model)'}` : label}${step.elapsedMs === null ? '' : `  ${duration(step.elapsedMs)} elapsed`}${limits ? `; ${limits}` : ''}${step.rootCause ? ' [root cause]' : ''}${step.error ? `  ${step.error}` : ''}`,
+      `${step.status} ${step.id}  ${request ? `${request.harness} ${request.model ?? '(native model)'}` : label}${step.elapsedMs === null ? '' : `  ${duration(step.elapsedMs)} elapsed`}${limits ? `; ${limits}` : ''}${step.errorKind ? ` [${step.errorKind}]` : ''}${step.rootCause ? ' [root cause]' : ''}${step.error ? `  ${step.error}` : ''}`,
     );
   }
   if (run.agents.total > 0) {
@@ -209,7 +209,9 @@ export function formatRunSummary(run: RunSummary, verbose = false): string {
   if (run.interruptedBy)
     lines.push(`Interrupted at ${run.interruptedBy.at}: ${run.interruptedBy.reason} (resumable)`);
   if (run.rootCause)
-    lines.push(`Root cause (${run.rootCause.stepId ?? 'workflow'}): ${run.rootCause.error}`);
+    lines.push(
+      `Root cause (${run.rootCause.stepId ?? 'workflow'}${run.rootCause.errorKind ? `, ${run.rootCause.errorKind}` : ''}): ${run.rootCause.error}`,
+    );
   else if (run.error) lines.push(`Error: ${run.error}`);
   lines.push(...formatNextCommands(run.next));
   lines.push(`Usage: ${cost(run)}`);
