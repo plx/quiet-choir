@@ -1,5 +1,7 @@
 import { Flags, type Interfaces } from '@oclif/core';
+import { resolve } from 'node:path';
 import { runBudgetFlags } from './run-budget.js';
+import { checkWorktreeRoot } from '../workflow/runtime/worktree-policy.js';
 
 /** The `--events FILE|-` flag shared by execute, start, resume, tick and answer. @internal */
 export function eventsFlag(
@@ -11,6 +13,39 @@ export function eventsFlag(
     helpValue: 'FILE|-',
     ...(options.dependsOn === undefined ? {} : { dependsOn: options.dependsOn }),
   });
+}
+
+/** The sticky worktree flags shared by execute (and so start) and resume. @internal */
+export const worktreeFlags = {
+  'worktree-keep': Flags.option({ options: ['all', 'failed', 'none'] as const })({
+    description:
+      'Worktree cache retention: all, failed (default) or none; overrides the definition, saved, and reused by a resume without it',
+  }),
+  'worktree-root': Flags.string({
+    description:
+      'Worktree cache container outside the checkout, resolved against cwd; overrides the definition, saved, and reused by a resume without it',
+  }),
+};
+
+/**
+ * The plan fragment for the worktree flags: the root validated like `RunOptions.worktrees.root` and
+ * resolved against `cwd`. Throws a plain error for the caller to report as `usage.flag`. @internal
+ */
+export function worktreePlan(
+  keep: 'all' | 'failed' | 'none' | undefined,
+  root: string | undefined,
+  cwd: string,
+): {
+  readonly worktrees?: { readonly keep?: 'all' | 'failed' | 'none'; readonly root?: string };
+} {
+  if (root !== undefined) checkWorktreeRoot(root, '--worktree-root');
+  if (keep === undefined && root === undefined) return {};
+  return {
+    worktrees: {
+      ...(keep === undefined ? {} : { keep }),
+      ...(root === undefined ? {} : { root: resolve(cwd, root) }),
+    },
+  };
 }
 
 /** Parsed flags of `workflow execute`, shared with `workflow start`. @internal */
@@ -27,6 +62,8 @@ export interface WorkflowExecuteFlags {
   readonly 'notify-command': string | undefined;
   readonly events: string | undefined;
   readonly 'wait-mode': 'suspend' | 'block' | undefined;
+  readonly 'worktree-keep': 'all' | 'failed' | 'none' | undefined;
+  readonly 'worktree-root': string | undefined;
   readonly harness: string[] | undefined;
   readonly 'harness-config': string | undefined;
   readonly 'dry-run': boolean | undefined;
@@ -97,6 +134,7 @@ export const executeFlags: Interfaces.FlagInput<WorkflowExecuteFlags> = {
     description:
       'Suspend long waits (default) or keep waiting in this process; saved, and reused by a resume without it',
   }),
+  ...worktreeFlags,
   harness: Flags.string({
     description:
       "cli (default), fixture:<file>, or name=fixture:<file>; repeatable. Saved; --resume without it reuses the run's selection",

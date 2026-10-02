@@ -11,7 +11,7 @@ import type {
 import { NodeProcessRunner } from '../../processes/runner.js';
 import type { ProcessRunner } from '../runtime/exec-model.js';
 import { lstat, realpath, stat } from 'node:fs/promises';
-import { join } from 'node:path';
+import { isAbsolute, join } from 'node:path';
 import { WorkflowNotifications } from './notifications.js';
 import { WorkflowEventLog, type EventLogTarget } from './events.js';
 import { recordEventLines, type EventFollowCursor } from './event-follow.js';
@@ -22,6 +22,7 @@ import {
   launchPolicyOf,
   selectedAdapters,
 } from './harness-selection.js';
+import { checkWorktreeKeep, checkWorktreeRoot } from '../runtime/worktree-policy.js';
 import { FixtureHarness } from '../../harnesses/fixture.js';
 import { FixtureProcessRunner } from '../../harnesses/fixture-exec.js';
 import { RehearsalHarness, rehearsalState } from './rehearsal.js';
@@ -424,6 +425,14 @@ export class WorkflowExecutor implements Executor<WorkflowExecutorPlan, Workflow
       // what the invocation left out, before anything below builds a harness from the selection.
       let selection = plan.kind === 'workflow.execute' ? plan.harness : undefined;
       let waitMode = plan.kind === 'workflow.execute' ? plan.waitMode : undefined;
+      let worktreeFlags = plan.kind === 'workflow.execute' ? plan.worktrees : undefined;
+      if (worktreeFlags?.keep !== undefined)
+        checkWorktreeKeep(worktreeFlags.keep, '--worktree-keep');
+      if (worktreeFlags?.root !== undefined) {
+        checkWorktreeRoot(worktreeFlags.root, '--worktree-root');
+        if (!isAbsolute(worktreeFlags.root))
+          throw new Error('--worktree-root must be resolved to an absolute path.');
+      }
       let saved: RunRecord | undefined;
       if (plan.kind === 'workflow.execute' && plan.resume) {
         saved = await readRequiredRun({ runId: plan.runId, stateDir: plan.stateDir });
@@ -433,6 +442,13 @@ export class WorkflowExecutor implements Executor<WorkflowExecutorPlan, Workflow
             this.#options.logger.log('warn', message);
           });
         waitMode ??= recorded?.waitMode;
+        // Each worktree flag the invocation left out keeps the run's recorded value, field by field.
+        const keep = worktreeFlags?.keep ?? recorded?.worktrees?.keep;
+        const root = worktreeFlags?.root ?? recorded?.worktrees?.root;
+        worktreeFlags = {
+          ...(keep === undefined ? {} : { keep }),
+          ...(root === undefined ? {} : { root }),
+        };
       }
       if (plan.kind === 'workflow.execute') {
         if ((plan.stubSteps?.length ?? 0) > 0 && !plan.dryRun)
@@ -594,7 +610,7 @@ export class WorkflowExecutor implements Executor<WorkflowExecutorPlan, Workflow
             `Harness ${name} is not declared in the static workflow tree; this setting only applies if a child invoked dynamically (via ctx.workflow) declares it.`,
           );
       // Options shared with the accepted-replay preflight; live-only ones are added below.
-      const policy = launchPolicyOf(selection, waitMode ?? 'suspend');
+      const policy = launchPolicyOf(selection, waitMode ?? 'suspend', worktreeFlags);
       const shared: PreflightRunOptions = {
         runId: plan.runId,
         launch: {
@@ -669,6 +685,10 @@ export class WorkflowExecutor implements Executor<WorkflowExecutorPlan, Workflow
             : { execRunner }
           : { execRunner: rehearsal.processRunner }),
         ...(effectiveWaitMode === undefined ? {} : { waitMode: effectiveWaitMode }),
+        // The CLI's worktree flags replace the definition's fields; the preflight never runs Git.
+        ...(worktreeFlags?.keep === undefined && worktreeFlags?.root === undefined
+          ? {}
+          : { worktrees: worktreeFlags }),
         ...(this.#options.store === undefined ? {} : { store: this.#options.store }),
         ...(this.#options.commandLauncher === undefined
           ? {}

@@ -34,8 +34,9 @@ export function harnessSpecifiers(
 /**
  * The flags that repeat a run's recorded launch policy on an emitted resume command:
  * `--harness fixture:<abs>` for the global fixture, `--harness <name>=fixture:<abs>` for each named
- * fixture, and `--wait-mode block`. The defaults (`cli`, `suspend`) and launches without a policy
- * add nothing. `--harness-config` is never emitted, because its values are not recorded. @internal
+ * fixture, `--wait-mode block`, and the recorded `--worktree-keep` and `--worktree-root`. The
+ * defaults (`cli`, `suspend`) and launches without a policy add nothing. `--harness-config` is never
+ * emitted, because its values are not recorded. @internal
  */
 export function launchPolicyFlags(launch: WorkflowLaunch | undefined): string[] {
   const policy = launch?.policy;
@@ -43,5 +44,7 @@ export function launchPolicyFlags(launch: WorkflowLaunch | undefined): string[] 
   return [
     ...harnessSpecifiers(policy.harness).flatMap((specifier) => ['--harness', specifier]),
     ...(policy.waitMode === 'block' ? ['--wait-mode', 'block'] : []),
+    ...(policy.worktrees?.keep === undefined ? [] : ['--worktree-keep', policy.worktrees.keep]),
+    ...(policy.worktrees?.root === undefined ? [] : ['--worktree-root', policy.worktrees.root]),
   ];
 }

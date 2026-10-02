@@ -232,6 +232,20 @@ describe('launchPolicyFlags', () => {
     ],
     ['block', { harness: { kind: 'cli' }, waitMode: 'block' }, ['--wait-mode', 'block']],
     [
+      'worktree keep only',
+      { harness: { kind: 'cli' }, waitMode: 'suspend', worktrees: { keep: 'all' } },
+      ['--worktree-keep', 'all'],
+    ],
+    [
+      'worktree keep and root after the wait mode',
+      {
+        harness: { kind: 'cli' },
+        waitMode: 'block',
+        worktrees: { keep: 'none', root: '/p/caches' },
+      },
+      ['--wait-mode', 'block', '--worktree-keep', 'none', '--worktree-root', '/p/caches'],
+    ],
+    [
       'everything, unnamed fixture first',
       {
         harness: {

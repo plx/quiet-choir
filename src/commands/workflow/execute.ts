@@ -1,5 +1,5 @@
 import { parseRunBudget } from '../../cli/run-budget.js';
-import { executeFlags, type WorkflowExecuteFlags } from '../../cli/execute-flags.js';
+import { executeFlags, worktreePlan, type WorkflowExecuteFlags } from '../../cli/execute-flags.js';
 import { existsSync } from 'node:fs';
 import type { RunBudgetPolicy } from '../../workflow/runtime/run-budget.js';
 import { readWorkflowInput } from '../../cli/input.js';
@@ -58,7 +58,9 @@ export default class WorkflowExecute extends WorkflowCommand {
     let policy: PolicyOverride[];
     let profileOverrides: ProfileOverride[];
     let harness: HarnessSelection;
+    let worktrees: ReturnType<typeof worktreePlan>;
     try {
+      worktrees = worktreePlan(flags['worktree-keep'], flags['worktree-root'], process.cwd());
       runBudget = parseRunBudget(flags['max-run-cost-usd'], flags['max-run-agent-attempts']);
       killGraceMs = flags['kill-grace-ms'] === undefined ? 3000 : Number(flags['kill-grace-ms']);
       if (
@@ -146,6 +148,7 @@ export default class WorkflowExecute extends WorkflowCommand {
       ...(flags['notify-command'] === undefined ? {} : { notifyCommand: flags['notify-command'] }),
       ...events.plan,
       ...(flags['wait-mode'] === undefined ? {} : { waitMode: flags['wait-mode'] }),
+      ...worktrees,
       harness,
       ...(flags.resume ? { inheritHarness: flags.harness === undefined } : {}),
       dryRun: flags['dry-run'] ?? false,

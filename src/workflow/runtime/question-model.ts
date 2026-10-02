@@ -124,7 +124,8 @@ export interface WorkflowLaunch {
 }
 
 /**
- * The CLI's harness selection and wait mode, replaced on every execution and outside step identity.
+ * The CLI's harness selection, wait mode and worktree flags, replaced on every execution and outside
+ * step identity.
  * It never holds CLI harness configuration values (only their digest is recorded, on
  * `RunRecord.harness.configDigest`).
  */
@@ -149,4 +150,14 @@ export interface LaunchPolicy {
   };
   /** Whether long waits suspend the run or keep waiting in the process. */
   readonly waitMode: 'suspend' | 'block';
+  /**
+   * The `--worktree-keep` and `--worktree-root` values of the latest execution, given or inherited.
+   * Only flags are recorded, never the definition's `worktrees` field; absent when neither was set.
+   */
+  readonly worktrees?: {
+    /** Cache retention passed as `RunOptions.worktrees.keep`. */
+    readonly keep?: 'all' | 'failed' | 'none';
+    /** Absolute cache container passed as `RunOptions.worktrees.root`. */
+    readonly root?: string;
+  };
 }

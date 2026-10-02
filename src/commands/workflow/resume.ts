@@ -2,7 +2,7 @@ import { parseRunBudget, runBudgetFlags } from '../../cli/run-budget.js';
 import type { RunBudgetPolicy } from '../../workflow/runtime/run-budget.js';
 import { Args, Flags, type Interfaces } from '@oclif/core';
 import { WorkflowCommand } from '../../cli/workflow-command.js';
-import { eventsFlag, executeFlags } from '../../cli/execute-flags.js';
+import { eventsFlag, executeFlags, worktreePlan } from '../../cli/execute-flags.js';
 import { requestedFull } from '../../cli/workflow-errors.js';
 import { WorkflowExecutor } from '../../workflow/loader/executor.js';
 import {
@@ -34,6 +34,8 @@ export default class WorkflowResume extends WorkflowCommand {
     readonly 'notify-command': string | undefined;
     readonly events: string | undefined;
     readonly 'wait-mode': 'suspend' | 'block' | undefined;
+    readonly 'worktree-keep': 'all' | 'failed' | 'none' | undefined;
+    readonly 'worktree-root': string | undefined;
     readonly 'strict-replay': boolean | undefined;
   }> = {
     'max-child-depth': Flags.integer({
@@ -51,6 +53,14 @@ export default class WorkflowResume extends WorkflowCommand {
     'wait-mode': Flags.option({ options: ['suspend', 'block'] as const })({
       description:
         'Suspend long waits or keep waiting in this process; omitted uses the mode the run last executed with (default suspend)',
+    }),
+    'worktree-keep': Flags.option({ options: ['all', 'failed', 'none'] as const })({
+      description:
+        'Worktree cache retention; omitted uses the value the run last executed with, else the definition (default failed)',
+    }),
+    'worktree-root': Flags.string({
+      description:
+        'Worktree cache container, resolved against cwd; omitted uses the value the run last executed with. A run keeps the root it first used',
     }),
     'state-dir': Flags.directory({
       description:
@@ -99,7 +109,9 @@ export default class WorkflowResume extends WorkflowCommand {
     this.logToStderr(`Run ID: ${args.runId}\nState directory: ${stateDir}`);
     let runBudget: Partial<RunBudgetPolicy>;
     let harness: HarnessSelection;
+    let worktrees: ReturnType<typeof worktreePlan>;
     try {
+      worktrees = worktreePlan(flags['worktree-keep'], flags['worktree-root'], process.cwd());
       runBudget = parseRunBudget(flags['max-run-cost-usd'], flags['max-run-agent-attempts']);
       harness = await readHarnessSelection(
         flags.harness ?? 'cli',
@@ -126,6 +138,7 @@ export default class WorkflowResume extends WorkflowCommand {
       ...(flags['notify-command'] === undefined ? {} : { notifyCommand: flags['notify-command'] }),
       ...events.plan,
       ...(flags['wait-mode'] === undefined ? {} : { waitMode: flags['wait-mode'] }),
+      ...worktrees,
       runId: args.runId,
       stateDir: stateDir,
       harness,

@@ -2,8 +2,9 @@
 // every CLI execution and inherited by a resume that does not repeat the flags. These tests drive
 // WorkflowExecutor with plans shaped like the CLI's, a fixture harness and a virtual clock; no agent
 // process starts except the repository's fake claude where a test switches to the CLI harness.
+import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { lstat, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -66,7 +67,7 @@ function virtualClock() {
   return { clock, state };
 }
 
-async function setup(body: 'sleep' | 'ask' = 'sleep') {
+async function setup(body: 'sleep' | 'ask' | 'worktree' = 'sleep') {
   const root = await mkdtemp(join(tmpdir(), 'choir-launch-policy-'));
   roots.push(root);
   await symlink(join(project, 'node_modules'), join(root, 'node_modules'));
@@ -82,14 +83,29 @@ export default defineWorkflow({ name: 'launch-policy', version: '1', input: z.nu
   strictProfiles: false,
   run: async (ctx) => {
     ${
-      body === 'sleep'
-        ? "await ctx.sleep('nap', 1500);"
-        : "await ctx.ask('gate', { prompt: 'Go?', schema: z.boolean() });"
+      body === 'ask'
+        ? "await ctx.ask('gate', { prompt: 'Go?', schema: z.boolean() });"
+        : "await ctx.sleep('nap', 1500);"
+    }
+    ${
+      body === 'worktree'
+        ? `const tree = await ctx.worktree('cache');
+    await ctx.exec('edit', [${JSON.stringify(process.execPath)}, '-e', "require('node:fs').writeFileSync('x.txt', 'x')"], { worktree: tree });`
+        : ''
     }
     return (await ctx.claude.text('call', { prompt: 'hi' })).output;
   } });
 `,
   );
+  if (body === 'worktree') {
+    // Isolation needs a committed repository; the state and dependency link stay ignored.
+    await writeFile(join(root, '.gitignore'), 'node_modules\nstate/\n');
+    const git = (...args: string[]) =>
+      execFileSync('git', ['-c', 'core.hooksPath=/dev/null', ...args], { cwd: root });
+    git('init', '-q');
+    git('add', '--all');
+    git('-c', 'user.name=t', '-c', 'user.email=t@localhost', 'commit', '-qm', 'base');
+  }
   const analysis = analyzeTypecheckEntrypoint(file, root);
   if (!analysis.ok) throw new Error(analysis.error.message);
   const stateDir = join(root, 'state');
@@ -335,5 +351,49 @@ describe('sticky launch policy', { timeout: 60_000 }, () => {
     const bytes = await readFile(join(f.stateDir, 'run', 'run.json'), 'utf8');
     expect(bytes).not.toContain('sekrit-value');
     expect(bytes).not.toContain('secret-claude');
+  });
+  it('records --worktree-keep and --worktree-root, inherits them field by field on resume and tick, and emits them', async () => {
+    const f = await setup('worktree');
+    const caches = await mkdtemp(join(tmpdir(), 'choir-launch-caches-'));
+    roots.push(caches);
+    const flags = ['--worktree-keep', 'all', '--worktree-root', caches];
+    // 1. execute --worktree-keep all --worktree-root CACHES suspends on the wait.
+    const first = ok(await f.execute({ worktrees: { keep: 'all', root: caches } }));
+    expect(first.status).toBe('suspended');
+    expect((await f.record()).launch?.policy?.worktrees).toEqual({ keep: 'all', root: caches });
+    expect(first.resumeCommand?.slice(-flags.length)).toEqual(flags);
+    // 2. A tick passes no worktree flags and keeps the recorded ones.
+    const ticked = ok(await f.resume({}, { waitModeOnce: 'suspend' }));
+    expect(ticked.status).toBe('suspended');
+    expect(ticked.resumeCommand?.slice(-flags.length)).toEqual(flags);
+    // 3. An explicit keep replaces only that field; the root is inherited.
+    const replaced = ok(await f.resume({}, { worktrees: { keep: 'none' } }));
+    expect(replaced.status).toBe('suspended');
+    expect((await f.record()).launch?.policy?.worktrees).toEqual({ keep: 'none', root: caches });
+    expect(replaced.resumeCommand?.slice(-4)).toEqual([
+      '--worktree-keep',
+      'none',
+      '--worktree-root',
+      caches,
+    ]);
+    // 4. A flagless resume runs the isolated exec under the inherited root and keep: none.
+    f.state.mode = 'advance';
+    const completed = ok(await f.resume());
+    expect(completed.status).toBe('completed');
+    expect(completed.worktrees?.root).toBe(await realpath(caches));
+    const cachePaths = Object.values(completed.worktrees?.caches ?? {});
+    expect(cachePaths.length).toBe(1);
+    expect(cachePaths[0]?.state).toBe('removed');
+    await expect(lstat(cachePaths[0]?.path ?? '')).rejects.toThrow();
+    expect((await f.record()).launch?.policy?.worktrees).toEqual({ keep: 'none', root: caches });
+  });
+
+  it('records no worktree field without the flags and refuses a relative root from a plan', async () => {
+    const f = await setup();
+    expect(ok(await f.execute()).status).toBe('suspended');
+    expect((await f.record()).launch?.policy).not.toHaveProperty('worktrees');
+    // A relative root from a plan is refused before anything runs.
+    const refused = await f.resume({}, { worktrees: { root: 'relative' } });
+    expect(refused).toMatchObject({ ok: false, code: 'usage.flag' });
   });
 });
