@@ -274,6 +274,35 @@ always refused with `usage.flag`, because the runner's stdout is the launch resu
 passes `--events FILE` to its runner unchanged. `--events FILE` with `--json` leaves the stdout
 document exactly as it is without the flag.
 
+## Event follower
+
+`workflow events RUN [--follow] [--from-start | --after-execution N] [--interval D] [--timeout D] [--wait-created D] [--state-dir DIR] [--json]`
+prints a run's compact event lines (the [event stream](#event-stream) shape, at most 512 bytes each)
+on stdout, derived from the persisted record without importing the workflow, so it works after the
+workflow file moved or stopped compiling. See
+[following a run without its events file](observability.md#following-a-run-without-its-events-file)
+for what the record can and cannot supply.
+
+- Without `--follow` it prints the record's lines once (all of them, or only those of executions
+  after `N` with `--after-execution N`) and exits 0, like non-watching `inspect`.
+- With `--follow` it starts from the current end: the first read prints nothing, and each later read
+  prints the new lines as soon as it derives them, one write per line. `--from-start` prints the
+  whole record first. `--after-execution N` prints only entries recorded by executions after `N` and
+  ignores a terminal status until a later execution reaches one; pass the `execution` of a suspended
+  snapshot so a follower started beside `answer --resume` waits for the resumed execution instead of
+  stopping on the old `suspended` status. An attempt saved before executions were recorded counts as
+  earlier.
+- `--follow` exits like `inspect --watch` once the run is terminal: 0 completed, 1 failed, 75
+  suspended, 130 cancelled, 3 stale. `--interval`, `--timeout` (exit 79, `watch.timeout`) and
+  `--wait-created` (exit 66, `watch.record_not_created`) have the watch's syntax, range and rules;
+  without `--wait-created` a missing record fails at once with `run.not_found` (exit 3).
+  Interrupting the follower exits 130, and so does a reader that closes the pipe.
+- Output is always JSONL. `--json` only turns a failure into a `workflow.error` document on stdout
+  (with the compact `summary`, never the whole record); without it the failure message goes to
+  stderr. `--from-start` with `--after-execution`, a negative `N`, and `--interval`, `--timeout` or
+  `--wait-created` without `--follow` are `usage.flag` (exit 2).
+- `--log-level debug` reports each read on stderr (`Events: read run …`).
+
 ## Next commands
 
 Every failure document has a top-level `next` array, and `inspect --json --summary` (and

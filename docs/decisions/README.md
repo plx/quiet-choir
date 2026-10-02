@@ -78,3 +78,5 @@ part of the documentation.
 - [0036: Detached start reports a run only when its runner owns the record](0036-detached-start.md)
 
 - [0037: A compact JSONL event stream behind --events](0037-compact-event-stream.md)
+
+- [0038: A code-free event follower derived from the run record](0038-code-free-event-follower.md)
