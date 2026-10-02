@@ -2,6 +2,20 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- Recovery hints by typed cause (behavior change in `recoveryHint` and failure messages; no identity
+  or checkpoint format change): the saved `recoveryHint` now follows the failure's typed cause
+  instead of always advertising `--resume --accept-code-change`. A missing grant suggests
+  `--resume --grant <profile>`; a replay divergence names a value computed in the body (use
+  `ctx.now` or `ctx.step`), `--fork-from` and `--resume --strict-replay`; a configuration or
+  authoring failure keeps the re-finalize text when all recorded work is terminal and otherwise
+  suggests fixing, then resuming; an effect failure or a cancellation gets a new plain-resume hint,
+  which the CLI appends to `workflow.failed` messages. A run that recorded no step or map, and any
+  dry-run, gets no hint, and the CLI no longer appends a run's saved hint to a refusal such as
+  `run.incompatible`. `hasTerminalOutcomes`, and so check-resume's `refinalizable`, is false for a
+  failed run with nothing recorded. `RootCause` (public type) gains an optional `effect`, the root
+  step's call-site effect kind, so `WorkflowRunError` names it (for example `(claude)` or
+  `(read-file)`) instead of `(unknown)` when the failing step has no record; older records still
+  load. See the [ADR 0006 amendment](docs/decisions/0006-code-change-recovery.md).
 - `errorKind` and `retryable` in failure output (additive; no identity or checkpoint format change):
   `rootCause` gains an optional `errorKind`, the root effect's classified kind, null for a body
   failure or interruption. Failure documents add `errorKind` and `retryable` to each `failedSteps[]`

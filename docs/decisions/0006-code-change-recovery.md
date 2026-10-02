@@ -98,3 +98,20 @@ preflight reads without the writer lock, so like check-resume it is a snapshot, 
 against concurrent writers. The workflow body, but no unfinished callback, runs once more per
 accepted resume. Embedded `runWorkflow({ acceptCodeChange: true })` callers get the typed
 `StepIdentityChangedError` cause but no preflight.
+
+## Amendment: recovery hints by typed cause (#276)
+
+The saved `recoveryHint` advertised `--accept-code-change` whenever all recorded work was terminal,
+which was vacuously true with nothing recorded and wrong for a grant failure or a nondeterministic
+replay divergence. The runner now classifies the failure from typed errors and the saved record,
+never from message text: a missing grant (`GrantRequiredError`, a `ConfigurationError`), a replay
+divergence (`ReplayDivergenceError` or `StepIdentityChangedError`), another configuration failure, a
+cancelled run, a recorded effect failure, or otherwise an authoring failure. The pure
+`recovery-hint.ts` chooses the text. A grant failure names `--resume --grant`; a divergence names
+`--strict-replay` and `--fork-from` and, with unchanged source, a value computed in the body outside
+`ctx.now` or `ctx.step`; only a configuration or authoring failure mentions `--accept-code-change`,
+keeping the re-finalize text when all recorded work is terminal; an effect failure or a cancellation
+gets a plain resume. A run with no recorded step or map, and a dry-run, get no hint, and
+`hasTerminalOutcomes` (and so check-resume's `refinalizable`) is false for a run with nothing
+recorded. The CLI appends the hint only to the invocation's own `WorkflowRunError`, never to a
+refusal or a dry-run, and a divergence refusal still never advertises the path it refused.
