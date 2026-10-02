@@ -261,3 +261,7 @@ operator hints, not a delivery service. For example
 desktop notifier or HTTP command; quiet-choir ships no messaging integration. Business messages
 belong in explicit idempotent workflow steps, and polling replies must validate the expected
 author's authority before treating them as approval.
+
+For a filterable stream of every step, phase, log, wait and run transition, use
+[`--events FILE`](observability.md#event-stream) instead: one bounded JSON line per event, appended
+to an owner-only file without running a command.

@@ -76,3 +76,5 @@ part of the documentation.
 - [0035: Sticky launch policy in the run's launch metadata](0035-sticky-launch-policy.md)
 
 - [0036: Detached start reports a run only when its runner owns the record](0036-detached-start.md)
+
+- [0037: A compact JSONL event stream behind --events](0037-compact-event-stream.md)

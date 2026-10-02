@@ -77,6 +77,64 @@ stderr warning. JSON returns `{ kind: 'workflow.list.result', ok: true, stateDir
 returns whole summary objects. A missing state directory gives an empty list. Neither list nor watch
 imports source.
 
+## Event stream
+
+`--events FILE` on `workflow execute`, `start`, `resume`, `tick` and `answer --resume` appends one
+compact JSON line per step, phase, log, wait and run event, so a host can follow a run with a
+line-buffered filter instead of polling snapshots. `--events -` writes the lines to stdout instead
+(not on `start`, and not with `--json`; see [the CLI contract](cli-contract.md#event-stream)).
+
+```sh
+quiet-choir workflow execute review.workflow.ts --run-id review-42 --events /abs/review-42.events.jsonl
+tail -n +1 -F /abs/review-42.events.jsonl | grep --line-buffered '"ev":"step.failed"'
+```
+
+```json
+{
+  "t": "2026-10-01T12:00:03.512Z",
+  "run": "review-42",
+  "ev": "step.failed",
+  "step": "review/2",
+  "attempt": 1,
+  "harness": "claude",
+  "ms": 5120,
+  "phase": "verify"
+}
+```
+
+| Field     | Meaning                                                                                                                                                                         |
+| --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `t`       | ISO event time                                                                                                                                                                  |
+| `run`     | Run ID                                                                                                                                                                          |
+| `ev`      | Event type                                                                                                                                                                      |
+| `step`    | Full step ID; on `run.failed`, the root effect when known                                                                                                                       |
+| `attempt` | Persisted attempt count, on `step.failed` and `step.settled` only                                                                                                               |
+| `harness` | The event's harness, or the one last seen on an agent event for this step in this process                                                                                       |
+| `ms`      | Step events: time since the step's latest start in this process. Terminal run events: time since this execution's `run.started`. Omitted when no start was seen in this process |
+| `costUsd` | Reported cost of a completed agent step, when known                                                                                                                             |
+| `phase`   | Phase at the call site                                                                                                                                                          |
+| `msg`     | The run error, phase title or lifecycle message; for `log`, the message plus the compact JSON of its data; for `wait.opened`, the compact JSON of the question                  |
+
+Fields are written in this order, and absent or null fields are omitted. The written types are
+`run.started`, `run.completed`, `run.failed`, `run.cancelled`, `run.suspended`, `step.completed`,
+`step.failed`, `step.settled`, `wait.opened`, `phase` and `log`; agent admission and progress,
+child, `step.started` and `step.cancelled` events are not written. `msg` is cut at a code point with
+a trailing `…` to about 200 bytes, so a typical line is near 300 bytes, and no line exceeds **512
+bytes** (UTF-8, without the newline): a longer line shrinks `msg` further, then shortens `step` and
+`phase` in the middle, then `run`. A line carries no step error text; read it from `inspect`.
+
+Replay echoes are dropped: a resume does not write `step.replayed`, `step.reused` or a replayed
+phase or log entry, because the earlier execution already wrote them to the same file. Each
+execution writes its own `run.started` and terminal run line.
+
+The file is opened for append and created owner-only (0600); an existing file keeps its mode, so use
+a new path or one in an owner-only directory. Each line is one write, flushed at once without an
+fsync: the stream is an observation, not durable state. If the file cannot be opened or a write
+fails, the command logs one `Events: …; further events are not written.` warning and the run's
+outcome and exit code are unchanged. The flag is per invocation and is not saved with the run: pass
+it again to every `resume`, `tick` and `answer --resume` that should continue the stream. It works
+with `--dry-run`, for rehearsing a filter. See [ADR 0037](decisions/0037-compact-event-stream.md).
+
 ## Phases and logs
 
 ```ts
