@@ -209,11 +209,12 @@ export default class WorkflowExecute extends WorkflowCommand {
   /** Print a rehearsal's warnings and one-line summary to stderr, on success and failure alike. */
   private rehearsalSummary(report: RehearsalReport): void {
     for (const warning of report.warnings) this.logToStderr(`Warning: ${warning}`);
-    const commands = (source: 'synthesized' | 'fixture'): string =>
+    const commands = (source: 'synthesized' | 'fixture' | 'live'): string =>
       String(report.commands.filter((entry) => entry.outputSource === source).length);
+    const live = commands('live');
     const isolated = report.calls.filter((call) => call.worktree?.synthesized).length;
     this.logToStderr(
-      `Rehearsal: ${String(report.calls.length)} calls; ${commands('synthesized')} synthesized and ${commands('fixture')} fixture commands; nominal Claude ceiling $${String(report.nominalClaudeCeilingUsd)}; ${String(report.replays.length)} replayed effects${isolated > 0 ? `; ${String(isolated)} synthesized isolated calls` : ''}${report.merges.length > 0 ? `; ${String(report.merges.length)} synthesized merges` : ''}.`,
+      `Rehearsal: ${String(report.calls.length)} calls; ${commands('synthesized')} synthesized and ${commands('fixture')} fixture commands${live === '0' ? '' : `; ${live} live observer commands`}; nominal Claude ceiling $${String(report.nominalClaudeCeilingUsd)}; ${String(report.replays.length)} replayed effects${isolated > 0 ? `; ${String(isolated)} synthesized isolated calls` : ''}${report.merges.length > 0 ? `; ${String(report.merges.length)} synthesized merges` : ''}.`,
     );
   }
 }

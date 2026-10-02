@@ -45,6 +45,34 @@ export async function prepareExec(
   return { settings, summary, env, input };
 }
 
+/** Normalized inputs of one command, as {@link prepareExec} returns them. @internal */
+export type PreparedExec = Awaited<ReturnType<typeof prepareExec>>;
+
+/**
+ * The live request for a prepared command, shared by the `ctx.exec` effect and a callback's
+ * `context.exec`. `schema` is the output's JSON Schema for `exec.json`, or null for plain exec.
+ * @internal
+ */
+export function processRequest(
+  prepared: PreparedExec,
+  limits: { readonly cwd: string; readonly timeoutMs: number; readonly maxOutputBytes: number },
+  schema: JsonValue | null,
+  nested = false,
+): ProcessRunRequest {
+  return {
+    command: prepared.summary.command,
+    cwd: limits.cwd,
+    env: prepared.env,
+    inheritEnv: prepared.summary.inheritEnv,
+    input: prepared.input,
+    timeoutMs: limits.timeoutMs,
+    maxOutputBytes: limits.maxOutputBytes,
+    capture: schema === null ? 'truncate' : 'error',
+    schema,
+    ...(nested ? { nested: true } : {}),
+  };
+}
+
 /** Execute and validate inside the runtime's single tracked effect. @internal */
 export async function executeCommand<T>(
   runner: ProcessRunner | undefined,

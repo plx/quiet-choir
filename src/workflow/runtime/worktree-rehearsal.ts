@@ -68,7 +68,10 @@ export class WorktreeRehearsal {
     runner: ProcessRunner | undefined,
     private readonly policy: WorktreePolicy,
     private readonly save: () => Promise<void>,
-    private readonly invocation: (id: string, context: StepContext) => HarnessInvocation,
+    private readonly invocation: (
+      id: string,
+      context: Omit<StepContext, 'exec'>,
+    ) => HarnessInvocation,
     private readonly runSignal?: AbortSignal,
   ) {
     this.git = runner === undefined ? undefined : new WorktreeGit(runner, true);
@@ -153,7 +156,7 @@ export class WorktreeRehearsal {
     id: string,
     isolation: WorktreeIsolation,
     logicalCwd: string,
-    context: StepContext,
+    context: Omit<StepContext, 'exec'>,
     step: StepRecord,
     attempt: AttemptRecord,
   ): Promise<{ lease: WorktreeLease; event: RehearsalWorktreeEvent }> {
@@ -219,7 +222,7 @@ export class WorktreeRehearsal {
     id: string,
     inputs: readonly WorktreeChange[],
     options: MergeOptions,
-    context: StepContext,
+    context: Omit<StepContext, 'exec'>,
   ): Promise<{ result: MergeResult; event: RehearsalWorktreeEvent }> {
     const target = options.target ?? 'ref';
     const kind = typeof target === 'object' ? 'branch' : target;

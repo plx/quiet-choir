@@ -52,8 +52,11 @@ export interface WorktreeCreateOptions {
   readonly base?: WorktreeBase;
 }
 
-/** Live dependency-provisioning context; setup is not a durable workflow callback. */
-export interface WorktreeSetupContext extends StepContext {
+/**
+ * Live dependency-provisioning context; setup is not a durable workflow callback, so it has no
+ * `exec`.
+ */
+export interface WorktreeSetupContext extends Omit<StepContext, 'exec'> {
   /** Absolute root of the isolated checkout. */
   readonly path: string;
   /** Pinned commit used to prepare this checkout. */

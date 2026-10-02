@@ -159,7 +159,9 @@ usually leaving `running` for tick's stale recovery. The cancelled owner itself 
 
 `execute --dry-run --json` returns a `workflow.rehearsal` document with `ok:true`, calls (each with
 `worktree`, `{synthesized: true, base, baseSource}` for a synthesized isolated call or null),
-commands (each with `outputSource`, the matched exec `fixtureIndex` or null, and `error`), `merges`
+commands (each with `stepId`, `parentStepId` (the step or wait whose callback issued it through
+`context.exec`, or null for `ctx.exec`), `outputSource` (`synthesized`, `fixture`, or `live` for an
+observer's `live: true` command), the matched exec `fixtureIndex` or null, and `error`), `merges`
 (synthesized `ctx.merge` effects with `stepId`, `synthesized`, `commit`, `inputs`, `target` and
 `baseSource`), replays, provider counts, nominal Claude ceiling, `staleExecFixtures`, warnings, and
 its in-memory run record. Failures retain the usual error document and exits, adding `rehearsal` and

@@ -40,12 +40,20 @@ in the wait request, and both may change on resume.
 
 ## Checks and outcomes
 
-`observe` receives `{ signal, idempotencyKey, attempt, previous }` and returns either
+`observe` receives `{ signal, idempotencyKey, attempt, cwd, exec, previous }` and returns either
 `{ done: true, value }` or `{ done: false, note? }`. It must read external state without writes,
 nested context operations, or cached answers. The engine prohibits durable and observational context
 operations inside observers; it cannot prevent arbitrary filesystem/network writes by trusted
 JavaScript. Parse terminal results through the supplied Zod schema. Unknown object keys are
 projected away before lossless JSON validation.
+
+Run commands such as `gh pr view` through `context.exec(argv, options)` or
+`context.exec.json(argv, { schema })` rather than spawning them yourself. They use the run's process
+runner, are owned by the wait for orphan recovery, stop with the observation's signal (so
+`observeTimeoutMs` and the deadline bound them), and are rehearsed and fixture-answered like
+`ctx.exec`. They are not durable: every check runs them again. See
+[commands inside a callback or observer](command-effects.md#commands-inside-a-callback-or-observer).
+`{ live: true }` keeps one real under `--dry-run`.
 
 `previous` is the wait's persisted progress before this check: `previous.note` is the latest
 nonterminal note, `previous.checks` the number of earlier checks (tolerated errors included), and
@@ -241,9 +249,11 @@ observation error with its `consecutive` count, or null), optional signal, answe
 `runStatus`, `delivery` (null for a poll or deadline with no signal) and `next`; see the
 [pending row contract](cli-contract.md). A dry-run skips timing-only waits and performs a poll's
 initial read-only observation, unless a `--stub-steps` pattern matches the wait ID: then the
-observer never runs and the wait completes with a synthesized value parsed by the poll schema.
-Unresolved external waits suspend. Rehearsals never fabricate signals and do not invoke notification
-commands.
+observer never runs and the wait completes with a synthesized value parsed by the poll schema. The
+observer's `context.exec` commands are synthesized or answered by exec fixture rules during that
+observation; a call with `live: true` runs the real read-only command and is listed in the
+rehearsal's `commands` with `outputSource: 'live'`. Unresolved external waits suspend. Rehearsals
+never fabricate signals and do not invoke notification commands.
 
 ## Operator notifications
 

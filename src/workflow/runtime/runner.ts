@@ -50,9 +50,10 @@ import {
   readFileResultSchema,
   writeFileResultSchema,
 } from './files.js';
-import { executeCommand, prepareExec } from './exec.js';
+import { executeCommand, prepareExec, processRequest } from './exec.js';
 import { execIdentityKey, type InternalExecIdentity } from './exec-identity.js';
-import { execResultSchema } from './exec-schema.js';
+import { execResultSchema, pollExecOptionsSchema, stepExecOptionsSchema } from './exec-schema.js';
+import { createStepExec, type StepExecDependencies, type StepExecHandle } from './step-exec.js';
 import { ExecError } from './exec-error.js';
 import type {
   Command,
@@ -1431,7 +1432,7 @@ export async function runWorkflow<
       if (closed) throw new Error('Workflow is closed; await all workflow operations.');
       if (inEffect.getStore())
         throw new Error(
-          'Nested durable steps are unsupported; compose steps in the workflow body.',
+          "Nested durable steps are unsupported; compose steps in the workflow body, or run a non-durable command with the callback's context.exec.",
         );
       signal.throwIfAborted();
       validateStepId(id, names.describe(id));
@@ -1774,7 +1775,7 @@ export async function runWorkflow<
               emit('step.started', id, step);
               const result = await inEffect.run(true, async () => {
                 let reporting = true;
-                const context: StepContext = {
+                const context: Omit<StepContext, 'exec'> = {
                   reportUsage: (usage) => {
                     if (
                       !reporting ||
@@ -1836,9 +1837,19 @@ export async function runWorkflow<
                     return transcriptFailure(error);
                   }
                 }
+                // Inner commands share the attempt signal and stop when the callback settles.
+                const actionCwd = lease ? lease.cwd : cwd;
+                const innerExec = stepExec({
+                  owner: { kind: 'step', id },
+                  cwd: actionCwd,
+                  attempt: step.attempts,
+                  signal,
+                  options: stepExecOptionsSchema,
+                  active: () => !closed,
+                });
                 try {
                   return await action(
-                    lease ? { ...context, cwd: lease.cwd } : context,
+                    { ...context, cwd: actionCwd, exec: innerExec.exec },
                     step,
                     attemptRecord,
                     (release) => {
@@ -1849,6 +1860,9 @@ export async function runWorkflow<
                   );
                 } finally {
                   reporting = false;
+                  await innerExec.close(
+                    new Error(`Step ${id}: its callback settled; inner command terminated.`),
+                  );
                 }
               });
               if (transcript) {
@@ -2089,7 +2103,30 @@ export async function runWorkflow<
       }
     }
 
-    function processInvocation(id: string, context: StepContext): HarnessInvocation {
+    /**
+     * Bind a callback's or observer's non-durable `context.exec` to this run's runners. A live
+     * observer call goes to processRunner only under a rehearsal, where the CLI supplies the real
+     * runner; otherwise it uses execRunner like every other command, so fixture rules still apply.
+     */
+    function stepExec(
+      binding: Omit<StepExecDependencies, 'invocation' | 'runner' | 'onSchema'>,
+    ): StepExecHandle {
+      return createStepExec({
+        ...binding,
+        invocation: (signal) =>
+          processInvocation(binding.owner.id, { signal, attempt: binding.attempt }),
+        runner: (live) =>
+          live && options.rehearsal !== undefined
+            ? options.processRunner
+            : (options.execRunner ?? options.processRunner),
+        onSchema: (schema) => options.rehearsal?.onSchema?.(binding.owner.id, schema),
+      });
+    }
+
+    function processInvocation(
+      id: string,
+      context: Pick<StepContext, 'signal' | 'attempt'>,
+    ): HarnessInvocation {
       return {
         signal: context.signal,
         runId: options.runId,
@@ -2176,17 +2213,16 @@ export async function runWorkflow<
           action: (context) =>
             executeCommand<T>(
               options.execRunner ?? options.processRunner,
-              {
-                command: prepared.summary.command,
-                cwd: prepared.settings.worktree === undefined ? prepared.summary.cwd : context.cwd,
-                env: prepared.env,
-                inheritEnv: prepared.summary.inheritEnv,
-                input: prepared.input,
-                timeoutMs: execution.policy.timeoutMs ?? 300_000,
-                maxOutputBytes: execution.policy.maxOutputBytes ?? 1_048_576,
-                capture: schema ? 'error' : 'truncate',
-                schema: schema ? jsonSchema : null,
-              },
+              processRequest(
+                prepared,
+                {
+                  cwd:
+                    prepared.settings.worktree === undefined ? prepared.summary.cwd : context.cwd,
+                  timeoutMs: execution.policy.timeoutMs ?? 300_000,
+                  maxOutputBytes: execution.policy.maxOutputBytes ?? 1_048_576,
+                },
+                schema ? jsonSchema : null,
+              ),
               processInvocation(id, context),
               prepared.summary.okExitCodes,
               schema,
@@ -2808,7 +2844,25 @@ export async function runWorkflow<
         options.rehearsal?.onSchema?.(id, source.schema);
         const stub = options.rehearsal?.localStep?.(id, schemaJson(source.schema));
         if (stub !== undefined) return Promise.resolve({ done: true, value: stub.output });
-        return inEffect.run('poll', () => source.observe(context));
+        // Inner commands stop with the observation's own signal (deadline, observeTimeoutMs,
+        // cancellation) and when the observation settles.
+        const innerExec = stepExec({
+          owner: { kind: 'wait', id },
+          cwd: context.cwd,
+          attempt: context.attempt,
+          signal: context.signal,
+          options: pollExecOptionsSchema,
+          active: () => !closed,
+        });
+        return inEffect.run('poll', async () => {
+          try {
+            return await source.observe({ ...context, exec: innerExec.exec });
+          } finally {
+            await innerExec.close(
+              new Error(`Wait ${id}: its observation settled; inner command terminated.`),
+            );
+          }
+        });
       },
       isFatal: (error) => origins.isFatal(error),
       guard: (action) => inEffect.run('poll', action),

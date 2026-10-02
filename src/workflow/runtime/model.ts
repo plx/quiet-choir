@@ -23,7 +23,7 @@ import type {
   WriteFileOptions,
   WriteFileResult,
 } from './file-model.js';
-import type { ExecFunction } from './exec-model.js';
+import type { ExecFunction, StepExecFunction } from './exec-model.js';
 import type { AskOptions, ApproveOptions, Approval } from './question-model.js';
 import type {
   WaitSources,
@@ -407,6 +407,15 @@ export interface StepContext {
   readonly idempotencyKey: string;
   /** Total persisted attempt number, including previous resumes. */
   readonly attempt: number;
+  /**
+   * Run a command through the run's process runner while this callback is active, without a step
+   * ID: `exec(command, options?)` and `exec.json(command, { schema })`. It is not a durable effect:
+   * no checkpoint or step record is written and every rerun of this step runs it again (at least
+   * once). The child is owned under this step and attempt for orphan recovery, receives this step's
+   * `QUIET_CHOIR_*` metadata, and is synthesized or fixture-answered under a rehearsal like
+   * `ctx.exec`. A failure throws an `ExecError` into this attempt unless `onError: 'return'`.
+   */
+  readonly exec: StepExecFunction;
 }
 
 /** A local durable effect. Keep nondeterminism and side effects inside its callback. */

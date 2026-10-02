@@ -10,6 +10,7 @@ import {
   z,
   type ProcessRunner,
   type RunOptions,
+  type StepContext,
   type WorkflowContext,
 } from '../src/index.js';
 import { decision } from '../src/integrations/decision.js';
@@ -141,6 +142,43 @@ describe('built-in step identity', () => {
       },
       fingerprint: '4cf8b45f2059dd887e31d9b30a0acf2749c551650d47f96c5025a42196afcc7a',
     });
+  });
+});
+
+describe('steps whose callback runs context.exec', () => {
+  it('keep the plain step identity components; the command enters no identity', async () => {
+    const processRunner: ProcessRunner = {
+      run: () =>
+        Promise.resolve({
+          code: 0,
+          signal: null,
+          stdout: 'one',
+          stderr: '',
+          truncated: false,
+          durationMs: 1,
+        }),
+    };
+    const run = async (context: StepContext): Promise<string> =>
+      (await context.exec(['golden', 'arg'])).stdout;
+    const definition = workflow((ctx) =>
+      ctx.step('user', { input: null, schema: z.string(), run }),
+    );
+    await runWorkflow(definition, options({ processRunner }));
+    const steps = await recorded();
+    // The same components and values as the plain user step pinned above, except the callback
+    // text; no exec summary or command component is added.
+    pinned('ctx.step with context.exec', steps['user'], {
+      identity: {
+        ...sharedComponents,
+        callback: digest(Function.prototype.toString.call(run)),
+        input: '74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b',
+        schema: '42c50030e717f64ef6435e786fcb4b3dc38968555e23764a7902b7e5032bc966',
+        version: '74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b',
+      },
+      fingerprint: steps['user']?.fingerprint,
+    });
+    expect(steps['user']?.fingerprint).toBe(digest(steps['user']?.identity));
+    expect(Object.keys(steps)).toEqual(['user']);
   });
 });
 
