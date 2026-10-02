@@ -28,7 +28,8 @@ interface MapDependencies {
   readonly launch: <T>(
     id: string,
     work: () => T | PromiseLike<T>,
-    effectOperation?: boolean,
+    /** Call-site effect kind, or null for a map, scope, phase or child operation. */
+    effect: string | null,
   ) => Promise<T>;
   readonly scopes: ExecutionScopes;
   readonly names: NameScopes;
@@ -371,7 +372,7 @@ export function createMap(dependencies: MapDependencies): WorkflowContext['map']
         }
         return results as U[] | Settled<U, MapStepError>[];
       },
-      false,
+      null,
     );
   }
 

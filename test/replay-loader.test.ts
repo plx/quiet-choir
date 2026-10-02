@@ -370,6 +370,55 @@ return approved ? scan.output : 'rejected';
     expect(await readFile(effectPath, 'utf8')).toBe('effect\n');
   });
 
+  it('gives no resume advice for a dry-run failure or a refusal, and appends only a saved failure hint', async () => {
+    await writeFile(file, source(undefined, '1', 'return undefined as unknown as string;'));
+    const dry = await execute('rehearsed', { dryRun: true });
+    if (dry.ok) throw new Error(JSON.stringify(dry));
+    expect(dry.message).not.toContain('--resume');
+    expect(dry.message).not.toContain('accept-code-change');
+    expect(dry.next ?? []).toEqual([]);
+    expect(dry.run?.recoveryHint).toBeUndefined();
+
+    const failed = await execute('source');
+    if (failed.ok) throw new Error(JSON.stringify(failed));
+    expect(failed.message).toContain('re-finalize');
+    expect((await readRun({ stateDir, runId: 'source' })).recoveryHint).toContain('re-finalize');
+
+    // An effect failure appends a plain resume; a later refusal carries its own advice instead.
+    const plain = 'Resume with --resume once the cause is fixed or has passed';
+    await writeFile(file, source('() => { throw new Error("down"); }'));
+    const down = await execute('effect');
+    if (down.ok) throw new Error(JSON.stringify(down));
+    expect(down.message).toContain(plain);
+    expect(down.message).not.toContain('accept-code-change');
+    expect((await readRun({ stateDir, runId: 'effect' })).recoveryHint).toContain(plain);
+    await writeFile(file, source('() => { throw new Error("down"); }', '2'));
+    const refused = await execute('effect', { resume: true });
+    if (refused.ok) throw new Error(JSON.stringify(refused));
+    expect(refused.code).toBe('run.incompatible');
+    expect(refused.message).not.toContain(plain);
+  });
+
+  it('advises --grant, not --accept-code-change, for a grant failure', async () => {
+    await writeFile(
+      file,
+      `import { defineWorkflow, z } from ${JSON.stringify(join(repository, 'src/index.js'))};
+export default defineWorkflow({ name: 'loader-grant', version: '1', input: z.null(), output: z.string(), async run(ctx) {
+await ctx.step('prepare', { input: null, schema: z.string(), run: () => 'ready' });
+return (await ctx.claude.text('edit', { prompt: 'x', profile: 'edit' })).output;
+}});`,
+    );
+    const fixtures = { version: 1 as const, calls: [], unmatched: 'synthesize' as const };
+    const failed = await execute('grant', {
+      harness: { kind: 'fixture' as const, config: {}, fixtures },
+    });
+    if (failed.ok) throw new Error(JSON.stringify(failed));
+    expect(failed.code).toBe('workflow.failed');
+    expect(failed.message).toMatch(/^Step edit \(claude\) failed:/u);
+    expect(failed.message).toContain('--resume --grant edit');
+    expect(failed.message).not.toContain('accept-code-change');
+  });
+
   it('reports source changes on a completed run instead of silently returning stale final output', async () => {
     const prefix = "import { appendFileSync } from 'node:fs';\n";
     const callback = `() => { appendFileSync(new URL('./effects', import.meta.url), 'effect\\n'); return 'one'; }`;

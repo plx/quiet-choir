@@ -1,6 +1,7 @@
 import type { HarnessDeclaration } from './harness-model.js';
 import { commonControlFields, claudeControlFields, codexControlFields } from './agent-controls.js';
 import { validateAgentOptions } from './options.js';
+import { GrantRequiredError } from './configuration-error.js';
 import { z } from 'zod';
 import type { AgentOptions, ClaudeOptions, CodexOptions, JsonValue } from './model.js';
 import type {
@@ -369,9 +370,7 @@ export function requireGrant(
     (grants.includes(profile.name) && pins[profile.name] === profileGrantDigest(profile))
   )
     return;
-  throw new Error(
-    `Profile ${profile.name} requires ${access} access. Retry with --grant ${profile.name}, --grant ${access}, or --grant all.`,
-  );
+  throw new GrantRequiredError(profile.name, access);
 }
 
 /** Resolve a call's role and semantics; raw capability calls still need class grants. @internal */

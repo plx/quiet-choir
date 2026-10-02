@@ -184,7 +184,7 @@ export class WorkflowRunError extends Error {
     super(
       stepId === null
         ? detail
-        : `Step ${stepId.length > 80 ? `${stepId.slice(0, 80)}…` : stepId} (${run.steps[stepId]?.harness ?? run.steps[stepId]?.kind ?? 'unknown'}) failed: ${detail}`,
+        : `Step ${stepId.length > 80 ? `${stepId.slice(0, 80)}…` : stepId} (${run.steps[stepId]?.harness ?? run.steps[stepId]?.kind ?? run.rootCause?.effect ?? 'unknown'}) failed: ${detail}`,
       { cause },
     );
     this.name = 'WorkflowRunError';
@@ -236,6 +236,33 @@ export class StepIdentityChangedError extends Error {
     this.stepId = details.stepId;
     this.components = Object.freeze([...details.components]);
     this.status = details.status;
+  }
+}
+
+/**
+ * A resumed body left the recorded replay path: strict replay stopped before a live step
+ * (`before-live`) or after a healed step (`healed`), or the body finished without visiting
+ * recorded steps (`skipped-steps`) or settled maps (`skipped-maps`). The runner reads `reason`
+ * to choose a recovery hint instead of parsing the message. @internal
+ */
+export class ReplayDivergenceError extends Error {
+  static {
+    brandError(this, 'ReplayDivergenceError');
+  }
+
+  /** Recognize an instance from any quiet-choir module instance, such as a CLI workflow's own import. */
+  public static override [Symbol.hasInstance](value: unknown): value is ReplayDivergenceError {
+    return isBranded(this, value);
+  }
+
+  /** Keep the divergence text exactly as the replay warning or skip check words it. */
+  public constructor(
+    /** Where replay left the recorded path. */
+    public readonly reason: 'before-live' | 'healed' | 'skipped-steps' | 'skipped-maps',
+    message: string,
+  ) {
+    super(message);
+    this.name = 'ReplayDivergenceError';
   }
 }
 

@@ -37,7 +37,8 @@ interface Dependencies {
   readonly used: Set<string>;
   readonly isInEffect: () => boolean;
   readonly context: () => WorkflowContext;
-  readonly launch: <T>(id: string, work: () => Promise<T>, effectOperation: boolean) => Promise<T>;
+  /** Launch an operation; `effect` is the call-site effect kind, null for a child frame. */
+  readonly launch: <T>(id: string, work: () => Promise<T>, effect: string | null) => Promise<T>;
   readonly save: () => Promise<void>;
   readonly isolatePhase: <T>(body: () => Promise<T>) => Promise<T>;
   readonly emit: (
@@ -311,7 +312,7 @@ export class RunChildren {
           throw cause;
         }
       },
-      false,
+      null,
     );
   }) as WorkflowContext['workflow'];
 

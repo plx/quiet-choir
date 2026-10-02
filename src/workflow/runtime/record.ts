@@ -379,7 +379,12 @@ export interface RunRecord {
   codeChanges?: CodeChange[];
   /** Replay-order warnings from the latest invocation. */
   replayWarnings?: string[];
-  /** Guidance when all recorded effects reached terminal outcomes before a tail/output failure. */
+  /**
+   * Recovery advice for a failed or cancelled run, chosen by its typed failure cause: `--grant` for
+   * a missing grant, `--strict-replay` for a replay divergence, re-finalizing with
+   * `--accept-code-change` for a configuration or authoring failure, or a plain resume. Absent when
+   * the run recorded nothing or was a dry-run.
+   */
   recoveryHint?: string;
   /** ISO creation timestamp. */
   createdAt: string;
@@ -708,6 +713,7 @@ const recordFieldsSchema = z.object({
       stepId: z.string().nullable(),
       error: z.string(),
       errorKind: errorKindSchema.nullable().optional(),
+      effect: z.string().nullable().optional(),
     })
     .nullable()
     .optional(),
@@ -987,8 +993,13 @@ export function isTerminalStep(step: StepRecord): boolean {
   return step.status === 'completed' || step.status === 'settled-failed';
 }
 
-/** Whether all recorded work can replay without executing an unfinished item/effect. @internal */
+/**
+ * Whether the run recorded at least one step or map and all of that work can replay without
+ * executing an unfinished item/effect. A record with nothing recorded has no outcomes to reuse, so
+ * this is false for it. @internal
+ */
 export function hasTerminalOutcomes(record: RunRecord): boolean {
+  if (!Object.keys(record.steps).length && !Object.keys(record.maps ?? {}).length) return false;
   const steps = new Set<string>();
   const maps = new Set<string>();
   for (const map of Object.values(record.maps ?? {})) {

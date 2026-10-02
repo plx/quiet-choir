@@ -302,6 +302,7 @@ it('drains late callback logs and keeps the original root cause by identity', as
     stepId: 'root',
     error: 'same message',
     errorKind: 'unknown',
+    effect: 'step',
   });
   expect(run.steps['late']?.status).toBe('completed');
   expect(run.events?.some((event) => event.message === 'late result')).toBe(true);

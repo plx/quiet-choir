@@ -7,6 +7,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 
 import {
   checkResume,
+  ConfigurationError,
   defineWorkflow,
   readRun,
   runWorkflow,
@@ -18,7 +19,7 @@ import {
   type WorkflowContext,
 } from '../src/index.js';
 import { findStepIdentityChange } from '../src/workflow/runtime/run-errors.js';
-import { lockRun } from '../src/workflow/runtime/store.js';
+import { hasTerminalOutcomes, lockRun } from '../src/workflow/runtime/store.js';
 
 let stateDir: string;
 const reply = {
@@ -513,5 +514,158 @@ it.each([false, true])(
     const saved = await readRun(options());
     expect(saved.replayWarnings?.[0]).toContain('first');
     if (strictReplay) expect(saved.steps['live-a']).toBeUndefined();
+    // The same source took a different path, so the hint blames a body-computed value even when
+    // the strict stop cancelled map siblings.
+    for (const phrase of ['ctx.now', 'ctx.step', '--strict-replay', '--fork-from source'])
+      expect(saved.recoveryHint).toContain(phrase);
+    expect(saved.recoveryHint).not.toContain('accept-code-change');
   },
 );
+
+const nondeterministicHint = (hint: string | undefined): void => {
+  for (const phrase of ['ctx.now', 'ctx.step', '--strict-replay']) expect(hint).toContain(phrase);
+  expect(hint).not.toContain('accept-code-change');
+};
+
+it.each([false, true])(
+  'advises against body-computed values when an unchanged source skips recorded steps (strictReplay: %s)',
+  async (strictReplay) => {
+    // A closure flag stands in for a value the body computes outside a durable effect.
+    let early = true;
+    let fail = true;
+    const definition = workflow(async (ctx) => {
+      if (early) await ctx.step('early', { input: null, schema: z.string(), run: () => 'e' });
+      await ctx.step('shared', { input: null, schema: z.string(), run: () => 's' });
+      if (fail) throw new Error('pause');
+      return ctx.step('late', { input: null, schema: z.string(), run: () => 'l' });
+    });
+    await expect(runWorkflow(definition, options())).rejects.toThrow('pause');
+    early = false;
+    fail = false;
+    const error: unknown = await runWorkflow(definition, {
+      ...options(),
+      resume: true,
+      strictReplay,
+    }).catch((cause: unknown) => cause);
+    expect(error).toBeInstanceOf(WorkflowRunError);
+    expect((error as Error).message).toContain(
+      strictReplay ? 'Replay divergence before live step late' : 'Replay skipped recorded steps',
+    );
+    nondeterministicHint((await readRun(options())).recoveryHint);
+  },
+);
+
+it('advises against body-computed values when strict replay stops after a healed step', async () => {
+  let attempt = 0;
+  const definition = workflow(async (ctx) => {
+    const flaky = ctx.step('flaky', {
+      input: null,
+      schema: z.string(),
+      run: () => {
+        attempt += 1;
+        if (attempt === 1) throw new Error('flaky');
+        return 'healed';
+      },
+    });
+    await ctx.step('other', { input: null, schema: z.string(), run: () => 'o' });
+    await flaky;
+    return ctx.step('after', { input: null, schema: z.string(), run: () => 'a' });
+  });
+  await expect(runWorkflow(definition, options())).rejects.toThrow('flaky');
+  expect((await readRun(options())).recoveryHint).toContain('Resume with --resume');
+  const error: unknown = await runWorkflow(definition, {
+    ...options(),
+    resume: true,
+    strictReplay: true,
+  }).catch((cause: unknown) => cause);
+  expect((error as Error).message).toContain('Healed step flaky now succeeded');
+  nondeterministicHint((await readRun(options())).recoveryHint);
+});
+
+it('advises against body-computed values when a completed step identity changes', async () => {
+  let stamp = 'monday';
+  let fail = true;
+  const definition = workflow(async (ctx) => {
+    await ctx.step('stamped', { input: stamp, schema: z.string(), run: () => 'done' });
+    if (fail) throw new Error('pause');
+    return 'ok';
+  });
+  await expect(runWorkflow(definition, options())).rejects.toThrow('pause');
+  stamp = 'tuesday';
+  fail = false;
+  const error: unknown = await runWorkflow(definition, { ...options(), resume: true }).catch(
+    (cause: unknown) => cause,
+  );
+  expect(findStepIdentityChange(error)?.stepId).toBe('stamped');
+  nondeterministicHint((await readRun(options())).recoveryHint);
+});
+
+it('saves no resume advice for a run that fails before recording anything', async () => {
+  const definition = workflow(() => Promise.reject(new Error('body bug')));
+  const error: unknown = await runWorkflow(definition, options()).catch((cause: unknown) => cause);
+  expect(error).toBeInstanceOf(WorkflowRunError);
+  expect((error as Error).message).not.toContain('--resume');
+  const saved = await readRun(options());
+  expect(saved.recoveryHint).toBeUndefined();
+  expect(hasTerminalOutcomes(saved)).toBe(false);
+  expect((await checkResume(definition, options())).refinalizable).toBe(false);
+});
+
+it('suggests a plain resume for an effect failure and re-finalizing for a later configuration failure', async () => {
+  let broken = true;
+  const failing = workflow(async (ctx) => {
+    await ctx.step('ok', { input: null, schema: z.string(), run: () => 'ok' });
+    return ctx.step('effect', {
+      input: null,
+      schema: z.string(),
+      run: () => {
+        if (broken) throw new Error('remote down');
+        return 'done';
+      },
+    });
+  });
+  await expect(runWorkflow(failing, options())).rejects.toThrow('remote down');
+  const hint = (await readRun(options())).recoveryHint;
+  expect(hint).toBe(
+    'Resume with --resume once the cause is fixed or has passed; completed steps are reused and the failed step runs again.',
+  );
+  expect(hint).not.toContain('accept-code-change');
+  broken = false;
+  expect((await runWorkflow(failing, { ...options(), resume: true })).output).toBe('done');
+
+  const configured = workflow(async (ctx) => {
+    await ctx.step('ok', { input: null, schema: z.string(), run: () => 'ok' });
+    throw new ConfigurationError('missing deploy target');
+  });
+  await expect(runWorkflow(configured, options('configured'))).rejects.toThrow(
+    'missing deploy target',
+  );
+  const refinalize = (await readRun(options('configured'))).recoveryHint;
+  expect(refinalize).toContain('All recorded work has terminal outcomes');
+  expect(refinalize).toContain('re-finalize');
+  expect(refinalize).toContain('--resume --accept-code-change');
+});
+
+it('names the call-site effect kind for a failure before the step has a record', async () => {
+  const definition = workflow(async (ctx) => {
+    await ctx.readFile('notes', 'notes.txt', { bogus: true } as never);
+    return 'never';
+  });
+  const error: unknown = await runWorkflow(definition, options()).catch((cause: unknown) => cause);
+  expect(error).toBeInstanceOf(WorkflowRunError);
+  expect((error as Error).message).toMatch(/^Step notes \(read-file\) failed:/u);
+  expect((error as Error).message).not.toContain('(unknown)');
+  const saved = await readRun(options());
+  expect(saved.steps['notes']).toBeUndefined();
+  expect(saved.rootCause).toMatchObject({ stepId: 'notes', effect: 'read-file' });
+});
+
+it('counts only recorded work as terminal outcomes', () => {
+  const empty = { steps: {}, maps: {} } as unknown as Parameters<typeof hasTerminalOutcomes>[0];
+  expect(hasTerminalOutcomes(empty)).toBe(false);
+  const completed = {
+    steps: { done: { status: 'completed' } },
+    maps: {},
+  } as unknown as Parameters<typeof hasTerminalOutcomes>[0];
+  expect(hasTerminalOutcomes(completed)).toBe(true);
+});

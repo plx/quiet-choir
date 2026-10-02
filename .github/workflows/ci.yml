@@ -94,7 +94,10 @@ jobs:
   test:
     name: Tests / Node.js ${{ matrix.node-version }}
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # measured: the Node 24 leg runs under V8 coverage, which slows the subprocess-heavy suites
+    # (replay-loader, tick) about 2.4x. Vitest took 208 s on Node 22.13 and 595 s on Node 24 for
+    # the same tests (495 s on main, an 8m28s job), so 10 minutes left no room for new tests.
+    timeout-minutes: 15
 
     strategy:
       fail-fast: false

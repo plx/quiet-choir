@@ -236,14 +236,18 @@ a null `stepId`, except `run.failed` can name the root effect. Debug lines inclu
 ID, and event type. Notification data is copied; observer mutation or failure cannot invalidate
 committed work, and observer promises are not awaited.
 
-`rootCause` is `{ stepId, error, errorKind }`: `errorKind` is the classified kind of the root
-effect's failure, null for a body failure, and absent in records from before the field. It uses
-error identity and cause chains, not message matching. It attributes diagnostics; it never decides
-durable error handling. Explicitly cancelled siblings keep `status: 'cancelled'`, while valid late
-callback results still commit as completed. Run interrupts have no root effect; a marked
+`rootCause` is `{ stepId, error, errorKind, effect }`: `errorKind` is the classified kind of the
+root effect's failure, null for a body failure, and absent in records from before the field.
+`effect` is the root step's call-site effect kind (the harness name for an agent call, otherwise the
+step kind such as `step`, `exec` or `read-file`), recorded even when the failure came before the
+step had a record; it is null for a body failure or interruption and absent in older records. It
+uses error identity and cause chains, not message matching. It attributes diagnostics; it never
+decides durable error handling. Explicitly cancelled siblings keep `status: 'cancelled'`, while
+valid late callback results still commit as completed. Run interrupts have no root effect; a marked
 interruption saves no `rootCause` or `error` at all, only `interruptedBy`. `WorkflowRunError`
 exposes `runId`, `stepId`, saved `run`, and original `cause`, with a message such as
-`Step word/1 (claude) failed: …`. `-v` on execute or inspect prints the stored stack/cause chain.
+`Step word/1 (claude) failed: …`; the kind comes from the step record, then `rootCause.effect`. `-v`
+on execute or inspect prints the stored stack/cause chain.
 
 Usage totals come from exported `summarizeUsage(run)`: one entry per local agent attempt, including
 failed and interrupted work, with replay counted once and fork reuse excluded. Text includes

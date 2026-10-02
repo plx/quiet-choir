@@ -32,7 +32,9 @@ Pass name filters and `--concurrency N` after `--` to iterate on a subset
 (`npm run test:cli -- worktrees`; a smoke's exact name, such as `cli-smoke`, selects only that
 smoke); a failing smoke prints the tail of its output and keeps its state directory. The Vitest
 suite has a similar guard (`test/setup/state-guard.ts`). CI runs coverage thresholds on the Node 24
-leg only; the Node 22.13 and 26 legs run `npm test`.
+leg only; the Node 22.13 and 26 legs run `npm test`. Coverage slows the subprocess-heavy suites
+about 2.4x (Vitest 595 s on Node 24 against 208 s on Node 22.13 for the same tests, 2026-10-02), so
+the test jobs have a 15-minute limit; keep new CLI-driving tests lean rather than raising it again.
 
 Cookbook changes must update `examples/patterns/` and the corresponding named fences in both
 physical skill copies. `skills:check` enforces source equality and the 30-line workflow limit;

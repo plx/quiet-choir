@@ -118,6 +118,7 @@ it('drains by default, stops scheduling promptly, and replays finished siblings 
     stepId: 'item/0',
     error: 'primary failed',
     errorKind: 'unknown',
+    effect: 'step',
   });
   broken = false;
   expect((await runWorkflow(definition, { ...options(), resume: true })).output).toEqual([
@@ -560,6 +561,10 @@ it.each([false, true])(
     expect(warnings[0]?.message).toContain('earlier committed settled maps (reviews)');
     const saved = await readRun(options());
     expect(saved.replayWarnings).toEqual([warnings[0]?.message]);
+    // Same source, different path: the hint blames a body-computed value, not a code change.
+    for (const phrase of ['ctx.now', 'ctx.step', '--strict-replay'])
+      expect(saved.recoveryHint).toContain(phrase);
+    expect(saved.recoveryHint).not.toContain('accept-code-change');
     if (strictReplay) {
       expect(effect).not.toHaveBeenCalled();
       expect(saved.steps['publish']).toBeUndefined();
@@ -840,6 +845,7 @@ it('records cancellation during retry backoff without overwriting the failed att
   expect(record.rootCause).toEqual({
     stepId: 'primary',
     error: 'primary cause',
+    effect: 'step',
     errorKind: 'unknown',
   });
   expect(record.steps['backoff']).toMatchObject({
@@ -873,7 +879,13 @@ it("records the root step's classified kind when a map failure surfaces through 
   if (!(error instanceof WorkflowRunError)) throw error;
   expect(error.cause).toBeInstanceOf(FanOutError);
   const saved = await readRun(options());
-  expect(saved.rootCause).toEqual({ stepId: 'item/0', error: 'slow', errorKind: 'timeout' });
+  // The effect label survives the FanOutError wrapper.
+  expect(saved.rootCause).toEqual({
+    stepId: 'item/0',
+    error: 'slow',
+    errorKind: 'timeout',
+    effect: 'step',
+  });
   expect(saved.steps['item/0']?.attemptHistory?.at(-1)?.errorKind).toBe('timeout');
 });
 
@@ -884,5 +896,10 @@ it('records a null kind for a failure of the workflow body itself', async () => 
   ).catch((cause: unknown) => cause);
   expect(error).toBeInstanceOf(WorkflowRunError);
   const saved = await readRun(options());
-  expect(saved.rootCause).toEqual({ stepId: null, error: 'body bug', errorKind: null });
+  expect(saved.rootCause).toEqual({
+    stepId: null,
+    error: 'body bug',
+    errorKind: null,
+    effect: null,
+  });
 });
