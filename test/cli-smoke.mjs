@@ -19,6 +19,7 @@ const expectedCommands = [
   'workflow:answer',
   'workflow:check-resume',
   'workflow:clean',
+  'workflow:events',
   'workflow:execute',
   'workflow:fixtures',
   'workflow:inspect',
