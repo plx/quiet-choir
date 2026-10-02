@@ -799,8 +799,14 @@ async function implementTicket(plan) {
   if (v.missingCommits.length)
     return { error: `reported commits not on the branch: ${v.missingCommits.join(', ')}` };
   if (v.dirty.length) return { error: `worktree not clean: ${v.dirty.slice(0, 5).join(', ')}` };
-  if (!v.checkPassedAtHead)
-    return { error: `no passing check recorded for head ${v.head.slice(0, 7)}` };
+  if (!v.checkPassedAtHead) {
+    // Surface the implementer's own diagnosis: twice a red gate was main's fault (a load-sensitive
+    // test already failing on origin/main), and the orchestrator needs to see that at a glance.
+    const why = result.notes.slice(0, 2).join(' | ').slice(0, 700);
+    return {
+      error: `no passing check recorded for head ${v.head.slice(0, 7)}${why ? `; implementer notes: ${why}` : ''}`,
+    };
+  }
   record.implementer = {
     ...record.implementer,
     head: v.head,
