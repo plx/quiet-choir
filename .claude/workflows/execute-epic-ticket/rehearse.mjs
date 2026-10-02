@@ -813,7 +813,7 @@ const SCENARIOS = {
           });
         }
         assert.match(prompt, /formatter lives in its own pure module/, 'previous report carried');
-        assert.match(prompt, /in the foreground/);
+        assert.match(prompt, /wait until it prints its result/);
         return IMPL_DONE({ deviations: ['formatter lives in its own pure module'] });
       },
     },

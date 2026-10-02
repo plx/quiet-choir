@@ -731,7 +731,7 @@ Rules:
 - Never write to GitHub (no comments, issues, reviews, PRs) and never push: the workflow publishes.
 - Commit on the current branch in small logical commits with concise imperative messages${A.commitTrailer ? `, each ending with a blank line and then:\n${A.commitTrailer}\n` : '.'} No new branches, no amending or rewriting existing commits.
 - Before checking, format and lint what you touched: \`cd ${sh(W)} && npx prettier --write <files> && npx eslint --fix <files>\`.
-- Then run \`node ${sh(TOOL)} check --epic ${A.epic} --issue ${T.number}${ROOT ? ` --root ${sh(ROOT)}` : ''} --label ${label}\` (the full suite, several minutes; prints JSON with passed, failedStep and the log path). If it fails, fix and re-run, at most 4 runs. Never weaken, skip, or delete tests to get green; if a failure is unrelated to your change and pre-existing on origin/${DEF}, say so in notes.
+- Then run \`node ${sh(TOOL)} check --epic ${A.epic} --issue ${T.number}${ROOT ? ` --root ${sh(ROOT)}` : ''} --label ${label}\` (the full suite, about 11 minutes; prints JSON with passed, failedStep and the log path). It usually outlasts the shell tool's 10-minute foreground limit and moves to the background: then keep waiting until it prints its JSON. Never report while a check is still running; checkPassed must come from a check that printed its result. If it fails, fix and re-run, at most 4 runs. Never weaken, skip, or delete tests to get green; if a failure is unrelated to your change and pre-existing on origin/${DEF}, say so in notes.
 - Commit everything; leave the worktree clean. Finally run \`node ${sh(TOOL)} snapshot --epic ${A.epic} --issue ${T.number}${ROOT ? ` --root ${sh(ROOT)}` : ''}\`.
 Return one entry per plan acceptance id: status (done | verify-on-pr | deviation | partial | not-done), the short SHA of the commit that delivers it, and evidence (the test or file that shows it). Use verify-on-pr only for a criterion that cannot be checked until the PR exists, such as a CI job's duration or GitHub-side state like code-scanning alerts: do everything that can be done locally, and put in evidence exactly what to check on the PR and what result counts as met. Use deviation only when the criterion is met in substance but its literal wording cannot be met within this ticket's scope (e.g. a size or count estimate that turns out to depend on another ticket's work): put the measured result, why the literal target is out of scope, and the follow-up (also listed in followups) in evidence. The landing review judges every deviation. Also checkPassed (from your last check), head (from snapshot), deviations from the plan, followups, and notes. Plain text, no HTML entities.`,
     {
@@ -777,7 +777,8 @@ async function implementTicket(plan) {
   }
   // A large ticket can exhaust the surgeon's turns with the work committed but the gate unconfirmed
   // (#140: the check was still running when the report was due). One finishing round carries the
-  // previous report forward, so its deviations and notes survive into the PR body. The escalation
+  // previous report forward, so its deviations and notes survive into the PR body. (Root cause in
+  // #140: the gate takes ~11 minutes, longer than the Bash tool's 10-minute foreground limit.) The escalation
   // above already was the follow-up round for a mechanic; one follow-up per ticket.
   if (unfinished(result) && result && !followedUp) {
     log('implementer reported open criteria or no passing check; one finishing round');
@@ -785,7 +786,7 @@ async function implementTicket(plan) {
     result = await implement(
       plan,
       TIER[tierName],
-      `\nA previous attempt committed work on the branch and reported:\n${JSON.stringify({ checkPassed: previous.checkPassed, criteria: previous.criteria, deviations: previous.deviations, followups: previous.followups, notes: previous.notes }, null, 1)}\nFinish only what is still open (and fix what the check finds); don't redo settled work. Run the check in the foreground, as a single shell call with a timeout of at least 45 minutes, never in the background: checkPassed must come from a check that has printed its result. In your report, carry the previous deviations, followups and notes forward (updated if they changed) together with your own.`,
+      `\nA previous attempt committed work on the branch and reported:\n${JSON.stringify({ checkPassed: previous.checkPassed, criteria: previous.criteria, deviations: previous.deviations, followups: previous.followups, notes: previous.notes }, null, 1)}\nFinish only what is still open (and fix what the check finds); don't redo settled work. Run the check and wait until it prints its result, even after it outlasts the shell's foreground limit and moves to the background: checkPassed must come from a check that printed its result. In your report, carry the previous deviations, followups and notes forward (updated if they changed) together with your own.`,
     );
   }
   record.implementer = { tier: tierName, rounds: implRound };
