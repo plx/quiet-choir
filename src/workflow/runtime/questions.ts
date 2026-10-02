@@ -679,6 +679,8 @@ export class RunQuestions {
       signal: controller.signal,
       idempotencyKey: `${this.#deps.record.id}/${id}`,
       attempt: 1,
+      // The run's observe dependency binds the real one to its process runners.
+      exec: unavailableExec(id),
       previous,
     };
     const observation = (async () =>
@@ -832,4 +834,11 @@ export class RunQuestions {
       // Keep abandoned IDs parked in OperationTracker through failure finalization.
     }
   }
+}
+
+/** `context.exec` of an observer run without a process-owning runtime, such as a bare test. */
+function unavailableExec(id: string): PollContext['exec'] {
+  const refuse = (): Promise<never> =>
+    Promise.reject(new Error(`Wait ${id}: context.exec is not available to this poll observer.`));
+  return Object.assign(refuse, { json: refuse }) as PollContext['exec'];
 }

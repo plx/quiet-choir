@@ -657,8 +657,12 @@ export class WorkflowExecutor implements Executor<WorkflowExecutorPlan, Workflow
         stateDir: previewState?.stateDir ?? plan.stateDir,
         // Under --dry-run, commands go to the rehearsal's synthesizing execRunner, as fixture exec
         // rules do under --harness fixture, while the real runner serves worktree Git (#148, #308).
-        // Rehearsal Git is read-only: the runtime refuses every command except rev-parse.
-        processRunner: this.#options.processRunner ?? new NodeProcessRunner(),
+        // Rehearsal Git is read-only: the runtime refuses every command except rev-parse. The real
+        // runner also serves a poll observer's live: true command, which the rehearsal lists.
+        processRunner:
+          rehearsal === undefined
+            ? (this.#options.processRunner ?? new NodeProcessRunner())
+            : rehearsal.recordLive(this.#options.processRunner ?? new NodeProcessRunner()),
         ...(rehearsal === undefined
           ? execRunner === undefined
             ? {}

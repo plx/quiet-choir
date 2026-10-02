@@ -1,5 +1,6 @@
 import type { z } from 'zod';
 import type { JsonInput, JsonValue, StepContext } from './model.js';
+import type { PollExecOptions, StepExecFunction } from './exec-model.js';
 import type {
   AskOptions,
   QuestionRequest,
@@ -35,7 +36,13 @@ export type PollInterval =
  * before this check. Every check is a fresh call (often in a fresh process after a suspension), so
  * cross-check state such as debounce flags belongs in the note, not in closures.
  */
-export type PollContext<N extends JsonValue = JsonValue> = StepContext & {
+export type PollContext<N extends JsonValue = JsonValue> = Omit<StepContext, 'exec'> & {
+  /**
+   * Run a command through the run's process runner during this observation; see
+   * {@link StepContext.exec}. The child is owned by the wait and aborted with the observation's
+   * signal. `live: true` runs the real process even under `--dry-run`, for read-only checks only.
+   */
+  readonly exec: StepExecFunction<PollExecOptions>;
   /** Progress persisted before this check; frozen, so observers cannot change saved state. */
   readonly previous: {
     /**

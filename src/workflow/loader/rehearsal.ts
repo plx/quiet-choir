@@ -1,5 +1,5 @@
 import type { ClaudeOptions } from '../runtime/model.js';
-import type { Command, ProcessRunner } from '../runtime/exec-model.js';
+import type { Command, ProcessRunRequest, ProcessRunner } from '../runtime/exec-model.js';
 import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -60,13 +60,22 @@ export interface RehearsalMerge {
   readonly target: 'ref' | 'checkout' | 'branch';
   readonly baseSource: 'resolved' | 'placeholder';
 }
-/** One command reaching the rehearsal process runner, answered by a rule or synthesized. @internal */
+/**
+ * One command reaching the rehearsal process runner, answered by a rule or synthesized, or an
+ * observer's `live: true` command run for real. @internal
+ */
 export interface RehearsalCommand {
+  /** The owning effect: the `ctx.exec` step, or the step or wait whose callback issued it. */
   readonly stepId: string;
+  /**
+   * For a command a step callback or poll observer issued through `context.exec`, the ID of that
+   * step or wait (equal to `stepId`); null for a `ctx.exec` effect.
+   */
+  readonly parentStepId: string | null;
   readonly command: Command;
   readonly cwd: string;
   readonly structured: boolean;
-  readonly outputSource: 'fixture' | 'synthesized';
+  readonly outputSource: 'fixture' | 'synthesized' | 'live';
   /** Matched index in the fixture file's `exec` array, or null. */
   readonly fixtureIndex: number | null;
   /** The refusal of an unmatched command under `commands: 'fixture'`, or null. */
@@ -102,12 +111,7 @@ export class RehearsalHarness extends FixtureHarness {
     run: (request, invocation) => {
       invocation.signal.throwIfAborted();
       const match = this.execRules.match(request, invocation);
-      const entry = {
-        stepId: invocation.stepId,
-        command: request.command,
-        cwd: request.cwd,
-        structured: request.schema !== null,
-      };
+      const entry = commandEntry(request, invocation);
       if (match) {
         this.commands.push({
           ...entry,
@@ -150,6 +154,25 @@ export class RehearsalHarness extends FixtureHarness {
       });
     },
   };
+  /**
+   * Wrap the real runner the CLI gives a dry run: an observer's `live: true` command, the only
+   * nested request that reaches it, is listed in `commands` and then run. Everything else, such as
+   * read-only worktree Git, passes through unrecorded.
+   */
+  public recordLive(real: ProcessRunner): ProcessRunner {
+    return {
+      run: (request, invocation) => {
+        if (request.nested === true)
+          this.commands.push({
+            ...commandEntry(request, invocation),
+            outputSource: 'live',
+            fixtureIndex: null,
+            error: null,
+          });
+        return real.run(request, invocation);
+      },
+    };
+  }
   private readonly merges: RehearsalMerge[] = [];
   /** Synthesized isolation by `stepId` and attempt, recorded before the call is invoked. */
   private readonly isolations = new Map<string, NonNullable<RehearsalCall['worktree']>>();
@@ -157,7 +180,7 @@ export class RehearsalHarness extends FixtureHarness {
   private readonly stubbedSteps = new Set<string>();
   private readonly skippedSleeps = new Set<string>();
   private readonly warnings = new Set<string>([
-    'Local callbacks, file effects, poll observers, and workflow top-level code run for real. Temporary checkpoints do not roll back filesystem or external effects; use --stub-steps for selected local effects and poll observers (a stubbed poll completes with a synthesized value).',
+    'Local callbacks, file effects, poll observers, and workflow top-level code run for real. Temporary checkpoints do not roll back filesystem or external effects; use --stub-steps for selected local effects and poll observers (a stubbed poll completes with a synthesized value). Commands they issue through context.exec are synthesized like ctx.exec, except a poll observer call with live: true.',
     'The nominal Claude ceiling covers only attempted calls on the rehearsed path. One-item synthesized arrays can understate fan-out; Codex calls are counted, not priced. CLI budget limits can overshoot on a final turn.',
   ]);
   public constructor(
@@ -358,6 +381,20 @@ export class RehearsalHarness extends FixtureHarness {
       warnings: [...this.warnings],
     });
   }
+}
+
+/** The report fields every command entry shares. */
+function commandEntry(
+  request: ProcessRunRequest,
+  invocation: HarnessInvocation,
+): Pick<RehearsalCommand, 'stepId' | 'parentStepId' | 'command' | 'cwd' | 'structured'> {
+  return {
+    stepId: invocation.stepId,
+    parentStepId: request.nested === true ? invocation.stepId : null,
+    command: request.command,
+    cwd: request.cwd,
+    structured: request.schema !== null,
+  };
 }
 
 function hasRefinement(schema: z.ZodType): boolean {

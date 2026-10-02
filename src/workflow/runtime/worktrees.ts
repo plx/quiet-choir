@@ -173,7 +173,10 @@ export class RunWorktrees {
     runner: ProcessRunner | undefined,
     private readonly policy: WorktreePolicy,
     private readonly save: () => Promise<void>,
-    private readonly invocation: (id: string, context: StepContext) => HarnessInvocation,
+    private readonly invocation: (
+      id: string,
+      context: Omit<StepContext, 'exec'>,
+    ) => HarnessInvocation,
     private readonly runSignal?: AbortSignal,
     /**
      * A dry-run rehearsal synthesizes isolation instead (`worktree-rehearsal.ts`), so every Git
@@ -403,7 +406,7 @@ export class RunWorktrees {
     path: string,
     base: string,
     id: string,
-    context: StepContext,
+    context: Omit<StepContext, 'exec'>,
   ): Promise<WorktreeLedger['caches'][string]> {
     const git = this.driver(),
       invocation = this.invocation(id, context);
@@ -470,7 +473,7 @@ export class RunWorktrees {
   public async create(
     id: string,
     base: WorktreeBase | undefined,
-    context: StepContext,
+    context: Omit<StepContext, 'exec'>,
     step: StepRecord,
     attempt: AttemptRecord,
   ): Promise<WorktreeHandle> {
@@ -501,7 +504,7 @@ export class RunWorktrees {
     const cache = await this.ensureCache(ledger, saved.handle.path, saved.latest, id, context);
     const cwd = await this.directory(ledger, saved.handle.path, this.record.cwd);
     await this.policy.setup?.({
-      ...context,
+      ...setupContext(context),
       cwd,
       path: saved.handle.path,
       base: saved.latest,
@@ -516,7 +519,7 @@ export class RunWorktrees {
     id: string,
     isolation: WorktreeIsolation,
     logicalCwd: string,
-    context: StepContext,
+    context: Omit<StepContext, 'exec'>,
     step: StepRecord,
     attempt: AttemptRecord,
   ): Promise<WorktreeLease> {
@@ -563,7 +566,7 @@ export class RunWorktrees {
       const cwd = await this.directory(ledger, path, logicalCwd);
       const cache = await this.ensureCache(ledger, path, start, id, context);
       await this.policy.setup?.({
-        ...context,
+        ...setupContext(context),
         cwd,
         path,
         base: start,
@@ -635,7 +638,7 @@ export class RunWorktrees {
     id: string,
     changes: readonly (WorktreeChange | WorktreeHandle)[],
     options: MergeOptions,
-    context: StepContext,
+    context: Omit<StepContext, 'exec'>,
     step: StepRecord,
     attempt: AttemptRecord,
     releaseAfterSave: (release: () => void) => void,
@@ -779,4 +782,13 @@ export class RunWorktrees {
     }
     return warnings;
   }
+}
+
+/**
+ * The step context members setup receives. Setup is not a durable callback, so a caller's
+ * `context.exec` (present on a full StepContext at runtime) is never passed on.
+ */
+function setupContext(context: Omit<StepContext, 'exec'>): Omit<StepContext, 'exec'> {
+  const { reportUsage, cwd, signal, idempotencyKey, attempt } = context;
+  return { reportUsage, cwd, signal, idempotencyKey, attempt };
 }

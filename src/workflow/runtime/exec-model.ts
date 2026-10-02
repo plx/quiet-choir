@@ -110,6 +110,54 @@ export interface ExecFunction {
   ): Promise<EffectResult<T, TMode, ExecStepError>>;
 }
 
+/**
+ * Options for a command a local step callback issues through `context.exec`: the options of
+ * {@link ExecOptions} without `worktree` and `retry`. The command is not a durable effect, so
+ * `onError: 'return'` resolves to a failure value without saving it.
+ */
+export type StepExecOptions = Omit<ExecOptions, 'worktree' | 'retry'>;
+
+/** Options for a command a poll observer issues through `context.exec`. */
+export interface PollExecOptions extends StepExecOptions {
+  /**
+   * Run the real process even under a `--dry-run` rehearsal, which otherwise synthesizes the
+   * command or answers it from an exec fixture rule. Keep it to read-only observations, such as the
+   * initial check of a wait. Outside a rehearsal it changes nothing: exec fixture rules still apply.
+   */
+  readonly live?: boolean;
+}
+
+/**
+ * Non-durable command API of a local step callback or poll observer (`context.exec`). A call takes
+ * no step ID and writes no checkpoint or step record. Its child is owned by the parent step or
+ * wait and attempt, so orphan recovery covers it, and it carries the parent's run metadata,
+ * including `QUIET_CHOIR_IDEMPOTENCY_KEY`. Commands run at least once: every rerun of the parent
+ * runs them again. Under a rehearsal they are synthesized or answered by exec fixture rules, like
+ * `ctx.exec`. A command still running when the callback or observation settles is terminated.
+ */
+export interface StepExecFunction<TOptions extends StepExecOptions = StepExecOptions> {
+  /** Run a command and return a failure as a value instead of throwing it; nothing is saved. */
+  (
+    command: Command,
+    options: TOptions & { readonly onError: 'return' },
+  ): Promise<Settled<ExecResult, ExecStepError>>;
+  /** Run a command; a failure throws an `ExecError` into the parent attempt. */
+  <TMode extends ErrorMode = 'throw'>(
+    command: Command,
+    options?: TOptions & { readonly onError?: TMode | undefined },
+  ): Promise<EffectResult<ExecResult, TMode, ExecStepError>>;
+  /** Parse and validate stdout, returning a failure as a value; nothing is saved. */
+  json<T>(
+    command: Command,
+    options: TOptions & { readonly schema: z.ZodType<T>; readonly onError: 'return' },
+  ): Promise<Settled<T, ExecStepError>>;
+  /** Parse stdout as JSON and validate it with the schema. */
+  json<T, TMode extends ErrorMode = 'throw'>(
+    command: Command,
+    options: TOptions & { readonly schema: z.ZodType<T>; readonly onError?: TMode | undefined },
+  ): Promise<EffectResult<T, TMode, ExecStepError>>;
+}
+
 /** Normalized live request. Environment and input must never be copied into a checkpoint. */
 export interface ProcessRunRequest {
   /** Explicit argv or shell command. */
@@ -130,6 +178,12 @@ export interface ProcessRunRequest {
   readonly capture: 'truncate' | 'error';
   /** Output schema for deterministic/rehearsal adapters; null for plain exec. */
   readonly schema: JsonValue | null;
+  /**
+   * True for a command a step callback or poll observer issued through `context.exec`. The
+   * invocation's `stepId` and `attempt` are then the parent step's or wait's. Omitted for a
+   * `ctx.exec` effect.
+   */
+  readonly nested?: boolean;
 }
 
 /** Replaceable process integration, independent of agent admission and permissions. */
