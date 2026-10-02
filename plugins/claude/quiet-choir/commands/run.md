@@ -94,15 +94,25 @@ the root cause and `next` commands on 1, and how to continue on 79, 3 or 130. On
 
 ## 6. Answer and follow again
 
-On 75, set `QC_EXECUTION` to the snapshot's `execution`. For each entry of the snapshot's
-`pending[]`, ask the user with AskUserQuestion, mapping it as the
-[answer loop](../skills/quiet-choir/references/operating-runs.md#answer-a-suspended-run) describes,
-and never choose a human's answer yourself. Set `QC_STEP` to the entry's `stepId`, `QC_ANSWER` to
-the answer JSON, and `QC_BY` to `human:` plus the user's name (or `agent:claude-code` for an `agent`
-or `any` question you answer within your task). Deliver one answer at a time with this block in the
-background, as in step 3; when other questions are still open, the resumed run suspends again and
-the next round asks them. A refused answer (exit 2 or 3) ends the block with its error document as
-the last line; ask again.
+On 75, set `QC_EXECUTION` to the snapshot's `execution`. The snapshot lists waiting steps but not
+their questions, so read the open questions without loading workflow code:
+
+<!-- skills-check: example run-pending -->
+
+```sh
+node "$QC_CHECKOUT/bin/run.js" workflow pending --state-dir "$QC_RUNS" --json
+```
+
+For each `pending[]` entry whose `runId` is this run, ask the user with AskUserQuestion, mapping it
+as the [answer loop](../skills/quiet-choir/references/operating-runs.md#answer-a-suspended-run)
+describes, and never choose a human's answer yourself. Set `QC_STEP` to the entry's `stepId`,
+`QC_ANSWER` to the answer JSON, and `QC_BY` to `human:` plus the user's name (or `agent:claude-code`
+for an `agent` or `any` question you answer within your task). Deliver one answer at a time with
+this block in the background, as in step 3; when other questions are still open, the resumed run
+suspends again and the next round asks them. A refused answer (exit 2 or 3) ends the block with its
+error document as the last line; ask again. `answer --resume` runs the resumed execution inside this
+task, so give the Bash call the longest timeout available; if the host stops it, the run saves a
+resumable suspension (exit 130) and `workflow resume` continues it.
 
 <!-- skills-check: example run-answer -->
 

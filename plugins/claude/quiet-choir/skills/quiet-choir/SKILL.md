@@ -149,8 +149,11 @@ has a runnable follow-up lists it in `next`; for 79 and 66, `next` is empty, so 
 start's error document: a usage error (2), `run.exists` (3), a type or import error (4),
 `start.exited` (70) or `start.timeout` (124). That is why the exit alone is not enough.
 
-On 75, map each entry of the snapshot's `pending[]` to an AskUserQuestion question, then relaunch in
-the background the same way, with the answer and a new bounded watch, and re-arm Monitor:
+On 75, list the open questions with
+`node "$QC_CHECKOUT/bin/run.js" workflow pending --state-dir "$QC_RUNS" --json` (the snapshot names
+waiting steps, not their questions), map each `pending[]` entry of this run to an AskUserQuestion
+question, then relaunch in the background the same way, with the answer and a new bounded watch, and
+re-arm Monitor:
 `workflow answer review-42 STEP --json 'VALUE' --resume --events "$QC_RUNS/review-42.events.jsonl"`
 chained with `&&` to the same `inspect … --watch --final --json --summary --timeout 8m`. On answer,
 `--json VALUE` is the answer and also requests JSON output, so a refused answer is the last line.

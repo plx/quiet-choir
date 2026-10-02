@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
+import { once } from 'node:events';
 import { mkdtemp, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -84,6 +85,137 @@ async function claudeRecipe(skillRoot, directory, target, state, env) {
   );
   assert.equal(command('git', ['status', '--porcelain'], { cwd: target }), '');
 }
+/** Spawn a shell fence in the background, collecting its stdout, as Monitor would run it. */
+function background(code, options) {
+  const child = spawn('sh', ['-c', code], {
+    ...options,
+    detached: true,
+    stdio: ['ignore', 'pipe', 'inherit'],
+  });
+  const state = { output: '', closed: once(child, 'close') };
+  child.stdout.setEncoding('utf8').on('data', (chunk) => {
+    state.output += chunk;
+  });
+  state.stop = () => {
+    try {
+      process.kill(-child.pid, 'SIGTERM');
+    } catch {
+      /* Already gone. */
+    }
+  };
+  return state;
+}
+/** Wait for a background fence to exit, bounded so a hang fails the smoke instead of stalling it. */
+async function finished(state, label) {
+  const timer = delay(120_000, 'timeout', { ref: false });
+  const outcome = await Promise.race([state.closed, timer]);
+  state.stop();
+  assert.notEqual(outcome, 'timeout', `${label} did not exit: ${state.output}`);
+  return outcome[0];
+}
+const matchedEvents = (output) =>
+  output
+    .split('\n')
+    .filter(Boolean)
+    .map((line) => {
+      assert.ok(Buffer.byteLength(line) <= 512, line);
+      return JSON.parse(line);
+    });
+/**
+ * Run every shell fence of the Claude package's /quiet-choir:run command verbatim, with the QC_*
+ * values the command tells Claude to export. first.workflow.mts has no question, so the answer
+ * loop runs against a local ask workflow written here.
+ */
+async function runCommandRecipe(pkg, directory, target, env) {
+  const file = join(repository, pkg, 'commands/run.md');
+  const all = fences(await readFile(file, 'utf8'), file);
+  const shell = all.filter((fence) => ['sh', 'bash', 'shell', 'zsh'].includes(fence.language));
+  for (const fence of shell)
+    assert.ok(fence.id, `${file}:${fence.line}: shell fence without an ID`);
+  const executed = new Set();
+  const fence = (id) => {
+    const found = shell.find((candidate) => candidate.id === id);
+    assert.ok(found, `Missing command fence ${id}`);
+    executed.add(id);
+    return found.code;
+  };
+  const run = (id, values, expected = 0) => {
+    const result = spawnSync('sh', ['-c', fence(id)], {
+      cwd: directory,
+      env: { ...env, ...values },
+      encoding: 'utf8',
+      timeout: 120_000,
+    });
+    assert.equal(result.error, undefined, result.error?.message);
+    assert.equal(result.status, expected, `${id}: ${result.stdout}\n${result.stderr}`);
+    return result.stdout
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line));
+  };
+
+  const first = { QC_RUN: 'command-first', QC_INPUT: '{}' };
+  const [validated, rehearsed] = run('run-preflight', first);
+  assert.equal(validated.kind, 'workflow.validate.result');
+  assert.equal(validated.ok, true);
+  assert.equal(rehearsed.kind, 'workflow.rehearsal');
+  assert.equal(rehearsed.ok, true);
+  // The follower starts alongside the launch and waits for the record to appear.
+  const follow = background(fence('run-follow'), { cwd: directory, env: { ...env, ...first } });
+  const launched = run('run-launch', first);
+  const snapshot = launched.at(-1);
+  assert.equal(snapshot.id, 'command-first');
+  assert.equal(snapshot.status, 'completed');
+  assert.deepEqual(snapshot.output, { message: 'Hello from a durable local step.' });
+  assert.equal(await finished(follow, 'run-follow'), 0);
+  assert.deepEqual(
+    matchedEvents(follow.output).map((line) => `${line.run} ${line.ev}`),
+    ['command-first run.completed'],
+  );
+
+  const askWorkflow = join(directory, 'ask.workflow.mts');
+  await writeFile(
+    askWorkflow,
+    `import { defineWorkflow, z } from ${JSON.stringify(join(repository, 'dist/index.js'))};
+export default defineWorkflow({ name: 'ask', version: '1', input: z.object({}), output: z.boolean(),
+  async run(ctx) {
+    return ctx.ask('gate', { prompt: 'Ship?', schema: z.boolean() });
+  },
+});
+`,
+  );
+  const ask = { QC_WORKFLOW: askWorkflow, QC_RUN: 'command-ask', QC_INPUT: '{}' };
+  const suspended = run('run-launch', ask, 75).at(-1);
+  assert.equal(suspended.status, 'suspended');
+  const [listed] = run('run-pending', ask);
+  assert.equal(listed.kind, 'workflow.pending.result');
+  const open = listed.pending.filter((entry) => entry.runId === 'command-ask');
+  assert.equal(open.length, 1);
+  assert.equal(open[0].prompt, 'Ship?');
+  const answer = {
+    ...ask,
+    QC_STEP: open[0].stepId,
+    QC_ANSWER: 'true',
+    QC_BY: 'agent:skills-smoke',
+    QC_EXECUTION: String(suspended.execution),
+  };
+  assert.equal(answer.QC_STEP, 'gate');
+  const again = background(fence('run-follow-again'), {
+    cwd: directory,
+    env: { ...env, ...answer },
+  });
+  const answered = run('run-answer', answer).at(-1);
+  assert.equal(answered.status, 'completed');
+  assert.equal(answered.output, true);
+  assert.equal(await finished(again, 'run-follow-again'), 0);
+  assert.deepEqual(
+    matchedEvents(again.output).map((line) => `${line.run} ${line.ev}`),
+    ['command-ask run.completed'],
+  );
+  // A new shell block must be added to this smoke, not left unexecuted.
+  assert.deepEqual([...executed].sort(), shell.map((candidate) => candidate.id).sort());
+  assert.equal(command('git', ['status', '--porcelain'], { cwd: target }), '');
+}
 try {
   for (const [index, pkg] of packages.entries()) {
     const skillRoot = join(repository, pkg, 'skills/quiet-choir');
@@ -154,7 +286,10 @@ try {
       open: [],
     });
     // Only the Claude package documents the run_in_background launch and its Monitor filter.
-    if (pkg === packages[1]) await claudeRecipe(skillRoot, directory, target, state, env);
+    if (pkg === packages[1]) {
+      await claudeRecipe(skillRoot, directory, target, state, env);
+      await runCommandRecipe(pkg, directory, target, env);
+    }
 
     const { loggingHarness } = await moduleExample(skillRoot, 'logging-harness', directory);
     const { resumeOrStart } = await moduleExample(skillRoot, 'resume-or-start', directory);
@@ -268,7 +403,7 @@ try {
     assert.equal(warnings.length, 1);
     assert.equal(command('git', ['status', '--porcelain'], { cwd: target }), '');
     console.log(
-      `${pkg}: documented golden path, ${pkg === packages[1] ? 'Claude launch and Monitor, ' : ''}jq, logging, and resume recipes passed`,
+      `${pkg}: documented golden path, ${pkg === packages[1] ? 'Claude launch and Monitor, /quiet-choir:run blocks, ' : ''}jq, logging, and resume recipes passed`,
     );
   }
 } finally {
