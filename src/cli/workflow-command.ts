@@ -75,7 +75,14 @@ export abstract class WorkflowCommand extends BaseCommand {
             cause instanceof Error ? cause.message : String(cause),
             this.failureContext,
           );
-    if (!failure.run && failure.runId && failure.stateDir && isValidRunId(failure.runId)) {
+    // A watch whose record never appeared reports no record, even one created after its deadline.
+    if (
+      !failure.run &&
+      failure.code !== 'watch.record_not_created' &&
+      failure.runId &&
+      failure.stateDir &&
+      isValidRunId(failure.runId)
+    ) {
       const run = await readRun({ runId: failure.runId, stateDir: failure.stateDir }).catch(
         () => null,
       );

@@ -148,6 +148,17 @@ export interface WatchWorkflowPlan extends ExecutionPlan {
   readonly runId: string;
   readonly stateDir: string;
   readonly intervalMs: number;
+  /**
+   * Stop with `watch.timeout` when the run is still running this long after the first successful
+   * read. The run is never touched; omitted means no bound.
+   */
+  readonly timeoutMs?: number;
+  /**
+   * Retry a missing record (`run.not_found`) until this long after the watch starts, then fail
+   * with `watch.record_not_created`. Applies only before the first successful read; omitted means
+   * a missing record fails at once.
+   */
+  readonly waitCreatedMs?: number;
 }
 
 /** Enumerate checkpoints without loading workflow modules. */

@@ -94,6 +94,41 @@ ceiling. quiet-choir now offers sticky run-wide gates on reported cost and agent
 with unknown cost are not counted toward the cost gate. The per-call Claude USD limit still applies,
 and there is still no run-wide token ceiling.
 
+## Launch in the background from Claude Code
+
+To wait for a run without polling, start it and a bounded watch in one Bash call with
+`run_in_background: true`. Claude Code notifies you when that command exits; read its output then
+instead of checking in a loop. Give the watch a `--timeout` shorter than the background task's own
+timeout (`8m` below is only an example), so the watch reports before the host stops it.
+
+```sh
+cd "$QC_TARGET" || exit 1
+node "$QC_CHECKOUT/bin/run.js" workflow start "$QC_WORKFLOW" \
+  --run-id review-42 --state-dir "$QC_RUNS" --input '{}' --json &&
+  node "$QC_CHECKOUT/bin/run.js" workflow inspect review-42 --state-dir "$QC_RUNS" \
+    --watch --final --json --summary --timeout 8m
+```
+
+`--final` makes the watch print one line. Read the **last stdout line**, not only the exit: a
+document with `kind: "workflow.error"` is a failure, so branch on its `error.code`; otherwise it is
+the watch's final snapshot, so branch on its `status`. A snapshot or failure that has a runnable
+follow-up lists it in `next`; for 79 and 66, `next` is empty, so use the table below.
+
+| Exit | Meaning                                                                                                       |
+| ---- | ------------------------------------------------------------------------------------------------------------- |
+| 0    | `completed`; the snapshot's `output` is the workflow output                                                   |
+| 1    | `failed`; inspect the root cause, fix, and resume                                                             |
+| 75   | `suspended`; answer its questions or deliver signals, or `workflow tick` when a wait is due                   |
+| 130  | `cancelled`, or the watcher (or start) was interrupted (`workflow.interrupted`); the run may still be running |
+| 3    | `stale`: the runner died; tick or resume it. From start, `run.exists` means the run ID was already used       |
+| 79   | `watch.timeout`: the run is still running and continues; start another bounded watch the same way             |
+| 66   | `watch.record_not_created`: only a watch without start, using `--wait-created`, for a run launched elsewhere  |
+
+`workflow start`'s own failures end the `&&` chain before the watch runs, so the last line is then
+start's error document: a usage error (2), `run.exists` (3), a type or import error (4),
+`start.exited` (70) or `start.timeout` (124). That is why the exit alone is not enough. See
+[operating a run](references/operating-runs.md) for the suspended-run loop and recovery.
+
 <!-- /skills-difference: claude-host -->
 
 ## Choose the next task

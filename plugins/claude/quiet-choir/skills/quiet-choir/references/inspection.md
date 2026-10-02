@@ -188,6 +188,8 @@ Failed `attemptHistory` entries retain `errorKind`. A run may complete with sett
 ```sh
 npm run --silent cli -- workflow inspect recovery --state-dir "$qc_state_dir" --watch --interval 2s
 npm run --silent cli -- workflow inspect recovery --state-dir "$qc_state_dir" --watch --json --summary
+npm run --silent cli -- workflow inspect recovery --state-dir "$qc_state_dir" --watch --json --summary \
+  --final --timeout 9m --wait-created 30s
 npm run --silent cli -- workflow list --state-dir "$qc_state_dir" --status stale --json
 ```
 
@@ -198,6 +200,14 @@ elapsed-time-only lines. It exits with a final snapshot: completed 0, failed 1, 
 dead. Missing/unreadable checkpoints use ordinary workflow error JSON. Interrupting the watcher adds
 an error document and exits 130 without stopping the observed workflow. Watch may miss intermediate
 writes and is not a lossless event stream. Normal inspect still exits 0.
+
+Bound a watch for a host with a time limit. `--timeout` (`ms`, `s`, `m` or `h`) counts from the
+first successful read; a run still running then exits 79 (`watch.timeout`) with the last observed
+`status` and `details.timeoutMs`, and keeps running. `--wait-created` counts from the start of the
+watch and retries a missing record until the first read, then exits 66 (`watch.record_not_created`,
+`status: null`). Each bound reads once more at its deadline, so the watch ends within one read after
+it. `--final` prints only the final snapshot, or only the error document; with `--summary`, error
+documents carry the compact `summary` instead of `run`.
 
 List sorts newest `updatedAt` first and supports running/failed/completed/cancelled/stale filters.
 Unreadable files are skipped with stderr warnings. JSON is

@@ -585,9 +585,12 @@ entries.
 `workflow inspect ID` shows progress, first-use-ordered active/failed steps, root cause, usage, and
 owner liveness. Add `--json --summary` for the same compact data, `-v` for saved stacks, or
 `--watch --interval 2s` to wait for completion. Watch emits JSONL per change in JSON mode and exits
-0/1/130/3 for completed/failed/cancelled/stale. `workflow list --status stale --json` finds
-abandoned runs without importing their source. Read [run observability](docs/observability.md) for
-replay, retention, partial usage, prompt-preview privacy, and watch semantics.
+0/1/75/130/3 for completed/failed/suspended/cancelled/stale. `--timeout 9m` bounds a watch (exit 79,
+`watch.timeout`; the run keeps running), `--wait-created 30s` waits for a record that is about to
+appear (exit 66, `watch.record_not_created`, when it never does), and `--final` prints only the last
+line. `workflow list --status stale --json` finds abandoned runs without importing their source.
+Read [run observability](docs/observability.md) for replay, retention, partial usage, prompt-preview
+privacy, and watch semantics.
 
 ## CLI and development
 

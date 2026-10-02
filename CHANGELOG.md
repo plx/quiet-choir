@@ -2,6 +2,19 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- Bounded `inspect --watch` (additive flags; two new error codes; one small contract change):
+  `--timeout DURATION` stops a watch whose run is still running that long after the first successful
+  read, with the new code `watch.timeout` (exit 79), the last observed `status` (`running`) and
+  `details.timeoutMs`; the run keeps running. `--wait-created DURATION`, measured from the start of
+  the watch, retries a missing record until the first read and then fails with the new
+  `watch.record_not_created` (exit 66, `status: null`, `details.waitCreatedMs`); a record that
+  disappears after it was read is still `run.not_found` (exit 3). Both take `ms`/`s`/`m`/`h`
+  durations and are opt-in, so existing watches behave as before. `--final` prints only the final
+  snapshot, or only the error document. The public `CliErrorCode` type gains both codes. 79 is the
+  first exit after the sysexits block; 66 is `EX_NOINPUT`. Contract change: with `--summary`,
+  `inspect` error documents (including an interrupted watch's) carry the compact `summary` instead
+  of the whole `run`. The `--watch` help and docs now list suspended (75), and the Claude skill
+  shows a background launch with `run_in_background` and a bounded `--final` watch.
 - `workflow start` (additive command; two new error codes): `workflow start FILE [execute flags]`
   launches `workflow execute` as a detached runner and returns once the run's record exists and is
   owned by that runner, with

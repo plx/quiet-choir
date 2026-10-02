@@ -54,6 +54,20 @@ because the observed run failed. A missing or unreadable run uses the ordinary J
 Interrupting the watcher exits 130 with an error document after any prior snapshots, and leaves the
 observed workflow running. Non-watching inspection exits 0 for every readable status.
 
+Watch has no time bound unless asked. `--timeout DURATION` (an `ms`, `s`, `m` or `h` suffix) stops a
+watch whose run is still running that long after the first successful read: it exits 79 with a
+`watch.timeout` error document whose `status` is the last observed one (`running`) and whose
+`details.timeoutMs` is the bound. The run keeps running and is never touched; start another bounded
+watch to keep waiting. `--wait-created DURATION`, measured from the start of the watch, retries a
+missing record at the interval until the first successful read, for a watch started right after a
+detached launch. When it expires the watch exits 66 with `watch.record_not_created`, `status: null`
+and `details.waitCreatedMs`; a record that disappears after it was read is still `run.not_found`
+(exit 3). Each bound sleeps at most until its deadline and reads once more there, so a run that
+finishes at the deadline is reported as finished and the watch ends within one read after it.
+`--final` prints only the final snapshot, or only the error document on a bound, an interrupt or a
+missing record, so a host can read the outcome from one line. With `--summary`, error documents
+carry the compact `summary` instead of the whole `run`.
+
 `workflow list` reads checkpoint filenames, sorts newest `updatedAt` first, and supports `running`,
 `failed`, `completed`, `cancelled`, and `stale` filters. Unreadable checkpoints are skipped with a
 stderr warning. JSON returns `{ kind: 'workflow.list.result', ok: true, stateDir, runs, warnings }`;

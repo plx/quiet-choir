@@ -18,8 +18,10 @@ import {
   listRuns,
   summarizeRun,
   toRunListRow,
+  WatchBoundError,
   watchRun,
 } from '../src/workflow/loader/inspection.js';
+import { WorkflowExecutor } from '../src/workflow/loader/executor.js';
 import {
   formatRunList,
   formatRunSummary,
@@ -420,10 +422,183 @@ it('supports bounded intervals and stable terminal watch exits', async () => {
   expect(parseWatchInterval('250ms')).toBe(250);
   expect(parseWatchInterval('0.5s')).toBe(500);
   expect(parseWatchInterval('2m')).toBe(120000);
-  expect(watchExitCodes).toMatchObject({ completed: 0, failed: 1, cancelled: 130, stale: 3 });
+  expect(watchExitCodes).toStrictEqual({
+    completed: 0,
+    suspended: 75,
+    failed: 1,
+    cancelled: 130,
+    stale: 3,
+    running: 0,
+  });
   await expect(watchRun({ stateDir, runId: 'run', intervalMs: 0 }, vi.fn())).rejects.toThrow(
     'Watch interval',
   );
+  await expect(
+    watchRun({ stateDir, runId: 'run', intervalMs: 5, timeoutMs: 0 }, vi.fn()),
+  ).rejects.toThrow('Watch timeout');
+  await expect(
+    watchRun({ stateDir, runId: 'run', intervalMs: 5, waitCreatedMs: 1.5 }, vi.fn()),
+  ).rejects.toThrow('Watch wait-created');
+});
+
+it('waits for a record created after the watch starts, only while waitCreatedMs is set', async () => {
+  const changes: string[] = [];
+  const watching = watchRun(
+    { stateDir, runId: 'late', intervalMs: 5, waitCreatedMs: 5000 },
+    (snapshot) => {
+      changes.push(snapshot.summary.status);
+    },
+  );
+  await delay(30);
+  await save({ ...record('late'), status: 'completed' });
+  expect((await watching).summary.status).toBe('completed');
+  expect(changes).toEqual(['completed']);
+
+  const missing: unknown = await watchRun(
+    { stateDir, runId: 'never', intervalMs: 5, waitCreatedMs: 30 },
+    vi.fn(),
+  ).catch((error: unknown) => error);
+  expect(missing).toBeInstanceOf(WatchBoundError);
+  expect(missing).toMatchObject({
+    code: 'watch.record_not_created',
+    runId: 'never',
+    run: null,
+    details: { waitCreatedMs: 30 },
+    cause: { code: 'run.not_found' },
+  });
+  expect((missing as Error).message).toMatch(
+    /^Run never was not created within 30ms\. Run never not found in /,
+  );
+
+  await expect(
+    watchRun({ stateDir, runId: 'never', intervalMs: 5 }, vi.fn()),
+  ).rejects.toMatchObject({ code: 'run.not_found' });
+
+  // A record that disappears after it was seen is not "not created yet".
+  await save(record('vanishing'));
+  await lock('vanishing');
+  const seen: string[] = [];
+  const vanishing = watchRun(
+    { stateDir, runId: 'vanishing', intervalMs: 5, waitCreatedMs: 5000 },
+    (snapshot) => {
+      seen.push(snapshot.summary.status);
+    },
+  );
+  await vi.waitFor(() => {
+    expect(seen).toEqual(['running']);
+  });
+  await rm(join(stateDir, 'vanishing.json'));
+  await expect(vanishing).rejects.toMatchObject({ code: 'run.not_found' });
+});
+
+it('stops a still-running watch at timeoutMs with the last observed record, and never touches it', async () => {
+  await save(record('slow'));
+  await lock('slow');
+  const bytes = await readFile(join(stateDir, 'slow.json'), 'utf8');
+  const changes: string[] = [];
+  const timedOut: unknown = await watchRun(
+    { stateDir, runId: 'slow', intervalMs: 5, timeoutMs: 40 },
+    (snapshot) => {
+      changes.push(snapshot.summary.status);
+    },
+  ).catch((error: unknown) => error);
+  expect(timedOut).toBeInstanceOf(WatchBoundError);
+  expect(timedOut).toMatchObject({
+    code: 'watch.timeout',
+    runId: 'slow',
+    details: { timeoutMs: 40 },
+    run: { id: 'slow', status: 'running' },
+  });
+  expect(changes).toEqual(['running']);
+  expect(await readFile(join(stateDir, 'slow.json'), 'utf8')).toBe(bytes);
+
+  const run = record('quick');
+  await save(run);
+  await lock('quick');
+  const seen: string[] = [];
+  const watching = watchRun(
+    { stateDir, runId: 'quick', intervalMs: 5, timeoutMs: 5000 },
+    (snapshot) => {
+      seen.push(snapshot.summary.status);
+    },
+  );
+  await vi.waitFor(() => {
+    expect(seen).toEqual(['running']);
+  });
+  await save({ ...run, status: 'completed', updatedAt: '2026-02-01T00:00:00.000Z' });
+  expect((await watching).summary.status).toBe('completed');
+  expect(seen).toEqual(['running', 'completed']);
+});
+
+it('measures timeoutMs from the first successful read, not from the start of the watch', async () => {
+  await lock('created');
+  let firstRead: number | undefined;
+  const changes: string[] = [];
+  const watching = watchRun(
+    { stateDir, runId: 'created', intervalMs: 5, waitCreatedMs: 5000, timeoutMs: 50 },
+    (snapshot) => {
+      firstRead ??= performance.now();
+      changes.push(snapshot.summary.status);
+    },
+  ).catch((error: unknown) => error);
+  await delay(100);
+  await save(record('created'));
+  const failure = await watching;
+  const stoppedAt = performance.now();
+  expect(failure).toMatchObject({ code: 'watch.timeout', details: { timeoutMs: 50 } });
+  expect(changes).toEqual(['running']);
+  expect(stoppedAt - (firstRead ?? stoppedAt)).toBeGreaterThanOrEqual(45);
+});
+
+it('maps watch bounds to executor failures with the observed run and no re-read', async () => {
+  const executor = new WorkflowExecutor({ logger: { log: vi.fn() } });
+  const missing = await executor.execute({
+    kind: 'workflow.watch',
+    runId: 'absent',
+    stateDir,
+    intervalMs: 5,
+    waitCreatedMs: 20,
+  });
+  expect(missing).toMatchObject({
+    ok: false,
+    code: 'watch.record_not_created',
+    runId: 'absent',
+    details: { waitCreatedMs: 20 },
+    run: null,
+  });
+  expect(missing).not.toHaveProperty('next');
+
+  await save(record('busy'));
+  await lock('busy');
+  const timedOut = await executor.execute({
+    kind: 'workflow.watch',
+    runId: 'busy',
+    stateDir,
+    intervalMs: 5,
+    timeoutMs: 20,
+  });
+  expect(timedOut).toMatchObject({
+    ok: false,
+    code: 'watch.timeout',
+    details: { timeoutMs: 20 },
+    run: { id: 'busy', status: 'running' },
+  });
+
+  // An interrupt still wins over a bound in flight.
+  const controller = new AbortController();
+  const interrupted = new WorkflowExecutor({
+    logger: { log: vi.fn() },
+    signal: controller.signal,
+  }).execute({
+    kind: 'workflow.watch',
+    runId: 'absent',
+    stateDir,
+    intervalMs: 5,
+    waitCreatedMs: 5000,
+  });
+  await delay(20);
+  controller.abort(new Error('stop'));
+  expect(await interrupted).toMatchObject({ ok: false, code: 'workflow.interrupted', run: null });
 });
 
 const iso = (seconds: number): string => new Date(Date.parse(time) + seconds * 1000).toISOString();

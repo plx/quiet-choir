@@ -2,7 +2,13 @@ import { brandError, isBranded } from './error-brand.js';
 import type { JsonValue } from './model.js';
 import type { RunRecord } from './store.js';
 
-/** Stable machine-readable workflow command failures; numeric exits belong to the CLI. */
+/**
+ * Stable machine-readable workflow command failures; numeric exits belong to the CLI.
+ *
+ * `watch.timeout` means a bounded `workflow inspect --watch --timeout` stopped watching while the
+ * run was still running; the run itself keeps running. `watch.record_not_created` means a
+ * `--wait-created` watch never saw the run's record appear within its bound.
+ */
 export type CliErrorCode =
   | 'answer.invalid'
   | 'answer.conflict'
@@ -28,7 +34,9 @@ export type CliErrorCode =
   | 'workflow.interrupted'
   | 'workflow.storage'
   | 'start.timeout'
-  | 'start.exited';
+  | 'start.exited'
+  | 'watch.timeout'
+  | 'watch.record_not_created';
 
 const cliErrorCodes: Readonly<Record<CliErrorCode, true>> = {
   'answer.invalid': true,
@@ -56,6 +64,8 @@ const cliErrorCodes: Readonly<Record<CliErrorCode, true>> = {
   'workflow.storage': true,
   'start.timeout': true,
   'start.exited': true,
+  'watch.timeout': true,
+  'watch.record_not_created': true,
 };
 
 /** Whether a string read from another process's document is a known {@link CliErrorCode}. @internal */

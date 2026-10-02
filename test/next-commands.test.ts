@@ -162,6 +162,12 @@ describe('failureNextCommands', () => {
     ],
     ['start.timeout without a record', { code: 'start.timeout', run: null, runId: null }, []],
     ['start.exited', { code: 'start.exited', run: null, runId: null }, []],
+    [
+      'watch.timeout on a running run',
+      { code: 'watch.timeout', run: run({ status: 'running' }) },
+      [],
+    ],
+    ['watch.record_not_created', { code: 'watch.record_not_created', run: null }, []],
     ['run.orphans', { code: 'run.orphans' }, [resume('--kill-orphans')]],
     [
       'run.orphans of an embedded run',
