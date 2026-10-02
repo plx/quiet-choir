@@ -3140,7 +3140,7 @@ export async function runWorkflow<
         waitOperation(id, sources, (outcome) => outcome as WaitOutcome<S>),
       sleepUntil: (id, deadline) => waitOperation(id, { deadline }, () => null),
       // Cast: one implementation serves the observer and command overloads.
-      poll: (<T, N extends JsonValue = JsonValue>(
+      poll: <T, N extends JsonValue = JsonValue>(
         id: string,
         settings: PollOptions<T, N> | CommandPollOptions<T, unknown, N>,
       ) =>
@@ -3160,7 +3160,7 @@ export async function runWorkflow<
             )
               throw new Error('Poll requires timeoutMs or deadline.');
           },
-        )),
+        ),
       ask,
       approve: (id, options) => ask(id, { ...options, schema: approvalSchema }),
       phase,
