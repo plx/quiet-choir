@@ -20,6 +20,7 @@ import {
   type HarnessSelection,
 } from '../../workflow/loader/harness-selection.js';
 import { WorkflowExecutor } from '../../workflow/loader/executor.js';
+import type { RehearsalReport } from '../../workflow/loader/rehearsal.js';
 import type { JsonValue } from '../../workflow/runtime/model.js';
 import { validatePolicy, type PolicyOverride } from '../../workflow/runtime/policy.js';
 
@@ -186,15 +187,11 @@ export default class WorkflowExecute extends WorkflowCommand {
       for (const diagnostic of result.diagnostics) {
         this.logToStderr(formatTypecheckDiagnostic(diagnostic, process.cwd()));
       }
+      if (result.rehearsal) this.rehearsalSummary(result.rehearsal);
       this.failResult(result);
     }
     if (result.kind === 'workflow.run.result') {
-      for (const warning of result.rehearsal?.warnings ?? [])
-        this.logToStderr(`Warning: ${warning}`);
-      if (result.rehearsal)
-        this.logToStderr(
-          `Rehearsal: ${String(result.rehearsal.calls.length)} calls; ${String(result.rehearsal.commands.filter((entry) => entry.outputSource === 'synthesized').length)} synthesized and ${String(result.rehearsal.commands.filter((entry) => entry.outputSource === 'fixture').length)} fixture commands; nominal Claude ceiling $${String(result.rehearsal.nominalClaudeCeilingUsd)}; ${String(result.rehearsal.replays.length)} replayed effects.`,
-        );
+      if (result.rehearsal) this.rehearsalSummary(result.rehearsal);
       for (const warning of result.run.warnings ?? []) this.logToStderr(`Warning: ${warning}`);
       if (result.run.status === 'suspended') {
         this.suspended(result.run, result.rehearsal);
@@ -207,5 +204,16 @@ export default class WorkflowExecute extends WorkflowCommand {
         `Run ${result.run.id} ${result.run.status}.\n${JSON.stringify(result.run.output, null, 2)}`,
       );
     }
+  }
+
+  /** Print a rehearsal's warnings and one-line summary to stderr, on success and failure alike. */
+  private rehearsalSummary(report: RehearsalReport): void {
+    for (const warning of report.warnings) this.logToStderr(`Warning: ${warning}`);
+    const commands = (source: 'synthesized' | 'fixture'): string =>
+      String(report.commands.filter((entry) => entry.outputSource === source).length);
+    const isolated = report.calls.filter((call) => call.worktree?.synthesized).length;
+    this.logToStderr(
+      `Rehearsal: ${String(report.calls.length)} calls; ${commands('synthesized')} synthesized and ${commands('fixture')} fixture commands; nominal Claude ceiling $${String(report.nominalClaudeCeilingUsd)}; ${String(report.replays.length)} replayed effects${isolated > 0 ? `; ${String(isolated)} synthesized isolated calls` : ''}${report.merges.length > 0 ? `; ${String(report.merges.length)} synthesized merges` : ''}.`,
+    );
   }
 }
