@@ -23,6 +23,7 @@ import {
   selectedAdapters,
 } from './harness-selection.js';
 import { FixtureHarness } from '../../harnesses/fixture.js';
+import { FixtureProcessRunner } from '../../harnesses/fixture-exec.js';
 import { RehearsalHarness, rehearsalState } from './rehearsal.js';
 import {
   divergenceRefusal,
@@ -170,6 +171,8 @@ export class WorkflowExecutor implements Executor<WorkflowExecutorPlan, Workflow
     let events: WorkflowEventLog | undefined;
     let previewState: Awaited<ReturnType<typeof rehearsalState>> | undefined;
     let harness = this.#options.harness;
+    // Answers ctx.exec from fixture exec rules under a non-dry-run fixture harness.
+    let execRunner: ProcessRunner | undefined;
     let stage: CliErrorCode = 'load.typecheck';
     // A live execution's run signal: the caller's, wrapped so a matching `workflow cancel` request
     // turns its interruption into a cancellation (ADR 0039).
@@ -446,6 +449,15 @@ export class WorkflowExecutor implements Executor<WorkflowExecutorPlan, Workflow
           if (selection.kind === 'fixture') {
             if (!selection.fixtures) throw new Error('Fixture selection requires fixture data.');
             harness = new FixtureHarness(selection.fixtures);
+            // Only ctx.exec goes through the rules; worktree Git keeps the real process runner.
+            if (
+              (selection.fixtures.exec?.length ?? 0) > 0 ||
+              selection.fixtures.commands === 'fixture'
+            )
+              execRunner = new FixtureProcessRunner(
+                selection.fixtures,
+                this.#options.processRunner ?? new NodeProcessRunner(),
+              );
           }
         }
       }
@@ -645,6 +657,7 @@ export class WorkflowExecutor implements Executor<WorkflowExecutorPlan, Workflow
         stateDir: previewState?.stateDir ?? plan.stateDir,
         processRunner:
           rehearsal?.processRunner ?? this.#options.processRunner ?? new NodeProcessRunner(),
+        ...(execRunner === undefined ? {} : { execRunner }),
         ...(effectiveWaitMode === undefined ? {} : { waitMode: effectiveWaitMode }),
         ...(this.#options.store === undefined ? {} : { store: this.#options.store }),
         ...(this.#options.commandLauncher === undefined

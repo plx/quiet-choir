@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import type { z } from 'zod';
 import { CliHarness, type CliHarnessPlan } from '../../harnesses/cli.js';
 import { FixtureHarness } from '../../harnesses/fixture.js';
+import { FixtureExecRules } from '../../harnesses/fixture-exec.js';
 import { synthesizeOutput } from '../../harnesses/synthesize.js';
 import type {
   HarnessInvocation,
@@ -39,16 +40,23 @@ export interface RehearsalCall {
   error: string | null;
   limits: ExecutionPolicy | null;
 }
+/** One command reaching the rehearsal process runner, answered by a rule or synthesized. @internal */
+export interface RehearsalCommand {
+  readonly stepId: string;
+  readonly command: Command;
+  readonly cwd: string;
+  readonly structured: boolean;
+  readonly outputSource: 'fixture' | 'synthesized';
+  /** Matched index in the fixture file's `exec` array, or null. */
+  readonly fixtureIndex: number | null;
+  /** The refusal of an unmatched command under `commands: 'fixture'`, or null. */
+  readonly error: string | null;
+}
 /** Plain-data report; its checkpoint has already been removed from temporary storage. @internal */
 export interface RehearsalReport {
   readonly kind: 'workflow.rehearsal';
   readonly calls: readonly RehearsalCall[];
-  readonly commands: readonly {
-    stepId: string;
-    command: Command;
-    cwd: string;
-    structured: boolean;
-  }[];
+  readonly commands: readonly RehearsalCommand[];
   readonly replays: readonly { stepId: string; kind: string }[];
   readonly harnessCounts: Readonly<Record<string, number>>;
   /** Compatibility counts for the two original native clients. */
@@ -56,6 +64,8 @@ export interface RehearsalReport {
   readonly nominalClaudeCeilingUsd: number;
   readonly stubbedSteps: readonly string[];
   readonly skippedSleeps: readonly string[];
+  /** Indices into the fixture file's `exec` array of rules that matched no command. */
+  readonly staleExecFixtures: readonly number[];
   readonly warnings: readonly string[];
 }
 
@@ -64,20 +74,43 @@ export class RehearsalHarness extends FixtureHarness {
   public override readonly kind = 'dry-run';
   private readonly cli: CliHarness;
   private readonly calls: RehearsalCall[] = [];
-  private readonly commands: {
-    stepId: string;
-    command: Command;
-    cwd: string;
-    structured: boolean;
-  }[] = [];
+  private readonly commands: RehearsalCommand[] = [];
+  private readonly execRules: FixtureExecRules;
   public readonly processRunner: ProcessRunner = {
     run: (request, invocation) => {
       invocation.signal.throwIfAborted();
-      this.commands.push({
+      const match = this.execRules.match(request, invocation);
+      const entry = {
         stepId: invocation.stepId,
         command: request.command,
         cwd: request.cwd,
         structured: request.schema !== null,
+      };
+      if (match) {
+        this.commands.push({
+          ...entry,
+          outputSource: 'fixture',
+          fixtureIndex: match.index,
+          error: null,
+        });
+        return Promise.resolve(this.execRules.result(match.rule));
+      }
+      // Unlike `unmatched`, the commands mode is honored here: its purpose is to forbid synthesis.
+      if (this.execRules.commands === 'fixture') {
+        const error = this.execRules.unmatched(request, invocation);
+        this.commands.push({
+          ...entry,
+          outputSource: 'fixture',
+          fixtureIndex: null,
+          error: error.message,
+        });
+        return Promise.reject(error);
+      }
+      this.commands.push({
+        ...entry,
+        outputSource: 'synthesized',
+        fixtureIndex: null,
+        error: null,
       });
       this.warnings.add(
         'Commands are synthesized without spawning. Empty plain stdout and synthesized JSON can select a different branch from real execution.',
@@ -117,6 +150,8 @@ export class RehearsalHarness extends FixtureHarness {
       unmatched: 'synthesize',
     });
     this.cli = new CliHarness(selection.config);
+    // Named fixture files cannot carry exec rules; commands come only from the global file.
+    this.execRules = new FixtureExecRules(selection.fixtures?.exec, selection.fixtures?.commands);
     for (const match of stubPatterns) policyOverrideSchema.parse({ match });
   }
   public policyDefaults(harness: HarnessRequest['harness']): ExecutionPolicy {
@@ -220,6 +255,11 @@ export class RehearsalHarness extends FixtureHarness {
           ? 'Rehearsal stopped at an unanswered question. Temporary state is removed; answer/resume commands are unavailable. Start a real run to request and persist the decision.'
           : 'Rehearsal stopped at an unresolved external wait. Temporary state is removed; start a real run to keep polling or resume later.',
       );
+    const staleExecFixtures = this.execRules.stale();
+    if (staleExecFixtures.length)
+      this.warnings.add(
+        `Exec fixture rules ${staleExecFixtures.join(', ')} matched no command; check their step, argvPrefix, digests and occurrence. Rules for steps replayed from a checkpoint are always stale.`,
+      );
     // A fully completed resume short-circuits before body events; all saved effects replay as a unit.
     const replayed =
       this.calls.length === 0 &&
@@ -255,6 +295,7 @@ export class RehearsalHarness extends FixtureHarness {
         0,
       ),
       stubbedSteps: [...this.stubbedSteps],
+      staleExecFixtures,
       skippedSleeps: [...this.skippedSleeps].filter((id) => {
         const step = record?.steps[id];
         return (

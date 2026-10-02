@@ -24,6 +24,7 @@ export type PreflightRunOptions = Omit<
   | 'harnessConfigurations'
   | 'rehearsal'
   | 'processRunner'
+  | 'execRunner'
   | 'processSupervisor'
   | 'killOrphans'
   | 'waitMode'

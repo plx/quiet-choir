@@ -101,10 +101,14 @@ async function readFixtureSelection(
       );
     if (Object.hasOwn(named, match[1]))
       throw new Error(`Duplicate --harness selection ${match[1]}.`);
-    Object.defineProperty(named, match[1], {
-      value: await readFixtureFile(resolve(cwd, match[2]), sources, match[1], missing),
-      enumerable: true,
-    });
+    const path = resolve(cwd, match[2]);
+    const file = await readFixtureFile(path, sources, match[1], missing);
+    // Commands are not per-harness: exec rules and the commands mode belong to the global file.
+    if (file.exec !== undefined || file.commands !== undefined)
+      throw new Error(
+        `Named fixture file ${path} for harness ${match[1]} has exec rules or a commands mode; commands are not per-harness, so put them in the global --harness fixture:FILE.`,
+      );
+    Object.defineProperty(named, match[1], { value: file, enumerable: true });
   }
   return {
     kind: fixtures === undefined ? 'cli' : 'fixture',

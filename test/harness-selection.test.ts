@@ -280,3 +280,27 @@ describe('inheritHarnessSelection', () => {
     await expect(failure).rejects.toThrow(/ENOENT.*pass --harness explicitly/u);
   });
 });
+
+describe('command fixtures in named fixture files', () => {
+  it('refuses exec rules or a commands mode in a named file, pointing to the global file', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'choir-selection-'));
+    directories.push(cwd);
+    await writeFile(
+      join(cwd, 'g.json'),
+      '{"version":1,"calls":[],"exec":[{"step":"x","stdout":""}]}',
+    );
+    await writeFile(
+      join(cwd, 'n.json'),
+      '{"version":1,"calls":[],"exec":[{"step":"x","stdout":""}]}',
+    );
+    await writeFile(join(cwd, 'm.json'), '{"version":1,"calls":[],"commands":"fixture"}');
+    const global = await readHarnessSelection('fixture:g.json', undefined, cwd);
+    expect(global.fixtures?.exec).toEqual([{ step: 'x', stdout: '' }]);
+    for (const file of ['n.json', 'm.json'])
+      await expect(
+        readHarnessSelection(['fixture:g.json', `claude=fixture:${file}`], undefined, cwd),
+      ).rejects.toThrow(
+        `Named fixture file ${join(cwd, file)} for harness claude has exec rules or a commands mode; commands are not per-harness, so put them in the global --harness fixture:FILE.`,
+      );
+  });
+});
