@@ -2,6 +2,7 @@ import type { WorkflowDeclaration } from '../runtime/child-model.js';
 import { importWorkflow, WorkflowDefinitionError } from './import.js';
 import { cleanWorktrees } from '../runtime/worktree-clean.js';
 import type {
+  CancelWorkflowPlan,
   CleanWorkflowPlan,
   ListDefinitionsPlan,
   ExecuteNamedWorkflowPlan,
@@ -38,6 +39,8 @@ import {
   type RunInspection,
 } from './inspection.js';
 import { workflowFailure } from './failure.js';
+import { cancellableRunSignal, type CancellableRunSignal } from './cancel-signal.js';
+import { cancelRun } from './cancel.js';
 import { failureKind, rootCauseErrorKind } from './failure-kind.js';
 import { failureNextCommands } from './next-commands.js';
 import type { CommandLauncher } from '../runtime/commands.js';
@@ -109,6 +112,11 @@ export interface WorkflowExecutorOptions {
   readonly eventsStdout?: Extract<EventLogTarget, { readonly write: unknown }>['write'];
   /** Receives each line of a `workflow.events` plan, without its newline, as soon as it is derived. */
   readonly onEventLine?: (line: string) => void;
+  /**
+   * Deliver a signal to one process ID (never a group) for a `workflow.cancel` plan; defaults to
+   * `process.kill`. Tests stub it.
+   */
+  readonly sendSignal?: (pid: number, signal: NodeJS.Signals) => void;
 }
 
 /** Every plain-data plan the workflow executor accepts. */
@@ -126,6 +134,7 @@ export type WorkflowExecutorPlan =
   | PendingWorkflowsPlan
   | CleanWorkflowPlan
   | UnlockWorkflowPlan
+  | CancelWorkflowPlan
   | ListDefinitionsPlan
   | ExecuteNamedWorkflowPlan;
 
@@ -162,6 +171,17 @@ export class WorkflowExecutor implements Executor<WorkflowExecutorPlan, Workflow
     let previewState: Awaited<ReturnType<typeof rehearsalState>> | undefined;
     let harness = this.#options.harness;
     let stage: CliErrorCode = 'load.typecheck';
+    // A live execution's run signal: the caller's, wrapped so a matching `workflow cancel` request
+    // turns its interruption into a cancellation (ADR 0039).
+    let cancellable: CancellableRunSignal | undefined;
+    let runSignal = this.#options.signal;
+    /**
+     * Stop before the runtime on an abort. A honoured cancel request continues instead: the runtime
+     * then saves `cancelled` before the workflow body starts, which covers tick's claim window.
+     */
+    const stopIfAborted = (): void => {
+      if (!cancellable?.cancelled) runSignal?.throwIfAborted();
+    };
     const context =
       'runId' in plan
         ? { runId: plan.runId, stateDir: resolveStateDir({ stateDir: plan.stateDir }) }
@@ -251,6 +271,27 @@ export class WorkflowExecutor implements Executor<WorkflowExecutorPlan, Workflow
           forceRemote: plan.forceRemote,
           locks,
         };
+      }
+      if (plan.kind === 'workflow.cancel') {
+        if (
+          !Number.isSafeInteger(plan.timeoutMs) ||
+          plan.timeoutMs < 1 ||
+          plan.timeoutMs > 2_147_483_647
+        )
+          return workflowFailure(
+            'usage.flag',
+            'The cancel timeout must be an integer from 1 to 2147483647 milliseconds.',
+            context,
+          );
+        stage = 'workflow.storage';
+        return await cancelRun(plan, {
+          sendSignal:
+            this.#options.sendSignal ??
+            ((pid, signal) => {
+              process.kill(pid, signal);
+            }),
+          signal: this.#options.signal,
+        });
       }
       if (plan.kind === 'workflow.pending') {
         stage = 'run.unreadable';
@@ -365,6 +406,16 @@ export class WorkflowExecutor implements Executor<WorkflowExecutorPlan, Workflow
           ...inspection,
         };
       }
+      if (plan.kind === 'workflow.execute' && !plan.dryRun && runSignal !== undefined) {
+        cancellable = cancellableRunSignal(
+          runSignal,
+          { stateDir: resolveStateDir({ stateDir: plan.stateDir }), runId: plan.runId },
+          (message) => {
+            this.#options.logger.log('info', message);
+          },
+        );
+        runSignal = cancellable.signal;
+      }
       stage = 'usage.flag';
       // The effective selection and wait mode. On resume, the run's recorded launch policy fills in
       // what the invocation left out, before anything below builds a harness from the selection.
@@ -435,7 +486,7 @@ export class WorkflowExecutor implements Executor<WorkflowExecutorPlan, Workflow
               : null,
           diagnostics: checked.diagnostics,
         });
-      this.#options.signal?.throwIfAborted();
+      stopIfAborted();
       stage = 'load.import';
       const source = await fingerprintSources(plan.typecheck, checked.sourceFiles);
       this.#options.logger.log(
@@ -444,7 +495,7 @@ export class WorkflowExecutor implements Executor<WorkflowExecutorPlan, Workflow
       );
       const imported = await importWorkflow(plan.typecheck);
       unregister = imported.dispose;
-      this.#options.signal?.throwIfAborted();
+      stopIfAborted();
       stage = 'load.definition';
       const definition = imported.definition;
       if (
@@ -556,7 +607,7 @@ export class WorkflowExecutor implements Executor<WorkflowExecutorPlan, Workflow
           ? {}
           : { allowModelOverride: plan.allowModelOverride }),
         ...(plan.input === undefined ? {} : { input: plan.input }),
-        ...(this.#options.signal === undefined ? {} : { signal: this.#options.signal }),
+        ...(runSignal === undefined ? {} : { signal: runSignal }),
         source,
         ...(plan.acceptCodeChange === undefined ? {} : { acceptCodeChange: plan.acceptCodeChange }),
         ...(plan.strictReplay === undefined ? {} : { strictReplay: plan.strictReplay }),
@@ -705,7 +756,7 @@ export class WorkflowExecutor implements Executor<WorkflowExecutorPlan, Workflow
               (error.run.status === 'suspended' && error.run.interruptedBy !== undefined)
               ? 'workflow.interrupted'
               : 'workflow.failed'
-            : this.#options.signal?.aborted
+            : runSignal?.aborted
               ? 'workflow.interrupted'
               : error instanceof RunRefusedError ||
                   error instanceof WorkflowInputError ||
@@ -747,6 +798,7 @@ export class WorkflowExecutor implements Executor<WorkflowExecutorPlan, Workflow
         },
       );
     } finally {
+      cancellable?.dispose();
       events?.close();
       await notifications?.flush();
       unregister?.();
