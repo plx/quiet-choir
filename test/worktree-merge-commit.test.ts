@@ -78,6 +78,7 @@ function integration(
   merge: MergeOptions,
   edits: readonly string[] = ['one.txt'],
   after?: (ctx: WorkflowContext, commit: string) => Promise<void>,
+  content: (file: string, index: number) => string = (file) => `${file}\n`,
 ) {
   return defineWorkflow({
     name: 'merge-commit',
@@ -94,7 +95,7 @@ function integration(
             input: file,
             schema: z.null(),
             async run({ cwd }) {
-              await writeFile(join(cwd, file), `${file}\n`);
+              await writeFile(join(cwd, file), content(file, index));
               return null;
             },
           });
@@ -165,6 +166,55 @@ describe('MergeOptions.commit', () => {
     ]);
     expect(await command('show', 'agent/100:two.txt')).toBe('two.txt');
     expect(await command('show', 'agent/100:one.txt')).toBe('one.txt');
+  });
+
+  it('gives a merge-strategy tip the message, two parents and the identity on its first-parent chain', async () => {
+    const result = await runWorkflow(
+      integration({ strategy: 'merge', commit: { message: 'Fix #42', author: 'git-config' } }, [
+        'one.txt',
+        'two.txt',
+      ]),
+      options('merge-strategy'),
+    );
+    const merged = result.steps['publish']?.merge?.result?.merged ?? [];
+    expect(merged).toHaveLength(2);
+    expect(await command('log', '-1', '--format=%s', 'agent/100')).toBe('Fix #42');
+    const parents = (await command('rev-list', '--parents', '-n1', 'agent/100')).split(' ');
+    expect(parents).toHaveLength(3);
+    expect(parents[0]).toBe(result.output);
+    expect(parents[2]).toBe(merged[1]);
+    const identity = 'Config User <config@example.test>';
+    const log = await command(
+      'log',
+      '--first-parent',
+      '--format=%an <%ae>|%cn <%ce>',
+      `${String(result.steps['publish']?.merge?.base)}..agent/100`,
+    );
+    expect(log.split('\n')).toEqual([`${identity}|${identity}`, `${identity}|${identity}`]);
+  });
+
+  it('puts the message on the last clean rebase commit when a trailing input conflicts', async () => {
+    const result = await runWorkflow(
+      integration(
+        {
+          strategy: 'rebase',
+          onConflict: 'report',
+          commit: { message: 'Fix #42', author: 'git-config' },
+        },
+        ['file.txt', 'file.txt'],
+        undefined,
+        (_, index) => `body ${String(index)}\n`,
+      ),
+      options('rebase-conflict'),
+    );
+    const merge = result.steps['publish']?.merge?.result;
+    expect(merge?.merged).toHaveLength(1);
+    expect(merge?.conflicts).toHaveLength(1);
+    expect(await head('agent/100')).toBe(
+      'Config User <config@example.test>\nConfig User <config@example.test>\nFix #42',
+    );
+    expect(await command('rev-parse', 'agent/100')).toBe(merge?.commit);
+    expect(merge?.commit).toBe(result.output);
   });
 
   it('reproduces the recorded commit after an interruption and a changed user.name', async () => {
