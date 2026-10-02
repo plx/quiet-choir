@@ -315,6 +315,10 @@ export class WorkflowExecutor implements Executor<WorkflowExecutorPlan, Workflow
         const emit = (value: RunInspection): void => {
           const derived = recordEventLines(value.run, cursor, start);
           cursor = derived.cursor;
+          this.#options.logger.log(
+            'debug',
+            `Events: read run ${value.run.id} (${value.summary.status}, execution ${String(value.summary.execution)}); ${String(derived.lines.length)} new lines.`,
+          );
           for (const line of derived.lines) this.#options.onEventLine?.(line);
         };
         const options = {
