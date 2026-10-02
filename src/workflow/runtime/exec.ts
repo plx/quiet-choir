@@ -58,6 +58,9 @@ export async function executeCommand<T>(
       'No process adapter configured. Supply RunOptions.processRunner (for example, NodeProcessRunner).',
     );
   const result = execResultSchema.parse(await runner.run(request, invocation));
+  // A failed exec.json keeps the complete JSON it printed, so a settled failure can branch on it.
+  const failure = () =>
+    schema === null || result.truncated ? {} : { parsed: boundedJson(result.stdout) };
   if (
     result.code === null ||
     result.signal !== null ||
@@ -67,6 +70,7 @@ export async function executeCommand<T>(
       `Command exited with ${result.signal ?? String(result.code)}.`,
       'process',
       result,
+      failure(),
     );
   if (!schema) return result;
   if (result.truncated)
@@ -78,7 +82,20 @@ export async function executeCommand<T>(
       `Command stdout did not match its JSON schema: ${cause instanceof Error ? cause.message : String(cause)}`,
       'schema',
       result,
-      { cause },
+      { cause, ...failure() },
     );
+  }
+}
+
+/** Largest stdout, in UTF-8 bytes, that a settled exec.json failure keeps as `parsed`. @internal */
+export const SETTLED_PARSED_MAX_BYTES = 16_384;
+
+/** Stdout as JSON when it is small enough and valid; never throws. */
+function boundedJson(stdout: string): JsonValue | undefined {
+  if (Buffer.byteLength(stdout, 'utf8') > SETTLED_PARSED_MAX_BYTES) return undefined;
+  try {
+    return JSON.parse(stdout) as JsonValue;
+  } catch {
+    return undefined;
   }
 }

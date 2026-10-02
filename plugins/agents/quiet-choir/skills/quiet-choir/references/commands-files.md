@@ -17,11 +17,24 @@ arguments or shell source: command descriptions are recorded and visible in insp
 
 `ExecResult` contains `code`, `signal`, `stdout`, `stderr`, `truncated`, and `durationMs`. By
 default, only exit 0 succeeds. Non-ok exits throw `ExecError`; attempt history preserves the exit
-code, signal, classification, and the last 1024 characters of each output stream.
-`okExitCodes: 'any'` records ordinary nonzero exits as completed results, suitable for branching on
-test outcomes. Signals, timeouts, and cancellation still fail. `ctx.exec.json` parses stdout with
-its required Zod schema and checkpoints that value instead of raw output. Invalid or truncated JSON
-fails.
+code, signal, classification, and the last 1024 characters of each output stream. `ctx.exec.json`
+parses stdout with its required Zod schema and checkpoints that value instead of raw output. Invalid
+or truncated JSON fails.
+
+A `try/catch` around a command is not a durable decision: resume runs the command again and can take
+the other branch. To branch on a failure, pass `onError: 'return'`, as every effect that can fail
+allows. `ctx.exec` then returns `Settled<ExecResult, ExecStepError>` and `ctx.exec.json` returns
+`Settled<T, ExecStepError>`. The final failure, after retries, is saved as `settled-failed` and
+replays on resume without running the command. `ExecStepError` adds the exit `code`, `signal`, and
+the last 1024 characters of stdout and stderr (`stdoutTail`, `stderrTail`) to `message`, `kind`, and
+`attempts`. A timeout settles with kind `timeout` and whatever partial output the runner reported.
+For `ctx.exec.json`, `parsed` holds stdout as JSON when the output was complete, valid JSON, and at
+most 16384 UTF-8 bytes; it is not checked against the success schema, so a failing tool's JSON
+report stays usable. The process fields are absent when the runner's error carried no process
+result. Cancellation and a missing process adapter still reject and leave the step unfinished.
+`okExitCodes: 'any'` is the older alternative: it records ordinary nonzero exits as completed
+results, but signals and timeouts still fail and `ctx.exec.json` keeps only the parsed value, not
+the exit code.
 
 Commands default to a five-minute deadline and 1 MiB **per stream**. Plain commands continue after
 output overflow, retaining the first and last half of each stream's byte cap. No separator is
@@ -31,8 +44,9 @@ escapes into a separate session/group is outside that ownership, as with native 
 process-tree semantics are weaker; filesystem durability uses the existing local POSIX contract.
 
 Identity covers the command, canonical cwd, hash of the explicit environment overlay, stdin digest,
-`inheritEnv`, accepted exit codes, and output schema/mode. `timeoutMs`, `maxOutputBytes`, and
-`retry` are policy, so raising them does not invalidate completed work. Sticky run policy accepts
+`inheritEnv`, accepted exit codes, output schema/mode, and `onError` when it is `'return'` (omitting
+it and passing `'throw'` are the same identity). `timeoutMs`, `maxOutputBytes`, and `retry` are
+policy, so raising them does not invalidate completed work. Sticky run policy accepts
 `kind: 'exec'`, timeout/output caps, and retry. Unfinished effects retain the existing explicit
 redefinition/history behavior; completed identity changes require a new run or an appropriate fork.
 Repeated observations need fresh IDs or a read-only `ctx.poll` observer; do not nest exec in one.
@@ -69,6 +83,12 @@ coordination. Paths, including existing symlink targets and missing-file parents
 cwd; `allowOutsideCwd: true` is required to escape it on both reads and writes. This is a path
 guard, not a sandbox against hostile processes racing directory replacements.
 
+Both file effects accept `onError: 'return'` and then return `Settled<ReadFileResult>` or
+`Settled<WriteFileResult>`. An oversized snapshot, an `ifMatch` conflict, or another final failure
+is saved with `message`, `kind`, and `attempts` and replays on resume even after the file changes.
+Invalid options and paths outside cwd still reject before the effect starts. Like commands, only
+`onError: 'return'` enters identity.
+
 ## Guarding a mutation
 
 `guardFile(ctx, id, path, body, { onChange: 'restore' | 'error' })` saves the current uncommitted
@@ -100,7 +120,8 @@ synthesized: plain stdout is empty and JSON follows the schema, so the exercised
 from reality. `--harness fixture` answers agents from `calls` and commands from `exec` rules without
 spawning; unmatched commands run for real there, and worktree Git always does. A file with
 `"commands": "fixture"` fails an unmatched command at its step in both modes. `workflow fixtures`
-exports completed command results as exec rules keyed by argv and environment/stdin digests. File
-effects, local callbacks, and top-level workflow code still run for real unless selected by
-`--stub-steps`. See [command fixtures](rehearsal.md#command-fixtures) and the
+exports completed command results as exec rules keyed by argv and environment/stdin digests. It does
+not export a settled-failed command yet, so a `"commands": "fixture"` replay of that run fails at
+that step. File effects, local callbacks, and top-level workflow code still run for real unless
+selected by `--stub-steps`. See [command fixtures](rehearsal.md#command-fixtures) and the
 [verified cookbook](patterns.md#commands-and-test-verdicts).

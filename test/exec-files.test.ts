@@ -951,3 +951,235 @@ it('resumes a failed guard restore without rerunning its journaled body', async 
   expect(await readFile(join(cwd, 'file'), 'utf8')).toBe('baseline');
   expect(bodies).toBe(1);
 });
+
+describe("settled commands and files (onError: 'return')", () => {
+  it('replays a settled red test on resume without invoking the process runner', async () => {
+    // The m21 scenario: a caught failure used to re-run live on resume and take another branch.
+    let broken = true;
+    const run = vi.fn<ProcessRunner['run']>(() =>
+      Promise.resolve({ ...reply, code: 1, stdout: 'FAIL a.test.ts', stderr: 'boom' }),
+    );
+    const workflow = definition(async (ctx) => {
+      const tested = await ctx.exec('test', ['npm', 'test'], { onError: 'return' });
+      await ctx.step('record', {
+        input: tested.ok,
+        schema: z.string(),
+        run: () => {
+          if (broken) throw new Error('tail');
+          return tested.ok ? 'passed' : 'failed';
+        },
+      });
+      return tested.ok ? 'passed' : { code: tested.error.code, kind: tested.error.kind };
+    });
+    await expect(runWorkflow(workflow, { ...setup(), processRunner: { run } })).rejects.toThrow(
+      'tail',
+    );
+    const saved = await readRun(setup());
+    expect(saved.steps['test']).toMatchObject({
+      status: 'settled-failed',
+      settledError: {
+        kind: 'process',
+        attempts: 1,
+        code: 1,
+        signal: null,
+        stdoutTail: 'FAIL a.test.ts',
+        stderrTail: 'boom',
+      },
+    });
+    expect(saved.steps['test']?.settledError).not.toHaveProperty('parsed');
+    broken = false;
+    const resumed = await runWorkflow(workflow, {
+      ...setup(),
+      processRunner: { run },
+      resume: true,
+    });
+    expect(run).toHaveBeenCalledTimes(1);
+    expect(resumed.status).toBe('completed');
+    expect(resumed.output).toEqual({ code: 1, kind: 'process' });
+  });
+
+  it('keeps the exit code, bounded tails and bounded parsed JSON of a settled exec.json', async () => {
+    const outputs: Record<string, { code: number; stdout: string }> = {
+      exit: { code: 1, stdout: JSON.stringify({ failed: ['a'], pad: 'x'.repeat(3000) }) },
+      mismatch: { code: 0, stdout: '{"failed":["b"]}' },
+      invalid: { code: 1, stdout: '{"failed":' },
+      // A string literal of exactly SETTLED_PARSED_MAX_BYTES bytes, and one byte over it.
+      bound: { code: 1, stdout: JSON.stringify('y'.repeat(16_384 - 2)) },
+      oversized: { code: 1, stdout: JSON.stringify('y'.repeat(16_384 - 1)) },
+      plain: { code: 1, stdout: '{"failed":["c"]}' },
+    };
+    const run = vi.fn<ProcessRunner['run']>((_request, invocation) => {
+      const output = outputs[invocation.stepId];
+      if (!output) throw new Error(`unexpected ${invocation.stepId}`);
+      return Promise.resolve({ ...reply, ...output, stderr: 'e'.repeat(3000) + 'END' });
+    });
+    const schema = z.object({ passed: z.boolean() });
+    const workflow = definition(async (ctx) => {
+      for (const id of ['exit', 'mismatch', 'invalid', 'bound', 'oversized'])
+        expect((await ctx.exec.json(id, ['fake'], { schema, onError: 'return' })).ok).toBe(false);
+      expect((await ctx.exec('plain', ['fake'], { onError: 'return' })).ok).toBe(false);
+      return null;
+    });
+    await runWorkflow(workflow, { ...setup(), processRunner: { run } });
+    const steps = (await readRun(setup())).steps;
+    const settled = (id: string) => steps[id]?.settledError as Record<string, unknown>;
+    for (const id of Object.keys(outputs)) {
+      expect(steps[id]?.status).toBe('settled-failed');
+      expect(settled(id)['stderrTail']).toBe('e'.repeat(1021) + 'END');
+      expect((settled(id)['stdoutTail'] as string).length).toBeLessThanOrEqual(1024);
+    }
+    expect(settled('exit')).toMatchObject({
+      kind: 'process',
+      code: 1,
+      signal: null,
+      parsed: { failed: ['a'], pad: 'x'.repeat(3000) },
+    });
+    expect(settled('exit')['stdoutTail']).toHaveLength(1024);
+    expect(settled('mismatch')).toMatchObject({
+      kind: 'schema',
+      code: 0,
+      parsed: { failed: ['b'] },
+    });
+    expect(settled('bound')['parsed']).toBe('y'.repeat(16_384 - 2));
+    for (const id of ['invalid', 'oversized', 'plain']) {
+      expect(settled(id)).toMatchObject({ code: 1 });
+      expect(settled(id)).not.toHaveProperty('parsed');
+    }
+  });
+
+  it('settles a command timeout with kind timeout and replays it', async () => {
+    const workflow = definition(async (ctx) => {
+      const result = await ctx.exec('slow', node('setTimeout(() => {}, 30000)'), {
+        timeoutMs: 200,
+        onError: 'return',
+      });
+      return result.ok ? 'finished' : result.error.kind;
+    });
+    expect((await runWorkflow(workflow, { ...setup(), processRunner: native })).output).toBe(
+      'timeout',
+    );
+    const saved = (await readRun(setup())).steps['slow'];
+    expect(saved).toMatchObject({
+      status: 'settled-failed',
+      settledError: { kind: 'timeout', code: null },
+    });
+    const run = vi.fn<ProcessRunner['run']>();
+    const resumed = await runWorkflow(workflow, {
+      ...setup(),
+      processRunner: { run },
+      resume: true,
+    });
+    expect(resumed.output).toBe('timeout');
+    expect(run).not.toHaveBeenCalled();
+  });
+
+  it('rejects a missing process adapter without settling, then runs the command live on resume', async () => {
+    const workflow = definition(async (ctx) => {
+      const result = await ctx.exec('one', ['fake'], { onError: 'return' });
+      return result.ok ? result.value.stdout : 'settled';
+    });
+    const error: unknown = await runWorkflow(workflow, setup()).catch((cause: unknown) => cause);
+    expect(error).toBeInstanceOf(WorkflowRunError);
+    expect((error as WorkflowRunError).cause).toBeInstanceOf(ConfigurationError);
+    const step = (await readRun(setup())).steps['one'];
+    expect(step?.status).toBe('failed');
+    expect(step?.settledError).toBeUndefined();
+    const run = vi.fn<ProcessRunner['run']>(() => Promise.resolve(reply));
+    const resumed = await runWorkflow(workflow, {
+      ...setup(),
+      processRunner: { run },
+      resume: true,
+    });
+    expect(resumed.output).toBe('hello');
+    expect(run).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects a cancelled command instead of settling it', async () => {
+    const controller = new AbortController();
+    const run: ProcessRunner['run'] = (_request, invocation) =>
+      new Promise((_resolve, reject) => {
+        invocation.signal.addEventListener('abort', () => {
+          reject(invocation.signal.reason as Error);
+        });
+        controller.abort(new Error('interrupt'));
+      });
+    await expect(
+      runWorkflow(
+        definition((ctx) => ctx.exec('cancel', ['fake'], { onError: 'return' })),
+        { ...setup(), processRunner: { run }, signal: controller.signal },
+      ),
+    ).rejects.toThrow();
+    const step = (await readRun(setup())).steps['cancel'];
+    expect(step?.status).toBe('cancelled');
+    expect(step?.settledError).toBeUndefined();
+  });
+
+  it('settles an oversized read and an ifMatch conflict and replays them after the files change', async () => {
+    await writeFile(join(cwd, 'big'), '12345');
+    await writeFile(join(cwd, 'target'), 'external');
+    let broken = true;
+    const workflow = definition(async (ctx) => {
+      const read = await ctx.readFile('read', 'big', { maxBytes: 4, onError: 'return' });
+      const write = await ctx.writeFile('write', 'target', 'desired', {
+        ifMatch: fileDigest('expected'),
+        onError: 'return',
+      });
+      if (broken) throw new Error('tail');
+      return {
+        read: read.ok ? read.value.content : read.error.message,
+        write: write.ok ? write.value.sha256 : write.error.kind,
+      };
+    });
+    await expect(runWorkflow(workflow, setup())).rejects.toThrow('tail');
+    const steps = (await readRun(setup())).steps;
+    expect(steps['read']).toMatchObject({
+      status: 'settled-failed',
+      settledError: { attempts: 1 },
+    });
+    expect(steps['read']?.settledError?.message).toContain('snapshot limit');
+    expect(steps['write']).toMatchObject({
+      status: 'settled-failed',
+      settledError: { kind: 'unknown', attempts: 1 },
+    });
+    expect(steps['write']?.settledError?.message).toContain('ifMatch');
+    expect(steps['write']?.settledError).not.toHaveProperty('code');
+    // Now both effects would succeed live; the settled outcomes still replay.
+    await writeFile(join(cwd, 'big'), '1234');
+    await writeFile(join(cwd, 'target'), 'expected');
+    broken = false;
+    const resumed = await runWorkflow(workflow, { ...setup(), resume: true });
+    expect(resumed.output).toMatchObject({ write: 'unknown' });
+    expect((resumed.output as { read: string }).read).toContain('snapshot limit');
+    expect(await readFile(join(cwd, 'target'), 'utf8')).toBe('expected');
+  });
+
+  it.each(['exec', 'readFile', 'writeFile'] as const)(
+    'refuses to drop onError from a settled %s on resume',
+    async (effect) => {
+      await writeFile(join(cwd, 'big'), '12345');
+      await writeFile(join(cwd, 'target'), 'external');
+      let onError: { readonly onError?: 'return' } = { onError: 'return' };
+      const run = vi.fn<ProcessRunner['run']>(() => Promise.resolve({ ...reply, code: 1 }));
+      const workflow = definition(async (ctx) => {
+        if (effect === 'exec') await ctx.exec('one', ['fake'], onError);
+        else if (effect === 'readFile')
+          await ctx.readFile('one', 'big', { maxBytes: 4, ...onError });
+        else
+          await ctx.writeFile('one', 'target', 'desired', {
+            ifMatch: fileDigest('expected'),
+            ...onError,
+          });
+        throw new Error('tail');
+      });
+      await expect(runWorkflow(workflow, { ...setup(), processRunner: { run } })).rejects.toThrow(
+        'tail',
+      );
+      expect((await readRun(setup())).steps['one']?.status).toBe('settled-failed');
+      onError = {};
+      await expect(
+        runWorkflow(workflow, { ...setup(), processRunner: { run }, resume: true }),
+      ).rejects.toThrow('onError changed');
+      expect(run.mock.calls.length).toBeLessThanOrEqual(1);
+    },
+  );
+});

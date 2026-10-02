@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -8,6 +8,7 @@ import {
   runWorkflow,
   WorkflowRunError,
   z,
+  type ProcessRunner,
   type RunOptions,
   type WorkflowContext,
 } from '../src/index.js';
@@ -249,4 +250,78 @@ describe('version-identified steps', () => {
     expect((rejected as Error).message).toContain('callback, version changed on a completed step');
     expect(await readFile(join(directory, 'run.json'), 'utf8')).toContain('started-at');
   });
+});
+
+describe('exec and file effect identity', () => {
+  // Captured on the code before #149 added onError to these effects. Path-dependent components
+  // (cwd, path) are compared against the digest of the canonical temporary path instead.
+  it.each<'throw' | undefined>([undefined, 'throw'])(
+    'keeps exec, exec.json, readFile and writeFile identities with onError %j',
+    async (mode) => {
+      const dir = await realpath(await mkdtemp(join(tmpdir(), 'choir-effect-identity-')));
+      try {
+        await writeFile(join(dir, 'in.txt'), 'golden');
+        const processRunner: ProcessRunner = {
+          run: () =>
+            Promise.resolve({
+              code: 0,
+              signal: null,
+              stdout: '{"ok":true}',
+              stderr: '',
+              truncated: false,
+              durationMs: 1,
+            }),
+        };
+        const onError = mode === undefined ? {} : { onError: mode };
+        const effects = workflow(async (ctx) => {
+          await ctx.exec('plain', ['golden', 'arg'], onError);
+          await ctx.exec.json('json', ['golden', 'json'], {
+            schema: z.object({ ok: z.boolean() }),
+            ...onError,
+          });
+          await ctx.readFile('read', 'in.txt', onError);
+          await ctx.writeFile('write', 'out.txt', 'golden', onError);
+        });
+        await runWorkflow(effects, options({ cwd: dir, processRunner }));
+        const steps = await recorded();
+        for (const step of Object.values(steps))
+          expect(step.fingerprint).toBe(digest(step.identity));
+        const exec = {
+          cwd: digest(dir),
+          envSha256: 'ba4b4c01512909e214270a4f23ef856ea7857d763cbab32fe7381b0dc204523d',
+          inheritEnv: 'b5bea41b6c623f7c09f1bf24dcae58ebab3c0cdd90ad966bc43a45b44867e12b',
+          inputSha256: 'b4b16dad390bac4c7ce42014c594fa668910b49ec1b7771a17891c187d71e0ab',
+          kind: '37c9a5bba64484ff1971b80862a96916501e4624e59e717e16e7686f6f41be73',
+          okExitCodes: 'd0bca111f8628137adc4c16f123496dcdd1d590d06cb5d9acd68b39fe656fb97',
+        };
+        pinned('ctx.exec', steps['plain']?.identity, {
+          ...exec,
+          command: '2b653fe7df7f2e8cff409dea7f2a72520752b094d249ba67f458e328eba208fa',
+          schema: 'ff62d310ae73387abafa02c2437810c9303d006a5af94c037f5f9c0754828d1a',
+          structured: 'fcbcf165908dd18a9e49f7ff27810176db8e9f63b4352213741664245224f8aa',
+        });
+        pinned('ctx.exec.json', steps['json']?.identity, {
+          ...exec,
+          command: '9ee6ad123c2ad9a7453f0366928c854f376fcf8ca9f7f3325b94fe5416b5a416',
+          schema: '3100ed3d183ac9ab1eeb5b77a47021a4ca2b831f69185104c5faa7e461cb02ef',
+          structured: 'b5bea41b6c623f7c09f1bf24dcae58ebab3c0cdd90ad966bc43a45b44867e12b',
+        });
+        pinned('ctx.readFile', steps['read']?.identity, {
+          kind: '990a232f429cdef5d4722cb255c20b8a3495191448b72fc4ff9e997f7853afe9',
+          path: digest(join(dir, 'in.txt')),
+          schema: 'efb42a696b43c0c91707a3e3749aeb13ad7f263d66ed61f7588dc5dec74615de',
+        });
+        pinned('ctx.writeFile', steps['write']?.identity, {
+          createOnly: 'fcbcf165908dd18a9e49f7ff27810176db8e9f63b4352213741664245224f8aa',
+          ifMatch: '74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b',
+          kind: '090ae1ddad0ad99982b216f113b6d027089f1ffce713684d129645e78d218241',
+          path: digest(join(dir, 'out.txt')),
+          schema: '061958b1f65c8220a5d098d97e1da1a86cea8de07e1fea3841fa3bcfa7bcbc99',
+          sha256: '41d98affbe759a061d6c1386cca894e9760e563f055732e987681fababde3b47',
+        });
+      } finally {
+        await rm(dir, { recursive: true, force: true });
+      }
+    },
+  );
 });

@@ -1,5 +1,5 @@
 import { brandError, isBranded } from './error-brand.js';
-import type { ErrorKind } from './model.js';
+import type { ErrorKind, JsonValue } from './model.js';
 import type { ExecDiagnostics, ExecResult } from './exec-model.js';
 
 /** Structured command failure; runtime attempt history retains its bounded diagnostics. */
@@ -17,16 +17,22 @@ export class ExecError extends Error {
   public readonly kind: ErrorKind;
   /** Available process exit/output diagnostics. */
   public readonly diagnostics: ExecDiagnostics;
+  /**
+   * `exec.json` only: the failed command's stdout parsed as JSON, when it was complete, at most
+   * 16384 UTF-8 bytes and valid JSON. Not validated against the success schema.
+   */
+  public readonly parsed?: JsonValue;
 
   public constructor(
     message: string,
     kind: ErrorKind,
     result?: ExecResult,
-    options?: ErrorOptions,
+    options?: ErrorOptions & { readonly parsed?: JsonValue | undefined },
   ) {
     super(message, options);
     this.name = 'ExecError';
     this.kind = kind;
+    if (options?.parsed !== undefined) this.parsed = options.parsed;
     this.diagnostics = {
       code: result?.code ?? null,
       signal: result?.signal ?? null,

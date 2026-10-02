@@ -11,11 +11,13 @@ const sha256 = z.string().regex(/^[a-f0-9]{64}$/u);
 export const readFileOptionsSchema = z.strictObject({
   maxBytes: z.number().int().positive().max(2_147_483_647).optional(),
   allowOutsideCwd: z.boolean().optional(),
+  onError: z.enum(['throw', 'return']).optional(),
 });
 /** @internal */
 export const writeFileOptionsSchema = z.strictObject({
   ifMatch: sha256.nullable().optional(),
   allowOutsideCwd: z.boolean().optional(),
+  onError: z.enum(['throw', 'return']).optional(),
 });
 /** @internal */
 export const readFileResultSchema = z.object({ content: z.string(), sha256 });

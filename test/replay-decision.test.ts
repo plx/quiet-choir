@@ -536,6 +536,19 @@ describe('forkReuseValid', () => {
     expect(outputParses).not.toHaveBeenCalled();
   });
 
+  it.each(['exec', 'read-file', 'write-file'] as const)(
+    "reuses a settled %s failure only under onError 'return', like a settled step",
+    (kind) => {
+      const execError = { ...settledError, kind: 'process', code: 1, signal: null } as const;
+      const settled = step({ kind, status: 'settled-failed', settledError: execError });
+      const outputParses = vi.fn(() => true);
+      expect(forkReuseValid(kind, 'return', settled, outputParses)).toBe(true);
+      expect(forkReuseValid(kind, 'throw', settled, outputParses)).toBe(false);
+      expect(forkReuseValid(kind, undefined, settled, outputParses)).toBe(false);
+      expect(outputParses).not.toHaveBeenCalled();
+    },
+  );
+
   it('reuses a completed step only when its output still parses', () => {
     const completed = step({ output: { answer: 42 } });
     const accepts = vi.fn(() => true);

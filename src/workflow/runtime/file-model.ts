@@ -1,9 +1,13 @@
+import type { ErrorMode } from './model.js';
+
 /** Guarded UTF-8 write options. */
 export interface WriteFileOptions {
   /** Null creates only; a SHA-256 requires that baseline. Desired content already present succeeds. */
   readonly ifMatch?: string | null;
   /** Explicitly permit paths outside the workflow directory, including symlink targets. */
   readonly allowOutsideCwd?: boolean;
+  /** Throw failures by default, or save the final failure and return it as `Settled`. */
+  readonly onError?: ErrorMode | undefined;
 }
 /** Memoized UTF-8 read options. */
 export interface ReadFileOptions {
@@ -11,6 +15,8 @@ export interface ReadFileOptions {
   readonly maxBytes?: number;
   /** Explicitly permit paths outside the workflow directory, including symlink targets. */
   readonly allowOutsideCwd?: boolean;
+  /** Throw failures by default, or save the final failure and return it as `Settled`. */
+  readonly onError?: ErrorMode | undefined;
 }
 /** Hash-only receipt; the supplied write content is never stored in the effect record. */
 export interface WriteFileResult {

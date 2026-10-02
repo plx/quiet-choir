@@ -2,6 +2,20 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- `ctx.exec`, `ctx.exec.json`, `ctx.readFile` and `ctx.writeFile` accept `onError: 'return'` (#149;
+  amends ADR 0007). A final failure, after retries, is saved as `settled-failed` and replays on
+  resume without running the command or touching the file, like settled local and agent calls; fork
+  reuse and `--invalidate` treat it the same way. Commands return
+  `Settled<ExecResult, ExecStepError>` and `Settled<T, ExecStepError>`; the new public
+  `ExecStepError` adds optional `code`, `signal`, `stdoutTail` and `stderrTail` (1024 characters
+  each) and, for `exec.json`, `parsed`: stdout as raw JSON when it was complete, valid and at most
+  16384 UTF-8 bytes. `ExecError` gains the same optional `parsed`, and `EffectResult` gains a
+  defaulted error type parameter. A command timeout settles with kind `timeout`; cancellation, a
+  missing process adapter and checkpoint failures still reject. `onError` enters identity only as
+  `'return'`, so existing calls keep their fingerprints. The command-verdict and guard-mutation
+  recipes now use `onError: 'return'` instead of `okExitCodes: 'any'`. `workflow fixtures` does not
+  export settled-failed commands yet (#306), so a `"commands": "fixture"` replay of such a run fails
+  at that step.
 - `--dry-run` synthesizes worktree-isolated agent calls and merges of their unchanged changes
   instead of failing (#148; amends ADR 0016). A fresh isolated Claude or Codex call is planned in an
   absolute placeholder directory that is never created and returns

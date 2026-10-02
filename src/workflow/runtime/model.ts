@@ -101,8 +101,13 @@ export type Settled<T, TError = StepError> =
 /** Throw failures by default, or persist and return the final failure. */
 export type ErrorMode = 'throw' | 'return';
 
-/** Return type selected by an effect's error mode. */
-export type EffectResult<T, TMode extends ErrorMode> = TMode extends 'return' ? Settled<T> : T;
+/**
+ * Return type selected by an effect's error mode. `TError` is the saved failure shape of a settled
+ * result: {@link StepError} by default, `ExecStepError` for commands.
+ */
+export type EffectResult<T, TMode extends ErrorMode, TError = StepError> = TMode extends 'return'
+  ? Settled<T, TError>
+  : T;
 
 /** Effort levels supported by both harnesses; model support can differ. */
 export type Effort = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
@@ -467,15 +472,40 @@ export interface WorkflowContext<
   readonly cwd: string;
   /** Operator-privileged durable commands; agent tool grants do not restrict this API. */
   readonly exec: ExecFunction;
-  /** Atomically publish UTF-8 content and save a hash-only receipt. Creates missing parent directories. */
+  /**
+   * Atomically publish UTF-8 content and save a hash-only receipt. Creates missing parent
+   * directories. With `onError: 'return'`, a failure such as an `ifMatch` conflict is saved and
+   * replayed as a settled result.
+   */
   writeFile(
     id: string,
     path: string,
     content: string,
-    options?: WriteFileOptions,
-  ): Promise<WriteFileResult>;
-  /** Save a size-capped UTF-8 snapshot; later reads with this ID replay it. */
-  readFile(id: string, path: string, options?: ReadFileOptions): Promise<ReadFileResult>;
+    options: WriteFileOptions & { readonly onError: 'return' },
+  ): Promise<Settled<WriteFileResult>>;
+  /** Publish UTF-8 content with an inferred or dynamic error mode. */
+  writeFile<TMode extends ErrorMode = 'throw'>(
+    id: string,
+    path: string,
+    content: string,
+    options?: WriteFileOptions & { readonly onError?: TMode | undefined },
+  ): Promise<EffectResult<WriteFileResult, TMode>>;
+  /**
+   * Save a size-capped UTF-8 snapshot; later reads with this ID replay it. With
+   * `onError: 'return'`, a failure such as an oversized file is saved and replayed as a settled
+   * result.
+   */
+  readFile(
+    id: string,
+    path: string,
+    options: ReadFileOptions & { readonly onError: 'return' },
+  ): Promise<Settled<ReadFileResult>>;
+  /** Save a snapshot with an inferred or dynamic error mode. */
+  readFile<TMode extends ErrorMode = 'throw'>(
+    id: string,
+    path: string,
+    options?: ReadFileOptions & { readonly onError?: TMode | undefined },
+  ): Promise<EffectResult<ReadFileResult, TMode>>;
   /** Record the current clock once and replay it as a stable deadline anchor. */
   now(id: string): Promise<number>;
   /** Choose and persist one signal, poll, or deadline outcome. Never race durable operations yourself. */
