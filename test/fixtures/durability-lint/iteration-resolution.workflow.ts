@@ -30,6 +30,15 @@ export default defineWorkflow({
     input.items.forEach(() => pending.push(ctx.step('array-for-each', text)));
     new Set(input.items).forEach(() => pending.push(ctx.step('set-for-each', text)));
     await Promise.all(Array.from(input.items, async () => ctx.step('array-from', text)));
+    // Only the per-item callback repeats: reduce's initial value and forEach's thisArg do not.
+    input.items.reduce(
+      (total) => total,
+      () => ctx.step('reduce-initial', text),
+    );
+    input.items.forEach(
+      () => undefined,
+      () => ctx.step('for-each-this-arg', text),
+    );
     await Promise.all(pending);
     return 'done';
   },

@@ -428,7 +428,9 @@ class DurabilityLinter {
         // method of the same name, or an unresolved (any-typed) receiver, is not a loop.
         const info = this.#resolve(parent);
         if (info && this.#isDefaultLibrary(info.declaration)) {
-          if (iterationMethods.has(info.member)) return { ...state, loop: true };
+          // Every iteration method takes its per-item callback first; reduce's initial value and
+          // map/forEach's thisArg are not repeated.
+          if (iterationMethods.has(info.member) && index === 0) return { ...state, loop: true };
           if (info.owner === 'ArrayConstructor' && info.member === 'from' && index === 1)
             return { ...state, loop: true };
         }
