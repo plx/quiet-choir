@@ -67,14 +67,34 @@ export interface WorktreeSetupContext extends Omit<StepContext, 'exec'> {
   readonly stepId: string;
 }
 
-/** Run-wide cache policy, independent of the semantic identity of an isolated call. */
+/**
+ * Run-wide cache policy, independent of the semantic identity of an isolated call. It can be
+ * declared on the root workflow definition (`defineWorkflow({ worktrees })`) and supplied as
+ * `RunOptions.worktrees` (the CLI's `--worktree-keep` and `--worktree-root`); a field the options
+ * set replaces the definition's field. No field enters step identity or the workflow fingerprint.
+ */
 export interface WorktreePolicy {
-  /** Cache container; defaults to project-specific state outside the checkout. */
+  /**
+   * Cache container; defaults to project-specific state outside the checkout. A run pins its root on
+   * first live use; a different root on a later resume is reported as a worktree warning and ignored.
+   */
   readonly root?: string;
   /** Keep all caches, failed attempts until run completion (default), or none after draining. */
   readonly keep?: 'all' | 'failed' | 'none';
-  /** Provision ignored dependencies after creation/reset; honor the supplied cancellation signal. */
+  /**
+   * Provision dependencies after creation/reset; honor the supplied cancellation signal. Untracked,
+   * non-ignored paths that setup creates (as `git status --untracked-files=normal` lists them, so a
+   * new directory counts as one path) are recorded and left out of capture; tracked files that setup
+   * modifies are captured.
+   */
   readonly setup?: (context: WorktreeSetupContext) => void | Promise<void>;
+  /**
+   * Git glob pathspecs, relative to the repository root, that capture never stages: `tmp/**`
+   * matches everything under `tmp`, and `*.log` matches top-level logs only, because `*` stays
+   * within one directory (prefix `**` and a slash to match at any depth). A matching tracked file
+   * keeps the content it had before the call in the captured snapshot.
+   */
+  readonly captureExclude?: readonly string[];
 }
 
 /** Explicit integration policy; only checkout targets modify the caller's working tree. */

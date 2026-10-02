@@ -4,6 +4,7 @@ import type { WorkflowDeclaration, WorkflowDescription } from './child-model.js'
 import { jsonValue } from './json.js';
 import { capabilityManifest } from './profiles.js';
 import { schemaJson } from './schema.js';
+import { checkWorktreePolicy } from './worktree-policy.js';
 
 const metadataSchema = z.object({
   description: z.string().min(1).optional(),
@@ -36,6 +37,11 @@ export function checkedDefinition(value: unknown): WorkflowDeclaration {
   if (definition['harnesses'] !== undefined && !Array.isArray(definition['harnesses']))
     throw new Error(
       `Workflow ${String(definition['name'])} harnesses must be an array of definitions.`,
+    );
+  if (definition['worktrees'] !== undefined)
+    checkWorktreePolicy(
+      definition['worktrees'],
+      `Workflow ${String(definition['name'])} worktrees`,
     );
   harnessDefinitions(value as WorkflowDeclaration);
   return value as WorkflowDeclaration;

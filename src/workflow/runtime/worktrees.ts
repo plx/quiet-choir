@@ -1,7 +1,7 @@
 import { integrate } from './worktree-merge.js';
 import type { MergeOptions, MergeResult, WorktreeChange } from './worktree-model.js';
 import { randomUUID } from 'node:crypto';
-import { lstat, mkdir, realpath } from 'node:fs/promises';
+import { lstat, mkdir, readlink, realpath } from 'node:fs/promises';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { WorktreeGit, changedFiles, commitId } from '../../worktrees/git.js';
 import type { ProcessRunner } from './exec-model.js';
@@ -22,6 +22,14 @@ import { ConfigurationError } from './configuration-error.js';
 import { filePath } from './files.js';
 import { repairWorktreeRegistrations } from './worktree-recovery.js';
 import { acquireWorktreeAdminLock, worktreeAdminLockPath } from './worktree-admin-lock.js';
+import { checkWorktreePolicy } from './worktree-policy.js';
+import {
+  capturePathspecs,
+  capturedSymlinks,
+  rawTreeChanges,
+  symlinkEscapes,
+  untrackedPaths,
+} from './worktree-capture.js';
 
 /** Whether `path` is `root` or inside it, lexically. @internal */
 export function within(root: string, path: string): boolean {
@@ -185,15 +193,7 @@ export class RunWorktrees {
     private readonly rehearsal = false,
   ) {
     this.git = runner === undefined ? undefined : new WorktreeGit(runner);
-    if (policy.keep !== undefined && !['all', 'failed', 'none'].includes(policy.keep))
-      throw new Error('worktrees.keep must be all, failed, or none.');
-    if (
-      policy.root !== undefined &&
-      (typeof policy.root !== 'string' || !policy.root || policy.root.includes('\0'))
-    )
-      throw new Error('worktrees.root must be a nonempty path.');
-    if (policy.setup !== undefined && typeof policy.setup !== 'function')
-      throw new Error('worktrees.setup must be a function.');
+    checkWorktreePolicy(policy);
   }
 
   private driver(): WorktreeGit {
@@ -233,6 +233,7 @@ export class RunWorktrees {
     if (this.record.worktrees) {
       const ledger = this.record.worktrees;
       this.recovery ??= (async () => {
+        await this.checkPinnedRoot(ledger);
         if (!Object.values(ledger.caches).some((cache) => cache.state === 'planned')) return;
         const signal = this.runSignal ?? invocation.signal;
         const common = await this.adminKey(ledger, { ...invocation, signal });
@@ -319,6 +320,76 @@ export class RunWorktrees {
       throw error;
     });
     return this.initialization;
+  }
+
+  /**
+   * The ledger pins its cache root on first live use, so a later execution's different
+   * `worktrees.root` cannot relocate it. Say so instead of ignoring the request silently.
+   */
+  private async checkPinnedRoot(ledger: WorktreeLedger): Promise<void> {
+    if (this.policy.root === undefined) return;
+    const requested = await filePath(this.record.cwd, this.policy.root, true).catch(() =>
+      resolve(this.record.cwd, this.policy.root ?? ''),
+    );
+    if (requested !== ledger.root)
+      this.warn(
+        `worktrees.root ${requested} differs from the cache root ${ledger.root} this run pinned on first use; the run keeps using ${ledger.root}.`,
+      );
+  }
+
+  /**
+   * Record the untracked, non-ignored paths that setup produced in a checkout that was clean
+   * before it, and save them before any harness work so a capture after a resume still excludes
+   * them. `normal` collapses a new directory into one entry, so a dependency tree stays one path.
+   */
+  private async recordSetupPaths(
+    path: string,
+    cache: WorktreeLedger['caches'][string],
+    invocation: HarnessInvocation,
+  ): Promise<void> {
+    if (this.policy.setup === undefined) return;
+    const status = await this.driver().run(
+      path,
+      ['status', '--porcelain', '-z', '--untracked-files=normal'],
+      invocation,
+    );
+    const paths = untrackedPaths(status.stdout);
+    if (paths.length) cache.setupPaths = paths;
+    else delete cache.setupPaths;
+    await this.save();
+  }
+
+  /** Warn about each captured symlink whose target lies outside the repository, lexically. */
+  private async warnEscapingSymlinks(
+    id: string,
+    ledger: WorktreeLedger,
+    path: string,
+    from: string,
+    to: string,
+    invocation: HarnessInvocation,
+  ): Promise<void> {
+    const git = this.driver();
+    const links = capturedSymlinks(
+      rawTreeChanges(
+        (
+          await git.run(
+            ledger.repo,
+            ['diff-tree', '-r', '-z', '--no-renames', '--diff-filter=AMT', from, to],
+            invocation,
+          )
+        ).stdout,
+      ),
+    );
+    for (const link of links) {
+      // The checkout still holds what was just staged; Git's blob is the fallback.
+      const target =
+        (await readlink(join(path, link.path)).catch(() => undefined)) ??
+        (await git.run(ledger.repo, ['cat-file', 'blob', link.oid], invocation)).stdout;
+      if (symlinkEscapes(link.path, target))
+        this.warn(
+          `Step ${id} captured symlink ${link.path} -> ${target}, which points outside the repository; create it from worktrees.setup or list it in worktrees.captureExclude to keep it out of the snapshot.`,
+        );
+    }
   }
 
   private warn(message: string): void {
@@ -511,6 +582,7 @@ export class RunWorktrees {
       runId: this.record.id,
       stepId: id,
     });
+    await this.recordSetupPaths(saved.handle.path, cache, invocation);
     cache.outcome = 'completed';
     return { ...saved.handle };
   }
@@ -573,6 +645,7 @@ export class RunWorktrees {
         runId: this.record.id,
         stepId: id,
       });
+      await this.recordSetupPaths(path, cache, invocation);
       return {
         cwd,
         release,
@@ -593,7 +666,18 @@ export class RunWorktrees {
           // and registered under the same owner, but does not inherit the already-aborted scope.
           const capture = { ...invocation, signal: new AbortController().signal };
           const git = this.driver();
-          await git.run(path, ['add', '--all', '--', '.'], capture);
+          // Read setup's paths from the saved ledger entry, so a resumed capture excludes them too.
+          await git.run(
+            path,
+            ['add', '--all', '--pathspec-from-file=-', '--pathspec-file-nul'],
+            capture,
+            {
+              input: capturePathspecs(
+                ledger.caches[digest(path)]?.setupPaths ?? [],
+                this.policy.captureExclude ?? [],
+              ),
+            },
+          );
           const tree = commitId(await git.text(path, ['write-tree'], capture));
           const original = commitId(
             await git.text(ledger.repo, ['rev-parse', `${base}^{tree}`], capture),
@@ -609,6 +693,7 @@ export class RunWorktrees {
             );
             const ref = this.ref(ledger, `snapshot:${id}:${String(context.attempt)}`);
             await this.pin(ledger, ref, commit, capture);
+            await this.warnEscapingSymlinks(id, ledger, path, start, commit, capture);
             state.commit = commit;
             state.ref = ref;
             state.files = changedFiles(

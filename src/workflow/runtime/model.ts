@@ -15,7 +15,7 @@ export type { CodexOptions } from '../../harnesses/builtins/codex-options.js';
 import type { AgentEnvironment, HostEnvironmentSummary } from './agent-environment-model.js';
 import type { AgentDiagnostics, AgentProgress, TranscriptMode } from './agent-stream-model.js';
 import type { AgentIsolation, AgentWorktree } from './agent-isolation.js';
-import type { MergeOptions, MergeResult } from './worktree-model.js';
+import type { MergeOptions, MergeResult, WorktreePolicy } from './worktree-model.js';
 import type { WorktreeChange, WorktreeHandle, WorktreeCreateOptions } from './worktree-model.js';
 import type {
   ReadFileOptions,
@@ -649,6 +649,13 @@ export interface WorkflowDefinition<
   readonly profiles?: Readonly<Record<TProfile, AgentProfile>>;
   /** Prohibit raw tools/allowedTools/sandbox at call sites; defaults to true. */
   readonly strictProfiles?: boolean;
+  /**
+   * Worktree cache and dependency-provisioning policy for isolated effects. Only the root definition
+   * passed to `runWorkflow` (or the CLI) is read; a child's field is ignored. Each field that
+   * `RunOptions.worktrees` (or `--worktree-keep`/`--worktree-root`) sets replaces this one. It is
+   * validated when the definition loads and stays outside step identity.
+   */
+  readonly worktrees?: WorktreePolicy;
   /** Stable workflow name, checked on resume. */
   readonly name: string;
   /** Explicit compatibility version; bump whenever code or dependencies change semantics. */

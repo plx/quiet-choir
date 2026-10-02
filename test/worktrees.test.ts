@@ -2236,3 +2236,291 @@ it('clean warns instead of hanging when another process holds the administration
   }
   expect(await readdir(path).then(() => true)).toBe(true);
 });
+
+it('invokes definition setup for per-call attempts and handle create and prepare, with RunOptions overriding field by field', async () => {
+  const calls: string[] = [];
+  const definitionSetup = vi.fn(({ stepId }: { stepId: string }) => {
+    calls.push(`definition:${stepId}`);
+  });
+  const workflow = defineWorkflow({
+    name: 'definition-policy',
+    version: '1',
+    input: z.null(),
+    output: z.null(),
+    worktrees: { keep: 'all', setup: definitionSetup },
+    async run(ctx) {
+      await ctx.claude.text('agent', { prompt: 'edit', isolation: 'worktree' });
+      const handle = await ctx.worktree('cache');
+      await ctx.step('handle-step', {
+        input: null,
+        worktree: handle,
+        schema: z.null(),
+        run: () => null,
+      });
+      return null;
+    },
+  });
+  const harness: Harness = { invoke: () => Promise.resolve(response) };
+  const defined = await runWorkflow(workflow, { ...options('defined'), harness, input: null });
+  expect(calls).toEqual(['definition:agent', 'definition:cache', 'definition:handle-step']);
+  // keep: 'all' from the definition retains every cache after completion.
+  for (const cache of Object.values(defined.worktrees?.caches ?? {}))
+    expect((await lstat(cache.path)).isDirectory()).toBe(true);
+
+  calls.length = 0;
+  const overridden = await runWorkflow(workflow, {
+    ...options('overridden'),
+    harness,
+    input: null,
+    worktrees: {
+      root,
+      setup: ({ stepId }) => {
+        calls.push(`option:${stepId}`);
+      },
+    },
+  });
+  expect(calls).toEqual(['option:agent', 'option:cache', 'option:handle-step']);
+  // The option replaced setup only; the definition's keep: 'all' still applies.
+  const caches = Object.values(overridden.worktrees?.caches ?? {});
+  expect(caches.length).toBeGreaterThan(0);
+  for (const cache of caches) expect(cache.state).toBe('ready');
+});
+
+it('excludes a setup-created node_modules symlink from capture across a resume before the merge', async () => {
+  const base = await command('rev-parse', 'HEAD');
+  const deps = join(directory, 'deps');
+  await mkdir(deps);
+  let failTail = true;
+  const harness: Harness = {
+    invoke: async (request) => {
+      await writeFile(join(request.cwd, 'a.ts'), 'export const a = 1;\n');
+      return response;
+    },
+  };
+  const workflow = defineWorkflow({
+    name: 'setup-symlink',
+    version: '1',
+    input: z.null(),
+    output: z.string(),
+    worktrees: {
+      setup: async ({ path }) => {
+        await symlink(deps, join(path, 'node_modules'));
+      },
+    },
+    async run(ctx) {
+      const call = await ctx.claude.text('agent', { prompt: 'edit', isolation: 'worktree' });
+      assert(call.worktree);
+      const handle = await ctx.worktree('cache');
+      await ctx.step('first', {
+        input: null,
+        worktree: handle,
+        schema: z.null(),
+        run: async ({ cwd }) => {
+          await writeFile(join(cwd, 'h1.txt'), 'one\n');
+          return null;
+        },
+      });
+      await ctx.step('gate', {
+        input: null,
+        schema: z.null(),
+        run: () => {
+          if (failTail) throw new Error('gate');
+          return null;
+        },
+      });
+      // Prepared again after the resume: reset, clean, then setup recreates the link.
+      await ctx.step('second', {
+        input: null,
+        worktree: handle,
+        schema: z.null(),
+        run: async ({ cwd }) => {
+          await writeFile(join(cwd, 'h2.txt'), 'two\n');
+          return null;
+        },
+      });
+      return (
+        await ctx.merge('integrate', [call.worktree, handle], {
+          target: { branch: 'ticket-42' },
+          strategy: 'squash',
+        })
+      ).commit;
+    },
+  });
+  await expect(
+    runWorkflow(workflow, { ...options('symlink'), harness, input: null }),
+  ).rejects.toThrow('gate');
+  const saved = await readRun({ stateDir, runId: 'symlink' });
+  expect(saved.steps['agent']?.worktree?.files).toEqual([{ path: 'a.ts', status: 'added' }]);
+  expect(saved.steps['first']?.worktree?.files).toEqual([{ path: 'h1.txt', status: 'added' }]);
+  const agentPath = saved.steps['agent']?.worktree?.path;
+  const handlePath = saved.steps['first']?.worktree?.path;
+  assert(agentPath && handlePath);
+  const caches = Object.values(saved.worktrees?.caches ?? {});
+  expect(caches.find((cache) => cache.path === agentPath)?.setupPaths).toEqual(['node_modules']);
+  expect(caches.find((cache) => cache.path === handlePath)?.setupPaths).toEqual(['node_modules']);
+  failTail = false;
+  const resumed = await runWorkflow(workflow, { ...options('symlink'), harness, resume: true });
+  expect(resumed.steps['agent']?.attempts).toBe(1);
+  expect(resumed.steps['second']?.worktree?.files).toEqual([
+    { path: 'h1.txt', status: 'added' },
+    { path: 'h2.txt', status: 'added' },
+  ]);
+  expect(await command('rev-parse', 'refs/heads/ticket-42')).toBe(resumed.output);
+  expect((await command('diff', '--name-only', base, 'ticket-42')).split('\n')).toEqual([
+    'a.ts',
+    'h1.txt',
+    'h2.txt',
+  ]);
+  expect(resumed.warnings ?? []).toEqual([]);
+});
+
+it('honours captureExclude globs and still captures agent files elsewhere', async () => {
+  const harness: Harness = {
+    invoke: async (request) => {
+      await writeFile(join(request.cwd, 'debug.log'), 'noise\n');
+      await mkdir(join(request.cwd, 'tmp'), { recursive: true });
+      await writeFile(join(request.cwd, 'tmp', 'x'), 'scratch\n');
+      await mkdir(join(request.cwd, 'src'), { recursive: true });
+      await writeFile(join(request.cwd, 'src', 'b.ts'), 'export {};\n');
+      await writeFile(join(request.cwd, 'src', 'nested.log'), 'noise\n');
+      return response;
+    },
+  };
+  const workflow = defineWorkflow({
+    name: 'capture-exclude',
+    version: '1',
+    input: z.null(),
+    output: z.null(),
+    worktrees: { captureExclude: ['**/*.log', 'tmp/**'] },
+    async run(ctx) {
+      await ctx.claude.text('agent', { prompt: 'edit', isolation: 'worktree' });
+      return null;
+    },
+  });
+  const run = await runWorkflow(workflow, { ...options('exclude'), harness, input: null });
+  expect(run.steps['agent']?.worktree?.files).toEqual([{ path: 'src/b.ts', status: 'added' }]);
+});
+
+it('warns about captured symlinks that point outside the repository, but not setup or in-tree links', async () => {
+  const harness: Harness = {
+    invoke: async (request) => {
+      await symlink('/tmp/elsewhere', join(request.cwd, 'link'));
+      await symlink('../../outside', join(request.cwd, 'rel'));
+      await symlink('file.txt', join(request.cwd, 'inside'));
+      return response;
+    },
+  };
+  const workflow = defineWorkflow({
+    name: 'symlink-warning',
+    version: '1',
+    input: z.null(),
+    output: z.null(),
+    worktrees: {
+      setup: async ({ path }) => {
+        await symlink('/tmp', join(path, 'node_modules'));
+      },
+    },
+    async run(ctx) {
+      await ctx.claude.text('agent', { prompt: 'edit', isolation: 'worktree' });
+      return null;
+    },
+  });
+  const run = await runWorkflow(workflow, { ...options('links'), harness, input: null });
+  expect(run.steps['agent']?.worktree?.files.map(({ path }) => path)).toEqual([
+    'inside',
+    'link',
+    'rel',
+  ]);
+  const expected = [
+    'Step agent captured symlink link -> /tmp/elsewhere, which points outside the repository; create it from worktrees.setup or list it in worktrees.captureExclude to keep it out of the snapshot.',
+    'Step agent captured symlink rel -> ../../outside, which points outside the repository; create it from worktrees.setup or list it in worktrees.captureExclude to keep it out of the snapshot.',
+  ];
+  expect(run.warnings).toEqual(expected);
+  expect((await inspectRun(options('links'))).summary.warnings).toEqual(expected);
+});
+
+it('warns when a resume asks for a different root than the one the run pinned', async () => {
+  const workflow = defineWorkflow({
+    name: 'pinned-root',
+    version: '1',
+    input: z.null(),
+    output: z.null(),
+    async run(ctx) {
+      const handle = await ctx.worktree('cache');
+      await ctx.step('tail', {
+        input: null,
+        worktree: handle,
+        schema: z.null(),
+        run: ({ attempt }) => {
+          if (attempt === 1) throw new Error('tail');
+          return null;
+        },
+      });
+      return null;
+    },
+  });
+  await expect(runWorkflow(workflow, { ...options('pinned'), input: null })).rejects.toThrow(
+    'tail',
+  );
+  const elsewhere = join(directory, 'elsewhere');
+  const resumed = await runWorkflow(workflow, {
+    ...options('pinned'),
+    worktrees: { root: elsewhere },
+    resume: true,
+  });
+  const pinned = await realpath(root);
+  expect(resumed.worktrees?.root).toBe(pinned);
+  expect(resumed.warnings).toEqual([
+    `worktrees.root ${elsewhere} differs from the cache root ${pinned} this run pinned on first use; the run keeps using ${pinned}.`,
+  ]);
+});
+
+it('keeps definition-level worktree policy out of step identity across resumes', async () => {
+  let fail = true;
+  const harness: Harness = { invoke: () => Promise.resolve(response) };
+  const define = (worktrees: { keep: 'all' | 'none'; captureExclude: string[] }) =>
+    defineWorkflow({
+      name: 'policy-identity',
+      version: '1',
+      input: z.null(),
+      output: z.null(),
+      worktrees,
+      async run(ctx) {
+        await ctx.claude.text('agent', { prompt: 'edit', isolation: 'worktree' });
+        await ctx.step('tail', {
+          input: null,
+          schema: z.null(),
+          run: () => {
+            if (fail) throw new Error('tail');
+            return null;
+          },
+        });
+        return null;
+      },
+    });
+  await expect(
+    runWorkflow(define({ keep: 'all', captureExclude: [] }), {
+      ...options('identity'),
+      harness,
+      input: null,
+    }),
+  ).rejects.toThrow('tail');
+  const before = (await readRun({ stateDir, runId: 'identity' })).steps['agent']?.fingerprint;
+  fail = false;
+  const resumed = await runWorkflow(define({ keep: 'none', captureExclude: ['*.log'] }), {
+    ...options('identity'),
+    harness: {
+      invoke: () => {
+        throw new Error('unexpected agent');
+      },
+    },
+    resume: true,
+  });
+  expect(resumed.status).toBe('completed');
+  expect(resumed.steps['agent']?.attempts).toBe(1);
+  expect(resumed.steps['agent']?.fingerprint).toBe(before);
+  expect(resumed.codeChanges ?? []).toEqual([]);
+  // keep: 'none' from the changed definition removed the retained cache.
+  for (const cache of Object.values(resumed.worktrees?.caches ?? {}))
+    expect(cache.state).toBe('removed');
+});

@@ -21,6 +21,7 @@ import type {
   AgentTranscriptWriter,
 } from './agent-stream-model.js';
 import { RunWorktrees, type WorktreeLease } from './worktrees.js';
+import { effectiveWorktreePolicy } from './worktree-policy.js';
 import {
   WorktreeRehearsal,
   canSynthesizeIsolation,
@@ -335,7 +336,10 @@ export interface RunOptions extends WorkflowCodeOptions {
   readonly maxRunCostUsd?: number | null;
   /** Sticky cap on locally admitted agent attempts across resumes; null clears it. */
   readonly maxRunAgentAttempts?: number | null;
-  /** Runtime-owned checkout cache and dependency provisioning policy. */
+  /**
+   * Runtime-owned checkout cache and dependency provisioning policy. Each field that is not
+   * undefined replaces the same field of the root definition's `worktrees`.
+   */
   readonly worktrees?: WorktreePolicy;
   /**
    * Process integration for durable exec and worktree Git operations; the core never spawns. Under
@@ -1323,10 +1327,12 @@ export async function runWorkflow<
       }
     }
 
+    // The root definition's policy, overlaid field by field by RunOptions (the CLI's flags).
+    const worktreePolicy = effectiveWorktreePolicy(definition.worktrees, options.worktrees);
     const worktrees = new RunWorktrees(
       record,
       options.processRunner,
-      options.worktrees ?? {},
+      worktreePolicy,
       save,
       processInvocation,
       signal,
@@ -1339,7 +1345,7 @@ export async function runWorkflow<
         : new WorktreeRehearsal(
             record,
             options.processRunner,
-            options.worktrees ?? {},
+            worktreePolicy,
             save,
             processInvocation,
             signal,
