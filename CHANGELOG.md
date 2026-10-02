@@ -2,6 +2,19 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- Worktree policy can be declared on the root workflow definition (#152; amends ADR 0022 and ADR
+  0035): `defineWorkflow({ worktrees: { setup, keep, root, captureExclude } })`, validated when the
+  workflow loads (`workflow validate`), outside step identity, and ignored on child definitions.
+  `RunOptions.worktrees` overrides it field by field. `workflow execute`, `start` and `resume`
+  accept `--worktree-keep all|failed|none` and `--worktree-root DIR`; both are recorded in the
+  launch policy (`LaunchPolicy.worktrees`), inherited per field by `resume`, `answer --resume` and
+  `tick`, and repeated on emitted resume commands. Capture now leaves out the untracked paths that
+  `setup` created (recorded as `setupPaths` on the ledger cache entry, so a resume excludes them
+  too) and the new `captureExclude` glob pathspecs, so a setup-created `node_modules` symlink is no
+  longer committed or merged. A captured symlink pointing outside the repository adds a worktree
+  warning, and a resume requesting a different cache root than the pinned one warns instead of
+  silently keeping the old root. New public fields `WorktreePolicy.captureExclude` and
+  `WorkflowDefinition.worktrees`; `WorktreeLedger` cache entries gain optional `setupPaths`.
 - `ctx.poll` (and `ctx.wait`'s `poll` source) has a command form (#151; amends ADR 0020):
   `{ input, schema, every, timeoutMs | deadline, command, output, done, commandOptions?, live? }`.
   Each check runs `command` through the run's process runner like an observer's `context.exec.json`,

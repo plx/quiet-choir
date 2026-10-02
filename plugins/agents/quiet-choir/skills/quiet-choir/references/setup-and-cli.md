@@ -226,6 +226,15 @@ with exit 2 before module loading. See
 [durability](durability.md#recovering-a-timeout-or-turn-limit) for compatibility and timeout
 recovery.
 
+## Worktree flags
+
+`--worktree-keep all|failed|none` and `--worktree-root DIR` on `execute`, `start` and `resume`
+replace the root definition's `worktrees.keep` and `worktrees.root`; a relative root resolves
+against the launch cwd, and invalid values exit 2. Both are sticky: recorded in the launch policy,
+inherited separately by `resume`, `answer --resume` and `tick` without them, and repeated on emitted
+resume commands. A run keeps the cache root it first used. `setup` and `captureExclude` are declared
+on `defineWorkflow`; see [worktrees](worktrees.md#cache-policy-and-cleanup).
+
 ## Code recovery flags
 
 `--fork-from OLD` creates a new run, defaulting to prefix reuse. `--reuse matching` opts into all

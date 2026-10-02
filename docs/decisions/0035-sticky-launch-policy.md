@@ -58,3 +58,17 @@ the kind is `fixture`.
   files (no recorded sources) records no policy for the same reason: a later resume could not
   reproduce it.
 - An older build reading a record with a policy ignores the field, and its next write drops it.
+
+## Amendment: worktree flags (#152)
+
+`--worktree-keep` and `--worktree-root` (on `execute`, `start` and `resume`) join the policy as an
+optional `worktrees: { keep?, root? }`, with the root resolved to an absolute path. Only fields a
+flag supplied are recorded, never the definition's `worktrees` values, so removing a flag later
+cannot freeze a definition change into the record. Inheritance is per field: on every resume path
+(`resume`, `execute --resume`, `answer --resume` and `tick`), an absent flag keeps the recorded
+value. Tick therefore gets no worktree flags of its own; one per-tick value would apply a single
+keep or root to every claimed run. The executor passes the effective fields as
+`RunOptions.worktrees`, which override the definition, and `launchPolicyFlags` emits them on resume
+commands. The policy schema is strict, so a build from before this amendment rejects a record whose
+policy carries `worktrees`; that is acceptable for the 0.0.0 prototype, as when this ADR added the
+policy.

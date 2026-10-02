@@ -410,9 +410,10 @@ never saved, so a later `pending` or `inspect` regenerates them for the current 
 Each execution records a non-secret launch policy in the run's launch metadata (`launch.policy`),
 outside the workflow fingerprint and step identity: the global harness kind (`cli` or `fixture`),
 each fixture file as its absolute path (resolved against the command's working directory) with the
-SHA-256 of its bytes (unnamed for `fixture:<file>`, named for `name=fixture:<file>`), and the wait
-mode. The latest execution's policy replaces the previous one, so an explicit flag becomes the new
-sticky value. No `--harness-config` value is recorded; only its digest is, as before.
+SHA-256 of its bytes (unnamed for `fixture:<file>`, named for `name=fixture:<file>`), the wait mode,
+and `--worktree-keep` and `--worktree-root` (as an absolute path) when given. The latest execution's
+policy replaces the previous one, so an explicit flag becomes the new sticky value. No
+`--harness-config` value is recorded; only its digest is, as before.
 
 - `resume`, `execute --resume` and `answer --resume` without `--harness` use the recorded harness
   kind and fixtures, combined with this invocation's `--harness-config` (or its default); without
@@ -420,6 +421,14 @@ sticky value. No `--harness-config` value is recorded; only its digest is, as be
   run.
 - Explicit `--harness` or `--wait-mode` replaces the recorded value. A different harness kind still
   needs `--allow-harness-change`.
+- `execute`, `start` and `resume` accept `--worktree-keep all|failed|none` and `--worktree-root DIR`
+  (resolved against the working directory; an empty value or an unknown keep is `usage.flag`). They
+  replace the root definition's `worktrees.keep` and `worktrees.root` for that run. Only the flags
+  are recorded, never the definition's values, and each is inherited separately: `resume`,
+  `execute --resume`, `answer --resume` and `tick` without one keep its recorded value, so tick has
+  no worktree flags. A run keeps the cache root it first used; a different `--worktree-root` later
+  adds a worktree warning instead of relocating it. See
+  [worktrees](worktrees.md#cache-policy-and-cleanup).
 - A recorded fixture file that is missing or unreadable fails the resume with `usage.flag`, naming
   the path; pass `--harness` explicitly. A fixture whose content changed is used with a warning that
   names the file and both digests, and its new digest is recorded.
@@ -432,10 +441,10 @@ sticky value. No `--harness-config` value is recorded; only its digest is, as be
   before: the default `cli` selection, with tick forwarding its `--harness-config` only to runs that
   last executed with the CLI harness.
 
-Emitted resume commands carry `--harness fixture:<abs>`, `--harness <name>=fixture:<abs>` and
-`--wait-mode block` as recorded; the defaults (`cli`, `suspend`) are omitted, and `--harness-config`
-is never emitted. `answerCommand` only delivers an answer, so it carries none; the resume entry
-after it does.
+Emitted resume commands carry `--harness fixture:<abs>`, `--harness <name>=fixture:<abs>`,
+`--wait-mode block`, `--worktree-keep` and `--worktree-root` as recorded; the defaults (`cli`,
+`suspend`) are omitted, and `--harness-config` is never emitted. `answerCommand` only delivers an
+answer, so it carries none; the resume entry after it does.
 
 Workflow `console.log` and `process.stdout.write` during import/execution are redirected to stderr
 in JSON mode. `Run ID:`, debug logs, warnings, and human diagnostics also use stderr. Redirecting

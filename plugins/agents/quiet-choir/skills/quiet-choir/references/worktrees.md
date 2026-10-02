@@ -56,9 +56,11 @@ its position within the source repository, including when the run starts in a mo
 
 Every attempt receives a fresh directory. Failed, timed-out, and cancelled attempts are retained
 according to policy, never reused for a later per-call attempt. Only a validated successful result
-is captured. The runtime stages tracked and untracked files, honors Git ignores, creates a snapshot
-commit with a fixed identity, and pins it under `refs/quiet-choir/<run>/<namespace>/…`. Hooks and
-commit signing are disabled for these internal Git operations. The agent need not run Git commits.
+is captured. The runtime stages tracked and untracked files, honors Git ignores, leaves out the
+paths `worktrees.setup` created and the `worktrees.captureExclude` patterns (see
+[cache policy](#cache-policy-and-cleanup)), creates a snapshot commit with a fixed identity, and
+pins it under `refs/quiet-choir/<run>/<namespace>/…`. Hooks and commit signing are disabled for
+these internal Git operations. The agent need not run Git commits.
 
 An isolated `object()` or `text()` result includes `worktree: { base, commit, ref, files }`.
 `commit` and `ref` are null when unchanged from the base. File statuses are added, modified,
@@ -136,23 +138,105 @@ without an index or worktree. Explicit checkout publication uses a fast-forward-
 
 ## Cache policy and cleanup
 
-`RunOptions.worktrees` accepts `root`, `keep`, and `setup`. The default root is project-specific XDG
-state outside the checkout; an explicit root must also be outside it. The canonical root is pinned
-on first use, so changing this live option does not relocate an existing run's handles. Each run has
-a unique namespace, including runs with the same ID in different state containers.
+The policy fields are `root`, `keep`, `setup` and `captureExclude`. Declare them on the root
+workflow definition, so `workflow execute` uses them too:
+
+```ts
+import { symlink } from 'node:fs/promises';
+import { join } from 'node:path';
+import { defineWorkflow, z } from 'quiet-choir';
+
+export default defineWorkflow({
+  name: 'ticket',
+  version: '1',
+  input: z.object({}),
+  output: z.array(z.string()),
+  worktrees: {
+    captureExclude: ['**/*.log', 'tmp/**'],
+    // This module sits at the repository root; link its dependencies into each checkout.
+    setup: async ({ path }) => {
+      await symlink(join(import.meta.dirname, 'node_modules'), join(path, 'node_modules'));
+    },
+  },
+  async run(ctx) {
+    const edit = await ctx.codex.text('edit', {
+      prompt: 'Fix the failing test.',
+      isolation: 'worktree',
+    });
+    return edit.worktree?.files.map((file) => file.path) ?? [];
+  },
+});
+```
+
+`RunOptions.worktrees` takes the same fields. Each field it sets replaces the definition's field of
+the same name; the others keep the definition's values. Only the root definition passed to
+`runWorkflow` (or the CLI) is read: a child workflow's `worktrees` field is ignored. The definition
+field is validated when the workflow loads (`workflow validate` reports a bad `keep`, an empty
+`root`, a non-function `setup` or a non-string pattern). None of these fields enters step identity
+or the workflow fingerprint, so changing them never needs `--accept-code-change` beyond the usual
+source drift check.
+
+From the CLI, `--worktree-keep all|failed|none` and `--worktree-root DIR` on `workflow execute`,
+`workflow start` and `workflow resume` replace the definition's `keep` and `root`. A relative root
+resolves against the invocation's directory. Like `--wait-mode`, both are recorded in the run's
+launch policy and inherited, field by field, by a later `workflow resume`, `execute --resume`,
+`answer --resume` or `workflow tick` that does not repeat them; emitted resume commands include
+them. Tick has no worktree flags of its own. `setup` and `captureExclude` have no flags: declare
+them in code.
+
+The default root is project-specific XDG state outside the checkout; an explicit root must also be
+outside it. The canonical root is pinned on first use, so a different root on a later execution does
+not relocate an existing run's caches and handles: the run keeps its root and records a worktree
+warning naming both paths. Each run has a unique namespace, including runs with the same ID in
+different state containers.
 
 `keep: 'failed'` is the default: remove completed caches after draining, retain failed attempts for
 inspection until the whole run completes, then remove all caches. `'all'` keeps every cache;
 `'none'` removes all caches after draining even on failure. Pins remain in all three cases. Cleanup
 failures are warnings and do not repeat validated agent work.
 
-`setup(context)` provisions dependencies after creation/reset. Its context includes `path`, mapped
-`cwd`, pinned `base`, run/step IDs, attempt, and cancellation signal. Honor cancellation and keep
-provisioning repeatable. It is a live callback, not a durable step; do not nest context operations.
-Meaningful dependency changes still require explicit workflow version/dependency discipline.
+`setup(context)` provisions dependencies after creation/reset, for per-call attempts and for shared
+handles (at `ctx.worktree` and before each effect on the handle). Its context includes `path`,
+mapped `cwd`, pinned `base`, run/step IDs, attempt, and cancellation signal. Honor cancellation and
+keep provisioning repeatable. It is a live callback, not a durable step; do not nest context
+operations. Meaningful dependency changes still require explicit workflow version/dependency
+discipline. It never runs under `--dry-run`.
 
 `workflow inspect RUN` includes base, commit, changed files, and current directory state.
 `workflow clean RUN` acquires the usual writer/orphan guards and removes owned leftover caches
 without loading workflow source. `--refs` additionally deletes recorded pins only if their values
 still match. It does not delete user branches or run Git garbage collection. Removing pins can make
 future recovery or integration impossible after Git collects otherwise unreachable objects.
+
+### What capture leaves out
+
+The checkout is clean before setup runs (a fresh `worktree add`, or a reset and `git clean` of a
+handle), so after setup returns the runtime lists the untracked, non-ignored paths with
+`git status --porcelain --untracked-files=normal` and saves them on the cache's ledger entry before
+any agent or command starts. Capture excludes those paths literally, so a resumed run excludes them
+too. `normal` reports a new untracked directory as one path: a `node_modules` tree that setup
+creates without an ignore rule is one entry, not thousands. The trade-off is that a file an agent
+creates inside a directory that setup created is not captured either. Tracked files that setup
+modifies are captured like agent edits; setup should only add untracked or ignored artifacts.
+
+`captureExclude` lists Git glob pathspecs, relative to the repository root, that capture never
+stages. `*` stays within one directory and `**` spans directories: `tmp/**` is everything under
+`tmp`, `*.log` is top-level logs, and `**/*.log` is logs at any depth. A matching tracked file keeps
+its previous content in the snapshot. Files that match neither list are still captured.
+
+A captured symlink whose target is absolute, or climbs out of the repository from the link's
+directory (judged lexically, without following other links), adds a worktree warning naming the
+step, the link and its target. Run results and `workflow inspect` show it. The link is still
+captured; create it from `setup` or list it in `captureExclude` to keep it out.
+
+### Node dependencies
+
+Git's `node_modules/` ignore rule matches directories only, so a `node_modules` symlink is untracked
+and not ignored, and plain `git add --all` would commit it. Two recipes:
+
+- Link the source checkout's dependencies from setup, as in the example above. The link is excluded
+  from capture only because setup created it; an agent that creates the same link gets it captured,
+  with the symlink warning.
+- Install per checkout with `npm ci --prefer-offline` from setup (through your own process call;
+  setup has no `exec`). The installed `node_modules/` directory is ignored and never captured, and
+  `--prefer-offline` installs from npm's local cache when it can.
