@@ -38,8 +38,35 @@ meaning in sh, Node, `timeout(1)` or xargs; 124 stays `start.timeout`, so a host
 stopped without a record" from "run still running". See [run observability](observability.md) for
 polling, stale detection, and partial usage. Non-watching inspect exits 0 for any readable
 checkpoint status, including `failed`, `cancelled`, and `running`. `workflow pending --json` returns
-`{kind:"workflow.pending.result", ok, pending}`, and `workflow answer --json` without `--resume`
-returns `{kind:"workflow.answer.result", ok, delivery}`.
+`{kind:"workflow.pending.result", ok, pending, hidden}`, and `workflow answer --json` without
+`--resume` returns `{kind:"workflow.answer.result", ok, delivery}`.
+
+Each `pending` row keeps the question or wait fields and adds `runStatus` (the owning run's
+checkpoint status), `delivery` and `next`. `delivery` is `{state, at, by}`: `state` is `queued` when
+an answer file is already in the run's inbox, with `at` and `by` read from its envelope (both null
+when the file is unreadable), and `none` otherwise; it is null for a poll or deadline wait that
+accepts no answer. Delivery is advisory: while an owner is consuming the file a row can read `none`
+for a moment, and `answer` stays the authoritative first-answer check. `next` follows the
+[next commands](#next-commands) shape: a queued row of a suspended or failed run that has launch
+metadata gets one `resume` entry (repeating the run's recorded launch policy) so the owner ingests
+the answer; every other row gets `[]`, because a running owner ingests the answer itself.
+
+By default `pending` lists only rows that still need an answer: it hides rows whose delivery is
+`queued` and rows of `failed`, `cancelled` or `completed` runs, and reports how many it hid in
+`hidden`. Rows of running runs stay, so a `--wait-mode block` run's live question is listed. `--all`
+lists every row (`hidden` is then 0). The library `listPending` is not filtered: it returns every
+waiting row, with `runStatus` and `delivery` added.
+
+`answer.invalid` (exit 2) carries `error.details.issues`, an array of `{code, path, message}` where
+`path` locates the offending field in the answer (`["approved"]`; `[]` for the whole value). A value
+that does not match the question's schema reports one issue per Zod issue (`code` is the Zod code
+such as `invalid_type`), and `error.message` is one line, for example
+`Answer does not match the question schema: approved: Invalid input: expected boolean, received string`.
+A refusal with no schema location has one issue with path `[]` and a synthetic code:
+`answer_not_json` (not JSON, or not representable as JSON), `question_schema_invalid` (the stored
+schema cannot be used), `answer_author` (`--by` is missing or wrong for a human question, or is
+invalid) and `answer_too_large` (the envelope exceeds 1 MiB). Re-ask from `issues`; nothing was
+written.
 
 ## Run results of execute, resume and answer --resume
 

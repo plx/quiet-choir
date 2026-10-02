@@ -116,6 +116,12 @@ released the lock. Read the result's `pending` entries or list them without load
 node "$QC_CHECKOUT/bin/run.js" workflow pending --state-dir "$QC_RUNS" --json
 ```
 
+The listing shows only rows still awaiting an answer: rows whose answer is already queued and rows
+of failed, cancelled or completed runs are hidden, and `hidden` counts them; add `--all` to list
+everything. Each row has `runStatus`, `delivery` (`{state: "none" | "queued", at, by}`, null for a
+poll or deadline wait) and `next`: a queued row of a suspended or failed run carries the `resume`
+command that makes its owner ingest the answer, and a running run ingests it itself.
+
 Check `codeChanged` before asking the human to review possibly stale context. `true` means saved
 source bytes changed; `null` means paths were not recorded. Resolve code compatibility with
 `check-resume FILE --run-id RUN` first when needed. Intentional `--accept-code-change` still cannot
@@ -153,12 +159,15 @@ entrypoint/cwd/tsconfig; older or embedded records without these paths still nee
 `execute FILE --resume --run-id RUN` or their embedding application. Repeat on exit 75; exit 0 means
 completion. `answer --resume` combines delivery with resume.
 
-An early invalid answer exits 2 and writes nothing. A duplicate or closed question exits 3.
-Successful delivery means queued; the owner validates again with real Zod refinements. Rejected
-files are quarantined and explanations appear in `pending.rejections`; submit a corrected answer. If
-`answer --resume` fails during loading or execution, keep the queued answer and retry `resume`, not
-`answer`. A delivery arriving while sibling work is active can continue the run without a
-suspension. See [question durability](durability.md#durable-questions) and the
+An early invalid answer exits 2 and writes nothing; `error.details.issues` lists
+`{code, path, message}` (`path` is `["approved"]` for a non-boolean `approved`, and `[]` with a code
+such as `answer_not_json`, `answer_author` or `answer_too_large` when no field is to blame), so
+re-ask for exactly that field. A duplicate or closed question exits 3. Successful delivery means
+queued; the owner validates again with real Zod refinements. Rejected files are quarantined and
+explanations appear in `pending.rejections`; submit a corrected answer. If `answer --resume` fails
+during loading or execution, keep the queued answer and retry `resume`, not `answer`. A delivery
+arriving while sibling work is active can continue the run without a suspension. See
+[question durability](durability.md#durable-questions) and the
 [human-review recipe](patterns.md#human-review).
 
 ## Stalls and orphan recovery

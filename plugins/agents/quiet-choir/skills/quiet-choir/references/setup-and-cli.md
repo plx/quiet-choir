@@ -127,8 +127,9 @@ resuming or ticking under a different `--harness-config` (omitted means the defa
 contract.
 
 `workflow pending --json` and `workflow answer RUN STEP --json VALUE` read stored question contracts
-without importing workflow code. `workflow resume RUN --json` loads its saved entrypoint and
-compiler configuration. See the
+without importing workflow code. `pending` hides answered rows and rows of ended runs unless given
+`--all`, and a refused answer exits 2 with `error.details.issues`. `workflow resume RUN --json`
+loads its saved entrypoint and compiler configuration. See the
 [suspension operating loop](operating-runs.md#answer-a-suspended-run).
 
 ## Run identity and output
