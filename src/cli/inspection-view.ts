@@ -206,6 +206,10 @@ export function formatRunSummary(run: RunSummary, verbose = false): string {
     for (const row of verbose ? settled : settled.slice(-maxCompletedAgentLines))
       lines.push(agentLine(row));
   }
+  for (const change of run.codeChanges)
+    lines.push(
+      `Code change accepted at ${change.at}: ${change.components.join(', ') || 'no components'}${change.map === undefined ? ` (${String(change.files.length)} files)` : ` in map ${change.map}`}`,
+    );
   if (run.interruptedBy)
     lines.push(`Interrupted at ${run.interruptedBy.at}: ${run.interruptedBy.reason} (resumable)`);
   if (run.rootCause)

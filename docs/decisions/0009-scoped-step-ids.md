@@ -1,6 +1,7 @@
 # 0009: Compose explicit leaves with stable scope prefixes
 
 **Status:** Accepted. Extends [0008](0008-scoped-fan-out.md) without changing checkpoint format 5.
+Amended by #146: explicit code acceptance can accept a change to the original mapper source.
 
 ## Context
 
@@ -57,3 +58,17 @@ The bug-hunt port uses named maps and lexical contexts instead of `createPort`. 
 same-round duplicate candidates by computing explicit occurrence keys from the completed input array
 before concurrency begins. Other ports retain their legacy adapters until their dedicated migration
 work; the active fixture suite must keep passing and API snapshot metadata must advance.
+
+## Amendment: explicit acceptance of a mapper change (#146)
+
+Hashing the original mapper function, not a generated wrapper, guards against silent changes: a
+plain resume still refuses a mapper edit after an item committed, and the refusal now names
+`mapper`. An explicit `--accept-code-change` is not silent, so it now accepts a change whose only
+changed component is the mapper, and records it in `codeChanges` with the map ID (ADR 0008, ADR
+0006). Resolved keys stay strict, so acceptance still cannot rename saved work.
+
+Because only the mapper function's own source is hashed, a thin mapper such as
+`(item) => handle(ctx, item)` keeps edits to `handle` out of map identity. This idiom is supported
+and documented with its limits: committed items keep their saved outcomes, captured helpers stay
+invisible, and leaf step identity checks still apply to items that run again. Bumping `version`
+remains the way to make a helper edit change map identity.

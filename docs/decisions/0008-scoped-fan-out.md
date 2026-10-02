@@ -3,7 +3,9 @@
 ## Status
 
 Accepted. Extends [0004](0004-operation-ownership.md) and [0007](0007-durable-failure-outcomes.md).
-Checkpoint format 5 supersedes format 4 for execution.
+Checkpoint format 5 supersedes format 4 for execution. Amended by #146: map journals also save
+per-component digests, a refusal names the changed component, and explicit code acceptance accepts a
+mapper-only change.
 
 ## Context
 
@@ -74,3 +76,28 @@ Durable race winners remain out of scope (#57).
 
 [ADR 0020](0020-durable-waits-and-tick.md) adds one recorded winner among signal/poll/deadline
 sources. Races among arbitrary durable effects remain unsupported.
+
+## Amendment: name the changed component and accept mapper-only edits (#146)
+
+The journal stored only the aggregate fingerprint, so a refusal could not say what changed, and the
+only recovery for a mapper edit after an item committed was a fork, which re-evaluates every
+committed item. A map journal now also saves `components`: one digest each for `items`, `mapper`,
+`version` and `cwd`, plus `keys` for a named map, mirroring the aggregate. The aggregate itself is
+unchanged, so existing journals with a matching fingerprint keep replaying, and a matching journal
+saved without components gets them backfilled.
+
+When the aggregate differs and an item has committed, the refusal names the changed components.
+Under an explicit `acceptCodeChange`, a change to `mapper` alone is accepted: the journal keeps its
+items, outcomes, `seq` and owned claims, takes the new fingerprint and components, and `codeChanges`
+gains one entry with the map ID in the same save. Committed items keep the outcomes the old mapper
+produced; unfinished items run the new mapper, where leaf step identity checks still apply. Items,
+keys, version and cwd stay strict, because they describe what the saved outcomes were computed from,
+not how. A journal saved before components existed cannot be split (the old mapper source is not
+stored), so any change to it after a commit keeps the unnamed refusal and fork advice. The decision
+is the pure `decideSettledMapReplay` in `replay-decision.ts`.
+
+Only the mapper function's own source is hashed, so a thin mapper such as
+`(item) => handle(ctx, item)` keeps edits to `handle` out of map identity and needs no acceptance.
+Committed items keep their saved outcomes, and leaf step identity checks still apply to items that
+run again. Bump `version` to make a helper edit change identity (see
+[ADR 0009](0009-scoped-step-ids.md)).

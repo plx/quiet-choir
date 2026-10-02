@@ -18,6 +18,8 @@ const defaults: RecoveryHintInput = {
 const causes: readonly RecoveryCause[] = [
   { kind: 'grant', profile: 'fixer', access: 'write' },
   { kind: 'divergence' },
+  { kind: 'map-changed', mapperOnly: true },
+  { kind: 'map-changed', mapperOnly: false },
   { kind: 'configuration' },
   { kind: 'authoring' },
   { kind: 'effect' },
@@ -37,6 +39,10 @@ const grant =
   'Grant the access, then resume: --resume --grant fixer (or --grant write, or --grant all); completed steps are reused.';
 const nondeterminism =
   'The workflow source is unchanged, so the body likely computed a value outside a durable effect (time, randomness, environment or file contents) that changed a step identity or the replay path. Compute such values with ctx.now or inside ctx.step so replay reuses them, then fork a new run with --fork-from run-1; --resume --strict-replay stops at the first divergence before live work.';
+const mapperOnly =
+  'Resume with --resume --accept-code-change to keep completed map items and run unfinished ones with the edited mapper, or fork a new run with --fork-from run-1.';
+const mapChanged =
+  "A settled map's items, keys, version or cwd changed after an item completed, or its journal predates per-component fingerprints; accepting code changes cannot reuse it. Restore the map and resume, or fork a new run with --fork-from run-1.";
 const changedPath =
   'Replay left the recorded path after the accepted source change. Restore the replay path, or fork a new run with --fork-from run-1; --resume --strict-replay stops at the first divergence before live work.';
 
@@ -87,6 +93,28 @@ describe('chooseRecoveryHint', () => {
       expect(chosen?.includes('--accept-code-change')).toBe(
         kind === 'configuration' || kind === 'authoring',
       );
+    },
+  );
+
+  // [mapperOnly, allTerminal, sourceChanged, expected hint]
+  const mapTable: readonly (readonly [boolean, boolean, boolean, string])[] = [
+    [true, false, false, mapperOnly],
+    [true, true, false, mapperOnly],
+    [true, false, true, mapperOnly],
+    [false, false, false, mapChanged],
+    [false, true, true, mapChanged],
+  ];
+  it.each(mapTable)(
+    'map-changed, mapperOnly %s, allTerminal %s, sourceChanged %s',
+    (only, allTerminal, sourceChanged, text) => {
+      const chosen = hint({
+        cause: { kind: 'map-changed', mapperOnly: only },
+        allTerminal,
+        sourceChanged,
+      });
+      expect(chosen).toBe(text);
+      // Only a mapper-only map change suggests accepting it.
+      expect(chosen?.includes('--accept-code-change')).toBe(only);
     },
   );
 

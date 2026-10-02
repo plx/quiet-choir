@@ -180,19 +180,22 @@ must migrate before fork reuse. Formats 2–5 remain inspection-only in this run
 source snapshot, reuse mode, invalidation globs, intentional differences, and progress; each copied
 step records `reusedFrom`. Its attempts/history describe the source work, not fresh target calls.
 Step `seq` records first-use order in the target; root `seq` is the storage journal sequence.
-`codeChanges` audits explicit source/schema acceptance; `replayWarnings` captures ordering or
-lost-fork-source warnings. `recoveryHint` is advice chosen from the typed failure cause, never from
-message text: a grant failure suggests `--resume --grant <profile>`; a replay divergence with
-unchanged source blames a value computed in the body (compute it with `ctx.now` or inside
-`ctx.step`) and suggests `--fork-from` or `--resume --strict-replay`; a configuration or authoring
-failure suggests fixing the workflow, adding `--accept-code-change` when the fix edits code, and,
-when all recorded effects have terminal outcomes, re-finalizing with no repeated work; an effect
-failure or a cancellation suggests a plain `--resume`. A run that recorded no step or map, and any
-dry-run, gets no hint. The CLI appends the hint only to this invocation's `workflow.failed` or
-`workflow.interrupted` message, never to a refusal. Use
-`workflow check-resume FILE --run-id ID --json` to compare run gates without a writer lock; it
-imports trusted source but does not call its body. Unlike inspection alone, it can identify changed
-source files and schemas.
+`codeChanges` audits explicit source/schema acceptance, plus one entry per settled map that accepted
+a mapper-only change (`map` names it); the text summary prints the last five as
+`Code change accepted at ...` lines. `replayWarnings` captures ordering or lost-fork-source
+warnings. `recoveryHint` is advice chosen from the typed failure cause, never from message text: a
+grant failure suggests `--resume --grant <profile>`; a replay divergence with unchanged source
+blames a value computed in the body (compute it with `ctx.now` or inside `ctx.step`) and suggests
+`--fork-from` or `--resume --strict-replay`; a settled map that changed after an item committed
+suggests `--resume --accept-code-change` when only its mapper changed, and otherwise restoring the
+map or `--fork-from`; a configuration or authoring failure suggests fixing the workflow, adding
+`--accept-code-change` when the fix edits code, and, when all recorded effects have terminal
+outcomes, re-finalizing with no repeated work; an effect failure or a cancellation suggests a plain
+`--resume`. A run that recorded no step or map, and any dry-run, gets no hint. The CLI appends the
+hint only to this invocation's `workflow.failed` or `workflow.interrupted` message, never to a
+refusal. Use `workflow check-resume FILE --run-id ID --json` to compare run gates without a writer
+lock; it imports trusted source but does not call its body. Unlike inspection alone, it can identify
+changed source files and schemas.
 
 A `settled-failed` step is terminal: `settledError` saves `message`, `kind`, and total `attempts`.
 Failed `attemptHistory` entries retain `errorKind`, and failure documents and summaries now surface

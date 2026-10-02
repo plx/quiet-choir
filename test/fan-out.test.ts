@@ -590,7 +590,7 @@ it('keeps empty-map identity and path checks, and allows concurrency changes', a
   await expect(runWorkflow(definition, options())).rejects.toThrow('tail');
   changed = true;
   await expect(runWorkflow(definition, { ...options(), resume: true })).rejects.toThrow(
-    'changed after an item completed',
+    'Settled map empty changed after an item completed (changed: items)',
   );
   changed = false;
   skip = true;

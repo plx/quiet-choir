@@ -89,18 +89,24 @@ export interface ReusedStep {
   readonly at: string;
 }
 
-/** An explicitly accepted run code/schema change. */
+/**
+ * An explicitly accepted code/schema change. A run-level entry records the workflow fingerprint
+ * change; a map entry (with `map` set) records one settled map that accepted a mapper-only change.
+ * The two are recorded independently.
+ */
 export interface CodeChange {
   /** ISO acceptance timestamp. */
   readonly at: string;
-  /** Previous full workflow fingerprint. */
+  /** Previous full workflow fingerprint, or the map's previous aggregate fingerprint when `map` is set. */
   readonly from: string | null;
-  /** Newly accepted full workflow fingerprint. */
+  /** Newly accepted full workflow fingerprint, or the map's new aggregate fingerprint when `map` is set. */
   readonly to: string;
-  /** Files added, removed, or changed. */
+  /** Files added, removed, or changed; empty for a map entry. */
   readonly files: readonly string[];
-  /** Changed compatibility components, including schemas. */
+  /** Changed compatibility components, including schemas; `['mapper']` for a map entry. */
   readonly components: readonly string[];
+  /** The settled map journal ID whose mapper change was accepted; absent for a run-level entry. */
+  readonly map?: string;
 }
 
 /** A lock-free run compatibility report; it does not execute or preview the workflow body. */

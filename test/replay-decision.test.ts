@@ -1,14 +1,16 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import type { RequestSummary } from '../src/workflow/runtime/observability-model.js';
-import type { StepRecord } from '../src/workflow/runtime/record.js';
+import type { MapComponents, StepRecord } from '../src/workflow/runtime/record.js';
 import {
   decideReplay,
+  decideSettledMapReplay,
   forkPrefixBlockers,
   forkReuseValid,
   healedDependents,
   legacyKind,
   replayRefusalMessage,
+  settledMapRefusalMessage,
   type ForkPrefixFacts,
   type ForkSourceLaunch,
   type ForkTargetStep,
@@ -18,6 +20,8 @@ import {
   type ReplayDecision,
   type ReplayInput,
   type ReplayRefusal,
+  type SettledMapInput,
+  type SettledMapReplay,
 } from '../src/workflow/runtime/replay-decision.js';
 
 // Replay and redefinition rules as a pure table: no state directory, store or workflow run.
@@ -815,5 +819,132 @@ describe('replayRefusalMessage', () => {
 
   it.each(cases)('%j', (refusal, message) => {
     expect(replayRefusalMessage('a/b', refusal)).toBe(message);
+  });
+});
+
+describe('decideSettledMapReplay', () => {
+  const components: MapComponents = { items: 'i', mapper: 'm', version: 'v', cwd: 'c', keys: 'k' };
+  const saved = (
+    overrides: Partial<NonNullable<SettledMapInput['saved']>> = {},
+  ): SettledMapInput['saved'] => ({
+    fingerprint: 'old',
+    components,
+    committed: true,
+    ...overrides,
+  });
+  const facts = (overrides: Partial<SettledMapInput>): SettledMapInput => ({
+    saved: saved(),
+    fingerprint: 'new',
+    components,
+    acceptCodeChange: false,
+    ...overrides,
+  });
+  const cases: { name: string; input: SettledMapInput; outcome: SettledMapReplay }[] = [
+    { name: 'no saved journal', input: facts({ saved: undefined }), outcome: { kind: 'reset' } },
+    {
+      name: 'same aggregate',
+      input: facts({ fingerprint: 'old' }),
+      outcome: { kind: 'reuse', backfill: false },
+    },
+    {
+      name: 'same aggregate without saved components backfills',
+      input: facts({ saved: saved({ components: undefined }), fingerprint: 'old' }),
+      outcome: { kind: 'reuse', backfill: true },
+    },
+    {
+      name: 'changed, nothing committed',
+      input: facts({
+        saved: saved({ committed: false }),
+        components: { ...components, items: 'x' },
+      }),
+      outcome: { kind: 'reset' },
+    },
+    {
+      name: 'changed legacy journal, nothing committed',
+      input: facts({ saved: saved({ committed: false, components: undefined }) }),
+      outcome: { kind: 'reset' },
+    },
+    {
+      name: 'mapper only, accepted',
+      input: facts({ components: { ...components, mapper: 'x' }, acceptCodeChange: true }),
+      outcome: { kind: 'accept' },
+    },
+    {
+      name: 'mapper only, not accepted',
+      input: facts({ components: { ...components, mapper: 'x' } }),
+      outcome: { kind: 'refuse', changed: ['mapper'] },
+    },
+    {
+      name: 'items under acceptance',
+      input: facts({ components: { ...components, items: 'x' }, acceptCodeChange: true }),
+      outcome: { kind: 'refuse', changed: ['items'] },
+    },
+    {
+      name: 'version and cwd under acceptance',
+      input: facts({
+        components: { ...components, version: 'x', cwd: 'x' },
+        acceptCodeChange: true,
+      }),
+      outcome: { kind: 'refuse', changed: ['version', 'cwd'] },
+    },
+    {
+      name: 'mapper and items under acceptance',
+      input: facts({
+        components: { ...components, mapper: 'x', items: 'x' },
+        acceptCodeChange: true,
+      }),
+      outcome: { kind: 'refuse', changed: ['items', 'mapper'] },
+    },
+    {
+      name: 'keys present on one side only',
+      input: facts({
+        components: { items: 'i', mapper: 'm', version: 'v', cwd: 'c' },
+        acceptCodeChange: true,
+      }),
+      outcome: { kind: 'refuse', changed: ['keys'] },
+    },
+    {
+      name: 'aggregate differs with equal components',
+      input: facts({ acceptCodeChange: true }),
+      outcome: { kind: 'refuse', changed: [] },
+    },
+    {
+      name: 'legacy committed journal under acceptance',
+      input: facts({ saved: saved({ components: undefined }), acceptCodeChange: true }),
+      outcome: { kind: 'refuse-legacy' },
+    },
+  ];
+
+  it.each(cases)('$name', ({ input, outcome }) => {
+    expect(decideSettledMapReplay(input)).toEqual(outcome);
+  });
+});
+
+describe('settledMapRefusalMessage', () => {
+  const cases: [Extract<SettledMapReplay, { kind: 'refuse' | 'refuse-legacy' }>, string][] = [
+    [
+      { kind: 'refuse', changed: ['mapper'] },
+      'Settled map a/m changed after an item completed (changed: mapper). Resume with --accept-code-change to keep completed item outcomes and run unfinished items with the new mapper, or fork a new run. A thin mapper such as (item) => handle(ctx, item) keeps helper edits out of map identity.',
+    ],
+    [
+      { kind: 'refuse', changed: ['items', 'keys'] },
+      'Settled map a/m changed after an item completed (changed: items, keys); --accept-code-change accepts only a mapper change. Fork a new run.',
+    ],
+    [
+      { kind: 'refuse', changed: ['items', 'mapper'] },
+      'Settled map a/m changed after an item completed (changed: items, mapper); --accept-code-change accepts only a mapper change. Fork a new run.',
+    ],
+    [
+      { kind: 'refuse', changed: [] },
+      'Settled map a/m changed after an item completed (changed: identity); --accept-code-change accepts only a mapper change. Fork a new run.',
+    ],
+    [
+      { kind: 'refuse-legacy' },
+      'Settled map a/m changed after an item completed; its journal predates per-component fingerprints, so the changed component is unknown. Fork a new run.',
+    ],
+  ];
+
+  it.each(cases)('%j', (refusal, message) => {
+    expect(settledMapRefusalMessage('a/m', refusal)).toBe(message);
   });
 });

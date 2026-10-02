@@ -20,6 +20,7 @@ import { RunRefusedError, type CliErrorCode } from '../runtime/run-errors.js';
 import type { RequestSummary, RunEvent, UsageSummary } from '../runtime/observability-model.js';
 import type { ErrorKind, JsonValue } from '../runtime/model.js';
 import type { ChildRecord } from '../runtime/child-model.js';
+import type { CodeChange } from '../runtime/replay-model.js';
 import type { CommandLauncher } from '../runtime/commands.js';
 import { runNextCommands, type NextCommand } from './next-commands.js';
 import { rootCauseSummary, stepErrorKind, type RootCauseSummary } from './failure-kind.js';
@@ -142,6 +143,8 @@ export interface RunSummary {
   };
   readonly usage: UsageSummary;
   readonly recent: readonly RunEvent[];
+  /** The latest accepted code changes, at most 5, as stored; a map entry names its settled map. */
+  readonly codeChanges: readonly CodeChange[];
   readonly warnings: readonly string[];
 }
 
@@ -439,6 +442,7 @@ export function summarizeRun(
     agents: summarizeAgents(run, entries, now),
     usage: summarizeUsage(run),
     recent,
+    codeChanges: (run.codeChanges ?? []).slice(-5),
     warnings: [
       ...(run.policyWarnings ?? []),
       ...(run.replayWarnings ?? []),

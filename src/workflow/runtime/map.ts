@@ -9,7 +9,12 @@ import {
 } from './fan-out.js';
 import type { ExecutionScopes } from './scopes.js';
 import type { NameScopes } from './names.js';
-import type { MapItemScope } from './replay-decision.js';
+import {
+  decideSettledMapReplay,
+  mapperOnlyChange,
+  settledMapRefusalMessage,
+  type MapItemScope,
+} from './replay-decision.js';
 import type { OperationTracker } from './tracking.js';
 import { errorKind, stepError } from './step-error.js';
 import type {
@@ -20,7 +25,19 @@ import type {
   SettledNamedMapOptions,
   WorkflowContext,
 } from './model.js';
-import type { MapRecord, RunRecord, StepRecord } from './store.js';
+import type { MapComponents, MapRecord, RunRecord, StepRecord } from './store.js';
+
+/** Settled map refusals thrown by this module, with whether only the mapper changed. */
+const settledMapRefusals = new WeakMap<Error, { readonly mapperOnly: boolean }>();
+
+/**
+ * Whether an error is a settled map refusal for a change after an item completed, and whether only
+ * the mapper changed (which `acceptCodeChange` would accept). Recovery advice reads it instead of
+ * the message text. @internal
+ */
+export function settledMapChange(error: unknown): { readonly mapperOnly: boolean } | undefined {
+  return error instanceof Error ? settledMapRefusals.get(error) : undefined;
+}
 
 /** Owned map execution dependencies; never part of the public workflow API. @internal */
 interface MapDependencies {
@@ -42,6 +59,8 @@ interface MapDependencies {
   readonly used: Set<string>;
   readonly visitedMaps: Set<string>;
   readonly save: () => Promise<void>;
+  /** Whether this resume explicitly accepts code changes; a committed map then accepts a mapper-only change. */
+  readonly acceptCodeChange: boolean;
   /** Allocate the next run-wide first-use ordering value, shared with leaf steps. */
   readonly nextSeq: () => number;
   /** Whether an error is this run's own checkpoint failure, not a domain error reusing the class. */
@@ -66,6 +85,7 @@ export function createMap(dependencies: MapDependencies): WorkflowContext['map']
     used,
     visitedMaps,
     save,
+    acceptCodeChange,
     nextSeq,
     isCheckpointFailure,
     replayed,
@@ -209,27 +229,69 @@ export function createMap(dependencies: MapDependencies): WorkflowContext['map']
           // Fingerprint, journal, and process one detached JSON copy of the items.
           const data = jsonData(snapshot) as JsonValue[];
           snapshot = data as readonly unknown[] as readonly T[];
+          const source = Function.prototype.toString.call(mapper);
+          // The aggregate is unchanged so existing journals keep matching (ADR 0008).
           const fingerprint = digest({
             items: data,
-            mapper: Function.prototype.toString.call(mapper),
+            mapper: source,
             version: settings.version ?? null,
             cwd,
             ...(keys === undefined ? {} : { keys }),
           });
-          journal = Object.hasOwn(maps, journalId) ? maps[journalId] : undefined;
-          if (journal && journal.fingerprint !== fingerprint) {
-            if (
-              journal.status === 'completed' ||
-              journal.items.some((item) => item.status === 'completed')
-            )
-              throw validationError(
-                `Settled map ${journalId} changed after an item completed; fork a new run.`,
-              );
-            journal = undefined;
+          const components: MapComponents = {
+            items: digest(data),
+            mapper: digest(source),
+            version: digest(settings.version ?? null),
+            cwd: digest(cwd),
+            ...(keys === undefined ? {} : { keys: digest(keys) }),
+          };
+          const prior = Object.hasOwn(maps, journalId) ? maps[journalId] : undefined;
+          const decision = decideSettledMapReplay({
+            saved: prior && {
+              fingerprint: prior.fingerprint,
+              components: prior.components,
+              committed:
+                prior.status === 'completed' ||
+                prior.items.some((item) => item.status === 'completed'),
+            },
+            fingerprint,
+            components,
+            acceptCodeChange,
+          });
+          switch (decision.kind) {
+            case 'refuse':
+            case 'refuse-legacy': {
+              const error = validationError(settledMapRefusalMessage(journalId, decision));
+              settledMapRefusals.set(error, { mapperOnly: mapperOnlyChange(decision) });
+              throw error;
+            }
+            case 'reset':
+              break;
+            case 'reuse':
+              journal = prior;
+              if (journal && decision.backfill) journal.components = components;
+              break;
+            case 'accept':
+              journal = prior;
+              if (journal) {
+                // Record and apply the acceptance in the same save, so it is never repeated.
+                (record.codeChanges ??= []).push({
+                  at: new Date().toISOString(),
+                  from: journal.fingerprint,
+                  to: fingerprint,
+                  files: [],
+                  components: ['mapper'],
+                  map: journalId,
+                });
+                journal.fingerprint = fingerprint;
+                journal.components = components;
+              }
+              break;
           }
           // A reused journal keeps its first-use order; a new or reset one takes the next seq.
           journal ??= {
             fingerprint,
+            components,
             seq: nextSeq(),
             status: 'running',
             items: data.map(() => ({ status: 'running', outcome: null, steps: [], maps: [] })),

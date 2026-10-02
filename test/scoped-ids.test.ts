@@ -8,12 +8,14 @@ import {
   readRun,
   runWorkflow,
   stepId,
+  writeAnswer,
   z,
   type Harness,
   type MapStepError,
   type Settled,
   type WorkflowContext,
 } from '../src/index.js';
+import { writeRun } from '../src/workflow/runtime/store.js';
 let stateDir: string;
 const options = () => ({ stateDir, runId: 'scopes', input: null });
 const workflow = (run: (ctx: WorkflowContext) => Promise<unknown>) =>
@@ -319,7 +321,7 @@ it('journals named-map outcomes with full IDs and guards original mapper source 
   expect(first.maps?.['round/items']?.items[0]?.steps).toEqual(['round/items/a/result']);
   changed = true;
   await expect(runWorkflow(definition, { ...options(), resume: true })).rejects.toThrow(
-    'changed after an item completed',
+    'Settled map round/items changed after an item completed (changed: keys)',
   );
   changed = false;
   tail = false;
@@ -338,7 +340,7 @@ it('checks original named mapper source when replaying terminal item outcomes', 
   await expect(runWorkflow(definition, options())).rejects.toThrow('tail');
   mapper = () => Promise.resolve('after');
   await expect(runWorkflow(definition, { ...options(), resume: true })).rejects.toThrow(
-    'changed after an item completed',
+    'Settled map items changed after an item completed (changed: mapper)',
   );
 });
 
@@ -450,4 +452,187 @@ it('rejects empty or non-string scoped leaves without coercion or a validator cr
     ).rejects.toThrow('Invalid step ID');
     expect((await readRun({ ...options(), runId })).steps).toEqual({});
   }
+});
+
+it('accepts a mapper-only change to a committed settled map only under acceptCodeChange (R1)', async () => {
+  const workA = vi.fn(() => 'done');
+  const workB = vi.fn(() => 'done');
+  const gate = { prompt: 'Ship b?', schema: z.string() };
+  const v1 = (ctx: WorkflowContext) => async (key: string) => {
+    if (key === 'b') await ctx.ask('gate', gate);
+    await ctx.step('work', { input: null, schema: z.string(), run: key === 'a' ? workA : workB });
+    return `v1-${key}`;
+  };
+  const v2 = (ctx: WorkflowContext) => async (key: string) => {
+    if (key === 'b') await ctx.ask('gate', gate);
+    await ctx.step('work', { input: null, schema: z.string(), run: key === 'a' ? workA : workB });
+    return `v2-${key}`;
+  };
+  let mapper = v1;
+  const definition = workflow((ctx) =>
+    ctx.map(
+      'tickets',
+      ['a', 'b'],
+      { concurrency: 2, onError: 'settle', key: (key) => key },
+      mapper(ctx),
+    ),
+  );
+  expect((await runWorkflow(definition, options())).status).toBe('suspended');
+  const first = await readRun(options());
+  expect(first.maps?.['tickets']?.items.map((item) => item.status)).toEqual([
+    'completed',
+    'running',
+  ]);
+  const before = first.maps?.['tickets']?.fingerprint;
+  expect(Object.keys(first.maps?.['tickets']?.components ?? {}).sort()).toEqual([
+    'cwd',
+    'items',
+    'keys',
+    'mapper',
+    'version',
+  ]);
+  await writeAnswer({ ...options(), stepId: 'tickets/b/gate', value: 'yes' });
+  mapper = v2;
+  await expect(runWorkflow(definition, { ...options(), resume: true })).rejects.toThrow(
+    'Settled map tickets changed after an item completed (changed: mapper). Resume with --accept-code-change',
+  );
+  const refused = await readRun(options());
+  expect(refused.recoveryHint).toContain('--resume --accept-code-change');
+  expect(refused.maps?.['tickets']?.fingerprint).toBe(before);
+  expect(refused.codeChanges).toBeUndefined();
+  const result = await runWorkflow(definition, {
+    ...options(),
+    resume: true,
+    acceptCodeChange: true,
+  });
+  expect(result.status).toBe('completed');
+  expect(result.output).toEqual([
+    { ok: true, value: 'v1-a' },
+    { ok: true, value: 'v2-b' },
+  ]);
+  expect(workA).toHaveBeenCalledTimes(1);
+  expect(workB).toHaveBeenCalledTimes(1);
+  const saved = await readRun(options());
+  const after = saved.maps?.['tickets']?.fingerprint;
+  expect(after).not.toBe(before);
+  expect(saved.maps?.['tickets']?.components?.mapper).not.toBe(
+    first.maps?.['tickets']?.components?.mapper,
+  );
+  const entry = {
+    from: before,
+    to: after,
+    files: [],
+    components: ['mapper'],
+    map: 'tickets',
+  };
+  // toMatchObject also checks the array length: exactly one entry, with an ISO timestamp.
+  expect(saved.codeChanges).toMatchObject([entry]);
+  expect(Date.parse(saved.codeChanges?.[0]?.at ?? '')).not.toBeNaN();
+  // A further accepted resume re-finalizes over the same map without a second entry.
+  await runWorkflow(definition, { ...options(), resume: true, acceptCodeChange: true });
+  expect((await readRun(options())).codeChanges).toEqual(saved.codeChanges);
+  expect(workA).toHaveBeenCalledTimes(1);
+  expect(workB).toHaveBeenCalledTimes(1);
+});
+
+it.each([
+  ['items', { n: 2 }],
+  ['keys', { prefix: 'k-' }],
+  ['version', { version: '2' }],
+  ['items, mapper', { n: 2, mapper: true }],
+] as const)(
+  'refuses a %s change to a committed settled map even under acceptCodeChange',
+  async (changed, edit) => {
+    const runId = `edit-${changed.replace(', ', '-')}`;
+    let current: { n: number; prefix: string; version: string; mapper: boolean } = {
+      n: 1,
+      prefix: '',
+      version: '1',
+      mapper: false,
+    };
+    const work = vi.fn(() => 'saved');
+    const definition = workflow(async (ctx) => {
+      const { n, prefix, version, mapper } = current;
+      const step = () => ctx.step('work', { input: null, schema: z.string(), run: work });
+      await ctx.map(
+        'items',
+        [{ id: 'a', n }],
+        { concurrency: 1, onError: 'settle', version, key: (item) => prefix + item.id },
+        mapper ? async (item) => `${await step()}-${String(item.n)}` : step,
+      );
+      throw new Error('tail');
+    });
+    await expect(runWorkflow(definition, { ...options(), runId })).rejects.toThrow('tail');
+    current = { ...current, ...edit };
+    await expect(
+      runWorkflow(definition, { ...options(), runId, resume: true, acceptCodeChange: true }),
+    ).rejects.toThrow(
+      `Settled map items changed after an item completed (changed: ${changed}); --accept-code-change accepts only a mapper change. Fork a new run.`,
+    );
+    const saved = await readRun({ ...options(), runId });
+    expect(saved.recoveryHint).toContain(`--fork-from ${runId}`);
+    expect(saved.recoveryHint).not.toContain('--accept-code-change');
+    expect(saved.codeChanges).toBeUndefined();
+    expect(work).toHaveBeenCalledTimes(1);
+  },
+);
+
+it('refuses a changed settled-map cwd component even under acceptCodeChange', async () => {
+  const definition = workflow(async (ctx) => {
+    await ctx.map('items', ['a'], { concurrency: 1, onError: 'settle' }, () =>
+      Promise.resolve('saved'),
+    );
+    throw new Error('tail');
+  });
+  await expect(runWorkflow(definition, options())).rejects.toThrow('tail');
+  // The run-level cwd gate refuses a real cwd move first, so edit the saved journal instead.
+  const record = await readRun(options());
+  const journal = record.maps?.['items'];
+  if (!journal?.components) throw new Error('missing map components');
+  journal.components.cwd = 'moved';
+  journal.fingerprint = 'moved';
+  await writeRun(stateDir, record);
+  await expect(
+    runWorkflow(definition, { ...options(), resume: true, acceptCodeChange: true }),
+  ).rejects.toThrow(
+    'Settled map items changed after an item completed (changed: cwd); --accept-code-change accepts only a mapper change.',
+  );
+});
+
+it('keeps the unnamed refusal for a settled-map journal saved without components, and backfills an unchanged one', async () => {
+  let tail = true;
+  let mapper = () => Promise.resolve('before');
+  const definition = workflow(async (ctx) => {
+    const result = await ctx.map('items', ['a'], { concurrency: 1, onError: 'settle' }, mapper);
+    if (tail) throw new Error('tail');
+    return result;
+  });
+  await expect(runWorkflow(definition, options())).rejects.toThrow('tail');
+  const record = await readRun(options());
+  const components = record.maps?.['items']?.components;
+  expect(components).toBeDefined();
+  delete record.maps?.['items']?.components;
+  await writeRun(stateDir, record);
+  expect((await readRun(options())).maps?.['items']?.components).toBeUndefined();
+  const original = mapper;
+  mapper = () => Promise.resolve('after');
+  const refusal: unknown = await runWorkflow(definition, {
+    ...options(),
+    resume: true,
+    acceptCodeChange: true,
+  }).catch((error: unknown) => error);
+  expect(refusal).toBeInstanceOf(Error);
+  if (!(refusal instanceof Error)) throw refusal;
+  expect(refusal.message).toContain(
+    'Settled map items changed after an item completed; its journal predates per-component fingerprints',
+  );
+  expect(refusal.message).toContain('Fork a new run');
+  expect((await readRun(options())).recoveryHint).not.toContain('--accept-code-change');
+  mapper = original;
+  tail = false;
+  const result = await runWorkflow(definition, { ...options(), resume: true });
+  expect(result.output).toEqual([{ ok: true, value: 'before' }]);
+  const saved = await readRun(options());
+  expect(saved.maps?.['items']?.components).toEqual(components);
+  expect(saved.codeChanges).toBeUndefined();
 });

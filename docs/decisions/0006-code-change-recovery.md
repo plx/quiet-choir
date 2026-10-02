@@ -7,7 +7,8 @@ resume remains the default. Checkpoint format 3 supersedes format 2 for executio
 by #126: the CLI refuses an accepted replay that would fail on a changed completed step before it
 changes the run. Amended by #144: steps also carry launch, settle and failure stamps, and the
 healed-step check uses them instead of `seq` (ADR 0007). Amended by #145: default fork prefix reuse
-is causal and treats named-map items as independent, instead of closing at the first miss.
+is causal and treats named-map items as independent, instead of closing at the first miss. Amended
+by #146: explicit acceptance reaches settled maps, which record their own `codeChanges` entries.
 
 ## Context
 
@@ -195,3 +196,23 @@ gets a plain resume. A run with no recorded step or map, and a dry-run, get no h
 `hasTerminalOutcomes` (and so check-resume's `refinalizable`) is false for a run with nothing
 recorded. The CLI appends the hint only to the invocation's own `WorkflowRunError`, never to a
 refusal or a dry-run, and a divergence refusal still never advertises the path it refused.
+
+## Amendment: settled map acceptance (#146)
+
+`acceptCodeChange` now reaches settled maps: a committed map whose only changed identity component
+is its mapper is accepted (ADR 0008). Each accepted map appends one `CodeChange` with `map` set to
+its journal ID, `from` and `to` set to the map's old and new aggregate fingerprints, empty `files`
+and `components: ['mapper']`, in the same save that updates the journal, so it is never repeated.
+
+Map acceptance does not require a run-level change in the same resume. Embedded runs may have no
+source fingerprint (`code: null`), where the run-level gate cannot see a mapper edit, and after an
+accepted resume that failed before reaching the map, the run-level fingerprint is already updated
+while the map still needs acceptance. The explicit flag is the operator's consent; run-level and
+map-level entries are recorded independently.
+
+A settled map refusal is a new typed recovery cause, `map-changed`, checked after divergence and
+before configuration. A mapper-only change suggests `--resume --accept-code-change`; any other map
+change, or a journal saved without components, suggests restoring the map or `--fork-from`, never
+`--accept-code-change`. The #126 preflight replays with acceptance, so it now passes a mapper-only
+map change; a non-mapper map refusal under acceptance still fails the real run after the run-level
+entry is written, as before.

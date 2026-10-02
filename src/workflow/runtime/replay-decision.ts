@@ -33,11 +33,16 @@
  *   target, and no live target step settled before its target launch. Steps in sibling items of a
  *   named map are independent by declaration and never block each other. The same per-pair
  *   stamp-or-`seq` fallback applies to source steps saved without stamps.
+ * - A settled map journal with a different fingerprint is reset only while nothing in it is
+ *   committed. A committed map accepts only a mapper-only change, only under an explicit
+ *   `acceptCodeChange`, and only when the journal saved per-component digests; items, keys,
+ *   version and cwd stay strict, and a journal without components cannot name what changed. The
+ *   aggregate fingerprint decides sameness, so its digest must never change shape.
  *
  * ESLint keeps this module free of runtime imports.
  */
 import type { ErrorMode } from './model.js';
-import type { StepRecord } from './record.js';
+import type { MapComponents, StepRecord } from './record.js';
 
 /** Facts about one effect invocation, all gathered by the runner before the decision. @internal */
 export interface ReplayInput {
@@ -353,4 +358,91 @@ export function replayRefusalMessage(
     case 'rehearsal-git':
       return 'Dry-run does not simulate Git worktree effects. Use a fixture harness in a temporary repository to rehearse isolation without paid calls.';
   }
+}
+
+/** The saved facts of one settled map journal. @internal */
+export interface SavedSettledMap {
+  /** The saved aggregate fingerprint. */
+  readonly fingerprint: string;
+  /** The saved component digests, or undefined for a journal saved before they existed. */
+  readonly components: MapComponents | undefined;
+  /** Whether the map completed or any item completed, so outcomes may already be observed. */
+  readonly committed: boolean;
+}
+
+/** Facts for one settled map invocation, all gathered by the map before the decision. @internal */
+export interface SettledMapInput {
+  /** The saved journal with this ID, if any. */
+  readonly saved: SavedSettledMap | undefined;
+  /** The current aggregate fingerprint. */
+  readonly fingerprint: string;
+  /** The current component digests. */
+  readonly components: MapComponents;
+  /** Whether the operator explicitly accepted code changes for this resume. */
+  readonly acceptCodeChange: boolean;
+}
+
+/** What the map does with its saved journal. @internal */
+export type SettledMapReplay =
+  /** Keep the journal; `backfill` stores the current components in a journal saved without them. */
+  | { readonly kind: 'reuse'; readonly backfill: boolean }
+  /** Start a fresh journal: none was saved, or nothing in the changed one is committed. */
+  | { readonly kind: 'reset' }
+  /** Keep the journal and its outcomes, and record the accepted mapper change. */
+  | { readonly kind: 'accept' }
+  /** Refuse; `changed` names the differing components in a fixed order. */
+  | { readonly kind: 'refuse'; readonly changed: readonly string[] }
+  /** Refuse a changed committed journal that saved no components. */
+  | { readonly kind: 'refuse-legacy' };
+
+const mapComponentNames = ['items', 'keys', 'mapper', 'version', 'cwd'] as const;
+
+/**
+ * Decide how a settled map relates to its saved journal: reuse on the same aggregate fingerprint,
+ * reset when nothing is committed, accept a mapper-only change under explicit acceptance, and
+ * otherwise refuse. A component counts as changed when its digest differs or it is present on one
+ * side only (`keys`).
+ *
+ * @internal
+ */
+export function decideSettledMapReplay(input: SettledMapInput): SettledMapReplay {
+  const { saved, components } = input;
+  if (saved === undefined) return { kind: 'reset' };
+  // A matching aggregate means the current components are the ones the journal would have saved.
+  if (saved.fingerprint === input.fingerprint)
+    return { kind: 'reuse', backfill: saved.components === undefined };
+  if (!saved.committed) return { kind: 'reset' };
+  if (saved.components === undefined) return { kind: 'refuse-legacy' };
+  const prior = saved.components;
+  const changed = mapComponentNames.filter((name) => prior[name] !== components[name]);
+  return input.acceptCodeChange && changed.length === 1 && changed[0] === 'mapper'
+    ? { kind: 'accept' }
+    : { kind: 'refuse', changed };
+}
+
+/** Whether a settled map refusal changed only the mapper, which `acceptCodeChange` accepts. @internal */
+export function mapperOnlyChange(
+  refusal: Extract<SettledMapReplay, { readonly kind: 'refuse' | 'refuse-legacy' }>,
+): boolean {
+  return (
+    refusal.kind === 'refuse' && refusal.changed.length === 1 && refusal.changed[0] === 'mapper'
+  );
+}
+
+/**
+ * The error message for a settled map refusal. Every message starts with
+ * `Settled map <id> changed after an item completed`.
+ *
+ * @internal
+ */
+export function settledMapRefusalMessage(
+  id: string,
+  refusal: Extract<SettledMapReplay, { readonly kind: 'refuse' | 'refuse-legacy' }>,
+): string {
+  const head = `Settled map ${id} changed after an item completed`;
+  if (refusal.kind === 'refuse-legacy')
+    return `${head}; its journal predates per-component fingerprints, so the changed component is unknown. Fork a new run.`;
+  if (mapperOnlyChange(refusal))
+    return `${head} (changed: mapper). Resume with --accept-code-change to keep completed item outcomes and run unfinished items with the new mapper, or fork a new run. A thin mapper such as (item) => handle(ctx, item) keeps helper edits out of map identity.`;
+  return `${head} (changed: ${refusal.changed.join(', ') || 'identity'}); --accept-code-change accepts only a mapper change. Fork a new run.`;
 }
