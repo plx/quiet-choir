@@ -315,7 +315,7 @@ export class NativeCliHarness implements Harness {
       processResult = result;
       // The child has exited, so a private home's refreshed credentials can be written back.
       const warnings = [...result.warnings, ...(await invocation.settle())];
-      const outcome = await stream.finish();
+      const outcome = await stream.finish(result.stderr);
       const diagnostics = stream.diagnostics(result.stderr, result.warnings);
       if (result.code === 0 && result.signal === null && outcome.kind === 'success')
         return {

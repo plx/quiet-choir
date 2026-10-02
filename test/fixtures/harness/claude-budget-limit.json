@@ -9,6 +9,7 @@
   "expected": {
     "reason": "Reached maximum budget ($0.008)",
     "terminalReason": "budget_exhausted",
-    "apiStatus": null
+    "apiStatus": null,
+    "kind": "budget-limit"
   }
 }

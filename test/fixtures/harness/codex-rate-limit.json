@@ -9,6 +9,7 @@
   "expected": {
     "reason": "rate limit exceeded",
     "terminalReason": null,
-    "apiStatus": null
+    "apiStatus": null,
+    "kind": "rate-limit"
   }
 }

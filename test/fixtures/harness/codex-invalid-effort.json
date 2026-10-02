@@ -9,6 +9,7 @@
   "expected": {
     "reason": "Invalid value: 'bogus'",
     "terminalReason": null,
-    "apiStatus": 400
+    "apiStatus": 400,
+    "kind": "invalid-request"
   }
 }
