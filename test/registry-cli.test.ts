@@ -147,6 +147,8 @@ it('doctor typechecks a trusted registry, forwards configuration, and invokes on
   });
   expect(result).toMatchObject({
     ok: true,
+    verdict: 'ok',
+    warnings: [],
     zeroInference: true,
     checks: [
       { harness: 'claude', check: 'registry' },
@@ -158,7 +160,13 @@ it('doctor typechecks a trusted registry, forwards configuration, and invokes on
   const failed = await executor.execute({ kind: 'configuration.doctor', cwd, workflow: path });
   expect(failed).toMatchObject({
     ok: false,
-    checks: [{ ok: true }, { ok: true }, { harness: 'third', ok: false }],
+    verdict: 'blocked',
+    warnings: [],
+    checks: [
+      { ok: true, status: 'pass' },
+      { ok: true, status: 'pass' },
+      { harness: 'third', ok: false, status: 'fail' },
+    ],
   });
   const selected = await executor.execute({
     kind: 'configuration.doctor',
@@ -168,7 +176,7 @@ it('doctor typechecks a trusted registry, forwards configuration, and invokes on
     configuration: { kind: 'cli', config: {}, configurations: { third: { version: 'selected' } } },
   });
   expect(selected.checks).toEqual([
-    { harness: 'third', check: 'version', ok: true, message: 'selected' },
+    { harness: 'third', check: 'version', status: 'pass', ok: true, message: 'selected' },
   ]);
   await expect(
     executor.execute({ kind: 'configuration.doctor', cwd, harness: 'third' }),
