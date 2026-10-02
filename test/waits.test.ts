@@ -1,27 +1,36 @@
-import { mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+import { existsSync } from 'node:fs';
+import { mkdtemp, readdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
-import { afterEach, beforeEach, expect, expectTypeOf, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, expectTypeOf, it, vi } from 'vitest';
 import {
   defineWorkflow,
+  ExecError,
+  NodeProcessRunner,
   readRun,
   runWorkflow,
   writeAnswer,
   listPending,
   RunInterruptedError,
+  WorkflowRunError,
   z,
   type WorkflowClock,
   type PollOptions,
   type PollContext,
   type PollErrorPolicy,
+  type PollSource,
   type JsonValue,
+  type Command,
+  type CommandPollSource,
 } from '../src/index.js';
 import { RunActivity } from '../src/workflow/runtime/activity.js';
 import { RunQuestions } from '../src/workflow/runtime/questions.js';
 import { stepIdentity } from '../src/workflow/runtime/identity.js';
 import { digest, jsonValue } from '../src/workflow/runtime/json.js';
 import { waitRequest } from '../src/workflow/runtime/wait-schema.js';
+import { commandPollIdentity } from '../src/workflow/runtime/poll-command.js';
 import type { WaitSources } from '../src/workflow/runtime/wait-model.js';
 import type { RunRecord } from '../src/workflow/runtime/store.js';
 
@@ -831,8 +840,8 @@ it('keeps the persisted request and identity of an existing observer-form poll',
   // new Function keeps the observer's source text out of the test transform, so the golden values
   // below (computed before poll policy options existed) stay stable across esbuild/vitest bumps.
   // eslint-disable-next-line @typescript-eslint/no-implied-eval -- fixed source, see above
-  const build = new Function('return async () => ({ done: false })') as () => NonNullable<
-    WaitSources['poll']
+  const build = new Function('return async () => ({ done: false })') as () => PollSource<
+    unknown
   >['observe'];
   const observe = build();
   const poll = {
@@ -1559,5 +1568,328 @@ it('types the poll context and the onError policy', () => {
       });
       return null;
     },
+  });
+});
+
+describe('command polls', () => {
+  const node = (code: string): Command => [process.execPath, '-e', code];
+  /** A command that counts its runs in `file` and prints `{ n, ready }`, ready from run `readyAt`. */
+  const counter = (file: string, readyAt: number, failOn: number | null = null): Command =>
+    node(
+      `const fs = require('node:fs'); const f = ${JSON.stringify(file)};` +
+        `const n = (fs.existsSync(f) ? Number(fs.readFileSync(f, 'utf8')) : 0) + 1;` +
+        `fs.writeFileSync(f, String(n));` +
+        `if (n === ${String(failOn)}) { process.stderr.write('flaky'); process.exit(7); }` +
+        `process.stdout.write(JSON.stringify({ n, ready: n >= ${String(readyAt)} }));`,
+    );
+  const counted = z.object({ n: z.number(), ready: z.boolean() });
+  type Settings = Omit<CommandPollSource<number, z.infer<typeof counted>>, 'input' | 'schema'> & {
+    readonly timeoutMs: number;
+  };
+  const commandPoll = (name: string, settings: Settings) =>
+    defineWorkflow({
+      name,
+      version: '1',
+      input: z.null(),
+      output: z.unknown(),
+      run: (ctx) => ctx.poll('ci', { input: null, schema: z.number(), ...settings }),
+    });
+  const run = (runId: string, extra: Record<string, unknown> = {}) => ({
+    stateDir,
+    cwd: stateDir,
+    runId,
+    input: null,
+    processRunner: new NodeProcessRunner(),
+    ...extra,
+  });
+
+  it('completes by poll once done says so and counts every observation', async () => {
+    const file = join(stateDir, 'count');
+    const previous: number[] = [];
+    const definition = commandPoll('command-poll', {
+      every: 1,
+      timeoutMs: 60_000,
+      command: counter(file, 3),
+      output: counted,
+      done: (output, before) => {
+        previous.push(before.checks);
+        return output.ready
+          ? { done: true, value: output.n }
+          : { done: false, note: { seen: output.n } };
+      },
+    });
+    const result = await runWorkflow(definition, run('command-poll', { waitMode: 'block' }));
+    expect(result.output).toMatchObject({ by: 'poll', value: 3, checks: 3 });
+    expect(await readFile(file, 'utf8')).toBe('3');
+    expect(previous).toEqual([0, 1, 2]);
+    const wait = (await readRun({ stateDir, runId: 'command-poll' })).steps['ci']?.wait;
+    expect(wait).toMatchObject({ checks: 3, note: { seen: 2 } });
+  });
+
+  it('fails with a bounded ExecError for a failing exit, truncated output or a schema mismatch', async () => {
+    const cases: [string, Command, Record<string, unknown>, string][] = [
+      [
+        'exit',
+        node(
+          "process.stdout.write('o'.repeat(3000)); process.stderr.write('e'.repeat(3000)); process.exit(3)",
+        ),
+        {},
+        'process',
+      ],
+      [
+        'truncated',
+        node(`process.stdout.write(JSON.stringify({ n: 1, ready: true, pad: 'x'.repeat(64) }))`),
+        { maxOutputBytes: 16 },
+        'output-limit',
+      ],
+      ['schema', node(`process.stdout.write(JSON.stringify({ n: 'one' }))`), {}, 'schema'],
+    ];
+    for (const [runId, command, commandOptions, kind] of cases) {
+      const definition = commandPoll(runId, {
+        every: 1,
+        timeoutMs: 60_000,
+        command,
+        output: counted,
+        commandOptions,
+        done: (output) => ({ done: true, value: output.n }),
+      });
+      const error = await runWorkflow(definition, run(runId)).catch((caught: unknown) => caught);
+      // The run error wraps the wait's failure, which is the command's own ExecError.
+      expect(error, runId).toBeInstanceOf(WorkflowRunError);
+      const failure = (error as WorkflowRunError).cause as ExecError;
+      expect(failure, runId).toBeInstanceOf(ExecError);
+      expect(failure.kind, runId).toBe(kind);
+      expect(failure.diagnostics.stdoutTail.length).toBeLessThanOrEqual(1024);
+      expect(failure.diagnostics.stderrTail.length).toBeLessThanOrEqual(1024);
+      if (runId === 'exit') {
+        expect(failure.diagnostics).toMatchObject({ code: 3, stdoutTail: 'o'.repeat(1024) });
+        expect(failure.diagnostics.stderrTail).toBe('e'.repeat(1024));
+      }
+      const step = (await readRun({ stateDir, runId })).steps['ci'];
+      expect(step?.error, runId).toBe(failure.message);
+    }
+  });
+
+  it('tolerates a failing check under onError, classified by its exit code', async () => {
+    const clock = new Clock();
+    const file = join(stateDir, 'count');
+    const classified: unknown[] = [];
+    const definition = commandPoll('command-tolerate', {
+      every: 30_000,
+      timeoutMs: 600_000,
+      command: counter(file, 2, 1),
+      output: counted,
+      onError: {
+        tolerate: 2,
+        classify: (error) => {
+          classified.push(error instanceof ExecError ? error.diagnostics.code : error);
+          return error instanceof ExecError && error.diagnostics.code === 7 ? 'transient' : 'fatal';
+        },
+      },
+      done: (output) => (output.ready ? { done: true, value: output.n } : { done: false }),
+    });
+    const options = run('command-tolerate', { clock });
+    expect((await runWorkflow(definition, options)).status).toBe('suspended');
+    expect(classified).toEqual([7]);
+    const failed = (await readRun(options)).steps['ci']?.wait;
+    expect(failed).toMatchObject({ checks: 1, lastError: { consecutive: 1 } });
+    expect(failed?.lastError?.message).toContain('Command exited with 7.');
+    clock.time += 31_000;
+    const done = await runWorkflow(definition, { ...options, resume: true });
+    expect(done.output).toMatchObject({ by: 'poll', value: 2, checks: 2 });
+    expect(done.steps['ci']?.wait).not.toHaveProperty('lastError');
+  });
+
+  it('records the command, its output schema and the done digest in the wait request', async () => {
+    const done = (output: { state: string }) =>
+      output.state === 'green'
+        ? { done: true as const, value: output.state }
+        : { done: false as const };
+    const poll = {
+      input: { pr: 151 },
+      schema: z.string(),
+      every: 1_000,
+      command: ['gh', 'pr', 'checks', '151'] as Command,
+      output: z.object({ state: z.string() }),
+      done,
+    };
+    const request = async (changes: Record<string, unknown> = {}) => {
+      const changed = { ...poll, ...changes };
+      return waitRequest(
+        { timeoutMs: 600_000, poll: changed },
+        await commandPollIdentity(changed, stateDir),
+      ).request;
+    };
+    const sha256 = (text: string) => createHash('sha256').update(text).digest('hex');
+    const original = await request();
+    expect(JSON.parse(JSON.stringify(original))).toEqual({
+      timeoutMs: 600_000,
+      deadline: null,
+      poll: {
+        input: { pr: 151 },
+        schema: { $schema: 'http://json-schema.org/draft-07/schema#', type: 'string' },
+        every: { initialMs: 1000, maxMs: 1000, factor: 1 },
+        observe: digest(Function.prototype.toString.call(done)),
+        command: {
+          exec: {
+            command: ['gh', 'pr', 'checks', '151'],
+            cwd: await realpath(stateDir),
+            envSha256: digest({}),
+            inheritEnv: true,
+            inputSha256: sha256(''),
+            okExitCodes: [0],
+            structured: true,
+          },
+          output: {
+            $schema: 'http://json-schema.org/draft-07/schema#',
+            additionalProperties: false,
+            properties: { state: { type: 'string' } },
+            required: ['state'],
+            type: 'object',
+          },
+        },
+      },
+    });
+    // Policy stays out of identity.
+    expect(
+      await request({
+        live: true,
+        observeTimeoutMs: 5_000,
+        onError: { tolerate: 2 },
+        commandOptions: { maxOutputBytes: 64 },
+      }),
+    ).toEqual(original);
+    // Semantic command inputs enter it.
+    for (const changes of [
+      { commandOptions: { env: { GH_REPO: 'plx/quiet-choir' } } },
+      { commandOptions: { input: '{}' } },
+      { commandOptions: { okExitCodes: [0, 8] } },
+      { commandOptions: { inheritEnv: false } },
+    ])
+      expect(await request(changes)).not.toEqual(original);
+    expect(() => waitRequest({ timeoutMs: 600_000, poll })).toThrow(
+      'Command poll identity must be prepared before its wait request.',
+    );
+  });
+
+  it('refuses a changed command, output or done under the same ID, but not changed policy', async () => {
+    const clock = new Clock();
+    const file = join(stateDir, 'count');
+    const base = {
+      every: 30_000,
+      timeoutMs: 600_000,
+      command: counter(file, 99),
+      output: counted,
+      done: (output: z.infer<typeof counted>) =>
+        output.ready ? { done: true as const, value: output.n } : { done: false as const },
+    };
+    const options = run('command-identity', { clock });
+    expect((await runWorkflow(commandPoll('identity', base), options)).status).toBe('suspended');
+    const resume = (changes: Record<string, unknown>) =>
+      runWorkflow(commandPoll('identity', { ...base, ...changes }), { ...options, resume: true });
+    for (const policy of [
+      { live: true },
+      { observeTimeoutMs: 5_000 },
+      { onError: { tolerate: 3 } },
+      { commandOptions: { maxOutputBytes: 4096 } },
+    ])
+      expect((await resume(policy)).status).toBe('suspended');
+    for (const changed of [
+      { command: counter(file, 98) },
+      { output: counted.extend({ extra: z.string().optional() }) },
+      { done: () => ({ done: false as const, note: 'changed' }) },
+    ])
+      await expect(resume(changed)).rejects.toThrow(
+        'Step ci: wait changed; use a new ID for a different decision, dependency, or deadline.',
+      );
+    expect(await readFile(file, 'utf8')).toBe('1');
+  });
+
+  it('rejects a malformed command poll when the wait opens', async () => {
+    const valid = {
+      every: 1,
+      timeoutMs: 60_000,
+      command: node('process.stdout.write("{}")'),
+      output: counted,
+      done: () => ({ done: false as const }),
+    };
+    const cases: [Record<string, unknown>, string][] = [
+      [
+        { observe: () => Promise.resolve({ done: false }) },
+        'Poll source takes an observe callback or a command, not both.',
+      ],
+      [{ output: { parse: () => null } }, 'Poll command output must be a Zod schema.'],
+      [{ done: 'yes' }, 'Poll command requires a done callback.'],
+      [{ command: [] }, 'Poll command is invalid'],
+      [{ commandOptions: { timeout: 5 } }, 'Poll commandOptions are invalid'],
+      [{ commandOptions: { timeoutMs: 5 } }, 'Poll commandOptions are invalid'],
+      [{ commandOptions: { onError: 'return' } }, 'Poll commandOptions are invalid'],
+      [{ live: 'yes' }, 'Poll live must be a boolean.'],
+      [
+        { command: undefined, done: undefined },
+        'Poll source requires an observe callback or a command.',
+      ],
+    ];
+    for (const [index, [changes, message]] of cases.entries()) {
+      const runId = `invalid-${String(index)}`;
+      await expect(
+        runWorkflow(commandPoll(runId, { ...valid, ...changes }), run(runId)),
+        message,
+      ).rejects.toThrow(message);
+    }
+  });
+
+  it('runs done under the observer guard, so it cannot call context operations', async () => {
+    const definition = defineWorkflow({
+      name: 'done-guard',
+      version: '1',
+      input: z.null(),
+      output: z.unknown(),
+      run: (ctx) =>
+        ctx.poll('ci', {
+          input: null,
+          schema: z.null(),
+          every: 1,
+          timeoutMs: 60_000,
+          command: node('process.stdout.write("{}")'),
+          output: z.object({}),
+          done: () => {
+            ctx.log('inside done');
+            return { done: true, value: null };
+          },
+        }),
+    });
+    await expect(runWorkflow(definition, run('done-guard'))).rejects.toThrow(
+      'Poll observers cannot call context operations.',
+    );
+  });
+
+  it('kills the running command when the run signal aborts, like ctx.exec', async () => {
+    const pidFile = join(stateDir, 'pid');
+    const controller = new AbortController();
+    const definition = commandPoll('command-abort', {
+      every: 1,
+      timeoutMs: 600_000,
+      command: node(
+        `require('node:fs').writeFileSync(${JSON.stringify(pidFile)}, String(process.pid)); setInterval(() => {}, 1000)`,
+      ),
+      output: counted,
+      done: (output) => ({ done: true, value: output.n }),
+    });
+    const running = runWorkflow(
+      definition,
+      run('command-abort', { signal: controller.signal }),
+    ).catch((error: unknown) => error);
+    await vi.waitFor(
+      () => {
+        if (!existsSync(pidFile)) throw new Error('command not started');
+      },
+      { timeout: 10_000, interval: 20 },
+    );
+    const pid = Number(await readFile(pidFile, 'utf8'));
+    controller.abort(new Error('stop'));
+    await running;
+    expect((await readRun({ stateDir, runId: 'command-abort' })).status).toBe('cancelled');
+    expect(() => process.kill(pid, 0)).toThrow(expect.objectContaining({ code: 'ESRCH' }) as Error);
   });
 });

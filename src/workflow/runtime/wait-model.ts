@@ -1,6 +1,12 @@
 import type { z } from 'zod';
 import type { JsonInput, JsonValue, StepContext } from './model.js';
-import type { PollExecOptions, StepExecFunction } from './exec-model.js';
+import type {
+  Command,
+  ExecSummary,
+  PollExecOptions,
+  StepExecFunction,
+  StepExecOptions,
+} from './exec-model.js';
 import type {
   AskOptions,
   QuestionRequest,
@@ -115,6 +121,68 @@ export interface PollSource<T, N extends JsonValue = JsonValue> {
       { readonly done: true; readonly value: T } | { readonly done: false; readonly note?: N }
     >
   >;
+  /** Only a {@link CommandPollSource} runs a command; an observer poll has none. */
+  readonly command?: never;
+}
+
+/**
+ * Options of the command a {@link CommandPollSource} runs on each check: those of a callback's
+ * `context.exec` without `timeoutMs` (the poll's `observeTimeoutMs` bounds each check) and
+ * `onError` (a failed command is a rejected observation, so the poll's `onError` applies).
+ */
+export type PollCommandExecOptions = Omit<StepExecOptions, 'timeoutMs' | 'onError'>;
+
+/**
+ * A poll whose every check runs one command through the run's process runner, validates its JSON
+ * stdout with `output`, and lets `done` decide the outcome. The engine owns the child: it is
+ * registered under the wait for orphan recovery, stopped with the observation's signal, and
+ * synthesized or fixture-answered under a rehearsal. `input`, `schema`, `every`, `observeTimeoutMs`
+ * and `onError` mean what they mean for an observer {@link PollSource}.
+ */
+export interface CommandPollSource<T, O = unknown, N extends JsonValue = JsonValue> extends Omit<
+  PollSource<T, N>,
+  'observe' | 'command'
+> {
+  /**
+   * The command for each check, an argv or `{ shell }`. With the canonical working directory and
+   * the environment overlay, stdin digest and accepted exit codes from `commandOptions`, it is part
+   * of the wait's identity, so changing it needs a new wait ID.
+   */
+  readonly command: Command;
+  /** Schema for the command's JSON stdout, part of the wait's identity. */
+  readonly output: z.ZodType<O>;
+  /**
+   * How to run the command. `cwd`, `env`, `inheritEnv`, `input` and `okExitCodes` are identity;
+   * `maxOutputBytes` is policy. Output that exceeds the cap fails the check.
+   */
+  readonly commandOptions?: PollCommandExecOptions;
+  /**
+   * Run the real command even under a `--dry-run` rehearsal, which otherwise synthesizes its
+   * output from `output` or answers it from an exec fixture rule. Keep it to read-only commands.
+   * Policy, not identity.
+   */
+  readonly live?: boolean;
+  /**
+   * Decide the outcome of one check from the validated output and the wait's persisted progress
+   * before it. It must be pure: it gets no context, cannot call context operations, and keeps
+   * cross-check state (such as a debounce flag) in the note. Its source text is part of the wait's
+   * identity. A throw is a rejected observation, so the poll's `onError` applies to it.
+   *
+   * `O` is inferred from `output` and `N` is never inferred, as for an observer poll. Declared as a method so a `ctx.wait` poll
+   * source may annotate `output` with its own type.
+   */
+  done(
+    output: NoInfer<O>,
+    previous: NoInfer<PollContext<N>['previous']>,
+  ): NoInfer<
+    | { readonly done: true; readonly value: T }
+    | { readonly done: false; readonly note?: N }
+    | Promise<
+        { readonly done: true; readonly value: T } | { readonly done: false; readonly note?: N }
+      >
+  >;
+  /** Only an observer {@link PollSource} has `observe`. */
+  readonly observe?: never;
 }
 
 /** Sources competing inside one durable wait; at least one must be supplied. */
@@ -125,8 +193,8 @@ export interface WaitSources {
   readonly deadline?: number;
   /** An optional external answer, with its subject and presentation fingerprinted. */
   readonly signal?: SignalSource<unknown>;
-  /** An optional changing-state observation. */
-  readonly poll?: PollSource<unknown>;
+  /** An optional changing-state observation, by an observer or by a command. */
+  readonly poll?: PollSource<unknown> | CommandPollSource<unknown>;
 }
 
 /** A terminal external answer; its timestamp is supplied by the inbox writer. */
@@ -212,6 +280,30 @@ export type PollOptions<T, N extends JsonValue = JsonValue> = PollSource<T, N> &
       }
   );
 
+/**
+ * A command poll's time bound, like {@link PollOptions}: `ctx.poll` requires `timeoutMs` or
+ * `deadline`.
+ */
+export type CommandPollOptions<T, O = unknown, N extends JsonValue = JsonValue> = CommandPollSource<
+  T,
+  O,
+  N
+> &
+  (
+    | {
+        /** Relative duration, pinned on first open. */
+        readonly timeoutMs: number;
+        /** Mutually exclusive with the relative duration. */
+        readonly deadline?: never;
+      }
+    | {
+        /** Absolute epoch time from input or recorded data. */
+        readonly deadline: number;
+        /** Mutually exclusive with the absolute deadline. */
+        readonly timeoutMs?: never;
+      }
+  );
+
 /** Validated, serializable polling identity. */
 export interface PollRequest {
   /** Canonical dependencies. */
@@ -227,8 +319,21 @@ export interface PollRequest {
     /** Exponential growth factor. */
     readonly factor: number;
   };
-  /** Hash of observer source; captured dependencies still belong in input. */
+  /**
+   * Hash of the observer's source, or of `done`'s source for a command poll; captured dependencies
+   * still belong in input.
+   */
   readonly observe: string;
+  /**
+   * A command poll's command and output contract; absent for an observer poll, whose persisted
+   * request and identity are unchanged by it.
+   */
+  readonly command?: {
+    /** The prepared command: argv or shell, canonical cwd, env and stdin digests, exit codes. */
+    readonly exec: ExecSummary;
+    /** JSON Schema of the command's stdout. */
+    readonly output: JsonValue;
+  };
 }
 
 /** Durable wait identity; signal presentation lives in the step's question record. */
@@ -293,6 +398,8 @@ export interface PendingWait {
   readonly lastError: WaitError | null;
   /** External signal presentation, or null. */
   readonly signal: QuestionRequest | null;
+  /** The command a command poll runs on each check, or null for any other wait. */
+  readonly command: Command | null;
   /** Most recent rejected signal deliveries, empty without a signal source. */
   readonly rejections: readonly QuestionRejection[];
   /** Whether stored source bytes changed; null without launch metadata. */

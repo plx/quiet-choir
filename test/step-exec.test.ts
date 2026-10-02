@@ -10,10 +10,16 @@ import {
   runWorkflow,
   z,
   type Command,
+  type CommandPollOptions,
+  type CommandPollSource,
+  type DeadlineOutcome,
   type ExecResult,
   type ExecStepError,
   type HarnessInvocation,
+  type JsonValue,
+  type PollCommandExecOptions,
   type PollErrorPolicy,
+  type PollOutcome,
   type PollSource,
   type ProcessRunner,
   type ProcessRunRequest,
@@ -124,6 +130,89 @@ describe('types', () => {
       });
     };
     expect(check).toBeTypeOf('function');
+  });
+});
+
+describe('command poll types', () => {
+  it('infers the output, value and note types of a command poll and keeps it apart from observe', () => {
+    const checks = z.array(z.object({ name: z.string(), state: z.string() }));
+    type Checks = z.infer<typeof checks>;
+    const check = async (ctx: WorkflowContext) => {
+      const outcome = await ctx.poll('ci', {
+        input: { pr: 1 },
+        schema: z.enum(['green', 'red']),
+        every: 30_000,
+        timeoutMs: 600_000,
+        command: ['gh', 'pr', 'checks', '1', '--json', 'name,state'],
+        output: checks,
+        commandOptions: { maxOutputBytes: 65_536, env: { GH_PAGER: '' } },
+        live: true,
+        done: (output, previous) => {
+          expectTypeOf(output).toEqualTypeOf<Checks>();
+          expectTypeOf(previous.note).toEqualTypeOf<JsonValue | null>();
+          expectTypeOf(previous.checks).toEqualTypeOf<number>();
+          return output.every((entry) => entry.state === 'SUCCESS')
+            ? // As with an observer, a literal value needs `as const` against an enum schema.
+              { done: true, value: 'green' as const }
+            : { done: false, note: { pending: output.length } };
+        },
+      });
+      expectTypeOf(outcome).toEqualTypeOf<PollOutcome<'green' | 'red'> | DeadlineOutcome>();
+      await ctx.poll<boolean, Checks, { seen: boolean }>('typed-note', {
+        input: null,
+        schema: z.boolean(),
+        every: 1,
+        deadline: 1,
+        command: { shell: 'gh pr checks 1 --json name,state' },
+        output: checks,
+        // done may be asynchronous.
+        done: async (_output, previous) => {
+          expectTypeOf(previous.note).toEqualTypeOf<{ seen: boolean } | null>();
+          return Promise.resolve({ done: false, note: { seen: true } });
+        },
+      });
+      // ctx.wait accepts the command form too; done may annotate its output.
+      const waited = await ctx.wait('either', {
+        timeoutMs: 1,
+        poll: {
+          input: null,
+          schema: z.literal('done'),
+          every: 1,
+          command: ['gh', 'pr', 'view'],
+          output: z.object({ state: z.string() }),
+          done: (output: { state: string }) =>
+            output.state === 'MERGED' ? { done: true, value: 'done' as const } : { done: false },
+        },
+      });
+      expectTypeOf(waited).toEqualTypeOf<PollOutcome<'done'> | DeadlineOutcome>();
+    };
+    expect(check).toBeTypeOf('function');
+    // The two forms exclude each other, and a command poll's options have no timeoutMs or onError.
+    expectTypeOf<CommandPollSource<null>['observe']>().toEqualTypeOf<undefined>();
+    expectTypeOf<PollSource<null>['command']>().toEqualTypeOf<undefined>();
+    expectTypeOf<PollCommandExecOptions>().not.toHaveProperty('timeoutMs');
+    expectTypeOf<PollCommandExecOptions>().not.toHaveProperty('onError');
+    expectTypeOf<PollCommandExecOptions>().toHaveProperty('maxOutputBytes');
+    expectTypeOf<{
+      input: null;
+      schema: z.ZodNull;
+      every: 1;
+      timeoutMs: 1;
+      command: ['gh'];
+      output: z.ZodNull;
+      done: () => { done: false };
+      observe: () => Promise<{ done: false }>;
+    }>().not.toExtend<CommandPollOptions<null, null>>();
+    expectTypeOf<{
+      input: null;
+      schema: z.ZodNull;
+      every: 1;
+      timeoutMs: 1;
+      command: ['gh'];
+      output: z.ZodNull;
+      commandOptions: { timeoutMs: 1 };
+      done: () => { done: false };
+    }>().not.toExtend<CommandPollOptions<null, null>>();
   });
 });
 
