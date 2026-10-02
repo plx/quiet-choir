@@ -171,6 +171,17 @@ describe('workflow cancel refusals', () => {
     expect(existsSync(requestPath())).toBe(false);
   });
 
+  it('refuses a lock whose owner.json is unreadable with run.locked', async () => {
+    await suspendedRun();
+    await plantOwner({ pid: 'not a number' });
+    const sendSignal = vi.fn();
+    const failure = failed(await cancel(sendSignal));
+    expect(failure.code).toBe('run.locked');
+    expect(failure.details).toMatchObject({ pid: null, reason: 'unreadable-owner' });
+    expect(sendSignal).not.toHaveBeenCalled();
+    expect(existsSync(requestPath())).toBe(false);
+  });
+
   it('refuses an unfinished run no process owns with run.unowned', async () => {
     await suspendedRun();
     const sendSignal = vi.fn();
