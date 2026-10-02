@@ -8,9 +8,20 @@ other's edits. Isolation is explicit; ordinary calls still run in their configur
 The runtime creates detached Git worktrees above the harness interface. The harness receives an
 absolute `cwd`; native Claude/Codex worktree flags are never used. Git 2.38+ is required. Embedded
 callers supply `RunOptions.processRunner`, usually `new NodeProcessRunner()`; the CLI supplies it.
-Dry-run does not simulate Git worktree effects: a live isolated effect fails before Git or agent
-invocation. Rehearse isolation with a fixture harness in a temporary repository; Git, commands, and
-local callbacks remain real, while agent responses incur no model calls.
+Dry-run synthesizes fresh isolation instead of creating it. An isolated Claude or Codex call
+(`isolation: 'worktree'`, `worktree: true`, or `{ kind: 'worktree', base }`) is planned in an
+absolute placeholder directory under the cache root that is never created, runs no
+`worktrees.setup`, and returns an unchanged change `{ base, commit: null, ref: null, files: [] }`.
+The base is resolved with a read-only `git rev-parse`, the only Git command a rehearsal runs, so an
+unresolvable base or an isolated `cwd` outside the repository fails with the same configuration
+error as a real run. Outside a Git working tree a placeholder of forty zeros stands in, with a
+warning that the real run would fail. `ctx.merge` over unchanged changes returns the real no-op
+result `{ commit, merged: [], conflicts: [] }`, where `commit` is the existing target branch or
+`HEAD`. The rehearsal report marks these calls with `worktree.synthesized` and lists the merges
+under `merges`; no refs, worktrees or cache directories are created. `ctx.worktree`, effects
+isolated on a handle, and merges of captured commits still fail with a configuration error before
+Git or agent invocation. Rehearse them with a fixture harness in a temporary repository; Git,
+commands, and local callbacks remain real, while agent responses incur no model calls.
 
 The source directory must belong to a Git working tree with committed history. Dirty source files
 produce a warning: isolated calls start from committed files only. Unmet prerequisites (Git version,

@@ -2,6 +2,21 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- `--dry-run` synthesizes worktree-isolated agent calls and merges of their unchanged changes
+  instead of failing (#148; amends ADR 0016). A fresh isolated Claude or Codex call is planned in an
+  absolute placeholder directory that is never created and returns
+  `{ base, commit: null, ref: null, files: [] }`; `ctx.merge` over unchanged changes returns
+  `{ commit, merged: [], conflicts: [] }` with `commit` the target branch or `HEAD`. The base comes
+  from a read-only `git rev-parse` (the runtime refuses every other Git command under rehearsal), an
+  unresolvable base fails with the real configuration error, and outside a Git working tree a
+  forty-zero placeholder base is used with a warning. No refs, worktrees or cache directories are
+  created. Report calls gain `worktree` (`{ synthesized: true, base, baseSource }` or null), the
+  report gains `merges`, and `RunOptions.rehearsal` gains an `onWorktree` observer. `ctx.worktree`,
+  handle-isolated effects and merges of captured commits still fail with a configuration error whose
+  message now names what dry-run synthesizes. The CLI passes the real process runner for that Git
+  and the synthesizing runner as `RunOptions.execRunner`, so `ctx.exec` still never spawns, and it
+  prints the rehearsal warnings and `Rehearsal: ...` summary on a failed dry-run too, with
+  synthesized isolated-call and merge counts when nonzero.
 - Fixture files can answer commands (#147; amends ADR 0016). A new optional `exec` array holds
   first-match command rules (public `FixtureExecCall` type) filtered by step glob, exact
   `argvPrefix`, `envSha256`, `inputSha256`, `attempt` and per-rule `occurrence`, each answering with

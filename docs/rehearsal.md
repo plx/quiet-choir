@@ -13,11 +13,13 @@ node bin/run.js workflow execute examples/duet.workflow.ts \
   --input '{"topic":"durable agent workflows"}' --run-id duet
 ```
 
-`--dry-run` invokes no Claude/Codex executable, version discovery, or OS owner-identity probe.
-Checkpoint files live in a private temporary directory removed when the executor finishes. The
-normal/default state directory is not created. Typechecking/importing still run normally. **Local
-callbacks and top-level workflow code execute for real.** Temporary checkpoints do not undo their
-filesystem, subprocess, network, or external effects. Stub named local effects when needed:
+`--dry-run` invokes no Claude/Codex executable, version discovery, or OS owner-identity probe. The
+only process it may start is a read-only `git rev-parse` that resolves the base of an isolated call
+or merge (see [worktree isolation](#worktree-isolation)). Checkpoint files live in a private
+temporary directory removed when the executor finishes. The normal/default state directory is not
+created. Typechecking/importing still run normally. **Local callbacks and top-level workflow code
+execute for real.** Temporary checkpoints do not undo their filesystem, subprocess, network, or
+external effects. Stub named local effects when needed:
 `--stub-steps 'publish/**' --stub-steps 'notify/*'`. These patterns match fully qualified IDs; `*`
 stays within a segment and `**` crosses segments. Matched callbacks, file reads/writes and poll
 observers receive synthesized results through their original Zod validation (a matched poll
@@ -137,10 +139,36 @@ because its purpose is to forbid synthesis.
 
 Under `--harness fixture` without `--dry-run`, matched commands are answered without spawning
 through `RunOptions.execRunner`; worktree Git operations always use the real process runner, so
-isolated worktrees are still provisioned. `guardFile`'s baseline and restore helpers are ordinary
-exec effects too, so under `commands: "fixture"` they need rules (for example a `**/baseline` step
-glob). Commands are not per-harness: a named `--harness name=fixture:FILE` file with `exec` or
-`commands` is refused; put them in the global `--harness fixture:FILE`.
+isolated worktrees are still provisioned. `--dry-run` routes the same way: its synthesizing runner
+is the `execRunner`, and the real runner serves only the read-only Git described below.
+`guardFile`'s baseline and restore helpers are ordinary exec effects too, so under
+`commands: "fixture"` they need rules (for example a `**/baseline` step glob). Commands are not
+per-harness: a named `--harness name=fixture:FILE` file with `exec` or `commands` is refused; put
+them in the global `--harness fixture:FILE`.
+
+## Worktree isolation
+
+Dry-run synthesizes fresh worktree isolation instead of refusing it. An isolated Claude or Codex
+call is planned and recorded in `calls` like any other, with `cwd` set to an absolute placeholder
+directory under the worktree cache root that is never created, and returns an unchanged change
+`{ base, commit: null, ref: null, files: [] }`; `worktrees.setup` does not run. `ctx.merge` over
+unchanged changes returns the no-op integration a real run would compute,
+`{ commit, merged: [], conflicts: [] }`, with `commit` the existing target branch or `HEAD`. Step
+IDs and fingerprints are those of the real run.
+
+The base is resolved once per revision with `git rev-parse` through the real process runner. The
+runtime refuses every other Git command under rehearsal before it reaches the runner, so a dry-run
+never creates refs, worktrees, objects or cache directories. An unresolvable base, a repository with
+no committed `HEAD`, or an isolated `cwd` outside the repository fails with the configuration error
+a real run reports. Outside a Git working tree, or when Git cannot run, a placeholder of forty zeros
+stands in for the base, with a warning that the real run fails. A dry-run resume of an interrupted
+real attempt reuses its recorded base.
+
+`ctx.worktree`, `ctx.exec` or `ctx.step` on a worktree handle, an agent call isolated on a handle,
+and a merge of a captured (non-null) commit still fail before Git or agent invocation with a
+configuration error. Rehearse those with a fixture harness in a temporary repository. A branch that
+depends on a captured change, such as `if (edit.worktree?.commit)`, takes the unchanged path in
+rehearsal.
 
 ## Synthesis and report
 
@@ -161,7 +189,11 @@ report contains:
 
 - `calls`: attempted live calls in invocation order, with full step ID, cumulative attempt, harness,
   cwd, prompt, original schema, output source (`fixture` or `synthesized`), fixture index, process
-  plan, resolved limits, and planning/fixture error when present.
+  plan, resolved limits, and planning/fixture error when present. `worktree` is
+  `{ synthesized: true, base, baseSource }` for a synthesized isolated call (`baseSource` is
+  `resolved`, `recorded` or `placeholder`) and null otherwise.
+- `merges`: synthesized `ctx.merge` effects with step ID, `synthesized: true`, `commit`, the number
+  of `inputs`, the `target` kind (`ref`, `checkout` or `branch`) and `baseSource`.
 - `plan`: binary, argv, stdin, cwd, process limits, and private-file placeholders. File contents are
   omitted from the report. The same pure `CliHarness.plan()` validates real invocations, including
   Codex strict-schema checks, before materializing private files.
@@ -185,8 +217,9 @@ prompts/output; handle them as sensitive workflow data.
 
 Failures keep the normal [CLI error document and exits](cli-contract.md), adding `rehearsal` and
 `error.stack`. `error.stepId` also identifies authoring failures that occur before a step record is
-created. The report's failure checkpoint is an in-memory copy: its temporary `stateDir` has been
-removed, so use a fresh rehearsal to retry. An abrupt kill can leave temporary files behind.
+created. Its warnings and the `Rehearsal: ...` summary are also printed to stderr. The report's
+failure checkpoint is an in-memory copy: its temporary `stateDir` has been removed, so use a fresh
+rehearsal to retry. An abrupt kill can leave temporary files behind.
 
 ## Preview resume and choose a harness
 
@@ -246,13 +279,16 @@ The root entry point exports `FixtureHarness`, `parseHarnessFixtures`, `HarnessF
 `FixtureCall`, `FixtureExecCall`, and `synthesizeOutput`. Supply `new FixtureHarness(fixtures)` to
 `runWorkflow` for durable fixture execution; `FixtureHarness` answers agent calls only. To answer
 commands, pass your own `ProcessRunner` as `RunOptions.execRunner`, which `ctx.exec` uses instead of
-`processRunner` while worktree Git keeps `processRunner`. `HarnessRequest.call` carries `runId`,
-`stepId`, cumulative `attempt`, and stable `idempotencyKey: runId/stepId`; it is attached inside the
-effect after fingerprinting. `HarnessRequestInput` is the identity-free input accepted by
-`CliHarness.plan()` and direct adapter calls. Planning image calls requires `imageAttachments`
-containing the already captured bytes; normal runtime/direct execution captures them before
-planning. A plan is JSON data and creates no files or processes. Actual invocation materializes only
-its indexed artifact references, then cleans them up.
+`processRunner` while worktree Git keeps `processRunner`. With `RunOptions.rehearsal`, the runtime
+uses `processRunner` only for the read-only `git rev-parse` of synthesized isolation, and
+`rehearsal.onWorktree` observes each synthesized isolated call and merge; a `processRunner` that
+spawns nothing yields placeholder bases. `HarnessRequest.call` carries `runId`, `stepId`, cumulative
+`attempt`, and stable `idempotencyKey: runId/stepId`; it is attached inside the effect after
+fingerprinting. `HarnessRequestInput` is the identity-free input accepted by `CliHarness.plan()` and
+direct adapter calls. Planning image calls requires `imageAttachments` containing the already
+captured bytes; normal runtime/direct execution captures them before planning. A plan is JSON data
+and creates no files or processes. Actual invocation materializes only its indexed artifact
+references, then cleans them up.
 
 Native CLI attempts receive `QUIET_CHOIR_RUN_ID`, `QUIET_CHOIR_STEP_ID`, `QUIET_CHOIR_ATTEMPT`, and
 `QUIET_CHOIR_IDEMPOTENCY_KEY` environment variables. These are routing/diagnostic metadata, not
