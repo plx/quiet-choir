@@ -6,7 +6,8 @@ Accepted. Extends ADR 0005 with callback identity, explicit code acceptance, and
 resume remains the default. Checkpoint format 3 supersedes format 2 for execution and reuse. Amended
 by #126: the CLI refuses an accepted replay that would fail on a changed completed step before it
 changes the run. Amended by #144: steps also carry launch, settle and failure stamps, and the
-healed-step check uses them instead of `seq` (ADR 0007).
+healed-step check uses them instead of `seq` (ADR 0007). Amended by #145: default fork prefix reuse
+is causal and treats named-map items as independent, instead of closing at the first miss.
 
 ## Context
 
@@ -43,17 +44,21 @@ opportunities.
 A fork creates a new checkpoint with the same workflow name and optional new input/version/source.
 It inherits source input when omitted, but starts with its own policy rules. It reads a source
 snapshot without locking or writing it. Only completed, revalidated, matching effects may be copied,
-with reusedFrom provenance. Default prefix reuse consumes source first-use order and closes on the
-first miss, including skipped or invalidated source work. Matching mode is explicit because later
-results may depend on filesystem side effects of earlier effects that reran. Neither mode restores
-workspace state or creates isolation. New live effects use the target run's idempotency keys.
+with reusedFrom provenance. Default prefix reuse is causal (#145, below): a step is copied only when
+every source step that had settled before it launched was copied too, and no live step of the fork
+settled before the fork requested it. Sibling items of a named map do not count. Skipped, changed or
+invalidated source work therefore stops reuse for the steps launched after it settled, not for its
+same-tick siblings. Matching mode is explicit because later results may depend on filesystem side
+effects of earlier effects that reran. Neither mode restores workspace state or creates isolation.
+New live effects use the target run's idempotency keys.
 
 Fork provenance pins a digest, mode, invalidation globs, differences, and prefix progress. Copied
 results are durable in the target and do not require a live source later. On target resume, a
 changed/unavailable source closes remaining reuse and emits a saved warning; remaining effects run
 live. This preserves prior copies without silently borrowing a newer source snapshot or bricking the
-target. Prefix decisions are synchronous before checkpoint awaits, preserving launch order under
-concurrency. A changed concurrent schedule can cause extra live work, not reuse past a known miss.
+target. A prefix decision and the insertion of its copy are synchronous, before checkpoint awaits,
+so a concurrent launch always sees the copies made before it. A changed concurrent schedule can
+cause extra live work, not reuse past a known miss.
 
 Every first-use step gets a unique seq. Before live work that skips earlier completed steps, the
 runner saves a warning and emits replay.divergence. Strict replay aborts immediately, before waiting
@@ -86,6 +91,66 @@ Agents can fix late bugs without repaying unchanged calls, while an edited compl
 cannot silently return stale data through accept-code-change. Reuse is explicit and recorded. The
 remaining dependency gaps are real: callback hashing is useful evidence, not full closure capture.
 All filesystem and external effects retain at-least-once behavior and are never rolled back.
+
+## Amendment: causal prefix reuse (#145)
+
+Default prefix reuse walked the source steps in global first-use (`seq`) order with one cursor and
+closed reuse for the whole fork at the first mismatch. A fork replays copies almost synchronously,
+so a concurrent named map requests its items in a different order than the source launched them. An
+unchanged 12-item, 3-stage map at concurrency 6 reused 6 of 36 steps and ran 30 live; editing only
+stage 3 also ran 30 live where 12 were needed. In a merge-down port, `Promise.all` ran the
+implementer and an issue-filing `fix/1/followups` step together; forking with
+`--invalidate 'fix/1/impl*'` re-ran the completed, independent followups step live and filed its
+issues again. `--reuse matching` avoided both, but it reuses by ID alone and can return a result
+whose undeclared filesystem inputs changed.
+
+The rule now uses the stamps from #144 and the target's own record. A requested step X that passes
+the identity checks (terminal source step, same kind and fingerprint, not invalidated, valid output)
+is reused when `forkPrefixBlockers` in `replay-decision.ts` finds nothing:
+
+- Every source step Y that X may have depended on is already reused into the target, with
+  `reusedFrom` naming this source and Y's ID. Y may have been a cause when it had settled when X was
+  launched in the source (`Y.settleStamp <= X.launchStamp`). A source step that never settled is not
+  a cause. When either launch stamp is missing (a source saved before #144), the pair falls back to
+  launch order: Y is a cause when its `seq` is lower.
+- No step that ran live in the fork (no `reusedFrom`) settled before the fork requested X (its
+  `settleStamp` is at most X's target `launchStamp`). A live re-run may have produced outputs or
+  files that X now reads. This also decides a miss with no source counterpart, a new step ID: it
+  closes reuse only for steps requested after it settled, not for its same-tick siblings.
+- Neither rule counts a step in a sibling item of a named map that encloses X, at any level of
+  nesting. Named-map items receive only their item value and their prefixes are declared item
+  boundaries (ADR 0009), so the runtime treats them as independent. The naming context records the
+  enclosing items with each ID prefix, so `within` views, child workflows and nested maps report the
+  same items as the ID. `ctx.scope` and `within` siblings are not independent: they often run in
+  sequence and share closure state (a plan step, then a build step), so stamps order them. A
+  positional map adds no item prefix and also relies on stamps alone.
+
+An unchanged concurrent named map now reuses every step whatever the schedule, an edit to stage 3
+runs only the stage-3 calls live, and the port's followups step is reused. A step launched after a
+missed step settled, such as a check after the `Promise.all` or a root step over the map results,
+still runs live, and a sequential chain still re-runs from its changed step.
+
+Proposal 1 of #145 was a persisted cursor per scope. It is not needed: reuse progress is the set of
+reused copies already saved in the target, with their target-run stamps, so a resumed fork target
+keeps its progress without new fields. A per-scope cursor would still close on harmless order
+differences inside a scope, and it would duplicate (and could disagree with) those copies. Its job,
+keeping a removed or skipped earlier step from being bypassed, is done by the first rule, because
+such a step is never reused.
+
+`ForkProvenance` keeps its schema, so records from either build load. `reuseClosed` now means only
+that reuse is closed for the whole fork: the pinned source changed or became unavailable, or an
+older build closed it on a prefix miss. A target saved that way stays closed on resume. `cursor` now
+counts the source effects reused by prefix reuse; older builds used it as a position in source
+launch order, and an older build reading a new record would miss and close, which is conservative.
+
+Limitations remain. Treating named-map items as independent assumes they communicate only through
+their item value and the map result; items that share mutable closure state or files can now reuse a
+stale result, and `--invalidate` remains the way to force them live. A cause that the fork has not
+requested yet blocks reuse, so a concurrent multi-step chain in one non-map scope can still pay for
+a few extra live calls when the fork requests steps in a different order than the source settled
+them; named maps and `--reuse matching` avoid it. Kinds that are never reused (worktree steps) and
+fresh questions run live and settle, so their later dependents run live too. Each prefix decision
+scans the source and target steps once, which is negligible for hundreds of steps.
 
 ## Amendment: refuse divergent accepted replays (#126)
 

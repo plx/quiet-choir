@@ -88,9 +88,10 @@ transitions; queued attempts remain `running`. See [ADR 0012](decisions/0012-age
 `ctx.sleep` records a durable wake deadline. The CLI checks canonical, project-relative source
 hashes alongside explicit version and engine metadata. Strict resume remains the default. Explicit
 code acceptance keeps step checks, and new-run forks copy matching terminal outcomes with provenance
-(prefix reuse by default). Local identity includes callback source and version; captured values and
-helpers remain declared dependencies. These checks guard compatibility without claiming to identify
-changes in external dependencies or services. See
+(by default causal prefix reuse: a step is copied only when the source steps that settled before it
+launched were copied too, and sibling named-map items are independent). Local identity includes
+callback source and version; captured values and helpers remain declared dependencies. These checks
+guard compatibility without claiming to identify changes in external dependencies or services. See
 [ADR 0002](decisions/0002-durable-external-workflows.md) for the at-least-once execution contract,
 [ADR 0005](decisions/0005-step-identity-and-policy.md) for step identity and execution policy,
 [ADR 0004](decisions/0004-operation-ownership.md) for promise ownership,
@@ -120,14 +121,16 @@ immutable: a completed or settled-failed step replays only under the same kind a
 Questions and waits are never redefined, even while unfinished. An original format-one step migrates
 only on an exact old-fingerprint match, and never for a terminal agent step, whose isolation mode
 was never pinned. Dry-run refuses Git effects after terminal replay but before fork reuse. Fork
-reuse is considered only for an absent step in a forked run, and the lookup that advances or closes
-the provenance cursor runs only when the decision reaches it. A strict healed divergence permits
-terminal replay and fork reuse but stops before the next live effect. The same module's
-`healedDependents` decides which recorded steps a healed failure may have influenced: those launched
-at or after its failure settled, by launch and failure stamps, falling back to `seq` order for a
-pair without stamps. The runner keeps the migration writes, saves, events, frame attribution and the
-divergence abort, and the same ESLint import guard covers the module. `test/replay-decision.test.ts`
-is the executable table of these rules.
+reuse is considered only for an absent step in a forked run, and the source lookup runs only when
+the decision reaches it. For default prefix reuse, the same module's `forkPrefixBlockers` lists the
+steps that keep a fork from reusing one: source steps that settled before its source launch and were
+not reused, and live fork steps that settled before its request, skipping sibling named-map items. A
+strict healed divergence permits terminal replay and fork reuse but stops before the next live
+effect. The same module's `healedDependents` decides which recorded steps a healed failure may have
+influenced: those launched at or after its failure settled, by launch and failure stamps, falling
+back to `seq` order for a pair without stamps. The runner keeps the migration writes, saves, events,
+frame attribution and the divergence abort, and the same ESLint import guard covers the module.
+`test/replay-decision.test.ts` is the executable table of these rules.
 
 The recovery rules for runs whose owner may be gone live in
 `src/workflow/runtime/recovery-decision.ts`. `classifyRecovery` sorts an ownership observation into

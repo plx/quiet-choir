@@ -137,9 +137,17 @@ branch from changing in the first place.
 | `--resume --accept-code-change` | Explicitly waive only source/run-schema changes; keep name/version, engine, cwd, input, terminal-step identity, and replay checks; refuse without changes when a completed step changed |
 | `--fork-from OLD`               | New run, same workflow name; source/version/input may change, terminal outcomes are copied only when their identity matches                                                             |
 
-Forks default to `--reuse prefix`: consume source steps in first-use `seq` order, stopping reuse at
-the first missing, changed, unfinished, skipped, or invalidated effect. All later effects run live.
-This avoids reusing later workspace-dependent work after an earlier effect reruns.
+Forks default to `--reuse prefix`, which is causal. A matching terminal source step is copied only
+when every source step that had settled before it launched was copied too, and no step that ran live
+in the fork settled before the fork requested it. So a missing, changed, unfinished, skipped, or
+invalidated effect makes the steps launched after it settled run live, which avoids reusing later
+workspace-dependent work after an earlier effect reruns, while its same-tick `Promise.all` siblings
+stay reusable. Items of a named map are independent of their sibling items: an edit to one stage
+re-runs that stage in every item and reuses the rest. Shared mutable state or files between items is
+not tracked; invalidate such items explicitly. `ctx.scope`/`within` siblings and positional map
+items are ordered by stamps alone. Sources saved before launch stamps fall back to launch (`seq`)
+order. With unchanged code, a concurrent multi-step chain outside a named map can still run a few
+steps live when the fork requests them in a different order than the source settled them.
 `--reuse matching` explicitly reuses every matching terminal ID; it can reuse a result whose
 undeclared filesystem inputs changed when an earlier effect reran. Choose it only when dependencies
 are fully represented by input/prompt/schema/versions. Neither mode reconstructs workspace edits or
@@ -175,12 +183,15 @@ checks with `execute --dry-run --resume --accept-code-change`.
 A fork never modifies its source checkpoint. `--fork-state-dir` selects alternate source storage;
 omitting `--input` inherits source input, while explicit input is validated for the new run. Forks
 do not inherit source policy overrides; the target's rules are independent. `--invalidate` accepts
-repeatable step-ID globs with the same `*`/`**` rules as policy. Invalidating a prefix effect closes
-prefix reuse. `forkedFrom` records source identity/differences, mode, and globs; copied steps carry
+repeatable step-ID globs with the same `*`/`**` rules as policy. Invalidating a prefix effect runs
+it live and closes prefix reuse for the steps launched after it settled, outside sibling named-map
+items. `forkedFrom` records source identity/differences, mode, and globs; copied steps carry
 `reusedFrom` and emit `step.reused`. Failed/running/superseded source records are never copied.
-Resume the target with `--resume` alone after interruption. Reuse progress survives; if the source
-snapshot changed or disappeared, existing copied results remain and remaining work runs live with a
-warning instead of borrowing new source results.
+Resume the target with `--resume` alone after interruption. Reuse progress survives, because it is
+the copied steps themselves; if the source snapshot changed or disappeared, existing copied results
+remain and remaining work runs live with a warning instead of borrowing new source results. In
+`forkedFrom`, `reuseClosed` is true only in that case (or for a target an older build closed on a
+prefix miss), and `cursor` counts the steps prefix reuse copied.
 
 Each use of `--accept-code-change` that actually changes code, schemas, or files records
 `codeChanges` with old/new fingerprints, changed files, components, and time, even if execution

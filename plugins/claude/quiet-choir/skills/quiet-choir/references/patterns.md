@@ -397,12 +397,12 @@ node "$QC_CHECKOUT/bin/run.js" workflow execute "$QC_CHECKOUT/examples/patterns/
   --run-id salvaged --fork-from original --state-dir "$QC_RUNS" --json
 ```
 
-Default reuse is the unchanged prefix. Add `--reuse matching` for matching effects beyond a change,
-or `--invalidate 'answer/2'` to force an otherwise reusable answer live. Omit input to inherit it.
-See [recovery](durability.md#choose-a-recovery-path) for source edits and schema compatibility.
-**Cost:** only non-reused agent calls; a fresh run without fork reuse repeats all calls.
-**Supersession:** manual output salvage was superseded by implemented
-[#41](https://github.com/plx/quiet-choir/issues/41).
+Default reuse copies unchanged steps whose earlier causes were copied too. Add `--reuse matching`
+for matching effects launched after a change, or `--invalidate 'answer/2'` to force an otherwise
+reusable answer live. Omit input to inherit it. See [recovery](durability.md#choose-a-recovery-path)
+for source edits and schema compatibility. **Cost:** only non-reused agent calls; a fresh run
+without fork reuse repeats all calls. **Supersession:** manual output salvage was superseded by
+implemented [#41](https://github.com/plx/quiet-choir/issues/41).
 
 ## Latch an outcome
 

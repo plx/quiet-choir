@@ -2,6 +2,21 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- Default fork reuse (`--reuse prefix`) is now causal instead of closing at the first miss (#145;
+  amends ADR 0006). A matching terminal source step is copied when every source step that had
+  settled before it launched was copied too, and no step that ran live in the fork settled before
+  the fork requested it. Steps in sibling items of a named map never block each other. An unchanged
+  12-item, 3-stage concurrent named map now reuses all 36 steps (before: 6), an edit to one stage
+  re-runs only that stage, and a `Promise.all` sibling of an invalidated step (such as an
+  issue-filing followups step) is reused instead of repeating its side effect. A step launched after
+  a missed step settled still runs live, and a sequential chain still re-runs from its changed step.
+  Sources saved without launch stamps fall back to `seq` order for each pair. `--reuse matching` is
+  unchanged. The `ForkProvenance` schema is unchanged and old records load: `reuseClosed` is now set
+  only when the pinned source changed or became unavailable (a target an older build closed on a
+  miss stays closed), and `cursor` now counts the steps prefix reuse copied rather than a position
+  in source launch order. Named-map items that share mutable state or files must be invalidated
+  explicitly; with unchanged code, a concurrent multi-step chain outside a named map can still run a
+  few steps live.
 - A healed step (failed before, succeeds on resume) now flags only recorded steps launched at or
   after its failure settled, instead of every step with a higher `seq` (#144; amends ADR 0006 and
   ADR 0007). A `Promise.all` sibling launched with the failing step no longer produces a
