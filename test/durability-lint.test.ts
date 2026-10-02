@@ -139,7 +139,7 @@ describe('durability lint', () => {
 
   it('resolves the context through a type parameter constrained to it', () => {
     // The unconstrained and union-constrained parameters are not contexts and report nothing.
-    expect(found('context-generic')).toEqual(['QC005@8', 'QC002@10', 'QC005@18', 'QC002@20']);
+    expect(found('context-generic')).toEqual(['QC005@11', 'QC002@13', 'QC005@21', 'QC002@23']);
   });
 
   it('classifies a parenthesized or asserted callback by its call', () => {
