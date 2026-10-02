@@ -13,6 +13,8 @@
 //   sync     --pr N           check out the PR in the worktree and rebase it onto the default branch
 //   snapshot --pr N           record the rebased diff (run after resolving rebase conflicts)
 //   check    --pr N [--label L] [--cmd "npm run check"]
+//   check-start --pr N [--label L] [--cmd C]    start that check detached and return at once
+//   check-wait  --pr N [--label L] [--max-seconds 540]   wait for it; {done: false} on timeout
 //   publish  --pr N [--ensure-closes I | --keep-open I]   retarget, push with lease, fix keywords
 //   reply    --pr N < replies.json        reply to review threads (resolves Codex threads by default)
 //   request-review --pr N                comment "@codex review"
@@ -27,10 +29,10 @@
 // Common flags: --root DIR (default: <main checkout>-merge-down, holding worktree/ and state/),
 // --repo OWNER/NAME (default: the current directory's GitHub repository).
 
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { availableParallelism, loadavg } from 'node:os';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { setTimeout as sleep } from 'node:timers/promises';
@@ -810,11 +812,81 @@ function sync(a, P, R) {
 // ---------------------------------------------------------------------------------------------
 // Local checks
 
+const checkLabel = (a) => (typeof a.label === 'string' ? a.label : 'check');
+const checkResultFile = (P, pr, label) => join(prDir(P, pr), `${label}.result.json`);
+
+// Each check also leaves its result in <label>.result.json (written whole, by rename), which is how
+// check-wait sees a detached check finish.
 function check(a, P) {
+  const pr = requirePr(a);
+  const result = runCheck(a, P);
+  const file = checkResultFile(P, pr, checkLabel(a));
+  writeJson(`${file}.tmp`, result);
+  renameSync(`${file}.tmp`, file);
+  return result;
+}
+
+// The suite can take longer than an agent's 10-minute shell limit, so a relaying clerk cannot run
+// `check` in one call: its output never arrived (#273, #279), and the landing paid for a fix round
+// that only re-ran the suite. check-start launches the same `check` detached (its own process group,
+// so it outlives the clerk's shell) and returns at once; check-wait then waits in bounded slices.
+function checkStart(a, P) {
+  const pr = requirePr(a);
+  const label = checkLabel(a);
+  const file = checkResultFile(P, pr, label);
+  rmSync(file, { force: true });
+  const args = [fileURLToPath(import.meta.url), 'check', '--pr', String(pr), '--label', label];
+  args.push('--root', P.root);
+  if (typeof a.repo === 'string') args.push('--repo', a.repo);
+  if (typeof a.cmd === 'string') args.push('--cmd', a.cmd);
+  const child = spawn(process.execPath, args, { detached: true, stdio: 'ignore' });
+  child.unref();
+  const started = { label, pid: child.pid, startedAt: nowIso() };
+  writeJson(join(prDir(P, pr), `${label}.started.json`), started);
+  return { started: true, ...started };
+}
+
+const processAlive = (pid) => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return error.code === 'EPERM';
+  }
+};
+
+async function checkWait(a, P) {
+  const pr = requirePr(a);
+  const label = checkLabel(a);
+  const file = checkResultFile(P, pr, label);
+  const started = readJson(join(prDir(P, pr), `${label}.started.json`));
+  if (!started) fail(`no check was started with label ${label}; run check-start first`);
+  const maxSeconds = Number(a['max-seconds'] ?? 540);
+  const begin = Date.now();
+  for (;;) {
+    if (existsSync(file)) return { done: true, ...readJson(file) };
+    if (!processAlive(started.pid)) {
+      if (existsSync(file)) return { done: true, ...readJson(file) };
+      return {
+        done: true,
+        passed: false,
+        failedStep: null,
+        error: `the check process (pid ${started.pid}) exited without a result`,
+      };
+    }
+    const waitedSeconds = Math.round((Date.now() - begin) / 1000);
+    if (waitedSeconds >= maxSeconds) {
+      return { done: false, label, pid: started.pid, startedAt: started.startedAt, waitedSeconds };
+    }
+    await sleep(5_000);
+  }
+}
+
+function runCheck(a, P) {
   const pr = requirePr(a);
   const W = P.workdir;
   const dir = prDir(P, pr);
-  const label = typeof a.label === 'string' ? a.label : 'check';
+  const label = checkLabel(a);
   const log = join(dir, `${label}.log`);
   const started = Date.now();
 
@@ -1323,6 +1395,8 @@ const COMMANDS = {
   sync,
   snapshot: (a, P, R) => snapshotDiff(P, R, requirePr(a)),
   check: (a, P) => check(a, P),
+  'check-start': (a, P) => checkStart(a, P),
+  'check-wait': (a, P) => checkWait(a, P),
   publish,
   reply,
   'request-review': requestReview,

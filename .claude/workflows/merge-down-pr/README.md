@@ -90,7 +90,12 @@ directory path, and another couldn't escape a multi-line test log inside a JSON 
   and large text (logs, diffs, threads) stays in files that only their paths point to;
 - every output is also saved under `state/pr-N/last/`, and a failed verification re-reads it
   (`merge-down.mjs last`) instead of repeating the effect, so a retry never double-posts or
-  double-merges.
+  double-merges;
+- no clerk command may outlast the Bash tool's 10-minute foreground limit. The check suite takes
+  about 11 minutes, so the first check runs as `check-start` (detached) followed by `check-wait`
+  calls of up to 9 minutes each, the same bounded-slice pattern `await` uses for CI. Before this, a
+  check that ran past 10 minutes (#273 and #279) lost its output, and the landing paid for a fix
+  round that only re-ran the suite.
 
 ## Files
 

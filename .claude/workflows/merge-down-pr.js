@@ -561,9 +561,26 @@ const majorBump = (() => {
   return m ? Number(m[2]) > Number(m[1]) : false;
 })();
 
+// The suite can outlast a clerk's 10-minute shell limit. Run in one call, its output then never
+// reached the relay (#273, #279), and the landing paid for a fix round that only re-ran the suite.
+// Instead, start it detached and wait for it in 9-minute slices, each a cheap clerk call.
+async function localCheck(label, phaseName) {
+  const start = await clerk('local checks', phaseName, [
+    step('start', 'check-start', `--label ${label}`),
+  ]);
+  if (!start.start || start.start.error) return start.start;
+  for (let i = 1; i <= 5; i++) {
+    const waited = await clerk(`local checks (wait ${i})`, phaseName, [
+      step('wait', 'check-wait', `--label ${label} --max-seconds 540`),
+    ]);
+    if (!waited.wait || waited.wait.error || waited.wait.done) return waited.wait;
+  }
+  return { passed: false, error: 'the local check did not finish within 45 minutes' };
+}
+
 phase('Review');
-const [checked, firstReview] = await parallel([
-  () => clerk('local checks', 'Review', [step('check', 'check', '--label check-0')]),
+const [check0Result, firstReview] = await parallel([
+  () => localCheck('check-0', 'Review'),
   () =>
     kind === 'dependency'
       ? agent(dependencyReviewPrompt(), {
@@ -579,7 +596,7 @@ const [checked, firstReview] = await parallel([
           schema: REVIEW,
         }),
 ]);
-const check0 = checked?.check ?? { passed: false, error: 'local checks produced no output' };
+const check0 = check0Result ?? { passed: false, error: 'local checks produced no output' };
 if (!firstReview) return blocked('review', 'reviewer returned nothing');
 log(`Local checks ${check0.passed ? 'pass' : `fail at ${check0.failedStep ?? check0.error}`}`);
 
