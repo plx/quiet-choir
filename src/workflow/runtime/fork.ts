@@ -5,6 +5,7 @@ import { z } from 'zod';
 import { oldFormatMessage } from './engine.js';
 import { digest, jsonValue } from './json.js';
 import { matchesStepGlob, policyOverrideSchema } from './policy.js';
+import { forkPrefixBlockers, type MapItemScope } from './replay-decision.js';
 import type { ForkOptions, ForkProvenance } from './replay-model.js';
 import { isTerminalStep, readRun, type RunRecord, type StepRecord } from './store.js';
 
@@ -58,7 +59,24 @@ export async function pinnedFork(provenance: ForkProvenance): Promise<RunRecord 
   return undefined;
 }
 
-/** Select reuse synchronously, so concurrent launches cannot pass an earlier prefix miss. @internal */
+/** Where a fork reuse request sits in the target run. @internal */
+export interface ForkRequest {
+  /** The target's settlement counter when the body requested the effect. */
+  readonly launchStamp: number;
+  /** The named-map items enclosing the request, outermost first. */
+  readonly mapItems: readonly MapItemScope[];
+  /** The target run's steps; read only. */
+  readonly target: Readonly<Record<string, StepRecord>>;
+}
+
+/**
+ * Select a reusable source step. `matching` reuses any terminal source step with the same ID and
+ * identity. `prefix` (the default) also requires `forkPrefixBlockers` to find nothing: every
+ * source step that had settled before this step's source launch is already reused, and no live
+ * target step settled before this request, ignoring sibling named-map items. A miss closes nothing,
+ * because later decisions read the reused copies already in the target; the caller must insert a
+ * reused copy synchronously, before an await lets another launch decide. @internal
+ */
 export function reuseCandidate(
   provenance: ForkProvenance,
   source: RunRecord | undefined,
@@ -66,30 +84,33 @@ export function reuseCandidate(
   kind: StepRecord['kind'],
   fingerprint: string,
   valid: (step: StepRecord) => boolean,
+  request: ForkRequest,
 ): StepRecord | undefined {
-  if (provenance.reuseClosed || source === undefined) return undefined;
-  const ordered = Object.entries(source.steps).sort((a, b) => (a[1].seq ?? 0) - (b[1].seq ?? 0));
-  const candidate =
-    provenance.reuse === 'prefix'
-      ? ordered[provenance.cursor]
-      : Object.hasOwn(source.steps, id)
-        ? ([id, source.steps[id]] as const)
-        : undefined;
-  const step = candidate?.[1];
+  if (provenance.reuseClosed || source === undefined || !Object.hasOwn(source.steps, id))
+    return undefined;
+  const step = source.steps[id];
   if (
-    candidate?.[0] === id &&
-    step !== undefined &&
-    isTerminalStep(step) &&
-    step.kind === kind &&
-    step.fingerprint === fingerprint &&
-    !provenance.invalidate.some((glob) => matchesStepGlob(glob, id)) &&
-    valid(step)
-  ) {
-    if (provenance.reuse === 'prefix') provenance.cursor++;
-    return step;
+    step === undefined ||
+    !isTerminalStep(step) ||
+    step.kind !== kind ||
+    step.fingerprint !== fingerprint ||
+    provenance.invalidate.some((glob) => matchesStepGlob(glob, id)) ||
+    !valid(step)
+  )
+    return undefined;
+  if (provenance.reuse === 'prefix') {
+    const blockers = forkPrefixBlockers({
+      id,
+      launchStamp: request.launchStamp,
+      mapItems: request.mapItems,
+      sourceRunId: provenance.runId,
+      source: source.steps,
+      target: request.target,
+    });
+    if (blockers.length > 0) return undefined;
+    provenance.cursor++;
   }
-  if (provenance.reuse === 'prefix') provenance.reuseClosed = true;
-  return undefined;
+  return step;
 }
 
 /** Reconstruct only the preceding harness field representation for an existing fork's source pin. */

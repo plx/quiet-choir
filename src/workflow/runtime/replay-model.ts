@@ -34,7 +34,10 @@ export interface ForkOptions {
   readonly runId: string;
   /** Source storage; defaults to the target's state directory. */
   readonly stateDir?: string;
-  /** Reuse the unchanged launch prefix, or explicitly reuse all matching effects. */
+  /**
+   * Reuse unchanged effects whose possible causes were reused too (the default), or explicitly reuse
+   * all matching effects. See ADR 0006.
+   */
   readonly reuse?: 'prefix' | 'matching';
   /** Step-ID globs that must execute live, using * within segments and ** across them. */
   readonly invalidate?: readonly string[];
@@ -58,9 +61,15 @@ export interface ForkProvenance {
   readonly differences: readonly string[];
   /** Time at which the fork was created. */
   readonly at: string;
-  /** Number of source effects consumed by prefix reuse. */
+  /**
+   * Number of source effects reused by prefix reuse. Builds before #145 used it as a position in
+   * source launch order; it no longer drives reuse.
+   */
   cursor: number;
-  /** True after the first prefix miss or loss of the pinned source snapshot. */
+  /**
+   * True when reuse is closed for the whole fork: the pinned source snapshot changed or became
+   * unavailable, or a build before #145 closed it on a prefix miss. A prefix miss no longer sets it.
+   */
   reuseClosed: boolean;
   /** Reason reuse was closed because the source changed or became unavailable. */
   warning?: string;

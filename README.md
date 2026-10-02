@@ -291,13 +291,14 @@ node "$QC_CHECKOUT/bin/run.js" workflow execute review.workflow.ts \
   --run-id review-1 --state-dir "$qc_state_dir" --resume --accept-code-change
 ```
 
-Forks preserve the source checkpoint and default to reusing the unchanged launch prefix. The first
-miss ends reuse; later effects run live. `--reuse matching` explicitly reuses all matching terminal
-IDs, which requires accounting for undeclared workspace dependencies. Repeat
-`--invalidate 'path/**'` to force effects live. Forks inherit source input when omitted, accept new
-explicit input/version, and require the same workflow name. Inspect `forkedFrom` and each copied
-step's `reusedFrom` for provenance. Resume the target normally after interruption; source changes
-close further reuse.
+Forks preserve the source checkpoint and default to causal prefix reuse: an unchanged step is copied
+only when the source steps that settled before it launched were copied too. A miss makes the steps
+launched after it settled run live, while same-tick siblings and the sibling items of a named map
+stay reusable. `--reuse matching` explicitly reuses all matching terminal IDs, which requires
+accounting for undeclared workspace dependencies. Repeat `--invalidate 'path/**'` to force effects
+live. Forks inherit source input when omitted, accept new explicit input/version, and require the
+same workflow name. Inspect `forkedFrom` and each copied step's `reusedFrom` for provenance. Resume
+the target normally after interruption; source changes close further reuse.
 
 `--accept-code-change` waives only source/run-schema gates, keeping name/version, engine, cwd,
 validated input, terminal-step identity, and replay checks. Each use that actually changes code,
