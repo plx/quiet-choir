@@ -281,6 +281,7 @@ export type {
   WorktreeSetupContext,
   WorktreePolicy,
   MergeOptions,
+  MergeCommitOptions,
   MergeResult,
 } from './workflow/runtime/worktree-model.js';
 
@@ -301,6 +302,7 @@ export type {
   WorktreeStep,
   WorktreeLedger,
   MergePreparation,
+  MergeIdentity,
 } from './workflow/runtime/worktree-schema.js';
 
 export type {

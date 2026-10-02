@@ -8,6 +8,7 @@ import {
   runWorkflow,
   WorkflowRunError,
   z,
+  type MergeCommitOptions,
   type ProcessRunner,
   type RunOptions,
   type StepContext,
@@ -362,4 +363,77 @@ describe('exec and file effect identity', () => {
       }
     },
   );
+});
+
+describe('merge effect identity', () => {
+  // Every git call fails, so the merge step fails after recording its identity.
+  const processRunner: ProcessRunner = {
+    run: () =>
+      Promise.resolve({
+        code: 128,
+        signal: null,
+        stdout: '',
+        stderr: 'fatal: golden',
+        truncated: false,
+        durationMs: 1,
+      }),
+  };
+  const change = { base: 'a'.repeat(40), commit: 'b'.repeat(40), ref: null, files: [] };
+  const merge = (runId: string, commit?: MergeCommitOptions) =>
+    runWorkflow(
+      workflow((ctx) =>
+        ctx.merge('integrate', [change], {
+          strategy: 'squash',
+          target: { branch: 'agent/100' },
+          ...(commit === undefined ? {} : { commit }),
+        }),
+      ),
+      options({ runId, processRunner }),
+    ).catch(() => undefined);
+
+  it('keeps the identity of a merge without commit, captured before #153', async () => {
+    await merge('golden');
+    // Computed from e68aba0's sources (before #153 added MergeOptions.commit) and confirmed on
+    // this change's base through runWorkflow.
+    pinned('ctx.merge without commit', (await recorded())['integrate'], {
+      identity: {
+        input: '341d33042639ce58200dbfe19d927c17b9289f826d401eff2f138ceed1ee3cd7',
+        kind: '532f53631c5865a58c44aeb6665e3c39eff9fcb1369e4ff3066568c964adf93f',
+        onError: 'a8ae35eaddff8b9970e3075d77d711798ddfa511a5391581aef83e1a8ebbf64f',
+        schema: '44ebdf54404a4ee69016a24a6db2aded96b661997d655dc55e0e544111d66fed',
+      },
+      fingerprint: 'f00522fa18cac8f477f604e56c372b16d691199879b7d1ae2787fb1bf860429a',
+    });
+  });
+
+  it('adds the requested commit form, with git-config unresolved and the default spelled out', async () => {
+    await merge('golden');
+    await merge('git-config', { message: 'Fix #42', author: 'git-config' });
+    await merge('bare', { message: 'Fix #42' });
+    await merge('explicit-default', { message: 'Fix #42', author: 'quiet-choir' });
+    const plain = (await recorded('golden'))['integrate'];
+    const configured = (await recorded('git-config'))['integrate'];
+    expect(configured?.identity['kind']).toBe(plain?.identity['kind']);
+    expect(configured?.identity['onError']).toBe(plain?.identity['onError']);
+    expect(configured?.identity['schema']).toBe(plain?.identity['schema']);
+    expect(Object.keys(configured?.identity ?? {}).sort()).toEqual(
+      Object.keys(plain?.identity ?? {}).sort(),
+    );
+    expect(configured?.identity['input']).not.toBe(plain?.identity['input']);
+    expect(configured?.fingerprint).not.toBe(plain?.fingerprint);
+    // The author stays as requested: git config is read only when the merge is prepared.
+    expect(configured?.identity['input']).toBe(
+      digest({
+        changes: [{ base: change.base, commit: change.commit }],
+        strategy: 'squash',
+        onConflict: 'report',
+        target: { branch: 'agent/100' },
+        commit: { message: 'Fix #42', author: 'git-config' },
+      }),
+    );
+    const bare = (await recorded('bare'))['integrate'];
+    expect(bare).toEqual((await recorded('explicit-default'))['integrate']);
+    expect(bare?.fingerprint).not.toBe(configured?.fingerprint);
+    expect(bare?.fingerprint).not.toBe(plain?.fingerprint);
+  });
 });

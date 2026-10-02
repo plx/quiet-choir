@@ -1,4 +1,4 @@
-import { integrate } from './worktree-merge.js';
+import { fixedIdentity, integrate, type CommitIdentity } from './worktree-merge.js';
 import type { MergeOptions, MergeResult, WorktreeChange } from './worktree-model.js';
 import { randomUUID } from 'node:crypto';
 import { lstat, mkdir, readlink, realpath } from 'node:fs/promises';
@@ -763,8 +763,8 @@ export class RunWorktrees {
         ref: (key) => this.ref(ledger, key),
         administer: (work) => administer(commonGitDir, invocation.signal, work),
         pin: (ref, commit) => this.pin(ledger, ref, commit, invocation),
-        commit: (tree, parents, message, date) =>
-          this.commit(ledger, tree, parents, message, date, invocation),
+        commit: (tree, parents, message, date, identity) =>
+          this.commit(ledger, tree, parents, message, date, invocation, identity),
       },
       id,
       step,
@@ -782,12 +782,13 @@ export class RunWorktrees {
     message: string,
     date: string,
     invocation: HarnessInvocation,
+    identity: CommitIdentity = fixedIdentity,
   ): Promise<string> {
-    const identity = {
-      GIT_AUTHOR_NAME: 'quiet-choir',
-      GIT_AUTHOR_EMAIL: 'quiet-choir@localhost',
-      GIT_COMMITTER_NAME: 'quiet-choir',
-      GIT_COMMITTER_EMAIL: 'quiet-choir@localhost',
+    const env = {
+      GIT_AUTHOR_NAME: identity.author.name,
+      GIT_AUTHOR_EMAIL: identity.author.email,
+      GIT_COMMITTER_NAME: identity.committer.name,
+      GIT_COMMITTER_EMAIL: identity.committer.email,
       GIT_AUTHOR_DATE: date,
       GIT_COMMITTER_DATE: date,
     };
@@ -797,7 +798,7 @@ export class RunWorktrees {
           ledger.repo,
           ['commit-tree', tree, ...parents.flatMap((parent) => ['-p', parent]), '-F', '-'],
           invocation,
-          { input: `${message}\n`, env: identity },
+          { input: `${message}\n`, env },
         )
       ).stdout.trim(),
     );

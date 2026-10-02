@@ -97,6 +97,39 @@ export interface WorktreePolicy {
   readonly captureExclude?: readonly string[];
 }
 
+/**
+ * Message and identity for the commits an integration creates, so a published branch can back a
+ * pull request. Isolated-attempt snapshot commits always keep the fixed `quiet-choir` identity.
+ */
+export interface MergeCommitOptions {
+  /**
+   * Message of the final commit: the squash commit, or the last clean integrate commit for
+   * `rebase` and `merge`. Intermediate commits keep their generated messages. It must contain
+   * non-whitespace text and no NUL. When nothing merges (unchanged inputs, or every input
+   * conflicted) no commit is created and this has no effect.
+   */
+  readonly message: string;
+  /**
+   * Author and committer of every commit the merge creates. `'quiet-choir'` (the default) is
+   * `quiet-choir <quiet-choir@localhost>`. `'git-config'` reads `git var GIT_AUTHOR_IDENT` and
+   * `GIT_COMMITTER_IDENT` in the repository, which come from `user.name` and `user.email` in git
+   * config because quiet-choir strips every `GIT_*` variable from git's environment; it fails the
+   * step when git cannot produce an identity, with no fallback. An explicit name and email are
+   * used for both author and committer and may not contain newlines, NUL or angle brackets. The
+   * identity is resolved once when the merge is prepared and recorded, so a retry or resume
+   * reproduces the same commit ID.
+   */
+  readonly author?:
+    | 'quiet-choir'
+    | 'git-config'
+    | {
+        /** Author and committer name. */
+        readonly name: string;
+        /** Author and committer email, without angle brackets. */
+        readonly email: string;
+      };
+}
+
 /** Explicit integration policy; only checkout targets modify the caller's working tree. */
 export interface MergeOptions {
   /** Reapply each snapshot in order, retain merge parents, or squash into one commit. Default rebase. */
@@ -111,6 +144,11 @@ export interface MergeOptions {
         /** Branch name under refs/heads; cannot be checked out in any worktree. */
         readonly branch: string;
       };
+  /**
+   * Message and author for the integration commits; omitted keeps the generated messages and the
+   * fixed `quiet-choir` identity. Supplying it changes the step identity.
+   */
+  readonly commit?: MergeCommitOptions;
 }
 
 /** Ordered, durable integration outcome. */

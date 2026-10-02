@@ -120,11 +120,35 @@ export interface WorktreeLedger {
   readonly refs: Record<string, string>;
 }
 
+/** Characters git cannot keep in an ident's name or email. */
+const identUnsafe = /[\r\n\0<>]/u;
+const identField = (field: string, blank: string) =>
+  z
+    .string()
+    .refine((value) => value.trim() !== '', `${field} must not be ${blank}`)
+    .refine(
+      (value) => !identUnsafe.test(value),
+      `${field} must not contain newlines, NUL or angle brackets`,
+    );
+/** @internal */
+export const identitySchema = z.strictObject({
+  name: identField('commit.author.name', 'empty'),
+  email: identField('commit.author.email', 'empty'),
+});
+/** @internal */
+export const mergeCommitSchema = z.strictObject({
+  message: z
+    .string()
+    .refine((value) => value.trim() !== '', 'commit.message must contain non-whitespace text')
+    .refine((value) => !value.includes('\0'), 'commit.message must not contain NUL'),
+  author: z.union([z.enum(['quiet-choir', 'git-config']), identitySchema]).optional(),
+});
 /** @internal */
 export const mergeOptionsSchema = z.strictObject({
   strategy: z.enum(['rebase', 'merge', 'squash']).optional(),
   onConflict: z.enum(['report', 'fail']).optional(),
   target: z.union([z.enum(['ref', 'checkout']), z.strictObject({ branch: text })]).optional(),
+  commit: mergeCommitSchema.optional(),
 });
 /** @internal */
 export const mergeResultSchema = z.object({
@@ -142,8 +166,18 @@ export const mergePreparationSchema = z.object({
   checkoutBranch: text.nullable(),
   changes: z.array(worktreeChangeSchema),
   date: z.iso.datetime(),
+  commit: z
+    .object({ message: z.string(), author: identitySchema, committer: identitySchema })
+    .optional(),
   result: mergeResultSchema.optional(),
 });
+/** A resolved git ident without its timestamp. */
+export interface MergeIdentity {
+  /** Ident name. */
+  readonly name: string;
+  /** Ident email, without angle brackets. */
+  readonly email: string;
+}
 /** Resolved integration inputs and publication intent, pinned across interrupted attempts. */
 export interface MergePreparation {
   /** Resolved starting commit; never re-resolved on retry. */
@@ -160,6 +194,18 @@ export interface MergePreparation {
   readonly changes: readonly WorktreeChange[];
   /** Fixed commit date across retries and resumes. */
   readonly date: string;
+  /**
+   * Resolved `MergeOptions.commit`, recorded before the first commit and pinned across retries
+   * and resumes; absent when no commit was requested or nothing could merge.
+   */
+  readonly commit?: {
+    /** Message of the final integration commit. */
+    readonly message: string;
+    /** Author of every commit the merge creates. */
+    readonly author: MergeIdentity;
+    /** Committer of every commit the merge creates. */
+    readonly committer: MergeIdentity;
+  };
   /** Computed clean result saved before target publication. */
   result?: MergeResult;
 }
