@@ -347,10 +347,24 @@ class DurabilityLinter {
 
   #isWorkflowContext(node: ts.Node): boolean {
     try {
-      const type = this.#checker.getTypeAtLocation(node);
-      // A local `type Context = WorkflowContext` has its own aliasSymbol, but the type's symbol
-      // still resolves to the interface, so accept either.
-      return [type.aliasSymbol, type.getSymbol()].some(
+      return this.#isContextType(this.#checker.getTypeAtLocation(node), new Set());
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Whether a type is the runtime WorkflowContext or a subtype of it: an interface or class that
+   * extends it, or an intersection with it. Unions are not accepted, so `WorkflowContext |
+   * undefined` is not a context.
+   */
+  #isContextType(type: ts.Type, visited: Set<ts.Type>): boolean {
+    if (visited.has(type)) return false;
+    visited.add(type);
+    // A local `type Context = WorkflowContext` has its own aliasSymbol, but the type's symbol
+    // still resolves to the interface, so accept either.
+    if (
+      [type.aliasSymbol, type.getSymbol()].some(
         (symbol) =>
           symbol?.getName() === 'WorkflowContext' &&
           (symbol.declarations ?? []).some(
@@ -358,10 +372,13 @@ class DurabilityLinter {
               ts.isInterfaceDeclaration(declaration) &&
               isRuntimeFile(declaration.getSourceFile().fileName),
           ),
-      );
-    } catch {
-      return false;
-    }
+      )
+    )
+      return true;
+    if (type.isIntersection()) return type.types.some((part) => this.#isContextType(part, visited));
+    if (type.isClassOrInterface())
+      return this.#checker.getBaseTypes(type).some((base) => this.#isContextType(base, visited));
+    return false;
   }
 
   /** The callback zone a function literal fills, from its property's contextual declaration. */

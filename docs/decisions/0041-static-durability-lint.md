@@ -37,12 +37,12 @@ check with no errors and before import.
   `StepExecFunction` (a callback's `context.exec`) is never durable. Effects are `step`, `sleep`,
   `sleepUntil`, `now`, `wait`, `poll`, `ask`, `approve`, `readFile`, `writeFile`, `workflow`,
   `merge`, `worktree`, `map`, an exec call, `exec.json` and client `value`, `text` and `object`. A
-  workflow function is any function with a parameter of type `WorkflowContext`, whatever it is
-  called. Its nested functions belong to its body except callback zones: functions whose owning
-  property, from the contextual type of the enclosing object literal, is declared on
-  `StepDefinition.run`, `PollSource.observe`, `CommandPollSource.done` or
-  `PollErrorPolicy.classify`/`retryAfterMs`. Nondeterministic APIs are resolved by their lib or
-  `@types/node` declarations, never by text.
+  workflow function is any function with a parameter of type `WorkflowContext`, a subtype (an
+  interface or class extending it) or an intersection with it, whatever it is called. Its nested
+  functions belong to its body except callback zones: functions whose owning property, from the
+  contextual type of the enclosing object literal, is declared on `StepDefinition.run`,
+  `PollSource.observe`, `CommandPollSource.done` or `PollErrorPolicy.classify`/`retryAfterMs`.
+  Nondeterministic APIs are resolved by their lib or `@types/node` declarations, never by text.
 - **Rules.**
   - QC001: an effect, `ctx.scope` or `ctx.phase(title, body)` promise that is `void`ed or left as an
     expression statement, also through `.then`/`.catch`/`.finally`. The message says what the
@@ -56,12 +56,13 @@ check with no errors and before import.
   - QC005: a literal ID (string or no-substitution template) as the first argument of an effect on a
     root receiver (the `WorkflowContext` parameter, or `.claude`, `.codex`, `.agent(x)`, `.exec`,
     `.exec.json` on it; never through `.within(...)`), either inside a loop of its ID namespace
-    (`for`, `for-in`, `for-of`, `while`, `do`, an array iteration callback, `Array.from` with a
-    mapper, a positional `ctx.map` mapper) or reused in that namespace. The workflow function, a
-    `ctx.scope` callback, a named-map mapper and a child workflow each start a namespace. Different
-    branches of one `if`/`else`, `?:` or `switch` (when the earlier clause ends in `break`,
-    `continue`, `return` or `throw`), and an `if` branch ending in `return` or `throw` versus code
-    after that `if`, are exclusive and not reuse. Every occurrence after the first is reported.
+    (`for`, `for-in`, `for-of`, `while`, `do`, an array iteration or `sort`/`toSorted` callback,
+    `Array.from` with a mapper, a positional `ctx.map` mapper) or reused in that namespace. The
+    workflow function, a `ctx.scope` callback, a named-map mapper and a child workflow each start a
+    namespace. Different branches of one `if`/`else`, `?:` or `switch` (when the earlier clause ends
+    in `break`, `continue`, `return` or `throw`), and an `if` branch ending in `return` or `throw`
+    versus code after that `if`, are exclusive and not reuse. Every occurrence after the first is
+    reported.
   - QC006: a call resolving to a `@deprecated` `WorkflowContext.map` overload, detected through the
     JSDoc tag, so the rule disappears when #158 removes the positional overloads.
 - **Suppression.** A line consisting of `// quiet-choir-ignore QCnnn[, QCnnn] <reason>` directly

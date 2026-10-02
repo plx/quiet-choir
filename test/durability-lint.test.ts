@@ -133,6 +133,14 @@ describe('durability lint', () => {
     expect(found('aliased-context')).toEqual(['QC005@13', 'QC002@15']);
   });
 
+  it('resolves the context through a subtype or an intersection', () => {
+    expect(found('context-subtype')).toEqual(['QC005@10', 'QC002@12', 'QC005@17', 'QC002@19']);
+  });
+
+  it('treats a standard-library sort or toSorted comparator as a loop', () => {
+    expect(found('sort-comparator')).toEqual(['QC005@21', 'QC005@25']);
+  });
+
   it('silences exactly the rules a suppression comment names, on the next line only', () => {
     expect(found('suppression')).toEqual(['QC002@12']);
     // A comment naming another rule silences nothing; one listing the rule among others, or
