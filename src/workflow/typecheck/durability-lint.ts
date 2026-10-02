@@ -100,6 +100,20 @@ function memberName(declaration: ts.Declaration): string | undefined {
   return name && (ts.isIdentifier(name) || ts.isStringLiteral(name)) ? name.text : undefined;
 }
 
+/** The outermost parenthesis, assertion, `satisfies` or non-null wrapper around an expression. */
+function outermostWrapper(node: ts.Node): ts.Node {
+  let outer = node;
+  while (
+    ts.isParenthesizedExpression(outer.parent) ||
+    ts.isAsExpression(outer.parent) ||
+    ts.isSatisfiesExpression(outer.parent) ||
+    ts.isTypeAssertionExpression(outer.parent) ||
+    ts.isNonNullExpression(outer.parent)
+  )
+    outer = outer.parent;
+  return outer;
+}
+
 function hasFunctionBody(node: ts.Node): node is ts.FunctionLikeDeclaration {
   return (
     (ts.isFunctionDeclaration(node) ||
@@ -355,8 +369,8 @@ class DurabilityLinter {
 
   /**
    * Whether a type is the runtime WorkflowContext or a subtype of it: an interface or class that
-   * extends it, or an intersection with it. Unions are not accepted, so `WorkflowContext |
-   * undefined` is not a context.
+   * extends it, an intersection with it, or a type parameter constrained to one of those. Unions
+   * are not accepted, so `WorkflowContext | undefined` is not a context.
    */
   #isContextType(type: ts.Type, visited: Set<ts.Type>): boolean {
     if (visited.has(type)) return false;
@@ -376,6 +390,12 @@ class DurabilityLinter {
     )
       return true;
     if (type.isIntersection()) return type.types.some((part) => this.#isContextType(part, visited));
+    if (type.flags & ts.TypeFlags.TypeParameter) {
+      const constraint = this.#checker.getBaseConstraintOfType(type);
+      return constraint !== undefined && constraint !== type
+        ? this.#isContextType(constraint, visited)
+        : false;
+    }
     if (type.isClassOrInterface())
       return this.#checker.getBaseTypes(type).some((base) => this.#isContextType(base, visited));
     return false;
@@ -386,13 +406,7 @@ class DurabilityLinter {
     let property: ts.PropertyAssignment | ts.MethodDeclaration | undefined;
     if (ts.isMethodDeclaration(fn)) property = fn;
     else {
-      let node: ts.Node = fn;
-      while (
-        ts.isParenthesizedExpression(node.parent) ||
-        ts.isAsExpression(node.parent) ||
-        ts.isSatisfiesExpression(node.parent)
-      )
-        node = node.parent;
+      const node = outermostWrapper(fn);
       if (ts.isPropertyAssignment(node.parent) && node.parent.initializer === node)
         property = node.parent;
     }
@@ -432,9 +446,11 @@ class DurabilityLinter {
     }
     const zone = this.#zone(fn);
     if (zone !== undefined) return { ...state, zone };
-    const parent = fn.parent;
+    // A parenthesized or asserted callback is still the call's argument.
+    const wrapper = outermostWrapper(fn);
+    const parent = wrapper.parent;
     if (ts.isCallExpression(parent)) {
-      const index = parent.arguments.indexOf(fn as unknown as ts.Expression);
+      const index = parent.arguments.indexOf(wrapper as ts.Expression);
       if (index >= 0) {
         if (index === 1 && this.#contextMember(parent, 'scope')) return this.#namespace({}, state);
         const map = this.#contextMember(parent, 'map');

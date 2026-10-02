@@ -137,6 +137,17 @@ describe('durability lint', () => {
     expect(found('context-subtype')).toEqual(['QC005@10', 'QC002@12', 'QC005@17', 'QC002@19']);
   });
 
+  it('resolves the context through a type parameter constrained to it', () => {
+    // The unconstrained and union-constrained parameters are not contexts and report nothing.
+    expect(found('context-generic')).toEqual(['QC005@8', 'QC002@10', 'QC005@18', 'QC002@20']);
+  });
+
+  it('classifies a parenthesized or asserted callback by its call', () => {
+    // Only the repeated array map callback reports; scope and named-map callbacks keep their own
+    // namespaces.
+    expect(found('callback-wrappers')).toEqual(['QC005@13']);
+  });
+
   it('treats a standard-library sort or toSorted comparator as a loop', () => {
     expect(found('sort-comparator')).toEqual(['QC005@21', 'QC005@25']);
   });
