@@ -289,7 +289,7 @@ it('derives stale only from proven owner loss, preserving unknown and remote own
     expect(
       summarizeRun(run, {
         locked: true,
-        owner: { pid: 10, host: 'h', state },
+        owner: { pid: 10, host: 'h', state, osStartTime: null },
         processes: [],
         locks: [],
       }).status,
@@ -311,13 +311,13 @@ it('derives stale only from proven owner loss, preserving unknown and remote own
 it('prints one line per lock with its owner, recovery marker and warning', () => {
   const ownership: RunOwnership = {
     locked: true,
-    owner: { pid: 10, host: 'h', state: 'dead' },
+    owner: { pid: 10, host: 'h', state: 'dead', osStartTime: null },
     processes: [],
     locks: [
       {
         kind: 'primary',
         path: '/state/run/lock',
-        owner: { pid: 10, host: 'h', state: 'dead' },
+        owner: { pid: 10, host: 'h', state: 'dead', osStartTime: null },
         recovery: { pid: 11, host: 'h', state: 'alive' },
       },
       {

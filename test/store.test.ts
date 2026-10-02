@@ -6,6 +6,7 @@ import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { processIdentity } from '../src/processes/identity.js';
 import { jsonValue } from '../src/workflow/runtime/json.js';
 import { classifyRecovery } from '../src/workflow/runtime/recovery-decision.js';
 import { inspectRunOwnership, lockRun, readRun, writeRun } from '../src/workflow/runtime/store.js';
@@ -565,7 +566,10 @@ describe('lock inspection', () => {
 
   it('lists the primary lock and the guard of a held run', async () => {
     const release = await lockRun(stateDir, 'run-1');
-    const alive = { pid: process.pid, host: hostname(), state: 'alive' };
+    // The recorded birth identity is exposed so a guarded signal can rule out PID reuse.
+    const osStartTime = processIdentity(process.pid)?.start ?? null;
+    expect(osStartTime).toEqual(expect.any(String));
+    const alive = { pid: process.pid, host: hostname(), state: 'alive', osStartTime };
     expect(await inspectRunOwnership({ stateDir, runId: 'run-1' })).toEqual({
       locked: true,
       owner: alive,
@@ -589,7 +593,12 @@ describe('lock inspection', () => {
     await write(guard(), 'owner.json', { pid: process.pid, host: hostname(), token: 'b' });
     pids({ 12345: 'ESRCH' });
     const ownership = await inspectRunOwnership({ stateDir, runId: 'run-1' });
-    expect(ownership.owner).toEqual({ pid: 12345, host: hostname(), state: 'dead' });
+    expect(ownership.owner).toEqual({
+      pid: 12345,
+      host: hostname(),
+      state: 'dead',
+      osStartTime: null,
+    });
     expect(ownership.locks.map((lock) => [lock.kind, lock.owner?.state])).toEqual([
       ['primary', 'dead'],
       ['guard', 'alive'],
