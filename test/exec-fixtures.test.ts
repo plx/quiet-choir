@@ -417,8 +417,10 @@ describe('command fixtures under --harness fixture', () => {
   });
 });
 
-// Each case type-checks a workflow module that imports the engine source.
-describe('merge-down-shaped rehearsal through the executor', { timeout: 120_000 }, () => {
+// Each case type-checks a workflow module that imports the engine source. measured: 1.3 s alone,
+// 5.0 s in the full coverage run (dominated by the loader's TypeScript compile); CI's Node 22.13
+// leg runs such compiles about 3.4x slower than local (replay-loader), so about 17 s there.
+describe('merge-down-shaped rehearsal through the executor', { timeout: 40_000 }, () => {
   const workflowSource =
     () => `import { defineWorkflow, z } from ${JSON.stringify(join(repository, 'src/index.js'))};
 const Err = z.object({ error: z.string() });
