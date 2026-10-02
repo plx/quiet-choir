@@ -5,13 +5,14 @@ belongs in a read-only poll. Use occurrence IDs derived from replayed data when 
 successive rounds; an incomplete collection is an error, not an empty selection. Reconcile external
 writes inside `ctx.step`, using idempotency keys, markers, or conditional APIs where available.
 
-| Operation                                                    | Saved result                                                             |
-| ------------------------------------------------------------ | ------------------------------------------------------------------------ |
-| `ctx.now(id)`                                                | One clock reading, replayed unchanged                                    |
-| `ctx.sleep(id, milliseconds)`                                | `null`, with a relative timeout pinned on first open                     |
-| `ctx.sleepUntil(id, epochMs)`                                | `null`, with an explicit absolute deadline                               |
-| `ctx.poll(id, { input, schema, every, observe, timeoutMs })` | A typed `poll` or `deadline` outcome; `deadline` can replace `timeoutMs` |
-| `ctx.wait(id, { signal?, poll?, timeoutMs?, deadline? })`    | One recorded winner, discriminated by `by`                               |
+| Operation                                                                  | Saved result                                                                   |
+| -------------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
+| `ctx.now(id)`                                                              | One clock reading, replayed unchanged                                          |
+| `ctx.sleep(id, milliseconds)`                                              | `null`, with a relative timeout pinned on first open                           |
+| `ctx.sleepUntil(id, epochMs)`                                              | `null`, with an explicit absolute deadline                                     |
+| `ctx.poll(id, { input, schema, every, observe, timeoutMs })`               | A typed `poll` or `deadline` outcome; `deadline` can replace `timeoutMs`       |
+| `ctx.poll(id, { input, schema, every, command, output, done, timeoutMs })` | The same outcomes; each check runs `command` ([command polls](#command-polls)) |
+| `ctx.wait(id, { signal?, poll?, timeoutMs?, deadline? })`                  | One recorded winner, discriminated by `by`                                     |
 
 At least one source is required. Relative timeout and absolute deadline are mutually exclusive. Each
 sleep/poll/wait creates exactly one `wait` record; `now` creates a normal local step. Existing
@@ -36,7 +37,8 @@ poll's input, schema, normalized spacing, and observer source. Captured dependen
 with code-change acceptance. Use new IDs and immutable subjects for new decisions, such as an exact
 commit SHA. Changing an explicit deadline under the same ID fails instead of silently extending it.
 The poll's `observeTimeoutMs` and `onError` are execution policy, not identity: neither is persisted
-in the wait request, and both may change on resume.
+in the wait request, and both may change on resume. A command poll fingerprints its prepared command
+and `done` in place of an observer; see [command polls](#command-polls).
 
 ## Checks and outcomes
 
@@ -53,7 +55,8 @@ runner, are owned by the wait for orphan recovery, stop with the observation's s
 `observeTimeoutMs` and the deadline bound them), and are rehearsed and fixture-answered like
 `ctx.exec`. They are not durable: every check runs them again. See
 [commands inside a callback or observer](command-effects.md#commands-inside-a-callback-or-observer).
-`{ live: true }` keeps one real under `--dry-run`.
+`{ live: true }` keeps one real under `--dry-run`. When the whole check is one command, a
+[command poll](#command-polls) declares it instead.
 
 `previous` is the wait's persisted progress before this check: `previous.note` is the latest
 nonterminal note, `previous.checks` the number of earlier checks (tolerated errors included), and
@@ -125,6 +128,72 @@ external system. Signal outcomes carry `value`, `at`, and `actor`; poll outcomes
 Never `Promise.race` durable operations: replay resolves completed operations in a different timing
 order. Competing readiness sources belong in one `ctx.wait`. `Promise.all` remains useful for
 independent waits and siblings. No general durable race between arbitrary effects is provided.
+
+## Command polls
+
+A command poll declares its check instead of writing an observer. Each check runs one command
+through the run's process runner, validates its JSON stdout with `output`, and passes the parsed
+value to `done`:
+
+```ts
+const outcome = await ctx.poll('ci', {
+  input: { pr },
+  schema: z.enum(['pass', 'fail']),
+  every: { initialMs: 30_000, maxMs: 120_000 },
+  timeoutMs: 3_600_000,
+  command: ['gh', 'pr', 'checks', String(pr), '--json', 'name,bucket'],
+  output: z.array(z.object({ name: z.string(), bucket: z.string() })),
+  commandOptions: { okExitCodes: [0, 8] }, // gh exits 8 while checks are pending
+  done: (checks) => {
+    if (checks.some((check) => ['fail', 'cancel'].includes(check.bucket)))
+      return { done: true, value: 'fail' };
+    if (checks.every((check) => check.bucket !== 'pending')) return { done: true, value: 'pass' };
+    return { done: false, note: { pending: checks.length } };
+  },
+});
+```
+
+`command` is an argv or `{ shell }`, and `output` the Zod schema of its stdout. `commandOptions`
+takes `cwd`, `env`, `inheritEnv`, `input`, `okExitCodes` and `maxOutputBytes`, but no `timeoutMs`
+(`observeTimeoutMs` bounds each check) and no `onError` (the poll's `onError` applies). `live: true`
+keeps the command real under `--dry-run`. `input`, `schema`, `every`, `observeTimeoutMs`, `onError`
+and the time bound mean what they mean for an observer. `ctx.wait(id, { poll })` accepts the same
+source, but there `done`'s output is typed `unknown`; `ctx.poll` infers it from `output`.
+
+Each check runs the command as an observer's `context.exec.json(command, { schema: output })` would:
+through `RunOptions.execRunner` (or `processRunner`), registered under the wait ID and attempt 1 so
+orphan recovery covers it, and aborted with the observation's signal on cancellation, interruption,
+the deadline or `observeTimeoutMs`. Its own timeout is `observeTimeoutMs` (60 seconds by default)
+and its output cap 1 MiB unless `maxOutputBytes` sets another. Then `done(output, previous)` returns
+`{ done: true, value }` or `{ done: false, note? }`, with the same frozen `previous` an observer
+gets. `done` must be pure: it receives no context, and it runs under the observer guard, so a
+context operation it reaches through a closure fails the run. The command runs again on every check;
+only the terminal value and the last note are recorded.
+
+A failing command throws an `ExecError`: kind `process` for a disallowed exit code or a signal,
+`output-limit` when stdout exceeds the cap, and `schema` when stdout is not JSON matching `output`.
+Its `diagnostics` keep the exit code and the last 1024 characters of stdout and stderr. A throwing
+`done` is handled the same way. Both are rejected observations, so they fail the wait unless
+`onError` tolerates them; `classify` can read `error.diagnostics.code`.
+
+The wait request records `poll.command`: the prepared command summary (`exec`: the command, the
+canonical absolute working directory, SHA-256 digests of the `env` overlay and of stdin,
+`inheritEnv`, the sorted accepted exit codes and `structured: true`) and the JSON Schema of
+`output`. `poll.observe` holds the digest of `done`'s source. Changing the command, its `cwd`,
+`env`, `inheritEnv`, `input` or `okExitCodes`, `output`, or `done` under the same ID fails with
+"wait changed; use a new ID"; `live`, `observeTimeoutMs`, `onError` and `maxOutputBytes` are policy.
+The working directory is absolute, so moving the checkout under a waiting command poll is an
+identity change, as for `ctx.exec`. As with an observer, `done`'s digest is its source text as
+loaded, so it can differ between loaders. The command and its options are validated and its working
+directory resolved when the wait opens, so an invalid command, an unknown option or a missing `cwd`
+fails the wait before its first check. Observer polls never record `poll.command`, so their requests
+and identities are unchanged.
+
+Under `--dry-run` each check's command is synthesized from `output`, or answered by an exec fixture
+rule matching the wait ID, and listed in the rehearsal's `commands` with `stepId` and `parentStepId`
+set to the wait ID. With `live: true` it runs for real and is listed with `outputSource: 'live'`. A
+`--stub-steps` pattern matching the wait ID still completes the wait without running the command.
+`workflow pending` shows the command on the wait's row.
 
 ## Suspension and tick
 
@@ -245,15 +314,16 @@ finish: a longer agent call is interrupted at the deadline and restarted by the 
 
 `workflow pending --json` returns legacy question projections and general waits distinguished by
 `kind: "wait"`, including deadline, next check, count, last note, `lastError` (the latest tolerated
-observation error with its `consecutive` count, or null), optional signal, answer command, and
-`runStatus`, `delivery` (null for a poll or deadline with no signal) and `next`; see the
-[pending row contract](cli-contract.md). A dry-run skips timing-only waits and performs a poll's
-initial read-only observation, unless a `--stub-steps` pattern matches the wait ID: then the
-observer never runs and the wait completes with a synthesized value parsed by the poll schema. The
-observer's `context.exec` commands are synthesized or answered by exec fixture rules during that
-observation; a call with `live: true` runs the real read-only command and is listed in the
-rehearsal's `commands` with `outputSource: 'live'`. Unresolved external waits suspend. Rehearsals
-never fabricate signals and do not invoke notification commands.
+observation error with its `consecutive` count, or null), `command` (a command poll's command, or
+null), optional signal, answer command, and `runStatus`, `delivery` (null for a poll or deadline
+with no signal) and `next`; see the [pending row contract](cli-contract.md). A dry-run skips
+timing-only waits and performs a poll's initial read-only observation, unless a `--stub-steps`
+pattern matches the wait ID: then the observer never runs and the wait completes with a synthesized
+value parsed by the poll schema. The observer's `context.exec` commands, and a command poll's
+command, are synthesized (a command poll's from its `output` schema) or answered by exec fixture
+rules during that observation; a call or command poll with `live: true` runs the real read-only
+command and is listed in the rehearsal's `commands` with `outputSource: 'live'`. Unresolved external
+waits suspend. Rehearsals never fabricate signals and do not invoke notification commands.
 
 ## Operator notifications
 

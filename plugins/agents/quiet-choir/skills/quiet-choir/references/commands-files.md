@@ -49,8 +49,8 @@ it and passing `'throw'` are the same identity). `timeoutMs`, `maxOutputBytes`, 
 policy, so raising them does not invalidate completed work. Sticky run policy accepts
 `kind: 'exec'`, timeout/output caps, and retry. Unfinished effects retain the existing explicit
 redefinition/history behavior; completed identity changes require a new run or an appropriate fork.
-Repeated observations need fresh IDs or a read-only `ctx.poll` observer, which can run its commands
-through `context.exec`.
+Repeated observations need fresh IDs or a read-only `ctx.poll`: a command poll runs one command per
+check, and an observer can run its commands through `context.exec`.
 
 The default environment inherits the parent plus `env`. `inheritEnv: false` supplies only that
 overlay and engine metadata (the selected executable or shell may itself add variables). Rotating
@@ -86,6 +86,12 @@ saved: a rerun of the parent runs the command again. Cancellation and a missing 
 still reject. Sticky run policy rules (`RunOptions.policy`) do not apply to these commands; set
 `timeoutMs` and `maxOutputBytes` in the call. Nothing about them enters identity: a step is still
 identified by its callback source, and a wait by its observer.
+
+When a poll's check is one command, use the [command form of `ctx.poll`](waits.md#command-polls)
+(`{ command, output, done }`) instead of an observer. Each check runs the command through this same
+path, owned by the wait, and `done(output, previous)` decides the outcome. Unlike an observer's
+`context.exec`, the command, its semantic options and its `output` schema are part of the wait's
+identity, and `workflow pending` shows the command.
 
 ## Files
 
@@ -158,7 +164,9 @@ or answered by an `exec` rule, and listed in `commands` with `parentStepId` set 
 (null for `ctx.exec`). A rule's `step` matches the parent's ID. `occurrence` counts distinct step
 IDs, so all of one parent's commands share an occurrence; tell them apart with `argvPrefix`. A poll
 observer may pass `live: true` to run a read-only command for real under `--dry-run`; it is listed
-with `outputSource: 'live'`. `live` is refused in a step callback, and outside `--dry-run` it
-changes nothing. `workflow fixtures` cannot export these commands, because they have no records. See
+with `outputSource: 'live'`. Each check of a command poll is rehearsed the same way, with `stepId`
+and `parentStepId` set to the wait ID, and a command poll's own `live: true` keeps it real. `live`
+is refused in a step callback, and outside `--dry-run` it changes nothing. `workflow fixtures`
+cannot export these commands, because they have no records. See
 [command fixtures](rehearsal.md#command-fixtures) and the
 [verified cookbook](patterns.md#commands-and-test-verdicts).

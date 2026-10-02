@@ -55,6 +55,14 @@ Tick's deadline interrupts in-flight resumes into resumable suspensions that are
 claim margin (default 10% of the timeout) stops new claims near the deadline, reporting ready runs
 as skipped `deadline`. See [ADR 0029](0029-persist-interruptions-as-resumable-suspensions.md).
 
+A poll may instead declare its check as a command (#151): each observation runs it through the
+observation's non-durable `context.exec.json`, owned by the wait, and a pure
+`done(output, previous)` decides. Its identity adds `poll.command` to the wait request, holding the
+prepared command summary (command, canonical cwd, environment and stdin digests, `inheritEnv`,
+accepted exit codes) and the `output` JSON Schema, while `poll.observe` holds the digest of `done`'s
+source. The key is present only for the command form, so observer-form requests and fingerprints are
+unchanged; output caps, `live`, `observeTimeoutMs` and `onError` stay policy.
+
 Operator shell hooks receive committed wait-open and run lifecycle events. A persisted notifiedAt
 marker deduplicates first-open attempts; delivery is best-effort and can be lost across a crash.
 Hook failures cannot change workflow outcomes. Business messages remain explicit idempotent steps.
