@@ -159,6 +159,15 @@ The events file is not saved with the run, so pass `--events` again to every `an
 for work that earlier executions already finished. See
 [operating a run](references/operating-runs.md) for the suspended-run loop and recovery.
 
+The plugin's `/quiet-choir:run WORKFLOW [--input JSON] [--run-id ID]` command packages this recipe:
+it rehearses, launches, follows and answers in one flow. To follow a run this session did not
+launch, or one started without `--events`, use
+`node "$QC_CHECKOUT/bin/run.js" workflow events RUN --state-dir "$QC_RUNS" --follow` with the same
+`grep` filter: it prints the same line shape from the run record without importing the workflow,
+starts from the current end (`--from-start` replays the record first), and exits with the watch
+codes above. After `answer --resume`, add `--after-execution N` with the suspended snapshot's
+`execution`, so the follower waits for the resumed execution instead of stopping on the old status.
+
 <!-- /skills-difference: claude-host -->
 
 ## Choose the next task

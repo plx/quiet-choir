@@ -195,6 +195,103 @@ test('frontmatter YAML is validated, including duplicate fields', async () => {
     await assert.rejects(checkSkills(root, { compile: false }), /invalid YAML/u);
   });
 });
+const command = (root) => join(root, packages[1], 'commands/run.md');
+async function editCommand(root, transform) {
+  const file = command(root);
+  await writeFile(file, transform(await readFile(file, 'utf8')));
+}
+for (const [label, transform, expected] of [
+  [
+    'a command without a description',
+    (text) => text.replace(/^description: >-\n(?: {2}.*\n)+/mu, ''),
+    /run\.md: invalid command frontmatter/u,
+  ],
+  [
+    'an unknown command frontmatter key',
+    (text) => text.replace('argument-hint:', 'model: haiku\nargument-hint:'),
+    /run\.md: invalid command frontmatter/u,
+  ],
+  [
+    'a duplicate command frontmatter key',
+    (text) => text.replace('argument-hint:', 'argument-hint: ID\nargument-hint:'),
+    /run\.md: invalid YAML/u,
+  ],
+  [
+    'a dangling command link',
+    (text) => `${text}\n[missing](../skills/quiet-choir/references/missing.md)\n`,
+    /run\.md: dangling link/u,
+  ],
+  [
+    'a command link escaping the package',
+    (text) => `${text}\n[escape](../../../../AGENTS.md)\n`,
+    /run\.md: link escapes package/u,
+  ],
+  [
+    'a missing command link anchor',
+    (text) => `${text}\n[missing](../skills/quiet-choir/SKILL.md#does-not-exist)\n`,
+    /run\.md: missing link anchor/u,
+  ],
+  ['an unclosed command fence', (text) => `${text}\n\`\`\`sh\necho open\n`, /unclosed code fence/u],
+  [
+    'a duplicate command example ID',
+    (text) =>
+      `${text}\n<!-- skills-check: example run-launch -->\n\n\`\`\`sh\necho again\n\`\`\`\n`,
+    /duplicate example run-launch/u,
+  ],
+  [
+    'a bare quiet-choir in a command shell fence',
+    (text) => `${text}\n\`\`\`sh\nquiet-choir workflow list --json\n\`\`\`\n`,
+    /run\.md:\d+: shell fence invokes bare quiet-choir/u,
+  ],
+  [
+    '$ARGUMENTS in a command shell fence',
+    (text) => `${text}\n\`\`\`sh\necho "$ARGUMENTS"\n\`\`\`\n`,
+    /run\.md:\d+: command fence uses \$ARGUMENTS/u,
+  ],
+  [
+    'a positional $1 in a command shell fence',
+    (text) => `${text}\n\`\`\`sh\necho "$1"\n\`\`\`\n`,
+    /run\.md:\d+: command fence uses \$ARGUMENTS or a positional/u,
+  ],
+])
+  test(`rejects ${label}`, async () => {
+    await fixture(async (root) => {
+      await editCommand(root, transform);
+      await assert.rejects(checkSkills(root, { compile: false }), expected);
+    });
+  });
+test('a broken TypeScript example in a command is rejected at its line', async () => {
+  await fixture(async (root) => {
+    await editCommand(
+      root,
+      (text) => `${text}\n\`\`\`ts\nexport const broken: number = "x";\n\`\`\`\n`,
+    );
+    await assert.rejects(checkSkills(root), /run\.md:\d+: TS2322/u);
+  });
+});
+test('a non-Markdown file under commands is rejected', async () => {
+  await fixture(async (root) => {
+    await writeFile(join(root, packages[1], 'commands/run.sh'), 'echo hi\n');
+    await assert.rejects(checkSkills(root, { compile: false }), /commands must be Markdown files/u);
+  });
+});
+test('commands are counted, and the manifests may differ only in description', async () => {
+  await fixture(async (root) => {
+    const summary = await checkSkills(root, { compile: false });
+    assert.equal(summary.commands, 1);
+    const portable = join(root, packages[0], 'plugin.json');
+    const claude = join(root, packages[1], '.claude-plugin/plugin.json');
+    const portableData = JSON.parse(await readFile(portable, 'utf8'));
+    const claudeData = JSON.parse(await readFile(claude, 'utf8'));
+    assert.notEqual(portableData.description, claudeData.description);
+    claudeData.version = '0.0.1';
+    await writeFile(claude, JSON.stringify(claudeData));
+    await assert.rejects(
+      checkSkills(root, { compile: false }),
+      /manifest metadata differs: version/u,
+    );
+  });
+});
 test('package roots cannot be symlinks to the other deliverable', async () => {
   await fixture(async (root) => {
     const directory = join(root, packages[0]);

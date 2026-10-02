@@ -44,14 +44,49 @@ function frontmatter(text, file) {
   const result = schema.safeParse(document.toJS());
   requireThat(result.success, `${file}: invalid skill frontmatter: ${result.error?.message ?? ''}`);
 }
+/**
+ * Claude Code command frontmatter: an explicit schema, so a misspelled or unsupported key fails
+ * instead of being silently ignored by the host.
+ */
+function commandFrontmatter(text, file) {
+  const match = /^---\r?\n([^]*?)\r?\n---(?:\r?\n|$)/u.exec(text);
+  requireThat(match, `${file}: missing YAML frontmatter`);
+  const document = parseDocument(match[1], { uniqueKeys: true });
+  requireThat(!document.errors.length, `${file}: invalid YAML: ${document.errors.join('; ')}`);
+  const schema = z
+    .object({
+      description: z.string().trim().min(1).max(1024),
+      'argument-hint': z.string().optional(),
+      'allowed-tools': z.union([z.string(), z.array(z.string())]).optional(),
+    })
+    .strict();
+  const result = schema.safeParse(document.toJS());
+  requireThat(
+    result.success,
+    `${file}: invalid command frontmatter: ${result.error?.message ?? ''}`,
+  );
+}
+/** Claude Code substitutes these in a command body, fences included, before the shell sees them. */
+const commandSubstitution = /\$(?:ARGUMENTS\b|\d|\{\d)/u;
+/** Reject a shell fence line that starts with a bare launcher the reader may not have installed. */
+function checkShellFence(fence, file) {
+  if (!shellLanguages.has(fence.language) || fence.installed) return;
+  fence.code.split('\n').forEach((line, offset) => {
+    requireThat(
+      !bareLauncher.test(line),
+      `${file}:${String(fence.line + offset)}: shell fence invokes bare quiet-choir; use node "$QC_CHECKOUT/bin/run.js", or annotate the fence with <!-- skills-check: installed-mode -->`,
+    );
+  });
+}
 async function manifests(root) {
   const portableFile = join(root, packages[0], 'plugin.json');
   const portable = await json(portableFile);
   const schema = await json(join(repository, 'test/fixtures/skills/agent-plugin.schema.json'));
   const result = z.fromJSONSchema(schema).safeParse(portable);
   requireThat(result.success, `${portableFile}: invalid manifest: ${result.error?.message ?? ''}`);
-  // This repository distributes documentation-only Claude plugins. Expanding its surface requires
-  // extending this explicit schema; unknown component fields must not silently bypass validation.
+  // The Claude plugin ships a skill and commands discovered from their default directories.
+  // Expanding its manifest requires extending this explicit schema; unknown component fields must
+  // not silently bypass validation.
   const common = {
     name: z.literal('quiet-choir'),
     version: z.string(),
@@ -68,7 +103,8 @@ async function manifests(root) {
   const claude = await json(claudeFile);
   const checked = z.object(common).strict().safeParse(claude);
   requireThat(checked.success, `${claudeFile}: invalid manifest: ${checked.error?.message ?? ''}`);
-  for (const key of Object.keys(common))
+  // Each host describes what its package ships; every other common field must match.
+  for (const key of Object.keys(common).filter((name) => name !== 'description'))
     requireThat(
       JSON.stringify(portable[key]) === JSON.stringify(claude[key]),
       `manifest metadata differs: ${key}`,
@@ -228,7 +264,8 @@ export async function checkSkills(root = repository, { compile = true } = {}) {
   const trees = [],
     examples = [];
   let links = 0,
-    fragments = 0;
+    fragments = 0,
+    commands = 0;
   for (const pkg of packages) {
     const packageRoot = join(root, pkg),
       skillRoot = join(packageRoot, skillPath);
@@ -248,13 +285,7 @@ export async function checkSkills(root = repository, { compile = true } = {}) {
       links += await checkLinks(absolute, text, packageRoot);
       tree.set(file, normalizeDifferences(text, file, rules, seen));
       for (const fence of fences(text, absolute)) {
-        if (shellLanguages.has(fence.language) && !fence.installed)
-          fence.code.split('\n').forEach((line, offset) => {
-            requireThat(
-              !bareLauncher.test(line),
-              `${absolute}:${String(fence.line + offset)}: shell fence invokes bare quiet-choir; use node "$QC_CHECKOUT/bin/run.js", or annotate the fence with <!-- skills-check: installed-mode -->`,
-            );
-          });
+        checkShellFence(fence, absolute);
         const source = sources.get(fence.id);
         if (fence.id?.startsWith('pattern-'))
           requireThat(source, `${absolute}: unknown pattern example ${fence.id}`);
@@ -283,6 +314,35 @@ export async function checkSkills(root = repository, { compile = true } = {}) {
         examples.push({ ...fence, file: absolute, ...(source ? { sourceFile: source.file } : {}) });
       }
     }
+    const commandsRoot = join(packageRoot, 'commands');
+    const hasCommands = await lstat(commandsRoot).then(
+      (entry) => entry.isDirectory(),
+      () => false,
+    );
+    for (const file of hasCommands ? await files(commandsRoot) : []) {
+      const absolute = join(commandsRoot, file);
+      requireThat(file.endsWith('.md'), `${absolute}: commands must be Markdown files`);
+      const text = await readFile(absolute, 'utf8');
+      commandFrontmatter(text, absolute);
+      links += await checkLinks(absolute, text, packageRoot);
+      commands++;
+      for (const fence of fences(text, absolute)) {
+        checkShellFence(fence, absolute);
+        if (shellLanguages.has(fence.language))
+          fence.code.split('\n').forEach((line, offset) => {
+            requireThat(
+              !commandSubstitution.test(line),
+              `${absolute}:${String(fence.line + offset)}: command fence uses $ARGUMENTS or a positional $N, which Claude Code substitutes before the shell runs; use exported QC_* variables`,
+            );
+          });
+        if (!['ts', 'typescript'].includes(fence.language)) continue;
+        if (fence.fragment) {
+          fragments++;
+          continue;
+        }
+        examples.push({ ...fence, file: absolute });
+      }
+    }
     for (const id of sources.keys())
       requireThat(patternsSeen.has(id), `${pkg}: missing pattern example ${id}`);
     for (const rule of rules)
@@ -296,7 +356,7 @@ export async function checkSkills(root = repository, { compile = true } = {}) {
   for (const [file, text] of trees[0])
     requireThat(text === trees[1].get(file), `unlisted difference: ${file}`);
   if (compile) await compileExamples(examples);
-  return { packages: packages.length, examples: examples.length, fragments, links };
+  return { packages: packages.length, commands, examples: examples.length, fragments, links };
 }
 if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url) {
   try {
