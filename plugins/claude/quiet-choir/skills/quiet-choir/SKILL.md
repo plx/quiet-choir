@@ -111,7 +111,8 @@ node "$QC_CHECKOUT/bin/run.js" workflow start "$QC_WORKFLOW" \
 
 `--final` makes the watch print one line. Read the **last stdout line**, not only the exit: a
 document with `kind: "workflow.error"` is a failure, so branch on its `error.code`; otherwise it is
-the watch's final snapshot, so branch on its `status`. Both carry runnable follow-ups in `next`.
+the watch's final snapshot, so branch on its `status`. A snapshot or failure that has a runnable
+follow-up lists it in `next`; for 79 and 66, `next` is empty, so use the table below.
 
 | Exit | Meaning                                                                                                       |
 | ---- | ------------------------------------------------------------------------------------------------------------- |
