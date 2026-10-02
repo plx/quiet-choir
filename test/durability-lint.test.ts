@@ -181,9 +181,12 @@ describe('durability suppression comments', () => {
   });
 
   it('parses a long hostile line in linear time', () => {
-    const line = `// quiet-choir-ignore QC001${' ,QC001'.repeat(20_000)}${' '.repeat(20_000)}!`;
+    // A polynomial regex takes minutes at this size, so the bound discriminates by input size
+    // rather than by a tight wall-clock budget that a loaded machine could trip.
+    const repeats = 200_000;
+    const line = `// quiet-choir-ignore QC001${' ,QC001'.repeat(repeats)}${' '.repeat(repeats)}!`;
     const started = performance.now();
-    expect(parseDurabilitySuppression(line)?.rules).toHaveLength(20_001);
-    expect(performance.now() - started).toBeLessThan(1_000);
+    expect(parseDurabilitySuppression(line)?.rules).toHaveLength(repeats + 1);
+    expect(performance.now() - started).toBeLessThan(5_000);
   });
 });
