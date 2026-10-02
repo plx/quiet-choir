@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { codexEffortValues } from './agent-controls.js';
 import type { ResolvedProfile, ProfileOverride } from './profiles-model.js';
-import { errorKindSchema } from './step-error.js';
+import { retryOnSchema } from './step-error.js';
 
 import type {
   AttemptPolicy,
@@ -20,7 +20,7 @@ const duration = positive.max(2_147_483_647);
 export const retryPolicySchema = z.strictObject({
   maxAttempts: positive,
   delayMs: z.number().nonnegative().max(Number.MAX_SAFE_INTEGER).optional(),
-  on: z.array(errorKindSchema).optional(),
+  on: z.array(retryOnSchema).optional(),
 });
 const limits = {
   timeoutMs: duration.optional(),

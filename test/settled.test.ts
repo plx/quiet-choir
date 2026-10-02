@@ -552,7 +552,15 @@ it.each([
   [504, null, 'timeout'],
   [null, 'max_turns', 'turn-limit'],
   [null, 'budget_exhausted', 'budget-limit'],
-  [400, null, 'unknown'],
+  [400, null, 'invalid-request'],
+  [404, null, 'invalid-request'],
+  [422, null, 'invalid-request'],
+  [500, null, 'overloaded'],
+  [502, null, 'overloaded'],
+  [503, null, 'overloaded'],
+  [529, null, 'overloaded'],
+  [418, null, 'unknown'],
+  [null, null, 'unknown'],
 ] as const)(
   'classifies protocol status %j / reason %j as %s',
   (apiStatus, terminalReason, expected) => {
@@ -574,6 +582,81 @@ it.each([
     expect(errorKind(error)).toBe(expected);
   },
 );
+
+const statusFailure = (
+  apiStatus: number,
+  kinds: { failure?: ErrorKind; details?: ErrorKind } = {},
+) =>
+  new HarnessError({
+    harness: 'claude',
+    exit: { code: 1, signal: null },
+    reason: 'error',
+    stderr: '',
+    stdout: '',
+    ...(kinds.details === undefined ? {} : { kind: kinds.details }),
+    failure: {
+      reason: `HTTP ${String(apiStatus)}`,
+      apiStatus,
+      terminalReason: 'api_error',
+      subtype: null,
+      sessionId: null,
+      usage: null,
+      ...(kinds.failure === undefined ? {} : { kind: kinds.failure }),
+    },
+  });
+
+it('prefers explicit adapter kinds over the protocol kind and the protocol kind over the status', () => {
+  expect(statusFailure(529).kind).toBe('overloaded');
+  expect(statusFailure(529, { failure: 'rate-limit' }).kind).toBe('rate-limit');
+  expect(statusFailure(529, { failure: 'rate-limit', details: 'process' }).kind).toBe('process');
+  expect(errorKind(statusFailure(404, { failure: 'invalid-request', details: 'timeout' }))).toBe(
+    'timeout',
+  );
+});
+
+it('retries transient harness failures once under on transient and never an invalid request', async () => {
+  for (const [apiStatus, calls, kinds] of [
+    [529, 2, ['overloaded', 'overloaded']],
+    [404, 1, ['invalid-request']],
+  ] as const) {
+    const harness = { invoke: vi.fn(() => Promise.reject(statusFailure(apiStatus))) };
+    const definition = workflow(async (ctx) => {
+      const result = await ctx.claude.text('ask', {
+        prompt: 'p',
+        onError: 'return',
+        retry: { maxAttempts: 2, delayMs: 0, on: ['transient'] },
+      });
+      return result.ok ? result.value.output : result.error.kind;
+    });
+    const runId = `transient-${String(apiStatus)}`;
+    const result = await runWorkflow(definition, { ...options(), runId, harness });
+    expect(result.output).toBe(kinds[0]);
+    expect(harness.invoke).toHaveBeenCalledTimes(calls);
+    expect(result.steps['ask']?.attemptHistory?.map((attempt) => attempt.errorKind)).toEqual(kinds);
+    // The alias is policy: it persists unexpanded and the saved record validates on read.
+    const saved = await readRun({ stateDir, runId });
+    expect(saved.steps['ask']?.attemptHistory?.[0]?.policy.retry.on).toEqual(['transient']);
+  }
+});
+
+it('stops an on-less retry at an invalid request but still retries unknown failures', async () => {
+  for (const [name, cause, kind, calls] of [
+    ['not-found', () => statusFailure(404), 'invalid-request', 1],
+    ['plain', () => new Error('flaky'), 'unknown', 3],
+    ['unavailable', () => statusFailure(503), 'overloaded', 3],
+  ] as const) {
+    const harness = { invoke: vi.fn(() => Promise.reject(cause())) };
+    const definition = workflow(async (ctx) => {
+      await ctx.codex.text('ask', { prompt: 'p', retry: { maxAttempts: 3, delayMs: 0 } });
+      return 'never';
+    });
+    const runId = `on-less-${name}`;
+    await expect(runWorkflow(definition, { ...options(), runId, harness })).rejects.toThrow();
+    expect(harness.invoke).toHaveBeenCalledTimes(calls);
+    const attempts = (await readRun({ stateDir, runId })).steps['ask']?.attemptHistory ?? [];
+    expect(attempts.map((attempt) => attempt.errorKind)).toEqual(Array(calls).fill(kind));
+  }
+});
 
 it('rejects a missing harness instead of settling it as a failed outcome', async () => {
   const settled: unknown[] = [];

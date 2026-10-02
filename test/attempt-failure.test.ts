@@ -30,6 +30,28 @@ function timeout(): Error {
   return Object.assign(new Error('slow'), { code: 'ETIMEDOUT' });
 }
 
+function harnessFailure(apiStatus: number): InstanceType<typeof secondHarness.HarnessError> {
+  return new secondHarness.HarnessError({
+    harness: 'custom',
+    exit: { code: 1, signal: null },
+    failure: {
+      reason: `HTTP ${String(apiStatus)}`,
+      subtype: null,
+      terminalReason: null,
+      apiStatus,
+      sessionId: null,
+      usage: null,
+    },
+    reason: 'failed',
+    stderr: '',
+    stdout: '',
+  });
+}
+
+function spawnFailure(): Error {
+  return Object.assign(new Error('missing'), { code: 'ENOENT' });
+}
+
 function abortError(): Error {
   const error = new Error('callback aborted');
   error.name = 'AbortError';
@@ -178,6 +200,71 @@ const rows: Row[] = [
     name: 'an empty retry.on disables retry',
     input: { cause: timeout(), retryOn: [] },
     expected: { ...exhausted, errorKind: 'timeout' },
+  },
+  {
+    name: 'transient retries a rate-limit failure',
+    input: { cause: harnessFailure(429), retryOn: ['transient'] },
+    expected: { ...retrying, errorKind: 'rate-limit' },
+  },
+  {
+    name: 'transient retries an overloaded failure',
+    input: { cause: harnessFailure(529), retryOn: ['transient'] },
+    expected: { ...retrying, errorKind: 'overloaded' },
+  },
+  {
+    name: 'transient retries a timeout',
+    input: { cause: timeout(), retryOn: ['transient'] },
+    expected: { ...retrying, errorKind: 'timeout' },
+  },
+  {
+    name: 'transient does not retry an invalid request',
+    input: { cause: harnessFailure(404), retryOn: ['transient'], onError: 'return' },
+    expected: { ...exhausted, settle: true, errorKind: 'invalid-request' },
+  },
+  {
+    name: 'transient does not retry an unknown failure',
+    input: { cause: new Error('boom'), retryOn: ['transient'] },
+    expected: { ...exhausted, errorKind: 'unknown' },
+  },
+  {
+    name: 'transient does not retry a process failure',
+    input: { cause: spawnFailure(), retryOn: ['transient'] },
+    expected: { ...exhausted, errorKind: 'process' },
+  },
+  {
+    name: 'transient combines with an explicit kind',
+    input: { cause: spawnFailure(), retryOn: ['transient', 'process'] },
+    expected: { ...retrying, errorKind: 'process' },
+  },
+  {
+    name: 'transient is still bounded by maxAttempts',
+    input: { cause: harnessFailure(503), retryOn: ['transient'], attempt: 3, maxAttempts: 3 },
+    expected: { ...exhausted, errorKind: 'overloaded' },
+  },
+  {
+    name: 'an omitted retry.on does not retry an invalid request',
+    input: { cause: harnessFailure(400), onError: 'return' },
+    expected: { ...exhausted, settle: true, errorKind: 'invalid-request' },
+  },
+  {
+    name: 'an omitted retry.on still retries an unknown failure',
+    input: { cause: new Error('boom') },
+    expected: { ...retrying, errorKind: 'unknown' },
+  },
+  {
+    name: 'an omitted retry.on still retries an overloaded failure',
+    input: { cause: harnessFailure(500) },
+    expected: { ...retrying, errorKind: 'overloaded' },
+  },
+  {
+    name: 'an omitted retry.on still retries a process failure',
+    input: { cause: spawnFailure() },
+    expected: { ...retrying, errorKind: 'process' },
+  },
+  {
+    name: 'an explicit invalid-request filter still retries an invalid request',
+    input: { cause: harnessFailure(422), retryOn: ['invalid-request'] },
+    expected: { ...retrying, errorKind: 'invalid-request' },
   },
   {
     name: 'exhausted attempts throw under onError throw',

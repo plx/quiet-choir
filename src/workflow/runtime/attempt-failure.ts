@@ -8,7 +8,7 @@
  */
 import type { ErrorKind, ErrorMode } from './model.js';
 import { ConfigurationError } from './configuration-error.js';
-import { errorKind } from './step-error.js';
+import { errorKind, transientErrorKinds } from './step-error.js';
 
 /** Facts about one failed attempt, all gathered by the runner before classification. @internal */
 export interface AttemptFailureInput {
@@ -18,8 +18,11 @@ export interface AttemptFailureInput {
   readonly aborted: boolean;
   /** Whether `cause` is one of this run's own recorded checkpoint failures. */
   readonly checkpointProblem: boolean;
-  /** The retry filter: `undefined` retries every kind and `[]` retries none. */
-  readonly retryOn: readonly ErrorKind[] | undefined;
+  /**
+   * The retry filter: `undefined` retries every kind except `invalid-request`, `[]` retries none,
+   * and `'transient'` stands for `rate-limit`, `overloaded` and `timeout`.
+   */
+  readonly retryOn: readonly (ErrorKind | 'transient')[] | undefined;
   /** The one-based number of the attempt that just failed. */
   readonly attempt: number;
   /** The most attempts the effect may make. */
@@ -56,7 +59,9 @@ export interface AttemptFailure {
  *   is still fatal: never retried or settled.
  * - Cancellation, this run's checkpoint failures and `ConfigurationError` are fatal. A domain
  *   error that merely reuses `CheckpointError` is not infrastructure.
- * - `retry.on` omitted retries every kind and `[]` retries none, bounded by `maxAttempts`.
+ * - `retry.on` omitted retries every kind except `invalid-request`, and `[]` retries none, bounded
+ *   by `maxAttempts`. The `'transient'` filter expands to `rate-limit`, `overloaded` and `timeout`;
+ *   an explicit `invalid-request` entry still retries that kind.
  * - Settling happens only for a failure that is not fatal, not retried and has `onError: 'return'`.
  *
  * @internal
@@ -69,8 +74,7 @@ export function classifyAttemptFailure(input: AttemptFailureInput): AttemptFailu
   const infrastructure = checkpointProblem || markFatal;
   // fatal deliberately reads errorKind(cause), not the scope-adjusted kind.
   const fatal = scoped || errorKind(cause) === 'cancelled' || infrastructure;
-  const retry =
-    !fatal && attempt < maxAttempts && (retryOn === undefined || retryOn.includes(kind));
+  const retry = !fatal && attempt < maxAttempts && retries(retryOn, kind);
   const settle = !fatal && !retry && onError === 'return';
   return {
     scoped,
@@ -82,4 +86,10 @@ export function classifyAttemptFailure(input: AttemptFailureInput): AttemptFailu
     retry,
     settle,
   };
+}
+
+function retries(retryOn: AttemptFailureInput['retryOn'], kind: ErrorKind): boolean {
+  if (retryOn === undefined) return kind !== 'invalid-request';
+  const transient: readonly ErrorKind[] = transientErrorKinds;
+  return retryOn.includes(kind) || (retryOn.includes('transient') && transient.includes(kind));
 }
