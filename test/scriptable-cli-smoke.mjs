@@ -133,7 +133,14 @@ export default defineWorkflow({ name:'json', version:'1',
   assert.equal(failed.runId, failed.run.id);
   assert.deepEqual(failed.run, saved(failed.runId));
   assert.deepEqual(failed.failedSteps, [
-    { id: 'result', kind: 'step', attempts: 1, error: 'original failure' },
+    {
+      id: 'result',
+      kind: 'step',
+      attempts: 1,
+      error: 'original failure',
+      errorKind: 'unknown',
+      retryable: false,
+    },
   ]);
   const demo = failure(
     [
