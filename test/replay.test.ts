@@ -285,23 +285,31 @@ function reviewMap(state: { edited?: boolean; pause?: boolean; summary?: boolean
 const stageIds = (stages: string[], indexes = mapItems.map((_, index) => index)) =>
   indexes.flatMap((index) => stages.map((stage) => `review/${String(index)}/${stage}`)).sort();
 
+// measured: 1.6-1.9 s alone, 3.0 s in a full coverage run (load average 11 on 16 cores); a sequential
+// loop passed the 5 s default at iteration 15 under the gate. CPU-bound: 40 runs saving per step.
 it('reuses every step of an unchanged concurrent named map whatever the source schedule', async () => {
-  const { harness, live } = delayedFixture();
   const definition = reviewMap({});
-  for (let iteration = 0; iteration < 20; iteration++) {
-    const sourceId = `source-${String(iteration)}`;
-    await runWorkflow(definition, { ...options(sourceId), harness });
-    live.length = 0;
-    const fork = await runWorkflow(definition, {
-      ...options(`fork-${String(iteration)}`),
-      harness,
-      forkFrom: { runId: sourceId },
-    });
+  // Twenty independent source/fork pairs, run side by side: each source gets its own schedule.
+  const forks = await Promise.all(
+    Array.from({ length: 20 }, async (_, iteration) => {
+      const { harness, live } = delayedFixture();
+      const sourceId = `source-${String(iteration)}`;
+      await runWorkflow(definition, { ...options(sourceId), harness });
+      live.length = 0;
+      const fork = await runWorkflow(definition, {
+        ...options(`fork-${String(iteration)}`),
+        harness,
+        forkFrom: { runId: sourceId },
+      });
+      return { fork, live };
+    }),
+  );
+  for (const { fork, live } of forks) {
     expect(live).toEqual([]);
     expect(reusedIds(fork)).toEqual(stageIds(['s1', 's2', 's3']));
     expect(fork.forkedFrom).toMatchObject({ cursor: 36, reuseClosed: false });
   }
-});
+}, 10_000);
 
 it('re-runs only the edited stage of a named map, and a root step after the map', async () => {
   const { harness, live } = delayedFixture();
