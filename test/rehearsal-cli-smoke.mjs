@@ -338,7 +338,7 @@ export default defineWorkflow({name:'rehearsal-exec',version:'1',input:z.null(),
     [['probe', 'fixture', 0]],
   );
   console.log(
-    'Rehearsal CLI: dry-run, fixtures/config/export, exec fixture export and replay, named late failures, process-free preview, and harness guards passed.',
+    'Rehearsal CLI: dry-run, fixtures/config/export, named late failures, process-free preview, and harness guards passed.',
   );
 } finally {
   rmSync(root, { recursive: true, force: true });
