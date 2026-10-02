@@ -16,31 +16,22 @@ import { runProcess, type ProcessResult } from './process.js';
 import { parseClaude, parseCodex } from './protocol.js';
 import { detectCodexInstructionSources } from './codex-instructions.js';
 import { readInheritedCodexConfig, type InheritedCodexConfig } from './doctor-config.js';
+import { gradeHarnessVersion, testedHarnessVersions } from './tested-versions.js';
 
-/** Contract-tested version bounds. Equal bounds deliberately certify only captured versions. */
-export const testedHarnessVersions = {
-  /** Captured Claude Code installation. */
-  claude: {
-    /** Oldest verified version. */
-    minimum: '2.1.283',
-    /** Newest verified version. */
-    maximum: '2.1.283',
-  },
-  /** Captured Codex CLI installation. */
-  codex: {
-    /** Oldest verified version. */
-    minimum: '0.157.1',
-    /** Newest verified version. */
-    maximum: '0.157.1',
-  },
-} as const;
+export { testedHarnessVersions };
+
 /** One independently reported installation/contract check. */
 export interface DoctorCheck {
   /** Native CLI checked, or config for inherited default inspection. */
   readonly harness: string;
   /** Stable check identifier. */
   readonly check: 'version' | 'argv' | 'hidden-flags' | 'enums' | 'inherited-defaults' | 'registry';
-  /** Pass or detected drift/error; warnings count as failure. */
+  /**
+   * Check result. `warn` is reported only by the version check, for an untested patch of a tested
+   * major.minor; every other drift, error or process warning is `fail`.
+   */
+  readonly status: 'pass' | 'warn' | 'fail';
+  /** `status !== 'fail'`: a warning keeps the harness usable unless `strict` promoted it. */
   readonly ok: boolean;
   /** Bounded diagnostic without full config or prompt contents. */
   readonly message: string;
@@ -67,17 +58,23 @@ export interface DoctorOptions {
   readonly timeoutMs?: number;
   /** Cancellation forwarded to every probe. */
   readonly signal?: AbortSignal;
+  /** Treat an untested patch version as a failure (status `fail`, verdict `blocked`). */
+  readonly strict?: boolean;
 }
-/** Serializable contract report; ok is false for drift, warnings, auth failures, or uncertain cost. */
+/** Serializable contract report; ok is false only when the verdict is `blocked`. */
 export interface DoctorReport {
   /** Workflow registry descriptions, when --workflow is supplied. */
   readonly registered?: WorkflowDescription['harnesses'];
-  /** All requested checks passed. */
+  /** No check failed: `verdict !== 'blocked'`. Warnings alone leave it true. */
   readonly ok: boolean;
+  /** `blocked` when any check fails, `usable-with-warnings` when any warns, otherwise `ok`. */
+  readonly verdict: 'ok' | 'usable-with-warnings' | 'blocked';
+  /** One `<harness> <check>: <message>` entry per check whose status is `warn`. */
+  readonly warnings: readonly string[];
   /**
    * True only when every requested harness's exact-argv probe actually ran and proved a
-   * zero-spend rejection; a skipped probe (missing executable, version drift, or an
-   * untested version) counts as unverified, not proven.
+   * zero-spend rejection; a skipped probe (the binary did not answer `--version`) counts as
+   * unverified, not proven. The probe runs whatever version the binary reports.
    */
   readonly zeroInference: boolean;
   /** Five checks per requested harness. */
@@ -88,6 +85,25 @@ export interface DoctorReport {
   readonly inherited?: InheritedCodexConfig;
   /** User-level Codex instruction files restricted calls still load, as paths and digests only. */
   readonly codexInstructions?: readonly InstructionSource[];
+}
+/** Message suffix that marks a version warning promoted to a failure by `strict`. */
+export const strictVersionFailure = '; --strict treats an untested patch version as a failure';
+/** Derive the report-level result from per-check statuses; shared by the registry path. */
+export function summarizeDoctorChecks(
+  checks: readonly Pick<DoctorCheck, 'harness' | 'check' | 'status' | 'message'>[],
+): Pick<DoctorReport, 'ok' | 'verdict' | 'warnings'> {
+  const verdict = checks.some((entry) => entry.status === 'fail')
+    ? 'blocked'
+    : checks.some((entry) => entry.status === 'warn')
+      ? 'usable-with-warnings'
+      : 'ok';
+  return {
+    ok: verdict !== 'blocked',
+    verdict,
+    warnings: checks
+      .filter((entry) => entry.status === 'warn')
+      .map((entry) => `${entry.harness} ${entry.check}: ${entry.message}`),
+  };
 }
 const message = (error: unknown): string =>
   (error instanceof Error ? error.message : String(error)).slice(-2048);
@@ -193,15 +209,30 @@ export async function probeHarnessContracts(options: DoctorOptions = {}): Promis
         env: env ?? childEnvironment(undefined, undefined).env,
         inheritEnv: false,
       });
+    // Set once --version resolves, so the argv probe runs for any binary that answered.
+    let responded = false;
     const check = async (
       name: DoctorCheck['check'],
-      run: () => Promise<{ ok: boolean; message: string }>,
+      run: () => Promise<{ ok: boolean; message: string; warn?: boolean }>,
     ): Promise<void> => {
       try {
-        checks.push({ harness, check: name, ...(await run()) });
+        const { ok, message: text, warn } = await run();
+        checks.push({
+          harness,
+          check: name,
+          status: !ok ? 'fail' : warn ? 'warn' : 'pass',
+          ok,
+          message: text,
+        });
       } catch (error) {
         signal.throwIfAborted();
-        checks.push({ harness, check: name, ok: false, message: message(error) });
+        checks.push({
+          harness,
+          check: name,
+          status: 'fail',
+          ok: false,
+          message: message(error),
+        });
       }
     };
     await check('version', async () => {
@@ -209,14 +240,24 @@ export async function probeHarnessContracts(options: DoctorOptions = {}): Promis
       const version =
         /\b[0-9]+\.[0-9]+\.[0-9]+(?:[-+][a-zA-Z0-9.-]+)?\b/u.exec(result.stdout)?.[0] ?? null;
       harnesses[harness] = { binary, version };
+      responded = true;
       const tested = testedHarnessVersions[harness];
+      const clean = result.code === 0 && result.signal === null && !warning(result);
+      const grade = clean ? gradeHarnessVersion(version, tested) : 'fail';
+      const strictFail = grade === 'warn' && options.strict === true;
+      const phrase = !clean
+        ? ''
+        : grade === 'warn'
+          ? '; untested patch version'
+          : grade === 'pass'
+            ? ''
+            : version !== null && /^[0-9]+\.[0-9]+\.[0-9]+$/u.test(version)
+              ? '; outside the tested range'
+              : '; unparseable or prerelease version';
       return {
-        ok:
-          result.code === 0 &&
-          result.signal === null &&
-          version === tested.minimum &&
-          !warning(result),
-        message: `${binary}@${version ?? 'unknown'}; tested ${tested.minimum}..${tested.maximum}${result.warnings.length ? `; process warnings: ${result.warnings.join(' ')}` : ''}${result.stderr ? `; stderr: ${result.stderr.slice(-1024)}` : ''}`,
+        ok: grade === 'pass' || (grade === 'warn' && !strictFail),
+        warn: grade === 'warn' && !strictFail,
+        message: `${binary}@${version ?? 'unknown'}; tested ${tested.minimum}..${tested.maximum}${phrase}${strictFail ? strictVersionFailure : ''}${result.warnings.length ? `; process warnings: ${result.warnings.join(' ')}` : ''}${result.stderr ? `; stderr: ${result.stderr.slice(-1024)}` : ''}`,
       };
     });
     let help = '';
@@ -225,10 +266,8 @@ export async function probeHarnessContracts(options: DoctorOptions = {}): Promis
     await check('argv', async () => {
       const previousZeroInference = zeroInference;
       zeroInference = false;
-      if (!checks.find((entry) => entry.harness === harness && entry.check === 'version')?.ok)
-        throw new Error(
-          'Exact-argv probe requires a contract-tested CLI version without warnings.',
-        );
+      if (!responded)
+        throw new Error(`Exact-argv probe skipped: ${binary} did not answer --version.`);
       const directory = await mkdtemp(join(tmpdir(), 'quiet-choir-doctor-'));
       try {
         const image = join(directory, 'probe.png');
@@ -471,7 +510,7 @@ export async function probeHarnessContracts(options: DoctorOptions = {}): Promis
     });
   }
   return {
-    ok: checks.every((entry) => entry.ok),
+    ...summarizeDoctorChecks(checks),
     zeroInference,
     checks,
     harnesses,

@@ -9,6 +9,8 @@ import type { ExecutionLogger, ExecutionPlan, Executor } from './execution.js';
 import type { ProcessSupervisor } from '../processes/supervisor.js';
 import {
   probeHarnessContracts,
+  strictVersionFailure,
+  summarizeDoctorChecks,
   type DoctorOptions,
   type DoctorReport,
 } from '../harnesses/doctor.js';
@@ -20,6 +22,33 @@ export interface DoctorPlan
   readonly workflow?: string;
   readonly configuration?: HarnessSelection;
 }
+const widenStep =
+  'from a quiet-choir checkout run `npm run build && npm run test:contract`, then widen testedHarnessVersions';
+
+/**
+ * Final line of the text report: the verdict and, unless everything passed, the next command. An
+ * untested patch version names the contract run that justifies widening the tested range.
+ */
+export function doctorVerdictLine(
+  report: Pick<DoctorReport, 'verdict' | 'checks' | 'harnesses'>,
+): string {
+  if (report.verdict === 'ok') return 'ok';
+  const untested = (check: DoctorReport['checks'][number]): boolean =>
+    check.check === 'version' &&
+    (check.status === 'warn' || check.message.includes(strictVersionFailure));
+  const named = report.checks
+    .filter(untested)
+    .map((check) => `${check.harness} ${report.harnesses[check.harness]?.version ?? 'unknown'}`)
+    .join(', ');
+  if (report.verdict === 'usable-with-warnings')
+    return `usable with warnings: ${named || 'a harness'} is an untested patch version; ${widenStep} (or pass --strict to treat this as a failure)`;
+  const onlyStrict =
+    named !== '' && report.checks.every((check) => check.status !== 'fail' || untested(check));
+  return onlyStrict
+    ? `blocked: ${named} is an untested patch version and --strict treats it as a failure; ${widenStep} (or rerun without --strict)`
+    : 'blocked: fix the FAIL checks above, then rerun `quiet-choir configuration doctor`';
+}
+
 /** Framework-independent execution of harness contract probes. */
 export class DoctorExecutor implements Executor<
   DoctorPlan,
@@ -65,6 +94,7 @@ export class DoctorExecutor implements Executor<
             checks.push({
               harness: definition.name,
               check: 'registry',
+              status: 'pass',
               ok: true,
               message: `${definition.name}@${String(definition.revision)} registered; no package probe.`,
             });
@@ -81,6 +111,7 @@ export class DoctorExecutor implements Executor<
             checks.push({
               harness: definition.name,
               check: 'version',
+              status: 'pass',
               ok: true,
               message: probe.version ?? 'Version unavailable',
             });
@@ -90,6 +121,7 @@ export class DoctorExecutor implements Executor<
             checks.push({
               harness: definition.name,
               check: 'version',
+              status: 'fail',
               ok: false,
               message: cause instanceof Error ? cause.message : String(cause),
             });
@@ -97,7 +129,7 @@ export class DoctorExecutor implements Executor<
         }
         return {
           kind: 'configuration.doctor.result',
-          ok: checks.every((check) => check.ok),
+          ...summarizeDoctorChecks(checks),
           zeroInference: true,
           checks,
           harnesses,

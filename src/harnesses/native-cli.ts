@@ -20,6 +20,11 @@ import { invocationRequest, materializeInvocation, planInvocation } from './invo
 import type { CliArgumentPlan } from './invocation.js';
 import { HarnessStream } from './stream.js';
 import {
+  gradeHarnessVersion,
+  testedHarnessVersions,
+  untestedVersionWarning,
+} from './tested-versions.js';
+import {
   codexHomeOf,
   codexInstructionWarning,
   detectCodexInstructionSources,
@@ -236,6 +241,11 @@ export class NativeCliHarness implements Harness {
         warnings.push(
           `${binary} version discovery: ${result.stderr.trim().slice(-1024) || 'unrecognized version output'}`,
         );
+      if (
+        version !== undefined &&
+        gradeHarnessVersion(version, testedHarnessVersions[request.harness]) !== 'pass'
+      )
+        warnings.push(untestedVersionWarning(request.harness, binary, version));
       return {
         binary,
         version: version ?? null,
