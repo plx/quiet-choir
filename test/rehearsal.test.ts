@@ -1,4 +1,13 @@
-import { mkdtemp, readFile, readdir, realpath, rm, symlink, writeFile } from 'node:fs/promises';
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  realpath,
+  rm,
+  symlink,
+  writeFile,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -1135,5 +1144,143 @@ export default defineWorkflow({
         .split('\n')
         .filter((line) => line.startsWith('worktree ')),
     ).toHaveLength(1);
+  });
+});
+
+// Same loader compile as the suite above; measured: 1.6 s alone for both cases.
+describe('dry-run commands from callbacks and observers', { timeout: 40_000 }, () => {
+  /** A workflow whose poll observer and step callback call gh through context.exec. */
+  async function project(): Promise<{ root: string; marker: string; file: string }> {
+    const root = await realpath(await mkdtemp(join(tmpdir(), 'choir-rehearsal-inner-')));
+    roots.push(root);
+    const repository = dirname(dirname(fileURLToPath(import.meta.url)));
+    await writeFile(join(root, 'package.json'), '{"type":"module"}');
+    await symlink(join(repository, 'node_modules'), join(root, 'node_modules'));
+    const marker = join(root, 'gh-calls.log');
+    await mkdir(join(root, 'bin'));
+    // A fake gh that logs every invocation; a real spawn is visible as a marker line.
+    await writeFile(
+      join(root, 'bin', 'gh'),
+      `#!/bin/sh\necho "$*" >> ${JSON.stringify(marker)}\necho '{"state":"LIVE"}'\n`,
+      { mode: 0o755 },
+    );
+    const file = join(root, 'workflow.ts');
+    await writeFile(
+      file,
+      `import { defineWorkflow, z } from ${JSON.stringify(join(repository, 'src/index.js'))};
+const state = z.object({ state: z.string() });
+export default defineWorkflow({
+  name: 'dry-inner', version: '1', input: z.object({ live: z.boolean() }), output: z.unknown(),
+  async run(ctx, input) {
+    const snapshot = await ctx.exec.json('snapshot', ['gh', 'pr', 'view', '1', '--json', 'headRefOid'], {
+      schema: z.object({ headRefOid: z.string() }),
+    });
+    const ci = await ctx.poll('ci', {
+      input: null, schema: state, every: 1, timeoutMs: 60_000,
+      async observe(context) {
+        const live = input.live
+          ? (await context.exec.json(['gh', 'pr', 'view', '1', '--json', 'state'], { schema: state, live: true })).state
+          : 'none';
+        const view = await context.exec.json(['gh', 'pr', 'view', '1', '--json', 'statusCheckRollup'], { schema: state });
+        return { done: true, value: { state: live + '+' + view.state } };
+      },
+    });
+    const comment = await ctx.step('comment', {
+      input: null, schema: z.unknown(),
+      run: (context) => context.exec.json(['gh', 'pr', 'comment', '1', '--body', 'ok'], { schema: z.object({ url: z.string() }) }),
+    });
+    return { snapshot, ci, comment };
+  },
+});
+`,
+    );
+    return { root, marker, file };
+  }
+
+  async function rehearse(live: boolean) {
+    const { root, marker, file } = await project();
+    vi.stubEnv('PATH', `${join(root, 'bin')}:${process.env['PATH'] ?? ''}`);
+    const analysis = analyzeTypecheckEntrypoint(file, root);
+    if (!analysis.ok) throw new Error('invalid workflow fixture');
+    const commands: string[][] = [];
+    const native = new NodeProcessRunner();
+    const spy: ProcessRunner = {
+      run: (request, invocation) => {
+        commands.push(Array.isArray(request.command) ? [...(request.command as string[])] : []);
+        return native.run(request, invocation);
+      },
+    };
+    try {
+      const result = await new WorkflowExecutor({
+        logger: new ThresholdLogger('silent', () => undefined),
+        processRunner: spy,
+      }).execute({
+        kind: 'workflow.execute',
+        typecheck: analysis.plan,
+        runId: 'dry',
+        stateDir: join(root, 'state'),
+        cwd: root,
+        input: { live },
+        resume: false,
+        harness: { kind: 'cli', config: {} },
+        dryRun: true,
+      });
+      if (result.kind !== 'workflow.run.result' || !result.rehearsal)
+        throw new Error(JSON.stringify(result));
+      const spawned = await readFile(marker, 'utf8').catch(() => null);
+      return { result, rehearsal: result.rehearsal, commands, spawned };
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  }
+
+  it('spawns no gh and lists every command, the inner ones with parentStepId', async () => {
+    const { rehearsal, commands, spawned } = await rehearse(false);
+    expect(spawned).toBeNull();
+    expect(commands.filter((argv) => argv[0] !== 'git')).toEqual([]);
+    expect(rehearsal.commands).toEqual([
+      expect.objectContaining({
+        stepId: 'snapshot',
+        parentStepId: null,
+        outputSource: 'synthesized',
+        command: ['gh', 'pr', 'view', '1', '--json', 'headRefOid'],
+      }),
+      expect.objectContaining({
+        stepId: 'ci',
+        parentStepId: 'ci',
+        outputSource: 'synthesized',
+        command: ['gh', 'pr', 'view', '1', '--json', 'statusCheckRollup'],
+      }),
+      expect.objectContaining({
+        stepId: 'comment',
+        parentStepId: 'comment',
+        outputSource: 'synthesized',
+        command: ['gh', 'pr', 'comment', '1', '--body', 'ok'],
+      }),
+    ]);
+    expect(rehearsal.warnings).toContainEqual(expect.stringContaining('except a poll observer'));
+  });
+
+  it('runs an observer command with live: true for real and reports it as live', async () => {
+    const { result, rehearsal, commands, spawned } = await rehearse(true);
+    expect(spawned).toBe('pr view 1 --json state\n');
+    expect(commands.filter((argv) => argv[0] !== 'git')).toEqual([
+      ['gh', 'pr', 'view', '1', '--json', 'state'],
+    ]);
+    expect(rehearsal.commands.map((entry) => [entry.stepId, entry.outputSource])).toEqual([
+      ['snapshot', 'synthesized'],
+      ['ci', 'live'],
+      ['ci', 'synthesized'],
+      ['comment', 'synthesized'],
+    ]);
+    expect(rehearsal.commands[1]).toMatchObject({
+      parentStepId: 'ci',
+      command: ['gh', 'pr', 'view', '1', '--json', 'state'],
+      fixtureIndex: null,
+      error: null,
+    });
+    expect(result.run.output).toMatchObject({
+      ci: { value: { state: expect.stringMatching(/^LIVE\+/u) as unknown } },
+    });
   });
 });
