@@ -1041,7 +1041,7 @@ describe('pending command exit and error codes', () => {
       hidden: 1,
     });
     const output = await captureCommand(WorkflowPending, ['--state-dir', stateDir]);
-    expect(execute).toHaveBeenCalledWith(expect.not.objectContaining({ all: expect.anything() }));
+    expect(execute.mock.calls[0]?.[0]).not.toHaveProperty('all');
     expect(output.stdout).toBe(
       'No pending waits.\n1 hidden (answered, or from ended runs); --all lists them.',
     );

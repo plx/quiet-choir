@@ -750,8 +750,10 @@ it('lists runStatus and delivery on every pending row, unfiltered', async () => 
   const at = Date.parse(queued?.delivery?.at ?? '');
   expect(at).toBeGreaterThanOrEqual(before);
   expect(at).toBeLessThanOrEqual(Date.now());
-  const envelope = JSON.parse(await readFile(answerPath(stateDir, 'questions', 'gate'), 'utf8'));
-  expect(queued?.delivery?.at).toBe((envelope as { at: string }).at);
+  const envelope = JSON.parse(
+    await readFile(answerPath(stateDir, 'questions', 'gate'), 'utf8'),
+  ) as { at: string };
+  expect(queued?.delivery?.at).toBe(envelope.at);
 });
 
 it('lists a corrupted inbox file as queued without attribution', async () => {
@@ -831,7 +833,13 @@ it('reports author, size and JSON refusals as one documented synthetic issue eac
   expect(author).toBeInstanceOf(AnswerError);
   expect(author).toMatchObject({
     reason: 'invalid',
-    issues: [{ code: 'answer_author', path: [], message: expect.stringContaining('human:<name>') }],
+    issues: [
+      {
+        code: 'answer_author',
+        path: [],
+        message: expect.stringContaining('human:<name>') as unknown,
+      },
+    ],
   });
   expect(author.message).not.toContain('\n');
   const large = await refusal('text', 'x'.repeat(1_048_576));
