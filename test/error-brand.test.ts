@@ -71,7 +71,9 @@ function samples(api: Api): Record<string, Error> {
       status: 'completed',
     }),
     WorkflowInputError: new api.WorkflowInputError(null, new Error('invalid')),
-    AnswerError: new api.AnswerError('invalid', 'bad answer'),
+    AnswerError: new api.AnswerError('invalid', 'bad answer', [
+      { code: 'invalid_type', path: ['approved'], message: 'Invalid input' },
+    ]),
   };
 }
 
@@ -162,6 +164,14 @@ describe('public error brands (ADR 0028)', () => {
     class Theirs extends second.OrphanProcessesError {}
     expect(new Theirs('run', []) instanceof host.RunRefusedError).toBe(true);
     expect(new host.OrphanProcessesError('run', []) instanceof Theirs).toBe(false);
+  });
+
+  it('keeps the issues of an AnswerError built by another module instance', () => {
+    const issues = [{ code: 'invalid_type', path: ['approved'], message: 'Invalid input' }];
+    const foreign = new second.AnswerError('invalid', 'bad answer', issues);
+    expect(foreign instanceof host.AnswerError).toBe(true);
+    expect(foreign.issues).toEqual(issues);
+    expect(new host.AnswerError('conflict', 'taken').issues).toEqual([]);
   });
 
   it('classifies failures built by another module instance', () => {

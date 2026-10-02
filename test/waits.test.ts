@@ -201,6 +201,7 @@ it.each(['signal', 'late-signal', 'late-poll'] as const)(
       nextCheckAt: opened + 30_000,
       deadline: opened + 10_000,
       note: { pending: 1 },
+      delivery: { state: 'none', at: null, by: null },
     });
     if (mode !== 'late-poll') {
       const answer = await writeAnswer({
@@ -1046,6 +1047,9 @@ it('tolerates a single observation error, shows it in pending and clears it on s
       lastError: { message: 'HTTP 502: Bad Gateway', consecutive: 1, at: failedAt },
       nextCheckAt: failedAt + 30_000,
       deadline: opened + 600_000,
+      // A poll-only wait accepts no answer, so it has no delivery state.
+      runStatus: 'suspended',
+      delivery: null,
     }),
   ]);
   // The additive field survives the suspension's write and re-read.

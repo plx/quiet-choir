@@ -16,7 +16,7 @@ import {
   type Approval,
   type WorkflowContext,
 } from '../src/index.js';
-import { answerPath } from '../src/workflow/runtime/inbox.js';
+import { AnswerError, answerPath } from '../src/workflow/runtime/inbox.js';
 import { writeRun } from '../src/workflow/runtime/store.js';
 
 let stateDir: string;
@@ -721,4 +721,140 @@ it('repeats a recorded launch policy in resumeCommand, validating and replacing 
     stateDir,
   ]);
   expect((await readRun(options())).launch?.policy).toBeUndefined();
+});
+
+it('lists runStatus and delivery on every pending row, unfiltered', async () => {
+  const definition = workflow((ctx) => ctx.ask('gate', question));
+  const suspended = await runWorkflow(definition, options());
+  if (suspended.status !== 'suspended') throw new Error('Expected a suspension.');
+  // The runner's own suspended-run result keeps the plain operation shape.
+  for (const entry of suspended.pending) {
+    expect(Object.keys(entry)).not.toContain('runStatus');
+    expect(Object.keys(entry)).not.toContain('delivery');
+  }
+  expect(await listPending({ stateDir })).toEqual([
+    {
+      ...suspended.pending[0],
+      runStatus: 'suspended',
+      delivery: { state: 'none', at: null, by: null },
+    },
+  ]);
+  const before = Date.now();
+  await writeAnswer({ ...options(), stepId: 'gate', value: 'ship', by: 'agent:test' });
+  const [queued] = await listPending({ stateDir });
+  expect(queued).toMatchObject({
+    stepId: 'gate',
+    runStatus: 'suspended',
+    delivery: { state: 'queued', by: 'agent:test' },
+  });
+  const at = Date.parse(queued?.delivery?.at ?? '');
+  expect(at).toBeGreaterThanOrEqual(before);
+  expect(at).toBeLessThanOrEqual(Date.now());
+  const envelope = JSON.parse(await readFile(answerPath(stateDir, 'questions', 'gate'), 'utf8'));
+  expect(queued?.delivery?.at).toBe((envelope as { at: string }).at);
+});
+
+it('lists a corrupted inbox file as queued without attribution', async () => {
+  await runWorkflow(
+    workflow((ctx) => ctx.ask('gate', question)),
+    options(),
+  );
+  const path = answerPath(stateDir, 'questions', 'gate');
+  await mkdir(join(path, '..'), { recursive: true });
+  await writeFile(path, '{not json');
+  expect((await listPending({ stateDir }))[0]?.delivery).toEqual({
+    state: 'queued',
+    at: null,
+    by: null,
+  });
+  await writeFile(path, JSON.stringify({ value: 'ship' }));
+  expect((await listPending({ stateDir }))[0]?.delivery).toEqual({
+    state: 'queued',
+    at: null,
+    by: null,
+  });
+});
+
+it('reports a legacy flat-inbox delivery as queued', async () => {
+  await runWorkflow(
+    workflow((ctx) => ctx.ask('gate', question)),
+    options(),
+  );
+  await mkdir(join(stateDir, 'questions.inbox'), { recursive: true });
+  await writeFile(join(stateDir, 'questions.inbox', 'gate.answer.json'), '{}');
+  expect((await listPending({ stateDir }))[0]?.delivery?.state).toBe('queued');
+});
+
+it('explains an invalid answer as normalized one-line issues', async () => {
+  await runWorkflow(
+    workflow((ctx) => ctx.approve('approval', { prompt: 'Apply?' })),
+    options(),
+  );
+  const error = await writeAnswer({
+    ...options(),
+    stepId: 'approval',
+    value: { approved: 'yes' },
+  }).catch((thrown: unknown) => thrown);
+  if (!(error instanceof AnswerError)) throw new Error('Expected an AnswerError.');
+  expect(error.reason).toBe('invalid');
+  expect(error.issues[0]).toMatchObject({ code: 'invalid_type', path: ['approved'] });
+  expect(error.message).not.toContain('\n');
+  expect(error.message).toMatch(/^Answer does not match the question schema: approved: /u);
+  // A root-level mismatch names (root).
+  const root = await writeAnswer({ ...options(), stepId: 'approval', value: 3 }).catch(
+    (thrown: unknown) => thrown,
+  );
+  expect(root).toMatchObject({ issues: [{ path: [] }] });
+  expect((root as Error).message).toContain('(root): ');
+});
+
+it('reports author, size and JSON refusals as one documented synthetic issue each', async () => {
+  await runWorkflow(
+    workflow((ctx) =>
+      Promise.all([
+        ctx.approve('human', { prompt: 'Apply?', audience: 'human' }),
+        ctx.ask('text', { prompt: 'Text?', schema: z.string() }),
+      ]),
+    ),
+    options(),
+  );
+  const refusal = async (stepId: string, value: unknown, by?: string): Promise<AnswerError> => {
+    try {
+      await writeAnswer({ ...options(), stepId, value, ...(by === undefined ? {} : { by }) });
+    } catch (thrown) {
+      if (thrown instanceof AnswerError) return thrown;
+      throw thrown;
+    }
+    throw new Error('Expected a refusal.');
+  };
+  const author = await refusal('human', { approved: true }, 'agent:x');
+  expect(author).toBeInstanceOf(AnswerError);
+  expect(author).toMatchObject({
+    reason: 'invalid',
+    issues: [{ code: 'answer_author', path: [], message: expect.stringContaining('human:<name>') }],
+  });
+  expect(author.message).not.toContain('\n');
+  const large = await refusal('text', 'x'.repeat(1_048_576));
+  expect(large).toMatchObject({
+    reason: 'invalid',
+    issues: [{ code: 'answer_too_large', path: [], message: 'Answer envelope exceeds 1 MiB.' }],
+  });
+  const notJson = await refusal('text', undefined);
+  expect(notJson).toMatchObject({ reason: 'invalid', issues: [{ code: 'answer_not_json' }] });
+  expect(notJson.issues).toHaveLength(1);
+  expect(notJson.message).not.toContain('\n');
+});
+
+it('gives a conflict no issues', async () => {
+  await runWorkflow(
+    workflow((ctx) => ctx.ask('gate', question)),
+    options(),
+  );
+  await writeAnswer({ ...options(), stepId: 'gate', value: 'ship' });
+  await expect(
+    writeAnswer({ ...options(), stepId: 'gate', value: 'revise' }),
+  ).rejects.toMatchObject({ reason: 'conflict', issues: [] });
+  await expect(
+    writeAnswer({ ...options(), stepId: 'missing', value: 'revise' }),
+  ).rejects.toMatchObject({ reason: 'conflict', issues: [] });
 });

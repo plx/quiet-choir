@@ -29,6 +29,7 @@ import { WorkflowExecutor } from '../src/workflow/loader/executor.js';
 import { TickWorkflowExecutor } from '../src/workflow/loader/tick.js';
 import type { TickWorkflowsResult } from '../src/workflow/loader/tick.js';
 import type { PendingOperation } from '../src/workflow/runtime/wait-model.js';
+import type { PendingRow } from '../src/workflow/loader/pending-listing.js';
 import type { RunRecord } from '../src/workflow/runtime/store.js';
 import WorkflowTypecheck from '../src/commands/workflow/typecheck.js';
 import { TypeScriptExecutor } from '../src/workflow/typecheck/typescript-executor.js';
@@ -916,7 +917,7 @@ describe('resume command exit and error codes', () => {
 });
 
 describe('pending command exit and error codes', () => {
-  const question: PendingOperation = {
+  const question: PendingRow = {
     runId: 'run-a',
     stepId: 'approve',
     questionFingerprint: 'fingerprint',
@@ -931,8 +932,11 @@ describe('pending command exit and error codes', () => {
     rejections: [],
     codeChanged: false,
     answerCommand: null,
+    runStatus: 'suspended',
+    delivery: null,
+    next: [],
   };
-  const wait: PendingOperation = {
+  const wait: PendingRow = {
     kind: 'wait',
     runId: 'run-b',
     stepId: 'poll',
@@ -946,6 +950,9 @@ describe('pending command exit and error codes', () => {
     rejections: [],
     codeChanged: null,
     answerCommand: null,
+    runStatus: 'suspended',
+    delivery: null,
+    next: [],
   };
 
   it('renders a question and a wait as human text', async () => {
@@ -954,6 +961,7 @@ describe('pending command exit and error codes', () => {
       kind: 'workflow.pending.result',
       ok: true,
       pending: [question, wait],
+      hidden: 0,
     });
     const output = await captureCommand(WorkflowPending, ['--state-dir', stateDir]);
     expect(output.error).toBeUndefined();
@@ -967,7 +975,7 @@ describe('pending command exit and error codes', () => {
 
   it('renders the latest tolerated observation error of a wait as text and JSON', async () => {
     const stateDir = await stateDirectory();
-    const tolerated: PendingOperation = {
+    const tolerated: PendingRow = {
       ...wait,
       note: { state: 'pending' },
       lastError: { message: 'HTTP 502: Bad Gateway', consecutive: 2, at: 1_500 },
@@ -976,6 +984,7 @@ describe('pending command exit and error codes', () => {
       kind: 'workflow.pending.result',
       ok: true,
       pending: [tolerated, wait],
+      hidden: 0,
     });
     const text = await captureCommand(WorkflowPending, ['--state-dir', stateDir]);
     expect(text.stdout).toBe(
@@ -994,12 +1003,57 @@ describe('pending command exit and error codes', () => {
     ]);
   });
 
+  it('marks queued and ended-run rows, prints their next command and the hidden hint', async () => {
+    const stateDir = await stateDirectory();
+    const queued: PendingRow = {
+      ...question,
+      runStatus: 'suspended',
+      delivery: { state: 'queued', at: '2026-01-02T00:00:00.000Z', by: 'human:Pat' },
+      next: [
+        { why: 'An answer is queued; resume the run.', argv: ['q', 'workflow', 'resume', 'run-a'] },
+      ],
+    };
+    const ended: PendingRow = { ...wait, runStatus: 'failed' };
+    const execute = vi.spyOn(WorkflowExecutor.prototype, 'execute').mockResolvedValue({
+      kind: 'workflow.pending.result',
+      ok: true,
+      pending: [queued, ended],
+      hidden: 2,
+    });
+    const output = await captureCommand(WorkflowPending, ['--state-dir', stateDir, '--all']);
+    expect(execute).toHaveBeenCalledWith(expect.objectContaining({ all: true }));
+    expect(output.stdout).toBe(
+      [
+        'run-a approve [human] Ship it? (answer queued by human:Pat at 2026-01-02T00:00:00.000Z)',
+        'Next: q workflow resume run-a  (An answer is queued; resume the run.)',
+        'run-b poll [wait] checks=3 nextCheckAt=2000 deadline=5000 [run failed]',
+        '2 hidden (answered, or from ended runs); --all lists them.',
+      ].join('\n'),
+    );
+  });
+
+  it('keeps the hidden hint after "No pending waits." and omits all by default', async () => {
+    const stateDir = await stateDirectory();
+    const execute = vi.spyOn(WorkflowExecutor.prototype, 'execute').mockResolvedValue({
+      kind: 'workflow.pending.result',
+      ok: true,
+      pending: [],
+      hidden: 1,
+    });
+    const output = await captureCommand(WorkflowPending, ['--state-dir', stateDir]);
+    expect(execute).toHaveBeenCalledWith(expect.not.objectContaining({ all: expect.anything() }));
+    expect(output.stdout).toBe(
+      'No pending waits.\n1 hidden (answered, or from ended runs); --all lists them.',
+    );
+  });
+
   it('renders the pending result as JSON', async () => {
     const stateDir = await stateDirectory();
     vi.spyOn(WorkflowExecutor.prototype, 'execute').mockResolvedValue({
       kind: 'workflow.pending.result',
       ok: true,
       pending: [question, wait],
+      hidden: 0,
     });
     const output = await captureCommand(WorkflowPending, ['--state-dir', stateDir, '--json']);
     expect(output.error).toBeUndefined();
@@ -1014,6 +1068,7 @@ describe('pending command exit and error codes', () => {
       kind: 'workflow.pending.result',
       ok: true,
       pending: [],
+      hidden: 0,
     });
     const output = await captureCommand(WorkflowPending, ['--state-dir', stateDir]);
     expect(output.error).toBeUndefined();
