@@ -2,7 +2,8 @@
 
 **Status:** Accepted. Extends ADR 0005/0006; supersedes their current checkpoint-format choice.
 Extended by [0008](0008-scoped-fan-out.md) for durable aggregate outcomes and scoped cancellation.
-Amended by #274 (invalid-request, overloaded and the transient retry alias).
+Amended by #274 (invalid-request, overloaded and the transient retry alias). Amended by #144
+(healed-step dependents use launch and failure stamps, with a `seq` fallback).
 
 ## Context
 
@@ -50,10 +51,17 @@ Forbid `Promise.race`/`Promise.any` over durable operations in author guidance. 
 a settled agent call for replayable timeout decisions; tests flip the agent's would-be timing on
 resume and verify the recorded timeout still selects the same downstream path.
 
-Warn as soon as a previously failed step completes when later recorded IDs exist, naming both the
-healed step and later IDs. Strict replay allows saved terminal outcomes but stops before the next
-live effect. The end-of-body skipped-step error names healed steps too. This is a launch-order
-heuristic: already running concurrent work can finish and a warning need not imply actual drift.
+Warn as soon as a previously failed step completes when recorded steps launched after its failure
+exist, naming both the healed step and those IDs. A recorded step qualifies when its `launchStamp`
+is at least the healed step's `failureStamp` (the settlement stamp of its first terminal failure
+since it last completed; ADR 0006 describes the counter), so a sibling launched in the same tick as
+the failing step is not flagged whichever settled first. When either stamp is missing (checkpoints
+written before #144, or a failure saved between retries), that pair falls back to the earlier
+launch-order rule: a higher `seq` qualifies. Strict replay allows saved terminal outcomes but stops
+before the next live effect. The end-of-body skipped-step error names healed steps too. The rule is
+a conservative watermark, not proof of dependence: a step launched after the failure by unrelated
+control flow is still flagged, already running concurrent work can finish, and a warning need not
+imply actual drift. `healedDependents` in `replay-decision.ts` encodes it.
 
 New checkpoints use format 4 because older readers cannot interpret the new terminal status. Formats
 1–3 remain inspectable and are refused for resume/fork without changing their data. No implicit

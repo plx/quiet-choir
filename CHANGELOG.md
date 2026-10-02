@@ -2,6 +2,18 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- A healed step (failed before, succeeds on resume) now flags only recorded steps launched at or
+  after its failure settled, instead of every step with a higher `seq` (#144; amends ADR 0006 and
+  ADR 0007). A `Promise.all` sibling launched with the failing step no longer produces a
+  `replay.divergence` warning, and `--strict-replay` no longer fails the resume for it. Step records
+  gain three optional fields on the public `StepRecord` type, from a run-level settlement counter:
+  `launchStamp` (when the body last requested the effect live), `settleStamp` (after its latest
+  terminal settlement) and `failureStamp` (its first terminal failure since it last completed). The
+  checkpoint format is unchanged. Records without stamps, such as existing checkpoints or a failure
+  saved between retries, keep the `seq` rule for that pair. The check is still a conservative
+  watermark: a step launched after the failure by unrelated control flow is flagged.
+  `workflow resume RUN --strict-replay` is now accepted, equivalent to
+  `execute --resume --strict-replay`, and the shared flag description names healed failures.
 - `configuration doctor` grades each harness version against the tested range instead of one pinned
   version, always runs the exact-argv probe once `--version` answered, and exits 1 only when blocked
   (ADR 0040; amends ADR 0011). A version inside `testedHarnessVersions` passes; an untested patch of

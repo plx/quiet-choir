@@ -122,9 +122,12 @@ only on an exact old-fingerprint match, and never for a terminal agent step, who
 was never pinned. Dry-run refuses Git effects after terminal replay but before fork reuse. Fork
 reuse is considered only for an absent step in a forked run, and the lookup that advances or closes
 the provenance cursor runs only when the decision reaches it. A strict healed divergence permits
-terminal replay and fork reuse but stops before the next live effect. The runner keeps the migration
-writes, saves, events, frame attribution and the divergence abort, and the same ESLint import guard
-covers the module. `test/replay-decision.test.ts` is the executable table of these rules.
+terminal replay and fork reuse but stops before the next live effect. The same module's
+`healedDependents` decides which recorded steps a healed failure may have influenced: those launched
+at or after its failure settled, by launch and failure stamps, falling back to `seq` order for a
+pair without stamps. The runner keeps the migration writes, saves, events, frame attribution and the
+divergence abort, and the same ESLint import guard covers the module. `test/replay-decision.test.ts`
+is the executable table of these rules.
 
 The recovery rules for runs whose owner may be gone live in
 `src/workflow/runtime/recovery-decision.ts`. `classifyRecovery` sorts an ownership observation into

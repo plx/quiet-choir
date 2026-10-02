@@ -5,7 +5,8 @@
 Accepted. Extends ADR 0005 with callback identity, explicit code acceptance, and fork reuse. Strict
 resume remains the default. Checkpoint format 3 supersedes format 2 for execution and reuse. Amended
 by #126: the CLI refuses an accepted replay that would fail on a changed completed step before it
-changes the run.
+changes the run. Amended by #144: steps also carry launch, settle and failure stamps, and the
+healed-step check uses them instead of `seq` (ADR 0007).
 
 ## Context
 
@@ -59,6 +60,20 @@ runner saves a warning and emits replay.divergence. Strict replay aborts immedia
 on persistence, so concurrent launches cannot bypass the guard. The warning is a concurrency
 heuristic and does not replace the end-of-body completed-step check. Ordinary warning mode may still
 perform new effects before final rejection.
+
+`seq` is launch order, not causality, so the healed-step check does not use it when it can avoid it
+(#144). The run keeps a settlement counter, derived at run start from the highest persisted stamp
+like `nextSeq`, so the checkpoint format is unchanged. Each terminal settlement increments it and
+records `settleStamp`; a terminal failure also records `failureStamp`, kept until the step
+completes, so the earliest failure since the last success wins. Each live launch records
+`launchStamp`, taken synchronously when the body requests the effect, before awaited preparation.
+When a failed step heals, a recorded step is flagged when its `launchStamp` (as saved before this
+execution) is at least the healed step's `failureStamp`: it was launched after the failure could be
+observed. Same-tick `Promise.all` siblings are therefore not flagged. When either stamp is missing,
+for legacy records or a failure saved between retries, that pair falls back to the `seq` rule. The
+rule is a conservative watermark: a step launched later by unrelated control flow is still flagged.
+Fork-reused copies are stamped on the target run's clock. The pre-live skipped-step check above
+still compares `seq`. `workflow resume` accepts `--strict-replay` like `execute --resume`.
 
 Formats 1 and 2 remain readable for inspection, but execution/fork refuses them without modifying
 checkpoint data. They lack callback/source/order metadata needed to justify this reuse contract. Use

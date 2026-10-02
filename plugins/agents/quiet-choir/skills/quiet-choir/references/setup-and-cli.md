@@ -234,7 +234,8 @@ matching completed effects; repeat `--invalidate 'reports/**'` to force chosen e
 cannot be combined with `--resume`. `--accept-code-change` requires `--resume` and records accepted
 source/schema changes while retaining step checks; when a completed step changed it refuses with
 `run.incompatible` before recording anything, and `error.details.next` holds the fork command.
-`--strict-replay` stops at the early ordering warning before live work. See
+`--strict-replay` stops at the early ordering warning or a healed-failure warning before live work;
+`workflow resume RUN --strict-replay` accepts it too. See
 [durability](durability.md#choose-a-recovery-path).
 
 `check-resume --json` emits `{kind, ok, check}` for a compatible report (exit 0). Incompatibility
