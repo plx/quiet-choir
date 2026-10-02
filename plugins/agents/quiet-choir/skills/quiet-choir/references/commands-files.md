@@ -3,10 +3,11 @@
 Use `ctx.exec(id, argv, options)` for deterministic commands, including tests, Git, and the
 installed `gh` CLI. The CLI supplies `NodeProcessRunner`; embedded callers supply
 `RunOptions.processRunner`. The core never imports a process-spawning adapter. A fixture can
-implement `ProcessRunner.run` with in-memory results. Custom adapters must enforce limits and
-register children before sending stdin. They are responsible for the correctness of their saved
-outputs; use separate run IDs/state for mocked and real executions. Commands do not consume an agent
-concurrency slot.
+implement `ProcessRunner.run` with in-memory results. `RunOptions.execRunner`, when set, serves
+`ctx.exec` effects (including `guardFile`'s helpers) instead, while worktree Git keeps
+`processRunner`. Custom adapters must enforce limits and register children before sending stdin.
+They are responsible for the correctness of their saved outputs; use separate run IDs/state for
+mocked and real executions. Commands do not consume an agent concurrency slot.
 
 An argv tuple runs directly. `{ shell: '...' }` explicitly selects `sh -c` (`cmd.exe` on Windows),
 and inspect prints `[SHELL]`. Both forms run with the operator's privileges. Agent tool grants do
@@ -93,8 +94,13 @@ original blob. Do not treat this as automatic restore-before-retry or concurrent
 
 ## Rehearsal
 
-CLI `--dry-run` synthesizes exec results without spawning, records planned commands in `commands`,
-and uses temporary state. Plain stdout is empty and JSON follows the schema, so the exercised branch
-may differ from reality. File effects, local callbacks, and top-level workflow code still run for
-real unless selected by `--stub-steps`. `--harness fixture` replaces agents only; ordinary commands
-and files remain real. See the [verified cookbook](patterns.md#commands-and-test-verdicts).
+CLI `--dry-run` never spawns commands, records them in `commands`, and uses temporary state. A
+command is answered by the first matching `exec` rule of the fixture file, if any, and otherwise
+synthesized: plain stdout is empty and JSON follows the schema, so the exercised branch may differ
+from reality. `--harness fixture` answers agents from `calls` and commands from `exec` rules without
+spawning; unmatched commands run for real there, and worktree Git always does. A file with
+`"commands": "fixture"` fails an unmatched command at its step in both modes. `workflow fixtures`
+exports completed command results as exec rules keyed by argv and environment/stdin digests. File
+effects, local callbacks, and top-level workflow code still run for real unless selected by
+`--stub-steps`. See [command fixtures](rehearsal.md#command-fixtures) and the
+[verified cookbook](patterns.md#commands-and-test-verdicts).

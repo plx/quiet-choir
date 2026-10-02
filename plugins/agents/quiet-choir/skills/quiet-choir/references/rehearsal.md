@@ -25,8 +25,10 @@ filesystem, subprocess, network, or external effects. Stub named local effects w
 `--stub-steps 'publish/**' --stub-steps 'notify/*'`. These patterns match fully qualified IDs; `*`
 stays within a segment and `**` crosses segments. Matched callbacks, file reads/writes and poll
 observers receive synthesized results through their original Zod validation (a matched poll
-completes without calling its observer); unmatched callbacks run normally. Durable sleeps complete
-immediately. Rehearsal preserves capability/profile validation and still requires declared grants.
+completes without calling its observer); unmatched callbacks run normally. Commands (`ctx.exec`)
+never spawn: they are synthesized from their schema unless the fixture file has a matching exec rule
+(see [command fixtures](#command-fixtures)). Durable sleeps complete immediately. Rehearsal
+preserves capability/profile validation and still requires declared grants.
 
 ## Fixtures
 
@@ -37,7 +39,7 @@ immediately. Rehearsal preserves capability/profile validation and still require
   "version": 1,
   "calls": [
     { "step": "triage", "output": { "severity": "high", "files": ["a.ts"] } },
-    { "step": "review/2", "attempt": 1, "error": "simulated failure" },
+    { "step": "review/2", "attempt": 1, "error": "simulated failure", "kind": "timeout" },
     { "step": "review/*", "harness": "codex", "output": { "findings": [] } },
     { "step": "summary", "text": "Looks fine.", "usage": { "costUsd": 0.01 } }
   ],
@@ -52,14 +54,18 @@ stays plain text. Missing usage fields become null. Results still pass normal pa
 validation, and checkpointing; stale fixtures fail at their named step. Missing rules fail with the
 step, harness, and attempt unless `unmatched` is `synthesize`. Unmatched calls and synthesis gaps
 reject as configuration errors and are never settled or retried, while a rule's `error` simulates a
-settleable invocation failure.
+settleable invocation failure. An optional `kind` (an `ErrorKind`, such as `timeout`, `rate-limit`,
+`overloaded` or `invalid-request`; it requires `error`) gives that failure a category: the call
+rejects with a `HarnessError` of that kind and the same `Step <id>: <error>` message, so `retry.on`
+filters, `StepError.kind` and branches on it can be rehearsed. Without `kind` the failure is
+`unknown`, as before.
 
 Fixture execution writes ordinary durable records. Use `--dry-run --harness fixture:./fixtures.json`
 for temporary state, immediate sleeps, and synthesis of unmatched calls regardless of the file's
 `unmatched` setting. Fixture overrides can direct branches and supply data that synthesis cannot.
 
-Export successful agent outputs from a completed run without importing its workflow or acquiring its
-lock:
+Export successful agent outputs and command results from a completed run without importing its
+workflow or acquiring its lock:
 
 ```sh
 node "$QC_CHECKOUT/bin/run.js" workflow fixtures duet --json > fixtures.json
@@ -67,8 +73,71 @@ node "$QC_CHECKOUT/bin/run.js" workflow execute edited.workflow.ts \
   --dry-run --harness fixture:./fixtures.json --json
 ```
 
-Export skips local/sleep effects and settled failures; successful agent outputs retain harness and
-usage but do not pin an attempt number. It does not modify the source checkpoint.
+Export skips local/sleep effects. It keeps completed agent outputs, which retain harness and usage
+but do not pin an attempt number, and settled agent failures (`onError: 'return'`) as `error` rules
+without their original `kind`, both in execution order. Completed commands become `exec` rules in
+execution order, keyed by full step ID, the full argv as `argvPrefix` (omitted for a shell command),
+and the recorded `envSha256` and `inputSha256`; environment overlay values and stdin are never read
+or written, only those digests. A structured command exports its parsed value as `json`; a plain one
+exports `stdout`, plus `stderr` and `code` when they are not empty or zero. When it exports any exec
+rule it also sets `"commands": "fixture"`, so a replay whose argv or inputs drift fails at that step
+instead of running the real command; shorten `argvPrefix` or drop a digest by hand when a value
+legitimately changes per run. A run without commands exports exactly as before. It does not modify
+the source checkpoint.
+
+## Command fixtures
+
+The same file can answer `ctx.exec` and `ctx.exec.json` with an optional `exec` array, so a workflow
+whose branches come from command output (CI checks, `gh` queries) rehearses the path real execution
+takes:
+
+```json
+{
+  "version": 1,
+  "calls": [{ "step": "fix-*", "output": { "fixed": true } }],
+  "exec": [
+    { "step": "prepare", "json": { "pr": 7, "headRefOid": "abc123" } },
+    {
+      "step": "gate-*",
+      "argvPrefix": ["gh", "pr", "checks"],
+      "occurrence": 1,
+      "json": { "state": "failure", "headRefOid": "abc123" }
+    },
+    { "step": "gate-*", "json": { "state": "success", "headRefOid": "abc123" } },
+    { "step": "merge", "argvPrefix": ["gh", "pr", "merge"], "stdout": "merged\n" }
+  ],
+  "commands": "fixture"
+}
+```
+
+Exec rules are first match, separate from agent `calls` and numbered in their own index space. A
+rule matches a command when every filter it has holds: `step` (the same glob as agent rules),
+`argvPrefix` (leading argv elements, compared exactly; a rule with a prefix never matches a
+`{ shell }` command), `envSha256` and `inputSha256` (the digests the step's exec summary records),
+`attempt` (cumulative, so a retry can see a different answer), and `occurrence`. A rule's occurrence
+is the one-based position of the step among the distinct step IDs that met its step, argv and digest
+filters so far; every rule counts every command, so it does not depend on earlier rules, and retries
+keep their occurrence. Above, `gate-1` gets `failure` and `gate-2` `success`. Occurrences count only
+commands that reach the process runner in this process: steps replayed from a checkpoint never do,
+and concurrent commands count in launch order, so prefer full step IDs for a run you will resume.
+
+Exactly one of `json` (serialized as stdout) and `stdout` is required; `stderr` defaults to empty
+and `code` (0-255) to 0. The result then goes through the step's usual checks: a code outside
+`okExitCodes` fails like a real exit (kind `process`), and `ctx.exec.json` parses and validates the
+stdout with its schema.
+
+A command no rule matches is synthesized under `--dry-run` and runs for real under
+`--harness fixture`. With `"commands": "fixture"` it instead fails at its step as a configuration
+error, naming the step, the JSON argv and the attempt; it is never retried or settled. Unlike
+`unmatched`, which `--dry-run` overrides, `commands: "fixture"` is honored under `--dry-run`,
+because its purpose is to forbid synthesis.
+
+Under `--harness fixture` without `--dry-run`, matched commands are answered without spawning
+through `RunOptions.execRunner`; worktree Git operations always use the real process runner, so
+isolated worktrees are still provisioned. `guardFile`'s baseline and restore helpers are ordinary
+exec effects too, so under `commands: "fixture"` they need rules (for example a `**/baseline` step
+glob). Commands are not per-harness: a named `--harness name=fixture:FILE` file with `exec` or
+`commands` is refused; put them in the global `--harness fixture:FILE`.
 
 ## Synthesis and report
 
@@ -95,6 +164,12 @@ report contains:
   Codex strict-schema checks, before materializing private files.
 - `replays`: reused effect IDs/kinds. Their full original prompts were never saved, so they do not
   appear as new live calls. A completed-run preview lists all reused terminal effects.
+- `commands`: commands that reached the rehearsal runner, with step ID, command, cwd, whether it is
+  structured, output source (`fixture` or `synthesized`), the matched index in the file's `exec`
+  array (or null), and `error`, the refusal of an unmatched command under `commands: "fixture"`
+  (such an entry has output source `fixture` and index null).
+- `staleExecFixtures`: indices of exec rules that matched no command, with a warning when any exist.
+  A resume preview reports rules for replayed steps as stale.
 - `harnessCounts` (`providerCounts` retains built-in compatibility counts),
   `nominalClaudeCeilingUsd`, `stubbedSteps`, `skippedSleeps`, and `warnings`.
 
@@ -165,14 +240,16 @@ belongs under `harnesses.<name>` in the same JSON config.
 ## Embedding and native protocol tests
 
 The root entry point exports `FixtureHarness`, `parseHarnessFixtures`, `HarnessFixtures`,
-`FixtureCall`, and `synthesizeOutput`. Supply `new FixtureHarness(fixtures)` to `runWorkflow` for
-durable fixture execution. `HarnessRequest.call` carries `runId`, `stepId`, cumulative `attempt`,
-and stable `idempotencyKey: runId/stepId`; it is attached inside the effect after fingerprinting.
-`HarnessRequestInput` is the identity-free input accepted by `CliHarness.plan()` and direct adapter
-calls. Planning image calls requires `imageAttachments` containing the already captured bytes;
-normal runtime/direct execution captures them before planning. A plan is JSON data and creates no
-files or processes. Actual invocation materializes only its indexed artifact references, then cleans
-them up.
+`FixtureCall`, `FixtureExecCall`, and `synthesizeOutput`. Supply `new FixtureHarness(fixtures)` to
+`runWorkflow` for durable fixture execution; `FixtureHarness` answers agent calls only. To answer
+commands, pass your own `ProcessRunner` as `RunOptions.execRunner`, which `ctx.exec` uses instead of
+`processRunner` while worktree Git keeps `processRunner`. `HarnessRequest.call` carries `runId`,
+`stepId`, cumulative `attempt`, and stable `idempotencyKey: runId/stepId`; it is attached inside the
+effect after fingerprinting. `HarnessRequestInput` is the identity-free input accepted by
+`CliHarness.plan()` and direct adapter calls. Planning image calls requires `imageAttachments`
+containing the already captured bytes; normal runtime/direct execution captures them before
+planning. A plan is JSON data and creates no files or processes. Actual invocation materializes only
+its indexed artifact references, then cleans them up.
 
 Native CLI attempts receive `QUIET_CHOIR_RUN_ID`, `QUIET_CHOIR_STEP_ID`, `QUIET_CHOIR_ATTEMPT`, and
 `QUIET_CHOIR_IDEMPOTENCY_KEY` environment variables. These are routing/diagnostic metadata, not

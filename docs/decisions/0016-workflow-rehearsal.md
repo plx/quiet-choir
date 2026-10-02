@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted.
+Accepted. Amended by #147 (command fixtures and typed fixture failures).
 
 ## Context
 
@@ -56,3 +56,37 @@ Normal tests replay captured bytes through shipped scripts. The opt-in `test:con
 installed CLIs with fake credentials and isolated loopback APIs, checks semantic protocol/exit
 contracts, and refreshes sanitized version-tagged captures. It makes no paid inference calls and
 remains separate from the older paid Claude schema matrix. Custom `module:` loading remains #64.
+
+## Amendment: command fixtures and typed fixture failures (#147)
+
+Rehearsal synthesized every `ctx.exec` result and `--harness fixture` replaced agents only, so a
+workflow that branches on command output (CI checks, `gh` queries) rehearsed paths real execution
+never takes, and fixture `error` rules always settled as `unknown`.
+
+The fixture file (still version 1) gains an optional ordered `exec` array of command rules and an
+optional `"commands": "fixture"` mode. Exec rules live beside `calls` rather than inside it, so
+agent rules, their matching and their `fixtureIndex` numbering are unchanged and the public
+`FixtureCall` type keeps its shape; exec rules have their own index space (`FixtureExecCall`). A
+rule filters on step glob, an exact argv prefix (never matching a shell command), the recorded
+environment and stdin digests, the attempt, and a per-rule occurrence counted over distinct step IDs
+in this process. The matched result enters the normal exec path, so exit-code contracts and schemas
+still apply.
+
+Commands that no rule matches keep today's behavior (synthesized under `--dry-run`, real under
+`--harness fixture`) unless `commands: "fixture"` is set; then they fail at their step as a
+`ConfigurationError`, never retried or settled. Dry-run honors this mode, unlike `unmatched`,
+because its purpose is to forbid synthesis. Under `--harness fixture`, commands go through the new
+`RunOptions.execRunner`, a process runner for `ctx.exec` only; worktree Git keeps
+`RunOptions.processRunner`, so fixture runs still provision real isolated checkouts. Exec rules come
+only from the global fixture file: a named per-harness file with `exec` or `commands` is refused,
+because commands are not per-harness. Exec outputs answered by fixtures are guarded by the existing
+harness-kind provenance (`fixture` or `dry-run`).
+
+`workflow fixtures` exports completed commands as exec rules keyed by full step ID, full argv and
+both digests, and then sets `commands: "fixture"`, so a replay that drifts fails loudly instead of
+running a real command such as a merge. Environment overlay values and stdin are never exported.
+
+A fixture `error` rule may carry `kind` (an `ErrorKind`). The call then rejects with a
+`HarnessError` of that kind whose message is the unchanged `Step <id>: <error>` text, so `retry.on`,
+`StepError.kind` and kind-based branches can be rehearsed while kindless rules behave exactly as
+before. Export still writes agent error rules without `kind`.
