@@ -74,6 +74,13 @@ export const workflowLaunchSchema = z.object({
           return new Set(names).size === names.length && global === (kind === 'fixture' ? 1 : 0);
         }, 'A launch policy has one unnamed fixture exactly for kind fixture, and unique names.'),
       waitMode: z.enum(['suspend', 'block']),
+      worktrees: z
+        .object({
+          keep: z.enum(['all', 'failed', 'none']).optional(),
+          root: z.string().refine(isAbsolute).optional(),
+        })
+        .strict()
+        .optional(),
     })
     .strict()
     .optional(),

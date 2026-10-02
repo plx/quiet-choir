@@ -176,14 +176,16 @@ export async function readHarnessSelection(
 }
 
 /**
- * The launch policy a selection records: its kind and fixture sources, and the wait mode. Undefined
- * when the selection holds fixtures it did not read from files (an embedder's data), because such
- * a policy could not be reproduced by a later resume. Configuration values are never included.
+ * The launch policy a selection records: its kind and fixture sources, the wait mode, and the
+ * worktree flags when any is set. Undefined when the selection holds fixtures it did not read from
+ * files (an embedder's data), because such a policy could not be reproduced by a later resume.
+ * Configuration values are never included.
  * @internal
  */
 export function launchPolicyOf(
   selection: HarnessSelection | undefined,
   waitMode: LaunchPolicy['waitMode'],
+  worktrees: LaunchPolicy['worktrees'] = {},
 ): LaunchPolicy | undefined {
   const sources = selection?.sources ?? [];
   const recorded = new Set(sources.map(({ name }) => name));
@@ -203,6 +205,14 @@ export function launchPolicyOf(
         : {}),
     },
     waitMode,
+    ...(worktrees.keep === undefined && worktrees.root === undefined
+      ? {}
+      : {
+          worktrees: {
+            ...(worktrees.keep === undefined ? {} : { keep: worktrees.keep }),
+            ...(worktrees.root === undefined ? {} : { root: worktrees.root }),
+          },
+        }),
   };
 }
 

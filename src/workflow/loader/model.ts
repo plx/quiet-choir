@@ -66,6 +66,15 @@ export interface ExecuteWorkflowPlan extends ExecutionPlan {
    */
   readonly waitModeOnce?: 'suspend' | 'block';
   /**
+   * Sticky worktree flags (`--worktree-keep`, and `--worktree-root` as an absolute path), passed as
+   * `RunOptions.worktrees` over the definition's `worktrees` field and recorded in the launch policy.
+   * On resume, an omitted field is the run's recorded one.
+   */
+  readonly worktrees?: {
+    readonly keep?: 'all' | 'failed' | 'none';
+    readonly root?: string;
+  };
+  /**
    * On resume, replace the kind and fixtures of `harness` with the run's recorded launch policy,
    * keeping its configuration. The CLI sets it when no `--harness` flag was given.
    */

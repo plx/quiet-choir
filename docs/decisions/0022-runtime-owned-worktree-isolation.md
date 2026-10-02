@@ -62,3 +62,33 @@ checkout/registration link must match the ledger-owned path, the metadata direct
 inside the recorded repository, and publication checks the empty-file digest. Completed effects,
 refs and failed per-call cache reuse rules are unchanged. Unowned or otherwise corrupt Git metadata
 is not repaired implicitly.
+
+## Amendment: definition-level policy and capture exclusion (#152)
+
+`WorktreePolicy` can be declared on the root workflow definition (`defineWorkflow({ worktrees })`),
+so CLI runs get `setup` without embedding code, and it gains `captureExclude`. Only the root
+definition is read; a child's field is ignored. `RunOptions.worktrees` (and the CLI's
+`--worktree-keep` and `--worktree-root`, recorded by the launch policy of ADR 0035) overrides it
+field by field. One pure validator (`worktree-policy.ts`) serves the definition at load, the run
+options and the CLI flags. The policy stays outside step identity and the workflow fingerprint.
+
+Capture no longer stages everything. After setup returns, the runtime records the untracked,
+non-ignored paths in the (previously clean) checkout with
+`git status --porcelain -z --untracked-files=normal` and saves them on the ledger cache entry
+(`setupPaths`, optional, so older records parse) before any harness work. Capture runs
+`git add --all` with a NUL-separated pathspec list on stdin: `.`, each setup path as
+`:(exclude,literal,top)`, and each `captureExclude` pattern as `:(exclude,glob,top)`. Stdin keeps
+long lists clear of the argument limit, and reading the saved entry keeps a resumed capture
+consistent. `normal` collapses a new untracked directory into one path, so a dependency tree setup
+creates without an ignore rule is not persisted as thousands of pathspecs; the cost is that an agent
+file inside a setup-created untracked directory is not captured. Tracked files that setup modifies
+are captured, because excluding tracked paths would also hide real edits to them. A handle records
+its setup paths again on every preparation, since the reset and clean remove setup's untracked
+artifacts.
+
+A captured symlink (mode 120000, added, modified or type-changed relative to the attempt's start)
+whose target is absolute or climbs out of the repository lexically from the link's directory adds a
+worktree warning naming the step, link and target. It is a warning, not a refusal: an absolute link
+can be intentional, and the target is never followed. A run's cache root stays pinned on first use;
+a different requested root on a later execution now adds a warning naming both paths instead of
+being ignored silently.

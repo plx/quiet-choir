@@ -110,6 +110,26 @@ export default defineConfig(
     },
   },
   {
+    // Worktree policy validation and capture planning: pure, so both table-test without Git, and
+    // the policy validator stays free of the run store that workflow type checks must not load.
+    files: ['src/workflow/runtime/worktree-policy.ts', 'src/workflow/runtime/worktree-capture.ts'],
+    rules: {
+      '@typescript-eslint/no-restricted-imports': [
+        'error',
+        {
+          patterns: [
+            {
+              group: ['node:*', ...builtinModules, './**', '../**'],
+              allowTypeImports: true,
+              message:
+                'Worktree policy and capture helpers must stay free of I/O and the run store: use import type only.',
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
     // The pending row selection: a pure function of listed rows and recorded launches.
     files: ['src/workflow/loader/pending-listing.ts'],
     rules: {

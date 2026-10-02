@@ -61,6 +61,7 @@ export const worktreeLedgerSchema = z.object({
       attempt: z.number().int().positive(),
       state: z.enum(['planned', 'ready', 'removed']),
       outcome: z.enum(['running', 'completed', 'failed']),
+      setupPaths: z.array(text).optional(),
     }),
   ),
   handles: z.record(
@@ -95,6 +96,12 @@ export interface WorktreeLedger {
       state: 'planned' | 'ready' | 'removed';
       /** Last effect outcome, used by automatic retention policy. */
       outcome: 'running' | 'completed' | 'failed';
+      /**
+       * Untracked paths that `worktrees.setup` created in the latest preparation, relative to the
+       * checkout root (a new directory is one entry); capture never stages them. Absent when no
+       * setup ran or it created none.
+       */
+      setupPaths?: readonly string[];
     }
   >;
   /** Shared checkout identities and latest committed snapshots. */
