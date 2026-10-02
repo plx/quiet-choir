@@ -142,6 +142,7 @@ async function cacheSources(
 /** Source-validated metadata cache; execution always imports and checks the selected workflow anew. @internal */
 export async function listDefinitions(
   directories: readonly string[],
+  /** Validate one definition; execution passes durabilityLint 'warn', so findings only log. */
   validate: (plan: TypecheckPlan) => Promise<WorkflowCommandResult>,
   refresh = false,
 ): Promise<WorkflowCommandResult> {
@@ -185,7 +186,13 @@ export async function listDefinitions(
       if (!checked.ok) return checked;
       if (checked.kind !== 'workflow.validate.result')
         throw new Error('Definition registry expected a validation result.');
-      result = checked;
+      // Drop the (empty) lint diagnostics, so a fresh entry equals one read from the cache.
+      result = {
+        kind: checked.kind,
+        ok: checked.ok,
+        entrypoint: checked.entrypoint,
+        workflow: checked.workflow,
+      };
       try {
         const sources = await cacheSources(plan, result);
         await mkdir(root, { recursive: true, mode: 0o700 });

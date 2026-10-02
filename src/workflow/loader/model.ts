@@ -19,12 +19,17 @@ import type { PendingListing } from '../runtime/wait-model.js';
 import type { NextCommand } from './next-commands.js';
 import type { AnswerDelivery } from '../runtime/inbox.js';
 import type { ForkOptions, ResumeCheck, WorkflowIdentity } from '../runtime/replay-model.js';
-import type { TypecheckPlan } from '../typecheck/model.js';
+import type { DurabilityDiagnostic, TypecheckPlan } from '../typecheck/model.js';
 
 /** Plain-data instructions for checking and importing a trusted workflow module. */
 export interface ValidateWorkflowPlan extends ExecutionPlan {
   readonly kind: 'workflow.validate';
   readonly typecheck: TypecheckPlan;
+  /**
+   * How durability lint findings (ADR 0041) affect the result: `'error'` (the default) fails it as
+   * `load.typecheck` before import; `'warn'` logs them and validates, as `list-defs` does.
+   */
+  readonly durabilityLint?: 'error' | 'warn';
 }
 
 /** Discover trusted workflow modules in directories, validating each before publishing metadata. */
@@ -314,6 +319,8 @@ export type WorkflowCommandResult = ExecutionResult &
         readonly kind: 'workflow.validate.result';
         readonly ok: true;
         readonly entrypoint: string;
+        /** Durability lint diagnostics; always empty on success, since findings fail validation. */
+        readonly diagnostics: readonly DurabilityDiagnostic[];
         readonly workflow: WorkflowDescription & {
           readonly fingerprint: string;
           readonly identity?: WorkflowIdentity;
@@ -335,8 +342,8 @@ export type WorkflowCommandResult = ExecutionResult &
       }
   );
 
-/** One validated definition, shared by validate and registry results. */
-export type ValidatedWorkflow = Extract<
-  WorkflowCommandResult,
-  { readonly kind: 'workflow.validate.result' }
+/** One validated definition, as `list-defs` caches and lists it: a validate result without `diagnostics`. */
+export type ValidatedWorkflow = Omit<
+  Extract<WorkflowCommandResult, { readonly kind: 'workflow.validate.result' }>,
+  'diagnostics'
 >;

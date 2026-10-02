@@ -72,6 +72,7 @@ import { readRun, type RunRecord } from '../runtime/store.js';
 import type { RunStore } from '../runtime/run-store.js';
 import type { WorkflowClock } from '../runtime/wait-model.js';
 import { TypeScriptExecutor } from '../typecheck/typescript-executor.js';
+import { formatDurabilityDiagnostic } from '../typecheck/model.js';
 import { fingerprintSources, workflowLaunch } from './source.js';
 import { AnswerError, listPendingRuns, writeAnswer } from '../runtime/inbox.js';
 import { selectPendingRows } from './pending-listing.js';
@@ -200,7 +201,8 @@ export class WorkflowExecutor implements Executor<WorkflowExecutorPlan, Workflow
         stage = 'load.definition';
         const registry = await listDefinitions(
           plan.directories,
-          (typecheck) => this.execute({ kind: 'workflow.validate', typecheck }),
+          (typecheck) =>
+            this.execute({ kind: 'workflow.validate', typecheck, durabilityLint: 'warn' }),
           plan.kind === 'workflow.list-defs' && plan.refresh,
         );
         if (plan.kind === 'workflow.list-defs' || !registry.ok) return registry;
@@ -502,7 +504,9 @@ export class WorkflowExecutor implements Executor<WorkflowExecutorPlan, Workflow
         }
       }
       stage = 'load.typecheck';
-      const checked = await new TypeScriptExecutor(this.#options.logger).execute(plan.typecheck);
+      const checked = await new TypeScriptExecutor(this.#options.logger, {
+        durabilityLint: true,
+      }).execute(plan.typecheck);
       if (!checked.ok)
         return workflowFailure('load.typecheck', 'Workflow type check failed.', {
           ...context,
@@ -514,6 +518,21 @@ export class WorkflowExecutor implements Executor<WorkflowExecutorPlan, Workflow
               : null,
           diagnostics: checked.diagnostics,
         });
+      const findings = checked.durability ?? [];
+      if (
+        findings.length > 0 &&
+        plan.kind === 'workflow.validate' &&
+        plan.durabilityLint !== 'warn'
+      )
+        return workflowFailure('load.typecheck', durabilityLintMessage(findings.length), {
+          ...context,
+          diagnostics: findings.map((finding) => ({ ...finding, category: 'error' as const })),
+        });
+      for (const finding of findings)
+        this.#options.logger.log(
+          'warn',
+          formatDurabilityDiagnostic({ ...finding, category: 'warning' }, process.cwd()),
+        );
       stopIfAborted();
       stage = 'load.import';
       const source = await fingerprintSources(plan.typecheck, checked.sourceFiles);
@@ -540,6 +559,7 @@ export class WorkflowExecutor implements Executor<WorkflowExecutorPlan, Workflow
           kind: 'workflow.validate.result',
           ok: true,
           entrypoint: plan.typecheck.entrypoint,
+          diagnostics: [],
           workflow: {
             ...description,
             ...workflowSnapshot(definition, { source }),
@@ -883,6 +903,11 @@ async function hasCheckpoint(stateDir: string, runId: string): Promise<boolean> 
       if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) return true;
     }
   return false;
+}
+
+/** The `load.typecheck` message of a `workflow validate` that the durability lint failed. */
+function durabilityLintMessage(count: number): string {
+  return `Workflow durability lint failed: ${String(count)} finding(s); fix them or add \`// quiet-choir-ignore QCnnn <reason>\` on the line before.`;
 }
 
 function hasCheckpointError(error: unknown, seen = new Set<unknown>()): boolean {

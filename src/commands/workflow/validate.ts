@@ -2,7 +2,7 @@ import { Args, Flags, type Interfaces } from '@oclif/core';
 
 import { withoutHarnessOptions } from '../../cli/workflow-metadata-view.js';
 import { WorkflowCommand } from '../../cli/workflow-command.js';
-import { formatTypecheckDiagnostic } from '../../cli/presentation.js';
+import { formatWorkflowDiagnostic } from '../../cli/presentation.js';
 import { WorkflowExecutor } from '../../workflow/loader/executor.js';
 
 interface WorkflowValidateArgs {
@@ -31,9 +31,9 @@ export default class WorkflowValidate extends WorkflowCommand {
   };
 
   public static override readonly summary =
-    'Type-check a workflow and validate its exported definition';
+    'Type-check and durability-lint a workflow and validate its exported definition';
   public static override readonly description =
-    'Imports trusted module top-level code to inspect its default export; does not invoke the workflow body.';
+    'After a clean type check, runs the static durability lint (QC001-QC006); any finding fails with exit 4 unless a `// quiet-choir-ignore QCnnn <reason>` line before it silences it. Then imports trusted module top-level code to inspect its default export; does not invoke the workflow body.';
 
   public async run(): Promise<void> {
     const { args, flags } = await this.parse(WorkflowValidate);
@@ -46,7 +46,7 @@ export default class WorkflowValidate extends WorkflowCommand {
     const result = await executor.execute({ kind: 'workflow.validate', typecheck });
     if (!result.ok) {
       for (const diagnostic of result.diagnostics) {
-        this.logToStderr(formatTypecheckDiagnostic(diagnostic, process.cwd()));
+        this.logToStderr(formatWorkflowDiagnostic(diagnostic, process.cwd()));
       }
       this.failResult(result);
     }

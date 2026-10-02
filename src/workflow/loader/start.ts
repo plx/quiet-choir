@@ -12,7 +12,7 @@ import { legacyRunPath, prepareStateDirectory, runDirectory } from '../runtime/p
 import { isCliErrorCode } from '../runtime/run-errors.js';
 import { createStorageDirectory } from '../runtime/storage-io.js';
 import { inspectRunOwnership, readRun, type RunRecord } from '../runtime/store.js';
-import type { TypecheckDiagnostic } from '../typecheck/model.js';
+import type { DurabilityDiagnostic, TypecheckDiagnostic } from '../typecheck/model.js';
 import { workflowFailure, type StartLaunchEvidence, type WorkflowFailure } from './failure.js';
 import { failureNextCommands, type NextCommand } from './next-commands.js';
 import { decideStart, type StartChildDocument } from './start-readiness.js';
@@ -434,7 +434,9 @@ export class StartWorkflowExecutor implements Executor<
             {
               details: (error['details'] ?? null) as JsonValue,
               stepId: typeof error['stepId'] === 'string' ? error['stepId'] : null,
-              diagnostics: Array.isArray(diagnostics) ? (diagnostics as TypecheckDiagnostic[]) : [],
+              diagnostics: Array.isArray(diagnostics)
+                ? (diagnostics as (TypecheckDiagnostic | DurabilityDiagnostic)[])
+                : [],
               next: Array.isArray(next) ? (next as NextCommand[]) : [],
             },
           );

@@ -3,7 +3,7 @@ import type { RehearsalReport } from './rehearsal.js';
 import type { CliErrorCode } from '../runtime/run-errors.js';
 import type { JsonValue } from '../runtime/model.js';
 import type { RunRecord } from '../runtime/store.js';
-import type { TypecheckDiagnostic } from '../typecheck/model.js';
+import type { DurabilityDiagnostic, TypecheckDiagnostic } from '../typecheck/model.js';
 
 /**
  * What a failed `workflow start` attempted: the run ID it passed to the runner (also when the
@@ -33,7 +33,12 @@ export interface WorkflowFailure {
   readonly runId: string | null;
   readonly stateDir: string | null;
   readonly run: RunRecord | null;
-  readonly diagnostics: readonly TypecheckDiagnostic[];
+  /**
+   * Compiler diagnostics (`code`, `filePath`) of a failed type check, or durability lint
+   * diagnostics (`rule`, `file`) of a failed `workflow validate`; never both, since the lint runs
+   * only after a clean type check.
+   */
+  readonly diagnostics: readonly (TypecheckDiagnostic | DurabilityDiagnostic)[];
   /** Runnable follow-ups, built with the invocation's launcher; absent means none. */
   readonly next?: readonly NextCommand[];
   /** Present only on `workflow start` failures after it launched a runner. */

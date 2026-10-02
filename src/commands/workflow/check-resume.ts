@@ -1,7 +1,7 @@
 import { Args, Flags, type Interfaces } from '@oclif/core';
 
 import { WorkflowCommand } from '../../cli/workflow-command.js';
-import { formatTypecheckDiagnostic } from '../../cli/presentation.js';
+import { formatWorkflowDiagnostic } from '../../cli/presentation.js';
 import { WorkflowExecutor } from '../../workflow/loader/executor.js';
 
 interface CheckArgs {
@@ -62,7 +62,7 @@ export default class WorkflowCheckResume extends WorkflowCommand {
     });
     if (!result.ok) {
       for (const diagnostic of result.diagnostics)
-        this.logToStderr(formatTypecheckDiagnostic(diagnostic, process.cwd()));
+        this.logToStderr(formatWorkflowDiagnostic(diagnostic, process.cwd()));
       this.failResult(result);
     }
     if (result.kind === 'workflow.check-resume.result') {

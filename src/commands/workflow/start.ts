@@ -7,7 +7,7 @@ import { parseDuration } from '../../cli/duration.js';
 import { executeFlags, type WorkflowExecuteFlags } from '../../cli/execute-flags.js';
 import { readWorkflowInput } from '../../cli/input.js';
 import { spawnLauncher } from '../../cli/launcher.js';
-import { formatNextCommands, formatTypecheckDiagnostic } from '../../cli/presentation.js';
+import { formatNextCommands, formatWorkflowDiagnostic } from '../../cli/presentation.js';
 import { buildStartChildArgv, type ArgvFlagTable } from '../../cli/start-argv.js';
 import { WorkflowCommand } from '../../cli/workflow-command.js';
 import { requestedEventsStdout } from '../../cli/workflow-errors.js';
@@ -118,7 +118,7 @@ export default class WorkflowStart extends WorkflowCommand {
     });
     if (!result.ok) {
       for (const diagnostic of result.diagnostics)
-        this.logToStderr(formatTypecheckDiagnostic(diagnostic, process.cwd()));
+        this.logToStderr(formatWorkflowDiagnostic(diagnostic, process.cwd()));
       if (result.launch) this.logToStderr(`Log: ${result.launch.log}`);
       this.failResult(result);
     }

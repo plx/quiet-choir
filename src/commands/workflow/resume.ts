@@ -9,7 +9,7 @@ import {
   readHarnessSelection,
   type HarnessSelection,
 } from '../../workflow/loader/harness-selection.js';
-import { formatTypecheckDiagnostic } from '../../cli/presentation.js';
+import { formatWorkflowDiagnostic } from '../../cli/presentation.js';
 
 export default class WorkflowResume extends WorkflowCommand {
   public static override readonly args: Interfaces.ArgInput<{ readonly runId: string }> = {
@@ -151,7 +151,7 @@ export default class WorkflowResume extends WorkflowCommand {
     });
     if (!result.ok) {
       for (const diagnostic of result.diagnostics)
-        this.logToStderr(formatTypecheckDiagnostic(diagnostic, process.cwd()));
+        this.logToStderr(formatWorkflowDiagnostic(diagnostic, process.cwd()));
       this.failResult(result);
     }
     if (result.kind === 'workflow.run.result') {
