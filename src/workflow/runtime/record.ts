@@ -253,10 +253,33 @@ export interface MapItemRecord {
   maps: string[];
 }
 
+/**
+ * One digest per component of a settled map's identity, saved beside the aggregate `fingerprint` so
+ * a changed map can name what changed. Only `mapper` may change after an item completed, and only
+ * under an explicit `acceptCodeChange`.
+ */
+export interface MapComponents {
+  /** Digest of the JSON item inputs. */
+  items: string;
+  /** Digest of the original mapper function's source text. */
+  mapper: string;
+  /** Digest of the map `version` option, or of null without one. */
+  version: string;
+  /** Digest of the run working directory. */
+  cwd: string;
+  /** Digest of the resolved item keys; present only for a named map. */
+  keys?: string;
+}
+
 /** Journal for an explicitly identified settled map. */
 export interface MapRecord {
-  /** Hash of item inputs, mapper source, optional version and cwd. */
+  /** Hash of item inputs, mapper source, optional version, cwd and, for a named map, keys. */
   fingerprint: string;
+  /**
+   * Per-component digests of the same identity; absent in journals saved before they existed, whose
+   * changed component cannot be named.
+   */
+  components?: MapComponents;
   /** First-use ordering shared with step seq values; absent in journals saved before it existed. */
   seq?: number;
   /** Partially evaluated or completely settled collection. */
@@ -747,6 +770,15 @@ const recordFieldsSchema = z.object({
       z.string(),
       z.object({
         fingerprint: z.string(),
+        components: z
+          .object({
+            items: z.string(),
+            mapper: z.string(),
+            version: z.string(),
+            cwd: z.string(),
+            keys: z.string().optional(),
+          })
+          .optional(),
         seq: z.number().int().positive().optional(),
         status: z.enum(['running', 'completed']),
         items: z.array(
@@ -831,6 +863,7 @@ const recordFieldsSchema = z.object({
         to: z.string(),
         files: z.array(z.string()),
         components: z.array(z.string()),
+        map: z.string().optional(),
       }),
     )
     .optional(),

@@ -9,8 +9,9 @@
  * Invariants:
  * - A rehearsal (dry-run) never gets resume advice.
  * - A run with no recorded step or map gets no hint: there is nothing to reuse.
- * - Only a configuration or authoring failure suggests `--accept-code-change`. A grant failure
- *   names `--grant`, and a replay divergence names `--strict-replay` and `--fork-from` instead.
+ * - Only a configuration or authoring failure, or a settled map whose only change is its mapper,
+ *   suggests `--accept-code-change`. A grant failure names `--grant`, a replay divergence names
+ *   `--strict-replay` and `--fork-from`, and any other settled map change names `--fork-from`.
  * - A divergence with unchanged source blames a value computed in the body outside a durable effect.
  * - A configuration or authoring failure after all recorded work is terminal keeps the re-finalize
  *   text, including "All recorded work has terminal outcomes" and "re-finalize".
@@ -21,13 +22,15 @@
 
 /**
  * Why a run failed, as far as recovery advice is concerned. `grant` is a missing access grant,
- * `divergence` a replay that left the recorded path, `configuration` any other ConfigurationError,
+ * `divergence` a replay that left the recorded path, `map-changed` a settled map that changed after
+ * an item completed (`mapperOnly` when only its mapper did), `configuration` any other ConfigurationError,
  * `authoring` a body, output or call-site failure, `effect` a durable effect's recorded failure, and
  * `cancelled` a cancelled run. @internal
  */
 export type RecoveryCause =
   | { readonly kind: 'grant'; readonly profile: string; readonly access: string }
   | { readonly kind: 'divergence' }
+  | { readonly kind: 'map-changed'; readonly mapperOnly: boolean }
   | { readonly kind: 'configuration' }
   | { readonly kind: 'authoring' }
   | { readonly kind: 'effect' }
@@ -60,6 +63,10 @@ export function chooseRecoveryHint(input: RecoveryHintInput): string | undefined
       return input.sourceChanged
         ? `Replay left the recorded path after the accepted source change. Restore the replay path, or fork a new run with --fork-from ${input.runId}; --resume --strict-replay stops at the first divergence before live work.`
         : `The workflow source is unchanged, so the body likely computed a value outside a durable effect (time, randomness, environment or file contents) that changed a step identity or the replay path. Compute such values with ctx.now or inside ctx.step so replay reuses them, then fork a new run with --fork-from ${input.runId}; --resume --strict-replay stops at the first divergence before live work.`;
+    case 'map-changed':
+      return cause.mapperOnly
+        ? `Resume with --resume --accept-code-change to keep completed map items and run unfinished ones with the edited mapper, or fork a new run with --fork-from ${input.runId}.`
+        : `A settled map's items, keys, version or cwd changed after an item completed, or its journal predates per-component fingerprints; accepting code changes cannot reuse it. Restore the map and resume, or fork a new run with --fork-from ${input.runId}.`;
     case 'configuration':
     case 'authoring':
       return input.allTerminal

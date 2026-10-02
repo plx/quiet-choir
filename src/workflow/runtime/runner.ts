@@ -135,7 +135,7 @@ import { OperationTracker } from './tracking.js';
 import { optionData, validateAgentOptions } from './options.js';
 import { HarnessError, boundedResponse, harnessEvidence } from './harness-error.js';
 import { CancelledError, FailureOrigins } from './fan-out.js';
-import { createMap } from './map.js';
+import { createMap, settledMapChange } from './map.js';
 import { ExecutionScopes } from './scopes.js';
 import { NameScopes } from './names.js';
 import { bindContext } from './context.js';
@@ -2610,6 +2610,7 @@ export async function runWorkflow<
       used,
       visitedMaps,
       save,
+      acceptCodeChange: Boolean(options.acceptCodeChange),
       nextSeq: () => nextSeq++,
       isCheckpointFailure: (error) => checkpointProblems.includes(error as CheckpointError),
       replayChild: (id) => {
@@ -3319,8 +3320,8 @@ export async function runWorkflow<
 /**
  * Classify a failure for recovery advice from error classes and the saved record, never from
  * message text. It searches the given errors' cause chains and aggregate members, and the first
- * matching rule wins: grant, divergence, other configuration, cancelled run, recorded effect
- * failure, then authoring.
+ * matching rule wins: grant, divergence, settled map change, other configuration, cancelled run,
+ * recorded effect failure, then authoring.
  */
 function recoveryCause(errors: readonly unknown[], record: RunRecord): RecoveryCause {
   const seen = new Set<unknown>();
@@ -3343,6 +3344,8 @@ function recoveryCause(errors: readonly unknown[], record: RunRecord): RecoveryC
     )
   )
     return { kind: 'divergence' };
+  const mapChange = found.map(settledMapChange).find((change) => change !== undefined);
+  if (mapChange) return { kind: 'map-changed', mapperOnly: mapChange.mapperOnly };
   if (found.some((error) => error instanceof ConfigurationError)) return { kind: 'configuration' };
   if (record.status === 'cancelled') return { kind: 'cancelled' };
   const stepId = record.rootCause?.stepId;

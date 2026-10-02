@@ -98,6 +98,7 @@ export type {
   RunOwnership,
   RunLockView,
   MapRecord,
+  MapComponents,
   MapItemRecord,
   StepRecord,
   FailedAttempt,
