@@ -250,6 +250,36 @@ it('shows an interrupted suspension as resumable and watches it as suspended', (
   expect(formatRunSummary(summarizeRun(record(), unlocked))).not.toContain('Interrupted at');
 });
 
+it('summarizes the latest accepted code changes and names map entries', () => {
+  const change = (n: number) => ({
+    at: time,
+    from: `old-${String(n)}`,
+    to: `new-${String(n)}`,
+    files: ['workflow.ts', 'helper.ts'],
+    components: ['code'],
+  });
+  const map = {
+    at: time,
+    from: 'map-old',
+    to: 'map-new',
+    files: [],
+    components: ['mapper'],
+    map: 'tickets',
+  };
+  const run: RunRecord = {
+    ...record(),
+    codeChanges: [change(1), change(2), change(3), change(4), change(5), map],
+  };
+  const summary = summarizeRun(run, unlocked);
+  expect(summary.codeChanges).toEqual([change(2), change(3), change(4), change(5), map]);
+  const text = formatRunSummary(summary);
+  expect(text).toContain(`Code change accepted at ${time}: mapper in map tickets`);
+  expect(text).toContain(`Code change accepted at ${time}: code (2 files)`);
+  expect(text.split('Code change accepted').length - 1).toBe(5);
+  expect(summarizeRun(record(), unlocked).codeChanges).toEqual([]);
+  expect(formatRunSummary(summarizeRun(record(), unlocked))).not.toContain('Code change');
+});
+
 it('shows a superseded child frame as its own status in the workflow tree and JSON summary', () => {
   const run: RunRecord = {
     ...record(),
