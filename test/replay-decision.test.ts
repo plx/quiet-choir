@@ -4,11 +4,16 @@ import type { RequestSummary } from '../src/workflow/runtime/observability-model
 import type { StepRecord } from '../src/workflow/runtime/record.js';
 import {
   decideReplay,
+  forkPrefixBlockers,
   forkReuseValid,
   healedDependents,
   legacyKind,
   replayRefusalMessage,
+  type ForkPrefixFacts,
+  type ForkSourceLaunch,
+  type ForkTargetStep,
   type HealedStep,
+  type MapItemScope,
   type PriorLaunch,
   type ReplayDecision,
   type ReplayInput,
@@ -550,6 +555,224 @@ describe('healedDependents', () => {
 
   it.each(cases)('$name', (testCase) => {
     expect(healedDependents(testCase.healed ?? healed, testCase.prior)).toEqual(testCase.expected);
+  });
+});
+
+describe('forkPrefixBlockers', () => {
+  // The request is X; unless a case says otherwise X launched in the source at stamp 5 (seq 5)
+  // and in the target at stamp 3, outside any named map.
+  const reused = (stepId: string, runId = 'src'): ForkTargetStep => ({
+    reusedFrom: { runId, stateDir: '/state', stepId, fingerprint: 'fp', at: 'now' },
+    settleStamp: 1,
+  });
+  const scope = (map: string, keys: string[], key: string): MapItemScope => ({
+    map,
+    item: `${map}${key}/`,
+    items: new Set(keys.map((k) => `${map}${k}/`)),
+  });
+  const review = (key: string): MapItemScope => scope('review/', ['0', '1', '2'], key);
+  const cases: {
+    name: string;
+    id?: string;
+    launchStamp?: number;
+    mapItems?: MapItemScope[];
+    source: Record<string, ForkSourceLaunch>;
+    target?: Record<string, ForkTargetStep>;
+    expected: string[];
+  }[] = [
+    { name: 'no causes', source: { x: { seq: 1, launchStamp: 0, settleStamp: 1 } }, expected: [] },
+    {
+      name: 'a cause reused from this source',
+      source: { y: { seq: 1, launchStamp: 0, settleStamp: 1 }, x: { seq: 2, launchStamp: 5 } },
+      target: { y: reused('y') },
+      expected: [],
+    },
+    {
+      name: 'a cause not reused',
+      source: { y: { seq: 1, launchStamp: 0, settleStamp: 1 }, x: { seq: 2, launchStamp: 5 } },
+      expected: ['y'],
+    },
+    {
+      name: 'a cause reused from another run or under another ID still blocks',
+      source: {
+        y: { seq: 1, launchStamp: 0, settleStamp: 1 },
+        z: { seq: 2, launchStamp: 0, settleStamp: 2 },
+        x: { seq: 3, launchStamp: 5 },
+      },
+      target: { y: reused('y', 'other'), z: reused('y') },
+      expected: ['y', 'z'],
+    },
+    {
+      name: 'a cause settled exactly at the launch stamp blocks',
+      source: { y: { seq: 1, launchStamp: 0, settleStamp: 5 }, x: { seq: 2, launchStamp: 5 } },
+      expected: ['y'],
+    },
+    {
+      name: 'a same-tick sibling that settled after the launch does not block',
+      source: { y: { seq: 1, launchStamp: 5, settleStamp: 6 }, x: { seq: 2, launchStamp: 5 } },
+      expected: [],
+    },
+    {
+      name: 'an unsettled source step does not block',
+      source: { y: { seq: 1, launchStamp: 0 }, x: { seq: 2, launchStamp: 5 } },
+      expected: [],
+    },
+    {
+      name: 'stamps govern over seq: a later-seq step that settled first blocks',
+      source: { x: { seq: 1, launchStamp: 5 }, y: { seq: 2, launchStamp: 4, settleStamp: 5 } },
+      expected: ['y'],
+    },
+    {
+      name: 'stampless source falls back to seq order',
+      source: { a: { seq: 1 }, x: { seq: 2 }, b: { seq: 3 } },
+      expected: ['a'],
+    },
+    {
+      name: 'a mixed pair falls back to seq for that pair only',
+      source: {
+        legacy: { seq: 1 },
+        legacyLater: { seq: 9 },
+        sibling: { seq: 3, launchStamp: 5, settleStamp: 6 },
+        x: { seq: 2, launchStamp: 5 },
+      },
+      expected: ['legacy'],
+    },
+    {
+      name: 'a requested step without a stamp falls back to seq for every pair',
+      source: { y: { seq: 1, launchStamp: 9, settleStamp: 10 }, x: { seq: 2 } },
+      expected: ['y'],
+    },
+    {
+      name: 'a missing seq in the fallback counts as a cause',
+      source: { y: {}, x: { seq: 2 } },
+      expected: ['y'],
+    },
+    {
+      name: 'sibling named-map items are independent',
+      id: 'review/1/s1',
+      mapItems: [review('1')],
+      source: {
+        'review/0/s3': { seq: 3, launchStamp: 2, settleStamp: 4 },
+        'review/1/s1': { seq: 4, launchStamp: 5 },
+      },
+      target: { 'review/0/s3': { settleStamp: 2 } },
+      expected: [],
+    },
+    {
+      name: 'the same item is not independent',
+      id: 'review/1/s2',
+      mapItems: [review('1')],
+      source: {
+        'review/1/s1': { seq: 1, launchStamp: 0, settleStamp: 2 },
+        'review/1/s2': { seq: 2, launchStamp: 5 },
+      },
+      target: { 'review/1/s1': { settleStamp: 1 } },
+      expected: ['review/1/s1'],
+    },
+    {
+      name: 'a step under the map prefix that is not an item still blocks',
+      id: 'review/1/s1',
+      mapItems: [review('1')],
+      source: {
+        'review/plan': { seq: 1, launchStamp: 0, settleStamp: 1 },
+        'review/9/s1': { seq: 2, launchStamp: 0, settleStamp: 2 },
+        'review/1/s1': { seq: 3, launchStamp: 5 },
+      },
+      expected: ['review/plan', 'review/9/s1'],
+    },
+    {
+      name: 'a step before the map blocks its items',
+      id: 'review/1/s1',
+      mapItems: [review('1')],
+      source: {
+        plan: { seq: 1, launchStamp: 0, settleStamp: 1 },
+        'review/1/s1': { seq: 2, launchStamp: 5 },
+      },
+      expected: ['plan'],
+    },
+    {
+      name: 'nested maps: sibling items at either level are independent',
+      id: 'outer/a/inner/x/s',
+      mapItems: [scope('outer/', ['a', 'b'], 'a'), scope('outer/a/inner/', ['x', 'y'], 'x')],
+      source: {
+        'outer/b/inner/x/s': { seq: 1, launchStamp: 0, settleStamp: 1 },
+        'outer/a/inner/y/s': { seq: 2, launchStamp: 0, settleStamp: 2 },
+        'outer/a/pre': { seq: 3, launchStamp: 0, settleStamp: 3 },
+        'outer/a/inner/x/s': { seq: 4, launchStamp: 5 },
+      },
+      expected: ['outer/a/pre'],
+    },
+    {
+      name: 'keys containing a slash resolve to the longest matching sibling item',
+      id: 'review/a/b/s',
+      mapItems: [scope('review/', ['a', 'a/b'], 'a/b')],
+      source: {
+        'review/a/s': { seq: 1, launchStamp: 0, settleStamp: 1 },
+        'review/a/b/s': { seq: 2, launchStamp: 5 },
+      },
+      expected: [],
+    },
+    {
+      name: 'a root step after the map depends on every item',
+      id: 'summary',
+      source: {
+        'review/0/s3': { seq: 1, launchStamp: 0, settleStamp: 1 },
+        'review/1/s3': { seq: 2, launchStamp: 0, settleStamp: 2 },
+        summary: { seq: 3, launchStamp: 5 },
+      },
+      target: { 'review/0/s3': reused('review/0/s3') },
+      expected: ['review/1/s3'],
+    },
+    {
+      name: 'target live work settled before the launch blocks',
+      source: { x: { seq: 1, launchStamp: 0 } },
+      target: { fresh: { settleStamp: 2 }, atLaunch: { settleStamp: 3 } },
+      expected: ['fresh', 'atLaunch'],
+    },
+    {
+      name: 'target live work settled after the launch, or still running, does not block',
+      source: { x: { seq: 1, launchStamp: 0 } },
+      target: { later: { settleStamp: 4 }, running: {} },
+      expected: [],
+    },
+    {
+      name: 'target reused steps never block as live work',
+      source: { x: { seq: 1, launchStamp: 0 } },
+      target: { y: reused('y') },
+      expected: [],
+    },
+    {
+      name: 'live work in a sibling named-map item does not block',
+      id: 'review/2/s1',
+      mapItems: [review('2')],
+      source: { 'review/2/s1': { seq: 1, launchStamp: 0 } },
+      target: { 'review/0/s3': { settleStamp: 1 } },
+      expected: [],
+    },
+    {
+      name: 'a step both unreused in the source and live in the target is reported once',
+      source: { y: { seq: 1, launchStamp: 0, settleStamp: 1 }, x: { seq: 2, launchStamp: 5 } },
+      target: { y: { settleStamp: 2 } },
+      expected: ['y'],
+    },
+    {
+      name: 'the requested ID is excluded on both sides',
+      source: { x: { seq: 1, launchStamp: 0, settleStamp: 1 } },
+      target: { x: { settleStamp: 1 } },
+      expected: [],
+    },
+  ];
+
+  it.each(cases)('$name', (testCase) => {
+    const facts: ForkPrefixFacts = {
+      id: testCase.id ?? 'x',
+      launchStamp: testCase.launchStamp ?? 3,
+      mapItems: testCase.mapItems ?? [],
+      sourceRunId: 'src',
+      source: testCase.source,
+      target: testCase.target ?? {},
+    };
+    expect(forkPrefixBlockers(facts)).toEqual(testCase.expected);
   });
 });
 

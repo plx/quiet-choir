@@ -7,8 +7,9 @@
  * The functions are pure: no I/O, no clock, no store, and `decideReplay` never mutates the prior
  * step. The runner gathers the facts, calls `decideReplay`, and performs every side effect from
  * the result: legacy migration writes, sequence allocation, saves, events, frame attribution and
- * cancellation. The only stateful call is the `forkCandidate` thunk, which advances or closes the
- * fork's prefix-reuse cursor; it is called at most once, and only when the decision reaches it.
+ * cancellation. The only stateful call is the `forkCandidate` thunk, which looks up a reusable fork
+ * source step (and counts a prefix reuse); it is called at most once, and only when the decision
+ * reaches it.
  *
  * Invariants:
  * - Terminal identities are immutable: a completed or settled-failed step is replayed only under
@@ -27,6 +28,11 @@
  *   a step launched later by unrelated control flow is still flagged. When either stamp is missing
  *   (checkpoints saved before stamps, or a failure saved between retries) the pair falls back to
  *   launch order: the step is flagged when its `seq` is higher.
+ * - Default (prefix) fork reuse is causal (`forkPrefixBlockers`): a requested step is reused only
+ *   when every source step that had settled before its source launch is already reused into the
+ *   target, and no live target step settled before its target launch. Steps in sibling items of a
+ *   named map are independent by declaration and never block each other. The same per-pair
+ *   stamp-or-`seq` fallback applies to source steps saved without stamps.
  *
  * ESLint keeps this module free of runtime imports.
  */
@@ -57,7 +63,7 @@ export interface ReplayInput {
   readonly legacyFingerprint: () => string;
   /** Whether the run is a fork. */
   readonly forkedFrom: boolean;
-  /** Looks up a reusable fork source step; advances or closes fork provenance when called. */
+  /** Looks up a reusable fork source step; counts a prefix reuse in the provenance when it finds one. */
   readonly forkCandidate: () => StepRecord | undefined;
   /** Whether the run is a dry-run rehearsal. */
   readonly rehearsal: boolean;
@@ -234,6 +240,95 @@ export function healedDependents(healed: HealedStep, prior: readonly PriorLaunch
           : other.seq > healed.seq,
     )
     .map((other) => other.id);
+}
+
+/** One named-map item enclosing a requested effect. @internal */
+export interface MapItemScope {
+  /** The map's prefix, such as `review/`. */
+  readonly map: string;
+  /** This item's prefix, such as `review/3/`. */
+  readonly item: string;
+  /** Every item prefix of the same map invocation, including this one. */
+  readonly items: ReadonlySet<string>;
+}
+
+/** The source step facts `forkPrefixBlockers` reads. @internal */
+export type ForkSourceLaunch = Pick<StepRecord, 'seq' | 'launchStamp' | 'settleStamp'>;
+
+/** The target step facts `forkPrefixBlockers` reads. @internal */
+export type ForkTargetStep = Pick<StepRecord, 'reusedFrom' | 'settleStamp'>;
+
+/** Facts for one default (prefix) fork reuse request. @internal */
+export interface ForkPrefixFacts {
+  /** The requested step ID; it must exist in `source`. */
+  readonly id: string;
+  /** The target run's settlement counter when the body requested this effect. */
+  readonly launchStamp: number;
+  /** The named-map items enclosing the request, outermost first. */
+  readonly mapItems: readonly MapItemScope[];
+  /** The fork source run ID that reused copies must name. */
+  readonly sourceRunId: string;
+  /** The pinned source run's steps. */
+  readonly source: Readonly<Record<string, ForkSourceLaunch>>;
+  /** The target run's steps as recorded now. */
+  readonly target: Readonly<Record<string, ForkTargetStep>>;
+}
+
+/** Whether `other` belongs to a different item of a named map that encloses the request. */
+function siblingItem(other: string, mapItems: readonly MapItemScope[]): boolean {
+  return mapItems.some(({ map, item, items }) => {
+    if (!other.startsWith(map) || other.startsWith(item)) return false;
+    // Keys may contain '/', so try every candidate item prefix rather than the first segment.
+    for (let end = other.indexOf('/', map.length); end !== -1; end = other.indexOf('/', end + 1))
+      if (items.has(other.slice(0, end + 1))) return true;
+    return false;
+  });
+}
+
+/**
+ * The steps that keep a default (prefix) fork from reusing `id`, source causes first and then target
+ * live work, each in record order without duplicates. Reuse is allowed when the result is empty and
+ * the source step also passes the identity and validity checks.
+ *
+ * A source step Y (other than `id`) blocks when the requested step may have depended on it in the
+ * source and the target has not reused it from this source under the same ID. With both launch
+ * stamps, Y is a possible cause when it had settled when the requested step was launched
+ * (`Y.settleStamp <= X.launchStamp`); a source step that never settled is not a cause. When either
+ * stamp is missing, the pair falls back to launch order (`Y.seq < X.seq`, and a missing `seq` counts
+ * as a cause).
+ *
+ * A target step W blocks when it ran live in this fork (no `reusedFrom`) and settled before the
+ * request (`W.settleStamp <= launchStamp`): its new outcome may feed the requested step. This also
+ * covers new step IDs with no source counterpart.
+ *
+ * Neither rule counts a step in a sibling item of a named map that encloses the request: named-map
+ * items receive only their item value (ADR 0009), so they are independent by declaration.
+ *
+ * @internal
+ */
+export function forkPrefixBlockers(facts: ForkPrefixFacts): string[] {
+  const { id, launchStamp, mapItems, sourceRunId, source, target } = facts;
+  const requested = source[id];
+  const blockers = new Set<string>();
+  for (const [other, step] of Object.entries(source)) {
+    if (other === id || siblingItem(other, mapItems)) continue;
+    const cause =
+      requested?.launchStamp !== undefined && step.launchStamp !== undefined
+        ? step.settleStamp !== undefined && step.settleStamp <= requested.launchStamp
+        : step.seq === undefined || requested?.seq === undefined || step.seq < requested.seq;
+    const reused = Object.hasOwn(target, other) ? target[other]?.reusedFrom : undefined;
+    if (cause && (reused?.runId !== sourceRunId || reused.stepId !== other)) blockers.add(other);
+  }
+  for (const [other, step] of Object.entries(target))
+    if (
+      other !== id &&
+      step.reusedFrom === undefined &&
+      step.settleStamp !== undefined &&
+      step.settleStamp <= launchStamp &&
+      !siblingItem(other, mapItems)
+    )
+      blockers.add(other);
+  return [...blockers];
 }
 
 /**
