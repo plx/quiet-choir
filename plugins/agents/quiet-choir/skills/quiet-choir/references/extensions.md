@@ -330,10 +330,13 @@ another durable step, and do not run effects at module import time.
 ## Service helper pattern
 
 Use ordinary helper functions for decisions, GitHub and Linear operations. Each operation should
-make exactly one `ctx.step`, `ctx.exec` or `ctx.wait` at workflow level. `StepDefinition.meta` can
-label `{ integration: 'decision', op: 'choose' }` without affecting replay identity. Explicit
-inputs/version capture meaningful service-operation changes; pass the stable idempotency key to
-services that support deduplication. Never put credentials in inputs or metadata.
+make exactly one `ctx.step`, `ctx.exec` or `ctx.wait` at workflow level. Inside that step's callback
+or wait's observer, run `gh` and other commands through `context.exec`, which the run owns and
+rehearses but does not checkpoint, never through `child_process` (see
+[commands inside a callback](commands-files.md#commands-inside-a-callback-or-observer)).
+`StepDefinition.meta` can label `{ integration: 'decision', op: 'choose' }` without affecting replay
+identity. Explicit inputs/version capture meaningful service-operation changes; pass the stable
+idempotency key to services that support deduplication. Never put credentials in inputs or metadata.
 
 `quiet-choir/decision` exports `decision(ctx, transport).choose(id, question)` as a reference with
 an injected transport and a validated answer and normalized probability distribution. It is not a
