@@ -890,13 +890,22 @@ async function fixRoundOf(threads, work) {
       return { error: `follow-up filing incomplete: ${unfiled.join(', ') || 'no result'}` };
     }
   }
+  // A minor finding from this workflow's own review that the fixer could not fully address
+  // becomes a follow-up instead of blocking the merge (#322's F1: its plan rested on a premise
+  // the fixer disproved, and the fixer covered the rest another way). Review threads still need a
+  // truthful reply, check and CI items need a green suite, and anything above minor is a real
+  // defect to fix here, so those still block.
+  const deferrable = (i) =>
+    i.status !== 'fixed' &&
+    i.key.startsWith('finding:') &&
+    work.fix.find((w) => w.key === i.key)?.severity === 'minor';
   // "partly" is unfinished, and "fixed" needs the commit that did it: otherwise the thread would
   // be called addressed and resolved without any change behind it. A failed check is the
   // exception: a flake is resolved by a green re-run at the same head, with no commit, and the
   // verification below still demands a passing check at the exact head being published.
   const needsCommit = (i) => !/^(check|ci):/.test(i.key);
   const unfixed = (fixed?.items ?? []).filter(
-    (i) => i.status !== 'fixed' || (needsCommit(i) && !i.commit?.trim()),
+    (i) => !deferrable(i) && (i.status !== 'fixed' || (needsCommit(i) && !i.commit?.trim())),
   );
   if (unfixed.length)
     return { error: `could not fix: ${unfixed.map((i) => `${i.key} (${i.summary})`).join('; ')}` };
@@ -918,6 +927,32 @@ async function fixRoundOf(threads, work) {
     if (!verified.checkPassedAtHead) {
       return { error: `no passing check recorded for head ${verified.head.slice(0, 7)}` };
     }
+  }
+  // Filed only once the round is otherwise sound (checks green, commits verified).
+  const deferred = (fixed?.items ?? []).filter(deferrable);
+  if (deferred.length) {
+    const items = deferred.map((d) => {
+      const w = work.fix.find((x) => x.key === d.key);
+      const how = d.status === 'partly' ? 'only partly addressed' : 'did not address';
+      return {
+        ...w,
+        detail: `${w.detail}\n\nThe fixer ${how} this in PR #${A.pr}${d.commit?.trim() ? ` (${d.commit.trim()})` : ''}: ${d.summary}${fixed.notes?.length ? `\nFixer notes: ${fixed.notes.join(' ')}` : ''}`,
+      };
+    });
+    if (publishing) {
+      const filedDeferred = await fileFollowups(items);
+      const keys = new Set((filedDeferred?.issues ?? []).map((i) => i.key));
+      const unfiled = items.filter((i) => !keys.has(i.key)).map((i) => i.key);
+      if (unfiled.length)
+        return { error: `could not file deferred findings: ${unfiled.join(', ')}` };
+    }
+    record.deferredFindings = [
+      ...(record.deferredFindings ?? []),
+      ...deferred.map((d) => ({ key: d.key, status: d.status, summary: d.summary })),
+    ];
+    log(
+      `Deferred ${deferred.length} minor finding(s) to follow-ups: ${deferred.map((d) => d.key).join(', ')}`,
+    );
   }
   if (fixed?.notes?.length) record.fixNotes = [...(record.fixNotes ?? []), ...fixed.notes];
   record.fixes = [...(record.fixes ?? []), ...(fixed?.items ?? [])];
