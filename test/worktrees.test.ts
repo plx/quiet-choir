@@ -1261,6 +1261,81 @@ it('reproduces the real configuration error for an unresolvable base under dry-r
 });
 
 it.each([
+  ['a cache root inside the checkout', { worktrees: { root: 'caches' } }, {}, 'worktrees.root'],
+  ['an isolated cwd outside the repository', {}, { cwd: '..' }, 'Isolated cwd must be inside'],
+])(
+  'reproduces the real configuration error for %s under dry-run',
+  async (_name, run, call, text) => {
+    const invoke = vi.fn<Harness['invoke']>(() => Promise.resolve(response));
+    const workflow = defineWorkflow({
+      name: 'dry-config',
+      version: '1',
+      input: z.null(),
+      output: z.string(),
+      async run(ctx) {
+        return ctx.codex.value('edit', { prompt: 'edit', isolation: 'worktree', ...call });
+      },
+    });
+    const failure: unknown = await runWorkflow(workflow, {
+      ...options('dry-config'),
+      ...run,
+      input: null,
+      rehearsal: {},
+      harness: { kind: 'dry-run', invoke },
+    }).catch((error: unknown) => error);
+    expect((failure as Error).cause).toBeInstanceOf(ConfigurationError);
+    expect((failure as Error).message).toContain(text);
+    expect(invoke).not.toHaveBeenCalled();
+  },
+);
+
+it('merges into an existing branch target and reuses a recorded base under dry-run', async () => {
+  const base = await command('rev-parse', 'HEAD');
+  await command('branch', 'target');
+  await writeFile(join(repo, 'file.txt'), 'moved\n');
+  const moved = await commit('moved');
+  await command('checkout', '-q', 'target');
+  const events: WorktreeEvent[] = [];
+  const workflow = defineWorkflow({
+    name: 'dry-branch',
+    version: '1',
+    input: z.null(),
+    output: z.string(),
+    async run(ctx) {
+      const edit = await ctx.codex.text('edit', { prompt: 'edit', isolation: 'worktree' });
+      if (!edit.worktree) throw new Error('missing synthesized change');
+      return (await ctx.merge('integrate', [edit.worktree], { target: { branch: 'master-x' } }))
+        .commit;
+    },
+  });
+  await command('branch', 'master-x', moved);
+  // An interrupted real attempt recorded its base; a dry-run resume keeps it.
+  let fail = true;
+  const invoke = vi.fn<Harness['invoke']>(() =>
+    fail ? Promise.reject(new Error('interrupted')) : Promise.resolve(response),
+  );
+  await expect(
+    runWorkflow(workflow, { ...options('dry-branch'), input: null, harness: { invoke } }),
+  ).rejects.toThrow('interrupted');
+  expect((await readRun({ stateDir, runId: 'dry-branch' })).steps['edit']?.worktree?.base).toBe(
+    base,
+  );
+  fail = false;
+  const run = await runWorkflow(workflow, {
+    ...options('dry-branch'),
+    resume: true,
+    rehearsal: { onWorktree: (event) => events.push(event) },
+    harness: { kind: 'dry-run', invoke },
+    allowHarnessChange: true,
+  });
+  expect(run.output).toBe(moved);
+  expect(events).toEqual([
+    expect.objectContaining({ kind: 'isolation', base, baseSource: 'recorded' }),
+    expect.objectContaining({ kind: 'merge', commit: moved, target: 'branch' }),
+  ]);
+});
+
+it.each([
   ['ctx.worktree', (ctx: WorkflowContext) => ctx.worktree('cache')],
   [
     'exec on a handle',
