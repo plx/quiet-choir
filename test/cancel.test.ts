@@ -265,6 +265,55 @@ describe('workflow cancel waits', () => {
     }
   });
 
+  it('reports no owner when the run completes before any signal lands', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let entered!: () => void;
+    const started = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const definition = defineWorkflow({
+      name: 'finishing',
+      version: '1',
+      input: z.null(),
+      output: z.null(),
+      async run(ctx) {
+        await ctx.step('gate', {
+          input: null,
+          schema: z.null(),
+          run: async () => {
+            entered();
+            await gate;
+            return null;
+          },
+        });
+        return null;
+      },
+    });
+    const pending = runWorkflow(definition, { stateDir, runId: 'run-1', input: null });
+    await started;
+    // The owner verifies, then the run finishes while the signal is being sent: the PID is gone.
+    const sendSignal = vi.fn(() => {
+      release();
+      throw Object.assign(new Error('no such process'), { code: 'ESRCH' });
+    });
+    const result = await cancel(sendSignal);
+    expect((await pending).status).toBe('completed');
+    expect(result).toEqual({
+      kind: 'workflow.cancel.result',
+      ok: true,
+      runId: 'run-1',
+      stateDir,
+      status: 'completed',
+      signalsSent: 0,
+      owner: null,
+    });
+    expect(sendSignal).toHaveBeenCalledOnce();
+    expect(existsSync(requestPath())).toBe(false);
+  });
+
   it('reports run.unowned when the owner exits without saving a terminal status', async () => {
     await suspendedRun();
     // An embedder that honours its interruption by suspending: the lock goes, the record stays.

@@ -250,7 +250,7 @@ export async function cancelRun(
     }
     await removeCancelRequest(requestPath, requestId);
     if (outcome === 'terminal' && terminal(run.status))
-      return result(run.status, signalsSent, target);
+      return result(run.status, signalsSent, signalsSent === 0 ? null : target);
     throw new RunRefusedError(
       'run.unowned',
       runId,
