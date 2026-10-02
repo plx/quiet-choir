@@ -269,7 +269,7 @@ export type WorkflowCommandResult = ExecutionResult &
         readonly status: 'completed' | 'failed' | 'cancelled';
         /** SIGINTs sent to the owner: 0 for a run that had already ended, 2 only under `force`. */
         readonly signalsSent: 0 | 1 | 2;
-        /** The verified owner that was signalled, or null when none was. */
+        /** The verified owner that was signalled, or null when no signal was sent. */
         readonly owner: {
           readonly pid: number;
           readonly host: string;
