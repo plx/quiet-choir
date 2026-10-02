@@ -8,6 +8,8 @@ import { EVENT_LINE_MAX_BYTES, type EventLine } from '../src/workflow/loader/eve
 import type { AttemptRecord, RunRecord, StepRecord } from '../src/workflow/runtime/record.js';
 import type { ExecutionRecord, RunEvent } from '../src/workflow/runtime/observability-model.js';
 
+/** Fields a test may set, including to undefined to model an older record that lacks them. */
+type Loose<T> = { [K in keyof T]?: T[K] | undefined };
 const at = (ms: number): string => new Date(Date.UTC(2026, 9, 1, 12, 0, 0, ms)).toISOString();
 
 function execution(n: number, startedAt: number, endedAt: number | null = null): ExecutionRecord {
@@ -38,7 +40,7 @@ function attempt(
   n: number,
   status: AttemptRecord['status'],
   finishedAt: number | null,
-  fields: Partial<AttemptRecord> = {},
+  fields: Loose<AttemptRecord> = {},
 ): AttemptRecord {
   return {
     attempt: n,
@@ -52,7 +54,7 @@ function attempt(
     ...fields,
   } as AttemptRecord;
 }
-function step(history: AttemptRecord[], fields: Partial<StepRecord> = {}): StepRecord {
+function step(history: AttemptRecord[], fields: Loose<StepRecord> = {}): StepRecord {
   return {
     kind: 'step',
     fingerprint: 'f',
@@ -63,7 +65,7 @@ function step(history: AttemptRecord[], fields: Partial<StepRecord> = {}): StepR
     error: null,
     wakeAt: null,
     ...fields,
-  };
+  } as StepRecord;
 }
 function record(fields: Partial<RunRecord> = {}): RunRecord {
   return {
