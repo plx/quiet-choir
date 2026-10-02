@@ -9,6 +9,7 @@
   "expected": {
     "reason": "Reached maximum number of turns (3)",
     "terminalReason": "max_turns",
-    "apiStatus": null
+    "apiStatus": null,
+    "kind": "turn-limit"
   }
 }

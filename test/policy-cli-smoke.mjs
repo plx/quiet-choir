@@ -135,8 +135,25 @@ export default defineWorkflow({ name: 'policy-cli', version: '1', input: z.objec
   ]);
   const invalid = cli(...args, '--resume', '--policy', '{"timeoutMs":0}');
   assert.equal(invalid.status, 2, invalid.stderr);
+  const transientRule = { match: 'review', retry: { maxAttempts: 2, on: ['transient'] } };
+  const transient = cli(
+    ...args,
+    '--resume',
+    '--policy-reset',
+    '--policy',
+    JSON.stringify(transientRule),
+    '--json',
+    '--full',
+  );
+  assert.equal(transient.status, 0, transient.stderr);
+  assert.deepEqual(JSON.parse(transient.stdout).policy, [transientRule]);
+  const reread = cli('inspect', 'recovery', '--state-dir', state, '--json');
+  assert.equal(reread.status, 0, reread.stderr);
+  assert.deepEqual(JSON.parse(reread.stdout).policy, [transientRule]);
+  const bogus = cli(...args, '--resume', '--policy', '{"retry":{"maxAttempts":2,"on":["bogus"]}}');
+  assert.equal(bogus.status, 2, bogus.stderr);
   console.log(
-    'PASS CLI timeout recovery, saved attempt policy, sticky resume, model authorization, and reset',
+    'PASS CLI timeout recovery, saved attempt policy, sticky resume, model authorization, reset, and the transient retry alias',
   );
 } finally {
   rmSync(fixture, { recursive: true, force: true });

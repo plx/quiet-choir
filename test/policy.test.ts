@@ -16,6 +16,8 @@ import {
   type WorkflowContext,
 } from '../src/index.js';
 import { agentIdentity } from '../src/workflow/runtime/identity.js';
+import { policyOverrideSchema, retryPolicySchema } from '../src/workflow/runtime/policy.js';
+import { errorKindSchema, stepErrorSchema } from '../src/workflow/runtime/step-error.js';
 
 let stateDir: string;
 const reply = {
@@ -397,6 +399,7 @@ it.each([
   { maxBudgetUsd: 0 },
   { retry: { maxAttempts: 0 } },
   { retry: { maxAttempts: 1, delayMs: -1 } },
+  { retry: { maxAttempts: 2, on: ['bogus'] } },
   { match: '[' },
   { kind: 'sleep' },
   { kind: 'step', timeoutMs: 1 },
@@ -496,4 +499,39 @@ it('rejects undeclared native options even when their names resemble identity co
     );
   expect(identity('first')['kind']).toBe(identity('second')['kind']);
   expect(identity('first')['option.kind']).not.toBe(identity('second')['option.kind']);
+});
+
+it('accepts the transient retry alias wherever a retry kind is accepted, but never as a kind', async () => {
+  const retry = { maxAttempts: 2, delayMs: 0, on: ['transient', 'process'] as const };
+  expect(retryPolicySchema.parse(retry)).toEqual(retry);
+  expect(policyOverrideSchema.parse({ match: 'ask', retry })).toEqual({ match: 'ask', retry });
+  expect(retryPolicySchema.safeParse({ maxAttempts: 2, on: ['bogus'] }).success).toBe(false);
+  // The alias is a retry filter, not a failure kind.
+  expect(errorKindSchema.safeParse('transient').success).toBe(false);
+  expect(stepErrorSchema.safeParse({ message: 'x', kind: 'transient', attempts: 1 }).success).toBe(
+    false,
+  );
+  const invoke = vi.fn<Harness['invoke']>(() => Promise.resolve(reply));
+  const definition = workflow(async (ctx) => {
+    await ctx.step('local', { input: null, schema: z.string(), retry, run: () => 'ok' });
+    return (
+      await ctx.claude.text('ask', { prompt: 'p', retry: { maxAttempts: 2, on: ['transient'] } })
+    ).output;
+  });
+  const result = await runWorkflow(definition, {
+    ...options(),
+    harness: { invoke },
+    policy: [{ match: 'ask', retry: { maxAttempts: 3, on: ['transient'] } }],
+  });
+  expect(result.output).toBe('ok');
+  const saved = await readRun(options());
+  expect(saved.policy).toEqual([{ match: 'ask', retry: { maxAttempts: 3, on: ['transient'] } }]);
+  expect(saved.steps['ask']?.attemptHistory?.[0]?.policy.retry).toMatchObject({
+    maxAttempts: 3,
+    on: ['transient'],
+  });
+  expect(saved.steps['local']?.attemptHistory?.[0]?.policy.retry.on).toEqual([
+    'transient',
+    'process',
+  ]);
 });

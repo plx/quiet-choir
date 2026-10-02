@@ -9,6 +9,7 @@
   "expected": {
     "reason": "Failed to authenticate",
     "terminalReason": "api_error",
-    "apiStatus": 401
+    "apiStatus": 401,
+    "kind": "authentication"
   }
 }

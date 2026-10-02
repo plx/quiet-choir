@@ -15,6 +15,7 @@ import type {
   HarnessRequestInput,
 } from '../src/index.js';
 import { parseCodex } from '../src/harnesses/protocol.js';
+import { errorKindSchema } from '../src/workflow/runtime/step-error.js';
 
 const directories: string[] = [];
 const signal = new AbortController().signal;
@@ -30,6 +31,7 @@ const captureSchema = z
       reason: z.string(),
       terminalReason: z.string().nullable(),
       apiStatus: z.number().nullable(),
+      kind: errorKindSchema,
     }),
   })
   .transform(({ provider, ...capture }) => ({ ...capture, harness: provider }));
@@ -129,11 +131,13 @@ describe('captured exit-1 failures', () => {
         if (capture.expected.apiStatus)
           expect(error.message).toContain(`HTTP ${String(capture.expected.apiStatus)}`);
         expect(error.failure?.reason).not.toMatch(/^Reconnecting/u);
+        expect(error.kind).toBe(capture.expected.kind);
         if (capture.name === 'claude-auth.json') expect(error.message).not.toContain('success');
         expect(error.stderrTail).toBe(capture.stderr.trim());
         const saved = await readRun({ stateDir: directory, runId: 'capture' });
         expect(saved.steps['agent']?.error).toBe(error.message);
         expect(saved.steps['agent']?.failedAttempts).toHaveLength(resume ? 2 : 1);
+        expect(saved.steps['agent']?.attemptHistory?.at(-1)?.errorKind).toBe(capture.expected.kind);
         expect(saved.steps['agent']?.failedAttempts?.at(-1)).toEqual({
           attempt: resume ? 2 : 1,
           sessionId: error.sessionId,

@@ -356,11 +356,11 @@ Use `onError: 'return'` when a local or agent failure selects a fallback. It ret
 failures as `settled-failed`. Those outcomes replay without another call. Throwing remains the
 default; a caught throwing call may heal and change the replay path. Cancellation still rejects.
 
-Use one ID with `retry: { maxAttempts: 3, delayMs: 100, on: ['rate-limit', 'timeout'] }` for
-transient retries. Retry policy can change on resume; `onError` is step identity. Do not race
-durable operations with `Promise.race`/`Promise.any`: replay may choose a different winner. Agent
-`timeoutMs` plus `onError: 'return'` journals a timeout decision. Signal/poll/deadline races use one
-`ctx.wait`; arbitrary effect races remain unsupported. See
+Use one ID with `retry: { maxAttempts: 3, delayMs: 100, on: ['transient'] }` for transient retries
+(`rate-limit`, `overloaded`, `timeout`). Retry policy can change on resume; `onError` is step
+identity. Do not race durable operations with `Promise.race`/`Promise.any`: replay may choose a
+different winner. Agent `timeoutMs` plus `onError: 'return'` journals a timeout decision.
+Signal/poll/deadline races use one `ctx.wait`; arbitrary effect races remain unsupported. See
 [failure handling](plugins/agents/quiet-choir/skills/quiet-choir/references/workflow-authoring.md#failure-handling)
 for safe fallbacks, best-effort maps, classification limits, and deliberate retry via fork
 invalidation.

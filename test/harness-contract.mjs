@@ -4,7 +4,7 @@ import { spawn } from 'node:child_process';
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { CliHarness } from '../dist/index.js';
+import { CliHarness, HarnessError } from '../dist/index.js';
 import { materializeInvocation } from '../dist/harnesses/invocation.js';
 import { parseClaude, parseCodex } from '../dist/harnesses/protocol.js';
 import { fakeApi } from './contracts/local-api.mjs';
@@ -254,6 +254,14 @@ try {
                       : 'Invalid schema for response_format',
                 terminalReason: parsed.failure.terminalReason,
                 apiStatus: parsed.failure.apiStatus,
+                kind: new HarnessError({
+                  harness: provider,
+                  exit: { code: result.code, signal: result.signal },
+                  failure: parsed.failure,
+                  reason: parsed.failure.reason,
+                  stderr: result.stderr,
+                  stdout: '',
+                }).kind,
               },
             }),
       };

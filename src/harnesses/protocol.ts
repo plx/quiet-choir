@@ -1,5 +1,5 @@
 import type { ProtocolFailure } from '../harness-kit.js';
-import type { AgentUsage, HarnessResponse } from '../harness-kit.js';
+import type { AgentUsage, ErrorKind, HarnessResponse } from '../harness-kit.js';
 import { claudeUsage, codexUsage } from './usage.js';
 
 /** Protocol classification, evaluated independently of the process exit code. */
@@ -60,9 +60,16 @@ function message(value: unknown): string {
   return text.slice(0, 2048);
 }
 
+interface ApiError {
+  readonly reason: string;
+  readonly status: number | null;
+  /** The innermost API error `type`, such as `invalid_request_error`. */
+  readonly type: string | null;
+}
+
 // Codex embeds API error JSON inside error.message. Unwrap only bounded nesting.
-function apiError(value: unknown, depth = 0): { reason: string; status: number | null } {
-  if (depth >= 4) return { reason: message(value), status: null };
+function apiError(value: unknown, depth = 0): ApiError {
+  if (depth >= 4) return { reason: message(value), status: null, type: null };
   if (typeof value === 'string') {
     try {
       const parsed: unknown = JSON.parse(value);
@@ -74,9 +81,29 @@ function apiError(value: unknown, depth = 0): { reason: string; status: number |
   const data = record(value);
   if (data && (data['error'] !== undefined || data['message'] !== undefined)) {
     const nested = apiError(data['error'] ?? data['message'], depth + 1);
-    return { reason: nested.reason, status: number(data['status']) ?? nested.status };
+    // The innermost type wins: an outer envelope's generic `"type": "error"` must not mask it.
+    return {
+      reason: nested.reason,
+      status: number(data['status']) ?? nested.status,
+      type: nested.type ?? string(data['type']),
+    };
   }
-  return { reason: message(value), status: null };
+  return { reason: message(value), status: null, type: null };
+}
+
+// Fixed codex-cli phrasings (recorded on 0.157.1). Match prefixes only, never arbitrary substrings,
+// so text quoted inside an unrelated error cannot change its classification.
+const codexRateLimit = /^rate limit exceeded/iu;
+const codexRateLimitReconnect = /^Reconnecting\.\.\. \d+\/\d+ \(rate limit exceeded/iu;
+// Claude Code tags an unknown model on its own stderr line.
+const claudeUnknownModel = /^\[claude-code:unrecognized_model\]/mu;
+
+/** Adapter-owned failure kind for Codex prose that carries no status metadata. */
+function codexKind(error: ApiError | undefined, notices: readonly string[]): ErrorKind | undefined {
+  if (error === undefined)
+    return codexRateLimitReconnect.test(notices.at(-1) ?? '') ? 'rate-limit' : undefined;
+  if (error.type === 'invalid_request_error') return 'invalid-request';
+  return codexRateLimit.test(error.reason) ? 'rate-limit' : undefined;
 }
 
 /** Classify Claude's terminal envelope. Real agent failures normally accompany exit 1. */
@@ -171,10 +198,22 @@ export class ClaudeProtocol {
     this.#outcome = parseClaude(JSON.stringify(data), this.#structured, this.#requested);
     this.#text = this.#outcome.kind === 'success' ? null : string(data['result']);
   }
-  public finish(): ProtocolOutcome {
-    return (
-      this.#outcome ?? { kind: 'unparseable', reason: 'Claude did not return a terminal result.' }
-    );
+  /**
+   * The terminal outcome. `stderr`, when given, lets a failure without a kind be classified from
+   * Claude Code's own `[claude-code:unrecognized_model]` tag.
+   */
+  public finish(stderr = ''): ProtocolOutcome {
+    const outcome = this.#outcome ?? {
+      kind: 'unparseable',
+      reason: 'Claude did not return a terminal result.',
+    };
+    if (
+      outcome.kind === 'failure' &&
+      outcome.failure.kind === undefined &&
+      claudeUnknownModel.test(stderr)
+    )
+      return { kind: 'failure', failure: { ...outcome.failure, kind: 'invalid-request' } };
+    return outcome;
   }
 }
 
@@ -188,8 +227,8 @@ export class CodexProtocol {
   #sessionId: string | null = null;
   #completed = false;
   #tokens: AgentUsage | null = null;
-  #failed: ReturnType<typeof apiError> | undefined;
-  #lastError: ReturnType<typeof apiError> | undefined;
+  #failed: ApiError | undefined;
+  #lastError: ApiError | undefined;
   readonly #notices: string[] = [];
 
   public get sessionId(): string | null {
@@ -247,10 +286,12 @@ export class CodexProtocol {
     }
   }
 
+  /** The terminal outcome. Codex reports its failures on stdout, so it reads no stderr. */
   public finish(): ProtocolOutcome {
     return classify(() => {
       if (this.#failed !== undefined || (!this.#completed && this.#notices.length > 0)) {
         const error = this.#failed ?? this.#lastError;
+        const kind = codexKind(error, this.#notices);
         const history = this.#notices
           .filter((notice) => notice !== error?.reason)
           .join('; ')
@@ -264,6 +305,7 @@ export class CodexProtocol {
             apiStatus: error?.status ?? null,
             sessionId: this.#sessionId,
             usage: this.#tokens,
+            ...(kind === undefined ? {} : { kind }),
           },
         };
       }

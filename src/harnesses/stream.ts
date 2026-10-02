@@ -84,9 +84,10 @@ export class HarnessStream {
     await this.#context.onOutput?.('stderr', chunk);
   }
 
-  public async finish(): Promise<ProtocolOutcome> {
+  /** Flush buffered lines and classify; `stderr` lets the protocol read native failure tags. */
+  public async finish(stderr = ''): Promise<ProtocolOutcome> {
     await this.#lines.finish();
-    return this.protocol.finish();
+    return this.protocol.finish(stderr);
   }
 
   public diagnostics(stderr: string, warnings: readonly string[] = []): AgentDiagnostics {

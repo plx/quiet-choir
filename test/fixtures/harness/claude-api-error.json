@@ -9,6 +9,7 @@
   "expected": {
     "reason": "Contract fixture API error",
     "terminalReason": "api_error",
-    "apiStatus": 400
+    "apiStatus": 400,
+    "kind": "invalid-request"
   }
 }

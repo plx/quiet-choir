@@ -9,6 +9,8 @@ import type { ErrorKind, StepError } from './model.js';
 export const errorKindSchema = z.enum([
   'timeout',
   'rate-limit',
+  'overloaded',
+  'invalid-request',
   'schema',
   'authentication',
   'permission',
@@ -20,6 +22,16 @@ export const errorKindSchema = z.enum([
   'cancelled',
   'unknown',
 ]);
+
+/** The kinds the `'transient'` retry filter stands for. @internal */
+export const transientErrorKinds = ['rate-limit', 'overloaded', 'timeout'] as const;
+
+/**
+ * Validation for one `retry.on` entry: any error kind, or the `'transient'` alias. The alias is a
+ * filter, never a kind: saved failures and attempt kinds keep using {@link errorKindSchema}.
+ * @internal
+ */
+export const retryOnSchema = z.enum([...errorKindSchema.options, 'transient']);
 
 /** Checkpoint representation of a terminal failure. @internal */
 export const stepErrorSchema = z.object({

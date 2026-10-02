@@ -38,7 +38,7 @@ import type {
 import { profileOverrideSchema, grantsSchema, capabilityManifestSchema } from './profiles.js';
 import type { CapabilityManifest, ProfileOverride } from './profiles-model.js';
 import { jsonValue } from './json.js';
-import { errorKindSchema, stepErrorSchema } from './step-error.js';
+import { errorKindSchema, retryOnSchema, stepErrorSchema } from './step-error.js';
 import type { MapStepError, RootCause } from './fan-out.js';
 import type { StepIdentity } from './identity.js';
 import type { CodeChange, ForkProvenance, ReusedStep, WorkflowIdentity } from './replay-model.js';
@@ -540,7 +540,7 @@ const stepSchema = z
             retry: z.object({
               maxAttempts: z.number().int().positive(),
               delayMs: z.number().nonnegative(),
-              on: z.array(errorKindSchema).optional(),
+              on: z.array(retryOnSchema).optional(),
             }),
           }),
           sources: z.record(z.string(), z.string()),

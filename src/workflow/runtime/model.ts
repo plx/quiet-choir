@@ -52,10 +52,16 @@ export type JsonInput =
   | readonly JsonInput[]
   | { readonly [key: string]: JsonInput | undefined };
 
-/** Stable categories used by settled outcomes and selective retry. */
+/**
+ * Stable categories used by settled outcomes and selective retry. `invalid-request` is a request
+ * the provider rejected as malformed (HTTP 400/404/422, an unknown model or an invalid option);
+ * `overloaded` is a provider-side failure (HTTP 500/502/503/529).
+ */
 export type ErrorKind =
   | 'timeout'
   | 'rate-limit'
+  | 'overloaded'
+  | 'invalid-request'
   | 'schema'
   | 'authentication'
   | 'permission'
@@ -377,8 +383,11 @@ export interface RetryPolicy {
   readonly maxAttempts: number;
   /** Initial delay in milliseconds, doubled on each retry; defaults to 100. */
   readonly delayMs?: number;
-  /** Retry only these categories; omission retries all non-cancellation effect failures, [] retries none. */
-  readonly on?: readonly ErrorKind[];
+  /**
+   * Retry only these categories; `'transient'` stands for `rate-limit`, `overloaded` and
+   * `timeout`. Omission retries every non-fatal failure except `invalid-request`; [] retries none.
+   */
+  readonly on?: readonly (ErrorKind | 'transient')[];
 }
 
 /** Context supplied to a local effect. */

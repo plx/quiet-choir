@@ -9,6 +9,7 @@
   "expected": {
     "reason": "There's an issue with the selected model",
     "terminalReason": "api_error",
-    "apiStatus": 404
+    "apiStatus": 404,
+    "kind": "invalid-request"
   }
 }

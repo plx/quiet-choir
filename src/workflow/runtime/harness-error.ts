@@ -77,6 +77,11 @@ export interface ProtocolFailure {
   readonly sessionId: string | null;
   /** Reported usage, including spend incurred before a failure. */
   readonly usage: AgentUsage | null;
+  /**
+   * Adapter-owned classification when protocol metadata such as `apiStatus` is insufficient, for
+   * example a provider's own fixed rate-limit phrasing. It takes precedence over the status mapping.
+   */
+  readonly kind?: ErrorKind;
 }
 
 /** Process termination metadata, separate from protocol success or failure. */
@@ -99,7 +104,10 @@ export interface HarnessErrorDetails {
   readonly turns?: number;
   /** Reported denial count from an otherwise successful envelope followed by a process failure. */
   readonly permissionDenials?: number;
-  /** Explicit adapter category when protocol metadata alone is insufficient. */
+  /**
+   * Explicit adapter category when protocol metadata alone is insufficient. It wins over
+   * `failure.kind`, which wins over the HTTP status and terminal-reason mapping.
+   */
   readonly kind?: ErrorKind;
   /** Adapter that performed the invocation. */
   readonly harness: string;
@@ -188,7 +196,7 @@ export class HarnessError extends Error {
     this.responseTruncated = details.responseTruncated === true || response.responseTruncated;
     this.turns = failure?.turns ?? details.turns ?? null;
     this.permissionDenials = failure?.permissionDenials ?? details.permissionDenials ?? null;
-    this.kind = details.kind ?? protocolErrorKind(failure);
+    this.kind = details.kind ?? failure?.kind ?? protocolErrorKind(failure);
     this.harness = details.harness;
     this.exit = { ...details.exit };
     this.failure = failure;
@@ -205,6 +213,10 @@ function protocolErrorKind(failure: ProtocolFailure | null): ErrorKind {
   if (failure.apiStatus === 401) return 'authentication';
   if (failure.apiStatus === 403) return 'permission';
   if (failure.apiStatus === 408 || failure.apiStatus === 504) return 'timeout';
+  if (failure.apiStatus !== null && [400, 404, 422].includes(failure.apiStatus))
+    return 'invalid-request';
+  if (failure.apiStatus !== null && [500, 502, 503, 529].includes(failure.apiStatus))
+    return 'overloaded';
   const reasons = [failure.subtype, failure.terminalReason];
   if (reasons.includes('error_max_turns') || reasons.includes('max_turns')) return 'turn-limit';
   if (reasons.includes('error_max_budget_usd') || reasons.includes('budget_exhausted'))

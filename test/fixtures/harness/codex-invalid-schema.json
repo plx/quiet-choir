@@ -9,6 +9,7 @@
   "expected": {
     "reason": "Invalid schema for response_format",
     "terminalReason": null,
-    "apiStatus": null
+    "apiStatus": null,
+    "kind": "invalid-request"
   }
 }

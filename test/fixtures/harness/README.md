@@ -13,8 +13,18 @@ are replaced with fixture values. Protocol fields and error text are otherwise p
 - `codex-rate-limit`: real Codex CLI against a local fake Responses API, reconnecting three times
   before emitting a terminal failure.
 
-All seven captures exited 1. See [CONTRIBUTING](../../../CONTRIBUTING.md#harness-protocol-captures)
-for refresh instructions. Tests replay them locally through fake executables.
+All seven captures above exited 1. See
+[CONTRIBUTING](../../../CONTRIBUTING.md#harness-protocol-captures) for refresh instructions. Tests
+replay them locally through fake executables.
+
+`claude-overloaded-500.json` and `claude-overloaded-529.json` are synthetic, not CLI captures: each
+copies the `claude-api-error` envelope below and changes only `api_error_status` (500 or 529) and
+the result text, which ends in `(synthetic)` so the files stay recognizable. They supply the
+`overloaded` kind, which the local fake API has no case for. Both replay with exit 1, and
+`--refresh` never rewrites them.
+
+Every failure capture records `expected.kind`, the `HarnessError.kind` its envelope produces.
+`npm run test:contract -- --refresh` computes it with the built `HarnessError`.
 
 `codex-reconnect-success.json` is another real 0.157.1 capture from the same local fake Responses
 API. The first SSE stream dropped; the CLI reconnected and exited 0 after completing the turn.
