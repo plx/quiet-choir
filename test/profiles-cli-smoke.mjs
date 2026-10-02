@@ -50,7 +50,9 @@ let prompt='';process.stdin.on('data',chunk=>prompt+=chunk);process.stdin.on('en
 import {writeFileSync} from 'node:fs';
 export default defineWorkflow({name:'profiles-cli',version:'1',input:z.object({}),output:z.string(),
 defaults:{claude:{model:'fixture'}},profiles:{scout:{extends:'readonly',maxTurns:30,description:'Reads code'},fixer:{extends:'edit'}},
-async run(ctx){writeFileSync('body-started','yes');await ctx.claude.text('saved',{prompt:'saved',profile:'scout'});return (await ctx.claude.text('pending',{prompt:'pending',profile:'scout'})).output;}});`;
+async run(ctx){
+// quiet-choir-ignore QC002 marker file proving whether the body ran
+writeFileSync('body-started','yes');await ctx.claude.text('saved',{prompt:'saved',profile:'scout'});return (await ctx.claude.text('pending',{prompt:'pending',profile:'scout'})).output;}});`;
   writeFileSync(file, source);
   const validation = cli('validate', file, '--json');
   assert.equal(validation.status, 0, validation.stderr);

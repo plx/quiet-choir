@@ -22,6 +22,7 @@ const files = readdirSync(fixtures)
 
 let program: ts.Program;
 let findings: DurabilityFinding[];
+let errors: string[];
 
 function of(fixture: string): DurabilityFinding[] {
   return findings.filter((finding) => basename(finding.file) === `${fixture}.workflow.ts`);
@@ -31,21 +32,21 @@ function found(fixture: string): string[] {
   return of(fixture).map((finding) => `${finding.rule}@${String(finding.line)}`);
 }
 
-// One program over every fixture, as validate builds it under the root tsconfig.
-// measured: 1.3 s alone (compile of the fixtures plus src/), 3.4 s in the full coverage run.
+// One program over every fixture, as validate builds it under the root tsconfig, plus its type
+// check. measured: 1.3 s alone; in a full coverage run the type check alone took 2.2 s.
 beforeAll(() => {
   const configured = configuredProgram(files, join(projectRoot, 'tsconfig.json'));
   if ('error' in configured) throw new Error('tsconfig.json could not be read');
   program = configured.program;
   findings = lintDurability(program);
+  errors = ts
+    .getPreEmitDiagnostics(program)
+    .filter((diagnostic) => diagnostic.category === ts.DiagnosticCategory.Error)
+    .map((diagnostic) => ts.flattenDiagnosticMessageText(diagnostic.messageText, '\n'));
 }, 30_000);
 
 describe('durability lint', () => {
   it('type-checks every fixture cleanly, so the lint sees a valid program', () => {
-    const errors = ts
-      .getPreEmitDiagnostics(program)
-      .filter((diagnostic) => diagnostic.category === ts.DiagnosticCategory.Error)
-      .map((diagnostic) => ts.flattenDiagnosticMessageText(diagnostic.messageText, '\n'));
     expect(errors).toEqual([]);
   });
 

@@ -43,7 +43,7 @@ afterEach(async () => {
 
 // Each case compiles one fixture against the root tsconfig (src/ included); a failing validate
 // stops before import.
-// measured: 0.7-1.0 s per case alone, 2.9 s for the slowest case in the full coverage run.
+// measured: 0.9-1.2 s per case alone, up to 5.1 s in a full coverage run (compile-dominated).
 describe('durability lint in the loader', { timeout: 20_000 }, () => {
   it.each([
     ['m01-void', 'QC001', 10],
