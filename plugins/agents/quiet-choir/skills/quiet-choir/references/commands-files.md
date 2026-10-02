@@ -49,7 +49,8 @@ it and passing `'throw'` are the same identity). `timeoutMs`, `maxOutputBytes`, 
 policy, so raising them does not invalidate completed work. Sticky run policy accepts
 `kind: 'exec'`, timeout/output caps, and retry. Unfinished effects retain the existing explicit
 redefinition/history behavior; completed identity changes require a new run or an appropriate fork.
-Repeated observations need fresh IDs or a read-only `ctx.poll` observer; do not nest exec in one.
+Repeated observations need fresh IDs or a read-only `ctx.poll` observer, which can run its commands
+through `context.exec`.
 
 The default environment inherits the parent plus `env`. `inheritEnv: false` supplies only that
 overlay and engine metadata (the selected executable or shell may itself add variables). Rotating
@@ -58,6 +59,33 @@ checkpointed; output can still contain anything the command prints. The `QUIET_C
 reserved. Children receive `QUIET_CHOIR_IDEMPOTENCY_KEY` (`runId/stepId`), `QUIET_CHOIR_RUN_ID`,
 `QUIET_CHOIR_STEP_ID`, and `QUIET_CHOIR_ATTEMPT`. Scripts must implement their own reconciliation;
 the runtime cannot make external writes exactly once.
+
+## Commands inside a callback or observer
+
+A `ctx.step` callback or `ctx.poll` observer cannot call durable `ctx.exec`. It runs commands
+through its own context instead: `context.exec(argv, options)` and
+`context.exec.json(argv, { schema })` take the same command and options as `ctx.exec`, without an
+ID, `worktree` or `retry`. They go through the same runner as `ctx.exec` (`RunOptions.execRunner`,
+or `processRunner`), with the same five-minute and 1 MiB defaults, environment overlay, reserved
+`QUIET_CHOIR_` prefix, exit-code and JSON rules.
+
+These commands are **not durable**. They write no checkpoint and no step record, and they run again
+whenever the parent reruns: on a retry, on a resume of an unfinished step, and on every poll check.
+Treat them as at least once. The child gets the parent's metadata, so `QUIET_CHOIR_IDEMPOTENCY_KEY`
+equals the callback's `context.idempotencyKey` and `QUIET_CHOIR_STEP_ID` names the parent step or
+wait. It is registered under the parent's ID and attempt, so a runner killed while it runs leaves a
+`lock/processes` record that orphan recovery reports (`run.orphans`) or stops (`--kill-orphans`) on
+resume. A command still running when the callback or observation settles is terminated before the
+step finishes; call `context.exec` only while the callback is active. An observer's commands are
+aborted with its observation signal, so `observeTimeoutMs` and the deadline bound them.
+
+A failure throws an `ExecError` into the parent attempt; left uncaught, it fails the step and the
+attempt history keeps its exit code and 1024-character output tails. `onError: 'return'` resolves to
+`{ ok: false, error }` with the same `ExecStepError` fields as a settled `ctx.exec`, but nothing is
+saved: a rerun of the parent runs the command again. Cancellation and a missing process adapter
+still reject. Sticky run policy rules (`RunOptions.policy`) do not apply to these commands; set
+`timeoutMs` and `maxOutputBytes` in the call. Nothing about them enters identity: a step is still
+identified by its callback source, and a wait by its observer.
 
 ## Files
 
@@ -123,5 +151,14 @@ spawning; unmatched commands run for real there, and worktree Git always does. A
 exports completed command results as exec rules keyed by argv and environment/stdin digests. It does
 not export a settled-failed command yet, so a `"commands": "fixture"` replay of that run fails at
 that step. File effects, local callbacks, and top-level workflow code still run for real unless
-selected by `--stub-steps`. See [command fixtures](rehearsal.md#command-fixtures) and the
+selected by `--stub-steps`.
+
+Commands a callback or observer runs through `context.exec` are rehearsed the same way: synthesized
+or answered by an `exec` rule, and listed in `commands` with `parentStepId` set to the step or wait
+(null for `ctx.exec`). A rule's `step` matches the parent's ID. `occurrence` counts distinct step
+IDs, so all of one parent's commands share an occurrence; tell them apart with `argvPrefix`. A poll
+observer may pass `live: true` to run a read-only command for real under `--dry-run`; it is listed
+with `outputSource: 'live'`. `live` is refused in a step callback, and outside `--dry-run` it
+changes nothing. `workflow fixtures` cannot export these commands, because they have no records. See
+[command fixtures](rehearsal.md#command-fixtures) and the
 [verified cookbook](patterns.md#commands-and-test-verdicts).

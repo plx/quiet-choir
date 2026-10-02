@@ -66,9 +66,12 @@ Checkpoints written before this change are scrubbed the next time the run execut
 secrets in the parent environment; inspection cannot reconstruct hashed call-site prompts.
 
 Agent operations are already durable: call them directly from the workflow, not from inside
-`ctx.step`. Local `run` receives `{ signal, attempt, idempotencyKey }`. `attempt` is the total
-persisted count across retries and resumes; `idempotencyKey` is the stable `runId/stepId` string.
-Pass the signal to cancellable I/O and the key to external systems that support deduplication.
+`ctx.step`. Local `run` receives `{ signal, attempt, idempotencyKey, cwd, exec, reportUsage }`.
+`attempt` is the total persisted count across retries and resumes; `idempotencyKey` is the stable
+`runId/stepId` string. Pass the signal to cancellable I/O and the key to external systems that
+support deduplication. Run commands inside the callback with `context.exec` or `context.exec.json`
+(non-durable, rerun with the step; see
+[commands inside a callback](commands-files.md#commands-inside-a-callback-or-observer)).
 
 For example, inside a workflow that imports `readFile` from `node:fs/promises`:
 

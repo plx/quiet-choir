@@ -2,6 +2,21 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- Step callbacks and poll observers can run commands through `context.exec(argv, options?)` and
+  `context.exec.json(argv, { schema })` (#150; amends ADR 0027 and ADR 0016). They take `ctx.exec`'s
+  command and options without an ID, `worktree` or `retry`, go through `RunOptions.execRunner` (or
+  `processRunner`) with the same defaults, caps, environment overlay and `QUIET_CHOIR_*` metadata,
+  and register their children under the parent step or wait and attempt, so orphan recovery covers
+  them. They are not durable: no checkpoint or step record is written and every rerun of the parent
+  runs them again. A failure throws `ExecError` into the parent attempt; `onError: 'return'`
+  resolves to an unsaved `{ ok: false, error: ExecStepError }`. A command still running when its
+  callback or observation settles is terminated, and a call after that rejects. Under `--dry-run`
+  they are synthesized or answered by exec fixture rules like `ctx.exec`, except an observer call
+  with `live: true`, which runs for real. New public types `StepExecFunction`, `StepExecOptions` and
+  `PollExecOptions`; `StepContext` gains `exec`; `PollContext` gains `exec` with `live`;
+  `ProcessRunRequest` gains optional `nested`; `WorktreeSetupContext` no longer includes `exec`.
+  Rehearsal `commands` entries gain `parentStepId` and the `outputSource` value `live`. Identities
+  are unchanged.
 - `ctx.exec`, `ctx.exec.json`, `ctx.readFile` and `ctx.writeFile` accept `onError: 'return'` (#149;
   amends ADR 0007). A final failure, after retries, is saved as `settled-failed` and replays on
   resume without running the command or touching the file, like settled local and agent calls; fork

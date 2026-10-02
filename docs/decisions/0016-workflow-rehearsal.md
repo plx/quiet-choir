@@ -125,8 +125,12 @@ Routing (#308): the CLI now passes the real process runner as `RunOptions.proces
 rehearsal's synthesizing runner as `RunOptions.execRunner`, the same split `--harness fixture` uses.
 `ctx.exec`, including `guardFile` helpers, still never spawns under dry-run; the only process a
 dry-run may start is that read-only `git rev-parse`. Later command routes (`StepContext.exec`,
-command polls) should follow `execRunner`. An embedder that passes `rehearsal` hooks with a
-synthesizing `processRunner`, as the CLI did before, now gets placeholder bases instead of a
+command polls) should follow `execRunner`. Amended by #150: a callback's or observer's
+`context.exec` follows `execRunner`, and the report lists those commands with `parentStepId`. A poll
+observer's `live: true` command is the one other process a dry-run starts: it goes to the real
+`processRunner`, which the CLI wraps to list it with `outputSource: 'live'`. Outside a rehearsal
+`live` is ignored, so fixture rules still answer it. An embedder that passes `rehearsal` hooks with
+a synthesizing `processRunner`, as the CLI did before, now gets placeholder bases instead of a
 refusal.
 
 Still refused, with a message that names what dry-run synthesizes: `ctx.worktree`, any effect

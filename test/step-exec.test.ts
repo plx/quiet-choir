@@ -226,8 +226,7 @@ describe('step callbacks', () => {
         ctx.step('parent', {
           input: null,
           schema: z.unknown(),
-          run: (context) =>
-            context.exec.json(['gh'], {} as { schema: z.ZodType }),
+          run: (context) => context.exec.json(['gh'], {} as { schema: z.ZodType }),
         }),
       ),
       { ...setup('schemaless'), processRunner: runner },

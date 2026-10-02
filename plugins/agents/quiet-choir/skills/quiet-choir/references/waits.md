@@ -22,8 +22,8 @@ Captured values still belong in poll input. Waiting identities cannot change; us
 IDs and immutable subjects. Never derive changing sleep durations from a body `Date.now()`.
 `observeTimeoutMs` and `onError` are policy, not identity, and may change on resume.
 
-`observe({ signal, idempotencyKey, attempt, previous })` returns `{ done: true, value }` or
-`{ done: false, note? }`. Zod validates/project terminal values. `every` is a positive integer
+`observe({ signal, idempotencyKey, attempt, cwd, exec, previous })` returns `{ done: true, value }`
+or `{ done: false, note? }`. Zod validates/project terminal values. `every` is a positive integer
 interval or `{ initialMs, maxMs, factor? }`, with factor default two. `ctx.poll` requires timeoutMs
 or deadline; `ctx.wait` may be unbounded. Progress overwrites checks/nextCheckAt/last note (16 KiB
 limit); naps do not save. By default a thrown observation fails the invocation and can be retried on
@@ -33,6 +33,13 @@ cancellation, when the deadline passes during the observation (the wait resolves
 the last note), and after `observeTimeoutMs` (positive integer, default 60 s, never past the
 deadline), which fails the wait like a throw. An observer that ignores its aborted signal is
 abandoned after a 2 s grace, also when the run closes, with a `waitWarnings` run warning.
+
+Run commands such as `gh pr view` through `context.exec(argv, options)` or
+`context.exec.json(argv, { schema })`, never a raw `child_process` spawn. They use the run's process
+runner, are owned by the wait for orphan recovery, stop with the observation signal, and are
+synthesized or fixture-answered under rehearsal like `ctx.exec`; `{ live: true }` keeps a read-only
+one real under `--dry-run`. They are not durable: every check runs them again. See
+[commands inside a callback or observer](commands-files.md#commands-inside-a-callback-or-observer).
 
 `previous` holds the persisted progress before this check: `note` (null on the first check),
 `checks` (0 on the first check, tolerated errors included) and `openedAt`. It survives suspend, tick

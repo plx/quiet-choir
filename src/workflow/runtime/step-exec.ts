@@ -119,12 +119,7 @@ async function execute(
     );
   }
   const { live = false, onError, ...settings } = parsed;
-  const prepared = await prepareExec(
-    command,
-    settings,
-    dependencies.cwd,
-    schema !== null,
-  );
+  const prepared = await prepareExec(command, settings, dependencies.cwd, schema !== null);
   const outputSchema = schema ?? execResultSchema;
   if (schema !== null) dependencies.onSchema?.(schema);
   const request = processRequest(
