@@ -38,6 +38,7 @@ const defaults: Omit<ReplayInput, 'forkCandidate' | 'legacyFingerprint'> = {
   forkedFrom: false,
   rehearsal: false,
   isolated: false,
+  rehearsalSynthesized: false,
   strictHealedDivergence: false,
 };
 
@@ -295,6 +296,60 @@ const rows: Row[] = [
     name: 'rehearsal refuses a merge effect',
     input: { kind: 'merge', rehearsal: true },
     expected: refused({ reason: 'rehearsal-git' }),
+  },
+  {
+    name: 'rehearsal runs a synthesized fresh isolated agent call',
+    input: { kind: 'agent', rehearsal: true, isolated: true, rehearsalSynthesized: true },
+    expected: fresh(false),
+  },
+  {
+    name: 'rehearsal resumes an unfinished synthesized isolated agent call',
+    input: {
+      kind: 'agent',
+      prior: step({ kind: 'agent', status: 'failed' }),
+      rehearsal: true,
+      isolated: true,
+      rehearsalSynthesized: true,
+    },
+    expected: fresh(true),
+  },
+  {
+    name: 'rehearsal runs a synthesized merge of unchanged changes',
+    input: { kind: 'merge', rehearsal: true, rehearsalSynthesized: true },
+    expected: fresh(false),
+  },
+  {
+    name: 'a synthesized rehearsal effect in a fork still looks up fork reuse',
+    input: {
+      kind: 'agent',
+      rehearsal: true,
+      isolated: true,
+      rehearsalSynthesized: true,
+      forkedFrom: true,
+    },
+    fork: source,
+    expected: { migrateLegacy: false, outcome: { kind: 'reuse-fork', candidate: source } },
+    forkCalls: 1,
+  },
+  {
+    name: 'rehearsal refuses an unsynthesized isolated exec or step',
+    input: { kind: 'exec', rehearsal: true, isolated: true, rehearsalSynthesized: false },
+    expected: refused({ reason: 'rehearsal-git' }),
+  },
+  {
+    name: 'rehearsal refuses an unsynthesized merge',
+    input: { kind: 'merge', rehearsal: true, rehearsalSynthesized: false },
+    expected: refused({ reason: 'rehearsal-git' }),
+  },
+  {
+    name: 'rehearsal refuses a worktree effect even when marked synthesized',
+    input: { kind: 'worktree', rehearsal: true, rehearsalSynthesized: true },
+    expected: refused({ reason: 'rehearsal-git' }),
+  },
+  {
+    name: 'synthesis without rehearsal changes nothing',
+    input: { kind: 'merge', rehearsalSynthesized: true },
+    expected: fresh(false),
   },
   {
     name: 'rehearsal runs a non-Git effect',
@@ -813,7 +868,7 @@ describe('replayRefusalMessage', () => {
     ],
     [
       { reason: 'rehearsal-git' },
-      'Dry-run does not simulate Git worktree effects. Use a fixture harness in a temporary repository to rehearse isolation without paid calls.',
+      'Dry-run does not simulate this Git worktree effect: it synthesizes fresh isolated agent calls and merges of unchanged changes, but not ctx.worktree, effects isolated on a worktree handle, or merges of captured commits. Use a fixture harness in a temporary repository to rehearse these without paid calls.',
     ],
   ];
 

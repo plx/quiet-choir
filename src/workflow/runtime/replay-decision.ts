@@ -17,7 +17,8 @@
  * - Questions and waits are never redefined, even while unfinished.
  * - Original format-one steps migrate only on an exact old-fingerprint match, never for a terminal
  *   agent step (its isolation mode was never pinned).
- * - Dry-run refuses Git effects after terminal replay but before fork reuse.
+ * - Dry-run refuses Git effects after terminal replay but before fork reuse, unless the runner
+ *   synthesizes the effect (a fresh isolated agent call, or a merge of unchanged changes).
  * - Fork reuse is considered only for an absent step in a forked run.
  * - Strict healed divergence permits terminal replay and fork reuse but stops before the next live
  *   effect.
@@ -74,6 +75,12 @@ export interface ReplayInput {
   readonly rehearsal: boolean;
   /** Whether the effect runs inside worktree isolation. */
   readonly isolated: boolean;
+  /**
+   * Whether a dry-run synthesizes this Git effect instead of running it: a fresh isolated agent
+   * call, or a merge whose inputs are all unchanged changes. Meaningful only under `rehearsal`; a
+   * `worktree` effect is refused regardless.
+   */
+  readonly rehearsalSynthesized: boolean;
   /** Whether a strict replay has already recorded a healed divergence. */
   readonly strictHealedDivergence: boolean;
 }
@@ -151,7 +158,7 @@ const refuse = (migrateLegacy: boolean, refusal: ReplayRefusal): ReplayDecision 
 /**
  * Decide how an effect invocation relates to its recorded step, in this order: legacy format-one
  * checks, the question/wait redefinition refusal, the terminal redefinition refusal, terminal
- * replay, the dry-run Git refusal, fork reuse, the strict healed-divergence refusal, and finally a
+ * replay, the dry-run Git refusal (for an unsynthesized Git effect), fork reuse, the strict healed-divergence refusal, and finally a
  * redefinition or a fresh run.
  *
  * @internal
@@ -193,7 +200,11 @@ export function decideReplay(input: ReplayInput): ReplayDecision {
     });
   }
   if (prior && isTerminal(prior)) return { migrateLegacy, outcome: { kind: 'replay' } };
-  if (input.rehearsal && (input.isolated || kind === 'worktree' || kind === 'merge'))
+  // ctx.worktree creates a real handle, so it is never synthesized.
+  if (
+    input.rehearsal &&
+    (kind === 'worktree' || ((input.isolated || kind === 'merge') && !input.rehearsalSynthesized))
+  )
     return refuse(migrateLegacy, { reason: 'rehearsal-git' });
   if (!prior && input.forkedFrom) {
     const candidate = input.forkCandidate();
@@ -356,7 +367,7 @@ export function replayRefusalMessage(
     case 'terminal-redefined':
       return `Step ${id}: ${refusal.changed.join(', ') || 'identity'} changed on a ${refusal.status} step; --accept-code-change cannot reuse it. Fork a new run with --fork-from RUN --reuse matching --invalidate ${id}.`;
     case 'rehearsal-git':
-      return 'Dry-run does not simulate Git worktree effects. Use a fixture harness in a temporary repository to rehearse isolation without paid calls.';
+      return 'Dry-run does not simulate this Git worktree effect: it synthesizes fresh isolated agent calls and merges of unchanged changes, but not ctx.worktree, effects isolated on a worktree handle, or merges of captured commits. Use a fixture harness in a temporary repository to rehearse these without paid calls.';
   }
 }
 

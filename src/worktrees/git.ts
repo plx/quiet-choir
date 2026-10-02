@@ -5,7 +5,14 @@ import { execResultSchema } from '../workflow/runtime/exec-schema.js';
 
 /** Command protocol for local Git operations; the caller owns sequencing and checkpoint policy. @internal */
 export class WorktreeGit {
-  public constructor(private readonly runner: ProcessRunner) {}
+  /**
+   * @param readOnly - Refuse every command except `rev-parse` before it reaches the runner. Dry-run
+   * rehearsal resolves bases through this mode, so it can never create refs, worktrees or objects.
+   */
+  public constructor(
+    private readonly runner: ProcessRunner,
+    private readonly readOnly = false,
+  ) {}
 
   public async run(
     cwd: string,
@@ -18,6 +25,10 @@ export class WorktreeGit {
       readonly timeoutMs?: number;
     } = {},
   ): Promise<ExecResult> {
+    if (this.readOnly && args[0] !== 'rev-parse')
+      throw new Error(
+        `Read-only Git refuses ${args[0] ?? 'an empty command'}; only rev-parse runs.`,
+      );
     // Caller environment must not redirect repository/index ownership away from -C cwd. Windows
     // names are case-insensitive, so strip every casing on all platforms.
     const env = Object.fromEntries(
