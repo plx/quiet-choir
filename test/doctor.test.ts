@@ -27,6 +27,11 @@ const codexHelp =
   '--json --output-schema --ephemeral --config --image --profile --add-dir --ignore-user-config --ignore-rules';
 const claudeHelp =
   '--effort <level> effort (choices: "low", "medium", "high", "xhigh", "max")\n  --permission-mode <mode> permissions (choices: "acceptEdits", "auto", "bypassPermissions", "manual", "dontAsk", "plan")';
+/** The first untested patch above the tested maximum, on the same major.minor. */
+const untestedPatch = (provider: 'claude' | 'codex'): string => {
+  const [major = '', minor = '', patch = ''] = testedHarnessVersions[provider].maximum.split('.');
+  return `${major}.${minor}.${String(Number(patch) + 1)}`;
+};
 async function binary(provider: 'claude' | 'codex', mode = 'ok'): Promise<string> {
   const fixture = JSON.parse(
     await readFile(
@@ -46,7 +51,7 @@ const fs = require('node:fs');
 const a=process.argv.slice(2), mode=${JSON.stringify(mode)}, provider=${JSON.stringify(provider)};
 fs.appendFileSync(${JSON.stringify(join(directory, 'calls'))},JSON.stringify({harness:provider,args:a})+'\\n');
 if(mode==='hang') {setInterval(()=>{},1000);return;}
-if(a.includes('--version')) {if(mode==='cleanup')require('node:child_process').spawn('/bin/sleep',['30'],{stdio:'ignore'}).unref();console.log(mode==='version'?'9.9.9':${JSON.stringify(testedHarnessVersions[provider].minimum)});process.exit(0);}
+if(a.includes('--version')) {if(mode==='cleanup')require('node:child_process').spawn('/bin/sleep',['30'],{stdio:'ignore'}).unref();console.log(mode==='version'?'9.9.9':mode==='garbage'?'no version here':mode==='patch'?${JSON.stringify(untestedPatch(provider))}:${JSON.stringify(testedHarnessVersions[provider].minimum)});process.exit(0);}
 if(a.includes('--help')) {console.log(${JSON.stringify(provider === 'claude' ? claudeHelp : codexHelp)}.replace(mode==='enums'?'xhigh':'not-found', 'ultra'));process.exit(0);}
 if(a.includes('abc')) {console.error(mode==='hidden'?'unknown option --max-turns':"argument 'abc' is invalid. must be a number");process.exit(1);}
 if(a.some(v=>v.includes('quiet-choir-missing-'))) {console.error('System prompt file not found');process.exit(1);}
@@ -173,19 +178,63 @@ it('detects hidden flag drift', async () => {
   });
   expect(report.checks.find((check) => check.check === 'hidden-flags')?.ok).toBe(false);
 });
-it('reports version drift and skips the potentially unsafe inference probe', async () => {
-  const report = await probeHarnessContracts({
-    harness: 'codex',
-    codexBinary: await binary('codex', 'version'),
-    codexHome: directory,
-  });
-  expect(report.ok).toBe(false);
-  expect(report.zeroInference).toBe(false);
-  expect(report.checks.find((check) => check.check === 'argv')?.message).toContain(
-    'contract-tested',
-  );
-  const calls = await readFile(join(directory, 'calls'), 'utf8');
-  expect(calls).not.toContain('--output-schema');
+const callsLog = async (): Promise<string> => readFile(join(directory, 'calls'), 'utf8');
+const probeArgv = { claude: '--json-schema', codex: '--output-schema' } as const;
+const version = (report: DoctorReport) => report.checks.find((check) => check.check === 'version');
+const argv = (report: DoctorReport) => report.checks.find((check) => check.check === 'argv');
+const probeOptions = async (provider: 'claude' | 'codex', mode: string) => ({
+  harness: provider,
+  claudeBinary: await binary('claude', mode),
+  codexBinary: await binary('codex', mode),
+  codexHome: directory,
+});
+it.each(['claude', 'codex'] as const)(
+  'warns for an untested %s patch version, still runs the argv probe and stays usable',
+  async (provider) => {
+    const report = await probeHarnessContracts(await probeOptions(provider, 'patch'));
+    expect(version(report)).toMatchObject({ status: 'warn', ok: true });
+    expect(version(report)?.message).toContain('untested patch version');
+    expect(argv(report)).toMatchObject({ status: 'pass', ok: true });
+    expect(await callsLog()).toContain(probeArgv[provider]);
+    expect(report).toMatchObject({
+      ok: true,
+      zeroInference: true,
+      verdict: 'usable-with-warnings',
+    });
+    expect(report.warnings).toEqual([expect.stringContaining(`${provider} version:`)]);
+    expect(report.harnesses[provider]?.version).toBe(untestedPatch(provider));
+  },
+);
+it.each(['claude', 'codex'] as const)(
+  'fails an untested %s patch version under strict and keeps the probe result',
+  async (provider) => {
+    const report = await probeHarnessContracts({
+      ...(await probeOptions(provider, 'patch')),
+      strict: true,
+    });
+    expect(version(report)).toMatchObject({ status: 'fail', ok: false });
+    expect(version(report)?.message).toContain('--strict treats an untested patch version');
+    expect(argv(report)?.status).toBe('pass');
+    expect(report).toMatchObject({ ok: false, verdict: 'blocked', warnings: [] });
+    expect(report.zeroInference).toBe(true);
+  },
+);
+it.each([
+  ['version', 'outside the tested range'],
+  ['garbage', 'unparseable or prerelease version'],
+] as const)('blocks a %s mismatch but still runs the argv probe', async (mode, phrase) => {
+  const report = await probeHarnessContracts(await probeOptions('codex', mode));
+  expect(version(report)).toMatchObject({ status: 'fail', ok: false });
+  expect(version(report)?.message).toContain(phrase);
+  expect(argv(report)).toMatchObject({ status: 'pass', ok: true });
+  expect(await callsLog()).toContain('--output-schema');
+  expect(report).toMatchObject({ ok: false, verdict: 'blocked', zeroInference: true });
+});
+it('blocks an argv probe failure and still reports the probe check', async () => {
+  const report = await probeHarnessContracts(await probeOptions('claude', 'auth'));
+  expect(argv(report)).toMatchObject({ status: 'fail', ok: false });
+  expect(report).toMatchObject({ ok: false, verdict: 'blocked' });
+  expect(await callsLog()).toContain('--json-schema');
 });
 it('retains an earlier cost failure across a later zero-cost provider', async () => {
   const report = await probeHarnessContracts({
@@ -207,6 +256,10 @@ it('bounds missing executables, timeouts, invalid deadlines, and cancellation', 
   expect(missing.ok).toBe(false);
   expect(missing.zeroInference).toBe(false);
   expect(missing.checks).toHaveLength(5);
+  expect(missing.verdict).toBe('blocked');
+  expect(argv(missing)).toMatchObject({ status: 'fail', ok: false });
+  expect(argv(missing)?.message).toContain('skipped');
+  expect(argv(missing)?.message).toContain('did not answer --version');
   const timeout = await probeHarnessContracts({
     harness: 'codex',
     codexBinary: await binary('codex', 'hang'),
@@ -276,27 +329,77 @@ it('exports version discovery with nonfatal diagnostics and cancellation', async
     harness.metadata(request, testInvocation(AbortSignal.abort(new Error('cancelled')))),
   ).rejects.toThrow('cancelled');
 });
-it.each(['ok', 'warning'])(
-  'prints machine-readable doctor JSON and exits nonzero only for drift (%s)',
-  async (mode) => {
-    const lines: string[] = [];
-    vi.spyOn(console, 'log').mockImplementation((value) => {
-      lines.push(String(value));
-    });
-    let error: unknown;
-    try {
-      await ConfigurationDoctor.run(
-        ['--harness', 'claude', '--claude-binary', await binary('claude', mode), '--json'],
-        { root: projectRoot },
-      );
-    } catch (caught) {
-      error = caught;
-    }
+async function runDoctor(
+  provider: 'claude' | 'codex',
+  mode: string,
+  extra: readonly string[] = [],
+): Promise<{ lines: string[]; error: unknown }> {
+  const lines: string[] = [];
+  vi.spyOn(console, 'log').mockImplementation((value) => {
+    lines.push(String(value));
+  });
+  let error: unknown;
+  try {
+    await ConfigurationDoctor.run(
+      [
+        '--harness',
+        provider,
+        `--${provider}-binary`,
+        await binary(provider, mode),
+        '--codex-home',
+        directory,
+        ...extra,
+      ],
+      { root: projectRoot },
+    );
+  } catch (caught) {
+    error = caught;
+  }
+  return { lines, error };
+}
+it.each([
+  ['ok', [], 'ok', 'ok'],
+  ['warning', [], 'blocked', 'fail'],
+  ['patch', [], 'usable-with-warnings', 'ok'],
+  ['patch', ['--strict'], 'blocked', 'fail'],
+  ['version', [], 'blocked', 'fail'],
+  ['garbage', [], 'blocked', 'fail'],
+  ['auth', [], 'blocked', 'fail'],
+] as const)(
+  'prints machine-readable doctor JSON and exits nonzero only when blocked (%s %j)',
+  async (mode, extra, verdict, outcome) => {
+    const { lines, error } = await runDoctor('claude', mode, ['--json', ...extra]);
     const report = JSON.parse(lines.join('')) as DoctorReport;
-    expect(report.ok).toBe(mode === 'ok');
+    expect(report.verdict).toBe(verdict);
+    expect(report.ok).toBe(outcome === 'ok');
+    expect(report.warnings).toHaveLength(verdict === 'usable-with-warnings' ? 1 : 0);
     expect(report.checks).toHaveLength(5);
-    if (mode === 'ok') expect(error).toBeUndefined();
+    if (outcome === 'ok') expect(error).toBeUndefined();
     else expect(error).toMatchObject({ oclif: { exit: 1 } });
+  },
+);
+it.each([
+  ['ok', [], /^ok$/u, undefined],
+  [
+    'patch',
+    [],
+    /^usable with warnings: .*untested patch version.*npm run test:contract/u,
+    undefined,
+  ],
+  ['patch', ['--strict'], /^blocked: .*--strict.*npm run test:contract/u, 1],
+  ['version', [], /^blocked: .*quiet-choir configuration doctor/u, 1],
+] as const)(
+  'ends text output with the verdict line and next command (%s %j)',
+  async (mode, extra, last, exit) => {
+    const { lines, error } = await runDoctor('codex', mode, extra);
+    const output = lines.join('\n').split('\n');
+    expect(output.at(-1)).toMatch(last);
+    expect(output.slice(0, -1)).toHaveLength(5);
+    expect(output[0]).toMatch(/^(PASS|WARN|FAIL) codex version: /u);
+    if (mode === 'patch' && extra.length === 0) expect(output[0]).toMatch(/^WARN /u);
+    if (mode === 'patch' && extra.length === 1) expect(output[0]).toMatch(/^FAIL /u);
+    if (exit === undefined) expect(error).toBeUndefined();
+    else expect(error).toMatchObject({ oclif: { exit } });
   },
 );
 

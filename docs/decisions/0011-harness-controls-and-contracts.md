@@ -2,7 +2,9 @@
 
 ## Status
 
-Accepted.
+Accepted. Amended by [ADR 0040](0040-grade-harness-versions-against-a-tested-range.md) (#143):
+exact-argv probes now run on any version the binary reports, and versions are graded against a
+range.
 
 ## Context
 

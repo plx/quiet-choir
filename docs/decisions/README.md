@@ -82,3 +82,5 @@ part of the documentation.
 - [0038: A code-free event follower derived from the run record](0038-code-free-event-follower.md)
 
 - [0039: Cancel a live run through a token-bound request](0039-cancel-a-live-run-through-a-token-bound-request.md)
+
+- [0040: Grade harness versions against a tested range](0040-grade-harness-versions-against-a-tested-range.md)

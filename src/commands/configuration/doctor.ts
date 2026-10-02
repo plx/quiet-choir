@@ -1,6 +1,6 @@
 import { readHarnessSelection } from '../../workflow/loader/harness-selection.js';
 import { Flags, type Interfaces } from '@oclif/core';
-import { DoctorExecutor } from '../../application/doctor.js';
+import { DoctorExecutor, doctorVerdictLine } from '../../application/doctor.js';
 import { BaseCommand } from '../../cli/base-command.js';
 import { executionSignals, tolerateClosedTerminal } from '../../cli/signals.js';
 import { ProcessSupervisor } from '../../processes/supervisor.js';
@@ -9,6 +9,7 @@ interface DoctorFlags {
   readonly workflow: string | undefined;
   readonly 'harness-config': string | undefined;
   readonly json: boolean | undefined;
+  readonly strict: boolean | undefined;
   readonly harness: string;
   readonly 'claude-binary': string | undefined;
   readonly 'codex-binary': string | undefined;
@@ -28,6 +29,10 @@ export default class ConfigurationDoctor extends BaseCommand {
       env: 'QUIET_CHOIR_HARNESS_CONFIG',
     }),
     json: Flags.boolean({ default: false, description: 'Print a structured contract report' }),
+    strict: Flags.boolean({
+      default: false,
+      description: 'Treat an untested patch version as a failure (exit 1)',
+    }),
     harness: Flags.string({
       default: 'all',
       description: 'Registered harness to diagnose, or all (custom names require --workflow)',
@@ -67,6 +72,7 @@ export default class ConfigurationDoctor extends BaseCommand {
             }),
         cwd: process.cwd(),
         harness: flags.harness,
+        ...(flags.strict ? { strict: true } : {}),
         ...(flags['claude-binary'] === undefined ? {} : { claudeBinary: flags['claude-binary'] }),
         ...(flags['codex-binary'] === undefined ? {} : { codexBinary: flags['codex-binary'] }),
         ...(flags['codex-home'] === undefined ? {} : { codexHome: flags['codex-home'] }),
@@ -78,11 +84,12 @@ export default class ConfigurationDoctor extends BaseCommand {
           : result.checks
               .map(
                 (check) =>
-                  `${check.ok ? 'PASS' : 'FAIL'} ${check.harness} ${check.check}: ${check.message}`,
+                  `${check.status.toUpperCase()} ${check.harness} ${check.check}: ${check.message}`,
               )
+              .concat(doctorVerdictLine(result))
               .join('\n'),
       );
-      if (!result.ok) this.exit(1);
+      if (result.verdict === 'blocked') this.exit(1);
     } catch (error) {
       if (controller.signal.aborted) this.exit(130);
       throw error;

@@ -119,8 +119,15 @@ quiet-choir configuration doctor --harness codex --codex-home /path/to/.codex --
 
 The exported `probeHarnessContracts(options)` runs the same checks for CI. It returns five checks
 per requested provider: tested version, exact adapter argv, hidden/plumbing flags, enum drift and
-inherited defaults. `testedHarnessVersions` currently certifies only Claude 2.1.283 and Codex
-0.157.1, the captured versions; new versions must be verified before widening the bounds.
+inherited defaults. `testedHarnessVersions` is the contract-tested range, currently Claude 2.1.283
+and Codex 0.157.1 (minimum and maximum are inclusive and may differ).
+
+The version check grades what `--version` reports. Inside the range is `PASS`. Outside it but on the
+same major.minor as a bound (an untested patch such as 2.1.285) is `WARN`. Another major.minor, an
+unparseable or prerelease/build-suffixed version, a nonzero exit and process or stderr warnings are
+`FAIL`. Each check has `status` `pass`, `warn` or `fail` (`ok` is `status !== 'fail'`); only the
+version check can warn. See
+[ADR 0040](decisions/0040-grade-harness-versions-against-a-tested-range.md).
 
 Exact-argv probes use a nonexistent Claude model (404, zero cost) or an invalid Codex effort (400
 with the enum list). They exercise all applicable typed flags through the production argument
@@ -130,20 +137,38 @@ when omitted), and removes those copies afterward. It does not modify user profi
 selected native or legacy profile defaults separately. Project/managed layers can still change
 actual defaults; this inspection is not an effective-config resolver.
 
-The doctor skips exact-argv probes on untested versions or version warnings. Authentication,
-transport, unknown flags, any stderr warning, nonzero reported tokens/cost, or an unexpected
-response fail the check. No ordinary agent task is used. `zeroInference` means every attempted
-exact-argv probe proved a pre-inference rejection; a skipped probe is not a passing check. `--json`
-emits the report on pass or drift, with exit 0 or 1 respectively. Configuration get/set remain
-stubs. Executable overrides are available as `--claude-binary` and `--codex-binary`.
+The exact-argv probe runs whenever the binary answered `--version`, whatever the version grade, and
+is reported independently of it. Authentication, transport, unknown flags, any stderr warning,
+nonzero reported tokens/cost, or an unexpected response fail the check. No ordinary agent task is
+used. `zeroInference` means every attempted exact-argv probe proved a pre-inference rejection; a
+probe skipped because the binary never answered `--version` is not a passing check.
+
+Text output ends with a verdict line: `ok`; `usable with warnings: ...` naming the untested version
+and the next step; or `blocked: ...`. `--json` adds `verdict` (`ok`, `usable-with-warnings` or
+`blocked`) and `warnings` (one `<harness> <check>: <message>` per warning) to the report, and `ok`
+is `verdict !== 'blocked'`. The exit code is 1 only when the verdict is `blocked`, so a warning
+exits 0. `--strict` (`DoctorOptions.strict`) turns an untested patch version into a failure, so
+scripts that want the old behavior exit 1. Configuration get/set remain stubs. Executable overrides
+are available as `--claude-binary` and `--codex-binary`.
+
+Probing an untested CLI carries a small cost risk. The Claude probe caps spend with
+`maxBudgetUsd: 0.01` and a nonexistent model. The Codex probe sends `model_reasoning_effort="bogus"`
+with no cost cap, and `zeroInference` is judged after the call, so a CLI that stopped rejecting bad
+input could run one tiny inference before the doctor notices.
+
+To widen the range after a CLI update, run `npm run build && npm run test:contract` from a
+quiet-choir checkout, review the captures, then raise `testedHarnessVersions` `maximum` (or lower
+`minimum`) in `src/harnesses/tested-versions.ts`.
 
 `CliHarness` also reads `--version` on each provider's first live use in a run invocation. Saved
 `harnesses` record binary/version, and inspect shows them. Discovery failures and version changes on
-resume are warnings, not identity changes. Completed-only replay does not launch version probes.
-Custom harnesses can implement optional `metadata(request, invocation)`; the invocation supplies the
-run's discovery signal and process-registration port. Older records remain readable. Discovery is
-shared by the run: an aborted map scope stops waiting for it, and the run aborts `invocation.signal`
-and awaits it before releasing ownership when no effect still needs the result. See
+resume are warnings, not identity changes. So is a discovered version outside the tested range: the
+run records one `harnessWarnings` entry naming `quiet-choir configuration doctor --harness <name>`,
+once per run. Completed-only replay does not launch version probes. Custom harnesses can implement
+optional `metadata(request, invocation)`; the invocation supplies the run's discovery signal and
+process-registration port. Older records remain readable. Discovery is shared by the run: an aborted
+map scope stops waiting for it, and the run aborts `invocation.signal` and awaits it before
+releasing ownership when no effect still needs the result. See
 [process lifecycle](process-lifecycle.md) for adapter migration and orphan recovery.
 
 Doctor probes use the same first/second SIGINT, SIGTERM and SIGHUP cleanup as workflow execution,

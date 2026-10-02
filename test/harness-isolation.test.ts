@@ -9,6 +9,7 @@ import {
   defineWorkflow,
   readRun,
   runWorkflow,
+  testedHarnessVersions,
   z,
   type Harness,
   type HarnessIsolation,
@@ -37,13 +38,14 @@ afterEach(async () => {
   await rm(directory, { recursive: true, force: true });
 });
 
-async function fakeBinary(): Promise<string> {
+/** Fake CLI that answers --version with a tested Codex version unless told otherwise. */
+async function fakeBinary(version: string = testedHarnessVersions.codex.minimum): Promise<string> {
   const name = 'fixture-agent';
   await writeFile(
     join(directory, name),
     `#!${process.execPath}
 const fs=require('node:fs');const args=process.argv.slice(2);
-if(args.includes('--version')){console.log('fixture 1.2.3');process.exit(0);}
+if(args.includes('--version')){console.log(${JSON.stringify(`fixture ${version}`)});process.exit(0);}
 let input='';process.stdin.on('data',b=>input+=b);process.stdin.on('end',()=>{
  const names=['CLAUDECODE','CLAUDE_CODE_MESSAGING_TOKEN','CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS','CODEX_THREAD_ID','TRACEPARENT','QC_REMOVE','QC_VALUE','ANTHROPIC_API_KEY','QUIET_CHOIR_RUN_ID'];
  fs.writeFileSync('capture.json',JSON.stringify({args,input,env:Object.fromEntries(names.map(k=>[k,process.env[k]??null]))}));
@@ -646,4 +648,79 @@ it('points the user-level instruction warning at the opt-out', () => {
   });
   expect(warning).toContain('every isolation mode, including restricted');
   expect(warning).toContain("Set codex instructions: 'none' to run a call without them.");
+});
+
+const untestedClaude = (() => {
+  const [major = '', minor = '', patch = ''] = testedHarnessVersions.claude.maximum.split('.');
+  return `${major}.${minor}.${String(Number(patch) + 1)}`;
+})();
+
+it('warns once per run when the CLI version is outside the tested range, and not when it is tested', async () => {
+  for (const [version, expected] of [
+    [untestedClaude, 1],
+    [testedHarnessVersions.claude.minimum, 0],
+  ] as const) {
+    const binary = join(directory, await fakeBinary(version));
+    let fail = true;
+    const workflow = defineWorkflow({
+      name: 'untested-version',
+      version: '1',
+      strictProfiles: false,
+      input: z.null(),
+      output: z.string(),
+      async run(ctx) {
+        await ctx.claude.text('first', { prompt: 'one' });
+        await ctx.claude.text('second', { prompt: 'two' });
+        await ctx.step('gate', {
+          input: null,
+          schema: z.null(),
+          run() {
+            if (fail) throw new Error('gate failure');
+            return null;
+          },
+        });
+        return (await ctx.claude.text('third', { prompt: 'three' })).output;
+      },
+    });
+    const options = {
+      runId: `version-${version.replaceAll('.', '-')}`,
+      stateDir: join(directory, 'runs'),
+      cwd: directory,
+      grants: ['all'],
+      harness: new CliHarness({ claudeBinary: binary }),
+    };
+    await expect(runWorkflow(workflow, { ...options, input: null })).rejects.toThrow(
+      'gate failure',
+    );
+    fail = false;
+    await runWorkflow(workflow, { ...options, resume: true });
+    const warnings = (await readRun(options)).harnessWarnings ?? [];
+    expect(warnings).toHaveLength(expected);
+    if (expected > 0) {
+      expect(warnings[0]).toContain('configuration doctor --harness claude');
+      expect(warnings[0]).toContain(`@${version}`);
+    }
+  }
+});
+
+it('adds the untested-version warning in metadata() but not for a missing binary', async () => {
+  const request = {
+    harness: 'claude' as const,
+    cwd: directory,
+    outputSchema: null,
+    options: { prompt: 'x' },
+  };
+  const untested = await new CliHarness({
+    claudeBinary: join(directory, await fakeBinary(untestedClaude)),
+  }).metadata(request, testInvocation());
+  expect(untested.version).toBe(untestedClaude);
+  expect(untested.warnings).toEqual([expect.stringContaining('contract-tested claude range')]);
+  const tested = await new CliHarness({
+    claudeBinary: join(directory, await fakeBinary(testedHarnessVersions.claude.minimum)),
+  }).metadata(request, testInvocation());
+  expect(tested).not.toHaveProperty('warnings');
+  const missing = await new CliHarness({
+    claudeBinary: join(directory, 'missing-binary'),
+  }).metadata(request, testInvocation());
+  expect(missing.warnings).toEqual([expect.stringContaining('version discovery failed')]);
 });
