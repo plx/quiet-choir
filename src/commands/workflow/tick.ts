@@ -1,5 +1,6 @@
 import { Flags, type Interfaces } from '@oclif/core';
 import { WorkflowCommand } from '../../cli/workflow-command.js';
+import { eventsFlag } from '../../cli/execute-flags.js';
 import { TickWorkflowExecutor } from '../../workflow/loader/tick.js';
 import {
   readHarnessSelection,
@@ -10,6 +11,7 @@ import { parseDuration } from '../../cli/duration.js';
 
 interface TickFlags {
   readonly 'notify-command': string | undefined;
+  readonly events: string | undefined;
   readonly 'state-dir': string | undefined;
   readonly run: string | undefined;
   readonly watch: boolean | undefined;
@@ -30,6 +32,7 @@ export default class WorkflowTick extends WorkflowCommand {
       description: 'Best-effort sh -c hook receiving event JSON on stdin',
       env: 'QUIET_CHOIR_NOTIFY_COMMAND',
     }),
+    events: eventsFlag(),
 
     'state-dir': Flags.directory({ description: 'Runs container; defaults to project state' }),
     run: Flags.string({
@@ -66,6 +69,7 @@ export default class WorkflowTick extends WorkflowCommand {
   };
 
   public async run(): Promise<void> {
+    this.refuseEventsStdoutWithJson();
     const { flags } = await this.parse(WorkflowTick);
     const stateDir =
       flags.run === undefined
@@ -100,15 +104,18 @@ export default class WorkflowTick extends WorkflowCommand {
         this.fail('usage.flag', error instanceof Error ? error.message : String(error));
       }
     }
+    const events = this.eventsOptions(flags.events);
     const result = await new TickWorkflowExecutor({
       logger: this.createExecutionLogger(flags),
       commandLauncher: this.commandLauncher,
       signal: this.signal,
       processSupervisor: this.processSupervisor,
+      ...events.executor,
     }).execute({
       kind: 'workflow.tick',
       stateDir,
       ...(flags['notify-command'] === undefined ? {} : { notifyCommand: flags['notify-command'] }),
+      ...events.plan,
       ...(flags.run === undefined ? {} : { runId: flags.run }),
       ...(flags['max-runs'] === undefined ? {} : { maxRuns: flags['max-runs'] }),
       ...(harness === undefined ? {} : { harness }),

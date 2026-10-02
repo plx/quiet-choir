@@ -44,6 +44,7 @@ export default class WorkflowExecute extends WorkflowCommand {
   }
 
   public async run(): Promise<void> {
+    this.refuseEventsStdoutWithJson();
     const { args, flags } = await this.parse(WorkflowExecute);
     const runId = flags['run-id'] ?? randomUUID();
     const stateDir = this.runContext(runId, flags['state-dir']);
@@ -127,11 +128,13 @@ export default class WorkflowExecute extends WorkflowCommand {
     if (flags.input !== undefined) input = await readWorkflowInput(flags.input, this.signal);
     else if (!flags.resume && !flags['fork-from']) input = {};
     this.logToStderr(`Run ID: ${runId}\nState directory: ${stateDir}`);
+    const events = this.eventsOptions(flags.events);
     const executor = new WorkflowExecutor({
       logger: this.createExecutionLogger(flags),
       commandLauncher: this.commandLauncher,
       processSupervisor: this.processSupervisor,
       signal: this.signal,
+      ...events.executor,
     });
     const result = await executor.execute({
       ...launch,
@@ -140,6 +143,7 @@ export default class WorkflowExecute extends WorkflowCommand {
         : { maxChildDepth: flags['max-child-depth'] }),
       ...(flags.progress === undefined ? {} : { progress: flags.progress }),
       ...(flags['notify-command'] === undefined ? {} : { notifyCommand: flags['notify-command'] }),
+      ...events.plan,
       ...(flags['wait-mode'] === undefined ? {} : { waitMode: flags['wait-mode'] }),
       harness,
       ...(flags.resume ? { inheritHarness: flags.harness === undefined } : {}),

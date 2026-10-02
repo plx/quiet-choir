@@ -10,6 +10,7 @@ import { spawnLauncher } from '../../cli/launcher.js';
 import { formatNextCommands, formatTypecheckDiagnostic } from '../../cli/presentation.js';
 import { buildStartChildArgv, type ArgvFlagTable } from '../../cli/start-argv.js';
 import { WorkflowCommand } from '../../cli/workflow-command.js';
+import { requestedEventsStdout } from '../../cli/workflow-errors.js';
 import { StartWorkflowExecutor } from '../../workflow/loader/start.js';
 
 interface WorkflowStartArgs {
@@ -66,6 +67,11 @@ export default class WorkflowStart extends WorkflowCommand {
   }
 
   public async run(): Promise<void> {
+    if (requestedEventsStdout(this.argv))
+      this.fail(
+        'usage.flag',
+        "workflow start's runner writes its stdout to the launch result file; give --events a file path",
+      );
     const { flags } = await this.parse(WorkflowStart);
     const runId = flags['run-id'] ?? randomUUID();
     const stateDir = this.runContext(runId, flags['state-dir']);

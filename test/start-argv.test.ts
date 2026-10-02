@@ -17,6 +17,7 @@ const table: ArgvFlagTable = {
   progress: { type: 'boolean' },
   verbose: { type: 'boolean', char: 'v' },
   'log-level': { type: 'option', char: 'l' },
+  events: { type: 'option' },
 };
 const ids = { runId: 'gen', stateDir: '/state' };
 const tail = ['--run-id', 'gen', '--state-dir', '/state', '--json'];
@@ -100,6 +101,18 @@ describe('buildStartChildArgv', () => {
       null,
     ],
     [
+      'passes --events FILE through to the runner unchanged',
+      ['wf.ts', '--events', 'run.events.jsonl'],
+      ['wf.ts', '--events', 'run.events.jsonl', ...tail],
+      null,
+    ],
+    [
+      'passes --events=FILE through to the runner unchanged',
+      ['wf.ts', '--events=/abs/run.events.jsonl', '--progress'],
+      ['wf.ts', '--events=/abs/run.events.jsonl', '--progress', ...tail],
+      null,
+    ],
+    [
       'passes unknown tokens through',
       ['wf.ts', '--unknown', 'value'],
       ['wf.ts', '--unknown', 'value', ...tail],
@@ -123,6 +136,7 @@ describe('buildStartChildArgv', () => {
     ]);
     expect(flags['input']?.type).toBe('option');
     expect(flags['progress']?.type).toBe('boolean');
+    expect(flags['events']?.type).toBe('option');
     expect(flags['harness-limit']?.aliases).toContain('provider-limit');
     expect(
       buildStartChildArgv(

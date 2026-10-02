@@ -1,6 +1,18 @@
 import { Flags, type Interfaces } from '@oclif/core';
 import { runBudgetFlags } from './run-budget.js';
 
+/** The `--events FILE|-` flag shared by execute, start, resume, tick and answer. @internal */
+export function eventsFlag(
+  options: { readonly dependsOn?: string[] } = {},
+): Interfaces.OptionFlag<string | undefined> {
+  return Flags.string({
+    description:
+      'Append one compact JSON line per step, phase, log, wait and run event to FILE (owner-only), or - for stdout; not saved across resumes',
+    helpValue: 'FILE|-',
+    ...(options.dependsOn === undefined ? {} : { dependsOn: options.dependsOn }),
+  });
+}
+
 /** Parsed flags of `workflow execute`, shared with `workflow start`. @internal */
 export interface WorkflowExecuteFlags {
   readonly 'max-child-depth': number | undefined;
@@ -13,6 +25,7 @@ export interface WorkflowExecuteFlags {
   readonly 'max-stream-bytes': string | undefined;
   readonly 'max-transcript-bytes': string | undefined;
   readonly 'notify-command': string | undefined;
+  readonly events: string | undefined;
   readonly 'wait-mode': 'suspend' | 'block' | undefined;
   readonly harness: string[] | undefined;
   readonly 'harness-config': string | undefined;
@@ -78,6 +91,7 @@ export const executeFlags: Interfaces.FlagInput<WorkflowExecuteFlags> = {
     description: 'Best-effort sh -c hook receiving event JSON on stdin',
     env: 'QUIET_CHOIR_NOTIFY_COMMAND',
   }),
+  events: eventsFlag(),
 
   'wait-mode': Flags.option({ options: ['suspend', 'block'] as const })({
     description:

@@ -4,6 +4,7 @@ import { writeSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { BaseCommand } from './base-command.js';
 import {
+  requestedEventsStdout,
   requestedJson,
   workflowErrorDocument,
   workflowExitCodes,
@@ -21,6 +22,7 @@ import { ProcessSupervisor } from '../processes/supervisor.js';
 import { readRunSync, readRun, type RunRecord } from '../workflow/runtime/store.js';
 import { commandLauncher as detectedCommandLauncher } from './launcher.js';
 import type { CommandLauncher } from '../workflow/runtime/commands.js';
+import type { WorkflowExecutorOptions } from '../workflow/loader/executor.js';
 
 /** Workflow presentation boundary, including failures that occur before argument parsing. @internal */
 export abstract class WorkflowCommand extends BaseCommand {
@@ -49,7 +51,9 @@ export abstract class WorkflowCommand extends BaseCommand {
       },
     );
     this.signal = this.#signals.signal;
-    if (requestedJson(this.argv)) {
+    // `--json` reserves stdout for the result document and `--events -` for event lines, so stray
+    // writes (workflow console output, human result text) go to stderr instead.
+    if (requestedJson(this.argv) || requestedEventsStdout(this.argv)) {
       // eslint-disable-next-line @typescript-eslint/unbound-method -- Stored and restored on the same stream, never invoked unbound.
       this.#stdoutWrite = process.stdout.write;
       process.stdout.write = process.stderr.write.bind(process.stderr);
@@ -114,6 +118,41 @@ export abstract class WorkflowCommand extends BaseCommand {
       this.exit(exit);
     }
     this.error(human, { code: failure.code, exit });
+  }
+
+  /**
+   * Refuse `--events -` together with JSON output before any run work: both would claim stdout.
+   * `requestedJson` also counts answer's `--json VALUE` alias. @internal
+   */
+  protected refuseEventsStdoutWithJson(): void {
+    if (requestedEventsStdout(this.argv) && requestedJson(this.argv))
+      this.fail(
+        'usage.flag',
+        '--events - writes events to stdout, which --json reserves for the result document; give --events a file path',
+      );
+  }
+
+  /**
+   * The executor plan and option for a parsed `--events` value: a path resolved against the launch
+   * directory, or `-` with a writer on the real stdout saved by `init`. @internal
+   */
+  protected eventsOptions(events: string | undefined): {
+    readonly plan: { readonly events?: string };
+    readonly executor: Pick<WorkflowExecutorOptions, 'eventsStdout'>;
+  } {
+    if (events === undefined) return { plan: {}, executor: {} };
+    if (events !== '-') return { plan: { events: resolve(events) }, executor: {} };
+    const write = this.#stdoutWrite ?? process.stdout.write.bind(process.stdout);
+    return {
+      plan: { events: '-' },
+      executor: {
+        eventsStdout: (line, onError) => {
+          write.call(process.stdout, line, 'utf8', (error?: Error | null) => {
+            if (error) onError(error);
+          });
+        },
+      },
+    };
   }
 
   /**
