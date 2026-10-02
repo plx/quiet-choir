@@ -2,7 +2,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, expectTypeOf, it } from 'vitest';
 import {
   assertCompleted,
   defineWorkflow,
@@ -15,7 +15,7 @@ import {
 } from '../src/index.js';
 import { WorkflowExecutor } from '../src/workflow/loader/executor.js';
 import { selectPendingRows, type PendingGroup } from '../src/workflow/loader/pending-listing.js';
-import type { PendingListing } from '../src/workflow/runtime/wait-model.js';
+import type { PendingListing, PendingRunState } from '../src/workflow/runtime/wait-model.js';
 import { writeRun, type RunRecord } from '../src/workflow/runtime/store.js';
 
 const launcher = ['/x/node', '/y/run.js'];
@@ -50,6 +50,10 @@ function group(
 }
 
 const resumeArgv = [...launcher, 'workflow', 'resume', 'r1', '--state-dir', stateDir];
+
+it('spells runStatus the way the checkpoint does', () => {
+  expectTypeOf<PendingRunState['runStatus']>().toEqualTypeOf<RunRecord['status']>();
+});
 
 describe('selectPendingRows', () => {
   it.each<

@@ -1,6 +1,5 @@
 import type { z } from 'zod';
 import type { JsonInput, JsonValue, StepContext } from './model.js';
-import type { RunRecord } from './store.js';
 import type {
   AskOptions,
   QuestionRequest,
@@ -314,8 +313,12 @@ export interface PendingDelivery {
 
 /** Run and delivery state that {@link listPending} adds to each waiting row. */
 export interface PendingRunState {
-  /** Status of the run that owns the row, from its checkpoint. */
-  readonly runStatus: RunRecord['status'];
+  /**
+   * Status of the run that owns the row, from its checkpoint. Spelled out, not `RunRecord['status']`,
+   * because this module's types are part of the bundle that workflow type checks load, which must
+   * not reach the store; a test keeps the two in step.
+   */
+  readonly runStatus: 'running' | 'suspended' | 'completed' | 'failed' | 'cancelled';
   /** Inbox delivery state, or null for a poll or deadline wait that accepts no answer. */
   readonly delivery: PendingDelivery | null;
 }
