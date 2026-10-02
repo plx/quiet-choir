@@ -898,6 +898,7 @@ function bareQuestions(save: () => Promise<void>): {
     save,
     beforeLive: () => Promise.resolve(),
     nextSeq: () => 0,
+    launchStamp: () => 0,
     warn: (message) => {
       warnings.push(message);
     },

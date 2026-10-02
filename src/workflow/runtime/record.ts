@@ -201,6 +201,28 @@ export interface StepRecord {
   attemptHistory?: AttemptRecord[];
   /** First-use ordering within this run; present from format 3. */
   seq?: number;
+  /**
+   * The run's settlement counter when the workflow body last requested this effect live. It is
+   * stamped synchronously at the call, before any awaited preparation, so an effect launched in the
+   * same tick as a sibling that later fails is stamped before that failure. Replays keep it; a live
+   * relaunch on resume restamps it. Absent in checkpoints saved before launch stamps existed, and
+   * on replayed legacy steps.
+   */
+  launchStamp?: number;
+  /**
+   * The run's settlement counter after this step's latest terminal settlement (completed, terminal
+   * failure, settled failure or cancellation). Each settlement increments the counter, so
+   * `x.settleStamp <= y.launchStamp` means x had settled when y was launched. Absent before the
+   * step first settles and in older checkpoints.
+   */
+  settleStamp?: number;
+  /**
+   * The `settleStamp` of this step's first terminal failure since it last completed. A healed step
+   * flags only recorded steps whose `launchStamp` is at least this value (they were launched after
+   * the failure could be observed). Removed when the step completes; absent in older checkpoints
+   * and after a failure saved between retries, where the runner falls back to `seq` order.
+   */
+  failureStamp?: number;
   /** Source checkpoint of a reused completed effect. */
   reusedFrom?: ReusedStep;
   /** Total started attempts across resumes. */
@@ -489,6 +511,9 @@ const stepSchema = z
     meta: z.record(z.string(), z.json()).optional(),
     kind: stepKindSchema,
     seq: z.number().int().positive().optional(),
+    launchStamp: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional(),
+    settleStamp: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional(),
+    failureStamp: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional(),
     reusedFrom: reusedStepSchema.optional(),
     fingerprint: z.string(),
     status: z.enum([

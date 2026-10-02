@@ -5,8 +5,11 @@ import type { StepRecord } from '../src/workflow/runtime/record.js';
 import {
   decideReplay,
   forkReuseValid,
+  healedDependents,
   legacyKind,
   replayRefusalMessage,
+  type HealedStep,
+  type PriorLaunch,
   type ReplayDecision,
   type ReplayInput,
   type ReplayRefusal,
@@ -475,6 +478,78 @@ describe('forkReuseValid', () => {
     expect(forkReuseValid('step', 'throw', completed, accepts)).toBe(true);
     expect(accepts).toHaveBeenCalledWith({ answer: 42 });
     expect(forkReuseValid('step', 'throw', completed, () => false)).toBe(false);
+  });
+});
+
+describe('healedDependents', () => {
+  // The healed step H has seq 2 and failed at settlement stamp 5 unless a case says otherwise.
+  const healed: HealedStep = { id: 'h', seq: 2, failureStamp: 5 };
+  const cases: {
+    name: string;
+    healed?: HealedStep;
+    prior: PriorLaunch[];
+    expected: string[];
+  }[] = [
+    { name: 'no prior steps', prior: [], expected: [] },
+    {
+      name: 'never flags the healed step itself',
+      prior: [{ id: 'h', seq: 2, launchStamp: 9 }],
+      expected: [],
+    },
+    {
+      name: 'same-tick sibling launched before the failure settled',
+      prior: [{ id: 's', seq: 3, launchStamp: 4 }],
+      expected: [],
+    },
+    {
+      name: 'launch at the failure stamp observed the failure',
+      prior: [{ id: 's', seq: 3, launchStamp: 5 }],
+      expected: ['s'],
+    },
+    {
+      name: 'later launch',
+      prior: [{ id: 's', seq: 3, launchStamp: 8 }],
+      expected: ['s'],
+    },
+    {
+      name: 'stamps govern over seq: a lower-seq step relaunched after the failure',
+      prior: [{ id: 'early', seq: 1, launchStamp: 6 }],
+      expected: ['early'],
+    },
+    {
+      name: 'healed step without a failure stamp falls back to seq',
+      healed: { id: 'h', seq: 2 },
+      prior: [
+        { id: 'before', seq: 1, launchStamp: 9 },
+        { id: 'after', seq: 3, launchStamp: 0 },
+      ],
+      expected: ['after'],
+    },
+    {
+      name: 'sibling without a launch stamp falls back to seq for that pair only',
+      prior: [
+        { id: 'legacy-later', seq: 3 },
+        { id: 'legacy-earlier', seq: 1 },
+        { id: 'stamped-sibling', seq: 4, launchStamp: 4 },
+        { id: 'stamped-dependent', seq: 5, launchStamp: 7 },
+      ],
+      expected: ['legacy-later', 'stamped-dependent'],
+    },
+    {
+      name: 'no stamps at all keeps the launch-order rule',
+      healed: { id: 'h', seq: 2 },
+      prior: [
+        { id: 'a', seq: 1 },
+        { id: 'h', seq: 2 },
+        { id: 'b', seq: 3 },
+        { id: 'c', seq: 4 },
+      ],
+      expected: ['b', 'c'],
+    },
+  ];
+
+  it.each(cases)('$name', (testCase) => {
+    expect(healedDependents(testCase.healed ?? healed, testCase.prior)).toEqual(testCase.expected);
   });
 });
 

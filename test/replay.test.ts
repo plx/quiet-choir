@@ -7,6 +7,8 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 
 import {
   checkResume,
+  type RunRecord,
+  type WorkflowEvent,
   ConfigurationError,
   defineWorkflow,
   readRun,
@@ -18,8 +20,25 @@ import {
   type RunOptions,
   type WorkflowContext,
 } from '../src/index.js';
-import { findStepIdentityChange } from '../src/workflow/runtime/run-errors.js';
+import {
+  findStepIdentityChange,
+  ReplayDivergenceError,
+} from '../src/workflow/runtime/run-errors.js';
+import type * as images from '../src/workflow/runtime/images.js';
 import { hasTerminalOutcomes, lockRun } from '../src/workflow/runtime/store.js';
+
+// A gate on Codex image snapshots: the only await an agent call makes before its effect starts.
+const preparation = vi.hoisted(() => ({ gate: undefined as Promise<void> | undefined }));
+vi.mock('../src/workflow/runtime/images.js', async (importOriginal) => {
+  const original = await importOriginal<typeof images>();
+  return {
+    ...original,
+    snapshotImages: async (...args: Parameters<typeof original.snapshotImages>) => {
+      await preparation.gate;
+      return original.snapshotImages(...args);
+    },
+  };
+});
 
 let stateDir: string;
 const reply = {
@@ -45,6 +64,7 @@ beforeEach(async () => {
   stateDir = await mkdtemp(join(tmpdir(), 'choir-replay-'));
 });
 afterEach(async () => {
+  preparation.gate = undefined;
   await rm(stateDir, { recursive: true, force: true });
 });
 
@@ -558,17 +578,21 @@ it.each([false, true])(
 it('advises against body-computed values when strict replay stops after a healed step', async () => {
   let attempt = 0;
   const definition = workflow(async (ctx) => {
-    const flaky = ctx.step('flaky', {
-      input: null,
-      schema: z.string(),
-      run: () => {
-        attempt += 1;
-        if (attempt === 1) throw new Error('flaky');
-        return 'healed';
-      },
-    });
-    await ctx.step('other', { input: null, schema: z.string(), run: () => 'o' });
-    await flaky;
+    try {
+      await ctx.step('flaky', {
+        input: null,
+        schema: z.string(),
+        run: () => {
+          attempt += 1;
+          if (attempt === 1) throw new Error('flaky');
+          return 'healed';
+        },
+      });
+    } catch (error) {
+      // Launched after the failure settled, so it may depend on it.
+      await ctx.step('other', { input: null, schema: z.string(), run: () => 'o' });
+      throw error;
+    }
     return ctx.step('after', { input: null, schema: z.string(), run: () => 'a' });
   });
   await expect(runWorkflow(definition, options())).rejects.toThrow('flaky');
@@ -580,6 +604,318 @@ it('advises against body-computed values when strict replay stops after a healed
   }).catch((cause: unknown) => cause);
   expect((error as Error).message).toContain('Healed step flaky now succeeded');
   nondeterministicHint((await readRun(options())).recoveryHint);
+});
+
+function deferred(): { promise: Promise<void>; resolve: () => void } {
+  let resolve!: () => void;
+  const promise = new Promise<void>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+
+function divergence(error: unknown): ReplayDivergenceError | undefined {
+  for (let cause = error; cause instanceof Error; cause = cause.cause)
+    if (cause instanceof ReplayDivergenceError) return cause;
+  return undefined;
+}
+
+/** Rewrite a saved run without launch stamps, as a checkpoint written before they existed. */
+async function stripStamps(runId: string): Promise<RunRecord> {
+  const record = await readRun(options(runId));
+  for (const step of Object.values(record.steps)) {
+    delete step.launchStamp;
+    delete step.settleStamp;
+    delete step.failureStamp;
+  }
+  await writeFile(join(stateDir, runId, 'run.json'), JSON.stringify(record));
+  await writeFile(join(stateDir, runId, 'journal.jsonl'), '');
+  return record;
+}
+
+type FanInOrder = 'followups first' | 'impl first' | 'impl during followups preparation';
+
+/**
+ * `impl` (a local step) and `followups` (a Codex call whose image snapshot awaits before its
+ * effect starts) launch in the same tick and fan in with Promise.all; impl fails only on the first
+ * execution. 'impl first' completes followups while the failed body drains. In 'impl during
+ * followups preparation', the snapshot waits until impl's failure is saved, so followups reaches
+ * its record after the failure settled although the body requested it before; that body uses
+ * Promise.allSettled, since a failed body launches no new effect. `ship` is the first live step
+ * after the fan-in, where strict replay would stop.
+ */
+function fanIn(order: FanInOrder): {
+  definition: ReturnType<typeof workflow>;
+  harness: Harness;
+  calls: string[];
+  onEvent: (event: WorkflowEvent) => void;
+  heal: () => void;
+} {
+  let broken = true;
+  const calls: string[] = [];
+  const implFailed = deferred();
+  const followupsDone = deferred();
+  const harness: Harness = {
+    async invoke(request) {
+      calls.push(request.options.prompt);
+      if (broken && order === 'impl first') await implFailed.promise;
+      return reply;
+    },
+  };
+  const image = join(stateDir, 'shot.png');
+  if (order === 'impl during followups preparation') preparation.gate = implFailed.promise;
+  const definition = workflow(async (ctx) => {
+    const launched = [
+      ctx.step('impl', {
+        input: null,
+        schema: z.string(),
+        run: async () => {
+          if (!broken) return 'implemented';
+          if (order === 'followups first') await followupsDone.promise;
+          throw new Error('impl failed');
+        },
+      }),
+      ctx.codex.text('followups', { prompt: 'followups', images: [image] }),
+    ] as const;
+    const [impl] =
+      order === 'impl during followups preparation'
+        ? await Promise.allSettled(launched).then((results) =>
+            results.map((result) => {
+              if (result.status === 'rejected') throw result.reason;
+              return result.value;
+            }),
+          )
+        : await Promise.all(launched);
+    await ctx.step('ship', { input: null, schema: z.null(), run: () => null });
+    return impl as string;
+  });
+  return {
+    definition,
+    harness,
+    calls,
+    onEvent: (event) => {
+      if (event.type === 'step.failed' && event.stepId === 'impl') implFailed.resolve();
+      if (event.type === 'step.completed' && event.stepId === 'followups') followupsDone.resolve();
+    },
+    heal: () => {
+      broken = false;
+    },
+  };
+}
+
+it.each<FanInOrder>(['followups first', 'impl first', 'impl during followups preparation'])(
+  'does not flag a Promise.all sibling launched with a healed step (%s)',
+  async (order) => {
+    const { definition, harness, calls, onEvent, heal } = fanIn(order);
+    await writeFile(join(stateDir, 'shot.png'), 'png');
+    await expect(runWorkflow(definition, { ...options(), harness, onEvent })).rejects.toThrow(
+      'impl failed',
+    );
+    const failed = await readRun(options());
+    const impl = failed.steps['impl'];
+    const followups = failed.steps['followups'];
+    expect(impl?.status).toBe('failed');
+    expect(followups?.status).toBe('completed');
+    expect(impl?.failureStamp).toBe(impl?.settleStamp);
+    expect(followups?.launchStamp).toBeLessThan(impl?.failureStamp ?? 0);
+    // Settle order shows in the stamps, launch order does not.
+    if (order === 'followups first')
+      expect(followups?.settleStamp).toBeLessThan(impl?.failureStamp ?? 0);
+    else expect(followups?.settleStamp).toBeGreaterThan(impl?.failureStamp ?? 0);
+    heal();
+    calls.length = 0;
+    const events: WorkflowEvent[] = [];
+    const resumed = await runWorkflow(definition, {
+      ...options(),
+      harness,
+      resume: true,
+      strictReplay: true,
+      onEvent: (event) => {
+        events.push(event);
+      },
+    });
+    expect(resumed.status).toBe('completed');
+    expect(resumed.output).toBe('implemented');
+    expect(calls).toEqual([]);
+    expect(events.filter((event) => event.type === 'replay.divergence')).toEqual([]);
+    const saved = await readRun(options());
+    expect(saved.replayWarnings).toEqual([]);
+    expect(saved.steps['impl']?.failureStamp).toBeUndefined();
+    expect(saved.steps['impl']?.settleStamp).toBeGreaterThan(impl?.failureStamp ?? 0);
+  },
+);
+
+it.each([false, true])(
+  'flags a step launched after the healed failure settled (strictReplay: %s)',
+  async (strictReplay) => {
+    let broken = true;
+    const ran: string[] = [];
+    const local = (id: string) => ({
+      input: null,
+      schema: z.string(),
+      run: () => {
+        ran.push(id);
+        if (broken && id === 'primary') throw new Error('primary failed');
+        return id;
+      },
+    });
+    const definition = workflow(async (ctx) => {
+      try {
+        await ctx.step('primary', local('primary'));
+      } catch {
+        await ctx.step('fallback', local('fallback'));
+      }
+      if (broken) throw new Error('tail');
+      return ctx.step('later', local('later'));
+    });
+    await expect(runWorkflow(definition, options())).rejects.toThrow('tail');
+    broken = false;
+    ran.length = 0;
+    const healed: WorkflowEvent[] = [];
+    const outcome = await runWorkflow(definition, {
+      ...options(),
+      resume: true,
+      strictReplay,
+      onEvent: (event) => {
+        if (event.type === 'replay.divergence') healed.push(event);
+      },
+    }).catch((error: unknown) => error);
+    expect(healed.filter((event) => event.healedStepId)).toMatchObject([
+      { healedStepId: 'primary', skippedStepIds: ['fallback'] },
+    ]);
+    expect((await readRun(options())).replayWarnings?.[0]).toContain(
+      'Healed step primary now succeeded; later recorded steps (fallback)',
+    );
+    if (strictReplay) {
+      expect(divergence(outcome)).toMatchObject({ reason: 'healed' });
+      expect(divergence(outcome)?.message).toContain('Healed step primary now succeeded');
+      expect(ran).toEqual(['primary']);
+    } else {
+      // The plain resume runs on and then reports the skipped fallback with the healed step.
+      expect(divergence(outcome)?.message).toContain('Healed steps: primary');
+      expect(ran).toEqual(['primary', 'later']);
+    }
+  },
+);
+
+it('keeps the earliest failure stamp across repeated failures until the step completes', async () => {
+  let failures = 2;
+  const definition = workflow(async (ctx) => {
+    try {
+      await ctx.step('healer', {
+        input: null,
+        schema: z.string(),
+        run: () => {
+          if (failures > 0) {
+            failures -= 1;
+            throw new Error('healer failed');
+          }
+          return 'h';
+        },
+      });
+    } catch {
+      await ctx.step('dependent', { input: null, schema: z.string(), run: () => 'd' });
+      throw new Error('tail');
+    }
+    return 'done';
+  });
+  await expect(runWorkflow(definition, options())).rejects.toThrow('tail');
+  const first = await readRun(options());
+  const firstFailure = first.steps['healer']?.failureStamp;
+  expect(firstFailure).toBeDefined();
+  expect(first.steps['dependent']?.launchStamp).toBeGreaterThanOrEqual(firstFailure ?? 0);
+  // The second failure settles after the dependent launched; only the first one explains it.
+  await expect(runWorkflow(definition, { ...options(), resume: true })).rejects.toThrow('tail');
+  const second = await readRun(options());
+  expect(second.steps['healer']?.failureStamp).toBe(firstFailure);
+  expect(second.steps['healer']?.settleStamp).toBeGreaterThan(
+    second.steps['dependent']?.launchStamp ?? 0,
+  );
+  expect(second.steps['dependent']?.launchStamp).toBe(first.steps['dependent']?.launchStamp);
+  const healed: WorkflowEvent[] = [];
+  await expect(
+    runWorkflow(definition, {
+      ...options(),
+      resume: true,
+      onEvent: (event) => {
+        if (event.type === 'replay.divergence') healed.push(event);
+      },
+    }),
+  ).rejects.toThrow('Healed steps: healer');
+  expect(healed).toMatchObject([{ healedStepId: 'healer', skippedStepIds: ['dependent'] }]);
+  const third = await readRun(options());
+  expect(third.steps['healer']).toMatchObject({ status: 'completed' });
+  expect(third.steps['healer']?.failureStamp).toBeUndefined();
+  expect(third.steps['healer']?.settleStamp).toBeGreaterThan(
+    second.steps['healer']?.settleStamp ?? 0,
+  );
+});
+
+it.each([false, true])(
+  'falls back to launch order for a checkpoint without launch stamps (strictReplay: %s)',
+  async (strictReplay) => {
+    const { definition, harness, calls, onEvent, heal } = fanIn('followups first');
+    await writeFile(join(stateDir, 'shot.png'), 'png');
+    await expect(runWorkflow(definition, { ...options(), harness, onEvent })).rejects.toThrow(
+      'impl failed',
+    );
+    const stripped = await stripStamps('source');
+    expect(stripped.steps['followups']?.seq).toBeGreaterThan(stripped.steps['impl']?.seq ?? 0);
+    const loaded = await readRun(options());
+    expect(loaded.steps['followups']?.launchStamp).toBeUndefined();
+    expect(loaded.steps['impl']?.failureStamp).toBeUndefined();
+    heal();
+    calls.length = 0;
+    const healed: WorkflowEvent[] = [];
+    const outcome = await runWorkflow(definition, {
+      ...options(),
+      harness,
+      resume: true,
+      strictReplay,
+      onEvent: (event) => {
+        if (event.type === 'replay.divergence') healed.push(event);
+      },
+    }).catch((error: unknown) => error);
+    expect(calls).toEqual([]);
+    expect(healed).toMatchObject([{ healedStepId: 'impl', skippedStepIds: ['followups'] }]);
+    if (strictReplay) {
+      expect(divergence(outcome)).toMatchObject({ reason: 'healed' });
+      expect((await readRun(options())).steps['ship']).toBeUndefined();
+    } else expect(outcome).toMatchObject({ status: 'completed', output: 'implemented' });
+    expect((await readRun(options())).replayWarnings?.[0]).toContain(
+      'later recorded steps (followups)',
+    );
+  },
+);
+
+it('stamps live launches, settlements and fork-reused copies in the target run', async () => {
+  const definition = workflow(async (ctx) => {
+    const a = await ctx.step('a', { input: null, schema: z.string(), run: () => 'a' });
+    const b = await ctx.step('b', { input: null, schema: z.string(), run: () => 'b' });
+    return a + b;
+  });
+  await runWorkflow(definition, options());
+  const source = await readRun(options());
+  expect(source.steps['a']).toMatchObject({ launchStamp: 0, settleStamp: 1 });
+  expect(source.steps['b']).toMatchObject({ launchStamp: 1, settleStamp: 2 });
+  const fork = await runWorkflow(definition, {
+    ...options('fork'),
+    forkFrom: { runId: 'source', invalidate: ['b'] },
+  });
+  expect(fork.steps['a']?.reusedFrom).toBeDefined();
+  expect(fork.steps['a']).toMatchObject({ launchStamp: 0, settleStamp: 1 });
+  expect(fork.steps['b']?.reusedFrom).toBeUndefined();
+  expect(fork.steps['b']).toMatchObject({ launchStamp: 1, settleStamp: 2 });
+  const asked = await runWorkflow(
+    workflow(async (ctx) => {
+      await ctx.step('a', { input: null, schema: z.string(), run: () => 'a' });
+      return ctx.ask('q', { prompt: 'Text?', schema: z.string() });
+    }),
+    options('asks'),
+  );
+  expect(asked.status).toBe('suspended');
+  expect(asked.steps['q']).toMatchObject({ status: 'waiting', launchStamp: 1 });
+  expect(asked.steps['q']?.settleStamp).toBeUndefined();
 });
 
 it('advises against body-computed values when a completed step identity changes', async () => {

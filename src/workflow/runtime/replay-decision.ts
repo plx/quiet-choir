@@ -20,6 +20,13 @@
  * - Fork reuse is considered only for an absent step in a forked run.
  * - Strict healed divergence permits terminal replay and fork reuse but stops before the next live
  *   effect.
+ * - A healed step (failed before, completes now) flags a recorded step as a possible dependent
+ *   only when that step was launched at or after the healed step's first failure settled
+ *   (`launchStamp >= failureStamp`, see `healedDependents`). A sibling launched in the same tick,
+ *   before the failure existed, is not flagged. The rule is a watermark, not proof of dependence:
+ *   a step launched later by unrelated control flow is still flagged. When either stamp is missing
+ *   (checkpoints saved before stamps, or a failure saved between retries) the pair falls back to
+ *   launch order: the step is flagged when its `seq` is higher.
  *
  * ESLint keeps this module free of runtime imports.
  */
@@ -187,6 +194,46 @@ export function decideReplay(input: ReplayInput): ReplayDecision {
     migrateLegacy,
     outcome: redefined ? { kind: 'redefine' } : { kind: 'fresh', resume: prior !== undefined },
   };
+}
+
+/** The healed step's facts for `healedDependents`. @internal */
+export interface HealedStep {
+  /** The healed step's ID; never reported as its own dependent. */
+  readonly id: string;
+  /** Its first-use order. */
+  readonly seq: number;
+  /** The settlement stamp of its first terminal failure, when the failure recorded one. */
+  readonly failureStamp?: number | undefined;
+}
+
+/** One recorded step as the run observed it at resume start. @internal */
+export interface PriorLaunch {
+  /** The step's ID. */
+  readonly id: string;
+  /** Its first-use order. */
+  readonly seq: number;
+  /** The settlement stamp when it was last launched, when one was recorded. */
+  readonly launchStamp?: number | undefined;
+}
+
+/**
+ * The recorded steps that may depend on a healed step's earlier failure, in `prior` order. With
+ * both stamps, a step is flagged when it was launched at or after the failure settled
+ * (`launchStamp >= failureStamp`), regardless of `seq`. When either stamp is missing, that pair
+ * falls back to launch order (`seq` higher than the healed step's).
+ *
+ * @internal
+ */
+export function healedDependents(healed: HealedStep, prior: readonly PriorLaunch[]): string[] {
+  return prior
+    .filter((other) =>
+      other.id === healed.id
+        ? false
+        : healed.failureStamp !== undefined && other.launchStamp !== undefined
+          ? other.launchStamp >= healed.failureStamp
+          : other.seq > healed.seq,
+    )
+    .map((other) => other.id);
 }
 
 /**
