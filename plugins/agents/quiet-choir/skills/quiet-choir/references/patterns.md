@@ -754,7 +754,7 @@ from them. Use one [`ctx.wait`](#polling-and-deadlines) for a durable choice.
 
 A literal effect ID (a string or plain template literal) on the root context (`ctx`, `ctx.claude`,
 `ctx.codex`, `ctx.agent(name)`, `ctx.exec`, `ctx.exec.json`) used twice in one ID namespace, or
-inside a loop: `for`, `while`, `do`, an array callback (`map`, `forEach`, `reduce`, ...),
+inside a loop: `for`, `while`, `do`, an array callback (`map`, `forEach`, `reduce`, `sort`, ...),
 `Array.from` with a mapper, or a positional `ctx.map` mapper. The workflow function, a `ctx.scope`
 callback, a named-map mapper and a child workflow each start a namespace. Reuse in different
 branches of one `if`/`else`, `?:` or `switch`, or in an `if` branch that ends in `return`/`throw`

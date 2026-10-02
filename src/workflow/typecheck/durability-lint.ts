@@ -44,6 +44,8 @@ const iterationMethods = new Set([
   'findIndex',
   'findLast',
   'findLastIndex',
+  'sort',
+  'toSorted',
 ]);
 const runtimeDirectory = '/workflow/runtime/';
 const suppressionPattern =
