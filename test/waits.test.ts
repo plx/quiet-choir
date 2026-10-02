@@ -840,9 +840,9 @@ it('keeps the persisted request and identity of an existing observer-form poll',
   // new Function keeps the observer's source text out of the test transform, so the golden values
   // below (computed before poll policy options existed) stay stable across esbuild/vitest bumps.
   // eslint-disable-next-line @typescript-eslint/no-implied-eval -- fixed source, see above
-  const build = new Function('return async () => ({ done: false })') as () => PollSource<
-    unknown
-  >['observe'];
+  const build = new Function(
+    'return async () => ({ done: false })',
+  ) as () => PollSource<unknown>['observe'];
   const observe = build();
   const poll = {
     input: { pr: 128 },
@@ -1701,9 +1701,10 @@ describe('command polls', () => {
   });
 
   it('records the command, its output schema and the done digest in the wait request', async () => {
-    const done = (output: { state: string }) =>
-      output.state === 'green'
-        ? { done: true as const, value: output.state }
+    // A wait source's done takes unknown output; ctx.poll infers it from output instead.
+    const done = (output: unknown) =>
+      (output as { state: string }).state === 'green'
+        ? { done: true as const, value: 'green' }
         : { done: false as const };
     const poll = {
       input: { pr: 151 },

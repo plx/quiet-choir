@@ -171,7 +171,7 @@ describe('command poll types', () => {
           return Promise.resolve({ done: false, note: { seen: true } });
         },
       });
-      // ctx.wait accepts the command form too; done may annotate its output.
+      // ctx.wait accepts the command form too; there done's output is unknown, so narrow it.
       const waited = await ctx.wait('either', {
         timeoutMs: 1,
         poll: {
@@ -180,8 +180,12 @@ describe('command poll types', () => {
           every: 1,
           command: ['gh', 'pr', 'view'],
           output: z.object({ state: z.string() }),
-          done: (output: { state: string }) =>
-            output.state === 'MERGED' ? { done: true, value: 'done' as const } : { done: false },
+          done: (output) => {
+            expectTypeOf(output).toEqualTypeOf<unknown>();
+            return (output as { state: string }).state === 'MERGED'
+              ? { done: true, value: 'done' }
+              : { done: false };
+          },
         },
       });
       expectTypeOf(waited).toEqualTypeOf<PollOutcome<'done'> | DeadlineOutcome>();

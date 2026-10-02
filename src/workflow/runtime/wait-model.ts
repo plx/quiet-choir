@@ -168,18 +168,19 @@ export interface CommandPollSource<T, O = unknown, N extends JsonValue = JsonVal
    * cross-check state (such as a debounce flag) in the note. Its source text is part of the wait's
    * identity. A throw is a rejected observation, so the poll's `onError` applies to it.
    *
-   * `O` is inferred from `output` and `N` is never inferred, as for an observer poll. Declared as a method so a `ctx.wait` poll
-   * source may annotate `output` with its own type.
+   * `O` is inferred from `output`, never from `done`. In a `ctx.wait` poll source `output` is
+   * `unknown`: narrow it, or use `ctx.poll` for an inferred type.
    */
-  done(
-    output: NoInfer<O>,
-    previous: NoInfer<PollContext<N>['previous']>,
-  ): NoInfer<
-    | { readonly done: true; readonly value: T }
-    | { readonly done: false; readonly note?: N }
-    | Promise<
-        { readonly done: true; readonly value: T } | { readonly done: false; readonly note?: N }
-      >
+  readonly done: NoInfer<
+    (
+      output: O,
+      previous: PollContext<N>['previous'],
+    ) =>
+      | { readonly done: true; readonly value: T }
+      | { readonly done: false; readonly note?: N }
+      | Promise<
+          { readonly done: true; readonly value: T } | { readonly done: false; readonly note?: N }
+        >
   >;
   /** Only an observer {@link PollSource} has `observe`. */
   readonly observe?: never;
