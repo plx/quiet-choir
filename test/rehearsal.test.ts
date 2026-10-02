@@ -1034,7 +1034,7 @@ it('selects a shipped fake CLI envelope by prompt pattern and logs its original 
   });
 });
 
-// One case type-checks a workflow module that imports the engine source. measured: 1.3 s alone; the
+// One case type-checks a workflow module that imports the engine source. measured: 1.4 s alone; the
 // sibling exec-fixtures executor suite budgets 40 s for the same loader compile on CI's slowest leg.
 describe('dry-run worktree synthesis through the executor', { timeout: 40_000 }, () => {
   it('sends ctx.exec to the synthesizing runner and only read-only Git to the injected runner', async () => {
