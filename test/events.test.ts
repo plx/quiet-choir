@@ -1,7 +1,8 @@
 import type * as NodeFs from 'node:fs';
-import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { ExecutionLogger } from '../src/application/execution.js';
@@ -15,6 +16,8 @@ import {
   type EventLine,
 } from '../src/workflow/loader/events.js';
 import type { WorkflowEvent } from '../src/workflow/runtime/runner.js';
+import { WorkflowExecutor } from '../src/workflow/loader/executor.js';
+import { analyzeTypecheckEntrypoint } from '../src/workflow/typecheck/plan.js';
 import type { AgentUsage } from '../src/workflow/runtime/model.js';
 
 // Fail the sink's file writes on demand; every other fs call stays real.
@@ -431,4 +434,80 @@ describe('requestedEventsStdout', () => {
     const argv = ['run', 'step', '--json', '{"ok":true}', '--resume', '--events', '-'];
     expect(requestedEventsStdout(argv) && requestedJson(argv)).toBe(true);
   });
+});
+
+describe('WorkflowExecutor with plan.events', () => {
+  const project = dirname(dirname(fileURLToPath(import.meta.url)));
+  let root: string | undefined;
+  afterEach(() => {
+    if (root) rmSync(root, { recursive: true, force: true });
+    root = undefined;
+  });
+  function workflow() {
+    root = mkdtempSync(join(tmpdir(), 'qc-events-executor-'));
+    symlinkSync(join(project, 'node_modules'), join(root, 'node_modules'));
+    writeFileSync(join(root, 'package.json'), '{"type":"module"}');
+    const file = join(root, 'workflow.ts');
+    writeFileSync(
+      file,
+      `import { z } from 'zod';
+import { defineWorkflow } from ${JSON.stringify(join(project, 'src/workflow/runtime/model.js'))};
+export default defineWorkflow({ name: 'events', version: '1', input: z.null(), output: z.number(),
+  run: async (ctx) => {
+    ctx.log('start', { n: 1 });
+    return ctx.step('one', { input: null, schema: z.number(), run: () => 1 });
+  } });
+`,
+    );
+    const analysis = analyzeTypecheckEntrypoint(file, root);
+    if (!analysis.ok) throw new Error(analysis.error.message);
+    return {
+      kind: 'workflow.execute' as const,
+      typecheck: analysis.plan,
+      stateDir: join(root, 'state'),
+      cwd: root,
+      resume: false,
+      input: null,
+    };
+  }
+
+  // measured: 1.7 s alone, three executions dominated by type checks and tsImport compiles
+  it(
+    'writes to the injected stdout writer and to an appended file',
+    { timeout: 20_000 },
+    async () => {
+      const plan = workflow();
+      const lines: string[] = [];
+      const executor = new WorkflowExecutor({
+        logger: { log: () => undefined },
+        eventsStdout: (line) => lines.push(line),
+      });
+      expect(await executor.execute({ ...plan, runId: 'stdout', events: '-' })).toMatchObject({
+        ok: true,
+      });
+      expect(lines.map((line) => (JSON.parse(line) as EventLine).ev)).toEqual([
+        'run.started',
+        'log',
+        'step.completed',
+        'run.completed',
+      ]);
+      const file = join(root ?? '', 'events.jsonl');
+      expect(await executor.execute({ ...plan, runId: 'file', events: file })).toMatchObject({
+        ok: true,
+      });
+      expect(
+        readFileSync(file, 'utf8')
+          .trim()
+          .split('\n')
+          .map((line) => (JSON.parse(line) as EventLine).run),
+      ).toEqual(['file', 'file', 'file', 'file']);
+      // Without a stdout writer, '-' is a usage error, not a write to process.stdout.
+      const refused = await new WorkflowExecutor({ logger: { log: () => undefined } }).execute({
+        ...plan,
+        runId: 'no-writer',
+        events: '-',
+      });
+      expect(refused).toMatchObject({ ok: false, code: 'usage.flag' });
+    },
+  );
 });
