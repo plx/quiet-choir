@@ -10,9 +10,12 @@ export interface PromptedStructuredOutput {
   /**
    * Find the JSON value in a model's answer and return it re-serialized, ready for
    * `HarnessResponse.text`. Accepts the whole answer as JSON, else the last json-tagged or untagged
-   * code fence that parses, else the outermost `{...}` or `[...]` span. Throws a `SyntaxError`,
-   * which the runtime classifies as `schema`, when the answer holds no JSON value. It does not
-   * validate against the schema; the runtime does that with the step's Zod schema.
+   * code fence that parses, else the outermost `{...}` or `[...]` span. The span fallback prefers
+   * the delimiter that matches the schema's top-level `type` (`{` for `object`, `[` for `array`),
+   * so a citation like `[1]` before the object is skipped; with no such type it takes the
+   * earliest span that parses. Throws a `SyntaxError`, which the runtime classifies as `schema`,
+   * when the answer holds no JSON value. It does not validate against the schema; the runtime
+   * does that with the step's Zod schema.
    */
   readonly extract: (text: string) => string;
 }
@@ -39,16 +42,23 @@ function fenced(text: string): { readonly value: unknown } | undefined {
   return undefined;
 }
 
-function span(text: string): { readonly value: unknown } | undefined {
+function span(text: string, preferred?: '{' | '['): { readonly value: unknown } | undefined {
   const candidates = (
     [
       ['{', '}'],
       ['[', ']'],
     ] as const
   )
-    .map(([open, close]) => ({ start: text.indexOf(open), end: text.lastIndexOf(close) }))
+    .map(([open, close]) => ({
+      open,
+      start: text.indexOf(open),
+      end: text.lastIndexOf(close),
+    }))
     .filter(({ start, end }) => start >= 0 && end > start)
-    .sort((a, b) => a.start - b.start);
+    .sort((a, b) => {
+      if (preferred !== undefined && a.open !== b.open) return a.open === preferred ? -1 : 1;
+      return a.start - b.start;
+    });
   for (const { start, end } of candidates) {
     const parsed = parse(text.slice(start, end + 1));
     if (parsed) return parsed;
@@ -73,10 +83,15 @@ export function promptedStructuredOutput(schema: JsonValue): PromptedStructuredO
     'JSON Schema:',
     JSON.stringify(schema),
   ].join('\n');
+  const type =
+    typeof schema === 'object' && schema !== null && !Array.isArray(schema)
+      ? schema['type']
+      : undefined;
+  const preferred = type === 'object' ? '{' : type === 'array' ? '[' : undefined;
   return {
     instructions,
     extract: (text) => {
-      const found = parse(text.trim()) ?? fenced(text) ?? span(text);
+      const found = parse(text.trim()) ?? fenced(text) ?? span(text, preferred);
       if (found === undefined) throw new SyntaxError('The response contains no JSON value.');
       return JSON.stringify(found.value);
     },

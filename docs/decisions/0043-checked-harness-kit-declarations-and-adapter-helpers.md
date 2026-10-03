@@ -56,8 +56,9 @@ negative case strips a synthetic re-export and expects TS2305, so the check cann
   `code` across module instances. `runProcess`, `JsonLines` and `errorKind` share the one constant.
 - `promptedStructuredOutput(schema)`: a prompt suffix embedding the JSON Schema, and an extractor
   that takes the whole answer, else the last json or untagged fence that parses, else the outermost
-  object or array span, and returns it re-serialized. No JSON throws a `SyntaxError`, which
-  classifies as `schema` like the runtime's own parse.
+  object or array span (preferring the delimiter that matches the schema's top-level type), and
+  returns it re-serialized. No JSON throws a `SyntaxError`, which classifies as `schema` like the
+  runtime's own parse.
 
 **`'prompted'` changes nothing in the runtime.** The runner handles `'prompted'` exactly like
 `'native'`: it passes `outputSchema`, JSON-parses `response.text` and validates it with the step's

@@ -331,9 +331,10 @@ The kit also exports the helpers the built-in adapters use, so a third adapter n
 - `promptedStructuredOutput(schema)` implements `capabilities: { structuredOutput: 'prompted' }` for
   a CLI that cannot enforce a schema. Append its `instructions` to the prompt when
   `request.outputSchema` is not null, and return `extract(answer)` as `text`; it takes the whole
-  answer, the last json fence, or the outermost object or array, and throws a `SyntaxError` (kind
-  `schema`) when there is none. The runtime treats `'prompted'` exactly like `'native'`: it passes
-  `outputSchema`, then parses and Zod-validates `response.text`, and never rewrites prompts.
+  answer, the last json fence, or the outermost object or array (preferring the delimiter that
+  matches the schema's top-level type), and throws a `SyntaxError` (kind `schema`) when there is
+  none. The runtime treats `'prompted'` exactly like `'native'`: it passes `outputSchema`, then
+  parses and Zod-validates `response.text`, and never rewrites prompts.
 
 Every value and type the kit, the root entry and `quiet-choir/decision` export is type-checked
 against the published declarations with `skipLibCheck: false`, so none resolves to `any`.

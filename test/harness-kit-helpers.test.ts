@@ -285,8 +285,19 @@ describe('promptedStructuredOutput', () => {
       '{"ok":true}',
     ],
     ['an object in prose', 'The result is {"ok": false} as requested.', '{"ok":false}'],
+    ['an object after a citation', 'According to [1], the result is {"ok": true}', '{"ok":true}'],
   ])('extracts %s', (_name, text, expected) => {
     expect(prompted.extract(text)).toBe(expected);
+  });
+
+  it('prefers the span matching an array schema over an earlier object-like span', () => {
+    const array = promptedStructuredOutput({ type: 'array' });
+    expect(array.extract('See {note} then [1,2]')).toBe('[1,2]');
+  });
+
+  it('keeps the earliest span when the schema has no single top-level type', () => {
+    const untyped = promptedStructuredOutput({ anyOf: [{ type: 'object' }, { type: 'array' }] });
+    expect(untyped.extract('According to [1], the result is {"ok": true}')).toBe('[1]');
   });
 
   it('throws a SyntaxError, classified as schema, when the answer holds no JSON', () => {
