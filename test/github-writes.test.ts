@@ -10,6 +10,7 @@ import {
   readRun,
   runWorkflow,
   z,
+  type JsonValue,
   type ProcessRunner,
   type WorkflowContext,
 } from '../src/index.js';
@@ -820,12 +821,63 @@ describe('requests and labels', () => {
   });
 });
 
-// One executor run type-checks and imports a workflow module. measured: 1.4 s alone (dominated by
+/** Rehearse a workflow file under `--dry-run` with a runner that fails if it is ever reached. */
+async function rehearse(file: string, input: JsonValue) {
+  const analysis = analyzeTypecheckEntrypoint(file, cwd);
+  if (!analysis.ok) throw new Error('invalid workflow fixture');
+  const spawned: unknown[] = [];
+  const result = await new WorkflowExecutor({
+    logger: new ThresholdLogger('silent', () => undefined),
+    processRunner: {
+      run: (request) => {
+        spawned.push(request.command);
+        return Promise.reject(new Error('A dry run reached the process runner.'));
+      },
+    },
+  }).execute({
+    kind: 'workflow.execute',
+    typecheck: analysis.plan,
+    runId: 'dry',
+    stateDir: join(cwd, 'state'),
+    cwd,
+    input,
+    resume: false,
+    harness: { kind: 'cli', config: {} },
+    dryRun: true,
+  });
+  if (result.kind !== 'workflow.run.result' || !result.rehearsal)
+    throw new Error(JSON.stringify(result));
+  expect(spawned).toEqual([]);
+  return { run: result.run, commands: result.rehearsal.commands };
+}
+
+/** The writes a rehearsal listed, as `STEP METHOD PATH` or `STEP graphql`. */
+const rehearsedWrites = (commands: Awaited<ReturnType<typeof rehearse>>['commands']): string[] =>
+  commands.flatMap((command) => {
+    const argv = command.command as readonly string[];
+    if (!argv.includes('--input')) return [];
+    const path = argv.find((arg) => arg.startsWith('repos/'));
+    return [
+      path === undefined
+        ? `${command.stepId} graphql`
+        : `${command.stepId} ${argv[argv.indexOf('-X') + 1] ?? ''} ${path}`,
+    ];
+  });
+
+async function project(): Promise<void> {
+  await writeFile(join(cwd, 'package.json'), '{"type":"module"}');
+  await symlink(join(repository, 'node_modules'), join(cwd, 'node_modules'));
+}
+const imports = (source: string): string =>
+  source
+    .replace("'quiet-choir/github'", JSON.stringify(join(repository, 'src/integrations/github.js')))
+    .replace("'quiet-choir'", JSON.stringify(join(repository, 'src/index.js')));
+
+// Each executor run type-checks and imports a workflow module. measured: 1.4 s alone (dominated by
 // the loader's type check and tsImport compile), like the read dry-run in test/github.test.ts.
 describe('dry-run', { timeout: 30_000 }, () => {
   it('lists every write in rehearsal commands under its step and spawns nothing', async () => {
-    await writeFile(join(cwd, 'package.json'), '{"type":"module"}');
-    await symlink(join(repository, 'node_modules'), join(cwd, 'node_modules'));
+    await project();
     const file = join(cwd, 'writes.workflow.ts');
     await writeFile(
       file,
@@ -847,46 +899,15 @@ export default defineWorkflow({
 });
 `,
     );
-    const analysis = analyzeTypecheckEntrypoint(file, cwd);
-    if (!analysis.ok) throw new Error('invalid workflow fixture');
-    const spawned: unknown[] = [];
-    const result = await new WorkflowExecutor({
-      logger: new ThresholdLogger('silent', () => undefined),
-      processRunner: {
-        run: (request) => {
-          spawned.push(request.command);
-          return Promise.reject(new Error('A dry run reached the process runner.'));
-        },
-      },
-    }).execute({
-      kind: 'workflow.execute',
-      typecheck: analysis.plan,
-      runId: 'dry',
-      stateDir: join(cwd, 'state'),
-      cwd,
-      input: { repo: REPO },
-      resume: false,
-      harness: { kind: 'cli', config: {} },
-      dryRun: true,
-    });
-    if (result.kind !== 'workflow.run.result' || !result.rehearsal)
-      throw new Error(JSON.stringify(result));
-    expect(spawned).toEqual([]);
+    const result = await rehearse(file, { repo: REPO });
     expect(result.run.status).toBe('completed');
-    const commands = result.rehearsal.commands;
+    const commands = result.commands;
     for (const command of commands)
       expect(command).toMatchObject({
         parentStepId: command.stepId,
         outputSource: 'synthesized',
       });
-    const written = commands.flatMap((command) => {
-      const argv = command.command as readonly string[];
-      if (!argv.includes('--input')) return [];
-      const path = argv.find((arg) => arg.startsWith('repos/'));
-      return [
-        `${command.stepId} ${path === undefined ? 'graphql' : (argv[argv.indexOf('-X') + 1] ?? '')} ${path ?? ''}`.trim(),
-      ];
-    });
+    const written = rehearsedWrites(commands);
     expect(written).toEqual([
       `comment POST repos/${REPO}/issues/7/comments`,
       'reply graphql',
@@ -907,5 +928,28 @@ export default defineWorkflow({
       reopen: { acted: false },
       dismiss: { dismissed: true, reason: 'false positive' },
     });
+  });
+
+  it('rehearses the write example from docs/github.md', async () => {
+    const docs = readFileSync(join(repository, 'docs', 'github.md'), 'utf8');
+    const section = docs.slice(docs.indexOf('### Write example'));
+    const snippet = /```ts\n([\s\S]*?)```/u.exec(section)?.[1];
+    if (snippet === undefined) throw new Error('docs/github.md has no write example');
+    await project();
+    const file = join(cwd, 'wrap-up.workflow.ts');
+    await writeFile(file, imports(snippet));
+    const result = await rehearse(file, {
+      repo: REPO,
+      issue: 7,
+      merged: '#9',
+      fixed: [{ threadId: 'PRRT_x', note: 'Fixed.' }],
+    });
+    expect(result.run.output).toBe(true);
+    // A synthesized author is not a bot, so the reply leaves the thread open.
+    expect(rehearsedWrites(result.commands)).toEqual([
+      'reply/PRRT_x graphql',
+      `close POST repos/${REPO}/issues/7/comments`,
+      `close PATCH repos/${REPO}/issues/7`,
+    ]);
   });
 });
