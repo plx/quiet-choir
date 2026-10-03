@@ -65,27 +65,33 @@ lists them. They use only `gh api`; no op runs `gh pr` or `gh run`.
   also matches the reference helper.
 - **Rerun baseline.** `checks.rerunFailed` takes the baseline explicitly as step input: `attempt`,
   the run attempt the caller saw failing (default 1; a second round passes 2). It lists every run of
-  the commit (`--paginate --slurp`, failing as an incomplete collection when fewer runs than
-  `total_count` arrive), reruns each completed run with conclusion `failure` at or below the
+  the commit (`--paginate --slurp`, failing as an incomplete collection when fewer distinct run IDs
+  than `total_count` arrive), reruns each completed run with conclusion `failure` at or below the
   baseline through `POST .../rerun-failed-jobs` (a plain exec, since GitHub answers 201 with no
   body), and reports runs past the baseline that failed again or are running as `skipped`. A run
   past the baseline was rerun already, by this step before a crash, by a person or by an earlier
-  round, so it is never rerun again. The plan asked for exactly the baseline; at or below it also
-  reruns a failed run no earlier round saw, which no round can have rerun. The step then confirms,
-  with the merge's bounds, that every rerun run is queued, running or at a higher attempt, so a
-  following `waitChecks` does not read the stale failure; that is best effort and reported as
-  `confirmed`.
+  round, so it is never rerun again. The at-most-once guarantee holds for runs at the baseline: a
+  run below it that this step reran before a crash and that failed again before the retry or resume
+  is still at or below the baseline, so it is rerun again. A caller that needs strictly once-only
+  reruns across mixed attempts passes the lowest failing attempt it saw. The plan asked for exactly
+  the baseline; at or below it also reruns a failed run no earlier round saw, which no round can
+  have rerun. The step then confirms, with the merge's bounds, that every rerun run is queued,
+  running or at a higher attempt, so a following `waitChecks` does not read the stale failure; that
+  is best effort and reported as `confirmed`.
 - **Guarantee classes.** `docs/github.md` names a class for every op, 0046's included: reconciled,
   conditional (check-then-act), conditional (atomic, the merge's `sha`), or at-least-once.
 
 ## Consequences
 
-- A crash between a merge, a create or a rerun and its checkpoint no longer repeats it on retry or
-  resume, and a merge can never land a head other than the one named. Crash-window tests drive the
-  stateful fake `gh`, which commits the write and exits 1 without output.
-- The completeness check on the runs list tolerates more rows than `total_count`, because a run
-  created between pages repeats a row and a synthesized list is one row with a count of 0; only
-  fewer rows fail.
+- A crash between a merge or a create and its checkpoint no longer repeats it on retry or resume,
+  and a merge can never land a head other than the one named. A rerun is not repeated for a run at
+  the baseline; a run below the baseline that failed again after the crashed attempt's rerun is
+  rerun again. Crash-window tests drive the stateful fake `gh`, which commits the write and exits 1
+  without output.
+- The completeness check on the runs list counts distinct run IDs, not rows: a run created between
+  pages repeats a row, and counting rows would let that repeat hide an omitted run. More distinct
+  runs than `total_count` are tolerated, and a synthesized list is one row with a count of 0; only
+  fewer distinct runs fail.
 - A rehearsed `pr.edit` or `pr.merge` sees a synthesized head that is never `sha` and returns
   `head-moved` after its read; a rehearsed `pr.create` posts; a rehearsed rerun finds no completed
   failure. Exec fixture rules rehearse the other paths.

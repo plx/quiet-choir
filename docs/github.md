@@ -365,7 +365,7 @@ Every op names its class in the table below:
 | `pr.create`                   | Reconciled: lists every pull request for the head and base in any state, returns the one carrying the marker, else an open one (whoever opened it, unchanged), and posts only when there is neither, so a step never opens a second pull request even after its first was closed.        | GitHub allows one open pull request per head and base: one opened by someone else between the list and the `POST` makes GitHub answer 422 and fails the attempt, and the retry returns it. The list is assumed to show a new pull request at once. A marker edited out, for example by a `pr.edit` body, before the step completes defeats it. Same-repository heads only.                                                                                                                                                                                                                                |
 | `pr.edit`                     | Conditional (check-then-act): reads the pull request and sends one `PATCH` with the fields that differ, only when it is open and its head is `expectHead`; after a committed edit nothing differs, so a retry sends nothing.                                                             | No `If-Match`: a push or an edit by someone else between the read and the `PATCH` is not detected, and a concurrent change to the same field is overwritten.                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 | `pr.merge`                    | Conditional (atomic): the `PUT` carries `sha`, and GitHub merges only while the head is that SHA. Reconciled by its read: merged at `sha` returns the merge commit with no second `PUT`; merged at another head throws.                                                                  | Readiness (base branch, review threads, alerts, checks) is the caller's; GitHub enforces only branch protection. A merge at `sha` by someone else also returns `merged: true` (with `acted: false`). A merge GitHub accepted but never reported within 20 reads throws, and the retry finds it.                                                                                                                                                                                                                                                                                                           |
-| `checks.rerunFailed`          | Conditional (check-then-act) on the attempt baseline: reruns only completed runs with conclusion `failure` at or below `attempt`; a run past it was rerun already (by this step before a crash, by someone else or by an earlier round) and is skipped.                                  | A rerun of the same run started by someone else between the list and the `POST` is not detected; GitHub refuses to rerun a running workflow with an HTTP error, which fails the attempt, and the retry skips the run. Only conclusion `failure` is rerun, not `cancelled` or `timed_out`. Confirmation is best effort.                                                                                                                                                                                                                                                                                    |
+| `checks.rerunFailed`          | Conditional (check-then-act) on the attempt baseline: reruns only completed runs with conclusion `failure` at or below `attempt`; a run past it was rerun already (by this step before a crash, by someone else or by an earlier round) and is skipped.                                  | A rerun of the same run started by someone else between the list and the `POST` is not detected; GitHub refuses to rerun a running workflow with an HTTP error, which fails the attempt, and the retry skips the run. A run below the baseline that this step reran before a crash and that failed again before the retry is rerun again: once only holds for runs at the baseline. Only conclusion `failure` is rerun, not `cancelled` or `timed_out`. Confirmation is best effort.                                                                                                                      |
 
 Reactions, comment edits and deletions, and issue body edits are not provided: without `If-Match` an
 edit cannot be made conditional, and run through `ctx.exec` or a step of your own they stay at least
@@ -452,20 +452,24 @@ alerts and checks with [`waitChecks` and `waitReview`](#waits) (or `pr.reviewThr
 ### Rerunning failed runs
 
 `checks.rerunFailed(id, { sha, attempt? })` reruns the failed jobs of the workflow runs of the
-commit `sha`. It lists every run of the commit (complete or throw: a list shorter than GitHub's
-`total_count` throws `IncompleteCollectionError`, and GitHub returns at most 1000 runs for a
-commit), reruns each completed run with conclusion `failure` whose `run_attempt` is at or below the
-baseline `attempt` (`POST .../actions/runs/ID/rerun-failed-jobs`, one per run), and reports runs
-past the baseline that failed again or are still running in `skipped`.
+commit `sha`. It lists every run of the commit (complete or throw: a list with fewer distinct run
+IDs than GitHub's `total_count` throws `IncompleteCollectionError`, and GitHub returns at most 1000
+runs for a commit), reruns each completed run with conclusion `failure` whose `run_attempt` is at or
+below the baseline `attempt` (`POST .../actions/runs/ID/rerun-failed-jobs`, one per run), and
+reports runs past the baseline that failed again or are still running in `skipped`.
 
 `attempt` is the run attempt you saw failing, a positive integer and part of the step's input: 1
 (the default) for the first round, 2 after the first round's reruns failed again, and so on. A run
 past the baseline was rerun already, by this step before a crash, by someone else or by an earlier
-round, so a retried or resumed step never reruns a job a second time, and a round never reruns what
-a later attempt already covers. Then the step reads the runs until every rerun one is queued,
-running or at a higher attempt, with the bounds of the merge confirmation, so a following
-`waitChecks` does not read the failure it just reran; `confirmed` is false when that never showed. A
-rerun step has no pull request: it reruns the commit's runs of every workflow.
+round, so a retried or resumed step does not rerun it again, and a round never reruns what a later
+attempt already covers. That at-most-once guarantee holds for runs at the baseline. A run below the
+baseline that this step reran before a crash, and that failed again before the retry or resume, is
+still at or below the baseline and is rerun again; a caller that needs strictly once-only reruns
+across mixed attempts passes the lowest failing attempt it saw. Then the step reads the runs until
+every rerun one is queued, running or at a higher attempt, with the bounds of the merge
+confirmation, so a following `waitChecks` does not read the failure it just reran; `confirmed` is
+false when that never showed. A rerun step has no pull request: it reruns the commit's runs of every
+workflow.
 
 ### Policy and identity
 
@@ -595,7 +599,7 @@ export default defineWorkflow({
     const gh = github(ctx, { repo });
     const policy = { retry: { maxAttempts: 3 } };
     if (gate === 'fix-ci') {
-      // Round N reruns the runs that failed at attempt N, at most once.
+      // Round N reruns the runs that failed at or below attempt N.
       const rerun = await gh.checks.rerunFailed(
         ctx.id('rerun', sha, round),
         { sha, attempt: round },
