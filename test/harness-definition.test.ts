@@ -1,5 +1,11 @@
-import { expect, it } from 'vitest';
-import { defineHarness, defineWorkflow, z, type HarnessDeclaration } from '../src/index.js';
+import { expect, expectTypeOf, it } from 'vitest';
+import {
+  defineHarness,
+  defineWorkflow,
+  z,
+  type CapabilityKeysOf,
+  type HarnessDeclaration,
+} from '../src/index.js';
 
 const review = defineHarness({
   name: 'review',
@@ -62,10 +68,54 @@ it('rejects invalid registration identities and policy declarations', () => {
   expect(() => defineHarness({ ...review, policy: ['prompt'] })).toThrow('cannot exclude prompt');
   expect(() =>
     defineHarness({
+      name: 'profiled',
+      revision: 1,
+      capabilities: review.capabilities,
+      options: z.object({ prompt: z.string(), profile: z.string().optional() }),
+      capabilityKeys: ['profile'],
+    }),
+  ).toThrow('capabilityKeys cannot include profile');
+  expect(() =>
+    defineHarness({
       name: 'invalid',
       revision: 1,
       capabilities: review.capabilities,
       options: z.custom<{ prompt: string }>(),
     }),
   ).toThrow('Zod object schema');
+});
+
+it('keeps a literal capabilityKeys tuple and widens the list when it is omitted', () => {
+  const keyedOptions = z.object({ prompt: z.string(), tools: z.array(z.string()).optional() });
+  const keyed = defineHarness({
+    name: 'keyed',
+    revision: 1,
+    options: keyedOptions,
+    capabilities: { structuredOutput: 'native' },
+    capabilityKeys: ['tools'],
+  });
+  expectTypeOf(keyed.capabilityKeys).toEqualTypeOf<readonly ['tools'] | undefined>();
+  expectTypeOf<CapabilityKeysOf<typeof keyed>>().toEqualTypeOf<'tools'>();
+  // An omitted list defaults to the widened key list, which forbids nothing at type level.
+  expectTypeOf(review.capabilityKeys).toEqualTypeOf<
+    readonly ('prompt' | 'thinking')[] | undefined
+  >();
+  expectTypeOf<CapabilityKeysOf<typeof review>>().toBeNever();
+  // Explicit <N, O, C> type arguments take the same widened default, so capabilityKeys still
+  // compiles; call sites stay permissive at type level and the runtime check applies.
+  type KeyedOptions = z.infer<typeof keyedOptions>;
+  interface KeyedCapabilities {
+    readonly structuredOutput: 'native';
+  }
+  const explicit = defineHarness<'explicit', KeyedOptions, KeyedCapabilities>({
+    name: 'explicit',
+    revision: 1,
+    options: keyedOptions,
+    capabilities: { structuredOutput: 'native' },
+    capabilityKeys: ['tools'],
+  });
+  expectTypeOf<CapabilityKeysOf<typeof explicit>>().toBeNever();
+  expect(explicit.capabilityKeys).toEqual(['tools']);
+  expect(keyed.capabilityKeys).toEqual(['tools']);
+  expect(review.capabilityKeys).toBeUndefined();
 });

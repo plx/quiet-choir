@@ -15,7 +15,12 @@ import type {
   ImageAttachment,
   JsonValue,
 } from './model.js';
-import type { AccessClass } from './profiles-model.js';
+import type { AccessClass, BuiltinProfile } from './profiles-model.js';
+import type { AgentIsolation } from './agent-isolation.js';
+import type {
+  claudeCapabilityKeys,
+  codexCapabilityKeys,
+} from '../../harnesses/builtins/capability-keys.js';
 
 /** Public features advertised by one named agent harness. */
 export interface HarnessCapabilities {
@@ -81,11 +86,16 @@ export interface HarnessProbe {
   readonly version: string | null;
 }
 
-/** A package's typed option contract and adapter factory, registered explicitly by workflows. */
+/**
+ * A package's typed option contract and adapter factory, registered explicitly by workflows. `K` is
+ * the literal tuple of `capabilityKeys`, which `defineHarness` infers so strict call sites can omit
+ * those keys; a widened list keeps call-site types permissive and leaves the check to the runtime.
+ */
 export interface HarnessDefinition<
   N extends string,
   O extends AgentOptions,
   C extends HarnessCapabilities,
+  K extends readonly (keyof O & string)[] = readonly (keyof O & string)[],
 > {
   /** Persisted lowercase name, matching /^[a-z][a-z0-9-]{0,31}$/. */
   readonly name: N;
@@ -97,8 +107,11 @@ export interface HarnessDefinition<
   readonly capabilities: C;
   /** Option keys treated as execution policy rather than replay identity. */
   readonly policy?: readonly (keyof O & string)[];
-  /** Capability controls that strict profiles own; adapters remain responsible for enforcing them. */
-  readonly capabilityKeys?: readonly (keyof O & string)[];
+  /**
+   * Capability controls that strict profiles own; adapters remain responsible for enforcing them.
+   * Under `strictProfiles` the workflow's `ctx.agent(name)` option type omits a literal list's keys.
+   */
+  readonly capabilityKeys?: K;
   /** Pure access classification of partial profile or resolved call options; omission conservatively requires exec access. */
   readonly access?: (options: Partial<O>) => AccessClass;
   /** Construct an adapter from operator configuration, outside effect identity. */
@@ -143,9 +156,19 @@ export interface NativeHarnessCapabilities extends HarnessCapabilities {
 // eslint-disable-next-line @typescript-eslint/consistent-type-definitions
 export type BuiltInHarnesses = {
   /** Claude Code option and response contract. */
-  readonly claude: HarnessDefinition<'claude', ClaudeOptions, NativeHarnessCapabilities>;
+  readonly claude: HarnessDefinition<
+    'claude',
+    ClaudeOptions,
+    NativeHarnessCapabilities,
+    typeof claudeCapabilityKeys
+  >;
   /** Codex option and response contract. */
-  readonly codex: HarnessDefinition<'codex', CodexOptions, NativeHarnessCapabilities>;
+  readonly codex: HarnessDefinition<
+    'codex',
+    CodexOptions,
+    NativeHarnessCapabilities,
+    typeof codexCapabilityKeys
+  >;
 };
 
 /** Built-ins plus the literal registrations supplied to defineWorkflow. */
@@ -167,6 +190,55 @@ export type CapabilitiesOf<D> = D extends {
 }
   ? C
   : never;
+
+/**
+ * The literal `capabilityKeys` of a registration, as a union. A registration without the field, or
+ * with a widened `string[]` list (such as an erased {@link HarnessDeclaration}), yields `never`, so
+ * its call sites stay permissive at type level and the runtime strict check remains the backstop.
+ */
+export type CapabilityKeysOf<D> = D extends {
+  /** Profile-owned capability option keys. */
+  readonly capabilityKeys?: infer K;
+}
+  ? Exclude<K, undefined> extends infer T extends readonly string[]
+    ? number extends T['length']
+      ? never
+      : T[number]
+    : never
+  : never;
+
+/**
+ * Call-site options of harness `K` with registration `D` in a workflow with declared roles `TProfile`.
+ * `profile` accepts a built-in preset or a declared role. When `TStrict` is exactly `true` (a
+ * workflow that omits `strictProfiles` or sets it to a literal `true`), the harness's capability keys
+ * are forbidden as optional `never` properties, mirroring the runtime check: for Claude and Codex
+ * every key except `isolation`, which is narrowed to exclude `'inherit'`; for a registered harness
+ * every literal `capabilityKeys` entry. Forbidding the keys structurally, not only through
+ * excess-property checks, also rejects a pre-built options variable and, with
+ * `exactOptionalPropertyTypes`, an explicit `undefined`. A literal `false`, or a
+ * non-literal `boolean`, keeps every option.
+ */
+export type CallOptions<
+  K extends string,
+  D,
+  TProfile extends string,
+  TStrict extends boolean,
+> = Extract<
+  ([TStrict] extends [true]
+    ? K extends 'claude' | 'codex'
+      ? Omit<OptionsOf<D>, 'profile' | 'isolation' | CapabilityKeysOf<D>> &
+          Readonly<Partial<Record<Exclude<CapabilityKeysOf<D>, 'isolation'>, never>>> & {
+            /** Native configuration mode or worktree shorthand; strict profiles own `'inherit'`. */
+            readonly isolation?: Exclude<AgentIsolation, 'inherit'> | undefined;
+          }
+      : Omit<OptionsOf<D>, 'profile' | CapabilityKeysOf<D>> &
+          Readonly<Partial<Record<CapabilityKeysOf<D>, never>>>
+    : Omit<OptionsOf<D>, 'profile'>) & {
+    /** Built-in preset or one of this workflow's declared role names. */
+    readonly profile?: BuiltinProfile | TProfile | undefined;
+  },
+  AgentOptions
+>;
 
 /** Client that cannot request structured responses from a text-only registration. */
 export type RegisteredAgentClient<

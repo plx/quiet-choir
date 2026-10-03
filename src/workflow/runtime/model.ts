@@ -5,7 +5,7 @@ import type {
   BuiltInHarnesses,
   WorkflowHarnesses,
   RegisteredAgentClient,
-  OptionsOf,
+  CallOptions,
   CapabilitiesOf,
 } from './harness-model.js';
 import type { ClaudeOptions } from '../../harnesses/builtins/claude-options.js';
@@ -35,7 +35,7 @@ import type {
 } from './wait-model.js';
 import type { PhaseOptions } from './observability-model.js';
 import type { z } from 'zod';
-import type { AgentDefaults, AgentProfile, BuiltinProfile } from './profiles-model.js';
+import type { AgentDefaults, AgentProfile } from './profiles-model.js';
 import type { MapStepError } from './fan-out.js';
 import type { ModelUsage, TokenCounts } from './usage-model.js';
 import type { ChildOptions, WorkflowDeclaration, WorkflowPhase } from './child-model.js';
@@ -447,29 +447,106 @@ export interface StepDefinition<T> {
   readonly run: NoInfer<(context: StepContext) => Promise<T> | T>;
 }
 
-/** Durable operations available to ordinary TypeScript workflow code. */
+/**
+ * Declared child names of a `children` tuple. An unparameterized context (`any`) or any child whose
+ * name is a plain `string` (such as a {@link WorkflowDeclaration}) widens this to `string`.
+ */
+export type ChildNamesOf<TChildren> = 0 extends 1 & TChildren
+  ? string
+  : TChildren extends readonly WorkflowDeclaration[]
+    ? TChildren[number]['name']
+    : string;
+
+/**
+ * Input of declared child `N`: the parsed type of its input schema, or {@link JsonValue} when the
+ * children are not known precisely (see {@link ChildNamesOf}).
+ */
+export type ChildInputOf<TChildren, N extends string> =
+  string extends ChildNamesOf<TChildren>
+    ? JsonValue
+    : TChildren extends readonly WorkflowDeclaration[]
+      ? z.output<
+          Extract<
+            TChildren[number],
+            {
+              /** Declared child name. */
+              readonly name: N;
+            }
+          >['input']
+        >
+      : JsonValue;
+
+/**
+ * Output of declared child `N`: the parsed type of its output schema, or {@link JsonValue} when the
+ * children are not known precisely (see {@link ChildNamesOf}).
+ */
+export type ChildOutputOf<TChildren, N extends string> =
+  string extends ChildNamesOf<TChildren>
+    ? JsonValue
+    : TChildren extends readonly WorkflowDeclaration[]
+      ? z.output<
+          Extract<
+            TChildren[number],
+            {
+              /** Declared child name. */
+              readonly name: N;
+            }
+          >['output']
+        >
+      : JsonValue;
+
+/**
+ * Durable operations available to ordinary TypeScript workflow code. `TStrict` is the workflow's
+ * `strictProfiles` literal: exactly `true` omits profile-owned capability keys from call-site option
+ * types, and the default `boolean` keeps them, so an unparameterized helper context stays permissive.
+ * `TChildren` is the declared `children` tuple that types by-name child dispatch; the default `any`
+ * keeps by-name dispatch on JSON values and lets typed contexts reach bare `WorkflowContext` helpers.
+ */
 export interface WorkflowContext<
   TProfile extends string = string,
   R extends HarnessMap = BuiltInHarnesses,
+  TStrict extends boolean = boolean,
+  // `any`, not a concrete array: a concrete default makes typed contexts unassignable to helpers
+  // that take a bare WorkflowContext, through the variance of the by-name workflow overload.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  TChildren extends readonly WorkflowDeclaration[] = any,
 > {
-  /** Select one explicitly registered harness; capabilities determine structured-output availability. */
+  /**
+   * Select one explicitly registered harness; capabilities determine structured-output availability.
+   * Options are typed like `ctx.claude`: `profile` must be a built-in or declared role, and a strict
+   * workflow omits the harness's literal `capabilityKeys` (see {@link CallOptions}).
+   */
   agent<K extends keyof R & string>(
     name: K,
-  ): RegisteredAgentClient<OptionsOf<R[K]>, CapabilitiesOf<R[K]>>;
+  ): RegisteredAgentClient<CallOptions<K, R[K], TProfile, TStrict>, CapabilitiesOf<R[K]>>;
   /** Run a typed child inline with validated I/O, recorded identity, and a scoped effect namespace. */
-  workflow<I, O, P extends string, H extends readonly HarnessDeclaration[]>(
+  workflow<
+    I,
+    O,
+    P extends string,
+    H extends readonly HarnessDeclaration[],
+    S extends boolean,
+    C extends readonly WorkflowDeclaration[],
+    M extends string,
+  >(
     id: string,
-    child: WorkflowDefinition<I, O, P, H>,
+    child: WorkflowDefinition<I, O, P, H, S, C, M>,
     input: NoInfer<I>,
     options?: ChildOptions,
   ): Promise<O>;
-  /** Dispatch only among the current workflow's declared children; validate input and return JSON. */
-  workflow(
+  /**
+   * Dispatch only among the current workflow's declared children; the runtime validates input and
+   * output with the child's schemas. In a workflow defined with literal `children`, the name must be
+   * declared, the input must match that child's input type, and the result has its output type. A
+   * bare `WorkflowContext`, or a child typed as an erased {@link WorkflowDeclaration}, falls back to
+   * any name and {@link JsonValue} input and output.
+   */
+  workflow<const N extends string>(
     id: string,
-    childName: string,
-    input: JsonValue,
+    childName: N & ChildNamesOf<TChildren>,
+    input: NoInfer<ChildInputOf<TChildren, N>>,
     options?: ChildOptions,
-  ): Promise<JsonValue>;
+  ): Promise<ChildOutputOf<TChildren, N>>;
   /** Integrate pinned changes in input order; only target checkout modifies the source working tree. */
   merge(
     id: string,
@@ -558,21 +635,13 @@ export interface WorkflowContext<
   /** Prefix every effect launched in the callback; nested scopes compose without counters. */
   scope<T>(prefix: string, run: () => Promise<T>): Promise<T>;
   /** Bind a lexical prefix to a reusable context; descendants retain their nested scope prefixes. */
-  within(prefix: string): WorkflowContext<TProfile, R>;
-  /** Claude-specific headless API. */
+  within(prefix: string): WorkflowContext<TProfile, R, TStrict, TChildren>;
+  /** Claude-specific headless API; a strict workflow omits profile-owned keys (see {@link CallOptions}). */
   readonly claude: AgentClient<
-    Omit<ClaudeOptions, 'profile'> & {
-      /** Built-in preset or one of this workflow's declared role names. */
-      readonly profile?: BuiltinProfile | TProfile | undefined;
-    }
+    CallOptions<'claude', BuiltInHarnesses['claude'], TProfile, TStrict>
   >;
-  /** Codex-specific headless API. */
-  readonly codex: AgentClient<
-    Omit<CodexOptions, 'profile'> & {
-      /** Built-in preset or one of this workflow's declared role names. */
-      readonly profile?: BuiltinProfile | TProfile | undefined;
-    }
-  >;
+  /** Codex-specific headless API; a strict workflow omits profile-owned keys (see {@link CallOptions}). */
+  readonly codex: AgentClient<CallOptions<'codex', BuiltInHarnesses['codex'], TProfile, TStrict>>;
   /** Save a JSON result and reuse it on resume when its inputs match. */
   step<T>(
     id: string,
@@ -626,12 +695,23 @@ export interface WorkflowContext<
   ): Promise<Settled<U, MapStepError>[]>;
 }
 
-/** Definition of a typed workflow; plain JavaScript controls branching, loops, and composition. */
+/**
+ * Definition of a typed workflow; plain JavaScript controls branching, loops, and composition.
+ * `TStrict`, `TChildren` and `TName` carry the literal `strictProfiles`, `children` and `name` that
+ * `defineWorkflow` infers into the context type; their defaults keep an unparameterized
+ * `WorkflowDefinition<I, O>` parameter assignable from any typed definition.
+ */
 export interface WorkflowDefinition<
   TInput,
   TOutput,
   TProfile extends string = string,
   H extends readonly HarnessDeclaration[] = readonly HarnessDeclaration[],
+  TStrict extends boolean = boolean,
+  // `any`, not a concrete array: a concrete default makes typed definitions unassignable to
+  // WorkflowDefinition<I, O> parameters through the variance of the run context.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  TChildren extends readonly WorkflowDeclaration[] = any,
+  TName extends string = string,
 > {
   /** Explicit agent registrations; Claude and Codex remain implicitly available. */
   readonly harnesses?: H;
@@ -641,14 +721,23 @@ export interface WorkflowDefinition<
   readonly whenToUse?: string;
   /** Expected stages; these descriptions do not emit progress events. */
   readonly phases?: readonly WorkflowPhase[];
-  /** Inline children available for discovery and name-based dispatch. */
-  readonly children?: readonly WorkflowDeclaration[];
+  /**
+   * Inline children available for discovery and name-based dispatch. `defineWorkflow` keeps the list
+   * as a tuple type, so `ctx.workflow(id, name, input)` checks the name and input and infers the
+   * output; a workflow without children rejects by-name dispatch at type level.
+   */
+  readonly children?: TChildren;
   /** Common defaults applied after the selected preset. */
   readonly defaults?: AgentDefaults<NoInfer<TProfile>>;
   /** Named capability roles, resolved before executing the workflow body. */
   readonly profiles?: Readonly<Record<TProfile, AgentProfile>>;
-  /** Prohibit raw tools/allowedTools/sandbox at call sites; defaults to true. */
-  readonly strictProfiles?: boolean;
+  /**
+   * Prohibit raw capability controls (tools, sandbox, env, `isolation: 'inherit'` and the rest) at
+   * call sites; defaults to true. `defineWorkflow` infers the literal: omitted or `true` removes those
+   * keys from `ctx.claude`, `ctx.codex` and `ctx.agent(name)` option types, while only a literal
+   * `false` (or a non-literal `boolean`) types them. The runtime check still applies to untyped code.
+   */
+  readonly strictProfiles?: TStrict;
   /**
    * Worktree cache and dependency-provisioning policy for isolated effects. Only the root definition
    * passed to `runWorkflow` (or the CLI) is read; a child's field is ignored. Each field that
@@ -656,8 +745,8 @@ export interface WorkflowDefinition<
    * validated when the definition loads and stays outside step identity.
    */
   readonly worktrees?: WorktreePolicy;
-  /** Stable workflow name, checked on resume. */
-  readonly name: string;
+  /** Stable workflow name, checked on resume; a literal name types by-name dispatch from a parent. */
+  readonly name: TName;
   /** Explicit compatibility version; bump whenever code or dependencies change semantics. */
   readonly version: string;
   /** Input validator and source of the inferred input type. */
@@ -667,21 +756,33 @@ export interface WorkflowDefinition<
   /** Workflow body. It replays from the beginning when resuming. */
   readonly run: NoInfer<
     (
-      context: WorkflowContext<NoInfer<TProfile>, WorkflowHarnesses<NoInfer<H>>>,
+      context: WorkflowContext<
+        NoInfer<TProfile>,
+        WorkflowHarnesses<NoInfer<H>>,
+        NoInfer<TStrict>,
+        NoInfer<TChildren>
+      >,
       input: TInput,
     ) => Promise<TOutput>
   >;
 }
 
-/** Define a workflow with input/output types inferred from its runtime schemas. */
+/**
+ * Define a workflow with input/output types inferred from its runtime schemas. The literal
+ * `strictProfiles` (omitted means `true`), `children` tuple and `name` are inferred too, so strict
+ * call sites, declared profiles and by-name child dispatch are checked at type level.
+ */
 export function defineWorkflow<
   TInput,
   TOutput,
   TProfile extends string = never,
   const H extends readonly HarnessDeclaration[] = readonly [],
+  const TStrict extends boolean = true,
+  const TChildren extends readonly WorkflowDeclaration[] = readonly [],
+  const TName extends string = string,
 >(
-  definition: WorkflowDefinition<TInput, TOutput, TProfile, H>,
-): WorkflowDefinition<TInput, TOutput, TProfile, H> {
+  definition: WorkflowDefinition<TInput, TOutput, TProfile, H, TStrict, TChildren, TName>,
+): WorkflowDefinition<TInput, TOutput, TProfile, H, TStrict, TChildren, TName> {
   if (!definition.name.trim() || !definition.version.trim()) {
     throw new Error('Workflow name and version must be nonempty.');
   }

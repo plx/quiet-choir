@@ -2,6 +2,28 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- Authoring types now match runtime strictness (#155; amends ADR 0010 and ADR 0027). This is a
+  source-level break: code that compiled but failed when the call ran now fails typecheck, and
+  `workflow validate` (and `execute`'s check) with `load.typecheck`, even in a branch that never
+  runs. Under the default `strictProfiles`, `ctx.claude`, `ctx.codex` and `ctx.agent(name)` options
+  omit the capability keys strict profiles own (`isolation` keeps every value except `'inherit'`);
+  only a literal `strictProfiles: false` types them. `ctx.agent(name)` profiles accept only built-in
+  or declared roles. By-name `ctx.workflow(id, name, input)` checks the name and input against the
+  declared `children` and infers the child's output; a workflow without children rejects it, while a
+  bare `WorkflowContext` or an erased `WorkflowDeclaration` child falls back to JSON. The built-in
+  `capabilityKeys` gain the keys the runtime already rejected (Claude `permissionMode`, `agent`,
+  `strictMcpConfig`, `addDirs`; Codex `addDirs`) and share one list with the runtime check, exported
+  as `claudeCapabilityKeys` and `codexCapabilityKeys`; runtime behavior, messages and identity are
+  unchanged. New type parameters: `WorkflowContext` `TStrict` and `TChildren`, `WorkflowDefinition`
+  `TStrict`, `TChildren` and `TName`, and `HarnessDefinition` `K` (inferred by `defineHarness` and
+  `defineWorkflow`). New public types: `CallOptions`, `CapabilityKeysOf`, `ChildNamesOf`,
+  `ChildInputOf` and `ChildOutputOf`. `defineHarness` defaults `K` to the widened key list, so an
+  omitted `capabilityKeys` or explicit `<N, O, C>` type arguments forbid nothing at type level (the
+  runtime check still applies). Explicit `defineWorkflow` type arguments are all-or-nothing: with a
+  shorter prefix such as `defineWorkflow<Input, Output>`, the rest take the strict, childless
+  defaults, so `strictProfiles: false` or a nonempty `children` list fails typecheck; drop the type
+  arguments (preferred) or spell all seven. `runWorkflow` keeps its four-argument
+  `<Input, Output, Profile, Harnesses>` form as an overload.
 - `workflow validate` runs a static durability lint after a clean type check (#154; ADR 0041). Rules
   QC001-QC006 report a discarded effect promise, a nondeterministic read in the workflow body
   (`Date.now()`, `new Date()`, `Math.random()`, `performance.now()`, `crypto.randomUUID`,

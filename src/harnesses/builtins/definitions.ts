@@ -3,6 +3,7 @@ import type { z } from 'zod';
 import { defineHarness } from '../definition.js';
 import type { ClaudeOptions } from './claude-options.js';
 import type { CodexOptions } from './codex-options.js';
+import { claudeCapabilityKeys, codexCapabilityKeys } from './capability-keys.js';
 import { claudeOptionsSchema, codexOptionsSchema } from '../../workflow/runtime/options.js';
 import { toolAccess } from '../../workflow/runtime/profiles.js';
 
@@ -13,18 +14,7 @@ export const claudeDefinition: BuiltInHarnesses['claude'] = defineHarness({
   options: claudeOptionsSchema as z.ZodType<ClaudeOptions>,
   capabilities: { structuredOutput: 'native', sandbox: false, sessionResume: false },
   policy: ['timeoutMs', 'maxTurns', 'maxBudgetUsd', 'retry'],
-  capabilityKeys: [
-    'tools',
-    'allowedTools',
-    'disallowedTools',
-    'plugins',
-    'mcpServers',
-    'settings',
-    'agents',
-    'extraArgs',
-    'env',
-    'isolation',
-  ],
+  capabilityKeys: claudeCapabilityKeys,
   access: (options) => toolAccess(options.tools ?? []),
 });
 
@@ -35,14 +25,6 @@ export const codexDefinition: BuiltInHarnesses['codex'] = defineHarness({
   options: codexOptionsSchema as z.ZodType<CodexOptions>,
   capabilities: { structuredOutput: 'native', sandbox: true, sessionResume: false },
   policy: ['timeoutMs', 'retry'],
-  capabilityKeys: [
-    'sandbox',
-    'networkAccess',
-    'config',
-    'harnessProfile',
-    'extraArgs',
-    'env',
-    'isolation',
-  ],
+  capabilityKeys: codexCapabilityKeys,
   access: (options) => (options.sandbox === 'workspace-write' ? 'write' : 'read'),
 });

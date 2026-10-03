@@ -6,6 +6,8 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import {
   capabilityManifest,
+  claudeCapabilityKeys,
+  codexCapabilityKeys,
   defineWorkflow,
   HarnessError,
   readRun,
@@ -21,7 +23,9 @@ import {
   profileGrantDigest,
   publicCapabilityManifest,
   resolveCapabilities,
+  resolveProfileCall,
 } from '../src/workflow/runtime/profiles.js';
+import { claudeDefinition, codexDefinition } from '../src/harnesses/builtins/definitions.js';
 import { digest } from '../src/workflow/runtime/json.js';
 import { parseClaude } from '../src/harnesses/protocol.js';
 
@@ -303,11 +307,34 @@ it('checks elevated built-ins at invocation and does not treat write as exec per
   );
 });
 
+it.each([
+  ['claude', claudeDefinition.capabilityKeys, claudeCapabilityKeys],
+  ['codex', codexDefinition.capabilityKeys, codexCapabilityKeys],
+] as const)(
+  'rejects every shared %s capability key at strict call sites, and only those',
+  (harness, declared, shared) => {
+    // One list drives the definition, the runtime check and the call-site types.
+    expect(declared).toBe(shared);
+    const manifest = capabilityManifest(
+      defineWorkflow({ ...base, run: () => Promise.resolve('') }),
+    );
+    const call = (options: Record<string, unknown>) => () =>
+      resolveProfileCall(manifest, harness, { prompt: 'x', ...options }, [], {});
+    for (const key of shared) {
+      // The strict check reads only the key's presence; isolation is raw only when inherited.
+      const value = key === 'isolation' ? 'inherit' : [];
+      expect(call({ [key]: value }), key).toThrow(`strictProfiles forbids call-site ${key};`);
+    }
+    expect(call({ isolation: 'restricted', model: 'm', effort: 'low' })).not.toThrow();
+  },
+);
+
 it('rejects raw capabilities by default; escape-hatch calls still require class grants', async () => {
   const invoke = vi.fn<Harness['invoke']>().mockResolvedValue(reply);
   const definition = defineWorkflow({
     ...base,
     async run(ctx) {
+      // @ts-expect-error -- strictProfiles omits tools at type level too; the runtime still rejects it.
       return (await ctx.claude.text('edit', { prompt: 'x', tools: ['Edit'] })).output;
     },
   });
@@ -582,6 +609,7 @@ it('checks raw Codex sandbox calls, unknown runtime names, and fresh fork grants
   const raw = defineWorkflow({
     ...base,
     async run(ctx) {
+      // @ts-expect-error -- strictProfiles omits sandbox at type level too; the runtime still rejects it.
       return (await ctx.codex.text('raw', { prompt: 'x', sandbox: 'workspace-write' })).output;
     },
   });

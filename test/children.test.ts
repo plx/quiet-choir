@@ -63,7 +63,7 @@ it('runs typed and named three-level composition with scoped effects, frames, ph
     output: z.string(),
     children: [tournament],
     async run(ctx) {
-      return (await ctx.workflow('design', 'design-tournament', { topic: 'chosen' })) as string;
+      return ctx.workflow('design', 'design-tournament', { topic: 'chosen' });
     },
   });
   const root = defineWorkflow({
@@ -212,6 +212,7 @@ it('validates child input before effects and output before returning, with ordin
     ...base,
     children: [child],
     async run(ctx) {
+      // @ts-expect-error -- the declared child's input type requires value; the runtime checks it too.
       await expect(ctx.workflow('invalid-input', 'required', {})).rejects.toThrow(
         'invalid-input (required) input validation',
       );
@@ -219,6 +220,7 @@ it('validates child input before effects and output before returning, with ordin
       await expect(ctx.workflow('invalid-output', child, { value: 'x' })).rejects.toThrow(
         'invalid-output (required) output validation',
       );
+      // @ts-expect-error -- undeclared is not a declared child name; the runtime rejects it too.
       await expect(ctx.workflow('unknown', 'undeclared', null)).rejects.toThrow(
         'no declared child',
       );
@@ -455,7 +457,7 @@ it('validates a dynamic child declaration tree before its frame or effects', asy
           return null;
         },
       });
-      return ctx.workflow('leaf', 'leaf', null) as Promise<null>;
+      return ctx.workflow('leaf', 'leaf', null);
     },
   });
   const root = defineWorkflow({

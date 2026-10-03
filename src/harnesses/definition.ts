@@ -7,13 +7,19 @@ import type { HarnessCapabilities, HarnessDefinition } from '../workflow/runtime
 /** Valid persisted names; package import paths and model-harness names are separate. */
 export const harnessNameSchema: z.ZodString = z.string().regex(/^[a-z][a-z0-9-]{0,31}$/u);
 
-/** Define a strict, explicit agent integration without modifying the workflow runtime. */
+/**
+ * Define a strict, explicit agent integration without modifying the workflow runtime. A literal
+ * `capabilityKeys` list is kept as a tuple type, so strict workflows reject those keys at call sites.
+ * An omitted list, or explicit `<N, O, C>` type arguments, default `K` to the widened key list, which
+ * forbids nothing at type level and leaves the check to the runtime.
+ */
 export function defineHarness<
   const N extends string,
   O extends AgentOptions,
   const C extends HarnessCapabilities,
+  const K extends readonly (keyof O & string)[] = readonly (keyof O & string)[],
 >(
-  definition: HarnessDefinition<N, O, C>,
+  definition: HarnessDefinition<N, O, C, K>,
 ): HarnessDefinition<
   N,
   O &
@@ -21,7 +27,8 @@ export function defineHarness<
       AgentOptions,
       'profile' | 'cwd' | 'onError' | 'retry' | 'timeoutMs' | 'worktree' | 'model'
     >,
-  C
+  C,
+  K
 > {
   const metadata = z.strictObject({
     name: harnessNameSchema,
@@ -79,6 +86,10 @@ export function defineHarness<
   for (const key of [...(definition.policy ?? []), ...(definition.capabilityKeys ?? [])])
     if (!Object.hasOwn(shape, key))
       throw new Error(`Harness ${definition.name} refers to unknown option ${key}.`);
+  if (definition.capabilityKeys?.includes('profile'))
+    throw new Error(
+      `Harness ${definition.name} capabilityKeys cannot include profile; profile selects a named profile.`,
+    );
   for (const key of definition.policy ?? [])
     if (
       ['prompt', 'cwd', 'profile', 'worktree', 'isolation', 'env', 'model', 'onError'].includes(key)

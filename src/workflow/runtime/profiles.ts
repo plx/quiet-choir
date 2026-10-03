@@ -16,6 +16,7 @@ import type {
 import { digest, jsonValue } from './json.js';
 import { harnessIsolationSchema, isolationParts, resolveIsolation } from './agent-isolation.js';
 import { environmentSummary, environmentSummarySchema } from './agent-environment.js';
+import { builtinCapabilityKeys } from '../../harnesses/builtins/capability-keys.js';
 
 const nameSchema = z.string().regex(/^[a-zA-Z][a-zA-Z0-9_-]{0,63}$/u);
 const limits = {
@@ -406,7 +407,7 @@ export function resolveProfileCall(
     );
     return { profile, options };
   }
-  const raw = capabilityFields.filter(
+  const raw = builtinCapabilityKeys[harness].filter(
     (key) => Object.hasOwn(call, key) && (key !== 'isolation' || call.isolation === 'inherit'),
   );
   if (manifest.strictProfiles && raw.length)
@@ -546,26 +547,6 @@ export function publicCapabilityManifest(manifest: CapabilityManifest): Capabili
   return result;
 }
 
-const capabilityFields = [
-  'isolation',
-  'plugins',
-  'tools',
-  'allowedTools',
-  'sandbox',
-  'disallowedTools',
-  'permissionMode',
-  'agent',
-  'agents',
-  'mcpServers',
-  'strictMcpConfig',
-  'settings',
-  'addDirs',
-  'extraArgs',
-  'env',
-  'networkAccess',
-  'harnessProfile',
-  'config',
-] as const;
 function capabilityExtras(
   claude: NonNullable<AgentProfile['claude']>,
   codex: NonNullable<AgentProfile['codex']>,
@@ -580,7 +561,7 @@ function capabilityExtras(
       Object.entries(controls)
         .filter(
           ([key]) =>
-            capabilityFields.some((field) => field === key) &&
+            builtinCapabilityKeys[harness].some((field) => field === key) &&
             !['tools', 'allowedTools', 'sandbox'].includes(key),
         )
         .map(([key, value]) => [`${harness}.${key}`, value]),

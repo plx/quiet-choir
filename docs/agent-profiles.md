@@ -37,10 +37,31 @@ export default defineWorkflow({
 ```
 
 `profile` is a union of declared names and `text | readonly | edit`; a misspelling fails typecheck,
-including through `ctx.within`. Helpers accepting an unparameterized `WorkflowContext` accept any
-string name, which is still checked at runtime. Use `WorkflowContext<'scout'>` to retain a narrow
-helper contract. Names may contain letters, digits, underscores and hyphens, start with a letter,
-and have at most 64 characters. Built-in names and grant class names cannot be redeclared.
+including through `ctx.within` and `ctx.agent(name)` for Claude, Codex and registered harnesses.
+Helpers accepting an unparameterized `WorkflowContext` accept any string name, which is still
+checked at runtime. Use `WorkflowContext<'scout'>` to retain a narrow helper contract. Names may
+contain letters, digits, underscores and hyphens, start with a letter, and have at most 64
+characters. Built-in names and grant class names cannot be redeclared.
+
+Call-site option types follow `strictProfiles`. `defineWorkflow` infers its literal: omitted or
+`true` removes the capability keys that strict profiles own from `ctx.claude`, `ctx.codex` and
+`ctx.agent(name)` options, so `ctx.claude.text('t', { prompt, tools: ['Read'] })` fails typecheck
+and `workflow validate` with `load.typecheck` instead of failing when the call runs. Claude's keys
+are tools, allowedTools, disallowedTools, permissionMode, agent, agents, plugins, mcpServers,
+strictMcpConfig, settings, addDirs, extraArgs, env and isolation; Codex's are sandbox,
+networkAccess, config, harnessProfile, addDirs, extraArgs, env and isolation. The same exported
+lists (`claudeCapabilityKeys`, `codexCapabilityKeys`) drive the runtime check. `isolation` stays
+available with every value except `'inherit'`, so `'restricted'` and the worktree shorthands still
+compile. A registered harness's literal `capabilityKeys` are removed the same way. The removed keys
+are typed as optional `never` properties, so a pre-built options variable or an explicit `undefined`
+is rejected too, not only a fresh object literal. Only a literal `strictProfiles: false` types the
+raw keys; a non-literal `boolean` also stays permissive and leaves the decision to the runtime. A
+helper typed with a bare `WorkflowContext` stays permissive (the runtime check still applies), while
+`WorkflowContext<'scout', BuiltInHarnesses, true>` is a strict helper contract that accepts the
+workflow's strict context. Explicit `defineWorkflow` type arguments are all-or-nothing: with a
+shorter prefix such as `defineWorkflow<Input, Output>`, the rest take the strict, childless
+defaults, so `strictProfiles: false` or a nonempty `children` list fails typecheck; drop the type
+arguments (preferred) or spell all seven.
 
 | Preset            | Claude tools                  | Codex sandbox   | Claude turns | Claude USD | Deadline     |
 | ----------------- | ----------------------------- | --------------- | ------------ | ---------- | ------------ |

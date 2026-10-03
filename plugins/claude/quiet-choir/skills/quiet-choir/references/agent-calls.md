@@ -46,7 +46,17 @@ turn/USD limits do not apply to Codex.
 Merge order is built-in preset, workflow defaults, custom ancestors, selected role, then call
 options. Replacing Claude tools re-infers allowedTools unless supplied explicitly. Under default
 `strictProfiles: true`, declare capability controls in profiles, including permissions, MCP, native
-config/agents, dirs, escape args, and environment. `workflow validate FILE --json` lists resolved
+config/agents, dirs, escape args, and environment. Call-site types enforce this: the inferred strict
+literal removes those keys (and `isolation: 'inherit'`) from `ctx.claude`, `ctx.codex` and
+`ctx.agent(name)` options (as optional `never` properties, so a pre-built options variable fails
+too), so a raw key fails typecheck and `workflow validate`; only a literal `strictProfiles: false`
+types them. `ctx.agent(name)` profiles accept only built-in or declared roles. A bare
+`WorkflowContext` helper stays permissive (the runtime still checks);
+`WorkflowContext<'role', BuiltInHarnesses, true>` is a strict helper contract. Explicit
+`defineWorkflow` type arguments are all-or-nothing: with a shorter prefix such as
+`defineWorkflow<Input, Output>`, the rest take the strict, childless defaults, so
+`strictProfiles: false` or a nonempty `children` list fails typecheck; drop the type arguments
+(preferred) or spell all seven. `workflow validate FILE --json` lists resolved
 `workflow.capabilities` without running the body (and omits harness option schemas unless
 `--harness-schemas`). Unknown tools/native config controls conservatively require exec capability.
 Configuration loading defaults to restricted mode; [harness isolation](harness-isolation.md)

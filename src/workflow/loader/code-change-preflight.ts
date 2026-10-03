@@ -3,6 +3,7 @@ import { RehearsalHarness, rehearsalState } from './rehearsal.js';
 import { formatArgv } from './next-commands.js';
 import { workflowArgv, type CommandLauncher } from '../runtime/commands.js';
 import { runWorkflow, type RunOptions } from '../runtime/runner.js';
+import type { WorkflowDefinition } from '../runtime/model.js';
 import {
   findStepIdentityChange,
   RunRefusedError,
@@ -43,7 +44,7 @@ const divergenceRefusals = new WeakSet<Error>();
  * proceeds and reproduces any genuine problem itself. Only an abort propagates. @internal
  */
 export async function preflightAcceptedReplay(
-  definition: Parameters<typeof runWorkflow>[0],
+  definition: WorkflowDefinition<unknown, unknown>,
   options: PreflightRunOptions,
   context: { readonly stateDir: string; readonly selection?: HarnessSelection },
 ): Promise<StepIdentityChangedError | undefined> {

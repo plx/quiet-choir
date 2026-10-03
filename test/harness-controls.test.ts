@@ -635,6 +635,7 @@ it('includes native controls in profile manifests, grants, and strict call-site 
     ...base,
     strictProfiles: true,
     async run(ctx) {
+      // @ts-expect-error -- strictProfiles omits env at type level too; the runtime still rejects it.
       return (await ctx.claude.text('ask', { prompt: 'x', env: { QC_TEST: 'x' } })).output;
     },
   });

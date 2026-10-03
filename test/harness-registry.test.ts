@@ -284,7 +284,9 @@ it('uses package capabilities for grants, strict profiles and bounded child dele
   const raw = defineWorkflow({
     ...base,
     harnesses: [tool],
-    async run(ctx) {
+    // The failed overload's result type would otherwise surface as a second error on run.
+    async run(ctx): Promise<string> {
+      // @ts-expect-error -- strictProfiles omits the declared capability key tools at type level too.
       return ctx.agent('tool').value('raw', { prompt: 'x', tools: ['shell'] });
     },
   });
@@ -387,7 +389,7 @@ it('keeps object-level option refinements when adding runtime fields', async () 
       return response('ranged');
     },
   };
-  const call = (options: { min: number; max?: number; profile?: string }) =>
+  const call = (options: { min: number; max?: number; profile?: 'bounded' }) =>
     defineWorkflow({
       ...base,
       harnesses: [ranged],
@@ -399,7 +401,7 @@ it('keeps object-level option refinements when adding runtime fields', async () 
   // Directly supplied options, then a profile default that only conflicts once merged.
   for (const options of [
     { min: 3, max: 2 },
-    { min: 3, profile: 'bounded' },
+    { min: 3, profile: 'bounded' as const },
   ]) {
     const rejected = await setup();
     await expect(

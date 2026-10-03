@@ -5,6 +5,7 @@ import {
   type HarnessConfigurations,
 } from './harness-registry.js';
 import type { HarnessDeclaration, WorkflowHarnesses } from './harness-model.js';
+import type { WorkflowDeclaration } from './child-model.js';
 import { RunBudget, RunBudgetExceededError, runBudgetSchema } from './run-budget.js';
 import { RunChildren } from './children.js';
 import { checkedDefinition, describeWorkflow } from './definition.js';
@@ -581,8 +582,37 @@ export async function runWorkflow<
   TOutput,
   TProfile extends string,
   H extends readonly HarnessDeclaration[],
+  TStrict extends boolean,
+  TChildren extends readonly WorkflowDeclaration[],
+  TName extends string,
+>(
+  definition: WorkflowDefinition<TInput, TOutput, TProfile, H, TStrict, TChildren, TName>,
+  options: RunOptions,
+): Promise<WorkflowResult<TOutput>>;
+/**
+ * Run or resume a workflow with explicit `<Input, Output, Profile, Harnesses>` type arguments. The
+ * definition's strictness, children and name widen to the {@link WorkflowDefinition} defaults; the
+ * runtime still applies them.
+ */
+export async function runWorkflow<
+  TInput,
+  TOutput,
+  TProfile extends string,
+  H extends readonly HarnessDeclaration[],
 >(
   definition: WorkflowDefinition<TInput, TOutput, TProfile, H>,
+  options: RunOptions,
+): Promise<WorkflowResult<TOutput>>;
+export async function runWorkflow<
+  TInput,
+  TOutput,
+  TProfile extends string,
+  H extends readonly HarnessDeclaration[],
+  TStrict extends boolean,
+  TChildren extends readonly WorkflowDeclaration[],
+  TName extends string,
+>(
+  definition: WorkflowDefinition<TInput, TOutput, TProfile, H, TStrict, TChildren, TName>,
   options: RunOptions,
 ): Promise<WorkflowResult<TOutput>> {
   if (!isValidRunId(options.runId)) throw new Error(runIdMessage);
@@ -3299,7 +3329,12 @@ export async function runWorkflow<
       const body = Promise.resolve().then(() =>
         observations.run(() =>
           definition.run(
-            context as unknown as WorkflowContext<TProfile, WorkflowHarnesses<H>>,
+            context as unknown as WorkflowContext<
+              TProfile,
+              WorkflowHarnesses<H>,
+              TStrict,
+              TChildren
+            >,
             bodyInput,
           ),
         ),

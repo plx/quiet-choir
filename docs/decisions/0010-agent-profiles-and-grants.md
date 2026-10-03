@@ -4,6 +4,13 @@
 
 Accepted. Extends [0005](0005-step-identity-and-policy.md) and its policy defaults.
 
+Amended by #155: call-site option types mirror `strictProfiles`. `defineWorkflow` infers its literal
+(omitted means `true`) into the context, which then omits the profile-owned capability keys (and
+`isolation: 'inherit'`) from `ctx.claude`, `ctx.codex` and `ctx.agent(name)` options; a literal
+`false` or a non-literal `boolean` keeps them. One key list per built-in harness drives both the
+types and the runtime check, which remains the backstop for untyped code and bare-context helpers.
+`ctx.agent(name)` profiles are typed like `ctx.claude` profiles.
+
 ## Context
 
 Shared per-call settings hide role capabilities and place operator controls in workflow input.
