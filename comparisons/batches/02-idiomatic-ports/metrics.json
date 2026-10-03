@@ -1,7 +1,7 @@
 {
   "method": "Matched six intents with deterministic schema-valid replies; Batch 01 receives global Read/Grep/Glob/Write/Edit/Bash, Batch 02 uses named least-privilege profiles. Counts are fixture path observations, not quality or billing savings. Formatted entrypoint lines exclude shared helpers and typed children. Strict errors are verified separately by tsc.",
   "sharedFormattedLines": {
-    "01-direct-ports": { "children.ts": 14, "sdlc-support.ts": 66, "support.ts": 144 },
+    "01-direct-ports": { "children.ts": 14, "sdlc-support.ts": 66, "support.ts": 141 },
     "02-idiomatic-ports": {
       "lifecycle-stages.ts": 107,
       "mutation-worker.ts": 45,

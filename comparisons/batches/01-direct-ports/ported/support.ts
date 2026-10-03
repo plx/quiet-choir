@@ -88,17 +88,17 @@ export function createPort(ctx: WorkflowContext) {
     scope.counts.set(site, count + 1);
     return `${scope.path}${site}/${count}${label === site ? '' : ':' + label.replace(/[^a-zA-Z0-9._:-]/g, '-').slice(0, 48)}`;
   }
+  // Paths are relative to the current named-map item, which already prefixes `map/index/`.
   function within<T>(path: string, fn: () => T): T {
-    return storage.run({ path: `${path}/`, counts: new Map() }, fn);
+    return storage.run({ path: path && `${path}/`, counts: new Map() }, fn);
   }
   async function parallel<const T extends readonly (() => unknown)[]>(
     site: string,
     tasks: T,
   ): Promise<{ [K in keyof T]: Awaited<ReturnType<T[K]>> }> {
     const path = id(site);
-    // quiet-choir-ignore QC006 direct port keeps legacy positional map IDs and journals that verification.json records
-    const results = await ctx.map(tasks, 8, (task, index) =>
-      within(`${path}/${index}`, async () => task()),
+    const results = await ctx.map(path, tasks, { concurrency: 8 }, (task) =>
+      within('', async () => task()),
     );
     return results as { [K in keyof T]: Awaited<ReturnType<T[K]>> };
   }
@@ -121,14 +121,11 @@ export function createPort(ctx: WorkflowContext) {
     ...stages: Stage<unknown, unknown, unknown>[]
   ): Promise<unknown[]> {
     const path = id(site);
-    // quiet-choir-ignore QC006 direct port keeps legacy positional map IDs and journals that verification.json records
-    return ctx.map(items, 8, (item, index) =>
-      within(`${path}/${index}`, async () => {
+    return ctx.map(path, items, { concurrency: 8 }, (item, index) =>
+      within('', async () => {
         let value = item;
         for (let stage = 0; stage < stages.length; stage++) {
-          value = await within(`${path}/${index}/stage-${stage}`, () =>
-            stages[stage]!(value, item, index),
-          );
+          value = await within(`stage-${stage}`, () => stages[stage]!(value, item, index));
         }
         return value;
       }),
