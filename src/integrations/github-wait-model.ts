@@ -239,16 +239,28 @@ export function parseSummaryRows(body: string): CodexSummaryRow[] {
   return rows;
 }
 
-const seenCompleteNote = z.object({ seenComplete: z.boolean() });
+const completeRowsNote = z.object({ completeRows: z.string() });
+
+/**
+ * What a check saw complete: the summary's update time and its rows for `sha`, in a stable order,
+ * so a check that sees an added row or an edited summary starts the debounce again.
+ */
+function completeRowsDigest(updatedAt: number, rows: readonly CodexSummaryRow[]): string {
+  return JSON.stringify({
+    updatedAt,
+    rows: rows.map((row) => JSON.stringify([row.review, row.status, row.commit])).sort(),
+  });
+}
 
 /**
  * Codex's rules, in order. A fresh review on `sha` is `findings`; a fresh +1 reaction is `clean`;
  * a fresh usage-limit notice is `error`; then the latest summary comment, when fresh and holding
  * rows for `sha`, judged over all of them (such as a Code Review and a Security Review row): any
  * failed, errored or cancelled row is `error`, any row not yet `Completed` is `running`, and rows
- * that are all `Completed` are `clean` only on the second consecutive check (Codex posts findings
- * right after updating the summary); an eyes reaction is `running`; otherwise `pending`. Fresh
- * means at or after `since` less 5 s.
+ * that are all `Completed` are `clean` only when two consecutive checks see the same completed rows
+ * on the same summary update (Codex posts findings right after updating the summary, and may add a
+ * row, such as a Security Review, after an earlier one completes); an eyes reaction is `running`;
+ * otherwise `pending`. Fresh means at or after `since` less 5 s.
  * @internal
  */
 export function codexObserve(
@@ -286,10 +298,11 @@ export function codexObserve(
     if (rows.some((row) => /fail|error|cancel/iu.test(row.status)))
       return { status: 'error', detail };
     if (rows.every((row) => /complete/iu.test(row.status))) {
-      const seen = seenCompleteNote.safeParse(context.previous.note);
-      return seen.success && seen.data.seenComplete
+      const completeRows = completeRowsDigest(summary.updatedAt, rows);
+      const seen = completeRowsNote.safeParse(context.previous.note);
+      return seen.success && seen.data.completeRows === completeRows
         ? { status: 'clean', detail: { via: 'summary', ...detail } }
-        : { status: 'running', note: { seenComplete: true }, detail };
+        : { status: 'running', note: { completeRows }, detail };
     }
     return { status: 'running', detail };
   }

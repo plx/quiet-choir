@@ -211,9 +211,10 @@ suspend and tick; `detail` appears in `by`.
   when the latest summary comment was updated after `since` and has rows for `sha`, all of them
   count (such as a Code Review and a Security Review row): any failed or cancelled row is `error`,
   any row not yet `Completed` is `running`, and rows that are all `Completed` are `clean` only when
-  the previous check saw them too, because Codex posts its findings right after updating the
-  summary; an eyes reaction is `running`. "After `since`" allows 5 seconds of clock skew. Take
-  `since` at or after the push of `sha`: the +1 reaction carries no SHA.
+  the previous check saw the same completed rows on the same summary update, because Codex posts its
+  findings right after updating the summary and may add a row (such as a Security Review) after an
+  earlier one completes; an eyes reaction is `running`. "After `since`" allows 5 seconds of clock
+  skew. Take `since` at or after the push of `sha`: the +1 reaction carries no SHA.
 - `codeqlReviewer({ settleMs = 60000, checkName = 'CodeQL' })` waits for the `checkName` check on
   the head to complete (with any conclusion), then keeps reading the open alerts for `settleMs`,
   because alerts land shortly after the check, and reports `findings` with their numbers or `clean`.

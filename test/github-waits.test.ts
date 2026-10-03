@@ -362,6 +362,11 @@ const codexComment = (body: string, created: number, updated = created) => ({
 });
 const recordedSummary = (status = '✅ **Completed**', updated = at('2026-10-03T06:20:23Z')) =>
   codexComment(summary(status).body ?? '', at('2026-10-03T05:34:14Z'), updated);
+/** The note Codex leaves after one check that saw the recorded Completed summary. */
+const seenComplete = () => ({
+  note: codexObserve(activity({ comments: [recordedSummary()] }), context()).note ?? null,
+  checks: 1,
+});
 
 describe('Codex rules', () => {
   it('parses the recorded summary rows', () => {
@@ -407,7 +412,7 @@ describe('Codex rules', () => {
           reactions: [reaction('+1', fresh)],
           comments: [recordedSummary()],
         }),
-        context({ previous: { note: { seenComplete: true }, checks: 1 } }),
+        context({ previous: seenComplete() }),
       ),
     ).toEqual({ status: 'findings', detail: { reviews: [7] } });
     // A review for another commit is not a finding on sha.
@@ -457,7 +462,7 @@ describe('Codex rules', () => {
         comments: [{ ...recorded, body: recorded.body.replace(line, `${line}\n${second}`) }],
       });
     };
-    const seen = context({ previous: { note: { seenComplete: true }, checks: 1 } });
+    const seen = context({ previous: seenComplete() });
     // A running Security Review keeps a Completed Code Review from ever being clean.
     const running = twoRows('⏳ **Running**');
     expect(parseSummaryRows(running.comments[0]?.body ?? '')).toHaveLength(2);
@@ -482,7 +487,10 @@ describe('Codex rules', () => {
     // Two Completed rows are clean on the second consecutive check.
     const both = twoRows('✅ **Completed**');
     const first = codexObserve(both, context());
-    expect(first).toMatchObject({ status: 'running', note: { seenComplete: true } });
+    expect(first).toMatchObject({
+      status: 'running',
+      note: { completeRows: expect.any(String) as unknown },
+    });
     expect(
       codexObserve(both, context({ previous: { note: first.note ?? null, checks: 1 } })),
     ).toMatchObject({
@@ -494,14 +502,17 @@ describe('Codex rules', () => {
   it('calls a Completed row clean only on the second consecutive check', () => {
     const completed = activity({ comments: [recordedSummary()] });
     const first = codexObserve(completed, context());
-    expect(first).toMatchObject({ status: 'running', note: { seenComplete: true } });
+    expect(first).toMatchObject({
+      status: 'running',
+      note: { completeRows: expect.any(String) as unknown },
+    });
     expect(
       codexObserve(completed, context({ previous: { note: first.note ?? null, checks: 1 } })),
     ).toMatchObject({ status: 'clean', detail: { via: 'summary' } });
     // A row that is no longer Completed resets the debounce: no note is returned.
     const running = codexObserve(
       activity({ comments: [recordedSummary('⏳ **Running**')] }),
-      context({ previous: { note: { seenComplete: true }, checks: 1 } }),
+      context({ previous: seenComplete() }),
     );
     expect(running.status).toBe('running');
     expect(running.note).toBeUndefined();
@@ -513,6 +524,61 @@ describe('Codex rules', () => {
     expect(
       codexObserve(activity({ comments: [recordedSummary()] }), context({ sha: OTHER })).status,
     ).toBe('pending');
+  });
+
+  it('restarts the debounce when the completed rows or the summary update change', () => {
+    /** Run `checks` in order, each seeing the note the one before it left. */
+    const observe = (...checks: ReviewActivity[]) => {
+      let note: ReviewerContext['previous']['note'] = null;
+      return checks.map((seen, index) => {
+        const observed = codexObserve(seen, context({ previous: { note, checks: index } }));
+        note = observed.note ?? null;
+        return observed;
+      });
+    };
+    const codeReview = recordedSummary();
+    const line = codeReview.body.split('\n').find((text) => text.includes('`c5c2233`')) ?? '';
+    const security = `| 🛡️ **Security Review** | ✅ **Completed** | \`c5c2233\` | Manual request |`;
+    // Same summary update time: only the added row tells the checks apart.
+    const both = { ...codeReview, body: codeReview.body.replace(line, `${line}\n${security}`) };
+    const [one, added, again] = observe(
+      activity({ comments: [codeReview] }),
+      activity({ comments: [both] }),
+      activity({ comments: [both] }),
+    );
+    expect(one).toMatchObject({
+      status: 'running',
+      note: { completeRows: expect.any(String) as unknown },
+    });
+    // Check 2 sees a just-completed Security Review whose findings may not be posted yet.
+    expect(added).toMatchObject({
+      status: 'running',
+      note: { completeRows: expect.any(String) as unknown },
+    });
+    expect(added?.note).not.toEqual(one?.note);
+    expect(again).toMatchObject({
+      status: 'clean',
+      detail: { via: 'summary', rows: [{ review: 'Code Review' }, { review: 'Security Review' }] },
+    });
+    // A summary updated again between checks, with the same rows, waits one more check.
+    const edited = recordedSummary(undefined, at('2026-10-03T06:20:53Z'));
+    const [, moved, settled] = observe(
+      activity({ comments: [codeReview] }),
+      activity({ comments: [edited] }),
+      activity({ comments: [edited] }),
+    );
+    expect(moved).toMatchObject({
+      status: 'running',
+      note: { completeRows: expect.any(String) as unknown },
+    });
+    expect(settled).toMatchObject({ status: 'clean', detail: { via: 'summary' } });
+    // A note from another shape, such as an older version's flag, never counts as seen.
+    expect(
+      codexObserve(
+        activity({ comments: [codeReview] }),
+        context({ previous: { note: { seenComplete: true }, checks: 1 } }),
+      ).status,
+    ).toBe('running');
   });
 });
 
@@ -932,10 +998,7 @@ describe('aggregation, threads, heads and classification', () => {
         ],
         reviews: [{ id: 1, author: 'x', state: 'COMMENTED', commit, submittedAt: fresh }],
       });
-      expect(
-        codexObserve(other, context({ previous: { note: { seenComplete: true }, checks: 1 } }))
-          .status,
-      ).not.toBe('clean');
+      expect(codexObserve(other, context({ previous: seenComplete() })).status).not.toBe('clean');
     }
     expect(cases).toBe(144);
   });
@@ -1883,7 +1946,13 @@ export default defineWorkflow({
       expect((await readRun({ stateDir, runId: 'run' })).steps['review']?.wait).toMatchObject({
         checks: 1,
         note: {
-          bots: { codex: { status: 'running', final: false, note: { seenComplete: true } } },
+          bots: {
+            codex: {
+              status: 'running',
+              final: false,
+              note: { completeRows: expect.any(String) as unknown },
+            },
+          },
         },
       });
       const futureClock: WorkflowClock = { now: () => Date.now() + 120_000, sleep: realSleep };
