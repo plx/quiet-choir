@@ -20,9 +20,12 @@ discovered value.
 **Idle deadline at the process layer.** `ProcessRequest.idleTimeoutMs` is enforced by `runProcess`,
 beside the wall-clock `timeoutMs`:
 
-- The timer is armed when the input has been written to stdin, after durable process registration.
-  Registration is a checkpoint save that can be slow under load, and the child cannot produce
-  protocol output before it has its input. Child startup therefore counts as idle time.
+- The timer is armed once the input has been fully flushed to the child's stdin, or stdin has
+  closed, after durable process registration. Registration is a checkpoint save that can be slow
+  under load, and the child cannot produce protocol output before it has its input. A large prompt
+  the child reads slowly is input backpressure and does not count; a child that closes stdin early
+  still starts the timer. Child startup before it reads stdin may delay arming, and startup after
+  the input is buffered counts as idle time.
 - Every stdout or stderr chunk re-arms it, so output that keeps streaming is never ended, however
   long the call runs.
 - quiet-choir's own backpressure never counts. When the timer fires while a stream consumer (the

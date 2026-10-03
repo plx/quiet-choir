@@ -121,11 +121,12 @@ code change; child workflows inherit the parent's value as a ceiling. The attemp
 effective value and its source in `attemptHistory[].policy` and `sources`, and `inspect` shows it as
 `idle timeout`.
 
-The process layer enforces it. The timer starts once the prompt is written to stdin (after durable
-process registration; CLI startup counts as idle time) and restarts on every output chunk, so a call
-that keeps streaming is never ended by it, however long it runs. While quiet-choir's own transcript
-or parser still holds a chunk, that backpressure is not counted. On expiry the group receives
-SIGTERM, then SIGKILL after the cleanup grace, as for `timeoutMs`
+The process layer enforces it. The timer starts once the prompt has been fully flushed to the CLI's
+stdin, or stdin has closed (after durable process registration; a large prompt the CLI reads slowly
+does not count, but CLI startup otherwise does) and restarts on every output chunk, so a call that
+keeps streaming is never ended by it, however long it runs. While quiet-choir's own transcript or
+parser still holds a chunk, that backpressure is not counted. On expiry the group receives SIGTERM,
+then SIGKILL after the cleanup grace, as for `timeoutMs`
 ([process lifecycle](process-lifecycle.md#deadlines-and-cleanup)). The failure has kind
 `idle-timeout`, distinct from `timeout`, and its message suggests
 `--resume --profile <role>.idleTimeoutMs=<double>`. `retry.on: ['idle-timeout']` retries only

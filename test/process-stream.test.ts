@@ -194,6 +194,41 @@ process.stdin.resume();process.stdin.on('end',()=>{
   expect(slow).toBeLessThan(0);
 });
 
+it('arms the idle deadline only after a slowly read prompt is flushed to stdin', async () => {
+  // The child does not read stdin for longer than the idle window, then reads 8 MB (far above the
+  // pipe buffer) and answers. Time spent writing the prompt is input backpressure, not idleness.
+  const config = await request(`
+setTimeout(()=>{
+ let bytes=0;process.stdin.on('data',(chunk)=>{bytes+=chunk.length;});
+ process.stdin.on('end',()=>{process.stdout.write(String(bytes)+'\\n');});
+},2000);`);
+  let output = '';
+  const result = await runProcess({
+    ...config,
+    input: 'x'.repeat(8 * 1024 * 1024),
+    timeoutMs: 20_000,
+    // Loose for a loaded machine: only the answer after the final flush must fit in the window.
+    idleTimeoutMs: 800,
+    stream: { ...quietStream, stdout: (chunk) => void (output += Buffer.from(chunk).toString()) },
+  });
+  expect(result.code).toBe(0);
+  expect(output).toBe(`${String(8 * 1024 * 1024)}\n`);
+});
+
+it('still arms the idle deadline when the child closes stdin without reading the prompt', async () => {
+  // Closing fd 0 makes the pending write fail with EPIPE, so stdin never emits 'finish'.
+  const config = await request(`require('node:fs').closeSync(0);setInterval(()=>{},1000);`);
+  await expect(
+    runProcess({
+      ...config,
+      input: 'x'.repeat(8 * 1024 * 1024),
+      idleTimeoutMs: 300,
+      killGraceMs: 50,
+      stream: quietStream,
+    }),
+  ).rejects.toMatchObject({ code: 'QUIET_CHOIR_IDLE_TIMEOUT' });
+});
+
 it('clears the idle deadline once the leader exits, so a silent leftover is reaped normally', async () => {
   const config = await request(`
 const {spawn}=require('node:child_process');

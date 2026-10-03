@@ -32,10 +32,11 @@ export interface ProcessRequest {
   /** Leader wall-clock deadline in milliseconds. */
   readonly timeoutMs: number;
   /**
-   * Optional idle deadline in milliseconds. It is armed once the input has been written (after
-   * durable registration) and re-armed by every stdout/stderr chunk. While a stream consumer
-   * still holds a chunk, quiet-choir's own backpressure is not counted as idleness. On expiry the
-   * group is terminated like the wall deadline, with code `QUIET_CHOIR_IDLE_TIMEOUT`.
+   * Optional idle deadline in milliseconds. It is armed once the input has been fully flushed to
+   * the child's stdin, or stdin has closed (after durable registration), and re-armed by every
+   * stdout/stderr chunk, so neither input-write nor stream-consumer backpressure counts as
+   * idleness. On expiry the group is terminated like the wall deadline, with code
+   * `QUIET_CHOIR_IDLE_TIMEOUT`.
    */
   readonly idleTimeoutMs?: number;
   /** Combined stdout/stderr size limit in bytes. */
@@ -418,11 +419,20 @@ export function runProcess(request: ProcessRequest): Promise<ProcessResult> {
     void Promise.resolve(registration).then(
       () => {
         if (settled || failure) return;
-        child.stdin.end(request.input);
         // The child cannot produce protocol output before it has its input, and registration
-        // (a checkpoint save) may be slow under load, so idleness is measured from here.
-        idleArmed = true;
-        armIdle();
+        // (a checkpoint save) may be slow under load, so idleness is measured once stdin has been
+        // fully flushed to the child ('finish') or closed. A large prompt the child reads slowly is
+        // input backpressure, not idleness. A child that closes stdin early never emits 'finish'
+        // (its EPIPE is swallowed above), so 'close' and 'error' also start the timer.
+        const startIdle = (): void => {
+          if (idleArmed) return;
+          idleArmed = true;
+          armIdle();
+        };
+        child.stdin.once('finish', startIdle);
+        child.stdin.once('close', startIdle);
+        child.stdin.once('error', startIdle);
+        child.stdin.end(request.input);
       },
       (error: unknown) => {
         // Registration may itself abort the run synchronously. Preserve its infrastructure
