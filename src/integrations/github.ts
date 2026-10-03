@@ -428,7 +428,9 @@ export function codexReviewer(): ReviewerBot {
 
 /**
  * GitHub code scanning (CodeQL) as a reviewer. It waits for the `checkName` check on the head to
- * complete, then keeps reading the open alerts on `refs/pull/N/merge` for `settleMs`, because
+ * complete (by default the `CodeQL` code-scanning results check GitHub publishes after the
+ * analysis is uploaded, not the Actions job that runs the analysis; another scanning tool needs
+ * its own `checkName`), then keeps reading the open alerts on `refs/pull/N/merge` for `settleMs`, because
  * alerts land shortly after the check, and reports `findings` (alert numbers) or `clean`.
  * Code scanning that is not enabled is `clean`. GitHub's `no analysis found` follows the check and
  * settle rules and is `clean` only when it persists after the settle window, or when the head has

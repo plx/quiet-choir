@@ -223,7 +223,10 @@ suspend and tick; `detail` appears in `by`.
   check and settle rules, and is `clean` (detail `unavailable`) only if GitHub still says so after
   the settle window, or when the head's checks hold no `checkName` check and have all been complete
   for `settleMs`. CodeQL publishes that check only after its analysis job finishes, so a running job
-  keeps it `pending`.
+  keeps it `pending`. The default `checkName` is the code-scanning results check that GitHub
+  publishes after the analysis is uploaded (the check run named `CodeQL` in the rollup), not the
+  Actions job that runs the analysis (such as `Analyze JavaScript and TypeScript`), which it does
+  not wait for by name; a different scanning tool needs its own `checkName`.
 
 A custom reviewer is a plain object; core needs no change:
 

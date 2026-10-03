@@ -320,7 +320,12 @@ export interface CodeqlReviewerOptions {
    * it is `clean`.
    */
   readonly settleMs?: number;
-  /** Name of the check that finishes the analysis, default `CodeQL`. */
+  /**
+   * Name of the check that finishes the analysis, default `CodeQL`: the code-scanning results
+   * check GitHub publishes after the analysis is uploaded, not the name of the Actions job that
+   * runs the analysis (such as `Analyze JavaScript and TypeScript`). A different scanning tool
+   * needs its own `checkName`.
+   */
   readonly checkName?: string;
 }
 

@@ -642,6 +642,47 @@ describe('CodeQL rules', () => {
     // The analysis publishes during the settle window: its alerts are findings.
     expect(later(1_000, alerts(12))).toEqual({ status: 'findings', detail: { alerts: [12] } });
   });
+
+  it('waits for the code-scanning check, not the Actions analysis job, by default', async () => {
+    // The probed rollup of this repository: the workflow job `Analyze JavaScript and TypeScript`
+    // and, after the analysis upload, GitHub's own `CodeQL` check run (empty workflow name).
+    const analyze = (conclusion: string | null = 'SUCCESS') =>
+      checkRun('Analyze JavaScript and TypeScript', conclusion);
+    const reviewer = codeqlReviewer({ settleMs: 1_000 });
+    const observe = async (
+      contexts: readonly RawCheckContext[],
+      now: number,
+      note: ReviewerContext['previous']['note'] = null,
+      found: GithubCodeScanning = alerts(),
+    ) =>
+      reviewer.observe(
+        activity({
+          pr: { number: 1, state: 'OPEN', headRefOid: SHA, checks: summarizeChecks(contexts) },
+          alerts: found,
+        }),
+        context({ now, previous: { note, checks: 1 } }),
+      );
+    // Only the analysis job, finished: no code-scanning check yet, so it keeps waiting.
+    expect(await observe([analyze()], SINCE + 600_000)).toEqual({ status: 'pending' });
+    // The analysis job is done and the CodeQL check is queued by the upload: running.
+    expect(await observe([analyze(), checkRun('CodeQL', null)], SINCE)).toEqual({
+      status: 'running',
+    });
+    // The CodeQL check completes: settle, then clean once alerts stay empty.
+    const done = [analyze(), checkRun('CodeQL')];
+    const first = await observe(done, SINCE);
+    expect(first).toEqual({
+      status: 'running',
+      note: { settleStart: SINCE },
+      detail: { settling: true },
+    });
+    expect(await observe(done, SINCE + 1_000, first.note)).toEqual({ status: 'clean' });
+    // Alerts that land after the check are findings once it settles.
+    expect(await observe(done, SINCE + 1_000, first.note, alerts(4))).toEqual({
+      status: 'findings',
+      detail: { alerts: [4] },
+    });
+  });
 });
 
 const head = (
