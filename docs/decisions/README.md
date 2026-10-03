@@ -96,3 +96,5 @@ part of the documentation.
 - [0045: Head-pinned GitHub waits with pluggable reviewers](0045-head-pinned-github-waits.md)
 
 - [0046: Reconciled GitHub writes](0046-reconciled-github-writes.md)
+
+- [0047: Pull request writes and a head-pinned merge](0047-pull-request-writes-and-head-pinned-merge.md)

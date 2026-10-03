@@ -1108,6 +1108,40 @@ describe('response schemas', () => {
 });
 
 // ---------------------------------------------------------------------------------------------
+// The guarantees table (a7)
+
+describe('docs/github.md guarantees table', () => {
+  it('starts every op row with its class', () => {
+    const docs = readFileSync(join(repository, 'docs', 'github.md'), 'utf8');
+    const section = docs.slice(docs.indexOf('### Guarantees'), docs.indexOf('### Pull requests'));
+    const rows = new Map(
+      section
+        .split('\n')
+        .filter((line) => line.startsWith('| `'))
+        .map((line) => {
+          const [, op = '', guarantee = ''] = line.split('|').map((cell) => cell.trim());
+          return [op, guarantee] as const;
+        }),
+    );
+    expect([...rows.keys()]).toEqual([
+      '`comment`',
+      '`thread.reply`',
+      '`issue.create`',
+      '`issue.close`, `issue.reopen`',
+      '`alert.dismiss`',
+      '`pr.create`',
+      '`pr.edit`',
+      '`pr.merge`',
+      '`checks.rerunFailed`',
+    ]);
+    for (const [op, guarantee] of rows)
+      expect(guarantee, op).toMatch(
+        /^(?:Reconciled|Conditional \((?:check-then-act|atomic)\)|At-least-once)[\s:]/u,
+      );
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
 // Rehearsal (a9)
 
 /** The commands a rehearsal listed, as `STEP METHOD PATH` with the query dropped. */

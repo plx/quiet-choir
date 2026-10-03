@@ -5,7 +5,7 @@ belongs in a read-only poll. Use occurrence IDs derived from replayed data when 
 successive rounds; an incomplete collection is an error, not an empty selection. Reconcile external
 writes inside `ctx.step`, using idempotency keys, markers, or conditional APIs where available;
 [`quiet-choir/github`'s writes](github.md#writes) are that pattern packaged for comments, thread
-replies, issues and code-scanning alerts.
+replies, issues, code-scanning alerts, pull requests, merges and failed-run reruns.
 
 | Operation                                                                  | Saved result                                                                   |
 | -------------------------------------------------------------------------- | ------------------------------------------------------------------------------ |

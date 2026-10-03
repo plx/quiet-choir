@@ -1,8 +1,9 @@
 /**
  * Pure parts of the reconciled `quiet-choir/github` writes
- * ([ADR 0046](../../docs/decisions/0046-reconciled-github-writes.md)): the marker, the request
- * builders and their stdin bodies, the response and result schemas, and the decisions each write
- * makes from its reads. No I/O, clock or process access; an ESLint block enforces it. The step
+ * ([ADR 0046](../../docs/decisions/0046-reconciled-github-writes.md)) and the pull request and
+ * check writes ([ADR 0047](../../docs/decisions/0047-pull-request-writes-and-head-pinned-merge.md)):
+ * the marker, the request builders and their stdin bodies, the response and result schemas, and the
+ * decisions each write makes from its reads. No I/O, clock or process access; an ESLint block enforces it. The step
  * callbacks in `github-writes.ts` run the commands and call these functions.
  *
  * Response schemas list their enums and union branches in the order that makes a `--dry-run`
@@ -749,7 +750,7 @@ export type GithubPrMergeResult =
       readonly reason: GithubPrMergeRefusal;
       /** The head SHA the step observed. */
       readonly head: string;
-      /** GitHub's message for `not-mergeable` (and a refused PUT); otherwise null. */
+      /** GitHub's message when it refused the merge `PUT`; null when the first read refused. */
       readonly message: string | null;
     };
 
