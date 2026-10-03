@@ -18,6 +18,12 @@ default grace is **3000ms**, configurable with `workflow execute --kill-grace-ms
 orphan recovery instead uses `RunOptions.killGraceMs`, also defaulting to 3000ms. These values are
 execution policy, outside identity and not sticky; repeat a CLI override on resume.
 
+An optional `idleTimeoutMs` adds a second deadline. It starts once the prompt is written to stdin
+and restarts on every stdout/stderr chunk; time a stream consumer spends holding a chunk does not
+count. On expiry it starts the same SIGTERM, grace and SIGKILL sequence with code
+`QUIET_CHOIR_IDLE_TIMEOUT` (kind `idle-timeout`). Leader exit clears it, so draining a leftover
+group is bounded only by the cleanup periods below.
+
 A 500ms backstop after escalation closes inherited pipes and settles the invocation even when an
 escaped descendant holds them. It is skipped when a leader exited without failure and its group is
 already reaped; the two-second drain alone then bounds settlement. A deadline therefore initiates a

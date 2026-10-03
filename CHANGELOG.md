@@ -2,6 +2,29 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- Agent attempts can enforce an output idle deadline and report their tool use (#109; ADR 0042,
+  amends ADR 0007 and ADR 0010). `idleTimeoutMs` is accepted on workflow `defaults`, profiles, call
+  options, `--profile name.idleTimeoutMs=N` (`profileOverrides`) and agent `--policy` rules (rules
+  with `kind: 'step'` or `'exec'` reject it). It is off by default and is execution policy outside
+  step identity, so a resume can raise it; children inherit the parent's value as a ceiling.
+  `runProcess` (and so `CliHarness`) arms it once the prompt is written and re-arms it on every
+  stdout/stderr chunk, never counting time a stream consumer holds a chunk; on expiry the group is
+  stopped like `timeoutMs` with code `QUIET_CHOIR_IDLE_TIMEOUT`. The failure has the new error kind
+  `idle-timeout`, which `retry.on` can name and which joins the `'transient'` set and `retryable`
+  failure documents; its message suggests `--resume --profile <role>.idleTimeoutMs=<double>`.
+  Request summaries record `limits.idleTimeoutMs`, and `inspect` prints `idle timeout`. Each agent
+  attempt's diagnostics now include `toolUses`, counted from the parsed stream (Claude `tool_use`
+  blocks by ID, excluding the `StructuredOutput` carrier of structured calls; distinct Codex
+  `command_execution`, `file_change`, `mcp_tool_call` and `web_search` items). When a profile's
+  `expectsToolUse` is true and a completed attempt reports zero tool calls, the step records a
+  `no-tool-use: ...` warning, the completed `agent.finished` event carries the step's `warnings`,
+  the CLI logs it at warn level, and `inspect --summary` agent rows gain optional `toolUses` and
+  `warnings` (text: `tools N`). The `expectsToolUse` default changes: it is true when a profile
+  grants more than the text baseline (any Claude tool, or a Codex sandbox beyond read-only), so the
+  built-in `text` profile now resolves to false and `readonly`/`edit` to true. A Codex attempt now
+  keeps the CLI version found by version discovery instead of recording `cliVersion: null`.
+  `CliHarnessPlan` gains `idleTimeoutMs`, and `ProcessRequest`, `AgentOptions`, `ProfileLimits`,
+  `ExecutionPolicy` and `PolicyOverride` gain an optional `idleTimeoutMs`.
 - Authoring types now match runtime strictness (#155; amends ADR 0010 and ADR 0027). This is a
   source-level break: code that compiled but failed when the call ran now fails typecheck, and
   `workflow validate` (and `execute`'s check) with `load.typecheck`, even in a branch that never

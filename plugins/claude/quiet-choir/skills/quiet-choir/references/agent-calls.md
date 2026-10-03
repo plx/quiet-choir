@@ -69,11 +69,24 @@ grants pin capability declarations and must be renewed if those change. Use `str
 only for a legacy migration; elevated raw calls still need class/all grants.
 
 Raise execution limits without source edits using `--resume --run-id ID --profile scout.maxTurns=60`
-or `--profile '*.timeoutMs=1800000'`. Profile override fields are maxTurns, maxBudgetUsd, timeoutMs.
-Rules persist; `--policy-reset` clears profile and step rules. Matching step `--policy` rules win.
-Embedders use `profileOverrides` and `grants` in `RunOptions`. Permission denials are warnings
-unless `onPermissionDenied: 'fail'` makes them permission-kind failures while retaining usage.
-Tool-count warnings and idle timeouts remain proposals (#61/#62); `idleTimeoutMs` is unsupported.
+or `--profile '*.timeoutMs=1800000'`. Profile override fields are maxTurns, maxBudgetUsd, timeoutMs
+and idleTimeoutMs. Rules persist; `--policy-reset` clears profile and step rules. Matching step
+`--policy` rules win. Embedders use `profileOverrides` and `grants` in `RunOptions`. Permission
+denials are warnings unless `onPermissionDenied: 'fail'` makes them permission-kind failures while
+retaining usage.
+
+`idleTimeoutMs` (off by default; set on `defaults`, a profile, a call, `--profile` or an agent
+`--policy` rule) ends an attempt whose CLI writes no stdout/stderr for that long, with kind
+`idle-timeout`; streaming output never trips it. It is policy outside identity, so raise it on
+resume as the error suggests (`--profile role.idleTimeoutMs=N`). Size it above the longest silent
+tool run or reasoning stretch: a too-small deadline fails the same way on every retry, including
+`'transient'` ones. Each attempt counts its tool calls in `diagnostics.toolUses` (Claude `tool_use`
+blocks without the `StructuredOutput` carrier, Codex command/file/MCP/web-search items). When the
+profile's `expectsToolUse` is true (default: any Claude tool or a Codex sandbox beyond read-only, so
+`readonly` and `edit` but not `text`) and a completed attempt used none, the step gets a warning
+`no-tool-use: Profile <name> expects tool use, ...`, shown on `agent.finished` and in `inspect`; it
+never fails the call. Custom adapters opt in by passing `idleTimeoutMs` to `runProcess` and
+reporting `toolUses`.
 
 ## Replay, retry, and usage
 

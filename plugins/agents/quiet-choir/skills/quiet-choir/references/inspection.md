@@ -71,6 +71,7 @@ scripts, use stable CLI `error.code` and structured harness categories instead o
 | `Codex output ended without turn.completed; the call may have been interrupted.`                                                             | Truncated/incomplete native turn                                                                                            | Inspect process outcome and saved notices; confirm no live child before retry.                                                                                                                  |
 | `Codex completed without a final agent_message.`                                                                                             | Terminal event lacked final text                                                                                            | Inspect native output/contract; do not equate exit 0 with a usable answer.                                                                                                                      |
 | `<binary> exceeded its <n>ms deadline.`                                                                                                      | Per-call timeout                                                                                                            | Inspect effects; raise a sticky timeout limit and resume if safe to repeat.                                                                                                                     |
+| `<binary> produced no output for <n>ms (idleTimeoutMs).`                                                                                     | Output idle deadline (`idle-timeout`)                                                                                       | Check whether the CLI hung or a tool was just silent; resume with the suggested `--profile role.idleTimeoutMs=N`, sized above the longest silent stretch.                                       |
 | `<binary> exceeded its <n>-byte output limit.`                                                                                               | Combined stdout/stderr cap                                                                                                  | Reduce noisy output or configure an embedded adapter cap; inspect existing file edits before retry.                                                                                             |
 | Harness `HTTP 401` / `HTTP 403`                                                                                                              | Reported authentication / permission error                                                                                  | Repair credentials or authorized permissions, then resume; do not change models as an auth workaround.                                                                                          |
 | Harness `rate limit exceeded` (Codex) / `HTTP 429`                                                                                           | Provider rate limit (`rate-limit`)                                                                                          | Wait, then resume; `retry.on: ['transient']` retries it in-process.                                                                                                                             |
@@ -106,8 +107,9 @@ checkpoint plus current OS ownership observations, not the live JavaScript stack
 dashboard; `--json --summary` returns the same compact progress, status counts, ordered
 active/problem steps, resolved limits, root cause, reported usage, recent logs, the completed run's
 `output` (null otherwise) and an `agents` roll-up (`total`, `byRequest`, and the last 50 calls with
-harness, requested model, effort, profile, elapsed time and cost; the model is never assumed
-effective). Text prints a completed command on one line and the last 20 completed agent calls; `-v`
+harness, requested model, effort, profile, elapsed time and cost, plus `toolUses` and the step's
+`warnings` when recorded; the model is never assumed effective). Text prints a completed command on
+one line and the last 20 completed agent calls, with `tools N` and any `no-tool-use` warning; `-v`
 restores two-line commands with absolute argv and cwd, all recent agent rows and saved stacks. For
 embedding, `await readRun({ runId, cwd, stateDir })` returns the validated checkpoint alone;
 `inspectRunOwnership({ runId, cwd, stateDir })` returns the separate current ownership view. Like
@@ -281,10 +283,10 @@ written before the field: `inspect` and the compact result then fall back to the
 attempt. Failure documents add `errorKind` and `retryable` to every `failedSteps[]` entry, and
 `error.details` is `{ errorKind, retryable }` for `workflow.failed` (null kind and
 `retryable: false` for a body failure; `workflow.interrupted` keeps `details: null`). `retryable` is
-true exactly when the kind is transient: `rate-limit`, `overloaded` or `timeout`, the set
-`retry.on: ['transient']` stands for. It is a classification, not a promise that a retry will
-succeed. `inspect --summary` step rows carry `errorKind` (the last attempt's kind, null for a step
-without a failed attempt), and the text view prints `[<kind>]` on the step line and
+true exactly when the kind is transient: `rate-limit`, `overloaded`, `timeout` or `idle-timeout`,
+the set `retry.on: ['transient']` stands for. It is a classification, not a promise that a retry
+will succeed. `inspect --summary` step rows carry `errorKind` (the last attempt's kind, null for a
+step without a failed attempt), and the text view prints `[<kind>]` on the step line and
 `Root cause (<step>, <kind>)`. Attribution uses error identity/cause chains, not message matching.
 `WorkflowRunError` names the root step/kind and exposes `runId`, `stepId`, saved `run`, and original
 `cause`; `-v` prints the saved stack. A map's initiating step stays `failed`; an interrupted sibling

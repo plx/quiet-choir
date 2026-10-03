@@ -4,6 +4,10 @@
 
 Accepted. Extends [0005](0005-step-identity-and-policy.md) and its policy defaults.
 
+Amended by #109: `expectsToolUse` defaults to roles that grant more than the text baseline and
+drives a `no-tool-use` warning, and `idleTimeoutMs` is a profile limit; see
+[0042](0042-idle-deadlines-and-tool-use-diagnostics.md).
+
 Amended by #155: call-site option types mirror `strictProfiles`. `defineWorkflow` infers its literal
 (omitted means `true`) into the context, which then omits the profile-owned capability keys (and
 `isolation: 'inherit'`) from `ctx.claude`, `ctx.codex` and `ctx.agent(name)` options; a literal
@@ -51,7 +55,8 @@ Existing workflows with raw capability options must migrate or explicitly opt ou
 Historical comparison ports preserve their input API using that explicit opt-out.
 
 Permission denials produce bounded count warnings and optionally permission-kind failures with usage
-preserved. Turn/budget errors add cap/role/turns/cost and an actionable override. We do not invent
-tool counts or enforce idle timeouts before #61; #62 can extend per-attempt measurements.
-Input-schema publication is #63. Hooks/MCP isolation is #60. No paid harness probes are required to
-verify deterministic profile resolution or launch authorization.
+preserved. Turn/budget errors add cap/role/turns/cost and an actionable override. Tool counts, the
+`no-tool-use` warning, the `expectsToolUse` default and the `idleTimeoutMs` limit are now decided in
+[ADR 0042](0042-idle-deadlines-and-tool-use-diagnostics.md) (#109). Input-schema publication is #63.
+Hooks/MCP isolation is #60. No paid harness probes are required to verify deterministic profile
+resolution or launch authorization.

@@ -133,13 +133,14 @@ quiet-choir workflow execute review.workflow.ts --run-id review-1 --resume \
   --profile scout.maxTurns=60 --profile '*.timeoutMs=1800000'
 ```
 
-The three overridable limits are `maxTurns`, `maxBudgetUsd`, and `timeoutMs`. The selector is an
-exact profile name or `*`; semantic overrides and unknown names fail before effects. Rules are
-sticky on resume, later values win, and `--policy-reset` clears both saved step rules and profile
-rules. Embedded callers pass `profileOverrides: [{ profile: 'scout', maxTurns: 60 }]`. Attempts
-record their role, effective limits, model/effort and value sources. Profile names and limits are
-outside step identity; resolved models, tools, sandbox, effort and permission-failure behavior are
-identity. Changing workflow source still requires the usual explicit code acceptance or fork.
+The four overridable limits are `maxTurns`, `maxBudgetUsd`, `timeoutMs` and `idleTimeoutMs` (for
+example `--profile scout.idleTimeoutMs=120000`). The selector is an exact profile name or `*`;
+semantic overrides and unknown names fail before effects. Rules are sticky on resume, later values
+win, and `--policy-reset` clears both saved step rules and profile rules. Embedded callers pass
+`profileOverrides: [{ profile: 'scout', maxTurns: 60 }]`. Attempts record their role, effective
+limits, model/effort and value sources. Profile names and limits are outside step identity; resolved
+models, tools, sandbox, effort and permission-failure behavior are identity. Changing workflow
+source still requires the usual explicit code acceptance or fork.
 
 Turn/budget errors report the configured cap, role, reported turns and cost (or `unknown`), and a
 suggested resume override. If a matching step `--policy` rule also sets the cap, update or reset
@@ -148,7 +149,20 @@ counts. A role can set `onPermissionDenied: 'fail'` to reject an otherwise succe
 kind `permission`; usage/session metadata remains available. Only reported denials are diagnosed,
 and the runtime does not save their tool-input payloads.
 
-`expectsToolUse` defaults to true for aggregate access read or higher. Zero-tool-use warnings and
-`idleTimeoutMs` await streaming/tool-count support in #61/#62; idle timeout is currently rejected,
-not accepted as an unenforced limit. These profiles are not the hermetic harness isolation proposed
-in #60, and there is no total run spending cap.
+`expectsToolUse` defaults to true when a role grants more than the text baseline: any Claude tool,
+or a Codex sandbox beyond `read-only`. So `text` is false, `readonly` and `edit` are true, and a
+role that only adds Codex `workspace-write` is true; set it explicitly to override. When it is true
+and a completed attempt reports zero tool calls, the step gets the warning
+`no-tool-use: Profile <name> expects tool use, but the <harness> attempt completed without a tool call.`
+The count comes from the attempt's stream (`attemptHistory[].diagnostics.toolUses`); a Claude call
+with an empty tool list, or an adapter that reports no count, never warns. The warning never fails
+the attempt.
+
+`idleTimeoutMs` (a profile, `defaults` or call limit, off by default) ends an agent attempt whose
+CLI writes nothing to stdout or stderr for that long, with error kind `idle-timeout`. Like
+`timeoutMs` it is policy outside identity, so raise it on resume with
+`--profile name.idleTimeoutMs=N`. Size it above the longest silent tool run or reasoning stretch;
+see
+[idle deadline and tool-use diagnostics](harness-controls.md#idle-deadline-and-tool-use-diagnostics).
+These profiles are not the hermetic harness isolation proposed in #60, and there is no total run
+spending cap.

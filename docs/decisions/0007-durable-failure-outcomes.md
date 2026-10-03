@@ -4,7 +4,9 @@
 Extended by [0008](0008-scoped-fan-out.md) for durable aggregate outcomes and scoped cancellation.
 Amended by #274 (invalid-request, overloaded and the transient retry alias). Amended by #144
 (healed-step dependents use launch and failure stamps, with a `seq` fallback). Amended by #149
-(commands and files take `onError: 'return'`; settled commands keep `ExecStepError` fields).
+(commands and files take `onError: 'return'`; settled commands keep `ExecStepError` fields). Amended
+by #109 (the `idle-timeout` kind joins the transient set; see
+[0042](0042-idle-deadlines-and-tool-use-diagnostics.md)).
 
 ## Context
 
@@ -101,14 +103,24 @@ begin `rate limit exceeded`, and a notice-only failure whose last notice is a
 cannot change its kind; if the CLIs change the wording, classification degrades to `unknown`.
 `errorKind()` still trusts only structured kinds.
 
-`retry.on` accepts the alias `transient`, which stands for `rate-limit`, `overloaded` and `timeout`.
-It is a filter, not a kind: saved failures and attempt kinds never contain it, and resolved and
-persisted policies keep it unexpanded, so the expansion happens only in `classifyAttemptFailure`.
-Omitting `on` now retries every non-fatal kind except `invalid-request`; an explicit
-`on: ['invalid-request']` still retries it. Retry remains policy, so step identities do not change.
+`retry.on` accepts the alias `transient`, which stands for `rate-limit`, `overloaded` and `timeout`
+(and `idle-timeout` since #109). It is a filter, not a kind: saved failures and attempt kinds never
+contain it, and resolved and persisted policies keep it unexpanded, so the expansion happens only in
+`classifyAttemptFailure`. Omitting `on` now retries every non-fatal kind except `invalid-request`;
+an explicit `on: ['invalid-request']` still retries it. Retry remains policy, so step identities do
+not change.
 
 The checkpoint format does not change. Older records validate under the widened enums; records that
 contain the new kinds or the alias need this runtime, which the 0.0.0 prototype accepts.
+
+## Amendment: idle-timeout (#109)
+
+An agent attempt that produces no stdout or stderr for its `idleTimeoutMs` ends with the new kind
+`idle-timeout`, separate from the wall-clock `timeout` so `retry.on` can target either one. It joins
+the transient set: `'transient'` now stands for `rate-limit`, `overloaded`, `timeout` and
+`idle-timeout`, and failure documents report it `retryable`. Older records validate under the
+widened enum; records containing the new kind need this runtime. See
+[ADR 0042](0042-idle-deadlines-and-tool-use-diagnostics.md).
 
 ## Amendment: commands and files (#149)
 
