@@ -51,7 +51,7 @@ output for `pr view` or `pr list` hides nested page information, so the reads ne
 | `pr.list(id, { head?, base?, state? })`    | `gh api graphql --paginate --slurp`                             | Every matching pull request (number, title, state, draft, branches, head SHA, URL, body), sorted by number. `state` is `open` (default), `closed`, `merged` or `all`                                          |
 | `pr.reviewThreads(id, { number })`         | `gh api graphql --paginate --slurp`                             | Every thread with every comment: `id`, `isResolved`, `isOutdated`, `path`, `line` (current, else original), `author`, `isBot`, `lastAuthor`, the first comment's `alert`, `priority` badge, `title` and `url` |
 | `issue.view(id, { number, comments? })`    | `gh api graphql`, paginated over comments with `comments: true` | Number, title, state, body, URL, author and labels, plus every comment with `comments: true`                                                                                                                  |
-| `codeScanning.alerts(id, { ref, state? })` | `gh api --paginate --slurp repos/O/R/code-scanning/alerts?...`  | `{ status: 'ok', alerts }` with number, rule, severity, path, line, message, state and URL; or `{ status: 'unavailable', reason, alerts: [] }`                                                                |
+| `codeScanning.alerts(id, { ref, state? })` | `gh api --paginate repos/O/R/code-scanning/alerts?...`          | `{ status: 'ok', alerts }` with number, rule, severity, path, line, message, state and URL; or `{ status: 'unavailable', reason, alerts: [] }`                                                                |
 
 `checks` follows one set of rules, exported as `summarizeChecks`: a commit status passes when
 `SUCCESS`, is pending when `PENDING` or `EXPECTED`, and fails otherwise; a check run is pending
@@ -86,14 +86,16 @@ A read is a memoized snapshot, not a live view:
   exec's schema, so the read is never checkpointed as completed, the run's root cause names the
   read, and a resume runs it again.
 - **Code scanning not set up.** gh exits 1 on an HTTP error and prints GitHub's error body. The
-  code-scanning read accepts exit 1 only when the body is the sole page and says code scanning is
+  code-scanning read accepts exit 1 only when stdout is that body alone and says code scanning is
   not enabled, has no analysis, or needs Advanced Security; it then completes with
   `status: 'unavailable'`, which replays as data. "No alerts" is `status: 'ok'` with an empty list.
 - **Everything else rejects.** Not Found, bad credentials, a GraphQL error, an error page after
   alerts, an empty stdout from a network failure, a timeout or any other exit code rejects with an
-  `ExecError`; nothing is settled, so a resume retries the read. One gap remains: gh prints the
-  pages it already fetched when a later page fails at the network level, so a code-scanning read of
-  more than 100 alerts interrupted that way would look complete.
+  `ExecError`; nothing is settled, so a resume retries the read.
+- **Code scanning skips `--slurp`.** With `--slurp`, gh closes its outer array even when a later
+  page fails, so the alerts fetched before a dropped connection would parse as a complete list.
+  Plain `--paginate` merges the REST pages into one array and writes its closing `]` only after the
+  last page, so a failure after the first page leaves unparseable JSON and the read rejects.
 - **Retry.** There is no default retry, because deciding which gh failures are transient would mean
   guessing from messages. Reads are safe to repeat, so pass one when you want it, such as
   `{ retry: { maxAttempts: 3, on: ['process', 'timeout'] } }`. A network failure that leaves no JSON
@@ -122,10 +124,10 @@ real data; a branch that compares two of them (such as a closing issue's reposit
 repository's name) takes the "different" path.
 
 To rehearse a specific path, answer a read with an exec fixture rule whose `json` is the raw `gh`
-response: one object for `repo.info`, `pr.view` and `issue.view`, and an array of pages for the
-paginated reads and code scanning. Match by step ID, or by `argvPrefix` such as
-`["gh", "api", "graphql"]`. `workflow fixtures export` writes such rules from a completed run, since
-the checkpoint holds the validated raw response. See
+response: one object for `repo.info`, `pr.view` and `issue.view`, an array of pages for the
+paginated GraphQL reads, and one alert array (or a GitHub error body) for code scanning. Match by
+step ID, or by `argvPrefix` such as `["gh", "api", "graphql"]`. `workflow fixtures export` writes
+such rules from a completed run, since the checkpoint holds the validated raw response. See
 [command fixtures](rehearsal.md#command-fixtures).
 
 ## Runnable example

@@ -385,39 +385,33 @@ describe('code scanning', () => {
       'gh',
       'api',
       '--paginate',
-      '--slurp',
       'repos/octo-org/quiet-choir/code-scanning/alerts?ref=refs%2Fpull%2F7%2Fmerge&state=open&per_page=100',
     ]);
     expect(run.steps['alerts']?.exec?.okExitCodes).toEqual([0, 1]);
   });
 
+  // gh 2.100 output without --slurp, recorded against a local server: an alert, as gh prints it.
+  const alert = JSON.stringify((json('code-scanning-alerts.json') as unknown[])[0]);
   it.each([
     ['Not Found', { code: 1, stdout: fixture('code-scanning-not-found.json') }, 'schema'],
     ['Bad credentials', { code: 1, stdout: fixture('bad-credentials.json') }, 'schema'],
     ['empty stdout (network failure)', { code: 1, stdout: '' }, 'schema'],
-    ['an empty slurp', { code: 1, stdout: '[]' }, 'schema'],
+    // A dropped connection after an empty first page: gh never closes the merged array.
+    ['an unclosed empty array', { code: 1, stdout: '[' }, 'schema'],
+    // A dropped connection after page 1: the alerts gh already printed, still unclosed.
+    ['a network drop after page 1', { code: 1, stdout: `[${alert}` }, 'schema'],
+    // A 5xx on page 2: gh appends the error body to the unclosed array.
     [
       'a 5xx page after alerts',
-      {
-        code: 1,
-        stdout: JSON.stringify([
-          (json('code-scanning-alerts.json') as unknown[])[0],
-          { message: 'Server Error', status: '502' },
-        ]),
-      },
+      { code: 1, stdout: `[${alert}{"message":"Server Error"}` },
       'schema',
     ],
     [
-      'a second unavailable page',
-      {
-        code: 1,
-        stdout: JSON.stringify([
-          (json('code-scanning-alerts.json') as unknown[])[0],
-          { message: 'no analysis found' },
-        ]),
-      },
+      'an unavailable page after alerts',
+      { code: 1, stdout: `[${alert}{"message":"no analysis found"}` },
       'schema',
     ],
+    ['an alert array inside an array', { code: 0, stdout: `[[${alert}]]` }, 'schema'],
     ['exit 2', { code: 2, stdout: fixture('code-scanning-not-enabled.json') }, 'process'],
   ] as const)('rejects %s without settling the read', async (_name, reply, kind) => {
     const error = await failing(read, alerts(reply).runner);
@@ -426,19 +420,26 @@ describe('code scanning', () => {
     expect((await readRun(setup())).steps['alerts']?.status).toBe('failed');
   });
 
-  it('flattens two success pages in order', async () => {
+  it('reads an empty merged array as no alerts', async () => {
+    const { runner } = alerts({ stdout: '[]' });
+    const run = await runWorkflow(
+      definition((ctx) => read(github(ctx, { repo: 'octo-org/quiet-choir' }))),
+      { ...setup(), processRunner: runner },
+    );
+    expect(run.output).toEqual({ status: 'ok', alerts: [] });
+  });
+
+  it('keeps the order of the array gh merged from two pages', async () => {
     const { runner } = alerts({ stdout: fixture('code-scanning-alerts.json') });
     const run = await runWorkflow(
       definition((ctx) => read(github(ctx, { repo: 'octo-org/quiet-choir' }))),
       { ...setup(), processRunner: runner },
     );
-    const pages = json('code-scanning-alerts.json') as { number: number }[][];
-    expect(pages).toHaveLength(2);
+    const merged = json('code-scanning-alerts.json') as { number: number }[];
+    expect(merged).toHaveLength(4);
     const result = run.output as { status: string; alerts: { number: number }[] };
     expect(result.status).toBe('ok');
-    expect(result.alerts.map((alert) => alert.number)).toEqual(
-      pages.flat().map((alert) => alert.number),
-    );
+    expect(result.alerts.map((alert) => alert.number)).toEqual(merged.map((alert) => alert.number));
     expect(result.alerts[0]).toEqual({
       number: 6,
       rule: 'js/bad-code-sanitization',

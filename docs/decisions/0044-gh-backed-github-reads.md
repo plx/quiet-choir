@@ -50,13 +50,13 @@ Add the `quiet-choir/github` subpath. `github(ctx, { repo })` returns `repo.info
   that would checkpoint a partial value as completed and replay the throw forever. Pure mappers turn
   the validated response into the typed result, after the exec and on replay alike.
 - **Code scanning "unavailable" is data.** `codeScanning.alerts` accepts exits 0 and 1, because gh
-  exits 1 on an HTTP error and prints the body on stdout. Each slurped page is an alert array or a
-  GitHub error body. An error body passes only as the sole page and only when its message says code
-  scanning is not set up (`no analysis found`, `code scanning is not enabled`,
-  `advanced security must be enabled`); the result is then
-  `{ status: 'unavailable', reason, alerts: [] }`, a completed output that replays. Any other body,
-  an empty stdout, a 5xx page after alerts, or another exit code rejects without settling.
-  `onError: 'return'` is never used, since it would settle a transient failure permanently.
+  exits 1 on an HTTP error and prints the body on stdout. The response is one alert array or a
+  GitHub error body. An error body passes only when its message says code scanning is not set up
+  (`no analysis found`, `code scanning is not enabled`, `advanced security must be enabled`); the
+  result is then `{ status: 'unavailable', reason, alerts: [] }`, a completed output that replays.
+  Any other body, an empty stdout, a 5xx page after alerts, or another exit code rejects without
+  settling. `onError: 'return'` is never used, since it would settle a transient failure
+  permanently.
 - **`ExecOptions.meta`.** Exec options gain JSON labels recorded on the step like
   `StepDefinition.meta`, outside identity and policy; a callback's `context.exec` rejects them
   because it writes no record. Each read records `{ integration: 'github', op }`, which `inspect`
@@ -87,9 +87,13 @@ Octokit could later sit behind the same signatures; this slice does not add it.
   been validated against a live GHES.
 - Output caps throw: a read larger than `maxOutputBytes` (1 MiB by default) rejects and never
   shrinks, so callers raise the cap for large thread or comment sets.
-- One gap remains for code scanning. gh still prints the pages it fetched when a later page fails at
-  the network level, and an exec schema cannot see the exit code, so more than 100 alerts followed
-  by a dropped connection would read as a complete list. GraphQL reads are not affected: they accept
-  only exit 0, and their last page would also report another page.
+- Code scanning runs `gh api --paginate` without `--slurp`, because an exec schema cannot see the
+  exit code. gh 2.100 closes a slurped outer array even when a later page fails, so more than 100
+  alerts followed by a dropped connection or a 5xx would read as a complete list. Without `--slurp`,
+  gh merges REST array pages into one array and writes its closing `]` only after the last page, so
+  any failure after the first page leaves unparseable JSON and the read rejects. This relies on that
+  gh behavior (checked against gh 2.100 with a local server); the code-scanning golden digest makes
+  a change to the argv deliberate. GraphQL reads keep `--slurp`: they accept only exit 0, and their
+  last page would also report another page.
 - `--dry-run` synthesizes every read from its JSON Schema (booleans false, one-item arrays, the
   first union branch), and the synthesized responses pass the completeness checks and the mappers.

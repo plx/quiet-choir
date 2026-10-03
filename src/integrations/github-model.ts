@@ -561,12 +561,10 @@ export interface RawGithubErrorBody {
 }
 
 /**
- * `codeScanning.alerts` response: every page, in order. An error body is accepted only as the
- * sole page and only when it says code scanning is unavailable.
+ * `codeScanning.alerts` response: every alert of every page, merged by gh into one array, or a
+ * GitHub error body, accepted only when it says code scanning is unavailable.
  */
-export type RawCodeScanningResponse = readonly (
-  readonly RawCodeScanningAlert[] | RawGithubErrorBody
-)[];
+export type RawCodeScanningResponse = readonly RawCodeScanningAlert[] | RawGithubErrorBody;
 
 // ---------------------------------------------------------------------------------------------
 // Schemas
@@ -854,22 +852,18 @@ const codeScanningAlert = z.object({
 });
 
 /**
- * Schema of the `codeScanning.alerts` response. Each page is an alert array or, only as the sole
- * page, a GitHub error body saying code scanning is unavailable; any other error body fails it.
- * The alert-array branch comes first, so `--dry-run` synthesizes alerts.
+ * Schema of the `codeScanning.alerts` response: one alert array (every page, merged by gh) or a
+ * GitHub error body saying code scanning is unavailable; any other error body fails it. The
+ * alert-array branch comes first, so `--dry-run` synthesizes alerts.
  */
 export const codeScanningResponseSchema: z.ZodType<RawCodeScanningResponse> = z
-  .array(z.union([z.array(codeScanningAlert), z.object({ message: z.string() })]))
-  .min(1)
-  .superRefine((pages, ctx) => {
-    pages.forEach((page, index) => {
-      if (Array.isArray(page)) return;
-      if (pages.length === 1 && CODE_SCANNING_UNAVAILABLE.test(page.message)) return;
-      ctx.addIssue({
-        code: 'custom',
-        message: `GitHub returned an error: ${page.message}`,
-        path: [index, 'message'],
-      });
+  .union([z.array(codeScanningAlert), z.object({ message: z.string() })])
+  .superRefine((response, ctx) => {
+    if (Array.isArray(response) || CODE_SCANNING_UNAVAILABLE.test(response.message)) return;
+    ctx.addIssue({
+      code: 'custom',
+      message: `GitHub returned an error: ${response.message}`,
+      path: ['message'],
     });
   });
 
@@ -1293,23 +1287,20 @@ export function mapIssueWithComments(raw: RawIssueCommentsResponse): GithubIssue
 
 /** @internal */
 export function mapCodeScanning(raw: RawCodeScanningResponse): GithubCodeScanning {
-  const [first] = raw;
-  if (first !== undefined && !Array.isArray(first))
-    return { status: 'unavailable', reason: (first as RawGithubErrorBody).message, alerts: [] };
+  if (!Array.isArray(raw))
+    return { status: 'unavailable', reason: (raw as RawGithubErrorBody).message, alerts: [] };
   return {
     status: 'ok',
-    alerts: raw.flatMap((page) =>
-      (Array.isArray(page) ? (page as readonly RawCodeScanningAlert[]) : []).map((alert) => ({
-        number: alert.number,
-        rule: alert.rule.id,
-        severity: alert.rule.security_severity_level ?? alert.rule.severity,
-        path: alert.most_recent_instance.location?.path ?? null,
-        line: alert.most_recent_instance.location?.start_line ?? null,
-        message: alert.most_recent_instance.message?.text ?? '',
-        state: alert.state,
-        url: alert.html_url,
-      })),
-    ),
+    alerts: (raw as readonly RawCodeScanningAlert[]).map((alert) => ({
+      number: alert.number,
+      rule: alert.rule.id,
+      severity: alert.rule.security_severity_level ?? alert.rule.severity,
+      path: alert.most_recent_instance.location?.path ?? null,
+      line: alert.most_recent_instance.location?.start_line ?? null,
+      message: alert.most_recent_instance.message?.text ?? '',
+      state: alert.state,
+      url: alert.html_url,
+    })),
   };
 }
 
@@ -1481,10 +1472,14 @@ export function codeScanningRead(
   );
   return {
     op: 'codeScanning.alerts',
+    // No `--slurp`: gh 2.100 (pkg/cmd/api) closes a slurped outer array even when a later page
+    // fails, so alerts fetched before a dropped connection would parse as a complete list. Plain
+    // `--paginate` merges REST array pages into one array and writes its closing `]` only after
+    // the last page; any failure after the first page leaves the array unclosed, and the JSON
+    // parse rejects it.
     argv: apiArgv(
       repo,
       '--paginate',
-      '--slurp',
       `repos/${repo.owner}/${repo.name}/code-scanning/alerts?ref=${encodeURIComponent(ref)}&state=${state}&per_page=100`,
     ),
     schema: codeScanningResponseSchema,

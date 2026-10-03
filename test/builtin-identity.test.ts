@@ -458,8 +458,8 @@ describe('quiet-choir/github read identity', () => {
       schema: 'fd040ea0ecc40bfa0a91eda4ab65297630fbb7c5e05335397edefb836d30183b',
     },
     'codeScanning.alerts': {
-      command: '41b94afed330e8e5d3c148e6bdb525bb1b8d24ab9f645724adbe71ae384a740c',
-      schema: '85423e769f742b450142721546d1549aa991e96fbc073fc2664821b1c824604b',
+      command: 'f0f1260181280e10bb60c775e3905cac94a6fc851b1444c1f94c162be558a245',
+      schema: 'ec1cd0b6a90d9e2a4123a195e60d3306a4967237eac7c245c0ba6c877471a8c5',
       // [0, 1]: gh's exit 1 for an HTTP error is accepted, and the schema decides.
       okExitCodes: '463f2998327eb3a694145e6014444480b2235be84aa6cfd57871cc64f1cd816c',
     },
