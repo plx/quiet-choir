@@ -90,3 +90,5 @@ part of the documentation.
 - [0042: Idle deadlines and tool-use diagnostics from the attempt stream](0042-idle-deadlines-and-tool-use-diagnostics.md)
 
 - [0043: Checked harness-kit declarations and shared adapter helpers](0043-checked-harness-kit-declarations-and-adapter-helpers.md)
+
+- [0044: gh-backed, complete-or-throw GitHub reads](0044-gh-backed-github-reads.md)

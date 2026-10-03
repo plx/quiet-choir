@@ -52,6 +52,12 @@ redefinition/history behavior; completed identity changes require a new run or a
 Repeated observations need fresh IDs or a read-only `ctx.poll`: a command poll runs one command per
 check, and an observer can run its commands through `context.exec`.
 
+`meta` attaches JSON labels to the step record, like `StepDefinition.meta`. It is neither identity
+nor policy, so relabelling never refuses a resume. `inspect` shows a step with a string
+`integration` label as `integration.op`; integration helpers such as
+[`quiet-choir/github`](github.md) record `{ integration, op }`. A non-JSON value is rejected before
+the command runs.
+
 The default environment inherits the parent plus `env`. `inheritEnv: false` supplies only that
 overlay and engine metadata (the selected executable or shell may itself add variables). Rotating
 authentication belongs in the parent environment. Explicit overlay values and stdin are hashed, not
@@ -65,9 +71,9 @@ the runtime cannot make external writes exactly once.
 A `ctx.step` callback or `ctx.poll` observer cannot call durable `ctx.exec`. It runs commands
 through its own context instead: `context.exec(argv, options)` and
 `context.exec.json(argv, { schema })` take the same command and options as `ctx.exec`, without an
-ID, `worktree` or `retry`. They go through the same runner as `ctx.exec` (`RunOptions.execRunner`,
-or `processRunner`), with the same five-minute and 1 MiB defaults, environment overlay, reserved
-`QUIET_CHOIR_` prefix, exit-code and JSON rules.
+ID, `worktree`, `retry` or `meta`. They go through the same runner as `ctx.exec`
+(`RunOptions.execRunner`, or `processRunner`), with the same five-minute and 1 MiB defaults,
+environment overlay, reserved `QUIET_CHOIR_` prefix, exit-code and JSON rules.
 
 These commands are **not durable**. They write no checkpoint and no step record, and they run again
 whenever the parent reruns: on a retry, on a resume of an unfinished step, and on every poll check.

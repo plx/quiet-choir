@@ -7,7 +7,10 @@ Amended by #150: a helper's single `ctx.step` or `ctx.wait` may run non-durable,
 through its callback's or observer's `context.exec`. Amended by #155: `HarnessDefinition` carries
 `capabilityKeys` as a literal tuple type (`defineHarness` infers it), so a strict workflow's
 `ctx.agent(name)` option type omits those keys; a widened list stays permissive at type level. The
-keys are still neither persisted nor digested.
+keys are still neither persisted nor digested. Amended by #159: `ExecOptions.meta` labels a
+`ctx.exec` like `StepDefinition.meta`, so a helper whose one operation is an exec can record
+`{ integration, op }`; `quiet-choir/github` is such a helper
+([ADR 0044](0044-gh-backed-github-reads.md)).
 
 ## Context
 
@@ -78,10 +81,11 @@ deliberately replaces the proposed `ctx.jev`, `ctx.github` and `ctx.linear` core
 Separate packages can still provide convenient discoverable APIs. `quiet-choir/decision` is a
 transport-injected reference, not a JEV SDK implementation and not completion of #20–#22.
 
-`StepDefinition.meta` supplies JSON inspection labels outside identity. Local callbacks may replace
-their cumulative attempt usage through `reportUsage`; that evidence commits with success or failure.
-Helper usage has separate totals and never consumes agent attempt slots. Reported helper cost does
-contribute to the next agent's run cost gate. No report makes an external action exactly once.
+`StepDefinition.meta` and `ExecOptions.meta` supply JSON inspection labels outside identity. Local
+callbacks may replace their cumulative attempt usage through `reportUsage`; that evidence commits
+with success or failure. Helper usage has separate totals and never consumes agent attempt slots.
+Reported helper cost does contribute to the next agent's run cost gate. No report makes an external
+action exactly once.
 
 ## Consequences
 

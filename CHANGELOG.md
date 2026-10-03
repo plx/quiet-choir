@@ -2,6 +2,21 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- New `quiet-choir/github` subpath: typed, complete-or-throw GitHub reads over the installed `gh`
+  (#159, slice A of #21; ADR 0044). `github(ctx, { repo })` offers `repo.info`, `pr.view` (closing
+  issues and summarized head checks), `pr.list`, `pr.reviewThreads`, `issue.view` (optionally with
+  every comment) and `codeScanning.alerts`. Each read is one `ctx.exec.json` over `gh api` argv with
+  the caller's ID, no environment overlay or stdin, so its identity is the argv, the response schema
+  and the fixed exec defaults. A connection that reports another page throws
+  `IncompleteCollectionError` (branded) and is never checkpointed; code scanning that is not set up
+  returns `status: 'unavailable'` as data, and every other gh failure rejects. `HOST/OWNER/REPO`
+  adds `--hostname`. The response schemas, `parseGithubRepo` and `summarizeChecks` are exported.
+  `examples/patterns/github-snapshot.workflow.ts` is rewritten on these reads, and
+  [GitHub reads](docs/github.md) documents them.
+- `ExecOptions.meta` records JSON labels on a `ctx.exec` step, like `StepDefinition.meta`, outside
+  identity and policy (#159; amends ADR 0027). A callback's or observer's `context.exec` rejects
+  `meta`, since it writes no step record. Compact `inspect` lines now show an integration label such
+  as `github.pr.view` for a completed labelled command instead of its program name.
 - Breaking: Codex has one effort option, and `reasoningEffort` is renamed to `effort` everywhere
   (#341, part of #158; amends ADR 0011). Migrate as follows:
   - Call options, profiles and defaults: Codex `reasoningEffort: X` becomes `effort: X`.
