@@ -216,6 +216,11 @@ precedence:
 | `waiting`     | A dependency or blocked-by relation is open, or a dependency is unknown                    |
 | `ready`       | None of the above                                                                          |
 
+`in-flight` sees only the pull requests GitHub links to the issue: one whose description uses a
+closing keyword (such as `Closes #N`) and whose base is the default branch, or one linked by hand. A
+pull request stacked on another branch, or one without a closing reference, is not seen, so its
+ticket can be picked again.
+
 A closed item is done. The pick is the first `in-flight` item, else the first `close-split`, else
 the first `ready`, in `order`: `listing` (default) or `number`. It returns
 `{ pick, skipped, done }`, where `pick` is

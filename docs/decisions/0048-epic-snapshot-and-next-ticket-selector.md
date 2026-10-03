@@ -87,8 +87,9 @@ writes, and would follow ADR 0046's reconciled-write rules if concurrent runs ev
   so the candidate it picked stays pinned until the next round.
 - Assignees are recorded but ignored by the selector, so two concurrent runs over one epic can pick
   the same ticket.
-- Linked pull requests are those GitHub links through closing keywords; a pull request that works on
-  an issue without a closing reference is not seen.
+- Linked pull requests are those GitHub links to the issue: through a closing keyword in a pull
+  request into the default branch, or by hand. A pull request stacked on another base, or one that
+  works on an issue without a closing reference, is not seen, so its ticket can be picked again.
 - GitHub Enterprise Server versions or accounts without sub-issues or issue dependencies lack the
   `subIssues` or `blockedBy` fields, so gh exits 1 and the read rejects; there is no fallback query.
 - An epic with more than 100 sub-issues, or a sub-issue with more than 100 comments, cannot be
