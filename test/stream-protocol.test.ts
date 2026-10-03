@@ -243,3 +243,19 @@ it("classifies Claude's unrecognized-model stderr tag as invalid-request", async
     'invalid-request',
   );
 });
+
+it('classifies the live rate-limit capture exactly as the same stream without its rate_limit_event', async () => {
+  const { stdout } = await capture('claude-rate-limit-success');
+  const lines = stdout.split('\n').filter(Boolean);
+  const events = lines.filter((line) => line.includes('"type":"rate_limit_event"'));
+  expect(events).toHaveLength(1);
+  const feed = (input: readonly string[]): ProtocolOutcome => {
+    const state = new ClaudeProtocol(false);
+    for (const line of input) state.feed(JSON.parse(line) as Record<string, unknown>);
+    return state.finish();
+  };
+  const outcome = feed(lines);
+  expect(outcome).toMatchObject({ kind: 'success', response: { text: 'ok' } });
+  expect(outcome).toEqual(feed(lines.filter((line) => !events.includes(line))));
+  expect(parseClaude(stdout, false)).toEqual(outcome);
+});

@@ -74,6 +74,8 @@ import type { WorkflowClock } from '../runtime/wait-model.js';
 import { TypeScriptExecutor } from '../typecheck/typescript-executor.js';
 import { formatDurabilityDiagnostic } from '../typecheck/model.js';
 import { fingerprintSources, workflowLaunch } from './source.js';
+import { formatRateLimitWindows, readRateLimit } from '../runtime/rate-limit.js';
+import type { WorkflowEvent } from '../runtime/runner.js';
 import { AnswerError, listPendingRuns, writeAnswer } from '../runtime/inbox.js';
 import { selectPendingRows } from './pending-listing.js';
 import { canonicalCwd, compareResume, workflowSnapshot } from '../runtime/compatibility.js';
@@ -91,6 +93,24 @@ import type {
   AnswerWorkflowPlan,
   PendingWorkflowsPlan,
 } from './model.js';
+
+/**
+ * The progress-log line of a run event: its message, or the step, attempt, harness and agent
+ * progress or wait fields. A finished agent attempt that recorded subscription rate-limit windows
+ * appends ` rate-limit: 5h window 22%, 7d 67%`; every other line is unchanged. @internal
+ */
+export function formatAgentEventDetail(event: WorkflowEvent): string {
+  const agentProgress =
+    event.type === 'agent.started' ||
+    event.type === 'agent.progress' ||
+    event.type === 'agent.finished';
+  const limit = event.type === 'agent.finished' ? readRateLimit(event.diagnostics) : undefined;
+  const windows = limit === undefined ? null : formatRateLimitWindows(limit);
+  return (
+    event.message ??
+    `${event.stepId ?? ''} (attempt ${String(event.attempt)})${event.harness === undefined ? '' : ` harness=${event.harness}`}${agentProgress ? ` ${event.progress?.summary ?? event.outcome ?? 'started'}${event.sessionId ? ` session=${event.sessionId}` : ''}${windows === null ? '' : ` rate-limit: ${windows}`}` : event.waitedMs === undefined ? '' : ` waitedMs=${String(event.waitedMs)} inFlight=${JSON.stringify(event.inFlight)} queued=${String(event.queued)}`}`
+  );
+}
 
 /** Explicit live dependencies, kept outside serializable command plans. */
 export interface WorkflowExecutorOptions {
@@ -752,9 +772,7 @@ export class WorkflowExecutor implements Executor<WorkflowExecutorPlan, Workflow
             for (const warning of event.warnings ?? [])
               if (warning.startsWith('no-tool-use:'))
                 this.#options.logger.log('warn', `${event.stepId}: ${warning}`);
-          const detail =
-            event.message ??
-            `${event.stepId ?? ''} (attempt ${String(event.attempt)})${event.harness === undefined ? '' : ` harness=${event.harness}`}${agentProgress ? ` ${event.progress?.summary ?? event.outcome ?? 'started'}${event.sessionId ? ` session=${event.sessionId}` : ''}` : event.waitedMs === undefined ? '' : ` waitedMs=${String(event.waitedMs)} inFlight=${JSON.stringify(event.inFlight)} queued=${String(event.queued)}`}`;
+          const detail = formatAgentEventDetail(event);
           this.#options.logger.log(
             observational || (plan.progress && agentProgress)
               ? 'info'

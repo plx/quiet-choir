@@ -130,6 +130,26 @@ export default defineConfig(
     },
   },
   {
+    // Rate-limit windows: the stored shape, its validation and its formatting, shared by the stream
+    // handler, the inspection summary and the text views.
+    files: ['src/workflow/runtime/rate-limit.ts'],
+    rules: {
+      '@typescript-eslint/no-restricted-imports': [
+        'error',
+        {
+          patterns: [
+            {
+              group: ['node:*', ...builtinModules, './**', '../**'],
+              allowTypeImports: true,
+              message:
+                'The rate-limit helpers must stay free of I/O and the run store: use import type only.',
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
     // The pending row selection: a pure function of listed rows and recorded launches.
     files: ['src/workflow/loader/pending-listing.ts'],
     rules: {
