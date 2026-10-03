@@ -322,11 +322,17 @@ function ownRefs(text: string, repo: string): number[] {
 
 const isBlank = (char: string): boolean => char === ' ' || char === '\t';
 const isDigit = (char: string): boolean => char >= '0' && char <= '9';
+/** The column after `char` at `column`: a tab advances to the next multiple of four. */
+const advance = (column: number, char: string): number =>
+  char === '\t' ? column + 4 - (column % 4) : column + 1;
 
 /**
  * The block-quote markers that open `line`: how many (`depth`, at most `limit`) and where the rest
- * of the line starts (`end`, after the last marker and one optional space). Whitespace before each
- * marker is skipped. A character loop, so no input can make it backtrack.
+ * of the line starts (`end`, after the last marker and one optional space). As in CommonMark, up to
+ * three columns of blanks may precede each marker, counted from where the previous marker (with its
+ * optional space) ended, a tab to the next multiple of four as {@link indentation} counts it; a `>`
+ * indented four or more columns is no marker, so `    > x` has depth 0 and `>     > x` depth 1, the
+ * rest of each being indented code. A character loop, so no input can make it backtrack.
  */
 function quotePrefix(
   line: string,
@@ -334,10 +340,11 @@ function quotePrefix(
 ): { depth: number; end: number } {
   let depth = 0;
   let end = 0;
-  let index = 0;
   while (depth < limit) {
-    while (isBlank(line.charAt(index))) index += 1;
-    if (line.charAt(index) !== '>') break;
+    let index = end;
+    let column = 0;
+    for (; isBlank(line.charAt(index)); index += 1) column = advance(column, line.charAt(index));
+    if (column >= 4 || line.charAt(index) !== '>') break;
     depth += 1;
     index += 1;
     if (isBlank(line.charAt(index))) index += 1;
@@ -372,14 +379,14 @@ function listMarkerEnd(line: string, index: number): number {
 function indentation(text: string): number {
   let column = 0;
   for (let index = 0; isBlank(text.charAt(index)); index += 1)
-    column = text.charAt(index) === '\t' ? column + 4 - (column % 4) : column + 1;
+    column = advance(column, text.charAt(index));
   return column;
 }
 
 /** The width of `text` in columns, as {@link indentation} counts them. */
 function width(text: string): number {
   let column = 0;
-  for (const char of text) column = char === '\t' ? column + 4 - (column % 4) : column + 1;
+  for (const char of text) column = advance(column, char);
   return column;
 }
 
@@ -390,7 +397,8 @@ function width(text: string): number {
  * markers that follow the last block quote: the first one's indentation (`indent`) and each item's
  * content column (`items`, outermost first), counted from `quote`, with `item` the innermost one's
  * (0 when no list marker follows the last quote). As in CommonMark, the content column includes up
- * to three more spaces after a marker's own.
+ * to three more spaces after a marker's own. A `>` is a marker only when the blanks before it, from
+ * where the previous marker ended, are less than four columns wide, as {@link quotePrefix} reads it.
  */
 function containerPrefix(line: string): {
   depth: number;
@@ -408,11 +416,13 @@ function containerPrefix(line: string): {
   let items: number[] = [];
   for (;;) {
     let index = end;
-    while (isBlank(line.charAt(index))) index += 1;
-    if (line.charAt(index) === '>') {
+    let blanks = 0;
+    for (; isBlank(line.charAt(index)); index += 1) blanks = advance(blanks, line.charAt(index));
+    if (line.charAt(index) === '>' && blanks < 4) {
       depth += 1;
       end = index + 1;
-      quote = isBlank(line.charAt(end)) ? end + 1 : end;
+      if (isBlank(line.charAt(end))) end += 1;
+      quote = end;
       items = [];
       continue;
     }

@@ -1057,6 +1057,22 @@ describe('parseDependencies', () => {
     ['a fence in nested block quotes', ['> > ```md\n>> Depends on #35\n> > ```'], []],
     ['a quoted fence ends with its block quote', ['> ~~~\n> code\n\nDepends on #36'], [36]],
     ['a quoted fence line is not a closer outside it', ['~~~\n> ~~~\nDepends on #37\n~~~'], []],
+    ['a > indented four columns opens no fence', ['    > ~~~\n> Depends on #104'], [104]],
+    ['a > indented a tab opens no fence', ['\t> ~~~\n> Depends on #105'], [105]],
+    ['a > indented three columns opens a fence', ['   > ~~~\n> Depends on #106'], []],
+    [
+      'a nested > four columns past its parent opens no fence',
+      ['>     > ~~~\n> > Depends on #107'],
+      [107],
+    ],
+    [
+      'a nested > three columns past its parent opens a fence',
+      ['>    > ~~~\n> > Depends on #108'],
+      [],
+    ],
+    ['a fence ends at a > indented four columns', ['> ~~~\n    > ~~~\n> Depends on #109'], [109]],
+    ['a > indented four columns is no deeper quote', ['Example `x\n    > Depends on #110`'], []],
+    ['a > indented three columns is a deeper quote', ['Example `x\n   > Depends on #111`'], [111]],
     [
       'a fence in a list item',
       ['- ~~~\n  Depends on #38\n  ~~~\n1. ```\n   Depends on #39\n   ```\n- Depends on #40'],
@@ -1258,6 +1274,24 @@ describe('parseSplit', () => {
     ['an indented marker after text', [by(VIEWER, 'Split.\n    <!-- epic:split 1,2 -->')], null],
     ['a tab-indented marker', [by(VIEWER, '\t<!-- epic:split 1 -->')], null],
     ['indented code in a block quote', [by(VIEWER, '>     <!-- epic:split 1,2 -->')], null],
+    ['a > indented four columns', [by(VIEWER, '    > <!-- epic:split 1 -->')], null],
+    ['a > indented a tab', [by(VIEWER, '\t> <!-- epic:split 1 -->')], null],
+    ['a > indented three columns', [by(VIEWER, '   > <!-- epic:split 17 -->')], [17]],
+    [
+      'a nested > four columns past its parent',
+      [by(VIEWER, '>     > <!-- epic:split 1 -->')],
+      null,
+    ],
+    [
+      'a nested > three columns past its parent',
+      [by(VIEWER, '>    > <!-- epic:split 18 -->')],
+      [18],
+    ],
+    [
+      'a fence behind a > indented four columns',
+      [by(VIEWER, '    > ~~~\n> <!-- epic:split 19 -->')],
+      [19],
+    ],
     [
       'a closer indented four columns stays in the fence',
       [by(VIEWER, '```\n    ```\n<!-- epic:split 1,2 -->\n```')],
