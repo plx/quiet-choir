@@ -316,4 +316,4 @@ export type {
   HarnessConfigurations,
 } from './workflow/runtime/harness-registry.js';
 export { ClaudeAdapter, CodexAdapter } from './harnesses/builtins/adapters.js';
-export type { BuiltinAdapterOptions } from './harnesses/builtins/adapters.js';
+export type { BuiltinAdapter, BuiltinAdapterOptions } from './harnesses/builtins/adapters.js';

@@ -4,12 +4,12 @@ import { jsonValue } from './json.js';
 
 import type { TokenCounts } from './usage-model.js';
 
-/** Finite, nonnegative measurements only; missing and invalid values stay unknown. @internal */
+/** Return a finite, nonnegative number, or null so missing and invalid values stay unknown. */
 export function measurement(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
 }
 
-/** Plain records only, never arrays or null. @internal */
+/** Return the value as a plain record, or undefined for arrays, null and non-objects. */
 export function usageObject(value: unknown): Record<string, unknown> | undefined {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
     ? (value as Record<string, unknown>)
@@ -28,7 +28,7 @@ export function tokenCounts(value: unknown): TokenCounts {
   };
 }
 
-/** Sum a complete set, returning null if any measurement is unknown. @internal */
+/** Sum measurements, returning null when the list is empty or any measurement is unknown. */
 export function knownSum(values: readonly (number | null)[]): number | null {
   return values.length && values.every((value) => value !== null)
     ? measurement(values.reduce<number>((total, value) => total + value, 0))
@@ -36,9 +36,9 @@ export function knownSum(values: readonly (number | null)[]): number | null {
 }
 
 /**
- * Normalize custom-harness measurements independently from effect identity.
- * JSON-compatible extra fields survive; malformed fields become null with a diagnostic.
- * @internal
+ * Normalize harness-reported usage into {@link AgentUsage}, independently from effect identity.
+ * JSON-compatible extra fields survive; malformed fields become null with a diagnostic. When
+ * given, `requested` is recorded as `model.requested` in place of any value the harness reported.
  */
 export function normalizeUsage(value: unknown, requested?: string | null): AgentUsage {
   const source = usageObject(value) ?? {};

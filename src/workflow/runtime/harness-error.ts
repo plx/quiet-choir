@@ -2,12 +2,20 @@ import { brandError, isBranded } from './error-brand.js';
 import type { AgentUsage, ErrorKind } from './model.js';
 import type { AgentDiagnostics } from './agent-stream-model.js';
 
-/** Evidence attached without replacing cancellation or infrastructure error identity. @internal */
+/**
+ * Evidence an adapter attaches to an error it rethrows unchanged, such as a cancellation or an
+ * infrastructure failure, so the runtime still records what the native call reported.
+ */
 export interface HarnessEvidence {
+  /** Native session or thread identifier, or null when none was observed. */
   readonly sessionId: string | null;
+  /** Usage reported before the failure, or null when unknown. */
   readonly usage: AgentUsage | null;
+  /** Extensible bounded native diagnostics. */
   readonly diagnostics: AgentDiagnostics;
+  /** Response text retained as evidence; bound it with {@link boundedResponse}. */
   readonly rawText: string | null;
+  /** Whether `rawText` was cut to its evidence budget. */
   readonly responseTruncated: boolean;
 }
 /**
@@ -18,9 +26,14 @@ const evidenceKey = Symbol.for('quiet-choir.evidence');
 /** Evidence for non-extensible (frozen) errors, readable only within this module instance. */
 const frozenEvidence = new WeakMap<object, HarnessEvidence>();
 
-/** Bound failed response evidence to 256 KiB, including UTF-8 boundaries. @internal */
+/**
+ * Bound response evidence to 256 KiB without splitting a UTF-8 sequence. Returns the retained text
+ * and whether it was truncated, ready to spread into {@link HarnessEvidence}.
+ */
 export function boundedResponse(text: string | null): {
+  /** The retained text, or null when `text` was null. */
   rawText: string | null;
+  /** Whether the text was cut to 256 KiB. */
   responseTruncated: boolean;
 } {
   if (text === null) return { rawText: null, responseTruncated: false };
@@ -31,7 +44,11 @@ export function boundedResponse(text: string | null): {
   return { rawText: bytes.subarray(0, end).toString('utf8'), responseTruncated: true };
 }
 
-/** Preserve evidence even when the original error must propagate unchanged. @internal */
+/**
+ * Attach native evidence to an error that must propagate unchanged, such as a cancellation, so its
+ * identity and handling are kept while the runtime still records the session, usage and response.
+ * Evidence is readable across quiet-choir module instances; non-objects are ignored.
+ */
 export function attachHarnessEvidence(error: unknown, value: HarnessEvidence): void {
   if (typeof error !== 'object' || error === null) return;
   const attached = Reflect.defineProperty(error, evidenceKey, {
