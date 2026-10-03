@@ -108,16 +108,18 @@ dashboard; `--json --summary` returns the same compact progress, status counts, 
 active/problem steps, resolved limits, root cause, reported usage, recent logs, the completed run's
 `output` (null otherwise) and an `agents` roll-up (`total`, `byRequest`, and the last 50 calls with
 harness, requested model, effort, profile, elapsed time and cost, plus `toolUses` and the step's
-`warnings` when recorded; the model is never assumed effective). Text prints a completed command on
-one line and the last 20 completed agent calls, with `tools N` and any `no-tool-use` warning; `-v`
-restores two-line commands with absolute argv and cwd, all recent agent rows and saved stacks. For
-embedding, `await readRun({ runId, cwd, stateDir })` returns the validated checkpoint alone;
-`inspectRunOwnership({ runId, cwd, stateDir })` returns the separate current ownership view. Like
-`runWorkflow`, it resolves explicit options, then `QUIET_CHOIR_STATE_DIR`, an existing run's legacy
-location, and the external XDG project default. Relative state paths resolve against `cwd` (default:
-`process.cwd()`). `resolveStateDir({ cwd, stateDir, runId })` returns the absolute directory;
-include `runId` to discover its legacy location. A missing CLI inspection names that directory and
-lists the run IDs present; embedded `readRun` retains the filesystem error's `code: 'ENOENT'`.
+`warnings` when recorded, bounded to 3 entries of 200 characters with a `+K more warnings` entry and
+always keeping `no-tool-use`, the full list being in `inspect --full`; the model is never assumed
+effective). Text prints a completed command on one line and the last 20 completed agent calls, with
+`tools N` and any `no-tool-use` warning; `-v` restores two-line commands with absolute argv and cwd,
+all recent agent rows and saved stacks. For embedding, `await readRun({ runId, cwd, stateDir })`
+returns the validated checkpoint alone; `inspectRunOwnership({ runId, cwd, stateDir })` returns the
+separate current ownership view. Like `runWorkflow`, it resolves explicit options, then
+`QUIET_CHOIR_STATE_DIR`, an existing run's legacy location, and the external XDG project default.
+Relative state paths resolve against `cwd` (default: `process.cwd()`).
+`resolveStateDir({ cwd, stateDir, runId })` returns the absolute directory; include `runId` to
+discover its legacy location. A missing CLI inspection names that directory and lists the run IDs
+present; embedded `readRun` retains the filesystem error's `code: 'ENOENT'`.
 
 Current checkpoints combine `<stateDir>/<runId>/run.json` and `journal.jsonl`; use the reader, since
 the snapshot alone can lag. Ownership lives in `<runId>/lock/`. Migrated runs also retain a legacy

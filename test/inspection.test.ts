@@ -16,6 +16,8 @@ import {
 import {
   inspectRun,
   listRuns,
+  maxAgentRowWarningChars,
+  maxAgentRowWarnings,
   summarizeRun,
   toRunListRow,
   WatchBoundError,
@@ -1116,15 +1118,32 @@ it('shows the tool-use count, step warnings and idle deadline of agent calls', (
     ...failed,
     request: { ...failed.request, limits: { ...failed.request.limits, idleTimeoutMs: 120_000 } },
   };
-  const summary = summarizeRun(withSteps({ quiet, busy, legacy, stalled }), unlocked);
+  const noisy: StepRecord = {
+    ...counted,
+    seq: 5,
+    warnings: [
+      ...Array.from({ length: 40 }, (_, index) => `denied-${String(index)}: ${'x'.repeat(5000)}`),
+      warning,
+    ],
+  };
+  const summary = summarizeRun(withSteps({ quiet, busy, legacy, stalled, noisy }), unlocked);
   const rows = Object.fromEntries(summary.agents.recent.map((row) => [row.id, row]));
   expect(rows['quiet']).toMatchObject({ toolUses: 0, warnings: [warning] });
+  // Verbose warnings are bounded: the count, length and overflow are visible, no-tool-use kept.
+  const bounded = rows['noisy']?.warnings ?? [];
+  expect(bounded).toHaveLength(maxAgentRowWarnings + 1);
+  expect(bounded.slice(0, -1).every((entry) => entry.length <= maxAgentRowWarningChars)).toBe(true);
+  expect(bounded.at(-1)).toBe(`+${String(41 - maxAgentRowWarnings)} more warnings`);
+  expect(bounded).toContain(warning);
+  expect(bounded[0]).toMatch(/^denied-0: /);
+  expect(JSON.stringify(rows['noisy']).length).toBeLessThan(1500);
   expect(rows['busy']).toMatchObject({ toolUses: 3 });
   expect(rows['busy']).not.toHaveProperty('warnings');
   // A record from before tool counting renders exactly as before.
   expect(rows['legacy']).not.toHaveProperty('toolUses');
   expect(rows['legacy']).not.toHaveProperty('warnings');
   const text = formatRunSummary(summary, true);
+  expect(text.length).toBeLessThan(5000);
   expect(text).toMatch(
     /^quiet {2}claude sonnet effort high {2}12s {2}\$0\.0123 {2}tools 0 {2}warnings: no-tool-use: /m,
   );
