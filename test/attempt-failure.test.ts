@@ -30,6 +30,10 @@ function timeout(): Error {
   return Object.assign(new Error('slow'), { code: 'ETIMEDOUT' });
 }
 
+function idle(): Error {
+  return Object.assign(new Error('silent'), { code: 'QUIET_CHOIR_IDLE_TIMEOUT' });
+}
+
 function harnessFailure(apiStatus: number): InstanceType<typeof secondHarness.HarnessError> {
   return new secondHarness.HarnessError({
     harness: 'custom',
@@ -215,6 +219,31 @@ const rows: Row[] = [
     name: 'transient retries a timeout',
     input: { cause: timeout(), retryOn: ['transient'] },
     expected: { ...retrying, errorKind: 'timeout' },
+  },
+  {
+    name: 'an idle timeout retries when retry.on is omitted',
+    input: { cause: idle() },
+    expected: { ...retrying, errorKind: 'idle-timeout' },
+  },
+  {
+    name: 'an idle timeout retries when retry.on names idle-timeout',
+    input: { cause: idle(), retryOn: ['idle-timeout'] },
+    expected: { ...retrying, errorKind: 'idle-timeout' },
+  },
+  {
+    name: 'transient retries an idle timeout',
+    input: { cause: idle(), retryOn: ['transient'] },
+    expected: { ...retrying, errorKind: 'idle-timeout' },
+  },
+  {
+    name: 'a wall-clock timeout filter does not retry an idle timeout',
+    input: { cause: idle(), retryOn: ['timeout'], onError: 'return' },
+    expected: { ...exhausted, settle: true, errorKind: 'idle-timeout' },
+  },
+  {
+    name: 'an idle-timeout filter does not retry a wall-clock timeout',
+    input: { cause: timeout(), retryOn: ['idle-timeout'] },
+    expected: { ...exhausted, errorKind: 'timeout' },
   },
   {
     name: 'transient does not retry an invalid request',

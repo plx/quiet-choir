@@ -9,6 +9,7 @@ import type { ErrorKind, StepError } from './model.js';
 /** Shared validation for retry filters and saved failures. @internal */
 export const errorKindSchema = z.enum([
   'timeout',
+  'idle-timeout',
   'rate-limit',
   'overloaded',
   'invalid-request',
@@ -25,7 +26,7 @@ export const errorKindSchema = z.enum([
 ]);
 
 /** The kinds the `'transient'` retry filter stands for. @internal */
-export const transientErrorKinds = ['rate-limit', 'overloaded', 'timeout'] as const;
+export const transientErrorKinds = ['rate-limit', 'overloaded', 'timeout', 'idle-timeout'] as const;
 
 /**
  * Whether a failure of this kind is worth retrying later: membership in
@@ -74,6 +75,7 @@ export function errorKind(error: unknown): ErrorKind {
     if ('phase' in error && error.phase === 'spawn') return 'process';
     const code = 'code' in error ? error.code : undefined;
     if (code === 'ETIMEDOUT') return 'timeout';
+    if (code === 'QUIET_CHOIR_IDLE_TIMEOUT') return 'idle-timeout';
     if (code === 'ABORT_ERR') return 'cancelled';
     if (code === 'QUIET_CHOIR_OUTPUT_LIMIT') return 'output-limit';
     if (code === 'ENOENT' || code === 'EPIPE') return 'process';

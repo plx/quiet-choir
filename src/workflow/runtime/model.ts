@@ -56,10 +56,12 @@ export type JsonInput =
 /**
  * Stable categories used by settled outcomes and selective retry. `invalid-request` is a request
  * the provider rejected as malformed (HTTP 400/404/422, an unknown model or an invalid option);
- * `overloaded` is a provider-side failure (HTTP 500/502/503/529).
+ * `overloaded` is a provider-side failure (HTTP 500/502/503/529). `idle-timeout` is an agent
+ * attempt that produced no output for its `idleTimeoutMs`, distinct from the wall-clock `timeout`.
  */
 export type ErrorKind =
   | 'timeout'
+  | 'idle-timeout'
   | 'rate-limit'
   | 'overloaded'
   | 'invalid-request'
@@ -171,6 +173,8 @@ export interface AgentOptions {
   readonly cwd?: string | undefined;
   /** Wall-clock deadline in milliseconds; implicit text profile: 300,000. Custom harnesses must enforce it. */
   readonly timeoutMs?: number | undefined;
+  /** Idle deadline: no stdout/stderr output for this long ends the attempt with kind idle-timeout. Off by default; custom harnesses must enforce it. */
+  readonly idleTimeoutMs?: number | undefined;
   /** Explicit runtime retries for calls safe to repeat; not part of replay identity. */
   readonly retry?: RetryPolicy | undefined;
 }
@@ -390,8 +394,9 @@ export interface RetryPolicy {
   /** Initial delay in milliseconds, doubled on each retry; defaults to 100. */
   readonly delayMs?: number;
   /**
-   * Retry only these categories; `'transient'` stands for `rate-limit`, `overloaded` and
-   * `timeout`. Omission retries every non-fatal failure except `invalid-request`; [] retries none.
+   * Retry only these categories; `'transient'` stands for `rate-limit`, `overloaded`, `timeout`
+   * and `idle-timeout`. Omission retries every non-fatal failure except `invalid-request`; []
+   * retries none.
    */
   readonly on?: readonly (ErrorKind | 'transient')[];
 }
@@ -801,6 +806,8 @@ export interface ExecutionPolicy {
   readonly transcripts?: TranscriptMode;
   /** Wall-clock deadline enforced by the harness. */
   readonly timeoutMs?: number;
+  /** Output idle deadline enforced by the harness; absent when off. */
+  readonly idleTimeoutMs?: number;
   /** Claude turn limit. */
   readonly maxTurns?: number;
   /** Claude per-call spend limit. */
@@ -833,6 +840,8 @@ export interface PolicyOverride {
   readonly maxOutputBytes?: number;
   /** Harness wall-clock deadline in milliseconds. */
   readonly timeoutMs?: number;
+  /** Agent output idle deadline in milliseconds; agent rules only. */
+  readonly idleTimeoutMs?: number;
   /** Claude turn limit. */
   readonly maxTurns?: number;
   /** Claude spend limit in USD. */

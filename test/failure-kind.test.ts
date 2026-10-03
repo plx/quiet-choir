@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { errorKind } from '../src/workflow/runtime/step-error.js';
 
 import { workflowErrorDocument } from '../src/cli/workflow-errors.js';
 import {
@@ -58,11 +59,20 @@ describe('failureKind', () => {
   it('derives retryable from the transient set', () => {
     expect(failureKind('overloaded')).toEqual({ errorKind: 'overloaded', retryable: true });
     expect(failureKind('timeout')).toEqual({ errorKind: 'timeout', retryable: true });
+    expect(failureKind('idle-timeout')).toEqual({ errorKind: 'idle-timeout', retryable: true });
     expect(failureKind('authentication')).toEqual({
       errorKind: 'authentication',
       retryable: false,
     });
     expect(failureKind(null)).toEqual({ errorKind: null, retryable: false });
+  });
+});
+
+describe('errorKind', () => {
+  it('maps the process idle deadline code to idle-timeout, apart from the wall deadline', () => {
+    const coded = (code: string) => Object.assign(new Error('x'), { code });
+    expect(errorKind(coded('QUIET_CHOIR_IDLE_TIMEOUT'))).toBe('idle-timeout');
+    expect(errorKind(coded('ETIMEDOUT'))).toBe('timeout');
   });
 });
 

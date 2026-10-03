@@ -20,7 +20,7 @@ export interface AttemptFailureInput {
   readonly checkpointProblem: boolean;
   /**
    * The retry filter: `undefined` retries every kind except `invalid-request`, `[]` retries none,
-   * and `'transient'` stands for `rate-limit`, `overloaded` and `timeout`.
+   * and `'transient'` stands for `rate-limit`, `overloaded`, `timeout` and `idle-timeout`.
    */
   readonly retryOn: readonly (ErrorKind | 'transient')[] | undefined;
   /** The one-based number of the attempt that just failed. */
@@ -60,8 +60,8 @@ export interface AttemptFailure {
  * - Cancellation, this run's checkpoint failures and `ConfigurationError` are fatal. A domain
  *   error that merely reuses `CheckpointError` is not infrastructure.
  * - `retry.on` omitted retries every kind except `invalid-request`, and `[]` retries none, bounded
- *   by `maxAttempts`. The `'transient'` filter expands to `rate-limit`, `overloaded` and `timeout`;
- *   an explicit `invalid-request` entry still retries that kind.
+ *   by `maxAttempts`. The `'transient'` filter expands to `rate-limit`, `overloaded`, `timeout`
+ *   and `idle-timeout`; an explicit `invalid-request` entry still retries that kind.
  * - Settling happens only for a failure that is not fatal, not retried and has `onError: 'return'`.
  *
  * @internal
