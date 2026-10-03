@@ -657,8 +657,8 @@ export function githubWrites(
           settings,
           async (gh) => {
             const marked = withMarker(body, gh.key);
-            const rows = await gh.read(pullListArgv(repo, head, base), pullListResponseSchema);
-            const decision = createDecision(rows, gh.key);
+            const rows = await gh.read(pullListArgv(repo, head), pullListResponseSchema);
+            const decision = createDecision(rows, gh.key, base);
             if (decision.kind !== 'create') {
               const { row } = decision;
               return {

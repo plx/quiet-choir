@@ -654,6 +654,19 @@ describe('pr.create', () => {
     }
   });
 
+  it('returns the marked pull request retargeted to another base, with no POST', async () => {
+    const { runner, state } = await fake({
+      pulls: pull(4, { base: 'release', body: `Earlier.\n\n${githubMarker('moved/create')}` }),
+    });
+    const result = await outcome(runner, 'moved', (ctx) =>
+      client(ctx).pr.create('create', { head: 'feature', base: 'main', title: 'T', body: 'B.' }),
+    );
+    expect(result.output).toMatchObject({ number: 4, state: 'open', created: false });
+    const after = await state();
+    expect(writes(after)).toEqual([]);
+    expect(after.calls[0]?.argv.join(' ')).not.toContain('base=');
+  });
+
   it('creates with the marker on stdin when only other bases or closed unmarked ones exist', async () => {
     const head = 'fix/a#b&c+d';
     const { runner, state } = await fake({
@@ -682,12 +695,12 @@ describe('pr.create', () => {
     });
     const after = await state();
     expect(writes(after)).toEqual(['POST pulls']);
-    // The owner-qualified head and the base are URL-encoded: no injected query parameter.
+    // The owner-qualified head is URL-encoded and there is no base filter: no injected parameter.
     expect(after.calls[0]?.argv).toEqual([
       'gh',
       'api',
       '--paginate',
-      `repos/${REPO}/pulls?head=octo-org%3Afix%2Fa%23b%26c%2Bd&base=main&state=all&per_page=100`,
+      `repos/${REPO}/pulls?head=octo-org%3Afix%2Fa%23b%26c%2Bd&state=all&per_page=100`,
     ]);
     const post = after.calls[1];
     expect(post?.argv.join(' ')).not.toContain('3c9a');
@@ -897,13 +910,33 @@ describe('pure rules', () => {
 
   it('decide a create: marked in any state first, then open, else create', () => {
     const key = 'run/create';
-    const marked = { state: 'closed', body: `x\n\n${githubMarker(key)}` };
-    const open = { state: 'open', body: null };
-    const closed = { state: 'closed', body: 'y' };
-    expect(createDecision([open, marked], key)).toEqual({ kind: 'found-marked', row: marked });
-    expect(createDecision([closed, open], key)).toEqual({ kind: 'found-open', row: open });
-    expect(createDecision([closed], key)).toEqual({ kind: 'create' });
-    expect(createDecision([], key)).toEqual({ kind: 'create' });
+    const main = { ref: 'main' };
+    const marked = { state: 'closed', body: `x\n\n${githubMarker(key)}`, base: main };
+    const open = { state: 'open', body: null, base: main };
+    const closed = { state: 'closed', body: 'y', base: main };
+    expect(createDecision([open, marked], key, 'main')).toEqual({
+      kind: 'found-marked',
+      row: marked,
+    });
+    expect(createDecision([closed, open], key, 'main')).toEqual({ kind: 'found-open', row: open });
+    expect(createDecision([closed], key, 'main')).toEqual({ kind: 'create' });
+    expect(createDecision([], key, 'main')).toEqual({ kind: 'create' });
+    // A marked pull request retargeted since the POST still wins, in any state.
+    const retargeted = { state: 'open', body: `x\n\n${githubMarker(key)}`, base: { ref: 'next' } };
+    expect(createDecision([open, retargeted], key, 'main')).toEqual({
+      kind: 'found-marked',
+      row: retargeted,
+    });
+    expect(createDecision([{ ...retargeted, state: 'closed' }], key, 'main')).toMatchObject({
+      kind: 'found-marked',
+    });
+    // An unmarked open pull request into another base is not this step's.
+    const elsewhere = { state: 'open', body: null, base: { ref: 'release' } };
+    expect(createDecision([elsewhere, closed], key, 'main')).toEqual({ kind: 'create' });
+    expect(createDecision([elsewhere, open], key, 'main')).toEqual({
+      kind: 'found-open',
+      row: open,
+    });
     expect(pullListState({ state: 'closed', merged_at: '2026-10-03T00:00:00Z' })).toBe('merged');
     expect(pullListState({ state: 'closed', merged_at: null })).toBe('closed');
     expect(pullState({ state: 'closed', merged: true })).toBe('merged');
@@ -1028,8 +1061,8 @@ describe('pure rules', () => {
       '-f',
       `sha=${HEAD}`,
     ]);
-    expect(pullListArgv(repo, 'a&base=x', 'main')[3]).toBe(
-      `repos/${REPO}/pulls?head=octo-org%3Aa%26base%3Dx&base=main&state=all&per_page=100`,
+    expect(pullListArgv(repo, 'a&base=x')[3]).toBe(
+      `repos/${REPO}/pulls?head=octo-org%3Aa%26base%3Dx&state=all&per_page=100`,
     );
   });
 });
@@ -1069,10 +1102,11 @@ describe('response schemas', () => {
       state: 'closed',
       merged_at: '2026-10-03T16:49:05Z',
       body: 'Closes #161.\n\nPart of #99.\n\n<!-- quiet-choir:land/open-pr -->',
+      base: { ref: 'main' },
     });
     expect(row && pullListState(row)).toBe('merged');
     expect(
-      createDecision(pullListResponseSchema.parse(pulls['list']), 'land/open-pr'),
+      createDecision(pullListResponseSchema.parse(pulls['list']), 'land/open-pr', 'main'),
     ).toMatchObject({ kind: 'found-marked' });
   });
 

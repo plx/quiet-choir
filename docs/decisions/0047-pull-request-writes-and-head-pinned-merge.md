@@ -28,16 +28,18 @@ constant (`github.pr.create/1`, `github.pr.edit/1`, `github.pr.merge/1`,
 lists them. They use only `gh api`; no op runs `gh pr` or `gh run`.
 
 - **REST reads inside the writes.** `GET repos/O/R/pulls/N` reports `merged`, `merge_commit_sha` and
-  `head.sha` after a merge, and the list `GET .../pulls?head=OWNER:BRANCH&base=BASE&state=all`
-  filters on the owner-qualified head, so a fork's branch of the same name never matches (the
-  GraphQL `headRefName` filter would). The list uses plain `--paginate` without `--slurp`, as the
-  code-scanning read does, so a failed later page rejects. Head SHAs stay plain strings in the
-  response schemas, so synthesis never fails on them.
-- **Create order.** `pr.create` returns a pull request carrying the step's marker in any state
-  first, so a step never opens a second pull request even after its first was closed; then any open
-  pull request for the head and base, whoever opened it, unchanged; and only otherwise posts, with
-  the marker. GitHub's one-open-pull-request rule makes a race a 422 that fails the attempt, and the
-  retry finds the winner. Cross-fork heads (`OWNER:BRANCH`) throw.
+  `head.sha` after a merge, and the list `GET .../pulls?head=OWNER:BRANCH&state=all` filters on the
+  owner-qualified head, so a fork's branch of the same name never matches (the GraphQL `headRefName`
+  filter would). The list uses plain `--paginate` without `--slurp`, as the code-scanning read does,
+  so a failed later page rejects. Head SHAs stay plain strings in the response schemas, so synthesis
+  never fails on them.
+- **Create order.** `pr.create` returns a pull request carrying the step's marker first, in any
+  state and into any base (the list has no `base` filter, which GitHub applies to the current base,
+  so a retargeted pull request still matches), so a step never opens a second pull request even
+  after its first was closed or retargeted; then any unmarked open pull request for the head into
+  the requested base, whoever opened it, unchanged; and only otherwise posts, with the marker.
+  GitHub's one-open-pull-request rule makes a race a 422 that fails the attempt, and the retry finds
+  the winner. Cross-fork heads (`OWNER:BRANCH`) throw.
 - **Edit is check-then-act.** `pr.edit` requires `expectHead`, reads the pull request, returns
   `reason: 'closed'` or `'head-moved'` as data without a write, and otherwise patches only the
   fields that differ; after a committed edit nothing differs, so a retry sends nothing. It carries

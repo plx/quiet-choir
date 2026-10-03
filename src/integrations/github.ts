@@ -406,8 +406,8 @@ export interface GithubThreadWrites {
 export interface GithubPullRequestWrites {
   /**
    * Open a pull request from the same-repository branch `head` into `base`, reconciled: list every
-   * pull request for that head and base in any state, and return one carrying the step's marker,
-   * else an open one (whoever opened it, unchanged; use {@link GithubPullRequestWrites.edit} to
+   * pull request for that head in any state and into any base, and return one carrying the step's
+   * marker (even if it was retargeted), else an open one into `base` (whoever opened it, unchanged; use {@link GithubPullRequestWrites.edit} to
    * change it), with `created: false`. Only when there is neither does it `POST` the pull request,
    * with the marker appended to `body`. A head with an `OWNER:` prefix throws.
    */

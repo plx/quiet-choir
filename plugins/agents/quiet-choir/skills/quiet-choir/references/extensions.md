@@ -421,8 +421,8 @@ re-posts writes its source left unfinished, and a rehearsed `issue.reopen` skips
 [GitHub writes](https://github.com/plx/quiet-choir/blob/main/docs/github.md#writes).
 
 Pull request writes use only `gh api`. `gh.pr.create(id, { head, base, title, body, draft? })`
-returns the pull request carrying its marker in any state, else an open one for the same-repository
-`head` and `base`, and opens one only when there is neither.
+returns the pull request carrying its marker in any state and base, else an open one for the
+same-repository `head` and `base`, and opens one only when there is neither.
 `gh.pr.edit(id, { number, expectHead, title?, body?, base? })` patches only differing fields of an
 open pull request still at `expectHead`, otherwise returning `reason: 'closed'` or `'head-moved'`.
 `gh.pr.merge(id, { number, sha, method? })` sends `PUT .../pulls/N/merge` with `sha` (never

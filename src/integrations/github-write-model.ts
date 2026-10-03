@@ -665,7 +665,7 @@ export interface GithubPrCreateResult {
   readonly state: GithubPrState;
   /**
    * Whether this attempt created it; false when a pull request carrying the step's marker, or an
-   * open one for the same head and base, already existed.
+   * unmarked open one for the same head and base, already existed.
    */
   readonly created: boolean;
 }
@@ -847,17 +847,19 @@ export function pullReadArgv(repo: GithubRepo, number: number): [string, ...stri
 }
 
 /**
- * Every pull request, in any state, from the same-repository branch `head` into `base`. The
- * `head` filter is owner-qualified, so a fork's branch of the same name never matches; both values
- * are URL-encoded, so a branch name cannot add query parameters. Plain `--paginate` without
- * `--slurp`, as for code-scanning alerts: a failed later page leaves the merged array unclosed, so
- * the read rejects instead of returning part of the list. @internal
+ * Every pull request, in any state and into any base, from the same-repository branch `head`.
+ * There is no `base` filter: GitHub applies it to the current base and a pull request can be
+ * retargeted, so a filtered list could hide the step's own marked pull request. The `head` filter
+ * is owner-qualified, so a fork's branch of the same name never matches; the value is URL-encoded,
+ * so a branch name cannot add query parameters. Plain `--paginate` without `--slurp`, as for
+ * code-scanning alerts: a failed later page leaves the merged array unclosed, so the read rejects
+ * instead of returning part of the list. @internal
  */
-export function pullListArgv(repo: GithubRepo, head: string, base: string): [string, ...string[]] {
+export function pullListArgv(repo: GithubRepo, head: string): [string, ...string[]] {
   return apiArgv(
     repo,
     '--paginate',
-    `repos/${repo.owner}/${repo.name}/pulls?head=${encodeURIComponent(`${repo.owner}:${head}`)}&base=${encodeURIComponent(base)}&state=all&per_page=100`,
+    `repos/${repo.owner}/${repo.name}/pulls?head=${encodeURIComponent(`${repo.owner}:${head}`)}&state=all&per_page=100`,
   );
 }
 
@@ -930,7 +932,7 @@ export const pullResponseSchema = z.object({
 export type PullResponse = z.infer<typeof pullResponseSchema>;
 
 /**
- * The pull request list for a head and base. `closed` comes first, so the synthesized row is a
+ * The pull request list for a head, across bases. `closed` comes first, so the synthesized row is a
  * closed pull request without the marker and a rehearsed create takes the create path. @internal
  */
 export const pullListResponseSchema = z.array(
@@ -941,6 +943,7 @@ export const pullListResponseSchema = z.array(
     state: z.enum(['closed', 'open']),
     merged_at: z.string().nullable(),
     body: z.string().nullable(),
+    base: z.object({ ref: z.string() }),
   }),
 );
 
@@ -1021,23 +1024,27 @@ export function pullState(pull: Pick<PullResponse, 'state' | 'merged'>): GithubP
   return pull.merged ? 'merged' : pull.state;
 }
 
-/** What `pr.create` does with the pull requests listed for its head and base. @internal */
+/** What `pr.create` does with the pull requests listed for its head. @internal */
 export type CreateDecision<T> =
   | { readonly kind: 'found-marked'; readonly row: T }
   | { readonly kind: 'found-open'; readonly row: T }
   | { readonly kind: 'create' };
 
 /**
- * `pr.create`'s order: a pull request in any state carrying the step's marker (so a step never
- * opens a second one, even after its first was closed), then any open one for the same head and
- * base, whoever opened it; otherwise create. @internal
+ * `pr.create`'s order: a pull request in any state and into any base carrying the step's marker
+ * (so a step never opens a second one, even after its first was closed or retargeted), then any
+ * unmarked open one into the requested `base`, whoever opened it; otherwise create. @internal
  */
 export function createDecision<
-  T extends { readonly body?: string | null | undefined; readonly state: string },
->(rows: readonly T[], idempotencyKey: string): CreateDecision<T> {
+  T extends {
+    readonly body?: string | null | undefined;
+    readonly state: string;
+    readonly base: { readonly ref: string };
+  },
+>(rows: readonly T[], idempotencyKey: string, base: string): CreateDecision<T> {
   const marked = findMarked(rows, idempotencyKey);
   if (marked !== undefined) return { kind: 'found-marked', row: marked };
-  const open = rows.find((row) => row.state === 'open');
+  const open = rows.find((row) => row.state === 'open' && row.base.ref === base);
   return open === undefined ? { kind: 'create' } : { kind: 'found-open', row: open };
 }
 
