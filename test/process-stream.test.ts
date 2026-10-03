@@ -145,3 +145,69 @@ it('bounds a stalled stream consumer after exit and keeps the ownership record',
   expect(error).toHaveProperty('message', expect.stringContaining('ownership record was retained'));
   expect(release).not.toHaveBeenCalled();
 });
+
+const quietStream = { maxBytes: 1024 * 1024, stdout: () => undefined, stderr: () => undefined };
+
+it('ends a silent child at idleTimeoutMs, well before its wall deadline', async () => {
+  const config = await request(
+    `process.stdin.resume();process.stdin.on('end',()=>{process.stdout.write('init\\n');setInterval(()=>{},1000);});`,
+  );
+  const started = performance.now();
+  await expect(
+    runProcess({ ...config, idleTimeoutMs: 150, killGraceMs: 50, stream: quietStream }),
+  ).rejects.toMatchObject({
+    code: 'QUIET_CHOIR_IDLE_TIMEOUT',
+    message: expect.stringContaining('produced no output for 150ms (idleTimeoutMs)') as unknown,
+  });
+  expect(performance.now() - started).toBeLessThan(config.timeoutMs);
+});
+
+it('never ends output that keeps streaming, however long the total time', async () => {
+  const config = await request(`
+process.stdin.resume();process.stdin.on('end',()=>{
+ let n=0;const timer=setInterval(()=>{process.stdout.write('tick\\n');if(++n===30){clearInterval(timer);}},40);
+});`);
+  // About 1.2 s of output against a 400 ms idle window: three windows, ten times the cadence.
+  // Child startup counts as idleness, so the window leaves room for a loaded machine.
+  const result = await runProcess({ ...config, idleTimeoutMs: 400, stream: quietStream });
+  expect(result.code).toBe(0);
+});
+
+it('does not count a slow consumer holding a chunk as child idleness', async () => {
+  const config = await request(`
+process.stdin.resume();process.stdin.on('end',()=>{
+ let n=0;const timer=setInterval(()=>{process.stdout.write('tick\\n');if(++n===10){clearInterval(timer);}},20);
+});`);
+  let slow = 1;
+  const result = await runProcess({
+    ...config,
+    idleTimeoutMs: 400,
+    stream: {
+      ...quietStream,
+      // The first chunk is held for longer than the idle window while the child keeps writing.
+      stdout: async () => {
+        if (slow-- > 0) await delay(700);
+      },
+    },
+  });
+  expect(result.code).toBe(0);
+  expect(slow).toBeLessThan(0);
+});
+
+it('clears the idle deadline once the leader exits, so a silent leftover is reaped normally', async () => {
+  const config = await request(`
+const {spawn}=require('node:child_process');
+process.stdin.resume();process.stdin.on('end',()=>{
+ spawn(process.execPath,['-e',"process.on('SIGTERM',()=>{});setTimeout(()=>{},5000)"],{stdio:'inherit'});
+ let n=0;const timer=setInterval(()=>{process.stdout.write('tick\\n');if(++n===5){clearInterval(timer);process.exit(0);}},20);
+});`);
+  // The leftover ignores SIGTERM and stays silent until SIGKILL, longer than the idle window.
+  const result = await runProcess({
+    ...config,
+    idleTimeoutMs: 400,
+    killGraceMs: 700,
+    stream: quietStream,
+  });
+  expect(result.code).toBe(0);
+  expect(result.warnings).toContain('Process cleanup escalated to SIGKILL.');
+});
