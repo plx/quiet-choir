@@ -809,6 +809,16 @@ describe('waitPr', () => {
     expect(other.output).toEqual({ status: 'head-moved', headRefOid: head, mergeCommit: null });
   });
 
+  it('maps the deadline to timeout with the last head', async () => {
+    const { runner } = inProcess({ 'pr.state': [{ json: prState('OPEN', OTHER) }] });
+    const result = await run(
+      (gh) =>
+        gh.waitPr('merged', { pr: 350, sha: SHA, until: 'closed', every: 10, timeoutMs: 100 }),
+      runner,
+    );
+    expect(result.output).toEqual({ status: 'timeout', headRefOid: OTHER, mergeCommit: null });
+  });
+
   it('waits through a push with until closed, and ends at the push with until merged', async () => {
     const replies = [
       { json: prState('OPEN') },
@@ -856,6 +866,44 @@ describe('waitChecks', () => {
       failed: [],
       pending: ['Tests'],
     });
+  });
+
+  it('treats a head that sha does not descend from as moved, even inside the stale grace', async () => {
+    for (const [runId, compare] of [
+      ['behind', { json: { status: 'behind' } }],
+      [
+        'unknown',
+        {
+          code: 1,
+          stdout: JSON.stringify({ message: 'Not Found', status: '404' }),
+          stderr: 'gh: Not Found (HTTP 404)',
+        },
+      ],
+    ] as const) {
+      const { runner, log } = inProcess({
+        'pr.view': [{ json: prView({ head: ANCESTOR }) }],
+        'repo.compare': [compare],
+      });
+      const result = await run(
+        (gh) =>
+          gh.waitChecks('ci', {
+            pr: 338,
+            sha: SHA,
+            staleGraceMs: 60_000,
+            every: 5,
+            timeoutMs: 60_000,
+          }),
+        runner,
+        runId,
+      );
+      expect(result.output).toEqual({
+        status: 'head-moved',
+        headRefOid: ANCESTOR,
+        failed: [],
+        pending: [],
+      });
+      expect(log).toEqual(['pr.view', 'repo.compare']);
+    }
   });
 
   it('fails after tolerate + 1 consecutive transient errors with the gh error', async () => {
@@ -1151,6 +1199,60 @@ describe('waitReview', () => {
       untriagedThreads: [],
       openAlerts: [],
     });
+  });
+
+  it('maps the deadline to timeout with the last status of each reviewer', async () => {
+    const { runner } = inProcess({
+      'pr.view': [{ json: prView() }],
+      'issue.comments': [{ json: [summary('⏳ **Running**')] }],
+      'pr.reviews': [{ json: [] }],
+      'issue.reactions': [{ json: [] }],
+    });
+    const result = await run(
+      (gh) =>
+        gh.waitReview('review', {
+          pr: 338,
+          sha: SHA,
+          since: SINCE,
+          reviewers: [codexReviewer()],
+          every: 10,
+          timeoutMs: 100,
+        }),
+      runner,
+    );
+    expect(result.output).toMatchObject({
+      status: 'timeout',
+      headRefOid: SHA,
+      by: [{ name: 'codex', status: 'running' }],
+      untriagedThreads: [],
+      openAlerts: [],
+    });
+  });
+
+  it('keeps reviewers waiting through a stale view inside the grace', async () => {
+    const { runner, log } = inProcess({
+      'pr.view': [{ json: prView({ head: ANCESTOR }) }, { json: prView() }],
+      'repo.compare': [{ stdout: fixture('compare-ahead.json') }],
+      'issue.comments': [{ json: [] }],
+      'pr.reviews': [{ json: [] }],
+      'issue.reactions': [{ json: json('rest-reactions.json') }],
+      ...finalReads,
+    });
+    const result = await run(
+      (gh) =>
+        gh.waitReview('review', {
+          pr: 338,
+          sha: SHA,
+          since: SINCE,
+          reviewers: [codexReviewer()],
+          staleGraceMs: 60_000,
+          every: 5,
+          timeoutMs: 60_000,
+        }),
+      runner,
+    );
+    expect(result.output).toMatchObject({ status: 'clean', headRefOid: SHA });
+    expect(log.slice(0, 3)).toEqual(['pr.view', 'repo.compare', 'pr.view']);
   });
 
   it('fails the wait when a reviewer throws, without tolerating it', async () => {
