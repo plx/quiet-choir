@@ -164,6 +164,7 @@ describe('storage sync boundary', () => {
       await import('../src/index.js'),
       await import('../src/harness-kit.js'),
       await import('../src/integrations/decision.js'),
+      await import('../src/integrations/github.js'),
     ];
     for (const entry of entries)
       for (const name of ['setStorageSyncForTesting', 'syncHandle', 'syncDirectory'])
@@ -174,6 +175,7 @@ describe('storage sync boundary', () => {
     expect(Object.keys(manifest.exports).sort()).toEqual([
       '.',
       './decision',
+      './github',
       './harness-kit',
       './package.json',
     ]);
