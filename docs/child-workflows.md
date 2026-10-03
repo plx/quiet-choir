@@ -8,10 +8,14 @@ agent session merely by entering a frame. See the runnable
 
 Declare `children: [reviewWorkflow]` on the parent to enable
 `ctx.workflow('review', 'review-workflow-name', input)`. Name dispatch checks only that parent's
-declarations and returns JSON; direct definition calls preserve inferred output types. It does not
-search the filesystem registry. Plain function helpers remain useful with `ctx.scope` or
-`ctx.within`; a typed workflow adds validated I/O, a recorded version, profile delegation and a
-visible frame. Do not wrap a child or a multi-effect helper in `ctx.step`.
+declarations. `defineWorkflow` keeps `children` as a tuple, so an undeclared name or a wrong input
+fails typecheck, and the result has the child's output type; a workflow without children rejects
+name dispatch at type level. A helper typed with a bare `WorkflowContext`, or a child typed as an
+erased `WorkflowDeclaration`, falls back to any name with JSON input and output, still validated at
+runtime. Direct definition calls preserve inferred output types. Name dispatch does not search the
+filesystem registry. Plain function helpers remain useful with `ctx.scope` or `ctx.within`; a typed
+workflow adds validated I/O, a recorded version, profile delegation and a visible frame. Do not wrap
+a child or a multi-effect helper in `ctx.step`.
 
 ## Identity and replay
 

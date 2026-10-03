@@ -4,7 +4,10 @@
 - Issue: #64
 
 Amended by #150: a helper's single `ctx.step` or `ctx.wait` may run non-durable, owned commands
-through its callback's or observer's `context.exec`.
+through its callback's or observer's `context.exec`. Amended by #155: `HarnessDefinition` carries
+`capabilityKeys` as a literal tuple type (`defineHarness` infers it), so a strict workflow's
+`ctx.agent(name)` option type omits those keys; a widened list stays permissive at type level. The
+keys are still neither persisted nor digested.
 
 ## Context
 
