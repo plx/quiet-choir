@@ -224,7 +224,8 @@ export const executeFlags: Interfaces.FlagInput<WorkflowExecuteFlags> = {
     description: 'With --json, print the full run record instead of the compact result',
   }),
   profile: Flags.string({
-    description: 'Named limit override, e.g. scout.maxTurns=50; repeatable and sticky on resume',
+    description:
+      'Named limit override, e.g. scout.maxTurns=50 or scout.idleTimeoutMs=120000; repeatable and sticky on resume',
     multiple: true,
   }),
   grant: Flags.string({

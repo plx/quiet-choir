@@ -24,6 +24,7 @@ export const retryPolicySchema = z.strictObject({
 });
 const limits = {
   timeoutMs: duration.optional(),
+  idleTimeoutMs: duration.optional(),
   maxTurns: positive.optional(),
   maxBudgetUsd: z.number().positive().optional(),
   retry: retryPolicySchema.optional(),
@@ -66,9 +67,17 @@ export const policyOverrideSchema = z
   .superRefine((rule, context) => {
     const invalid =
       rule.kind === 'step'
-        ? ['timeoutMs', 'maxTurns', 'maxBudgetUsd', 'model', 'reasoningEffort', 'maxOutputBytes']
+        ? [
+            'timeoutMs',
+            'idleTimeoutMs',
+            'maxTurns',
+            'maxBudgetUsd',
+            'model',
+            'reasoningEffort',
+            'maxOutputBytes',
+          ]
         : rule.kind === 'exec'
-          ? ['maxTurns', 'maxBudgetUsd', 'model', 'reasoningEffort']
+          ? ['idleTimeoutMs', 'maxTurns', 'maxBudgetUsd', 'model', 'reasoningEffort']
           : rule.kind === 'codex'
             ? ['maxTurns', 'maxBudgetUsd']
             : rule.kind === 'claude'
@@ -154,6 +163,7 @@ export function resolvePolicy(
   if (agent) {
     for (const key of [
       'timeoutMs',
+      'idleTimeoutMs',
       'model',
       'maxOutputBytes',
       'killGraceMs',

@@ -89,7 +89,7 @@ function commandLabel(command: ExecSummary['command']): string {
 }
 
 function agentLine(row: RunSummary['agents']['recent'][number]): string {
-  return `${row.status === 'completed' ? '' : `${row.status} `}${row.id}  ${row.harness} ${row.model ?? '(native model)'} effort ${row.effort ?? '-'}${row.profile === null ? '' : ` profile ${row.profile}`}${row.elapsedMs === null ? '' : `  ${duration(row.elapsedMs)}`}  ${row.costUsd === null ? 'unknown cost' : `$${row.costUsd.toFixed(4)}`}`;
+  return `${row.status === 'completed' ? '' : `${row.status} `}${row.id}  ${row.harness} ${row.model ?? '(native model)'} effort ${row.effort ?? '-'}${row.profile === null ? '' : ` profile ${row.profile}`}${row.elapsedMs === null ? '' : `  ${duration(row.elapsedMs)}`}  ${row.costUsd === null ? 'unknown cost' : `$${row.costUsd.toFixed(4)}`}${row.toolUses === undefined ? '' : `  tools ${String(row.toolUses)}`}${row.warnings?.length ? `  warnings: ${row.warnings.join(' ')}` : ''}`;
 }
 
 /** Statuses whose steps already print in full in the step list. */
@@ -175,6 +175,9 @@ export function formatRunSummary(run: RunSummary, verbose = false): string {
           request.limits.timeoutMs === null
             ? null
             : `per-call timeout ${duration(request.limits.timeoutMs)}`,
+          request.limits.idleTimeoutMs == null
+            ? null
+            : `idle timeout ${duration(request.limits.idleTimeoutMs)}`,
           request.limits.maxTurns === null ? null : `${String(request.limits.maxTurns)} turns`,
           request.limits.maxBudgetUsd === null
             ? null

@@ -248,6 +248,7 @@ export class RehearsalHarness extends FixtureHarness {
       call.limits = {
         ...this.cli.policyDefaults(request.harness),
         timeoutMs: call.plan.timeoutMs,
+        ...(call.plan.idleTimeoutMs === null ? {} : { idleTimeoutMs: call.plan.idleTimeoutMs }),
         ...(request.harness === 'claude'
           ? {
               maxTurns: (request.options as ClaudeOptions).maxTurns ?? 10,
@@ -313,7 +314,7 @@ export class RehearsalHarness extends FixtureHarness {
         const defaults = Object.entries(policy.sources)
           .filter(
             ([key, source]) =>
-              ['timeoutMs', 'maxTurns', 'maxBudgetUsd'].includes(key) &&
+              ['timeoutMs', 'idleTimeoutMs', 'maxTurns', 'maxBudgetUsd'].includes(key) &&
               (source === 'harness' || source.startsWith('profile:')),
           )
           .map(([key]) => key);

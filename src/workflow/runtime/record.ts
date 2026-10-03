@@ -475,6 +475,7 @@ const requestSummarySchema = z
     profile: z.string().nullable(),
     limits: z.object({
       timeoutMs: z.number().positive().nullable(),
+      idleTimeoutMs: z.number().positive().nullable().optional(),
       maxTurns: z.number().int().positive().nullable(),
       maxBudgetUsd: z.number().nonnegative().nullable(),
       sandbox: z.string().nullable(),

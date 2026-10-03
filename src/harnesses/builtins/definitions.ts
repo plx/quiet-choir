@@ -13,7 +13,7 @@ export const claudeDefinition: BuiltInHarnesses['claude'] = defineHarness({
   revision: 1,
   options: claudeOptionsSchema as z.ZodType<ClaudeOptions>,
   capabilities: { structuredOutput: 'native', sandbox: false, sessionResume: false },
-  policy: ['timeoutMs', 'maxTurns', 'maxBudgetUsd', 'retry'],
+  policy: ['timeoutMs', 'idleTimeoutMs', 'maxTurns', 'maxBudgetUsd', 'retry'],
   capabilityKeys: claudeCapabilityKeys,
   access: (options) => toolAccess(options.tools ?? []),
 });
@@ -24,7 +24,7 @@ export const codexDefinition: BuiltInHarnesses['codex'] = defineHarness({
   revision: 1,
   options: codexOptionsSchema as z.ZodType<CodexOptions>,
   capabilities: { structuredOutput: 'native', sandbox: true, sessionResume: false },
-  policy: ['timeoutMs', 'retry'],
+  policy: ['timeoutMs', 'idleTimeoutMs', 'retry'],
   capabilityKeys: codexCapabilityKeys,
   access: (options) => (options.sandbox === 'workspace-write' ? 'write' : 'read'),
 });

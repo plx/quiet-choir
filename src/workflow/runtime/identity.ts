@@ -29,6 +29,7 @@ export function agentIdentity(
   Reflect.deleteProperty(options, 'profile');
   Reflect.deleteProperty(options, 'retry');
   Reflect.deleteProperty(options, 'timeoutMs');
+  Reflect.deleteProperty(options, 'idleTimeoutMs');
   for (const key of definition?.policy ?? []) Reflect.deleteProperty(options, key);
   if (options.worktree !== undefined)
     Object.assign(options, {

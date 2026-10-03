@@ -4,7 +4,7 @@ import type { WorkflowDeclaration } from '../src/workflow/runtime/child-model.js
 import { delegateCapabilities } from '../src/workflow/runtime/child-profiles.js';
 import { profileGrantDigest, resolveCapabilities } from '../src/workflow/runtime/profiles.js';
 import type { AgentProfile } from '../src/workflow/runtime/profiles-model.js';
-import type { ClaudeOptions } from '../src/workflow/runtime/model.js';
+import type { ClaudeOptions, ExecutionPolicy } from '../src/workflow/runtime/model.js';
 
 function declaration(
   name: string,
@@ -61,6 +61,28 @@ it('clamps a delegated profile to the root ceiling before a grandchild can inher
   expect(
     grandchild.limits('worker', { maxTurns: 99, maxBudgetUsd: 99, timeoutMs: 99_000 }),
   ).toEqual({ maxTurns: 3, maxBudgetUsd: 3, timeoutMs: 3_000 });
+});
+
+it('clamps a delegated idle deadline to the parent ceiling', () => {
+  const root = resolveCapabilities({
+    profiles: { worker: { extends: 'readonly', idleTimeoutMs: 1_000 } },
+  });
+  const ceiling = root.profiles['worker'];
+  if (!ceiling) throw new Error('root ceiling missing');
+  const child = delegateCapabilities(
+    declaration('child', { worker: { extends: 'readonly', idleTimeoutMs: 99_000 } }),
+    root,
+    ['worker'],
+    { worker: profileGrantDigest(ceiling) },
+    [],
+    {},
+  );
+  expect(child.manifest.profiles['worker']?.idleTimeoutMs).toBe(1_000);
+  expect(child.limits('worker', { idleTimeoutMs: 99_000 }).idleTimeoutMs).toBe(1_000);
+  expect(child.limits('worker', { idleTimeoutMs: 500 }).idleTimeoutMs).toBe(500);
+  // An unset child deadline inherits the parent ceiling rather than running without one.
+  const unset: ExecutionPolicy = {};
+  expect(child.limits('worker', unset).idleTimeoutMs).toBe(1_000);
 });
 
 it('keeps a failing parent denial policy for omitted child policies and refuses explicit warn', () => {

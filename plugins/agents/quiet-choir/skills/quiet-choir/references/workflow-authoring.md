@@ -238,25 +238,27 @@ also useful when only the individual call's fallback must be durable.
 
 For transient retries, use one step ID with `retry` rather than a loop of throwing `ask/0`, `ask/1`
 calls. `retry.on` limits retries to listed error kinds; `'transient'` stands for `rate-limit`,
-`overloaded`, and `timeout`, and can be combined with other kinds. Omit `on` to retry all effect
-failures except cancellation, configuration, checkpoint-write, and `invalid-request` failures (list
-`invalid-request` explicitly to retry it), or use `[]` to retry none. `transient` is only a filter:
-saved failures and attempts never have that kind. Harness process failures (`process`, including any
-CLI launch failure such as a missing or non-executable binary), `authentication`, and `permission`
-are ordinary effect failures: they are settled under `onError: 'return'`, and `retry.on` should
-exclude them. It is execution policy and can be changed on resume. Each attempt retains its error
-and category. Every agent retry starts a fresh session; previous filesystem edits remain.
+`overloaded`, `timeout`, and `idle-timeout`, and can be combined with other kinds. Omit `on` to
+retry all effect failures except cancellation, configuration, checkpoint-write, and
+`invalid-request` failures (list `invalid-request` explicitly to retry it), or use `[]` to retry
+none. `transient` is only a filter: saved failures and attempts never have that kind. Harness
+process failures (`process`, including any CLI launch failure such as a missing or non-executable
+binary), `authentication`, and `permission` are ordinary effect failures: they are settled under
+`onError: 'return'`, and `retry.on` should exclude them. It is execution policy and can be changed
+on resume. Each attempt retains its error and category. Every agent retry starts a fresh session;
+previous filesystem edits remain.
 
-Kinds include `timeout`, `rate-limit`, `overloaded`, `invalid-request`, `schema`, `authentication`,
-`permission`, `turn-limit`, `budget-limit`, `output-limit`, `process`, `protocol`, `cancelled`, and
-`unknown`. HTTP 400/404/422 is `invalid-request` (an unknown model, an invalid effort or option) and
-500/502/503/529 is `overloaded`. Classification uses structured protocol metadata, process codes, or
-error types. The Codex adapter's protocol layer also classifies Codex's own `rate limit exceeded`
-terminal errors and reconnect notices as `rate-limit`; plain messages from other errors are still
-never guessed. Custom adapters can set `HarnessErrorDetails.kind`, or `ProtocolFailure.kind` from
-their protocol parser; the first wins over the second, which wins over the HTTP status. Broadly
-typed options with a dynamic `onError` produce a union result; preserve the literal mode (or
-explicitly use `onError: 'throw'`) to narrow it.
+Kinds include `timeout`, `idle-timeout` (no output for `idleTimeoutMs`), `rate-limit`, `overloaded`,
+`invalid-request`, `schema`, `authentication`, `permission`, `turn-limit`, `budget-limit`,
+`output-limit`, `process`, `protocol`, `cancelled`, and `unknown`. HTTP 400/404/422 is
+`invalid-request` (an unknown model, an invalid effort or option) and 500/502/503/529 is
+`overloaded`. Classification uses structured protocol metadata, process codes, or error types. The
+Codex adapter's protocol layer also classifies Codex's own `rate limit exceeded` terminal errors and
+reconnect notices as `rate-limit`; plain messages from other errors are still never guessed. Custom
+adapters can set `HarnessErrorDetails.kind`, or `ProtocolFailure.kind` from their protocol parser;
+the first wins over the second, which wins over the HTTP status. Broadly typed options with a
+dynamic `onError` produce a union result; preserve the literal mode (or explicitly use
+`onError: 'throw'`) to narrow it.
 
 Do not use `Promise.race` or `Promise.any` over durable operations. Replay timing can pick a
 different winner, and the runner drains losing work instead of cancelling it. Use an agent's

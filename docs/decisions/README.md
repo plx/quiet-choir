@@ -86,3 +86,5 @@ part of the documentation.
 - [0040: Grade harness versions against a tested range](0040-grade-harness-versions-against-a-tested-range.md)
 
 - [0041: Static durability lint at load time](0041-static-durability-lint.md)
+
+- [0042: Idle deadlines and tool-use diagnostics from the attempt stream](0042-idle-deadlines-and-tool-use-diagnostics.md)

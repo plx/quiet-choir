@@ -107,12 +107,12 @@ signal that is not the run's own checkpoint failure is a scope cancellation. Can
 a callback's own `AbortError`), checkpoint failures and `ConfigurationError` are fatal, so they are
 never retried and never settled; `ConfigurationError` is also marked fatal so it never becomes
 settled map data. `retry.on` omitted retries every kind except `invalid-request`, the `'transient'`
-filter expands to `rate-limit`, `overloaded` and `timeout`, and `[]` disables retry, all bounded by
-`maxAttempts`. A failure settles only when it is not fatal, is exhausted or filtered out of retry,
-and the effect uses `onError: 'return'`. The runner gathers the facts, calls the function once and
-keeps saves, events, cancellation errors and backoff. An ESLint import guard keeps the module free
-of I/O by allowing value imports only from `step-error.ts` and `configuration-error.ts`, and
-`test/attempt-failure.test.ts` is the executable table of the rules.
+filter expands to `rate-limit`, `overloaded`, `timeout` and `idle-timeout`, and `[]` disables retry,
+all bounded by `maxAttempts`. A failure settles only when it is not fatal, is exhausted or filtered
+out of retry, and the effect uses `onError: 'return'`. The runner gathers the facts, calls the
+function once and keeps saves, events, cancellation errors and backoff. An ESLint import guard keeps
+the module free of I/O by allowing value imports only from `step-error.ts` and
+`configuration-error.ts`, and `test/attempt-failure.test.ts` is the executable table of the rules.
 
 The replay and redefinition rules live in one pure function, `decideReplay` in
 `src/workflow/runtime/replay-decision.ts`, which returns an optional format-one migration and one

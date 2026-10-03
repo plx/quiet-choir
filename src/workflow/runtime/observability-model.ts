@@ -36,6 +36,8 @@ export interface RequestSummary {
   readonly limits: {
     /** Per-call deadline; admission waiting is outside this deadline. */
     readonly timeoutMs: number | null;
+    /** Output idle deadline; null when off. Absent in records before #109. */
+    readonly idleTimeoutMs?: number | null;
     /** Claude turn limit. */
     readonly maxTurns: number | null;
     /** Claude per-call budget. */

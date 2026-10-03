@@ -86,6 +86,8 @@ export interface CliHarnessPlan extends CliArgumentPlan {
   readonly stdin: string;
   /** Resolved per-call deadline in milliseconds. */
   readonly timeoutMs: number;
+  /** Resolved idle deadline (no stdout/stderr for this long), or null when unset. */
+  readonly idleTimeoutMs: number | null;
   /** Legacy alias for maxRetainedBytes. */
   readonly maxOutputBytes: number;
   /** Retained parser state and single-line byte limit. */
@@ -176,6 +178,7 @@ export class NativeCliHarness implements Harness {
       cwd: request.cwd,
       stdin: request.options.prompt,
       timeoutMs: request.options.timeoutMs ?? defaultTimeoutMs,
+      idleTimeoutMs: request.options.idleTimeoutMs ?? null,
       maxOutputBytes:
         context?.policy?.maxRetainedBytes ?? context?.policy?.maxOutputBytes ?? this.maxOutputBytes,
       maxRetainedBytes:
@@ -303,6 +306,7 @@ export class NativeCliHarness implements Harness {
         cwd: plan.cwd,
         input: plan.stdin,
         timeoutMs: plan.timeoutMs,
+        ...(plan.idleTimeoutMs === null ? {} : { idleTimeoutMs: plan.idleTimeoutMs }),
         maxOutputBytes: plan.maxOutputBytes,
         stream: {
           maxBytes: plan.maxStreamBytes,

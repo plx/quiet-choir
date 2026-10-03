@@ -24,6 +24,7 @@ const shared = {
   model: z.string().optional(),
   cwd: z.string().optional(),
   timeoutMs: positiveInteger.max(2_147_483_647, 'must not exceed 2147483647ms').optional(),
+  idleTimeoutMs: positiveInteger.max(2_147_483_647, 'must not exceed 2147483647ms').optional(),
   retry: retryPolicySchema.optional(),
 };
 

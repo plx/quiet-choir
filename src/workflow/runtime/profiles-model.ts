@@ -7,10 +7,12 @@ export type BuiltinProfile = 'text' | 'readonly' | 'edit';
 /** Capability classification; exec includes arbitrary command or unknown tool execution. */
 export type AccessClass = 'none' | 'read' | 'write' | 'exec';
 
-/** Resource limits available to profile launch overrides. Codex uses only timeoutMs. */
+/** Resource limits available to profile launch overrides. Codex uses only the two deadlines. */
 export interface ProfileLimits {
   /** Wall-clock deadline, enforced by the harness. */
   readonly timeoutMs?: number;
+  /** Idle deadline: no native output for this long ends the attempt (kind idle-timeout). Off by default. */
+  readonly idleTimeoutMs?: number;
   /** Claude agent turn cap. */
   readonly maxTurns?: number;
   /** Claude per-call spend cap in USD. */
@@ -29,7 +31,11 @@ export interface AgentProfile extends ProfileLimits {
   readonly description?: string;
   /** Optional assertion of the inferred maximum access across both providers. */
   readonly access?: AccessClass;
-  /** Whether this role expects tools; reserved for tool-count diagnostics once available. */
+  /**
+   * Whether this role expects tools. A completed attempt with a known zero tool count then records
+   * a `no-tool-use` step warning. Defaults to true when the role grants more than the text baseline
+   * (any Claude tool, or a Codex sandbox beyond read-only).
+   */
   readonly expectsToolUse?: boolean;
   /** Warn by default, or fail on reported permission denials. */
   readonly onPermissionDenied?: 'warn' | 'fail';

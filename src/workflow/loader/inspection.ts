@@ -46,6 +46,18 @@ export interface AgentRow {
   readonly elapsedMs: number | null;
   /** Sum of reported costs of this step's attempts; null when none reported a cost. */
   readonly costUsd: number | null;
+  /**
+   * Tool calls the latest attempt's adapter counted; absent for older records and adapters that
+   * report no count, which keeps the bounded summary compact.
+   */
+  readonly toolUses?: number;
+  /**
+   * The step's warnings, such as `no-tool-use` or permission denials; absent when none. Bounded:
+   * at most `maxAgentRowWarnings` warnings, each cut to `maxAgentRowWarningChars`, plus a final
+   * `+K more warnings` entry when some were dropped. A `no-tool-use` warning is always kept. The
+   * full list is in `inspect --full` or the step record.
+   */
+  readonly warnings?: readonly string[];
 }
 
 /** Agent calls rolled up by their requested harness, model, effort and profile. @internal */
@@ -66,6 +78,12 @@ export interface AgentGroup {
 
 /** Most recent agent rows kept in a summary, whatever the run size. @internal */
 export const maxRecentAgents = 50;
+
+/** Warnings kept on one compact agent row; the rest are counted, not copied. @internal */
+export const maxAgentRowWarnings = 3;
+
+/** Characters kept of each warning on a compact agent row. @internal */
+export const maxAgentRowWarningChars = 200;
 
 /** Compact plain-data projection, shared by text, JSON summary, watch, and list. @internal */
 export interface RunSummary {
@@ -204,6 +222,40 @@ function stepElapsed(step: StepRecord, now: number): number | null {
     : (step.durationMs ?? null);
 }
 
+/**
+ * Bound a step's warnings for the compact summary: keep any `no-tool-use` warning, fill the other
+ * slots in record order, cut each to the character cap and count the dropped ones.
+ */
+function boundedWarnings(warnings: readonly string[]): string[] {
+  const priority = (warning: string): boolean => warning.startsWith('no-tool-use:');
+  const kept = new Set<number>();
+  for (const wantPriority of [true, false]) {
+    warnings.forEach((warning, index) => {
+      if (kept.size < maxAgentRowWarnings && priority(warning) === wantPriority) kept.add(index);
+    });
+  }
+  const rows = warnings
+    .filter((_, index) => kept.has(index))
+    .map((warning) =>
+      warning.length > maxAgentRowWarningChars
+        ? `${warning.slice(0, maxAgentRowWarningChars - 1)}…`
+        : warning,
+    );
+  const dropped = warnings.length - kept.size;
+  return dropped > 0 ? [...rows, `+${String(dropped)} more warnings`] : rows;
+}
+
+/** The latest attempt's reported tool count and the step's warnings, each only when present. */
+function optionalAgentFields(step: StepRecord): Pick<AgentRow, 'toolUses' | 'warnings'> {
+  const value = step.attemptHistory?.at(-1)?.diagnostics?.['toolUses'];
+  return {
+    ...(typeof value === 'number' && Number.isSafeInteger(value) && value >= 0
+      ? { toolUses: value }
+      : {}),
+    ...(step.warnings?.length ? { warnings: boundedWarnings(step.warnings) } : {}),
+  };
+}
+
 /** Agent calls only: fork-reused steps are excluded, as usage excludes them. */
 function summarizeAgents(
   run: RunRecord,
@@ -259,6 +311,7 @@ function summarizeAgents(
       profile,
       elapsedMs: stepElapsed(step, now),
       costUsd: cost({ [id]: step }),
+      ...optionalAgentFields(step),
     })),
   };
 }

@@ -31,6 +31,14 @@ export interface ProcessRequest {
   readonly input: string;
   /** Leader wall-clock deadline in milliseconds. */
   readonly timeoutMs: number;
+  /**
+   * Optional idle deadline in milliseconds. It is armed once the input has been fully flushed to
+   * the child's stdin, or stdin has closed (after durable registration), and re-armed by every
+   * stdout/stderr chunk, so neither input-write nor stream-consumer backpressure counts as
+   * idleness. On expiry the group is terminated like the wall deadline, with code
+   * `QUIET_CHOIR_IDLE_TIMEOUT`.
+   */
+  readonly idleTimeoutMs?: number;
   /** Combined stdout/stderr size limit in bytes. */
   readonly maxOutputBytes: number;
   /** Grace period between SIGTERM and SIGKILL. */
@@ -98,6 +106,8 @@ export function runProcess(request: ProcessRequest): Promise<ProcessResult> {
     let drain: NodeJS.Timeout | undefined;
     let delivery: NodeJS.Timeout | undefined;
     let poll: NodeJS.Timeout | undefined;
+    let idle: NodeJS.Timeout | undefined;
+    let idleArmed = false;
     let cleaning = false;
     const descriptor: HarnessProcess | undefined =
       child.pid === undefined
@@ -137,6 +147,7 @@ export function runProcess(request: ProcessRequest): Promise<ProcessResult> {
       if (settled) return;
       settled = true;
       clearTimeout(deadline);
+      clearTimeout(idle);
       clearTimeout(escalation);
       clearTimeout(backstop);
       clearTimeout(drain);
@@ -265,6 +276,28 @@ export function runProcess(request: ProcessRequest): Promise<ProcessResult> {
         ),
       );
     }, request.timeoutMs);
+    const idleTimeoutMs = request.idleTimeoutMs;
+    const armIdle = (): void => {
+      if (idleTimeoutMs === undefined || !idleArmed || settled || failure || exited) return;
+      clearTimeout(idle);
+      idle = setTimeout(() => {
+        if (settled || failure || exited) return;
+        // A chunk still held by the consumer is quiet-choir's backpressure, not the child's
+        // silence; its settlement re-arms the timer.
+        if (pipeDeliveries.size > 0) {
+          armIdle();
+          return;
+        }
+        stop(
+          Object.assign(
+            new Error(
+              `${request.binary} produced no output for ${String(idleTimeoutMs)}ms (idleTimeoutMs).`,
+            ),
+            { code: 'QUIET_CHOIR_IDLE_TIMEOUT' },
+          ),
+        );
+      }, idleTimeoutMs);
+    };
     const subscription = addAbortListener(request.signal, abort);
     const collect = (capture: OutputCapture, chunk: Buffer): void => {
       bytes += chunk.length;
@@ -309,16 +342,19 @@ export function runProcess(request: ProcessRequest): Promise<ProcessResult> {
             pipeDeliveries.delete(pipe);
             if (!settled) pipe.resume();
           }
+          armIdle();
           maybeFinish();
         });
       pipeDeliveries.set(pipe, pending);
       deliveries.add(pending);
     };
     child.stdout.on('data', (chunk: Buffer) => {
+      armIdle();
       collect(stdout, chunk);
       if (request.stream) deliver(child.stdout, request.stream.stdout, chunk);
     });
     child.stderr.on('data', (chunk: Buffer) => {
+      armIdle();
       collect(stderr, chunk);
       if (request.stream) deliver(child.stderr, request.stream.stderr, chunk);
     });
@@ -355,6 +391,7 @@ export function runProcess(request: ProcessRequest): Promise<ProcessResult> {
       code = exitCode;
       signal = exitSignal;
       clearTimeout(deadline);
+      clearTimeout(idle);
       drain = setTimeout(() => {
         if (pipesEnded !== 2) {
           pipesTruncated = true;
@@ -381,7 +418,21 @@ export function runProcess(request: ProcessRequest): Promise<ProcessResult> {
     }
     void Promise.resolve(registration).then(
       () => {
-        if (!settled && !failure) child.stdin.end(request.input);
+        if (settled || failure) return;
+        // The child cannot produce protocol output before it has its input, and registration
+        // (a checkpoint save) may be slow under load, so idleness is measured once stdin has been
+        // fully flushed to the child ('finish') or closed. A large prompt the child reads slowly is
+        // input backpressure, not idleness. A child that closes stdin early never emits 'finish'
+        // (its EPIPE is swallowed above), so 'close' and 'error' also start the timer.
+        const startIdle = (): void => {
+          if (idleArmed) return;
+          idleArmed = true;
+          armIdle();
+        };
+        child.stdin.once('finish', startIdle);
+        child.stdin.once('close', startIdle);
+        child.stdin.once('error', startIdle);
+        child.stdin.end(request.input);
       },
       (error: unknown) => {
         // Registration may itself abort the run synchronously. Preserve its infrastructure

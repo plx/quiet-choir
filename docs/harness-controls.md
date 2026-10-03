@@ -110,6 +110,47 @@ interruption cancels a pending snapshot as ordinary cancellation. Either way, an
 stuck on a stalled mount is abandoned rather than awaited, and its handle is closed in the
 background if the operation ever returns.
 
+## Idle deadline and tool-use diagnostics
+
+`idleTimeoutMs` ends an agent attempt whose CLI writes nothing to stdout or stderr for that many
+milliseconds. It is off by default. Set it like `timeoutMs`: in workflow `defaults`, on a profile,
+on a call, with `--profile name.idleTimeoutMs=N` (`RunOptions.profileOverrides`), or with an agent
+`--policy` rule (later sources win in the same order as `timeoutMs`; `kind: 'step'` and `'exec'`
+rules reject it). It is execution policy, never step identity, so a resume can raise it without a
+code change; child workflows inherit the parent's value as a ceiling. The attempt records the
+effective value and its source in `attemptHistory[].policy` and `sources`, and `inspect` shows it as
+`idle timeout`.
+
+The process layer enforces it. The timer starts once the prompt has been fully flushed to the CLI's
+stdin, or stdin has closed (after durable process registration; a large prompt the CLI reads slowly
+does not count, but CLI startup otherwise does) and restarts on every output chunk, so a call that
+keeps streaming is never ended by it, however long it runs. While quiet-choir's own transcript or
+parser still holds a chunk, that backpressure is not counted. On expiry the group receives SIGTERM,
+then SIGKILL after the cleanup grace, as for `timeoutMs`
+([process lifecycle](process-lifecycle.md#deadlines-and-cleanup)). The failure has kind
+`idle-timeout`, distinct from `timeout`, and its message suggests
+`--resume --profile <role>.idleTimeoutMs=<double>`. `retry.on: ['idle-timeout']` retries only
+stalls, and `'transient'` includes them. Size the deadline above the longest silent stretch: a long
+command under Codex, a quiet tool, or long silent reasoning ends the same way on every retry, so a
+too-small deadline turns `'transient'` retries into repeated failures.
+
+Each attempt's `diagnostics.toolUses` counts tool calls from the parsed stream (not from the lossy
+progress events): Claude assistant `tool_use` blocks by ID, without the `StructuredOutput` tool that
+carries structured output, and distinct Codex `command_execution`, `file_change`, `mcp_tool_call`
+and `web_search` items, counted from the header when the parser skips an oversized line. A skipped
+oversized Claude assistant line leaves a zero count unknown (`null`). When the profile's
+`expectsToolUse` is true and a completed attempt reports `toolUses: 0`, the step records a
+`no-tool-use` warning, which the completed `agent.finished` event carries in `warnings` and the CLI
+logs at warn level ([agent profiles](agent-profiles.md)). The warning never fails the attempt.
+
+Custom adapters own both features. A `HarnessRequest` carries the resolved `idleTimeoutMs` in its
+options when the adapter's option schema has that key (`defineHarness` adds it); pass it to
+`runProcess` from `harness-kit` to get the same enforcement, and throw an error with code
+`QUIET_CHOIR_IDLE_TIMEOUT` (or a `HarnessError` of kind `idle-timeout`) for a stall detected another
+way. Report `toolUses` in the response diagnostics to enable the warning; without it the count is
+unknown and nothing warns. See
+[ADR 0042](decisions/0042-idle-deadlines-and-tool-use-diagnostics.md).
+
 ## Configuration doctor
 
 ```sh

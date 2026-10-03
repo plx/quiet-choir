@@ -1,7 +1,8 @@
+import { readFileSync } from 'node:fs';
 import { chmod, mkdtemp, readFile, readdir, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, relative } from 'node:path';
-import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   CliHarness,
   CheckpointError,
@@ -10,6 +11,7 @@ import {
   FileRunStore,
   defineWorkflow,
   deriveAgentSessionId,
+  inspectRunOwnership,
   readRun,
   runWorkflow,
   z,
@@ -649,7 +651,7 @@ it('keeps diagnostic keys and cap policy out of completed agent identity', async
   });
   const second = await runWorkflow(definition, {
     ...setup('second'),
-    policy: [{ transcripts: 'off', maxRetainedBytes: 2048 }],
+    policy: [{ transcripts: 'off', maxRetainedBytes: 8192 }],
     harness: {
       invoke: () =>
         Promise.resolve({
@@ -713,3 +715,347 @@ it.each([{ maxRetainedBytes: 64 }, { maxStreamBytes: 64 }] satisfies PolicyOverr
     ).rejects.toMatchObject({ code: 'QUIET_CHOIR_OUTPUT_LIMIT' });
   },
 );
+
+function fixtureStdout(name: string): string[] {
+  const fixture = JSON.parse(
+    readFileSync(new URL(`./fixtures/harness/${name}.json`, import.meta.url), 'utf8'),
+  ) as { readonly stdout: string };
+  return fixture.stdout.split('\n').filter((line) => line.trim() !== '');
+}
+const claudeInit = { type: 'system', subtype: 'init', model: 'fake', claude_code_version: '9.9.9' };
+const claudeText = { type: 'assistant', message: { content: [{ type: 'text', text: 'hi' }] } };
+const claudeTool = (id: string, name = 'Read') => ({
+  type: 'assistant',
+  message: { content: [{ type: 'tool_use', id, name, input: {} }] },
+});
+const codexItem = (event: string, id: string, type: string) => ({
+  type: event,
+  item: { id, type, ...(type === 'agent_message' ? { text: 'hello' } : { command: 'ls' }) },
+});
+const codexLines = (...items: unknown[]) => {
+  const [started, turn, message, completed] = fixtureStdout('codex-text-success');
+  return [started, turn, ...items, message, completed];
+};
+
+/** A fake CLI that prints these protocol lines, then runs `after` (for example, to hang). */
+async function protocolBinary(lines: readonly unknown[], after = ''): Promise<string> {
+  const text = lines.map((line) => (typeof line === 'string' ? line : JSON.stringify(line)));
+  return binary(`for (const line of ${JSON.stringify(text)}) console.log(line);\n${after}`);
+}
+
+async function toolUseRun(
+  harness: 'claude' | 'codex',
+  lines: readonly unknown[],
+  profile: 'text' | 'readonly' = 'readonly',
+  structured = false,
+  runId = 'stream',
+  policy: PolicyOverride[] = [],
+) {
+  const agent = await protocolBinary(lines);
+  const events: WorkflowEvent[] = [];
+  const definition = defineWorkflow({
+    ...base,
+    async run(ctx) {
+      if (structured)
+        return JSON.stringify(
+          await ctx.claude.value('task', {
+            prompt: 'answer',
+            profile,
+            schema: z.object({ answer: z.string() }),
+          }),
+        );
+      return (await ctx[harness].text('task', { prompt: 'answer', profile })).output;
+    },
+  });
+  const run = await runWorkflow(definition, {
+    ...setup(runId),
+    harness: new CliHarness({ claudeBinary: agent, codexBinary: agent, killGraceMs: 20 }),
+    ...(policy.length > 0 ? { policy } : {}),
+    onEvent: (event) => {
+      events.push(event);
+    },
+  });
+  const step = required(run.steps['task']);
+  return {
+    step,
+    toolUses: step.attemptHistory?.[0]?.diagnostics?.['toolUses'],
+    finished: events.filter((event) => event.type === 'agent.finished'),
+  };
+}
+
+const noToolUse = (harness: string, profile = 'readonly') =>
+  `no-tool-use: Profile ${profile} expects tool use, but the ${harness} attempt completed without a tool call.`;
+
+it('warns when a Claude attempt that expects tools completes without one', async () => {
+  const { step, toolUses, finished } = await toolUseRun('claude', [
+    claudeInit,
+    claudeText,
+    ...fixtureStdout('claude-text-success'),
+  ]);
+  expect(toolUses).toBe(0);
+  expect(step.warnings).toEqual([noToolUse('claude')]);
+  expect(finished).toMatchObject([{ outcome: 'completed', warnings: [noToolUse('claude')] }]);
+});
+
+it('counts a Claude tool_use block once, even when its ID repeats, and does not warn', async () => {
+  const { step, toolUses, finished } = await toolUseRun('claude', [
+    claudeInit,
+    claudeTool('toolu_1'),
+    claudeTool('toolu_1'),
+    claudeText,
+    ...fixtureStdout('claude-text-success'),
+  ]);
+  expect(toolUses).toBe(1);
+  expect(step.warnings).toBeUndefined();
+  expect(finished[0]).not.toHaveProperty('warnings');
+});
+
+it('does not count the synthetic StructuredOutput tool of a structured Claude call', async () => {
+  const { step, toolUses } = await toolUseRun(
+    'claude',
+    [
+      claudeInit,
+      claudeTool('toolu_s', 'StructuredOutput'),
+      ...fixtureStdout('claude-structured-success'),
+    ],
+    'readonly',
+    true,
+  );
+  expect(toolUses).toBe(0);
+  expect(step.warnings).toEqual([noToolUse('claude')]);
+});
+
+it('warns for a Codex attempt with only a message, and counts a started+completed item once', async () => {
+  const silent = await toolUseRun('codex', codexLines());
+  expect(silent.toolUses).toBe(0);
+  expect(silent.step.warnings).toEqual([noToolUse('codex')]);
+  const tool = await toolUseRun(
+    'codex',
+    codexLines(
+      codexItem('item.started', 'item_1', 'command_execution'),
+      codexItem('item.completed', 'item_1', 'command_execution'),
+    ),
+    'readonly',
+    false,
+    'stream-tool',
+  );
+  expect(tool.toolUses).toBe(1);
+  expect(tool.step.warnings).toBeUndefined();
+});
+
+describe('oversized skipped lines', () => {
+  const cap: PolicyOverride[] = [{ maxRetainedBytes: 8192 }];
+  const huge = 'x'.repeat(20_000);
+  const bigCodex = (event: string, id: string | undefined, type: string, extra = {}) => ({
+    type: event,
+    item: { ...(id === undefined ? {} : { id }), type, aggregated_output: huge, ...extra },
+  });
+
+  it('counts a skipped oversized Codex tool item from its header, so no warning', async () => {
+    const run = await toolUseRun(
+      'codex',
+      codexLines(bigCodex('item.completed', 'command', 'command_execution')),
+      'readonly',
+      false,
+      'stream-big',
+      cap,
+    );
+    expect(run.step.attemptHistory?.[0]?.diagnostics).toMatchObject({ skippedLines: 1 });
+    expect(run.toolUses).toBe(1);
+    expect(run.step.warnings).toBeUndefined();
+  });
+
+  it('counts a started item and its oversized completion once, with or without an ID', async () => {
+    const paired = await toolUseRun(
+      'codex',
+      codexLines(
+        codexItem('item.started', 'item_1', 'command_execution'),
+        bigCodex('item.completed', 'item_1', 'command_execution'),
+        bigCodex('item.updated', 'item_2', 'file_change'),
+        bigCodex('item.completed', 'item_2', 'file_change'),
+        bigCodex('item.completed', undefined, 'mcp_tool_call'),
+      ),
+      'readonly',
+      false,
+      'stream-big-pair',
+      cap,
+    );
+    expect(paired.toolUses).toBe(3);
+    expect(paired.step.warnings).toBeUndefined();
+  });
+
+  it('does not count skipped Codex items that are not tool calls', async () => {
+    const { step, toolUses } = await toolUseRun(
+      'codex',
+      codexLines(bigCodex('item.completed', 'think', 'reasoning')),
+      'readonly',
+      false,
+      'stream-big-reasoning',
+      cap,
+    );
+    expect(toolUses).toBe(0);
+    expect(step.warnings).toEqual([noToolUse('codex')]);
+  });
+
+  it('reports an unknown count when an oversized Claude assistant line is skipped', async () => {
+    const oversized = {
+      type: 'assistant',
+      message: {
+        content: [
+          { type: 'text', text: huge },
+          { type: 'tool_use', id: 'toolu_big', name: 'Read', input: {} },
+        ],
+      },
+    };
+    const { step, toolUses } = await toolUseRun(
+      'claude',
+      [claudeInit, oversized, claudeText, ...fixtureStdout('claude-text-success')],
+      'readonly',
+      false,
+      'stream-big-claude',
+      cap,
+    );
+    expect(step.attemptHistory?.[0]?.diagnostics).toMatchObject({ skippedLines: 1 });
+    expect(toolUses).toBeNull();
+    expect(step.warnings).toBeUndefined();
+  });
+
+  it('keeps a positive Claude count when a later assistant line is skipped', async () => {
+    const { step, toolUses } = await toolUseRun(
+      'claude',
+      [
+        claudeInit,
+        claudeTool('toolu_1'),
+        { type: 'assistant', message: { content: [{ type: 'text', text: huge }] } },
+        ...fixtureStdout('claude-text-success'),
+      ],
+      'readonly',
+      false,
+      'stream-big-claude-count',
+      cap,
+    );
+    expect(toolUses).toBe(1);
+    expect(step.warnings).toBeUndefined();
+  });
+});
+
+it.each(['claude', 'codex'] as const)(
+  'does not warn under the text profile, which no longer expects tools (%s)',
+  async (harness) => {
+    const { step, toolUses } = await toolUseRun(
+      harness,
+      harness === 'claude'
+        ? [claudeInit, claudeText, ...fixtureStdout('claude-text-success')]
+        : codexLines(),
+      'text',
+    );
+    expect(toolUses).toBe(0);
+    expect(step.warnings).toBeUndefined();
+  },
+);
+
+it('keeps the discovered Codex CLI version when the stream reports none', async () => {
+  const { step } = await toolUseRun('codex', codexLines(), 'text');
+  expect(step.attemptHistory?.[0]?.diagnostics).toMatchObject({ cliVersion: '1.2.3' });
+});
+
+describe('idle deadline', () => {
+  const hang = 'setInterval(() => {}, 1000);';
+  const stalled = (
+    retry?: { maxAttempts: number; delayMs: number; on: ('timeout' | 'idle-timeout')[] },
+    idle = 200,
+  ) =>
+    defineWorkflow({
+      ...base,
+      defaults: { idleTimeoutMs: idle },
+      async run(ctx) {
+        return (await ctx.claude.text('stall', { prompt: 'x', ...(retry ? { retry } : {}) }))
+          .output;
+      },
+    });
+
+  it('ends a silent Claude CLI with kind idle-timeout and a resume hint, and reaps it', async () => {
+    const agent = await protocolBinary([claudeInit], hang);
+    const harness = new CliHarness({ claudeBinary: agent, killGraceMs: 20 });
+    await expect(runWorkflow(stalled(), { ...setup(), harness })).rejects.toThrow(
+      'produced no output for 200ms (idleTimeoutMs)',
+    );
+    const step = required((await readRun(setup())).steps['stall']);
+    expect(step.attemptHistory?.map((attempt) => attempt.errorKind)).toEqual(['idle-timeout']);
+    expect(step.attemptHistory?.[0]?.diagnostics).toMatchObject({ toolUses: 0 });
+    expect(step.error).toContain('Retry: --resume --profile text.idleTimeoutMs=400');
+    expect((await inspectRunOwnership({ stateDir: directory, runId: 'stream' })).processes).toEqual(
+      [],
+    );
+  });
+
+  it.each([
+    [['idle-timeout'] as const, 2],
+    [['timeout'] as const, 1],
+  ])('lets retry.on %j target idle-timeout', async (on, attempts) => {
+    const agent = await protocolBinary([claudeInit], hang);
+    const harness = new CliHarness({ claudeBinary: agent, killGraceMs: 20 });
+    await expect(
+      runWorkflow(stalled({ maxAttempts: 2, delayMs: 0, on: [...on] }), { ...setup(), harness }),
+    ).rejects.toThrow('idleTimeoutMs');
+    expect((await readRun(setup())).steps['stall']?.attemptHistory).toHaveLength(attempts);
+  });
+
+  it('never ends a Claude CLI that keeps streaming past several idle windows', async () => {
+    const [result] = fixtureStdout('claude-text-success');
+    const agent = await binary(`
+console.log(${JSON.stringify(JSON.stringify(claudeInit))});
+let n = 0;
+const timer = setInterval(() => {
+  console.log(JSON.stringify({ type: 'system', subtype: 'status' }));
+  if (++n === 30) { clearInterval(timer); console.log(${JSON.stringify(result)}); }
+}, 40);`);
+    const harness = new CliHarness({ claudeBinary: agent, killGraceMs: 20 });
+    // About 1.2 s of status lines every 40 ms against a 400 ms idle window (three windows). Child
+    // startup counts as idleness, so the window leaves room for a loaded machine.
+    const run = await runWorkflow(stalled(undefined, 400), { ...setup(), harness });
+    expect(run.output).toBe('hello from captured claude');
+  });
+
+  it('raises the deadline on resume with --profile and reuses completed steps', async () => {
+    const log = join(directory, 'calls.log');
+    const agent = await binary(`
+const { appendFileSync } = require('node:fs');
+let prompt = '';
+process.stdin.on('data', (chunk) => { prompt += chunk; });
+process.stdin.on('end', () => {
+  appendFileSync(${JSON.stringify(log)}, prompt + '\\n');
+  console.log(${JSON.stringify(JSON.stringify(claudeInit))});
+  // The slow step is silent for 1000 ms: longer than 400 ms, shorter than 5000 ms.
+  setTimeout(() => console.log(${JSON.stringify(fixtureStdout('claude-text-success')[0])}), prompt === 'slow' ? 1000 : 0);
+});`);
+    const definition = defineWorkflow({
+      ...base,
+      profiles: { scout: { idleTimeoutMs: 400 } },
+      async run(ctx) {
+        await ctx.claude.text('first', { prompt: 'fast', profile: 'scout' });
+        return (await ctx.claude.text('second', { prompt: 'slow', profile: 'scout' })).output;
+      },
+    });
+    const harness = new CliHarness({ claudeBinary: agent, killGraceMs: 20 });
+    await expect(runWorkflow(definition, { ...setup(), harness })).rejects.toThrow(
+      '--profile scout.idleTimeoutMs=800',
+    );
+    const run = await runWorkflow(definition, {
+      ...setup(),
+      harness,
+      resume: true,
+      profileOverrides: [{ profile: 'scout', idleTimeoutMs: 5000 }],
+    });
+    expect(run.status).toBe('completed');
+    expect((await readFile(log, 'utf8')).trim().split('\n')).toEqual(['fast', 'slow', 'slow']);
+    expect(run.steps['second']?.redefinitions).toBeUndefined();
+    expect(
+      run.steps['second']?.attemptHistory?.map((attempt) => attempt.errorKind ?? null),
+    ).toEqual(['idle-timeout', null]);
+    expect(run.steps['second']?.attemptHistory?.[1]).toMatchObject({
+      policy: { idleTimeoutMs: 5000 },
+      sources: { idleTimeoutMs: 'profile-override:0' },
+    });
+  });
+});

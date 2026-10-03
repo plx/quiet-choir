@@ -14,6 +14,7 @@ import {
   type ProtocolOutcome,
 } from '../src/harnesses/protocol.js';
 import type { HarnessRequestInput } from '../src/workflow/runtime/model.js';
+import { HarnessStream } from '../src/harnesses/stream.js';
 
 // Existing success/malformed-shape checks exercise the classified parser result.
 function response(outcome: ProtocolOutcome) {
@@ -512,5 +513,56 @@ describe('headless CLI adapter', () => {
     await expect(
       harness.invoke(request('claude'), testInvocation(signal)),
     ).rejects.not.toBeInstanceOf(ConfigurationError);
+  });
+});
+
+describe('HarnessStream tool-use count', () => {
+  async function count(
+    harness: 'claude' | 'codex',
+    lines: readonly object[],
+    structured = false,
+  ): Promise<unknown> {
+    const stream = new HarnessStream(harness, structured, 1024 * 1024, testInvocation());
+    await stream.stdout(Buffer.from(lines.map((line) => `${JSON.stringify(line)}\n`).join('')));
+    await stream.finish();
+    return stream.diagnostics('')['toolUses'];
+  }
+  const block = (id: string, name = 'Read') => ({ type: 'tool_use', id, name, input: {} });
+  const assistant = (...content: object[]) => ({ type: 'assistant', message: { content } });
+
+  it('counts every Claude tool_use block once by ID, across messages', async () => {
+    expect(await count('claude', [])).toBe(0);
+    expect(
+      await count('claude', [
+        assistant({ type: 'text', text: 'two tools' }, block('a'), block('b', 'Grep')),
+        assistant(block('a')),
+        assistant(block('c', 'StructuredOutput')),
+      ]),
+    ).toBe(3);
+  });
+
+  it('excludes StructuredOutput only for a structured call', async () => {
+    expect(await count('claude', [assistant(block('s', 'StructuredOutput'))], true)).toBe(0);
+    expect(await count('claude', [assistant(block('s', 'StructuredOutput'))], false)).toBe(1);
+  });
+
+  it('counts each distinct Codex tool item once, on first sight', async () => {
+    const item = (type: string, event: string, id?: string) => ({
+      type: event,
+      item: { ...(id === undefined ? {} : { id }), type, text: 'x' },
+    });
+    expect(
+      await count('codex', [
+        item('command_execution', 'item.started', 'i1'),
+        item('command_execution', 'item.completed', 'i1'),
+        item('file_change', 'item.completed', 'i2'),
+        item('mcp_tool_call', 'item.started', 'i3'),
+        item('web_search', 'item.completed', 'i4'),
+        item('command_execution', 'item.started'),
+        item('command_execution', 'item.completed'),
+        item('agent_message', 'item.completed', 'i5'),
+        item('reasoning', 'item.completed', 'i6'),
+      ]),
+    ).toBe(5);
   });
 });
