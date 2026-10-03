@@ -593,7 +593,9 @@ Additional service operations use one ordinary effect per helper call; the trans
 `quiet-choir/github` reads repositories, pull requests, review threads, issues and code-scanning
 alerts through the installed `gh`, one `ctx.exec.json` per read, and throws instead of returning a
 truncated list. Its head-pinned waits for CI, reviewers (Codex, CodeQL or your own) and merges are
-one `ctx.poll` each; see [GitHub reads and waits](docs/github.md).
+one `ctx.poll` each. Its writes (comments, thread replies, issue create, close and reopen, alert
+dismissals) are one `ctx.step` each and reconcile with a marker or a preceding read, so a rerun
+after a crash does not write twice; see [GitHub reads, waits and writes](docs/github.md).
 
 ## Progress and monitoring
 

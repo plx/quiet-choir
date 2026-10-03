@@ -9,11 +9,14 @@ definitions to a particular agent harness.
   `quiet-choir/decision` and `quiet-choir/github` are deliberate adapter/helper subpaths. Public
   exports need API comments.
 - `src/integrations/` contains helper subpaths. They import the public entry point, never runtime
-  internals; `github.ts` keeps its queries, schemas and mappers in the pure `github-model.ts` and
-  its wait rules in the pure `github-wait-model.ts`, and may also import two cross-instance
-  registries: error brands ([ADR 0044](decisions/0044-gh-backed-github-reads.md)) and the internal
-  poll-identity key ([ADR 0045](decisions/0045-head-pinned-github-waits.md)). See
-  [GitHub reads and waits](github.md).
+  internals; `github.ts` keeps its queries, schemas and mappers in the pure `github-model.ts`, its
+  wait rules in the pure `github-wait-model.ts`, and its reconciled writes in `github-writes.ts`
+  (one version-identified `ctx.step` per op) over the pure `github-write-model.ts` (marker, request
+  builders, schemas and decisions; [ADR 0046](decisions/0046-reconciled-github-writes.md)). It may
+  also import two cross-instance registries: error brands
+  ([ADR 0044](decisions/0044-gh-backed-github-reads.md)) and the internal poll-identity key
+  ([ADR 0045](decisions/0045-head-pinned-github-waits.md)). See
+  [GitHub reads, waits and writes](github.md).
 - `src/application/` contains framework-independent execution contracts and small executors.
 - `src/workflow/` contains workflow-specific plans, results, analysis, and executors.
 - `src/workflow/runtime/` defines the typed workflow API and local checkpoint/replay engine.

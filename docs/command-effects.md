@@ -64,7 +64,10 @@ authentication belongs in the parent environment. Explicit overlay values and st
 checkpointed; output can still contain anything the command prints. The `QUIET_CHOIR_` prefix is
 reserved. Children receive `QUIET_CHOIR_IDEMPOTENCY_KEY` (`runId/stepId`), `QUIET_CHOIR_RUN_ID`,
 `QUIET_CHOIR_STEP_ID`, and `QUIET_CHOIR_ATTEMPT`. Scripts must implement their own reconciliation;
-the runtime cannot make external writes exactly once.
+the runtime cannot make external writes exactly once. For GitHub,
+[`quiet-choir/github`'s writes](github.md#writes) package it: each comment, thread reply, issue
+create, close or reopen, and alert dismissal is one `ctx.step` that finds its own earlier write by a
+marker, or acts only when a preceding read says it still needs to.
 
 ## Commands inside a callback or observer
 

@@ -94,3 +94,5 @@ part of the documentation.
 - [0044: gh-backed, complete-or-throw GitHub reads](0044-gh-backed-github-reads.md)
 
 - [0045: Head-pinned GitHub waits with pluggable reviewers](0045-head-pinned-github-waits.md)
+
+- [0046: Reconciled GitHub writes](0046-reconciled-github-writes.md)

@@ -2,6 +2,21 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- `quiet-choir/github` adds reconciled writes (#161, slice C1 of #21; ADR 0046): `gh.comment`,
+  `gh.thread.reply` (resolving bot threads by default, human threads only with `resolve: true`),
+  `gh.issue.create` (with an optional same-repository `parent` sub-issue link),
+  `gh.issue.close`/`gh.issue.reopen` (conditional on `ifState`, with an optional comment) and
+  `gh.alert.dismiss` (reason from the alert's path unless given; comment truncated to 280
+  characters). Each is exactly one `ctx.step`, identified by a version constant such as
+  `github.comment/1` rather than callback text, labelled `{ integration: 'github', op }`, and runs
+  its gh commands through the step's `context.exec`, so `--dry-run` lists them without spawning.
+  Writes that create something append the marker `<!-- quiet-choir:RUN/STEP -->` and search for it
+  first, so a retry or resume after a crash between GitHub's commit and the checkpoint finds the
+  earlier write instead of repeating it; the others read the state and act only when it still needs
+  to change. Request bodies go to gh on stdin, never in argv. `github(ctx, ...)` now takes
+  `Pick<WorkflowContext, 'exec' | 'poll' | 'step'>`, so a caller passing a narrowed context must
+  also pass `step`. `alertDismissReason`, `GithubWritePolicy` and the write option and result types
+  are exported; [GitHub writes](docs/github.md#writes) has the per-op guarantees table.
 - `quiet-choir/github` adds head-pinned waits (#160, slice B of #21; ADR 0045).
   `gh.waitChecks(id, { pr, sha, ... })`, `gh.waitPr(id, { pr, sha, until, ... })` and
   `gh.waitReview(id, { pr, sha, since, reviewers, ... })` are each exactly one `ctx.poll`, so one

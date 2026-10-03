@@ -1,23 +1,27 @@
-# GitHub reads and waits
+# GitHub reads, waits and writes
 
-`quiet-choir/github` gives a workflow typed GitHub reads and waits over the installed `gh` CLI. Each
-read is exactly one durable `ctx.exec.json` with an ID you choose, so it checkpoints, replays and
-rehearses like any other command. A read never returns a silently truncated list: when GitHub
-reports another page that the read did not fetch, it throws `IncompleteCollectionError`. Each
-[wait](#waits) for CI, reviews or a merge is exactly one `ctx.poll`, pinned to a head SHA. The
-designs are recorded in [ADR 0044](decisions/0044-gh-backed-github-reads.md) and
-[ADR 0045](decisions/0045-head-pinned-github-waits.md).
+`quiet-choir/github` gives a workflow typed GitHub reads, waits and writes over the installed `gh`
+CLI. Each read is exactly one durable `ctx.exec.json` with an ID you choose, so it checkpoints,
+replays and rehearses like any other command. A read never returns a silently truncated list: when
+GitHub reports another page that the read did not fetch, it throws `IncompleteCollectionError`. Each
+[wait](#waits) for CI, reviews or a merge is exactly one `ctx.poll`, pinned to a head SHA. Each
+[write](#writes) (a comment, a thread reply, an issue created, closed or reopened, an alert
+dismissed) is exactly one `ctx.step` that reads before it writes, so a rerun after a crash finds the
+earlier attempt's write instead of repeating it. The designs are recorded in
+[ADR 0044](decisions/0044-gh-backed-github-reads.md),
+[ADR 0045](decisions/0045-head-pinned-github-waits.md) and
+[ADR 0046](decisions/0046-reconciled-github-writes.md).
 
-The helpers read and wait only. Writes such as comments, thread replies and merges, and epic
-selection, are planned separately (#161 to #163).
+Pull request writes (creating, editing and merging pull requests, rerunning failed checks) and epic
+selection are planned separately (#162 and #163).
 
 ## Install and authenticate
 
 Install [gh](https://cli.github.com/) and sign in with `gh auth login` (add `--hostname HOST` for
-GitHub Enterprise Server). quiet-choir never handles a token: the reads inherit your environment, so
-`gh`'s own login, `GH_TOKEN` or `GH_HOST` apply as they do in your shell, and nothing secret enters
-argv, an environment overlay or the checkpoint. The reads need a `gh` whose `gh api` supports
-`--paginate --slurp` (see `gh api --help`); they were developed against gh 2.100.
+GitHub Enterprise Server). quiet-choir never handles a token: every gh command inherits your
+environment, so `gh`'s own login, `GH_TOKEN` or `GH_HOST` apply as they do in your shell, and
+nothing secret enters argv, an environment overlay or the checkpoint. The reads need a `gh` whose
+`gh api` supports `--paginate --slurp` (see `gh api --help`); they were developed against gh 2.100.
 
 ```ts
 import { defineWorkflow, z } from 'quiet-choir';
@@ -276,6 +280,160 @@ response (`{ data: { repository: { pullRequest } } }` with `number`, `state`, `h
 `sha` and `commits`), a JSON array for the REST comments, reviews and reactions, and
 `{ data: { repository: { pullRequest } } }` with `state`, `headRefOid` and `mergeCommit` for
 `waitPr`.
+
+## Writes
+
+| Write                                                      | gh calls: reads, then writes                                                                                                                   | Result                                           |
+| ---------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------ |
+| `comment(id, { number, body })`                            | Every comment (`gh api --paginate .../issues/N/comments`); `POST repos/O/R/issues/N/comments`                                                  | `{ id, url, created }`                           |
+| `thread.reply(id, { threadId, body, resolve? })`           | The thread with every comment (`gh api graphql --paginate --slurp`); `addPullRequestReviewThreadReply`; `resolveReviewThread`                  | `{ comment: { id, url }, created, resolved }`    |
+| `issue.create(id, { title, body, labels?, parent? })`      | The viewer; the viewer's issues, newest first, page by page; `POST repos/O/R/issues`; with `parent`, the issue's parent and `addSubIssue`      | `{ number, url, nodeId, created, parent }`       |
+| `issue.close(id, { number, comment?, reason?, ifState? })` | The issue's state; with `comment`, every comment and `POST .../comments`; `PATCH repos/O/R/issues/N` with `state: 'closed'` and `state_reason` | `{ number, state, stateReason, acted, comment }` |
+| `issue.reopen(id, { number, comment?, ifState? })`         | As `close`, with `state: 'open'`                                                                                                               | `{ number, state, stateReason, acted, comment }` |
+| `alert.dismiss(id, { number, comment, reason? })`          | `GET repos/O/R/code-scanning/alerts/N`; `PATCH` of the same path                                                                               | `{ number, state, reason, dismissed }`           |
+
+Each write is exactly one `ctx.step` under your ID, so it leaves one step record, and a completed
+write replays its result without calling gh. Its callback runs every gh command through the step's
+`context.exec.json`: the commands are not steps of their own, and every attempt of the step runs
+them again, reads first. A request body (a comment, a title, a state change) goes to gh as JSON on
+stdin (`gh api ... --input -`), never in argv, so it never shows in a process listing, never meets
+the per-argument size limit, and never triggers gh's `@file` expansion. `HOST/OWNER/REPO` adds
+`--hostname HOST` right after `gh api` in every command. Arguments are validated before the step
+opens: numbers are positive integers, bodies, titles and labels nonempty strings without NUL, and
+`ifState` and the reasons one of their documented values.
+
+`close` and `reopen` take `ifState`, the state the issue must be in for the op to act: `open` for
+`close` and `closed` for `reopen`, the defaults and the only accepted values (the opposite one
+throws before the step opens). `close`'s `reason` is `completed` (default) or `not_planned`.
+
+### Markers
+
+A write that creates something carries a marker, an HTML comment appended to the body after a blank
+line:
+
+```text
+Landed in #9.
+
+<!-- quiet-choir:RUN_ID/STEP_ID -->
+```
+
+`RUN_ID/STEP_ID` is the step's idempotency key: the run ID and the full step ID, scope prefixes
+included (`<!-- quiet-choir:nightly/round-2/note -->` for `note` inside
+`ctx.scope('round-2', ...)`). It contains no environment value, token, timestamp or attempt number,
+and the allowed ID characters cannot end the comment early. Before writing, the step searches for
+the exact, full marker (so `run/a` never matches `run/a2`); a retry or resume of the same step finds
+the comment, reply or issue an earlier attempt created, even when that attempt crashed after GitHub
+committed the write and before its checkpoint.
+
+- GitHub does not render HTML comments, so readers do not see the marker, but it is visible in the
+  raw body, the API and the edit view. A body that leaves a code fence open would show it as text.
+- A fork starts a new run ID, so a fork posts again any write its source started but did not
+  complete; completed writes are reused from the source as data.
+- A human who edits the marker out of a body, or deletes the comment or issue, defeats it: the next
+  attempt of a step that has not completed writes again.
+- The body with its marker must fit GitHub's 65536-character limit; a body that is too long throws a
+  plain Error before any write.
+
+### Guarantees
+
+GitHub offers no conditional (compare-and-set) API for any of these writes: there is no `If-Match`
+on issue state or bodies, and resolving a thread or dismissing an alert does not check a version.
+Each op is therefore either **reconciled** (it finds its own earlier write by its marker) or
+**conditional** (check-then-act: it reads the current state and writes only when it still needs to).
+
+| Op                            | Guarantee                                                                                                                                                                                                                                                               | Not covered                                                                                                                                                                                                                                                                                                                                                                      |
+| ----------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `comment`                     | Reconciled: reads every comment and posts only when none carries the marker.                                                                                                                                                                                            | A marker removed by an edit, or a deleted comment, lets a rerun post again.                                                                                                                                                                                                                                                                                                      |
+| `thread.reply`                | The reply is reconciled the same way over every comment of the thread. The resolve is conditional: only when wanted and the thread read reported `isResolved: false`.                                                                                                   | `resolveReviewThread` has no compare-and-set: someone resolving or unresolving the thread between the read and the mutation is not detected. `resolve: false` never unresolves.                                                                                                                                                                                                  |
+| `issue.create`                | Reconciled by the marker over the viewer's issues in the repository (the REST list, not search, whose index lags). The `parent` link is conditional on reading the issue's parent: none links it, `parent` already is a no-op, another parent throws without any write. | The list is assumed to show an issue right after it is created; GitHub documents no consistency guarantee for it. A miss scans every issue the viewer created there. An issue is never moved to another parent, and cross-repository parents are not supported. A `parent` that does not exist fails after the issue is created; a rerun finds the issue and fails the same way. |
+| `issue.close`, `issue.reopen` | Conditional: reads the state and acts only when it matches `ifState`; otherwise returns `acted: false` with no write. The optional comment is reconciled and posted before the state change, so a crash after the change cannot lose it.                                | No `If-Match`: a state change by someone else between the read and the `PATCH` is not detected, and the `PATCH` applies anyway.                                                                                                                                                                                                                                                  |
+| `alert.dismiss`               | Conditional: reads the alert and dismisses it only when it is neither `dismissed` nor `fixed`; otherwise returns `dismissed: false` with no write.                                                                                                                      | No compare-and-set: a dismissal or reopening by someone else between the read and the `PATCH` is overwritten.                                                                                                                                                                                                                                                                    |
+
+Reactions, comment edits and deletions, and issue body edits are not provided: without `If-Match` an
+edit cannot be made conditional, and run through `ctx.exec` or a step of your own they stay at least
+once.
+
+`acted`, `created` and `dismissed` describe the attempt that returned, not the step: after a crash
+past the state change, the retry finds the issue already closed and returns `acted: false` (and
+`comment: null`) although an earlier attempt of the same step closed it. Read the state fields
+(`state`, `stateReason`, `resolved`) for the outcome.
+
+`issue.create` reads the viewer, then one page of 100 of the viewer's issues per command, newest
+first, so the issue a crashed attempt just created is on the first page; pull requests in the list
+are skipped. A create that finds nothing reads every page: an account that has opened thousands of
+issues in the repository pays one command per hundred. Raise `maxOutputBytes` (1 MiB per command by
+default) when those issues have long bodies.
+
+`alert.dismiss` sends GitHub's reason: an explicit `reason` (`false positive`, `used in tests` or
+`won't fix`) wins; otherwise it is `used in tests` when the alert's most recent instance is in a
+test-only path (a directory segment `test`, `tests` or `__tests__`, or a file ending in `.test` or
+`.spec` plus `.js`, `.ts`, `.cjs`, `.mjs`, `.cts` or `.mts`) and `false positive` otherwise,
+including an alert without a path. `alertDismissReason(path, reason?)` exports the rule. The comment
+is truncated to GitHub's 280 characters, on a code-point boundary.
+
+### Policy and identity
+
+The third argument takes the same keys as a read: `timeoutMs` and `maxOutputBytes` apply to each gh
+command of the write, and `retry` is the step's retry policy. There is no default retry; the writes
+are safe to repeat, so pass one, such as `{ retry: { maxAttempts: 3 } }`. A rerun on resume needs no
+policy: an unfinished write runs again and reconciles.
+
+A write's identity is a version constant (`github.comment/1`, `github.thread.reply/1`,
+`github.issue.create/1`, `github.issue.close/1`, `github.issue.reopen/1` and
+`github.alert.dismiss/1`), its input (the repository as `HOST/OWNER/REPO` or `OWNER/REPO` and the
+normalized arguments, bodies included) and its result schema, never the callback's source text or
+the policy. Changing a body or title under the ID of a completed write refuses the resume like any
+changed step input; use a new ID. A later quiet-choir version that changes an op's behaviour bumps
+its version. Each step records `meta: { integration: 'github', op }`, so `workflow inspect` shows a
+failed or running write as `github.comment`, `github.issue.close` and so on.
+
+### Rehearsal
+
+Under `--dry-run` the step callbacks run and their gh commands are synthesized, never spawned, so
+the report's `commands` lists each write's reads and writes under its step ID (`parentStepId` is the
+step, `outputSource` `synthesized`), with the write's argv but not its body. The response schemas
+order their values so that synthesis takes the write path: a synthesized issue is open, a thread
+unresolved, an alert open and an issue without a parent, and synthesized bodies never carry the
+marker. A rehearsed `comment`, `thread.reply`, `issue.create`, `issue.close` and `alert.dismiss`
+therefore list their writes; a rehearsed `issue.reopen` sees an open issue and lists only its read,
+and a rehearsed reply resolves only with `resolve: true`, since a synthesized author is not a bot.
+Answer the reads with [exec fixture rules](rehearsal.md#command-fixtures) to rehearse another path.
+Under `--harness fixture` a command that no rule matches runs for real, writes included, unless the
+fixture file sets `"commands": "fixture"`.
+
+### Write example
+
+This step of a review loop replies to the threads it fixed, resolves the bot ones, and closes the
+issue with a comment once the pull request has landed:
+
+```ts
+import { defineWorkflow, z } from 'quiet-choir';
+import { github } from 'quiet-choir/github';
+
+export default defineWorkflow({
+  name: 'wrap-up',
+  version: '1',
+  input: z.object({
+    repo: z.string(),
+    issue: z.int().positive(),
+    merged: z.string(),
+    fixed: z.array(z.object({ threadId: z.string(), note: z.string() })),
+  }),
+  output: z.boolean(),
+  async run(ctx, { repo, issue, merged, fixed }) {
+    const gh = github(ctx, { repo });
+    const policy = { retry: { maxAttempts: 3 } };
+    for (const { threadId, note } of fixed)
+      await gh.thread.reply(ctx.id('reply', threadId), { threadId, body: note }, policy);
+    const closed = await gh.issue.close(
+      'close',
+      { number: issue, comment: `Closed by ${merged}.` },
+      policy,
+    );
+    return closed.state === 'CLOSED';
+  },
+});
+```
 
 ## Gate example
 
