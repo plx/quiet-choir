@@ -43,6 +43,7 @@ import {
 } from '../src/integrations/github-wait-model.js';
 import type {
   GithubChecks,
+  GithubCodeScanning,
   GithubPullRequestHead,
   GithubReviewThread,
 } from '../src/integrations/github-model.js';
@@ -521,7 +522,7 @@ describe('CodeQL rules', () => {
       url: 'u',
     })),
   });
-  const withChecks = (checks: GithubChecks | null, found = alerts()) =>
+  const withChecks = (checks: GithubChecks | null, found: GithubCodeScanning = alerts()) =>
     activity({ pr: { number: 1, state: 'OPEN', headRefOid: SHA, checks }, alerts: found });
 
   it('waits for the check, then settles before deciding', () => {
@@ -552,18 +553,64 @@ describe('CodeQL rules', () => {
     expect(later(1_000, alerts(7, 9))).toEqual({ status: 'findings', detail: { alerts: [7, 9] } });
   });
 
-  it('treats unavailable code scanning as clean', () => {
+  const unavailable = (reason: string): GithubCodeScanning => ({
+    status: 'unavailable',
+    reason,
+    alerts: [],
+  });
+
+  it('treats code scanning that is not enabled as clean at once', () => {
+    for (const reason of [
+      'Code scanning is not enabled for this repository.',
+      'Advanced Security must be enabled for this repository to use code scanning.',
+    ])
+      expect(codeqlObserve(withChecks(null, unavailable(reason)), context(), options)).toEqual({
+        status: 'clean',
+        detail: { unavailable: reason },
+      });
+  });
+
+  it('keeps no analysis pending until the check settles or the grace passes without one', () => {
+    const none = unavailable('no analysis found');
+    const quality = summarizeChecks([checkRun('Quality')]);
+    // No CodeQL check on the head: pending inside settleMs after since, then clean.
     expect(
-      codeqlObserve(
-        withChecks(null, {
-          status: 'unavailable',
-          reason: 'no analysis found',
-          alerts: [],
-        } as never),
-        context(),
-        options,
-      ),
+      codeqlObserve(withChecks(quality, none), context({ now: SINCE + 999 }), options),
+    ).toEqual({ status: 'pending' });
+    expect(
+      codeqlObserve(withChecks(quality, none), context({ now: SINCE + 1_000 }), options),
     ).toEqual({ status: 'clean', detail: { unavailable: 'no analysis found' } });
+    // A rollup that still belongs to another commit shows nothing, so it never ends the wait.
+    expect(
+      codeqlObserve(withChecks(null, none), context({ now: SINCE + 60_000 }), options),
+    ).toEqual({ status: 'pending' });
+    // A running check keeps it running, however long since since.
+    const running = summarizeChecks([checkRun('CodeQL', null)]);
+    expect(
+      codeqlObserve(withChecks(running, none), context({ now: SINCE + 60_000 }), options),
+    ).toEqual({ status: 'running' });
+    // After the check completes it settles; still no analysis after settleMs is clean.
+    const done = summarizeChecks([checkRun('CodeQL')]);
+    const now = SINCE + 10_000;
+    const first = codeqlObserve(withChecks(done, none), context({ now }), options);
+    expect(first).toEqual({
+      status: 'running',
+      note: { settleStart: now },
+      detail: { settling: true },
+    });
+    const later = (ms: number, found: GithubCodeScanning) =>
+      codeqlObserve(
+        withChecks(done, found),
+        context({ now: now + ms, previous: { note: first.note ?? null, checks: 1 } }),
+        options,
+      );
+    expect(later(500, none)).toMatchObject({ status: 'running', detail: { settling: true } });
+    expect(later(1_000, none)).toEqual({
+      status: 'clean',
+      detail: { unavailable: 'no analysis found' },
+    });
+    // The analysis publishes during the settle window: its alerts are findings.
+    expect(later(1_000, alerts(12))).toEqual({ status: 'findings', detail: { alerts: [12] } });
   });
 });
 

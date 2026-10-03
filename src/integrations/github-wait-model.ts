@@ -303,13 +303,19 @@ export function codexObserve(
 
 /** Login of GitHub's code-scanning review comments. */
 export const CODEQL_LOGIN = 'github-advanced-security[bot]';
+/**
+ * The `unavailable` reason (one of `CODE_SCANNING_UNAVAILABLE` in `github-model.ts`) that may only
+ * mean the pull request's first analysis has not published yet. @internal
+ */
+export const CODE_SCANNING_NO_ANALYSIS = /no analysis found/iu;
 const settleNote = z.object({ settleStart: z.number() });
 
 /** Options of the CodeQL reviewer. */
 export interface CodeqlReviewerOptions {
   /**
    * Milliseconds to keep reading alerts after the check completes, default 60000: alerts land
-   * shortly after the check, so an alert inside this window is still counted.
+   * shortly after the check, so an alert inside this window is still counted. Also how long after
+   * `since` a head without the check and without an analysis waits before it is `clean`.
    */
   readonly settleMs?: number;
   /** Name of the check that finishes the analysis, default `CodeQL`. */
@@ -317,10 +323,14 @@ export interface CodeqlReviewerOptions {
 }
 
 /**
- * CodeQL's rules. Code scanning that is not set up is `clean` (detail `unavailable`). Until a
- * check named `checkName` is on the head it is `pending`, and `running` while that check runs.
- * Once it completes, with any conclusion, the first such check records `settleStart` in the note;
- * after `settleMs` it is `findings` with the open alert numbers, or `clean`.
+ * CodeQL's rules. Code scanning that is not enabled (or needs Advanced Security) is `clean` at
+ * once (detail `unavailable`). Until a check named `checkName` is on the head it is `pending`,
+ * and `running` while that check runs. Once it completes, with any conclusion, the first such
+ * check records `settleStart` in the note; after `settleMs` it is `findings` with the open alert
+ * numbers, or `clean`. GitHub's `no analysis found` may only mean the first analysis has not
+ * published: it follows the same check and settle rules and is `clean` (detail `unavailable`)
+ * only when still reported after the settle window, or when the head's checks hold no such check
+ * `settleMs` after `since`.
  * @internal
  */
 export function codeqlObserve(
@@ -329,15 +339,23 @@ export function codeqlObserve(
   options: { readonly settleMs: number; readonly checkName: string },
 ): ReviewerObservation {
   const alerts = activity.alerts;
-  if (alerts?.status === 'unavailable')
-    return { status: 'clean', detail: { unavailable: alerts.reason } };
-  const named = (activity.pr.checks?.items ?? []).filter((item) => item.name === options.checkName);
-  if (named.length === 0) return { status: 'pending' };
+  const unavailable = alerts?.status === 'unavailable' ? alerts.reason : null;
+  const noAnalysis = unavailable !== null && CODE_SCANNING_NO_ANALYSIS.test(unavailable);
+  if (unavailable !== null && !noAnalysis) return { status: 'clean', detail: { unavailable } };
+  const checks = activity.pr.checks;
+  const named = (checks?.items ?? []).filter((item) => item.name === options.checkName);
+  if (named.length === 0) {
+    // Only the head's own checks show that the check is absent; a lagging rollup shows nothing.
+    if (noAnalysis && checks !== null && context.now - context.since >= options.settleMs)
+      return { status: 'clean', detail: { unavailable } };
+    return { status: 'pending' };
+  }
   if (named.some((item) => item.outcome === 'pending')) return { status: 'running' };
   const previous = settleNote.safeParse(context.previous.note);
   const settleStart = previous.success ? previous.data.settleStart : context.now;
   if (context.now - settleStart < options.settleMs)
     return { status: 'running', note: { settleStart }, detail: { settling: true } };
+  if (noAnalysis) return { status: 'clean', detail: { unavailable } };
   const open = (alerts?.alerts ?? []).filter((alert) => alert.state === 'open');
   return open.length
     ? { status: 'findings', detail: { alerts: open.map((alert) => alert.number) } }
