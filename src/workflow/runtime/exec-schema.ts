@@ -32,9 +32,14 @@ export const execOptionsSchema = z.strictObject({
   maxOutputBytes: z.number().int().positive().max(2_147_483_647).optional(),
   retry: retryPolicySchema.optional(),
   onError: z.enum(['throw', 'return']).optional(),
+  meta: z.record(z.string(), z.json()).optional(),
 });
-/** Options of a step callback's `context.exec`: no worktree or retry. @internal */
-export const stepExecOptionsSchema = execOptionsSchema.omit({ worktree: true, retry: true });
+/** Options of a step callback's `context.exec`: no worktree, retry or meta. @internal */
+export const stepExecOptionsSchema = execOptionsSchema.omit({
+  worktree: true,
+  retry: true,
+  meta: true,
+});
 /** Options of a poll observer's `context.exec`, which may also ask for a live run. @internal */
 export const pollExecOptionsSchema = stepExecOptionsSchema.extend({
   live: z.boolean().optional(),

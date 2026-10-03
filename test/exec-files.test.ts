@@ -282,6 +282,81 @@ it('rejects json output overflow and truncated fixture output with output-limit 
   ).rejects.toThrow('truncated');
 });
 
+it('records ExecOptions.meta on the step, outside identity and policy, and rejects non-JSON labels', async () => {
+  const runner: ProcessRunner = {
+    run: () => Promise.resolve({ ...reply, stdout: '{"ok":true}' }),
+  };
+  const labelled = (meta: ExecOptions['meta'], tail = false) =>
+    definition(async (ctx) => {
+      const value = await ctx.exec.json('read', ['gh', 'api', 'graphql'], {
+        schema: z.object({ ok: z.boolean() }),
+        ...(meta === undefined ? {} : { meta }),
+      });
+      if (tail) throw new Error('Injected tail failure');
+      return value;
+    });
+  const github = { integration: 'github', op: 'pr.view' };
+  const labelledRun = await runWorkflow(labelled(github), {
+    ...setup(),
+    runId: 'labelled',
+    processRunner: runner,
+  });
+  const other = await runWorkflow(labelled({ integration: 'other', nested: [1, null] }), {
+    ...setup(),
+    runId: 'other',
+    processRunner: runner,
+  });
+  const plain = await runWorkflow(labelled(undefined), {
+    ...setup(),
+    runId: 'plain',
+    processRunner: runner,
+  });
+  expect(labelledRun.steps['read']?.meta).toEqual(github);
+  expect(other.steps['read']?.meta).toEqual({ integration: 'other', nested: [1, null] });
+  expect(plain.steps['read']).not.toHaveProperty('meta');
+  for (const run of [other, plain]) {
+    expect(run.steps['read']?.fingerprint).toBe(labelledRun.steps['read']?.fingerprint);
+    expect(run.steps['read']?.identity).toEqual(labelledRun.steps['read']?.identity);
+  }
+  expect(JSON.stringify(labelledRun.steps['read']?.attemptHistory)).not.toContain('github');
+  const inspected = await inspectRun({ ...setup(), runId: 'labelled' });
+  expect(formatRunSummary(inspected.summary)).toContain('completed read  github.pr.view');
+  // A changed label never refuses a resume: the completed command replays.
+  let calls = 0;
+  const counting: ProcessRunner = {
+    run: (request, invocation) => {
+      calls++;
+      return runner.run(request, invocation);
+    },
+  };
+  await expect(
+    runWorkflow(labelled(github, true), { ...setup(), runId: 'relabel', processRunner: counting }),
+  ).rejects.toThrow('Injected tail failure');
+  await expect(
+    runWorkflow(labelled({ integration: 'renamed' }, true), {
+      ...setup(),
+      runId: 'relabel',
+      processRunner: counting,
+      resume: true,
+    }),
+  ).rejects.toThrow('Injected tail failure');
+  expect(calls).toBe(1);
+  for (const [index, meta] of [
+    { op: () => 'x' },
+    { op: Number.NaN },
+    'github',
+    { nested: { value: undefined } },
+  ].entries())
+    await expect(
+      runWorkflow(labelled(meta as unknown as ExecOptions['meta']), {
+        ...setup(),
+        runId: `bad-${String(index)}`,
+        processRunner: counting,
+      }),
+    ).rejects.toThrow();
+  expect(calls).toBe(1);
+});
+
 it('flags an explicit shell and its diagnostics in inspect without counting it as agent usage', async () => {
   await expect(
     runWorkflow(
