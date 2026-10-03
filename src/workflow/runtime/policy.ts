@@ -13,6 +13,7 @@ import type {
 export type { AttemptPolicy, ExecutionPolicy, PolicyOverride } from './model.js';
 import { jsonValue } from './json.js';
 import { validateStepId } from './identity.js';
+import { legacyEffort, rejectRenamedEffort } from './effort-compat.js';
 
 const positive = z.number().int().positive().max(Number.MAX_SAFE_INTEGER);
 const duration = positive.max(2_147_483_647);
@@ -29,7 +30,7 @@ const limits = {
   maxBudgetUsd: z.number().positive().optional(),
   retry: retryPolicySchema.optional(),
 };
-const effort = z.enum(codexEffortValues);
+const codexEffort = z.enum(codexEffortValues);
 const streaming = {
   maxRetainedBytes: positive.max(2_147_483_647).optional(),
   maxStreamBytes: positive.optional(),
@@ -62,7 +63,8 @@ export const policyOverrideSchema = z
     ...streaming,
     ...limits,
     model: z.string().min(1).optional(),
-    reasoningEffort: effort.optional(),
+    // Codex-only: claude, step and exec rules reject it, and unscoped rules skip other kinds.
+    effort: codexEffort.optional(),
   })
   .superRefine((rule, context) => {
     const invalid =
@@ -73,15 +75,15 @@ export const policyOverrideSchema = z
             'maxTurns',
             'maxBudgetUsd',
             'model',
-            'reasoningEffort',
+            'effort',
             'maxOutputBytes',
           ]
         : rule.kind === 'exec'
-          ? ['idleTimeoutMs', 'maxTurns', 'maxBudgetUsd', 'model', 'reasoningEffort']
+          ? ['idleTimeoutMs', 'maxTurns', 'maxBudgetUsd', 'model', 'effort']
           : rule.kind === 'codex'
             ? ['maxTurns', 'maxBudgetUsd']
             : rule.kind === 'claude'
-              ? ['reasoningEffort']
+              ? ['effort']
               : [];
     if (rule.kind === 'step' || rule.kind === 'exec') invalid.push(...Object.keys(streaming));
     for (const key of invalid) {
@@ -94,16 +96,24 @@ export const policyOverrideSchema = z
     }
   });
 
+/** Saved rules: rules written before #341 spell the Codex effort reasoningEffort. @internal */
+export const storedPolicyOverrideSchema: z.ZodType<z.output<typeof policyOverrideSchema>> =
+  z.preprocess(legacyEffort, policyOverrideSchema);
+
 /** Validate all rules before workflow effects, including authorization of model changes. @internal */
 export function validatePolicy(value: unknown, allowModelOverride: boolean): PolicyOverride[] {
+  if (Array.isArray(value))
+    value.forEach((rule: unknown, index) => {
+      rejectRenamedEffort(`Invalid execution policy rule ${String(index)}`, rule);
+    });
   const parsed = z.array(policyOverrideSchema).safeParse(jsonValue(value));
   if (!parsed.success) throw new Error(`Invalid execution policy: ${parsed.error.message}`);
   if (
     !allowModelOverride &&
-    parsed.data.some((rule) => rule.model !== undefined || rule.reasoningEffort !== undefined)
+    parsed.data.some((rule) => rule.model !== undefined || rule.effort !== undefined)
   )
     throw new Error(
-      'Model and reasoningEffort policy overrides require allowModelOverride (--allow-model-override).',
+      'Model and effort policy overrides require allowModelOverride (--allow-model-override).',
     );
   return parsed.data as PolicyOverride[];
 }
@@ -161,7 +171,7 @@ export function resolvePolicy(
     sources['maxTranscriptBytes'] = 'runtime';
   }
   let requestedModel: string | null = null;
-  let reasoningEffort: CodexOptions['reasoningEffort'] | null = null;
+  let effort: CodexOptions['effort'] | null = null;
   const applicable = new Set<string>(['retry']);
   if (agent) {
     for (const key of [
@@ -174,7 +184,7 @@ export function resolvePolicy(
       ...Object.keys(streaming),
     ])
       applicable.add(key);
-    for (const key of kind === 'codex' ? ['reasoningEffort'] : ['maxTurns', 'maxBudgetUsd'])
+    for (const key of kind === 'codex' ? ['effort'] : ['maxTurns', 'maxBudgetUsd'])
       applicable.add(key);
   }
   if (kind === 'exec') {
@@ -205,8 +215,7 @@ export function resolvePolicy(
         }
       } else {
         if (key === 'model') requestedModel = value as string;
-        else if (key === 'reasoningEffort')
-          reasoningEffort = value as CodexOptions['reasoningEffort'];
+        else if (key === 'effort') effort = value as CodexOptions['effort'];
         else {
           Object.assign(policy, { [key]: value });
           if (key === 'maxRetainedBytes') {
@@ -244,7 +253,7 @@ export function resolvePolicy(
     policy,
     sources,
     requestedModel,
-    reasoningEffort,
+    effort,
     ...(profile ? { profile: profile.name } : {}),
   };
 }

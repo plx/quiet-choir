@@ -300,7 +300,7 @@ describe('headless CLI adapter', () => {
         options: {
           prompt: 'hello',
           sandbox: 'workspace-write',
-          reasoningEffort: 'low',
+          effort: 'low',
           skipGitRepoCheck: true,
           model: 'test-model',
         },

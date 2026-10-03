@@ -2409,19 +2409,16 @@ export async function runWorkflow<
                 requestedModel: resolvedProfile.options.model,
                 sources: { ...execution.sources, model: `profile:${profile.name}` },
               };
-            const profileEffort = (resolvedProfile.options as CodexOptions).reasoningEffort;
-            if (
-              harness === 'codex' &&
-              execution.reasoningEffort === null &&
-              profileEffort !== undefined
-            )
+            // Codex effort is a policy control (call site, then override); the profile fills a gap.
+            const profileEffort = (resolvedProfile.options as CodexOptions).effort;
+            if (harness === 'codex' && execution.effort === null && profileEffort !== undefined)
               execution = {
                 ...execution,
-                reasoningEffort: profileEffort,
-                sources: { ...execution.sources, reasoningEffort: `profile:${profile.name}` },
+                effort: profileEffort,
+                sources: { ...execution.sources, effort: `profile:${profile.name}` },
               };
-            // The shared effort is requested only when no reasoningEffort replaces it.
-            if (execution.reasoningEffort === null && resolvedProfile.options.effort !== undefined)
+            // Claude effort is semantic only; record where it came from.
+            if (harness === 'claude' && resolvedProfile.options.effort !== undefined)
               execution = {
                 ...execution,
                 sources: {
@@ -2463,7 +2460,7 @@ export async function runWorkflow<
             ...execution,
             requested: {
               model: execution.requestedModel ?? 'inherited',
-              effort: execution.reasoningEffort ?? request.options.effort ?? 'inherited',
+              effort: execution.effort ?? request.options.effort ?? 'inherited',
             },
           };
           // Registered harness options skip isolationParts, so normalize legacy spellings here too.
@@ -2492,9 +2489,7 @@ export async function runWorkflow<
             ...(maxTurns === undefined ? {} : { maxTurns }),
             ...(maxBudgetUsd === undefined ? {} : { maxBudgetUsd }),
             ...(execution.requestedModel === null ? {} : { model: execution.requestedModel }),
-            ...(execution.reasoningEffort === null
-              ? {}
-              : { reasoningEffort: execution.reasoningEffort }),
+            ...(execution.effort === null ? {} : { effort: execution.effort }),
           };
           const shape =
             registration.options instanceof z.ZodObject
@@ -2506,7 +2501,6 @@ export async function runWorkflow<
               Object.entries(policyOptions).filter(([key]) => native || Object.hasOwn(shape, key)),
             ),
           );
-          if (harness === 'codex' && execution.reasoningEffort !== null) delete applied.effort;
           request = { ...request, options: applied };
           if (native) validateAgentOptions(harness, request.options);
           else harnessOptions(registration, request.options);

@@ -162,9 +162,8 @@ export function planInvocation(
     // The private CODEX_HOME removes user instructions; this removes project AGENTS.md files.
     if (options.instructions === 'none') args.push('--config', 'project_doc_max_bytes=0');
     if (options.harnessProfile !== undefined) args.push('--profile', options.harnessProfile);
-    const effort = options.effort ?? options.reasoningEffort;
-    if (effort !== undefined)
-      args.push('--config', `model_reasoning_effort=${JSON.stringify(effort)}`);
+    if (options.effort !== undefined)
+      args.push('--config', `model_reasoning_effort=${JSON.stringify(options.effort)}`);
     if (options.networkAccess !== undefined)
       args.push(
         '--config',

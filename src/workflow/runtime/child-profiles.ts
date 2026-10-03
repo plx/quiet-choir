@@ -256,8 +256,8 @@ export function delegateCapabilities(
         ...(role.codex.model === undefined && ceiling.codex.model !== undefined
           ? { model: ceiling.codex.model }
           : {}),
-        ...(role.codex.reasoningEffort === undefined && ceiling.codex.reasoningEffort !== undefined
-          ? { reasoningEffort: ceiling.codex.reasoningEffort }
+        ...(role.codex.effort === undefined && ceiling.codex.effort !== undefined
+          ? { effort: ceiling.codex.effort }
           : {}),
       },
     };

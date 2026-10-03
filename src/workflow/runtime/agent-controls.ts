@@ -50,7 +50,8 @@ export const claudeControlFields = {
 };
 /** Codex-only semantic fields. @internal */
 export const codexControlFields = {
-  reasoningEffort: z.enum(codexEffortValues).optional(),
+  // Spread after commonControlFields, so Codex's wider effort replaces the shared enum.
+  effort: z.enum(codexEffortValues).optional(),
   networkAccess: z.boolean().optional(),
   harnessProfile: z
     .string()
@@ -191,7 +192,7 @@ const reservedConfig: Record<string, string> = {
   approval_policy: 'adapter approval policy',
   sandbox_mode: 'sandbox',
   model: 'model',
-  model_reasoning_effort: 'effort/reasoningEffort',
+  model_reasoning_effort: 'effort',
   'sandbox_workspace_write.network_access': 'networkAccess',
   'sandbox_workspace_write.writable_roots': 'addDirs',
   profile: 'harnessProfile',

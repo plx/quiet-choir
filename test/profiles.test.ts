@@ -88,10 +88,10 @@ it('merges preset, defaults, ancestors, role, call, named launch rules, and step
       maxTurns: 11,
       maxBudgetUsd: 0.8,
       claude: { model: 'sonnet' },
-      codex: { reasoningEffort: 'medium' },
+      codex: { effort: 'medium' },
     },
     profiles: {
-      ancestor: { extends: 'readonly', maxTurns: 20, codex: { reasoningEffort: 'high' } },
+      ancestor: { extends: 'readonly', maxTurns: 20, codex: { effort: 'high' } },
       scout: { extends: 'ancestor', maxTurns: 30, description: 'Reads source' },
     },
     async run(ctx) {
@@ -121,7 +121,7 @@ it('merges preset, defaults, ancestors, role, call, named launch rules, and step
   });
   expect(invoke.mock.calls[1]?.[0].options).toMatchObject({
     sandbox: 'read-only',
-    reasoningEffort: 'high',
+    effort: 'high',
     timeoutMs: 6000,
   });
   expect(invoke.mock.calls[1]?.[0].options).not.toHaveProperty('maxTurns');
@@ -136,8 +136,8 @@ it('merges preset, defaults, ancestors, role, call, named launch rules, and step
     },
   });
   expect(run.steps['cross']?.attemptHistory?.[0]).toMatchObject({
-    reasoningEffort: 'high',
-    sources: { reasoningEffort: 'profile:scout' },
+    effort: 'high',
+    sources: { effort: 'profile:scout' },
   });
 });
 

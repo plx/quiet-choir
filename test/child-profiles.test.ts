@@ -141,3 +141,22 @@ it('keeps a failing parent denial policy for omitted child policies and refuses 
     ),
   ).toThrow('exceeds parent profile text: onPermissionDenied');
 });
+
+it('lets a delegated child role inherit the parent role Codex effort unless it sets its own', () => {
+  const root = resolveCapabilities({
+    profiles: { careful: { extends: 'readonly', codex: { effort: 'minimal' } } },
+  });
+  const delegated = delegateCapabilities(
+    declaration('child', {
+      author: { extends: 'readonly' },
+      tuned: { extends: 'readonly', codex: { effort: 'high' } },
+    }),
+    root,
+    [],
+    {},
+    [],
+    { profiles: { author: 'careful', tuned: 'careful' } },
+  );
+  expect(delegated.manifest.profiles['author']?.codex).toMatchObject({ effort: 'minimal' });
+  expect(delegated.manifest.profiles['tuned']?.codex).toMatchObject({ effort: 'high' });
+});

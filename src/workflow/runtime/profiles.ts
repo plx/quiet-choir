@@ -17,6 +17,7 @@ import { digest, jsonValue } from './json.js';
 import { harnessIsolationSchema, isolationParts, resolveIsolation } from './agent-isolation.js';
 import { environmentSummary, environmentSummarySchema } from './agent-environment.js';
 import { builtinCapabilityKeys } from '../../harnesses/builtins/capability-keys.js';
+import { codexBlock, legacyEffort, rejectRenamedEffort } from './effort-compat.js';
 
 const nameSchema = z.string().regex(/^[a-zA-Z][a-zA-Z0-9_-]{0,63}$/u);
 const limits = {
@@ -167,6 +168,9 @@ export function resolveCapabilities(definition: {
   readonly strictProfiles?: boolean;
   readonly harnesses?: readonly HarnessDeclaration[];
 }): CapabilityManifest {
+  rejectRenamedEffort('defaults.codex', codexBlock(definition.defaults));
+  for (const [name, profile] of Object.entries(definition.profiles ?? {}))
+    rejectRenamedEffort(`Profile ${name} codex`, codexBlock(profile));
   const config = z
     .strictObject({
       defaults: z.strictObject({ ...fields, profile: nameSchema.optional() }).optional(),
@@ -481,7 +485,11 @@ const resolvedProfileSchema = z.strictObject({
   claude: fields.claude
     .unwrap()
     .extend({ tools: z.array(z.string()), allowedTools: z.array(z.string()) }),
-  codex: fields.codex.unwrap().extend({ sandbox: z.enum(['read-only', 'workspace-write']) }),
+  // Manifests written before #341 spell Codex effort reasoningEffort; authoring stays strict.
+  codex: z.preprocess(
+    legacyEffort,
+    fields.codex.unwrap().extend({ sandbox: z.enum(['read-only', 'workspace-write']) }),
+  ),
 });
 /** Validate persisted manifests as plain declaration data, never executable authority. @internal */
 export const capabilityManifestSchema = z.strictObject({
@@ -580,7 +588,8 @@ function capabilityExtras(
 /** Classify configuration/escape hatches conservatively without interpreting native plugins. @internal */
 export function controlAccess(
   harness: 'claude' | 'codex',
-  value: Partial<ClaudeOptions & CodexOptions>,
+  // Effort never affects access, and the two harnesses accept different effort levels.
+  value: Partial<Omit<ClaudeOptions & CodexOptions, 'effort'>>,
 ): AccessClass {
   if (
     value.isolation === 'inherit' ||

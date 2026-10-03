@@ -32,7 +32,8 @@ export function legacyAgentIdentity(request: HarnessRequestInput, schema: JsonVa
             'profile',
             'prompt',
             'model',
-            'reasoningEffort',
+            // Codex effort has its own identity slot below; Claude effort stays option.effort.
+            ...(request.harness === 'codex' ? ['effort'] : []),
             'cwd',
             'timeoutMs',
             'idleTimeoutMs',
@@ -57,7 +58,8 @@ export function legacyAgentIdentity(request: HarnessRequestInput, schema: JsonVa
     onError: options.onError ?? 'throw',
     prompt: options.prompt,
     model: options.model ?? null,
-    reasoningEffort: request.harness === 'codex' ? (request.options.reasoningEffort ?? null) : null,
+    // The slot keeps its pre-#341 name, so Codex calls recorded with reasoningEffort replay.
+    reasoningEffort: request.harness === 'codex' ? (request.options.effort ?? null) : null,
     cwd: request.cwd,
     schema,
   });

@@ -14,6 +14,7 @@ import { z } from 'zod';
 import { retryPolicySchema } from './policy.js';
 import { environmentEdits } from './agent-environment.js';
 import { resolveIsolation } from './agent-isolation.js';
+import { rejectRenamedEffort } from './effort-compat.js';
 
 const positiveInteger = z.number().int().positive().max(Number.MAX_SAFE_INTEGER);
 const shared = {
@@ -57,6 +58,7 @@ export function validateAgentOptions(
   options: unknown,
   resolved = true,
 ): void {
+  rejectRenamedEffort(`Invalid ${harness} options`, options);
   const result = (harness === 'claude' ? claudeOptionsSchema : codexOptionsSchema).safeParse(
     options,
   );
@@ -83,8 +85,6 @@ export function validateAgentOptions(
   const isolation = resolveIsolation(controls).isolation;
   validateExtraArgs(harness, controls.extraArgs ?? []);
   if (harness === 'codex') {
-    if (controls.effort !== undefined && controls.reasoningEffort !== undefined)
-      throw new Error('Set effort or reasoningEffort, never both.');
     if (
       controls.networkAccess !== undefined &&
       controls.sandbox !== 'workspace-write' &&

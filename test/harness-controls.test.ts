@@ -16,6 +16,7 @@ import {
   type Harness,
 } from '../src/index.js';
 import {
+  codexEffortValues,
   validateExtraArgs,
   validateConfig,
   tomlLiteral,
@@ -188,6 +189,59 @@ it('passes every Codex control, preserves TOML values, snapshots images, and sep
   await expect(stat(result.files['image']?.path ?? '')).rejects.toMatchObject({ code: 'ENOENT' });
 });
 
+it.each(codexEffortValues)('sends Codex effort %s as model_reasoning_effort', async (effort) => {
+  const path = await binary(capture);
+  await new CliHarness({ codexBinary: path }).invoke(
+    { harness: 'codex', cwd: directory, outputSchema: null, options: { prompt: 'x', effort } },
+    testInvocation(signal),
+  );
+  const { args } = JSON.parse(await readFile(join(directory, 'capture.json'), 'utf8')) as {
+    args: string[];
+  };
+  expect(args).toContain(`model_reasoning_effort=${JSON.stringify(effort)}`);
+  expect(args.filter((arg) => arg.startsWith('model_reasoning_effort='))).toHaveLength(1);
+});
+
+it('rejects a renamed reasoningEffort on a Codex call, profile or defaults before invoking', async () => {
+  const renamed = 'reasoningEffort was renamed to effort';
+  const legacy: object = { reasoningEffort: 'low' };
+  await expect(
+    new CliHarness({ codexBinary: '/absent' }).invoke(
+      { harness: 'codex', cwd: directory, outputSchema: null, options: { prompt: 'x', ...legacy } },
+      testInvocation(signal),
+    ),
+  ).rejects.toThrow(`Invalid codex options: ${renamed}`);
+  const invoke = vi.fn<Harness['invoke']>().mockResolvedValue(reply);
+  const call = defineWorkflow({
+    ...base,
+    async run(ctx) {
+      return (await ctx.codex.text('ask', { prompt: 'x', ...legacy })).output;
+    },
+  });
+  await expect(runWorkflow(call, { ...setup(), harness: { invoke } })).rejects.toThrow(renamed);
+  const declarations = [
+    [{ profiles: { scout: { codex: legacy } } }, `Profile scout codex: ${renamed}`],
+    [{ defaults: { codex: legacy } }, `defaults.codex: ${renamed}`],
+  ] as const;
+  for (const [index, [declaration, message]] of declarations.entries()) {
+    const definition = defineWorkflow({
+      ...base,
+      ...(declaration as object),
+      async run(ctx) {
+        return (await ctx.codex.text('ask', { prompt: 'x' })).output;
+      },
+    });
+    await expect(
+      runWorkflow(definition, {
+        ...setup(),
+        runId: `renamed-${String(index)}`,
+        harness: { invoke },
+      }),
+    ).rejects.toThrow(message);
+  }
+  expect(invoke).not.toHaveBeenCalled();
+});
+
 it.each(['failure', 'timeout', 'abort'] as const)(
   'removes all prepared files on %s',
   async (mode) => {
@@ -347,8 +401,7 @@ it('rejects typed enum conflicts, bypass settings and config shadowing before sp
       { agents: { bad: { description: 'x', prompt: 'x', permissionMode: 'bypassPermissions' } } },
     ],
     ['claude', { settings: { permissions: { defaultMode: 'bypassPermissions' } } }],
-    ['codex', { reasoningEffort: 'ultra' }],
-    ['codex', { effort: 'high', reasoningEffort: 'low' }],
+    ['codex', { effort: 'ultra' }],
     ['codex', { networkAccess: true }],
     ['codex', { config: { thing: null } }],
   ];
@@ -401,7 +454,7 @@ const semanticOptions: ['claude' | 'codex', object][] = [
   ['claude', { extraArgs: ['--no-chrome'] }],
   ['claude', { env: { QC_TEST: 'value' } }],
   ['codex', { effort: 'xhigh' }],
-  ['codex', { reasoningEffort: 'none' }],
+  ['codex', { effort: 'none' }],
   ['codex', { networkAccess: true }],
   ['codex', { isolation: 'inherit', harnessProfile: 'native' }],
   ['codex', { config: { 'features.test': true } }],
@@ -644,19 +697,30 @@ it('includes native controls in profile manifests, grants, and strict call-site 
   );
 });
 
-it('rejects conflicting inherited effort controls before invocation and resolves inherited network sandbox', async () => {
+it('lets a call-site Codex effort replace an inherited one and resolves inherited network sandbox', async () => {
   const invoke = vi.fn<Harness['invoke']>().mockResolvedValue(reply);
-  const conflict = defineWorkflow({
+  const inherited = defineWorkflow({
     ...base,
-    defaults: { codex: { reasoningEffort: 'low' } },
+    defaults: { codex: { effort: 'low' } },
     async run(ctx) {
+      await ctx.codex.text('inherit', { prompt: 'y' });
       return (await ctx.codex.text('ask', { prompt: 'x', effort: 'high' })).output;
     },
   });
-  await expect(runWorkflow(conflict, { ...setup(), harness: { invoke } })).rejects.toThrow(
-    'never both',
-  );
-  expect(invoke).not.toHaveBeenCalled();
+  const run = await runWorkflow(inherited, { ...setup(), harness: { invoke } });
+  expect(invoke.mock.calls[0]?.[0].options).toMatchObject({ effort: 'low' });
+  expect(invoke.mock.calls[1]?.[0].options).toMatchObject({ effort: 'high' });
+  expect(run.steps['inherit']?.attemptHistory?.[0]).toMatchObject({
+    effort: 'low',
+    requested: { effort: 'low' },
+    sources: { effort: 'profile:text' },
+  });
+  expect(run.steps['ask']?.attemptHistory?.[0]).toMatchObject({
+    effort: 'high',
+    requested: { effort: 'high' },
+    sources: { effort: 'call-site' },
+  });
+  invoke.mockClear();
   const network = defineWorkflow({
     ...base,
     defaults: { profile: 'edit' },

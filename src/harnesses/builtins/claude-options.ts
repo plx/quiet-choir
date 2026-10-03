@@ -2,7 +2,7 @@ import type { AgentOptions, Effort, JsonValue } from '../../workflow/runtime/mod
 
 /** Claude-specific controls. CliHarness denies unapproved tools by default. */
 export interface ClaudeOptions extends AgentOptions {
-  /** Native effort level; cannot accompany Codex reasoningEffort. */
+  /** Native effort level, mapped to --effort. */
   readonly effort?: Effort | undefined;
   /** Warn about denied tools, or fail the call; overrides the selected profile policy. */
   readonly onPermissionDenied?: 'warn' | 'fail';

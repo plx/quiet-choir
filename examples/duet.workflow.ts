@@ -16,7 +16,7 @@ export default defineWorkflow({
     });
     const review = await ctx.codex.value('review', {
       prompt: `Is this label understandable? Topic: ${input.topic}. Label: ${proposal.label}. Give a boolean and a one-sentence reason. Do not use tools.`,
-      reasoningEffort: 'low',
+      effort: 'low',
       schema: z.object({ accepted: z.boolean(), reason: z.string() }),
     });
     return { label: proposal.label, ...review };
