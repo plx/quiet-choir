@@ -2,9 +2,7 @@
 // workflows are constructed but never run: typecheck (`npm run typecheck`) is the assertion, with
 // one `@ts-expect-error` per rejected call and `expectTypeOf` for inferred results.
 import { expect, expectTypeOf, it } from 'vitest';
-import type {
-  claudeCapabilityKeys,
-  codexCapabilityKeys} from '../src/index.js';
+import type { claudeCapabilityKeys, codexCapabilityKeys } from '../src/index.js';
 import {
   defineHarness,
   defineWorkflow,
