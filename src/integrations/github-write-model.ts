@@ -971,9 +971,10 @@ export const mergeResponseSchema = z.union([
 export type MergeResponse = z.infer<typeof mergeResponseSchema>;
 
 /**
- * Every page of a commit's workflow runs. Complete or throw: fewer runs than a page's
- * `total_count` fails as an incomplete collection. More is tolerated, since a run created between
- * pages can repeat a row, and a synthesized list is one row with a count of 0. @internal
+ * Every page of a commit's workflow runs. Complete or throw: fewer distinct run IDs than a
+ * page's `total_count` fails as an incomplete collection. Rows are counted by ID, because a run
+ * created between pages repeats a row and the repeat could otherwise hide an omitted run. More is
+ * tolerated, and a synthesized list is one row with a count of 0. @internal
  */
 export const runsListResponseSchema = z
   .array(
@@ -993,11 +994,11 @@ export const runsListResponseSchema = z
   .min(1)
   .superRefine((pages, ctx) => {
     const total = Math.max(...pages.map((page) => page.total_count));
-    const listed = pages.reduce((sum, page) => sum + page.workflow_runs.length, 0);
+    const listed = new Set(pages.flatMap((page) => page.workflow_runs.map((run) => run.id))).size;
     if (listed < total)
       ctx.addIssue({
         code: 'custom',
-        message: `actions.workflowRuns lists ${String(listed)} of ${String(total)} runs.`,
+        message: `actions.workflowRuns lists ${String(listed)} distinct of ${String(total)} runs.`,
         path: [pages.length - 1, 'workflow_runs'],
         params: { [INCOMPLETE_COLLECTION_PARAM]: 'actions.workflowRuns' },
       });

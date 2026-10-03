@@ -415,8 +415,15 @@ function main() {
       .filter((run) => run.head_sha === params.get('head_sha'))
       .sort((left, right) => right.id - left.id)
       .map((run) => ({ ...run, html_url: `${host}/${repo}/actions/runs/${run.id}` }));
-    const page = { total_count: state.runsTotalCount ?? runs.length, workflow_runs: runs };
-    reply(args.includes('--slurp') ? [page] : page);
+    const total_count = state.runsTotalCount ?? runs.length;
+    // runsPages: explicit pages of run IDs, so a page-boundary duplicate can be seeded.
+    const pages = state.runsPages
+      ? state.runsPages.map((ids) => ({
+          total_count,
+          workflow_runs: ids.map((runId) => runs.find((run) => run.id === runId)).filter(Boolean),
+        }))
+      : [{ total_count, workflow_runs: runs }];
+    reply(args.includes('--slurp') ? pages : pages[0]);
   }
   if ((match = /^actions\/runs\/(\d+)\/rerun-failed-jobs$/.exec(path)) && method === 'POST') {
     const run = state.runs?.[match[1]];

@@ -86,6 +86,7 @@ interface FakeState {
   readonly mergeError?: { readonly message: string; readonly status?: string } | null;
   readonly mergeLag?: number;
   readonly runsTotalCount?: number;
+  readonly runsPages?: readonly (readonly number[])[];
   readonly branches?: Record<string, string>;
 }
 
@@ -761,6 +762,22 @@ describe('checks.rerunFailed', () => {
     expect(cause).toMatchObject({ connection: 'actions.workflowRuns', stepId: 'rerun' });
     expect(writes(await state())).toEqual([]);
   });
+
+  it('counts distinct runs, so a repeated page-boundary row cannot hide an omitted run', async () => {
+    // Run 101 repeats across the pages and run 102 is absent: three rows, but two distinct runs of 3.
+    const { runner, state } = await fake({
+      runs: { ...run(101), ...run(102), ...run(103) },
+      runsTotalCount: 3,
+      runsPages: [[103, 101], [101]],
+    });
+    const result = await outcome(runner, 'duplicate-boundary', (ctx) =>
+      client(ctx).checks.rerunFailed('rerun', { sha: HEAD }),
+    );
+    const cause = (result.error as Error).cause;
+    expect(cause).toBeInstanceOf(IncompleteCollectionError);
+    expect(cause).toMatchObject({ connection: 'actions.workflowRuns', stepId: 'rerun' });
+    expect(writes(await state())).toEqual([]);
+  });
 });
 
 // ---------------------------------------------------------------------------------------------
@@ -1081,6 +1098,30 @@ describe('response schemas', () => {
     const parsed = runsListResponseSchema.safeParse(truncated);
     expect(parsed.success).toBe(false);
     expect(JSON.stringify(parsed.error?.issues)).toContain('incompleteCollection');
+  });
+
+  it('count distinct workflow runs, not rows, against total_count', () => {
+    const row = (id: number) => ({
+      id,
+      name: 'W',
+      status: 'completed',
+      conclusion: 'failure',
+      run_attempt: 1,
+    });
+    const pages = [
+      { total_count: 3, workflow_runs: [row(3), row(1)] },
+      { total_count: 3, workflow_runs: [row(1)] },
+    ];
+    const parsed = runsListResponseSchema.safeParse(pages);
+    expect(parsed.success).toBe(false);
+    expect(JSON.stringify(parsed.error?.issues)).toContain('incompleteCollection');
+    // The same rows with the omitted run present pass, repeats included.
+    expect(
+      runsListResponseSchema.safeParse([
+        { total_count: 3, workflow_runs: [row(3), row(1)] },
+        { total_count: 3, workflow_runs: [row(1), row(2)] },
+      ]).success,
+    ).toBe(true);
   });
 
   it('accept the documented write responses', () => {
