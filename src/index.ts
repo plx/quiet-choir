@@ -4,6 +4,7 @@
  * @packageDocumentation
  */
 export { defineHarness } from './harnesses/definition.js';
+export { claudeCapabilityKeys, codexCapabilityKeys } from './harnesses/builtins/capability-keys.js';
 export type {
   AgentRequest,
   HarnessAdapter,
@@ -17,6 +18,8 @@ export type {
   WorkflowHarnesses,
   OptionsOf,
   CapabilitiesOf,
+  CapabilityKeysOf,
+  CallOptions,
   RegisteredAgentClient,
 } from './workflow/runtime/harness-model.js';
 export { RunBudgetExceededError } from './workflow/runtime/run-budget.js';
@@ -81,6 +84,9 @@ export type {
   StepDefinition,
   WorkflowContext,
   WorkflowDefinition,
+  ChildNamesOf,
+  ChildInputOf,
+  ChildOutputOf,
 } from './workflow/runtime/model.js';
 export { CheckpointError } from './workflow/runtime/checkpoint.js';
 export { ConfigurationError } from './workflow/runtime/configuration-error.js';

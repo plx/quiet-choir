@@ -7,13 +7,17 @@ import type { HarnessCapabilities, HarnessDefinition } from '../workflow/runtime
 /** Valid persisted names; package import paths and model-harness names are separate. */
 export const harnessNameSchema: z.ZodString = z.string().regex(/^[a-z][a-z0-9-]{0,31}$/u);
 
-/** Define a strict, explicit agent integration without modifying the workflow runtime. */
+/**
+ * Define a strict, explicit agent integration without modifying the workflow runtime. A literal
+ * `capabilityKeys` list is kept as a tuple type, so strict workflows reject those keys at call sites.
+ */
 export function defineHarness<
   const N extends string,
   O extends AgentOptions,
   const C extends HarnessCapabilities,
+  const K extends readonly (keyof O & string)[] = readonly [],
 >(
-  definition: HarnessDefinition<N, O, C>,
+  definition: HarnessDefinition<N, O, C, K>,
 ): HarnessDefinition<
   N,
   O &
@@ -21,7 +25,8 @@ export function defineHarness<
       AgentOptions,
       'profile' | 'cwd' | 'onError' | 'retry' | 'timeoutMs' | 'worktree' | 'model'
     >,
-  C
+  C,
+  K
 > {
   const metadata = z.strictObject({
     name: harnessNameSchema,

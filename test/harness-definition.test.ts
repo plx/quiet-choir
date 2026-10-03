@@ -1,4 +1,4 @@
-import { expect, it } from 'vitest';
+import { expect, expectTypeOf, it } from 'vitest';
 import { defineHarness, defineWorkflow, z, type HarnessDeclaration } from '../src/index.js';
 
 const review = defineHarness({
@@ -68,4 +68,18 @@ it('rejects invalid registration identities and policy declarations', () => {
       options: z.custom<{ prompt: string }>(),
     }),
   ).toThrow('Zod object schema');
+});
+
+it('keeps a literal capabilityKeys tuple and infers an empty tuple when it is omitted', () => {
+  const keyed = defineHarness({
+    name: 'keyed',
+    revision: 1,
+    options: z.object({ prompt: z.string(), tools: z.array(z.string()).optional() }),
+    capabilities: { structuredOutput: 'native' },
+    capabilityKeys: ['tools'],
+  });
+  expectTypeOf(keyed.capabilityKeys).toEqualTypeOf<readonly ['tools'] | undefined>();
+  expectTypeOf(review.capabilityKeys).toEqualTypeOf<readonly [] | undefined>();
+  expect(keyed.capabilityKeys).toEqual(['tools']);
+  expect(review.capabilityKeys).toBeUndefined();
 });
