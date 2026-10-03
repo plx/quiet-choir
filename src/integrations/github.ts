@@ -336,7 +336,7 @@ export type GithubWaitChecksOptions = GithubWaitBound &
   GithubWaitPolicy & {
     /** Pull request number. */
     readonly pr: number;
-    /** The head SHA to pin: 7 to 40 lowercase hex characters, compared with GitHub's full SHA. */
+    /** The head SHA to pin: the full 40 lowercase hex characters; an abbreviated SHA throws. */
     readonly sha: string;
     /** Milliseconds from the first check before "no checks" is final; default 300000. */
     readonly graceMs?: number;
@@ -354,7 +354,7 @@ export type GithubWaitPrOptions = GithubWaitBound &
   GithubWaitPolicy & {
     /** Pull request number. */
     readonly pr: number;
-    /** The head SHA a merge must have to count as `merged`. */
+    /** The full 40-character head SHA a merge must have to count as `merged`. */
     readonly sha: string;
     /**
      * `merged`: end at a merge, a close, or as soon as the head leaves `sha`. `closed`: wait
@@ -368,7 +368,7 @@ export type GithubWaitReviewOptions = GithubWaitBound &
   GithubWaitPolicy & {
     /** Pull request number. */
     readonly pr: number;
-    /** The head SHA to pin. */
+    /** The full 40-character head SHA to pin. */
     readonly sha: string;
     /**
      * Unix epoch milliseconds at or after the push of `sha`, such as `await ctx.now('since')`:
@@ -590,6 +590,7 @@ function waitBase(
   if (typeof pr !== 'number' || !Number.isSafeInteger(pr) || pr <= 0)
     throw new Error(`${name} pr must be a positive integer.`);
   const sha = commitSha(options.sha, `${name} sha`);
+  if (sha.length !== 40) throw new Error(`${name} sha must be the full 40-character head SHA.`);
   const { timeoutMs, deadline } = options as { timeoutMs?: unknown; deadline?: unknown };
   if ((timeoutMs === undefined) === (deadline === undefined))
     throw new Error(`${name} needs exactly one of timeoutMs and deadline.`);

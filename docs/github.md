@@ -144,8 +144,9 @@ Each wait is exactly one `ctx.poll` under your ID, so it leaves one `wait` recor
 checks it makes, suspends and resumes through `workflow tick` like any poll, and replays its result
 without reading GitHub. Its reads run inside the observation through `context.exec`; they are not
 steps. Exactly one of `timeoutMs` and `deadline` is required; at the bound the wait returns
-`timeout` with its last progress instead of a raw deadline outcome. `sha` is 7 to 40 lowercase hex
-characters and is compared with GitHub's full head SHA, so pass the full SHA.
+`timeout` with its last progress instead of a raw deadline outcome. `sha` is the full 40-character
+lowercase hex head SHA, compared with GitHub's full head SHA; a wait throws on an abbreviated one
+before it opens, since it could never match.
 
 - `waitChecks` returns `{ status, headRefOid, failed: [{ name, url, runId }], pending }`. It rolls
   up the checks of the head with the rules of `summarizeChecks`: `failure` only once nothing is

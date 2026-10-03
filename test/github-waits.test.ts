@@ -995,6 +995,28 @@ describe('arguments', () => {
       'waitChecks sha must be a commit SHA',
     ],
     [
+      'abbreviated sha (waitChecks)',
+      (gh) => gh.waitChecks('ci', { pr: 1, sha: SHA.slice(0, 7), timeoutMs: 1 }),
+      'waitChecks sha must be the full 40-character head SHA',
+    ],
+    [
+      'abbreviated sha (waitPr)',
+      (gh) => gh.waitPr('pr', { pr: 1, sha: SHA.slice(0, 7), until: 'merged', timeoutMs: 1 }),
+      'waitPr sha must be the full 40-character head SHA',
+    ],
+    [
+      'abbreviated sha (waitReview)',
+      (gh) =>
+        gh.waitReview('review', {
+          pr: 1,
+          sha: SHA.slice(0, 7),
+          since: 0,
+          reviewers: [codexReviewer()],
+          timeoutMs: 1,
+        }),
+      'waitReview sha must be the full 40-character head SHA',
+    ],
+    [
       'both bounds',
       (gh) =>
         gh.waitPr('pr', {
