@@ -31,6 +31,7 @@ import { stepIdentity } from '../src/workflow/runtime/identity.js';
 import { digest, jsonValue } from '../src/workflow/runtime/json.js';
 import { waitRequest } from '../src/workflow/runtime/wait-schema.js';
 import { commandPollIdentity } from '../src/workflow/runtime/poll-command.js';
+import { pollIdentityKey } from '../src/workflow/runtime/poll-identity.js';
 import type { WaitSources } from '../src/workflow/runtime/wait-model.js';
 import type { RunRecord } from '../src/workflow/runtime/store.js';
 
@@ -313,6 +314,65 @@ it('fails deadline drift on resume and keeps a pinned sleepUntil through interru
   await expect(runWorkflow(drifting, { ...options, runId: 'drift', resume: true })).rejects.toThrow(
     'wait changed',
   );
+});
+
+describe('internal helper poll identity', () => {
+  const observeA: PollSource<number>['observe'] = () => Promise.resolve({ done: false });
+  const observeB: PollSource<number>['observe'] = () =>
+    Promise.resolve({ done: false, note: 'different source' });
+  const source = (observe: PollSource<number>['observe'], helper?: unknown): WaitSources => ({
+    timeoutMs: 60_000,
+    poll: {
+      input: { pr: 7 },
+      schema: z.number(),
+      every: 1_000,
+      observe,
+      ...(helper === undefined ? {} : { [pollIdentityKey]: helper }),
+    },
+  });
+
+  it('digests the helper value in place of the observer source, and only when present', () => {
+    const helper = { helper: 'github.waitChecks', version: 1 };
+    const a = waitRequest(source(observeA, helper)).request;
+    const b = waitRequest(source(observeB, helper)).request;
+    expect(a).toEqual(b);
+    expect(a.poll?.observe).toBe(digest({ helper }));
+    expect(waitRequest(source(observeA, { ...helper, version: 2 })).request).not.toEqual(a);
+    // Without the key nothing changes: the observer's source text is the digest.
+    const plain = waitRequest(source(observeA)).request;
+    expect(plain.poll?.observe).toBe(digest(Function.prototype.toString.call(observeA)));
+    expect(waitRequest(source(observeB)).request.poll?.observe).not.toBe(plain.poll?.observe);
+    expect(() => waitRequest(source(observeA, { bad: () => 1 }))).toThrow(
+      'Poll helper identity is not JSON',
+    );
+  });
+
+  it('keeps a waiting helper poll resumable after its observer source changes', async () => {
+    const clock = new Clock();
+    const helper = { helper: 'test.helper', version: 1 };
+    const definition = (observe: PollSource<number>['observe'], version = 1) =>
+      defineWorkflow({
+        name: 'helper-identity',
+        version: '1',
+        input: z.null(),
+        output: z.unknown(),
+        run: (ctx) =>
+          ctx.poll('helper', {
+            ...(source(observe, { ...helper, version }).poll as PollSource<number>),
+            // Not due within the in-process window, so the run suspends after the first check.
+            every: 30_000,
+            timeoutMs: 600_000,
+          }),
+      });
+    const options = { stateDir, runId: 'helper-identity', input: null, clock };
+    expect((await runWorkflow(definition(observeA), options)).status).toBe('suspended');
+    expect((await runWorkflow(definition(observeB), { ...options, resume: true })).status).toBe(
+      'suspended',
+    );
+    await expect(
+      runWorkflow(definition(observeA, 2), { ...options, resume: true }),
+    ).rejects.toThrow('wait changed');
+  });
 });
 
 it('drains active siblings after body failure even with a blocked wait inside a map', async () => {
