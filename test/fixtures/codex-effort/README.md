@@ -7,9 +7,10 @@ fingerprint. Stack and transcript paths are scrubbed to `/fixture/...`; no trans
 
 - `pre-effort-checkpoint.json` (fingerprint `effort-compatibility`, run `pre-effort`) declares
   `scout: { extends: 'text', codex: { reasoningEffort: 'low' } }`, so its capability manifest
-  carries the old key. Step `tuned` runs `ctx.codex.text('tuned', { prompt: 'a', profile: 'scout' })`
-  under the saved policy rule `{ kind: 'codex', match: 'tuned', reasoningEffort: 'high' }` with
-  `allowModelOverride`, so its attempt records `reasoningEffort: 'high'`.
+  carries the old key. Step `tuned` runs
+  `ctx.codex.text('tuned', { prompt: 'a', profile: 'scout' })` under the saved policy rule
+  `{ kind: 'codex', match: 'tuned', reasoningEffort: 'high' }` with `allowModelOverride`, so its
+  attempt records `reasoningEffort: 'high'`.
 - `pre-shared-effort-checkpoint.json` (fingerprint `effort-shared`, run `pre-shared-effort`) runs
   `ctx.codex.text('shared', { prompt: 'a', effort: 'low' })` with the old shared Codex `effort`,
   whose identity was `option.effort`. It pins the documented one-time identity change.

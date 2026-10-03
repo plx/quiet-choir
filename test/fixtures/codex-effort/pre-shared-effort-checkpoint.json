@@ -38,21 +38,9 @@
       "edit": {
         "access": "write",
         "claude": {
-          "allowedTools": [
-            "Read",
-            "Grep",
-            "Glob",
-            "Edit",
-            "Write"
-          ],
+          "allowedTools": ["Read", "Grep", "Glob", "Edit", "Write"],
           "isolation": "restricted",
-          "tools": [
-            "Read",
-            "Grep",
-            "Glob",
-            "Edit",
-            "Write"
-          ]
+          "tools": ["Read", "Grep", "Glob", "Edit", "Write"]
         },
         "claudeAccess": "write",
         "codex": {
@@ -82,17 +70,9 @@
       "readonly": {
         "access": "read",
         "claude": {
-          "allowedTools": [
-            "Read",
-            "Grep",
-            "Glob"
-          ],
+          "allowedTools": ["Read", "Grep", "Glob"],
           "isolation": "restricted",
-          "tools": [
-            "Read",
-            "Grep",
-            "Glob"
-          ]
+          "tools": ["Read", "Grep", "Glob"]
         },
         "claudeAccess": "read",
         "codex": {
