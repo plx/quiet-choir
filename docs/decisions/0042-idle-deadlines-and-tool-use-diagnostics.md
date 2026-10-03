@@ -63,6 +63,11 @@ evidence and `agent.finished`:
 - Codex: each distinct `command_execution`, `file_change`, `mcp_tool_call` or `web_search` item,
   counted when first seen (`item.started`, or `item.completed` without a prior start); an item
   without an ID counts on completion.
+- An oversized line the parser skips is not parsed, so its bounded header is used instead. A skipped
+  Codex tool item is counted from its event, type and ID in the header, with the same started and
+  completed deduplication. A skipped Claude `assistant` line may hold a `tool_use` block past that
+  header, so when no tool was counted the count is reported as unknown (`toolUses: null`) rather
+  than a false zero; a positive count stays a lower bound.
 - The ID sets are bounded; past the bound the count can only grow, never cause a warning.
 
 **Warning, not failing.** After a completed attempt, the runner records the step warning

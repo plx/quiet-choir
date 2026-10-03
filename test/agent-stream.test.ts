@@ -651,7 +651,7 @@ it('keeps diagnostic keys and cap policy out of completed agent identity', async
   });
   const second = await runWorkflow(definition, {
     ...setup('second'),
-    policy: [{ transcripts: 'off', maxRetainedBytes: 2048 }],
+    policy: [{ transcripts: 'off', maxRetainedBytes: 8192 }],
     harness: {
       invoke: () =>
         Promise.resolve({
@@ -749,6 +749,7 @@ async function toolUseRun(
   profile: 'text' | 'readonly' = 'readonly',
   structured = false,
   runId = 'stream',
+  policy: PolicyOverride[] = [],
 ) {
   const agent = await protocolBinary(lines);
   const events: WorkflowEvent[] = [];
@@ -769,6 +770,7 @@ async function toolUseRun(
   const run = await runWorkflow(definition, {
     ...setup(runId),
     harness: new CliHarness({ claudeBinary: agent, codexBinary: agent, killGraceMs: 20 }),
+    ...(policy.length > 0 ? { policy } : {}),
     onEvent: (event) => {
       events.push(event);
     },
@@ -839,6 +841,102 @@ it('warns for a Codex attempt with only a message, and counts a started+complete
   );
   expect(tool.toolUses).toBe(1);
   expect(tool.step.warnings).toBeUndefined();
+});
+
+describe('oversized skipped lines', () => {
+  const cap: PolicyOverride[] = [{ maxRetainedBytes: 8192 }];
+  const huge = 'x'.repeat(20_000);
+  const bigCodex = (event: string, id: string | undefined, type: string, extra = {}) => ({
+    type: event,
+    item: { ...(id === undefined ? {} : { id }), type, aggregated_output: huge, ...extra },
+  });
+
+  it('counts a skipped oversized Codex tool item from its header, so no warning', async () => {
+    const run = await toolUseRun(
+      'codex',
+      codexLines(bigCodex('item.completed', 'command', 'command_execution')),
+      'readonly',
+      false,
+      'stream-big',
+      cap,
+    );
+    expect(run.step.attemptHistory?.[0]?.diagnostics).toMatchObject({ skippedLines: 1 });
+    expect(run.toolUses).toBe(1);
+    expect(run.step.warnings).toBeUndefined();
+  });
+
+  it('counts a started item and its oversized completion once, with or without an ID', async () => {
+    const paired = await toolUseRun(
+      'codex',
+      codexLines(
+        codexItem('item.started', 'item_1', 'command_execution'),
+        bigCodex('item.completed', 'item_1', 'command_execution'),
+        bigCodex('item.updated', 'item_2', 'file_change'),
+        bigCodex('item.completed', 'item_2', 'file_change'),
+        bigCodex('item.completed', undefined, 'mcp_tool_call'),
+      ),
+      'readonly',
+      false,
+      'stream-big-pair',
+      cap,
+    );
+    expect(paired.toolUses).toBe(3);
+    expect(paired.step.warnings).toBeUndefined();
+  });
+
+  it('does not count skipped Codex items that are not tool calls', async () => {
+    const { step, toolUses } = await toolUseRun(
+      'codex',
+      codexLines(bigCodex('item.completed', 'think', 'reasoning')),
+      'readonly',
+      false,
+      'stream-big-reasoning',
+      cap,
+    );
+    expect(toolUses).toBe(0);
+    expect(step.warnings).toEqual([noToolUse('codex')]);
+  });
+
+  it('reports an unknown count when an oversized Claude assistant line is skipped', async () => {
+    const oversized = {
+      type: 'assistant',
+      message: {
+        content: [
+          { type: 'text', text: huge },
+          { type: 'tool_use', id: 'toolu_big', name: 'Read', input: {} },
+        ],
+      },
+    };
+    const { step, toolUses } = await toolUseRun(
+      'claude',
+      [claudeInit, oversized, claudeText, ...fixtureStdout('claude-text-success')],
+      'readonly',
+      false,
+      'stream-big-claude',
+      cap,
+    );
+    expect(step.attemptHistory?.[0]?.diagnostics).toMatchObject({ skippedLines: 1 });
+    expect(toolUses).toBeNull();
+    expect(step.warnings).toBeUndefined();
+  });
+
+  it('keeps a positive Claude count when a later assistant line is skipped', async () => {
+    const { step, toolUses } = await toolUseRun(
+      'claude',
+      [
+        claudeInit,
+        claudeTool('toolu_1'),
+        { type: 'assistant', message: { content: [{ type: 'text', text: huge }] } },
+        ...fixtureStdout('claude-text-success'),
+      ],
+      'readonly',
+      false,
+      'stream-big-claude-count',
+      cap,
+    );
+    expect(toolUses).toBe(1);
+    expect(step.warnings).toBeUndefined();
+  });
 });
 
 it.each(['claude', 'codex'] as const)(

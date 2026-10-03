@@ -82,6 +82,26 @@ export class ProtocolLines {
   }
 }
 
+const codexHeader =
+  /^\s*\{\s*"type"\s*:\s*"(item\.(?:started|updated|completed))"\s*,\s*"item"\s*:\s*\{\s*(?:"id"\s*:\s*("(?:[^"\\]|\\.)*")\s*,\s*)?"type"\s*:\s*"(command_execution|reasoning|file_change|mcp_tool_call|web_search|todo_list)"\s*[,}]/u;
+
+/** The event, item ID and item type of a recognized Codex item header, from a bounded prefix. @internal */
+export function codexItemHeader(
+  prefix: string,
+): { readonly event: string; readonly id: string | undefined; readonly type: string } | undefined {
+  const match = codexHeader.exec(prefix);
+  if (!match) return undefined;
+  let id = match[2];
+  if (id !== undefined) {
+    try {
+      id = JSON.parse(id) as string;
+    } catch {
+      // An undecodable ID keeps its raw spelling; it only has to match its own completion.
+    }
+  }
+  return { event: match[1] ?? '', id, type: match[3] ?? '' };
+}
+
 /** Only recognize the native outer header, never type-like text inside command output. @internal */
 export function irrelevantLine(harness: 'claude' | 'codex', prefix: string): boolean {
   if (harness === 'claude')
@@ -91,7 +111,5 @@ export function irrelevantLine(harness: 'claude' | 'codex', prefix: string): boo
         prefix,
       )
     );
-  return /^\s*\{\s*"type"\s*:\s*"item\.(?:started|updated|completed)"\s*,\s*"item"\s*:\s*\{\s*(?:"id"\s*:\s*"(?:[^"\\]|\\.)*"\s*,\s*)?"type"\s*:\s*"(?:command_execution|reasoning|file_change|mcp_tool_call|web_search|todo_list)"\s*[,}]/u.test(
-    prefix,
-  );
+  return codexHeader.test(prefix);
 }

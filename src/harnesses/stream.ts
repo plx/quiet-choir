@@ -1,7 +1,7 @@
 import type { AgentDiagnostics, AgentProgress } from '../harness-kit.js';
 import type { HarnessInvocation, JsonValue } from '../harness-kit.js';
 import { ClaudeProtocol, CodexProtocol, type ProtocolOutcome } from './protocol.js';
-import { irrelevantLine, ProtocolLines, retainedLimit } from './lines.js';
+import { codexItemHeader, irrelevantLine, ProtocolLines, retainedLimit } from './lines.js';
 
 function object(value: unknown): Record<string, unknown> | undefined {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -38,6 +38,8 @@ export class HarnessStream {
   readonly #structured: boolean;
   /** Tool calls counted from every parsed line (progress is throttled, so it cannot count). */
   #toolUses = 0;
+  /** A skipped oversized line may have carried tool calls that were not counted. */
+  #toolUsesUnknown = false;
   readonly #claudeToolIds = new Set<string>();
   readonly #codexInFlight = new Set<string>();
   readonly #diagnostics: Record<string, JsonValue> = { model: null, cliVersion: null };
@@ -69,6 +71,7 @@ export class HarnessStream {
       (prefix) => {
         if (!irrelevantLine(harness, prefix)) return false;
         this.#skippedLines++;
+        this.#countSkipped(prefix);
         return true;
       },
     );
@@ -106,7 +109,8 @@ export class HarnessStream {
     const notices = outcome.kind === 'success' ? (outcome.response.warnings ?? []) : [];
     return {
       ...this.#diagnostics,
-      toolUses: this.#toolUses,
+      // A positive count is a true lower bound; only a zero is made unknown by a skipped line.
+      toolUses: this.#toolUsesUnknown && this.#toolUses === 0 ? null : this.#toolUses,
       skippedLines: this.#skippedLines,
       stderrTail: stderr,
       warnings: [
@@ -119,6 +123,22 @@ export class HarnessStream {
         .slice(-32)
         .map((value) => value.slice(0, 2048)),
     };
+  }
+
+  /**
+   * An oversized line is discarded unparsed, so count what its bounded header proves. A Codex tool
+   * item names its type and ID up front; a Claude assistant line may hold a tool_use block past
+   * the prefix, so the count becomes unknown rather than a false zero.
+   */
+  #countSkipped(prefix: string): void {
+    if (this.#harness === 'claude') {
+      if (/^\s*\{\s*"type"\s*:\s*"assistant"/u.test(prefix)) this.#toolUsesUnknown = true;
+      return;
+    }
+    const header = codexItemHeader(prefix);
+    if (header === undefined) return;
+    if (codexToolItems.has(header.type))
+      this.#countCodexTool(header.event, header.id === undefined ? undefined : { id: header.id });
   }
 
   async #consume(line: string): Promise<void> {
