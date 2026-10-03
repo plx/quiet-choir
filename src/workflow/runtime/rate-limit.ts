@@ -125,7 +125,12 @@ export function readRateLimit(
   return normalizeRateLimit(diagnostics?.['rateLimit']);
 }
 
-const windowLabels: Readonly<Record<string, string>> = { five_hour: '5h', seven_day: '7d' };
+// A Map, not an object literal: names such as `constructor` or `toString` must not match inherited
+// Object.prototype properties.
+const windowLabels: ReadonlyMap<string, string> = new Map([
+  ['five_hour', '5h'],
+  ['seven_day', '7d'],
+]);
 
 /**
  * Format the windows as `5h window 22%, 7d 67%`: the 5h and 7d windows first under those short
@@ -135,16 +140,16 @@ const windowLabels: Readonly<Record<string, string>> = { five_hour: '5h', seven_
 export function formatRateLimitWindows(
   value: Pick<RateLimitDiagnostics, 'windows'>,
 ): string | null {
-  const names = Object.keys(value.windows);
+  const entries = Object.entries(value.windows);
   const ordered = [
-    ...Object.keys(windowLabels).filter((name) => names.includes(name)),
-    ...names.filter((name) => !(name in windowLabels)),
+    ...[...windowLabels.keys()].flatMap((name) => entries.filter(([key]) => key === name)),
+    ...entries.filter(([name]) => !windowLabels.has(name)),
   ];
   if (ordered.length === 0) return null;
   return ordered
-    .map((name, index) => {
-      const percent = Math.round((value.windows[name]?.utilization ?? 0) * 100);
-      return `${windowLabels[name] ?? name}${index === 0 ? ' window' : ''} ${String(percent)}%`;
+    .map(([name, window], index) => {
+      const percent = Math.round(window.utilization * 100);
+      return `${windowLabels.get(name) ?? name}${index === 0 ? ' window' : ''} ${String(percent)}%`;
     })
     .join(', ');
 }

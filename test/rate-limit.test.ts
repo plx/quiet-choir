@@ -198,6 +198,25 @@ describe('formatRateLimitWindows', () => {
     expect(formatRateLimitWindows(windows({ opus: 0.5 }))).toBe('opus window 50%');
   });
 
+  it('treats names that exist on Object.prototype as ordinary windows', () => {
+    const report = normalizeRateLimit({
+      windows: {
+        constructor: { utilization: 0.1 },
+        toString: { utilization: 0.2 },
+        ['__proto__']: { utilization: 0.3 },
+      },
+    });
+    expect(formatRateLimitWindows(report ?? { windows: {} })).toBe(
+      'constructor window 10%, toString 20%, __proto__ 30%',
+    );
+    const mixed = normalizeRateLimit({
+      windows: { constructor: { utilization: 0.5 }, five_hour: { utilization: 0.22 } },
+    });
+    expect(formatRateLimitWindows(mixed ?? { windows: {} })).toBe('5h window 22%, constructor 50%');
+    const only = normalizeRateLimit({ windows: { constructor: { utilization: 0.4 } } });
+    expect(formatRateLimitWindows(only ?? { windows: {} })).toBe('constructor window 40%');
+  });
+
   it('rounds to a whole percent and keeps values above 100%', () => {
     expect(formatRateLimitWindows(windows({ five_hour: 0.004, seven_day: 1.234 }))).toBe(
       '5h window 0%, 7d 123%',
