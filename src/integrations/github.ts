@@ -408,7 +408,10 @@ export interface GithubClient {
   waitPr(id: string, options: GithubWaitPrOptions): Promise<WaitPrResult>;
   /**
    * Wait until every reviewer has a final verdict on head `sha`, then count untriaged review
-   * threads and open alerts: one `ctx.poll` under `id`. A head move ends with `head-moved`.
+   * threads and open alerts: one `ctx.poll` under `id`. A head move ends with `head-moved`. The
+   * check that sees the last verdict only commits it to the note; the next check makes those
+   * reads and ends the wait, so a tolerated read error never observes a reviewer again (one extra
+   * `every` after the last verdict).
    */
   waitReview(id: string, options: GithubWaitReviewOptions): Promise<WaitReviewResult>;
 }
@@ -849,6 +852,26 @@ function githubWaits(
           if (head === 'stale') return note();
           if (view.state !== 'OPEN') return early('closed');
           const active = reviewers.filter(({ bot }) => bots[bot.name]?.final !== true);
+          if (!active.length) {
+            // Every verdict was committed by an earlier check, so a tolerated error in these reads
+            // retries them without observing any reviewer again.
+            const [threads, info, settled] = await Promise.all([
+              read(context, reviewThreadsRead(repo, pr)),
+              read(context, repoInfoRead(repo)),
+              read(context, alertsRead(pr)),
+            ]);
+            const by = verdicts(names, { startedAt, stale: [...stale], headRefOid: sha, bots });
+            return {
+              done: true,
+              value: {
+                status: aggregateReview(by.map((verdict) => verdict.status)),
+                headRefOid: view.headRefOid,
+                by,
+                untriagedThreads: untriagedThreads(threads, info.viewer),
+                openAlerts: openAlertNumbers(settled),
+              },
+            };
+          }
           const wanted = new Set(active.flatMap(({ reads }) => reads));
           const [comments, reviews, reactions, alerts] = await Promise.all([
             wanted.has('comments') ? read(context, issueCommentsRestRead(repo, pr)) : [],
@@ -905,23 +928,8 @@ function githubWaits(
               detail: observation.detail ?? null,
             };
           }
-          if (reviewers.some(({ bot }) => bots[bot.name]?.final !== true)) return note();
-          const [threads, info, settled] = await Promise.all([
-            read(context, reviewThreadsRead(repo, pr)),
-            read(context, repoInfoRead(repo)),
-            alerts ?? read(context, alertsRead(pr)),
-          ]);
-          const by = verdicts(names, { startedAt, stale: [...stale], headRefOid: sha, bots });
-          return {
-            done: true,
-            value: {
-              status: aggregateReview(by.map((verdict) => verdict.status)),
-              headRefOid: view.headRefOid,
-              by,
-              untriagedThreads: untriagedThreads(threads, info.viewer),
-              openAlerts: openAlertNumbers(settled),
-            },
-          };
+          // Commit this check's verdicts before any further read: the wait ends on the next check.
+          return note();
         },
       };
       const outcome = await ctx.poll(id, source);

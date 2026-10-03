@@ -49,9 +49,11 @@ context parameter widens to `Pick<WorkflowContext, 'exec' | 'poll'>`.
   login, and keeps each reviewer's status and returned note under `bots[name]` in the wait's note.
   `clean`, `findings` and `error` are final and never observed again, so a verdict cannot flap and a
   finished reviewer costs no reads. Codex's two-check debounce and CodeQL's settle start live in
-  that note, so they survive suspend and tick. Once every reviewer is final, the same check counts
-  untriaged threads (unresolved, last comment not the viewer's) and open alerts on
-  `refs/pull/N/merge`. `codexReviewer()` and `codeqlReviewer({ settleMs })` port merge-down's rules;
+  that note, so they survive suspend and tick. The check that sees the last verdict commits it to
+  the note and ends there; the next check counts untriaged threads (unresolved, last comment not the
+  viewer's) and open alerts on `refs/pull/N/merge` and ends the wait, so a tolerated error in those
+  reads retries them over the committed verdicts instead of observing a reviewer again, at the cost
+  of one more `every`. `codexReviewer()` and `codeqlReviewer({ settleMs })` port merge-down's rules;
   a third reviewer needs no core change.
 - **Internal versioned poll identity.** A poll source may carry a value under the registry symbol
   `Symbol.for('quiet-choir.poll-identity')` (`poll-identity.ts`, built-in helpers only). The wait

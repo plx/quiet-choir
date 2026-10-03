@@ -1135,9 +1135,10 @@ describe('waitChecks', () => {
       'review',
     );
     expect(review.output).toMatchObject({ status: 'clean', headRefOid: SHA });
-    expect(log.filter((read) => read === 'pr.head')).toHaveLength(2);
+    // One check for waitChecks; two for waitReview: the verdict, then the final reads.
+    expect(log.filter((read) => read === 'pr.head')).toHaveLength(3);
     const head = queries.filter((query) => query.includes('headRefOid commits'));
-    expect(head).toHaveLength(2);
+    expect(head).toHaveLength(3);
     for (const query of head)
       expect(query).not.toMatch(/closingIssuesReferences|\bbody\b|\btitle\b/u);
   });
@@ -1489,7 +1490,8 @@ describe('waitReview', () => {
       untriagedThreads: [],
       openAlerts: [],
     });
-    expect(log.filter((read) => read === 'pr.head')).toHaveLength(3);
+    // Pending, Completed once, clean (committed), then the final reads.
+    expect(log.filter((read) => read === 'pr.head')).toHaveLength(4);
   });
 
   it('reports untriaged threads by viewer and open alerts once every reviewer is final', async () => {
@@ -1527,6 +1529,35 @@ describe('waitReview', () => {
       untriagedThreads: ['PRRT_kwDOTxycVs6ogkEM'],
       openAlerts: [12],
     });
+  });
+
+  it('commits the last verdict to the note on its check and makes the final reads on the next', async () => {
+    const { runner, log } = inProcess({
+      'pr.head': [{ json: prHead() }],
+      'codeScanning.alerts': [{ json: openAlerts(7) }],
+    });
+    // A long interval suspends the run after the first check, so its note can be read.
+    const result = await run(
+      (gh) =>
+        gh.waitReview('review', {
+          pr: 338,
+          sha: SHA,
+          since: SINCE,
+          reviewers: [codeqlReviewer({ settleMs: 0 })],
+          every: 60_000,
+          timeoutMs: 3_600_000,
+        }),
+      runner,
+    );
+    expect(result.status).toBe('suspended');
+    expect((await readRun(setup())).steps['review']?.wait).toMatchObject({
+      checks: 1,
+      note: {
+        headRefOid: SHA,
+        bots: { codeql: { status: 'findings', final: true, detail: { alerts: [7] } } },
+      },
+    });
+    expect(log).toEqual(['pr.head', 'codeScanning.alerts']);
   });
 
   it('reports closed for a pull request closed before the reviewers finish', async () => {
@@ -1651,8 +1682,9 @@ describe('one wait record per wait', () => {
                 ],
               }
             : {
+                // Completed once, clean (committed), then the final reads.
                 'pr.head': [{ json: prHead() }],
-                'issue.comments': [{ json: [] }, { json: comments() }],
+                'issue.comments': [{ json: comments() }],
                 'pr.reviews': [{ json: [] }],
                 'issue.reactions': [{ json: [] }],
                 ...finalReads,
@@ -1730,7 +1762,62 @@ describe('fake gh scenarios', { timeout: 10_000 }, () => {
       untriagedThreads: [],
       openAlerts: [],
     });
-    expect((await fake.log()).filter((read) => read === 'pr.head')).toHaveLength(2);
+    // Completed once, findings (committed), then the final reads.
+    expect((await fake.log()).filter((read) => read === 'pr.head')).toHaveLength(3);
+  });
+
+  it('keeps a committed verdict through a tolerated error in the final reads', async () => {
+    const dismissed = openAlerts(7).map((alert) => ({ ...alert, state: 'dismissed' }));
+    fake = await fakeGh({
+      'pr.head': [{ json: prHead() }],
+      // Open when CodeQL is observed; dismissed by the time the final reads run.
+      'codeScanning.alerts': [{ json: openAlerts(7) }, { json: dismissed }],
+      'pr.reviewThreads': [{ json: threads() }],
+      'repo.info': [
+        {
+          code: 1,
+          stdout: '',
+          stderr: 'gh: HTTP 502: Bad Gateway (https://api.github.com/graphql)\n',
+        },
+        { stdout: fixture('repo-info.json') },
+      ],
+    });
+    const codeql = codeqlReviewer({ settleMs: 0 });
+    let observed = 0;
+    const counted: ReviewerBot = {
+      ...codeql,
+      observe: (activity, context) => {
+        observed++;
+        return codeql.observe(activity, context);
+      },
+    };
+    const result = await run(
+      (gh) =>
+        gh.waitReview('review', {
+          pr: 338,
+          sha: SHA,
+          since: SINCE,
+          reviewers: [counted],
+          every: 5,
+          timeoutMs: 60_000,
+        }),
+      fake.runner,
+    );
+    // The retry reuses the committed findings instead of calling the dismissed alert clean.
+    expect(result.output).toEqual({
+      status: 'findings',
+      headRefOid: SHA,
+      by: [{ name: 'codeql', status: 'findings', detail: { alerts: [7] } }],
+      untriagedThreads: [],
+      openAlerts: [],
+    });
+    expect(observed).toBe(1);
+    const log = await fake.log();
+    expect(log.filter((read) => read === 'pr.head')).toHaveLength(3);
+    expect(log.filter((read) => read === 'repo.info')).toHaveLength(2);
+    const wait = (await readRun(setup())).steps['review']?.wait;
+    expect(wait?.checks).toBe(3);
+    expect(wait?.lastError).toBeUndefined();
   });
 
   it('reports head-moved when the head moves mid-wait', async () => {
@@ -1858,8 +1945,10 @@ async function workflowFile(name: string, source: string): Promise<string> {
 // measured: 1.4 and 2.7 s alone, 3.4 and 6.7 s in a coverage run of this file, and in CI's full
 // coverage run 7.0 and 13.1 s on Node 22.13, 5.7 and 10.8 s on Node 26, and 13.2 and over 20 s
 // (28.2 s to the timeout) on Node 24, dominated by the tsImport compiles of the workflow file (the
-// debounce case compiles it twice: execute, then tick). 60 s is about 2x the slowest CI leg.
-describe('workflow files', { timeout: 60_000 }, () => {
+// debounce case compiled it twice: execute, then tick). Since the review wait ends one check after
+// its last verdict, the debounce case ticks twice: 3.8 s alone and 9.6 s in a coverage run of this
+// file (1.4x), so about 40 s on CI's Node 24 leg; 80 s is about 2x that.
+describe('workflow files', { timeout: 80_000 }, () => {
   it('runs the gate example from docs/github.md, under 30 lines', async () => {
     const docs = readFileSync(join(repository, 'docs', 'github.md'), 'utf8');
     const section = docs.slice(docs.indexOf('## Gate example'));
@@ -1887,8 +1976,18 @@ describe('workflow files', { timeout: 60_000 }, () => {
       'codeScanning.alerts': [{ code: 1, stdout: fixture('code-scanning-not-enabled.json') }],
     });
     // The run clock starts at the recorded review's time, so ctx.now('since') precedes its +1.
-    const offset = Date.now() - SINCE;
-    const clock: WorkflowClock = { now: () => Date.now() - offset, sleep: realSleep };
+    // The poll pump's short sleeps (at most 200 ms) advance it at once, so the review's second
+    // check needs no real 30 s; longer sleeps, such as an observation's time limit, stay real.
+    let offset = Date.now() - SINCE;
+    const clock: WorkflowClock = {
+      now: () => Date.now() - offset,
+      sleep: async (ms, signal) => {
+        if (ms > 200) return realSleep(ms, signal);
+        signal.throwIfAborted();
+        offset -= ms;
+        await new Promise((resolve) => setImmediate(resolve));
+      },
+    };
     const result = await new WorkflowExecutor({ logger, processRunner: runner, clock }).execute({
       kind: 'workflow.execute',
       typecheck: analysis.plan,
@@ -1897,10 +1996,12 @@ describe('workflow files', { timeout: 60_000 }, () => {
       cwd,
       input: { repo: REPO, pr: 338, sha: SHA },
       resume: false,
+      waitMode: 'block',
     });
     if (!result.ok) throw new Error(JSON.stringify(result));
     expect(result).toMatchObject({ run: { status: 'completed', output: 'land' } });
-    expect(log.filter((read) => read === 'pr.head')).toHaveLength(2);
+    // One check for ci; two for review: the verdicts, then the final reads.
+    expect(log.filter((read) => read === 'pr.head')).toHaveLength(3);
     const steps = (await readRun({ stateDir: join(cwd, 'state'), runId: 'gate' })).steps;
     expect(Object.keys(steps).sort()).toEqual(['ci', 'review', 'since']);
   });
@@ -1955,13 +2056,22 @@ export default defineWorkflow({
           },
         },
       });
-      const futureClock: WorkflowClock = { now: () => Date.now() + 120_000, sleep: realSleep };
-      const ticked = await new TickWorkflowExecutor({ logger, clock: futureClock }).execute({
-        kind: 'workflow.tick',
-        runId: 'run',
-        stateDir,
+      const tick = (aheadMs: number) =>
+        new TickWorkflowExecutor({
+          logger,
+          clock: { now: () => Date.now() + aheadMs, sleep: realSleep },
+        }).execute({ kind: 'workflow.tick', runId: 'run', stateDir });
+      // The tick's check sees the same completed rows: clean, committed to the note before the
+      // final reads, which the next check makes.
+      expect(await tick(120_000)).toMatchObject({
+        resumed: [{ runId: 'run', outcome: 'suspended' }],
+        exitCode: 75,
       });
-      expect(ticked).toMatchObject({
+      expect((await readRun({ stateDir, runId: 'run' })).steps['review']?.wait).toMatchObject({
+        checks: 2,
+        note: { bots: { codex: { status: 'clean', final: true } } },
+      });
+      expect(await tick(240_000)).toMatchObject({
         resumed: [{ runId: 'run', outcome: 'completed' }],
         exitCode: 0,
       });
@@ -1970,8 +2080,11 @@ export default defineWorkflow({
         status: 'clean',
         by: [{ name: 'codex', status: 'clean', detail: { via: 'summary' } }],
       });
-      expect(done.steps['review']?.wait?.checks).toBe(2);
-      expect((await gh.log()).filter((read) => read === 'pr.head')).toHaveLength(2);
+      expect(done.steps['review']?.wait?.checks).toBe(3);
+      const log = await gh.log();
+      expect(log.filter((read) => read === 'pr.head')).toHaveLength(3);
+      // Codex was observed on the first two checks only.
+      expect(log.filter((read) => read === 'issue.comments')).toHaveLength(2);
     } finally {
       await gh.gh.dispose();
     }

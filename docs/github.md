@@ -202,9 +202,12 @@ reads the union of what unfinished reviewers need and calls each one's `observe(
 with only its own login's comments, reviews and reactions (times in epoch milliseconds), the pull
 request's head, state and checks (null while the rollup belongs to another commit), and the alerts
 when declared. `observe` returns `{ status, note?, detail? }`: `pending` or `running` keeps waiting;
-`clean`, `findings` and `error` are final and sticky, so a final reviewer is not observed again.
-`note` is kept for the reviewer's next check, in the wait's checkpointed note, so it survives
-suspend and tick; `detail` appears in `by`.
+`clean`, `findings` and `error` are final and sticky, so a final reviewer is not observed again. The
+check that sees the last verdict only commits the verdicts to the wait's note; the next check, one
+`every` later, reads the review threads, the viewer and the open alerts and ends the wait, so a
+tolerated error in those reads never observes a reviewer again. `note` is kept for the reviewer's
+next check, in the wait's checkpointed note, so it survives suspend and tick; `detail` appears in
+`by`.
 
 - `codexReviewer()` follows `chatgpt-codex-connector[bot]`. A review on `sha` after `since` is
   `findings`; a +1 reaction after `since` is `clean`; a usage-limit notice after `since` is `error`;
