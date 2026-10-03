@@ -652,24 +652,121 @@ function isSetextUnderline(rest: string): boolean {
   return index === rest.length;
 }
 
+/** What ends an open HTML block: a blank line, or a line holding one of these strings, in any case. */
+type HtmlBlockEnd = 'blank' | readonly string[];
+
+/** The tag names of CommonMark's HTML block type 1, whose content is raw text. */
+const HTML_RAW_TAGS: readonly string[] = ['pre', 'script', 'style', 'textarea'];
+const HTML_RAW_END: readonly string[] = HTML_RAW_TAGS.map((name) => `</${name}>`);
+/** The tag names of HTML block type 6 in CommonMark 0.31.2. */
+const HTML_BLOCK_TAGS: ReadonlySet<string> = new Set(
+  [
+    'address article aside base basefont blockquote body caption center col colgroup dd details',
+    'dialog dir div dl dt fieldset figcaption figure footer form frame frameset h1 h2 h3 h4 h5 h6',
+    'head header hr html iframe legend li link main menu menuitem nav noframes ol optgroup option p',
+    'param search section summary table tbody td tfoot th thead title tr track ul',
+  ]
+    .join(' ')
+    .split(' '),
+);
+
+const isLetter = (char: string): boolean => /^[A-Za-z]$/u.test(char);
+const isTagNameChar = (char: string): boolean => /^[A-Za-z0-9-]$/u.test(char);
+const isAttributeStart = (char: string): boolean => /^[A-Za-z_:]$/u.test(char);
+const isAttributeChar = (char: string): boolean => /^[A-Za-z0-9_.:-]$/u.test(char);
+const isUnquotedValueChar = (char: string): boolean => char !== '' && !` \t"'=<>\``.includes(char);
+
 /**
- * Whether `rest`, a line after its block-quote markers, opens an HTML comment block (CommonMark's
- * HTML block of type 2): up to three spaces of indentation, then `<!--`.
+ * Where the open tag whose name ends at `index` of `text` ends (after its `>` or `/>`), or -1 when
+ * it is not complete on this line: attributes, each after blanks, with an optional unquoted, single-
+ * or double-quoted value, as in CommonMark. A character loop, so no input can make it backtrack.
  */
-const opensHtmlComment = (rest: string): boolean => /^ {0,3}<!--/u.test(rest);
+function openTagEnd(text: string, index: number): number {
+  for (let at = index; ;) {
+    let next = at;
+    while (isBlank(text.charAt(next))) next += 1;
+    if (text.startsWith('/>', next)) return next + 2;
+    if (text.charAt(next) === '>') return next + 1;
+    if (next === at || !isAttributeStart(text.charAt(next))) return -1;
+    next += 1;
+    while (isAttributeChar(text.charAt(next))) next += 1;
+    at = next;
+    while (isBlank(text.charAt(next))) next += 1;
+    if (text.charAt(next) !== '=') continue;
+    next += 1;
+    while (isBlank(text.charAt(next))) next += 1;
+    const quote = text.charAt(next);
+    if (quote === '"' || quote === "'") {
+      const close = text.indexOf(quote, next + 1);
+      if (close === -1) return -1;
+      at = close + 1;
+    } else {
+      const start = next;
+      while (isUnquotedValueChar(text.charAt(next))) next += 1;
+      if (next === start) return -1;
+      at = next;
+    }
+  }
+}
+
+/**
+ * How `rest`, a line after its block-quote markers, opens a CommonMark HTML block, as what ends it,
+ * or null when it opens none. After up to three spaces of indentation, with tag names in any case:
+ * `<script`, `<pre`, `<style` or `<textarea` (type 1) runs through a line holding one of their
+ * closing tags; `<!--` (type 2) through `-->`; `<?` (type 3) through `?>`; `<!` and a letter (type
+ * 4) through `>`; `<![CDATA[` (type 5) through `]]>`; an open or closing tag of a block-level element
+ * such as `<div` (type 6) runs to a blank line; and any other complete open or closing tag alone on
+ * its line (type 7) runs to a blank line too, but cannot interrupt a paragraph, so it opens a block
+ * only when `paragraphOpen` is false. Character loops, so no input can make it backtrack.
+ */
+function htmlBlockStart(rest: string, paragraphOpen: boolean): HtmlBlockEnd | null {
+  let index = 0;
+  while (index < 3 && rest.charAt(index) === ' ') index += 1;
+  if (rest.charAt(index) !== '<') return null;
+  index += 1;
+  if (rest.startsWith('!--', index)) return ['-->'];
+  if (rest.startsWith('?', index)) return ['?>'];
+  if (rest.startsWith('![CDATA[', index)) return [']]>'];
+  if (rest.charAt(index) === '!') return isLetter(rest.charAt(index + 1)) ? ['>'] : null;
+  const closing = rest.charAt(index) === '/';
+  if (closing) index += 1;
+  if (!isLetter(rest.charAt(index))) return null;
+  let end = index + 1;
+  while (isTagNameChar(rest.charAt(end))) end += 1;
+  const name = rest.slice(index, end).toLowerCase();
+  const next = rest.charAt(end);
+  const delimited = next === '' || isBlank(next) || next === '>';
+  if (!closing && delimited && HTML_RAW_TAGS.includes(name)) return HTML_RAW_END;
+  if (HTML_BLOCK_TAGS.has(name) && (delimited || rest.startsWith('/>', end))) return 'blank';
+  if (paragraphOpen) return null;
+  let tagEnd: number;
+  if (closing) {
+    tagEnd = end;
+    while (isBlank(rest.charAt(tagEnd))) tagEnd += 1;
+    tagEnd = rest.charAt(tagEnd) === '>' ? tagEnd + 1 : -1;
+  } else tagEnd = openTagEnd(rest, end);
+  return tagEnd !== -1 && /^[ \t]*$/u.test(rest.slice(tagEnd)) ? 'blank' : null;
+}
+
+/** Whether `rest`, a line of an HTML block that ends at one of `end`, holds one of them. */
+function endsHtmlBlock(rest: string, end: readonly string[]): boolean {
+  const lower = rest.toLowerCase();
+  return end.some((closer) => lower.includes(closer));
+}
 
 /**
  * `text` without fenced blocks and inline code spans, so quoted examples are never read. A span may
  * cross a line ending within a paragraph, including a lazy continuation line of a block quote, but
  * never a block boundary: a blank line, a fence, a deeper block quote, a list item, an ATX heading,
- * a thematic break or an HTML comment block ends the paragraph, and a heading or break is a block of
- * one line. An HTML comment block (a line opening with `<!--`, as a workflow marker does) runs
- * through the first line holding `-->`, which may be its first, or until its block quote ends; it has
- * no inline code, so its lines are kept as they are. A `=` or
- * `-` underline of any length at the paragraph's block-quote depth makes it a setext heading and
- * ends it there (so a lone `-` there is an underline, not an empty list item, which cannot interrupt
- * a paragraph). With no paragraph open, a lone `=` or `-` run shorter than a thematic break is
- * paragraph text.
+ * a thematic break or an HTML block ends the paragraph, and a heading or break is a block of one
+ * line. HTML blocks are CommonMark's seven types (see {@link htmlBlockStart}), among them a comment
+ * block (a line opening with `<!--`, as a workflow marker does) that runs through the first line
+ * holding `-->`, which may be its first, and a `<div>` block that runs to a blank line. Every HTML
+ * block also ends with its block quote, and has no inline code, so its lines are kept as they are. A
+ * `=` or `-` underline of any length at the paragraph's block-quote depth makes it a setext heading
+ * and ends it there (so a lone `-` there is an underline, not an empty list item, which cannot
+ * interrupt a paragraph). With no paragraph open, a lone `=` or `-` run shorter than a thematic
+ * break is paragraph text.
  */
 function stripCode(text: string): string {
   const all = lines(text);
@@ -679,8 +776,8 @@ function stripCode(text: string): string {
   // The paragraph's block-quote depth, and whether it opens a list item.
   let depth = 0;
   let inItem = false;
-  // The open HTML comment block's block-quote depth, or null when none is open.
-  let html: number | null = null;
+  // The open HTML block's block-quote depth and what ends it, or null when none is open.
+  let html: { depth: number; end: HtmlBlockEnd } | null = null;
   const flush = (): void => {
     if (paragraph.length) kept.push(stripInlineCode(paragraph.join('\n')));
     paragraph = [];
@@ -692,21 +789,25 @@ function stripCode(text: string): string {
     }
     const quote = quotePrefix(line);
     const rest = line.slice(quote.end);
-    if (html !== null && quote.depth >= html) {
+    const blank = /^[ \t]*$/u.test(rest);
+    // A block that ends at a blank line closes on it; the blank line is read below.
+    if (html !== null && quote.depth >= html.depth && !(html.end === 'blank' && blank)) {
       kept.push(line);
-      if (rest.includes('-->')) html = null;
+      if (html.end !== 'blank' && endsHtmlBlock(rest, html.end)) html = null;
       return;
     }
     html = null;
-    if (/^[ \t]*$/u.test(rest)) {
+    if (blank) {
       flush();
       kept.push(line);
       return;
     }
-    if (opensHtmlComment(rest)) {
+    const opened = htmlBlockStart(rest, paragraph.length > 0 && quote.depth <= depth);
+    if (opened !== null) {
       flush();
       kept.push(line);
-      if (!rest.includes('-->')) html = quote.depth;
+      if (opened === 'blank' || !endsHtmlBlock(rest, opened))
+        html = { depth: quote.depth, end: opened };
       return;
     }
     if (paragraph.length && quote.depth === depth && isSetextUnderline(rest)) {

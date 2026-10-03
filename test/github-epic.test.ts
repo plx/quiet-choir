@@ -1051,6 +1051,44 @@ describe('parseDependencies', () => {
       ['> <!-- open\nExample `x\nDepends on #102`'],
       [],
     ],
+    // The other CommonMark HTML blocks: types 1 and 3-6 interrupt a paragraph, type 7 does not.
+    [
+      'a span does not cross a script block',
+      ['Example `x\n<script>\n</script>\nDepends on #123`'],
+      [123],
+    ],
+    [
+      'a raw block has no inline code until its closing tag',
+      ['Example `x\n<Style>\nDepends on #124 `\n</style>'],
+      [124],
+    ],
+    [
+      'a div block runs to a blank line, past its closing tag',
+      ['Example `x\n<div>\n</div>\nDepends on #125 `'],
+      [125],
+    ],
+    ['a div block ends at a blank line', ['<div>\n\nExample `x\nDepends on #126`'], []],
+    ['a closing block tag opens a block', ['Example `x\n</details>\nDepends on #127 `'], [127]],
+    [
+      'a processing instruction ends at ?>',
+      ['Example `x\n<?php echo 1; ?>\nDepends on #128 `'],
+      [128],
+    ],
+    ['a declaration ends at >', ['Example `x\n<!DOCTYPE html>\nDepends on #129 `'], [129]],
+    ['a CDATA section ends at ]]>', ['Example `x\n<![CDATA[ x ]]>\nDepends on #130 `'], [130]],
+    ['a lone inline tag continues a paragraph', ['Example `x\n<span>\nDepends on #131`'], []],
+    ['a lone inline tag opens a block', ['<span class="a">\n`x\nDepends on #132 `'], [132]],
+    [
+      'a lone tag with attributes opens a block',
+      ['<a href=x title=\'t\' data-x = "y" disabled/>\n`x\nDepends on #139 `'],
+      [139],
+    ],
+    ['a lone closing tag opens a block', ['</span >\n`x\nDepends on #138 `'], [138]],
+    ['a tag followed by text is inline', ['<span>a\n`x\nDepends on #133 `'], []],
+    ['an unfinished tag is inline', ['<span class="a\n`x\nDepends on #140 `'], []],
+    ['an unknown tag continues a paragraph', ['Example `x\n<divx>\nDepends on #136`'], []],
+    ['an HTML block ends with its block quote', ['> <div>\nExample `x\nDepends on #134`'], []],
+    ['a tag indented four columns is no block', ['Example `x\n    <div>\nDepends on #135`'], []],
     ['a colon after the phrase', ['Depends on: #29', 'requires :#30'], [29, 30]],
     ['fenced code ignored', ['```\nDepends on #16\n```\nDepends on #17'], [17]],
     ['a fence in a block quote', ['> ~~~\n> Depends on #33\n>\n> ~~~\n> Depends on #34'], [34]],
@@ -1227,6 +1265,16 @@ describe('parsers on adversarial input', () => {
           42,
         ),
       ).toEqual([7]);
+  });
+
+  it('reads HTML tag lines with long runs of attributes in linear time', () => {
+    for (const tag of [
+      `<a${' b'.repeat(100_000)}`,
+      `<a${" b='c'".repeat(100_000)}>`,
+      `<a${' b = "'.repeat(100_000)}`,
+      `</${'a'.repeat(100_000)}${' '.repeat(100_000)}`,
+    ])
+      expect(parseDependencies([`${tag}\nDepends on #7`], REPO, 42)).toEqual([7]);
   });
 
   it('reads fence lines made of long backtick runs', () => {
