@@ -430,6 +430,7 @@ open pull request still at `expectHead`, otherwise returning `reason: 'closed'` 
 `acted: false` and no second `PUT`, merged elsewhere throws, and `closed`, `head-moved` (also
 GitHub's 409) or `not-mergeable` (GitHub's 405) come back as `{ merged: false, reason }`. Check the
 base, threads and alerts yourself first. `gh.checks.rerunFailed(id, { sha, attempt })` reruns failed
-runs at or below the run attempt you saw failing and skips runs past it, so pass the round number. A
-rehearsed edit or merge reports `head-moved`. See
+runs at or below the run attempt you saw failing and skips runs past it, so pass the round number (a
+run below it that was rerun before a crash and failed again is rerun again). A rehearsed edit or
+merge reports `head-moved`. See
 [merging](https://github.com/plx/quiet-choir/blob/main/docs/github.md#merging).

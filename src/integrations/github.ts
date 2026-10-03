@@ -8,7 +8,8 @@
  * is exactly one `ctx.exec.json` with the caller's ID, pure `gh` argv, no environment overlay or
  * stdin, and the workflow cwd, so its identity is the argv, the response schema and the fixed exec
  * defaults. Each wait is exactly one `ctx.poll`. Each write is exactly one version-identified
- * `ctx.step` that reads before it writes, so a rerun after a crash does not write twice.
+ * `ctx.step` that reads before it writes, so a rerun after a crash does not write twice (a
+ * failed-run rerun holds this only for runs at the attempt baseline).
  * Authentication stays in gh and its inherited environment.
  */
 import { createHash } from 'node:crypto';

@@ -12,7 +12,9 @@
   GitHub's 409) or GitHub's 405 return `{ merged: false, reason }` as data; any other refusal
   throws. After a merge it reads until GitHub reports it merged (20 reads, 3 seconds apart).
   `rerunFailed` reruns completed failed runs of a commit at or below an explicit `attempt` baseline
-  and skips runs past it, so a retry, resume or later round never reruns a job twice. Each op is one
+  and skips runs past it, so a retry, resume or later round does not rerun a run that started at the
+  baseline twice; a run below the baseline that was rerun before a crash and failed again can be
+  rerun again (pass the lowest failing attempt for strictly once-only reruns). Each op is one
   version-identified `ctx.step` (`github.pr.merge/1` and so on) over `gh api` through the step's
   `context.exec`, so `--dry-run` lists its commands without spawning. The client gains `pr.create`,
   `pr.edit`, `pr.merge` and `checks.rerunFailed`, with their option and result types exported, and
