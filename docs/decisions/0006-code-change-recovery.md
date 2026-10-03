@@ -124,7 +124,7 @@ is reused when `forkPrefixBlockers` in `replay-decision.ts` finds nothing:
   enclosing items with each ID prefix, so `within` views, child workflows and nested maps report the
   same items as the ID. `ctx.scope` and `within` siblings are not independent: they often run in
   sequence and share closure state (a plan step, then a build step), so stamps order them. A
-  positional map adds no item prefix and also relies on stamps alone.
+  positional map (removed in #339) added no item prefix and also relied on stamps alone.
 
 An unchanged concurrent named map now reuses every step whatever the schedule, an edit to stage 3
 runs only the stage-3 calls live, and the port's followups step is reused. A step launched after a

@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-deprecated -- Exercise the supported legacy map/replay contract. */
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -43,31 +42,26 @@ it('explicit abort cancels a waiting map sibling immediately and retains the fir
     input: z.null(),
     output: z.array(z.null()),
     run: async (context) =>
-      context.map(
-        [0, 1, 2],
-        2,
-        async (item) => {
-          if (item === 0) {
-            await ready;
-            throw new Error('first mapper failed');
-          }
-          if (item === 2) thirdStarted = true;
-          return context.step('waiting-sibling', {
-            input: null,
-            schema: z.null(),
-            run: async ({ signal }) => {
-              markReady();
-              try {
-                await delay(10_000, undefined, { signal });
-              } finally {
-                siblingDrained = true;
-              }
-              return null;
-            },
-          });
-        },
-        { onError: 'abort' },
-      ),
+      context.map('items', [0, 1, 2], { concurrency: 2, cancelSiblings: true }, async (item) => {
+        if (item === 0) {
+          await ready;
+          throw new Error('first mapper failed');
+        }
+        if (item === 2) thirdStarted = true;
+        return context.step('waiting-sibling', {
+          input: null,
+          schema: z.null(),
+          run: async ({ signal }) => {
+            markReady();
+            try {
+              await delay(10_000, undefined, { signal });
+            } finally {
+              siblingDrained = true;
+            }
+            return null;
+          },
+        });
+      }),
   });
   const invocation = runWorkflow(workflow, {
     runId: 'map',

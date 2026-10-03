@@ -54,7 +54,6 @@ describe('durability lint in the loader', { timeout: 20_000 }, () => {
     ['m07-process-env', 'QC002', 10],
     ['m08-nested-step', 'QC003', 13],
     ['m08b-nested-exec', 'QC003', 14],
-    ['m11-positional-map', 'QC006', 11],
     ['m20-race', 'QC004', 10],
   ])('fails validate of %s with %s at its line', async (name, rule, line) => {
     const result = await executor().execute({

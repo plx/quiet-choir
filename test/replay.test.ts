@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-deprecated -- Exercise the supported legacy map/replay contract. */
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -162,8 +161,11 @@ it('keeps same-tick concurrent siblings reusable after a prefix miss', async () 
   const invoke = vi.fn<Harness['invoke']>().mockResolvedValue(reply);
   let edited = false;
   const definition = workflow(async (ctx) => {
-    await ctx.map(['a', 'b', 'c'], 3, (id) =>
-      ctx.claude.text(id, { prompt: edited && id === 'a' ? 'changed' : id }),
+    // Unscoped concurrent root effects, not a named map: named-map items are declared independent.
+    await Promise.all(
+      ['a', 'b', 'c'].map((id) =>
+        ctx.claude.text(id, { prompt: edited && id === 'a' ? 'changed' : id }),
+      ),
     );
     return 'done';
   });
@@ -733,8 +735,8 @@ it.each([false, true])(
         await ctx.step('first', { input: null, schema: z.string(), run: first });
         throw new Error('pause');
       }
-      await ctx.map(['live-a', 'live-b'], 2, (id) =>
-        ctx.step(id, {
+      await ctx.map('live', ['a', 'b'], { concurrency: 2, key: (id) => id }, (id) =>
+        ctx.step('run', {
           input: null,
           schema: z.string(),
           run() {
@@ -764,7 +766,7 @@ it.each([false, true])(
     expect(order).toHaveLength(strictReplay ? 1 : 3);
     const saved = await readRun(options());
     expect(saved.replayWarnings?.[0]).toContain('first');
-    if (strictReplay) expect(saved.steps['live-a']).toBeUndefined();
+    if (strictReplay) expect(saved.steps['live/a/run']).toBeUndefined();
     // The same source took a different path, so the hint blames a body-computed value even when
     // the strict stop cancelled map siblings.
     for (const phrase of ['ctx.now', 'ctx.step', '--strict-replay', '--fork-from source'])

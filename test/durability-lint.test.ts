@@ -59,7 +59,6 @@ describe('durability lint', () => {
     ['m07-process-env', ['QC002@10']],
     ['m08-nested-step', ['QC003@13']],
     ['m08b-nested-exec', ['QC003@14']],
-    ['m11-positional-map', ['QC006@11', 'QC005@12']],
     ['m20-race', ['QC004@10']],
   ])('flags the %s hazard', (fixture, expected) => {
     expect(found(fixture)).toEqual(expected);
@@ -187,7 +186,7 @@ describe('durability suppression comments', () => {
   it.each([
     ['// quiet-choir-ignore QC002 live clock', { rules: ['QC002'], reason: 'live clock' }],
     ['    //quiet-choir-ignore QC002,QC005  why  ', { rules: ['QC002', 'QC005'], reason: 'why' }],
-    ['// quiet-choir-ignore QC001 , QC006', { rules: ['QC001', 'QC006'], reason: '' }],
+    ['// quiet-choir-ignore QC001 , QC005', { rules: ['QC001', 'QC005'], reason: '' }],
     ['// quiet-choir-ignore QC002', { rules: ['QC002'], reason: '' }],
   ])('parses %j', (line, expected) => {
     expect(parseDurabilitySuppression(line)).toEqual(expected);

@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-deprecated -- Exercise the supported legacy map/replay contract. */
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -542,8 +541,8 @@ describe('durable TypeScript workflows', () => {
         input: z.object({}),
         output: z.array(z.number()),
         run: async (ctx) =>
-          ctx.map([3, 2, 1], 2, (n, index) =>
-            ctx.step(`item/${String(index)}`, {
+          ctx.map('item', [3, 2, 1], { concurrency: 2 }, (n) =>
+            ctx.step('run', {
               input: n,
               schema: z.number(),
               run: async () => {
@@ -564,7 +563,7 @@ describe('durable TypeScript workflows', () => {
     let siblingDone = false;
     const visited: number[] = [];
     const failed = workflow(async (ctx) => {
-      await ctx.map([1, 2, 3], 2, async (n) => {
+      await ctx.map('items', [1, 2, 3], { concurrency: 2 }, async (n) => {
         visited.push(n);
         if (n === 1) throw new Error('item failure');
         await delay(10);
@@ -673,7 +672,7 @@ describe('durable TypeScript workflows', () => {
     await expect(
       runWorkflow(
         workflow(async (ctx) => {
-          await ctx.map([], 0, () => Promise.resolve(1));
+          await ctx.map('items', [], { concurrency: 0 }, () => Promise.resolve(1));
           return 1;
         }),
         { ...options, runId: 'map' },

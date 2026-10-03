@@ -329,7 +329,7 @@ it('records cancellation separately from the root agent failure and retains inte
     return response;
   };
   const definition = workflow((ctx) =>
-    ctx.map('agents', [0, 1, 2], { concurrency: 3, onError: 'abort' }, (n) =>
+    ctx.map('agents', [0, 1, 2], { concurrency: 3, cancelSiblings: true }, (n) =>
       ctx.claude.text('ask', { prompt: String(n) }),
     ),
   );
@@ -477,7 +477,7 @@ it.each([
       return n;
     });
     const definition = workflow((ctx) =>
-      ctx.map('items', [0], { concurrency: 1, onError: 'settle' }, (n) => mapper(ctx, n)),
+      ctx.map('items', [0], { concurrency: 1, onError: 'return' }, (n) => mapper(ctx, n)),
     );
     await expect(runWorkflow(definition, options())).rejects.toThrow(message);
     const failed = await readRun(options());
@@ -493,7 +493,7 @@ it.each([
 it('still settles an error thrown by a valid phase body as an item failure', async () => {
   const body = vi.fn(() => Promise.reject(new Error('body failed')));
   const definition = workflow((ctx) =>
-    ctx.map('items', [0], { concurrency: 1, onError: 'settle' }, () =>
+    ctx.map('items', [0], { concurrency: 1, onError: 'return' }, () =>
       ctx.phase('work', body, { total: 1 }),
     ),
   );

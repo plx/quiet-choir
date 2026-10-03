@@ -451,7 +451,7 @@ it('rejects a failing adapter factory as configuration instead of settling it', 
     ...base,
     harnesses: [broken],
     async run(ctx) {
-      const items = await ctx.map('items', [0], { concurrency: 1, onError: 'settle' }, () =>
+      const items = await ctx.map('items', [0], { concurrency: 1, onError: 'return' }, () =>
         ctx.agent('third').value('ask', { prompt: 'x' }),
       );
       return JSON.stringify(items.map((item) => item.ok));

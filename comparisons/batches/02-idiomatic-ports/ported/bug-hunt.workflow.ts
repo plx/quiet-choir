@@ -78,7 +78,7 @@ export default defineWorkflow({
       const found = await round.map(
         'finders',
         panel,
-        { concurrency: 3, onError: 'settle' },
+        { concurrency: 3, onError: 'return' },
         (lens) =>
           round.claude.value('find', {
             profile: 'reader',
@@ -107,7 +107,7 @@ export default defineWorkflow({
         const results = await round.map(
           ctx.id('skeptics', index),
           Array.from({ length: votes }, (_, vote) => vote),
-          { concurrency: 3, onError: 'settle' },
+          { concurrency: 3, onError: 'return' },
           (vote) =>
             round.claude.value('verify', {
               profile: 'reader',

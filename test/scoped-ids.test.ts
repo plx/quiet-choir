@@ -196,14 +196,15 @@ it('inspects the real format-5 legacy-map checkpoint but refuses execution acros
     version: '1',
     input: z.null(),
     output: z.array(z.string()),
+    // The positional map that recorded the fixture is gone; unscoped concurrent root calls keep
+    // the same leaf IDs, so the fresh run still compares identities with the old capture.
     run: (ctx) =>
-      // eslint-disable-next-line @typescript-eslint/no-deprecated -- Real checkpoint compatibility fixture.
-      ctx.map(
-        [0, 1],
-        2,
-        async (index) =>
-          (await ctx.claude.text(`legacy/${String(index)}`, { prompt: `item-${String(index)}` }))
-            .output,
+      Promise.all(
+        [0, 1].map(
+          async (index) =>
+            (await ctx.claude.text(`legacy/${String(index)}`, { prompt: `item-${String(index)}` }))
+              .output,
+        ),
       ),
   });
   const saved = await readRun({ stateDir, runId: 'legacy-map' });
@@ -308,7 +309,7 @@ it('journals named-map outcomes with full IDs and guards original mapper source 
       ctx.map(
         'items',
         ['a'],
-        { concurrency: 2, key: () => (changed ? 'b' : 'a'), onError: 'settle' },
+        { concurrency: 2, key: () => (changed ? 'b' : 'a'), onError: 'return' },
         () => ctx.step('result', { input: null, schema: z.string(), run: called }),
       ),
     );
@@ -334,7 +335,7 @@ it('journals named-map outcomes with full IDs and guards original mapper source 
 it('checks original named mapper source when replaying terminal item outcomes', async () => {
   let mapper = () => Promise.resolve('before');
   const definition = workflow(async (ctx) => {
-    await ctx.map('items', [0], { concurrency: 1, onError: 'settle' }, mapper);
+    await ctx.map('items', [0], { concurrency: 1, onError: 'return' }, mapper);
     throw new Error('tail');
   });
   await expect(runWorkflow(definition, options())).rejects.toThrow('tail');
@@ -351,7 +352,7 @@ it('keeps cancellation dynamic through a lexical view and contains abort within 
       const panel = ctx.within('panel');
       const rootSignal = panel.signal;
       try {
-        await panel.map('items', [0, 1], { concurrency: 2, onError: 'abort' }, (index) =>
+        await panel.map('items', [0, 1], { concurrency: 2, cancelSiblings: true }, (index) =>
           panel.step('work', {
             input: index,
             schema: z.null(),
@@ -417,7 +418,7 @@ it('tracks unawaited scopes and rejects scope entry from local callbacks', async
   ).rejects.toThrow('local effect callback');
   const settled = await runWorkflow(
     workflow((ctx) =>
-      ctx.map('items', [0], { concurrency: 1, onError: 'settle' }, () =>
+      ctx.map('items', [0], { concurrency: 1, onError: 'return' }, () =>
         ctx.scope('nested', () => Promise.reject(new Error('domain error'))),
       ),
     ),
@@ -473,7 +474,7 @@ it('accepts a mapper-only change to a committed settled map only under acceptCod
     ctx.map(
       'tickets',
       ['a', 'b'],
-      { concurrency: 2, onError: 'settle', key: (key) => key },
+      { concurrency: 2, onError: 'return', key: (key) => key },
       mapper(ctx),
     ),
   );
@@ -557,7 +558,7 @@ it.each([
       await ctx.map(
         'items',
         [{ id: 'a', n }],
-        { concurrency: 1, onError: 'settle', version, key: (item) => prefix + item.id },
+        { concurrency: 1, onError: 'return', version, key: (item) => prefix + item.id },
         mapper ? async (item) => `${await step()}-${String(item.n)}` : step,
       );
       throw new Error('tail');
@@ -579,7 +580,7 @@ it.each([
 
 it('refuses a changed settled-map cwd component even under acceptCodeChange', async () => {
   const definition = workflow(async (ctx) => {
-    await ctx.map('items', ['a'], { concurrency: 1, onError: 'settle' }, () =>
+    await ctx.map('items', ['a'], { concurrency: 1, onError: 'return' }, () =>
       Promise.resolve('saved'),
     );
     throw new Error('tail');
@@ -603,7 +604,7 @@ it('keeps the unnamed refusal for a settled-map journal saved without components
   let tail = true;
   let mapper = () => Promise.resolve('before');
   const definition = workflow(async (ctx) => {
-    const result = await ctx.map('items', ['a'], { concurrency: 1, onError: 'settle' }, mapper);
+    const result = await ctx.map('items', ['a'], { concurrency: 1, onError: 'return' }, mapper);
     if (tail) throw new Error('tail');
     return result;
   });

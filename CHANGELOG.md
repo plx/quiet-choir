@@ -2,6 +2,28 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- Breaking: `ctx.map` has one named form, and `onError` is split into a result mode and
+  `cancelSiblings` (#339, part of #158; amends ADRs 0008, 0009 and 0041). Migrate as follows:
+  - Positional `ctx.map(items, n, mapper[, options])` is removed: use
+    `ctx.map(id, items, { concurrency: n }, mapper)`. Named maps prefix each item's step IDs with
+    `id/key/`, so a migrated workflow needs a new run or a deliberate fork. A positional call is a
+    type error and fails at runtime with a message showing the named form.
+  - `onError: 'settle'` is now `onError: 'return'`. Neither enters the map journal's identity, so
+    journals are byte-identical and in-flight runs replay after the edit; `'settle'` is still
+    accepted at runtime but is no longer typed.
+  - `onError: 'drain'` is the default (omit it) and `onError: 'abort'` is `cancelSiblings: true`.
+    Both old values now fail validation with a message naming `'throw'`, `'return'` and
+    `cancelSiblings`. `FanOutError.policy` keeps its `'drain'`/`'abort'` values.
+  - New: `onError: 'return'` with `cancelSiblings: true` cancels only that map's subtree after the
+    first failure and still returns the full `Settled[]`. A sibling that resolves anyway keeps its
+    value, a cancelled sibling returns `kind: 'cancelled'` with its cancelled step's ID, and an
+    unstarted item returns `kind: 'cancelled'` with `attempts: 0` and a null `stepId`. A resume that
+    finds a committed failure cancels the unfinished items before scheduling them.
+  - A mistyped `onError` now reports the valid literals instead of "No overload matches this call".
+  - `SettledMapOptions` and `SettledNamedMapOptions` are no longer exported; `MapOptions` carries
+    `onError`, `cancelSiblings` and `version`.
+  - Durability lint rule QC006 (positional `ctx.map`) is retired and its code reserved; the lint
+    reports QC001-QC005.
 - The published harness-kit declarations are complete, and the kit exports the helpers adapters
   re-implemented (#157; ADR 0043, amends ADR 0023). `dist/harness-kit.d.ts` re-exported 16 helpers
   (`attachHarnessEvidence`, `boundedResponse`, `validateAgentOptions`, `environmentEdits`,

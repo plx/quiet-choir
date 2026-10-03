@@ -79,7 +79,7 @@ export function guardFile<T>(
     const [outcome] = await ctx.map(
       'body',
       [{ path: baseline.path, blob: baseline.blob, identity }],
-      { concurrency: 1, onError: 'settle' },
+      { concurrency: 1, onError: 'return' },
       () => body(),
     );
     if (!outcome) throw new Error('Guard body outcome is missing.');

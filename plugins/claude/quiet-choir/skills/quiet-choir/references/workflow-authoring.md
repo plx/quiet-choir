@@ -45,7 +45,7 @@ version requires a new run ID (a fork can reuse compatible steps). See [durabili
 | `ctx.claude.value(id, { schema?, ...options })` / Codex equivalent                 | Schema-inferred output; plain string without a schema                                               |
 | `ctx.claude.text(id, options)` / `ctx.codex.text(id, options)`                     | `{ output: string, sessionId, usage }`                                                              |
 | `ctx.claude.object(id, { schema, ...options })` / Codex equivalent                 | Same wrapper with schema-inferred `output`                                                          |
-| `ctx.map(id, items, { concurrency, key?, onError? }, mapper)`                      | Ordered fan-out with per-item prefixes and optional outcome journal                                 |
+| `ctx.map(id, items, { concurrency, key?, onError?, cancelSiblings? }, mapper)`     | Ordered fan-out with per-item prefixes and optional outcome journal                                 |
 | `ctx.ask(id, { prompt, schema, details?, choices?, audience?, subject?, title? })` | Durable schema-validated external answer; a quiescent run suspends                                  |
 | `ctx.approve(id, options)`                                                         | `{ approved: boolean, comment?: string }`; fixed-schema question                                    |
 | `ctx.now(id)`                                                                      | Recorded clock anchor                                                                               |
@@ -124,28 +124,28 @@ Full IDs still allow 1–200 characters, starting with a letter/number and follo
 numbers, `.`, `_`, `:`, `/`, or `-`. Shorten nesting or labels when the full ID exceeds 200.
 Diagnostics name the bounded full ID, scope, leaf, bad character/index, and allowed pattern.
 
-The deprecated positional `ctx.map(items, concurrency, mapper, options?)` adds no item prefix and
-keeps existing IDs and semantic fingerprints unchanged. Format-5 records are inspectable but require
-the original runtime for resumption. Current storage format 7 preserves replay contract 6; flat
-format 6 migrates automatically and original format 1 uses a legacy identity bridge. Adopting
-scopes/named maps changes IDs and requires a new run (or an explicit fork); accepting code changes
-does not rename saved effects.
+The positional `ctx.map(items, concurrency, mapper, options?)` form has been removed; use the named
+form. Format-5 records are inspectable but require the original runtime for resumption. Current
+storage format 7 preserves replay contract 6; flat format 6 migrates automatically and original
+format 1 uses a legacy identity bridge. Adopting scopes/named maps changes IDs and requires a new
+run (or an explicit fork); accepting code changes does not rename saved effects.
 
-Await all workflow operations. The default map policy is `drain`: stop scheduling on first failure,
-let started mappers finish without sending an abort signal, then reject with `FanOutError`. Its
-`failures` preserve `{ index, stepId, error }` in observation order and `unscheduled` lists input
-indexes never started. A workflow-body rejection closes the workflow: effects already started finish
-and checkpoint, but any new launch fails with "Workflow is closed", including an active mapper's
-next step and a map started by a still-running branch. To let sibling branches finish, catch inside
-each branch or use `Promise.allSettled`. Draining can wait for the slowest active call; configure
-timeouts on agent calls.
+Await all workflow operations. Maps drain by default: stop scheduling on first failure, let started
+mappers finish without sending an abort signal, then reject with `FanOutError` (`policy: 'drain'`).
+Its `failures` preserve `{ index, stepId, error }` in observation order and `unscheduled` lists
+input indexes never started. A workflow-body rejection closes the workflow: effects already started
+finish and checkpoint, but any new launch fails with "Workflow is closed", including an active
+mapper's next step and a map started by a still-running branch. To let sibling branches finish,
+catch inside each branch or use `Promise.allSettled`. Draining can wait for the slowest active call;
+configure timeouts on agent calls.
 
-Pass `{ onError: 'abort' }` to cancel only that map's subtree. Catching a failed map permits more
-work, and a caught inner-map failure does not cancel unrelated outer branches. `ctx.signal` is a
-getter for the current scope; effects capture that signal at launch. Ctrl-C/SIGTERM cancels every
-scope. Parallel mappers share the working directory unless a call selects `isolation: 'worktree'` or
-a shared `ctx.worktree` handle. Use [runtime worktrees](worktrees.md) for overlapping edits or
-concurrent commands, and structural file sharding for disjoint writers.
+Pass `cancelSiblings: true` to cancel only that map's subtree (`policy: 'abort'`). Catching a failed
+map permits more work, and a caught inner-map failure does not cancel unrelated outer branches.
+`ctx.signal` is a getter for the current scope; effects capture that signal at launch.
+Ctrl-C/SIGTERM cancels every scope. Parallel mappers share the working directory unless a call
+selects `isolation: 'worktree'` or a shared `ctx.worktree` handle. Use
+[runtime worktrees](worktrees.md) for overlapping edits or concurrent commands, and structural file
+sharding for disjoint writers.
 
 Local and agent steps run once per execution unless given `retry: { maxAttempts: 3, delayMs: 100 }`.
 `maxAttempts` counts attempts in the current execution; delay doubles up to 30 seconds. Only opt
@@ -200,24 +200,27 @@ value retains its normal type; `text`/`object` values include `output`, `session
 while `value` returns only output. The final failure, after applicable retries, is saved as
 `settled-failed`. Replay returns that exact failure without another callback, harness, command or
 file call. `onError: 'return'` is semantic identity: adding or dropping it on a terminal step
-requires a new run/fork. Cancellation (including an explicit map abort) always rejects and stays
-retryable; authoring errors, configuration errors (a missing harness or process adapter, or an
-adapter's pre-launch `ConfigurationError` such as a Claude schema without an object root), and
-checkpoint failures also reject instead of becoming fallback data.
+requires a new run/fork. Cancellation always rejects and stays retryable, except a `cancelSiblings`
+map's own cancellation inside an `onError: 'return'` map, which is journaled as described below;
+authoring errors, configuration errors (a missing harness or process adapter, or an adapter's
+pre-launch `ConfigurationError` such as a Claude schema without an object root), and checkpoint
+failures also reject instead of becoming fallback data.
 
-For best-effort fan-out, use a named map with `onError: 'settle'`:
+For best-effort fan-out, use a named map with `onError: 'return'`:
 
 <!-- skills-check: fragment; reason: Workflow-body pattern with ctx, schemas, and surrounding definition omitted. -->
 
 ```ts
-const results = await ctx.map('reviewers', topics, { concurrency: 3, onError: 'settle' }, (topic) =>
+const results = await ctx.map('reviewers', topics, { concurrency: 3, onError: 'return' }, (topic) =>
   ctx.claude.value('review', { prompt: topic }),
 );
 const votes = results.flatMap((result) => (result.ok ? [result.value] : []));
 ```
 
 A settled map runs all items and journals the ordered `Settled<U, MapStepError>[]`. Errors contain
-`message`, `kind`, `attempts`, and `stepId` (null for a mapper-body failure). Cancellation,
+`message`, `kind`, `attempts`, and `stepId` (null for a mapper-body failure). Add
+`cancelSiblings: true` to stop after the first failure instead: the rest return `kind: 'cancelled'`
+entries (`attempts: 0` and a null `stepId` for items that never started). Run cancellation,
 checkpoint errors, configuration errors, and authoring guards still reject. The full map ID names
 the journal; items prefix explicit leaves with the map ID and key/index. Resume skips committed
 mappers and returns their exact saved outcomes, including ordinary thrown body errors and caught

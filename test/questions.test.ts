@@ -226,7 +226,7 @@ it('preserves waiting questions on body failure and drains active work', async (
 it('does not hang a settled mapper that returns after abandoning a question', async () => {
   const result = await runWorkflow(
     workflow((ctx) =>
-      ctx.map('items', [1, 2], { concurrency: 2, onError: 'settle' }, async (item) => {
+      ctx.map('items', [1, 2], { concurrency: 2, onError: 'return' }, async (item) => {
         return Promise.race([
           ctx.ask('gate', { prompt: 'A number?', schema: z.number() }),
           ctx.step('winner', {

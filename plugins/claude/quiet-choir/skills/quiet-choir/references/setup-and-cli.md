@@ -107,7 +107,7 @@ defaults can block an unchanged in-flight resume before its body runs; fix the s
 explicit code-change recovery. A project's own options still apply when a tsconfig exists.
 `validate`, `check-resume`, and `execute` run module top-level code on import, even for completed
 resumes. `validate` cannot check step schemas/options constructed inside `run`. After a clean type
-check it runs the [durability lint](patterns.md#durability-lint) (QC001–QC006) before importing: any
+check it runs the [durability lint](patterns.md#durability-lint) (QC001–QC005) before importing: any
 finding fails with exit 4 (`load.typecheck`) and prints `path:line:col - error QCnnn: message`. A
 `// quiet-choir-ignore QCnnn <reason>` line directly before the reported line silences that rule
 there. `execute`, `start`, `resume`, `tick` and `check-resume` print the findings as `warning QCnnn`

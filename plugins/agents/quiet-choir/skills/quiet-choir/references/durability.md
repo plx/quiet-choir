@@ -144,16 +144,15 @@ invalidated effect makes the steps launched after it settled run live, which avo
 workspace-dependent work after an earlier effect reruns, while its same-tick `Promise.all` siblings
 stay reusable. Items of a named map are independent of their sibling items: an edit to one stage
 re-runs that stage in every item and reuses the rest. Shared mutable state or files between items is
-not tracked; invalidate such items explicitly. `ctx.scope`/`within` siblings and positional map
-items are ordered by stamps alone. Sources saved before launch stamps fall back to launch (`seq`)
-order. With unchanged code, a concurrent multi-step chain outside a named map can still run a few
-steps live when the fork requests them in a different order than the source settled them.
-`--reuse matching` explicitly reuses every matching terminal ID; it can reuse a result whose
-undeclared filesystem inputs changed when an earlier effect reran. Choose it only when dependencies
-are fully represented by input/prompt/schema/versions. Neither mode reconstructs workspace edits or
-provides isolation by itself. Explicit [worktree effects](worktrees.md) preserve immutable changes;
-forked shared handles are recreated for the new owner. Review other workspace effects before
-repeating writes.
+not tracked; invalidate such items explicitly. `ctx.scope`/`within` siblings are ordered by stamps
+alone. Sources saved before launch stamps fall back to launch (`seq`) order. With unchanged code, a
+concurrent multi-step chain outside a named map can still run a few steps live when the fork
+requests them in a different order than the source settled them. `--reuse matching` explicitly
+reuses every matching terminal ID; it can reuse a result whose undeclared filesystem inputs changed
+when an earlier effect reran. Choose it only when dependencies are fully represented by
+input/prompt/schema/versions. Neither mode reconstructs workspace edits or provides isolation by
+itself. Explicit [worktree effects](worktrees.md) preserve immutable changes; forked shared handles
+are recreated for the new owner. Review other workspace effects before repeating writes.
 
 From the original launch directory, with absolute `QC_CHECKOUT` and `qc_state_dir`:
 
@@ -234,34 +233,39 @@ run gates without executing the supplied definition. `forkFrom` and `resume` are
 
 ## Settled map replay
 
-`ctx.map(id, items, { concurrency, onError: 'settle', key?, version? }, mapper)` journals each
+`ctx.map(id, items, { concurrency, onError: 'return', key?, version? }, mapper)` journals each
 entire mapper outcome under an explicit run-unique ID. Completed items replay without invoking the
 mapper, claiming their owned step and nested-map IDs as visited. A child step can remain `failed` or
 `cancelled` if its containing item saved a handled outcome; inspection retains that history, while
 resume returns the containing outcome. Running items retry. Cancellation, infrastructure failures,
-and authoring errors never become failed item values. Ignored child-operation failures prevent the
-item from committing.
+and authoring errors never become failed item values, with one exception: with
+`cancelSiblings: true` the first item failure cancels only this map's subtree, and its own
+cancellation is journaled. A started sibling that resolves anyway keeps its value; one that rejects
+as cancelled saves `kind: 'cancelled'` with its cancelled step's ID; an unstarted item saves
+`kind: 'cancelled'`, `attempts: 0` and a null `stepId`. A resume that finds a committed failure
+cancels unfinished items before scheduling them. Ignored child-operation failures prevent the item
+from committing.
 
 Named-map identity includes item inputs, resolved keys, original mapper source, optional version,
-and cwd; it excludes concurrency. Changing identity after any item committed, duplicating a journal
-ID, or skipping a recorded terminal map fails replay; a skipped map also triggers the pre-live
-divergence check. The journal also saves one digest per component (`items`, `keys`, `mapper`,
-`version`, `cwd`), so the refusal names what changed. Explicit code acceptance
-(`--accept-code-change`, `acceptCodeChange: true`) accepts a change to the `mapper` component only:
-completed items keep their journaled outcomes and owned step claims, unfinished items run with the
-new mapper, and `codeChanges` records the map. A change to items, keys, version or cwd is still
-refused, with fork advice. A journal saved before per-component digests cannot name what changed, so
-any change to it after a commit is refused. Only the mapper function's own source is hashed: a thin
-mapper such as `(item) => handle(ctx, item)` keeps edits to `handle` out of map identity, with no
-acceptance needed. Either way completed items keep the outcomes the old code produced, and leaf step
-identity checks still apply to items that run again. To make a helper edit change map identity, bump
-`version`; after a commit that means a fork. Inputs/results must be lossless JSON, and captured
-dependencies belong in items or the explicit version. Items are snapshotted when `ctx.map` is
-called; settled mappers receive JSON copies of the fingerprinted snapshot, so later caller edits
-cannot change the processed items. Full IDs stay run-unique; named maps prefix each item as
-`mapId/key/`. The deprecated positional form still uses an explicit `options.id` journal without
-adding an item prefix. Forks start fresh map journals and apply their normal per-step
-reuse/invalidation rules, so mapper-body outcomes are re-evaluated in the new run.
+and cwd; it excludes concurrency, `onError` and `cancelSiblings`, so a journal recorded with the
+former `'settle'` spelling replays unchanged under `'return'`. Changing identity after any item
+committed, duplicating a journal ID, or skipping a recorded terminal map fails replay; a skipped map
+also triggers the pre-live divergence check. The journal also saves one digest per component
+(`items`, `keys`, `mapper`, `version`, `cwd`), so the refusal names what changed. Explicit code
+acceptance (`--accept-code-change`, `acceptCodeChange: true`) accepts a change to the `mapper`
+component only: completed items keep their journaled outcomes and owned step claims, unfinished
+items run with the new mapper, and `codeChanges` records the map. A change to items, keys, version
+or cwd is still refused, with fork advice. A journal saved before per-component digests cannot name
+what changed, so any change to it after a commit is refused. Only the mapper function's own source
+is hashed: a thin mapper such as `(item) => handle(ctx, item)` keeps edits to `handle` out of map
+identity, with no acceptance needed. Either way completed items keep the outcomes the old code
+produced, and leaf step identity checks still apply to items that run again. To make a helper edit
+change map identity, bump `version`; after a commit that means a fork. Inputs/results must be
+lossless JSON, and captured dependencies belong in items or the explicit version. Items are
+snapshotted when `ctx.map` is called; settled mappers receive JSON copies of the fingerprinted
+snapshot, so later caller edits cannot change the processed items. Full IDs stay run-unique; named
+maps prefix each item as `mapId/key/`. Forks start fresh map journals and apply their normal
+per-step reuse/invalidation rules, so mapper-body outcomes are re-evaluated in the new run.
 
 ## At-least-once effects
 
