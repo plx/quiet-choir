@@ -552,16 +552,17 @@ function blockStart(rest: string, inItem: boolean): 'line' | 'item' | null {
 }
 
 /**
- * Whether `rest`, a line after its block-quote markers, is a setext heading's `=` underline: up to
- * three spaces of indentation, one or more `=`, then only spaces or tabs. A character loop, so no
- * input can make it backtrack.
+ * Whether `rest`, a line after its block-quote markers, is a setext heading's underline: up to three
+ * spaces of indentation, a run of one or more `=` or of one or more `-` with no spaces inside it,
+ * then only spaces or tabs. A character loop, so no input can make it backtrack.
  */
 function isSetextUnderline(rest: string): boolean {
   let index = 0;
   while (index < 3 && rest.charAt(index) === ' ') index += 1;
   const start = index;
-  while (rest.charAt(index) === '=') index += 1;
-  if (index === start) return false;
+  const char = rest.charAt(start);
+  if (char !== '=' && char !== '-') return false;
+  while (rest.charAt(index) === char) index += 1;
   while (isBlank(rest.charAt(index))) index += 1;
   return index === rest.length;
 }
@@ -570,10 +571,11 @@ function isSetextUnderline(rest: string): boolean {
  * `text` without fenced blocks and inline code spans, so quoted examples are never read. A span may
  * cross a line ending within a paragraph, including a lazy continuation line of a block quote, but
  * never a block boundary: a blank line, a fence, a deeper block quote, a list item, an ATX heading
- * or a thematic break ends the paragraph, and a heading or break is a block of one line. A `=`
- * underline at the paragraph's block-quote depth makes it a setext heading and ends it there; a
- * `-` underline is a thematic break, which ends the paragraph just the same. With no paragraph
- * open, a `=` line is paragraph text.
+ * or a thematic break ends the paragraph, and a heading or break is a block of one line. A `=` or
+ * `-` underline of any length at the paragraph's block-quote depth makes it a setext heading and
+ * ends it there (so a lone `-` there is an underline, not an empty list item, which cannot interrupt
+ * a paragraph). With no paragraph open, a lone `=` or `-` run shorter than a thematic break is
+ * paragraph text.
  */
 function stripCode(text: string): string {
   const all = lines(text);
