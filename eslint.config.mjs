@@ -70,9 +70,9 @@ export default defineConfig(
               // A regex, because a gitignore group cannot re-include a file below an excluded
               // directory such as ../workflow/.
               regex:
-                '^(?:\\./(?!github-model\\.js$)|\\.\\./(?!index\\.js$|workflow/runtime/error-brand\\.js$))',
+                '^(?:\\./(?!github-model\\.js$|github-wait-model\\.js$)|\\.\\./(?!index\\.js$|workflow/runtime/error-brand\\.js$|workflow/runtime/poll-identity\\.js$))',
               message:
-                'Integration helpers must use the public quiet-choir entry point, not runtime internals. The exceptions are their own pure ./github-model.js and the error-brand registry, a cross-instance contract (ADR 0028), not runtime state.',
+                'Integration helpers must use the public quiet-choir entry point, not runtime internals. The exceptions are their own pure ./github-model.js and ./github-wait-model.js, the error-brand registry (ADR 0028) and the poll-identity key (ADR 0045): cross-instance contracts, not runtime state.',
             },
           ],
         },
@@ -80,9 +80,9 @@ export default defineConfig(
     },
   },
   {
-    // The pure parts of quiet-choir/github (ADR 0044): queries, schemas and mappers. Values come
-    // only from the public entry point (for z); no I/O, clock or process.
-    files: ['src/integrations/github-model.ts'],
+    // The pure parts of quiet-choir/github: queries, schemas and mappers (ADR 0044) and the wait
+    // rules (ADR 0045). Values come only from the public entry point; no I/O, clock or process.
+    files: ['src/integrations/github-model.ts', 'src/integrations/github-wait-model.ts'],
     rules: {
       '@typescript-eslint/no-restricted-imports': [
         'error',
@@ -92,15 +92,15 @@ export default defineConfig(
               group: ['node:*', ...builtinModules, './**', '../**', '!../index.js'],
               allowTypeImports: true,
               message:
-                'The GitHub read model must stay free of I/O: import values only from ../index.js; everything else must be import type.',
+                'The GitHub read and wait models must stay free of I/O: import values only from ../index.js; everything else must be import type.',
             },
           ],
         },
       ],
       'no-restricted-globals': [
         'error',
-        { name: 'process', message: 'The GitHub read model must not read the process.' },
-        { name: 'Date', message: 'The GitHub read model must not read the clock.' },
+        { name: 'process', message: 'The GitHub read and wait models must not read the process.' },
+        { name: 'Date', message: 'The GitHub read and wait models must not read the clock.' },
       ],
     },
   },

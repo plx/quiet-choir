@@ -1,0 +1,46 @@
+[
+  {
+    "id": 5399223034,
+    "user": {
+      "login": "chatgpt-codex-connector[bot]",
+      "type": "Bot"
+    },
+    "state": "COMMENTED",
+    "commit_id": "6ac5df5b9f0e918bf0548306ff2c562013a50f3a",
+    "submitted_at": "2026-10-03T05:38:38Z",
+    "body": "\n### 💡 Codex Review\n\nHere are some automated review suggestions for this pull request.\n\n**Reviewed commit:** `6ac5df5b9f"
+  },
+  {
+    "id": 5399277383,
+    "user": {
+      "login": "octo-dev",
+      "type": "User"
+    },
+    "state": "COMMENTED",
+    "commit_id": "2a93aa66fba3705c4fcaf2b453facc8a9b7dc33e",
+    "submitted_at": "2026-10-03T05:54:43Z",
+    "body": ""
+  },
+  {
+    "id": 5399286800,
+    "user": {
+      "login": "chatgpt-codex-connector[bot]",
+      "type": "Bot"
+    },
+    "state": "COMMENTED",
+    "commit_id": "2a93aa66fba3705c4fcaf2b453facc8a9b7dc33e",
+    "submitted_at": "2026-10-03T05:58:16Z",
+    "body": "\n### 💡 Codex Review\n\nHere are some automated review suggestions for this pull request.\n\n**Reviewed commit:** `2a93aa66fb"
+  },
+  {
+    "id": 5399339475,
+    "user": {
+      "login": "octo-dev",
+      "type": "User"
+    },
+    "state": "COMMENTED",
+    "commit_id": "c5c2233fa0c0b9e89b688f2c40ca9364275efd87",
+    "submitted_at": "2026-10-03T06:16:19Z",
+    "body": ""
+  }
+]

@@ -8,6 +8,7 @@ import type { WaitRecord, WaitRequest, WaitSources } from './wait-model.js';
 import { MAX_EPOCH_MS } from './clock.js';
 import { execSummarySchema } from './exec-schema.js';
 import type { PollCommandIdentity } from './poll-command.js';
+import { pollIdentityKey } from './poll-identity.js';
 
 const epoch = z.number().int().min(0).max(MAX_EPOCH_MS);
 const duration = z.number().min(0).max(MAX_EPOCH_MS);
@@ -118,6 +119,13 @@ export function waitRequest(
       throw new Error('Poll onError.retryAfterMs must be a function.');
   }
   const every = poll?.every;
+  // A built-in helper's internal identity (poll-identity.ts), read as a plain value.
+  const helperValue =
+    poll === undefined
+      ? undefined
+      : (poll as { readonly [pollIdentityKey]?: unknown })[pollIdentityKey];
+  const helper =
+    helperValue === undefined ? undefined : jsonValue(helperValue, 'Poll helper identity');
   const request = requestSchema.parse(
     jsonValue(
       {
@@ -137,12 +145,16 @@ export function waitRequest(
                         maxMs: every?.maxMs,
                         factor: every?.factor ?? 2,
                       },
-                // A command poll records done's source where an observer poll records observe's.
-                observe: digest(
-                  Function.prototype.toString.call(
-                    commandForm ? callbacks.done : callbacks?.observe,
-                  ),
-                ),
+                // A command poll records done's source where an observer poll records observe's;
+                // a built-in helper's versioned identity replaces either source text.
+                observe:
+                  helper === undefined
+                    ? digest(
+                        Function.prototype.toString.call(
+                          commandForm ? callbacks.done : callbacks?.observe,
+                        ),
+                      )
+                    : digest({ helper }),
                 ...(commandForm && command !== undefined ? { command } : {}),
               },
       },

@@ -56,7 +56,8 @@ runner, are owned by the wait for orphan recovery, stop with the observation's s
 `ctx.exec`. They are not durable: every check runs them again. See
 [commands inside a callback or observer](command-effects.md#commands-inside-a-callback-or-observer).
 `{ live: true }` keeps one real under `--dry-run`. When the whole check is one command, a
-[command poll](#command-polls) declares it instead.
+[command poll](#command-polls) declares it instead. For pull request CI, reviews and merges,
+[`quiet-choir/github`'s waits](github.md#waits) package these observers and their rules.
 
 `previous` is the wait's persisted progress before this check: `previous.note` is the latest
 nonterminal note, `previous.checks` the number of earlier checks (tolerated errors included), and

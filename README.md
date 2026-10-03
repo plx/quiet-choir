@@ -592,7 +592,8 @@ Additional service operations use one ordinary effect per helper call; the trans
 [the integration decision](docs/decisions/0027-typed-harness-registry-and-integration-helpers.md).
 `quiet-choir/github` reads repositories, pull requests, review threads, issues and code-scanning
 alerts through the installed `gh`, one `ctx.exec.json` per read, and throws instead of returning a
-truncated list; see [GitHub reads](docs/github.md).
+truncated list. Its head-pinned waits for CI, reviewers (Codex, CodeQL or your own) and merges are
+one `ctx.poll` each; see [GitHub reads and waits](docs/github.md).
 
 ## Progress and monitoring
 

@@ -1,0 +1,46 @@
+[
+  {
+    "id": 5965996078,
+    "user": {
+      "login": "chatgpt-codex-connector[bot]",
+      "type": "Bot"
+    },
+    "body": "<!-- codex-pull-request-review-summary -->\n\n## Codex Review Summary\n\nThis comment shows the latest Codex review activity on this pull request.\n\n| Review | Status | Commit | Review trigger |\n| --- | --- | --- | --- |\n| 📝 **Code Review** | ✅ **Completed** <relative-time datetime=\"2026-10-03T06:20:22.149932Z\">2026-10-03T06:20:22.149932Z</relative-time> | `c5c2233` | Manual request |\n\n\n\n<details> <summary>ℹ️ About Codex in GitHub</summary>\n<br/>\n\n[Your team has set up Codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/general). Reviews are triggered when you\n- Open a pull request for review\n- Mark a draft as ready\n- Comment \"@codex review\" or \"@codex security review\".\n\nCodex reacts with 👀 while any review is running, comments if it has suggestions, and reacts with 👍 once all reviews finish with no findings.\n\n</details>",
+    "created_at": "2026-10-03T05:34:14Z",
+    "updated_at": "2026-10-03T06:20:23Z",
+    "html_url": "https://github.com/octo-org/quiet-choir/pull/338#issuecomment-5965996078"
+  },
+  {
+    "id": 5966126242,
+    "user": {
+      "login": "octo-dev",
+      "type": "User"
+    },
+    "body": "@codex review",
+    "created_at": "2026-10-03T05:54:48Z",
+    "updated_at": "2026-10-03T05:54:48Z",
+    "html_url": "https://github.com/octo-org/quiet-choir/pull/338#issuecomment-5966126242"
+  },
+  {
+    "id": 5966277239,
+    "user": {
+      "login": "octo-dev",
+      "type": "User"
+    },
+    "body": "@codex review",
+    "created_at": "2026-10-03T06:16:23Z",
+    "updated_at": "2026-10-03T06:16:23Z",
+    "html_url": "https://github.com/octo-org/quiet-choir/pull/338#issuecomment-5966277239"
+  },
+  {
+    "id": 5966302550,
+    "user": {
+      "login": "chatgpt-codex-connector[bot]",
+      "type": "Bot"
+    },
+    "body": "Codex Review: Didn't find any major issues. :+1:\n\n**Reviewed commit:** `c5c2233fa0`\n\n<details> <summary>ℹ️ About Codex in GitHub</summary>\n<br/>\n\n[Your team has set up Codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/general). Reviews are triggered when you\n- Open a pull request for review\n- Mark a draft as ready\n- Comment \"@codex review\".\n\nIf Codex has suggestions, it will comment; otherwise it will react with 👍.\n\n\n\n\nCodex can also answer questions or update the PR. Try commenting \"@codex address that feedback\".\n            \n</details>",
+    "created_at": "2026-10-03T06:20:20Z",
+    "updated_at": "2026-10-03T06:20:20Z",
+    "html_url": "https://github.com/octo-org/quiet-choir/pull/338#issuecomment-5966302550"
+  }
+]

@@ -2,6 +2,31 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- `quiet-choir/github` adds head-pinned waits (#160, slice B of #21; ADR 0045).
+  `gh.waitChecks(id, { pr, sha, ... })`, `gh.waitPr(id, { pr, sha, until, ... })` and
+  `gh.waitReview(id, { pr, sha, since, reviewers, ... })` are each exactly one `ctx.poll`, so one
+  `wait` record however many checks, and take exactly one of `timeoutMs` and `deadline`. No wait
+  reports `success`, `clean` or `merged` for a head other than `sha`: another head ends the wait
+  with `head-moved`, after an optional `staleGraceMs` in which an ancestor head (GitHub compare
+  `ahead`) is a stale view. `waitChecks` rolls up the head's checks (`failure` only once nothing is
+  pending, `no-checks` only after `graceMs`, failed checks with URL and Actions run ID); `waitPr`
+  reports `merged` only for the pinned head and a pull request closed without merging as `closed` at
+  once; `waitReview` waits for every `ReviewerBot` to be final, commits those verdicts, then reports
+  untriaged threads and open alerts on the next check. A deadline returns `timeout` with the last
+  progress. Each wait tolerates 5 consecutive transient gh errors by default, classified from typed
+  facts. `codexReviewer()` and `codeqlReviewer({ settleMs, checkName })` port `merge-down-pr`'s
+  rules, with Codex's two-check debounce and the CodeQL settle start kept in the wait's note, so
+  they survive suspend and tick. Codex judges every summary row for `sha`, and CodeQL's
+  `no analysis found` waits for the check and settle window instead of passing at once. `waitChecks`
+  and `waitReview` read the head through a focused `pr.head` GraphQL read, so unrelated truncated
+  fields such as closing issues never fail them. Grace, stale grace and settle use the wall clock,
+  not `RunOptions.clock`. `github(ctx, ...)` now takes `Pick<WorkflowContext, 'exec' | 'poll'>`, so
+  a caller passing a context with only `exec` must also pass `poll`. The new REST and state response
+  schemas and `Raw*` types are exported.
+- Built-in helpers can give a poll an internal versioned identity (`poll-identity.ts`, a registry
+  symbol): its wait request's `observe` digest is then that value's, not the observer's or `done`'s
+  source text (#160; ADR 0045). The request schema is unchanged and every other poll keeps its
+  identity. `test/builtin-identity.test.ts` pins the three GitHub wait fingerprints.
 - New `quiet-choir/github` subpath: typed, complete-or-throw GitHub reads over the installed `gh`
   (#159, slice A of #21; ADR 0044). `github(ctx, { repo })` offers `repo.info`, `pr.view` (closing
   issues and summarized head checks), `pr.list`, `pr.reviewThreads`, `issue.view` (optionally with
