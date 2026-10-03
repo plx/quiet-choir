@@ -55,10 +55,10 @@ negative case strips a synthetic re-export and expects TS2305, so the check cann
   whose `code` is `'QUIET_CHOIR_OUTPUT_LIMIT'`, not a class, because `errorKind` already reads
   `code` across module instances. `runProcess`, `JsonLines` and `errorKind` share the one constant.
 - `promptedStructuredOutput(schema)`: a prompt suffix embedding the JSON Schema, and an extractor
-  that takes the whole answer, else the last json or untagged fence that parses, else the outermost
-  object or array span (preferring the delimiter that matches the schema's top-level type), and
-  returns it re-serialized. No JSON throws a `SyntaxError`, which classifies as `schema` like the
-  runtime's own parse.
+  that takes the whole answer, else the last json or untagged fence that parses, else the first
+  balanced object or array value that parses (trying every bracket as a start, the delimiter that
+  matches the schema's top-level type first), and returns it re-serialized. No JSON throws a
+  `SyntaxError`, which classifies as `schema` like the runtime's own parse.
 
 **`'prompted'` changes nothing in the runtime.** The runner handles `'prompted'` exactly like
 `'native'`: it passes `outputSchema`, JSON-parses `response.text` and validates it with the step's

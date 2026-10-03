@@ -286,6 +286,21 @@ describe('promptedStructuredOutput', () => {
     ],
     ['an object in prose', 'The result is {"ok": false} as requested.', '{"ok":false}'],
     ['an object after a citation', 'According to [1], the result is {"ok": true}', '{"ok":true}'],
+    [
+      'an object after a non-JSON brace fragment',
+      'Example: {not JSON}. Result: {"ok":true}',
+      '{"ok":true}',
+    ],
+    [
+      'a nested object with braces inside strings before a stray close',
+      '{"s":"a}b","q":"say \\"{\\"","n":{"x":1}} trailing }',
+      '{"s":"a}b","q":"say \\"{\\"","n":{"x":1}}',
+    ],
+    [
+      'the first of two objects in prose',
+      'First {"ok": false}, then {"ok": true}.',
+      '{"ok":false}',
+    ],
   ])('extracts %s', (_name, text, expected) => {
     expect(prompted.extract(text)).toBe(expected);
   });
@@ -293,6 +308,7 @@ describe('promptedStructuredOutput', () => {
   it('prefers the span matching an array schema over an earlier object-like span', () => {
     const array = promptedStructuredOutput({ type: 'array' });
     expect(array.extract('See {note} then [1,2]')).toBe('[1,2]');
+    expect(array.extract('Tick [x] then [1,2]')).toBe('[1,2]');
   });
 
   it('keeps the earliest span when the schema has no single top-level type', () => {
