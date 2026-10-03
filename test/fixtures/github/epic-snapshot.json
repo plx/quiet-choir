@@ -1,0 +1,841 @@
+{
+  "data": {
+    "viewer": {
+      "login": "octo-bot"
+    },
+    "repository": {
+      "issue": {
+        "number": 99,
+        "title": "Epic: initial enhancements, wave 2",
+        "state": "OPEN",
+        "url": "https://github.com/octo-org/quiet-choir/issues/99",
+        "body": "This epic collects the next wave of quiet-choir work (trimmed recording: only the items kept in this fixture).\n\n**The checklist below is the execution order.** Each run takes the first ready item, skipping items with a \"Depends on #N\" line whose dependency is still open.\n\n## Items\n\n### 1. A faster, quieter feedback loop\n\n- [x] #121 runner.ts: replace effect()'s 15 positional parameters with an EffectSpec and extract pure classifyAttemptFailure and decideReplay with table tests\n- [x] #184 Replace effect()'s positional parameters with an EffectSpec object\n- [x] #185 Extract classifyAttemptFailure into a pure attempt-failure module with ADR 0007 table tests\n- [x] #186 Extract decideReplay into a pure replay-decision module with table tests\n\n### 2. Trust: bugs that lose work, lie, or break resume\n\n- [x] #131 Pin step-identity schema encodings with golden tests so zod bumps fail CI, and record toolchain versions\n\n### 4. The authoring and recovery loop\n\n- [x] #109 Enforce expectsToolUse and add idleTimeoutMs using streamed attempt events\n- [x] #156 Record and show the subscription rate-limit windows Claude reports\n- [x] #158 One spelling per concept at 0.0.0: remove positional map overloads, split map settle/abort, and unify worktree isolation and Codex effort\n- [x] #339 Remove positional ctx.map overloads and split map onError into a result mode and cancelSiblings\n- [x] #340 Make worktree the only checkout selector and narrow isolation to the harness mode\n- [x] #341 Give Codex one effort option and rename reasoningEffort in policy overrides and attempt records\n\n### 5. Built-in GitHub (advances #21)\n\n- [x] #159 quiet-choir/github slice A: typed, complete-or-throw reads over the installed gh\n- [ ] #163 quiet-choir/github slice D: epic snapshot and a pure next-ticket selector\n\n### 6. Docs and housekeeping\n\n- [ ] #164 Agent-facing docs: native-Workflow porting reference, a present-tense decision table, and tested CI-gate and ticket-loop recipes\n\n### 7. Second slices, lower priority\n\n- [ ] #167 Add a run-record schemaRevision so older builds refuse to rewrite records with fields they do not know\n- [ ] #168 Add a sticky --max-window-utilization gate that suspends until the rate-limit window resets\n",
+        "subIssuesSummary": {
+          "total": 16,
+          "completed": 12
+        },
+        "subIssues": {
+          "pageInfo": {
+            "hasNextPage": false
+          },
+          "nodes": [
+            {
+              "number": 109,
+              "title": "Enforce expectsToolUse and add idleTimeoutMs using streamed attempt events",
+              "state": "CLOSED",
+              "stateReason": "COMPLETED",
+              "url": "https://github.com/octo-org/quiet-choir/issues/109",
+              "body": "## Summary\n\nTwo items from #45 were deferred until harness output streamed. Streaming has now landed (#61, PR #94), but neither item was built. First, profiles resolve `expectsToolUse` and nothing reads it, so a profile that should use tools can finish without a single tool call and give no signal. Second, `idl…\n- `idleTimeoutMs` is still rejected up front. #45 kept it out \"until an idle deadline can be enforced (depends on #61 streaming)\".",
+              "repository": {
+                "nameWithOwner": "octo-org/quiet-choir"
+              },
+              "labels": {
+                "pageInfo": {
+                  "hasNextPage": false
+                },
+                "nodes": [
+                  {
+                    "name": "enhancement"
+                  }
+                ]
+              },
+              "assignees": {
+                "pageInfo": {
+                  "hasNextPage": false
+                },
+                "nodes": []
+              },
+              "blockedBy": {
+                "pageInfo": {
+                  "hasNextPage": false
+                },
+                "nodes": []
+              },
+              "closedByPullRequestsReferences": {
+                "pageInfo": {
+                  "hasNextPage": false
+                },
+                "nodes": [
+                  {
+                    "number": 335,
+                    "state": "MERGED",
+                    "isDraft": false,
+                    "url": "https://github.com/octo-org/quiet-choir/pull/335",
+                    "headRefName": "epic-99/109-enforce-expectstooluse-and-add"
+                  }
+                ]
+              },
+              "comments": {
+                "pageInfo": {
+                  "hasNextPage": false
+                },
+                "nodes": []
+              }
+            },
+            {
+              "number": 121,
+              "title": "runner.ts: replace effect()'s 15 positional parameters with an EffectSpec and extract pure classifyAttemptFailure and decideReplay with table tests",
+              "state": "CLOSED",
+              "stateReason": "COMPLETED",
+              "url": "https://github.com/octo-org/quiet-choir/issues/121",
+              "body": "## Summary\n\n`effect()` in `src/workflow/runtime/runner.ts` takes 15 positional parameters, and its eight call sites pass runs of placeholders such as `null, identity, undefined, undefined, null, phase, ...`, so a swapped argument of a matching type would typecheck. Its replay decision and failure classification…\n- Failure classification is in the attempt `catch` at `:1600-1712`: `scoped` (`:1616`), `infrastructure` (`:1671`), `fatal` (`:1676`), `retry` (`:1677`), then the settle-or-throw branch for `onError: 'return'`. It depends on checkpoint problems, the scope signal, `ConfigurationError`, attempt limits and `retry.on`. ADR 0007 (`docs/decisions/0007-durable-failure-outcomes.md`) specifies these outcomes in prose (cancellation, configuration failures, checkpoint failures, retry filters, settled returns) with no table.\n   - `classifyAttemptFailure({ cause, scopeSignal, checkpointProblems, policy, attempt, maxAttempts, onError })` returns `{ status, retry, settle, fatal, errorKind }` for the facts known at `:1616-1682`. The post-save `signal.reason instanceof CheckpointError` check at the retry branch stays in the runner because it depends on state after `trySave()`.",
+              "repository": {
+                "nameWithOwner": "octo-org/quiet-choir"
+              },
+              "labels": {
+                "pageInfo": {
+                  "hasNextPage": false
+                },
+                "nodes": [
+                  {
+                    "name": "enhancement"
+                  }
+                ]
+              },
+              "assignees": {
+                "pageInfo": {
+                  "hasNextPage": false
+                },
+                "nodes": []
+              },
+              "blockedBy": {
+                "pageInfo": {
+                  "hasNextPage": false
+                },
+                "nodes": []
+              },
+              "closedByPullRequestsReferences": {
+                "pageInfo": {
+                  "hasNextPage": false
+                },
+                "nodes": []
+              },
+              "comments": {
+                "pageInfo": {
+                  "hasNextPage": false
+                },
+                "nodes": [
+                  {
+                    "author": {
+                      "login": "octo-bot"
+                    },
+                    "body": "Splitting this into three PRs, in order, to match the two-PR plan in the ticket. The pure-decision half is itself two independent reviews of different risk.\n\n<!-- epic:split 184,185,186 -->"
+                  }
+                ]
+              }
+            },
+            {
+              "number": 131,
+              "title": "Pin step-identity schema encodings with golden tests so zod bumps fail CI, and record toolchain versions",
+              "state": "CLOSED",
+              "stateReason": "COMPLETED",
+              "url": "https://github.com/octo-org/quiet-choir/issues/131",
+              "body": "## Summary\n\nStep and agent identities hash the raw output of `z.toJSONSchema`, and the CI golden-identity test feeds a literal schema, so a zod release that changes that encoding strands every suspended run without failing CI. zod is a production dependency covered by grouped weekly Dependabot minor bumps. This…\n- **PR-B, stable built-in identities.** `ctx.now` (`runner.ts:2715-2720`) and `decision.choose` (`src/integrations/decision.ts:68-77`) hash their own callback text through `Function.prototype.toString` (`runner.ts:1240`), so a refactor of quiet-choir strands runs that completed them (review repro R9: rewriting `run: () => clockNow(clock)` as a block body made resume fail with \"callback changed on a completed step\"). The fix gives built-ins an explicit versioned identity and hashes no callback text, and needs an internal path because `decision` uses public `ctx.step`, whose `version` plus callback identity is documented (`durability.md:166-170`). An identity that embeds `schemaJson` output stays exposed to the drift above. Golden digests for these two identities belong in that PR, since callback text depends on the loader (`durability.md:166`).",
+              "repository": {
+                "nameWithOwner": "octo-org/quiet-choir"
+              },
+              "labels": {
+                "pageInfo": {
+                  "hasNextPage": false
+                },
+                "nodes": [
+                  {
+                    "name": "bug"
+                  }
+                ]
+              },
+              "assignees": {
+                "pageInfo": {
+                  "hasNextPage": false
+                },
+                "nodes": []
+              },
+              "blockedBy": {
+                "pageInfo": {
+                  "hasNextPage": false
+                },
+                "nodes": []
+              },
+              "closedByPullRequestsReferences": {
+                "pageInfo": {
+                  "hasNextPage": false
+                },
+                "nodes": [
+                  {
+                    "number": 233,
+                    "state": "MERGED",
+                    "isDraft": false,
+                    "url": "https://github.com/octo-org/quiet-choir/pull/233",
+                    "headRefName": "epic-99/131-pin-step-identity-schema-encodings-with"
+                  }
+                ]
+              },
+              "comments": {
+                "pageInfo": {
+                  "hasNextPage": false
+                },
+                "nodes": []
+              }
+            },
+            {
+              "number": 156,
+              "title": "Record and show the subscription rate-limit windows Claude reports",
+              "state": "CLOSED",
+              "stateReason": "COMPLETED",
+              "url": "https://github.com/octo-org/quiet-choir/issues/156",
+              "body": "## Summary\n\nFor subscription (OAuth) use, the binding limit on a long burndown is the 5-hour and 7-day usage window, not USD. Claude emits a `rate_limit_event` on every call with the window status, reset time and per-window utilization, and quiet-choir ignores it. This first slice parses the latest event into a…\nDepends on #141.",
+              "repository": {
+                "nameWithOwner": "octo-org/quiet-choir"
+              },
+              "labels": {
+                "pageInfo": {
+                  "hasNextPage": false
+                },
+                "nodes": [
+                  {
+                    "name": "enhancement"
+                  }
+                ]
+              },
+              "assignees": {
+                "pageInfo": {
+                  "hasNextPage": false
+                },
+                "nodes": []
+              },
+              "blockedBy": {
+                "pageInfo": {
+                  "hasNextPage": false
+                },
+                "nodes": []
+              },
+              "closedByPullRequestsReferences": {
+                "pageInfo": {
+                  "hasNextPage": false
+                },
+                "nodes": [
+                  {
+                    "number": 336,
+                    "state": "MERGED",
+                    "isDraft": false,
+                    "url": "https://github.com/octo-org/quiet-choir/pull/336",
+                    "headRefName": "epic-99/156-record-and-show-the-subscription-rate"
+                  }
+                ]
+              },
+              "comments": {
+                "pageInfo": {
+                  "hasNextPage": false
+                },
+                "nodes": []
+              }
+            },
+            {
+              "number": 158,
+              "title": "One spelling per concept at 0.0.0: remove positional map overloads, split map settle/abort, and unify worktree isolation and Codex effort",
+              "state": "CLOSED",
+              "stateReason": "COMPLETED",
+              "url": "https://github.com/octo-org/quiet-choir/issues/158",
+              "body": "## Summary\n\n`ctx.map` still exposes two `@deprecated` positional overloads, map uses `onError: 'settle'` where steps and agents use `'return'`, worktree isolation has three overlapping spellings (`isolation: 'worktree'`, `worktree: 'worktree'`, `{ kind: 'worktree' }`), and Codex accepts both `effort` and `reaso…",
+              "repository": {
+                "nameWithOwner": "octo-org/quiet-choir"
+              },
+              "labels": {
+                "pageInfo": {
+                  "hasNextPage": false
+                },
+                "nodes": [
+                  {
+                    "name": "enhancement"
+                  }
+                ]
+              },
+              "assignees": {
+                "pageInfo": {
+                  "hasNextPage": false
+                },
+                "nodes": []
+              },
+              "blockedBy": {
+                "pageInfo": {
+                  "hasNextPage": false
+                },
+                "nodes": []
+              },
+              "closedByPullRequestsReferences": {
+                "pageInfo": {
+                  "hasNextPage": false
+                },
+                "nodes": []
+              },
+              "comments": {
+                "pageInfo": {
+                  "hasNextPage": false
+                },
+                "nodes": [
+                  {
+                    "author": {
+                      "login": "octo-bot"
+                    },
+                    "body": "Splitting this ticket into three PRs. They are independent, but each is too large to review alongside the others. Together they come to about 40 positional `ctx.map` call sites, 22 `'settle'` uses in …\n\n<!-- epic:split 339,340,341 -->"
+                  }
+                ]
+              }
+            },
+            {
+              "number": 159,
+              "title": "quiet-choir/github slice A: typed, complete-or-throw reads over the installed gh",
+              "state": "CLOSED",
+              "stateReason": "COMPLETED",
+              "url": "https://github.com/octo-org/quiet-choir/issues/159",
+              "body": "## Summary\n\nEvery GitHub workflow re-implements the same reads as untyped `gh` calls; `.claude/workflows/merge-down-pr/merge-down.mjs` does it for repo info, PR snapshot and CI rollup, linked issue, review threads with bot detection, and code-scanning alerts. Add a `quiet-choir/github` helper subpath, following…",
+              "repository": {
+                "nameWithOwner": "octo-org/quiet-choir"
+              },
+              "labels": {
+                "pageInfo": {
+                  "hasNextPage": false
+                },
+                "nodes": [
+                  {
+                    "name": "enhancement"
+                  }
+                ]
+              },
+              "assignees": {
+                "pageInfo": {
+                  "hasNextPage": false
+                },
+                "nodes": []
+              },
+              "blockedBy": {
+                "pageInfo": {
+                  "hasNextPage": false
+                },
+                "nodes": []
+              },
+              "closedByPullRequestsReferences": {
+                "pageInfo": {
+                  "hasNextPage": false
+                },
+                "nodes": [
+                  {
+                    "number": 350,
+                    "state": "MERGED",
+                    "isDraft": false,
+                    "url": "https://github.com/octo-org/quiet-choir/pull/350",
+                    "headRefName": "epic-99/159-quiet-choir-github-slice-a-typed"
+                  }
+                ]
+              },
+              "comments": {
+                "pageInfo": {
+                  "hasNextPage": false
+                },
+                "nodes": []
+              }
+            },
+            {
+              "number": 163,
+              "title": "quiet-choir/github slice D: epic snapshot and a pure next-ticket selector",
+              "state": "OPEN",
+              "stateReason": null,
+              "url": "https://github.com/octo-org/quiet-choir/issues/163",
+              "body": "## Summary\n\nThe \"execute the next ticket of an epic\" workflow needs a complete, replay-stable view of an epic and a deterministic, explainable pick. Add `gh.epic.snapshot(id, n)`, one GraphQL `ctx.exec.json` returning the epic's sub-issues with state, labels, assignees, open blockers and linked PRs, and an expo…\n4. Export `nextTicket(snapshot, policy)` as a pure function with no context argument. Candidates are open, not blocked by an open issue, and without an open linked PR. `policy` selects order: listing order or issue number. Every open item that is not picked appears in `skipped` with a reason such as `blocked` or `has-open-pr`. No pick with nothing skipped means every ticket is closed (done).\n- [ ] `nextTicket` unit tests over a recorded #99-shaped snapshot cover: blocked by an open issue, has an open linked PR, all closed (done, empty `skipped`), and empty-but-incomplete (throws).\nDepends on #159.",
+              "repository": {
+                "nameWithOwner": "octo-org/quiet-choir"
+              },
+              "labels": {
+                "pageInfo": {
+                  "hasNextPage": false
+                },
+                "nodes": [
+                  {
+                    "name": "enhancement"
+                  }
+                ]
+              },
+              "assignees": {
+                "pageInfo": {
+                  "hasNextPage": false
+                },
+                "nodes": []
+              },
+              "blockedBy": {
+                "pageInfo": {
+                  "hasNextPage": false
+                },
+                "nodes": []
+              },
+              "closedByPullRequestsReferences": {
+                "pageInfo": {
+                  "hasNextPage": false
+                },
+                "nodes": []
+              },
+              "comments": {
+                "pageInfo": {
+                  "hasNextPage": false
+                },
+                "nodes": []
+              }
+            },
+            {
+              "number": 164,
+              "title": "Agent-facing docs: native-Workflow porting reference, a present-tense decision table, and tested CI-gate and ticket-loop recipes",
+              "state": "OPEN",
+              "stateReason": null,
+              "url": "https://github.com/octo-org/quiet-choir/issues/164",
+              "body": "## Summary\n\nThe first question an agent brings to the skill is \"quiet-choir or native Workflow, and how do I port my script?\", and the skill cannot answer it. The claude-host region is a changelog of issue links, misstates native budget as advisory, and omits that restricted quiet-choir agents do not see CLAUDE…",
+              "repository": {
+                "nameWithOwner": "octo-org/quiet-choir"
+              },
+              "labels": {
+                "pageInfo": {
+                  "hasNextPage": false
+                },
+                "nodes": [
+                  {
+                    "name": "documentation"
+                  }
+                ]
+              },
+              "assignees": {
+                "pageInfo": {
+                  "hasNextPage": false
+                },
+                "nodes": []
+              },
+              "blockedBy": {
+                "pageInfo": {
+                  "hasNextPage": false
+                },
+                "nodes": []
+              },
+              "closedByPullRequestsReferences": {
+                "pageInfo": {
+                  "hasNextPage": false
+                },
+                "nodes": []
+              },
+              "comments": {
+                "pageInfo": {
+                  "hasNextPage": false
+                },
+                "nodes": []
+              }
+            },
+            {
+              "number": 167,
+              "title": "Add a run-record schemaRevision so older builds refuse to rewrite records with fields they do not know",
+              "state": "OPEN",
+              "stateReason": null,
+              "url": "https://github.com/octo-org/quiet-choir/issues/167",
+              "body": "## Summary\n\n`parseRunRecord` strips unknown top-level fields from `run.json`, and the next compaction writes the stripped record back. A build that predates a field therefore deletes it when it resumes a run that a newer build wrote, with exit 0 and no warning. Add a record `schemaRevision` that a build bumps w…\nDepends on #131.",
+              "repository": {
+                "nameWithOwner": "octo-org/quiet-choir"
+              },
+              "labels": {
+                "pageInfo": {
+                  "hasNextPage": false
+                },
+                "nodes": [
+                  {
+                    "name": "bug"
+                  }
+                ]
+              },
+              "assignees": {
+                "pageInfo": {
+                  "hasNextPage": false
+                },
+                "nodes": []
+              },
+              "blockedBy": {
+                "pageInfo": {
+                  "hasNextPage": false
+                },
+                "nodes": []
+              },
+              "closedByPullRequestsReferences": {
+                "pageInfo": {
+                  "hasNextPage": false
+                },
+                "nodes": []
+              },
+              "comments": {
+                "pageInfo": {
+                  "hasNextPage": false
+                },
+                "nodes": []
+              }
+            },
+            {
+              "number": 168,
+              "title": "Add a sticky --max-window-utilization gate that suspends until the rate-limit window resets",
+              "state": "OPEN",
+              "stateReason": null,
+              "url": "https://github.com/octo-org/quiet-choir/issues/168",
+              "body": "## Summary\n\n#156 records the Claude subscription window utilization (`rateLimit` in attempt diagnostics) but nothing acts on it. Add a sticky `--max-window-utilization <0..1>` admission gate, outside step identity and modeled on the existing run caps. When the gate closes and the window's reset time is known, s…\nDepends on #156.\nDepends on #141.",
+              "repository": {
+                "nameWithOwner": "octo-org/quiet-choir"
+              },
+              "labels": {
+                "pageInfo": {
+                  "hasNextPage": false
+                },
+                "nodes": [
+                  {
+                    "name": "enhancement"
+                  }
+                ]
+              },
+              "assignees": {
+                "pageInfo": {
+                  "hasNextPage": false
+                },
+                "nodes": []
+              },
+              "blockedBy": {
+                "pageInfo": {
+                  "hasNextPage": false
+                },
+                "nodes": []
+              },
+              "closedByPullRequestsReferences": {
+                "pageInfo": {
+                  "hasNextPage": false
+                },
+                "nodes": []
+              },
+              "comments": {
+                "pageInfo": {
+                  "hasNextPage": false
+                },
+                "nodes": []
+              }
+            },
+            {
+              "number": 184,
+              "title": "Replace effect()'s positional parameters with an EffectSpec object",
+              "state": "CLOSED",
+              "stateReason": "COMPLETED",
+              "url": "https://github.com/octo-org/quiet-choir/issues/184",
+              "body": "## Summary\n\n`effect()` in `src/workflow/runtime/runner.ts` takes 15 positional parameters, and its eight call sites pass runs of placeholder `undefined` and `null` values, so a swapped argument of a matching type would typecheck. Replace the parameters with one internal `EffectSpec<T, TMode extends ErrorMode>` …",
+              "repository": {
+                "nameWithOwner": "octo-org/quiet-choir"
+              },
+              "labels": {
+                "pageInfo": {
+                  "hasNextPage": false
+                },
+                "nodes": [
+                  {
+                    "name": "enhancement"
+                  }
+                ]
+              },
+              "assignees": {
+                "pageInfo": {
+                  "hasNextPage": false
+                },
+                "nodes": []
+              },
+              "blockedBy": {
+                "pageInfo": {
+                  "hasNextPage": false
+                },
+                "nodes": []
+              },
+              "closedByPullRequestsReferences": {
+                "pageInfo": {
+                  "hasNextPage": false
+                },
+                "nodes": [
+                  {
+                    "number": 187,
+                    "state": "MERGED",
+                    "isDraft": false,
+                    "url": "https://github.com/octo-org/quiet-choir/pull/187",
+                    "headRefName": "epic-99/184-replace-effect-s-positional-parameters"
+                  }
+                ]
+              },
+              "comments": {
+                "pageInfo": {
+                  "hasNextPage": false
+                },
+                "nodes": []
+              }
+            },
+            {
+              "number": 185,
+              "title": "Extract classifyAttemptFailure into a pure attempt-failure module with ADR 0007 table tests",
+              "state": "CLOSED",
+              "stateReason": "COMPLETED",
+              "url": "https://github.com/octo-org/quiet-choir/issues/185",
+              "body": "## Summary\n\nThe attempt failure classification in `runner.ts` (cancelled, checkpoint failure, configuration failure, retry, settle) is interleaved with saves and events, so ADR 0007's outcomes can only be tested through a real store. Extract the decision into a pure `classifyAttemptFailure` in a new `src/workfl…\nDepends on #184.",
+              "repository": {
+                "nameWithOwner": "octo-org/quiet-choir"
+              },
+              "labels": {
+                "pageInfo": {
+                  "hasNextPage": false
+                },
+                "nodes": [
+                  {
+                    "name": "enhancement"
+                  }
+                ]
+              },
+              "assignees": {
+                "pageInfo": {
+                  "hasNextPage": false
+                },
+                "nodes": []
+              },
+              "blockedBy": {
+                "pageInfo": {
+                  "hasNextPage": false
+                },
+                "nodes": []
+              },
+              "closedByPullRequestsReferences": {
+                "pageInfo": {
+                  "hasNextPage": false
+                },
+                "nodes": [
+                  {
+                    "number": 188,
+                    "state": "MERGED",
+                    "isDraft": false,
+                    "url": "https://github.com/octo-org/quiet-choir/pull/188",
+                    "headRefName": "epic-99/185-extract-classifyattemptfailure-into-a"
+                  }
+                ]
+              },
+              "comments": {
+                "pageInfo": {
+                  "hasNextPage": false
+                },
+                "nodes": []
+              }
+            },
+            {
+              "number": 186,
+              "title": "Extract decideReplay into a pure replay-decision module with table tests",
+              "state": "CLOSED",
+              "stateReason": "COMPLETED",
+              "url": "https://github.com/octo-org/quiet-choir/issues/186",
+              "body": "## Summary\n\nThe replay decision in `effect()` (legacy migration, redefinition refusals, terminal replay, rehearsal refusal, fork reuse, strict healed divergence, fresh) is interleaved with saves, events and frame attribution, so it is only testable through a real store. Extract it into a pure `decideReplay` in …\n- Depends on the `classifyAttemptFailure` slice of #121, which adds the ESLint purity block this slice extends, and follows the EffectSpec slice.\nDepends on #185.",
+              "repository": {
+                "nameWithOwner": "octo-org/quiet-choir"
+              },
+              "labels": {
+                "pageInfo": {
+                  "hasNextPage": false
+                },
+                "nodes": [
+                  {
+                    "name": "enhancement"
+                  }
+                ]
+              },
+              "assignees": {
+                "pageInfo": {
+                  "hasNextPage": false
+                },
+                "nodes": []
+              },
+              "blockedBy": {
+                "pageInfo": {
+                  "hasNextPage": false
+                },
+                "nodes": []
+              },
+              "closedByPullRequestsReferences": {
+                "pageInfo": {
+                  "hasNextPage": false
+                },
+                "nodes": [
+                  {
+                    "number": 192,
+                    "state": "MERGED",
+                    "isDraft": false,
+                    "url": "https://github.com/octo-org/quiet-choir/pull/192",
+                    "headRefName": "epic-99/186-extract-decidereplay-into-a-pure-replay"
+                  }
+                ]
+              },
+              "comments": {
+                "pageInfo": {
+                  "hasNextPage": false
+                },
+                "nodes": []
+              }
+            },
+            {
+              "number": 339,
+              "title": "Remove positional ctx.map overloads and split map onError into a result mode and cancelSiblings",
+              "state": "CLOSED",
+              "stateReason": "COMPLETED",
+              "url": "https://github.com/octo-org/quiet-choir/issues/339",
+              "body": "## Summary\n\n`ctx.map` still carries two `@deprecated` positional overloads, and `onError` mixes two axes: result shape (`'settle'`) and scheduling after a failure (`'drain'` | `'abort'`). Leave one named form, rename `'settle'` to `'return'` to match steps and agents, and move abort/drain to a boolean `cancelSi…",
+              "repository": {
+                "nameWithOwner": "octo-org/quiet-choir"
+              },
+              "labels": {
+                "pageInfo": {
+                  "hasNextPage": false
+                },
+                "nodes": [
+                  {
+                    "name": "enhancement"
+                  }
+                ]
+              },
+              "assignees": {
+                "pageInfo": {
+                  "hasNextPage": false
+                },
+                "nodes": []
+              },
+              "blockedBy": {
+                "pageInfo": {
+                  "hasNextPage": false
+                },
+                "nodes": []
+              },
+              "closedByPullRequestsReferences": {
+                "pageInfo": {
+                  "hasNextPage": false
+                },
+                "nodes": [
+                  {
+                    "number": 342,
+                    "state": "MERGED",
+                    "isDraft": false,
+                    "url": "https://github.com/octo-org/quiet-choir/pull/342",
+                    "headRefName": "epic-99/339-remove-positional-ctx-map-overloads-and"
+                  }
+                ]
+              },
+              "comments": {
+                "pageInfo": {
+                  "hasNextPage": false
+                },
+                "nodes": []
+              }
+            },
+            {
+              "number": 340,
+              "title": "Make worktree the only checkout selector and narrow isolation to the harness mode",
+              "state": "CLOSED",
+              "stateReason": "COMPLETED",
+              "url": "https://github.com/octo-org/quiet-choir/issues/340",
+              "body": "## Summary\n\nWorktree checkout has three overlapping spellings: `isolation: 'worktree'`, `worktree: 'worktree'` and `{ kind: 'worktree' }`. Make `worktree` the only checkout selector on agents (`true | { base? } | handle`) and narrow `isolation` to the harness mode (`'restricted' | 'inherit'`). Old spellings kee…",
+              "repository": {
+                "nameWithOwner": "octo-org/quiet-choir"
+              },
+              "labels": {
+                "pageInfo": {
+                  "hasNextPage": false
+                },
+                "nodes": [
+                  {
+                    "name": "enhancement"
+                  }
+                ]
+              },
+              "assignees": {
+                "pageInfo": {
+                  "hasNextPage": false
+                },
+                "nodes": []
+              },
+              "blockedBy": {
+                "pageInfo": {
+                  "hasNextPage": false
+                },
+                "nodes": []
+              },
+              "closedByPullRequestsReferences": {
+                "pageInfo": {
+                  "hasNextPage": false
+                },
+                "nodes": [
+                  {
+                    "number": 343,
+                    "state": "MERGED",
+                    "isDraft": false,
+                    "url": "https://github.com/octo-org/quiet-choir/pull/343",
+                    "headRefName": "epic-99/340-make-worktree-the-only-checkout-selector"
+                  }
+                ]
+              },
+              "comments": {
+                "pageInfo": {
+                  "hasNextPage": false
+                },
+                "nodes": []
+              }
+            },
+            {
+              "number": 341,
+              "title": "Give Codex one effort option and rename reasoningEffort in policy overrides and attempt records",
+              "state": "CLOSED",
+              "stateReason": "COMPLETED",
+              "url": "https://github.com/octo-org/quiet-choir/issues/341",
+              "body": "## Summary\n\nCodex accepts both `effort` and `reasoningEffort`, which typecheck together and then fail at runtime. Give `CodexOptions` a single `effort`, and rename `reasoningEffort` to `effort` in policy overrides, attempt policy, saved policy rules and persisted attempt records. Old persisted data must still p…",
+              "repository": {
+                "nameWithOwner": "octo-org/quiet-choir"
+              },
+              "labels": {
+                "pageInfo": {
+                  "hasNextPage": false
+                },
+                "nodes": [
+                  {
+                    "name": "enhancement"
+                  }
+                ]
+              },
+              "assignees": {
+                "pageInfo": {
+                  "hasNextPage": false
+                },
+                "nodes": []
+              },
+              "blockedBy": {
+                "pageInfo": {
+                  "hasNextPage": false
+                },
+                "nodes": []
+              },
+              "closedByPullRequestsReferences": {
+                "pageInfo": {
+                  "hasNextPage": false
+                },
+                "nodes": [
+                  {
+                    "number": 346,
+                    "state": "MERGED",
+                    "isDraft": false,
+                    "url": "https://github.com/octo-org/quiet-choir/pull/346",
+                    "headRefName": "epic-99/341-give-codex-one-effort-option-and-rename"
+                  }
+                ]
+              },
+              "comments": {
+                "pageInfo": {
+                  "hasNextPage": false
+                },
+                "nodes": []
+              }
+            }
+          ]
+        }
+      }
+    }
+  }
+}

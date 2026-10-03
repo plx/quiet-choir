@@ -20,10 +20,12 @@ import {
   codeqlReviewer,
   codexReviewer,
   github,
+  parseGithubRepo,
   pullRequestViewResponseSchema,
   type GithubClient,
   type GithubWritePolicy,
 } from '../src/integrations/github.js';
+import { epicSnapshotRead } from '../src/integrations/github-epic-model.js';
 import { digest } from '../src/workflow/runtime/json.js';
 import { agentIdentity, type StepIdentity } from '../src/workflow/runtime/identity.js';
 import type { HarnessDeclaration } from '../src/workflow/runtime/harness-model.js';
@@ -397,6 +399,7 @@ describe('quiet-choir/github read identity', () => {
     'issue.view': (gh) => gh.issue.view('read', { number: 7 }),
     'issue.view comments': (gh) => gh.issue.view('read', { number: 7, comments: true }),
     'codeScanning.alerts': (gh) => gh.codeScanning.alerts('read', { ref: 'refs/pull/7/merge' }),
+    'epic.snapshot': (gh) => gh.epic.snapshot('read', { number: 7 }),
   };
   async function identityOfRead(
     name: string,
@@ -466,6 +469,11 @@ describe('quiet-choir/github read identity', () => {
       // [0, 1]: gh's exit 1 for an HTTP error is accepted, and the schema decides.
       okExitCodes: '463f2998327eb3a694145e6014444480b2235be84aa6cfd57871cc64f1cd816c',
     },
+    // The 8 MiB default output cap is policy, so it is not here.
+    'epic.snapshot': {
+      command: '374b42cec2fe578c037a27637d2c27b2db0251c471bc6639e56262228334973b',
+      schema: '2128b1db6d8e326cf5ea65c32cb88fce3921d0276e0ee4cd99e33a0c0024b621',
+    },
   };
 
   it.each(Object.keys(reads))(
@@ -490,6 +498,37 @@ describe('quiet-choir/github read identity', () => {
       }
     },
   );
+
+  it('keeps the epic snapshot argv to the fixed query, the repository and the epic number', async () => {
+    const step = await identityOfRead(
+      'epic-argv',
+      reads['epic.snapshot'] ?? (() => Promise.resolve()),
+    );
+    expect(step.argv).toEqual(epicSnapshotRead(parseGithubRepo('octo-org/quiet-choir'), 7).argv);
+    expect(step.argv.filter((argument) => !argument.startsWith('query='))).toEqual([
+      'gh',
+      'api',
+      'graphql',
+      '-f',
+      '-f',
+      'owner=octo-org',
+      '-f',
+      'name=quiet-choir',
+      '-F',
+      'number=7',
+    ]);
+    // No run ID, timestamp or cwd: a second run under another ID records the same identity.
+    const again = await identityOfRead(
+      'epic-argv-again',
+      reads['epic.snapshot'] ?? (() => Promise.resolve()),
+    );
+    expect(again.identity).toEqual(step.identity);
+    for (const argument of step.argv) {
+      expect(argument).not.toContain('epic-argv');
+      expect(argument).not.toContain(cwd);
+      expect(argument).not.toMatch(/\d{4}-\d{2}-\d{2}T/u);
+    }
+  });
 
   it('keeps a read identical to a plain exec.json of the same argv and schema, so meta is not identity', async () => {
     const step = await identityOfRead('labelled', reads['pr.view'] ?? (() => Promise.resolve()));

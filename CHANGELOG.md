@@ -2,6 +2,28 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- `quiet-choir/github` adds an epic snapshot and a pure next-ticket selector (#163, slice D of #21;
+  ADR 0048). `gh.epic.snapshot(id, { number })` is one `ctx.exec.json` over a fixed `gh api graphql`
+  (`-F number=N`, no pagination), labelled `{ integration: 'github', op: 'epic.snapshot' }`,
+  returning a compact snapshot: the epic's sub-issues with state, labels, assignees, blocked-by
+  relations, linked pull requests, "Depends on #N" / "blocked by" / "requires" references and
+  `<!-- epic:depends-on -->` markers from bodies and comments, and the viewer's
+  `<!-- epic:split a,b -->` markers, ordered by the epic body's checklist (fenced and inline code
+  ignored). An epic without sub-issues falls back to its `- [ ] #N` checklist
+  (`source: 'task-list'`). Any truncated connection, or fewer sub-issues listed than
+  `subIssuesSummary.total`, throws `IncompleteCollectionError` instead of shrinking; the read's
+  `maxOutputBytes` defaults to 8 MiB. The pure
+  `nextTicket(snapshot, { order, holdLabels, outside })` picks the first `in-flight` item (an open
+  linked pull request), else a `close-split` parent whose slices have all closed, else the first
+  `ready` item, and lists every other open item in `skipped` with its reason (`waiting` with
+  `waitingOn`, `held`, `split` with `openSlices`, `other-repository`, `not-a-sub-issue`, or a later
+  `in-flight`, `close-split` or `ready`); `done` is true only when every item is closed, and a
+  snapshot with fewer items than its total throws. A dependency outside the epic counts as open
+  until `outsideReferences(snapshot)` is read and passed as `outside`. `parseEpicChecklist`,
+  `parseDependencies`, `parseSplit`, `epicSnapshotResponseSchema` and the snapshot, selector and
+  `Raw*` types are exported, and
+  [`examples/patterns/next-ticket.workflow.ts`](examples/patterns/next-ticket.workflow.ts) composes
+  the reads with the selector.
 - `quiet-choir/github` adds pull request and check writes (#162, slice C2 of #21; ADR 0047):
   `gh.pr.create` (reconciled: returns the pull request carrying its marker in any state and base,
   else an open one for the same head and base, and only otherwise opens one), `gh.pr.edit`

@@ -4,7 +4,9 @@
  * reviews and merges ([ADR 0045](../../docs/decisions/0045-head-pinned-github-waits.md)),
  * reconciled writes ([ADR 0046](../../docs/decisions/0046-reconciled-github-writes.md)), and pull
  * request writes with a head-pinned merge and a failed-run rerun
- * ([ADR 0047](../../docs/decisions/0047-pull-request-writes-and-head-pinned-merge.md)). Each read
+ * ([ADR 0047](../../docs/decisions/0047-pull-request-writes-and-head-pinned-merge.md)), and an epic
+ * snapshot with a pure next-ticket selector
+ * ([ADR 0048](../../docs/decisions/0048-epic-snapshot-and-next-ticket-selector.md)). Each read
  * is exactly one `ctx.exec.json` with the caller's ID, pure `gh` argv, no environment overlay or
  * stdin, and the workflow cwd, so its identity is the argv, the response schema and the fixed exec
  * defaults. Each wait is exactly one `ctx.poll`. Each write is exactly one version-identified
@@ -97,6 +99,7 @@ import {
   type WaitReviewResult,
   type WaitReviewTerminal,
 } from './github-wait-model.js';
+import { epicSnapshotRead, type GithubEpicSnapshot } from './github-epic-model.js';
 import { githubWrites } from './github-writes.js';
 import type {
   GithubAlertDismissOptions,
@@ -138,6 +141,37 @@ export {
   summarizeChecks,
 } from './github-model.js';
 export { CODEQL_LOGIN, CODEX_LOGIN } from './github-wait-model.js';
+export {
+  epicSnapshotResponseSchema,
+  nextTicket,
+  outsideReferences,
+  parseDependencies,
+  parseEpicChecklist,
+  parseSplit,
+} from './github-epic-model.js';
+export type {
+  GithubEpicBlocker,
+  GithubEpicChecklistEntry,
+  GithubEpicChecklistLine,
+  GithubEpicItem,
+  GithubEpicItemStatus,
+  GithubEpicPullRequest,
+  GithubEpicSnapshot,
+  GithubEpicSource,
+  NextTicketOutsideIssue,
+  NextTicketPick,
+  NextTicketPolicy,
+  NextTicketResult,
+  NextTicketSkip,
+  NextTicketSkipReason,
+  RawEpicBlocker,
+  RawEpicComment,
+  RawEpicIssue,
+  RawEpicPullRequestRef,
+  RawEpicRepositoryRef,
+  RawEpicSnapshotResponse,
+  RawEpicSubIssue,
+} from './github-epic-model.js';
 export { alertDismissReason } from './github-write-model.js';
 export type {
   GithubAlertDismissOptions,
@@ -239,8 +273,8 @@ export type {
 
 /**
  * A read whose response had a truncated connection: a nested connection, or the last page of a
- * paginated one, reported `pageInfo.hasNextPage`. The read fails instead of returning a partial
- * list, and is never checkpointed as completed, so a resume runs it again. Its `cause` is the
+ * paginated one, reported `pageInfo.hasNextPage`, or (for `epic.snapshot`) fewer sub-issues were
+ * listed than GitHub counts. The read fails instead of returning a partial list, and is never checkpointed as completed, so a resume runs it again. Its `cause` is the
  * read's schema `ExecError`, so the run's root cause names the read's step.
  */
 export class IncompleteCollectionError extends Error {
@@ -488,6 +522,23 @@ export interface GithubCodeScanningOptions {
   readonly state?: GithubCodeScanningState;
 }
 
+/** Epic reads ([ADR 0048](../../docs/decisions/0048-epic-snapshot-and-next-ticket-selector.md)). */
+export interface GithubEpicReads {
+  /**
+   * One epic's items in one `gh api graphql` (`-F number=N`, no pagination): the sub-issues with
+   * state, labels, assignees, blocked-by relations, linked pull requests, declared dependencies and
+   * split markers, ordered by the epic body's checklist; or, for an epic without sub-issues, the
+   * checklist itself. Complete or throw: any truncated connection, or fewer sub-issues listed than
+   * GitHub counts, throws `IncompleteCollectionError`. `maxOutputBytes` defaults to 8 MiB. Pass the
+   * result to {@link nextTicket}.
+   */
+  snapshot(
+    id: string,
+    args: { readonly number: number },
+    policy?: GithubReadPolicy,
+  ): Promise<GithubEpicSnapshot>;
+}
+
 /** Code-scanning reads. */
 export interface GithubCodeScanningReads {
   /**
@@ -591,6 +642,8 @@ export interface GithubClient {
   readonly issue: GithubIssueReads & GithubIssueWrites;
   /** Code-scanning reads. */
   readonly codeScanning: GithubCodeScanningReads;
+  /** Epic reads. */
+  readonly epic: GithubEpicReads;
   /** Review thread writes. */
   readonly thread: GithubThreadWrites;
   /** Code-scanning alert writes. */
@@ -736,6 +789,7 @@ export function github(
         schema: spec.schema,
         meta: { integration: 'github', op: spec.op },
         ...(spec.okExitCodes === undefined ? {} : { okExitCodes: spec.okExitCodes }),
+        ...(spec.maxOutputBytes === undefined ? {} : { maxOutputBytes: spec.maxOutputBytes }),
         ...settings,
       });
     } catch (error) {
@@ -781,6 +835,9 @@ export function github(
     issue: { view: issueView, ...writes.issue },
     codeScanning: {
       alerts: async (id, args, policy) => read(id, codeScanningRead(repo, args), policy),
+    },
+    epic: {
+      snapshot: async (id, args, policy) => read(id, epicSnapshotRead(repo, args.number), policy),
     },
     comment: writes.comment,
     thread: writes.thread,
