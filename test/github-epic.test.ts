@@ -873,12 +873,14 @@ describe('parseEpicChecklist', () => {
     ['an unclosed fence runs to the end', '- [ ] #27\n```ts\n- [ ] #28', [[27, false]]],
     [
       'a fence in a block quote or list item',
-      '> ~~~\n- [ ] #35\n> ~~~\n- ```\n- [ ] #36\n  ```\n- [ ] #37',
+      '> ~~~\n- [ ] #35\n> ~~~\n- ```\n  - [ ] #36\n  ```\n- [ ] #37',
       [
         [35, false],
         [37, false],
       ],
     ],
+    ['an unclosed fence ends with its list item', '- ```\n- [ ] #38', [[38, false]]],
+    ['an unclosed fence ends with its quoted list item', '> 1. ~~~\n- [ ] #39', [[39, false]]],
     ['inline code on a fence-like line is not a fence', '```a` b\n- [ ] #29', [[29, false]]],
     ['an unmatched backtick stays literal', '- [ ] ` #30 then ``#31``', [[30, false]]],
     [
@@ -949,6 +951,15 @@ describe('parseDependencies', () => {
       [40],
     ],
     ['a fence in a list item in a block quote', ['> - ~~~\n>   Depends on #41\n>   ~~~'], []],
+    ['a fence ends with its list item', ['- ```\n- Depends on #56'], [56]],
+    ['a fence continues in its list item', ['- ```\n  Depends on #57\n\n  x'], []],
+    ['a fence ends at a dedent after a blank line', ['1. ~~~\n\n   x\nDepends on #58'], [58]],
+    ['a fence takes the spaces after its marker', ['-   ```\n  Depends on #59'], [59]],
+    ['a fence in a nested list item', ['- - ```\n    x\n  Depends on #60'], [60]],
+    ['a quoted fence ends with its list item', ['> - ```\n> - Depends on #61'], [61]],
+    ['a quoted fence continues in its list item', ['> - ```\n>   Depends on #62'], []],
+    ['a quoted fence ends at a dedent', ['> 1. ~~~\n>\n>    x\n> Depends on #63'], [63]],
+    ['a dedented fence line is not a closer in the item', ['- ```\n```\nDepends on #64'], []],
     ['a word between the phrase and the reference', ['depends on the #18 fix'], []],
     ['self excluded', ['Depends on #42 and #19'], [19]],
     [

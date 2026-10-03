@@ -184,10 +184,12 @@ blocked from a ready one.
 - **Code.** Text in code is never read. A fenced block is three or more backticks or tildes, closes
   only on a line of the same character at least as long, and an unclosed fence runs to the end. It
   may open inside block quotes and list items (`> ~~~`, `- ~~~`, as in a quoted reply), and a fence
-  in a block quote ends with that quote: a later line with fewer `>` markers is outside it. An
-  inline code span, as in CommonMark, opens at a backtick run and closes at the next run of exactly
-  the same length; it may cross a line ending within a paragraph (a block quote's lazy continuation
-  line included) but not a block boundary: a blank line, a fence, a deeper block quote, a list item
+  in a block quote ends with that quote: a later line with fewer `>` markers is outside it. A fence
+  that opens after a list marker also ends with that item: a later non-blank line indented less than
+  the item's content is outside it, as in `- ~~~` followed by `- Depends on #4`. An inline code
+  span, as in CommonMark, opens at a backtick run and closes at the next run of exactly the same
+  length; it may cross a line ending within a paragraph (a block quote's lazy continuation line
+  included) but not a block boundary: a blank line, a fence, a deeper block quote, a list item
   (ordered ones numbered 1, unless the paragraph is itself in a list item), an ATX heading or a
   thematic break. A run with no closer is literal text. Checklist lines are read one at a time, so a
   span never continues onto the next line there.

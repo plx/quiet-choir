@@ -366,23 +366,48 @@ function listMarkerEnd(line: string, index: number): number {
 }
 
 /**
- * The Markdown container markers that open `line`, block quotes (`>`) and list items (`-`, `1.`)
- * in any nesting: the number of block quotes among them and where the rest of the line starts.
+ * The width of the blanks that open `text`, in columns: a tab advances to the next multiple of
+ * four.
  */
-function containerPrefix(line: string): { depth: number; end: number } {
+function indentation(text: string): number {
+  let column = 0;
+  for (let index = 0; isBlank(text.charAt(index)); index += 1)
+    column = text.charAt(index) === '\t' ? column + 4 - (column % 4) : column + 1;
+  return column;
+}
+
+/**
+ * The Markdown container markers that open `line`, block quotes (`>`) and list items (`-`, `1.`)
+ * in any nesting: the number of block quotes among them, where the rest of the line starts, and,
+ * when list markers follow the last block quote, the column where the innermost item's content
+ * starts, counted from the end of that quote's markers as {@link quotePrefix} reads them (0 when
+ * no list marker follows it). As in CommonMark, the content column includes up to three more
+ * spaces after a marker's own.
+ */
+function containerPrefix(line: string): { depth: number; end: number; item: number } {
   let depth = 0;
   let end = 0;
+  // Where the last block quote's markers end, and whether a list marker follows them.
+  let quoteEnd = 0;
+  let inItem = false;
   for (;;) {
     let index = end;
     while (isBlank(line.charAt(index))) index += 1;
     if (line.charAt(index) === '>') {
       depth += 1;
       end = index + 1;
+      quoteEnd = isBlank(line.charAt(end)) ? end + 1 : end;
+      inItem = false;
       continue;
     }
     const marker = listMarkerEnd(line, index);
-    if (marker === -1) return { depth, end };
+    if (marker === -1) {
+      if (!inItem) return { depth, end, item: 0 };
+      const extra = indentation(line.slice(end));
+      return { depth, end, item: end - quoteEnd + (extra <= 3 ? extra : 0) };
+    }
     end = marker;
+    inItem = true;
   }
 }
 
@@ -392,20 +417,26 @@ function containerPrefix(line: string): { depth: number; end: number } {
  * unclosed fence runs to the end of its container, as in CommonMark. A fence may open inside block
  * quotes and list items (`> ~~~`, `- ~~~`, `> 1. ~~~`): the container markers are read first. It
  * ends with the block quotes it opened in: a later line with fewer `>` markers is outside it, and
- * its own markers are read before its closer. A fence in a list item runs until its closer.
+ * its own markers are read before its closer. A fence that opens after a list marker also ends with
+ * that item: a later non-blank line indented less than the item's content column is outside it
+ * (fenced code has no lazy continuation), and blank lines stay inside. A fence that opens on a
+ * later line of an item, with no marker of its own, runs until its closer or its block quote ends.
  */
 function fenceMask(text: readonly string[]): boolean[] {
-  let fence: { run: string; depth: number } | null = null;
+  // The open fence's run, its block-quote depth, and its list item's content column (0 for none).
+  let fence: { run: string; depth: number; item: number } | null = null;
   return text.map((line) => {
     if (fence !== null) {
       const quote = quotePrefix(line, fence.depth);
-      if (quote.depth === fence.depth) {
-        const close = /^\s*(`{3,}|~{3,})\s*$/u.exec(line.slice(quote.end))?.[1];
+      const rest = line.slice(quote.end);
+      const itemEnded = fence.item > 0 && !/^[ \t]*$/u.test(rest) && indentation(rest) < fence.item;
+      if (quote.depth === fence.depth && !itemEnded) {
+        const close = /^\s*(`{3,}|~{3,})\s*$/u.exec(rest)?.[1];
         if (close?.startsWith(fence.run.charAt(0)) && close.length >= fence.run.length)
           fence = null;
         return true;
       }
-      // The block quote that held the fence ended, and the fence with it.
+      // The block quote or list item that held the fence ended, and the fence with it.
       fence = null;
     }
     const prefix = containerPrefix(line);
@@ -417,7 +448,7 @@ function fenceMask(text: readonly string[]): boolean[] {
       open?.[1] !== undefined &&
       !(open[1].startsWith('`') && rest.slice(open[0].length).includes('`'))
     ) {
-      fence = { run: open[1], depth: prefix.depth };
+      fence = { run: open[1], depth: prefix.depth, item: prefix.item };
       return true;
     }
     return false;
