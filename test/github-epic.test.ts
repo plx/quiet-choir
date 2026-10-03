@@ -931,6 +931,13 @@ describe('parseDependencies', () => {
     ['a span does not cross into a heading', ['Example `x\n# Depends on #45`'], [45]],
     ['a heading is one line', ['## Example `x\nDepends on #46`'], [46]],
     ['a span does not cross a thematic break', ['Example `x\n* * *\nDepends on #47`'], [47]],
+    ['a span does not cross a setext heading', ['Example `x\n===\nDepends on #65`'], [65]],
+    ['a span does not cross a - underline', ['Example `x\n---\nDepends on #66`'], [66]],
+    ['a setext heading in a block quote', ['> Example `x\n>  == \t\n> Depends on #67`'], [67]],
+    ['a heading keeps its own spans', ['`Depends on #68`\n==='], []],
+    ['a lone = line starts a paragraph', ['===\nSee `x\nDepends on #69`'], []],
+    ['an indented = line continues a paragraph', ['Example `x\n    ===\nDepends on #70`'], []],
+    ['a lazy = line continues a quoted paragraph', ['> Example `x\n===\nDepends on #71`'], []],
     ['a span does not cross into an item numbered 1', ['Example `x\n1) Depends on #48`'], [48]],
     ['an item numbered 2 continues a paragraph', ['Example `x\n2. Depends on #49`'], []],
     ['a sibling item of any number', ['1. Example `x\n2. Depends on #50`'], [50]],
@@ -1012,7 +1019,7 @@ describe('parsers on adversarial input', () => {
   });
 
   it('reads long runs of container markers in linear time', () => {
-    for (const marker of ['> ', '- ', '1. ', ' \t', '#', '-', '_ '])
+    for (const marker of ['> ', '- ', '1. ', ' \t', '#', '-', '_ ', '='])
       expect(
         parseDependencies(
           [`${marker.repeat(100_000)}x\n${marker.repeat(100_000)}Depends on #7`],

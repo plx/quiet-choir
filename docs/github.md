@@ -190,9 +190,10 @@ blocked from a ready one.
   span, as in CommonMark, opens at a backtick run and closes at the next run of exactly the same
   length; it may cross a line ending within a paragraph (a block quote's lazy continuation line
   included) but not a block boundary: a blank line, a fence, a deeper block quote, a list item
-  (ordered ones numbered 1, unless the paragraph is itself in a list item), an ATX heading or a
-  thematic break. A run with no closer is literal text. Checklist lines are read one at a time, so a
-  span never continues onto the next line there.
+  (ordered ones numbered 1, unless the paragraph is itself in a list item), an ATX heading, a
+  thematic break, or a setext heading's `===` underline, which ends the heading's paragraph. A run
+  with no closer is literal text. Checklist lines are read one at a time, so a span never continues
+  onto the next line there.
 - **Checklist.** Lines `- [ ] ...`, `* [x] ...` or `+ [X] ...` outside fenced code. Inline code is
   removed from a line before it is read. Each line counts for its first reference to the repository,
   `#N` or `OWNER/REPO#N` (compared case-insensitively); lines naming only other repositories,
