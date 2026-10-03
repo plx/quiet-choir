@@ -12,10 +12,13 @@ declarations. `defineWorkflow` keeps `children` as a tuple, so an undeclared nam
 fails typecheck, and the result has the child's output type; a workflow without children rejects
 name dispatch at type level. A helper typed with a bare `WorkflowContext`, or a child typed as an
 erased `WorkflowDeclaration`, falls back to any name with JSON input and output, still validated at
-runtime. Direct definition calls preserve inferred output types. Name dispatch does not search the
-filesystem registry. Plain function helpers remain useful with `ctx.scope` or `ctx.within`; a typed
-workflow adds validated I/O, a recorded version, profile delegation and a visible frame. Do not wrap
-a child or a multi-effect helper in `ctx.step`.
+runtime. Explicit `defineWorkflow` type arguments are all-or-nothing: with a shorter prefix such as
+`defineWorkflow<Input, Output>`, the rest take the strict, childless defaults, so
+`strictProfiles: false` or a nonempty `children` list fails typecheck; drop the type arguments
+(preferred) or spell all seven. Direct definition calls preserve inferred output types. Name
+dispatch does not search the filesystem registry. Plain function helpers remain useful with
+`ctx.scope` or `ctx.within`; a typed workflow adds validated I/O, a recorded version, profile
+delegation and a visible frame. Do not wrap a child or a multi-effect helper in `ctx.step`.
 
 ## Identity and replay
 

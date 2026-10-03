@@ -278,6 +278,48 @@ export const grandparent = defineWorkflow({
     return null;
   },
 });
+// Explicit defineWorkflow type arguments are all-or-nothing: TypeScript has no partial inference,
+// so a shorter prefix takes the strict, childless defaults for the remaining parameters.
+export const prefixPermissive = defineWorkflow<null, null>({
+  ...base,
+  name: 'prefix-permissive',
+  // @ts-expect-error -- the <Input, Output> prefix defaults TStrict to true.
+  strictProfiles: false,
+  run: () => Promise.resolve(null),
+});
+export const prefixParent = defineWorkflow<null, null>({
+  ...base,
+  name: 'prefix-parent',
+  // @ts-expect-error -- the <Input, Output> prefix defaults TChildren to an empty tuple.
+  children: [child],
+  run: () => Promise.resolve(null),
+});
+// The prefix form still compiles for a strict, childless workflow.
+export const prefixStrict = defineWorkflow<null, null>({
+  ...base,
+  name: 'prefix-strict',
+  run: () => Promise.resolve(null),
+});
+// Spelling all seven type arguments types strictProfiles: false and declared children.
+export const explicitAll = defineWorkflow<
+  null,
+  null,
+  never,
+  readonly [],
+  false,
+  readonly [typeof child],
+  'explicit-all'
+>({
+  ...base,
+  name: 'explicit-all',
+  strictProfiles: false,
+  children: [child],
+  async run(ctx) {
+    await ctx.claude.text('t', { prompt, tools: ['Read'] });
+    expectTypeOf(await ctx.workflow('c', 'child', { x: 1 })).toEqualTypeOf<string>();
+    return null;
+  },
+});
 // Typed definitions still reach unparameterized definition parameters and runWorkflow.
 const accepts = (definition: WorkflowDefinition<null, null>) => definition.name;
 const run = () => runWorkflow(parent, { runId: 'unused', stateDir: 'unused', input: null });
@@ -316,6 +358,12 @@ it('carries strictness, profiles and declared children into authoring types', ()
   expectTypeOf<CapabilityKeysOf<typeof tool>>().toEqualTypeOf<'tools'>();
   expectTypeOf<CapabilityKeysOf<typeof wide>>().toBeNever();
   expect([strict, permissive, dynamic, profiled, parent, childless, erasedParent].length).toBe(7);
+  expect([prefixPermissive, prefixParent, prefixStrict].map(({ name }) => name)).toEqual([
+    'prefix-permissive',
+    'prefix-parent',
+    'prefix-strict',
+  ]);
+  expectTypeOf(explicitAll.name).toEqualTypeOf<'explicit-all'>();
   expect(accepts(parent)).toBe('parent');
   expect(accepts(strict)).toBe('strict');
   expect(typeof run).toBe('function');

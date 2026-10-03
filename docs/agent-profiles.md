@@ -58,7 +58,10 @@ is rejected too, not only a fresh object literal. Only a literal `strictProfiles
 raw keys; a non-literal `boolean` also stays permissive and leaves the decision to the runtime. A
 helper typed with a bare `WorkflowContext` stays permissive (the runtime check still applies), while
 `WorkflowContext<'scout', BuiltInHarnesses, true>` is a strict helper contract that accepts the
-workflow's strict context.
+workflow's strict context. Explicit `defineWorkflow` type arguments are all-or-nothing: with a
+shorter prefix such as `defineWorkflow<Input, Output>`, the rest take the strict, childless
+defaults, so `strictProfiles: false` or a nonempty `children` list fails typecheck; drop the type
+arguments (preferred) or spell all seven.
 
 | Preset            | Claude tools                  | Codex sandbox   | Claude turns | Claude USD | Deadline     |
 | ----------------- | ----------------------------- | --------------- | ------------ | ---------- | ------------ |
