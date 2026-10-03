@@ -25,11 +25,10 @@ import type {
   WorktreeBase,
   WorktreeChange,
   WorktreeHandle,
-  WorktreeIsolation,
   WorktreePolicy,
 } from './worktree-model.js';
-import type { WorktreeStep } from './worktree-schema.js';
-import { worktreeIsolationSchema } from './worktree-schema.js';
+import type { ResolvedWorktree, WorktreeStep } from './worktree-schema.js';
+import { resolveWorktree } from './worktree-schema.js';
 import {
   defaultWorktreeRoot,
   isolatedCwdOutsideMessage,
@@ -48,8 +47,8 @@ export type RehearsalWorktreeEvent = Parameters<
 export const placeholderCommit = '0'.repeat(40);
 
 /** Whether a dry-run synthesizes this isolation: fresh per-call isolation, never a handle. @internal */
-export function canSynthesizeIsolation(isolation: WorktreeIsolation): boolean {
-  return typeof isolation === 'string' || !('id' in isolation);
+export function canSynthesizeIsolation(isolation: ResolvedWorktree): boolean {
+  return !('id' in isolation);
 }
 
 /** Whether a dry-run synthesizes this merge: every input is an unchanged change. @internal */
@@ -154,14 +153,14 @@ export class WorktreeRehearsal {
    */
   public async isolate(
     id: string,
-    isolation: WorktreeIsolation,
+    isolation: ResolvedWorktree,
     logicalCwd: string,
     context: Omit<StepContext, 'exec'>,
     step: StepRecord,
     attempt: AttemptRecord,
   ): Promise<{ lease: WorktreeLease; event: RehearsalWorktreeEvent }> {
-    const parsed = worktreeIsolationSchema.parse(isolation);
-    if (typeof parsed === 'object' && 'id' in parsed)
+    const parsed = resolveWorktree(isolation);
+    if ('id' in parsed)
       throw new Error('Dry-run never synthesizes isolation on a worktree handle.');
     const invocation = this.invocation(id, context);
     const repo = await this.repo(invocation);
@@ -177,11 +176,7 @@ export class WorktreeRehearsal {
       base = placeholderCommit;
       baseSource = 'placeholder';
     } else {
-      base = await this.base(
-        repo,
-        typeof parsed === 'string' ? undefined : parsed.base,
-        invocation,
-      );
+      base = await this.base(repo, parsed.base, invocation);
       baseSource = 'resolved';
     }
     let inside = '';

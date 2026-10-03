@@ -31,10 +31,9 @@ export function agentIdentity(
   Reflect.deleteProperty(options, 'timeoutMs');
   Reflect.deleteProperty(options, 'idleTimeoutMs');
   for (const key of definition?.policy ?? []) Reflect.deleteProperty(options, key);
+  // Registered options skip isolationParts, so any accepted (legacy) spelling normalizes here.
   if (options.worktree !== undefined)
-    Object.assign(options, {
-      worktree: isolationIdentity(options.worktree === true ? 'worktree' : options.worktree),
-    });
+    Object.assign(options, { worktree: isolationIdentity(options.worktree) });
   if (options.env !== undefined) Object.assign(options, { env: environmentEdits(options.env) });
   return stepIdentity({
     kind: 'agent',

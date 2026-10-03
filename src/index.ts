@@ -279,7 +279,6 @@ export type { GuardFileOptions } from './workflow/helpers/guard-file.js';
 export type {
   WorktreeBase,
   WorktreeHandle,
-  WorktreeIsolation,
   WorktreeChange,
   WorktreeCreateOptions,
   WorktreeSetupContext,
@@ -289,11 +288,7 @@ export type {
   MergeResult,
 } from './workflow/runtime/worktree-model.js';
 
-export type {
-  HarnessIsolation,
-  AgentIsolation,
-  AgentWorktree,
-} from './workflow/runtime/agent-isolation.js';
+export type { HarnessIsolation, AgentWorktree } from './workflow/runtime/agent-isolation.js';
 export type {
   AgentEnvironment,
   EnvironmentEdits,

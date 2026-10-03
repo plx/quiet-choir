@@ -1069,7 +1069,7 @@ export default defineWorkflow({
   name: 'dry-worktrees', version: '1', input: z.null(), output: z.string(),
   async run(ctx) {
     await ctx.exec('probe', ['qc-never-spawned', 'status']);
-    const edit = await ctx.codex.text('edit', { prompt: 'edit', isolation: 'worktree' });
+    const edit = await ctx.codex.text('edit', { prompt: 'edit', worktree: true });
     if (!edit.worktree) throw new Error('missing change');
     return (await ctx.merge('integrate', [edit.worktree])).commit;
   },

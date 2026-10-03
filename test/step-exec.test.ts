@@ -225,7 +225,7 @@ describe('step callbacks', () => {
     const { seen, runner } = recorder();
     for (const [index, options] of [
       { live: true },
-      { worktree: { kind: 'worktree', id: 'w' } },
+      { worktree: true },
       { retry: { maxAttempts: 2 } },
     ].entries()) {
       const failure = await runWorkflow(

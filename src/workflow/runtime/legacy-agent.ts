@@ -9,9 +9,7 @@ import type { BuiltinHarnessRequestInput as HarnessRequestInput, JsonValue } fro
 export function legacyAgentIdentity(request: HarnessRequestInput, schema: JsonValue): StepIdentity {
   const options = resolveIsolation(request.options);
   if (options.worktree !== undefined)
-    Object.assign(options, {
-      worktree: isolationIdentity(options.worktree === true ? 'worktree' : options.worktree),
-    });
+    Object.assign(options, { worktree: isolationIdentity(options.worktree) });
   if (options.env !== undefined) Object.assign(options, { env: environmentEdits(options.env) });
   if (request.harness === 'codex' && request.imageAttachments !== undefined)
     Object.assign(options, { images: request.imageAttachments.map((image) => image.sha256) });

@@ -630,14 +630,22 @@ defineWorkflow({
   },
 });
 
-// Compile-time contract: isolation is a per-call placement decision, not a profile property.
+// Compile-time contract: checkout placement is a per-call decision, not a profile property, and
+// profile isolation is only the configuration mode (the legacy worktree shorthand is rejected).
+const profileRun = () => Promise.resolve('ok');
+// @ts-expect-error Profile isolation is only the configuration mode.
 defineWorkflow({
   ...base,
-  // @ts-expect-error Profile claude/codex options omit isolation; it belongs on the call itself.
   profiles: { r: { claude: { isolation: 'worktree' } } },
-  async run(ctx) {
-    return (await ctx.claude.text('ok', { prompt: 'x', profile: 'r' })).output;
-  },
+  run: profileRun,
+});
+// @ts-expect-error Profiles never select a checkout.
+defineWorkflow({ ...base, profiles: { r: { claude: { worktree: true } } }, run: profileRun });
+defineWorkflow({
+  ...base,
+  // @ts-expect-error Profiles never select a checkout, with a base either.
+  profiles: { r: { codex: { worktree: { base: 'main' } } } },
+  run: profileRun,
 });
 
 it('checks raw Codex sandbox calls, unknown runtime names, and fresh fork grants', async () => {

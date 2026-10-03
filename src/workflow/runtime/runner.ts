@@ -31,11 +31,13 @@ import {
 } from './worktree-rehearsal.js';
 import { isolationIdentity } from './worktree-identity.js';
 import {
+  resolveWorktree,
   worktreeChangeSchema,
   worktreeHandleSchema,
   worktreeCreateSchema,
+  type ResolvedWorktree,
 } from './worktree-schema.js';
-import type { WorktreeIsolation, WorktreePolicy, MergeOptions } from './worktree-model.js';
+import type { WorktreePolicy, MergeOptions } from './worktree-model.js';
 import type {
   ReadFileOptions,
   ReadFileResult,
@@ -1411,7 +1413,7 @@ export async function runWorkflow<
 
     /** Worktree isolation an effect runs inside; `agent` marks an agent call. */
     interface EffectIsolation {
-      readonly value: WorktreeIsolation;
+      readonly value: ResolvedWorktree;
       readonly cwd: string;
       readonly agent?: boolean;
     }
@@ -2464,8 +2466,11 @@ export async function runWorkflow<
               effort: execution.reasoningEffort ?? request.options.effort ?? 'inherited',
             },
           };
+          // Registered harness options skip isolationParts, so normalize legacy spellings here too.
           const isolation =
-            request.options.worktree === true ? 'worktree' : request.options.worktree;
+            request.options.worktree === undefined
+              ? undefined
+              : resolveWorktree(request.options.worktree);
           const identitySchema = agentResultIdentitySchema(schema, isolation !== undefined);
           const identity = agentIdentity(request, schemaJson(identitySchema), registration);
           const resultSchema = identitySchema.extend({ usage: agentUsageSchema });

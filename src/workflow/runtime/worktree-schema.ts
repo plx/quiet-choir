@@ -1,4 +1,9 @@
-import type { MergeResult, WorktreeChange, WorktreeHandle } from './worktree-model.js';
+import type {
+  MergeResult,
+  WorktreeChange,
+  WorktreeCreateOptions,
+  WorktreeHandle,
+} from './worktree-model.js';
 import { z } from 'zod';
 
 const oid = z.string().regex(/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/u);
@@ -11,13 +16,34 @@ export const worktreeBaseSchema = z.union([text, z.strictObject({ commit: oid })
 /** @internal */
 export const worktreeHandleSchema = z.strictObject({ id: text, path: text, base: oid });
 /** @internal */
-export const worktreeIsolationSchema = z.union([
+export const worktreeCreateSchema = z.strictObject({ base: worktreeBaseSchema.optional() });
+/**
+ * Every accepted agent checkout selection: the public `true`, `{ base? }` and handle forms, plus the
+ * pre-#340 `'worktree'` string and `{ kind: 'worktree', base? }` object, which still run so recorded
+ * checkpoints resume unchanged. @internal
+ */
+export const worktreeSelectionSchema = z.union([
+  z.literal(true),
+  z.literal('worktree'),
+  worktreeCreateSchema,
+  z.strictObject({ kind: z.literal('worktree'), base: worktreeBaseSchema.optional() }),
+  worktreeHandleSchema,
+]);
+/** The pre-#340 checkout selections that `isolation` used to carry, still accepted at runtime. @internal */
+export const legacyWorktreeIsolationSchema = z.union([
   z.literal('worktree'),
   z.strictObject({ kind: z.literal('worktree'), base: worktreeBaseSchema.optional() }),
   worktreeHandleSchema,
 ]);
-/** @internal */
-export const worktreeCreateSchema = z.strictObject({ base: worktreeBaseSchema.optional() });
+/** Canonical checkout selection: a fresh per-attempt checkout's base, or a shared handle. @internal */
+export type ResolvedWorktree = WorktreeCreateOptions | WorktreeHandle;
+/** Normalize any accepted (including legacy) checkout selection to its canonical form. @internal */
+export function resolveWorktree(value: unknown): ResolvedWorktree {
+  const selection = worktreeSelectionSchema.parse(value);
+  if (selection === true || selection === 'worktree') return {};
+  if ('id' in selection) return selection;
+  return selection.base === undefined ? {} : { base: selection.base };
+}
 /** @internal */
 export const worktreeChangeSchema = z.strictObject({
   base: oid,

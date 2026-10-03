@@ -14,7 +14,7 @@ export type { ClaudeOptions } from '../../harnesses/builtins/claude-options.js';
 export type { CodexOptions } from '../../harnesses/builtins/codex-options.js';
 import type { AgentEnvironment, HostEnvironmentSummary } from './agent-environment-model.js';
 import type { AgentDiagnostics, AgentProgress, TranscriptMode } from './agent-stream-model.js';
-import type { AgentIsolation, AgentWorktree } from './agent-isolation.js';
+import type { AgentWorktree, HarnessIsolation } from './agent-isolation.js';
 import type { MergeOptions, MergeResult, WorktreePolicy } from './worktree-model.js';
 import type { WorktreeChange, WorktreeHandle, WorktreeCreateOptions } from './worktree-model.js';
 import type {
@@ -151,9 +151,12 @@ export interface ImageAttachment {
 
 /** Options shared by headless agent calls. */
 export interface AgentOptions {
-  /** Native configuration loading, default restricted; also accepts the original worktree shorthand. */
-  readonly isolation?: AgentIsolation | undefined;
-  /** Select a managed checkout independently from native configuration loading. */
+  /** Native configuration loading, default restricted. It never selects a checkout. */
+  readonly isolation?: HarnessIsolation | undefined;
+  /**
+   * Run in a runtime-owned checkout: `true` for a fresh worktree from HEAD per attempt, `{ base }`
+   * for one from another ref or commit, or a `ctx.worktree` handle to share that checkout.
+   */
   readonly worktree?: AgentWorktree | undefined;
   /** Additional tool directories; Codex treats these as writable roots. */
   readonly addDirs?: readonly string[] | undefined;

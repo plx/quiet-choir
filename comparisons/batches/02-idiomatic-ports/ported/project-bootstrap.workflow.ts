@@ -96,7 +96,7 @@ export default defineWorkflow({
       async (concern) => {
         const result = await ctx.claude.object('apply', {
           profile: 'writer',
-          worktree: { kind: 'worktree', base: { commit: base } },
+          worktree: { base: { commit: base } },
           schema: z.object({ summary: z.string() }),
           prompt: `Apply only concern ${concern.name}. You own exactly ${json(concern.files)}. Do not run commands or edit other files.\nApproved plan digest: ${approvedDigest}\nApproved plan:\n${json(plan)}`,
         });

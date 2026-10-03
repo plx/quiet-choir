@@ -7,14 +7,9 @@ import { WorktreeGit, changedFiles, commitId } from '../../worktrees/git.js';
 import type { ProcessRunner } from './exec-model.js';
 import type { HarnessInvocation, StepContext } from './model.js';
 import type { RunRecord, StepRecord, AttemptRecord } from './record.js';
-import type {
-  WorktreeBase,
-  WorktreeHandle,
-  WorktreeIsolation,
-  WorktreePolicy,
-} from './worktree-model.js';
-import type { WorktreeLedger, WorktreeStep } from './worktree-schema.js';
-import { worktreeIsolationSchema } from './worktree-schema.js';
+import type { WorktreeBase, WorktreeHandle, WorktreePolicy } from './worktree-model.js';
+import type { ResolvedWorktree, WorktreeLedger, WorktreeStep } from './worktree-schema.js';
+import { resolveWorktree } from './worktree-schema.js';
 import { defaultStateDir } from './paths.js';
 import { digest } from './json.js';
 import { CheckpointError } from './checkpoint.js';
@@ -589,14 +584,14 @@ export class RunWorktrees {
 
   public async prepare(
     id: string,
-    isolation: WorktreeIsolation,
+    isolation: ResolvedWorktree,
     logicalCwd: string,
     context: Omit<StepContext, 'exec'>,
     step: StepRecord,
     attempt: AttemptRecord,
   ): Promise<WorktreeLease> {
-    const parsed = worktreeIsolationSchema.parse(isolation);
-    const shared = typeof parsed === 'object' && 'id' in parsed ? parsed : undefined;
+    const parsed = resolveWorktree(isolation);
+    const shared = 'id' in parsed ? parsed : undefined;
     const release = shared
       ? await this.locks.acquire(shared.id, context.signal)
       : () => {
@@ -609,11 +604,7 @@ export class RunWorktrees {
       const base =
         saved?.handle.base ??
         step.worktree?.base ??
-        (await this.resolveBase(
-          typeof parsed === 'string' || 'id' in parsed ? undefined : parsed.base,
-          ledger,
-          invocation,
-        ));
+        (await this.resolveBase('id' in parsed ? undefined : parsed.base, ledger, invocation));
       const start = saved?.latest ?? base;
       const path =
         saved?.handle.path ?? this.path(ledger, `attempt:${id}:${String(context.attempt)}`);

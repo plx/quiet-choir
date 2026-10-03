@@ -115,7 +115,7 @@ it.each(['claude', 'codex'] as const)(
       input: z.null(),
       output: z.string(),
       async run(ctx) {
-        const result = await ctx[provider].text('edit', { prompt: 'edit', isolation: 'worktree' });
+        const result = await ctx[provider].text('edit', { prompt: 'edit', worktree: true });
         if (!result.worktree?.commit) throw new Error('missing captured change');
         return result.worktree.commit;
       },
@@ -176,9 +176,8 @@ it('maps monorepo cwd, warns about dirty source files, and snapshots only commit
     input: z.null(),
     output: z.string(),
     async run(ctx) {
-      return (
-        await ctx.codex.text('edit', { prompt: 'edit', isolation: 'worktree', cwd: 'packages/a' })
-      ).output;
+      return (await ctx.codex.text('edit', { prompt: 'edit', worktree: true, cwd: 'packages/a' }))
+        .output;
     },
   });
   const run = await runWorkflow(definition, { ...options('mono'), input: null, harness });
@@ -224,8 +223,7 @@ it('never overlaps worktree administration for concurrent isolated calls', async
         'items',
         ['a', 'b', 'c'],
         { concurrency: 3 },
-        async (item) =>
-          (await ctx.codex.text('edit', { prompt: item, isolation: 'worktree' })).worktree,
+        async (item) => (await ctx.codex.text('edit', { prompt: item, worktree: true })).worktree,
       );
       const merged = await ctx.merge(
         'integrate',
@@ -279,7 +277,7 @@ it('keys worktree administration by the shared common Git directory across linke
       input: z.null(),
       output: z.null(),
       async run(ctx) {
-        await ctx.codex.text('edit', { prompt: 'edit', isolation: 'worktree' });
+        await ctx.codex.text('edit', { prompt: 'edit', worktree: true });
         return null;
       },
     });
@@ -459,7 +457,11 @@ it('composes inherited configuration with both legacy and explicit checkout sele
     output: z.null(),
     defaults: { isolation: 'inherit' },
     async run(ctx) {
-      const first = await ctx.claude.text('shorthand', { prompt: '', isolation: 'worktree' });
+      // Legacy spelling, kept to prove it still runs (#340).
+      const first = await ctx.claude.text('shorthand', {
+        prompt: '',
+        isolation: 'worktree' as never,
+      });
       const second = await ctx.codex.text('explicit', { prompt: '', worktree: true });
       expect(first.worktree?.commit).toBeTruthy();
       expect(second.worktree?.commit).toBeTruthy();
@@ -485,7 +487,7 @@ it('fails isolation outside a repository before invoking a harness', async () =>
     input: z.null(),
     output: z.string(),
     async run(ctx) {
-      return (await ctx.claude.text('edit', { prompt: 'edit', isolation: 'worktree' })).output;
+      return (await ctx.claude.text('edit', { prompt: 'edit', worktree: true })).output;
     },
   });
   await expect(
@@ -512,7 +514,7 @@ it('keeps a missing repository a configuration failure that settled maps cannot 
         async () =>
           ctx.claude.text('edit', {
             prompt: 'edit',
-            isolation: 'worktree',
+            worktree: true,
             onError: 'return',
             retry: { maxAttempts: 3, delayMs: 0 },
           }),
@@ -562,7 +564,7 @@ it('treats an unresolvable isolation base as a configuration failure that settle
         async () =>
           ctx.claude.text('edit', {
             prompt: 'edit',
-            isolation: { kind: 'worktree', base: 'no-such-branch' },
+            worktree: { base: 'no-such-branch' },
             onError: 'return',
             retry: { maxAttempts: 3, delayMs: 0 },
           }),
@@ -600,7 +602,7 @@ it('names a missing committed HEAD when no isolation base is given', async () =>
     input: z.null(),
     output: z.string(),
     async run(ctx) {
-      return (await ctx.claude.text('edit', { prompt: 'edit', isolation: 'worktree' })).output;
+      return (await ctx.claude.text('edit', { prompt: 'edit', worktree: true })).output;
     },
   });
   const headless: unknown = await runWorkflow(definition, {
@@ -627,7 +629,7 @@ it('rejects a cache root symlinked into the checkout before creating directories
     input: z.null(),
     output: z.string(),
     async run(ctx) {
-      return (await ctx.codex.text('edit', { prompt: 'edit', isolation: 'worktree' })).output;
+      return (await ctx.codex.text('edit', { prompt: 'edit', worktree: true })).output;
     },
   });
   await expect(
@@ -671,7 +673,7 @@ it.each(['rebase', 'merge', 'squash'] as const)(
           'writers',
           ['one', 'two', 'three'],
           { concurrency: 3 },
-          (name) => ctx.claude.text(name, { prompt: name, isolation: 'worktree' }),
+          (name) => ctx.claude.text(name, { prompt: name, worktree: true }),
         );
         return ctx.within('integration').merge(
           'result',
@@ -769,7 +771,7 @@ it('refuses dirty checkout targets, then fast-forwards the explicit checkout on 
     input: z.null(),
     output: z.string(),
     async run(ctx) {
-      const result = await ctx.codex.text('change', { prompt: 'edit', isolation: 'worktree' });
+      const result = await ctx.codex.text('change', { prompt: 'edit', worktree: true });
       assert(result.worktree);
       return (await ctx.merge('publish', [result.worktree], { target: 'checkout' })).commit;
     },
@@ -798,8 +800,8 @@ it('does not publish any integration result when onConflict is fail', async () =
     input: z.null(),
     output: z.unknown(),
     async run(ctx) {
-      const one = await ctx.claude.text('one', { prompt: 'one', isolation: 'worktree' });
-      const two = await ctx.claude.text('two', { prompt: 'two', isolation: 'worktree' });
+      const one = await ctx.claude.text('one', { prompt: 'one', worktree: true });
+      const two = await ctx.claude.text('two', { prompt: 'two', worktree: true });
       assert(one.worktree);
       assert(two.worktree);
       return ctx.merge('publish', [one.worktree, two.worktree], {
@@ -1011,7 +1013,7 @@ it('captures a validated agent result after cancellation without repeating that 
     input: z.null(),
     output: z.string(),
     async run(ctx) {
-      const result = await ctx.codex.text('edit', { prompt: 'edit', isolation: 'worktree' });
+      const result = await ctx.codex.text('edit', { prompt: 'edit', worktree: true });
       assert(result.worktree?.commit);
       return result.worktree.commit;
     },
@@ -1053,7 +1055,7 @@ it('never advances a shared snapshot for a rejected structured response and pres
       const handle = await ctx.worktree('cache');
       const bad = await ctx.codex.object('bad', {
         prompt: 'edit',
-        isolation: handle,
+        worktree: handle,
         schema: z.object({ ok: z.boolean() }),
         onError: 'return',
       });
@@ -1107,7 +1109,7 @@ it('synthesizes isolated calls and their merge under dry-run with read-only rev-
     output: z.string(),
     async run(ctx) {
       const [one, two] = await Promise.all(
-        ['one', 'two'].map((id) => ctx.codex.text(id, { prompt: id, isolation: 'worktree' })),
+        ['one', 'two'].map((id) => ctx.codex.text(id, { prompt: id, worktree: true })),
       );
       if (!one?.worktree || !two?.worktree) throw new Error('missing synthesized change');
       const merged = await ctx.merge('integrate', [one.worktree, two.worktree]);
@@ -1201,7 +1203,7 @@ it('uses a labelled placeholder base outside a Git working tree', async () => {
     input: z.null(),
     output: z.string(),
     async run(ctx) {
-      const edit = await ctx.codex.text('edit', { prompt: 'edit', isolation: 'worktree' });
+      const edit = await ctx.codex.text('edit', { prompt: 'edit', worktree: true });
       if (!edit.worktree) throw new Error('missing synthesized change');
       return (await ctx.merge('integrate', [edit.worktree])).commit;
     },
@@ -1242,7 +1244,7 @@ it('reproduces the real configuration error for an unresolvable base under dry-r
     async run(ctx) {
       return ctx.codex.value('edit', {
         prompt: 'edit',
-        isolation: { kind: 'worktree', base: 'missing-ref' },
+        worktree: { base: 'missing-ref' },
       });
     },
   });
@@ -1273,7 +1275,7 @@ it.each([
       input: z.null(),
       output: z.string(),
       async run(ctx) {
-        return ctx.codex.value('edit', { prompt: 'edit', isolation: 'worktree', ...call });
+        return ctx.codex.value('edit', { prompt: 'edit', worktree: true, ...call });
       },
     });
     const failure: unknown = await runWorkflow(workflow, {
@@ -1302,7 +1304,7 @@ it('merges into an existing branch target and reuses a recorded base under dry-r
     input: z.null(),
     output: z.string(),
     async run(ctx) {
-      const edit = await ctx.codex.text('edit', { prompt: 'edit', isolation: 'worktree' });
+      const edit = await ctx.codex.text('edit', { prompt: 'edit', worktree: true });
       if (!edit.worktree) throw new Error('missing synthesized change');
       return (await ctx.merge('integrate', [edit.worktree], { target: { branch: 'master-x' } }))
         .commit;
@@ -1350,7 +1352,7 @@ it.each([
   [
     'an agent on a handle',
     (ctx: WorkflowContext, handle: WorktreeHandle) =>
-      ctx.codex.text('edit', { prompt: 'edit', isolation: handle }),
+      ctx.codex.text('edit', { prompt: 'edit', worktree: handle }),
   ],
   [
     'a merge of a captured commit',
@@ -1437,7 +1439,7 @@ it('checks the Git version before any agent invocation', async () => {
     input: z.null(),
     output: z.string(),
     run(ctx) {
-      return ctx.codex.value('edit', { prompt: 'edit', isolation: 'worktree' });
+      return ctx.codex.value('edit', { prompt: 'edit', worktree: true });
     },
   });
   await expect(
@@ -1472,7 +1474,7 @@ it('treats a failed Git version probe as a configuration error that settled maps
         async () =>
           ctx.claude.text('edit', {
             prompt: 'edit',
-            isolation: 'worktree',
+            worktree: true,
             onError: 'return',
             retry: { maxAttempts: 3, delayMs: 0 },
           }),
@@ -1526,7 +1528,7 @@ it('propagates cancellation during the Git version probe instead of a configurat
     input: z.null(),
     output: z.string(),
     async run(ctx) {
-      return (await ctx.claude.text('edit', { prompt: 'edit', isolation: 'worktree' })).output;
+      return (await ctx.claude.text('edit', { prompt: 'edit', worktree: true })).output;
     },
   });
   const promise = runWorkflow(workflow, {
@@ -1569,7 +1571,7 @@ it('keeps committed results when cache cleanup fails and reports repeated cleanu
     input: z.null(),
     output: z.string(),
     run(ctx) {
-      return ctx.codex.value('edit', { prompt: 'edit', isolation: 'worktree' });
+      return ctx.codex.value('edit', { prompt: 'edit', worktree: true });
     },
   });
   const run = await runWorkflow(workflow, {
@@ -1708,7 +1710,7 @@ it.each(['owned', 'different-owner'] as const)(
       input: z.null(),
       output: z.string(),
       async run(ctx) {
-        const result = await ctx.codex.text('edit', { prompt: 'edit', isolation: 'worktree' });
+        const result = await ctx.codex.text('edit', { prompt: 'edit', worktree: true });
         assert(result.worktree?.commit);
         return result.worktree.commit;
       },
@@ -1802,7 +1804,7 @@ it.each([
       input: z.null(),
       output: z.string(),
       async run(ctx) {
-        const result = await ctx.codex.text('edit', { prompt: 'edit', isolation: 'worktree' });
+        const result = await ctx.codex.text('edit', { prompt: 'edit', worktree: true });
         assert(result.worktree?.commit);
         return result.worktree.commit;
       },
@@ -1880,7 +1882,7 @@ it.each([
     input: z.null(),
     output: z.string(),
     async run(ctx) {
-      const result = await ctx.codex.text('edit', { prompt: 'edit', isolation: 'worktree' });
+      const result = await ctx.codex.text('edit', { prompt: 'edit', worktree: true });
       assert(result.worktree?.commit);
       return result.worktree.commit;
     },
@@ -1974,7 +1976,7 @@ it('throws ConfigurationError when a resumed worktree registration is missing it
     input: z.null(),
     output: z.string(),
     async run(ctx) {
-      const result = await ctx.codex.text('edit', { prompt: 'edit', isolation: 'worktree' });
+      const result = await ctx.codex.text('edit', { prompt: 'edit', worktree: true });
       assert(result.worktree?.commit);
       return result.worktree.commit;
     },
@@ -2038,7 +2040,7 @@ it('keeps a resumed different-owner worktree registration a configuration failur
     input: z.null(),
     output: z.string(),
     async run(ctx) {
-      const result = await ctx.codex.text('edit', { prompt: 'edit', isolation: 'worktree' });
+      const result = await ctx.codex.text('edit', { prompt: 'edit', worktree: true });
       assert(result.worktree?.commit);
       return result.worktree.commit;
     },
@@ -2056,7 +2058,7 @@ it('keeps a resumed different-owner worktree registration a configuration failur
         async () =>
           ctx.codex.text('edit', {
             prompt: 'edit',
-            isolation: 'worktree',
+            worktree: true,
             onError: 'return',
             retry: { maxAttempts: 3, delayMs: 0 },
           }),
@@ -2124,7 +2126,7 @@ it('serializes sibling Git registrations while retaining concurrent isolated eff
     output: z.array(z.string()),
     run: (ctx) =>
       ctx.map('items', ['a', 'b'], { concurrency: 2 }, (item) =>
-        ctx.codex.value('edit', { prompt: item, isolation: 'worktree' }),
+        ctx.codex.value('edit', { prompt: item, worktree: true }),
       ),
   });
   const invoke = vi.fn<Harness['invoke']>(() => Promise.resolve(response));
@@ -2249,7 +2251,7 @@ it('invokes definition setup for per-call attempts and handle create and prepare
     output: z.null(),
     worktrees: { keep: 'all', setup: definitionSetup },
     async run(ctx) {
-      await ctx.claude.text('agent', { prompt: 'edit', isolation: 'worktree' });
+      await ctx.claude.text('agent', { prompt: 'edit', worktree: true });
       const handle = await ctx.worktree('cache');
       await ctx.step('handle-step', {
         input: null,
@@ -2308,7 +2310,7 @@ it('excludes a setup-created node_modules symlink from capture across a resume b
       },
     },
     async run(ctx) {
-      const call = await ctx.claude.text('agent', { prompt: 'edit', isolation: 'worktree' });
+      const call = await ctx.claude.text('agent', { prompt: 'edit', worktree: true });
       assert(call.worktree);
       const handle = await ctx.worktree('cache');
       await ctx.step('first', {
@@ -2393,7 +2395,7 @@ it('honours captureExclude globs and still captures agent files elsewhere', asyn
     output: z.null(),
     worktrees: { captureExclude: ['**/*.log', 'tmp/**'] },
     async run(ctx) {
-      await ctx.claude.text('agent', { prompt: 'edit', isolation: 'worktree' });
+      await ctx.claude.text('agent', { prompt: 'edit', worktree: true });
       return null;
     },
   });
@@ -2421,7 +2423,7 @@ it('warns about captured symlinks that point outside the repository, but not set
       },
     },
     async run(ctx) {
-      await ctx.claude.text('agent', { prompt: 'edit', isolation: 'worktree' });
+      await ctx.claude.text('agent', { prompt: 'edit', worktree: true });
       return null;
     },
   });
@@ -2486,7 +2488,7 @@ it('keeps definition-level worktree policy out of step identity across resumes',
       output: z.null(),
       worktrees,
       async run(ctx) {
-        await ctx.claude.text('agent', { prompt: 'edit', isolation: 'worktree' });
+        await ctx.claude.text('agent', { prompt: 'edit', worktree: true });
         await ctx.step('tail', {
           input: null,
           schema: z.null(),

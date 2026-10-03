@@ -14,7 +14,7 @@ export default defineWorkflow({
       async (item) => {
         const result = await ctx.codex.text('edit', {
           profile: 'editor',
-          isolation: 'worktree',
+          worktree: true,
           prompt: `Implement: ${item}`,
         });
         if (!result.worktree) throw new Error('Missing isolated change');

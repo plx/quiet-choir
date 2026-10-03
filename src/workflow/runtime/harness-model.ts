@@ -16,7 +16,7 @@ import type {
   JsonValue,
 } from './model.js';
 import type { AccessClass, BuiltinProfile } from './profiles-model.js';
-import type { AgentIsolation } from './agent-isolation.js';
+import type { HarnessIsolation } from './agent-isolation.js';
 import type {
   claudeCapabilityKeys,
   codexCapabilityKeys,
@@ -235,8 +235,8 @@ export type CallOptions<
     ? K extends 'claude' | 'codex'
       ? Omit<OptionsOf<D>, 'profile' | 'isolation' | CapabilityKeysOf<D>> &
           Readonly<Partial<Record<Exclude<CapabilityKeysOf<D>, 'isolation'>, never>>> & {
-            /** Native configuration mode or worktree shorthand; strict profiles own `'inherit'`. */
-            readonly isolation?: Exclude<AgentIsolation, 'inherit'> | undefined;
+            /** Native configuration mode; strict profiles own `'inherit'`. */
+            readonly isolation?: Exclude<HarnessIsolation, 'inherit'> | undefined;
           }
       : Omit<OptionsOf<D>, 'profile' | CapabilityKeysOf<D>> &
           Readonly<Partial<Record<CapabilityKeysOf<D>, never>>>
