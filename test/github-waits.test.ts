@@ -1355,9 +1355,9 @@ describe('one wait record per wait', () => {
 // ---------------------------------------------------------------------------------------------
 // Real gh process scenarios (createFakeBinary)
 
-// measured: 0.6-1.6 s per test alone, up to 4 s in a full coverage run (each check spawns gh
-// processes, and the CodeQL case waits out a 1 s settle).
-describe('fake gh scenarios', { timeout: 20_000 }, () => {
+// measured: 0.2-1.2 s per test in a coverage run of this file (each check spawns real gh
+// processes; the CodeQL case waits out its 1 s settle), so 10 s keeps over 3x headroom.
+describe('fake gh scenarios', { timeout: 10_000 }, () => {
   let fake: Awaited<ReturnType<typeof fakeGh>> | undefined;
   afterEach(async () => {
     await fake?.gh.dispose();
@@ -1524,8 +1524,9 @@ async function workflowFile(name: string, source: string): Promise<string> {
   return file;
 }
 
-// measured: 2.5 s alone, 6 s in a full coverage run (dominated by the tsImport compile).
-describe('workflow files', { timeout: 30_000 }, () => {
+// measured: 1.4 and 2.7 s alone, 3.4 and 6.7 s in a coverage run of this file (dominated by the
+// tsImport compile of the workflow file).
+describe('workflow files', { timeout: 20_000 }, () => {
   it('runs the gate example from docs/github.md, under 30 lines', async () => {
     const docs = readFileSync(join(repository, 'docs', 'github.md'), 'utf8');
     const section = docs.slice(docs.indexOf('## Gate example'));
