@@ -99,16 +99,16 @@ which always isolates, could not be previewed before paid work, and its isolated
 appeared in the report.
 
 Dry-run now synthesizes the two Git effects whose real outcome is predictable without writing to the
-repository: an agent call with fresh isolation (`'worktree'`, `worktree: true` or
-`{ kind: 'worktree', base }`), and `ctx.merge` when every input is a change with `commit: null`. The
-call is planned in an absolute placeholder directory that mirrors the real cache layout
-(`<root>/<runId>-dry-run/<attempt digest>/<relative cwd>`) and is never created; it records
-`step.worktree` in the temporary checkpoint, returns `{ base, commit: null, ref: null, files: [] }`
-and runs no `worktrees.setup`. The merge returns `{ commit, merged: [], conflicts: [] }`, the result
-a real integration of unchanged inputs computes, with `commit` the existing target branch or `HEAD`.
-Step identity and dependencies are unchanged, so fingerprints match the real run. The pure replay
-decision gains a `rehearsalSynthesized` fact and refuses `rehearsal-git` only without it; a
-`worktree` effect is refused regardless.
+repository: an agent call with fresh isolation (`worktree: true` or `worktree: { base }`; #340
+removed the older spellings from the public types), and `ctx.merge` when every input is a change
+with `commit: null`. The call is planned in an absolute placeholder directory that mirrors the real
+cache layout (`<root>/<runId>-dry-run/<attempt digest>/<relative cwd>`) and is never created; it
+records `step.worktree` in the temporary checkpoint, returns
+`{ base, commit: null, ref: null, files: [] }` and runs no `worktrees.setup`. The merge returns
+`{ commit, merged: [], conflicts: [] }`, the result a real integration of unchanged inputs computes,
+with `commit` the existing target branch or `HEAD`. Step identity and dependencies are unchanged, so
+fingerprints match the real run. The pure replay decision gains a `rehearsalSynthesized` fact and
+refuses `rehearsal-git` only without it; a `worktree` effect is refused regardless.
 
 The base is read, never written. Under rehearsal `RunWorktrees` refuses every Git command with an
 internal error, and synthesis runs Git only through a read-only driver that refuses anything but

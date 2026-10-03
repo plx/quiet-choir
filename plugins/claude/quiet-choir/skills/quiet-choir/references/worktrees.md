@@ -1,27 +1,27 @@
 # Worktree isolation and integration
 
-Use `isolation: 'worktree'` on a Claude or Codex call when writers may touch the same files,
-concurrent commands need a stable tree, or failed partial edits are unsafe to build on. Keep file
-sharding when writers have structurally disjoint targets and do not run commands that observe each
-other's edits. Isolation is explicit; ordinary calls still run in their configured directory.
+Use `worktree: true` on a Claude or Codex call when writers may touch the same files, concurrent
+commands need a stable tree, or failed partial edits are unsafe to build on. Keep file sharding when
+writers have structurally disjoint targets and do not run commands that observe each other's edits.
+Isolation is explicit; ordinary calls still run in their configured directory.
 
 The runtime creates detached Git worktrees above the harness interface. The harness receives an
 absolute `cwd`; native Claude/Codex worktree flags are never used. Git 2.38+ is required. Embedded
 callers supply `RunOptions.processRunner`, usually `new NodeProcessRunner()`; the CLI supplies it.
 Dry-run synthesizes fresh isolation instead of creating it. An isolated Claude or Codex call
-(`isolation: 'worktree'`, `worktree: true`, or `{ kind: 'worktree', base }`) is planned in an
-absolute placeholder directory under the cache root that is never created, runs no
-`worktrees.setup`, and returns an unchanged change `{ base, commit: null, ref: null, files: [] }`.
-The base is resolved with a read-only `git rev-parse`, the only Git command a rehearsal runs, so an
-unresolvable base or an isolated `cwd` outside the repository fails with the same configuration
-error as a real run. Outside a Git working tree a placeholder of forty zeros stands in, with a
-warning that the real run would fail. `ctx.merge` over unchanged changes returns the real no-op
-result `{ commit, merged: [], conflicts: [] }`, where `commit` is the existing target branch or
-`HEAD`. The rehearsal report marks these calls with `worktree.synthesized` and lists the merges
-under `merges`; no refs, worktrees or cache directories are created. `ctx.worktree`, effects
-isolated on a handle, and merges of captured commits still fail with a configuration error before
-Git or agent invocation. Rehearse them with a fixture harness in a temporary repository; Git,
-commands, and local callbacks remain real, while agent responses incur no model calls.
+(`worktree: true` or `worktree: { base }`) is planned in an absolute placeholder directory under the
+cache root that is never created, runs no `worktrees.setup`, and returns an unchanged change
+`{ base, commit: null, ref: null, files: [] }`. The base is resolved with a read-only
+`git rev-parse`, the only Git command a rehearsal runs, so an unresolvable base or an isolated `cwd`
+outside the repository fails with the same configuration error as a real run. Outside a Git working
+tree a placeholder of forty zeros stands in, with a warning that the real run would fail.
+`ctx.merge` over unchanged changes returns the real no-op result
+`{ commit, merged: [], conflicts: [] }`, where `commit` is the existing target branch or `HEAD`. The
+rehearsal report marks these calls with `worktree.synthesized` and lists the merges under `merges`;
+no refs, worktrees or cache directories are created. `ctx.worktree`, effects isolated on a handle,
+and merges of captured commits still fail with a configuration error before Git or agent invocation.
+Rehearse them with a fixture harness in a temporary repository; Git, commands, and local callbacks
+remain real, while agent responses incur no model calls.
 
 The source directory must belong to a Git working tree with committed history. Dirty source files
 produce a warning: isolated calls start from committed files only. Unmet prerequisites (Git version,
@@ -34,7 +34,7 @@ never retried or settled as data, so correcting them and resuming runs the call 
 const edit = await ctx.codex.text('edit', {
   prompt: 'Fix the failing parser test.',
   profile: 'editor',
-  isolation: 'worktree',
+  worktree: true,
 });
 if (!edit.worktree) throw new Error('Missing isolated change');
 const integration = await ctx.merge('integrate', [edit.worktree]);
@@ -43,16 +43,16 @@ const integration = await ctx.merge('integrate', [edit.worktree]);
 Declare and grant the editing profile as usual. Isolation does not grant tools or filesystem access.
 It is not a sandbox: a command can still write outside its directory. Native configuration defaults
 to restricted mode; [harness isolation](harness-isolation.md) explains explicit opt-ins and
-remaining managed-policy dependencies. Use `worktree: true` or a handle with an inherited role to
-combine checkout isolation and inherited native configuration.
+remaining managed-policy dependencies. `worktree` is the only checkout selector and `isolation` is
+only that configuration mode, so `worktree: true` or a handle combines with an inherited role.
 
 ## Attempt lifecycle
 
-Use `{ kind: 'worktree', base: 'branch-name' }` or
-`{ kind: 'worktree', base: { commit: 'full-object-id' } }` to select a base. The default is `HEAD`.
-The runtime resolves and saves the base before invocation; resume does not follow a moved ref.
-Logical options enter the effect identity. Disposable attempt paths do not. Relative `cwd` retains
-its position within the source repository, including when the run starts in a monorepo subdirectory.
+Use `worktree: { base: 'branch-name' }` or `worktree: { base: { commit: 'full-object-id' } }` to
+select a base. The default is `HEAD`. The runtime resolves and saves the base before invocation;
+resume does not follow a moved ref. Logical options enter the effect identity. Disposable attempt
+paths do not. Relative `cwd` retains its position within the source repository, including when the
+run starts in a monorepo subdirectory.
 
 Every attempt receives a fresh directory. Failed, timed-out, and cancelled attempts are retained
 according to policy, never reused for a later per-call attempt. Only a validated successful result
@@ -75,7 +75,7 @@ agent call, and external writes outside the isolated tree are not rolled back.
 ## Shared write, test, fix sequences
 
 `ctx.worktree(id, { base? })` returns a JSON `{ id, path, base }` handle owned by the creating run.
-Use it as agent `isolation`, local-step `worktree`, or exec `worktree`:
+Use it as the `worktree` of an agent call, a local step, or an exec:
 
 <!-- skills-check: fragment; reason: Inside a workflow with ctx, z, and an editor profile declared and granted. -->
 
@@ -84,7 +84,7 @@ const tree = await ctx.worktree('workspace');
 await ctx.claude.text('edit', {
   prompt: 'Implement the change.',
   profile: 'editor',
-  isolation: tree,
+  worktree: tree,
 });
 const test = await ctx.exec('test', ['npm', 'test'], { worktree: tree, okExitCodes: 'any' });
 await ctx.step('inspect', {
@@ -162,7 +162,7 @@ Integrate into a branch with `commit`, then push `result.commit` in one `ctx.exe
 
 ```ts
 const tree = await ctx.worktree('ticket');
-await ctx.claude.text('fix', { prompt: 'Fix #42.', profile: 'editor', isolation: tree });
+await ctx.claude.text('fix', { prompt: 'Fix #42.', profile: 'editor', worktree: tree });
 const result = await ctx.merge('integrate', [tree], {
   strategy: 'squash',
   target: { branch: 'ticket-42' },
@@ -212,7 +212,7 @@ export default defineWorkflow({
   async run(ctx) {
     const edit = await ctx.codex.text('edit', {
       prompt: 'Fix the failing test.',
-      isolation: 'worktree',
+      worktree: true,
     });
     return edit.worktree?.files.map((file) => file.path) ?? [];
   },

@@ -159,13 +159,13 @@ output. With `onError: 'return'`, it returns `Settled<T>` or `Settled<string>`. 
 `step.completed` events include `usage` and `sessionId`; replay/reuse events do not report usage
 again. Observers receive a detached copy.
 
-Set agent `isolation: 'worktree'` for a fresh checkout on every attempt, or create a shared
-`ctx.worktree(id)` handle for write → test → fix effects. Isolated result methods include a pinned
-`worktree` change; `ctx.merge(id, changes)` integrates in input order to a run-owned ref by default.
-The source checkout changes only with explicit `target: 'checkout'`. Use sharding for structurally
-disjoint files; isolate overlapping writers or commands that observe concurrent edits. See
-[worktree isolation, policies, and cleanup](docs/worktrees.md). `workflow clean RUN [--refs]`
-removes owned caches and optionally pins without importing source.
+Set agent `worktree: true` for a fresh checkout on every attempt, or pass a shared
+`ctx.worktree(id)` handle as `worktree` for write → test → fix effects. Isolated result methods
+include a pinned `worktree` change; `ctx.merge(id, changes)` integrates in input order to a
+run-owned ref by default. The source checkout changes only with explicit `target: 'checkout'`. Use
+sharding for structurally disjoint files; isolate overlapping writers or commands that observe
+concurrent edits. See [worktree isolation, policies, and cleanup](docs/worktrees.md).
+`workflow clean RUN [--refs]` removes owned caches and optionally pins without importing source.
 `workflow unlock RUN [--force-remote] [--json]` clears an abandoned run lock without importing
 source; it refuses while an owner, recoverer or recorded child is alive or unverifiable (see
 [process ownership](docs/process-lifecycle.md)). `workflow cancel RUN [--force] [--timeout 30s]`

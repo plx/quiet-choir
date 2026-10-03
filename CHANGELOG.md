@@ -2,6 +2,22 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- Breaking: `worktree` is the only agent checkout selector, and `isolation` is only the native
+  configuration mode (#340, part of #158; amends ADR 0023). Migrate as follows:
+  - `isolation: 'worktree'` and `worktree: 'worktree'` become `worktree: true`.
+  - `isolation: { kind: 'worktree', base }` and `worktree: { kind: 'worktree', base }` become
+    `worktree: { base }`; `{ kind: 'worktree' }` without a base becomes `worktree: true`.
+  - `isolation: handle` becomes `worktree: handle`.
+  - `AgentOptions.isolation` is now `HarnessIsolation` (`'restricted' | 'inherit'`) and
+    `AgentOptions.worktree` is `AgentWorktree` (`true | WorktreeCreateOptions | WorktreeHandle`).
+    Steps and exec still take only a `WorktreeHandle`.
+  - The old spellings are type errors but still run: they normalize to the same step identity, so an
+    in-flight run recorded with one resumes after the source is migrated, even under
+    `--accept-code-change`. Supplying both `worktree` and a legacy worktree `isolation` still fails
+    before the harness runs, now naming the `worktree` forms.
+  - `WorktreeIsolation` and `AgentIsolation` are no longer exported; use `AgentWorktree`,
+    `WorktreeCreateOptions` or `HarnessIsolation`. The harness kit's `resolveIsolation` declares its
+    parameter with those public types; it still normalizes the legacy values at runtime.
 - Breaking: `ctx.map` has one named form, and `onError` is split into a result mode and
   `cancelSiblings` (#339, part of #158; amends ADRs 0008, 0009 and 0041). Migrate as follows:
   - Positional `ctx.map(items, n, mapper[, options])` is removed: use
