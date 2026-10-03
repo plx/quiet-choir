@@ -393,12 +393,16 @@ function width(text: string): number {
 /**
  * The Markdown container markers that open `line`, block quotes (`>`) and list items (`-`, `1.`)
  * in any nesting: the number of block quotes among them (`depth`), where the last quote's markers
- * end (`quote`, after one optional space), where the rest of the line starts (`end`), and the list
- * markers that follow the last block quote: the first one's indentation (`indent`) and each item's
- * content column (`items`, outermost first), counted from `quote`, with `item` the innermost one's
- * (0 when no list marker follows the last quote). As in CommonMark, the content column includes up
- * to three more spaces after a marker's own. A `>` is a marker only when the blanks before it, from
- * where the previous marker ended, are less than four columns wide, as {@link quotePrefix} reads it.
+ * end (`quote`, a string index after one optional space), where the rest of the line starts (`end`,
+ * a string index after the last list marker's own space or tab), and the list markers that follow
+ * the last block quote: the first one's indentation (`indent`) and each item's content column
+ * (`items`, outermost first), with `item` the innermost one's (0 when no list marker follows the
+ * last quote). Columns are counted from `quote`, a tab advancing to the next multiple of four as
+ * {@link indentation} counts it, so `-\tfoo` has its content at column 4. As in CommonMark, an
+ * item's content starts after one to four columns of blanks past its marker, and after one column
+ * when five or more follow (the rest is indented code) or none of the line does. A `>` is a marker
+ * only when the blanks before it, from where the previous marker ended, are less than four columns
+ * wide, as {@link quotePrefix} reads it.
  */
 function containerPrefix(line: string): {
   depth: number;
@@ -414,30 +418,37 @@ function containerPrefix(line: string): {
   let quote = 0;
   let indent = 0;
   let items: number[] = [];
+  // The column of `end`, and of the innermost list marker's end, counted from `quote`.
+  let column = 0;
+  let markerEnd = 0;
   for (;;) {
     let index = end;
-    let blanks = 0;
-    for (; isBlank(line.charAt(index)); index += 1) blanks = advance(blanks, line.charAt(index));
-    if (line.charAt(index) === '>' && blanks < 4) {
+    let at = column;
+    for (; isBlank(line.charAt(index)); index += 1) at = advance(at, line.charAt(index));
+    if (line.charAt(index) === '>' && at - column < 4) {
       depth += 1;
       end = index + 1;
       if (isBlank(line.charAt(end))) end += 1;
       quote = end;
+      column = 0;
       items = [];
       continue;
     }
     const marker = listMarkerEnd(line, index);
     if (marker === -1) {
       if (items.length) {
-        const extra = indentation(line.slice(end));
-        items[items.length - 1] = end - quote + (extra <= 3 ? extra : 0);
+        const padding = at - markerEnd;
+        items[items.length - 1] = index < line.length && padding <= 4 ? at : markerEnd + 1;
       }
       return { depth, quote, end, indent, items, item: items.at(-1) ?? 0 };
     }
     // A nested marker on the same line starts its parent item's content.
-    if (items.length) items[items.length - 1] = index - quote;
-    else indent = width(line.slice(quote, index));
-    items.push(marker - quote);
+    if (items.length) items[items.length - 1] = at;
+    else indent = at;
+    // Each of the marker's characters takes one column; the space or tab after it is its own.
+    markerEnd = at + marker - 1 - index;
+    items.push(markerEnd + 1);
+    column = advance(markerEnd, line.charAt(marker - 1));
     end = marker;
   }
 }
@@ -533,13 +544,17 @@ function fenceMask(text: readonly string[]): boolean[] {
       for (const column of prefix.items) items.push(column);
       item = prefix.item;
     } else item = opens || leaf || !paragraph ? within(indent) : (items.at(-1) ?? 0);
-    // On a marker's line the item's content column already holds up to three spaces.
-    if (opens && open[1] !== undefined && indent <= (marked ? 3 : item + 3)) {
+    // Columns after the block-quote markers, so a tab after a list marker counts as CommonMark has
+    // it. On a marker's line the run starts at the item's content column unless five or more
+    // columns of blanks follow the marker, which make it indented code.
+    if (opens && open[1] !== undefined) {
       const runStart = line.length - rest.length + open[0].length - open[1].length;
       const column = width(line.slice(prefix.quote, runStart));
-      fence = { run: open[1], depth: prefix.depth, item, column };
-      paragraph = false;
-      return true;
+      if (column <= item + 3) {
+        fence = { run: open[1], depth: prefix.depth, item, column };
+        paragraph = false;
+        return true;
+      }
     }
     // Indented code is not a paragraph, unless it continues one.
     paragraph = !leaf && !blank && (marked || paragraph || indent < item + 4);

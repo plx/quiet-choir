@@ -1087,6 +1087,19 @@ describe('parseDependencies', () => {
     ['a quoted fence ends with its list item', ['> - ```\n> - Depends on #61'], [61]],
     ['a quoted fence continues in its list item', ['> - ```\n>   Depends on #62'], []],
     ['a quoted fence ends at a dedent', ['> 1. ~~~\n>\n>    x\n> Depends on #63'], [63]],
+    // A tab after a list marker advances to the next multiple of four, so `-\t` puts the content at
+    // column 4 and `1. -\t` at column 8.
+    ['a fence ends left of a tab-padded bullet item', ['-\t~~~\n   Depends on #112'], [112]],
+    ['a fence continues in a tab-padded bullet item', ['-\t~~~\n    Depends on #113'], []],
+    ['a fence ends left of a tab-padded ordered item', ['1.\t~~~\n   Depends on #114'], [114]],
+    ['a fence continues in a tab-padded ordered item', ['1.\t~~~\n    Depends on #115'], []],
+    ['a fence ends left of a tab-padded nested item', ['- -\t~~~\n   Depends on #116'], [116]],
+    ['a fence continues in a tab-padded nested item', ['- -\t~~~\n    Depends on #117'], []],
+    ['a fence ends left of tab-padded nested items', ['-\t-\t~~~\n       Depends on #118'], [118]],
+    ['a fence continues in tab-padded nested items', ['-\t-\t~~~\n        Depends on #119'], []],
+    ['a fence ends left of a tab past column 4', ['1. -\t~~~\n       Depends on #120'], [120]],
+    ['a fence continues past a tab past column 4', ['1. -\t~~~\n        Depends on #121'], []],
+    ['five columns after a marker make indented code', ['-\t\t~~~\n  Depends on #122'], [122]],
     ['a dedented fence line is not a closer in the item', ['- ```\n```\nDepends on #64'], []],
     [
       'a closer indented four columns stays in the fence',

@@ -188,19 +188,20 @@ blocked from a ready one.
   also ends with the list item it opens in, after the item's marker or on a later line of the item:
   a later non-blank line indented less than the item's content is outside it, as in `- ~~~`, or
   `- example`, a blank line and `  ~~~`, followed by `- Depends on #4`. Open list items are tracked
-  across lines for this, lazy paragraph continuations included. A fence line indented four or more
-  columns past its container's content (the list item's, or the block quote's markers) is indented
-  code, so `    ~~~` opens no fence and closes none. A `>` indented four or more columns past the
-  previous marker is no block-quote marker, so `    > ~~~` is indented code as well. An inline code
-  span, as in CommonMark, opens at a backtick run and closes at the next run of exactly the same
-  length; it may cross a line ending within a paragraph (a block quote's lazy continuation line
-  included) but not a block boundary: a blank line, a fence, a deeper block quote, a list item
-  (ordered ones numbered 1, unless the paragraph is itself in a list item), an ATX heading, a
-  thematic break, a setext heading's `===` underline, which ends the heading's paragraph, or an HTML
-  comment block. That block opens on a line starting with `<!--` (as a workflow marker does) and
-  runs through the first line holding `-->`; it has no inline code, so a marker on such a line is
-  read even after a lone backtick. A run with no closer is literal text. Checklist lines are read
-  one at a time, so a span never continues onto the next line there.
+  across lines for this, lazy paragraph continuations included. Columns count a tab to the next
+  multiple of four, as in CommonMark, so after `-` and a tab an item's content starts at column 4. A
+  fence line indented four or more columns past its container's content (the list item's, or the
+  block quote's markers) is indented code, so `    ~~~` opens no fence and closes none. A `>`
+  indented four or more columns past the previous marker is no block-quote marker, so `    > ~~~` is
+  indented code as well. An inline code span, as in CommonMark, opens at a backtick run and closes
+  at the next run of exactly the same length; it may cross a line ending within a paragraph (a block
+  quote's lazy continuation line included) but not a block boundary: a blank line, a fence, a deeper
+  block quote, a list item (ordered ones numbered 1, unless the paragraph is itself in a list item),
+  an ATX heading, a thematic break, a setext heading's `===` underline, which ends the heading's
+  paragraph, or an HTML comment block. That block opens on a line starting with `<!--` (as a
+  workflow marker does) and runs through the first line holding `-->`; it has no inline code, so a
+  marker on such a line is read even after a lone backtick. A run with no closer is literal text.
+  Checklist lines are read one at a time, so a span never continues onto the next line there.
 - **Checklist.** Lines `- [ ] ...`, `* [x] ...` or `+ [X] ...` outside fenced code. Inline code is
   removed from a line before it is read. Each line counts for its first reference to the repository,
   `#N` or `OWNER/REPO#N` (compared case-insensitively); lines naming only other repositories,
