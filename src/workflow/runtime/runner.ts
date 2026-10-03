@@ -110,7 +110,7 @@ import {
   type AgentLimiterSnapshot,
 } from './agent-limiter.js';
 import { snapshotImages } from './images.js';
-import { profileLimitError } from './profile-diagnostics.js';
+import { idleTimeoutError, profileLimitError } from './profile-diagnostics.js';
 import {
   resolveCapabilities,
   publicCapabilityManifest,
@@ -219,6 +219,8 @@ export type WorkflowEvent = {
   readonly outcome?: 'completed' | 'failed' | 'cancelled';
   /** Extensible bounded native evidence on agent.finished. */
   readonly diagnostics?: AgentDiagnostics;
+  /** The step's warnings (such as `no-tool-use`) on a completed agent.finished, when any. */
+  readonly warnings?: readonly string[];
   /** Reported usage on step.completed and live agent.finished; do not sum across event types. */
   readonly usage?: AgentUsage;
   /** Observed native session, or predicted Claude ID on early live notifications; absent on replay. */
@@ -574,6 +576,25 @@ function preserveFirstSessionId(
   if (observed != null && current != null && observed !== current)
     record.diagnostics = { ...record.diagnostics, finalSessionId: observed };
   return current;
+}
+
+/**
+ * Merge adapter diagnostics over earlier attempt diagnostics, keeping a known `cliVersion` or
+ * `model` (for example from version discovery) when the adapter reports it as null (#109).
+ */
+function mergeDiagnostics(
+  prior: AgentDiagnostics | undefined,
+  next: AgentDiagnostics | undefined,
+): Record<string, JsonValue> {
+  const merged: Record<string, JsonValue> = { ...prior, ...next };
+  for (const key of ['cliVersion', 'model'])
+    if (merged[key] === null && prior?.[key] != null) merged[key] = prior[key];
+  return merged;
+}
+
+/** Whether an agent call could use a tool: Claude with an explicitly empty tool list cannot. */
+function exposesTools(harness: string, options: { readonly tools?: unknown }): boolean {
+  return !(harness === 'claude' && Array.isArray(options.tools) && options.tools.length === 0);
 }
 
 /** Run or resume a workflow with local, at-least-once durable effects. Throws after saving failures. */
@@ -1976,10 +1997,10 @@ export async function runWorkflow<
                     evidence.usage,
                     observedRequest?.model ?? null,
                   );
-                attemptRecord.diagnostics = {
-                  ...attemptRecord.diagnostics,
-                  ...evidence.diagnostics,
-                };
+                attemptRecord.diagnostics = mergeDiagnostics(
+                  attemptRecord.diagnostics,
+                  evidence.diagnostics,
+                );
                 attemptRecord.sessionId = preserveFirstSessionId(attemptRecord, evidence.sessionId);
                 attemptRecord.response = evidence.rawText;
                 attemptRecord.responseTruncated = evidence.responseTruncated;
@@ -2093,6 +2114,7 @@ export async function runWorkflow<
                 sessionId: metadata.sessionId,
                 usage: metadata.usage,
                 diagnostics: metadata.diagnostics ?? {},
+                ...(step.warnings?.length ? { warnings: [...step.warnings] } : {}),
               });
             emit(
               'step.completed',
@@ -2364,7 +2386,12 @@ export async function runWorkflow<
             if (children.authority) {
               const bounded = children.authority.limits(profile.name, execution.policy);
               const sources = { ...execution.sources };
-              for (const field of ['timeoutMs', 'maxTurns', 'maxBudgetUsd'] as const)
+              for (const field of [
+                'timeoutMs',
+                'idleTimeoutMs',
+                'maxTurns',
+                'maxBudgetUsd',
+              ] as const)
                 if (bounded[field] !== execution.policy[field])
                   sources[field] = `child-delegation:${profile.name}`;
               execution = {
@@ -2453,9 +2480,10 @@ export async function runWorkflow<
           delete applied.retry;
           delete applied.onError;
           delete applied.worktree;
-          const { timeoutMs, maxTurns, maxBudgetUsd } = execution.policy;
+          const { timeoutMs, idleTimeoutMs, maxTurns, maxBudgetUsd } = execution.policy;
           const policyOptions = {
             ...(timeoutMs === undefined ? {} : { timeoutMs }),
+            ...(idleTimeoutMs === undefined ? {} : { idleTimeoutMs }),
             ...(maxTurns === undefined ? {} : { maxTurns }),
             ...(maxBudgetUsd === undefined ? {} : { maxBudgetUsd }),
             ...(execution.requestedModel === null ? {} : { model: execution.requestedModel }),
@@ -2632,7 +2660,7 @@ export async function runWorkflow<
                     evidence.usage === null
                       ? null
                       : normalizeUsage(evidence.usage, request.options.model ?? null);
-                  attempt.diagnostics = { ...attempt.diagnostics, ...evidence.diagnostics };
+                  attempt.diagnostics = mergeDiagnostics(attempt.diagnostics, evidence.diagnostics);
                   attempt.sessionId = preserveFirstSessionId(attempt, evidence.sessionId);
                   attempt.response = evidence.rawText;
                   attempt.responseTruncated = evidence.responseTruncated;
@@ -2643,9 +2671,14 @@ export async function runWorkflow<
                     step.warnings = [
                       `Profile ${profile.name}: ${String(denials)} permission denials reported.`,
                     ];
-                  throw profileLimitError(error, id, profile.name, execution);
+                  throw idleTimeoutError(
+                    profileLimitError(error, id, profile.name, execution),
+                    id,
+                    profile.name,
+                    execution,
+                  );
                 }
-                throw error;
+                throw idleTimeoutError(error, id, profile.name, execution);
               }
               attempt.usage = normalizeUsage(response.usage, request.options.model ?? null);
               attempt.sessionId = preserveFirstSessionId(attempt, response.sessionId);
@@ -2653,13 +2686,14 @@ export async function runWorkflow<
               attempt.response = evidence.rawText;
               attempt.responseTruncated = evidence.responseTruncated;
               attempt.diagnostics = agentDiagnosticsSchema.parse({
-                ...attempt.diagnostics,
-                ...(response.turns === undefined ? {} : { turns: response.turns }),
-                ...(response.permissionDenials === undefined
-                  ? {}
-                  : { permissionDenials: response.permissionDenials }),
-                ...(response.warnings === undefined ? {} : { warnings: [...response.warnings] }),
-                ...response.diagnostics,
+                ...mergeDiagnostics(attempt.diagnostics, {
+                  ...(response.turns === undefined ? {} : { turns: response.turns }),
+                  ...(response.permissionDenials === undefined
+                    ? {}
+                    : { permissionDenials: response.permissionDenials }),
+                  ...(response.warnings === undefined ? {} : { warnings: [...response.warnings] }),
+                  ...response.diagnostics,
+                }),
                 ...(transcript ? { transcript: transcript.snapshot() } : {}),
               });
               if (response.warnings !== undefined) step.warnings = [...response.warnings];
@@ -2694,6 +2728,17 @@ export async function runWorkflow<
                   attempt.validationIssues = jsonValue(error.issues) as JsonValue[];
                 throw error;
               }
+              // Only a completed attempt with a known count warns; adapters that report no
+              // count (registered, rehearsal, fixture) never do.
+              if (
+                profile.expectsToolUse === true &&
+                attempt.diagnostics['toolUses'] === 0 &&
+                exposesTools(harness, request.options)
+              )
+                step.warnings = [
+                  ...(step.warnings ?? []),
+                  `no-tool-use: Profile ${profile.name} expects tool use, but the ${harness} attempt completed without a tool call.`,
+                ];
               return {
                 output,
                 diagnostics: attempt.diagnostics,

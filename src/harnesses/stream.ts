@@ -19,6 +19,11 @@ function names(value: unknown): string[] {
       })
     : [];
 }
+/** Codex item types that are tool calls (live 0.157.1 evidence in #109). */
+const codexToolItems = new Set(['command_execution', 'file_change', 'mcp_tool_call', 'web_search']);
+/** Bound for deduplication sets; a protocol that exceeds it can only overcount, never warn. */
+const maxTrackedIds = 4096;
+
 function count(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
 }
@@ -30,6 +35,11 @@ export class HarnessStream {
   readonly #harness: 'claude' | 'codex';
   readonly #context: HarnessInvocation;
   readonly #limit: number;
+  readonly #structured: boolean;
+  /** Tool calls counted from every parsed line (progress is throttled, so it cannot count). */
+  #toolUses = 0;
+  readonly #claudeToolIds = new Set<string>();
+  readonly #codexInFlight = new Set<string>();
   readonly #diagnostics: Record<string, JsonValue> = { model: null, cliVersion: null };
   #reportedSession: string | null = null;
   #lastProgress = -Infinity;
@@ -48,6 +58,7 @@ export class HarnessStream {
     this.#harness = harness;
     this.#context = context;
     this.#limit = limit;
+    this.#structured = structured;
     this.protocol =
       harness === 'claude'
         ? new ClaudeProtocol(structured, requested)
@@ -95,6 +106,7 @@ export class HarnessStream {
     const notices = outcome.kind === 'success' ? (outcome.response.warnings ?? []) : [];
     return {
       ...this.#diagnostics,
+      toolUses: this.#toolUses,
       skippedLines: this.#skippedLines,
       stderrTail: stderr,
       warnings: [
@@ -208,6 +220,7 @@ export class HarnessStream {
       const tool = Array.isArray(content)
         ? (content.find((item: unknown) => object(item)?.['type'] === 'tool_use') as unknown)
         : undefined;
+      if (Array.isArray(content)) for (const item of content) this.#countClaudeTool(object(item));
       return tool
         ? { kind: 'tool', summary: `Claude tool: ${short(object(tool)?.['name']) ?? 'unknown'}` }
         : { kind: 'message', summary: 'Claude assistant message' };
@@ -225,6 +238,7 @@ export class HarnessStream {
       return { kind: 'init', summary: 'Codex thread initialized' };
     const item = object(data['item']);
     const type = short(item?.['type']);
+    if (type !== null && codexToolItems.has(type)) this.#countCodexTool(data['type'], item);
     if (type !== null)
       return {
         kind: type === 'agent_message' ? 'message' : 'tool',
@@ -233,5 +247,31 @@ export class HarnessStream {
     if (typeof data['type'] === 'string')
       return { kind: 'status', summary: `Codex: ${data['type'].slice(0, 128)}` };
     return undefined;
+  }
+
+  #countClaudeTool(block: Record<string, unknown> | undefined): void {
+    if (block?.['type'] !== 'tool_use') return;
+    // Claude Code delivers --json-schema output through this synthetic tool; it is not tool use.
+    if (this.#structured && block['name'] === 'StructuredOutput') return;
+    const id = typeof block['id'] === 'string' ? block['id'] : undefined;
+    if (id !== undefined) {
+      if (this.#claudeToolIds.has(id)) return;
+      if (this.#claudeToolIds.size < maxTrackedIds) this.#claudeToolIds.add(id);
+    }
+    this.#toolUses++;
+  }
+
+  #countCodexTool(event: unknown, item: Record<string, unknown> | undefined): void {
+    const id = typeof item?.['id'] === 'string' ? item['id'] : undefined;
+    // An item is counted when first seen: item.started records it in flight, and its
+    // item.completed then only clears that entry. An item without an ID counts on completion.
+    if (event === 'item.started') {
+      if (id === undefined || this.#codexInFlight.has(id)) return;
+      if (this.#codexInFlight.size < maxTrackedIds) this.#codexInFlight.add(id);
+      this.#toolUses++;
+    } else if (event === 'item.completed') {
+      if (id !== undefined && this.#codexInFlight.delete(id)) return;
+      this.#toolUses++;
+    }
   }
 }

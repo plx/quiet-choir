@@ -46,6 +46,13 @@ export interface AgentRow {
   readonly elapsedMs: number | null;
   /** Sum of reported costs of this step's attempts; null when none reported a cost. */
   readonly costUsd: number | null;
+  /**
+   * Tool calls the latest attempt's adapter counted; absent for older records and adapters that
+   * report no count, which keeps the bounded summary compact.
+   */
+  readonly toolUses?: number;
+  /** The step's warnings, such as `no-tool-use` or permission denials; absent when none. */
+  readonly warnings?: readonly string[];
 }
 
 /** Agent calls rolled up by their requested harness, model, effort and profile. @internal */
@@ -204,6 +211,17 @@ function stepElapsed(step: StepRecord, now: number): number | null {
     : (step.durationMs ?? null);
 }
 
+/** The latest attempt's reported tool count and the step's warnings, each only when present. */
+function optionalAgentFields(step: StepRecord): Pick<AgentRow, 'toolUses' | 'warnings'> {
+  const value = step.attemptHistory?.at(-1)?.diagnostics?.['toolUses'];
+  return {
+    ...(typeof value === 'number' && Number.isSafeInteger(value) && value >= 0
+      ? { toolUses: value }
+      : {}),
+    ...(step.warnings?.length ? { warnings: [...step.warnings] } : {}),
+  };
+}
+
 /** Agent calls only: fork-reused steps are excluded, as usage excludes them. */
 function summarizeAgents(
   run: RunRecord,
@@ -259,6 +277,7 @@ function summarizeAgents(
       profile,
       elapsedMs: stepElapsed(step, now),
       costUsd: cost({ [id]: step }),
+      ...optionalAgentFields(step),
     })),
   };
 }

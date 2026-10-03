@@ -1092,3 +1092,43 @@ it('gives a stale or failed summary a resume next entry and prints it as Next:',
   const listed = await listRuns({ stateDir, status: 'stale', commandLauncher: launcher });
   expect(listed.runs[0]?.next?.[0]?.argv).toEqual(resume('stale'));
 });
+
+it('shows the tool-use count, step warnings and idle deadline of agent calls', () => {
+  const warning =
+    'no-tool-use: Profile readonly expects tool use, but the claude attempt completed without a tool call.';
+  const counted = agentStep(1, { harness: 'claude', model: 'sonnet', effort: 'high' });
+  const [attempt] = counted.attemptHistory ?? [];
+  if (!attempt) throw new Error('fixture attempt missing');
+  const quiet: StepRecord = {
+    ...counted,
+    warnings: [warning],
+    attemptHistory: [{ ...attempt, diagnostics: { toolUses: 0 } }],
+  };
+  const busy: StepRecord = {
+    ...counted,
+    seq: 2,
+    attemptHistory: [{ ...attempt, diagnostics: { toolUses: 3 } }],
+  };
+  const legacy = agentStep(3, { harness: 'codex', model: null, effort: 'high' });
+  const failed = agentStep(4, { harness: 'codex', model: null, effort: 'high', status: 'failed' });
+  if (!failed.request) throw new Error('fixture request missing');
+  const stalled: StepRecord = {
+    ...failed,
+    request: { ...failed.request, limits: { ...failed.request.limits, idleTimeoutMs: 120_000 } },
+  };
+  const summary = summarizeRun(withSteps({ quiet, busy, legacy, stalled }), unlocked);
+  const rows = Object.fromEntries(summary.agents.recent.map((row) => [row.id, row]));
+  expect(rows['quiet']).toMatchObject({ toolUses: 0, warnings: [warning] });
+  expect(rows['busy']).toMatchObject({ toolUses: 3 });
+  expect(rows['busy']).not.toHaveProperty('warnings');
+  // A record from before tool counting renders exactly as before.
+  expect(rows['legacy']).not.toHaveProperty('toolUses');
+  expect(rows['legacy']).not.toHaveProperty('warnings');
+  const text = formatRunSummary(summary, true);
+  expect(text).toMatch(
+    /^quiet {2}claude sonnet effort high {2}12s {2}\$0\.0123 {2}tools 0 {2}warnings: no-tool-use: /m,
+  );
+  expect(text).toMatch(/^busy {2}claude sonnet effort high {2}12s {2}\$0\.0123 {2}tools 3$/m);
+  expect(text).toMatch(/^legacy {2}codex \(native model\) effort high {2}12s {2}\$0\.0123$/m);
+  expect(text).toMatch(/^failed stalled .*idle timeout 2m00s/m);
+});

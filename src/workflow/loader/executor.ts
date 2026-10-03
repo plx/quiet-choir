@@ -747,6 +747,11 @@ export class WorkflowExecutor implements Executor<WorkflowExecutorPlan, Workflow
               'warn',
               `${event.stepId}: ${String(denials)} permission denials${Array.isArray(event.diagnostics?.['deniedTools']) ? ` (${event.diagnostics['deniedTools'].filter((tool) => typeof tool === 'string').join(', ')})` : ''}.`,
             );
+          // Denials are logged from diagnostics above, so only the tool-use warning is added here.
+          if (event.type === 'agent.finished')
+            for (const warning of event.warnings ?? [])
+              if (warning.startsWith('no-tool-use:'))
+                this.#options.logger.log('warn', `${event.stepId}: ${warning}`);
           const detail =
             event.message ??
             `${event.stepId ?? ''} (attempt ${String(event.attempt)})${event.harness === undefined ? '' : ` harness=${event.harness}`}${agentProgress ? ` ${event.progress?.summary ?? event.outcome ?? 'started'}${event.sessionId ? ` session=${event.sessionId}` : ''}` : event.waitedMs === undefined ? '' : ` waitedMs=${String(event.waitedMs)} inFlight=${JSON.stringify(event.inFlight)} queued=${String(event.queued)}`}`;
