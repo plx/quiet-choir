@@ -21,9 +21,24 @@ import {
   type GithubWritePolicy,
 } from '../src/integrations/github.js';
 import {
+  addSubIssueResponseSchema,
+  alertPatchResponseSchema,
+  alertResponseSchema,
+  commentPostResponseSchema,
   githubMarker,
   hasMarker,
   isTestPath,
+  issueListPageSchema,
+  issuePatchResponseSchema,
+  issuePostResponseSchema,
+  issueStateResponseSchema,
+  parentDecision,
+  parentReadResponseSchema,
+  replyResponseSchema,
+  resolveResponseSchema,
+  shouldResolve,
+  stateMatches,
+  threadReadResponseSchema,
   truncateDismissComment,
   withMarker,
 } from '../src/integrations/github-write-model.js';
@@ -684,6 +699,71 @@ describe('alertDismissReason', () => {
     const emoji = '😀'.repeat(300);
     expect(Array.from(truncateDismissComment(emoji))).toHaveLength(280);
     expect(truncateDismissComment(emoji)).toBe('😀'.repeat(280));
+  });
+});
+
+describe('response schemas', () => {
+  const fixture = (name: string): unknown =>
+    JSON.parse(readFileSync(join(repository, 'test', 'fixtures', 'github', name), 'utf8'));
+  const responses = fixture('write-responses.json') as Record<string, unknown>;
+
+  it('accept GitHub-shaped responses with extra fields and keep only what the writes use', () => {
+    const cases: readonly [string, z.ZodType][] = [
+      ['commentPost', commentPostResponseSchema],
+      ['issuePost', issuePostResponseSchema],
+      ['issueListPage', issueListPageSchema],
+      ['issuePatch', issuePatchResponseSchema],
+      ['alertPatch', alertPatchResponseSchema],
+      ['threadRead', threadReadResponseSchema],
+      ['reply', replyResponseSchema],
+      ['resolve', resolveResponseSchema],
+      ['parentUnlinked', parentReadResponseSchema],
+      ['parentLinked', parentReadResponseSchema],
+      ['addSubIssue', addSubIssueResponseSchema],
+      ['issueState', issueStateResponseSchema],
+    ];
+    for (const [name, schema] of cases) {
+      const parsed = schema.safeParse(responses[name]);
+      expect(parsed.success, name).toBe(true);
+    }
+    expect(commentPostResponseSchema.parse(responses['commentPost'])).toEqual({
+      id: 3341234567,
+      html_url: 'https://github.com/octo-org/quiet-choir/issues/7#issuecomment-3341234567',
+    });
+    // The recorded alert GET (a read-only probe, scrubbed) yields the path the reason rule needs.
+    const alert = alertResponseSchema.parse(fixture('code-scanning-alert.json'));
+    expect(alert).toEqual({
+      number: 6,
+      state: 'fixed',
+      dismissed_reason: null,
+      most_recent_instance: { location: { path: 'test/process-lifecycle.test.ts' } },
+    });
+  });
+
+  it('fail a thread read whose last page reports more comments', () => {
+    const pages = structuredClone(responses['threadRead']) as {
+      data: { node: { comments: { pageInfo: { hasNextPage: boolean } } } };
+    }[];
+    const [page] = pages;
+    if (!page) throw new Error('no page');
+    page.data.node.comments.pageInfo.hasNextPage = true;
+    const parsed = threadReadResponseSchema.safeParse(pages);
+    expect(parsed.success).toBe(false);
+    expect(JSON.stringify(parsed.error?.issues)).toContain('incompleteCollection');
+  });
+
+  it('decide resolution, parents and states as pure functions', () => {
+    expect(shouldResolve({ __typename: 'Bot' }, undefined)).toBe(true);
+    expect(shouldResolve({ __typename: 'User' }, undefined)).toBe(false);
+    expect(shouldResolve(null, undefined)).toBe(false);
+    expect(shouldResolve({ __typename: 'User' }, true)).toBe(true);
+    expect(shouldResolve({ __typename: 'Bot' }, false)).toBe(false);
+    expect(parentDecision(null, { id: 'P' })).toBe('link');
+    expect(parentDecision({ id: 'P' }, { id: 'P' })).toBe('same');
+    expect(parentDecision({ id: 'Q' }, { id: 'P' })).toBe('different');
+    expect(stateMatches('OPEN', 'open')).toBe(true);
+    expect(stateMatches('CLOSED', 'open')).toBe(false);
+    expect(stateMatches('CLOSED', 'closed')).toBe(true);
   });
 });
 
