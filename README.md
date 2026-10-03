@@ -596,7 +596,9 @@ truncated list. Its head-pinned waits for CI, reviewers (Codex, CodeQL or your o
 one `ctx.poll` each. Its writes (comments, thread replies, issue create, close and reopen, alert
 dismissals, pull request create and edit, a merge pinned to a head SHA, failed-run reruns) are one
 `ctx.step` each and reconcile with a marker or a preceding read, so a rerun after a crash does not
-write twice (failed-run reruns hold this only for runs at the attempt baseline); see
+write twice (failed-run reruns hold this only for runs at the attempt baseline). Its epic snapshot
+reads an epic's sub-issues (or its checklist) in one command, and the pure `nextTicket` picks the
+next ticket and says why every other open one was skipped; see
 [GitHub reads, waits and writes](docs/github.md).
 
 ## Progress and monitoring
