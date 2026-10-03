@@ -628,10 +628,19 @@ function isSetextUnderline(rest: string): boolean {
 }
 
 /**
+ * Whether `rest`, a line after its block-quote markers, opens an HTML comment block (CommonMark's
+ * HTML block of type 2): up to three spaces of indentation, then `<!--`.
+ */
+const opensHtmlComment = (rest: string): boolean => /^ {0,3}<!--/u.test(rest);
+
+/**
  * `text` without fenced blocks and inline code spans, so quoted examples are never read. A span may
  * cross a line ending within a paragraph, including a lazy continuation line of a block quote, but
- * never a block boundary: a blank line, a fence, a deeper block quote, a list item, an ATX heading
- * or a thematic break ends the paragraph, and a heading or break is a block of one line. A `=` or
+ * never a block boundary: a blank line, a fence, a deeper block quote, a list item, an ATX heading,
+ * a thematic break or an HTML comment block ends the paragraph, and a heading or break is a block of
+ * one line. An HTML comment block (a line opening with `<!--`, as a workflow marker does) runs
+ * through the first line holding `-->`, which may be its first, or until its block quote ends; it has
+ * no inline code, so its lines are kept as they are. A `=` or
  * `-` underline of any length at the paragraph's block-quote depth makes it a setext heading and
  * ends it there (so a lone `-` there is an underline, not an empty list item, which cannot interrupt
  * a paragraph). With no paragraph open, a lone `=` or `-` run shorter than a thematic break is
@@ -645,6 +654,8 @@ function stripCode(text: string): string {
   // The paragraph's block-quote depth, and whether it opens a list item.
   let depth = 0;
   let inItem = false;
+  // The open HTML comment block's block-quote depth, or null when none is open.
+  let html: number | null = null;
   const flush = (): void => {
     if (paragraph.length) kept.push(stripInlineCode(paragraph.join('\n')));
     paragraph = [];
@@ -656,9 +667,21 @@ function stripCode(text: string): string {
     }
     const quote = quotePrefix(line);
     const rest = line.slice(quote.end);
+    if (html !== null && quote.depth >= html) {
+      kept.push(line);
+      if (rest.includes('-->')) html = null;
+      return;
+    }
+    html = null;
     if (/^[ \t]*$/u.test(rest)) {
       flush();
       kept.push(line);
+      return;
+    }
+    if (opensHtmlComment(rest)) {
+      flush();
+      kept.push(line);
+      if (!rest.includes('-->')) html = quote.depth;
       return;
     }
     if (paragraph.length && quote.depth === depth && isSetextUnderline(rest)) {

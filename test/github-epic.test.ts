@@ -575,6 +575,19 @@ describe('nextTicket over the recorded #99 snapshot', () => {
         ],
       ],
       [
+        'waiting on an open item named by a marker on an HTML comment line after a lone backtick',
+        (raw) => {
+          node(raw, 163).body += '\n\nExample `x\n<!-- epic:depends-on 167 -->\n`';
+        },
+        {},
+        164,
+        [
+          [163, 'waiting'],
+          [167, 'ready'],
+          [168, 'waiting'],
+        ],
+      ],
+      [
         'an open linked pull request: in flight, picked before an earlier ready item',
         (raw) => {
           node(raw, 167).closedByPullRequestsReferences.nodes.push(pr(400, 'OPEN'));
@@ -1006,6 +1019,38 @@ describe('parseDependencies', () => {
     ['a span across lines of one block quote', ['> See `x\n> Depends on #53`'], []],
     ['a span across a lazy continuation line', ['> See `x\nDepends on #54`'], []],
     ['a span across lines of one list item', ['- See `x\n  Depends on #55`'], []],
+    [
+      'a span does not cross an HTML comment line',
+      ['Example `x\n<!-- epic:depends-on 97 -->\n`'],
+      [97],
+    ],
+    [
+      'a span does not cross a multi-line HTML comment',
+      ['Example `x\n<!--\n  epic:depends-on 98\n-->\n`'],
+      [98],
+    ],
+    [
+      'a span does not cross a quoted HTML comment line',
+      ['> Example `x\n> <!-- epic:depends-on 100 -->\n> `'],
+      [100],
+    ],
+    [
+      'an inline marker in a paragraph is code',
+      ['Intro\nsee `<!-- epic:depends-on 99 -->` here'],
+      [],
+    ],
+    [
+      'a line opening with code is not an HTML comment',
+      ['Intro\n`<!-- epic:depends-on 99 -->`'],
+      [],
+    ],
+    ['an HTML comment has no inline code', ['<!-- `x\nDepends on #101 ` -->'], [101]],
+    ['an HTML comment ends at its closer', ['<!--\n`x\n-->\nDepends on #103 `'], [103]],
+    [
+      'an HTML comment ends with its block quote',
+      ['> <!-- open\nExample `x\nDepends on #102`'],
+      [],
+    ],
     ['a colon after the phrase', ['Depends on: #29', 'requires :#30'], [29, 30]],
     ['fenced code ignored', ['```\nDepends on #16\n```\nDepends on #17'], [17]],
     ['a fence in a block quote', ['> ~~~\n> Depends on #33\n>\n> ~~~\n> Depends on #34'], [34]],
@@ -1187,7 +1232,12 @@ describe('parseSplit', () => {
     ],
     ['a template is not a marker', [by(VIEWER, '<!-- epic:split a,b -->')], null],
     ['inline code', [by(VIEWER, '`<!-- epic:split 12 -->`')], null],
-    ['a two-line code span', [by(VIEWER, 'Like `\n<!-- epic:split 5,6 -->\n` this')], null],
+    ['a two-line code span', [by(VIEWER, 'Like `\nsee <!-- epic:split 5,6 -->\n` this')], null],
+    [
+      'an HTML comment line ends a code span',
+      [by(VIEWER, 'Like `\n<!-- epic:split 5,6 -->\n` this')],
+      [5, 6],
+    ],
     [
       'a code span does not cross a blank line',
       [by(VIEWER, 'Like `\n\n<!-- epic:split 5,6 -->\n\n` this')],
