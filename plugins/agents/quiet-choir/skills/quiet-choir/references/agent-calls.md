@@ -13,24 +13,24 @@ These are quiet-choir options. The core resolves profile defaults and validates 
 `CliHarness` translates them to native flags and enforces process limits. A custom harness must
 honor the resolved request itself. Native binaries/configuration still determine model support.
 
-| Option                   | Claude                          | Codex                                   | Default                                      | Enforced by                                                    |
-| ------------------------ | ------------------------------- | --------------------------------------- | -------------------------------------------- | -------------------------------------------------------------- |
-| `prompt`                 | stdin                           | stdin                                   | Required                                     | Core validates; adapter supplies without a shell               |
-| `schema`                 | Object root                     | Compat accepts common Zod shapes        | No schema for text                           | Core validates output; provider adapter prepares wire schema   |
-| `profile`                | Declared role/preset            | Same                                    | Workflow default, otherwise `text`           | Core resolves capabilities and grants                          |
-| `model`                  | Name/alias                      | Name/alias                              | Inherited native model                       | Adapter passes; native CLI selects                             |
-| `effort`                 | low/medium/high/xhigh/max       | Same; cannot also set `reasoningEffort` | Inherited                                    | Core validates; native CLI applies                             |
-| `cwd`                    | Relative to run cwd or absolute | Same                                    | Run cwd                                      | Core resolves absolute path; adapter must use `request.cwd`    |
-| `timeoutMs`              | Wall-clock                      | Wall-clock                              | Text 300,000 ms                              | Profile supplies; adapter times and terminates                 |
-| `maxTurns`               | Positive integer                | Unsupported                             | Text 10                                      | Profile supplies; Claude enforces                              |
-| `maxBudgetUsd`           | Positive finite USD             | Unsupported                             | Text $0.50                                   | Profile supplies; Claude enforces                              |
-| `tools` / `allowedTools` | Exposed / permitted tools       | Unsupported                             | Text empty; allowed copies tools             | Core grants; Claude enforces                                   |
-| `sandbox`                | Unsupported                     | read-only/workspace-write               | read-only                                    | Core grants; Codex enforces                                    |
-| `addDirs`                | Extra access directories        | Extra writable directories              | None                                         | Core resolves/grants; native CLI enforces                      |
-| `extraArgs`              | `--flag` or `--flag=value`      | Same                                    | None                                         | Adapter rejects owned flags/aliases; core fingerprints strings |
-| `env`                    | Environment overlay             | Same                                    | Inherit parent environment                   | Adapter overlays; core fingerprints explicit values            |
-| `retry`                  | Safe-to-repeat calls only       | Same                                    | One attempt; opted-in delay starts at 100 ms | Core owns retry, removes it from adapter request               |
-| `onError`                | throw/return                    | Same                                    | throw                                        | Core journals final outcomes                                   |
+| Option                   | Claude                          | Codex                            | Default                                      | Enforced by                                                    |
+| ------------------------ | ------------------------------- | -------------------------------- | -------------------------------------------- | -------------------------------------------------------------- |
+| `prompt`                 | stdin                           | stdin                            | Required                                     | Core validates; adapter supplies without a shell               |
+| `schema`                 | Object root                     | Compat accepts common Zod shapes | No schema for text                           | Core validates output; provider adapter prepares wire schema   |
+| `profile`                | Declared role/preset            | Same                             | Workflow default, otherwise `text`           | Core resolves capabilities and grants                          |
+| `model`                  | Name/alias                      | Name/alias                       | Inherited native model                       | Adapter passes; native CLI selects                             |
+| `effort`                 | low/medium/high/xhigh/max       | Same, plus none/minimal          | Inherited                                    | Core validates; native CLI applies                             |
+| `cwd`                    | Relative to run cwd or absolute | Same                             | Run cwd                                      | Core resolves absolute path; adapter must use `request.cwd`    |
+| `timeoutMs`              | Wall-clock                      | Wall-clock                       | Text 300,000 ms                              | Profile supplies; adapter times and terminates                 |
+| `maxTurns`               | Positive integer                | Unsupported                      | Text 10                                      | Profile supplies; Claude enforces                              |
+| `maxBudgetUsd`           | Positive finite USD             | Unsupported                      | Text $0.50                                   | Profile supplies; Claude enforces                              |
+| `tools` / `allowedTools` | Exposed / permitted tools       | Unsupported                      | Text empty; allowed copies tools             | Core grants; Claude enforces                                   |
+| `sandbox`                | Unsupported                     | read-only/workspace-write        | read-only                                    | Core grants; Codex enforces                                    |
+| `addDirs`                | Extra access directories        | Extra writable directories       | None                                         | Core resolves/grants; native CLI enforces                      |
+| `extraArgs`              | `--flag` or `--flag=value`      | Same                             | None                                         | Adapter rejects owned flags/aliases; core fingerprints strings |
+| `env`                    | Environment overlay             | Same                             | Inherit parent environment                   | Adapter overlays; core fingerprints explicit values            |
+| `retry`                  | Safe-to-repeat calls only       | Same                             | One attempt; opted-in delay starts at 100 ms | Core owns retry, removes it from adapter request               |
+| `onError`                | throw/return                    | Same                             | throw                                        | Core journals final outcomes                                   |
 
 See [Claude controls/protocol](claude.md) and [Codex controls/protocol](codex.md) for
 native-specific fields. Keep rotating secrets in the inherited environment; explicit `env` values

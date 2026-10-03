@@ -2,6 +2,37 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- Breaking: Codex has one effort option, and `reasoningEffort` is renamed to `effort` everywhere
+  (#341, part of #158; amends ADR 0011). Migrate as follows:
+  - Call options, profiles and defaults: Codex `reasoningEffort: X` becomes `effort: X`.
+    `CodexOptions.effort` accepts
+    `'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'`; Claude's `effort` keeps the
+    shared levels, so `'none'` and `'minimal'` are type errors there. The "Set effort or
+    reasoningEffort, never both" error is gone: a call-site Codex `effort` now replaces one
+    inherited from profile defaults.
+  - Policy overrides: `PolicyOverride.reasoningEffort` becomes `effort`
+    (`--policy '{"kind":"codex","effort":"high"}'`). It is still Codex-only: a `claude`, `step` or
+    `exec` rule rejects it and an unscoped rule never changes a Claude call. The
+    `--allow-model-override` error now reads "Model and effort policy overrides require
+    allowModelOverride (--allow-model-override)."
+  - Attempt records: `AttemptPolicy.reasoningEffort` becomes `effort`. A Codex call-site `effort`
+    now enters the policy as `call-site`, so `attempt.effort` and `sources.effort` record it;
+    before, only `reasoningEffort` reached the attempt record. A delegated child role now inherits
+    its parent role's Codex `effort` when it sets none.
+  - A runtime `reasoningEffort` on a call, profile, defaults block or incoming policy rule fails
+    before any effect with "reasoningEffort was renamed to effort; use effort (accepts
+    none/minimal/low/medium/high/xhigh/max)."
+  - Old data still loads: attempts, saved policy rules and capability manifests (run records and the
+    definition registry) written with `reasoningEffort` read back as `effort`, and a record holding
+    both keys is rejected. The checkpoint format stays 7 and new writes carry `effort`, so a runtime
+    from before this change cannot read attempts written after it. Attempt `sources` keys are
+    historical provenance and keep their recorded names.
+  - Identity: Codex `effort` keeps the `reasoningEffort` identity slot, so Codex calls recorded with
+    `reasoningEffort` resume unchanged after the source is migrated. Codex calls recorded with the
+    old shared `effort` change identity once: resume reports
+    `option.effort, reasoningEffort changed on a completed step`, and `--accept-code-change` cannot
+    reuse them. Recover with `--fork-from RUN --reuse matching --invalidate STEP`, which re-runs
+    only those calls. Claude effort identity is unchanged.
 - Breaking: `worktree` is the only agent checkout selector, and `isolation` is only the native
   configuration mode (#340, part of #158; amends ADR 0023). Migrate as follows:
   - `isolation: 'worktree'` and `worktree: 'worktree'` become `worktree: true`.

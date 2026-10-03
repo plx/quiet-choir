@@ -1,11 +1,11 @@
 # Harness controls and contract checks
 
-Both providers accept `effort: 'low' | 'medium' | 'high' | 'xhigh' | 'max'`. Claude maps this to
-`--effort`; Codex maps it to `model_reasoning_effort`. Codex also accepts
-`reasoningEffort: 'none' | 'minimal' | Effort`. Set one effort field, never both, including across
-profile defaults and call options. Omission uses native defaults under the selected configuration
-mode. Accepted enum values do not guarantee support for every model. Each attempt records
-`requested.model` and `requested.effort`, using `"inherited"` for omissions.
+Both providers take one `effort` field. Claude accepts `'low' | 'medium' | 'high' | 'xhigh' | 'max'`
+and maps it to `--effort`; Codex also accepts `'none'` and `'minimal'` and sends it as
+`model_reasoning_effort`. A call-site `effort` replaces one inherited from profile defaults.
+Omission uses native defaults under the selected configuration mode. Accepted enum values do not
+guarantee support for every model. Each attempt records `requested.model` and `requested.effort`,
+using `"inherited"` for omissions.
 
 ## Typed controls
 
@@ -13,7 +13,7 @@ mode. Accepted enum values do not guarantee support for every model. Each attemp
 | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | Both     | `isolation`, `worktree`, `effort`, `addDirs`, `extraArgs`, `env`, alongside existing prompt/model/cwd/deadline                                                                                                                 |
 | Claude   | `disallowedTools`, `permissionMode` (`dontAsk`, `acceptEdits`, `plan`), `systemPrompt`, `appendSystemPrompt`, `agent`, `agents`, `mcpServers`, `strictMcpConfig`, `settings`, `plugins`, `fallbackModel`, `onPermissionDenied` |
-| Codex    | `reasoningEffort`, `networkAccess`, `harnessProfile`, `config`, `images`, `instructions`                                                                                                                                       |
+| Codex    | `networkAccess`, `harnessProfile`, `config`, `images`, `instructions`                                                                                                                                                          |
 
 `profile` always selects a quiet-choir role. `harnessProfile` selects Codex's native configuration
 profile (`--profile`). Native profile names contain letters, numbers, underscores or hyphens and

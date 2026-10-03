@@ -168,20 +168,20 @@ default hides those of failed, cancelled or completed runs and those with an ans
 
 Current records include run `policy`, `allowModelOverride`, and `policyWarnings`. Each step has
 component `identity` hashes and `attemptHistory`: each attempt records its fingerprint, resolved
-`policy`, value `sources`, `requestedModel`, `reasoningEffort`, `startedAt`, `finishedAt`, `status`,
-and `error`. Format 6 adds execution number, monotonic duration, reported usage, request summary,
-and stack to each attempt. Agent attempts additionally retain early `sessionId`, Claude
-`requestedSessionId`, loose `diagnostics`, and a private `transcript` receipt. Failed responses are
-bounded to 256 KiB with `responseTruncated`; local Zod failures retain `validationIssues`. Later
-success preserves these earlier entries. Steps retain the latest phase/timing/request/stack;
-existing cancellation status and `attemptHistory` are used, with no duplicate boolean or history
-array. A `running` attempt has no saved settlement. Redefined unfinished steps retain old hashes and
-change times in `redefinitions`; unvisited unfinished steps, and unvisited child frames that are
-still running, suspended, failed or cancelled, become `superseded` after a successful body replay.
-Existing terminal outcomes still must be visited. Storage format 7 retains replay contract 6. Flat
-format 6 migrates automatically; original format 1 migrates by verifying its old step identities and
-must migrate before fork reuse. Formats 2–5 remain inspection-only in this runtime. See
-[legacy migration](durability.md#legacy-records).
+`policy`, value `sources`, `requestedModel`, `effort` (explicit Codex effort, else null),
+`startedAt`, `finishedAt`, `status`, and `error`. Format 6 adds execution number, monotonic
+duration, reported usage, request summary, and stack to each attempt. Agent attempts additionally
+retain early `sessionId`, Claude `requestedSessionId`, loose `diagnostics`, and a private
+`transcript` receipt. Failed responses are bounded to 256 KiB with `responseTruncated`; local Zod
+failures retain `validationIssues`. Later success preserves these earlier entries. Steps retain the
+latest phase/timing/request/stack; existing cancellation status and `attemptHistory` are used, with
+no duplicate boolean or history array. A `running` attempt has no saved settlement. Redefined
+unfinished steps retain old hashes and change times in `redefinitions`; unvisited unfinished steps,
+and unvisited child frames that are still running, suspended, failed or cancelled, become
+`superseded` after a successful body replay. Existing terminal outcomes still must be visited.
+Storage format 7 retains replay contract 6. Flat format 6 migrates automatically; original format 1
+migrates by verifying its old step identities and must migrate before fork reuse. Formats 2–5 remain
+inspection-only in this runtime. See [legacy migration](durability.md#legacy-records).
 
 `workflow.identity` holds code/schema/file hashes and engine metadata. `forkedFrom` identifies a
 source snapshot, reuse mode, invalidation globs, intentional differences, and progress; each copied
