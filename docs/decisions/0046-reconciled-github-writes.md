@@ -45,7 +45,11 @@ the client that `github(ctx, { repo })` returns. Its context parameter widens to
   attempt has just created. The cost of a miss is a scan of every issue the viewer created there; no
   heuristic bound is added, since one could miss. The list is assumed to show a new issue at once;
   GitHub documents no guarantee, and this burn-down forbids a write probe, so the residual risk is
-  stated in the guarantees table.
+  stated in the guarantees table. The `creator` filter also assumes the same `gh` account across
+  attempts and resumes: a retry after authentication switches to another account does not see the
+  earlier account's marked issue and can create a duplicate. Dropping the filter would make every
+  miss page through every issue and pull request in the repository, a far larger cost for the rare
+  account switch mid-run, so the limit is documented instead.
 - **Sub-issue links are looked up, never assumed.** Re-linking an already linked sub-issue is not
   documented behaviour, so `issue.create` reads the issue's parent (by node ID) and the wanted
   parent's node ID: no parent links with `addSubIssue` (never `replaceParent`), the same parent is a
