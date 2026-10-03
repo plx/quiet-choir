@@ -104,7 +104,7 @@ it('recovers a timed-out review with a sticky override and replays completed wor
   ).toBe(true);
 });
 
-it.each(['timeoutMs', 'maxTurns', 'maxBudgetUsd', 'retry'] as const)(
+it.each(['timeoutMs', 'idleTimeoutMs', 'maxTurns', 'maxBudgetUsd', 'retry'] as const)(
   'allows call-site %s changes for failed and completed calls',
   async (field) => {
     let updated = false;
@@ -134,6 +134,40 @@ it.each(['timeoutMs', 'maxTurns', 'maxBudgetUsd', 'retry'] as const)(
     expect(result.steps['ask']?.attemptHistory).toHaveLength(2);
   },
 );
+
+it('raises an idle deadline on resume with a --policy rule, without redefining the step', async () => {
+  const invoke = vi
+    .fn<Harness['invoke']>()
+    .mockRejectedValueOnce(
+      Object.assign(new Error('fake produced no output for 100ms (idleTimeoutMs).'), {
+        code: 'QUIET_CHOIR_IDLE_TIMEOUT',
+      }),
+    )
+    .mockResolvedValue(reply);
+  const definition = workflow(async (ctx) => (await ctx.codex.text('ask', { prompt: 'x' })).output);
+  const setup = { ...options(), harness: { invoke } };
+  await expect(
+    runWorkflow(definition, { ...setup, policy: [{ match: 'ask', idleTimeoutMs: 100 }] }),
+  ).rejects.toThrow('produced no output');
+  const failed = (await readRun(options())).steps['ask'];
+  expect(failed?.attemptHistory?.[0]?.errorKind).toBe('idle-timeout');
+  expect(failed?.error).toContain('Retry: --resume --profile text.idleTimeoutMs=200');
+  expect(failed?.error).toContain(`--policy '{"match":"ask","idleTimeoutMs":200}'`);
+  const result = await runWorkflow(definition, {
+    ...setup,
+    resume: true,
+    policy: [{ match: 'ask', idleTimeoutMs: 200 }],
+  });
+  expect(result.output).toBe('ok');
+  expect(invoke.mock.calls.map(([request]) => request.options.idleTimeoutMs)).toEqual([100, 200]);
+  expect(result.steps['ask']?.redefinitions).toBeUndefined();
+  expect(result.steps['ask']?.attemptHistory?.[1]).toMatchObject({
+    policy: { idleTimeoutMs: 200 },
+    // Policy rules are sticky: the resume rule follows the first run's rule and wins.
+    sources: { idleTimeoutMs: 'override:1' },
+  });
+  expect(result.steps['ask']?.request?.limits.idleTimeoutMs).toBe(200);
+});
 
 it('changes local retry policy without changing identity and retries agents explicitly', async () => {
   let retry = { maxAttempts: 1, delayMs: 0 };
@@ -403,6 +437,9 @@ it.each([
   { match: '[' },
   { kind: 'sleep' },
   { kind: 'step', timeoutMs: 1 },
+  { kind: 'step', idleTimeoutMs: 1 },
+  { kind: 'exec', idleTimeoutMs: 1 },
+  { idleTimeoutMs: 0 },
   { kind: 'codex', maxTurns: 1 },
   { kind: 'claude', reasoningEffort: 'high' },
   { tools: ['Bash'] },

@@ -8,6 +8,7 @@ import {
   capabilityManifest,
   claudeCapabilityKeys,
   codexCapabilityKeys,
+  defineHarness,
   defineWorkflow,
   HarnessError,
   readRun,
@@ -175,10 +176,57 @@ it.each([
   { profiles: { bad: { claude: { tools: ['Read'], allowedTools: ['Write'] } } } },
   { profiles: { bad: { claude: { tools: ['Bash(npm test:*)'] } } } },
   { defaults: { profile: 'absent' } },
-  { defaults: { idleTimeoutMs: 100 } },
+  { defaults: { idleTimeoutMs: 0 } },
+  { profiles: { bad: { idleTimeoutMs: 2_147_483_648 } } },
   { strictProfiles: 'true' },
 ])('rejects invalid profile declarations before the body: %j', (config) => {
   expect(() => capabilityManifest(config as Parameters<typeof capabilityManifest>[0])).toThrow();
+});
+
+it('accepts idleTimeoutMs as a profile limit on defaults, profiles and overrides', () => {
+  const manifest = capabilityManifest({
+    defaults: { idleTimeoutMs: 100 },
+    profiles: { scout: { extends: 'readonly', idleTimeoutMs: 250 } },
+  });
+  expect(manifest.defaults.idleTimeoutMs).toBe(100);
+  expect(manifest.profiles['readonly']?.idleTimeoutMs).toBe(100);
+  expect(manifest.profiles['scout']?.idleTimeoutMs).toBe(250);
+  expect(capabilityManifest({}).defaults.idleTimeoutMs).toBeUndefined();
+});
+
+it('defaults expectsToolUse to roles that grant more than the text baseline', () => {
+  const manifest = capabilityManifest({
+    profiles: {
+      writer: { codex: { sandbox: 'workspace-write' } },
+      reader: { codex: { sandbox: 'read-only' } },
+      quiet: { extends: 'readonly', expectsToolUse: false },
+      eager: { expectsToolUse: true },
+    },
+  });
+  const expects = (name: string) => manifest.profiles[name]?.expectsToolUse;
+  expect(expects('text')).toBe(false);
+  expect(expects('readonly')).toBe(true);
+  expect(expects('edit')).toBe(true);
+  expect(expects('writer')).toBe(true);
+  expect(expects('reader')).toBe(false);
+  expect(expects('quiet')).toBe(false);
+  expect(expects('eager')).toBe(true);
+});
+
+it('rejects idleTimeoutMs inside a registered harness profile block', () => {
+  const tool = defineHarness({
+    name: 'tool',
+    revision: 1,
+    options: z.object({ prompt: z.string() }),
+    capabilities: { structuredOutput: 'none' },
+    access: () => 'none',
+  });
+  expect(() =>
+    capabilityManifest({
+      harnesses: [tool],
+      profiles: { worker: { harnesses: { tool: { idleTimeoutMs: 100 } } } },
+    }),
+  ).toThrow('cannot set harness tool.idleTimeoutMs');
 });
 
 it.each(['fixer', 'write', 'exec', 'all'])(
@@ -537,12 +585,17 @@ it('validates CLI numeric policy syntax and runtime profile/grant names', async 
     profile: 'scout',
     maxBudgetUsd: 0.75,
   });
+  expect(parseProfileOverride('scout.idleTimeoutMs=20')).toEqual({
+    profile: 'scout',
+    idleTimeoutMs: 20,
+  });
   for (const value of [
     'scout.model=sonnet',
     'scout.maxTurns=0',
     'scout.maxTurns=1.5',
     'scout.timeoutMs=2147483648',
-    'scout.idleTimeoutMs=20',
+    'scout.idleTimeoutMs=0',
+    'scout.idleTimeoutMs=2147483648',
     '*.maxTurns=-2',
     'bad',
   ])

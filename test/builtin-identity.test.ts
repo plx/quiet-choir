@@ -16,7 +16,9 @@ import {
 } from '../src/index.js';
 import { decision } from '../src/integrations/decision.js';
 import { digest } from '../src/workflow/runtime/json.js';
-import type { StepIdentity } from '../src/workflow/runtime/identity.js';
+import { agentIdentity, type StepIdentity } from '../src/workflow/runtime/identity.js';
+import type { HarnessDeclaration } from '../src/workflow/runtime/harness-model.js';
+import { claudeDefinition } from '../src/harnesses/builtins/definitions.js';
 
 // The golden fingerprints include the cwd digest, so the cwd is fixed and never a temp directory.
 const cwd = '/golden-cwd';
@@ -435,5 +437,51 @@ describe('merge effect identity', () => {
     expect(bare).toEqual((await recorded('explicit-default'))['integrate']);
     expect(bare?.fingerprint).not.toBe(configured?.fingerprint);
     expect(bare?.fingerprint).not.toBe(plain?.fingerprint);
+  });
+});
+
+describe('idle deadline identity', () => {
+  // idleTimeoutMs is execution policy like timeoutMs: it never enters a call's identity.
+  it.each(['claude', 'codex'] as const)(
+    'keeps %s identity unchanged by idleTimeoutMs',
+    (harness) => {
+      const identity = (extra: object) =>
+        agentIdentity(
+          { harness, cwd, outputSchema: null, options: { prompt: 'x', ...extra } },
+          null,
+        );
+      expect(identity({ idleTimeoutMs: 1000 })).toEqual(identity({}));
+      expect(identity({ idleTimeoutMs: 1000 })).toEqual(identity({ idleTimeoutMs: 9000 }));
+    },
+  );
+
+  it('keeps a registered harness identity unchanged by idleTimeoutMs', () => {
+    const identity = (extra: object, definition?: HarnessDeclaration) =>
+      agentIdentity(
+        {
+          harness: 'tool',
+          revision: 1,
+          cwd,
+          outputSchema: null,
+          options: { prompt: 'x', ...extra },
+        },
+        null,
+        definition,
+      );
+    expect(identity({ idleTimeoutMs: 1000 })).toEqual(identity({}));
+    // A revised built-in contract takes the registered path, where its policy list applies.
+    const revised = (extra: object) =>
+      agentIdentity(
+        {
+          harness: 'claude',
+          revision: 2,
+          cwd,
+          outputSchema: null,
+          options: { prompt: 'x', ...extra },
+        },
+        null,
+        claudeDefinition,
+      );
+    expect(revised({ idleTimeoutMs: 1000 })).toEqual(revised({}));
   });
 });

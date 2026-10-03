@@ -21,6 +21,7 @@ import { builtinCapabilityKeys } from '../../harnesses/builtins/capability-keys.
 const nameSchema = z.string().regex(/^[a-zA-Z][a-zA-Z0-9_-]{0,63}$/u);
 const limits = {
   timeoutMs: z.number().int().positive().max(2_147_483_647).optional(),
+  idleTimeoutMs: z.number().int().positive().max(2_147_483_647).optional(),
   maxTurns: z.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional(),
   maxBudgetUsd: z.number().positive().optional(),
 };
@@ -68,6 +69,7 @@ export const profileOverrideSchema = z
   .refine(
     (rule) =>
       rule.timeoutMs !== undefined ||
+      rule.idleTimeoutMs !== undefined ||
       rule.maxTurns !== undefined ||
       rule.maxBudgetUsd !== undefined,
     'A profile override must set a limit.',
@@ -245,6 +247,7 @@ export function resolveCapabilities(definition: {
         'retry',
         'worktree',
         'timeoutMs',
+        'idleTimeoutMs',
         'maxTurns',
         'maxBudgetUsd',
       ])
@@ -279,7 +282,9 @@ export function resolveCapabilities(definition: {
       claudeAccess,
       codexAccess,
       ...(registrations.size ? { harnesses, harnessAccess, harnessCapabilities } : {}),
-      expectsToolUse: data.expectsToolUse ?? access !== 'none',
+      // The text baseline (no Claude tools, Codex read-only) answers from the prompt; Codex
+      // read-only still has a shell, so plain access would make every text call expect tools.
+      expectsToolUse: data.expectsToolUse ?? (claudeAccess !== 'none' || codexAccess !== 'read'),
       onPermissionDenied: data.onPermissionDenied ?? 'warn',
       environment: {
         claude: environmentSummary(data.claude.env),
@@ -330,12 +335,12 @@ export function validateProfileOverrides(
 /** Parse a single CLI name.limit=value rule; no semantic overrides. @internal */
 export function parseProfileOverride(value: string): ProfileOverride {
   const match =
-    /^(\*|[a-zA-Z][a-zA-Z0-9_-]{0,63})\.(timeoutMs|maxTurns|maxBudgetUsd)=((?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?)$/u.exec(
+    /^(\*|[a-zA-Z][a-zA-Z0-9_-]{0,63})\.(timeoutMs|idleTimeoutMs|maxTurns|maxBudgetUsd)=((?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?)$/u.exec(
       value,
     );
   if (!match?.[1] || !match[2] || !match[3])
     throw new Error(
-      'Invalid --profile; use name.maxTurns=50, name.maxBudgetUsd=3, or *.timeoutMs=1800000.',
+      'Invalid --profile; use name.maxTurns=50, name.maxBudgetUsd=3, *.timeoutMs=1800000, or name.idleTimeoutMs=120000.',
     );
   return profileOverrideSchema.parse({
     profile: match[1],

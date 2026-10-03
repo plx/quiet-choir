@@ -47,6 +47,7 @@ export function requestSummary(
     profile: execution.profile ?? null,
     limits: {
       timeoutMs: execution.policy.timeoutMs ?? null,
+      idleTimeoutMs: execution.policy.idleTimeoutMs ?? null,
       maxTurns: request.harness === 'claude' ? (execution.policy.maxTurns ?? null) : null,
       maxBudgetUsd: request.harness === 'claude' ? (execution.policy.maxBudgetUsd ?? null) : null,
       sandbox:

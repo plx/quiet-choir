@@ -25,7 +25,7 @@ export function defineHarness<
   O &
     Pick<
       AgentOptions,
-      'profile' | 'cwd' | 'onError' | 'retry' | 'timeoutMs' | 'worktree' | 'model'
+      'profile' | 'cwd' | 'onError' | 'retry' | 'timeoutMs' | 'idleTimeoutMs' | 'worktree' | 'model'
     >,
   C,
   K
@@ -65,6 +65,7 @@ export function defineHarness<
     onError: z.enum(['throw', 'return']).optional(),
     retry: retryPolicySchema.optional(),
     timeoutMs: z.number().int().positive().max(2_147_483_647).optional(),
+    idleTimeoutMs: z.number().int().positive().max(2_147_483_647).optional(),
     worktree: agentWorktreeSchema.optional(),
   };
   // Extend the author's schema, so object-level refinements survive; author fields keep precedence.
@@ -105,7 +106,14 @@ export function defineHarness<
       O &
         Pick<
           AgentOptions,
-          'profile' | 'cwd' | 'onError' | 'retry' | 'timeoutMs' | 'worktree' | 'model'
+          | 'profile'
+          | 'cwd'
+          | 'onError'
+          | 'retry'
+          | 'timeoutMs'
+          | 'idleTimeoutMs'
+          | 'worktree'
+          | 'model'
         >
     >,
   };

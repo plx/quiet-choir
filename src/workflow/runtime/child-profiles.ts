@@ -34,7 +34,7 @@ export interface ChildCapabilities {
 /** Clamp resource limit fields to a ceiling, keeping an undefined ceiling field unconstrained. */
 function clampLimits<T extends ProfileLimits>(values: T, ceiling: ProfileLimits): T {
   const result = { ...values };
-  for (const field of ['timeoutMs', 'maxTurns', 'maxBudgetUsd'] as const)
+  for (const field of ['timeoutMs', 'idleTimeoutMs', 'maxTurns', 'maxBudgetUsd'] as const)
     if (ceiling[field] !== undefined)
       Object.assign(result, {
         [field]: Math.min(result[field] ?? ceiling[field], ceiling[field]),

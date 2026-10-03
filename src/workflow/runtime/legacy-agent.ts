@@ -37,6 +37,7 @@ export function legacyAgentIdentity(request: HarnessRequestInput, schema: JsonVa
             'reasoningEffort',
             'cwd',
             'timeoutMs',
+            'idleTimeoutMs',
             'maxTurns',
             'maxBudgetUsd',
             'retry',
