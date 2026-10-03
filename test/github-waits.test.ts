@@ -367,6 +367,12 @@ describe('Codex rules', () => {
     const [row] = parseSummaryRows(malformed);
     expect(row?.status).toMatch(/^Completed/u);
     expect(row?.status).not.toMatch(/[<>]/u);
+    // A cell holding only markup comes out empty.
+    expect(
+      parseSummaryRows(
+        '| <b>Code Review</b> | <relative-time>now</relative-time> | `c5c2233` | > x |',
+      ),
+    ).toEqual([{ review: '', status: '', commit: 'c5c2233', trigger: 'x' }]);
   });
 
   it('applies the rules in order: findings, +1, usage limit, summary row, eyes, pending', () => {

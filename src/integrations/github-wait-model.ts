@@ -219,15 +219,15 @@ export interface CodexSummaryRow {
 /**
  * Parse the rows of a Codex summary comment's table, such as
  * `| 📝 **Code Review** | ✅ **Completed** <relative-time …>…</relative-time> | \`15d5a1a\` | PR opened |`.
+ * Each cell keeps only its text before the first `<`, where Codex puts the status word, without
+ * emphasis, quote markers or a leading emoji; no markup is parsed.
  * @internal
  */
 export function parseSummaryRows(body: string): CodexSummaryRow[] {
   const rows: CodexSummaryRow[] = [];
   const clean = (text: string): string =>
-    text
-      .replace(/<relative-time[^>]*>.*?<\/relative-time>/gu, '')
-      .replace(/<[^>]*>/gu, '')
-      .replace(/[<>*]/gu, '')
+    (text.split('<', 1)[0] ?? '')
+      .replace(/[*>]/gu, '')
       .replace(/^[^A-Za-z]+/u, '')
       .trim();
   for (const line of body.split('\n')) {
