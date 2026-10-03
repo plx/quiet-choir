@@ -70,9 +70,9 @@ export default defineConfig(
               // A regex, because a gitignore group cannot re-include a file below an excluded
               // directory such as ../workflow/.
               regex:
-                '^(?:\\./(?!github-model\\.js$|github-wait-model\\.js$|github-write-model\\.js$|github-writes\\.js$)|\\.\\./(?!index\\.js$|workflow/runtime/error-brand\\.js$|workflow/runtime/poll-identity\\.js$))',
+                '^(?:\\./(?!github-model\\.js$|github-epic-model\\.js$|github-wait-model\\.js$|github-write-model\\.js$|github-writes\\.js$)|\\.\\./(?!index\\.js$|workflow/runtime/error-brand\\.js$|workflow/runtime/poll-identity\\.js$))',
               message:
-                'Integration helpers must use the public quiet-choir entry point, not runtime internals. The exceptions are their own pure ./github-model.js, ./github-wait-model.js and ./github-write-model.js, the writes module ./github-writes.js, the error-brand registry (ADR 0028) and the poll-identity key (ADR 0045): cross-instance contracts, not runtime state.',
+                'Integration helpers must use the public quiet-choir entry point, not runtime internals. The exceptions are their own pure ./github-model.js, ./github-epic-model.js, ./github-wait-model.js and ./github-write-model.js, the writes module ./github-writes.js, the error-brand registry (ADR 0028) and the poll-identity key (ADR 0045): cross-instance contracts, not runtime state.',
             },
           ],
         },
@@ -133,6 +133,38 @@ export default defineConfig(
         'error',
         { name: 'process', message: 'The GitHub write model must not read the process.' },
         { name: 'Date', message: 'The GitHub write model must not read the clock.' },
+      ],
+    },
+  },
+  {
+    // The pure epic snapshot and next-ticket selector (ADR 0048): query, schema, parsers, mapper
+    // and selector. Values come only from the public entry point and the pure read model.
+    files: ['src/integrations/github-epic-model.ts'],
+    rules: {
+      '@typescript-eslint/no-restricted-imports': [
+        'error',
+        {
+          patterns: [
+            {
+              group: [
+                'node:*',
+                ...builtinModules,
+                './**',
+                '../**',
+                '!../index.js',
+                '!./github-model.js',
+              ],
+              allowTypeImports: true,
+              message:
+                'The GitHub epic model must stay free of I/O: import values only from ../index.js and ./github-model.js; everything else must be import type.',
+            },
+          ],
+        },
+      ],
+      'no-restricted-globals': [
+        'error',
+        { name: 'process', message: 'The GitHub epic model must not read the process.' },
+        { name: 'Date', message: 'The GitHub epic model must not read the clock.' },
       ],
     },
   },
