@@ -466,24 +466,80 @@ function stripInlineCode(text: string): string {
 }
 
 /**
+ * How `rest`, a line after its block-quote markers, starts a block that ends a paragraph, as in
+ * CommonMark: `line` for a one-line block (an ATX heading or a thematic break), `item` for a list
+ * item with content, or null for paragraph text. Up to three spaces of indentation are allowed. An
+ * ordered item ends a paragraph only when it is numbered 1, unless the paragraph is itself in a
+ * list item (`inItem`), whose next sibling may have any number. A character loop, so no input can
+ * make it backtrack.
+ */
+function blockStart(rest: string, inItem: boolean): 'line' | 'item' | null {
+  let index = 0;
+  while (index < 3 && rest.charAt(index) === ' ') index += 1;
+  const char = rest.charAt(index);
+  if (char === '#') {
+    let end = index;
+    while (end - index < 7 && rest.charAt(end) === '#') end += 1;
+    return end - index <= 6 && (end === rest.length || isBlank(rest.charAt(end))) ? 'line' : null;
+  }
+  if (char === '-' || char === '*' || char === '_') {
+    let count = 0;
+    let end = index;
+    for (; end < rest.length; end += 1) {
+      if (rest.charAt(end) === char) count += 1;
+      else if (!isBlank(rest.charAt(end))) break;
+    }
+    if (end === rest.length && count >= 3) return 'line';
+  }
+  const marker = listMarkerEnd(rest, index);
+  if (marker === -1 || /^[ \t]*$/u.test(rest.slice(marker))) return null;
+  // The marker's digits end before its `.` or `)` and the space after it.
+  if (inItem || !isDigit(char) || Number(rest.slice(index, marker - 2)) === 1) return 'item';
+  return null;
+}
+
+/**
  * `text` without fenced blocks and inline code spans, so quoted examples are never read. A span may
- * cross a line ending but not a blank line or a fence, which end its paragraph.
+ * cross a line ending within a paragraph, including a lazy continuation line of a block quote, but
+ * never a block boundary: a blank line, a fence, a deeper block quote, a list item, an ATX heading
+ * or a thematic break ends the paragraph, and a heading or break is a block of one line.
  */
 function stripCode(text: string): string {
   const all = lines(text);
   const fenced = fenceMask(all);
   const kept: string[] = [];
   let paragraph: string[] = [];
+  // The paragraph's block-quote depth, and whether it opens a list item.
+  let depth = 0;
+  let inItem = false;
   const flush = (): void => {
     if (paragraph.length) kept.push(stripInlineCode(paragraph.join('\n')));
     paragraph = [];
   };
   all.forEach((line, index) => {
-    if (fenced[index] === true) flush();
-    else if (/^[ \t]*$/u.test(line)) {
+    if (fenced[index] === true) {
+      flush();
+      return;
+    }
+    const quote = quotePrefix(line);
+    const rest = line.slice(quote.end);
+    if (/^[ \t]*$/u.test(rest)) {
       flush();
       kept.push(line);
-    } else paragraph.push(line);
+      return;
+    }
+    const block = blockStart(rest, inItem);
+    if (block === 'line') {
+      flush();
+      kept.push(stripInlineCode(line));
+      return;
+    }
+    if (block === 'item' || quote.depth > depth) flush();
+    if (!paragraph.length) {
+      depth = quote.depth;
+      inItem = blockStart(rest, true) === 'item';
+    }
+    paragraph.push(line);
   });
   flush();
   return kept.join('\n');

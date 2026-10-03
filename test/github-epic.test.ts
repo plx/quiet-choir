@@ -924,6 +924,19 @@ describe('parseDependencies', () => {
     ['a span across a line ending', ['See `x\nDepends on #26` here'], []],
     ['a span does not cross a blank line', ['See `x\n\nDepends on #27 `'], [27]],
     ['a span does not cross a fence', ['See `x\n```\ncode\n```\nDepends on #28 `'], [28]],
+    ['a span does not cross into a list item', ['Example `x\n- Depends on #43`'], [43]],
+    ['a span does not cross into a block quote', ['Example `x\n> Depends on #44`'], [44]],
+    ['a span does not cross into a heading', ['Example `x\n# Depends on #45`'], [45]],
+    ['a heading is one line', ['## Example `x\nDepends on #46`'], [46]],
+    ['a span does not cross a thematic break', ['Example `x\n* * *\nDepends on #47`'], [47]],
+    ['a span does not cross into an item numbered 1', ['Example `x\n1) Depends on #48`'], [48]],
+    ['an item numbered 2 continues a paragraph', ['Example `x\n2. Depends on #49`'], []],
+    ['a sibling item of any number', ['1. Example `x\n2. Depends on #50`'], [50]],
+    ['an empty item continues a paragraph', ['Example `x\n-\nDepends on #51`'], []],
+    ['indented code continues a paragraph', ['Example `x\n    - Depends on #52`'], []],
+    ['a span across lines of one block quote', ['> See `x\n> Depends on #53`'], []],
+    ['a span across a lazy continuation line', ['> See `x\nDepends on #54`'], []],
+    ['a span across lines of one list item', ['- See `x\n  Depends on #55`'], []],
     ['a colon after the phrase', ['Depends on: #29', 'requires :#30'], [29, 30]],
     ['fenced code ignored', ['```\nDepends on #16\n```\nDepends on #17'], [17]],
     ['a fence in a block quote', ['> ~~~\n> Depends on #33\n>\n> ~~~\n> Depends on #34'], [34]],
@@ -988,7 +1001,7 @@ describe('parsers on adversarial input', () => {
   });
 
   it('reads long runs of container markers in linear time', () => {
-    for (const marker of ['> ', '- ', '1. ', ' \t'])
+    for (const marker of ['> ', '- ', '1. ', ' \t', '#', '-', '_ '])
       expect(
         parseDependencies(
           [`${marker.repeat(100_000)}x\n${marker.repeat(100_000)}Depends on #7`],
