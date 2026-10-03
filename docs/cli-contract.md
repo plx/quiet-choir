@@ -258,7 +258,7 @@ the external XDG project default; relative explicit paths resolve against the la
 
 ## Durability lint
 
-After a type check with no errors, the loader runs a static durability lint (rules QC001-QC006,
+After a type check with no errors, the loader runs a static durability lint (rules QC001-QC005,
 [ADR 0041](decisions/0041-static-durability-lint.md); rule reference in the skill's
 `references/patterns.md`, "Durability lint") over the workflow file and the local modules it
 imports, never quiet-choir's own sources or `node_modules`.

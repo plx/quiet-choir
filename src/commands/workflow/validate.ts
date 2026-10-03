@@ -33,7 +33,7 @@ export default class WorkflowValidate extends WorkflowCommand {
   public static override readonly summary =
     'Type-check and durability-lint a workflow and validate its exported definition';
   public static override readonly description =
-    'After a clean type check, runs the static durability lint (QC001-QC006); any finding fails with exit 4 unless a `// quiet-choir-ignore QCnnn <reason>` line before it silences it. Then imports trusted module top-level code to inspect its default export; does not invoke the workflow body.';
+    'After a clean type check, runs the static durability lint (QC001-QC005); any finding fails with exit 4 unless a `// quiet-choir-ignore QCnnn <reason>` line before it silences it. Then imports trusted module top-level code to inspect its default export; does not invoke the workflow body.';
 
   public async run(): Promise<void> {
     const { args, flags } = await this.parse(WorkflowValidate);

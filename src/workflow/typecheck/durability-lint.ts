@@ -453,13 +453,8 @@ class DurabilityLinter {
       const index = parent.arguments.indexOf(wrapper as ts.Expression);
       if (index >= 0) {
         if (index === 1 && this.#contextMember(parent, 'scope')) return this.#namespace({}, state);
-        const map = this.#contextMember(parent, 'map');
-        if (map) {
-          const named = mapIsNamed(map);
-          if (named && index === 3) return this.#namespace({}, state);
-          if (!named && index === 2) return { ...state, loop: true };
-          return state;
-        }
+        if (this.#contextMember(parent, 'map'))
+          return index === 3 ? this.#namespace({}, state) : state;
         if (this.#quietChoir(parent)) return state;
         // Only a standard-library iteration method or Array.from repeats its callback: a custom
         // method of the same name, or an unresolved (any-typed) receiver, is not a loop.
@@ -553,16 +548,6 @@ class DurabilityLinter {
         'QC003',
         node,
         `${label}(...) inside a ${state.zone} callback is a nested durable call, which the runtime rejects; use the callback's context.exec or move the call into the workflow body.`,
-      );
-    if (
-      info.owner === 'WorkflowContext' &&
-      info.member === 'map' &&
-      ts.getJSDocDeprecatedTag(info.declaration) !== undefined
-    )
-      this.#report(
-        'QC006',
-        node,
-        'The positional ctx.map(items, concurrency, mapper) form is deprecated and keeps legacy unscoped IDs; use the named form ctx.map(id, items, options, mapper).',
       );
     if (effect && state.namespace && state.zone === undefined) {
       const first = node.arguments[0];
@@ -739,12 +724,6 @@ class DurabilityLinter {
   }
 }
 
-function mapIsNamed(info: CallInfo): boolean {
-  const declaration = info.declaration as ts.SignatureDeclaration;
-  const first = declaration.parameters[0];
-  return first !== undefined && ts.isIdentifier(first.name) && first.name.text === 'id';
-}
-
 function hasBody(info: CallInfo): boolean {
   const declaration = info.declaration as ts.SignatureDeclaration;
   return declaration.parameters.some(
@@ -781,7 +760,7 @@ function suppressed(file: ts.SourceFile, line: number, rule: DurabilityRule): bo
 }
 
 /**
- * Lint every workflow source file of a type-checked program for replay hazards (QC001-QC006) and
+ * Lint every workflow source file of a type-checked program for replay hazards (QC001-QC005) and
  * return findings sorted by file, line, column and rule. A
  * `// quiet-choir-ignore QCnnn[, QCnnn] <reason>` line directly before a finding's line silences
  * the listed rules for findings that start on that line.

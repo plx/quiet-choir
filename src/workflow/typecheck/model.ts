@@ -50,10 +50,10 @@ export interface TypecheckDiagnostic extends TypecheckDiagnosticDetails {
  * Rule codes of the static durability lint that `workflow validate` and execution run after a
  * clean type check (ADR 0041): QC001 discarded effect promise, QC002 nondeterministic read in the
  * workflow body, QC003 durable call inside a step or poll callback, QC004 `Promise.race`/`any`
- * over durable calls, QC005 literal effect ID reused or repeated in a loop, QC006 deprecated
- * positional `ctx.map`.
+ * over durable calls, QC005 literal effect ID reused or repeated in a loop. QC006 (the removed
+ * positional `ctx.map`) is retired and its code is never reused.
  */
-export const DURABILITY_RULES = ['QC001', 'QC002', 'QC003', 'QC004', 'QC005', 'QC006'] as const;
+export const DURABILITY_RULES = ['QC001', 'QC002', 'QC003', 'QC004', 'QC005'] as const;
 
 /** One durability lint rule code. */
 export type DurabilityRule = (typeof DURABILITY_RULES)[number];
