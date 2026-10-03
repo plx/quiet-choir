@@ -579,10 +579,12 @@ The CLI accepts `--harness-config '{"harnesses":{"third":{"binary":"third-cli"}}
 `QUIET_CHOIR_HARNESS_CONFIG`) and repeated `--harness third=fixture:FILE` overrides. Relative
 `harnesses.claude.binary` and `harnesses.codex.binary` paths resolve against the command cwd.
 `configuration doctor --workflow FILE` lists trusted registrations and runs optional zero-inference
-probes. `quiet-choir/harness-kit` supplies process ownership, fake binaries and the adapter
-conformance suite. Additional service operations use one ordinary effect per helper call; the
-transport-injected `quiet-choir/decision` reference preserves answers and probability distributions.
-See
+probes. `quiet-choir/harness-kit` supplies process ownership, fake binaries, the adapter conformance
+suite, and the JSONL framing, environment scrub, session/output/progress plumbing, output-limit
+error and prompted structured output the built-in adapters use
+([ADR 0043](docs/decisions/0043-checked-harness-kit-declarations-and-adapter-helpers.md)).
+Additional service operations use one ordinary effect per helper call; the transport-injected
+`quiet-choir/decision` reference preserves answers and probability distributions. See
 [the integration decision](docs/decisions/0027-typed-harness-registry-and-integration-helpers.md).
 
 ## Progress and monitoring

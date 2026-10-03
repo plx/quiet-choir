@@ -2,6 +2,29 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- The published harness-kit declarations are complete, and the kit exports the helpers adapters
+  re-implemented (#157; ADR 0043, amends ADR 0023). `dist/harness-kit.d.ts` re-exported 16 helpers
+  (`attachHarnessEvidence`, `boundedResponse`, `validateAgentOptions`, `environmentEdits`,
+  `checkAllowedTools`, `tomlLiteral`, `effortValues`, `codexEffortValues`, `permissionModeValues`,
+  `snapshotImages`, `resolveIsolation`, `matchesStepGlob`, `knownSum`, `measurement`,
+  `normalizeUsage`, `usageObject`) whose declarations `stripInternal` removed, so consumers saw
+  TS2305 or `any`; they are now documented public API, `HarnessEvidence` is exported as a type, and
+  the root entry no longer names the internal `lockRun` or an undeclared `BuiltinAdapter`, which is
+  now exported from `quiet-choir` as a type. `test/public-types.test.ts` compiles a consumer of
+  every export of `quiet-choir`, `quiet-choir/harness-kit` and `quiet-choir/decision` against
+  freshly emitted declarations with `skipLibCheck: false`. New harness-kit exports: `JsonLines`
+  (byte-bounded JSONL framing), `childEnvironment` and the `ScrubEnvironment` type,
+  `createInvocationStream` (the `onOutput` tee, `onSession`-once and throttled `onProgress`
+  contracts, now shared with the built-in adapters), `standaloneInvocation`, `outputLimitError` and
+  `outputLimitCode` (the documented `QUIET_CHOIR_OUTPUT_LIMIT` contract behind the `output-limit`
+  kind), and `promptedStructuredOutput`. `structuredOutput: 'prompted'` now has a defined meaning:
+  the adapter prompts for and extracts the JSON, and the runtime parses and validates
+  `response.text` exactly as for `'native'`, without rewriting prompts. Behavior change: the
+  host-session scrub for built-in Claude and Codex children and doctor probes now matches patterns,
+  removing every `CLAUDE_CODE_*` name except `CLAUDE_CODE_USE_*`, `CLAUDE_CODE_OAUTH_TOKEN`,
+  `CLAUDE_CODE_EFFORT_LEVEL` and `CLAUDE_CODE_SUBAGENT_MODEL`, plus `CLAUDE_PLUGIN_*`,
+  `CODEX_INTERNAL_*` and `CODEX_COMPANION_*`. Host settings such as `CLAUDE_CODE_MAX_OUTPUT_TOKENS`
+  no longer reach children; restore one with `env.set`, or disable scrubbing with `scrubEnv: false`.
 - Claude attempts now record the subscription rate-limit windows the CLI reports (#156). The latest
   valid stream `rate_limit_event` of an attempt is kept in `attemptHistory[].diagnostics.rateLimit`
   as `{ status, type, resetsAt, windows }`, where `windows` maps a name such as `five_hour` or
