@@ -284,12 +284,12 @@ export const epicSnapshotResponseSchema: z.ZodType<RawEpicSnapshotResponse> = z
  * `owner/name#12` from also matching as a bare `#12` and skips anchors such as `page#12`.
  */
 const REF = String.raw`(?<![\w./-])(?:([\w.-]+\/[\w.-]+))?#(\d+)\b`;
-const CHECKLIST = /^\s*[-*+]\s+\[( |x|X)\]\s+(.*)$/u;
-const INLINE_CODE = /(`+)[^\n]*?\1/gu;
+// One whitespace after the box: the title is trimmed, and `\s+(.*)` would backtrack polynomially.
+const CHECKLIST = /^\s*[-*+]\s+\[( |x|X)\]\s(.*)$/u;
 const DEP_REF = String.raw`(?:[\w.-]+\/[\w.-]+)?#\d+`;
 const DEP_SEP = String.raw`(?:\s*,\s*(?:and\s+)?|\s+and\s+|\s*&\s*|\s+)`;
 const DEP_PHRASE = new RegExp(
-  String.raw`\b(?:depends\s+on|blocked\s+by|requires)\b\s*:?\s*(${DEP_REF}(?:${DEP_SEP}${DEP_REF})*)`,
+  String.raw`\b(?:depends\s+on|blocked\s+by|requires)\b\s*(?::\s*)?(${DEP_REF}(?:${DEP_SEP}${DEP_REF})*)`,
   'giu',
 );
 // Markers must list at least one number: a template such as <!-- epic:split a,b --> is not one.
@@ -324,9 +324,13 @@ function fenceMask(text: readonly string[]): boolean[] {
       if (close?.startsWith(fence.charAt(0)) && close.length >= fence.length) fence = null;
       return true;
     }
-    const open = /^\s*(`{3,}|~{3,})(.*)$/u.exec(line);
+    // The run is taken whole and the info string sliced off, so no regex splits the run.
+    const open = /^\s*(`{3,}|~{3,})/u.exec(line);
     // A backtick fence's info string cannot contain a backtick (that line is inline code).
-    if (open?.[1] !== undefined && !(open[1].startsWith('`') && (open[2] ?? '').includes('`'))) {
+    if (
+      open?.[1] !== undefined &&
+      !(open[1].startsWith('`') && line.slice(open[0].length).includes('`'))
+    ) {
       fence = open[1];
       return true;
     }
@@ -334,14 +338,69 @@ function fenceMask(text: readonly string[]): boolean[] {
   });
 }
 
-/** `text` without fenced blocks and inline code spans, so quoted examples are never read. */
+/**
+ * `text` without inline code spans, in linear time. As in CommonMark, a span opens at a backtick
+ * run and closes at the next run of exactly the same length; a run with no such closer stays as
+ * literal text, and scanning resumes after it. Backslash escapes are not interpreted.
+ */
+function stripInlineCode(text: string): string {
+  const starts: number[] = [];
+  const lengths: number[] = [];
+  for (let index = text.indexOf('`'); index !== -1;) {
+    let end = index + 1;
+    while (text.charAt(end) === '`') end += 1;
+    starts.push(index);
+    lengths.push(end - index);
+    index = text.indexOf('`', end);
+  }
+  // closer[i]: the next run with the same length as run i, or -1.
+  const closer = new Array<number>(starts.length).fill(-1);
+  const nextOfLength = new Map<number, number>();
+  for (let run = starts.length - 1; run >= 0; run -= 1) {
+    const length = lengths[run] ?? 0;
+    closer[run] = nextOfLength.get(length) ?? -1;
+    nextOfLength.set(length, run);
+  }
+  const kept: string[] = [];
+  let from = 0;
+  let run = 0;
+  while (run < starts.length) {
+    const close = closer[run] ?? -1;
+    if (close === -1) {
+      run += 1;
+      continue;
+    }
+    // Runs between the opener and its closer are inside the span.
+    kept.push(text.slice(from, starts[run]));
+    from = (starts[close] ?? 0) + (lengths[close] ?? 0);
+    run = close + 1;
+  }
+  kept.push(text.slice(from));
+  return kept.join('');
+}
+
+/**
+ * `text` without fenced blocks and inline code spans, so quoted examples are never read. A span may
+ * cross a line ending but not a blank line or a fence, which end its paragraph.
+ */
 function stripCode(text: string): string {
   const all = lines(text);
   const fenced = fenceMask(all);
-  return all
-    .filter((_, index) => fenced[index] !== true)
-    .join('\n')
-    .replace(INLINE_CODE, '');
+  const kept: string[] = [];
+  let paragraph: string[] = [];
+  const flush = (): void => {
+    if (paragraph.length) kept.push(stripInlineCode(paragraph.join('\n')));
+    paragraph = [];
+  };
+  all.forEach((line, index) => {
+    if (fenced[index] === true) flush();
+    else if (/^[ \t]*$/u.test(line)) {
+      flush();
+      kept.push(line);
+    } else paragraph.push(line);
+  });
+  flush();
+  return kept.join('\n');
 }
 
 /** One checklist line of an epic body that names an issue of the epic's repository. */
@@ -374,7 +433,7 @@ export function parseEpicChecklist(
     if (fenced[index] === true) return;
     const match = CHECKLIST.exec(line);
     if (!match) return;
-    const title = (match[2] ?? '').replace(INLINE_CODE, '').trim();
+    const title = stripInlineCode(match[2] ?? '').trim();
     const number = ownRefs(title, repo)[0];
     if (number === undefined || number === self || seen.has(number)) return;
     seen.add(number);

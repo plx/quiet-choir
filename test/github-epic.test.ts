@@ -849,6 +849,15 @@ describe('parseEpicChecklist', () => {
     ],
     ['an unclosed fence runs to the end', '- [ ] #27\n```ts\n- [ ] #28', [[27, false]]],
     ['inline code on a fence-like line is not a fence', '```a` b\n- [ ] #29', [[29, false]]],
+    ['an unmatched backtick stays literal', '- [ ] ` #30 then ``#31``', [[30, false]]],
+    [
+      'a span does not continue onto the next line',
+      '- [ ] `#32\n- [ ] #33`',
+      [
+        [32, false],
+        [33, false],
+      ],
+    ],
   ])('%s', (_name, body, expected) => {
     expect(
       parseEpicChecklist(body, REPO, 99).map(({ number, checked }) => [number, checked]),
@@ -872,6 +881,13 @@ describe('parseDependencies', () => {
     ['marker', ['<!-- epic:depends-on 13, 14 -->'], [13, 14]],
     ['template marker is not one', ['<!-- epic:depends-on a,b -->'], []],
     ['inline code ignored', ['`Depends on #15`'], []],
+    ['a double-backtick span holding a backtick', ['``Depends on `#22` `` and #23'], []],
+    ['an unmatched backtick stays literal', ['` Depends on #24'], [24]],
+    ['unmatched runs of different lengths stay literal', ['``a` Depends on #25'], [25]],
+    ['a span across a line ending', ['See `x\nDepends on #26` here'], []],
+    ['a span does not cross a blank line', ['See `x\n\nDepends on #27 `'], [27]],
+    ['a span does not cross a fence', ['See `x\n```\ncode\n```\nDepends on #28 `'], [28]],
+    ['a colon after the phrase', ['Depends on: #29', 'requires :#30'], [29, 30]],
     ['fenced code ignored', ['```\nDepends on #16\n```\nDepends on #17'], [17]],
     ['a word between the phrase and the reference', ['depends on the #18 fix'], []],
     ['self excluded', ['Depends on #42 and #19'], [19]],
@@ -882,6 +898,58 @@ describe('parseDependencies', () => {
     ],
   ])('%s', (_name, texts, expected) => {
     expect(parseDependencies(texts, REPO, 42)).toEqual(expected);
+  });
+});
+
+// Inputs that made the regex-based code stripping and checklist line backtrack polynomially
+// (CodeQL js/polynomial-redos). The linear scanner finishes them well within the default timeout.
+describe('parsers on adversarial input', () => {
+  const runs = (count: number, length: (index: number) => number): string =>
+    Array.from({ length: count }, (_, index) => '`'.repeat(length(index))).join('a');
+
+  it.each<[string, string]>([
+    ['one long backtick run', 'x' + '`'.repeat(200_000)],
+    ['runs of distinct lengths', runs(440, (index) => index + 1)],
+    ['alternating run lengths', runs(40_000, (index) => (index % 2) + 1)],
+    ['a long run after an opener', '`a' + '`'.repeat(100_000)],
+  ])('reads a dependency after %s', (_name, prefix) => {
+    expect(parseDependencies([`${prefix} Depends on #7`], REPO, 42)).toEqual([7]);
+  });
+
+  it('reads no dependency inside a code span that holds a long run of another length', () => {
+    expect(parseDependencies(['` ' + '``'.repeat(50_000) + ' Depends on #7`'], REPO, 42)).toEqual(
+      [],
+    );
+  });
+
+  it('reads a checklist title made of backtick runs', () => {
+    const title = '`'.repeat(100_000);
+    expect(
+      parseEpicChecklist(`- [ ] #7 ${title}\n- [ ] ${runs(440, (i) => i + 1)} #8`, REPO),
+    ).toEqual([
+      { number: 7, checked: false, title: `#7 ${title}` },
+      { number: 8, checked: false, title: `${runs(440, (i) => i + 1)} #8` },
+    ]);
+  });
+
+  it('rejects a checkbox line with a long run of whitespace and a line separator', () => {
+    expect(parseEpicChecklist(`* [ ]${'\t'.repeat(100_000)}x #5\u2028`, REPO)).toEqual([]);
+  });
+
+  it('reads no dependency from a phrase followed by a long run of whitespace', () => {
+    expect(parseDependencies([`Depends on${' '.repeat(100_000)}x`], REPO, 42)).toEqual([]);
+  });
+
+  it('reads fence lines made of long backtick runs', () => {
+    const run = '`'.repeat(100_000);
+    // A backtick after the run makes the line inline code, not a fence.
+    expect(parseEpicChecklist(`${run} x\`\n- [ ] #9`, REPO)).toEqual([
+      { number: 9, checked: false, title: '#9' },
+    ]);
+    // Any other info string opens a fence, which a run at least as long closes.
+    expect(parseEpicChecklist(`${run}\u2028\n- [ ] #9\n${run}\n- [ ] #10`, REPO)).toEqual([
+      { number: 10, checked: false, title: '#10' },
+    ]);
   });
 });
 
@@ -904,6 +972,12 @@ describe('parseSplit', () => {
     ],
     ['a template is not a marker', [by(VIEWER, '<!-- epic:split a,b -->')], null],
     ['inline code', [by(VIEWER, '`<!-- epic:split 12 -->`')], null],
+    ['a two-line code span', [by(VIEWER, 'Like `\n<!-- epic:split 5,6 -->\n` this')], null],
+    [
+      'a code span does not cross a blank line',
+      [by(VIEWER, 'Like `\n\n<!-- epic:split 5,6 -->\n\n` this')],
+      [5, 6],
+    ],
     ['fenced code', [by(VIEWER, '~~~\n<!-- epic:split 13 -->\n~~~')], null],
     ['self excluded and duplicates removed', [by(VIEWER, '<!-- epic:split 42, 14, 14 -->')], [14]],
     ['only self', [by(VIEWER, '<!-- epic:split 42 -->')], null],
