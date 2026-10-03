@@ -17,6 +17,8 @@ import {
 } from '../src/index.js';
 import { decision } from '../src/integrations/decision.js';
 import {
+  codeqlReviewer,
+  codexReviewer,
   github,
   pullRequestViewResponseSchema,
   type GithubClient,
@@ -507,6 +509,61 @@ describe('quiet-choir/github read identity', () => {
       'meta',
     );
   });
+});
+
+describe('quiet-choir/github wait identity', () => {
+  // Every gh call fails; the waits tolerate it and suspend after recording their identity.
+  const processRunner: ProcessRunner = {
+    run: () =>
+      Promise.resolve({
+        code: 2,
+        signal: null,
+        stdout: '',
+        stderr: 'gh: golden',
+        truncated: false,
+        durationMs: 1,
+      }),
+  };
+  const sha = 'c5c2233fa0c0b9e89b688f2c40ca9364275efd87';
+  const waits: Readonly<Record<string, (gh: GithubClient) => Promise<unknown>>> = {
+    waitChecks: (gh) => gh.waitChecks('wait', { pr: 7, sha, timeoutMs: 3_600_000 }),
+    waitPr: (gh) => gh.waitPr('wait', { pr: 7, sha, until: 'merged', timeoutMs: 3_600_000 }),
+    waitReview: (gh) =>
+      gh.waitReview('wait', {
+        pr: 7,
+        sha,
+        since: 1_800_000_000_000,
+        reviewers: [codexReviewer(), codeqlReviewer()],
+        timeoutMs: 3_600_000,
+      }),
+  };
+  // Captured on this change. The input, result schema, spacing and the helper's versioned identity
+  // ({ helper: 'github.waitChecks', version: 1 } and so on) are pinned; the observer's source text
+  // is not part of it. A deliberate change bumps the helper's version and moves these values.
+  const golden: Readonly<Record<string, string>> = {
+    waitChecks: 'f9f2cf35c8bc2cedb690af8828560cd522a15b85a3b85f1c8e82cb980f674f1e',
+    waitPr: '47a4d9226695eb1181357d0474c22bc92b3f3f63cec4a9b93a394600b0965676',
+    waitReview: '1db7a3d0436d20e00257e6d2fb5da681a2c90f265f4cd06a6c16810cd4cdc00d',
+  };
+
+  it.each(Object.keys(waits))(
+    'pins %s to its input, schema and versioned helper identity',
+    async (name) => {
+      const wait = waits[name];
+      if (!wait) throw new Error(`unknown wait ${name}`);
+      const result = await runWorkflow(
+        workflow((ctx) => wait(github(ctx, { repo: 'octo-org/quiet-choir' }))),
+        options({ runId: name, processRunner }),
+      );
+      expect(result.status).toBe('suspended');
+      const run = await readRun({ stateDir, runId: name });
+      const step = run.steps['wait'];
+      expect(step?.kind).toBe('wait');
+      const helper = { helper: `github.${name}`, version: 1 };
+      expect(step?.wait?.request.poll?.observe).toBe(digest({ helper }));
+      pinned(`quiet-choir/github ${name}`, step?.fingerprint, golden[name]);
+    },
+  );
 });
 
 describe('merge effect identity', () => {

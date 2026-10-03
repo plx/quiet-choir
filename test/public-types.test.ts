@@ -146,6 +146,8 @@ describe('published declarations', () => {
           'parseGithubRepo',
           'summarizeChecks',
           'reviewThreadsResponseSchema',
+          'codexReviewer',
+          'codeqlReviewer',
         ]),
       );
       expect(
