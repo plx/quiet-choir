@@ -221,7 +221,9 @@ suspend and tick; `detail` appears in `by`.
   or needs Advanced Security, is `clean` at once (detail `unavailable`). GitHub's
   `no analysis found` may only mean the first analysis has not published, so it follows the same
   check and settle rules, and is `clean` (detail `unavailable`) only if GitHub still says so after
-  the settle window, or when the head's checks hold no `checkName` check `settleMs` after `since`.
+  the settle window, or when the head's checks hold no `checkName` check and have all been complete
+  for `settleMs`. CodeQL publishes that check only after its analysis job finishes, so a running job
+  keeps it `pending`.
 
 A custom reviewer is a plain object; core needs no change:
 

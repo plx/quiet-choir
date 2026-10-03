@@ -432,7 +432,7 @@ export function codexReviewer(): ReviewerBot {
  * alerts land shortly after the check, and reports `findings` (alert numbers) or `clean`.
  * Code scanning that is not enabled is `clean`. GitHub's `no analysis found` follows the check and
  * settle rules and is `clean` only when it persists after the settle window, or when the head has
- * no such check `settleMs` after `since`.
+ * no such check and all its checks have been complete for `settleMs`.
  */
 export function codeqlReviewer(options: CodeqlReviewerOptions = {}): ReviewerBot {
   const settleMs = options.settleMs ?? 60_000;

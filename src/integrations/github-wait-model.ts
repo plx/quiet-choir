@@ -309,13 +309,15 @@ export const CODEQL_LOGIN = 'github-advanced-security[bot]';
  */
 export const CODE_SCANNING_NO_ANALYSIS = /no analysis found/iu;
 const settleNote = z.object({ settleStart: z.number() });
+const quietNote = z.object({ quietStart: z.number() });
 
 /** Options of the CodeQL reviewer. */
 export interface CodeqlReviewerOptions {
   /**
    * Milliseconds to keep reading alerts after the check completes, default 60000: alerts land
-   * shortly after the check, so an alert inside this window is still counted. Also how long after
-   * `since` a head without the check and without an analysis waits before it is `clean`.
+   * shortly after the check, so an alert inside this window is still counted. Also how long a
+   * head without the check and without an analysis waits, once all its checks completed, before
+   * it is `clean`.
    */
   readonly settleMs?: number;
   /** Name of the check that finishes the analysis, default `CodeQL`. */
@@ -330,7 +332,8 @@ export interface CodeqlReviewerOptions {
  * numbers, or `clean`. GitHub's `no analysis found` may only mean the first analysis has not
  * published: it follows the same check and settle rules and is `clean` (detail `unavailable`)
  * only when still reported after the settle window, or when the head's checks hold no such check
- * `settleMs` after `since`.
+ * and have all been complete for `settleMs` (CodeQL publishes its check only after the analysis
+ * job, so a running job keeps it `pending`).
  * @internal
  */
 export function codeqlObserve(
@@ -345,10 +348,15 @@ export function codeqlObserve(
   const checks = activity.pr.checks;
   const named = (checks?.items ?? []).filter((item) => item.name === options.checkName);
   if (named.length === 0) {
-    // Only the head's own checks show that the check is absent; a lagging rollup shows nothing.
-    if (noAnalysis && checks !== null && context.now - context.since >= options.settleMs)
-      return { status: 'clean', detail: { unavailable } };
-    return { status: 'pending' };
+    // Only the head's own checks show that the check is absent (a lagging rollup shows nothing),
+    // and only once nothing on the head runs: the analysis job precedes the check it publishes.
+    if (!noAnalysis || checks === null || checks.items.some((item) => item.outcome === 'pending'))
+      return { status: 'pending' };
+    const quiet = quietNote.safeParse(context.previous.note);
+    const quietStart = quiet.success ? quiet.data.quietStart : context.now;
+    if (context.now - quietStart < options.settleMs)
+      return { status: 'pending', note: { quietStart } };
+    return { status: 'clean', detail: { unavailable } };
   }
   if (named.some((item) => item.outcome === 'pending')) return { status: 'running' };
   const previous = settleNote.safeParse(context.previous.note);

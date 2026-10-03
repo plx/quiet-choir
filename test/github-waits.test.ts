@@ -579,16 +579,37 @@ describe('CodeQL rules', () => {
       });
   });
 
-  it('keeps no analysis pending until the check settles or the grace passes without one', () => {
+  it('keeps no analysis pending until the check settles, or the head settles without one', () => {
     const none = unavailable('no analysis found');
     const quality = summarizeChecks([checkRun('Quality')]);
-    // No CodeQL check on the head: pending inside settleMs after since, then clean.
+    // No CodeQL check on the head while the analysis job runs: pending, however long it takes.
+    const analyzing = summarizeChecks([checkRun('Quality'), checkRun('Analyze', null)]);
     expect(
-      codeqlObserve(withChecks(quality, none), context({ now: SINCE + 999 }), options),
+      codeqlObserve(withChecks(analyzing, none), context({ now: SINCE + 600_000 }), options),
     ).toEqual({ status: 'pending' });
-    expect(
-      codeqlObserve(withChecks(quality, none), context({ now: SINCE + 1_000 }), options),
-    ).toEqual({ status: 'clean', detail: { unavailable: 'no analysis found' } });
+    // Every head check complete and still no CodeQL check: pending for settleMs, then clean.
+    const quietAt = SINCE + 20_000;
+    const quiet = codeqlObserve(withChecks(quality, none), context({ now: quietAt }), options);
+    expect(quiet).toEqual({ status: 'pending', note: { quietStart: quietAt } });
+    const quietLater = (ms: number, checks: GithubChecks = quality) =>
+      codeqlObserve(
+        withChecks(checks, none),
+        context({ now: quietAt + ms, previous: { note: quiet.note ?? null, checks: 1 } }),
+        options,
+      );
+    expect(quietLater(999)).toEqual({ status: 'pending', note: { quietStart: quietAt } });
+    expect(quietLater(1_000)).toEqual({
+      status: 'clean',
+      detail: { unavailable: 'no analysis found' },
+    });
+    // A check that starts again resets the quiet window: its note is dropped.
+    expect(quietLater(1_000, analyzing)).toEqual({ status: 'pending' });
+    // A CodeQL check that lands inside the quiet window starts its own settle window.
+    expect(quietLater(500, summarizeChecks([checkRun('CodeQL')]))).toEqual({
+      status: 'running',
+      note: { settleStart: quietAt + 500 },
+      detail: { settling: true },
+    });
     // A rollup that still belongs to another commit shows nothing, so it never ends the wait.
     expect(
       codeqlObserve(withChecks(null, none), context({ now: SINCE + 60_000 }), options),
