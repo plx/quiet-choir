@@ -62,6 +62,15 @@ it('rejects invalid registration identities and policy declarations', () => {
   expect(() => defineHarness({ ...review, policy: ['prompt'] })).toThrow('cannot exclude prompt');
   expect(() =>
     defineHarness({
+      name: 'profiled',
+      revision: 1,
+      capabilities: review.capabilities,
+      options: z.object({ prompt: z.string(), profile: z.string().optional() }),
+      capabilityKeys: ['profile'],
+    }),
+  ).toThrow('capabilityKeys cannot include profile');
+  expect(() =>
+    defineHarness({
       name: 'invalid',
       revision: 1,
       capabilities: review.capabilities,

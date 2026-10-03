@@ -84,6 +84,10 @@ export function defineHarness<
   for (const key of [...(definition.policy ?? []), ...(definition.capabilityKeys ?? [])])
     if (!Object.hasOwn(shape, key))
       throw new Error(`Harness ${definition.name} refers to unknown option ${key}.`);
+  if (definition.capabilityKeys?.includes('profile'))
+    throw new Error(
+      `Harness ${definition.name} capabilityKeys cannot include profile; profile selects a named profile.`,
+    );
   for (const key of definition.policy ?? [])
     if (
       ['prompt', 'cwd', 'profile', 'worktree', 'isolation', 'env', 'model', 'onError'].includes(key)
