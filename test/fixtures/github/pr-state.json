@@ -1,0 +1,13 @@
+{
+  "data": {
+    "repository": {
+      "pullRequest": {
+        "state": "MERGED",
+        "headRefOid": "dc42525e2d772d92e14f0ea633ecc6f938a7f90f",
+        "mergeCommit": {
+          "oid": "ddc48ee7132b68166f05e40ee84c3b155d0e819d"
+        }
+      }
+    }
+  }
+}
