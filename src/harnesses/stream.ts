@@ -1,6 +1,7 @@
 import type { AgentDiagnostics, AgentProgress } from '../harness-kit.js';
 import type { HarnessInvocation, JsonValue } from '../harness-kit.js';
 import { ClaudeProtocol, CodexProtocol, type ProtocolOutcome } from './protocol.js';
+import { parseClaudeRateLimitEvent } from '../workflow/runtime/rate-limit.js';
 import { codexItemHeader, irrelevantLine, ProtocolLines, retainedLimit } from './lines.js';
 
 function object(value: unknown): Record<string, unknown> | undefined {
@@ -244,6 +245,13 @@ export class HarnessStream {
       return tool
         ? { kind: 'tool', summary: `Claude tool: ${short(object(tool)?.['name']) ?? 'unknown'}` }
         : { kind: 'message', summary: 'Claude assistant message' };
+    }
+    if (data['type'] === 'rate_limit_event') {
+      // The latest valid event wins; a malformed or empty one keeps any earlier report and, like
+      // every other observation here, can never fail a call.
+      const report = parseClaudeRateLimitEvent(data);
+      if (report) this.#diagnostics['rateLimit'] = report;
+      return { kind: 'status', summary: `Claude: rate limit ${report?.status ?? 'event'}` };
     }
     if (data['type'] === 'system' && typeof data['subtype'] === 'string') {
       if (data['subtype'] === 'hook_started')

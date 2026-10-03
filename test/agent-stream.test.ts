@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { chmod, mkdtemp, readFile, readdir, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, relative } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   CliHarness,
@@ -25,6 +26,8 @@ import {
 import { testInvocation } from './harness-invocation.js';
 import { AttemptTranscript } from '../src/workflow/runtime/agent-transcript.js';
 import * as storageIo from '../src/workflow/runtime/storage-io.js';
+import { formatAgentEventDetail } from '../src/workflow/loader/executor.js';
+import { maxRateLimitWindows } from '../src/workflow/runtime/rate-limit.js';
 
 let directory: string;
 beforeEach(async () => {
@@ -1057,5 +1060,236 @@ process.stdin.on('end', () => {
       policy: { idleTimeoutMs: 5000 },
       sources: { idleTimeoutMs: 'profile-override:0' },
     });
+  });
+});
+
+describe('subscription rate-limit windows', () => {
+  const rateEvent = (info: unknown) => ({ type: 'rate_limit_event', rate_limit_info: info });
+  const first = rateEvent({
+    status: 'allowed',
+    resetsAt: 100,
+    rateLimitType: 'five_hour',
+    unifiedWindows: { five_hour: { utilization: 0.22 }, seven_day: { utilization: 0.67 } },
+  });
+  const second = rateEvent({
+    status: 'allowed_warning',
+    resetsAt: 200,
+    rateLimitType: 'seven_day',
+    unifiedWindows: { five_hour: { utilization: 0.3, resetsAt: 150 } },
+  });
+  const tail = fixtureStdout('claude-text-success');
+  const textOf = (step: { output: unknown }) => (step.output as { output?: unknown }).output;
+  const rateLimitOf = (step: { attemptHistory?: { diagnostics?: Record<string, unknown> }[] }) =>
+    step.attemptHistory?.[0]?.diagnostics?.['rateLimit'];
+
+  it('records the live capture on the attempt and on agent.finished, and shows it in the log line', async () => {
+    vi.stubEnv('QUIET_CHOIR_FAKE_SCENARIO', 'claude-rate-limit-success');
+    const events: WorkflowEvent[] = [];
+    const definition = defineWorkflow({
+      ...base,
+      async run(ctx) {
+        return (await ctx.claude.text('task', { prompt: 'answer' })).output;
+      },
+    });
+    const run = await runWorkflow(definition, {
+      ...setup('rate-limit-fixture'),
+      harness: new CliHarness({
+        claudeBinary: fileURLToPath(new URL('./bin/fake-claude.mjs', import.meta.url)),
+        killGraceMs: 20,
+      }),
+      onEvent: (event) => {
+        events.push(event);
+      },
+    });
+    vi.unstubAllEnvs();
+    expect(run.status).toBe('completed');
+    expect(run.output).toBe('ok');
+    const expected = {
+      status: 'allowed_warning',
+      type: 'seven_day',
+      resetsAt: 1791360000,
+      windows: {
+        five_hour: { utilization: 0.01, resetsAt: 1791014400 },
+        seven_day: { utilization: 0.84, resetsAt: 1791360000 },
+      },
+    };
+    expect(run.steps['task']?.attemptHistory?.[0]?.diagnostics?.['rateLimit']).toEqual(expected);
+    const finished = events.filter((event) => event.type === 'agent.finished');
+    expect(finished).toHaveLength(1);
+    expect(finished[0]?.diagnostics?.['rateLimit']).toEqual(expected);
+    expect(formatAgentEventDetail(required(finished[0]))).toMatch(
+      / completed session=\S+ rate-limit: 5h window 1%, 7d 84%$/u,
+    );
+  });
+
+  it('reports a lossy status progress line for a rate-limit event, valid or not', async () => {
+    const lines = [claudeInit, first, rateEvent('garbage'), ...tail].map((line) =>
+      typeof line === 'string' ? line : JSON.stringify(line),
+    );
+    // Progress is throttled to one line per 100 ms, so each line waits past the window.
+    const agent = await binary(`
+      const lines = ${JSON.stringify(lines)};
+      for (const line of lines) {
+        console.log(line);
+        await new Promise((resolve) => setTimeout(resolve, 150));
+      }
+    `);
+    const summaries: string[] = [];
+    await new CliHarness({ claudeBinary: agent, killGraceMs: 20 }).invoke(
+      { harness: 'claude', options: { prompt: 'respond' }, cwd: directory, outputSchema: null },
+      {
+        ...testInvocation(),
+        onProgress: (progress) => {
+          summaries.push(progress.summary);
+        },
+      },
+    );
+    expect(summaries).toContain('Claude: rate limit allowed');
+    expect(summaries).toContain('Claude: rate limit event');
+  });
+
+  it('renders agent events without a report exactly as before', () => {
+    const event = {
+      type: 'agent.finished',
+      runId: 'run',
+      stepId: 'task',
+      attempt: 2,
+      harness: 'claude',
+      outcome: 'completed',
+      sessionId: 'abc',
+      at: '2026-10-01T00:00:00.000Z',
+      execution: 1,
+      diagnostics: { toolUses: 0 },
+    } as unknown as WorkflowEvent;
+    expect(formatAgentEventDetail(event)).toBe(
+      'task (attempt 2) harness=claude completed session=abc',
+    );
+    // A report on any other event type is not shown.
+    const limit = { status: 'allowed', windows: { five_hour: { utilization: 0.5 } } };
+    expect(formatAgentEventDetail({ ...event, diagnostics: { rateLimit: limit } })).toBe(
+      'task (attempt 2) harness=claude completed session=abc rate-limit: 5h window 50%',
+    );
+    expect(
+      formatAgentEventDetail({
+        ...event,
+        type: 'agent.progress',
+        diagnostics: { rateLimit: limit },
+      } as unknown as WorkflowEvent),
+    ).toBe('task (attempt 2) harness=claude completed session=abc');
+    // A custom adapter's invalid report is ignored rather than printed.
+    expect(
+      formatAgentEventDetail({
+        ...event,
+        diagnostics: { rateLimit: { windows: { five_hour: { utilization: 'x' } } } },
+      }),
+    ).toBe('task (attempt 2) harness=claude completed session=abc');
+  });
+
+  it('keeps the latest of several events in one call', async () => {
+    const { step } = await toolUseRun(
+      'claude',
+      [claudeInit, first, claudeText, second, ...tail],
+      'text',
+      false,
+      'rate-limit-latest',
+    );
+    expect(rateLimitOf(step)).toEqual({
+      status: 'allowed_warning',
+      type: 'seven_day',
+      resetsAt: 200,
+      windows: { five_hour: { utilization: 0.3, resetsAt: 150 } },
+    });
+  });
+
+  it('keeps an earlier valid report when a later event is malformed', async () => {
+    const { step } = await toolUseRun(
+      'claude',
+      [claudeInit, first, rateEvent('garbage'), { type: 'rate_limit_event' }, ...tail],
+      'text',
+      false,
+      'rate-limit-kept',
+    );
+    expect(rateLimitOf(step)).toMatchObject({ status: 'allowed', type: 'five_hour' });
+  });
+
+  it('ignores malformed events without changing the attempt output, usage or diagnostics keys', async () => {
+    const huge = 'x'.repeat(5000);
+    const malformed = [
+      { type: 'rate_limit_event' },
+      rateEvent(null),
+      rateEvent('allowed'),
+      rateEvent([first]),
+      rateEvent({}),
+      rateEvent({ unifiedWindows: [{ utilization: 0.5 }] }),
+      rateEvent({ unifiedWindows: { five_hour: { utilization: '0.5' } } }),
+      rateEvent({
+        unifiedWindows: { five_hour: { utilization: -1 }, seven_day: { utilization: null } },
+      }),
+      rateEvent({ status: 7, rateLimitType: [], resetsAt: 'tomorrow' }),
+      { type: 'rate_limit_event', rate_limit_info: 5 },
+    ];
+    const plain = await toolUseRun(
+      'claude',
+      [claudeInit, claudeText, ...tail],
+      'text',
+      false,
+      'rate-limit-plain',
+    );
+    const noisy = await toolUseRun(
+      'claude',
+      [claudeInit, ...malformed, claudeText, ...tail],
+      'text',
+      false,
+      'rate-limit-noisy',
+    );
+    expect(noisy.step.status).toBe('completed');
+    expect(textOf(noisy.step)).toBe('hello from captured claude');
+    expect(textOf(noisy.step)).toEqual(textOf(plain.step));
+    expect(noisy.step.attemptHistory?.[0]?.usage).toEqual(plain.step.attemptHistory?.[0]?.usage);
+    expect(rateLimitOf(noisy.step)).toBeUndefined();
+    expect(Object.keys(noisy.step.attemptHistory?.[0]?.diagnostics ?? {}).sort()).toEqual(
+      Object.keys(plain.step.attemptHistory?.[0]?.diagnostics ?? {}).sort(),
+    );
+    // Oversized strings and window lists are bounded, not rejected.
+    const bounded = await toolUseRun(
+      'claude',
+      [
+        claudeInit,
+        rateEvent({
+          status: huge,
+          rateLimitType: huge,
+          unifiedWindows: Object.fromEntries(
+            Array.from({ length: 40 }, (_, index) => [
+              `${String(index)}${huge}`,
+              { utilization: 0.5 },
+            ]),
+          ),
+        }),
+        claudeText,
+        ...tail,
+      ],
+      'text',
+      false,
+      'rate-limit-bounded',
+    );
+    const stored = rateLimitOf(bounded.step) as {
+      status: string;
+      type: string;
+      windows: Record<string, unknown>;
+    };
+    expect(stored.status).toHaveLength(64);
+    expect(stored.type).toHaveLength(64);
+    expect(Object.keys(stored.windows)).toHaveLength(maxRateLimitWindows);
+  });
+
+  it('leaves Codex attempts without a rateLimit even when a stray event arrives', async () => {
+    const plain = await toolUseRun('codex', codexLines(), 'text', false, 'rate-codex-plain');
+    const stray = await toolUseRun('codex', codexLines(first), 'text', false, 'rate-codex-stray');
+    expect(rateLimitOf(stray.step)).toBeUndefined();
+    expect(stray.step.attemptHistory?.[0]?.diagnostics).not.toHaveProperty('rateLimit');
+    expect(Object.keys(stray.step.attemptHistory?.[0]?.diagnostics ?? {}).sort()).toEqual(
+      Object.keys(plain.step.attemptHistory?.[0]?.diagnostics ?? {}).sort(),
+    );
+    expect(textOf(stray.step)).toEqual(textOf(plain.step));
   });
 });

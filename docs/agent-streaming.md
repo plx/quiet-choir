@@ -80,11 +80,14 @@ initial capabilities, model/version, warnings, stderr tail, skipped-line count, 
 and `toolUses`, the tool calls counted from every parsed line and from the headers of skipped
 oversized Codex tool items (see
 [tool-use diagnostics](harness-controls.md#idle-deadline-and-tool-use-diagnostics)). A skipped
-oversized Claude assistant line makes a zero count unknown (`null`), so it never warns. Missing
-native fields remain absent or null; a version or model found by discovery is kept when the stream
-reports none. The completed `agent.finished` event also carries the step's `warnings` (such as
-`no-tool-use`) when there are any. Full initialization paths/socket details are not copied into
-diagnostics; raw transcripts can contain them.
+oversized Claude assistant line makes a zero count unknown (`null`), so it never warns. A Claude
+attempt that streamed a `rate_limit_event` also has `rateLimit`, the latest valid event's status,
+type, reset time and window utilizations (see
+[subscription rate-limit windows](usage-and-budgets.md#subscription-rate-limit-windows)); Codex
+attempts have none. Missing native fields remain absent or null; a version or model found by
+discovery is kept when the stream reports none. The completed `agent.finished` event also carries
+the step's `warnings` (such as `no-tool-use`) when there are any. Full initialization paths/socket
+details are not copied into diagnostics; raw transcripts can contain them.
 
 Failed attempts retain session, usage, error/stack/category, diagnostics, and available rejected
 response text (up to 256 KiB, with `responseTruncated`). Local Zod failures also retain

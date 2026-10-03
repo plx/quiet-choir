@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import {
+  CliHarness,
   defineWorkflow,
   runWorkflow,
   z,
@@ -24,6 +25,8 @@ import {
   watchRun,
 } from '../src/workflow/loader/inspection.js';
 import { WorkflowExecutor } from '../src/workflow/loader/executor.js';
+import { fileURLToPath } from 'node:url';
+import { maxRateLimitText, maxRateLimitWindows } from '../src/workflow/runtime/rate-limit.js';
 import {
   formatRunList,
   formatRunSummary,
@@ -770,6 +773,8 @@ interface AgentFixture {
   readonly status?: StepRecord['status'];
   readonly inputTokens?: number | null;
   readonly outputTokens?: number | null;
+  /** Native diagnostics of the attempt, such as a `rateLimit` report. */
+  readonly diagnostics?: Record<string, unknown>;
 }
 
 function agentStep(seq: number, fixture: AgentFixture): StepRecord {
@@ -808,6 +813,7 @@ function agentStep(seq: number, fixture: AgentFixture): StepRecord {
         error: null,
         requestedModel: model,
         reasoningEffort: null,
+        ...(fixture.diagnostics === undefined ? {} : { diagnostics: fixture.diagnostics }),
         ...(effort === undefined ? {} : { requested: { model: model ?? 'inherited', effort } }),
         policy: { retry: { maxAttempts: 1, delayMs: 0 } },
         sources: {},
@@ -1150,4 +1156,164 @@ it('shows the tool-use count, step warnings and idle deadline of agent calls', (
   expect(text).toMatch(/^busy {2}claude sonnet effort high {2}12s {2}\$0\.0123 {2}tools 3$/m);
   expect(text).toMatch(/^legacy {2}codex \(native model\) effort high {2}12s {2}\$0\.0123$/m);
   expect(text).toMatch(/^failed stalled .*idle timeout 2m00s/m);
+});
+
+const rateReport = (utilization: number, extra: Record<string, unknown> = {}) => ({
+  rateLimit: {
+    status: 'allowed',
+    type: 'five_hour',
+    resetsAt: 1791014400,
+    windows: { five_hour: { utilization }, seven_day: { utilization: 0.5 } },
+    ...extra,
+  },
+});
+
+it('shows the live capture per harness in text and JSON summaries', async () => {
+  vi.stubEnv('QUIET_CHOIR_FAKE_SCENARIO', 'claude-rate-limit-success');
+  const run = await runWorkflow(
+    defineWorkflow({
+      name: 'rate-windows',
+      version: '1',
+      input: z.null(),
+      output: z.string(),
+      async run(ctx) {
+        return (await ctx.claude.text('task', { prompt: 'answer' })).output;
+      },
+    }),
+    {
+      stateDir,
+      runId: 'rate-windows',
+      cwd: stateDir,
+      input: null,
+      harness: new CliHarness({
+        claudeBinary: fileURLToPath(new URL('./bin/fake-claude.mjs', import.meta.url)),
+        killGraceMs: 20,
+      }),
+    },
+  );
+  vi.unstubAllEnvs();
+  const summary = summarizeRun(run, unlocked);
+  expect(summary.rateLimits).toEqual({
+    claude: {
+      stepId: 'task',
+      attempt: 1,
+      finishedAt: run.steps['task']?.attemptHistory?.[0]?.finishedAt,
+      status: 'allowed_warning',
+      type: 'seven_day',
+      resetsAt: 1791360000,
+      windows: {
+        five_hour: { utilization: 0.01, resetsAt: 1791014400 },
+        seven_day: { utilization: 0.84, resetsAt: 1791360000 },
+      },
+    },
+  });
+  expect((JSON.parse(JSON.stringify(summary)) as typeof summary).rateLimits).toEqual(
+    summary.rateLimits,
+  );
+  expect(formatRunSummary(summary)).toContain(
+    '\n  Rate windows claude: 5h window 1%, 7d 84% (allowed_warning; seven_day resets 2026-10-07T08:00:00.000Z)',
+  );
+  // The line follows the per-harness usage lines.
+  const text = formatRunSummary(summary);
+  expect(text.indexOf('  Harness claude:')).toBeLessThan(text.indexOf('  Rate windows claude:'));
+});
+
+it('omits the key and the line when no attempt reported windows', () => {
+  const run = withSteps({
+    a: agentStep(1, { harness: 'claude', model: 'sonnet' }),
+    b: agentStep(2, { harness: 'codex', model: 'gpt-5.4', diagnostics: { toolUses: 1 } }),
+    // Loose or invalid diagnostics are not displayed.
+    c: agentStep(3, {
+      harness: 'claude',
+      model: 'sonnet',
+      diagnostics: { rateLimit: { windows: { five_hour: { utilization: 'high' } } } },
+    }),
+  });
+  const summary = summarizeRun(run, unlocked);
+  expect(Object.keys(summary)).not.toContain('rateLimits');
+  expect(JSON.stringify(summary)).not.toContain('rateLimit');
+  expect(formatRunSummary(summary)).not.toContain('Rate windows');
+  expect(Object.keys(summarizeRun(withSteps({}), unlocked))).toEqual(Object.keys(summary));
+});
+
+it('takes the latest settled report per harness, failed attempts included, and skips reused steps', () => {
+  const step = agentStep(1, { harness: 'claude', model: 'sonnet', diagnostics: rateReport(0.2) });
+  const earlier = step.attemptHistory?.[0];
+  if (!earlier) throw new Error('Expected an attempt.');
+  const failed = {
+    ...earlier,
+    attempt: 2,
+    startedAt: iso(20),
+    finishedAt: iso(30),
+    status: 'failed',
+    diagnostics: rateReport(0.97, { status: 'rejected', resetsAt: 1791360000 }),
+  } as unknown as AttemptRecord;
+  const reused = {
+    ...agentStep(2, { harness: 'claude', model: 'sonnet', diagnostics: rateReport(0.99) }),
+    reusedFrom: { runId: 'other' } as unknown as NonNullable<StepRecord['reusedFrom']>,
+  };
+  const summary = summarizeRun(
+    withSteps({
+      first: { ...step, attempts: 2, attemptHistory: [earlier, failed] },
+      reused,
+      codex: agentStep(3, { harness: 'codex', model: 'gpt-5.4' }),
+    }),
+    unlocked,
+  );
+  expect(Object.keys(summary.rateLimits ?? {})).toEqual(['claude']);
+  expect(summary.rateLimits?.['claude']).toMatchObject({
+    stepId: 'first',
+    attempt: 2,
+    finishedAt: iso(30),
+    status: 'rejected',
+    windows: { five_hour: { utilization: 0.97 } },
+  });
+  const text = formatRunSummary(summary);
+  expect(text).toContain(
+    '  Rate windows claude: 5h window 97%, 7d 50% (rejected; five_hour resets 2026-10-',
+  );
+  expect(text).not.toContain('Rate windows codex');
+});
+
+it('bounds the rate-limit projection independently of the run size', () => {
+  const name = (index: number) =>
+    `${String(index)}${'w'.repeat(maxRateLimitText)}`.slice(0, maxRateLimitText);
+  const windows = Object.fromEntries(
+    Array.from({ length: maxRateLimitWindows * 3 }, (_, index) => [
+      name(index),
+      { utilization: 0.123456789, resetsAt: 1791360000 + index },
+    ]),
+  );
+  const maximal = {
+    rateLimit: {
+      status: 's'.repeat(maxRateLimitText * 3),
+      type: 't'.repeat(maxRateLimitText * 3),
+      resetsAt: 1791360000,
+      windows,
+    },
+  };
+  const realistic = rateReport(0.01, { status: 'allowed_warning', type: 'seven_day' });
+  const calls = (count: number, diagnostics: Record<string, unknown>) => {
+    const steps: Record<string, StepRecord> = {};
+    for (let i = 0; i < count; i++)
+      steps[`agent/${String(i).padStart(2, '0')}`] = agentStep(i + 1, {
+        harness: i % 2 ? 'codex' : 'claude',
+        model: i % 2 ? 'gpt-5.4' : 'sonnet',
+        effort: 'high',
+        ...(i >= count - 2 ? { diagnostics } : {}),
+      });
+    return summarizeRun(withSteps(steps), unlocked);
+  };
+  const size = (value: unknown) => Buffer.byteLength(JSON.stringify(value));
+  // An oversized report is cut to 8 windows of 64 characters, whatever the run size.
+  for (const count of [4, 40]) {
+    const summary = calls(count, maximal);
+    expect(Object.keys(summary.rateLimits ?? {}).sort()).toEqual(['claude', 'codex']);
+    expect(Object.keys(summary.rateLimits?.['claude']?.windows ?? {})).toHaveLength(8);
+    expect(size(summary.rateLimits)).toBeLessThan(2560);
+  }
+  // Both harnesses at the maximum fit the 10 KB bound with a 20-call run, and a realistic report
+  // (Claude's two windows) fits it beside the 40-call run that the agent bound test uses.
+  expect(size(calls(20, maximal))).toBeLessThan(10_240);
+  expect(size(calls(40, realistic))).toBeLessThan(10_240);
 });

@@ -14,6 +14,7 @@ import {
   type StepRecord,
 } from '../runtime/store.js';
 import { summarizeUsage } from '../runtime/usage-summary.js';
+import { latestRateLimits, type RateLimitSummary } from '../runtime/rate-limit.js';
 import { classifyRecovery } from '../runtime/recovery-decision.js';
 import { brandError, isBranded } from '../runtime/error-brand.js';
 import { RunRefusedError, type CliErrorCode } from '../runtime/run-errors.js';
@@ -160,6 +161,14 @@ export interface RunSummary {
     readonly recent: readonly AgentRow[];
   };
   readonly usage: UsageSummary;
+  /**
+   * The latest subscription rate-limit windows each harness reported, by harness name (#156).
+   * Only Claude reports them today. Each entry comes from the attempt with a valid
+   * `diagnostics.rateLimit` that settled last, failed attempts included and fork-reused steps
+   * excluded; `resetsAt` is Unix epoch seconds as reported. The key is absent when no attempt
+   * reported windows, so a run without them serializes as before.
+   */
+  readonly rateLimits?: Readonly<Record<string, RateLimitSummary>>;
   readonly recent: readonly RunEvent[];
   /** The latest accepted code changes, at most 5, as stored; a map entry names its settled map. */
   readonly codeChanges: readonly CodeChange[];
@@ -422,6 +431,7 @@ export function summarizeRun(
     ]
       .sort()
       .at(-1) ?? run.updatedAt;
+  const rateLimits = latestRateLimits(entries);
   return {
     children: summarizeChildren(run),
     cwd: run.cwd,
@@ -494,6 +504,7 @@ export function summarizeRun(
     output: run.status === 'completed' ? run.output : null,
     agents: summarizeAgents(run, entries, now),
     usage: summarizeUsage(run),
+    ...(Object.keys(rateLimits).length > 0 ? { rateLimits } : {}),
     recent,
     codeChanges: (run.codeChanges ?? []).slice(-5),
     warnings: [

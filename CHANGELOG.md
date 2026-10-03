@@ -2,6 +2,19 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- Claude attempts now record the subscription rate-limit windows the CLI reports (#156). The latest
+  valid stream `rate_limit_event` of an attempt is kept in `attemptHistory[].diagnostics.rateLimit`
+  as `{ status, type, resetsAt, windows }`, where `windows` maps a name such as `five_hour` or
+  `seven_day` to `{ utilization, resetsAt? }`; `resetsAt` stays Unix epoch seconds as reported.
+  Strings are cut to 64 characters, at most 8 windows are kept, and a malformed or empty event is
+  ignored without failing or changing the call. `agent.finished` carries it and the `--progress`
+  line appends `rate-limit: 5h window 22%, 7d 67%`. `inspect --json --summary` gains an optional
+  per-harness `rateLimits` map (absent when nothing was reported, so other runs serialize as before)
+  and text inspect prints a `Rate windows claude: ...` line after the usage lines. Only Claude
+  reports windows; Codex attempts are unchanged. This is observation only: no checkpoint schema
+  change, and run caps still measure USD and attempts. The utilization gate and suspend-until-reset
+  follow-up is #168. The new `claude-rate-limit-success` fixture is a live subscription capture
+  (Claude Code 2.1.286).
 - Agent attempts can enforce an output idle deadline and report their tool use (#109; ADR 0042,
   amends ADR 0007 and ADR 0010). `idleTimeoutMs` is accepted on workflow `defaults`, profiles, call
   options, `--profile name.idleTimeoutMs=N` (`profileOverrides`) and agent `--policy` rules (rules
