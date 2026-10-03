@@ -835,8 +835,11 @@ export interface PolicyOverride {
   readonly retry?: RetryPolicy;
   /** Explicitly authorized model replacement for unfinished calls only. */
   readonly model?: string;
-  /** Explicitly authorized Codex effort replacement for unfinished calls only. */
-  readonly reasoningEffort?: CodexOptions['reasoningEffort'];
+  /**
+   * Explicitly authorized Codex effort replacement for unfinished calls only. Codex-only: a rule
+   * that sets it never changes a Claude call's effort, and a claude-scoped rule cannot set it.
+   */
+  readonly effort?: CodexOptions['effort'];
 }
 
 /** Fully resolved runtime retry policy plus adapter-declared limits and their provenance. */
@@ -859,8 +862,11 @@ export interface AttemptPolicy {
   readonly sources: Readonly<Record<string, string>>;
   /** Explicit model sent to the harness; null means its own configuration chooses. */
   readonly requestedModel: string | null;
-  /** Explicit effort sent to Codex; null means its own configuration chooses. */
-  readonly reasoningEffort: CodexOptions['reasoningEffort'] | null;
+  /**
+   * Explicit effort sent to Codex (call site, profile or override); null for Claude calls and when
+   * Codex's own configuration chooses. Records written before #341 stored it as reasoningEffort.
+   */
+  readonly effort: CodexOptions['effort'] | null;
 }
 
 /** Scheduling, item identity and failure policy for a named map. */

@@ -1,0 +1,435 @@
+{
+  "allowModelOverride": true,
+  "capabilities": {
+    "defaultProfile": "text",
+    "defaults": {
+      "access": "read",
+      "claude": {
+        "allowedTools": [],
+        "isolation": "restricted",
+        "tools": []
+      },
+      "claudeAccess": "none",
+      "codex": {
+        "isolation": "restricted",
+        "sandbox": "read-only"
+      },
+      "codexAccess": "read",
+      "environment": {
+        "claude": {
+          "set": [],
+          "sha256": "2427b8a3193f4941d731ebcc7f2ea9ae4029bd00b6f30c119edb89cc70dd7247",
+          "unset": []
+        },
+        "codex": {
+          "set": [],
+          "sha256": "2427b8a3193f4941d731ebcc7f2ea9ae4029bd00b6f30c119edb89cc70dd7247",
+          "unset": []
+        }
+      },
+      "expectsToolUse": false,
+      "maxBudgetUsd": 0.5,
+      "maxTurns": 10,
+      "name": "text",
+      "onPermissionDenied": "warn",
+      "timeoutMs": 300000
+    },
+    "profiles": {
+      "edit": {
+        "access": "write",
+        "claude": {
+          "allowedTools": ["Read", "Grep", "Glob", "Edit", "Write"],
+          "isolation": "restricted",
+          "tools": ["Read", "Grep", "Glob", "Edit", "Write"]
+        },
+        "claudeAccess": "write",
+        "codex": {
+          "isolation": "restricted",
+          "sandbox": "workspace-write"
+        },
+        "codexAccess": "write",
+        "environment": {
+          "claude": {
+            "set": [],
+            "sha256": "2427b8a3193f4941d731ebcc7f2ea9ae4029bd00b6f30c119edb89cc70dd7247",
+            "unset": []
+          },
+          "codex": {
+            "set": [],
+            "sha256": "2427b8a3193f4941d731ebcc7f2ea9ae4029bd00b6f30c119edb89cc70dd7247",
+            "unset": []
+          }
+        },
+        "expectsToolUse": true,
+        "maxBudgetUsd": 5,
+        "maxTurns": 40,
+        "name": "edit",
+        "onPermissionDenied": "warn",
+        "timeoutMs": 1800000
+      },
+      "readonly": {
+        "access": "read",
+        "claude": {
+          "allowedTools": ["Read", "Grep", "Glob"],
+          "isolation": "restricted",
+          "tools": ["Read", "Grep", "Glob"]
+        },
+        "claudeAccess": "read",
+        "codex": {
+          "isolation": "restricted",
+          "sandbox": "read-only"
+        },
+        "codexAccess": "read",
+        "environment": {
+          "claude": {
+            "set": [],
+            "sha256": "2427b8a3193f4941d731ebcc7f2ea9ae4029bd00b6f30c119edb89cc70dd7247",
+            "unset": []
+          },
+          "codex": {
+            "set": [],
+            "sha256": "2427b8a3193f4941d731ebcc7f2ea9ae4029bd00b6f30c119edb89cc70dd7247",
+            "unset": []
+          }
+        },
+        "expectsToolUse": true,
+        "maxBudgetUsd": 2,
+        "maxTurns": 25,
+        "name": "readonly",
+        "onPermissionDenied": "warn",
+        "timeoutMs": 900000
+      },
+      "scout": {
+        "access": "read",
+        "claude": {
+          "allowedTools": [],
+          "isolation": "restricted",
+          "tools": []
+        },
+        "claudeAccess": "none",
+        "codex": {
+          "isolation": "restricted",
+          "reasoningEffort": "low",
+          "sandbox": "read-only"
+        },
+        "codexAccess": "read",
+        "environment": {
+          "claude": {
+            "set": [],
+            "sha256": "2427b8a3193f4941d731ebcc7f2ea9ae4029bd00b6f30c119edb89cc70dd7247",
+            "unset": []
+          },
+          "codex": {
+            "set": [],
+            "sha256": "2427b8a3193f4941d731ebcc7f2ea9ae4029bd00b6f30c119edb89cc70dd7247",
+            "unset": []
+          }
+        },
+        "expectsToolUse": false,
+        "maxBudgetUsd": 0.5,
+        "maxTurns": 10,
+        "name": "scout",
+        "onPermissionDenied": "warn",
+        "timeoutMs": 300000
+      },
+      "text": {
+        "access": "read",
+        "claude": {
+          "allowedTools": [],
+          "isolation": "restricted",
+          "tools": []
+        },
+        "claudeAccess": "none",
+        "codex": {
+          "isolation": "restricted",
+          "sandbox": "read-only"
+        },
+        "codexAccess": "read",
+        "environment": {
+          "claude": {
+            "set": [],
+            "sha256": "2427b8a3193f4941d731ebcc7f2ea9ae4029bd00b6f30c119edb89cc70dd7247",
+            "unset": []
+          },
+          "codex": {
+            "set": [],
+            "sha256": "2427b8a3193f4941d731ebcc7f2ea9ae4029bd00b6f30c119edb89cc70dd7247",
+            "unset": []
+          }
+        },
+        "expectsToolUse": false,
+        "maxBudgetUsd": 0.5,
+        "maxTurns": 10,
+        "name": "text",
+        "onPermissionDenied": "warn",
+        "timeoutMs": 300000
+      }
+    },
+    "requiredGrants": [],
+    "strictProfiles": true
+  },
+  "createdAt": "2026-10-03T08:32:33.536Z",
+  "cwd": "/",
+  "engine": {
+    "node": "v26.8.1",
+    "quietChoir": "0.0.0",
+    "tsx": "4.23.11",
+    "zod": "4.5.4"
+  },
+  "error": "fixture tail",
+  "errorStack": "Error: fixture tail\n    at Object.run (file:///fixture/create-effort-fixture.mts:19:11)\n    at async executeOwned (file:///fixture/src/workflow/runtime/runner.ts:3397:22)\n    at async runWorkflow (file:///fixture/src/workflow/runtime/runner.ts:3615:32)\n    at async <anonymous> (file:///fixture/create-effort-fixture.mts:22:1)",
+  "eventCounts": {},
+  "events": [
+    {
+      "at": "2026-10-03T08:32:33.537Z",
+      "data": null,
+      "execution": 1,
+      "message": null,
+      "phase": null,
+      "stepId": null,
+      "total": null,
+      "type": "run.started"
+    },
+    {
+      "at": "2026-10-03T08:32:33.592Z",
+      "data": null,
+      "execution": 1,
+      "message": "fixture tail",
+      "phase": null,
+      "stepId": null,
+      "total": null,
+      "type": "run.failed"
+    }
+  ],
+  "executions": [
+    {
+      "endedAt": "2026-10-03T08:32:33.589Z",
+      "error": "fixture tail",
+      "errorStack": "Error: fixture tail\n    at Object.run (file:///fixture/create-effort-fixture.mts:19:11)\n    at async executeOwned (file:///fixture/src/workflow/runtime/runner.ts:3397:22)\n    at async runWorkflow (file:///fixture/src/workflow/runtime/runner.ts:3615:32)\n    at async <anonymous> (file:///fixture/create-effort-fixture.mts:22:1)",
+      "n": 1,
+      "outcome": "failed",
+      "pid": 8930,
+      "startedAt": "2026-10-03T08:32:33.537Z"
+    }
+  ],
+  "formatVersion": 7,
+  "grantedProfiles": {},
+  "grants": [],
+  "harness": {
+    "kind": "custom",
+    "previousKinds": []
+  },
+  "id": "pre-effort",
+  "input": null,
+  "maps": {},
+  "maxChildDepth": 8,
+  "nextWakeAt": null,
+  "output": null,
+  "phase": null,
+  "policy": [
+    {
+      "kind": "codex",
+      "match": "tuned",
+      "reasoningEffort": "high"
+    }
+  ],
+  "policyWarnings": [],
+  "profileOverrides": [],
+  "recoveryHint": "All recorded work has terminal outcomes, including settled map items. Fix the workflow tail, output or configuration and use --resume --accept-code-change to re-finalize; unchanged identities reuse their results.",
+  "replayWarnings": [],
+  "rootCause": {
+    "effect": null,
+    "error": "fixture tail",
+    "errorKind": null,
+    "stepId": null
+  },
+  "runBudget": {
+    "maxRunAgentAttempts": null,
+    "maxRunCostUsd": null
+  },
+  "seq": 4,
+  "sessionSalt": "a0a7c377-3191-4bc5-ba75-e676fd134e92",
+  "status": "failed",
+  "steps": {
+    "tuned": {
+      "attemptHistory": [
+        {
+          "attempt": 1,
+          "diagnostics": {
+            "transcript": {
+              "bytes": 0,
+              "path": "/fixture/state/pre-effort/attempts/aba407b81ed016841ea552feadaf0663c7804a64554ba55d3109b3dc8198cdcb/1.codex.jsonl",
+              "retained": true,
+              "truncated": false
+            }
+          },
+          "durationMs": 22,
+          "error": null,
+          "errorStack": null,
+          "execution": 1,
+          "fingerprint": "e5fc900e5bc6a63633db8f94c2c784158ea417574dda83b3c95d2b646ef772c1",
+          "finishedAt": "2026-10-03T08:32:33.583Z",
+          "policy": {
+            "maxTranscriptBytes": 67108864,
+            "retry": {
+              "delayMs": 100,
+              "maxAttempts": 1
+            },
+            "timeoutMs": 300000,
+            "transcripts": "on"
+          },
+          "profile": "scout",
+          "reasoningEffort": "high",
+          "request": {
+            "cwd": "/",
+            "environment": {
+              "set": [],
+              "sha256": "2427b8a3193f4941d731ebcc7f2ea9ae4029bd00b6f30c119edb89cc70dd7247",
+              "unset": []
+            },
+            "harness": "codex",
+            "instructions": "native",
+            "isolation": "restricted",
+            "limits": {
+              "idleTimeoutMs": null,
+              "killGraceMs": null,
+              "maxBudgetUsd": null,
+              "maxTurns": null,
+              "sandbox": "read-only",
+              "timeoutMs": 300000
+            },
+            "model": null,
+            "profile": "scout",
+            "promptPreview": "a",
+            "promptSha256": "ca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b9807785afee48bb",
+            "revision": 1,
+            "structured": false,
+            "tools": null
+          },
+          "requested": {
+            "effort": "high",
+            "model": "inherited"
+          },
+          "requestedModel": null,
+          "sessionId": null,
+          "sources": {
+            "maxTranscriptBytes": "runtime",
+            "reasoningEffort": "override:0",
+            "retry.delayMs": "runtime",
+            "retry.maxAttempts": "runtime",
+            "timeoutMs": "profile:scout",
+            "transcripts": "runtime"
+          },
+          "startedAt": "2026-10-03T08:32:33.561Z",
+          "status": "completed",
+          "transcript": {
+            "bytes": 0,
+            "path": "/fixture/state/pre-effort/attempts/aba407b81ed016841ea552feadaf0663c7804a64554ba55d3109b3dc8198cdcb/1.codex.jsonl",
+            "retained": true,
+            "truncated": false
+          },
+          "usage": {
+            "completeness": "unavailable",
+            "costUsd": null,
+            "inputTokens": null,
+            "model": {
+              "effective": null,
+              "requested": null
+            },
+            "outputTokens": null
+          }
+        }
+      ],
+      "attempts": 1,
+      "durationMs": 22,
+      "error": null,
+      "errorStack": null,
+      "fingerprint": "e5fc900e5bc6a63633db8f94c2c784158ea417574dda83b3c95d2b646ef772c1",
+      "finishedAt": "2026-10-03T08:32:33.583Z",
+      "harness": "codex",
+      "identity": {
+        "cwd": "df7e940f72aa93cbcb6d70cc35124b0767c7a0e353043c7c24b660ea9be7b952",
+        "kind": "08f6b585592467d20717e8abd8dd02b9fb430ba65eb4b745c373ce3001ef5dae",
+        "model": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+        "onError": "a8ae35eaddff8b9970e3075d77d711798ddfa511a5391581aef83e1a8ebbf64f",
+        "option.isolation": "cd28dab5321c1d3031e52e50cf1d8a3f5db1f8b1088046c8025efb84bd02ba03",
+        "prompt": "ac8d8342bbb2362d13f0a559a3621bb407011368895164b628a54f7fc33fc43c",
+        "reasoningEffort": "364bb7082249ee9fbc5247ee49735c4246f271b82c2745a35107ddda0d7cabcc",
+        "schema": "1a7dffe553dca5717f29f1586271c9a170f0aa97be651b7f2e59bbaecde9bbd1"
+      },
+      "kind": "agent",
+      "launchStamp": 0,
+      "output": {
+        "diagnostics": {
+          "transcript": {
+            "bytes": 0,
+            "path": "/fixture/state/pre-effort/attempts/aba407b81ed016841ea552feadaf0663c7804a64554ba55d3109b3dc8198cdcb/1.codex.jsonl",
+            "retained": true,
+            "truncated": false
+          }
+        },
+        "output": "ok",
+        "sessionId": null,
+        "usage": {
+          "completeness": "unavailable",
+          "costUsd": null,
+          "inputTokens": null,
+          "model": {
+            "effective": null,
+            "requested": null
+          },
+          "outputTokens": null
+        }
+      },
+      "phase": null,
+      "request": {
+        "cwd": "/",
+        "environment": {
+          "set": [],
+          "sha256": "2427b8a3193f4941d731ebcc7f2ea9ae4029bd00b6f30c119edb89cc70dd7247",
+          "unset": []
+        },
+        "harness": "codex",
+        "instructions": "native",
+        "isolation": "restricted",
+        "limits": {
+          "idleTimeoutMs": null,
+          "killGraceMs": null,
+          "maxBudgetUsd": null,
+          "maxTurns": null,
+          "sandbox": "read-only",
+          "timeoutMs": 300000
+        },
+        "model": null,
+        "profile": "scout",
+        "promptPreview": "a",
+        "promptSha256": "ca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b9807785afee48bb",
+        "revision": 1,
+        "structured": false,
+        "tools": null
+      },
+      "revision": 1,
+      "seq": 1,
+      "settleStamp": 1,
+      "startedAt": "2026-10-03T08:32:33.561Z",
+      "status": "completed",
+      "wakeAt": null
+    }
+  },
+  "updatedAt": "2026-10-03T08:32:33.592Z",
+  "workflow": {
+    "fingerprint": "4233e444937ef8d80fd9aa74ca6dc59c85e2fe9cf94aeb16e2fb6e329d9400e8",
+    "identity": {
+      "code": "effort-compatibility",
+      "engine": {
+        "formatVersion": 6,
+        "version": "0.0.0"
+      },
+      "files": {},
+      "inputSchema": "199490fad0bd9dd1925ebbce2ed02f949ef0396fcbabcd41baa5ffa3b1ea49b2",
+      "outputSchema": "199490fad0bd9dd1925ebbce2ed02f949ef0396fcbabcd41baa5ffa3b1ea49b2"
+    },
+    "name": "effort-compatibility",
+    "version": "1"
+  }
+}

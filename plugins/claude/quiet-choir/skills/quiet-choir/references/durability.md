@@ -341,12 +341,12 @@ Provider-specific fields on a rule without `kind` apply only to that provider. P
 to the profile API; `profile` is not an accepted rule field yet.
 
 All rules are validated before effects. Unmatched rules produce saved `policyWarnings` for the
-visited path, also returned/printed as warnings on successful execution. `model` and
-`reasoningEffort` overrides require `--allow-model-override` (`allowModelOverride: true`) when
-added. That authorization is saved with the rules. They change only unfinished attempts; completed
-results keep their original model and never rerun. Tools, sandbox, and other capabilities cannot be
-changed by a policy rule. Resetting policy also clears saved model authorization unless explicitly
-granted again.
+visited path, also returned/printed as warnings on successful execution. `model` and `effort`
+overrides require `--allow-model-override` (`allowModelOverride: true`) when added. An `effort` rule
+applies to Codex steps only; a `claude`-scoped rule cannot set it. That authorization is saved with
+the rules. They change only unfinished attempts; completed results keep their original model and
+never rerun. Tools, sandbox, and other capabilities cannot be changed by a policy rule. Resetting
+policy also clears saved model authorization unless explicitly granted again.
 
 Inspect `steps[id].attemptHistory` for resolved limits, `sources`, requested model/effort,
 timestamps, and outcome. Sources are `runtime`, `harness`, `call-site`, or `override:N` (the

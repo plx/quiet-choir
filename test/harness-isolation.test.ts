@@ -491,7 +491,10 @@ const pinnedRequests = {
 } as const satisfies Record<string, BuiltinHarnessRequestInput>;
 const pinnedDigests = {
   codexPlain: '440c8defac487e76bb6686deb544bdf0553a52b56d91279b91ba6d01dbe148cc',
-  codexOptions: '6f0a8d10ccd191cefbd2badb6a5679596ff9aa5ad324159dcec3848fda0bb7e1',
+  // #341 moved Codex effort from option.effort into the reasoningEffort slot (a documented one-time
+  // change, 6f0a8d10… before). This is main's (c73138f) digest for the same request spelled
+  // reasoningEffort: 'low', so the pin still comes from code before the change.
+  codexOptions: 'd15fe1f7cbc171b389c671a8fd07b0dc5b6a5eda92e47f7a081e4d0e125ed99a',
   claude: '2d5ee84d4ac85337d6dba576936f436acb2c7d1e2132eed426cdec62ddb3721a',
 };
 const identityDigest = (identity: Readonly<Record<string, string>>): string =>

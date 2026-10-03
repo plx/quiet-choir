@@ -16,7 +16,11 @@ import {
   type WorkflowContext,
 } from '../src/index.js';
 import { agentIdentity } from '../src/workflow/runtime/identity.js';
-import { policyOverrideSchema, retryPolicySchema } from '../src/workflow/runtime/policy.js';
+import {
+  policyOverrideSchema,
+  retryPolicySchema,
+  validatePolicy,
+} from '../src/workflow/runtime/policy.js';
 import { errorKindSchema, stepErrorSchema } from '../src/workflow/runtime/step-error.js';
 
 let stateDir: string;
@@ -346,28 +350,35 @@ it('requires model authorization for new rules, saves it, and leaves completed m
     .mockRejectedValueOnce(new Error('first'))
     .mockResolvedValue(reply);
   const definition = workflow(async (ctx) => {
-    await ctx.codex.text('ask', { prompt: 'same', model: 'original', reasoningEffort: 'low' });
+    await ctx.codex.text('ask', { prompt: 'same', model: 'original', effort: 'low' });
     if (pause) throw new Error('pause');
     return 'done';
   });
   const setup = { ...options(), harness: { invoke } };
-  const policy: PolicyOverride[] = [{ model: 'replacement', reasoningEffort: 'high' }];
-  await expect(runWorkflow(definition, { ...setup, policy })).rejects.toThrow('allowModelOverride');
+  const policy: PolicyOverride[] = [{ model: 'replacement', effort: 'high' }];
+  await expect(runWorkflow(definition, { ...setup, policy })).rejects.toThrow(
+    'Model and effort policy overrides require allowModelOverride (--allow-model-override).',
+  );
   expect(invoke).not.toHaveBeenCalled();
   await expect(runWorkflow(definition, setup)).rejects.toThrow('first');
   await expect(
     runWorkflow(definition, { ...setup, resume: true, policy, allowModelOverride: true }),
   ).rejects.toThrow('pause');
+  expect(invoke.mock.calls[0]?.[0].options).toMatchObject({ model: 'original', effort: 'low' });
   expect(invoke.mock.calls[1]?.[0].options).toMatchObject({
     model: 'replacement',
-    reasoningEffort: 'high',
+    effort: 'high',
   });
-  const attempt = (await readRun(options())).steps['ask']?.attemptHistory?.[1];
-  expect(attempt).toMatchObject({
+  const history = (await readRun(options())).steps['ask']?.attemptHistory;
+  // The call-site Codex effort is a policy value too, so the first attempt records it.
+  expect(history?.[0]).toMatchObject({ effort: 'low', sources: { effort: 'call-site' } });
+  expect(history?.[1]).toMatchObject({
     requestedModel: 'replacement',
-    reasoningEffort: 'high',
-    sources: { model: 'override:0', reasoningEffort: 'override:0' },
+    effort: 'high',
+    requested: { model: 'replacement', effort: 'high' },
+    sources: { model: 'override:0', effort: 'override:0' },
   });
+  expect(history?.[1]).not.toHaveProperty('reasoningEffort');
   pause = false;
   await runWorkflow(definition, { ...setup, resume: true });
   expect(invoke).toHaveBeenCalledTimes(2);
@@ -378,7 +389,7 @@ it('requires model authorization for new rules, saves it, and leaves completed m
     allowModelOverride: true,
   });
   expect(result.policy).toHaveLength(2);
-  expect(result.steps['ask']?.attemptHistory?.[1]).toEqual(attempt);
+  expect(result.steps['ask']?.attemptHistory?.[1]).toEqual(history?.[1]);
   expect(invoke).toHaveBeenCalledTimes(2);
   await expect(
     runWorkflow(definition, { ...setup, resume: true, policy: [{ model: 'fourth' }] }),
@@ -441,10 +452,13 @@ it.each([
   { kind: 'exec', idleTimeoutMs: 1 },
   { idleTimeoutMs: 0 },
   { kind: 'codex', maxTurns: 1 },
-  { kind: 'claude', reasoningEffort: 'high' },
+  { kind: 'claude', effort: 'high' },
+  { kind: 'step', effort: 'high' },
+  { kind: 'exec', effort: 'high' },
   { tools: ['Bash'] },
   { model: 'x' },
-  { reasoningEffort: 'high' },
+  { effort: 'high' },
+  { kind: 'codex', effort: 'ultra' },
 ])('rejects invalid or unauthorized policy %j before workflow effects', async (policy) => {
   const run = vi.fn(() => Promise.resolve('done'));
   await expect(
@@ -452,6 +466,48 @@ it.each([
   ).rejects.toThrow();
   expect(run).not.toHaveBeenCalled();
   await expect(readFile(join(stateDir, 'policy.json'))).rejects.toMatchObject({ code: 'ENOENT' });
+});
+
+it('rejects an incoming reasoningEffort rule with the renamed message, even when authorized', async () => {
+  const run = vi.fn(() => Promise.resolve('done'));
+  const policy = [{ match: 'ask', reasoningEffort: 'high' }] as unknown as PolicyOverride[];
+  await expect(
+    runWorkflow(workflow(run), { ...options(), policy, allowModelOverride: true }),
+  ).rejects.toThrow(
+    'Invalid execution policy rule 0: reasoningEffort was renamed to effort; use effort (accepts none/minimal/low/medium/high/xhigh/max).',
+  );
+  expect(() => validatePolicy([{ kind: 'codex', effort: 'none' }], true)).not.toThrow();
+  expect(() => validatePolicy([{ kind: 'claude', effort: 'high' }], true)).toThrow(
+    'Does not apply to claude steps',
+  );
+  expect(run).not.toHaveBeenCalled();
+});
+
+it('applies an unscoped effort rule to Codex steps only', async () => {
+  const invoke = vi.fn<Harness['invoke']>().mockResolvedValue(reply);
+  const result = await runWorkflow(
+    workflow(async (ctx) => {
+      await ctx.claude.text('claude', { prompt: 'x', effort: 'low' });
+      return (await ctx.codex.text('codex', { prompt: 'x' })).output;
+    }),
+    {
+      ...options(),
+      harness: { invoke },
+      policy: [{ effort: 'minimal' }],
+      allowModelOverride: true,
+    },
+  );
+  expect(invoke.mock.calls[0]?.[0].options).toMatchObject({ effort: 'low' });
+  expect(invoke.mock.calls[1]?.[0].options).toMatchObject({ effort: 'minimal' });
+  expect(result.steps['claude']?.attemptHistory?.[0]).toMatchObject({
+    effort: null,
+    requested: { effort: 'low' },
+    sources: { effort: 'call-site' },
+  });
+  expect(result.steps['codex']?.attemptHistory?.[0]).toMatchObject({
+    effort: 'minimal',
+    sources: { effort: 'override:0' },
+  });
 });
 
 it('reports adapter defaults and preserves custom-harness unknowns', async () => {
@@ -486,7 +542,7 @@ it('reports adapter defaults and preserves custom-harness unknowns', async () =>
   expect(result.steps['ask']?.attemptHistory?.[0]).toMatchObject({
     policy: { retry: { maxAttempts: 1, delayMs: 100 } },
     requestedModel: null,
-    reasoningEffort: null,
+    effort: null,
   });
   expect(result.steps['ask']?.attemptHistory?.[0]?.policy).toHaveProperty('timeoutMs', 300_000);
 });

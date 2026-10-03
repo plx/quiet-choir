@@ -2,8 +2,8 @@ import type { AgentOptions, Effort, JsonValue } from '../../workflow/runtime/mod
 
 /** Codex-specific controls. CliHarness defaults to read-only sandbox and never approving. */
 export interface CodexOptions extends AgentOptions {
-  /** Native effort level; cannot accompany Codex reasoningEffort. */
-  readonly effort?: Effort | undefined;
+  /** Reasoning effort, sent as model_reasoning_effort; Codex also accepts none and minimal. */
+  readonly effort?: 'none' | 'minimal' | Effort | undefined;
   /** Network access for workspace-write; requires that sandbox explicitly. */
   readonly networkAccess?: boolean;
   /** Native Codex configuration profile; profile itself selects the quiet-choir role. */
@@ -16,8 +16,6 @@ export interface CodexOptions extends AgentOptions {
   readonly structuredOutput?: 'strict' | 'compat';
   /** Filesystem sandbox; declare in a workflow profile under default strictProfiles. Default: read-only. */
   readonly sandbox?: 'read-only' | 'workspace-write';
-  /** Harness reasoning effort. */
-  readonly reasoningEffort?: 'none' | 'minimal' | Effort;
   /**
    * Native instruction loading. `'native'` (the default) lets Codex read the user's
    * `CODEX_HOME/AGENTS.md`, user skills and project `AGENTS.md` files. `'none'` runs Codex against

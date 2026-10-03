@@ -812,7 +812,7 @@ function agentStep(seq: number, fixture: AgentFixture): StepRecord {
         status: status === 'running' ? 'running' : 'completed',
         error: null,
         requestedModel: model,
-        reasoningEffort: null,
+        effort: null,
         ...(fixture.diagnostics === undefined ? {} : { diagnostics: fixture.diagnostics }),
         ...(effort === undefined ? {} : { requested: { model: model ?? 'inherited', effort } }),
         policy: { retry: { maxAttempts: 1, delayMs: 0 } },

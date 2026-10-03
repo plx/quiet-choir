@@ -159,7 +159,7 @@ describe('durable TypeScript workflows', () => {
       });
       expectTypeOf(result.output.answer).toEqualTypeOf<number>();
       answer = result.output.answer;
-      const text = await ctx.codex.text('ask-codex', { prompt: 'echo', reasoningEffort: 'low' });
+      const text = await ctx.codex.text('ask-codex', { prompt: 'echo', effort: 'low' });
       expectTypeOf(text.output).toEqualTypeOf<string>();
       return answer;
     });

@@ -244,7 +244,8 @@ it('pins built-in revision-one digests to predecessor e25f264 and normalizes its
           options: {
             prompt: 'golden',
             isolation: 'restricted',
-            ...{ sandbox: 'read-only', reasoningEffort: 'high' },
+            // Pinned before #341 with reasoningEffort: Codex effort keeps that identity slot.
+            ...{ sandbox: 'read-only', effort: 'high' },
           },
         },
         { type: 'string' },

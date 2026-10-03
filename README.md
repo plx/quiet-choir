@@ -264,10 +264,10 @@ node "$QC_CHECKOUT/bin/run.js" workflow execute review.workflow.ts \
 Use the original launch directory, state path, and absolute `QC_CHECKOUT`. Completed steps replay;
 only unfinished calls use the new deadline. Repeat `--policy` for ordered rules; later matching
 fields win over call-site options and adapter defaults. `--policy-reset` clears saved rules. A bare
-resume retains them. `model` and `reasoningEffort` overrides require `--allow-model-override` when
-added; completed calls never rerun because of policy. Embedded callers use `RunOptions.policy`,
-`policyReset`, and `allowModelOverride`, or edit call-site limits without changing their source
-fingerprint. Globs use `*` within segments and `**` across `/`.
+resume retains them. `model` and `effort` overrides require `--allow-model-override` when added
+(`effort` rules apply to Codex steps only); completed calls never rerun because of policy. Embedded
+callers use `RunOptions.policy`, `policyReset`, and `allowModelOverride`, or edit call-site limits
+without changing their source fingerprint. Globs use `*` within segments and `**` across `/`.
 
 The implicit `text` profile supplies a five-minute deadline, 10 Claude turns and a $0.50 per-call
 budget. `readonly` and `edit` supply larger limits. Custom harnesses receive those resolved options,
@@ -533,9 +533,9 @@ rules add to applicable native permissions. Codex uses approval policy `never`. 
 calls suppress inherited hooks/MCP; explicit opt-ins and managed policy still apply. Retained
 protocol data is capped at 8 MiB; Codex has no per-call USD cap here. Model selection is explicit or
 uses the selected configuration mode’s native defaults. Both providers accept
-`effort: 'low' | 'medium' | 'high' | 'xhigh' | 'max'`; Codex `reasoningEffort` additionally accepts
-`none` and `minimal`. Set one effort field, never both. Omission uses the selected mode’s native
-defaults. [Harness controls](docs/harness-controls.md) describes role prompts, agents, MCP, native
+`effort: 'low' | 'medium' | 'high' | 'xhigh' | 'max'`; Codex `effort` additionally accepts `none`
+and `minimal`. Omission uses the selected mode’s native defaults.
+[Harness controls](docs/harness-controls.md) describes role prompts, agents, MCP, native
 profiles/config, directories, image attachments and the fingerprinted `extraArgs`/`env` escape
 hatch. `configuration doctor --json` verifies installed CLI contracts with zero-inference rejection
 probes and reports inherited Codex defaults. Run metadata captures native CLI versions on first live

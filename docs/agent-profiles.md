@@ -11,7 +11,7 @@ export default defineWorkflow({
   defaults: {
     profile: 'text',
     claude: { model: 'sonnet' },
-    codex: { reasoningEffort: 'medium' },
+    codex: { effort: 'medium' },
   },
   profiles: {
     scout: { extends: 'readonly', maxTurns: 30, description: 'Maps the repository' },

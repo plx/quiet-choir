@@ -42,9 +42,10 @@ import { errorKindSchema, retryOnSchema, stepErrorSchema } from './step-error.js
 import type { MapStepError, RootCause } from './fan-out.js';
 import type { StepIdentity } from './identity.js';
 import type { CodeChange, ForkProvenance, ReusedStep, WorkflowIdentity } from './replay-model.js';
+import { renameLegacyEffort } from './effort-compat.js';
 import {
   executionPolicySchema,
-  policyOverrideSchema,
+  storedPolicyOverrideSchema,
   type AttemptPolicy,
   type PolicyOverride,
 } from './policy.js';
@@ -566,43 +567,50 @@ const stepSchema = z
       .optional(),
     attemptHistory: z
       .array(
-        z.object({
-          sessionId: z.string().nullable().optional(),
-          requestedSessionId: z.uuid().optional(),
-          diagnostics: agentDiagnosticsSchema.optional(),
-          transcript: agentTranscriptSchema.optional(),
-          response: z.string().nullable().optional(),
-          responseTruncated: z.boolean().optional(),
-          validationIssues: z.array(jsonSchema).optional(),
-          worktree: worktreeStepSchema.optional(),
-          execution: z.number().int().positive().optional(),
-          exec: execSummarySchema.optional(),
-          execError: execDiagnosticsSchema.optional(),
-          durationMs: z.number().nonnegative().nullable().optional(),
-          usage: usageSchema.nullable().optional(),
-          errorStack: z.string().nullable().optional(),
-          request: requestSummarySchema.nullable().optional(),
-          integration: z.string().min(1).max(100).optional(),
-          attempt: z.number().int().positive(),
-          fingerprint: z.string(),
-          startedAt: z.iso.datetime(),
-          finishedAt: z.iso.datetime().nullable(),
-          status: z.enum(['running', 'completed', 'failed', 'cancelled', 'interrupted']),
-          error: z.string().nullable(),
-          errorKind: errorKindSchema.optional(),
-          policy: executionPolicySchema.extend({
-            retry: z.object({
-              maxAttempts: z.number().int().positive(),
-              delayMs: z.number().nonnegative(),
-              on: z.array(retryOnSchema).optional(),
+        z
+          .object({
+            sessionId: z.string().nullable().optional(),
+            requestedSessionId: z.uuid().optional(),
+            diagnostics: agentDiagnosticsSchema.optional(),
+            transcript: agentTranscriptSchema.optional(),
+            response: z.string().nullable().optional(),
+            responseTruncated: z.boolean().optional(),
+            validationIssues: z.array(jsonSchema).optional(),
+            worktree: worktreeStepSchema.optional(),
+            execution: z.number().int().positive().optional(),
+            exec: execSummarySchema.optional(),
+            execError: execDiagnosticsSchema.optional(),
+            durationMs: z.number().nonnegative().nullable().optional(),
+            usage: usageSchema.nullable().optional(),
+            errorStack: z.string().nullable().optional(),
+            request: requestSummarySchema.nullable().optional(),
+            integration: z.string().min(1).max(100).optional(),
+            attempt: z.number().int().positive(),
+            fingerprint: z.string(),
+            startedAt: z.iso.datetime(),
+            finishedAt: z.iso.datetime().nullable(),
+            status: z.enum(['running', 'completed', 'failed', 'cancelled', 'interrupted']),
+            error: z.string().nullable(),
+            errorKind: errorKindSchema.optional(),
+            policy: executionPolicySchema.extend({
+              retry: z.object({
+                maxAttempts: z.number().int().positive(),
+                delayMs: z.number().nonnegative(),
+                on: z.array(retryOnSchema).optional(),
+              }),
             }),
-          }),
-          sources: z.record(z.string(), z.string()),
-          profile: z.string().optional(),
-          requestedModel: z.string().nullable(),
-          reasoningEffort: z.enum(codexEffortValues).nullable(),
-          requested: z.object({ model: z.string(), effort: z.string() }).optional(),
-        }),
+            sources: z.record(z.string(), z.string()),
+            profile: z.string().optional(),
+            requestedModel: z.string().nullable(),
+            // Attempts written before #341 spell the Codex effort reasoningEffort.
+            effort: z.enum(codexEffortValues).nullable().optional(),
+            reasoningEffort: z.enum(codexEffortValues).nullable().optional(),
+            requested: z.object({ model: z.string(), effort: z.string() }).optional(),
+          })
+          .refine(
+            (attempt) => (attempt.effort === undefined) !== (attempt.reasoningEffort === undefined),
+            'An attempt records exactly one of effort or legacy reasoningEffort.',
+          ),
       )
       .optional(),
     attempts: z.number().int().nonnegative(),
@@ -842,7 +850,7 @@ const recordFieldsSchema = z.object({
   profileOverrides: z.array(profileOverrideSchema).optional(),
   grants: grantsSchema.optional(),
   grantedProfiles: z.record(z.string(), z.string().regex(/^[a-f0-9]{64}$/u)).optional(),
-  policy: z.array(policyOverrideSchema).optional(),
+  policy: z.array(storedPolicyOverrideSchema).optional(),
   allowModelOverride: z.boolean().optional(),
   policyWarnings: z.array(z.string()).optional(),
   forkedFrom: z
@@ -1034,7 +1042,12 @@ export function parseRunRecord(text: string, runId: string): RunRecord {
   return normalizeStoredHarnesses(record as RunRecord);
 }
 
-/** Normalize read views only; original checkpoint bytes and native identity digests remain untouched. @internal */
+/**
+ * Normalize read views only (legacy harness names, and the pre-#341 Codex reasoningEffort as effort
+ * in attempts, saved policy and capability manifests); original checkpoint bytes and native
+ * identity digests remain untouched. Runs after the snapshot parse and after journal replay.
+ * @internal
+ */
 export function normalizeStoredHarnesses(record: RunRecord): RunRecord {
   const summary = (value: RequestSummary | null | undefined): void => {
     if (!value) return;
@@ -1043,14 +1056,30 @@ export function normalizeStoredHarnesses(record: RunRecord): RunRecord {
       Object.assign(value, { harness: legacy });
     Reflect.deleteProperty(value, 'provider');
   };
-  for (const step of Object.values(record.steps)) {
+  // Codex reasoningEffort was renamed to effort (#341); validation rejects a value holding both.
+  const effort = (value: unknown, where: string): void => {
+    if (!renameLegacyEffort(value))
+      throw new Error(`${where} has both effort and legacy reasoningEffort.`);
+  };
+  for (const [id, step] of Object.entries(record.steps)) {
     if (record.formatVersion !== 1 && (step.kind === 'claude' || step.kind === 'codex')) {
       step.harness = step.kind;
       step.revision = 1;
       step.kind = 'agent';
     }
     summary(step.request);
-    for (const attempt of step.attemptHistory ?? []) summary(attempt.request);
+    for (const attempt of step.attemptHistory ?? []) {
+      summary(attempt.request);
+      effort(attempt, `Step ${id} attempt ${String(attempt.attempt)}`);
+    }
+  }
+  (record.policy ?? []).forEach((rule, index) => {
+    effort(rule, `Saved policy rule ${String(index)}`);
+  });
+  if (record.capabilities) {
+    effort(record.capabilities.defaults.codex, 'Capability defaults codex');
+    for (const [name, profile] of Object.entries(record.capabilities.profiles))
+      effort(profile.codex, `Capability profile ${name} codex`);
   }
   return record;
 }

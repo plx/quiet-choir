@@ -287,7 +287,7 @@ function summarizeAgents(
         harness:
           step.request?.harness ?? (step.kind === 'agent' ? step.harness : undefined) ?? step.kind,
         model: step.request?.model ?? null,
-        effort: attempt?.requested?.effort ?? attempt?.reasoningEffort ?? null,
+        effort: attempt?.requested?.effort ?? attempt?.effort ?? null,
         profile: step.request?.profile ?? attempt?.profile ?? null,
       };
     });

@@ -140,7 +140,15 @@ export const strict = defineWorkflow({
     // Non-capability options, restricted isolation and every worktree form still compile.
     await ctx.claude.text('t', { prompt, isolation: 'restricted', model: 'm', effort: 'low' });
     await ctx.claude.text('t', { prompt, worktree: true });
-    await ctx.codex.text('t', { prompt, worktree: { base: 'main' }, reasoningEffort: 'low' });
+    await ctx.codex.text('t', { prompt, worktree: { base: 'main' }, effort: 'low' });
+    // Codex has one effort option (#341): it adds none and minimal to the shared levels.
+    await ctx.codex.text('t', { prompt, effort: 'none' });
+    await ctx.codex.text('t', { prompt, effort: 'minimal' });
+    await ctx.codex.text('t', { prompt, effort: 'xhigh' });
+    // @ts-expect-error -- reasoningEffort was renamed to effort.
+    await ctx.codex.text('t', { prompt, reasoningEffort: 'low' });
+    // @ts-expect-error -- minimal is a Codex-only effort level.
+    await ctx.claude.text('t', { prompt, effort: 'minimal' });
     await ctx.codex.text('t', { prompt, worktree: { base: { commit } } });
     const tree = await ctx.worktree('tree');
     await ctx.claude.text('t', { prompt, worktree: tree, isolation: 'restricted' });
@@ -263,6 +271,21 @@ export const profiled = defineWorkflow({
     await strictHelper(ctx);
     return null;
   },
+});
+
+// Profiles and defaults take the same single Codex effort (#341).
+export const effortProfiles = defineWorkflow({
+  ...base,
+  name: 'effort-profiles',
+  defaults: { codex: { effort: 'minimal' } },
+  profiles: {
+    scout: { codex: { effort: 'none' } },
+    // @ts-expect-error -- reasoningEffort was renamed to effort.
+    legacy: { codex: { reasoningEffort: 'low' } },
+    // @ts-expect-error -- none is a Codex-only effort level.
+    claudeNone: { claude: { effort: 'none' } },
+  },
+  run: () => Promise.resolve(null),
 });
 
 // Declared children type by-name dispatch.

@@ -10,9 +10,10 @@ usage, retries, identity, and process recovery.
 
 ## Codex controls
 
-`reasoningEffort` accepts none/minimal/low/medium/high/xhigh/max; set it or shared `effort`, never
-both. `sandbox` is read-only or workspace-write. `skipGitRepoCheck: true` permits calls outside Git.
-These are resolved through the shared profile/grant rules.
+`effort` accepts none/minimal/low/medium/high/xhigh/max (Claude's `effort` has no none/minimal) and
+is sent as `model_reasoning_effort`. `sandbox` is read-only or workspace-write.
+`skipGitRepoCheck: true` permits calls outside Git. These are resolved through the shared
+profile/grant rules.
 
 | Additional option | Meaning                                                                                                                                                                               |
 | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -31,9 +32,8 @@ Explicit config values enter identity; external native config files do not. `ima
 Escape args fingerprint strings only, not files at paths embedded in them. Record model/effort
 selections under each attempt's `requested`, with `"inherited"` for omissions.
 
-Declare shared roles on `defineWorkflow`, for example
-`defaults: { codex: { reasoningEffort: 'medium' } }` and
-`profiles: { skeptic: { extends: 'readonly', codex: { reasoningEffort: 'high' } } }`. See
+Declare shared roles on `defineWorkflow`, for example `defaults: { codex: { effort: 'medium' } }`
+and `profiles: { skeptic: { extends: 'readonly', codex: { effort: 'high' } } }`. See
 [profiles and grants](agent-calls.md#select-a-role-and-grant-its-capabilities).
 
 Inside a workflow whose input includes `topic`:
@@ -44,7 +44,7 @@ Inside a workflow whose input includes `topic`:
 const result = await ctx.codex.object('review', {
   prompt: `Assess the clarity of this topic: ${input.topic}. Do not use tools.`,
   profile: 'readonly',
-  reasoningEffort: 'low',
+  effort: 'low',
   schema: z.object({ accepted: z.boolean(), reason: z.string() }),
 });
 ```

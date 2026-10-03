@@ -391,7 +391,7 @@ it.each([
   ['claude', 'model', 42],
   ['codex', 'timeoutMs', 2_147_483_648],
   ['codex', 'sandbox', 'unsafe'],
-  ['codex', 'reasoningEffort', 'bad'],
+  ['codex', 'effort', 'bad'],
   ['codex', 'skipGitRepoCheck', 1],
 ] as const)('rejects %s %s=%s before recording an effect', async (provider, key, value) => {
   const stateDir = await directory();
