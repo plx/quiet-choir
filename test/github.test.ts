@@ -520,7 +520,7 @@ describe('repository specs', () => {
     '',
     'o/',
   ])('rejects %j when the client is created', (repo) => {
-    expect(() => github({} as Pick<WorkflowContext, 'exec'>, { repo })).toThrow(
+    expect(() => github({} as Pick<WorkflowContext, 'exec' | 'poll'>, { repo })).toThrow(
       /Invalid GitHub repository/u,
     );
   });
