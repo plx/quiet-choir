@@ -12,9 +12,10 @@ describe('isTransientErrorKind', () => {
     expect(isTransientErrorKind(kind)).toBe(transient.includes(kind));
   });
 
-  it('is true for exactly the three transient kinds', () => {
+  it('is true for exactly the four transient kinds', () => {
     expect(errorKindSchema.options.filter((kind) => isTransientErrorKind(kind))).toEqual([
       'timeout',
+      'idle-timeout',
       'rate-limit',
       'overloaded',
     ]);
