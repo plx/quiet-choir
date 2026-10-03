@@ -41,8 +41,12 @@ fingerprint byte-identical; per-component digests sit beside it, and after a com
 mapper-only change under explicit acceptance is accepted (`decideSettledMapReplay`), recorded in
 `codeChanges` synchronously before the journal save. Drain and check ignored operation failures
 before committing an item. Cancellation, storage, configuration, and authoring guards must never
-become settled map data. Error identity/cause tracking attributes diagnostics only; it does not
-infer durable handling. See [ADR 0008](../../../docs/decisions/0008-scoped-fan-out.md).
+become settled map data, with one exception: in an `onError: 'return'` map with `cancelSiblings`,
+the map's own cancellation (never its parent's) journals cancelled siblings, attributed only to the
+step remembered for that exact error, and unstarted items with zero attempts. `onError` and
+`cancelSiblings` are scheduling policy outside the map fingerprint. Error identity/cause tracking
+attributes diagnostics only; it does not infer durable handling. See
+[ADR 0008](../../../docs/decisions/0008-scoped-fan-out.md).
 
 Names are captured at invocation, before policy resolution or asynchronous work. Scope and named-map
 prefixes compose explicit leaves; never allocate IDs from completion-order counters. Keep naming

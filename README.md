@@ -132,22 +132,22 @@ API key is required. See [harness isolation](docs/harness-isolation.md). The sou
 
 ## Operations
 
-| API                                                           | Behavior                                                                      |
-| ------------------------------------------------------------- | ----------------------------------------------------------------------------- |
-| `ctx.claude.value(id, { schema?, ...options })`               | Schema-inferred output, or plain text without a schema                        |
-| `ctx.codex.value`                                             | Equivalent Codex direct-output API                                            |
-| `ctx.claude.text(id, options)`                                | Durable Claude text result                                                    |
-| `ctx.claude.object(id, { schema, ...options })`               | Durable, validated Claude structured result                                   |
-| `ctx.codex.text` / `ctx.codex.object`                         | Equivalent Codex APIs with Codex-specific options                             |
-| `ctx.step(id, { input, schema, run, retry? })`                | Checkpoint a local effect; explicit dependencies detect replay drift          |
-| `ctx.map(id, items, { concurrency, key?, onError? }, mapper)` | Bounded fan-out; each item prefixes explicit leaf IDs with its map ID and key |
-| `ctx.ask(id, { prompt, schema, ... })`                        | Durable external answer; suspends after active work drains                    |
-| `ctx.approve(id, options)`                                    | Durable `{ approved, comment? }` decision for a specific subject              |
-| `ctx.now(id)`                                                 | Record a stable clock anchor for replay                                       |
-| `ctx.wait(id, sources)`                                       | Resolve a signal, read-only poll, or deadline in one record                   |
-| `ctx.sleepUntil(id, epochMs)`                                 | Wait until a fixed deadline; long waits suspend                               |
-| `ctx.poll(id, options)`                                       | Poll an observer or a command, with a schema, spacing, and finite deadline    |
-| `ctx.sleep(id, milliseconds)`                                 | Persist a wake time and wait only the remaining time after resume             |
+| API                                                                            | Behavior                                                                      |
+| ------------------------------------------------------------------------------ | ----------------------------------------------------------------------------- |
+| `ctx.claude.value(id, { schema?, ...options })`                                | Schema-inferred output, or plain text without a schema                        |
+| `ctx.codex.value`                                                              | Equivalent Codex direct-output API                                            |
+| `ctx.claude.text(id, options)`                                                 | Durable Claude text result                                                    |
+| `ctx.claude.object(id, { schema, ...options })`                                | Durable, validated Claude structured result                                   |
+| `ctx.codex.text` / `ctx.codex.object`                                          | Equivalent Codex APIs with Codex-specific options                             |
+| `ctx.step(id, { input, schema, run, retry? })`                                 | Checkpoint a local effect; explicit dependencies detect replay drift          |
+| `ctx.map(id, items, { concurrency, key?, onError?, cancelSiblings? }, mapper)` | Bounded fan-out; each item prefixes explicit leaf IDs with its map ID and key |
+| `ctx.ask(id, { prompt, schema, ... })`                                         | Durable external answer; suspends after active work drains                    |
+| `ctx.approve(id, options)`                                                     | Durable `{ approved, comment? }` decision for a specific subject              |
+| `ctx.now(id)`                                                                  | Record a stable clock anchor for replay                                       |
+| `ctx.wait(id, sources)`                                                        | Resolve a signal, read-only poll, or deadline in one record                   |
+| `ctx.sleepUntil(id, epochMs)`                                                  | Wait until a fixed deadline; long waits suspend                               |
+| `ctx.poll(id, options)`                                                        | Poll an observer or a command, with a schema, spacing, and finite deadline    |
+| `ctx.sleep(id, milliseconds)`                                                  | Persist a wake time and wait only the remaining time after resume             |
 
 Long waits suspend at quiescence without cancelling siblings; waits due within 1000 ms stay live.
 Use `workflow tick --run RUN --watch --timeout 540s --json` or periodic cron to resume due work.
@@ -349,11 +349,11 @@ the raw part. Each part remains one segment. Hash suffixes reduce collisions; un
 still apply. Full IDs retain the 200-character limit; shorten nesting/labels if that limit is hit.
 Errors show bounded full ID, scope, leaf, offending character/index, and the allowed pattern.
 
-The deprecated `ctx.map(items, concurrency, mapper, options?)` form adds no item prefix. Existing
-unscoped IDs and semantic fingerprints remain unchanged. Storage format 7 preserves replay contract
-6; flat format-6 runs migrate automatically. Format-5 records remain inspectable. Its settled form
-still requires an explicit `options.id` for the journal. Adopting named maps or scopes changes IDs:
-use a new run, optionally a deliberate fork; code acceptance does not rename saved steps.
+The positional `ctx.map(items, concurrency, mapper, options?)` form has been removed; calling it
+fails with a message showing the named form. Storage format 7 preserves replay contract 6; flat
+format-6 runs migrate automatically, and format-5 records remain inspectable. Moving a workflow from
+positional maps to named maps or scopes changes its IDs: use a new run, optionally a deliberate
+fork; code acceptance does not rename saved steps.
 
 ## Failure handling
 
@@ -388,46 +388,50 @@ eligible FIFO ordering and shared limits.
 
 ## Fan-out failure policies
 
-`ctx.map('items', items, { concurrency }, mapper)` defaults to `onError: 'drain'`: the first mapper
-failure stops scheduling new items, lets started mappers finish and checkpoint without an abort
-signal, then rejects with `FanOutError`. Its `failures` identify input indexes and originating step
-IDs; `unscheduled` lists items never started. Drain can wait for the slowest active call. A body
-rejection (for example from `Promise.all`) closes the workflow: effects already started finish and
-checkpoint before the run lock is released, but any new launch fails with "Workflow is closed",
-including an active mapper's next step and a map started by a still-running branch. To let sibling
-branches finish, catch inside each branch or use `Promise.allSettled`.
+`ctx.map('items', items, { concurrency }, mapper)` drains by default: the first mapper failure stops
+scheduling new items, lets started mappers finish and checkpoint without an abort signal, then
+rejects with `FanOutError` (`policy: 'drain'`). Its `failures` identify input indexes and
+originating step IDs; `unscheduled` lists items never started. Drain can wait for the slowest active
+call. A body rejection (for example from `Promise.all`) closes the workflow: effects already started
+finish and checkpoint before the run lock is released, but any new launch fails with "Workflow is
+closed", including an active mapper's next step and a map started by a still-running branch. To let
+sibling branches finish, catch inside each branch or use `Promise.allSettled`.
 
-Pass `{ onError: 'abort' }` to cancel just that map's subtree after a failure. Catching a failed map
-allows later workflow steps, and a caught inner-map failure leaves other outer branches running.
-`ctx.signal` and each effect's signal refer to the current scope. Run interruption still cancels all
-scopes. Interrupted effects have status `cancelled` and `cancelledBy`; the initiating effect stays
-`failed`. Inspect `rootCause: { stepId, error, errorKind }` for the run's cause; handled failures
-leave `rootCause` null in a completed run. Ctrl-C (or SIGTERM/SIGHUP) is not a failure: it drains,
-saves a resumable `suspended` run with `interruptedBy: { reason, at }` and no root cause, and exits
-130; the next `workflow tick` or `resume` continues it. An explicit or workflow-scoped cancellation
-saves `cancelled`.
+Pass `cancelSiblings: true` to cancel just that map's subtree after a failure (`policy: 'abort'`).
+Catching a failed map allows later workflow steps, and a caught inner-map failure leaves other outer
+branches running. `ctx.signal` and each effect's signal refer to the current scope. Run interruption
+still cancels all scopes. Interrupted effects have status `cancelled` and `cancelledBy`; the
+initiating effect stays `failed`. Inspect `rootCause: { stepId, error, errorKind }` for the run's
+cause; handled failures leave `rootCause` null in a completed run. Ctrl-C (or SIGTERM/SIGHUP) is not
+a failure: it drains, saves a resumable `suspended` run with `interruptedBy: { reason, at }` and no
+root cause, and exits 130; the next `workflow tick` or `resume` continues it. An explicit or
+workflow-scoped cancellation saves `cancelled`.
 
-Use an explicitly named settled map to retain every item's outcome, including mapper-body errors:
+Pass `onError: 'return'` to retain every item's outcome, including mapper-body errors:
 
 ```ts
-const reviews = await ctx.map('reviews', topics, { concurrency: 3, onError: 'settle' }, (topic) =>
+const reviews = await ctx.map('reviews', topics, { concurrency: 3, onError: 'return' }, (topic) =>
   ctx.claude.text('review', { prompt: topic }),
 );
 const accepted = reviews.flatMap((review) => (review.ok ? [review.value.output] : []));
 ```
 
 This returns ordered `Settled<U, MapStepError>[]`: failures have
-`{ message, kind, attempts, stepId }`. It runs every item without cancelling siblings; cancellation,
-checkpoint failures, and authoring errors still reject. The full map ID names the journal and its
-items prefix leaf IDs. Item inputs, resolved keys, original mapper source, optional `version`, and
-cwd define its identity; concurrency can change on resume. Inputs and results must be lossless JSON.
-The map snapshots `items` when called; settled mappers receive JSON copies of that snapshot. Put
-captured dependencies in items or bump `version`. Resume skips each committed mapper and its owned
-effects and returns the saved outcome, so an ordinary mapper-body failure cannot heal and change a
-downstream fingerprint. Incomplete items execute again. A change after an item committed is refused
-with the changed component named; `--accept-code-change` accepts a mapper-only change, keeping
-committed outcomes and running unfinished items with the new mapper. Forks start fresh map journals
-and use the normal per-step reuse rules.
+`{ message, kind, attempts, stepId }`. By default it runs every item without cancelling siblings.
+With `cancelSiblings: true` as well, the first failure cancels only this map's subtree: started
+siblings that resolve anyway keep their value, cancelled ones return `kind: 'cancelled'` with their
+cancelled step's ID, and unstarted ones return `kind: 'cancelled'` with `attempts: 0` and a null
+`stepId`. Run cancellation, checkpoint failures, and authoring errors still reject. `onError` and
+`cancelSiblings` are scheduling policy, outside the map's identity. The full map ID names the
+journal and its items prefix leaf IDs. Item inputs, resolved keys, original mapper source, optional
+`version`, and cwd define its identity; concurrency can change on resume. Inputs and results must be
+lossless JSON. The map snapshots `items` when called; settled mappers receive JSON copies of that
+snapshot. Put captured dependencies in items or bump `version`. Resume skips each committed mapper
+and its owned effects and returns the saved outcome, so an ordinary mapper-body failure cannot heal
+and change a downstream fingerprint. Incomplete items execute again. A change after an item
+committed is refused with the changed component named; `--accept-code-change` accepts a mapper-only
+change, keeping committed outcomes and running unfinished items with the new mapper. Forks start
+fresh map journals and use the normal per-step reuse rules.
 
 ## Durable commands and files
 

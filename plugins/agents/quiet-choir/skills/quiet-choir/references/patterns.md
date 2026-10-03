@@ -70,7 +70,7 @@ workaround was superseded by drain/scoped cancellation in
 ## Failure-tolerant panel
 
 **Rule:** when failure participates in a quorum or fallback decision, journal that decision.
-`onError: 'settle'` saves each whole mapper outcome, including failures. This recipe returns
+`onError: 'return'` saves each whole mapper outcome, including failures. This recipe returns
 `quorum:false` as data when too few reviewers succeed. Cancellation, configuration errors,
 checkpoint failures, and authoring guards still reject instead of becoming votes. Use the preceding
 drain recipe when failed reviewers should be retried on resume.
@@ -89,7 +89,7 @@ export default defineWorkflow({
     const results = await ctx.map(
       'panel',
       input.lenses,
-      { concurrency: 2, onError: 'settle' },
+      { concurrency: 2, onError: 'return' },
       (lens) => ctx.claude.value('review', { prompt: `${lens}: ${input.topic}` }),
     );
     const answers = results.flatMap((result) => (result.ok ? [result.value] : []));
@@ -707,7 +707,6 @@ marked with a rule code are also reported before the run by the [durability lint
 | Start `void` chains or ignore a durable promise ([QC001](#qc001))                           | Owned operations drain, ignored failures reject, and new operations after closure are refused; unowned async chains remain unsafe | Await each stage as in the [per-item pipeline](#per-item-pipeline)                                                                                                  |
 | Call `ctx.step`/`ctx.exec` inside a step `run` or a poll `observe`/`done` ([QC003](#qc003)) | The runtime rejects the nested durable call when the callback runs, after earlier effects already ran                             | The callback's own `context.exec`/`context.exec.json`, or move the call into the workflow body                                                                      |
 | Reuse a literal effect ID, or put one in a loop ([QC005](#qc005))                           | `Duplicate step ID` at the second use                                                                                             | Unique IDs, `ctx.id(...)` per item, `ctx.within`/`ctx.scope`, or a named `ctx.map` as in the [per-item pipeline](#per-item-pipeline)                                |
-| Fan out with the positional `ctx.map(items, n, mapper)` ([QC006](#qc006))                   | Deprecated; mappers share one unscoped ID namespace                                                                               | The named `ctx.map(id, items, { concurrency }, mapper)`                                                                                                             |
 | Raise limits by changing completed semantic inputs/model/tool grants                        | Limits/retry are now policy; semantic changes still invalidate terminal identity                                                  | Keep the [bounded loop](#bounded-reviewrevise), raise authorized sticky limits, and use [fork reuse](#salvage-an-old-run) for semantic edits                        |
 | Run parallel editing calls in one checkout                                                  | Filesystem edits race and checkpoints cannot roll them back                                                                       | [Worktree per item](#worktree-per-item), with explicit ownership and grants                                                                                         |
 
@@ -754,16 +753,11 @@ from them. Use one [`ctx.wait`](#polling-and-deadlines) for a durable choice.
 
 A literal effect ID (a string or plain template literal) on the root context (`ctx`, `ctx.claude`,
 `ctx.codex`, `ctx.agent(name)`, `ctx.exec`, `ctx.exec.json`) used twice in one ID namespace, or
-inside a loop: `for`, `while`, `do`, an array callback (`map`, `forEach`, `reduce`, `sort`, ...),
-`Array.from` with a mapper, or a positional `ctx.map` mapper. The workflow function, a `ctx.scope`
-callback, a named-map mapper and a child workflow each start a namespace. Reuse in different
-branches of one `if`/`else`, `?:` or `switch`, or in an `if` branch that ends in `return`/`throw`
-versus code after it, is not reported. Use `ctx.id(...)`, `ctx.within`, `ctx.scope` or a named map.
-
-#### QC006
-
-The deprecated positional `ctx.map(items, concurrency, mapper)`. Use the named form
-`ctx.map(id, items, { concurrency }, mapper)`.
+inside a loop: `for`, `while`, `do`, an array callback (`map`, `forEach`, `reduce`, `sort`, ...), or
+`Array.from` with a mapper. The workflow function, a `ctx.scope` callback, a named-map mapper and a
+child workflow each start a namespace. Reuse in different branches of one `if`/`else`, `?:` or
+`switch`, or in an `if` branch that ends in `return`/`throw` versus code after it, is not reported.
+Use `ctx.id(...)`, `ctx.within`, `ctx.scope` or a named map.
 
 #### Suppress a finding
 

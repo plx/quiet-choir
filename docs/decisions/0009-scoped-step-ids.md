@@ -34,9 +34,12 @@ checkpointed inputs. Failure policies retain decision 0008's semantics.
 
 A named settled map uses its full name as the item journal ID. Its fingerprint includes resolved
 keys and the original mapper function, as well as inputs/version/cwd. Hashing a generated wrapper
-instead would silently hide mapper changes. The deprecated positional overload remains available;
-unscoped legacy effects and settled-map fingerprints remain unchanged. Adopting scopes changes IDs
-and requires a new run or explicit fork; code acceptance cannot rename saved work.
+instead would silently hide mapper changes. The deprecated positional overload remained available
+until #339 removed it
+([ADR 0008](0008-scoped-fan-out.md#amendment-split-onerror-into-a-result-mode-and-cancelsiblings-339));
+a positional call now fails at runtime with a message showing the named form, and existing format-5
+legacy-map checkpoints stay inspectable. Adopting scopes changes IDs and requires a new run or
+explicit fork; code acceptance cannot rename saved work.
 
 `stepId(...parts)` and `ctx.id(...parts)` are identical pure helpers. Each clean segment up to 64
 characters passes through; unsafe/long parts become a slug plus eight hex characters of SHA-256 over

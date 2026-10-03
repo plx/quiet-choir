@@ -5,7 +5,8 @@
 Accepted. Extends [0004](0004-operation-ownership.md) and [0007](0007-durable-failure-outcomes.md).
 Checkpoint format 5 supersedes format 4 for execution. Amended by #146: map journals also save
 per-component digests, a refusal names the changed component, and explicit code acceptance accepts a
-mapper-only change.
+mapper-only change. Amended by #339: `'settle'` is spelled `'return'`, `'drain'`/`'abort'` become
+the default and `cancelSiblings: true`, and a `'return'` map can cancel its own siblings.
 
 ## Context
 
@@ -43,7 +44,8 @@ resumable suspension with `interruptedBy` and no run cause; unmarked aborts keep
 identity to the illustrative API in issue #43: unnamed completion-order counters cannot safely
 distinguish concurrent/nested mapper-body outcomes. Drain and abort retain the existing positional
 API and no collection journal. Map IDs do not change or prefix leaf IDs; broader ID composition is
-issue #44.
+issue #44. (Historical: since #339 only the named form exists, so every map has an ID, and
+`'settle'` is spelled `'return'`; see the amendment below.)
 
 A settled map hashes JSON item inputs, mapper source, optional version, and cwd, excluding
 concurrency. Every item saves its whole JSON `Settled` outcome and the IDs of owned leaves/nested
@@ -101,3 +103,40 @@ Only the mapper function's own source is hashed, so a thin mapper such as
 Committed items keep their saved outcomes, and leaf step identity checks still apply to items that
 run again. Bump `version` to make a helper edit change identity (see
 [ADR 0009](0009-scoped-step-ids.md)).
+
+## Amendment: split onError into a result mode and cancelSiblings (#339)
+
+`onError` mixed two axes: the result shape (`'settle'`) and scheduling after a failure (`'drain'`,
+`'abort'`), so a map could not both return settled outcomes and cancel its siblings. With the
+positional overloads removed ([ADR 0009](0009-scoped-step-ids.md)),
+`ctx.map(id, items, options, mapper)` takes `onError: 'throw' | 'return'`, matching steps and
+agents, and a separate boolean `cancelSiblings`. `'settle'` is renamed `'return'`; the runtime still
+accepts `'settle'` as an untyped alias so in-flight workflows keep running. `'drain'` becomes the
+default and `'abort'` becomes `cancelSiblings: true`; both now fail validation with a message
+pointing at the new options. `FanOutError.policy` keeps its `'drain' | 'abort'` values.
+
+`onError` and `cancelSiblings` are scheduling policy, like concurrency, and stay outside the map
+fingerprint and components. The aggregate formula is unchanged, so `'settle'` and `'return'` journal
+byte-identically and existing format-7 settled journals keep replaying, including after the source
+is edited from `'settle'` to `'return'`. The settled scope flag (declared children) follows the
+journal, not `cancelSiblings`.
+
+`'return'` with `cancelSiblings: true` journals the map's own cancellation, the one exception to
+"cancellation never becomes settled data":
+
+- The first item failure journaled as a non-cancelled outcome aborts only the map's controller,
+  never its parent scope or the run.
+- A started sibling whose mapper resolves after that abort is journaled `ok: true`, following the
+  resolve-after-abort rule above.
+- A started sibling that rejects as cancelled while the parent scope is live is journaled as a
+  failure built from that rejection: kind `'cancelled'`, its `Map cancelled by step X.` message, and
+  the step remembered for that exact error (the cancelled leaf), or null. The cause chain leads to
+  the initiating failure, so it is never used to attribute this outcome.
+- Unstarted items are journaled without calling their mappers as kind `'cancelled'` with
+  `attempts: 0` and a null `stepId`. The record validator accepts cancelled item outcomes and zero
+  attempts only in that combination with a null step.
+- On resume, a journal that already holds a committed non-cancelled failure aborts the controller
+  before scheduling, so uncommitted items are journaled as cancelled deterministically.
+- Parent, run and interrupt cancellation, checkpoint failures and authoring errors still reject and
+  are not journaled; the map completes with the full `Settled[]` only while its parent scope is
+  live, and replay returns identical results.

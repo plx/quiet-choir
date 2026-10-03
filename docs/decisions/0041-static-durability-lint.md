@@ -1,6 +1,6 @@
 # 0041: Static durability lint at load time
 
-- Status: accepted
+- Status: accepted; amended by #339 (QC006 retired)
 - Issue: #154
 
 ## Context
@@ -58,14 +58,15 @@ check with no errors and before import.
     root receiver (the `WorkflowContext` parameter, or `.claude`, `.codex`, `.agent(x)`, `.exec`,
     `.exec.json` on it; never through `.within(...)`), either inside a loop of its ID namespace
     (`for`, `for-in`, `for-of`, `while`, `do`, an array iteration or `sort`/`toSorted` callback,
-    `Array.from` with a mapper, a positional `ctx.map` mapper) or reused in that namespace. The
-    workflow function, a `ctx.scope` callback, a named-map mapper and a child workflow each start a
-    namespace. Different branches of one `if`/`else`, `?:` or `switch` (when the earlier clause ends
-    in `break`, `continue`, `return` or `throw`), and an `if` branch ending in `return` or `throw`
-    versus code after that `if`, are exclusive and not reuse. Every occurrence after the first is
-    reported.
+    `Array.from` with a mapper, and until #339 a positional `ctx.map` mapper) or reused in that
+    namespace. The workflow function, a `ctx.scope` callback, a named-map mapper and a child
+    workflow each start a namespace. Different branches of one `if`/`else`, `?:` or `switch` (when
+    the earlier clause ends in `break`, `continue`, `return` or `throw`), and an `if` branch ending
+    in `return` or `throw` versus code after that `if`, are exclusive and not reuse. Every
+    occurrence after the first is reported.
   - QC006: a call resolving to a `@deprecated` `WorkflowContext.map` overload, detected through the
-    JSDoc tag, so the rule disappears when #158 removes the positional overloads.
+    JSDoc tag, so the rule disappears when #158 removes the positional overloads. Retired by #339;
+    see the amendment below.
 - **Suppression.** A line consisting of `// quiet-choir-ignore QCnnn[, QCnnn] <reason>` directly
   before a finding's line silences the listed rules for findings that start on that line. It is
   matched with a linear regular expression. The engine accepts a missing reason; the repository's
@@ -86,8 +87,8 @@ check with no errors and before import.
   program per tsconfig, with the same `configuredProgram` construction and lint as validate, over
   `examples/`, `examples/patterns/` and both Workflow Lab batches' ported workflows. It fails on any
   finding, type error or reasonless suppression, and runs in `npm run check` and the CI static job
-  after the build. Batch 01's positional maps keep their legacy IDs behind reasoned QC006
-  suppressions, because the named form would change the IDs and journals its verification records.
+  after the build. Batch 01 needed reasoned QC006 suppressions for its positional maps until #339
+  moved them to named maps with item-relative scopes, which keep its verified IDs.
 
 ## Consequences
 
@@ -102,3 +103,14 @@ separate variable is not a callback zone), does not check literal `ctx.scope` or
 prefixes inside loops or IDs on a `ctx.within(...)` context, and does not cover `fs/promises` or
 `child_process` reads. Runtime guards (duplicate IDs, nested effects, tracked-operation draining)
 remain the backstop. Unused suppressions are not reported.
+
+## Amendment: QC006 retired (#339)
+
+#339 removed the positional `ctx.map` overloads, so no `@deprecated` map member is left for QC006 to
+find. The rule is gone from `DURABILITY_RULES` and the lint, with its fixture and the lint's
+positional-mapper loop branch; a positional call is now a type error and a runtime validation error.
+The code QC006 is reserved and never reused, so an old suppression comment or report cannot be
+mistaken for a new rule. Suppression parsing still accepts any `QCnnn`. Batch 01's parallel and
+pipeline helpers use named maps whose mappers scope IDs relative to the item prefix, so their full
+step IDs and verification records are unchanged and the corpus needs no suppressions. The lint
+reports QC001-QC005.
