@@ -182,7 +182,9 @@ blocked from a ready one.
 ### Text rules
 
 - **Code.** Text in code is never read. A fenced block is three or more backticks or tildes, closes
-  only on a line of the same character at least as long, and an unclosed fence runs to the end. An
+  only on a line of the same character at least as long, and an unclosed fence runs to the end. It
+  may open inside block quotes and list items (`> ~~~`, `- ~~~`, as in a quoted reply), and a fence
+  in a block quote ends with that quote: a later line with fewer `>` markers is outside it. An
   inline code span, as in CommonMark, opens at a backtick run and closes at the next run of exactly
   the same length; it may cross a line ending but not a blank line or a fence, and a run with no
   closer is literal text. Checklist lines are read one at a time, so a span never continues onto the

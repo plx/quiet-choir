@@ -871,6 +871,14 @@ describe('parseEpicChecklist', () => {
       [[26, false]],
     ],
     ['an unclosed fence runs to the end', '- [ ] #27\n```ts\n- [ ] #28', [[27, false]]],
+    [
+      'a fence in a block quote or list item',
+      '> ~~~\n- [ ] #35\n> ~~~\n- ```\n- [ ] #36\n  ```\n- [ ] #37',
+      [
+        [35, false],
+        [37, false],
+      ],
+    ],
     ['inline code on a fence-like line is not a fence', '```a` b\n- [ ] #29', [[29, false]]],
     ['an unmatched backtick stays literal', '- [ ] ` #30 then ``#31``', [[30, false]]],
     [
@@ -918,6 +926,16 @@ describe('parseDependencies', () => {
     ['a span does not cross a fence', ['See `x\n```\ncode\n```\nDepends on #28 `'], [28]],
     ['a colon after the phrase', ['Depends on: #29', 'requires :#30'], [29, 30]],
     ['fenced code ignored', ['```\nDepends on #16\n```\nDepends on #17'], [17]],
+    ['a fence in a block quote', ['> ~~~\n> Depends on #33\n>\n> ~~~\n> Depends on #34'], [34]],
+    ['a fence in nested block quotes', ['> > ```md\n>> Depends on #35\n> > ```'], []],
+    ['a quoted fence ends with its block quote', ['> ~~~\n> code\n\nDepends on #36'], [36]],
+    ['a quoted fence line is not a closer outside it', ['~~~\n> ~~~\nDepends on #37\n~~~'], []],
+    [
+      'a fence in a list item',
+      ['- ~~~\n  Depends on #38\n  ~~~\n1. ```\n   Depends on #39\n   ```\n- Depends on #40'],
+      [40],
+    ],
+    ['a fence in a list item in a block quote', ['> - ~~~\n>   Depends on #41\n>   ~~~'], []],
     ['a word between the phrase and the reference', ['depends on the #18 fix'], []],
     ['self excluded', ['Depends on #42 and #19'], [19]],
     [
@@ -969,6 +987,17 @@ describe('parsers on adversarial input', () => {
     expect(parseDependencies([`Depends on${' '.repeat(100_000)}x`], REPO, 42)).toEqual([]);
   });
 
+  it('reads long runs of container markers in linear time', () => {
+    for (const marker of ['> ', '- ', '1. ', ' \t'])
+      expect(
+        parseDependencies(
+          [`${marker.repeat(100_000)}x\n${marker.repeat(100_000)}Depends on #7`],
+          REPO,
+          42,
+        ),
+      ).toEqual([7]);
+  });
+
   it('reads fence lines made of long backtick runs', () => {
     const run = '`'.repeat(100_000);
     // A backtick after the run makes the line inline code, not a fence.
@@ -1008,6 +1037,16 @@ describe('parseSplit', () => {
       [5, 6],
     ],
     ['fenced code', [by(VIEWER, '~~~\n<!-- epic:split 13 -->\n~~~')], null],
+    [
+      'a quoted reply of a fenced example',
+      [by(VIEWER, '> ~~~\n> <!-- epic:split 1,2 -->\n> ~~~\n\nThanks.')],
+      null,
+    ],
+    [
+      'a fenced example in a list item',
+      [by(VIEWER, '- ```\n  <!-- epic:split 1 -->\n  ```')],
+      null,
+    ],
     ['self excluded and duplicates removed', [by(VIEWER, '<!-- epic:split 42, 14, 14 -->')], [14]],
     ['only self', [by(VIEWER, '<!-- epic:split 42 -->')], null],
     ['invalid numbers dropped', [by(VIEWER, '<!-- epic:split 0,3 -->')], [3]],

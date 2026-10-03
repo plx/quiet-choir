@@ -320,27 +320,104 @@ function ownRefs(text: string, repo: string): number[] {
   return found;
 }
 
+const isBlank = (char: string): boolean => char === ' ' || char === '\t';
+const isDigit = (char: string): boolean => char >= '0' && char <= '9';
+
+/**
+ * The block-quote markers that open `line`: how many (`depth`, at most `limit`) and where the rest
+ * of the line starts (`end`, after the last marker and one optional space). Whitespace before each
+ * marker is skipped. A character loop, so no input can make it backtrack.
+ */
+function quotePrefix(
+  line: string,
+  limit = Number.POSITIVE_INFINITY,
+): { depth: number; end: number } {
+  let depth = 0;
+  let end = 0;
+  let index = 0;
+  while (depth < limit) {
+    while (isBlank(line.charAt(index))) index += 1;
+    if (line.charAt(index) !== '>') break;
+    depth += 1;
+    index += 1;
+    if (isBlank(line.charAt(index))) index += 1;
+    end = index;
+  }
+  return { depth, end };
+}
+
+/**
+ * Where the list marker at `index` of `line` ends, after the space or tab that must follow it, or
+ * -1 when there is none: a bullet (`-`, `*` or `+`) or an ordered marker (one to nine digits and
+ * `.` or `)`).
+ */
+function listMarkerEnd(line: string, index: number): number {
+  const char = line.charAt(index);
+  let end = index;
+  if (char === '-' || char === '*' || char === '+') end += 1;
+  else {
+    while (end - index < 10 && isDigit(line.charAt(end))) end += 1;
+    const digits = end - index;
+    if (digits === 0 || digits > 9 || (line.charAt(end) !== '.' && line.charAt(end) !== ')'))
+      return -1;
+    end += 1;
+  }
+  return isBlank(line.charAt(end)) ? end + 1 : -1;
+}
+
+/**
+ * The Markdown container markers that open `line`, block quotes (`>`) and list items (`-`, `1.`)
+ * in any nesting: the number of block quotes among them and where the rest of the line starts.
+ */
+function containerPrefix(line: string): { depth: number; end: number } {
+  let depth = 0;
+  let end = 0;
+  for (;;) {
+    let index = end;
+    while (isBlank(line.charAt(index))) index += 1;
+    if (line.charAt(index) === '>') {
+      depth += 1;
+      end = index + 1;
+      continue;
+    }
+    const marker = listMarkerEnd(line, index);
+    if (marker === -1) return { depth, end };
+    end = marker;
+  }
+}
+
 /**
  * For each line, whether it belongs to a fenced code block (fence lines included). A fence is three
  * or more backticks or tildes; it closes on a line of the same character at least as long, and an
- * unclosed fence runs to the end, as in CommonMark.
+ * unclosed fence runs to the end of its container, as in CommonMark. A fence may open inside block
+ * quotes and list items (`> ~~~`, `- ~~~`, `> 1. ~~~`): the container markers are read first. It
+ * ends with the block quotes it opened in: a later line with fewer `>` markers is outside it, and
+ * its own markers are read before its closer. A fence in a list item runs until its closer.
  */
 function fenceMask(text: readonly string[]): boolean[] {
-  let fence: string | null = null;
+  let fence: { run: string; depth: number } | null = null;
   return text.map((line) => {
     if (fence !== null) {
-      const close = /^\s*(`{3,}|~{3,})\s*$/u.exec(line)?.[1];
-      if (close?.startsWith(fence.charAt(0)) && close.length >= fence.length) fence = null;
-      return true;
+      const quote = quotePrefix(line, fence.depth);
+      if (quote.depth === fence.depth) {
+        const close = /^\s*(`{3,}|~{3,})\s*$/u.exec(line.slice(quote.end))?.[1];
+        if (close?.startsWith(fence.run.charAt(0)) && close.length >= fence.run.length)
+          fence = null;
+        return true;
+      }
+      // The block quote that held the fence ended, and the fence with it.
+      fence = null;
     }
+    const prefix = containerPrefix(line);
+    const rest = line.slice(prefix.end);
     // The run is taken whole and the info string sliced off, so no regex splits the run.
-    const open = /^\s*(`{3,}|~{3,})/u.exec(line);
+    const open = /^\s*(`{3,}|~{3,})/u.exec(rest);
     // A backtick fence's info string cannot contain a backtick (that line is inline code).
     if (
       open?.[1] !== undefined &&
-      !(open[1].startsWith('`') && line.slice(open[0].length).includes('`'))
+      !(open[1].startsWith('`') && rest.slice(open[0].length).includes('`'))
     ) {
-      fence = open[1];
+      fence = { run: open[1], depth: prefix.depth };
       return true;
     }
     return false;
