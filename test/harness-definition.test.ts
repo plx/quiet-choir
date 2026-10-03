@@ -104,7 +104,9 @@ it('keeps a literal capabilityKeys tuple and widens the list when it is omitted'
   // Explicit <N, O, C> type arguments take the same widened default, so capabilityKeys still
   // compiles; call sites stay permissive at type level and the runtime check applies.
   type KeyedOptions = z.infer<typeof keyedOptions>;
-  interface KeyedCapabilities { readonly structuredOutput: 'native' }
+  interface KeyedCapabilities {
+    readonly structuredOutput: 'native';
+  }
   const explicit = defineHarness<'explicit', KeyedOptions, KeyedCapabilities>({
     name: 'explicit',
     revision: 1,
