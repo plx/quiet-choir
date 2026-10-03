@@ -2,6 +2,24 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- `quiet-choir/github` adds pull request and check writes (#162, slice C2 of #21; ADR 0047):
+  `gh.pr.create` (reconciled: returns the pull request carrying its marker in any state and base,
+  else an open one for the same head and base, and only otherwise opens one), `gh.pr.edit`
+  (check-then-act on `expectHead`, patching only the fields that differ), `gh.pr.merge` and
+  `gh.checks.rerunFailed`. The merge is `PUT .../pulls/N/merge` with `sha` and `merge_method`, never
+  `gh pr merge`, auto-merge or a merge queue: a pull request already merged at `sha` returns its
+  merge commit with no second `PUT`, one merged at another head throws, and a closed pull request, a
+  moved head (also GitHub's 409) or GitHub's 405 return `{ merged: false, reason }` as data; any
+  other refusal throws. After a merge it reads until GitHub reports it merged (20 reads, 3 seconds
+  apart). `rerunFailed` reruns completed failed runs of a commit at or below an explicit `attempt`
+  baseline and skips runs past it, so a retry, resume or later round does not rerun a run that
+  started at the baseline twice; a run below the baseline that was rerun before a crash and failed
+  again can be rerun again (pass the lowest failing attempt for strictly once-only reruns). Each op
+  is one version-identified `ctx.step` (`github.pr.merge/1` and so on) over `gh api` through the
+  step's `context.exec`, so `--dry-run` lists its commands without spawning. The client gains
+  `pr.create`, `pr.edit`, `pr.merge` and `checks.rerunFailed`, with their option and result types
+  exported, and the [guarantees table](docs/github.md#guarantees) names a class (reconciled,
+  conditional check-then-act or atomic, at-least-once) for every write.
 - `quiet-choir/github` adds reconciled writes (#161, slice C1 of #21; ADR 0046): `gh.comment`,
   `gh.thread.reply` (resolving bot threads by default, human threads only with `resolve: true`),
   `gh.issue.create` (with an optional same-repository `parent` sub-issue link),

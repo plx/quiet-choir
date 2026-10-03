@@ -66,8 +66,9 @@ reserved. Children receive `QUIET_CHOIR_IDEMPOTENCY_KEY` (`runId/stepId`), `QUIE
 `QUIET_CHOIR_STEP_ID`, and `QUIET_CHOIR_ATTEMPT`. Scripts must implement their own reconciliation;
 the runtime cannot make external writes exactly once. For GitHub,
 [`quiet-choir/github`'s writes](github.md#writes) package it: each comment, thread reply, issue
-create, close or reopen, and alert dismissal is one `ctx.step` that finds its own earlier write by a
-marker, or acts only when a preceding read says it still needs to.
+create, close or reopen, alert dismissal, pull request create or edit, merge and failed-run rerun is
+one `ctx.step` that finds its own earlier write by a marker or by the state it left, or acts only
+when a preceding read says it still needs to; the merge is also pinned to a head SHA by GitHub.
 
 ## Commands inside a callback or observer
 

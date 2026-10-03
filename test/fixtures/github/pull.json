@@ -1,0 +1,163 @@
+{
+  "//": "Read-only probes of this repository's pull 354 (GET pulls/354 and GET pulls?head=OWNER:BRANCH&state=all), scrubbed: owner octo-org, human login octo-human, body replaced, nested repositories trimmed.",
+  "view": {
+    "url": "https://api.github.com/repos/octo-org/quiet-choir/pulls/354",
+    "id": 4727818735,
+    "node_id": "PR_kwDOTxycVs8AAAABGczJ7w",
+    "html_url": "https://github.com/octo-org/quiet-choir/pull/354",
+    "diff_url": "https://github.com/octo-org/quiet-choir/pull/354.diff",
+    "patch_url": "https://github.com/octo-org/quiet-choir/pull/354.patch",
+    "issue_url": "https://api.github.com/repos/octo-org/quiet-choir/issues/354",
+    "number": 354,
+    "state": "closed",
+    "locked": false,
+    "title": "Add reconciled GitHub writes: comments, threads, issues, alerts",
+    "user": {
+      "login": "octo-human",
+      "id": 1,
+      "type": "User"
+    },
+    "body": "Closes #161.\n\nPart of #99.\n\n<!-- quiet-choir:land/open-pr -->",
+    "created_at": "2026-10-03T15:57:24Z",
+    "updated_at": "2026-10-03T16:49:06Z",
+    "closed_at": "2026-10-03T16:49:05Z",
+    "merged_at": "2026-10-03T16:49:05Z",
+    "merge_commit_sha": "c25ef328d16d1022655ea42e8dc48afec55c816c",
+    "assignees": [],
+    "requested_reviewers": [],
+    "requested_teams": [],
+    "labels": [],
+    "milestone": null,
+    "draft": false,
+    "commits_url": "https://api.github.com/repos/octo-org/quiet-choir/pulls/354/commits",
+    "review_comments_url": "https://api.github.com/repos/octo-org/quiet-choir/pulls/354/comments",
+    "review_comment_url": "https://api.github.com/repos/octo-org/quiet-choir/pulls/comments{/number}",
+    "comments_url": "https://api.github.com/repos/octo-org/quiet-choir/issues/354/comments",
+    "statuses_url": "https://api.github.com/repos/octo-org/quiet-choir/statuses/89e3c4cb26fa1bb2b96fb42c38806dd43ebd492c",
+    "head": {
+      "label": "octo-org:epic-99/161-quiet-choir-github-slice-c1-reconciled",
+      "ref": "epic-99/161-quiet-choir-github-slice-c1-reconciled",
+      "sha": "89e3c4cb26fa1bb2b96fb42c38806dd43ebd492c",
+      "user": {
+        "login": "octo-org",
+        "id": 2,
+        "type": "Organization"
+      },
+      "repo": {
+        "id": 1,
+        "name": "quiet-choir",
+        "full_name": "octo-org/quiet-choir",
+        "private": false
+      }
+    },
+    "base": {
+      "label": "octo-org:main",
+      "ref": "main",
+      "sha": "16a8b8ab1359d8a9b95b2442b86b030ea106c5a9",
+      "user": {
+        "login": "octo-org",
+        "id": 2,
+        "type": "Organization"
+      },
+      "repo": {
+        "id": 1,
+        "name": "quiet-choir",
+        "full_name": "octo-org/quiet-choir",
+        "private": false
+      }
+    },
+    "author_association": "OWNER",
+    "auto_merge": null,
+    "assignee": null,
+    "active_lock_reason": null,
+    "merged": true,
+    "mergeable": null,
+    "rebaseable": null,
+    "mergeable_state": "unknown",
+    "merged_by": {
+      "login": "octo-human",
+      "id": 1,
+      "type": "User"
+    },
+    "comments": 3,
+    "review_comments": 4,
+    "maintainer_can_modify": false,
+    "commits": 6,
+    "additions": 3159,
+    "deletions": 47,
+    "changed_files": 22
+  },
+  "list": [
+    {
+      "url": "https://api.github.com/repos/octo-org/quiet-choir/pulls/354",
+      "id": 4727818735,
+      "node_id": "PR_kwDOTxycVs8AAAABGczJ7w",
+      "html_url": "https://github.com/octo-org/quiet-choir/pull/354",
+      "diff_url": "https://github.com/octo-org/quiet-choir/pull/354.diff",
+      "patch_url": "https://github.com/octo-org/quiet-choir/pull/354.patch",
+      "issue_url": "https://api.github.com/repos/octo-org/quiet-choir/issues/354",
+      "number": 354,
+      "state": "closed",
+      "locked": false,
+      "title": "Add reconciled GitHub writes: comments, threads, issues, alerts",
+      "user": {
+        "login": "octo-human",
+        "id": 1,
+        "type": "User"
+      },
+      "body": "Closes #161.\n\nPart of #99.\n\n<!-- quiet-choir:land/open-pr -->",
+      "created_at": "2026-10-03T15:57:24Z",
+      "updated_at": "2026-10-03T16:49:06Z",
+      "closed_at": "2026-10-03T16:49:05Z",
+      "merged_at": "2026-10-03T16:49:05Z",
+      "merge_commit_sha": "c25ef328d16d1022655ea42e8dc48afec55c816c",
+      "assignees": [],
+      "requested_reviewers": [],
+      "requested_teams": [],
+      "labels": [],
+      "milestone": null,
+      "draft": false,
+      "commits_url": "https://api.github.com/repos/octo-org/quiet-choir/pulls/354/commits",
+      "review_comments_url": "https://api.github.com/repos/octo-org/quiet-choir/pulls/354/comments",
+      "review_comment_url": "https://api.github.com/repos/octo-org/quiet-choir/pulls/comments{/number}",
+      "comments_url": "https://api.github.com/repos/octo-org/quiet-choir/issues/354/comments",
+      "statuses_url": "https://api.github.com/repos/octo-org/quiet-choir/statuses/89e3c4cb26fa1bb2b96fb42c38806dd43ebd492c",
+      "head": {
+        "label": "octo-org:epic-99/161-quiet-choir-github-slice-c1-reconciled",
+        "ref": "epic-99/161-quiet-choir-github-slice-c1-reconciled",
+        "sha": "89e3c4cb26fa1bb2b96fb42c38806dd43ebd492c",
+        "user": {
+          "login": "octo-org",
+          "id": 2,
+          "type": "Organization"
+        },
+        "repo": {
+          "id": 1,
+          "name": "quiet-choir",
+          "full_name": "octo-org/quiet-choir",
+          "private": false
+        }
+      },
+      "base": {
+        "label": "octo-org:main",
+        "ref": "main",
+        "sha": "16a8b8ab1359d8a9b95b2442b86b030ea106c5a9",
+        "user": {
+          "login": "octo-org",
+          "id": 2,
+          "type": "Organization"
+        },
+        "repo": {
+          "id": 1,
+          "name": "quiet-choir",
+          "full_name": "octo-org/quiet-choir",
+          "private": false
+        }
+      },
+      "author_association": "OWNER",
+      "auto_merge": null,
+      "assignee": null,
+      "active_lock_reason": null
+    }
+  ]
+}

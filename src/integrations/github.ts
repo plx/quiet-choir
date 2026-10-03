@@ -1,12 +1,15 @@
 /**
  * `quiet-choir/github`: typed, complete-or-throw GitHub reads over the installed `gh`
  * ([ADR 0044](../../docs/decisions/0044-gh-backed-github-reads.md)), head-pinned waits for CI,
- * reviews and merges ([ADR 0045](../../docs/decisions/0045-head-pinned-github-waits.md)) and
- * reconciled writes ([ADR 0046](../../docs/decisions/0046-reconciled-github-writes.md)). Each read
+ * reviews and merges ([ADR 0045](../../docs/decisions/0045-head-pinned-github-waits.md)),
+ * reconciled writes ([ADR 0046](../../docs/decisions/0046-reconciled-github-writes.md)), and pull
+ * request writes with a head-pinned merge and a failed-run rerun
+ * ([ADR 0047](../../docs/decisions/0047-pull-request-writes-and-head-pinned-merge.md)). Each read
  * is exactly one `ctx.exec.json` with the caller's ID, pure `gh` argv, no environment overlay or
  * stdin, and the workflow cwd, so its identity is the argv, the response schema and the fixed exec
  * defaults. Each wait is exactly one `ctx.poll`. Each write is exactly one version-identified
- * `ctx.step` that reads before it writes, so a rerun after a crash does not write twice.
+ * `ctx.step` that reads before it writes, so a rerun after a crash does not write twice (a
+ * failed-run rerun holds this only for runs at the attempt baseline).
  * Authentication stays in gh and its inherited environment.
  */
 import { createHash } from 'node:crypto';
@@ -105,6 +108,14 @@ import type {
   GithubIssueCreateResult,
   GithubIssueReopenOptions,
   GithubIssueStateResult,
+  GithubPrCreateOptions,
+  GithubPrCreateResult,
+  GithubPrEditOptions,
+  GithubPrEditResult,
+  GithubPrMergeOptions,
+  GithubPrMergeResult,
+  GithubRerunFailedOptions,
+  GithubRerunFailedResult,
   GithubThreadReplyOptions,
   GithubThreadReplyResult,
 } from './github-write-model.js';
@@ -140,8 +151,21 @@ export type {
   GithubIssueCreateResult,
   GithubIssueReopenOptions,
   GithubIssueStateResult,
+  GithubPrCreateOptions,
+  GithubPrCreateResult,
+  GithubPrEditField,
+  GithubPrEditOptions,
+  GithubPrEditResult,
+  GithubPrMergeMethod,
+  GithubPrMergeOptions,
+  GithubPrMergeRefusal,
+  GithubPrMergeResult,
+  GithubPrState,
+  GithubRerunFailedOptions,
+  GithubRerunFailedResult,
   GithubThreadReplyOptions,
   GithubThreadReplyResult,
+  GithubWorkflowRunRef,
 } from './github-write-model.js';
 export type {
   CodeqlReviewerOptions,
@@ -374,6 +398,74 @@ export interface GithubThreadWrites {
   ): Promise<GithubThreadReplyResult>;
 }
 
+/**
+ * Pull request writes ([ADR 0047](../../docs/decisions/0047-pull-request-writes-and-head-pinned-merge.md)).
+ * Each is one `ctx.step` under `id` with the identity rules of {@link GithubClient.comment}, and
+ * uses only `gh api`, never `gh pr`.
+ */
+export interface GithubPullRequestWrites {
+  /**
+   * Open a pull request from the same-repository branch `head` into `base`, reconciled: list every
+   * pull request for that head in any state and into any base, and return one carrying the step's
+   * marker (even if it was retargeted), else an open one into `base` (whoever opened it, unchanged; use {@link GithubPullRequestWrites.edit} to
+   * change it), with `created: false`. Only when there is neither does it `POST` the pull request,
+   * with the marker appended to `body`. A head with an `OWNER:` prefix throws.
+   */
+  create(
+    id: string,
+    args: GithubPrCreateOptions,
+    policy?: GithubWritePolicy,
+  ): Promise<GithubPrCreateResult>;
+  /**
+   * Change the title, body or base of an open pull request whose head is still `expectHead`,
+   * check-then-act: read it, return `reason: 'closed'` or `'head-moved'` with no write, and
+   * otherwise `PATCH` only the fields that differ (none after a committed edit, so a retry sends
+   * nothing). GitHub has no `If-Match`: a push or edit between the read and the `PATCH` is not
+   * detected, and a concurrent edit is overwritten.
+   */
+  edit(
+    id: string,
+    args: GithubPrEditOptions,
+    policy?: GithubWritePolicy,
+  ): Promise<GithubPrEditResult>;
+  /**
+   * Merge at exactly head `sha` with `PUT repos/O/R/pulls/N/merge` and its `sha` parameter, which
+   * GitHub checks atomically; never `gh pr merge`, auto-merge or a merge queue. It reads the pull
+   * request first: merged at `sha` returns the merge commit with `acted: false` and no `PUT` (an
+   * earlier attempt merged it), merged at another head throws, closed and another head return
+   * `merged: false` with `closed` or `head-moved`. A refused `PUT` reads again and returns
+   * `head-moved` (HTTP 409), `not-mergeable` (HTTP 405, with GitHub's message) or throws for
+   * anything else. After a merge it reads until GitHub reports it merged, up to 20 reads 3 seconds
+   * apart. Readiness (base branch, review threads, alerts) is the caller's to check.
+   */
+  merge(
+    id: string,
+    args: GithubPrMergeOptions,
+    policy?: GithubWritePolicy,
+  ): Promise<GithubPrMergeResult>;
+}
+
+/** Check writes ([ADR 0047](../../docs/decisions/0047-pull-request-writes-and-head-pinned-merge.md)). */
+export interface GithubChecksWrites {
+  /**
+   * Rerun the failed jobs of the workflow runs of commit `sha` whose failure the caller saw, one
+   * `ctx.step` under `id`: list every run (complete or throw), and rerun each completed run with
+   * conclusion `failure` at or below the baseline `attempt` (default 1). A run past the baseline was
+   * rerun already, by this step before a crash, a person or an earlier round, and is reported in
+   * `skipped`, never rerun again. At most once holds for runs at the baseline: a run below it that
+   * this step reran before a crash and that failed again before the retry or resume is rerun again,
+   * so a caller that needs strictly once-only reruns across mixed attempts passes the lowest failing
+   * attempt it saw. Then it reads the runs until each rerun shows (bounded, best
+   * effort; see `confirmed`). Check-then-act on the baseline: a rerun started between the list and
+   * the `POST` is not detected.
+   */
+  rerunFailed(
+    id: string,
+    args: GithubRerunFailedOptions,
+    policy?: GithubWritePolicy,
+  ): Promise<GithubRerunFailedResult>;
+}
+
 /** Code-scanning alert writes. */
 export interface GithubAlertWrites {
   /**
@@ -493,8 +585,8 @@ export type GithubWaitReviewOptions = GithubWaitBound &
 export interface GithubClient {
   /** Repository reads. */
   readonly repo: GithubRepoReads;
-  /** Pull request reads. */
-  readonly pr: GithubPullRequestReads;
+  /** Pull request reads and writes. */
+  readonly pr: GithubPullRequestReads & GithubPullRequestWrites;
   /** Issue reads and writes. */
   readonly issue: GithubIssueReads & GithubIssueWrites;
   /** Code-scanning reads. */
@@ -503,6 +595,8 @@ export interface GithubClient {
   readonly thread: GithubThreadWrites;
   /** Code-scanning alert writes. */
   readonly alert: GithubAlertWrites;
+  /** Check writes. */
+  readonly checks: GithubChecksWrites;
   /**
    * Comment on an issue or pull request, reconciled by its marker: one `ctx.step` under `id`
    * (version `github.comment/1`) that reads every comment and posts only when none carries the
@@ -682,6 +776,7 @@ export function github(
       list: async (id, args = {}, policy) => read(id, prListRead(repo, args), policy),
       reviewThreads: async (id, args, policy) =>
         read(id, reviewThreadsRead(repo, args.number), policy),
+      ...writes.pr,
     },
     issue: { view: issueView, ...writes.issue },
     codeScanning: {
@@ -690,6 +785,7 @@ export function github(
     comment: writes.comment,
     thread: writes.thread,
     alert: writes.alert,
+    checks: writes.checks,
     ...githubWaits(ctx, repo),
   };
 }

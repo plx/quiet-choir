@@ -6,14 +6,15 @@ replays and rehearses like any other command. A read never returns a silently tr
 GitHub reports another page that the read did not fetch, it throws `IncompleteCollectionError`. Each
 [wait](#waits) for CI, reviews or a merge is exactly one `ctx.poll`, pinned to a head SHA. Each
 [write](#writes) (a comment, a thread reply, an issue created, closed or reopened, an alert
-dismissed) is exactly one `ctx.step` that reads before it writes, so a rerun after a crash finds the
-earlier attempt's write instead of repeating it. The designs are recorded in
-[ADR 0044](decisions/0044-gh-backed-github-reads.md),
-[ADR 0045](decisions/0045-head-pinned-github-waits.md) and
-[ADR 0046](decisions/0046-reconciled-github-writes.md).
+dismissed, a pull request created, edited or merged, failed workflow runs rerun) is exactly one
+`ctx.step` that reads before it writes, so a rerun after a crash finds the earlier attempt's write
+instead of repeating it, and a merge happens only at the head SHA you name. The designs are recorded
+in [ADR 0044](decisions/0044-gh-backed-github-reads.md),
+[ADR 0045](decisions/0045-head-pinned-github-waits.md),
+[ADR 0046](decisions/0046-reconciled-github-writes.md) and
+[ADR 0047](decisions/0047-pull-request-writes-and-head-pinned-merge.md).
 
-Pull request writes (creating, editing and merging pull requests, rerunning failed checks) and epic
-selection are planned separately (#162 and #163).
+Epic selection is planned separately (#163).
 
 ## Install and authenticate
 
@@ -283,14 +284,18 @@ response (`{ data: { repository: { pullRequest } } }` with `number`, `state`, `h
 
 ## Writes
 
-| Write                                                      | gh calls: reads, then writes                                                                                                                   | Result                                           |
-| ---------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------ |
-| `comment(id, { number, body })`                            | Every comment (`gh api --paginate .../issues/N/comments`); `POST repos/O/R/issues/N/comments`                                                  | `{ id, url, created }`                           |
-| `thread.reply(id, { threadId, body, resolve? })`           | The thread with every comment (`gh api graphql --paginate --slurp`); `addPullRequestReviewThreadReply`; `resolveReviewThread`                  | `{ comment: { id, url }, created, resolved }`    |
-| `issue.create(id, { title, body, labels?, parent? })`      | The viewer; the viewer's issues, newest first, page by page; `POST repos/O/R/issues`; with `parent`, the issue's parent and `addSubIssue`      | `{ number, url, nodeId, created, parent }`       |
-| `issue.close(id, { number, comment?, reason?, ifState? })` | The issue's state; with `comment`, every comment and `POST .../comments`; `PATCH repos/O/R/issues/N` with `state: 'closed'` and `state_reason` | `{ number, state, stateReason, acted, comment }` |
-| `issue.reopen(id, { number, comment?, ifState? })`         | As `close`, with `state: 'open'`                                                                                                               | `{ number, state, stateReason, acted, comment }` |
-| `alert.dismiss(id, { number, comment, reason? })`          | `GET repos/O/R/code-scanning/alerts/N`; `PATCH` of the same path                                                                               | `{ number, state, reason, dismissed }`           |
+| Write                                                       | gh calls: reads, then writes                                                                                                                                                                     | Result                                                                                                     |
+| ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------- |
+| `comment(id, { number, body })`                             | Every comment (`gh api --paginate .../issues/N/comments`); `POST repos/O/R/issues/N/comments`                                                                                                    | `{ id, url, created }`                                                                                     |
+| `thread.reply(id, { threadId, body, resolve? })`            | The thread with every comment (`gh api graphql --paginate --slurp`); `addPullRequestReviewThreadReply`; `resolveReviewThread`                                                                    | `{ comment: { id, url }, created, resolved }`                                                              |
+| `issue.create(id, { title, body, labels?, parent? })`       | The viewer; the viewer's issues, newest first, page by page; `POST repos/O/R/issues`; with `parent`, the issue's parent and `addSubIssue`                                                        | `{ number, url, nodeId, created, parent }`                                                                 |
+| `issue.close(id, { number, comment?, reason?, ifState? })`  | The issue's state; with `comment`, every comment and `POST .../comments`; `PATCH repos/O/R/issues/N` with `state: 'closed'` and `state_reason`                                                   | `{ number, state, stateReason, acted, comment }`                                                           |
+| `issue.reopen(id, { number, comment?, ifState? })`          | As `close`, with `state: 'open'`                                                                                                                                                                 | `{ number, state, stateReason, acted, comment }`                                                           |
+| `alert.dismiss(id, { number, comment, reason? })`           | `GET repos/O/R/code-scanning/alerts/N`; `PATCH` of the same path                                                                                                                                 | `{ number, state, reason, dismissed }`                                                                     |
+| `pr.create(id, { head, base, title, body, draft? })`        | Every pull request for the head, any base (`gh api --paginate .../pulls?head=OWNER:HEAD&state=all`); the marker is searched across bases, open ones narrowed to the base; `POST repos/O/R/pulls` | `{ number, url, nodeId, state, created }`                                                                  |
+| `pr.edit(id, { number, expectHead, title?, body?, base? })` | `GET repos/O/R/pulls/N`; `PATCH` of the same path with the fields that differ                                                                                                                    | `{ number, edited, reason, head, changed }`                                                                |
+| `pr.merge(id, { number, sha, method? })`                    | `GET repos/O/R/pulls/N`; `PUT .../pulls/N/merge -f merge_method=METHOD -f sha=SHA`; after a merge, the pull request until it reports merged; after a refusal, the pull request once              | `{ merged: true, number, mergeCommit, head, acted }` or `{ merged: false, number, reason, head, message }` |
+| `checks.rerunFailed(id, { sha, attempt? })`                 | Every workflow run of the commit (`gh api --paginate --slurp .../actions/runs?head_sha=SHA`); `POST .../actions/runs/ID/rerun-failed-jobs` per run; the runs until each rerun shows              | `{ rerun, skipped, confirmed }`                                                                            |
 
 Each write is exactly one `ctx.step` under your ID, so it leaves one step record, and a completed
 write replays its result without calling gh. Its callback runs every gh command through the step's
@@ -299,8 +304,9 @@ them again, reads first. A request body (a comment, a title, a state change) goe
 stdin (`gh api ... --input -`), never in argv, so it never shows in a process listing, never meets
 the per-argument size limit, and never triggers gh's `@file` expansion. `HOST/OWNER/REPO` adds
 `--hostname HOST` right after `gh api` in every command. Arguments are validated before the step
-opens: numbers are positive integers, bodies, titles and labels nonempty strings without NUL, and
-`ifState` and the reasons one of their documented values.
+opens: numbers are positive integers, bodies, titles, labels and branch names nonempty strings
+without NUL, SHAs the full 40 lowercase hex characters, branch names free of `:` (no `OWNER:BRANCH`
+heads), and `ifState`, the reasons, `method` and `attempt` one of their documented values.
 
 `close` and `reopen` take `ifState`, the state the issue must be in for the op to act: `open` for
 `close` and `closed` for `reopen`, the defaults and the only accepted values (the opposite one
@@ -308,8 +314,8 @@ throws before the step opens). `close`'s `reason` is `completed` (default) or `n
 
 ### Markers
 
-A write that creates something carries a marker, an HTML comment appended to the body after a blank
-line:
+A write that creates something (a comment, a reply, an issue or a pull request) carries a marker, an
+HTML comment appended to the body after a blank line:
 
 ```text
 Landed in #9.
@@ -336,27 +342,40 @@ committed the write and before its checkpoint.
 
 ### Guarantees
 
-GitHub offers no conditional (compare-and-set) API for any of these writes: there is no `If-Match`
-on issue state or bodies, and resolving a thread or dismissing an alert does not check a version.
-Each op is therefore either **reconciled** (it finds its own earlier write by its marker) or
-**conditional** (check-then-act: it reads the current state and writes only when it still needs to).
+Every op names its class in the table below:
 
-| Op                            | Guarantee                                                                                                                                                                                                                                                               | Not covered                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
-| ----------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `comment`                     | Reconciled: reads every comment and posts only when none carries the marker.                                                                                                                                                                                            | A marker removed by an edit, or a deleted comment, lets a rerun post again.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
-| `thread.reply`                | The reply is reconciled the same way over every comment of the thread. The resolve is conditional: only when wanted and the thread read reported `isResolved: false`.                                                                                                   | `resolveReviewThread` has no compare-and-set: someone resolving or unresolving the thread between the read and the mutation is not detected. `resolve: false` never unresolves.                                                                                                                                                                                                                                                                                                                                                                                                                           |
-| `issue.create`                | Reconciled by the marker over the viewer's issues in the repository (the REST list, not search, whose index lags). The `parent` link is conditional on reading the issue's parent: none links it, `parent` already is a no-op, another parent throws without any write. | The list is assumed to show an issue right after it is created; GitHub documents no consistency guarantee for it. A miss scans every issue the viewer created there. Reconciliation assumes the same `gh` account across attempts and resumes: a retry or resume after authentication switches to another account does not see the earlier account's marked issue and can create a duplicate. An issue is never moved to another parent, and cross-repository parents are not supported. A `parent` that does not exist fails after the issue is created; a rerun finds the issue and fails the same way. |
-| `issue.close`, `issue.reopen` | Conditional: reads the state and acts only when it matches `ifState`; otherwise returns `acted: false` with no write. The optional comment is reconciled and posted before the state change, so a crash after the change cannot lose it.                                | No `If-Match`: a state change by someone else between the read and the `PATCH` is not detected, and the `PATCH` applies anyway.                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
-| `alert.dismiss`               | Conditional: reads the alert and dismisses it only when it is neither `dismissed` nor `fixed`; otherwise returns `dismissed: false` with no write.                                                                                                                      | No compare-and-set: a dismissal or reopening by someone else between the read and the `PATCH` is overwritten.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+- **Reconciled**: it finds its own earlier write, by its marker or by the state it left, so a retry
+  or resume after a crash between GitHub's commit and the checkpoint does not write again.
+- **Conditional (check-then-act)**: it reads the current state and writes only when it still needs
+  to. GitHub offers no `If-Match` on issue state, bodies or pull request fields, and resolving a
+  thread, dismissing an alert or rerunning a run does not check a version, so a change by someone
+  else between the read and the write is not detected.
+- **Conditional (atomic)**: GitHub checks the precondition in the same request, a compare-and-set.
+  Only the merge has one: `PUT .../merge` with `sha` merges only while the head is that SHA.
+- **At-least-once**: repeated on every attempt. No op here is; a write of your own through
+  `ctx.exec` or a step of your own is, unless it reconciles.
+
+| Op                            | Guarantee                                                                                                                                                                                                                                                                                                                     | Not covered                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| ----------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `comment`                     | Reconciled: reads every comment and posts only when none carries the marker.                                                                                                                                                                                                                                                  | A marker removed by an edit, or a deleted comment, lets a rerun post again.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| `thread.reply`                | Reconciled reply: the same marker search over every comment of the thread. Conditional (check-then-act) resolve: only when wanted and the thread read reported `isResolved: false`.                                                                                                                                           | `resolveReviewThread` has no compare-and-set: someone resolving or unresolving the thread between the read and the mutation is not detected. `resolve: false` never unresolves.                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| `issue.create`                | Reconciled by the marker over the viewer's issues in the repository (the REST list, not search, whose index lags). The `parent` link is conditional (check-then-act) on reading the issue's parent: none links it, `parent` already is a no-op, another parent throws without any write.                                      | The list is assumed to show an issue right after it is created; GitHub documents no consistency guarantee for it. A miss scans every issue the viewer created there. Reconciliation assumes the same `gh` account across attempts and resumes: a retry or resume after authentication switches to another account does not see the earlier account's marked issue and can create a duplicate. An issue is never moved to another parent, and cross-repository parents are not supported. A `parent` that does not exist fails after the issue is created; a rerun finds the issue and fails the same way. |
+| `issue.close`, `issue.reopen` | Conditional (check-then-act): reads the state and acts only when it matches `ifState`; otherwise returns `acted: false` with no write. The optional comment is reconciled and posted before the state change, so a crash after the change cannot lose it.                                                                     | No `If-Match`: a state change by someone else between the read and the `PATCH` is not detected, and the `PATCH` applies anyway.                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| `alert.dismiss`               | Conditional (check-then-act): reads the alert and dismisses it only when it is neither `dismissed` nor `fixed`; otherwise returns `dismissed: false` with no write.                                                                                                                                                           | No compare-and-set: a dismissal or reopening by someone else between the read and the `PATCH` is overwritten.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| `pr.create`                   | Reconciled: lists every pull request for the head in any state and into any base, returns the one carrying the marker (even if retargeted), else an open one into the base (whoever opened it, unchanged), and posts only when there is neither, so a step never opens a second pull request even after its first was closed. | GitHub allows one open pull request per head and base: one opened by someone else between the list and the `POST` makes GitHub answer 422 and fails the attempt, and the retry returns it. The list is assumed to show a new pull request at once. A marker edited out, for example by a `pr.edit` body, before the step completes defeats it. Same-repository heads only.                                                                                                                                                                                                                                |
+| `pr.edit`                     | Conditional (check-then-act): reads the pull request and sends one `PATCH` with the fields that differ, only when it is open and its head is `expectHead`; after a committed edit nothing differs, so a retry sends nothing.                                                                                                  | No `If-Match`: a push or an edit by someone else between the read and the `PATCH` is not detected, and a concurrent change to the same field is overwritten.                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| `pr.merge`                    | Conditional (atomic): the `PUT` carries `sha`, and GitHub merges only while the head is that SHA. Reconciled by its read: merged at `sha` returns the merge commit with no second `PUT`; merged at another head throws.                                                                                                       | Readiness (base branch, review threads, alerts, checks) is the caller's; GitHub enforces only branch protection. A merge at `sha` by someone else also returns `merged: true` (with `acted: false`). A merge GitHub accepted but never reported within 20 reads throws, and the retry finds it.                                                                                                                                                                                                                                                                                                           |
+| `checks.rerunFailed`          | Conditional (check-then-act) on the attempt baseline: reruns only completed runs with conclusion `failure` at or below `attempt`; a run past it was rerun already (by this step before a crash, by someone else or by an earlier round) and is skipped.                                                                       | A rerun of the same run started by someone else between the list and the `POST` is not detected; GitHub refuses to rerun a running workflow with an HTTP error, which fails the attempt, and the retry skips the run. A run below the baseline that this step reran before a crash and that failed again before the retry is rerun again: once only holds for runs at the baseline. Only conclusion `failure` is rerun, not `cancelled` or `timed_out`. Confirmation is best effort.                                                                                                                      |
 
 Reactions, comment edits and deletions, and issue body edits are not provided: without `If-Match` an
 edit cannot be made conditional, and run through `ctx.exec` or a step of your own they stay at least
-once.
+once. `pr.edit` is conditional on the pull request's head and state, not on its fields: it is
+check-then-act, and its fields are set rather than appended, so repeating it is harmless.
 
-`acted`, `created` and `dismissed` describe the attempt that returned, not the step: after a crash
-past the state change, the retry finds the issue already closed and returns `acted: false` (and
-`comment: null`) although an earlier attempt of the same step closed it. Read the state fields
-(`state`, `stateReason`, `resolved`) for the outcome.
+`acted`, `created`, `dismissed`, `edited` and `rerun` describe the attempt that returned, not the
+step: after a crash past the state change, the retry finds the issue already closed and returns
+`acted: false` (and `comment: null`) although an earlier attempt of the same step closed it. Read
+the state fields (`state`, `stateReason`, `resolved`) for the outcome.
 
 `issue.create` reads the viewer, then one page of 100 of the viewer's issues per command, newest
 first, so the issue a crashed attempt just created is on the first page; pull requests in the list
@@ -373,6 +392,87 @@ test-only path (a directory segment `test`, `tests` or `__tests__`, or a file en
 including an alert without a path. `alertDismissReason(path, reason?)` exports the rule. The comment
 is truncated to GitHub's 280 characters, on a code-point boundary.
 
+### Pull requests
+
+`pr.create(id, { head, base, title, body, draft? })` opens a pull request from `head`, a branch in
+the same repository, into `base`; a head with an `OWNER:` prefix throws, since cross-fork pull
+requests are not supported. It lists the pull requests for that head in every state and into every
+base, with an owner-qualified, URL-encoded `head` filter (a fork's branch of the same name never
+matches; there is no `base` filter, which GitHub applies to the current base), and decides in this
+order: a pull request carrying the step's marker, in any state and into any base (so a retargeted
+one still matches), is returned; else an open one into `base`, whoever opened it, is returned
+unchanged (change it with `pr.edit`); else it posts, with the marker appended to `body` and the
+request on stdin. Only a `POST` sets `created: true`.
+
+`pr.edit(id, { number, expectHead, title?, body?, base? })` needs at least one field and the full
+head SHA you expect. It reads the pull request and returns `edited: false` with `reason: 'closed'`
+for a closed or merged one, or `reason: 'head-moved'` when the head is not `expectHead`, without a
+write. Otherwise it sends one `PATCH` with only the fields that differ and lists them in `changed`;
+when none differs it sends nothing (`edited: false`, `reason: null`). A body is sent as given,
+without a marker, so replacing the body of a pull request `pr.create` opened drops its marker; that
+is harmless once the create step has completed, since a completed step replays from its checkpoint.
+
+### Merging
+
+`pr.merge(id, { number, sha, method? })` merges at exactly the full head SHA `sha`, with `method`
+`squash` (default), `merge` or `rebase`. It reads the pull request first:
+
+| Read or response                                      | Result                                                         |
+| ----------------------------------------------------- | -------------------------------------------------------------- |
+| Merged at `sha`                                       | `merged: true` with its merge commit, `acted: false`; no `PUT` |
+| Merged at another head                                | Throws, naming both SHAs; never reported as `merged: false`    |
+| Closed without merging                                | `merged: false`, `reason: 'closed'`; no `PUT`                  |
+| Open at another head                                  | `merged: false`, `reason: 'head-moved'`; no `PUT`              |
+| Open at `sha`: the `PUT` succeeds                     | `merged: true`, `acted: true`, after the confirmation below    |
+| The `PUT` answers 409 (the head moved since the read) | `merged: false`, `reason: 'head-moved'`, GitHub's message      |
+| The `PUT` answers 405                                 | `merged: false`, `reason: 'not-mergeable'`, GitHub's message   |
+| Any other refusal                                     | Throws with GitHub's message                                   |
+
+After a refused `PUT` the step reads the pull request again, and that read wins: merged at `sha`
+(say, by someone else) is success, and a closed pull request or a moved head is reported as such.
+`not-mergeable` covers what GitHub refuses with 405: merge conflicts, failing required checks or
+reviews, a draft, or a branch protected by a merge queue, which the REST merge does not bypass. A
+403, 404 or 422, or an error body without a `status`, as some GitHub Enterprise Server versions
+send, throws instead: the step never claims a pull request is not mergeable without GitHub saying
+so. A `PUT` that leaves no JSON (a dropped connection) fails the attempt, and the retry's first read
+finds the merge if GitHub committed it.
+
+The merge is `gh api -X PUT repos/O/R/pulls/N/merge -f merge_method=METHOD -f sha=SHA`, never
+`gh pr merge`, `--auto` or a merge queue: `gh pr merge` may enable auto-merge or enqueue the pull
+request, which would land it later without your checks. Unlike the other writes, its two fields go
+in argv rather than on stdin: both are validated tokens (a method name and a 40-character SHA),
+never free text, and the SHA stays visible in the process listing and the rehearsal report. After
+GitHub accepts the merge, the step reads the pull request until it reports merged, at most 20 reads
+3 seconds apart with the first at once, as `merge-down-pr`'s land loop does, so a following read
+sees it merged; if it never does, the step throws, and the retry finds the merge. Cancelling the run
+stops the wait.
+
+Readiness is the caller's policy: check the base branch with `pr.view`, and the review threads, open
+alerts and checks with [`waitChecks` and `waitReview`](#waits) (or `pr.reviewThreads` and
+`codeScanning.alerts`) on the same `sha` before merging; see the [land example](#land-example).
+
+### Rerunning failed runs
+
+`checks.rerunFailed(id, { sha, attempt? })` reruns the failed jobs of the workflow runs of the
+commit `sha`. It lists every run of the commit (complete or throw: a list with fewer distinct run
+IDs than GitHub's `total_count` throws `IncompleteCollectionError`, and GitHub returns at most 1000
+runs for a commit), reruns each completed run with conclusion `failure` whose `run_attempt` is at or
+below the baseline `attempt` (`POST .../actions/runs/ID/rerun-failed-jobs`, one per run), and
+reports runs past the baseline that failed again or are still running in `skipped`.
+
+`attempt` is the run attempt you saw failing, a positive integer and part of the step's input: 1
+(the default) for the first round, 2 after the first round's reruns failed again, and so on. A run
+past the baseline was rerun already, by this step before a crash, by someone else or by an earlier
+round, so a retried or resumed step does not rerun it again, and a round never reruns what a later
+attempt already covers. That at-most-once guarantee holds for runs at the baseline. A run below the
+baseline that this step reran before a crash, and that failed again before the retry or resume, is
+still at or below the baseline and is rerun again; a caller that needs strictly once-only reruns
+across mixed attempts passes the lowest failing attempt it saw. Then the step reads the runs until
+every rerun one is queued, running or at a higher attempt, with the bounds of the merge
+confirmation, so a following `waitChecks` does not read the failure it just reran; `confirmed` is
+false when that never showed. A rerun step has no pull request: it reruns the commit's runs of every
+workflow.
+
 ### Policy and identity
 
 The third argument takes the same keys as a read: `timeoutMs` and `maxOutputBytes` apply to each gh
@@ -381,13 +481,14 @@ are safe to repeat, so pass one, such as `{ retry: { maxAttempts: 3 } }`. A reru
 policy: an unfinished write runs again and reconciles.
 
 A write's identity is a version constant (`github.comment/1`, `github.thread.reply/1`,
-`github.issue.create/1`, `github.issue.close/1`, `github.issue.reopen/1` and
-`github.alert.dismiss/1`), its input (the repository as `HOST/OWNER/REPO` or `OWNER/REPO` and the
-normalized arguments, bodies included) and its result schema, never the callback's source text or
-the policy. Changing a body or title under the ID of a completed write refuses the resume like any
-changed step input; use a new ID. A later quiet-choir version that changes an op's behaviour bumps
-its version. Each step records `meta: { integration: 'github', op }`, so `workflow inspect` shows a
-failed or running write as `github.comment`, `github.issue.close` and so on.
+`github.issue.create/1`, `github.issue.close/1`, `github.issue.reopen/1`, `github.alert.dismiss/1`,
+`github.pr.create/1`, `github.pr.edit/1`, `github.pr.merge/1` and `github.checks.rerunFailed/1`),
+its input (the repository as `HOST/OWNER/REPO` or `OWNER/REPO` and the normalized arguments, bodies
+included) and its result schema, never the callback's source text or the policy. Changing a body or
+title under the ID of a completed write refuses the resume like any changed step input; use a new
+ID. A later quiet-choir version that changes an op's behaviour bumps its version. Each step records
+`meta: { integration: 'github', op }`, so `workflow inspect` shows a failed or running write as
+`github.comment`, `github.issue.close` and so on.
 
 ### Rehearsal
 
@@ -399,9 +500,14 @@ unresolved, an alert open and an issue without a parent, and synthesized bodies 
 marker. A rehearsed `comment`, `thread.reply`, `issue.create`, `issue.close` and `alert.dismiss`
 therefore list their writes; a rehearsed `issue.reopen` sees an open issue and lists only its read,
 and a rehearsed reply resolves only with `resolve: true`, since a synthesized author is not a bot.
-Answer the reads with [exec fixture rules](rehearsal.md#command-fixtures) to rehearse another path.
-Under `--harness fixture` a command that no rule matches runs for real, writes included, unless the
-fixture file sets `"commands": "fixture"`.
+The pull request writes rehearse the same way: a synthesized pull request list holds one closed pull
+request without the marker, so a rehearsed `pr.create` lists its `POST`; a synthesized head is never
+a real SHA, so a rehearsed `pr.edit` or `pr.merge` lists only its read and returns `head-moved`; and
+a synthesized workflow run is not a completed failure, so a rehearsed `checks.rerunFailed` lists
+only its list read and reruns nothing. Answer the reads with
+[exec fixture rules](rehearsal.md#command-fixtures) to rehearse another path, such as the merge
+`PUT`. Under `--harness fixture` a command that no rule matches runs for real, writes included,
+unless the fixture file sets `"commands": "fixture"`.
 
 ### Write example
 
@@ -466,6 +572,46 @@ export default defineWorkflow({
     if (review.status !== 'clean' || review.untriagedThreads.length || review.openAlerts.length)
       return 'triage';
     return 'land';
+  },
+});
+```
+
+## Land example
+
+When the gate says `land` or `fix-ci`, this step merges at the gated head or reruns the failed runs,
+once per round. The gate already checked CI, the reviewers, untriaged threads and open alerts on
+`sha`; the base branch is also the caller's to check, as `merge-down-pr` does before it lands.
+
+```ts
+import { defineWorkflow, z } from 'quiet-choir';
+import { github } from 'quiet-choir/github';
+
+export default defineWorkflow({
+  name: 'land',
+  version: '1',
+  input: z.object({
+    repo: z.string(),
+    pr: z.int().positive(),
+    sha: z.string(),
+    gate: z.enum(['fix-ci', 'land']),
+    round: z.int().positive(),
+  }),
+  output: z.enum(['landed', 'rerun', 'restart', 'blocked']),
+  async run(ctx, { repo, pr, sha, gate, round }) {
+    const gh = github(ctx, { repo });
+    const policy = { retry: { maxAttempts: 3 } };
+    if (gate === 'fix-ci') {
+      // Round N reruns the runs that failed at or below attempt N.
+      const rerun = await gh.checks.rerunFailed(
+        ctx.id('rerun', sha, round),
+        { sha, attempt: round },
+        policy,
+      );
+      return rerun.rerun.length ? 'rerun' : 'blocked';
+    }
+    const merge = await gh.pr.merge(ctx.id('merge', sha), { number: pr, sha }, policy);
+    if (merge.merged) return 'landed';
+    return merge.reason === 'head-moved' ? 'restart' : 'blocked';
   },
 });
 ```

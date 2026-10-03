@@ -12,10 +12,11 @@ definitions to a particular agent harness.
   internals; `github.ts` keeps its queries, schemas and mappers in the pure `github-model.ts`, its
   wait rules in the pure `github-wait-model.ts`, and its reconciled writes in `github-writes.ts`
   (one version-identified `ctx.step` per op) over the pure `github-write-model.ts` (marker, request
-  builders, schemas and decisions; [ADR 0046](decisions/0046-reconciled-github-writes.md)). It may
-  also import two cross-instance registries: error brands
-  ([ADR 0044](decisions/0044-gh-backed-github-reads.md)) and the internal poll-identity key
-  ([ADR 0045](decisions/0045-head-pinned-github-waits.md)). See
+  builders, schemas and decisions; [ADR 0046](decisions/0046-reconciled-github-writes.md)),
+  including the pull request writes, the head-pinned merge and the failed-run rerun
+  ([ADR 0047](decisions/0047-pull-request-writes-and-head-pinned-merge.md)). It may also import two
+  cross-instance registries: error brands ([ADR 0044](decisions/0044-gh-backed-github-reads.md)) and
+  the internal poll-identity key ([ADR 0045](decisions/0045-head-pinned-github-waits.md)). See
   [GitHub reads, waits and writes](github.md).
 - `src/application/` contains framework-independent execution contracts and small executors.
 - `src/workflow/` contains workflow-specific plans, results, analysis, and executors.

@@ -268,7 +268,7 @@ function inProcess(scenario: Scenario): { runner: ProcessRunner; log: string[] }
 }
 
 // A constant script: the scenario and its counters come from GH_FAKE_DIR, never from spliced code.
-const FAKE_GH = `import { appendFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
+const FAKE_GH = `import { appendFileSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 const dir = process.env.GH_FAKE_DIR;
 const argv = process.argv.slice(2);
@@ -285,9 +285,17 @@ const read = query.includes('viewer {') ? 'repo.info'
   : /\\/pulls\\/\\d+\\/reviews/.test(path) ? 'pr.reviews'
   : /\\/issues\\/\\d+\\/reactions/.test(path) ? 'issue.reactions'
   : 'unknown';
-const counter = join(dir, read + '.count');
-const n = existsSync(counter) ? Number(readFileSync(counter, 'utf8')) : 0;
-writeFileSync(counter, String(n + 1));
+// Claim the next reply index with an exclusive create: a read-modify-write counter file lets a
+// retried check's child read a truncated counter while an abandoned sibling child still writes it.
+let n = 0;
+for (;; n++) {
+  try {
+    writeFileSync(join(dir, read + '.claim.' + n), '', { flag: 'wx' });
+    break;
+  } catch (error) {
+    if (error.code !== 'EEXIST') throw error;
+  }
+}
 appendFileSync(join(dir, 'log'), read + '\\n');
 const replies = JSON.parse(readFileSync(join(dir, 'scenario.json'), 'utf8'))[read] ?? [];
 const reply = replies[Math.min(n, replies.length - 1)];

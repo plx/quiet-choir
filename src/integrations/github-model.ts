@@ -1835,6 +1835,13 @@ export function commitSha(value: unknown, label: string): string {
   return value;
 }
 
+/** Throw unless `value` is a full 40-character lowercase hex commit SHA. @internal */
+export function fullSha(value: unknown, label: string): string {
+  if (commitSha(value, label).length !== 40)
+    throw new Error(`${label} must be the full 40-character commit SHA.`);
+  return value as string;
+}
+
 /** `pr.head`: the pull request's state, head, rollup commit and checks. @internal */
 export function prHeadRead(
   repo: GithubRepo,

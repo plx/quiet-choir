@@ -1,8 +1,9 @@
 /**
  * Pure parts of the reconciled `quiet-choir/github` writes
- * ([ADR 0046](../../docs/decisions/0046-reconciled-github-writes.md)): the marker, the request
- * builders and their stdin bodies, the response and result schemas, and the decisions each write
- * makes from its reads. No I/O, clock or process access; an ESLint block enforces it. The step
+ * ([ADR 0046](../../docs/decisions/0046-reconciled-github-writes.md)) and the pull request and
+ * check writes ([ADR 0047](../../docs/decisions/0047-pull-request-writes-and-head-pinned-merge.md)):
+ * the marker, the request builders and their stdin bodies, the response and result schemas, and the
+ * decisions each write makes from its reads. No I/O, clock or process access; an ESLint block enforces it. The step
  * callbacks in `github-writes.ts` run the commands and call these functions.
  *
  * Response schemas list their enums and union branches in the order that makes a `--dry-run`
@@ -631,3 +632,538 @@ export const alertPatchResponseSchema = z.object({
   state: z.string(),
   dismissed_reason: z.string().nullish(),
 });
+
+// ---------------------------------------------------------------------------------------------
+// Pull request and check writes (ADR 0047)
+
+/** Arguments of `pr.create`. */
+export interface GithubPrCreateOptions {
+  /** Head branch in the same repository, without an `OWNER:` prefix; cross-fork heads throw. */
+  readonly head: string;
+  /** Base branch. */
+  readonly base: string;
+  /** Title, nonempty and without NUL. */
+  readonly title: string;
+  /** Markdown body, nonempty and without NUL; the marker is appended after a blank line. */
+  readonly body: string;
+  /** Open the pull request as a draft; default false. */
+  readonly draft?: boolean;
+}
+
+/** A pull request's state as the PR writes report it. */
+export type GithubPrState = 'open' | 'closed' | 'merged';
+
+/** Result of `pr.create`. */
+export interface GithubPrCreateResult {
+  /** Pull request number. */
+  readonly number: number;
+  /** Web URL. */
+  readonly url: string;
+  /** GraphQL node ID. */
+  readonly nodeId: string;
+  /** Its state when the step found or created it. */
+  readonly state: GithubPrState;
+  /**
+   * Whether this attempt created it; false when a pull request carrying the step's marker, or an
+   * unmarked open one for the same head and base, already existed.
+   */
+  readonly created: boolean;
+}
+
+/** Arguments of `pr.edit`; at least one of `title`, `body` and `base` is required. */
+export interface GithubPrEditOptions {
+  /** Pull request number. */
+  readonly number: number;
+  /** The full 40-character head SHA the pull request must still have; otherwise nothing changes. */
+  readonly expectHead: string;
+  /** New title, nonempty and without NUL. */
+  readonly title?: string;
+  /** New body, nonempty and without NUL; sent as given, without a marker. */
+  readonly body?: string;
+  /** New base branch. */
+  readonly base?: string;
+}
+
+/** A field `pr.edit` changes. */
+export type GithubPrEditField = 'title' | 'body' | 'base';
+
+/** Result of `pr.edit`. */
+export interface GithubPrEditResult {
+  /** Pull request number. */
+  readonly number: number;
+  /** Whether this attempt sent the edit. */
+  readonly edited: boolean;
+  /**
+   * Why nothing was sent: `closed` (closed or merged) or `head-moved` (the head is not
+   * `expectHead`); null when the edit was sent or nothing differed.
+   */
+  readonly reason: 'closed' | 'head-moved' | null;
+  /** The head SHA the read observed. */
+  readonly head: string;
+  /** The fields this attempt changed, in `title`, `body`, `base` order. */
+  readonly changed: readonly GithubPrEditField[];
+}
+
+/** How `pr.merge` merges. */
+export type GithubPrMergeMethod = 'squash' | 'merge' | 'rebase';
+
+/** Arguments of `pr.merge`. */
+export interface GithubPrMergeOptions {
+  /** Pull request number. */
+  readonly number: number;
+  /** The full 40-character head SHA to merge; GitHub refuses the merge when the head differs. */
+  readonly sha: string;
+  /** Merge method, default `squash`. */
+  readonly method?: GithubPrMergeMethod;
+}
+
+/** Why `pr.merge` did not merge. */
+export type GithubPrMergeRefusal = 'head-moved' | 'not-mergeable' | 'closed';
+
+/** Result of `pr.merge`: merged at `sha`, or a refusal as data. */
+export type GithubPrMergeResult =
+  | {
+      /** Merged at `sha`. */
+      readonly merged: true;
+      /** Pull request number. */
+      readonly number: number;
+      /** The merge commit, or null when GitHub reports none. */
+      readonly mergeCommit: string | null;
+      /** The merged head, always `sha`. */
+      readonly head: string;
+      /**
+       * Whether this attempt merged it; false when the pull request was already merged at `sha`,
+       * for example by an earlier attempt that crashed before its checkpoint.
+       */
+      readonly acted: boolean;
+    }
+  | {
+      /** Not merged. */
+      readonly merged: false;
+      /** Pull request number. */
+      readonly number: number;
+      /**
+       * `head-moved`: the head is not `sha`. `not-mergeable`: GitHub refused (HTTP 405), for
+       * example for conflicts, required checks or reviews, a draft or a merge queue. `closed`:
+       * closed without merging.
+       */
+      readonly reason: GithubPrMergeRefusal;
+      /** The head SHA the step observed. */
+      readonly head: string;
+      /** GitHub's message when it refused the merge `PUT`; null when the first read refused. */
+      readonly message: string | null;
+    };
+
+/** Arguments of `checks.rerunFailed`. */
+export interface GithubRerunFailedOptions {
+  /** The full 40-character commit SHA whose workflow runs to rerun. */
+  readonly sha: string;
+  /**
+   * The baseline: the run attempt the caller observed failing, a positive integer, default 1.
+   * Only failed runs at or below it are rerun; a run whose attempt is past it was rerun already.
+   * Pass 2 for a second round after a first rerun.
+   */
+  readonly attempt?: number;
+}
+
+/** A workflow run `checks.rerunFailed` acted on or skipped. */
+export interface GithubWorkflowRunRef {
+  /** Actions run ID. */
+  readonly id: number;
+  /** Workflow name, or null. */
+  readonly name: string | null;
+  /** The run attempt the list reported. */
+  readonly attempt: number;
+}
+
+/** Result of `checks.rerunFailed`. */
+export interface GithubRerunFailedResult {
+  /** The failed runs this attempt asked GitHub to rerun (their failed jobs). */
+  readonly rerun: readonly GithubWorkflowRunRef[];
+  /**
+   * Runs past the baseline that failed again or are still running: rerun already, so never rerun
+   * again.
+   */
+  readonly skipped: readonly GithubWorkflowRunRef[];
+  /**
+   * Whether a later list showed every rerun run queued, running or at a higher attempt; true when
+   * nothing was rerun. False after the bounded confirmation found a run unchanged.
+   */
+  readonly confirmed: boolean;
+}
+
+const prState = z.enum(['open', 'closed', 'merged']);
+
+/** Step schema of `pr.create`. @internal */
+export const prCreateResultSchema: z.ZodType<GithubPrCreateResult> = z.object({
+  number: issueNumber,
+  url: z.string(),
+  nodeId: z.string(),
+  state: prState,
+  created: z.boolean(),
+});
+
+/** Step schema of `pr.edit`. @internal */
+export const prEditResultSchema: z.ZodType<GithubPrEditResult> = z.object({
+  number: issueNumber,
+  edited: z.boolean(),
+  reason: z.enum(['closed', 'head-moved']).nullable(),
+  head: z.string(),
+  changed: z.array(z.enum(['title', 'body', 'base'])),
+});
+
+/** Step schema of `pr.merge`. @internal */
+export const prMergeResultSchema: z.ZodType<GithubPrMergeResult> = z.discriminatedUnion('merged', [
+  z.object({
+    merged: z.literal(true),
+    number: issueNumber,
+    mergeCommit: z.string().nullable(),
+    head: z.string(),
+    acted: z.boolean(),
+  }),
+  z.object({
+    merged: z.literal(false),
+    number: issueNumber,
+    reason: z.enum(['head-moved', 'not-mergeable', 'closed']),
+    head: z.string(),
+    message: z.string().nullable(),
+  }),
+]);
+
+const runRef = z.object({ id, name: z.string().nullable(), attempt: z.int().positive() });
+
+/** Step schema of `checks.rerunFailed`. @internal */
+export const rerunFailedResultSchema: z.ZodType<GithubRerunFailedResult> = z.object({
+  rerun: z.array(runRef),
+  skipped: z.array(runRef),
+  confirmed: z.boolean(),
+});
+
+// Requests
+
+/** `GET repos/O/R/pulls/N`. @internal */
+export function pullReadArgv(repo: GithubRepo, number: number): [string, ...string[]] {
+  return apiArgv(repo, `repos/${repo.owner}/${repo.name}/pulls/${String(number)}`);
+}
+
+/**
+ * Every pull request, in any state and into any base, from the same-repository branch `head`.
+ * There is no `base` filter: GitHub applies it to the current base and a pull request can be
+ * retargeted, so a filtered list could hide the step's own marked pull request. The `head` filter
+ * is owner-qualified, so a fork's branch of the same name never matches; the value is URL-encoded,
+ * so a branch name cannot add query parameters. Plain `--paginate` without `--slurp`, as for
+ * code-scanning alerts: a failed later page leaves the merged array unclosed, so the read rejects
+ * instead of returning part of the list. @internal
+ */
+export function pullListArgv(repo: GithubRepo, head: string): [string, ...string[]] {
+  return apiArgv(
+    repo,
+    '--paginate',
+    `repos/${repo.owner}/${repo.name}/pulls?head=${encodeURIComponent(`${repo.owner}:${head}`)}&state=all&per_page=100`,
+  );
+}
+
+/**
+ * The head-pinned merge: `PUT repos/O/R/pulls/N/merge` with `merge_method` and `sha` as `-f`
+ * fields. Both are validated tokens, never free text, and `sha` stays visible in argv. Never
+ * `gh pr merge`, which can enable auto-merge or enqueue the pull request instead. @internal
+ */
+export function mergeArgv(
+  repo: GithubRepo,
+  number: number,
+  method: GithubPrMergeMethod,
+  sha: string,
+): [string, ...string[]] {
+  return apiArgv(
+    repo,
+    '-X',
+    'PUT',
+    `repos/${repo.owner}/${repo.name}/pulls/${String(number)}/merge`,
+    '-f',
+    `merge_method=${method}`,
+    '-f',
+    `sha=${sha}`,
+  );
+}
+
+/** Every workflow run of a commit, one slurped array of pages. @internal */
+export function runsListArgv(repo: GithubRepo, sha: string): [string, ...string[]] {
+  return apiArgv(
+    repo,
+    '--paginate',
+    '--slurp',
+    `repos/${repo.owner}/${repo.name}/actions/runs?head_sha=${sha}&per_page=100`,
+  );
+}
+
+/** `POST repos/O/R/actions/runs/ID/rerun-failed-jobs`; GitHub answers 201 with no body. @internal */
+export function rerunArgv(repo: GithubRepo, runId: number): [string, ...string[]] {
+  return apiArgv(
+    repo,
+    '-X',
+    'POST',
+    `repos/${repo.owner}/${repo.name}/actions/runs/${String(runId)}/rerun-failed-jobs`,
+  );
+}
+
+// Response schemas. Head SHAs stay plain strings: a synthesized head is never a SHA, so a
+// rehearsed edit or merge reports `head-moved` instead of failing synthesis.
+
+const ref = z.object({ ref: z.string(), sha: z.string() });
+
+/**
+ * `GET repos/O/R/pulls/N`. `open` comes first, so a synthesized pull request is open, unmerged
+ * and at a head that is not the pinned SHA. @internal
+ */
+export const pullResponseSchema = z.object({
+  number: issueNumber,
+  html_url: z.string(),
+  node_id: z.string(),
+  state: z.enum(['open', 'closed']),
+  merged: z.boolean(),
+  merge_commit_sha: z.string().nullable(),
+  title: z.string(),
+  body: z.string().nullable(),
+  head: ref,
+  base: z.object({ ref: z.string() }),
+});
+
+/** A validated pull request read. @internal */
+export type PullResponse = z.infer<typeof pullResponseSchema>;
+
+/**
+ * The pull request list for a head, across bases. `closed` comes first, so the synthesized row is a
+ * closed pull request without the marker and a rehearsed create takes the create path. @internal
+ */
+export const pullListResponseSchema = z.array(
+  z.object({
+    number: issueNumber,
+    html_url: z.string(),
+    node_id: z.string(),
+    state: z.enum(['closed', 'open']),
+    merged_at: z.string().nullable(),
+    body: z.string().nullable(),
+    base: z.object({ ref: z.string() }),
+  }),
+);
+
+/** One row of the pull request list. @internal */
+export type PullListRow = z.infer<typeof pullListResponseSchema>[number];
+
+/** `POST repos/O/R/pulls` response. @internal */
+export const pullPostResponseSchema = z.object({
+  number: issueNumber,
+  html_url: z.string(),
+  node_id: z.string(),
+});
+
+/** `PATCH repos/O/R/pulls/N` response. @internal */
+export const pullPatchResponseSchema = z.object({ number: issueNumber });
+
+/**
+ * The merge PUT's stdout under `okExitCodes: [0, 1]`: GitHub's success body first, then the error
+ * body gh prints on an HTTP error. Newer bodies carry `status` (`"405"`, `"409"`); older ones may
+ * not. @internal
+ */
+export const mergeResponseSchema = z.union([
+  z.object({ merged: z.literal(true), sha: z.string(), message: z.string().optional() }),
+  z.object({ message: z.string(), status: z.union([z.string(), z.int()]).optional() }),
+]);
+
+/** A validated merge response. @internal */
+export type MergeResponse = z.infer<typeof mergeResponseSchema>;
+
+/**
+ * Every page of a commit's workflow runs. Complete or throw: fewer distinct run IDs than a
+ * page's `total_count` fails as an incomplete collection. Rows are counted by ID, because a run
+ * created between pages repeats a row and the repeat could otherwise hide an omitted run. More is
+ * tolerated, and a synthesized list is one row with a count of 0. @internal
+ */
+export const runsListResponseSchema = z
+  .array(
+    z.object({
+      total_count: z.int().nonnegative(),
+      workflow_runs: z.array(
+        z.object({
+          id,
+          name: z.string().nullish(),
+          status: z.string().nullish(),
+          conclusion: z.string().nullish(),
+          run_attempt: z.int().positive(),
+        }),
+      ),
+    }),
+  )
+  .min(1)
+  .superRefine((pages, ctx) => {
+    const total = Math.max(...pages.map((page) => page.total_count));
+    const listed = new Set(pages.flatMap((page) => page.workflow_runs.map((run) => run.id))).size;
+    if (listed < total)
+      ctx.addIssue({
+        code: 'custom',
+        message: `actions.workflowRuns lists ${String(listed)} distinct of ${String(total)} runs.`,
+        path: [pages.length - 1, 'workflow_runs'],
+        params: { [INCOMPLETE_COLLECTION_PARAM]: 'actions.workflowRuns' },
+      });
+  });
+
+/** One workflow run of the list. @internal */
+export type WorkflowRunRow = z.infer<
+  typeof runsListResponseSchema
+>[number]['workflow_runs'][number];
+
+// Decisions
+
+/** A list row's state, `merged` when it has a merge time. @internal */
+export function pullListState(row: Pick<PullListRow, 'state' | 'merged_at'>): GithubPrState {
+  return row.merged_at === null ? row.state : 'merged';
+}
+
+/** A pull request read's state. @internal */
+export function pullState(pull: Pick<PullResponse, 'state' | 'merged'>): GithubPrState {
+  return pull.merged ? 'merged' : pull.state;
+}
+
+/** What `pr.create` does with the pull requests listed for its head. @internal */
+export type CreateDecision<T> =
+  | { readonly kind: 'found-marked'; readonly row: T }
+  | { readonly kind: 'found-open'; readonly row: T }
+  | { readonly kind: 'create' };
+
+/**
+ * `pr.create`'s order: a pull request in any state and into any base carrying the step's marker
+ * (so a step never opens a second one, even after its first was closed or retargeted), then any
+ * unmarked open one into the requested `base`, whoever opened it; otherwise create. @internal
+ */
+export function createDecision<
+  T extends {
+    readonly body?: string | null | undefined;
+    readonly state: string;
+    readonly base: { readonly ref: string };
+  },
+>(rows: readonly T[], idempotencyKey: string, base: string): CreateDecision<T> {
+  const marked = findMarked(rows, idempotencyKey);
+  if (marked !== undefined) return { kind: 'found-marked', row: marked };
+  const open = rows.find((row) => row.state === 'open' && row.base.ref === base);
+  return open === undefined ? { kind: 'create' } : { kind: 'found-open', row: open };
+}
+
+/** The fields `pr.edit` wants, null for a field it leaves alone. @internal */
+export interface PrEditWanted {
+  /** New title. */
+  readonly title: string | null;
+  /** New body. */
+  readonly body: string | null;
+  /** New base. */
+  readonly base: string | null;
+}
+
+/**
+ * The fields of `wanted` that differ from the pull request, as the PATCH body and the changed
+ * names in `title`, `body`, `base` order. A missing body equals no body. @internal
+ */
+export function editChanges(
+  pull: Pick<PullResponse, 'title' | 'body' | 'base'>,
+  wanted: PrEditWanted,
+): { readonly changed: GithubPrEditField[]; readonly patch: Record<string, string> } {
+  const current: Record<GithubPrEditField, string> = {
+    title: pull.title,
+    body: pull.body ?? '',
+    base: pull.base.ref,
+  };
+  const changed: GithubPrEditField[] = [];
+  const patch: Record<string, string> = {};
+  for (const field of ['title', 'body', 'base'] as const) {
+    const value = wanted[field];
+    if (value === null || value === current[field]) continue;
+    changed.push(field);
+    patch[field] = value;
+  }
+  return { changed, patch };
+}
+
+/** What `pr.merge` does after reading the pull request. @internal */
+export type MergePrecheck = 'merged' | 'merged-elsewhere' | 'closed' | 'head-moved' | 'put';
+
+/**
+ * Merged at `sha` is success with no PUT (an earlier attempt may have merged it); merged at
+ * another head refuses; closed and a moved head are refusals as data; otherwise PUT. @internal
+ */
+export function mergePrecheck(
+  pull: Pick<PullResponse, 'state' | 'merged' | 'head'>,
+  sha: string,
+): MergePrecheck {
+  if (pull.merged) return pull.head.sha === sha ? 'merged' : 'merged-elsewhere';
+  if (pull.state !== 'open') return 'closed';
+  return pull.head.sha === sha ? 'put' : 'head-moved';
+}
+
+/** What a refused PUT means after the pull request is read again. @internal */
+export type MergeFailure = Exclude<MergePrecheck, 'put'> | 'not-mergeable' | 'unknown';
+
+/**
+ * Classify a refused PUT from the re-read and GitHub's error body: the re-read wins (merged at
+ * `sha` is success, elsewhere refuses, closed, head moved); then status 409 is `head-moved` and
+ * 405 `not-mergeable`. Anything else, such as 403, 404, 422 or a body without status, is
+ * `unknown`: never claimed not mergeable without GitHub saying so. @internal
+ */
+export function mergeFailure(
+  error: { readonly status?: string | number | undefined },
+  reread: Pick<PullResponse, 'state' | 'merged' | 'head'>,
+  sha: string,
+): MergeFailure {
+  const settled = mergePrecheck(reread, sha);
+  if (settled !== 'put') return settled;
+  const status = error.status === undefined ? null : String(error.status);
+  if (status === '409') return 'head-moved';
+  if (status === '405') return 'not-mergeable';
+  return 'unknown';
+}
+
+/** Every run once, by ID, across the pages. @internal */
+export function uniqueRuns(
+  pages: readonly { readonly workflow_runs: readonly WorkflowRunRow[] }[],
+): WorkflowRunRow[] {
+  const byId = new Map<number, WorkflowRunRow>();
+  for (const page of pages) for (const run of page.workflow_runs) byId.set(run.id, run);
+  return [...byId.values()];
+}
+
+const failed = (run: WorkflowRunRow): boolean =>
+  run.status === 'completed' && run.conclusion === 'failure';
+
+/** A run as a result reference. @internal */
+export function runRefOf(run: WorkflowRunRow): GithubWorkflowRunRef {
+  return { id: run.id, name: run.name ?? null, attempt: run.run_attempt };
+}
+
+/**
+ * Which runs `checks.rerunFailed` reruns: completed with conclusion `failure` at or below the
+ * baseline `attempt`. Runs past the baseline that failed again or are still running are
+ * `skipped`: they were rerun already. Successful, cancelled and other runs are neither. @internal
+ */
+export function rerunSelection(
+  runs: readonly WorkflowRunRow[],
+  attempt: number,
+): { readonly rerun: WorkflowRunRow[]; readonly skipped: WorkflowRunRow[] } {
+  return {
+    rerun: runs.filter((run) => failed(run) && run.run_attempt <= attempt),
+    skipped: runs.filter(
+      (run) => run.run_attempt > attempt && (failed(run) || run.status !== 'completed'),
+    ),
+  };
+}
+
+/**
+ * Whether every rerun run now shows the rerun: not completed (queued or running) or at a higher
+ * attempt than the one rerun. @internal
+ */
+export function rerunConfirmed(
+  runs: readonly WorkflowRunRow[],
+  rerun: readonly GithubWorkflowRunRef[],
+): boolean {
+  return rerun.every((wanted) => {
+    const run = runs.find((candidate) => candidate.id === wanted.id);
+    return run !== undefined && (run.status !== 'completed' || run.run_attempt > wanted.attempt);
+  });
+}

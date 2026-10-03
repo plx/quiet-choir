@@ -419,3 +419,18 @@ concurrent change between the read and the write is not detected. Bodies go to g
 `{ retry: { maxAttempts: 3 } }` as the third argument; the writes are safe to repeat. A fork
 re-posts writes its source left unfinished, and a rehearsed `issue.reopen` skips. See
 [GitHub writes](https://github.com/plx/quiet-choir/blob/main/docs/github.md#writes).
+
+Pull request writes use only `gh api`. `gh.pr.create(id, { head, base, title, body, draft? })`
+returns the pull request carrying its marker in any state and base, else an open one for the
+same-repository `head` and `base`, and opens one only when there is neither.
+`gh.pr.edit(id, { number, expectHead, title?, body?, base? })` patches only differing fields of an
+open pull request still at `expectHead`, otherwise returning `reason: 'closed'` or `'head-moved'`.
+`gh.pr.merge(id, { number, sha, method? })` sends `PUT .../pulls/N/merge` with `sha` (never
+`gh pr merge`, auto-merge or a queue): already merged at `sha` returns the merge commit with
+`acted: false` and no second `PUT`, merged elsewhere throws, and `closed`, `head-moved` (also
+GitHub's 409) or `not-mergeable` (GitHub's 405) come back as `{ merged: false, reason }`. Check the
+base, threads and alerts yourself first. `gh.checks.rerunFailed(id, { sha, attempt })` reruns failed
+runs at or below the run attempt you saw failing and skips runs past it, so pass the round number (a
+run below it that was rerun before a crash and failed again is rerun again). A rehearsed edit or
+merge reports `head-moved`. See
+[merging](https://github.com/plx/quiet-choir/blob/main/docs/github.md#merging).
