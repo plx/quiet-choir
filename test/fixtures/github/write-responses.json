@@ -1,0 +1,126 @@
+{
+  "//": "Hand-built from GitHub's REST and GraphQL documentation (no write probes); owner octo-org.",
+  "commentPost": {
+    "id": 3341234567,
+    "node_id": "IC_kwDOPexample",
+    "url": "https://api.github.com/repos/octo-org/quiet-choir/issues/comments/3341234567",
+    "html_url": "https://github.com/octo-org/quiet-choir/issues/7#issuecomment-3341234567",
+    "body": "Landed.\n\n<!-- quiet-choir:run/note -->",
+    "user": { "login": "octo-bot", "id": 1, "type": "User" },
+    "created_at": "2026-10-03T00:00:00Z",
+    "updated_at": "2026-10-03T00:00:00Z",
+    "issue_url": "https://api.github.com/repos/octo-org/quiet-choir/issues/7",
+    "author_association": "OWNER"
+  },
+  "issuePost": {
+    "id": 3456789012,
+    "node_id": "I_kwDOPexample",
+    "url": "https://api.github.com/repos/octo-org/quiet-choir/issues/12",
+    "html_url": "https://github.com/octo-org/quiet-choir/issues/12",
+    "number": 12,
+    "state": "open",
+    "state_reason": null,
+    "title": "Follow-up",
+    "body": "Do it.\n\n<!-- quiet-choir:run/file -->",
+    "user": { "login": "octo-bot", "id": 1, "type": "User" },
+    "labels": [{ "id": 1, "name": "enhancement" }],
+    "created_at": "2026-10-03T00:00:00Z"
+  },
+  "issueListPage": [
+    {
+      "number": 13,
+      "node_id": "PR_kwDOPexample",
+      "html_url": "https://github.com/octo-org/quiet-choir/pull/13",
+      "body": null,
+      "pull_request": { "url": "https://api.github.com/repos/octo-org/quiet-choir/pulls/13" }
+    },
+    {
+      "number": 12,
+      "node_id": "I_kwDOPexample",
+      "html_url": "https://github.com/octo-org/quiet-choir/issues/12",
+      "title": "Follow-up",
+      "body": "Do it.\n\n<!-- quiet-choir:run/file -->",
+      "state": "open"
+    }
+  ],
+  "issuePatch": {
+    "number": 7,
+    "node_id": "I_kwDOPseven",
+    "state": "closed",
+    "state_reason": "completed",
+    "html_url": "https://github.com/octo-org/quiet-choir/issues/7"
+  },
+  "alertPatch": {
+    "number": 3,
+    "state": "dismissed",
+    "dismissed_reason": "used in tests",
+    "dismissed_comment": "Test fixture only.",
+    "dismissed_by": { "login": "octo-bot" },
+    "dismissed_at": "2026-10-03T00:00:00Z",
+    "html_url": "https://github.com/octo-org/quiet-choir/security/code-scanning/3"
+  },
+  "threadRead": [
+    {
+      "data": {
+        "node": {
+          "__typename": "PullRequestReviewThread",
+          "isResolved": false,
+          "comments": {
+            "pageInfo": { "hasNextPage": false, "endCursor": "Y3Vyc29yOnYyOpHOAAAAAQ==" },
+            "nodes": [
+              {
+                "id": "PRRC_kwDOPfirst",
+                "url": "https://github.com/octo-org/quiet-choir/pull/1#discussion_r1",
+                "body": "Guard the cursor.",
+                "author": { "login": "chatgpt-codex-connector", "__typename": "Bot" }
+              }
+            ]
+          }
+        }
+      }
+    }
+  ],
+  "reply": {
+    "data": {
+      "addPullRequestReviewThreadReply": {
+        "comment": {
+          "id": "PRRC_kwDOPreply",
+          "url": "https://github.com/octo-org/quiet-choir/pull/1#discussion_r2"
+        }
+      }
+    }
+  },
+  "resolve": { "data": { "resolveReviewThread": { "thread": { "isResolved": true } } } },
+  "parentUnlinked": {
+    "data": {
+      "repository": {
+        "child": { "id": "I_kwDOPchild", "number": 12, "parent": null },
+        "wanted": { "id": "I_kwDOPparent", "number": 5 }
+      }
+    }
+  },
+  "parentLinked": {
+    "data": {
+      "repository": {
+        "child": {
+          "id": "I_kwDOPchild",
+          "number": 12,
+          "parent": {
+            "id": "I_kwDOPparent",
+            "number": 5,
+            "repository": { "nameWithOwner": "octo-org/quiet-choir" }
+          }
+        },
+        "wanted": { "id": "I_kwDOPparent", "number": 5 }
+      }
+    }
+  },
+  "addSubIssue": {
+    "data": { "addSubIssue": { "issue": { "number": 5 }, "subIssue": { "number": 12 } } }
+  },
+  "issueState": {
+    "data": {
+      "repository": { "issue": { "number": 7, "state": "CLOSED", "stateReason": "NOT_PLANNED" } }
+    }
+  }
+}

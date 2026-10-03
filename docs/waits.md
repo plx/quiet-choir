@@ -3,7 +3,9 @@
 A read that selects a workflow branch belongs in `ctx.step`. A read that only says “keep waiting”
 belongs in a read-only poll. Use occurrence IDs derived from replayed data when selecting work in
 successive rounds; an incomplete collection is an error, not an empty selection. Reconcile external
-writes inside `ctx.step`, using idempotency keys, markers, or conditional APIs where available.
+writes inside `ctx.step`, using idempotency keys, markers, or conditional APIs where available;
+[`quiet-choir/github`'s writes](github.md#writes) are that pattern packaged for comments, thread
+replies, issues and code-scanning alerts.
 
 | Operation                                                                  | Saved result                                                                   |
 | -------------------------------------------------------------------------- | ------------------------------------------------------------------------------ |

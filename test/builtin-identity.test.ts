@@ -22,6 +22,7 @@ import {
   github,
   pullRequestViewResponseSchema,
   type GithubClient,
+  type GithubWritePolicy,
 } from '../src/integrations/github.js';
 import { digest } from '../src/workflow/runtime/json.js';
 import { agentIdentity, type StepIdentity } from '../src/workflow/runtime/identity.js';
@@ -562,6 +563,92 @@ describe('quiet-choir/github wait identity', () => {
       const helper = { helper: `github.${name}`, version: 1 };
       expect(step?.wait?.request.poll?.observe).toBe(digest({ helper }));
       pinned(`quiet-choir/github ${name}`, step?.fingerprint, golden[name]);
+    },
+  );
+});
+
+describe('quiet-choir/github write identity', () => {
+  // Every gh call fails, so each write's step fails after recording its identity.
+  const processRunner: ProcessRunner = {
+    run: () =>
+      Promise.resolve({
+        code: 2,
+        signal: null,
+        stdout: '',
+        stderr: 'gh: golden',
+        truncated: false,
+        durationMs: 1,
+      }),
+  };
+  const writes: Readonly<
+    Record<string, (gh: GithubClient, policy?: GithubWritePolicy) => Promise<unknown>>
+  > = {
+    comment: (gh, policy) => gh.comment('write', { number: 7, body: 'golden' }, policy),
+    'thread.reply': (gh, policy) =>
+      gh.thread.reply('write', { threadId: 'PRRT_golden', body: 'golden' }, policy),
+    'issue.create': (gh, policy) =>
+      gh.issue.create(
+        'write',
+        { title: 'golden', body: 'golden', labels: ['bug'], parent: 5 },
+        policy,
+      ),
+    'issue.close': (gh, policy) =>
+      gh.issue.close('write', { number: 7, comment: 'golden', reason: 'not_planned' }, policy),
+    'issue.reopen': (gh, policy) => gh.issue.reopen('write', { number: 7 }, policy),
+    'alert.dismiss': (gh, policy) =>
+      gh.alert.dismiss('write', { number: 3, comment: 'golden' }, policy),
+  };
+  // Captured on this change. The input (repository and normalized arguments), the result schema and
+  // the op's version constant (github.comment/1 and so on) are pinned; the callback's source text
+  // and the policy are not. A deliberate change of an op's behaviour bumps its version.
+  const golden: Readonly<Record<string, string>> = {
+    comment: '81fc3378aa8a4c0a7b78a1dbb0152b6ee1013409fab04c35664336a22ffac020',
+    'thread.reply': '7b8b7cf2c3f41aeaa7d6f7bb77a30e4fbadd9bb968912eb7aed5fba85681dc3b',
+    'issue.create': 'b45fe9184afc5950c5496dc60f9bba0b6edc87f68b9a606384cef228a5adf803',
+    'issue.close': 'bb198f1ffd295871305ad5d9a5caf57bf26d1fd77059bfec8201a7f980cfd76e',
+    'issue.reopen': '9aeb88dcedb20255b7d06a01257f043fb0f1433bb60a2a0d57f1d5d32fdeda36',
+    'alert.dismiss': '3cb90155c05d9ab1ac6b96ec7e5579fddd5482b33432ca42804d7941fd16c706',
+  };
+
+  async function identityOfWrite(
+    runId: string,
+    write: (gh: GithubClient) => Promise<unknown>,
+  ): Promise<StepRecordIdentity> {
+    await runWorkflow(
+      workflow((ctx) => write(github(ctx, { repo: 'octo-org/quiet-choir' }))),
+      options({ runId, processRunner }),
+    ).catch(() => undefined);
+    const step = (await recorded(runId))['write'];
+    if (!step) throw new Error(`${runId} recorded no step`);
+    return step;
+  }
+
+  it.each(Object.keys(writes))(
+    'pins %s to its input, result schema and version, without callback text or policy',
+    async (name) => {
+      const write = writes[name];
+      if (!write) throw new Error(`unknown write ${name}`);
+      const runId = name.replace(/[^A-Za-z0-9]/gu, '-');
+      const step = await identityOfWrite(runId, (gh) => write(gh));
+      expect(step.identity).not.toHaveProperty('callback');
+      pinned(
+        `quiet-choir/github ${name} version`,
+        step.identity['version'],
+        digest(`github.${name}/1`),
+      );
+      pinned(`quiet-choir/github ${name}`, step.fingerprint, golden[name]);
+      expect(step.fingerprint).toBe(digest(step.identity));
+      // Policy is not identity: retry, timeoutMs and maxOutputBytes leave the fingerprint alone.
+      const withPolicy = await identityOfWrite(`${runId}-policy`, (gh) =>
+        write(gh, {
+          retry: { maxAttempts: 2, delayMs: 1 },
+          timeoutMs: 1_000,
+          maxOutputBytes: 4_096,
+        }),
+      );
+      expect(withPolicy).toEqual(step);
+      const run = await readRun({ stateDir, runId });
+      expect(run.steps['write']?.meta).toEqual({ integration: 'github', op: name });
     },
   );
 });
