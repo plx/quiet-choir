@@ -207,9 +207,6 @@ export type CapabilityKeysOf<D> = D extends {
     : never
   : never;
 
-/** Capability keys `P` forbidden as optional `never` properties, so even an explicit `undefined` fails. */
-type ForbiddenKeys<P extends PropertyKey> = Readonly<Partial<Record<P, never>>>;
-
 /**
  * Call-site options of harness `K` with registration `D` in a workflow with declared roles `TProfile`.
  * `profile` accepts a built-in preset or a declared role. When `TStrict` is exactly `true` (a
@@ -217,7 +214,8 @@ type ForbiddenKeys<P extends PropertyKey> = Readonly<Partial<Record<P, never>>>;
  * are forbidden as optional `never` properties, mirroring the runtime check: for Claude and Codex
  * every key except `isolation`, which is narrowed to exclude `'inherit'`; for a registered harness
  * every literal `capabilityKeys` entry. Forbidding the keys structurally, not only through
- * excess-property checks, also rejects a pre-built options variable. A literal `false`, or a
+ * excess-property checks, also rejects a pre-built options variable and, with
+ * `exactOptionalPropertyTypes`, an explicit `undefined`. A literal `false`, or a
  * non-literal `boolean`, keeps every option.
  */
 export type CallOptions<
@@ -229,11 +227,12 @@ export type CallOptions<
   ([TStrict] extends [true]
     ? K extends 'claude' | 'codex'
       ? Omit<OptionsOf<D>, 'profile' | 'isolation' | CapabilityKeysOf<D>> &
-          ForbiddenKeys<Exclude<CapabilityKeysOf<D>, 'isolation'>> & {
+          Readonly<Partial<Record<Exclude<CapabilityKeysOf<D>, 'isolation'>, never>>> & {
             /** Native configuration mode or worktree shorthand; strict profiles own `'inherit'`. */
             readonly isolation?: Exclude<AgentIsolation, 'inherit'> | undefined;
           }
-      : Omit<OptionsOf<D>, 'profile' | CapabilityKeysOf<D>> & ForbiddenKeys<CapabilityKeysOf<D>>
+      : Omit<OptionsOf<D>, 'profile' | CapabilityKeysOf<D>> &
+          Readonly<Partial<Record<CapabilityKeysOf<D>, never>>>
     : Omit<OptionsOf<D>, 'profile'>) & {
     /** Built-in preset or one of this workflow's declared role names. */
     readonly profile?: BuiltinProfile | TProfile | undefined;
