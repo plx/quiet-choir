@@ -80,7 +80,7 @@ context parameter widens to `Pick<WorkflowContext, 'exec' | 'poll'>`.
   late review of the previous head could still read as clean, as in merge-down.
 - The checks rollup sees only checks GitHub has registered: right after a push, one fast check can
   roll up as success before slower workflows register. Required-check lists are a follow-up.
-- Dry runs synthesize a head that never equals `sha`, so a rehearsed wait reports `head-moved`
-  unless exec fixture rules answer its reads.
+- Dry runs synthesize a head that never equals `sha`, so a rehearsed wait reports `head-moved` (or,
+  for `waitPr` with `until: 'closed'`, suspends) unless exec fixture rules answer its reads.
 - A future change to a wait's rules must bump its version, which makes in-flight waits of that kind
   refuse to resume ("wait changed") instead of silently running new rules under an old identity.

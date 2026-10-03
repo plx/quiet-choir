@@ -251,12 +251,14 @@ the wall clock from the wait's first check, kept in its note; `RunOptions.clock`
 ### Rehearsal
 
 Under `--dry-run` the reads are synthesized, and a synthesized head never equals `sha`, so a
-rehearsed wait reports `head-moved`; quiet-choir does not special-case rehearsals. To rehearse
-another path, answer the wait's reads with [exec fixture rules](rehearsal.md#command-fixtures)
-matching the wait's ID and each read's argv (for example the GraphQL `query=` argument or the REST
-path), with raw `gh` responses: the `pr.view` response with `headRefOid` set to `sha`, a JSON array
-for the REST comments, reviews and reactions, and `{ data: { repository: { pullRequest } } }` with
-`state`, `headRefOid` and `mergeCommit` for `waitPr`.
+rehearsed `waitChecks`, `waitReview` or `waitPr` with `until: 'merged'` reports `head-moved` (and
+`until: 'closed'` suspends at its first check); quiet-choir does not special-case rehearsals. To
+rehearse another path, answer the wait's reads with
+[exec fixture rules](rehearsal.md#command-fixtures) matching the wait's ID and each read's argv (for
+example the GraphQL `query=` argument or the REST path), with raw `gh` responses: the `pr.view`
+response with `headRefOid` set to `sha`, a JSON array for the REST comments, reviews and reactions,
+and `{ data: { repository: { pullRequest } } }` with `state`, `headRefOid` and `mergeCommit` for
+`waitPr`.
 
 ## Gate example
 
