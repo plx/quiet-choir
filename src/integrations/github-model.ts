@@ -1488,3 +1488,365 @@ export function codeScanningRead(
     map: mapCodeScanning,
   };
 }
+
+// ---------------------------------------------------------------------------------------------
+// Wait reads (ADR 0045): the pull request's head and state, REST review activity and compare
+
+/** A pull request's state, head and merge commit, for `waitPr`. @internal */
+export const PR_STATE_QUERY: string = compact(`
+query($owner: String!, $name: String!, $number: Int!) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) { state headRefOid mergeCommit { oid } }
+  }
+}`);
+
+/** A REST user; null for a deleted account. */
+export interface RawRestUser {
+  /** Login, such as `chatgpt-codex-connector[bot]`. */
+  readonly login: string;
+}
+
+/** One issue (or pull request conversation) comment, as the REST API returns it. */
+export interface RawRestIssueComment {
+  /** Comment ID. */
+  readonly id: number;
+  /** Author, or null for a deleted account. */
+  readonly user: RawRestUser | null;
+  /** Markdown body. */
+  readonly body?: string | null | undefined;
+  /** ISO 8601 creation time. */
+  readonly created_at: string;
+  /** ISO 8601 time of the last edit, or the creation time. */
+  readonly updated_at: string;
+  /** Web URL. */
+  readonly html_url: string;
+}
+
+/** One pull request review, as the REST API returns it. */
+export interface RawRestReview {
+  /** Review ID. */
+  readonly id: number;
+  /** Author, or null for a deleted account. */
+  readonly user: RawRestUser | null;
+  /** `COMMENTED`, `APPROVED`, `CHANGES_REQUESTED`, `DISMISSED` or `PENDING`. */
+  readonly state: string;
+  /** The commit the review was submitted against. */
+  readonly commit_id: string | null;
+  /** ISO 8601 submission time; absent for a pending review. */
+  readonly submitted_at?: string | null | undefined;
+}
+
+/** One reaction on an issue or pull request, as the REST API returns it. */
+export interface RawRestReaction {
+  /** Author, or null for a deleted account. */
+  readonly user: RawRestUser | null;
+  /** Reaction, such as `+1` or `eyes`. */
+  readonly content: string;
+  /** ISO 8601 creation time. */
+  readonly created_at: string;
+}
+
+/** `gh api --paginate .../issues/N/comments` response: every page merged by gh into one array. */
+export type RawRestIssueCommentsResponse = readonly RawRestIssueComment[];
+/** `gh api --paginate .../pulls/N/reviews` response: every page merged into one array. */
+export type RawRestReviewsResponse = readonly RawRestReview[];
+/** `gh api --paginate .../issues/N/reactions` response: every page merged into one array. */
+export type RawRestReactionsResponse = readonly RawRestReaction[];
+
+/** The pull request state read of `waitPr`. */
+export interface RawPullRequestStateResponse {
+  /** GraphQL data. */
+  readonly data: {
+    /** The repository. */
+    readonly repository: {
+      /** The pull request. */
+      readonly pullRequest: {
+        /** `OPEN`, `CLOSED` or `MERGED`. */
+        readonly state: string;
+        /** Head commit SHA. */
+        readonly headRefOid: string;
+        /** The merge commit once merged, otherwise null. */
+        readonly mergeCommit: {
+          /** Commit SHA. */
+          readonly oid: string;
+        } | null;
+      };
+    };
+  };
+}
+
+/** `gh api repos/O/R/compare/BASE...HEAD --jq '{status: .status}'` output. */
+export interface RawCompareResponse {
+  /** `ahead` (HEAD descends from BASE), `behind`, `identical` or `diverged`. */
+  readonly status: string;
+}
+
+const restUser = z.object({ login: z.string() }).nullable();
+
+/** Schema of the issue comments REST read; one merged array, possibly empty. */
+export const restIssueCommentsResponseSchema: z.ZodType<RawRestIssueCommentsResponse> = z.array(
+  z.object({
+    id: count,
+    user: restUser,
+    body: z.string().nullish(),
+    created_at: z.string(),
+    updated_at: z.string(),
+    html_url: z.string(),
+  }),
+);
+
+/** Schema of the pull request reviews REST read; one merged array, possibly empty. */
+export const restReviewsResponseSchema: z.ZodType<RawRestReviewsResponse> = z.array(
+  z.object({
+    id: count,
+    user: restUser,
+    state: z.string(),
+    commit_id: z.string().nullable(),
+    submitted_at: z.string().nullish(),
+  }),
+);
+
+/** Schema of the issue reactions REST read; one merged array, possibly empty. */
+export const restReactionsResponseSchema: z.ZodType<RawRestReactionsResponse> = z.array(
+  z.object({ user: restUser, content: z.string(), created_at: z.string() }),
+);
+
+/** Schema of the `waitPr` state read. */
+export const pullRequestStateResponseSchema: z.ZodType<RawPullRequestStateResponse> = z.object({
+  data: z.object({
+    repository: z.object({
+      pullRequest: z.object({
+        state: z.string(),
+        headRefOid: z.string(),
+        mergeCommit: z.object({ oid: z.string() }).nullable(),
+      }),
+    }),
+  }),
+});
+
+/** Schema of the compare read's `{status}` projection. */
+export const compareResponseSchema: z.ZodType<RawCompareResponse> = z.object({
+  status: z.string(),
+});
+
+/** An issue comment from the REST read, with its author resolved. @internal */
+export interface GithubIssueComment {
+  /** Comment ID. */
+  readonly id: number;
+  /** Author login, or `ghost`. */
+  readonly author: string;
+  /** Markdown body; empty when GitHub returned none. */
+  readonly body: string;
+  /** Web URL. */
+  readonly url: string;
+  /** ISO 8601 creation time. */
+  readonly createdAt: string;
+  /** ISO 8601 time of the last edit. */
+  readonly updatedAt: string;
+}
+
+/** A pull request review from the REST read. @internal */
+export interface GithubReview {
+  /** Review ID. */
+  readonly id: number;
+  /** Author login, or `ghost`. */
+  readonly author: string;
+  /** Review state. */
+  readonly state: string;
+  /** The reviewed commit SHA. */
+  readonly commit: string | null;
+  /** ISO 8601 submission time, or null for a pending review. */
+  readonly submittedAt: string | null;
+}
+
+/** A reaction from the REST read. @internal */
+export interface GithubReaction {
+  /** Author login, or `ghost`. */
+  readonly author: string;
+  /** Reaction, such as `+1` or `eyes`. */
+  readonly content: string;
+  /** ISO 8601 creation time. */
+  readonly createdAt: string;
+}
+
+/** A pull request's state, head, last-commit rollup SHA and summarized checks. @internal */
+export interface GithubPullRequestHead {
+  /** Pull request number. */
+  readonly number: number;
+  /** `OPEN`, `CLOSED` or `MERGED`. */
+  readonly state: string;
+  /** Head commit SHA. */
+  readonly headRefOid: string;
+  /** SHA of the commit the check rollup belongs to, or null without commits. */
+  readonly rollupOid: string | null;
+  /** Checks of that commit. */
+  readonly checks: GithubChecks;
+}
+
+/** A pull request's state for `waitPr`. @internal */
+export interface GithubPullRequestState {
+  /** `OPEN`, `CLOSED` or `MERGED`. */
+  readonly state: string;
+  /** Head commit SHA. */
+  readonly headRefOid: string;
+  /** Merge commit SHA, or null. */
+  readonly mergeCommit: string | null;
+}
+
+const restLogin = (user: RawRestUser | null): string => user?.login ?? 'ghost';
+
+/** @internal */
+export function mapPullRequestHead(raw: RawPullRequestViewResponse): GithubPullRequestHead {
+  const pr = raw.data.repository.pullRequest;
+  return {
+    number: pr.number,
+    state: pr.state,
+    headRefOid: pr.headRefOid,
+    rollupOid: pr.commits.nodes.at(-1)?.commit.oid ?? null,
+    checks: mapPullRequest(raw).checks,
+  };
+}
+
+/** @internal */
+export function mapPullRequestState(raw: RawPullRequestStateResponse): GithubPullRequestState {
+  const pr = raw.data.repository.pullRequest;
+  return { state: pr.state, headRefOid: pr.headRefOid, mergeCommit: pr.mergeCommit?.oid ?? null };
+}
+
+/** @internal */
+export function mapRestIssueComments(raw: RawRestIssueCommentsResponse): GithubIssueComment[] {
+  return raw.map((comment) => ({
+    id: comment.id,
+    author: restLogin(comment.user),
+    body: comment.body ?? '',
+    url: comment.html_url,
+    createdAt: comment.created_at,
+    updatedAt: comment.updated_at,
+  }));
+}
+
+/** @internal */
+export function mapRestReviews(raw: RawRestReviewsResponse): GithubReview[] {
+  return raw.map((review) => ({
+    id: review.id,
+    author: restLogin(review.user),
+    state: review.state,
+    commit: review.commit_id,
+    submittedAt: review.submitted_at ?? null,
+  }));
+}
+
+/** @internal */
+export function mapRestReactions(raw: RawRestReactionsResponse): GithubReaction[] {
+  return raw.map((reaction) => ({
+    author: restLogin(reaction.user),
+    content: reaction.content,
+    createdAt: reaction.created_at,
+  }));
+}
+
+const shaPattern = /^[0-9a-f]{7,40}$/u;
+
+/** Throw unless `value` is a 7 to 40 character lowercase hex commit SHA. @internal */
+export function commitSha(value: unknown, label: string): string {
+  if (typeof value !== 'string' || !shaPattern.test(value))
+    throw new Error(`${label} must be a commit SHA of 7 to 40 lowercase hex characters.`);
+  return value;
+}
+
+/** `pr.view`'s argv and schema, mapped to the head, rollup commit and checks. @internal */
+export function prHeadRead(
+  repo: GithubRepo,
+  number: unknown,
+): GithubReadSpec<RawPullRequestViewResponse, GithubPullRequestHead> {
+  return { ...prViewRead(repo, number), map: mapPullRequestHead };
+}
+
+/** @internal */
+export function prStateRead(
+  repo: GithubRepo,
+  number: unknown,
+): GithubReadSpec<RawPullRequestStateResponse, GithubPullRequestState> {
+  return {
+    op: 'pr.state',
+    argv: graphqlArgv(
+      repo,
+      PR_STATE_QUERY,
+      false,
+      {},
+      { number: positiveInteger(number, 'pr.state number') },
+    ),
+    schema: pullRequestStateResponseSchema,
+    map: mapPullRequestState,
+  };
+}
+
+// No `--slurp`, for the reason given at codeScanningRead: a failure after the first page leaves
+// the merged array unclosed, so the read rejects instead of returning a partial list.
+function restListArgv(repo: GithubRepo, path: string): [string, ...string[]] {
+  return apiArgv(repo, '--paginate', `repos/${repo.owner}/${repo.name}/${path}?per_page=100`);
+}
+
+/** @internal */
+export function issueCommentsRestRead(
+  repo: GithubRepo,
+  number: unknown,
+): GithubReadSpec<RawRestIssueCommentsResponse, GithubIssueComment[]> {
+  const issue = positiveInteger(number, 'issue comments number');
+  return {
+    op: 'issue.comments',
+    argv: restListArgv(repo, `issues/${String(issue)}/comments`),
+    schema: restIssueCommentsResponseSchema,
+    map: mapRestIssueComments,
+  };
+}
+
+/** @internal */
+export function reviewsRestRead(
+  repo: GithubRepo,
+  number: unknown,
+): GithubReadSpec<RawRestReviewsResponse, GithubReview[]> {
+  const pr = positiveInteger(number, 'pr.reviews number');
+  return {
+    op: 'pr.reviews',
+    argv: restListArgv(repo, `pulls/${String(pr)}/reviews`),
+    schema: restReviewsResponseSchema,
+    map: mapRestReviews,
+  };
+}
+
+/** @internal */
+export function reactionsRestRead(
+  repo: GithubRepo,
+  number: unknown,
+): GithubReadSpec<RawRestReactionsResponse, GithubReaction[]> {
+  const issue = positiveInteger(number, 'issue reactions number');
+  return {
+    op: 'issue.reactions',
+    argv: restListArgv(repo, `issues/${String(issue)}/reactions`),
+    schema: restReactionsResponseSchema,
+    map: mapRestReactions,
+  };
+}
+
+/**
+ * Compare two commits: `ahead` means `head` descends from `base`. Both SHAs are validated, so
+ * neither can smuggle a path or flag into argv. @internal
+ */
+export function compareRead(
+  repo: GithubRepo,
+  base: unknown,
+  head: unknown,
+): GithubReadSpec<RawCompareResponse, RawCompareResponse> {
+  return {
+    op: 'repo.compare',
+    argv: apiArgv(
+      repo,
+      `repos/${repo.owner}/${repo.name}/compare/${commitSha(base, 'compare base')}...${commitSha(head, 'compare head')}`,
+      '--jq',
+      '{status: .status}',
+    ),
+    schema: compareResponseSchema,
+    map: (raw) => ({ status: raw.status }),
+  };
+}
