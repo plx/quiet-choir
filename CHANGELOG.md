@@ -22,7 +22,8 @@
   runtime check still applies). Explicit `defineWorkflow` type arguments are all-or-nothing: with a
   shorter prefix such as `defineWorkflow<Input, Output>`, the rest take the strict, childless
   defaults, so `strictProfiles: false` or a nonempty `children` list fails typecheck; drop the type
-  arguments (preferred) or spell all seven.
+  arguments (preferred) or spell all seven. `runWorkflow` keeps its four-argument
+  `<Input, Output, Profile, Harnesses>` form as an overload.
 - `workflow validate` runs a static durability lint after a clean type check (#154; ADR 0041). Rules
   QC001-QC006 report a discarded effect promise, a nondeterministic read in the workflow body
   (`Date.now()`, `new Date()`, `Math.random()`, `performance.now()`, `crypto.randomUUID`,

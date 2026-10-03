@@ -588,6 +588,32 @@ export async function runWorkflow<
 >(
   definition: WorkflowDefinition<TInput, TOutput, TProfile, H, TStrict, TChildren, TName>,
   options: RunOptions,
+): Promise<WorkflowResult<TOutput>>;
+/**
+ * Run or resume a workflow with explicit `<Input, Output, Profile, Harnesses>` type arguments. The
+ * definition's strictness, children and name widen to the {@link WorkflowDefinition} defaults; the
+ * runtime still applies them.
+ */
+export async function runWorkflow<
+  TInput,
+  TOutput,
+  TProfile extends string,
+  H extends readonly HarnessDeclaration[],
+>(
+  definition: WorkflowDefinition<TInput, TOutput, TProfile, H>,
+  options: RunOptions,
+): Promise<WorkflowResult<TOutput>>;
+export async function runWorkflow<
+  TInput,
+  TOutput,
+  TProfile extends string,
+  H extends readonly HarnessDeclaration[],
+  TStrict extends boolean,
+  TChildren extends readonly WorkflowDeclaration[],
+  TName extends string,
+>(
+  definition: WorkflowDefinition<TInput, TOutput, TProfile, H, TStrict, TChildren, TName>,
+  options: RunOptions,
 ): Promise<WorkflowResult<TOutput>> {
   if (!isValidRunId(options.runId)) throw new Error(runIdMessage);
   if (!definition.name.trim() || !definition.version.trim())

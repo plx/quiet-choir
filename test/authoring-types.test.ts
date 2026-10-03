@@ -16,6 +16,7 @@ import {
   type WorkflowContext,
   type WorkflowDeclaration,
   type WorkflowDefinition,
+  type WorkflowResult,
 } from '../src/index.js';
 
 const base = { version: '1', input: z.null(), output: z.null() } as const;
@@ -323,6 +324,13 @@ export const explicitAll = defineWorkflow<
 // Typed definitions still reach unparameterized definition parameters and runWorkflow.
 const accepts = (definition: WorkflowDefinition<null, null>) => definition.name;
 const run = () => runWorkflow(parent, { runId: 'unused', stateDir: 'unused', input: null });
+// The four-argument explicit runWorkflow form still compiles for a strict workflow with children.
+const runExplicit = () =>
+  runWorkflow<null, null, never, readonly []>(parent, {
+    runId: 'unused',
+    stateDir: 'unused',
+    input: null,
+  });
 
 it('carries strictness, profiles and declared children into authoring types', () => {
   // The literal name and strictness flow into the definition type.
@@ -367,5 +375,6 @@ it('carries strictness, profiles and declared children into authoring types', ()
   expect(accepts(parent)).toBe('parent');
   expect(accepts(strict)).toBe('strict');
   expect(typeof run).toBe('function');
+  expectTypeOf(runExplicit).returns.toEqualTypeOf<Promise<WorkflowResult<null>>>();
   expect(grandparent.name).toBe('grandparent');
 });
