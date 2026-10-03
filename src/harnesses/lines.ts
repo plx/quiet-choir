@@ -1,15 +1,21 @@
+import { outputLimitError } from '../processes/output-limit.js';
+
 /** An output limit that must remain distinct from malformed native JSON. @internal */
 export function retainedLimit(limit: number): Error {
-  return Object.assign(
-    new Error(`Harness output exceeded maxRetainedBytes (${String(limit)} bytes).`),
-    {
-      code: 'QUIET_CHOIR_OUTPUT_LIMIT',
-    },
-  );
+  return outputLimitError(`Harness output exceeded maxRetainedBytes (${String(limit)} bytes).`);
 }
 
-/** Byte-bounded JSONL framing; a known irrelevant oversized line can be discarded. @internal */
-export class ProtocolLines {
+/**
+ * Byte-bounded newline framing for JSONL protocols, fed raw stdout chunks. Each complete line is
+ * decoded as UTF-8 (a multi-byte character may span chunks) and awaited by `onLine` before the
+ * next one, so a slow consumer applies backpressure through {@link runProcess}'s `stream.stdout`.
+ * Blank lines are skipped; a trailing `\r` is left for the consumer, since `JSON.parse` ignores it.
+ *
+ * A line longer than `maxLineBytes` throws {@link outputLimitError}, unless `skipOversized` accepts
+ * its first bytes (at most 8 KiB), in which case the whole line is discarded unparsed. Only accept
+ * a prefix that proves the line is nonessential, such as a known native progress header.
+ */
+export class JsonLines {
   #buffer = Buffer.alloc(0);
   #length = 0;
   #skipping = false;
@@ -17,18 +23,25 @@ export class ProtocolLines {
   readonly #consume: (line: string) => void | Promise<void>;
   readonly #skip: (prefix: string) => boolean;
 
+  /**
+   * @param maxLineBytes - Largest line retained, from 1 to 2147483647 bytes.
+   * @param onLine - Consumer of each nonblank line; a rejection rejects the `feed` call.
+   * @param skipOversized - Decide from an oversized line's prefix whether to discard it; by
+   *   default every oversized line is an output-limit failure.
+   */
   public constructor(
-    limit: number,
-    consume: (line: string) => void | Promise<void>,
-    skip: (prefix: string) => boolean,
+    maxLineBytes: number,
+    onLine: (line: string) => void | Promise<void>,
+    skipOversized: (prefix: string) => boolean = () => false,
   ) {
-    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 2_147_483_647)
+    if (!Number.isSafeInteger(maxLineBytes) || maxLineBytes < 1 || maxLineBytes > 2_147_483_647)
       throw new Error('maxRetainedBytes must be a positive integer at most 2147483647.');
-    this.#limit = limit;
-    this.#consume = consume;
-    this.#skip = skip;
+    this.#limit = maxLineBytes;
+    this.#consume = onLine;
+    this.#skip = skipOversized;
   }
 
+  /** Frame one chunk, awaiting `onLine` for each line it completes. */
   public async feed(value: Uint8Array): Promise<void> {
     const chunk = Buffer.from(value.buffer, value.byteOffset, value.byteLength);
     let cursor = 0;
@@ -41,6 +54,7 @@ export class ProtocolLines {
     }
   }
 
+  /** Deliver a final line that had no trailing newline; call once after the last chunk. */
   public async finish(): Promise<void> {
     if (this.#length > 0 || this.#skipping) await this.#line();
   }
@@ -81,6 +95,9 @@ export class ProtocolLines {
     this.#skipping = false;
   }
 }
+
+/** Former name of {@link JsonLines}, kept for internal callers. @internal */
+export const ProtocolLines: typeof JsonLines = JsonLines;
 
 const codexHeader =
   /^\s*\{\s*"type"\s*:\s*"(item\.(?:started|updated|completed))"\s*,\s*"item"\s*:\s*\{\s*(?:"id"\s*:\s*("(?:[^"\\]|\\.)*")\s*,\s*)?"type"\s*:\s*"(command_execution|reasoning|file_change|mcp_tool_call|web_search|todo_list)"\s*[,}]/u;

@@ -24,7 +24,14 @@ import type {
 
 /** Public features advertised by one named agent harness. */
 export interface HarnessCapabilities {
-  /** Whether structured responses are native, prompted, or unsupported. */
+  /**
+   * How the harness honors an output schema. `'native'`: the CLI enforces `request.outputSchema`.
+   * `'prompted'`: the CLI cannot, so the adapter asks for JSON in the prompt and extracts it from
+   * the answer, usually with `promptedStructuredOutput` from quiet-choir/harness-kit. The runtime
+   * treats both alike: it passes `outputSchema`, then JSON-parses and Zod-validates
+   * `response.text`, and it never rewrites prompts. `'none'`: text responses only, so the typed
+   * client offers no schema calls.
+   */
   readonly structuredOutput: 'native' | 'prompted' | 'none';
   /** Supported effort values, for discovery rather than automatic option translation. */
   readonly effort?: readonly string[];

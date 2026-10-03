@@ -1,8 +1,9 @@
 import type { AgentDiagnostics, AgentProgress } from '../harness-kit.js';
-import type { HarnessInvocation, JsonValue } from '../harness-kit.js';
+import type { HarnessInvocation, InvocationStream, JsonValue } from '../harness-kit.js';
+import { createInvocationStream } from '../harness-kit.js';
 import { ClaudeProtocol, CodexProtocol, type ProtocolOutcome } from './protocol.js';
 import { parseClaudeRateLimitEvent } from '../workflow/runtime/rate-limit.js';
-import { codexItemHeader, irrelevantLine, ProtocolLines, retainedLimit } from './lines.js';
+import { codexItemHeader, irrelevantLine, JsonLines, retainedLimit } from './lines.js';
 
 function object(value: unknown): Record<string, unknown> | undefined {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -32,9 +33,10 @@ function count(value: unknown): number | null {
 /** Native JSONL state, bounded diagnostics and lossy progress; no filesystem ownership. @internal */
 export class HarnessStream {
   public readonly protocol: ClaudeProtocol | CodexProtocol;
-  readonly #lines: ProtocolLines;
+  readonly #lines: JsonLines;
   readonly #harness: 'claude' | 'codex';
-  readonly #context: HarnessInvocation;
+  /** The shared onOutput tee, session-once and progress throttle of the public harness kit. */
+  readonly #plumbing: InvocationStream;
   readonly #limit: number;
   readonly #structured: boolean;
   /** Tool calls counted from every parsed line (progress is throttled, so it cannot count). */
@@ -44,9 +46,6 @@ export class HarnessStream {
   readonly #claudeToolIds = new Set<string>();
   readonly #codexInFlight = new Set<string>();
   readonly #diagnostics: Record<string, JsonValue> = { model: null, cliVersion: null };
-  #reportedSession: string | null = null;
-  #lastProgress = -Infinity;
-  #reportedInit = false;
   #skippedLines = 0;
   #stdoutTail = '';
   #sawStdout = false;
@@ -59,14 +58,13 @@ export class HarnessStream {
     requested: string | null = null,
   ) {
     this.#harness = harness;
-    this.#context = context;
     this.#limit = limit;
     this.#structured = structured;
     this.protocol =
       harness === 'claude'
         ? new ClaudeProtocol(structured, requested)
         : new CodexProtocol(requested);
-    this.#lines = new ProtocolLines(
+    this.#lines = new JsonLines(
       limit,
       (line) => this.#consume(line),
       (prefix) => {
@@ -76,6 +74,15 @@ export class HarnessStream {
         return true;
       },
     );
+    this.#plumbing = createInvocationStream({
+      invocation: context,
+      stdout: (chunk) => {
+        const text = Buffer.from(chunk).toString('utf8');
+        this.#sawStdout ||= /\S/u.test(text);
+        this.#stdoutTail = (this.#stdoutTail + text).slice(-1024);
+        return this.#lines.feed(chunk);
+      },
+    });
   }
 
   public get stdoutTail(): string {
@@ -87,16 +94,12 @@ export class HarnessStream {
     return this.#sawStdout;
   }
 
-  public async stdout(chunk: Uint8Array): Promise<void> {
-    await this.#context.onOutput?.('stdout', chunk);
-    const text = Buffer.from(chunk).toString('utf8');
-    this.#sawStdout ||= /\S/u.test(text);
-    this.#stdoutTail = (this.#stdoutTail + text).slice(-1024);
-    await this.#lines.feed(chunk);
+  public stdout(chunk: Uint8Array): Promise<void> {
+    return this.#plumbing.stdout(chunk);
   }
 
-  public async stderr(chunk: Uint8Array): Promise<void> {
-    await this.#context.onOutput?.('stderr', chunk);
+  public stderr(chunk: Uint8Array): Promise<void> {
+    return this.#plumbing.stderr(chunk);
   }
 
   /** Flush buffered lines and classify; `stderr` lets the protocol read native failure tags. */
@@ -171,24 +174,10 @@ export class HarnessStream {
       this.#limit
     )
       throw retainedLimit(this.#limit);
+    // The session is awaited before this line's progress and before any further output.
     const session = this.protocol.sessionId;
-    if (session && this.#reportedSession === null) {
-      await this.#context.onSession?.(session);
-      this.#reportedSession = session;
-    }
-    if (
-      progress &&
-      ((progress.kind === 'init' && !this.#reportedInit) ||
-        performance.now() - this.#lastProgress >= 100)
-    ) {
-      this.#lastProgress = performance.now();
-      if (progress.kind === 'init') this.#reportedInit = true;
-      try {
-        this.#context.onProgress?.(progress);
-      } catch {
-        // Observers are lossy diagnostics; they never invalidate native work.
-      }
-    }
+    if (session) await this.#plumbing.session(session);
+    if (progress) this.#plumbing.progress(progress);
   }
 
   #claude(data: Record<string, unknown>): AgentProgress | undefined {

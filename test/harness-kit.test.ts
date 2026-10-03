@@ -1,4 +1,4 @@
-import { expect, it } from 'vitest';
+import { expect, it, vi } from 'vitest';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -6,8 +6,13 @@ import { defineWorkflow, readRun, runWorkflow } from '../src/index.js';
 import { ClaudeAdapter, CodexAdapter } from '../src/harnesses/builtins/adapters.js';
 import {
   assertHarnessConformance,
+  childEnvironment,
   createFakeBinary,
+  createInvocationStream,
+  JsonLines,
+  promptedStructuredOutput,
   runProcess,
+  standaloneInvocation,
   defineHarness,
   z,
   type AgentRequest,
@@ -133,16 +138,26 @@ it('rejects an adapter whose abort scenario fails before cancellation', async ()
 });
 
 it('adds a third harness entirely through the public package contracts and fake CLI on PATH', async () => {
+  // A JSONL CLI that cannot enforce a schema: it answers with fenced JSON inside prose.
   const binary = await createFakeBinary(
     'third-agent',
     `
     let input = ''; for await (const chunk of process.stdin) input += chunk;
     const request = JSON.parse(input);
-    process.stdout.write(JSON.stringify({answer: request.prompt + ':' + request.provider + ':' + request.thinking}));
+    if (!request.prompt.includes('JSON Schema')) throw new Error('missing prompted instructions');
+    const answer = [request.prompt.split('\\n')[0], request.provider, request.thinking,
+      process.env.CLAUDECODE ?? 'scrubbed'].join(':');
+    const lines = [
+      { type: 'session', id: 'third-session-1' },
+      { type: 'progress', summary: 'thinking' },
+      { type: 'answer', text: 'Sure.\\n\`\`\`json\\n' + JSON.stringify({ answer }) + '\\n\`\`\`' },
+    ];
+    process.stdout.write(lines.map((line) => JSON.stringify(line)).join('\\n') + '\\n');
   `,
   );
   const stateDir = await mkdtemp(join(tmpdir(), 'choir-kit-run-'));
   const seen: AgentRequest[] = [];
+  vi.stubEnv('CLAUDECODE', 'host-session-marker');
   try {
     const third = defineHarness({
       name: 'third-agent',
@@ -155,27 +170,53 @@ it('adds a third harness entirely through the public package contracts and fake 
       capabilities: { structuredOutput: 'prompted' },
       access: () => 'none',
       createAdapter(config) {
-        const parsed = z.object({ binary: z.string() }).parse(config);
+        const parsed = z.object({ binary: z.string(), path: z.string() }).parse(config);
         return {
-          async invoke(request, signal, invocation) {
+          async invoke(request, signal, supplied) {
             seen.push(request);
+            const invocation = supplied ?? standaloneInvocation(request, signal);
+            const prompted =
+              request.outputSchema === null
+                ? undefined
+                : promptedStructuredOutput(request.outputSchema);
+            let answer: string | undefined;
+            const lines = new JsonLines(64 * 1024, async (line) => {
+              const event = z
+                .object({ type: z.string(), id: z.string(), summary: z.string(), text: z.string() })
+                .partial()
+                .parse(JSON.parse(line));
+              if (event.type === 'session' && event.id) await stream.session(event.id);
+              if (event.type === 'progress')
+                stream.progress({ kind: 'status', summary: event.summary ?? '' });
+              if (event.type === 'answer') answer = event.text;
+            });
+            const stream = createInvocationStream({
+              invocation,
+              stdout: (chunk) => lines.feed(chunk),
+            });
+            const environment = childEnvironment({ set: { PATH: parsed.path } });
             const result = await runProcess({
               binary: parsed.binary,
-              env: binary.env,
+              env: environment.env,
+              inheritEnv: false,
               args: [],
               cwd: request.cwd,
-              input: JSON.stringify(request.options),
+              input: JSON.stringify({
+                ...request.options,
+                prompt: request.options.prompt + (prompted?.instructions ?? ''),
+              }),
               signal,
-              timeoutMs: invocation?.policy?.timeoutMs ?? 1000,
-              maxOutputBytes: 10000,
+              timeoutMs: invocation.policy?.timeoutMs ?? 5000,
+              maxOutputBytes: 64 * 1024,
+              stream: { maxBytes: 1024 * 1024, stdout: stream.stdout, stderr: stream.stderr },
               killGraceMs: 25,
-              ...(invocation === undefined
-                ? {}
-                : { trackProcess: invocation.trackProcess.bind(invocation) }),
+              trackProcess: invocation.trackProcess.bind(invocation),
             });
-            if (result.code !== 0)
-              throw new Error(`third-agent failed: ${result.stdout} ${result.stderr}`);
-            return { text: result.stdout, sessionId: null };
+            await lines.finish();
+            if (result.code !== 0 || answer === undefined)
+              throw new Error(`third-agent failed: ${result.stderr}`);
+            // The session reached the runtime only through createInvocationStream.
+            return { text: prompted ? prompted.extract(answer) : answer, sessionId: null };
           },
         };
       },
@@ -200,10 +241,12 @@ it('adds a third harness entirely through the public package contracts and fake 
       runId: 'kit',
       cwd: binary.directory,
       input: null,
-      harnessConfigurations: { 'third-agent': { binary: 'third-agent' } },
+      harnessConfigurations: {
+        'third-agent': { binary: 'third-agent', path: binary.env['PATH'] ?? '' },
+      },
     };
     const first = await runWorkflow(workflow, options);
-    expect(first.output).toEqual({ answer: 'question:openai:high' });
+    expect(first.output).toEqual({ answer: 'question:openai:high:scrubbed' });
     expect(seen).toHaveLength(1);
     expect(seen[0]).toMatchObject({
       harness: 'third-agent',
@@ -216,11 +259,12 @@ it('adds a third harness entirely through the public package contracts and fake 
       kind: 'agent',
       harness: 'third-agent',
       revision: 7,
-      attemptHistory: [{ status: 'completed' }],
+      attemptHistory: [{ status: 'completed', sessionId: 'third-session-1' }],
     });
     await runWorkflow(workflow, { ...options, resume: true, acceptCodeChange: true });
     expect(seen).toHaveLength(1);
   } finally {
+    vi.unstubAllEnvs();
     await binary.dispose();
     await rm(stateDir, { recursive: true, force: true });
   }

@@ -10,6 +10,7 @@ import type {
   ClaudeOptions,
   CodexOptions,
 } from '../../harness-kit.js';
+import { standaloneInvocation } from '../../harness-kit.js';
 import { NativeCliHarness, type CliHarnessOptions, type CliHarnessPlan } from '../native-cli.js';
 
 /** Native process configuration for one built-in adapter; outside replay identity. */
@@ -21,12 +22,17 @@ export interface BuiltinAdapterOptions extends Omit<
   readonly binary?: string;
 }
 
-/** Shared native implementation; each public adapter owns exactly one harness name. @internal */
+/**
+ * Shared native implementation behind {@link ClaudeAdapter} and {@link CodexAdapter}; each public
+ * adapter owns exactly one harness name. Exported as a type only: construct the public subclasses.
+ */
 export class BuiltinAdapter<O extends AgentOptions> implements HarnessAdapter<O> {
+  /** Adapter category: built-ins launch an installed command-line harness. */
   public readonly kind = 'cli';
   readonly #native: NativeCliHarness;
   /** Single registered native harness supported by this adapter. */
   public readonly name: 'claude' | 'codex';
+  /** Bind the shared implementation to one harness name and its process configuration. */
   public constructor(name: 'claude' | 'codex', options: BuiltinAdapterOptions = {}) {
     this.name = name;
     const { binary, ...limits } = options;
@@ -44,17 +50,10 @@ export class BuiltinAdapter<O extends AgentOptions> implements HarnessAdapter<O>
     signal: AbortSignal,
     invocation?: HarnessInvocation,
   ): HarnessInvocation {
-    return {
-      ...(invocation ?? {
-        runId: request.runId,
-        stepId: request.stepId,
-        attempt: request.attempt,
-        // Standalone adapter calls still reap processes; durable tracking belongs to runtime invocations.
-        trackProcess: () => Promise.resolve({ release: () => Promise.resolve() }),
-      }),
-      signal,
-    };
+    // Standalone adapter calls still reap processes; durable tracking belongs to runtime invocations.
+    return invocation ? { ...invocation, signal } : standaloneInvocation(request, signal);
   }
+  /** Execution-policy defaults the native harness applies when a call sets none. */
   public policyDefaults(): ExecutionPolicy {
     return this.#native.policyDefaults(this.name);
   }
@@ -66,6 +65,7 @@ export class BuiltinAdapter<O extends AgentOptions> implements HarnessAdapter<O>
     this.#check(request);
     return this.#native.plan(request, context);
   }
+  /** Report the installed CLI's version and other provenance without running the task. */
   public metadata(
     request: AgentRequest<O>,
     signal: AbortSignal,
@@ -74,6 +74,7 @@ export class BuiltinAdapter<O extends AgentOptions> implements HarnessAdapter<O>
     this.#check(request);
     return this.#native.metadata(request, this.#invocation(request, signal, invocation));
   }
+  /** Perform one fresh headless call; standalone calls get {@link standaloneInvocation}. */
   public invoke(
     request: AgentRequest<O>,
     signal: AbortSignal,
