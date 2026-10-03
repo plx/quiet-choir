@@ -1,0 +1,47 @@
+[
+  {
+    "data": {
+      "repository": {
+        "issue": {
+          "number": 154,
+          "title": "Add a static durability lint (QC001-QC006) to workflow validate and execute",
+          "state": "CLOSED",
+          "body": "## Summary\n\n`workflow validate` runs `tsc` and imports the module but never inspects the workflow body, so replay hazards such as branching on `existsSync`, `Date.now()` in step input, `Promise.race` over durable calls, nested durable calls and reused literal IDs all pass validation. They surface at runtime or on resume, after earlier effects have already run. Add a lint after the typecheck that r\n...",
+          "url": "https://github.com/octo-org/quiet-choir/issues/154",
+          "author": {
+            "login": "human-author",
+            "__typename": "User"
+          },
+          "comments": {
+            "pageInfo": {
+              "hasNextPage": false,
+              "endCursor": "Y3Vyc29yOnYyOpHPAAAAAWNwRks="
+            },
+            "nodes": [
+              {
+                "databaseId": 5963269707,
+                "author": {
+                  "login": "human-author",
+                  "__typename": "User"
+                },
+                "body": "#329 landed as 29c2911 and closes this issue; the review found no gaps against the acceptance criteria, and merge-down fixed seven review threads and one of our own findings before the squash.\n\nFixes made during merge-down:\n- Loop detection (63a1b74, c4a7c2f, 0a5915e): QC005 now treats a callback as a loop only for default-library iteration methods and `Array.from`, only at the repeating argument\n...",
+                "url": "https://github.com/octo-org/quiet-choir/issues/154#issuecomment-5963269707",
+                "createdAt": "2026-10-02T23:50:07Z"
+              }
+            ]
+          },
+          "labels": {
+            "pageInfo": {
+              "hasNextPage": false
+            },
+            "nodes": [
+              {
+                "name": "enhancement"
+              }
+            ]
+          }
+        }
+      }
+    }
+  }
+]

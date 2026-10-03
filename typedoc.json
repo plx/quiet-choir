@@ -1,6 +1,11 @@
 {
   "$schema": "https://typedoc.org/schema.json",
-  "entryPoints": ["src/index.ts", "src/harness-kit.ts", "src/integrations/decision.ts"],
+  "entryPoints": [
+    "src/index.ts",
+    "src/harness-kit.ts",
+    "src/integrations/decision.ts",
+    "src/integrations/github.ts"
+  ],
   "out": "docs/api",
   "name": "quiet-choir",
   "readme": "README.md",

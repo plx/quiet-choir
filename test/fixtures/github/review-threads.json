@@ -1,0 +1,178 @@
+[
+  {
+    "data": {
+      "repository": {
+        "pullRequest": {
+          "reviewThreads": {
+            "pageInfo": {
+              "hasNextPage": true,
+              "endCursor": "Y3Vyc29yOnYyOpK0MjAyNi0xMC0wMlQyMjo0MDowMVrOqINxFw=="
+            },
+            "nodes": [
+              {
+                "id": "PRRT_kwDOTxycVs6ogkEM",
+                "isResolved": true,
+                "isOutdated": true,
+                "path": "src/workflow/typecheck/durability-lint.ts",
+                "line": null,
+                "originalLine": 429,
+                "comments": {
+                  "pageInfo": {
+                    "hasNextPage": false,
+                    "endCursor": "Y3Vyc29yOnYyOpK0MjAyNi0xMC0wMlQyMjozNTo1NFrO-JMSXA=="
+                  },
+                  "nodes": [
+                    {
+                      "databaseId": 4170288059,
+                      "author": {
+                        "login": "chatgpt-codex-connector",
+                        "__typename": "Bot"
+                      },
+                      "body": "**<sub><sub>![P2 Badge](https://img.shields.io/badge/P2-yellow?style=flat)</sub></sub>  Resolve iteration methods before treating callbacks as loops**\n\nOnly treat the callback as looping after confirming that the call resolves to an actual array iteration API. Currently any property named `map`, `forEach`, `reduce`, and so on sets `loop: true`, so a custom API such as `singleValue.map(() => ctx.st\n...",
+                      "url": "https://github.com/octo-org/quiet-choir/pull/329#discussion_r4170288059",
+                      "createdAt": "2026-10-02T22:19:34Z"
+                    },
+                    {
+                      "databaseId": 4170388060,
+                      "author": {
+                        "login": "human-author",
+                        "__typename": "User"
+                      },
+                      "body": "Agreed: the loop detection matched any method named map/forEach/etc. We will resolve the call's declaration and treat the callback as a loop only for the standard-library iteration methods (and Array.from), with a clean test for a custom single-call map.\n\nAddressed in 63a1b74: QC005 now treats a callback as a loop only when the call resolves to a default-library iteration method or Array.from (Arr\n...",
+                      "url": "https://github.com/octo-org/quiet-choir/pull/329#discussion_r4170388060",
+                      "createdAt": "2026-10-02T22:35:54Z"
+                    }
+                  ]
+                }
+              },
+              {
+                "id": "PRRT_kwDOTxycVs6og3EX",
+                "isResolved": true,
+                "isOutdated": true,
+                "path": "src/workflow/typecheck/durability-lint.ts",
+                "line": null,
+                "originalLine": 431,
+                "comments": {
+                  "pageInfo": {
+                    "hasNextPage": false,
+                    "endCursor": "Y3Vyc29yOnYyOpK0MjAyNi0xMC0wMlQyMjo1ODowMVrO-JTkug=="
+                  },
+                  "nodes": [
+                    {
+                      "databaseId": 4170412614,
+                      "author": {
+                        "login": "chatgpt-codex-connector",
+                        "__typename": "Bot"
+                      },
+                      "body": "**<sub><sub>![P2 Badge](https://img.shields.io/badge/P2-yellow?style=flat)</sub></sub>  Restrict iteration handling to the actual callback argument**\n\nFor standard iteration methods, this marks every function-valued argument as a loop callback, although only argument 0 is invoked per item. For example, a function used as the initial accumulator in `reduce(reducer, () => ctx.step('once', ...))`, or\n...",
+                      "url": "https://github.com/octo-org/quiet-choir/pull/329#discussion_r4170412614",
+                      "createdAt": "2026-10-02T22:40:01Z"
+                    },
+                    {
+                      "databaseId": 4170507450,
+                      "author": {
+                        "login": "human-author",
+                        "__typename": "User"
+                      },
+                      "body": "Agreed: only argument 0 of a standard iteration method runs once per item, so the lint now marks just that argument as a loop callback, as the Array.from branch already does for index 1. A function passed as reduce's initial value or as a thisArg is no longer treated as looped, and the iteration-resolution fixture covers both.\n\nAddressed in c4a7c2f: Standard-library iteration methods now mark a ca\n...",
+                      "url": "https://github.com/octo-org/quiet-choir/pull/329#discussion_r4170507450",
+                      "createdAt": "2026-10-02T22:58:01Z"
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      }
+    }
+  },
+  {
+    "data": {
+      "repository": {
+        "pullRequest": {
+          "reviewThreads": {
+            "pageInfo": {
+              "hasNextPage": false,
+              "endCursor": "Y3Vyc29yOnYyOpK0MjAyNi0xMC0wMlQyMzoyMjowMlrOqIWH5A=="
+            },
+            "nodes": [
+              {
+                "id": "PRRT_kwDOTxycVs6ohYfb",
+                "isResolved": true,
+                "isOutdated": true,
+                "path": "src/workflow/typecheck/durability-lint.ts",
+                "line": null,
+                "originalLine": 436,
+                "comments": {
+                  "pageInfo": {
+                    "hasNextPage": false,
+                    "endCursor": "Y3Vyc29yOnYyOpK0MjAyNi0xMC0wMlQyMzozODoxMlrO-Jfcvg=="
+                  },
+                  "nodes": [
+                    {
+                      "databaseId": 4170630022,
+                      "author": {
+                        "login": "chatgpt-codex-connector",
+                        "__typename": "Bot"
+                      },
+                      "body": "**<sub><sub>![P2 Badge](https://img.shields.io/badge/P2-yellow?style=flat)</sub></sub>  Unwrap callback expressions before classifying their call site**\n\nWhen an inline callback is parenthesized or asserted, such as `items.map(((item) => ctx.step('fixed', ...)))`, the function's immediate parent is a `ParenthesizedExpression` rather than the call, so this branch is skipped and the callback retains\n...",
+                      "url": "https://github.com/octo-org/quiet-choir/pull/329#discussion_r4170630022",
+                      "createdAt": "2026-10-02T23:22:02Z"
+                    },
+                    {
+                      "databaseId": 4170702014,
+                      "author": {
+                        "login": "human-author",
+                        "__typename": "User"
+                      },
+                      "body": "Agreed: the call-site classification looked only at the immediate parent. Callback expressions are now unwrapped through parentheses, `as`/`satisfies`/type assertions and non-null before matching the call argument (shared with the zone lookup), with tests for wrapped iteration, scope and named-map callbacks.\n\nAddressed in 58f804e: A shared outermostWrapper helper (parenthesis, as, satisfies, type\n...",
+                      "url": "https://github.com/octo-org/quiet-choir/pull/329#discussion_r4170702014",
+                      "createdAt": "2026-10-02T23:38:12Z"
+                    }
+                  ]
+                }
+              },
+              {
+                "id": "PRRT_kwDOTxycVs6ohYfk",
+                "isResolved": true,
+                "isOutdated": false,
+                "path": "src/workflow/typecheck/durability-lint.ts",
+                "line": 580,
+                "originalLine": 564,
+                "comments": {
+                  "pageInfo": {
+                    "hasNextPage": false,
+                    "endCursor": "Y3Vyc29yOnYyOpK0MjAyNi0xMC0wMlQyMzozODoxNVrO-Jfdfw=="
+                  },
+                  "nodes": [
+                    {
+                      "databaseId": 4170630032,
+                      "author": {
+                        "login": "chatgpt-codex-connector",
+                        "__typename": "Bot"
+                      },
+                      "body": "**<sub><sub>![P2 Badge](https://img.shields.io/badge/P2-yellow?style=flat)</sub></sub>  Track aliases of root-context effect functions**\n\nFor a valid detached call such as `const step = ctx.step; await step('build', ...); await step('build', ...)`, signature resolution still identifies both calls as durable `WorkflowContext.step` effects, but their callee is an identifier, so this early return exc\n...",
+                      "url": "https://github.com/octo-org/quiet-choir/pull/329#discussion_r4170630032",
+                      "createdAt": "2026-10-02T23:22:02Z"
+                    },
+                    {
+                      "databaseId": 4170702207,
+                      "author": {
+                        "login": "human-author",
+                        "__typename": "User"
+                      },
+                      "body": "The detached call does run, but QC005 is deliberately syntactic: ADR 0041 defines the root receiver as the WorkflowContext parameter and its documented member chains, not values flowing out of it. Following aliases and destructured bindings would need dataflow tracking for a pattern no example or doc uses, and the runtime still rejects the duplicate ID, so this stays a known false negative of a be\n...",
+                      "url": "https://github.com/octo-org/quiet-choir/pull/329#discussion_r4170702207",
+                      "createdAt": "2026-10-02T23:38:15Z"
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      }
+    }
+  }
+]

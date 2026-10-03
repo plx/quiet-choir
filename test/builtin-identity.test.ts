@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -15,6 +16,11 @@ import {
   type WorkflowContext,
 } from '../src/index.js';
 import { decision } from '../src/integrations/decision.js';
+import {
+  github,
+  pullRequestViewResponseSchema,
+  type GithubClient,
+} from '../src/integrations/github.js';
 import { digest } from '../src/workflow/runtime/json.js';
 import { agentIdentity, type StepIdentity } from '../src/workflow/runtime/identity.js';
 import type { HarnessDeclaration } from '../src/workflow/runtime/harness-model.js';
@@ -365,6 +371,142 @@ describe('exec and file effect identity', () => {
       }
     },
   );
+});
+
+describe('quiet-choir/github read identity', () => {
+  // Every gh call fails, so each read fails after recording its identity.
+  const processRunner: ProcessRunner = {
+    run: () =>
+      Promise.resolve({
+        code: 2,
+        signal: null,
+        stdout: '',
+        stderr: 'gh: golden',
+        truncated: false,
+        durationMs: 1,
+      }),
+  };
+  const reads: Readonly<Record<string, (gh: GithubClient) => Promise<unknown>>> = {
+    'repo.info': (gh) => gh.repo.info('read'),
+    'pr.view': (gh) => gh.pr.view('read', { number: 7 }),
+    'pr.list': (gh) => gh.pr.list('read', { base: 'main' }),
+    'pr.reviewThreads': (gh) => gh.pr.reviewThreads('read', { number: 7 }),
+    'issue.view': (gh) => gh.issue.view('read', { number: 7 }),
+    'issue.view comments': (gh) => gh.issue.view('read', { number: 7, comments: true }),
+    'codeScanning.alerts': (gh) => gh.codeScanning.alerts('read', { ref: 'refs/pull/7/merge' }),
+  };
+  async function identityOfRead(
+    name: string,
+    read: (gh: GithubClient) => Promise<unknown>,
+  ): Promise<StepRecordIdentity & { argv: readonly string[] }> {
+    const runId = name.replace(/[^A-Za-z0-9]/gu, '-');
+    let argv: readonly string[] = [];
+    await runWorkflow(
+      workflow((ctx) => read(github(ctx, { repo: 'octo-org/quiet-choir' }))),
+      options({
+        runId,
+        processRunner: {
+          run: (request, invocation) => {
+            argv = request.command as readonly string[];
+            return processRunner.run(request, invocation);
+          },
+        },
+      }),
+    ).catch(() => undefined);
+    const step = (await recorded(runId))['read'];
+    if (!step) throw new Error(`${name} recorded no step`);
+    return { ...step, argv };
+  }
+  // The plain-exec literals pinned in 'exec and file effect identity' above: no environment
+  // overlay, empty stdin, inherited environment, structured output.
+  const plainExec = {
+    cwd: sharedComponents.cwd,
+    envSha256: 'ba4b4c01512909e214270a4f23ef856ea7857d763cbab32fe7381b0dc204523d',
+    inheritEnv: 'b5bea41b6c623f7c09f1bf24dcae58ebab3c0cdd90ad966bc43a45b44867e12b',
+    inputSha256: 'b4b16dad390bac4c7ce42014c594fa668910b49ec1b7771a17891c187d71e0ab',
+    kind: '37c9a5bba64484ff1971b80862a96916501e4624e59e717e16e7686f6f41be73',
+    okExitCodes: 'd0bca111f8628137adc4c16f123496dcdd1d590d06cb5d9acd68b39fe656fb97',
+    structured: 'b5bea41b6c623f7c09f1bf24dcae58ebab3c0cdd90ad966bc43a45b44867e12b',
+  };
+  // Captured on this change. A deliberate change to a query, argv shape or response schema moves
+  // these digests and strands in-flight runs of that read; see the message above.
+  const golden: Readonly<
+    Record<string, { command: string; schema: string; okExitCodes?: string }>
+  > = {
+    'repo.info': {
+      command: 'f089e5f7152ff90d96e442c823363e3e2ddccce9ae9b9c113dfec19075ed82ae',
+      schema: '18ca13faafb7ec255bab4395f149706f85c69ec97f9473af7833193f54ab88a6',
+    },
+    'pr.view': {
+      command: '661ba1f230681bd5877b557f4f139e3cf1842a7a18d80f44a1878b0dd37cf200',
+      schema: '6d3c7ddfca3d2c56525f528d937d722878e45130b59f34d7141c697ffc861032',
+    },
+    'pr.list': {
+      command: 'efa8d91dfbf2b5273171758c0ad3de1f107a852459f57c26ffc696a33b4346a1',
+      schema: '735f04183548dfee20770e853d870211fd8228c3478a9603edd8319a27062bf3',
+    },
+    'pr.reviewThreads': {
+      command: '8fb9a414cb2d9359c98e4020c171bb3e32dc1d303a03261db0bba213f8109158',
+      schema: 'e838e29d87512f35075052373b85d0bee5dfdb4a00880c7022a7bbbc8dddb51c',
+    },
+    'issue.view': {
+      command: '5d8f7d277f3a5cebe6f895bdffdcbbae61efc00d65d117c6901dddc26ca6cfc2',
+      schema: 'a8da9fef5dbc0897a6dae88cc29be948d6f0b75fc17d4ce188cda9f50c1026b4',
+    },
+    'issue.view comments': {
+      command: 'ebd330228a548f04dd4894014882004eaef47c39f38a0374ab316ccdcf3c3282',
+      schema: 'fd040ea0ecc40bfa0a91eda4ab65297630fbb7c5e05335397edefb836d30183b',
+    },
+    'codeScanning.alerts': {
+      command: '41b94afed330e8e5d3c148e6bdb525bb1b8d24ab9f645724adbe71ae384a740c',
+      schema: '85423e769f742b450142721546d1549aa991e96fbc073fc2664821b1c824604b',
+      // [0, 1]: gh's exit 1 for an HTTP error is accepted, and the schema decides.
+      okExitCodes: '463f2998327eb3a694145e6014444480b2235be84aa6cfd57871cc64f1cd816c',
+    },
+  };
+
+  it.each(Object.keys(reads))(
+    'pins %s to argv, schema and the fixed exec defaults',
+    async (name) => {
+      const read = reads[name];
+      const expected = golden[name];
+      if (!read || !expected) throw new Error(`unknown read ${name}`);
+      const step = await identityOfRead(name, read);
+      pinned(`quiet-choir/github ${name}`, step.identity, { ...plainExec, ...expected });
+      expect(step.fingerprint).toBe(digest(step.identity));
+      // Argv-only identity: no helper component, interpreter, program source, overlay or stdin.
+      expect(step.identity).not.toHaveProperty('helper');
+      expect(step.identity['envSha256']).toBe(digest(digest({})));
+      expect(step.identity['inputSha256']).toBe(
+        digest(createHash('sha256').update('').digest('hex')),
+      );
+      expect(step.argv[0]).toBe('gh');
+      for (const argument of step.argv) {
+        expect(argument).not.toContain(process.execPath);
+        expect(argument).not.toMatch(/(?:^|[\\/])node(?:\.exe)?$/u);
+      }
+    },
+  );
+
+  it('keeps a read identical to a plain exec.json of the same argv and schema, so meta is not identity', async () => {
+    const step = await identityOfRead('labelled', reads['pr.view'] ?? (() => Promise.resolve()));
+    await runWorkflow(
+      workflow((ctx) =>
+        ctx.exec.json('read', step.argv as [string, ...string[]], {
+          schema: pullRequestViewResponseSchema,
+        }),
+      ),
+      options({ runId: 'unlabelled', processRunner }),
+    ).catch(() => undefined);
+    const plain = (await recorded('unlabelled'))['read'];
+    expect(plain?.identity).toEqual(step.identity);
+    expect(plain?.fingerprint).toBe(step.fingerprint);
+    const run = await readRun({ stateDir, runId: 'labelled' });
+    expect(run.steps['read']?.meta).toEqual({ integration: 'github', op: 'pr.view' });
+    expect((await readRun({ stateDir, runId: 'unlabelled' })).steps['read']).not.toHaveProperty(
+      'meta',
+    );
+  });
 });
 
 describe('merge effect identity', () => {

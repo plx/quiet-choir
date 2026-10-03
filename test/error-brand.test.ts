@@ -6,6 +6,7 @@ import { beforeAll, describe, expect, it, vi } from 'vitest';
 
 import * as host from '../src/index.js';
 import * as hostKit from '../src/harness-kit.js';
+import * as hostGithub from '../src/integrations/github.js';
 import type { ErrorKind, HarnessErrorDetails, RunRecord } from '../src/index.js';
 import { harnessEvidence, type HarnessEvidence } from '../src/workflow/runtime/harness-error.js';
 import { errorKind } from '../src/workflow/runtime/step-error.js';
@@ -16,10 +17,12 @@ type Api = typeof host;
 type Kit = typeof hostKit;
 let second: Api;
 let secondKit: Kit;
+let secondGithub: typeof hostGithub;
 beforeAll(async () => {
   vi.resetModules();
   second = await import('../src/index.js');
   secondKit = await import('../src/harness-kit.js');
+  secondGithub = await import('../src/integrations/github.js');
 });
 
 const errorBrand = Symbol.for('quiet-choir.error');
@@ -262,5 +265,25 @@ describe('public error brands (ADR 0028)', () => {
     hostKit.attachHarnessEvidence('not an object', evidence);
     expect(harnessEvidence('not an object')).toBeUndefined();
     expect(harnessEvidence(new Error('none'))).toBeUndefined();
+  });
+});
+
+describe('quiet-choir/github error brand', () => {
+  it('recognizes IncompleteCollectionError across module instances in both directions', () => {
+    const { IncompleteCollectionError } = hostGithub;
+    const Foreign = secondGithub.IncompleteCollectionError;
+    expect(Foreign).not.toBe(IncompleteCollectionError);
+    expect(Reflect.get(IncompleteCollectionError, errorBrandName)).toBe(
+      'IncompleteCollectionError',
+    );
+    const cause = new second.ExecError('schema mismatch', 'schema');
+    const foreign = new Foreign('issue.labels', 'read', { cause });
+    expect(foreign instanceof IncompleteCollectionError).toBe(true);
+    expect(new IncompleteCollectionError('issue.labels', 'read') instanceof Foreign).toBe(true);
+    expect(foreign.cause instanceof host.ExecError).toBe(true);
+    expect(foreign instanceof host.ExecError).toBe(false);
+    expect(cause instanceof IncompleteCollectionError).toBe(false);
+    expect(new Error('plain') instanceof IncompleteCollectionError).toBe(false);
+    expect(foreign).toMatchObject({ connection: 'issue.labels', stepId: 'read' });
   });
 });

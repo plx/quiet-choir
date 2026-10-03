@@ -40,6 +40,9 @@
       ],
       "decision": [
         "./dist/integrations/decision.d.ts"
+      ],
+      "github": [
+        "./dist/integrations/github.d.ts"
       ]
     }
   },
@@ -59,6 +62,11 @@
       "types": "./dist/integrations/decision.d.ts",
       "import": "./dist/integrations/decision.js",
       "default": "./dist/integrations/decision.js"
+    },
+    "./github": {
+      "types": "./dist/integrations/github.d.ts",
+      "import": "./dist/integrations/github.js",
+      "default": "./dist/integrations/github.js"
     }
   },
   "engines": {
