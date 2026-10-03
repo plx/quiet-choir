@@ -17,7 +17,9 @@
   unchanged. New type parameters: `WorkflowContext` `TStrict` and `TChildren`, `WorkflowDefinition`
   `TStrict`, `TChildren` and `TName`, and `HarnessDefinition` `K` (inferred by `defineHarness` and
   `defineWorkflow`). New public types: `CallOptions`, `CapabilityKeysOf`, `ChildNamesOf`,
-  `ChildInputOf` and `ChildOutputOf`.
+  `ChildInputOf` and `ChildOutputOf`. `defineHarness` defaults `K` to the widened key list, so an
+  omitted `capabilityKeys` or explicit `<N, O, C>` type arguments forbid nothing at type level (the
+  runtime check still applies).
 - `workflow validate` runs a static durability lint after a clean type check (#154; ADR 0041). Rules
   QC001-QC006 report a discarded effect promise, a nondeterministic read in the workflow body
   (`Date.now()`, `new Date()`, `Math.random()`, `performance.now()`, `crypto.randomUUID`,

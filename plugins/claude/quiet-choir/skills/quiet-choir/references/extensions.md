@@ -296,10 +296,11 @@ Package profiles use `profiles.<role>.harnesses.<name>`. Declare `capabilityKeys
 `access` classifier accepting partial profile options; without a classifier access defaults to exec.
 Strict profiles own capability controls: `defineHarness` keeps a literal `capabilityKeys` list as a
 tuple type, so a strict workflow's `ctx.agent(name)` options omit those keys and a raw call fails
-typecheck (a widened `string[]` list stays permissive at type level; the runtime still rejects it).
-Child calls cannot exceed delegated roles. `policy` lists option keys excluded from semantic
-identity; adapter defaults and operator configuration are also outside identity. Custom adapters
-must enforce the resolved policy supplied in the invocation context.
+typecheck (a widened `string[]` list, an omitted list or explicit `<N, O, C>` type arguments stay
+permissive at type level; the runtime still rejects the keys). Child calls cannot exceed delegated
+roles. `policy` lists option keys excluded from semantic identity; adapter defaults and operator
+configuration are also outside identity. Custom adapters must enforce the resolved policy supplied
+in the invocation context.
 
 Import `runProcess`, `createFakeBinary`, and `assertHarnessConformance` from
 `quiet-choir/harness-kit`. Pass `invocation.trackProcess` to the process runner so registration

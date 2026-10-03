@@ -10,12 +10,14 @@ export const harnessNameSchema: z.ZodString = z.string().regex(/^[a-z][a-z0-9-]{
 /**
  * Define a strict, explicit agent integration without modifying the workflow runtime. A literal
  * `capabilityKeys` list is kept as a tuple type, so strict workflows reject those keys at call sites.
+ * An omitted list, or explicit `<N, O, C>` type arguments, default `K` to the widened key list, which
+ * forbids nothing at type level and leaves the check to the runtime.
  */
 export function defineHarness<
   const N extends string,
   O extends AgentOptions,
   const C extends HarnessCapabilities,
-  const K extends readonly (keyof O & string)[] = readonly [],
+  const K extends readonly (keyof O & string)[] = readonly (keyof O & string)[],
 >(
   definition: HarnessDefinition<N, O, C, K>,
 ): HarnessDefinition<
