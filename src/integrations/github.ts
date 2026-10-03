@@ -415,9 +415,10 @@ export interface GithubClient {
  * Codex's GitHub reviewer (`chatgpt-codex-connector[bot]`). Its rules, in order: a review on `sha`
  * submitted after `since` is `findings`; a +1 reaction after `since` is `clean`; a usage-limit
  * notice after `since` is `error`; when the latest summary comment was updated after `since` and
- * has a row for `sha`, a failed, errored or cancelled row is `error`, and a `Completed` row is
- * `clean` only when the previous check saw it too; an eyes reaction is `running`; otherwise
- * `pending`. "After `since`" allows 5 seconds of clock skew.
+ * has rows for `sha`, all of them count: any failed, errored or cancelled row is `error`, any row
+ * not yet `Completed` is `running`, and rows that are all `Completed` are `clean` only when the
+ * previous check saw them too; an eyes reaction is `running`; otherwise `pending`. "After `since`"
+ * allows 5 seconds of clock skew.
  */
 export function codexReviewer(): ReviewerBot {
   return { name: 'codex', login: CODEX_LOGIN, identity: { codex: 1 }, observe: codexObserve };

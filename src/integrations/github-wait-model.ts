@@ -243,10 +243,12 @@ const seenCompleteNote = z.object({ seenComplete: z.boolean() });
 
 /**
  * Codex's rules, in order. A fresh review on `sha` is `findings`; a fresh +1 reaction is `clean`;
- * a fresh usage-limit notice is `error`; then the latest summary comment, when fresh and holding a
- * row for `sha`: a failed, errored or cancelled row is `error`, and a `Completed` row is `clean`
- * only on the second consecutive check (Codex posts findings right after updating the summary);
- * an eyes reaction is `running`; otherwise `pending`. Fresh means at or after `since` less 5 s.
+ * a fresh usage-limit notice is `error`; then the latest summary comment, when fresh and holding
+ * rows for `sha`, judged over all of them (such as a Code Review and a Security Review row): any
+ * failed, errored or cancelled row is `error`, any row not yet `Completed` is `running`, and rows
+ * that are all `Completed` are `clean` only on the second consecutive check (Codex posts findings
+ * right after updating the summary); an eyes reaction is `running`; otherwise `pending`. Fresh
+ * means at or after `since` less 5 s.
  * @internal
  */
 export function codexObserve(
@@ -275,14 +277,15 @@ export function codexObserve(
   const summary = activity.comments
     .filter((comment) => comment.body.includes(SUMMARY_MARKER))
     .at(-1);
-  const row =
+  const rows =
     summary === undefined
-      ? undefined
-      : parseSummaryRows(summary.body).find((candidate) => sha.startsWith(candidate.commit));
-  if (summary !== undefined && row !== undefined && fresh(summary.updatedAt)) {
-    const detail = { row: { ...row } };
-    if (/fail|error|cancel/iu.test(row.status)) return { status: 'error', detail };
-    if (/complete/iu.test(row.status)) {
+      ? []
+      : parseSummaryRows(summary.body).filter((candidate) => sha.startsWith(candidate.commit));
+  if (summary !== undefined && rows.length > 0 && fresh(summary.updatedAt)) {
+    const detail = { rows: rows.map((row) => ({ ...row })) };
+    if (rows.some((row) => /fail|error|cancel/iu.test(row.status)))
+      return { status: 'error', detail };
+    if (rows.every((row) => /complete/iu.test(row.status))) {
       const seen = seenCompleteNote.safeParse(context.previous.note);
       return seen.success && seen.data.seenComplete
         ? { status: 'clean', detail: { via: 'summary', ...detail } }

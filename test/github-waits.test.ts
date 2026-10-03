@@ -437,6 +437,50 @@ describe('Codex rules', () => {
     });
   });
 
+  it('judges every summary row for sha: any failed is error, any unfinished is running', () => {
+    /** The recorded summary with a second row for c5c2233 in `status`. */
+    const twoRows = (status: string) => {
+      const recorded = recordedSummary();
+      const line = recorded.body.split('\n').find((text) => text.includes('`c5c2233`')) ?? '';
+      const second = `| 🛡️ **Security Review** | ${status} | \`c5c2233\` | Manual request |`;
+      return activity({
+        comments: [{ ...recorded, body: recorded.body.replace(line, `${line}\n${second}`) }],
+      });
+    };
+    const seen = context({ previous: { note: { seenComplete: true }, checks: 1 } });
+    // A running Security Review keeps a Completed Code Review from ever being clean.
+    const running = twoRows('⏳ **Running**');
+    expect(parseSummaryRows(running.comments[0]?.body ?? '')).toHaveLength(2);
+    for (const at of [context(), seen]) {
+      const observed = codexObserve(running, at);
+      expect(observed).toMatchObject({
+        status: 'running',
+        detail: {
+          rows: [
+            { review: 'Code Review', status: 'Completed' },
+            { review: 'Security Review', status: 'Running' },
+          ],
+        },
+      });
+      expect(observed.note).toBeUndefined();
+    }
+    // A failed second row is error, whatever the first row says.
+    expect(codexObserve(twoRows('❌ **Failed**'), context())).toMatchObject({
+      status: 'error',
+      detail: { rows: [{ status: 'Completed' }, { status: 'Failed' }] },
+    });
+    // Two Completed rows are clean on the second consecutive check.
+    const both = twoRows('✅ **Completed**');
+    const first = codexObserve(both, context());
+    expect(first).toMatchObject({ status: 'running', note: { seenComplete: true } });
+    expect(
+      codexObserve(both, context({ previous: { note: first.note ?? null, checks: 1 } })),
+    ).toMatchObject({
+      status: 'clean',
+      detail: { via: 'summary', rows: [{ review: 'Code Review' }, { review: 'Security Review' }] },
+    });
+  });
+
   it('calls a Completed row clean only on the second consecutive check', () => {
     const completed = activity({ comments: [recordedSummary()] });
     const first = codexObserve(completed, context());
@@ -1180,12 +1224,14 @@ describe('waitReview', () => {
           status: 'clean',
           detail: {
             via: 'summary',
-            row: {
-              review: 'Code Review',
-              status: 'Completed',
-              commit: 'c5c2233',
-              trigger: 'Manual request',
-            },
+            rows: [
+              {
+                review: 'Code Review',
+                status: 'Completed',
+                commit: 'c5c2233',
+                trigger: 'Manual request',
+              },
+            ],
           },
         },
         // Only the bot's own login counts: the human comment naming sha did not make it clean.
