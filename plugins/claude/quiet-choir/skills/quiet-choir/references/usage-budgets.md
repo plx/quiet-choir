@@ -66,3 +66,18 @@ Usage validation is outside the frozen prior usage schema used for identity. Thi
 fingerprints from the preceding runtime; it does not remove older isolation/diagnostics upgrade
 boundaries. Do not read live totals inside workflow control flow to choose replay-sensitive
 branches.
+
+## Subscription rate-limit windows
+
+Claude Code reports the 5-hour and 7-day usage windows of a subscription login in a stream
+`rate_limit_event`. quiet-choir keeps the latest valid event of an attempt in
+`attemptHistory[].diagnostics.rateLimit` as `{ status, type, resetsAt, windows }`; `windows` maps a
+name such as `five_hour` or `seven_day` to `{ utilization, resetsAt? }` (a 0 to 1 fraction). Every
+`resetsAt` is Unix epoch seconds as reported. Strings are cut to 64 characters, at most 8 windows
+are kept, the latest valid event wins, and a malformed event is ignored without failing the call.
+`agent.finished` and `--progress` lines carry it (`rate-limit: 5h window 1%, 7d 84%`),
+`inspect --json --summary` adds an optional per-harness `rateLimits` map (absent when nothing was
+reported; the latest settled attempt wins, failed ones included), and text inspect prints
+`Rate windows claude: 5h window 1%, 7d 84% (allowed_warning; seven_day resets <ISO time>)` after the
+usage lines. Only Claude reports windows; Codex attempts are unchanged. This is observation only:
+run caps still measure USD and attempts, with no utilization gate or suspend-until-reset yet.

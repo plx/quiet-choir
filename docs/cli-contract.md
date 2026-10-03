@@ -10,7 +10,8 @@ Success documents retain their shapes, except for the run commands described bel
 a run with current ownership diagnostics, validate returns workflow metadata with `diagnostics: []`
 (see [durability lint](#durability-lint)), typecheck returns its compiler result, and check-resume
 returns a compatible comparison in `check`. `inspect --json --summary` returns the compact
-dashboard, including the completed run's `output` (null otherwise) and an `agents` roll-up.
+dashboard, including the completed run's `output` (null otherwise), an `agents` roll-up and, when an
+attempt reported Claude subscription rate-limit windows, a per-harness `rateLimits` map.
 `workflow list --json` returns `{kind, ok, stateDir, runs, warnings}` with compact rows: `id`,
 `workflow`, `status`, `recordedStatus`, `counts`, `updatedAt`, `ownership`, `nextWakeAt`, `cwd`,
 `stateDir`, `warnings` and a six-field `usage`; `--full` restores whole run summaries.

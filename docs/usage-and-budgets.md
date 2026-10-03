@@ -104,3 +104,55 @@ cost is not priced, and Codex reports no cost here. Pair the cost gate with the 
 concurrency limits. Per-call Claude limits help bound ordinary overshoot, but are also native
 estimates rather than transaction limits. Every attempt still needs ordinary timeout/cancellation
 handling, including custom harnesses which must settle on abort.
+
+## Subscription rate-limit windows
+
+Run caps measure USD and attempts, but a subscription (OAuth) login is limited by its 5-hour and
+7-day usage windows. Claude Code emits a `rate_limit_event` in its stream with the window status,
+reset time and per-window utilization. quiet-choir records the latest valid event of each attempt as
+`attemptHistory[].diagnostics.rateLimit`, so no checkpoint schema changes:
+
+```json
+{
+  "status": "allowed_warning",
+  "type": "seven_day",
+  "resetsAt": 1791360000,
+  "windows": {
+    "five_hour": { "utilization": 0.01, "resetsAt": 1791014400 },
+    "seven_day": { "utilization": 0.84, "resetsAt": 1791360000 }
+  }
+}
+```
+
+`type` is the native `rateLimitType` and `windows` is `unifiedWindows`. `utilization` is the
+fraction of the window used. Every `resetsAt` is Unix epoch seconds exactly as Claude reported it
+(Claude 2.1.285 reported no per-window reset, so a window's `resetsAt` is optional); only the text
+views convert it to an ISO time. Other native fields differ between CLI versions and are not stored.
+Strings are cut to 64 characters with control characters replaced, at most 8 windows are kept, and a
+number that is not finite and non-negative becomes null (a window without a valid `utilization` is
+dropped). With several events in one call the latest valid one replaces the earlier one. A
+structurally malformed event (no `rate_limit_info` object, or nothing usable in it) is ignored: it
+keeps any earlier report and never fails or changes an otherwise valid call. A stream line that is
+not JSON still fails the attempt as a protocol error, as for every native event.
+
+`agent.finished` carries `diagnostics.rateLimit`, and the CLI's `--progress` line for it ends with
+` rate-limit: 5h window 1%, 7d 84%`; the live progress line for the event itself reads
+`Claude: rate limit allowed_warning`. `workflow inspect --json --summary` adds an optional
+`rateLimits` map keyed by harness. Each entry (`stepId`, `attempt`, `finishedAt`, `status`, `type`,
+`resetsAt`, `windows`) comes from the attempt that settled last and carries a valid report. A failed
+attempt counts, because a `rejected` status on a 429 is the most useful report. Fork-reused steps
+are excluded, as for usage. The key is absent when no attempt reported windows, so a run without
+events serializes as before. Text inspect (and `--watch`) prints one line per harness after the
+usage lines:
+
+```text
+  Rate windows claude: 5h window 1%, 7d 84% (allowed_warning; seven_day resets 2026-10-07T08:00:00.000Z)
+```
+
+Windows other than `five_hour` (`5h`) and `seven_day` (`7d`) print under their own names after those
+two.
+
+Only the built-in Claude adapter reports windows. Codex attempts carry no `rateLimit`, and a custom
+adapter that writes the same shape into its diagnostics is displayed too. This is observation only:
+run caps still measure USD and attempts, and there is no utilization gate and no suspend-until-reset
+yet. Window percentages are the CLI's report at the end of that call, not a reservation.
