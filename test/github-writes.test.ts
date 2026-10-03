@@ -1,20 +1,9 @@
 import { readFileSync } from 'node:fs';
-import { mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import {
-  defineWorkflow,
-  NodeProcessRunner,
-  readRun,
-  runWorkflow,
-  z,
-  type JsonValue,
-  type ProcessRunner,
-  type WorkflowContext,
-} from '../src/index.js';
-import { createFakeBinary, type FakeBinary } from '../src/harness-kit.js';
+import { writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { describe, expect, it, vi } from 'vitest';
+import type { z } from '../src/index.js';
+import { readRun, runWorkflow, type WorkflowContext } from '../src/index.js';
 import {
   alertDismissReason,
   github,
@@ -45,13 +34,16 @@ import {
 } from '../src/integrations/github-write-model.js';
 import { inspectRun } from '../src/workflow/loader/inspection.js';
 import { formatRunSummary } from '../src/cli/inspection-view.js';
-import { ThresholdLogger } from '../src/application/execution.js';
-import { WorkflowExecutor } from '../src/workflow/loader/executor.js';
-import { analyzeTypecheckEntrypoint } from '../src/workflow/typecheck/plan.js';
-
-const repository = dirname(dirname(fileURLToPath(import.meta.url)));
-const REPO = 'octo-org/quiet-choir';
-const VIEWER = 'octo-bot';
+import {
+  definition,
+  imports,
+  REPO,
+  repository,
+  useGithubFake,
+  VIEWER,
+  type FakeCall,
+  type RehearsedCommands,
+} from './github-fake.js';
 
 // ---------------------------------------------------------------------------------------------
 // The fake gh: a real executable on PATH whose state is a JSON file (test/bin/fake-gh-writes.mjs).
@@ -87,10 +79,6 @@ interface FakeAlert {
   readonly dismissed_comment?: string | null;
   readonly path: string | null;
 }
-interface FakeCall {
-  readonly argv: readonly string[];
-  readonly stdin: string | null;
-}
 interface FakeState {
   readonly comments: Record<string, RestComment[]>;
   readonly threads: Record<string, { isResolved: boolean; comments: ThreadComment[] }>;
@@ -100,56 +88,9 @@ interface FakeState {
   readonly calls: FakeCall[];
 }
 
-let gh: FakeBinary;
-beforeAll(async () => {
-  gh = await createFakeBinary(
-    'gh',
-    readFileSync(join(repository, 'test', 'bin', 'fake-gh-writes.mjs'), 'utf8'),
-  );
-});
-afterAll(async () => {
-  await gh.dispose();
-});
-
-let cwd: string;
-beforeEach(async () => {
-  cwd = await realpath(await mkdtemp(join(tmpdir(), 'choir-github-writes-')));
-});
-afterEach(async () => {
-  vi.unstubAllEnvs();
-  await rm(cwd, { recursive: true, force: true });
-});
-
-/** Seed the fake's state; return a runner that puts the fake on PATH and a state reader. */
-async function fake(seed: Partial<FakeState> = {}): Promise<{
-  runner: ProcessRunner;
-  state: () => Promise<FakeState>;
-}> {
-  const path = join(cwd, 'gh-state.json');
-  await writeFile(
-    path,
-    JSON.stringify({
-      comments: {},
-      threads: {},
-      issues: {},
-      alerts: {},
-      crashAfterCommit: null,
-      calls: [],
-      ...seed,
-    }),
-  );
-  const native = new NodeProcessRunner();
-  return {
-    runner: {
-      run: (request, invocation) =>
-        native.run(
-          { ...request, env: { ...request.env, ...gh.env, FAKE_GH_STATE: path } },
-          invocation,
-        ),
-    },
-    state: async () => JSON.parse(await readFile(path, 'utf8')) as FakeState,
-  };
-}
+const harness = useGithubFake('choir-github-writes-');
+const { cwd, setup, rehearse, project } = harness;
+const fake = (seed: Partial<FakeState> = {}) => harness.fake<FakeState>(seed);
 
 /** A write's route: the mutation name, or `METHOD path` without the repository prefix. */
 function route(call: FakeCall): string | null {
@@ -185,15 +126,6 @@ const thread = (author: ThreadComment['author'], isResolved = false) => ({
   comments: [{ id: 'PRRC_first', url: 'https://github.com/x#first', body: 'Fix this.', author }],
 });
 
-const setup = (runId: string) => ({ cwd, stateDir: join(cwd, 'state'), runId, input: null });
-const definition = (run: (ctx: WorkflowContext) => Promise<unknown>) =>
-  defineWorkflow({
-    name: 'github-writes',
-    version: '1',
-    input: z.null(),
-    output: z.unknown(),
-    run,
-  });
 const client = (ctx: WorkflowContext, repo = REPO): GithubClient => github(ctx, { repo });
 
 /** Strip every HTML comment, as GitHub's renderer hides them. */
@@ -339,7 +271,7 @@ describe('crash windows', () => {
       await expect(
         runWorkflow(workflow, { ...setup('resume'), processRunner: runner }),
       ).rejects.toThrow();
-      const failed = (await readRun({ stateDir: join(cwd, 'state'), runId: 'resume' })).steps[
+      const failed = (await readRun({ stateDir: join(cwd(), 'state'), runId: 'resume' })).steps[
         'write'
       ];
       expect(failed).toMatchObject({ status: 'failed', output: null });
@@ -654,7 +586,7 @@ describe('conditional ops', () => {
         name,
       ).rejects.toThrow();
       expect(
-        (await readRun({ stateDir: join(cwd, 'state'), runId })).steps,
+        (await readRun({ stateDir: join(cwd(), 'state'), runId })).steps,
         `${name} opened no step`,
       ).toEqual({});
     }
@@ -821,38 +753,8 @@ describe('requests and labels', () => {
   });
 });
 
-/** Rehearse a workflow file under `--dry-run` with a runner that fails if it is ever reached. */
-async function rehearse(file: string, input: JsonValue) {
-  const analysis = analyzeTypecheckEntrypoint(file, cwd);
-  if (!analysis.ok) throw new Error('invalid workflow fixture');
-  const spawned: unknown[] = [];
-  const result = await new WorkflowExecutor({
-    logger: new ThresholdLogger('silent', () => undefined),
-    processRunner: {
-      run: (request) => {
-        spawned.push(request.command);
-        return Promise.reject(new Error('A dry run reached the process runner.'));
-      },
-    },
-  }).execute({
-    kind: 'workflow.execute',
-    typecheck: analysis.plan,
-    runId: 'dry',
-    stateDir: join(cwd, 'state'),
-    cwd,
-    input,
-    resume: false,
-    harness: { kind: 'cli', config: {} },
-    dryRun: true,
-  });
-  if (result.kind !== 'workflow.run.result' || !result.rehearsal)
-    throw new Error(JSON.stringify(result));
-  expect(spawned).toEqual([]);
-  return { run: result.run, commands: result.rehearsal.commands };
-}
-
 /** The writes a rehearsal listed, as `STEP METHOD PATH` or `STEP graphql`. */
-const rehearsedWrites = (commands: Awaited<ReturnType<typeof rehearse>>['commands']): string[] =>
+const rehearsedWrites = (commands: RehearsedCommands): string[] =>
   commands.flatMap((command) => {
     const argv = command.command as readonly string[];
     if (!argv.includes('--input')) return [];
@@ -864,21 +766,12 @@ const rehearsedWrites = (commands: Awaited<ReturnType<typeof rehearse>>['command
     ];
   });
 
-async function project(): Promise<void> {
-  await writeFile(join(cwd, 'package.json'), '{"type":"module"}');
-  await symlink(join(repository, 'node_modules'), join(cwd, 'node_modules'));
-}
-const imports = (source: string): string =>
-  source
-    .replace("'quiet-choir/github'", JSON.stringify(join(repository, 'src/integrations/github.js')))
-    .replace("'quiet-choir'", JSON.stringify(join(repository, 'src/index.js')));
-
 // Each executor run type-checks and imports a workflow module. measured: 1.4 s alone (dominated by
 // the loader's type check and tsImport compile), like the read dry-run in test/github.test.ts.
 describe('dry-run', { timeout: 30_000 }, () => {
   it('lists every write in rehearsal commands under its step and spawns nothing', async () => {
     await project();
-    const file = join(cwd, 'writes.workflow.ts');
+    const file = join(cwd(), 'writes.workflow.ts');
     await writeFile(
       file,
       `import { defineWorkflow, z } from ${JSON.stringify(join(repository, 'src/index.js'))};
@@ -936,7 +829,7 @@ export default defineWorkflow({
     const snippet = /```ts\n([\s\S]*?)```/u.exec(section)?.[1];
     if (snippet === undefined) throw new Error('docs/github.md has no write example');
     await project();
-    const file = join(cwd, 'wrap-up.workflow.ts');
+    const file = join(cwd(), 'wrap-up.workflow.ts');
     await writeFile(file, imports(snippet));
     const result = await rehearse(file, {
       repo: REPO,
