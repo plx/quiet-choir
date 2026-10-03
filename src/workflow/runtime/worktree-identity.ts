@@ -1,14 +1,12 @@
 import type { JsonValue } from './model.js';
-import type { WorktreeIsolation } from './worktree-model.js';
-import { worktreeIsolationSchema } from './worktree-schema.js';
+import { resolveWorktree } from './worktree-schema.js';
 
-/** Logical isolation identity never includes a disposable checkout path. @internal */
-export function isolationIdentity(value: WorktreeIsolation): JsonValue {
-  const isolation = worktreeIsolationSchema.parse(value);
-  if (typeof isolation === 'object' && 'id' in isolation)
-    return { id: isolation.id, base: isolation.base };
-  return {
-    kind: 'worktree',
-    base: typeof isolation === 'string' ? 'HEAD' : (isolation.base ?? 'HEAD'),
-  };
+/**
+ * Logical isolation identity never includes a disposable checkout path. Every accepted spelling of a
+ * checkout selection, legacy ones included, normalizes to the same identity. @internal
+ */
+export function isolationIdentity(value: unknown): JsonValue {
+  const worktree = resolveWorktree(value);
+  if ('id' in worktree) return { id: worktree.id, base: worktree.base };
+  return { kind: 'worktree', base: worktree.base ?? 'HEAD' };
 }

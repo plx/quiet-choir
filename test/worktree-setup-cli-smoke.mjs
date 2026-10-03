@@ -92,7 +92,7 @@ export default defineWorkflow({ name: 'worktree-setup', version: '1', input: z.o
     symlinkSync(${JSON.stringify(deps)}, join(path, 'node_modules'));
   } },
   async run(ctx) {
-    const call = await ctx.claude.text('agent', { prompt: 'edit', isolation: 'worktree' });
+    const call = await ctx.claude.text('agent', { prompt: 'edit', worktree: true });
     if (!call.worktree) throw new Error('missing change');
     const tree = await ctx.worktree('cache');
     await ctx.exec('edit', [${JSON.stringify(process.execPath)}, '-e', "require('node:fs').writeFileSync('handle.txt', 'handle')"], { worktree: tree });

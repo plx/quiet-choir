@@ -53,10 +53,10 @@ The adapter runs
 `codex exec --json --sandbox read-only --config approval_policy="never" --ephemeral --color never --ignore-user-config --ignore-rules -- -`
 by default. It does not expose interactive approvals or an unrestricted sandbox. Declare an
 `edit`-based role with `codex: { sandbox: 'workspace-write' }` for authorized editing tasks and
-launch with `--grant role`. Add `isolation: 'worktree'` for a fresh checkout on every attempt, or
-pass a `ctx.worktree` handle for serialized write/test/fix effects. Shard structurally disjoint
-files; isolate overlapping targets, concurrent runners, and retries unsafe on partial edits. See
-[worktrees](worktrees.md) for snapshots and explicit integration. Restricted mode skips
+launch with `--grant role`. Add `worktree: true` for a fresh checkout on every attempt, or pass a
+`ctx.worktree` handle as `worktree` for serialized write/test/fix effects. Shard structurally
+disjoint files; isolate overlapping targets, concurrent runners, and retries unsafe on partial
+edits. See [worktrees](worktrees.md) for snapshots and explicit integration. Restricted mode skips
 `config.toml` and execpolicy rules, but Codex still loads the user's `CODEX_HOME/AGENTS.md` (or
 `AGENTS.override.md`), `CODEX_HOME/skills` descriptions, and project `AGENTS.md` or
 `AGENTS.override.md` from the Git root down to `cwd`, plus managed layers. Metadata records these

@@ -36,3 +36,21 @@ default. Worktree snapshots remain runtime-owned, avoiding protected Git writes 
 Native fixture tests use dummy keys and loopback fake APIs, while ordinary CI uses fake executable
 children and recorded evidence. OAuth evidence is separately identified as an earlier zero-cost
 invalid-model probe. See [the contract and its limits](../harness-isolation.md).
+
+## Amendment: `worktree` is the only checkout selector (#340, 2026-10)
+
+The preserved shorthand left three spellings for one checkout: `isolation: 'worktree'` (or a handle
+in `isolation`), `worktree: 'worktree'`, and `{ kind: 'worktree', base }` in either field. At 0.0.0
+one spelling per concept (#158) outweighs keeping them, so the public types now say `isolation` is
+only the configuration mode (`'restricted' | 'inherit'`) and an agent's `worktree` is
+`true | { base?: WorktreeBase } | WorktreeHandle`. `WorktreeIsolation` and `AgentIsolation` are no
+longer exported, and the harness kit's `resolveIsolation` declares only those public types.
+
+The shorthand is removed from the types only. An internal legacy schema still accepts every old
+spelling at runtime and normalizes it before identity, and `isolationIdentity` keeps its output (a
+fresh checkout still hashes as `{ kind: 'worktree', base }`, its default base `HEAD`). The raw
+`worktree` option never reaches the run record, so old and new spellings produce byte-identical step
+fingerprints and base pin refs, and a checkpoint recorded with an old spelling resumes after the
+source migrates, with no identity migration. Supplying both `worktree` and a legacy worktree
+`isolation` still fails before the harness runs. Profiles keep accepting only a configuration mode
+and never a checkout.

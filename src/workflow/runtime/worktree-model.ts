@@ -18,17 +18,6 @@ export interface WorktreeHandle {
   readonly base: string;
 }
 
-/** Per-call fresh isolation, or serialization on a previously created shared handle. */
-export type WorktreeIsolation =
-  | 'worktree'
-  | {
-      /** Create a fresh detached worktree for each attempt. */
-      readonly kind: 'worktree';
-      /** Ref or commit to pin before the first invocation; default HEAD. */
-      readonly base?: WorktreeBase;
-    }
-  | WorktreeHandle;
-
 /** A captured change remains usable after its cache directory has been removed. */
 export interface WorktreeChange {
   /** Commit from which this change was captured. */
@@ -46,9 +35,12 @@ export interface WorktreeChange {
   }[];
 }
 
-/** Initial base for a run-owned shared handle. */
+/**
+ * Base for a run-owned checkout: a shared handle from `ctx.worktree`, or a fresh per-attempt agent
+ * checkout (`worktree: { base }`).
+ */
 export interface WorktreeCreateOptions {
-  /** Resolve once before creating the cache, default HEAD. */
+  /** Ref or commit, resolved once and pinned before the checkout is first used; default HEAD. */
   readonly base?: WorktreeBase;
 }
 

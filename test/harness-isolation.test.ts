@@ -158,8 +158,17 @@ it('resolves shared and provider-specific mode defaults and hides environment va
 });
 
 it('keeps checkout placement out of profiles while accepting provider configuration modes', () => {
-  for (const claude of [{ worktree: true }, { isolation: 'worktree' }])
-    expect(() => capabilityManifest({ profiles: { r: { claude } as never } })).toThrow();
+  for (const options of [
+    { worktree: true },
+    { worktree: { base: 'main' } },
+    { worktree: { kind: 'worktree' } },
+    { isolation: 'worktree' },
+    { isolation: { kind: 'worktree', base: 'main' } },
+  ]) {
+    expect(() => capabilityManifest({ profiles: { r: { claude: options } as never } })).toThrow();
+    expect(() => capabilityManifest({ profiles: { r: { codex: options } as never } })).toThrow();
+    expect(() => capabilityManifest({ defaults: { claude: options } as never })).toThrow();
+  }
   expect(
     capabilityManifest({ profiles: { r: { claude: { isolation: 'inherit' } } } }).profiles['r']
       ?.claude.isolation,

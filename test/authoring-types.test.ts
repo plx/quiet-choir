@@ -8,10 +8,10 @@ import {
   defineWorkflow,
   runWorkflow,
   z,
-  type AgentIsolation,
   type BuiltInHarnesses,
   type CallOptions,
   type CapabilityKeysOf,
+  type HarnessIsolation,
   type JsonValue,
   type MapStepError,
   type Settled,
@@ -51,7 +51,9 @@ const codexSandboxOptions = { prompt, sandbox: 'workspace-write' as const };
 const registeredToolsOptions = { prompt, tools: ['shell'] };
 const undefinedToolsOptions = { prompt, tools: undefined };
 const inheritOptions = { prompt, isolation: 'inherit' as const };
-const worktreeOptions = { prompt, isolation: 'worktree' as const };
+const worktreeOptions = { prompt, worktree: true as const };
+const baseWorktreeOptions = { prompt, worktree: { base: 'main' } };
+const commit = 'a'.repeat(40);
 
 // Every built-in capability key is rejected under the default strictProfiles.
 export const strict = defineWorkflow({
@@ -130,14 +132,36 @@ export const strict = defineWorkflow({
     await ctx.claude.text('t', inheritOptions);
     await ctx.claude.text('t', worktreeOptions);
     await ctx.codex.text('t', worktreeOptions);
+    await ctx.claude.text('t', baseWorktreeOptions);
     await ctx.agent('wide').text('t', registeredToolsOptions);
     // Strictness survives within().
     // @ts-expect-error -- strict inside a bound scope too.
     await ctx.within('scope').claude.text('t', { prompt, tools: ['Read'] });
-    // Non-capability options, restricted isolation and worktree shorthands still compile.
+    // Non-capability options, restricted isolation and every worktree form still compile.
     await ctx.claude.text('t', { prompt, isolation: 'restricted', model: 'm', effort: 'low' });
-    await ctx.claude.text('t', { prompt, isolation: { kind: 'worktree' } });
-    await ctx.codex.text('t', { prompt, isolation: 'worktree', reasoningEffort: 'low' });
+    await ctx.claude.text('t', { prompt, worktree: true });
+    await ctx.codex.text('t', { prompt, worktree: { base: 'main' }, reasoningEffort: 'low' });
+    await ctx.codex.text('t', { prompt, worktree: { base: { commit } } });
+    const tree = await ctx.worktree('tree');
+    await ctx.claude.text('t', { prompt, worktree: tree, isolation: 'restricted' });
+    await ctx.agent('codex').text('t', { prompt, worktree: tree });
+    // worktree is the only checkout selector; the pre-#340 spellings run but no longer type-check.
+    // @ts-expect-error -- isolation is only the configuration mode.
+    await ctx.claude.text('t', { prompt, isolation: 'worktree' });
+    // @ts-expect-error -- isolation is only the configuration mode.
+    await ctx.codex.text('t', { prompt, isolation: 'worktree' });
+    // @ts-expect-error -- a handle goes in worktree.
+    await ctx.claude.text('t', { prompt, isolation: tree });
+    // @ts-expect-error -- a handle goes in worktree.
+    await ctx.codex.text('t', { prompt, isolation: tree });
+    // @ts-expect-error -- use worktree: true.
+    await ctx.claude.text('t', { prompt, worktree: 'worktree' });
+    // @ts-expect-error -- use worktree: true.
+    await ctx.codex.text('t', { prompt, worktree: 'worktree' });
+    // @ts-expect-error -- use worktree: { base }.
+    await ctx.claude.text('t', { prompt, worktree: { kind: 'worktree' } });
+    // @ts-expect-error -- use worktree: { base }.
+    await ctx.codex.text('t', { prompt, worktree: { kind: 'worktree', base: 'main' } });
     await ctx.within('scope').claude.text('t', { prompt, profile: 'scout' });
     return null;
   },
@@ -167,6 +191,30 @@ export const permissive = defineWorkflow({
     await ctx.codex.text('t', codexSandboxOptions);
     await ctx.agent('tool').text('t', registeredToolsOptions);
     await ctx.claude.text('t', inheritOptions);
+    // Every worktree form, alone or with either configuration mode.
+    const tree = await ctx.worktree('tree');
+    await ctx.claude.text('t', { prompt, worktree: true, isolation: 'inherit' });
+    await ctx.codex.text('t', { prompt, worktree: { base: 'main' }, isolation: 'restricted' });
+    await ctx.codex.text('t', { prompt, worktree: { base: { commit } } });
+    await ctx.claude.text('t', { prompt, worktree: tree });
+    await ctx.claude.text('t', baseWorktreeOptions);
+    // The pre-#340 spellings are type errors without strict profiles too.
+    // @ts-expect-error -- isolation is only the configuration mode.
+    await ctx.claude.text('t', { prompt, isolation: 'worktree' });
+    // @ts-expect-error -- isolation is only the configuration mode.
+    await ctx.codex.text('t', { prompt, isolation: 'worktree' });
+    // @ts-expect-error -- a handle goes in worktree.
+    await ctx.claude.text('t', { prompt, isolation: tree });
+    // @ts-expect-error -- a handle goes in worktree.
+    await ctx.codex.text('t', { prompt, isolation: tree });
+    // @ts-expect-error -- use worktree: true.
+    await ctx.claude.text('t', { prompt, worktree: 'worktree' });
+    // @ts-expect-error -- use worktree: true.
+    await ctx.codex.text('t', { prompt, worktree: 'worktree' });
+    // @ts-expect-error -- use worktree: { base }.
+    await ctx.claude.text('t', { prompt, worktree: { kind: 'worktree' } });
+    // @ts-expect-error -- use worktree: { base }.
+    await ctx.codex.text('t', { prompt, worktree: { kind: 'worktree', base: 'main' } });
     return null;
   },
 });
@@ -402,8 +450,9 @@ it('carries strictness, profiles and declared children into authoring types', ()
   type StrictWide = CallOptions<'wide', typeof wide, never, true>;
   expectTypeOf<Extract<Settable<StrictWide>, 'tools'>>().toEqualTypeOf<'tools'>();
   expectTypeOf<StrictClaude['isolation']>().toEqualTypeOf<
-    Exclude<AgentIsolation, 'inherit'> | undefined
+    Exclude<HarnessIsolation, 'inherit'> | undefined
   >();
+  expectTypeOf<StrictClaude['isolation']>().toEqualTypeOf<'restricted' | undefined>();
   expectTypeOf<CapabilityKeysOf<BuiltInHarnesses['claude']>>().toEqualTypeOf<
     (typeof claudeCapabilityKeys)[number]
   >();

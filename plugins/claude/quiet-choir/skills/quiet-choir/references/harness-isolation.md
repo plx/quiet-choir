@@ -6,11 +6,12 @@ provider-specific `claude`/`codex` options. Explicit `inherit` loads native conf
 classified as exec capability: declare it in a profile and grant that role, or use raw controls with
 `strictProfiles: false` and an exec grant. Narrowing a call to `restricted` is allowed.
 
-Configuration mode and Git checkout selection are separate. `worktree: true` requests a fresh
-checkout; a shared handle or `{ kind: 'worktree', base }` selects other managed checkout behavior.
-The existing `isolation: 'worktree'`/handle shorthand still works and preserves the configuration
-mode from the selected profile. For example, a trusted inherited role can also use `worktree: true`.
-See [worktree isolation](worktrees.md).
+Configuration mode and Git checkout selection are separate: `isolation` is only the configuration
+mode (`'restricted' | 'inherit'`), and `worktree` is the only checkout selector. `worktree: true`
+requests a fresh checkout per attempt, `worktree: { base }` pins another ref or commit for it, and a
+shared `ctx.worktree` handle serializes the call on that checkout. Checkout selection keeps the
+configuration mode from the selected profile; for example, a trusted inherited role can also use
+`worktree: true`. See [worktree isolation](worktrees.md).
 
 ## Native boundary
 
