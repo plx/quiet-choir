@@ -3,6 +3,7 @@ import { validateStepId, displayId, duplicateStepId } from './identity.js';
 import {
   CancelledError,
   FanOutError,
+  errorMessage,
   type FanOutFailure,
   type FailureOrigins,
   type MapStepError,
@@ -17,14 +18,7 @@ import {
 } from './replay-decision.js';
 import type { OperationTracker } from './tracking.js';
 import { errorKind, stepError } from './step-error.js';
-import type {
-  JsonValue,
-  Settled,
-  SettledMapOptions,
-  MapOptions,
-  SettledNamedMapOptions,
-  WorkflowContext,
-} from './model.js';
+import type { JsonValue, Settled, MapOptions, WorkflowContext } from './model.js';
 import type { MapComponents, MapRecord, RunRecord, StepRecord } from './store.js';
 
 /** Settled map refusals thrown by this module, with whether only the mapper changed. */
@@ -109,51 +103,23 @@ export function createMap(dependencies: MapDependencies): WorkflowContext['map']
     items: readonly T[],
     options: MapOptions<T>,
     mapper: (item: T, index: number) => Promise<U>,
-  ): Promise<U[]>;
-  function map<T, U>(
-    id: string,
-    items: readonly T[],
-    options: SettledNamedMapOptions<T>,
-    mapper: (item: T, index: number) => Promise<U>,
-  ): Promise<Settled<U, MapStepError>[]>;
-  function map<T, U>(
-    items: readonly T[],
-    concurrency: number,
-    mapper: (item: T, index: number) => Promise<U>,
-    settings?: { readonly onError?: 'abort' | 'drain' },
-  ): Promise<U[]>;
-  function map<T, U>(
-    items: readonly T[],
-    concurrency: number,
-    mapper: (item: T, index: number) => Promise<U>,
-    settings: SettledMapOptions,
-  ): Promise<Settled<U, MapStepError>[]>;
-  function map<T, U>(
-    first: string | readonly T[],
-    second: readonly T[] | number,
-    third: MapOptions<T> | SettledNamedMapOptions<T> | ((item: T, index: number) => Promise<U>),
-    fourth:
-      | { readonly onError?: 'abort' | 'drain' }
-      | SettledMapOptions
-      | ((item: T, index: number) => Promise<U>) = {},
   ): Promise<U[] | Settled<U, MapStepError>[]> {
     const parentPath = names.path;
     return launch(
       'map',
       async () => {
-        const named = typeof first === 'string';
-        const items = (named ? second : first) as readonly T[];
-        const rawSettings: unknown = named ? third : fourth;
-        if (rawSettings === null || typeof rawSettings !== 'object')
+        if (typeof id !== 'string')
           throw validationError(
-            named
-              ? 'Map options must be an object.'
-              : 'Map options must be an object when provided.',
+            'Map requires a string ID first: the positional ctx.map(items, concurrency, mapper) form was removed. Use ctx.map(id, items, { concurrency }, mapper).',
           );
-        const settings = rawSettings as
-          MapOptions<T> | SettledNamedMapOptions<T> | SettledMapOptions;
-        const concurrency = named ? (settings as MapOptions<T>).concurrency : (second as number);
-        const mapper = (named ? fourth : third) as (item: T, index: number) => Promise<U>;
+        const rawSettings: unknown = options;
+        if (rawSettings === null || typeof rawSettings !== 'object')
+          throw validationError('Map options must be an object.');
+        const settings = rawSettings as MapOptions<T> & {
+          readonly onError?: unknown;
+          readonly cancelSiblings?: unknown;
+        };
+        const concurrency = settings.concurrency;
         if (isClosed()) throw validationError('Workflow is closed; await all workflow operations.');
         if (isInEffect())
           throw validationError('Do not nest workflow operations inside a local effect callback.');
@@ -161,60 +127,63 @@ export function createMap(dependencies: MapDependencies): WorkflowContext['map']
           throw validationError('Map concurrency must be a positive integer.');
         if (!Array.isArray(items) || typeof mapper !== 'function')
           throw validationError('Map requires an array and a mapper callback.');
+        // Normalize before any journal or identity use. 'settle' is an untyped runtime alias for
+        // 'return'; neither enters the fingerprint, so both journal identically (ADR 0008).
+        const mode = mapMode(settings.onError);
+        if (mode === undefined)
+          throw validationError(
+            `Map onError must be 'throw' or 'return', not ${describeValue(settings.onError)}. The default drains started mappers after a failure; use cancelSiblings: true to cancel this map's subtree instead.`,
+          );
+        if (settings.cancelSiblings !== undefined && typeof settings.cancelSiblings !== 'boolean')
+          throw validationError('Map cancelSiblings must be a boolean.');
+        const cancelSiblings = settings.cancelSiblings === true;
         // Fix scheduling to the items present at call time; later caller edits cannot add work.
         let snapshot: readonly T[] = Array.from<T>(items);
-        const policy = settings.onError ?? 'drain';
-        if (!['abort', 'drain', 'settle'].includes(policy))
-          throw validationError('Map onError must be abort, drain, or settle.');
-        let journalId: string | undefined;
+        const policy = cancelSiblings ? 'abort' : 'drain';
+        let journalId: string;
         // Named-map items are declared independent; fork prefix reuse reads them (ADR 0006).
-        let itemPaths: MapItemScope[] | undefined;
-        let keys: string[] | undefined;
+        let itemPaths: MapItemScope[];
+        let keys: string[];
         try {
-          if (named) {
-            const prefix = names.prefix(first);
-            const key = (settings as MapOptions<T>).key;
-            if (key !== undefined && typeof key !== 'function')
-              throw new Error('Map key must be a function.');
-            const seen = new Set<string>();
-            keys = Array.from<T, string>(snapshot, (item, index) => {
-              const value = key === undefined ? String(index) : key(item, index);
-              try {
-                validateStepId(value, { scope: prefix, leaf: value });
-                validateStepId(prefix + value, { scope: prefix, leaf: value });
-              } catch (cause) {
-                throw new Error(
-                  `Invalid map key ${typeof value === 'string' ? displayId(value) : String(value)} at index ${String(index)}: ${cause instanceof Error ? cause.message : String(cause)}`,
-                  { cause },
-                );
-              }
-              if (seen.has(value))
-                throw new Error(
-                  `Duplicate map key ${displayId(value)} (scope ${displayId(prefix)}). Provide a unique key for every item.`,
-                );
-              seen.add(value);
-              return value;
-            });
-            const items = new Set(keys.map((key) => `${prefix}${key}/`));
-            itemPaths = [...items].map((item) => ({ map: prefix, item, items }));
-            journalId = names.qualify(first);
-          } else if (settings.onError === 'settle') {
-            const id = (settings as SettledMapOptions).id;
-            if (typeof id !== 'string')
-              throw new Error('Settled maps require a stable id to journal item outcomes.');
-            journalId = names.qualify(id);
-            validateStepId(journalId, names.describe(journalId));
-          }
+          const prefix = names.prefix(id);
+          const key = settings.key;
+          if (key !== undefined && typeof key !== 'function')
+            throw new Error('Map key must be a function.');
+          const seen = new Set<string>();
+          keys = Array.from<T, string>(snapshot, (item, index) => {
+            const value = key === undefined ? String(index) : key(item, index);
+            try {
+              validateStepId(value, { scope: prefix, leaf: value });
+              validateStepId(prefix + value, { scope: prefix, leaf: value });
+            } catch (cause) {
+              throw new Error(
+                `Invalid map key ${typeof value === 'string' ? displayId(value) : String(value)} at index ${String(index)}: ${cause instanceof Error ? cause.message : String(cause)}`,
+                { cause },
+              );
+            }
+            if (seen.has(value))
+              throw new Error(
+                `Duplicate map key ${displayId(value)} (scope ${displayId(prefix)}). Provide a unique key for every item.`,
+              );
+            seen.add(value);
+            return value;
+          });
+          const items = new Set(keys.map((key) => `${prefix}${key}/`));
+          itemPaths = [...items].map((item) => ({ map: prefix, item, items }));
+          journalId = names.qualify(id);
         } catch (error) {
           origins.markFatal(error);
           throw error;
         }
+        // Only this map's controller aborts for cancelSiblings; the parent scope is never cancelled.
         const controller = new AbortController();
-        const mapSignal = AbortSignal.any([scopes.signal, controller.signal]);
+        const parentSignal = scopes.signal;
+        const mapSignal = AbortSignal.any([parentSignal, controller.signal]);
         mapSignal.throwIfAborted();
-        const mapScope = scopes.create(mapSignal, settings.onError === 'settle');
+        // The settled scope flag follows the journal, not cancelSiblings.
+        const mapScope = scopes.create(mapSignal, mode === 'return');
         let journal: MapRecord | undefined;
-        if (settings.onError === 'settle' && journalId !== undefined) {
+        if (mode === 'return') {
           if (
             settings.version !== undefined &&
             (typeof settings.version !== 'string' || !settings.version.trim())
@@ -236,14 +205,14 @@ export function createMap(dependencies: MapDependencies): WorkflowContext['map']
             mapper: source,
             version: settings.version ?? null,
             cwd,
-            ...(keys === undefined ? {} : { keys }),
+            keys,
           });
           const components: MapComponents = {
             items: digest(data),
             mapper: digest(source),
             version: digest(settings.version ?? null),
             cwd: digest(cwd),
-            ...(keys === undefined ? {} : { keys: digest(keys) }),
+            keys: digest(keys),
           };
           const prior = Object.hasOwn(maps, journalId) ? maps[journalId] : undefined;
           const decision = decideSettledMapReplay({
@@ -303,8 +272,23 @@ export function createMap(dependencies: MapDependencies): WorkflowContext['map']
             configurable: true,
           });
           await save();
+          // A committed failure already cancelled the rest on an earlier run: abort before
+          // scheduling, so uncommitted items are journaled as cancelled deterministically.
+          const committed = journal.items.find(
+            (item) =>
+              item.status === 'completed' &&
+              item.outcome?.ok === false &&
+              item.outcome.error.kind !== 'cancelled',
+          )?.outcome;
+          if (cancelSiblings && committed?.ok === false)
+            controller.abort(
+              new CancelledError(committed.error.stepId, new Error(committed.error.message), 'map'),
+            );
         }
         const saved = journal;
+        // In return mode, cancelSiblings may abort only the map's controller; work still drains
+        // and journals until the parent scope itself is cancelled.
+        const scopeSignal = mode === 'return' ? parentSignal : mapSignal;
         const results: (U | Settled<U, MapStepError>)[] = new Array<U | Settled<U, MapStepError>>(
           snapshot.length,
         );
@@ -314,19 +298,19 @@ export function createMap(dependencies: MapDependencies): WorkflowContext['map']
         const fail = (index: number, error: unknown): void => {
           const origin = origins.find(error);
           failures.push({ index, stepId: origin.stepId, error });
-          if (policy === 'abort' && failures.length === 1)
+          if (cancelSiblings && failures.length === 1)
             controller.abort(new CancelledError(origin.stepId, error, 'map'));
         };
         await scopes.run(mapScope, () =>
           Promise.all(
             Array.from({ length: Math.min(concurrency, snapshot.length) }, async () => {
-              while (fatal === undefined && (policy === 'settle' || failures.length === 0)) {
-                if (mapSignal.aborted) break;
+              while (fatal === undefined && (mode === 'return' || failures.length === 0)) {
+                if (scopeSignal.aborted) break;
                 const index = next++;
                 if (index >= snapshot.length) return;
                 const itemScope = scopes.create(mapSignal);
                 await scopes.run(itemScope, () =>
-                  names.run(itemPaths?.[index] ?? parentPath, async () => {
+                  names.run(itemPaths[index] ?? parentPath, async () => {
                     const item = saved?.items[index];
                     try {
                       if (item?.status === 'completed') {
@@ -348,6 +332,30 @@ export function createMap(dependencies: MapDependencies): WorkflowContext['map']
                         results[index] = structuredClone(item.outcome) as Settled<U, MapStepError>;
                         return;
                       }
+                      if (saved && item && controller.signal.aborted && !parentSignal.aborted) {
+                        // An unstarted item after this map's own cancellation: no attempt started.
+                        item.outcome = {
+                          ok: false,
+                          error: {
+                            message: errorMessage(controller.signal.reason),
+                            kind: 'cancelled',
+                            attempts: 0,
+                            stepId: null,
+                          },
+                        };
+                        item.status = 'completed';
+                        item.steps = [];
+                        item.maps = [];
+                        item.children = [];
+                        try {
+                          await save();
+                        } catch (error) {
+                          fatal ??= { error };
+                          return;
+                        }
+                        results[index] = structuredClone(item.outcome);
+                        return;
+                      }
                       let output: U | undefined;
                       let rejected: { error: unknown } | undefined;
                       try {
@@ -355,8 +363,7 @@ export function createMap(dependencies: MapDependencies): WorkflowContext['map']
                       } catch (error) {
                         rejected = { error };
                       }
-                      if (policy !== 'settle' && rejected !== undefined)
-                        fail(index, rejected.error);
+                      if (mode === 'throw' && rejected !== undefined) fail(index, rejected.error);
                       // Own and drain the mapper's launched descendants before journaling its result.
                       await operations.drain(itemScope);
                       try {
@@ -366,7 +373,8 @@ export function createMap(dependencies: MapDependencies): WorkflowContext['map']
                         throw error;
                       }
                       if (rejected !== undefined) throw rejected.error;
-                      mapSignal.throwIfAborted();
+                      // A valid result resolved after this map's own abort still commits (ADR 0008).
+                      scopeSignal.throwIfAborted();
                       if (saved && item) {
                         item.outcome = { ok: true, value: jsonData(output) };
                         item.status = 'completed';
@@ -379,15 +387,21 @@ export function createMap(dependencies: MapDependencies): WorkflowContext['map']
                         results[index] = structuredClone(item.outcome) as Settled<U, MapStepError>;
                       } else results[index] = output as U;
                     } catch (error) {
+                      const cancelled = errorKind(error) === 'cancelled';
                       if (
                         saved &&
                         item?.status === 'running' &&
-                        !mapSignal.aborted &&
-                        errorKind(error) !== 'cancelled' &&
+                        !parentSignal.aborted &&
+                        // Only this map's own cancelSiblings cancellation becomes item data.
+                        (!cancelled || controller.signal.aborted) &&
                         !isCheckpointFailure(error) &&
                         !origins.isFatal(error)
                       ) {
-                        const origin = origins.find(error);
+                        // A cancelled leaf keeps its own step: the cause chain leads to the
+                        // initiating failure, which must not be attributed to this item.
+                        const origin = cancelled
+                          ? { error, stepId: origins.exact(error) }
+                          : origins.find(error);
                         item.outcome = {
                           ok: false,
                           error: {
@@ -413,7 +427,9 @@ export function createMap(dependencies: MapDependencies): WorkflowContext['map']
                           return;
                         }
                         results[index] = structuredClone(item.outcome);
-                      } else if (policy === 'settle') fatal ??= { error };
+                        if (cancelSiblings && !controller.signal.aborted)
+                          controller.abort(new CancelledError(origin.stepId, origin.error, 'map'));
+                      } else if (mode === 'return') fatal ??= { error };
                       else if (!failures.some((failure) => failure.index === index))
                         fail(index, error);
                     }
@@ -426,11 +442,11 @@ export function createMap(dependencies: MapDependencies): WorkflowContext['map']
         if (fatal !== undefined) throw fatal.error;
         if (failures.length)
           throw new FanOutError(
-            policy === 'abort' ? 'abort' : 'drain',
+            policy,
             failures,
             Array.from({ length: Math.max(0, snapshot.length - next) }, (_, index) => next + index),
           );
-        mapSignal.throwIfAborted();
+        scopeSignal.throwIfAborted();
         if (saved) {
           saved.status = 'completed';
           await save();
@@ -441,5 +457,17 @@ export function createMap(dependencies: MapDependencies): WorkflowContext['map']
     );
   }
 
-  return map;
+  return map as WorkflowContext['map'];
+}
+
+/** Normalize a map's onError, or undefined for an invalid value. */
+function mapMode(value: unknown): 'throw' | 'return' | undefined {
+  if (value === undefined || value === 'throw') return 'throw';
+  if (value === 'return' || value === 'settle') return 'return';
+  return undefined;
+}
+
+/** Show an invalid option value in a validation message. */
+function describeValue(value: unknown): string {
+  return typeof value === 'string' ? `'${value}'` : String(value);
 }

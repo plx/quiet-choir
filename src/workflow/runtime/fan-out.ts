@@ -127,6 +127,11 @@ export class FailureOrigins {
       this.failures.push({ error, stepId, effect });
   }
 
+  /** The effect remembered for exactly this error object, without following causes. */
+  public exact(error: unknown): string | null {
+    return this.failures.find((failure) => Object.is(failure.error, error))?.stepId ?? null;
+  }
+
   /** The original error and effect behind a failure; `effect` is the remembered call-site label. */
   public find(
     error: unknown,

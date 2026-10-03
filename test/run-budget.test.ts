@@ -60,9 +60,14 @@ it.each(['cost', 'attempts'] as const)(
     const definition = defineWorkflow({
       ...base,
       async run(ctx) {
-        await ctx.map('agents', [0, 1, 2, 3], { concurrency: 4, onError: 'abort' }, async () => {
-          await ctx.claude.text('call', { prompt: 'x', onError: 'return' });
-        });
+        await ctx.map(
+          'agents',
+          [0, 1, 2, 3],
+          { concurrency: 4, cancelSiblings: true },
+          async () => {
+            await ctx.claude.text('call', { prompt: 'x', onError: 'return' });
+          },
+        );
         return null;
       },
     });

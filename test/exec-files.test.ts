@@ -325,7 +325,7 @@ it('treats a missing process adapter as fatal inside a settled map instead of se
   // instead of letting the map journal a fallback item and complete.
   const mapError: unknown = await runWorkflow(
     definition((ctx) =>
-      ctx.map('items', [0], { concurrency: 1, onError: 'settle' }, () => ctx.exec('cmd', ['fake'])),
+      ctx.map('items', [0], { concurrency: 1, onError: 'return' }, () => ctx.exec('cmd', ['fake'])),
     ),
     { ...setup(), runId: 'settled-map' },
   ).catch((error: unknown) => error);

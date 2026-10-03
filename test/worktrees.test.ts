@@ -508,7 +508,7 @@ it('keeps a missing repository a configuration failure that settled maps cannot 
       const [result] = await ctx.map(
         'items',
         ['only'],
-        { concurrency: 1, onError: 'settle' },
+        { concurrency: 1, onError: 'return' },
         async () =>
           ctx.claude.text('edit', {
             prompt: 'edit',
@@ -558,7 +558,7 @@ it('treats an unresolvable isolation base as a configuration failure that settle
       const [result] = await ctx.map(
         'items',
         ['only'],
-        { concurrency: 1, onError: 'settle' },
+        { concurrency: 1, onError: 'return' },
         async () =>
           ctx.claude.text('edit', {
             prompt: 'edit',
@@ -1468,7 +1468,7 @@ it('treats a failed Git version probe as a configuration error that settled maps
       const [result] = await ctx.map(
         'items',
         ['only'],
-        { concurrency: 1, onError: 'settle' },
+        { concurrency: 1, onError: 'return' },
         async () =>
           ctx.claude.text('edit', {
             prompt: 'edit',
@@ -2000,7 +2000,7 @@ it('throws ConfigurationError when a resumed worktree registration is missing it
 
 it('keeps a resumed different-owner worktree registration a configuration failure that a retried, settled map cannot journal', async () => {
   // First interrupt and corrupt the planned registration exactly as the plain-call case does,
-  // then resume with the *same* step wrapped in a retry policy under an onError: 'settle' map.
+  // then resume with the *same* step wrapped in a retry policy under an onError: 'return' map.
   // Recovery runs in `ledger()` before the harness ever launches, so it must still surface as a
   // fatal ConfigurationError: never retried by the call's own policy, never journaled as the
   // map item's settled outcome.
@@ -2052,7 +2052,7 @@ it('keeps a resumed different-owner worktree registration a configuration failur
       const [result] = await ctx.map(
         'items',
         ['only'],
-        { concurrency: 1, onError: 'settle' },
+        { concurrency: 1, onError: 'return' },
         async () =>
           ctx.codex.text('edit', {
             prompt: 'edit',

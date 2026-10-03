@@ -790,7 +790,11 @@ const recordFieldsSchema = z.object({
                 z.object({ ok: z.literal(true), value: jsonSchema }),
                 z.object({
                   ok: z.literal(false),
-                  error: stepErrorSchema.extend({ stepId: z.string().nullable() }),
+                  // Zero attempts marks an item cancelSiblings cancelled before it started.
+                  error: stepErrorSchema.extend({
+                    attempts: z.number().int().nonnegative(),
+                    stepId: z.string().nullable(),
+                  }),
                 }),
               ])
               .nullable(),
@@ -935,7 +939,11 @@ const recordSchema = recordFieldsSchema.superRefine((record, context) => {
         if (
           (item.status === 'completed') !== (item.outcome !== null) ||
           (map.status === 'completed' && item.status !== 'completed') ||
-          (item.outcome?.ok === false && item.outcome.error.kind === 'cancelled') ||
+          // Only a return map's own cancelSiblings cancellation is item data; an unstarted
+          // item (zero attempts) is always such a cancellation with no originating step.
+          (item.outcome?.ok === false &&
+            item.outcome.error.attempts === 0 &&
+            (item.outcome.error.kind !== 'cancelled' || item.outcome.error.stepId !== null)) ||
           item.steps.some((stepId) => !Object.hasOwn(record.steps, stepId)) ||
           item.maps.some((mapId) => !Object.hasOwn(record.maps ?? {}, mapId))
         )

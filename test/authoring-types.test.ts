@@ -13,6 +13,8 @@ import {
   type CallOptions,
   type CapabilityKeysOf,
   type JsonValue,
+  type MapStepError,
+  type Settled,
   type WorkflowContext,
   type WorkflowDeclaration,
   type WorkflowDefinition,
@@ -323,6 +325,48 @@ export const explicitAll = defineWorkflow<
 });
 // Typed definitions still reach unparameterized definition parameters and runWorkflow.
 const accepts = (definition: WorkflowDefinition<null, null>) => definition.name;
+// ctx.map has one named signature: onError selects the result shape, cancelSiblings the policy.
+export const mapForms = defineWorkflow({
+  ...base,
+  name: 'map-forms',
+  async run(ctx) {
+    const items = [1, 2];
+    const mapper = (item: number) => Promise.resolve(String(item));
+    expectTypeOf(await ctx.map('a', items, { concurrency: 2 }, mapper)).toEqualTypeOf<string[]>();
+    expectTypeOf(
+      await ctx.map('b', items, { concurrency: 2, onError: 'throw', cancelSiblings: true }, mapper),
+    ).toEqualTypeOf<string[]>();
+    expectTypeOf(
+      await ctx.map('c', items, { concurrency: 2, onError: 'return' }, mapper),
+    ).toEqualTypeOf<Settled<string, MapStepError>[]>();
+    expectTypeOf(
+      await ctx.map(
+        'd',
+        items,
+        { concurrency: 2, onError: 'return', cancelSiblings: true, version: '2' },
+        mapper,
+      ),
+    ).toEqualTypeOf<Settled<string, MapStepError>[]>();
+    const mode = 'return' as 'throw' | 'return';
+    expectTypeOf(
+      await ctx.map('e', items, { concurrency: 2, onError: mode }, mapper),
+    ).toEqualTypeOf<string[] | Settled<string, MapStepError>[]>();
+    // @ts-expect-error The positional ctx.map(items, concurrency, mapper) form was removed.
+    await ctx.map(items, 2, mapper);
+    // @ts-expect-error 'abort' is now cancelSiblings: true.
+    await ctx.map('f', items, { concurrency: 2, onError: 'abort' }, mapper);
+    // @ts-expect-error 'drain' is the default policy, not an onError value.
+    await ctx.map('g', items, { concurrency: 2, onError: 'drain' }, mapper);
+    // @ts-expect-error 'settle' is accepted only as an untyped runtime alias for 'return'.
+    await ctx.map('h', items, { concurrency: 2, onError: 'settle' }, mapper);
+    // @ts-expect-error A typo names the valid literals (see map-types.test.ts).
+    await ctx.map('i', items, { concurrency: 2, onError: 'settled' }, mapper);
+    // @ts-expect-error cancelSiblings is a boolean.
+    await ctx.map('j', items, { concurrency: 2, cancelSiblings: 'yes' }, mapper);
+    return null;
+  },
+});
+
 const run = () => runWorkflow(parent, { runId: 'unused', stateDir: 'unused', input: null });
 // The four-argument explicit runWorkflow form still compiles for a strict workflow with children.
 const runExplicit = () =>
@@ -365,7 +409,9 @@ it('carries strictness, profiles and declared children into authoring types', ()
   >();
   expectTypeOf<CapabilityKeysOf<typeof tool>>().toEqualTypeOf<'tools'>();
   expectTypeOf<CapabilityKeysOf<typeof wide>>().toBeNever();
-  expect([strict, permissive, dynamic, profiled, parent, childless, erasedParent].length).toBe(7);
+  expect(
+    [strict, permissive, dynamic, profiled, parent, childless, erasedParent, mapForms].length,
+  ).toBe(8);
   expect([prefixPermissive, prefixParent, prefixStrict].map(({ name }) => name)).toEqual([
     'prefix-permissive',
     'prefix-parent',

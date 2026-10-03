@@ -507,7 +507,7 @@ it('cancels only queued calls in the failed map subtree and admits its root sibl
       const mapped = ctx.map(
         'group',
         [0, 1],
-        { concurrency: 2, onError: 'abort' },
+        { concurrency: 2, cancelSiblings: true },
         async (item) => {
           if (item === 0) return (await ctx.claude.text('ask', { prompt: 'inside' })).output;
           await queued.promise;

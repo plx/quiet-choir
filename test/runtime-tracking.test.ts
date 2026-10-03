@@ -1,5 +1,5 @@
 import { defaultStateDir, projectCwd } from '../src/workflow/runtime/paths.js';
-/* eslint-disable @typescript-eslint/no-deprecated -- Exercise the supported legacy map/replay contract. */
+
 import { testInvocation } from './harness-invocation.js';
 import { access, mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -256,7 +256,8 @@ it.each(['sleep', 'agent', 'map'] as const)('tracks ignored %s precheck failures
             isolation: 'restricted',
             tools: ['Read', undefined],
           } as unknown as ClaudeOptions);
-        if (kind === 'map') void ctx.map([], 0, () => Promise.resolve(null));
+        if (kind === 'map')
+          void ctx.map('items', [], { concurrency: 0 }, () => Promise.resolve(null));
         return Promise.resolve('ok');
       }),
       { stateDir, runId: kind, input: null },
@@ -273,15 +274,15 @@ it('owns an ignored map until its mapper has launched and completed effects', as
   const stateDir = await directory();
   const result = await runWorkflow(
     workflow((ctx) => {
-      void ctx.map([0, 1], 1, async (index) => {
+      void ctx.map('mapped', [0, 1], { concurrency: 1 }, async () => {
         await delay(10);
-        return ctx.step(`mapped-${String(index)}`, local);
+        return ctx.step('run', local);
       });
       return Promise.resolve('ok');
     }),
     { stateDir, runId: 'map', input: null },
   );
-  expect(Object.keys(result.steps)).toEqual(['mapped-0', 'mapped-1']);
+  expect(Object.keys(result.steps)).toEqual(['mapped/0/run', 'mapped/1/run']);
   expect(Object.values(result.steps).every((step) => step.status === 'completed')).toBe(true);
 });
 

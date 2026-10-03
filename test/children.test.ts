@@ -357,7 +357,7 @@ it('claims child frames on settled-map replay without executing the mapper or ch
     ...base,
     children: [child],
     async run(ctx) {
-      await ctx.map('items', [0, 1], { concurrency: 2, onError: 'settle' }, async () =>
+      await ctx.map('items', [0, 1], { concurrency: 2, onError: 'return' }, async () =>
         ctx.workflow('child', child, null),
       );
       return null;
@@ -384,7 +384,7 @@ it('checks declared child identity before replay skips a settled mapper and reje
       ...base,
       ...(declared ? { children: [child] } : {}),
       async run(ctx) {
-        await ctx.map('items', [0], { concurrency: 1, onError: 'settle' }, async () =>
+        await ctx.map('items', [0], { concurrency: 1, onError: 'return' }, async () =>
           ctx.workflow('child', child, null),
         );
         return null;
@@ -418,7 +418,7 @@ it('checks skipped declared descendants when their dynamic parent is rediscovere
       ...base,
       children: [leaf],
       async run(ctx) {
-        await ctx.map('items', [0], { concurrency: 1, onError: 'settle' }, () =>
+        await ctx.map('items', [0], { concurrency: 1, onError: 'return' }, () =>
           ctx.workflow('leaf', leaf, null),
         );
         return null;
@@ -684,7 +684,7 @@ it.each([true, false])(
       async run(ctx) {
         const frame = () => ctx.workflow('same', child, null);
         const map = () =>
-          ctx.map('same', [], { concurrency: 1, onError: 'settle' }, () => Promise.resolve(null));
+          ctx.map('same', [], { concurrency: 1, onError: 'return' }, () => Promise.resolve(null));
         if (childFirst) {
           await frame();
           await map();
@@ -781,7 +781,7 @@ it('cancels a sibling map item child frame when the map aborts on another item f
     ...base,
     children: [child],
     async run(ctx) {
-      await ctx.map('items', [0, 1], { concurrency: 2, onError: 'abort' }, async (item) => {
+      await ctx.map('items', [0, 1], { concurrency: 2, cancelSiblings: true }, async (item) => {
         if (item === 0) {
           await ready;
           throw new Error('item failure');

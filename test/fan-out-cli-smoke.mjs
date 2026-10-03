@@ -78,7 +78,8 @@ async function interrupt(id, sleep) {
         if (
           sleep
             ? record.steps.nap?.status === 'waiting'
-            : record.steps.lint?.status === 'running' && existsSync(join(fixture, `${id}-lint.txt`))
+            : record.steps['checks/lint/run']?.status === 'running' &&
+              existsSync(join(fixture, `${id}-lint.txt`))
         )
           break;
       }
@@ -102,8 +103,9 @@ async function interrupt(id, sleep) {
     assert.equal(record.rootCause, null);
     assert.match(record.interruptedBy.reason, /Workflow interrupted/);
     assert.ok(record.nextWakeAt <= Date.now());
-    assert.equal(record.steps[sleep ? 'nap' : 'lint'].status, sleep ? 'waiting' : 'cancelled');
-    assert.equal(record.steps[sleep ? 'nap' : 'lint'].cancelledBy ?? null, null);
+    const target = record.steps[sleep ? 'nap' : 'checks/lint/run'];
+    assert.equal(target.status, sleep ? 'waiting' : 'cancelled');
+    assert.equal(target.cancelledBy ?? null, null);
     assert.equal(existsSync(join(state, id, 'lock')), false);
   } finally {
     if (child.exitCode === null && child.signalCode === null) {
@@ -155,7 +157,7 @@ process.stdin.on('end', () => {
     `import { defineWorkflow, z } from 'quiet-choir';
 export default defineWorkflow({name:'fanout-cli',version:'1',input:z.object({prefix:z.string(),policy:z.enum(['drain','abort']).default('drain'),sleep:z.boolean().default(false)}),output:z.array(z.string()),async run(ctx,input) {
   if(input.sleep) { await ctx.sleep('nap',10000); return []; }
-  return ctx.map(['ci','lint','tests'],3,async(name)=>(await ctx.claude.text(name,{prompt:JSON.stringify({prefix:input.prefix,name})})).output,{onError:input.policy});
+  return ctx.map('checks',['ci','lint','tests'],{concurrency:3,key:(name)=>name,cancelSiblings:input.policy==='abort'},async(name)=>(await ctx.claude.text('run',{prompt:JSON.stringify({prefix:input.prefix,name})})).output);
 }});
 `,
   );
@@ -172,12 +174,12 @@ export default defineWorkflow({name:'fanout-cli',version:'1',input:z.object({pre
   assert.equal(first.status, 1, first.stderr);
   assert.match(first.stderr, /CI failed/);
   const saved = checkpoint('drain');
-  assert.equal(saved.rootCause.stepId, 'ci');
+  assert.equal(saved.rootCause.stepId, 'checks/ci/run');
   assert.match(saved.rootCause.error, /CI failed/);
-  assert.equal(saved.steps.ci.status, 'failed');
+  assert.equal(saved.steps['checks/ci/run'].status, 'failed');
   for (const name of ['lint', 'tests']) {
     assert.equal(lines('drain', name), 10);
-    assert.equal(saved.steps[name].status, 'completed');
+    assert.equal(saved.steps[`checks/${name}/run`].status, 'completed');
   }
   assert.equal(existsSync(join(fixture, 'drain-signals.txt')), false);
   writeFileSync(join(fixture, 'drain-healed'), 'yes');
@@ -212,16 +214,17 @@ export default defineWorkflow({name:'fanout-cli',version:'1',input:z.object({pre
   assert.equal(aborted.status, 1, aborted.stderr);
   const interrupted = checkpoint('abort');
   assert.equal(interrupted.status, 'failed');
-  assert.equal(interrupted.rootCause.stepId, 'ci');
+  assert.equal(interrupted.rootCause.stepId, 'checks/ci/run');
   for (const name of ['lint', 'tests']) {
-    assert.equal(interrupted.steps[name].status, 'cancelled');
-    assert.equal(interrupted.steps[name].cancelledBy, 'ci');
-    assert.doesNotMatch(interrupted.steps[name].error, /CI failed/);
+    const step = interrupted.steps[`checks/${name}/run`];
+    assert.equal(step.status, 'cancelled');
+    assert.equal(step.cancelledBy, 'checks/ci/run');
+    assert.doesNotMatch(step.error, /CI failed/);
     assert.ok(lines('abort', name) < 10);
   }
   const inspected = cli('inspect', 'abort', '--state-dir', state);
   assert.equal(inspected.status, 0, inspected.stderr);
-  assert.match(inspected.stdout, /Root cause \(ci, unknown\):.*CI failed/);
+  assert.match(inspected.stdout, /Root cause \(checks\/ci\/run, unknown\):.*CI failed/);
   await interrupt('interrupt-agent', false);
   await interrupt('interrupt-sleep', true);
   console.log(

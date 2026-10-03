@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-deprecated -- Exercise the supported legacy map/replay contract. */
 import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -223,10 +222,15 @@ it('preserves best-effort map outcomes when a failed item heals on resume', asyn
   } satisfies Harness;
   const summary = vi.fn(() => 'summary');
   const definition = workflow(async (ctx) => {
-    const results = await ctx.map(['a', 'b'], 2, async (id) => {
-      const result = await ctx.claude.text(id, { prompt: id, onError: 'return' });
-      return result.ok ? result.value.output : null;
-    });
+    const results = await ctx.map(
+      'items',
+      ['a', 'b'],
+      { concurrency: 2, key: (id) => id },
+      async (id) => {
+        const result = await ctx.claude.text('ask', { prompt: id, onError: 'return' });
+        return result.ok ? result.value.output : null;
+      },
+    );
     const result = await ctx.step('summary', { input: results, schema: z.string(), run: summary });
     if (broken) throw new Error('tail');
     return result;
@@ -268,16 +272,11 @@ it.each(['external', 'sibling'] as const)('never settles %s cancellation', async
         },
       });
     if (origin === 'sibling')
-      await ctx.map(
-        [0, 1],
-        2,
-        async (index) => {
-          if (index === 0) return waiting();
-          await ready;
-          throw new Error('sibling failed');
-        },
-        { onError: 'abort' },
-      );
+      await ctx.map('items', [0, 1], { concurrency: 2, cancelSiblings: true }, async (index) => {
+        if (index === 0) return waiting();
+        await ready;
+        throw new Error('sibling failed');
+      });
     else await waiting();
     return 'never';
   });
@@ -288,7 +287,9 @@ it.each(['external', 'sibling'] as const)('never settles %s cancellation', async
   await ready;
   if (origin === 'external') controller.abort(new Error('cancelled'));
   await failed;
-  const step = (await readRun(options())).steps['waiting'];
+  const step = (await readRun(options())).steps[
+    origin === 'sibling' ? 'items/0/waiting' : 'waiting'
+  ];
   expect(step).toMatchObject({ status: 'cancelled', attempts: 1 });
   expect(step?.settledError).toBeUndefined();
 });

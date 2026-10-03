@@ -9,7 +9,7 @@ export default defineWorkflow({
     const results = await ctx.map(
       'panel',
       input.lenses,
-      { concurrency: 2, onError: 'settle' },
+      { concurrency: 2, onError: 'return' },
       (lens) => ctx.claude.value('review', { prompt: `${lens}: ${input.topic}` }),
     );
     const answers = results.flatMap((result) => (result.ok ? [result.value] : []));

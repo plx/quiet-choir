@@ -704,7 +704,7 @@ it('keeps shared version discovery alive when its first map subtree aborts', asy
       const mapped = ctx.map(
         'group',
         [0, 1],
-        { concurrency: 2, onError: 'abort' },
+        { concurrency: 2, cancelSiblings: true },
         async (item) => {
           if (item === 0) return (await ctx.claude.text('inside', { prompt: 'x' })).output;
           await discovered;
@@ -760,7 +760,7 @@ it('releases an aborted scope from stalled discovery and drains discovery before
   const definition = defineWorkflow({
     ...base,
     async run(ctx) {
-      await ctx.map('group', [0, 1], { concurrency: 2, onError: 'abort' }, async (item) => {
+      await ctx.map('group', [0, 1], { concurrency: 2, cancelSiblings: true }, async (item) => {
         if (item === 0) {
           try {
             return (await ctx.claude.text('inside', { prompt: 'x' })).output;

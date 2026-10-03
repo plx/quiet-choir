@@ -659,45 +659,27 @@ export interface WorkflowContext<
   ): Promise<EffectResult<T, TMode>>;
   /** Pin a relative timeout once; long waits suspend after active work drains. */
   sleep(id: string, milliseconds: number): Promise<null>;
-  /** Scope each item as id/key (index by default); validate all keys before starting any mapper. */
-  map<T, U>(
+  /**
+   * Bounded fan-out in input order. Each item is scoped as `id/key` (its index by default), and every
+   * key is validated before any mapper starts. Supply unique effect IDs inside the mapper.
+   *
+   * By default a mapper failure drains: scheduling stops and started mappers finish without being
+   * aborted, then the map rejects with FanOutError (an escaping failure is attributed in
+   * RunRecord.rootCause). `cancelSiblings: true` also cancels this map's own subtree, never the run.
+   *
+   * `onError: 'return'` journals each whole item outcome under the map ID and returns
+   * `Settled<U, MapStepError>[]`; replay skips committed mappers and their owned effects. Inputs and
+   * results must be lossless JSON, and `version` revises dependencies the items, keys and mapper
+   * source do not show. With `cancelSiblings: true` the first item failure cancels the rest, which
+   * are returned as `'cancelled'` failures. Run cancellation, infrastructure and authoring errors
+   * still reject.
+   */
+  map<T, U, TMode extends 'throw' | 'return' = 'throw'>(
     id: string,
     items: readonly T[],
-    options: MapOptions<T>,
+    options: MapOptions<T> & { readonly onError?: TMode | undefined },
     mapper: (item: T, index: number) => Promise<U>,
-  ): Promise<U[]>;
-  /** Journal whole item outcomes under the named map ID, including mapper-body failures. */
-  map<T, U>(
-    id: string,
-    items: readonly T[],
-    options: SettledNamedMapOptions<T>,
-    mapper: (item: T, index: number) => Promise<U>,
-  ): Promise<Settled<U, MapStepError>[]>;
-  /**
-   * Bounded fan-out in input order. Default drain stops scheduling after failure and lets started
-   * mappers finish without aborting them. Explicit abort cancels only this map's subtree. Both
-   * reject with FanOutError after draining; an escaping failure is attributed in RunRecord.rootCause.
-   * Supply unique effect IDs inside mappers.
-   * @deprecated Use the named map overload for per-item prefixes. This form keeps legacy IDs.
-   */
-  map<T, U>(
-    items: readonly T[],
-    concurrency: number,
-    mapper: (item: T, index: number) => Promise<U>,
-    options?: { readonly onError?: 'abort' | 'drain' },
-  ): Promise<U[]>;
-  /**
-   * Journal every item outcome under an explicit map ID; replay skips settled mappers and their owned
-   * effects. Inputs/results must be lossless JSON. Cancellation, infrastructure, and authoring errors
-   * still reject. Failed outcomes include their originating step ID, or null for mapper-body errors.
-   * @deprecated Use the named settled map overload. This form keeps legacy IDs and journals.
-   */
-  map<T, U>(
-    items: readonly T[],
-    concurrency: number,
-    mapper: (item: T, index: number) => Promise<U>,
-    options: SettledMapOptions,
-  ): Promise<Settled<U, MapStepError>[]>;
+  ): Promise<TMode extends 'return' ? Settled<U, MapStepError>[] : U[]>;
 }
 
 /**
@@ -878,30 +860,23 @@ export interface AttemptPolicy {
   readonly reasoningEffort: CodexOptions['reasoningEffort'] | null;
 }
 
-/** Stable identity and policy for a durable settled map. */
-export interface SettledMapOptions {
-  /** Run-unique map journal ID. This does not prefix effect IDs. */
-  readonly id: string;
-  /** Journal successes and failures for every item without cancelling siblings. */
-  readonly onError: 'settle';
-  /** Revision for captured values or helpers not visible in mapper source and items. */
-  readonly version?: string;
-}
-
-/** Scheduling and item identity for a named map. */
+/** Scheduling, item identity and failure policy for a named map. */
 export interface MapOptions<T> {
   /** Positive local mapper bound; RunOptions.agentLimit separately caps live agents across the run. */
   readonly concurrency: number;
   /** Explicit stable item key; defaults to its index. Keys must be valid IDs and unique in this call. */
-  readonly key?: (item: T, index: number) => string;
-  /** Default drain lets started work finish; abort cancels only this subtree. */
-  readonly onError?: 'drain' | 'abort';
-}
-
-/** Named map with durable aggregate decisions. */
-export interface SettledNamedMapOptions<T> extends Omit<MapOptions<T>, 'onError'> {
-  /** Persist each entire mapper outcome; cancellation/infrastructure/authoring errors still reject. */
-  readonly onError: 'settle';
-  /** Revision for dependencies not represented by item data, keys, or mapper source. */
-  readonly version?: string;
+  readonly key?: ((item: T, index: number) => string) | undefined;
+  /**
+   * `'throw'` (the default) rejects with FanOutError after a mapper failure; `'return'` journals
+   * every item outcome and returns `Settled<U, MapStepError>[]`. Scheduling policy, outside the map
+   * journal's fingerprint.
+   */
+  readonly onError?: 'throw' | 'return' | undefined;
+  /**
+   * Cancel this map's own subtree after the first item failure instead of draining started mappers
+   * (the default). Scheduling policy, outside the map journal's fingerprint.
+   */
+  readonly cancelSiblings?: boolean | undefined;
+  /** With `onError: 'return'`, a revision for dependencies not shown by items, keys or mapper source. */
+  readonly version?: string | undefined;
 }

@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-deprecated -- Exercise the supported legacy map/replay contract. */
 import { chmod, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -725,7 +724,9 @@ it('preserves a mapper body failure when saving its settled outcome also fails',
   );
   const error: unknown = await runWorkflow(
     workflow(async (ctx) => {
-      await ctx.map([0], 1, () => Promise.reject(original), { onError: 'settle', id: 'items' });
+      await ctx.map('items', [0], { concurrency: 1, onError: 'return' }, () =>
+        Promise.reject(original),
+      );
       return 'unreachable';
     }),
     options(),

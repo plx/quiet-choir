@@ -438,7 +438,7 @@ it('fails the whole run rather than settle a poll observer context-operation vio
     input: z.null(),
     output: z.unknown(),
     run: (ctx) =>
-      ctx.map('items', [0], { concurrency: 1, onError: 'settle' }, () =>
+      ctx.map('items', [0], { concurrency: 1, onError: 'return' }, () =>
         ctx.poll('bad', {
           input: null,
           schema: z.null(),
