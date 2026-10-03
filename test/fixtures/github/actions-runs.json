@@ -1,0 +1,214 @@
+{
+  "//": "Read-only probe of this repository's GET actions/runs?head_sha=SHA&per_page=100 with --paginate --slurp, scrubbed: owner octo-org, human login octo-human, commit author replaced, repositories trimmed.",
+  "pages": [
+    {
+      "total_count": 3,
+      "workflow_runs": [
+        {
+          "id": 37137584719,
+          "name": "Dependency Review",
+          "node_id": "WFR_kwLOTxycVs8AAAAIpZKSTw",
+          "head_branch": "epic-99/161-quiet-choir-github-slice-c1-reconciled",
+          "head_sha": "89e3c4cb26fa1bb2b96fb42c38806dd43ebd492c",
+          "path": ".github/workflows/dependency-review.yml",
+          "display_title": "Add reconciled GitHub writes: comments, threads, issues, alerts",
+          "run_number": 320,
+          "event": "pull_request",
+          "status": "completed",
+          "conclusion": "success",
+          "workflow_id": 329732673,
+          "check_suite_id": 100594894980,
+          "check_suite_node_id": "CS_kwDOTxycVs8AAAAXa-xIhA",
+          "url": "https://api.github.com/repos/octo-org/quiet-choir/actions/runs/37137584719",
+          "html_url": "https://github.com/octo-org/quiet-choir/actions/runs/37137584719",
+          "pull_requests": [],
+          "created_at": "2026-10-03T16:38:20Z",
+          "updated_at": "2026-10-03T16:38:27Z",
+          "actor": {
+            "login": "octo-human",
+            "id": 1,
+            "type": "User"
+          },
+          "run_attempt": 1,
+          "referenced_workflows": [],
+          "run_started_at": "2026-10-03T16:38:20Z",
+          "triggering_actor": {
+            "login": "octo-human",
+            "id": 1,
+            "type": "User"
+          },
+          "jobs_url": "https://api.github.com/repos/octo-org/quiet-choir/actions/runs/37137584719/jobs",
+          "logs_url": "https://api.github.com/repos/octo-org/quiet-choir/actions/runs/37137584719/logs",
+          "check_suite_url": "https://api.github.com/repos/octo-org/quiet-choir/check-suites/100594894980",
+          "artifacts_url": "https://api.github.com/repos/octo-org/quiet-choir/actions/runs/37137584719/artifacts",
+          "cancel_url": "https://api.github.com/repos/octo-org/quiet-choir/actions/runs/37137584719/cancel",
+          "rerun_url": "https://api.github.com/repos/octo-org/quiet-choir/actions/runs/37137584719/rerun",
+          "previous_attempt_url": null,
+          "workflow_url": "https://api.github.com/repos/octo-org/quiet-choir/actions/workflows/329732673",
+          "head_commit": {
+            "id": "89e3c4cb26fa1bb2b96fb42c38806dd43ebd492c",
+            "tree_id": "63938c3691442d8c1c05f444a8e21a0f487f9220",
+            "message": "Add reconciled GitHub writes",
+            "timestamp": "2026-10-03T16:31:14Z",
+            "author": {
+              "name": "Octo Human",
+              "email": "octo-human@example.com"
+            },
+            "committer": {
+              "name": "GitHub",
+              "email": "noreply@github.com"
+            }
+          },
+          "repository": {
+            "id": 1,
+            "name": "quiet-choir",
+            "full_name": "octo-org/quiet-choir",
+            "private": false
+          },
+          "head_repository": {
+            "id": 1,
+            "name": "quiet-choir",
+            "full_name": "octo-org/quiet-choir",
+            "private": false
+          }
+        },
+        {
+          "id": 37137584645,
+          "name": "CodeQL",
+          "node_id": "WFR_kwLOTxycVs8AAAAIpZKSBQ",
+          "head_branch": "epic-99/161-quiet-choir-github-slice-c1-reconciled",
+          "head_sha": "89e3c4cb26fa1bb2b96fb42c38806dd43ebd492c",
+          "path": ".github/workflows/codeql.yml",
+          "display_title": "Add reconciled GitHub writes: comments, threads, issues, alerts",
+          "run_number": 395,
+          "event": "pull_request",
+          "status": "completed",
+          "conclusion": "success",
+          "workflow_id": 329732672,
+          "check_suite_id": 100594894833,
+          "check_suite_node_id": "CS_kwDOTxycVs8AAAAXa-xH8Q",
+          "url": "https://api.github.com/repos/octo-org/quiet-choir/actions/runs/37137584645",
+          "html_url": "https://github.com/octo-org/quiet-choir/actions/runs/37137584645",
+          "pull_requests": [],
+          "created_at": "2026-10-03T16:38:20Z",
+          "updated_at": "2026-10-03T16:39:39Z",
+          "actor": {
+            "login": "octo-human",
+            "id": 1,
+            "type": "User"
+          },
+          "run_attempt": 1,
+          "referenced_workflows": [],
+          "run_started_at": "2026-10-03T16:38:20Z",
+          "triggering_actor": {
+            "login": "octo-human",
+            "id": 1,
+            "type": "User"
+          },
+          "jobs_url": "https://api.github.com/repos/octo-org/quiet-choir/actions/runs/37137584645/jobs",
+          "logs_url": "https://api.github.com/repos/octo-org/quiet-choir/actions/runs/37137584645/logs",
+          "check_suite_url": "https://api.github.com/repos/octo-org/quiet-choir/check-suites/100594894833",
+          "artifacts_url": "https://api.github.com/repos/octo-org/quiet-choir/actions/runs/37137584645/artifacts",
+          "cancel_url": "https://api.github.com/repos/octo-org/quiet-choir/actions/runs/37137584645/cancel",
+          "rerun_url": "https://api.github.com/repos/octo-org/quiet-choir/actions/runs/37137584645/rerun",
+          "previous_attempt_url": null,
+          "workflow_url": "https://api.github.com/repos/octo-org/quiet-choir/actions/workflows/329732672",
+          "head_commit": {
+            "id": "89e3c4cb26fa1bb2b96fb42c38806dd43ebd492c",
+            "tree_id": "63938c3691442d8c1c05f444a8e21a0f487f9220",
+            "message": "Add reconciled GitHub writes",
+            "timestamp": "2026-10-03T16:31:14Z",
+            "author": {
+              "name": "Octo Human",
+              "email": "octo-human@example.com"
+            },
+            "committer": {
+              "name": "GitHub",
+              "email": "noreply@github.com"
+            }
+          },
+          "repository": {
+            "id": 1,
+            "name": "quiet-choir",
+            "full_name": "octo-org/quiet-choir",
+            "private": false
+          },
+          "head_repository": {
+            "id": 1,
+            "name": "quiet-choir",
+            "full_name": "octo-org/quiet-choir",
+            "private": false
+          }
+        },
+        {
+          "id": 37137584639,
+          "name": "CI",
+          "node_id": "WFR_kwLOTxycVs8AAAAIpZKR_w",
+          "head_branch": "epic-99/161-quiet-choir-github-slice-c1-reconciled",
+          "head_sha": "89e3c4cb26fa1bb2b96fb42c38806dd43ebd492c",
+          "path": ".github/workflows/ci.yml",
+          "display_title": "Add reconciled GitHub writes: comments, threads, issues, alerts",
+          "run_number": 428,
+          "event": "pull_request",
+          "status": "completed",
+          "conclusion": "success",
+          "workflow_id": 329732671,
+          "check_suite_id": 100594894815,
+          "check_suite_node_id": "CS_kwDOTxycVs8AAAAXa-xH3w",
+          "url": "https://api.github.com/repos/octo-org/quiet-choir/actions/runs/37137584639",
+          "html_url": "https://github.com/octo-org/quiet-choir/actions/runs/37137584639",
+          "pull_requests": [],
+          "created_at": "2026-10-03T16:38:20Z",
+          "updated_at": "2026-10-03T16:48:13Z",
+          "actor": {
+            "login": "octo-human",
+            "id": 1,
+            "type": "User"
+          },
+          "run_attempt": 1,
+          "referenced_workflows": [],
+          "run_started_at": "2026-10-03T16:38:20Z",
+          "triggering_actor": {
+            "login": "octo-human",
+            "id": 1,
+            "type": "User"
+          },
+          "jobs_url": "https://api.github.com/repos/octo-org/quiet-choir/actions/runs/37137584639/jobs",
+          "logs_url": "https://api.github.com/repos/octo-org/quiet-choir/actions/runs/37137584639/logs",
+          "check_suite_url": "https://api.github.com/repos/octo-org/quiet-choir/check-suites/100594894815",
+          "artifacts_url": "https://api.github.com/repos/octo-org/quiet-choir/actions/runs/37137584639/artifacts",
+          "cancel_url": "https://api.github.com/repos/octo-org/quiet-choir/actions/runs/37137584639/cancel",
+          "rerun_url": "https://api.github.com/repos/octo-org/quiet-choir/actions/runs/37137584639/rerun",
+          "previous_attempt_url": null,
+          "workflow_url": "https://api.github.com/repos/octo-org/quiet-choir/actions/workflows/329732671",
+          "head_commit": {
+            "id": "89e3c4cb26fa1bb2b96fb42c38806dd43ebd492c",
+            "tree_id": "63938c3691442d8c1c05f444a8e21a0f487f9220",
+            "message": "Add reconciled GitHub writes",
+            "timestamp": "2026-10-03T16:31:14Z",
+            "author": {
+              "name": "Octo Human",
+              "email": "octo-human@example.com"
+            },
+            "committer": {
+              "name": "GitHub",
+              "email": "noreply@github.com"
+            }
+          },
+          "repository": {
+            "id": 1,
+            "name": "quiet-choir",
+            "full_name": "octo-org/quiet-choir",
+            "private": false
+          },
+          "head_repository": {
+            "id": 1,
+            "name": "quiet-choir",
+            "full_name": "octo-org/quiet-choir",
+            "private": false
+          }
+        }
+      ]
+    }
+  ]
+}

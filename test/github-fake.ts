@@ -65,7 +65,7 @@ export interface GithubFake {
   /** Run options for `runId`. */
   readonly setup: (runId: string) => Setup;
   /** Rehearse a workflow file under `--dry-run`, failing if a process would be spawned. */
-  readonly rehearse: (file: string, input: JsonValue) => Promise<Rehearsal>;
+  readonly rehearse: (file: string, input: JsonValue, runId?: string) => Promise<Rehearsal>;
   /** Make `cwd()` a module project that resolves this checkout's dependencies. */
   readonly project: () => Promise<void>;
 }
@@ -144,7 +144,7 @@ export function useGithubFake(prefix: string): GithubFake {
   });
 
   /** Rehearse a workflow file under `--dry-run` with a runner that fails if it is ever reached. */
-  async function rehearse(file: string, input: JsonValue): Promise<Rehearsal> {
+  async function rehearse(file: string, input: JsonValue, runId = 'dry'): Promise<Rehearsal> {
     const analysis = analyzeTypecheckEntrypoint(file, cwd);
     if (!analysis.ok) throw new Error('invalid workflow fixture');
     const spawned: unknown[] = [];
@@ -159,7 +159,7 @@ export function useGithubFake(prefix: string): GithubFake {
     }).execute({
       kind: 'workflow.execute',
       typecheck: analysis.plan,
-      runId: 'dry',
+      runId,
       stateDir: join(cwd, 'state'),
       cwd,
       input,

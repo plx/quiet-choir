@@ -597,6 +597,18 @@ describe('quiet-choir/github write identity', () => {
     'issue.reopen': (gh, policy) => gh.issue.reopen('write', { number: 7 }, policy),
     'alert.dismiss': (gh, policy) =>
       gh.alert.dismiss('write', { number: 3, comment: 'golden' }, policy),
+    'pr.create': (gh, policy) =>
+      gh.pr.create(
+        'write',
+        { head: 'golden', base: 'main', title: 'golden', body: 'golden', draft: true },
+        policy,
+      ),
+    'pr.edit': (gh, policy) =>
+      gh.pr.edit('write', { number: 9, expectHead: 'a'.repeat(40), title: 'golden' }, policy),
+    'pr.merge': (gh, policy) =>
+      gh.pr.merge('write', { number: 9, sha: 'a'.repeat(40), method: 'rebase' }, policy),
+    'checks.rerunFailed': (gh, policy) =>
+      gh.checks.rerunFailed('write', { sha: 'a'.repeat(40), attempt: 2 }, policy),
   };
   // Captured on this change. The input (repository and normalized arguments), the result schema and
   // the op's version constant (github.comment/1 and so on) are pinned; the callback's source text
@@ -608,6 +620,11 @@ describe('quiet-choir/github write identity', () => {
     'issue.close': 'bb198f1ffd295871305ad5d9a5caf57bf26d1fd77059bfec8201a7f980cfd76e',
     'issue.reopen': '9aeb88dcedb20255b7d06a01257f043fb0f1433bb60a2a0d57f1d5d32fdeda36',
     'alert.dismiss': '3cb90155c05d9ab1ac6b96ec7e5579fddd5482b33432ca42804d7941fd16c706',
+    // Captured on #162 (ADR 0047).
+    'pr.create': '61f095f57bb63648a36a8c6cc90a5a75e34efa360786cc7d418e1e190c58a193',
+    'pr.edit': 'de1056d379fe5c7a7a41809716c30b17e3bd5568179eed0859d9ed99a02e2602',
+    'pr.merge': 'dbe9a73da34977b8ac79e022071a14f89cde30975b4d2740d1f0cd6ecb5674bb',
+    'checks.rerunFailed': '80471ba302959c253442d1cde0407b17e39443335f6ca00243893604dbb04119',
   };
 
   async function identityOfWrite(

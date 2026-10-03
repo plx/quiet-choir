@@ -1,15 +1,24 @@
 /**
  * Reconciled GitHub writes of `quiet-choir/github`
- * ([ADR 0046](../../docs/decisions/0046-reconciled-github-writes.md)). Each op is exactly one
- * `ctx.step` under the caller's ID, identified by a versioned constant such as
- * `github.comment/1` instead of callback text. Its callback reads first and writes only what an
+ * ([ADR 0046](../../docs/decisions/0046-reconciled-github-writes.md)) and its pull request and
+ * check writes ([ADR 0047](../../docs/decisions/0047-pull-request-writes-and-head-pinned-merge.md)).
+ * Each op is exactly one `ctx.step` under the caller's ID, identified by a versioned constant such
+ * as `github.comment/1` instead of callback text. Its callback reads first and writes only what an
  * earlier attempt did not: a write that creates something carries the step's marker and is found
- * by it, and a state change is conditional on a preceding read. Every gh call goes through
- * `StepContext.exec.json`, with request bodies on stdin, so a `--dry-run` lists the reads and writes
- * and spawns nothing.
+ * by it, a state change is conditional on a preceding read, and a merge is pinned to a head SHA.
+ * Every gh call goes through `StepContext.exec`, with request bodies on stdin, so a `--dry-run`
+ * lists the reads and writes and spawns nothing.
  */
+import { setTimeout as delay } from 'node:timers/promises';
 import type { ExecOptions, JsonValue, StepContext, WorkflowContext, z } from '../index.js';
-import { choice, positiveInteger, repoInfoRead, text, type GithubRepo } from './github-model.js';
+import {
+  choice,
+  fullSha,
+  positiveInteger,
+  repoInfoRead,
+  text,
+  type GithubRepo,
+} from './github-model.js';
 import { issueCommentsRestRead } from './github-model.js';
 import {
   addSubIssueResponseSchema,
@@ -23,6 +32,8 @@ import {
   checkBodyLength,
   commentPostResponseSchema,
   commentResultSchema,
+  createDecision,
+  editChanges,
   findMarked,
   graphqlWrite,
   issueCreateResultSchema,
@@ -34,11 +45,33 @@ import {
   issueStateArgv,
   issueStateResponseSchema,
   issueStateResultSchema,
+  mergeArgv,
+  mergeFailure,
+  mergePrecheck,
+  mergeResponseSchema,
   parentDecision,
   parentReadArgv,
   parentReadResponseSchema,
+  prCreateResultSchema,
+  prEditResultSchema,
+  prMergeResultSchema,
+  pullListArgv,
+  pullListResponseSchema,
+  pullListState,
+  pullPatchResponseSchema,
+  pullPostResponseSchema,
+  pullReadArgv,
+  pullResponseSchema,
+  pullState,
   replyResponseSchema,
   REPLY_MUTATION,
+  rerunArgv,
+  rerunConfirmed,
+  rerunFailedResultSchema,
+  rerunSelection,
+  runRefOf,
+  runsListArgv,
+  runsListResponseSchema,
   resolveResponseSchema,
   RESOLVE_MUTATION,
   restWrite,
@@ -48,6 +81,7 @@ import {
   threadReadResponseSchema,
   threadReplyResultSchema,
   truncateDismissComment,
+  uniqueRuns,
   withMarker,
   type GithubAlertDismissOptions,
   type GithubAlertDismissReason,
@@ -60,9 +94,19 @@ import {
   type GithubIssueCreateResult,
   type GithubIssueReopenOptions,
   type GithubIssueStateResult,
+  type GithubPrCreateOptions,
+  type GithubPrCreateResult,
+  type GithubPrEditOptions,
+  type GithubPrEditResult,
+  type GithubPrMergeMethod,
+  type GithubPrMergeOptions,
+  type GithubPrMergeResult,
+  type GithubRerunFailedOptions,
+  type GithubRerunFailedResult,
   type GithubThreadReplyOptions,
   type GithubThreadReplyResult,
   type GithubWriteRequest,
+  type PullResponse,
 } from './github-write-model.js';
 
 /** The policy a write's step and commands use, validated by `github.ts`. @internal */
@@ -81,6 +125,8 @@ export interface GithubWriteHelpers {
   readonly policy: (policy: unknown) => GithubWriteSettings;
   /** Rethrow an exec schema failure that names a truncated connection as `IncompleteCollectionError`. */
   readonly rethrow: (error: unknown, id: string) => never;
+  /** The wait between confirmation reads; tests inject one that does not wait. */
+  readonly sleep?: (ms: number, signal: AbortSignal) => Promise<void>;
 }
 
 /** The write ops of the client, before `github.ts` adds the reads to `issue`. @internal */
@@ -125,6 +171,77 @@ export interface GithubWriteOps {
       policy?: GithubWriteSettings,
     ) => Promise<GithubAlertDismissResult>;
   };
+  /** See `GithubPullRequestWrites`. */
+  readonly pr: {
+    readonly create: (
+      id: string,
+      args: GithubPrCreateOptions,
+      policy?: GithubWriteSettings,
+    ) => Promise<GithubPrCreateResult>;
+    readonly edit: (
+      id: string,
+      args: GithubPrEditOptions,
+      policy?: GithubWriteSettings,
+    ) => Promise<GithubPrEditResult>;
+    readonly merge: (
+      id: string,
+      args: GithubPrMergeOptions,
+      policy?: GithubWriteSettings,
+    ) => Promise<GithubPrMergeResult>;
+  };
+  /** See `GithubChecksWrites`. */
+  readonly checks: {
+    readonly rerunFailed: (
+      id: string,
+      args: GithubRerunFailedOptions,
+      policy?: GithubWriteSettings,
+    ) => Promise<GithubRerunFailedResult>;
+  };
+}
+
+/** Bounds of a confirmation: merge-down's land loop, 20 reads 3 seconds apart. @internal */
+export interface ConfirmBounds {
+  /** Reads, the first at once. */
+  readonly attempts: number;
+  /** Milliseconds between reads. */
+  readonly delayMs: number;
+  /** The wait between reads. */
+  readonly sleep: (ms: number, signal: AbortSignal) => Promise<void>;
+  /** Aborts the wait. */
+  readonly signal: AbortSignal;
+}
+
+/** The default bounds' counts. @internal */
+export const CONFIRM_ATTEMPTS = 20;
+/** @internal */
+export const CONFIRM_DELAY_MS = 3_000;
+
+/** Wait `ms`, rejecting with the signal's reason when it aborts. @internal */
+export async function signalSleep(ms: number, signal: AbortSignal): Promise<void> {
+  try {
+    await delay(ms, undefined, { signal });
+  } catch (error) {
+    if (signal.aborted) throw signal.reason;
+    throw error;
+  }
+}
+
+/**
+ * Read until `done` holds, at most `attempts` reads with `delayMs` between them, the first at
+ * once. Returns whether it held and the last value read; a read that throws rejects. @internal
+ */
+export async function confirm<T>(
+  read: () => Promise<T>,
+  done: (value: T) => boolean,
+  bounds: ConfirmBounds,
+): Promise<{ readonly done: boolean; readonly last: T | undefined }> {
+  let last: T | undefined;
+  for (let index = 0; index < bounds.attempts; index++) {
+    if (index > 0) await bounds.sleep(bounds.delayMs, bounds.signal);
+    last = await read();
+    if (done(last)) return { done: true, last };
+  }
+  return { done: false, last };
 }
 
 /**
@@ -139,6 +256,10 @@ const VERSIONS = {
   'issue.close': 'github.issue.close/1',
   'issue.reopen': 'github.issue.reopen/1',
   'alert.dismiss': 'github.alert.dismiss/1',
+  'pr.create': 'github.pr.create/1',
+  'pr.edit': 'github.pr.edit/1',
+  'pr.merge': 'github.pr.merge/1',
+  'checks.rerunFailed': 'github.checks.rerunFailed/1',
 } as const;
 
 type WriteOp = keyof typeof VERSIONS;
@@ -149,6 +270,15 @@ const dismissReasons: readonly GithubAlertDismissReason[] = [
   'used in tests',
   "won't fix",
 ];
+const mergeMethods: readonly GithubPrMergeMethod[] = ['squash', 'merge', 'rebase'];
+
+/** A branch name: nonempty text without NUL; a cross-fork `OWNER:BRANCH` head throws. */
+function branch(value: unknown, label: string): string {
+  const name = text(value, label);
+  if (name.includes(':'))
+    throw new Error(`${label} must be a branch in the same repository, without an OWNER: prefix.`);
+  return name;
+}
 
 function options(value: unknown, op: WriteOp): Readonly<Record<string, unknown>> {
   if (value === null || typeof value !== 'object')
@@ -208,6 +338,16 @@ export function githubWrites(
     read<R>(argv: [string, ...string[]], schema: z.ZodType<R>): Promise<R>;
     /** Run a write with its body on stdin. */
     write<R>(request: GithubWriteRequest, schema: z.ZodType<R>): Promise<R>;
+    /** Run a write without a body whose stdout is JSON, accepting `okExitCodes`. */
+    json<R>(
+      argv: [string, ...string[]],
+      schema: z.ZodType<R>,
+      okExitCodes: readonly number[],
+    ): Promise<R>;
+    /** Run a write without a body whose stdout is empty; a nonzero exit throws. */
+    run(argv: [string, ...string[]]): Promise<void>;
+    /** The bounds of a confirmation loop. */
+    readonly bounds: ConfirmBounds;
   }
 
   function commands(context: StepContext, id: string, settings: GithubWriteSettings): Gh {
@@ -226,6 +366,17 @@ export function githubWrites(
       },
       write: (request, schema) =>
         context.exec.json(request.argv, { schema, input: request.input, ...limits }),
+      json: (argv, schema, okExitCodes) =>
+        context.exec.json(argv, { schema, okExitCodes, ...limits }),
+      async run(argv) {
+        await context.exec(argv, limits);
+      },
+      bounds: {
+        attempts: CONFIRM_ATTEMPTS,
+        delayMs: CONFIRM_DELAY_MS,
+        sleep: helpers.sleep ?? signalSleep,
+        signal: context.signal,
+      },
     };
   }
 
@@ -481,6 +632,190 @@ export function githubWrites(
               alertPatchResponseSchema,
             );
             return { number, state: 'dismissed', reason: dismissedReason, dismissed: true };
+          },
+        );
+      },
+    },
+
+    pr: {
+      create: (id, args, policy) => {
+        const given = options(args, 'pr.create');
+        const settings = helpers.policy(policy);
+        const head = branch(given['head'], 'github pr.create head');
+        const base = branch(given['base'], 'github pr.create base');
+        const title = text(given['title'], 'github pr.create title');
+        const body = text(given['body'], 'github pr.create body');
+        const draft = given['draft'] ?? false;
+        if (typeof draft !== 'boolean')
+          throw new Error('github pr.create draft must be a boolean.');
+        checkBodyLength(body, 'github pr.create body');
+        return step(
+          'pr.create',
+          id,
+          { head, base, title, body, draft },
+          prCreateResultSchema,
+          settings,
+          async (gh) => {
+            const marked = withMarker(body, gh.key);
+            const rows = await gh.read(pullListArgv(repo, head, base), pullListResponseSchema);
+            const decision = createDecision(rows, gh.key);
+            if (decision.kind !== 'create') {
+              const { row } = decision;
+              return {
+                number: row.number,
+                url: row.html_url,
+                nodeId: row.node_id,
+                state: pullListState(row),
+                created: false,
+              };
+            }
+            // An open pull request for head and base that appeared since the list makes GitHub
+            // answer 422; the attempt fails, and a retry finds it.
+            const pull = await gh.write(
+              restWrite(repo, 'POST', 'pulls', { title, head, base, body: marked, draft }),
+              pullPostResponseSchema,
+            );
+            return {
+              number: pull.number,
+              url: pull.html_url,
+              nodeId: pull.node_id,
+              state: 'open',
+              created: true,
+            };
+          },
+        );
+      },
+
+      edit: (id, args, policy) => {
+        const given = options(args, 'pr.edit');
+        const settings = helpers.policy(policy);
+        const number = positiveInteger(given['number'], 'github pr.edit number');
+        const expectHead = fullSha(given['expectHead'], 'github pr.edit expectHead');
+        const title = optionalText(given['title'], 'github pr.edit title');
+        const body = optionalText(given['body'], 'github pr.edit body');
+        const base =
+          given['base'] === undefined ? null : branch(given['base'], 'github pr.edit base');
+        if (title === null && body === null && base === null)
+          throw new Error('github pr.edit needs at least one of title, body and base.');
+        if (body !== null) checkBodyLength(body, 'github pr.edit body');
+        return step(
+          'pr.edit',
+          id,
+          { number, expectHead, title, body, base },
+          prEditResultSchema,
+          settings,
+          async (gh) => {
+            const pull = await gh.read(pullReadArgv(repo, number), pullResponseSchema);
+            const head = pull.head.sha;
+            if (pullState(pull) !== 'open')
+              return { number, edited: false, reason: 'closed', head, changed: [] };
+            if (head !== expectHead)
+              return { number, edited: false, reason: 'head-moved', head, changed: [] };
+            // Only the fields that differ: nothing differs after a committed PATCH, so a retry
+            // sends none.
+            const { changed, patch } = editChanges(pull, { title, body, base });
+            if (changed.length > 0)
+              await gh.write(
+                restWrite(repo, 'PATCH', `pulls/${String(number)}`, patch),
+                pullPatchResponseSchema,
+              );
+            return { number, edited: changed.length > 0, reason: null, head, changed };
+          },
+        );
+      },
+
+      merge: (id, args, policy) => {
+        const given = options(args, 'pr.merge');
+        const settings = helpers.policy(policy);
+        const number = positiveInteger(given['number'], 'github pr.merge number');
+        const sha = fullSha(given['sha'], 'github pr.merge sha');
+        const method = choice(given['method'] ?? 'squash', mergeMethods, 'github pr.merge method');
+        return step(
+          'pr.merge',
+          id,
+          { number, sha, method },
+          prMergeResultSchema,
+          settings,
+          async (gh) => {
+            const read = () => gh.read(pullReadArgv(repo, number), pullResponseSchema);
+            /** A decision that needs no PUT, from a read. */
+            const settled = (
+              pull: PullResponse,
+              decision: 'merged' | 'merged-elsewhere' | 'closed' | 'head-moved' | 'not-mergeable',
+              message: string | null,
+            ): GithubPrMergeResult => {
+              if (decision === 'merged')
+                return {
+                  merged: true,
+                  number,
+                  mergeCommit: pull.merge_commit_sha,
+                  head: sha,
+                  acted: false,
+                };
+              if (decision === 'merged-elsewhere')
+                throw new Error(
+                  `github pr.merge ${id}: pull request #${String(number)} is merged at head ${pull.head.sha}, not ${sha}.`,
+                );
+              return { merged: false, number, reason: decision, head: pull.head.sha, message };
+            };
+            const before = await read();
+            const precheck = mergePrecheck(before, sha);
+            if (precheck !== 'put') return settled(before, precheck, null);
+            // gh exits 1 on an HTTP error and prints GitHub's error body.
+            const response = await gh.json(
+              mergeArgv(repo, number, method, sha),
+              mergeResponseSchema,
+              [0, 1],
+            );
+            if ('merged' in response) {
+              // Merged now: wait until the pull request says so, as merge-down's land does, so a
+              // following read never sees it open.
+              const seen = await confirm(read, (pull) => pull.merged, gh.bounds);
+              if (!seen.done)
+                throw new Error(
+                  `github pr.merge ${id}: GitHub merged #${String(number)} but it did not report merged after ${String(gh.bounds.attempts)} reads; a retry finds the merge.`,
+                );
+              return { merged: true, number, mergeCommit: response.sha, head: sha, acted: true };
+            }
+            const after = await read();
+            const failure = mergeFailure(response, after, sha);
+            if (failure === 'unknown')
+              throw new Error(
+                `github pr.merge ${id}: GitHub refused to merge #${String(number)}${response.status === undefined ? '' : ` (HTTP ${String(response.status)})`}: ${response.message}`,
+              );
+            return settled(after, failure, failure === 'merged' ? null : response.message);
+          },
+        );
+      },
+    },
+
+    checks: {
+      rerunFailed: (id, args, policy) => {
+        const given = options(args, 'checks.rerunFailed');
+        const settings = helpers.policy(policy);
+        const sha = fullSha(given['sha'], 'github checks.rerunFailed sha');
+        const attempt =
+          given['attempt'] === undefined
+            ? 1
+            : positiveInteger(given['attempt'], 'github checks.rerunFailed attempt');
+        return step(
+          'checks.rerunFailed',
+          id,
+          { sha, attempt },
+          rerunFailedResultSchema,
+          settings,
+          async (gh) => {
+            const list = async () =>
+              uniqueRuns(await gh.read(runsListArgv(repo, sha), runsListResponseSchema));
+            const selection = rerunSelection(await list(), attempt);
+            const rerun = selection.rerun.map(runRefOf);
+            // GitHub answers 201 with no body, so a plain exec.
+            for (const run of rerun) await gh.run(rerunArgv(repo, run.id));
+            // Best effort: a following waitChecks should not read the failure just rerun.
+            const confirmed =
+              rerun.length === 0 ||
+              (await confirm(list, (runs) => rerunConfirmed(runs, rerun), gh.bounds)).done;
+            return { rerun, skipped: selection.skipped.map(runRefOf), confirmed };
           },
         );
       },
