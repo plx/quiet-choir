@@ -376,6 +376,13 @@ function indentation(text: string): number {
   return column;
 }
 
+/** The width of `text` in columns, as {@link indentation} counts them. */
+function width(text: string): number {
+  let column = 0;
+  for (const char of text) column = char === '\t' ? column + 4 - (column % 4) : column + 1;
+  return column;
+}
+
 /**
  * The Markdown container markers that open `line`, block quotes (`>`) and list items (`-`, `1.`)
  * in any nesting: the number of block quotes among them, where the rest of the line starts, and,
@@ -421,17 +428,30 @@ function containerPrefix(line: string): { depth: number; end: number; item: numb
  * that item: a later non-blank line indented less than the item's content column is outside it
  * (fenced code has no lazy continuation), and blank lines stay inside. A fence that opens on a
  * later line of an item, with no marker of its own, runs until its closer or its block quote ends.
+ *
+ * A closer may be indented at most three columns past its container's content column, as in
+ * CommonMark: past the list item's content column when the fence opened after a list marker, and
+ * otherwise past the block quote's markers, or as far as the opening run when that is deeper (a fence
+ * on a later line of an item, whose content column is unknown, may be indented that far). A more
+ * deeply indented fence line is code inside the fence, so the fence never closes before CommonMark's
+ * would. The opener accepts any indentation: telling a fence on an item's later line from indented
+ * code needs full list tracking, and a wrong guess there only hides text from the parsers
+ * ({@link parseSplit} already ignores markers indented four or more columns).
  */
 function fenceMask(text: readonly string[]): boolean[] {
-  // The open fence's run, its block-quote depth, and its list item's content column (0 for none).
-  let fence: { run: string; depth: number; item: number } | null = null;
+  // The open fence's run, its block-quote depth, its list item's content column (0 for none), and
+  // the opening run's column after the block-quote markers.
+  let fence: { run: string; depth: number; item: number; column: number } | null = null;
   return text.map((line) => {
     if (fence !== null) {
       const quote = quotePrefix(line, fence.depth);
       const rest = line.slice(quote.end);
       const itemEnded = fence.item > 0 && !/^[ \t]*$/u.test(rest) && indentation(rest) < fence.item;
       if (quote.depth === fence.depth && !itemEnded) {
-        const close = /^\s*(`{3,}|~{3,})\s*$/u.exec(rest)?.[1];
+        const close =
+          indentation(rest) <= Math.max(fence.item + 3, fence.column)
+            ? /^[ \t]*(`{3,}|~{3,})\s*$/u.exec(rest)?.[1]
+            : undefined;
         if (close?.startsWith(fence.run.charAt(0)) && close.length >= fence.run.length)
           fence = null;
         return true;
@@ -448,7 +468,9 @@ function fenceMask(text: readonly string[]): boolean[] {
       open?.[1] !== undefined &&
       !(open[1].startsWith('`') && rest.slice(open[0].length).includes('`'))
     ) {
-      fence = { run: open[1], depth: prefix.depth, item: prefix.item };
+      const runStart = prefix.end + open[0].length - open[1].length;
+      const column = width(line.slice(quotePrefix(line, prefix.depth).end, runStart));
+      fence = { run: open[1], depth: prefix.depth, item: prefix.item, column };
       return true;
     }
     return false;

@@ -881,6 +881,12 @@ describe('parseEpicChecklist', () => {
     ],
     ['an unclosed fence ends with its list item', '- ```\n- [ ] #38', [[38, false]]],
     ['an unclosed fence ends with its quoted list item', '> 1. ~~~\n- [ ] #39', [[39, false]]],
+    [
+      'a closer indented four columns stays in the fence',
+      '~~~\n    ~~~\n- [ ] #40\n~~~\n- [ ] #41',
+      [[41, false]],
+    ],
+    ['a closer indented three columns closes', '~~~\n   ~~~\n- [ ] #42', [[42, false]]],
     ['inline code on a fence-like line is not a fence', '```a` b\n- [ ] #29', [[29, false]]],
     ['an unmatched backtick stays literal', '- [ ] ` #30 then ``#31``', [[30, false]]],
     [
@@ -967,6 +973,19 @@ describe('parseDependencies', () => {
     ['a quoted fence continues in its list item', ['> - ```\n>   Depends on #62'], []],
     ['a quoted fence ends at a dedent', ['> 1. ~~~\n>\n>    x\n> Depends on #63'], [63]],
     ['a dedented fence line is not a closer in the item', ['- ```\n```\nDepends on #64'], []],
+    [
+      'a closer indented four columns stays in the fence',
+      ['```\n    ```\nDepends on #74\n```'],
+      [],
+    ],
+    ['a closer indented three columns closes', ['```\n   ```\nDepends on #75'], [75]],
+    ['a closer three columns past its item closes', ['1. ```\n      ```\n   Depends on #76'], [76]],
+    ['a closer four columns past its item does not', ['- ```\n      ```\n  Depends on #77'], []],
+    [
+      'a fence on an item continuation line closes at its own indentation',
+      ['- a\n\n    ```\n    x\n    ```\nDepends on #78'],
+      [78],
+    ],
     ['a word between the phrase and the reference', ['depends on the #18 fix'], []],
     ['indented code is still read', ['Example:\n\n    Depends on #72'], [72]],
     ['an indented marker is still read', ['    <!-- epic:depends-on 73 -->'], [73]],
@@ -1084,6 +1103,41 @@ describe('parseSplit', () => {
     ['an indented marker after text', [by(VIEWER, 'Split.\n    <!-- epic:split 1,2 -->')], null],
     ['a tab-indented marker', [by(VIEWER, '\t<!-- epic:split 1 -->')], null],
     ['indented code in a block quote', [by(VIEWER, '>     <!-- epic:split 1,2 -->')], null],
+    [
+      'a closer indented four columns stays in the fence',
+      [by(VIEWER, '```\n    ```\n<!-- epic:split 1,2 -->\n```')],
+      null,
+    ],
+    [
+      'a closer indented three columns closes',
+      [by(VIEWER, '```\n   ```\n<!-- epic:split 1,2 -->')],
+      [1, 2],
+    ],
+    [
+      'a closer three columns past its bullet item closes',
+      [by(VIEWER, '- ```\n     ```\n  <!-- epic:split 3 -->')],
+      [3],
+    ],
+    [
+      'a closer four columns past its bullet item does not',
+      [by(VIEWER, '- ```\n      ```\n  <!-- epic:split 3 -->')],
+      null,
+    ],
+    [
+      'a closer three columns past its ordered item closes',
+      [by(VIEWER, '1. ```\n      ```\n   <!-- epic:split 4 -->')],
+      [4],
+    ],
+    [
+      'a closer four columns past its ordered item does not',
+      [by(VIEWER, '1. ```\n       ```\n   <!-- epic:split 4 -->')],
+      null,
+    ],
+    [
+      'a fence on an item continuation line closes at its own indentation',
+      [by(VIEWER, '- a\n\n    ```\n    x\n    ```\n<!-- epic:split 6 -->')],
+      [6],
+    ],
     ['a marker after indented text', [by(VIEWER, '    see <!-- epic:split 1 -->')], null],
     [
       'a column-0 marker after an indented one',
