@@ -906,6 +906,26 @@ describe('waitChecks', () => {
     }
   });
 
+  it('fails on bad credentials from the compare instead of calling the head moved', async () => {
+    const { runner } = inProcess({
+      'pr.view': [{ json: prView({ head: ANCESTOR }) }],
+      'repo.compare': [{ code: 1, stdout: fixture('bad-credentials.json') }],
+    });
+    await expect(
+      run(
+        (gh) =>
+          gh.waitChecks('ci', {
+            pr: 338,
+            sha: SHA,
+            staleGraceMs: 60_000,
+            every: 5,
+            timeoutMs: 60_000,
+          }),
+        runner,
+      ),
+    ).rejects.toThrow('Command exited with 1.');
+  });
+
   it('fails after tolerate + 1 consecutive transient errors with the gh error', async () => {
     const bad = { code: 1, stdout: '', stderr: 'gh: HTTP 502: Bad Gateway' };
     const { runner, log } = inProcess({ 'pr.view': [bad, bad, bad, { json: prView() }] });

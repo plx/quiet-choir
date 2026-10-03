@@ -67,8 +67,8 @@ import {
   headDecision,
   isFinalStatus,
   openAlertNumbers,
+  isNotFound,
   parseNote,
-  permanentGithubError,
   prTimeout,
   rememberStale,
   reviewerObservation,
@@ -689,8 +689,9 @@ function githubWaits(
         )
       ).status;
     } catch (error) {
-      if (!(error instanceof ExecError) || error.parsed === undefined) throw error;
-      if (!permanentGithubError(error.parsed)) throw error;
+      // Only GitHub's 404 body: it knows no relation between the two commits. Anything else,
+      // such as bad credentials, keeps its own classification.
+      if (!(error instanceof ExecError) || !isNotFound(error.parsed)) throw error;
       status = null;
     }
     const head = staleFromCompare(status);

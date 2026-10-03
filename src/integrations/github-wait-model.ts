@@ -705,8 +705,19 @@ export function reviewTimeout(names: readonly string[], note: JsonValue): WaitRe
 // ---------------------------------------------------------------------------------------------
 // Error classification
 
-/** A GitHub error body that no retry can fix: REST 401/404, or a GraphQL `NOT_FOUND`. @internal */
-export function permanentGithubError(parsed: JsonValue | undefined): boolean {
+/** A REST 404 error body, as gh prints it on stdout. @internal */
+export function isNotFound(parsed: JsonValue | undefined): boolean {
+  return (
+    parsed !== undefined &&
+    parsed !== null &&
+    typeof parsed === 'object' &&
+    !Array.isArray(parsed) &&
+    parsed['status'] === '404'
+  );
+}
+
+/** A GitHub error body that no retry can fix: REST 401/404, or a GraphQL `NOT_FOUND`. */
+function permanentGithubError(parsed: JsonValue | undefined): boolean {
   if (
     parsed === undefined ||
     parsed === null ||
