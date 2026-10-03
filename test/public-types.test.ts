@@ -148,6 +148,7 @@ describe('published declarations', () => {
           'reviewThreadsResponseSchema',
           'codexReviewer',
           'codeqlReviewer',
+          'alertDismissReason',
         ]),
       );
       expect(
