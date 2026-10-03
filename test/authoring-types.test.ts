@@ -42,6 +42,14 @@ const wide = defineHarness({
   access: () => 'read',
 });
 
+// Pre-built option variables escape excess-property checks, so strictness must be structural.
+const claudeToolsOptions = { prompt, tools: ['Read'] };
+const codexSandboxOptions = { prompt, sandbox: 'workspace-write' as const };
+const registeredToolsOptions = { prompt, tools: ['shell'] };
+const undefinedToolsOptions = { prompt, tools: undefined };
+const inheritOptions = { prompt, isolation: 'inherit' as const };
+const worktreeOptions = { prompt, isolation: 'worktree' as const };
+
 // Every built-in capability key is rejected under the default strictProfiles.
 export const strict = defineWorkflow({
   ...base,
@@ -104,6 +112,22 @@ export const strict = defineWorkflow({
     await ctx.agent('tool').text('t', { prompt, depth: 2 });
     // A widened capabilityKeys list stays permissive; the runtime check still applies.
     await ctx.agent('wide').text('t', { prompt, tools: ['shell'] });
+    // Pre-built variables are rejected structurally, not only fresh literals.
+    // @ts-expect-error -- strict: a variable's tools belongs to a named profile.
+    await ctx.claude.text('t', claudeToolsOptions);
+    // @ts-expect-error -- strict: a variable's sandbox belongs to a named profile.
+    await ctx.codex.text('t', codexSandboxOptions);
+    // @ts-expect-error -- strict: a variable's tools belongs to a named profile.
+    await ctx.agent('claude').text('t', claudeToolsOptions);
+    // @ts-expect-error -- strict: a variable's tools is a declared capability key of the tool harness.
+    await ctx.agent('tool').text('t', registeredToolsOptions);
+    // @ts-expect-error -- strict: an explicit undefined still sets the key (runtime Object.hasOwn).
+    await ctx.claude.text('t', undefinedToolsOptions);
+    // @ts-expect-error -- strict: a variable's inherited configuration belongs to a named profile.
+    await ctx.claude.text('t', inheritOptions);
+    await ctx.claude.text('t', worktreeOptions);
+    await ctx.codex.text('t', worktreeOptions);
+    await ctx.agent('wide').text('t', registeredToolsOptions);
     // Strictness survives within().
     // @ts-expect-error -- strict inside a bound scope too.
     await ctx.within('scope').claude.text('t', { prompt, tools: ['Read'] });
@@ -136,6 +160,10 @@ export const permissive = defineWorkflow({
     await ctx.agent('claude').text('t', { prompt, tools: ['Read'] });
     await ctx.agent('tool').text('t', { prompt, tools: ['shell'] });
     await ctx.within('scope').claude.text('t', { prompt, tools: ['Read'] });
+    await ctx.claude.text('t', claudeToolsOptions);
+    await ctx.codex.text('t', codexSandboxOptions);
+    await ctx.agent('tool').text('t', registeredToolsOptions);
+    await ctx.claude.text('t', inheritOptions);
     return null;
   },
 });
@@ -259,15 +287,26 @@ it('carries strictness, profiles and declared children into authoring types', ()
   expectTypeOf(parent.name).toEqualTypeOf<'parent'>();
   expectTypeOf(strict.strictProfiles).toEqualTypeOf<true | undefined>();
   expectTypeOf(permissive.strictProfiles).toEqualTypeOf<false | undefined>();
-  // Strict built-in call options keep only a narrowed isolation of the shared key tuples.
+  // Strict built-in call options can set only a narrowed isolation of the shared key tuples; the
+  // other capability keys remain as optional never properties.
   type StrictClaude = CallOptions<'claude', BuiltInHarnesses['claude'], never, true>;
   type StrictCodex = CallOptions<'codex', BuiltInHarnesses['codex'], never, true>;
+  type Settable<T> = {
+    [P in keyof T]-?: [Exclude<T[P], undefined>] extends [never] ? never : P;
+  }[keyof T];
   expectTypeOf<
-    Extract<keyof StrictClaude, (typeof claudeCapabilityKeys)[number]>
+    Extract<Settable<StrictClaude>, (typeof claudeCapabilityKeys)[number]>
   >().toEqualTypeOf<'isolation'>();
   expectTypeOf<
-    Extract<keyof StrictCodex, (typeof codexCapabilityKeys)[number]>
+    Extract<Settable<StrictCodex>, (typeof codexCapabilityKeys)[number]>
   >().toEqualTypeOf<'isolation'>();
+  expectTypeOf<Exclude<(typeof claudeCapabilityKeys)[number], keyof StrictClaude>>().toBeNever();
+  type StrictTool = CallOptions<'tool', typeof tool, never, true>;
+  expectTypeOf<Extract<Settable<StrictTool>, 'tools' | 'depth'>>().toEqualTypeOf<'depth'>();
+  expectTypeOf<Extract<keyof StrictTool, 'tools'>>().toEqualTypeOf<'tools'>();
+  // A widened capabilityKeys list adds no forbidden keys.
+  type StrictWide = CallOptions<'wide', typeof wide, never, true>;
+  expectTypeOf<Extract<Settable<StrictWide>, 'tools'>>().toEqualTypeOf<'tools'>();
   expectTypeOf<StrictClaude['isolation']>().toEqualTypeOf<
     Exclude<AgentIsolation, 'inherit'> | undefined
   >();

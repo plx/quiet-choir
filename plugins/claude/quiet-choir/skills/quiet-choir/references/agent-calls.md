@@ -48,9 +48,10 @@ options. Replacing Claude tools re-infers allowedTools unless supplied explicitl
 `strictProfiles: true`, declare capability controls in profiles, including permissions, MCP, native
 config/agents, dirs, escape args, and environment. Call-site types enforce this: the inferred strict
 literal removes those keys (and `isolation: 'inherit'`) from `ctx.claude`, `ctx.codex` and
-`ctx.agent(name)` options, so a raw key fails typecheck and `workflow validate`; only a literal
-`strictProfiles: false` types them. `ctx.agent(name)` profiles accept only built-in or declared
-roles. A bare `WorkflowContext` helper stays permissive (the runtime still checks);
+`ctx.agent(name)` options (as optional `never` properties, so a pre-built options variable fails
+too), so a raw key fails typecheck and `workflow validate`; only a literal `strictProfiles: false`
+types them. `ctx.agent(name)` profiles accept only built-in or declared roles. A bare
+`WorkflowContext` helper stays permissive (the runtime still checks);
 `WorkflowContext<'role', BuiltInHarnesses, true>` is a strict helper contract.
 `workflow validate FILE --json` lists resolved `workflow.capabilities` without running the body (and
 omits harness option schemas unless `--harness-schemas`). Unknown tools/native config controls

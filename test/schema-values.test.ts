@@ -281,7 +281,7 @@ it.each(['input', 'dependencies', 'request', 'step output', 'final output'] as c
         if (boundary === 'dependencies')
           await ctx.step('triage/3', { input: bad as never, schema: z.null(), run: () => null });
         if (boundary === 'request')
-          // @ts-expect-error -- strictProfiles omits settings; this probes the request JSON boundary.
+          // Strict profiles type settings as never; the cast probes the request JSON boundary.
           await ctx.claude.value('triage/3', { prompt: 'p', settings: bad as never });
         if (boundary === 'step output')
           return ctx.step('triage/3', { input: null, schema, run: () => bad });

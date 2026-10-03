@@ -207,13 +207,18 @@ export type CapabilityKeysOf<D> = D extends {
     : never
   : never;
 
+/** Capability keys `P` forbidden as optional `never` properties, so even an explicit `undefined` fails. */
+type ForbiddenKeys<P extends PropertyKey> = Readonly<Partial<Record<P, never>>>;
+
 /**
  * Call-site options of harness `K` with registration `D` in a workflow with declared roles `TProfile`.
  * `profile` accepts a built-in preset or a declared role. When `TStrict` is exactly `true` (a
  * workflow that omits `strictProfiles` or sets it to a literal `true`), the harness's capability keys
- * are omitted, mirroring the runtime check: for Claude and Codex every key except `isolation`, which
- * is narrowed to exclude `'inherit'`; for a registered harness every literal `capabilityKeys` entry.
- * A literal `false`, or a non-literal `boolean`, keeps every option.
+ * are forbidden as optional `never` properties, mirroring the runtime check: for Claude and Codex
+ * every key except `isolation`, which is narrowed to exclude `'inherit'`; for a registered harness
+ * every literal `capabilityKeys` entry. Forbidding the keys structurally, not only through
+ * excess-property checks, also rejects a pre-built options variable. A literal `false`, or a
+ * non-literal `boolean`, keeps every option.
  */
 export type CallOptions<
   K extends string,
@@ -223,11 +228,12 @@ export type CallOptions<
 > = Extract<
   ([TStrict] extends [true]
     ? K extends 'claude' | 'codex'
-      ? Omit<OptionsOf<D>, 'profile' | 'isolation' | CapabilityKeysOf<D>> & {
-          /** Native configuration mode or worktree shorthand; strict profiles own `'inherit'`. */
-          readonly isolation?: Exclude<AgentIsolation, 'inherit'> | undefined;
-        }
-      : Omit<OptionsOf<D>, 'profile' | CapabilityKeysOf<D>>
+      ? Omit<OptionsOf<D>, 'profile' | 'isolation' | CapabilityKeysOf<D>> &
+          ForbiddenKeys<Exclude<CapabilityKeysOf<D>, 'isolation'>> & {
+            /** Native configuration mode or worktree shorthand; strict profiles own `'inherit'`. */
+            readonly isolation?: Exclude<AgentIsolation, 'inherit'> | undefined;
+          }
+      : Omit<OptionsOf<D>, 'profile' | CapabilityKeysOf<D>> & ForbiddenKeys<CapabilityKeysOf<D>>
     : Omit<OptionsOf<D>, 'profile'>) & {
     /** Built-in preset or one of this workflow's declared role names. */
     readonly profile?: BuiltinProfile | TProfile | undefined;

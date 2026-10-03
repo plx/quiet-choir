@@ -52,11 +52,13 @@ strictMcpConfig, settings, addDirs, extraArgs, env and isolation; Codex's are sa
 networkAccess, config, harnessProfile, addDirs, extraArgs, env and isolation. The same exported
 lists (`claudeCapabilityKeys`, `codexCapabilityKeys`) drive the runtime check. `isolation` stays
 available with every value except `'inherit'`, so `'restricted'` and the worktree shorthands still
-compile. A registered harness's literal `capabilityKeys` are removed the same way. Only a literal
-`strictProfiles: false` types the raw keys; a non-literal `boolean` also stays permissive and leaves
-the decision to the runtime. A helper typed with a bare `WorkflowContext` stays permissive (the
-runtime check still applies), while `WorkflowContext<'scout', BuiltInHarnesses, true>` is a strict
-helper contract that accepts the workflow's strict context.
+compile. A registered harness's literal `capabilityKeys` are removed the same way. The removed keys
+are typed as optional `never` properties, so a pre-built options variable or an explicit `undefined`
+is rejected too, not only a fresh object literal. Only a literal `strictProfiles: false` types the
+raw keys; a non-literal `boolean` also stays permissive and leaves the decision to the runtime. A
+helper typed with a bare `WorkflowContext` stays permissive (the runtime check still applies), while
+`WorkflowContext<'scout', BuiltInHarnesses, true>` is a strict helper contract that accepts the
+workflow's strict context.
 
 | Preset            | Claude tools                  | Codex sandbox   | Claude turns | Claude USD | Deadline     |
 | ----------------- | ----------------------------- | --------------- | ------------ | ---------- | ------------ |
