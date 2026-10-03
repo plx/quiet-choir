@@ -981,7 +981,7 @@ let codexRequests = 0;
 
 const AWAIT_LOOP = (
   listing,
-) => `Run this command with the Bash tool (timeout 600000 ms). It waits up to 9 minutes and prints one line of JSON.
+) => `Run this command with the Bash tool (timeout 600000 ms). It waits up to about 8 minutes and prints one line of JSON.
 
 ${listing}
 
@@ -991,7 +991,7 @@ ${RELAY_RULES} The only id is "await": relay the output of the last run.`;
 
 async function waitForGate(sha, since, codex) {
   // --stale-grace: GitHub may still report the pre-push head for a short while after publish.
-  const flags = `--sha ${sha} --since ${since} --codex ${codex ? 'required' : 'skip'} --stale-grace 90 --max-seconds 540`;
+  const flags = `--sha ${sha} --since ${since} --codex ${codex ? 'required' : 'skip'} --stale-grace 90 --max-seconds 420`;
   for (let attempt = 1; attempt <= 3; attempt++) {
     const label = `await r${record.rounds}.${attempt}`;
     const gate = (await clerk(label, 'Gate', [step('await', 'await', flags)], AWAIT_LOOP)).await;

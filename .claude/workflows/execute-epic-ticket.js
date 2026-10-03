@@ -935,7 +935,7 @@ Return title (default: ${JSON.stringify(plan.title)}; keep it under 72 character
 
 const AWAIT_LOOP = (
   listing,
-) => `Run this command with the Bash tool (timeout 600000 ms). It waits up to 9 minutes and prints one line of JSON.
+) => `Run this command with the Bash tool (timeout 600000 ms). It waits up to about 8 minutes and prints one line of JSON.
 
 ${listing}
 
@@ -952,7 +952,7 @@ async function awaitFirstReview(pr, sha, since) {
       'await',
       'await',
       pr,
-      `--sha ${sha} --since ${since} --codex required --ci skip --max-seconds 540`,
+      `--sha ${sha} --since ${since} --codex required --ci skip --max-seconds 420`,
     );
     const gate = (await clerk(`await review #${pr}.${attempt}`, 'Publish', [step], AWAIT_LOOP))
       .await;

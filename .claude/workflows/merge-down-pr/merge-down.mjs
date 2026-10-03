@@ -21,7 +21,7 @@
 //   rerun    --pr N --sha S              re-run failed CI jobs for S once (flake check)
 //   verify-fixes --pr N --commits a,b    reported commits are in HEAD; last check passed at HEAD
 //   await    --pr N --sha S --since ISO [--codex required|skip] [--ci wait|skip] [--stale-grace 90]
-//            [--max-seconds 540]
+//            [--max-seconds 420]
 //   land     --pr N --sha S [--issue I] [--expect-close | --keep-open I]
 //   close    --pr N < comment.md          comment, then close (Dependabot commands self-close)
 //   last     --pr N --cmd C               re-print the saved output of the last C run
@@ -861,7 +861,7 @@ async function checkWait(a, P) {
   const file = checkResultFile(P, pr, label);
   const started = readJson(join(prDir(P, pr), `${label}.started.json`));
   if (!started) fail(`no check was started with label ${label}; run check-start first`);
-  const maxSeconds = Number(a['max-seconds'] ?? 540);
+  const maxSeconds = Number(a['max-seconds'] ?? 420);
   const begin = Date.now();
   for (;;) {
     if (existsSync(file)) return { done: true, ...readJson(file) };
@@ -1250,7 +1250,11 @@ async function awaitGate(a, P, R) {
         threadsFile: refreshed.files.threads,
       };
     }
-    if (elapsedSeconds >= maxSeconds) {
+    // Stop before a sleep that would start the next poll past the deadline: the final poll, the
+    // 20 s code-scanning settle and the refresh can take a minute under load, and a caller that
+    // runs this under a 10-minute shell limit must get its line before that limit (#359's landing
+    // lost a round when the command outlived it and was moved to the background).
+    if (elapsedSeconds + 30 >= maxSeconds) {
       return { done: false, headMoved: false, timedOut: true, ci, codex, elapsedSeconds };
     }
     await sleep(30_000);
