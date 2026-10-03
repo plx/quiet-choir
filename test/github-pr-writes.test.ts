@@ -1273,6 +1273,10 @@ export default defineWorkflow({
     });
   });
 
+  // This case rehearses the example twice (land, then fix-ci), each a type check and a tsImport
+  // compile. measured: 2.6 s alone, 6.6 s in a coverage run of this file; CI's Node 24 leg timed
+  // out at 30 s in the full run, where one rehearsal in test/rehearsal.test.ts took 13-15 s, so
+  // two take about 30 s; 90 s is 3x that, like the gate example in test/github-waits.test.ts.
   it('rehearses the land example from docs/github.md', async () => {
     const docs = readFileSync(join(repository, 'docs', 'github.md'), 'utf8');
     const section = docs.slice(docs.indexOf('## Land example'));
@@ -1289,5 +1293,5 @@ export default defineWorkflow({
       expect(result.run.output, gate).toBe(expected);
       expect(rehearsed(result.commands), gate).toEqual(commands);
     }
-  });
+  }, 90_000);
 });
