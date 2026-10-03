@@ -155,9 +155,9 @@ The snapshot is exactly one `gh api graphql` (`-F number=N`, no `--paginate`): t
 (number, title, state, URL, body, `subIssuesSummary`) and up to 100 sub-issues, each with its state
 and close reason, repository, labels, assignees, blocked-by relations
 (`blockedBy { number state repository }`), linked pull requests
-(`closedByPullRequestsReferences { number state isDraft url headRefName }`) and comments, up to 100
-of each. Its identity is that argv, the response schema and the plain exec defaults, like every
-other read.
+(`closedByPullRequestsReferences(includeClosedPrs: true) { number state isDraft url headRefName }`,
+in any state) and comments, up to 100 of each. Its identity is that argv, the response schema and
+the plain exec defaults, like every other read.
 
 The checkpoint keeps the raw response; the mapper parses it into a compact result with no bodies or
 comments:

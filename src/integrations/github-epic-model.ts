@@ -51,7 +51,7 @@ query($owner: String!, $name: String!, $number: Int!) {
             pageInfo { hasNextPage }
             nodes { number state repository { nameWithOwner } }
           }
-          closedByPullRequestsReferences(first: 100) {
+          closedByPullRequestsReferences(first: 100, includeClosedPrs: true) {
             pageInfo { hasNextPage }
             nodes { number state isDraft url headRefName }
           }

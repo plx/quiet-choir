@@ -740,6 +740,27 @@ describe('nextTicket over the recorded #99 snapshot', () => {
     ]);
   });
 
+  it('keeps closed and merged linked pull requests, which do not make an item in flight', () => {
+    // GitHub omits closed pull requests from this connection unless the query asks for them.
+    expect(EPIC_SNAPSHOT_QUERY).toContain(
+      'closedByPullRequestsReferences(first: 100, includeClosedPrs: true)',
+    );
+    const snapshot = snapshotOf((raw) => {
+      node(raw, 163).closedByPullRequestsReferences.nodes.push(
+        pr(402, 'CLOSED'),
+        pr(403, 'MERGED'),
+      );
+    });
+    expect(
+      snapshot.items.find((item) => item.number === 163)?.pullRequests.map((p) => p.state),
+    ).toEqual(['CLOSED', 'MERGED']);
+    expect(nextTicket(snapshot).pick).toMatchObject({
+      number: 163,
+      status: 'ready',
+      pullRequests: [],
+    });
+  });
+
   it('resolves an outside dependency from policy.outside, and counts an unknown one as open', () => {
     const snapshot = snapshotOf(close(163, 164, 167));
     expect(outsideReferences(snapshot)).toEqual([141]);

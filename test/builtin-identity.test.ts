@@ -471,7 +471,7 @@ describe('quiet-choir/github read identity', () => {
     },
     // The 8 MiB default output cap is policy, so it is not here.
     'epic.snapshot': {
-      command: '6b0c8d64362f3335ce0c52174c9c4c1f02bad78cca0a23bf81df9c525dd5e19b',
+      command: '374b42cec2fe578c037a27637d2c27b2db0251c471bc6639e56262228334973b',
       schema: '2128b1db6d8e326cf5ea65c32cb88fce3921d0276e0ee4cd99e33a0c0024b621',
     },
   };

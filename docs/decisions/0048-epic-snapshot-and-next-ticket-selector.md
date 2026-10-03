@@ -15,8 +15,8 @@ replay-stable as one effect, or unit-tested against a recorded epic.
 
 GitHub's GraphQL API can return the epic, its sub-issues (`subIssues`, `subIssuesSummary`), each
 sub-issue's labels, assignees, blocked-by relations, linked pull requests
-(`closedByPullRequestsReferences`) and comments in one query. A read-only probe of #99 returned 80
-sub-issues and their comments in 687 KB.
+(`closedByPullRequestsReferences`, with `includeClosedPrs: true` for every state) and comments in
+one query. A read-only probe of #99 returned 80 sub-issues and their comments in 687 KB.
 
 ## Decision
 
