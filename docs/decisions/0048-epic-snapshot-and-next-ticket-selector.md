@@ -70,8 +70,10 @@ Add `gh.epic.snapshot(id, { number }, policy?)` to `quiet-choir/github`, and the
   `policy.outside`, keeping the snapshot one command and the selector pure.
 - **Viewer-only split markers.** A `<!-- epic:split a,b -->` marker counts only in a comment by the
   authenticated viewer (the snapshot's `viewer`), because a split closes an item once its slices
-  close: someone quoting the syntax must not close an unfinished issue. Dependency phrases count
-  from any author, because a misread dependency only delays an item.
+  close: someone quoting the syntax must not close an unfinished issue. A marker on a line indented
+  four or more columns is ignored too, as indented code would be. Dependency phrases count from any
+  author, and in indented lines as well, because a misread dependency only delays an item while
+  masking an indented list line by mistake would hide a real blocker.
 - **Incomplete is never done.** `nextTicket` throws when a snapshot holds fewer items than its
   `total`, so a hand-built or edited snapshot cannot report an incomplete epic as done.
 - **Module layout.** The query, schema, parsers, mapper and selector live in the pure

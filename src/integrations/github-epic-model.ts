@@ -643,7 +643,9 @@ export function parseEpicChecklist(
  * "depends on", "blocked by" and "requires" followed by a list such as `#4, #5 and #6`, and the
  * marker `<!-- epic:depends-on 3,4 -->`. Code (fenced or inline) is ignored, only `repo`'s issues
  * count, and the result is unique, in order, and never `self`. A misread dependency only delays an
- * item, so every author counts.
+ * item, so every author counts, and indented code is read: telling an indented code block from an
+ * indented continuation of a list item needs full list tracking, and a wrong guess there would hide
+ * a real blocker.
  */
 export function parseDependencies(texts: readonly string[], repo: string, self: number): number[] {
   const found: number[] = [];
@@ -660,7 +662,9 @@ export function parseDependencies(texts: readonly string[], repo: string, self: 
  * in a comment whose author is `viewer` (compared case-insensitively), unique and never `self`;
  * null when there is none or it names only `self`. A split closes an item once its slices close, so
  * only the viewer's markers count: anyone else quoting the syntax must not close an unfinished
- * issue.
+ * issue. For the same reason a marker on a line indented four or more columns after its block-quote
+ * markers (a tab counts to the next multiple of four) is ignored, as indented code would be: the
+ * workflow writes its markers at column 0, and a missed split only leaves the parent open.
  */
 export function parseSplit(
   comments: readonly { readonly author: string | null; readonly body: string }[],
@@ -671,8 +675,13 @@ export function parseSplit(
   for (const comment of comments) {
     if (viewer === '' || comment.author === null || !sameRepository(comment.author, viewer))
       continue;
-    for (const match of stripCode(comment.body).matchAll(SPLIT_MARKER))
+    const text = stripCode(comment.body);
+    for (const match of text.matchAll(SPLIT_MARKER)) {
+      const start = text.lastIndexOf('\n', match.index - 1) + 1;
+      const line = text.slice(start, match.index);
+      if (indentation(line.slice(quotePrefix(line).end)) >= 4) continue;
       split = [...new Set(numbersIn(match[1] ?? ''))].filter((number) => number !== self);
+    }
   }
   return split?.length ? split : null;
 }

@@ -203,10 +203,14 @@ blocked from a ready one.
 - **Dependencies** (`dependsOn`), from an item's body and all its comments, by any author, with code
   removed: the phrases "depends on", "blocked by" and "requires" followed by a list such as
   `#4, #5 and #6`, and the marker `<!-- epic:depends-on 3,4 -->`. Only the repository's issues
-  count, and never the item itself. A misread dependency only delays an item.
+  count, and never the item itself. A misread dependency only delays an item, so indented code is
+  read here: telling an indented code block from an indented line of a list item needs full list
+  tracking, and a wrong guess would hide a real blocker.
 - **Splits** (`split`): the last `<!-- epic:split a,b -->` marker outside code in a comment by the
   viewer. Only the viewer counts, because a split closes an item once its slices close: someone
-  quoting the syntax must not close an unfinished issue.
+  quoting the syntax must not close an unfinished issue. For the same reason a marker on a line
+  indented four or more columns after its `>` markers is ignored, as indented code would be; the
+  workflow writes its markers at column 0, and a missed split only leaves the parent open.
 - **Blocked-by relations** (`blockedBy`) keep their own states; the selector counts the ones not
   `CLOSED`.
 
