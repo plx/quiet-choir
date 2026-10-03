@@ -478,6 +478,94 @@ it('composes inherited configuration with both legacy and explicit checkout sele
   expect(await readFile(join(repo, 'file.txt'), 'utf8')).toBe('base\n');
 });
 
+// Pre-#340 spellings still run and fingerprint like their replacements, so a checkpoint recorded
+// with one resumes after the source migrates; #126 refuses acceptCodeChange if identities diverge.
+it.each([
+  ['isolation worktree', () => ({ isolation: 'worktree' }), () => ({ worktree: true })],
+  [
+    'isolation kind with a branch base',
+    () => ({ isolation: { kind: 'worktree', base: 'feature' } }),
+    () => ({ worktree: { base: 'feature' } }),
+  ],
+  [
+    'isolation kind with a commit base',
+    (base: string) => ({ isolation: { kind: 'worktree', base: { commit: base } } }),
+    (base: string) => ({ worktree: { base: { commit: base } } }),
+  ],
+  ['worktree true', () => ({ worktree: true }), () => ({ worktree: true })],
+] as const)(
+  'resumes a checkpoint recorded with %s after migrating to the worktree spelling',
+  async (_name, recorded, migrated) => {
+    const base = await command('rev-parse', 'HEAD');
+    await command('branch', 'feature');
+    const invoke = vi.fn<Harness['invoke']>(() => Promise.resolve(response));
+    const definition = (selection: object, fail: boolean) =>
+      defineWorkflow({
+        name: 'migrated-selection',
+        version: '1',
+        input: z.null(),
+        output: z.string(),
+        async run(ctx) {
+          const result = await ctx.claude.text('edit', { prompt: 'edit', ...selection });
+          if (fail) throw new Error('tail failure');
+          return result.output;
+        },
+      });
+    const run = { ...options('migrated'), harness: { invoke }, input: null };
+    await expect(
+      runWorkflow(definition(recorded(base), true), { ...run, fingerprint: 'code-1' }),
+    ).rejects.toThrow('tail failure');
+    const before = (await readRun({ stateDir, runId: 'migrated' })).steps['edit'];
+    expect(before?.worktree?.base).toBe(base);
+    // Moving HEAD and the branch proves the resume reuses the recorded base.
+    await writeFile(join(repo, 'file.txt'), 'moved\n');
+    await command('branch', '-f', 'feature', await commit('move head'));
+    const result = await runWorkflow(definition(migrated(base), false), {
+      ...run,
+      resume: true,
+      fingerprint: 'code-2',
+      acceptCodeChange: true,
+    });
+    expect(result.status).toBe('completed');
+    expect(invoke).toHaveBeenCalledTimes(1);
+    const after = (await readRun({ stateDir, runId: 'migrated' })).steps['edit'];
+    expect(after?.fingerprint).toBe(before?.fingerprint);
+    expect(after?.worktree?.base).toBe(base);
+  },
+);
+
+it('refuses a worktree together with a legacy worktree isolation before invoking a harness', async () => {
+  const invoke = vi.fn<Harness['invoke']>(() => Promise.resolve(response));
+  const handle = { id: 'h-1', path: join(root, 'h-1'), base: await command('rev-parse', 'HEAD') };
+  for (const [index, isolation] of ['worktree', handle].entries()) {
+    const definition = defineWorkflow({
+      name: 'both-selections',
+      version: '1',
+      input: z.null(),
+      output: z.string(),
+      async run(ctx) {
+        return (
+          await ctx.claude.text('edit', {
+            prompt: 'edit',
+            worktree: true,
+            isolation: isolation as never,
+          })
+        ).output;
+      },
+    });
+    await expect(
+      runWorkflow(definition, {
+        ...options(`both-${String(index)}`),
+        harness: { invoke },
+        input: null,
+      }),
+    ).rejects.toThrow(
+      'Choose worktree or a legacy worktree isolation value, not both; use worktree: true | { base } | handle.',
+    );
+  }
+  expect(invoke).not.toHaveBeenCalled();
+});
+
 it('fails isolation outside a repository before invoking a harness', async () => {
   const invoke = vi.fn<Harness['invoke']>(() => Promise.resolve(response));
   const harness: Harness = { invoke };

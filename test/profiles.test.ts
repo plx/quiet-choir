@@ -633,14 +633,18 @@ defineWorkflow({
 // Compile-time contract: checkout placement is a per-call decision, not a profile property, and
 // profile isolation is only the configuration mode (the legacy worktree shorthand is rejected).
 const profileRun = () => Promise.resolve('ok');
-// @ts-expect-error Profile isolation is only the configuration mode.
 defineWorkflow({
   ...base,
+  // @ts-expect-error Profile isolation is only the configuration mode.
   profiles: { r: { claude: { isolation: 'worktree' } } },
   run: profileRun,
 });
-// @ts-expect-error Profiles never select a checkout.
-defineWorkflow({ ...base, profiles: { r: { claude: { worktree: true } } }, run: profileRun });
+defineWorkflow({
+  ...base,
+  // @ts-expect-error Profiles never select a checkout.
+  profiles: { r: { claude: { worktree: true } } },
+  run: profileRun,
+});
 defineWorkflow({
   ...base,
   // @ts-expect-error Profiles never select a checkout, with a base either.
