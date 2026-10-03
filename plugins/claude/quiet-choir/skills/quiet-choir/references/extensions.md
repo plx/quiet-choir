@@ -391,3 +391,15 @@ checkpointed, and code scanning that is not set up returns `status: 'unavailable
 replays forever under its ID, so observe new state with a fresh ID keyed by round or head SHA. See
 [GitHub snapshots](patterns.md#github-snapshots-through-gh) and
 [GitHub reads](https://github.com/plx/quiet-choir/blob/main/docs/github.md).
+
+Its waits `gh.waitChecks(id, { pr, sha, timeoutMs })`, `gh.waitPr(id, { pr, sha, until })` and
+`gh.waitReview(id, { pr, sha, since, reviewers })` are one `ctx.poll` each, so one `wait` record
+however many checks, and are head-pinned: `success`, `clean` and `merged` are reported only for
+`sha`, any other head ends with `head-moved` (after an optional `staleGraceMs` for an ancestor
+view), and a closed pull request with `closed`. They tolerate a bounded run of transient gh errors
+and return `timeout` at the deadline. Reviewers are `ReviewerBot` adapters (`name`, `login`,
+`reads`, a pure `observe(activity, context)` returning `pending`, `running`, `clean`, `findings` or
+`error`, with a note kept in the wait's checkpoint); `codexReviewer()` keeps Codex's two-check
+debounce and `codeqlReviewer({ settleMs })` counts alerts that land after the CodeQL check. Take
+`since` from `ctx.now` after pushing `sha`. See
+[GitHub waits](https://github.com/plx/quiet-choir/blob/main/docs/github.md#waits).

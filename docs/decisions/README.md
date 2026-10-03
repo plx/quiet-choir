@@ -92,3 +92,5 @@ part of the documentation.
 - [0043: Checked harness-kit declarations and shared adapter helpers](0043-checked-harness-kit-declarations-and-adapter-helpers.md)
 
 - [0044: gh-backed, complete-or-throw GitHub reads](0044-gh-backed-github-reads.md)
+
+- [0045: Head-pinned GitHub waits with pluggable reviewers](0045-head-pinned-github-waits.md)

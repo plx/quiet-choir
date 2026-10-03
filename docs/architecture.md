@@ -10,8 +10,10 @@ definitions to a particular agent harness.
   exports need API comments.
 - `src/integrations/` contains helper subpaths. They import the public entry point, never runtime
   internals; `github.ts` keeps its queries, schemas and mappers in the pure `github-model.ts` and
-  may also import the error-brand registry ([ADR 0044](decisions/0044-gh-backed-github-reads.md)).
-  See [GitHub reads](github.md).
+  its wait rules in the pure `github-wait-model.ts`, and may also import two cross-instance
+  registries: error brands ([ADR 0044](decisions/0044-gh-backed-github-reads.md)) and the internal
+  poll-identity key ([ADR 0045](decisions/0045-head-pinned-github-waits.md)). See
+  [GitHub reads and waits](github.md).
 - `src/application/` contains framework-independent execution contracts and small executors.
 - `src/workflow/` contains workflow-specific plans, results, analysis, and executors.
 - `src/workflow/runtime/` defines the typed workflow API and local checkpoint/replay engine.
