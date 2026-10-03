@@ -1,11 +1,13 @@
 /**
  * `quiet-choir/github`: typed, complete-or-throw GitHub reads over the installed `gh`
- * ([ADR 0044](../../docs/decisions/0044-gh-backed-github-reads.md)) and head-pinned waits for CI,
- * reviews and merges ([ADR 0045](../../docs/decisions/0045-head-pinned-github-waits.md)). Each read
+ * ([ADR 0044](../../docs/decisions/0044-gh-backed-github-reads.md)), head-pinned waits for CI,
+ * reviews and merges ([ADR 0045](../../docs/decisions/0045-head-pinned-github-waits.md)) and
+ * reconciled writes ([ADR 0046](../../docs/decisions/0046-reconciled-github-writes.md)). Each read
  * is exactly one `ctx.exec.json` with the caller's ID, pure `gh` argv, no environment overlay or
  * stdin, and the workflow cwd, so its identity is the argv, the response schema and the fixed exec
- * defaults. Each wait is exactly one `ctx.poll`. Authentication stays in gh and its inherited
- * environment.
+ * defaults. Each wait is exactly one `ctx.poll`. Each write is exactly one version-identified
+ * `ctx.step` that reads before it writes, so a rerun after a crash does not write twice.
+ * Authentication stays in gh and its inherited environment.
  */
 import { createHash } from 'node:crypto';
 import {
@@ -92,6 +94,20 @@ import {
   type WaitReviewResult,
   type WaitReviewTerminal,
 } from './github-wait-model.js';
+import { githubWrites } from './github-writes.js';
+import type {
+  GithubAlertDismissOptions,
+  GithubAlertDismissResult,
+  GithubCommentOptions,
+  GithubCommentResult,
+  GithubIssueCloseOptions,
+  GithubIssueCreateOptions,
+  GithubIssueCreateResult,
+  GithubIssueReopenOptions,
+  GithubIssueStateResult,
+  GithubThreadReplyOptions,
+  GithubThreadReplyResult,
+} from './github-write-model.js';
 
 export {
   codeScanningResponseSchema,
@@ -111,6 +127,22 @@ export {
   summarizeChecks,
 } from './github-model.js';
 export { CODEQL_LOGIN, CODEX_LOGIN } from './github-wait-model.js';
+export { alertDismissReason } from './github-write-model.js';
+export type {
+  GithubAlertDismissOptions,
+  GithubAlertDismissReason,
+  GithubAlertDismissResult,
+  GithubCommentOptions,
+  GithubCommentResult,
+  GithubIssueCloseOptions,
+  GithubIssueCloseReason,
+  GithubIssueCreateOptions,
+  GithubIssueCreateResult,
+  GithubIssueReopenOptions,
+  GithubIssueStateResult,
+  GithubThreadReplyOptions,
+  GithubThreadReplyResult,
+} from './github-write-model.js';
 export type {
   CodeqlReviewerOptions,
   GithubCheckFailure,
@@ -230,6 +262,14 @@ export interface GithubReadPolicy {
   readonly retry?: RetryPolicy;
 }
 
+/**
+ * Execution policy of a write, with the keys of {@link GithubReadPolicy}: `timeoutMs` and
+ * `maxOutputBytes` apply to each gh command of the write, and `retry` is the step's retry policy.
+ * None of it enters identity. There is no default retry; the reconciled ops are safe to repeat, so
+ * a retry such as `{ maxAttempts: 3, on: ['process', 'timeout'] }` is recommended.
+ */
+export type GithubWritePolicy = GithubReadPolicy;
+
 /** Repository reads. */
 export interface GithubRepoReads {
   /** Repository facts and the authenticated viewer: `gh api graphql`. */
@@ -282,6 +322,70 @@ export interface GithubIssueReads {
     args: { readonly number: number; readonly comments?: false },
     policy?: GithubReadPolicy,
   ): Promise<GithubIssue>;
+}
+
+/**
+ * Issue writes. Each is one `ctx.step` under `id`; see {@link GithubClient.comment} for the marker
+ * and identity rules they share.
+ */
+export interface GithubIssueWrites {
+  /**
+   * Create an issue, reconciled by its marker: read the viewer, then the viewer's issues in the
+   * repository newest first, page by page, and create the issue only when none carries the marker.
+   * A miss scans every issue the viewer created there. With `parent`, read the issue's parent:
+   * link it with `addSubIssue` when it has none, do nothing when it already is `parent`, and throw
+   * without any write when it has a different parent.
+   */
+  create(
+    id: string,
+    args: GithubIssueCreateOptions,
+    policy?: GithubWritePolicy,
+  ): Promise<GithubIssueCreateResult>;
+  /**
+   * Close an open issue, check-then-act: read its state, and act only when it is open; a closed
+   * issue returns `acted: false` with no write. `comment`, reconciled by its marker, is posted
+   * before the state change. GitHub has no conditional update, so a concurrent change between the
+   * read and the write is not detected.
+   */
+  close(
+    id: string,
+    args: GithubIssueCloseOptions,
+    policy?: GithubWritePolicy,
+  ): Promise<GithubIssueStateResult>;
+  /** Reopen a closed issue, check-then-act, like {@link GithubIssueWrites.close}. */
+  reopen(
+    id: string,
+    args: GithubIssueReopenOptions,
+    policy?: GithubWritePolicy,
+  ): Promise<GithubIssueStateResult>;
+}
+
+/** Review thread writes. */
+export interface GithubThreadWrites {
+  /**
+   * Reply to a review thread, reconciled by its marker, then resolve it when wanted and not yet
+   * resolved. By default bot threads are resolved and human threads stay open; `resolve` overrides
+   * it, and never unresolves a thread.
+   */
+  reply(
+    id: string,
+    args: GithubThreadReplyOptions,
+    policy?: GithubWritePolicy,
+  ): Promise<GithubThreadReplyResult>;
+}
+
+/** Code-scanning alert writes. */
+export interface GithubAlertWrites {
+  /**
+   * Dismiss an alert, check-then-act: read it, and dismiss it only when it is neither dismissed nor
+   * fixed; otherwise return `dismissed: false` with no write. The reason follows
+   * {@link alertDismissReason}; the comment is truncated to 280 characters.
+   */
+  dismiss(
+    id: string,
+    args: GithubAlertDismissOptions,
+    policy?: GithubWritePolicy,
+  ): Promise<GithubAlertDismissResult>;
 }
 
 /** Filters of `codeScanning.alerts`. */
@@ -385,16 +489,33 @@ export type GithubWaitReviewOptions = GithubWaitBound &
     readonly maxOutputBytes?: number;
   };
 
-/** Typed GitHub reads and waits for one repository. */
+/** Typed GitHub reads, waits and reconciled writes for one repository. */
 export interface GithubClient {
   /** Repository reads. */
   readonly repo: GithubRepoReads;
   /** Pull request reads. */
   readonly pr: GithubPullRequestReads;
-  /** Issue reads. */
-  readonly issue: GithubIssueReads;
+  /** Issue reads and writes. */
+  readonly issue: GithubIssueReads & GithubIssueWrites;
   /** Code-scanning reads. */
   readonly codeScanning: GithubCodeScanningReads;
+  /** Review thread writes. */
+  readonly thread: GithubThreadWrites;
+  /** Code-scanning alert writes. */
+  readonly alert: GithubAlertWrites;
+  /**
+   * Comment on an issue or pull request, reconciled by its marker: one `ctx.step` under `id`
+   * (version `github.comment/1`) that reads every comment and posts only when none carries the
+   * marker `<!-- quiet-choir:RUN/STEP -->`, the step's idempotency key, appended after a blank
+   * line. A rerun after a crash between the post and the checkpoint finds the comment instead of
+   * posting it again. Each write's identity is its version, the repository and its arguments; the
+   * request body goes to gh on stdin, never in argv.
+   */
+  comment(
+    id: string,
+    args: GithubCommentOptions,
+    policy?: GithubWritePolicy,
+  ): Promise<GithubCommentResult>;
   /**
    * Wait for the checks of head `sha` to finish: one `ctx.poll` under `id`, reading the pull
    * request view on every check. Head-pinned: `success` and `failure` only for `sha`; any other
@@ -472,7 +593,7 @@ function policyOptions(
   );
   if (unknown.length)
     throw new Error(
-      `GitHub reads accept only timeoutMs, maxOutputBytes and retry as policy; got ${unknown.join(', ')}.`,
+      `GitHub reads and writes accept only timeoutMs, maxOutputBytes and retry as policy; got ${unknown.join(', ')}.`,
     );
   return {
     ...(policy.timeoutMs === undefined ? {} : { timeoutMs: policy.timeoutMs }),
@@ -498,14 +619,14 @@ function incompleteConnection(error: ExecError): string | undefined {
 }
 
 /**
- * Typed GitHub reads and waits for `repo`. Each read is one
+ * Typed GitHub reads, waits and reconciled writes for `repo`. Each read is one
  * `ctx.exec.json(id, argv, { schema, meta })` labelled `{ integration: 'github', op }`. A
  * completed read replays forever under its ID: observe new state with a fresh occurrence ID, such
- * as one keyed by round or head SHA, or with a wait. Each wait is one `ctx.poll` under its ID. An
- * invalid `repo` throws here.
+ * as one keyed by round or head SHA, or with a wait. Each wait is one `ctx.poll` under its ID, and
+ * each write one `ctx.step` under its ID. An invalid `repo` throws here.
  */
 export function github(
-  ctx: Pick<WorkflowContext, 'exec' | 'poll'>,
+  ctx: Pick<WorkflowContext, 'exec' | 'poll' | 'step'>,
   options: GithubOptions,
 ): GithubClient {
   const repo = parseGithubRepo(options.repo);
@@ -541,6 +662,17 @@ export function github(
     args.comments === true
       ? read(id, issueCommentsRead(repo, args.number), policy)
       : read(id, issueViewRead(repo, args.number), policy)) as GithubIssueReads['view'];
+  const writes = githubWrites(ctx, repo, {
+    policy: (policy) => policyOptions(policy as GithubWritePolicy | undefined),
+    rethrow: (error, id) => {
+      if (error instanceof ExecError && error.kind === 'schema') {
+        const connection = incompleteConnection(error);
+        if (connection !== undefined)
+          throw new IncompleteCollectionError(connection, id, { cause: error });
+      }
+      throw error;
+    },
+  });
   return {
     repo: {
       info: async (id, policy) => read(id, repoInfoRead(repo), policy),
@@ -551,10 +683,13 @@ export function github(
       reviewThreads: async (id, args, policy) =>
         read(id, reviewThreadsRead(repo, args.number), policy),
     },
-    issue: { view: issueView },
+    issue: { view: issueView, ...writes.issue },
     codeScanning: {
       alerts: async (id, args, policy) => read(id, codeScanningRead(repo, args), policy),
     },
+    comment: writes.comment,
+    thread: writes.thread,
+    alert: writes.alert,
     ...githubWaits(ctx, repo),
   };
 }

@@ -69,13 +69,19 @@ export function parseGithubRepo(spec: string): GithubRepo {
   return { host, owner, name, nameWithOwner: `${owner}/${name}` };
 }
 
-/** `gh api` argv for a repository: `--hostname HOST` follows `api` only for a host-qualified spec. */
-function apiArgv(repo: GithubRepo, ...rest: readonly string[]): [string, ...string[]] {
+/**
+ * `gh api` argv for a repository: `--hostname HOST` follows `api` only for a host-qualified spec.
+ * @internal
+ */
+export function apiArgv(repo: GithubRepo, ...rest: readonly string[]): [string, ...string[]] {
   return ['gh', 'api', ...(repo.host === null ? [] : ['--hostname', repo.host]), ...rest];
 }
 
-/** One GraphQL read: `-f` for strings, `-F` for numbers, `--paginate --slurp` when paginated. */
-function graphqlArgv(
+/**
+ * One GraphQL read: `-f` for strings, `-F` for numbers, `--paginate --slurp` when paginated.
+ * @internal
+ */
+export function graphqlArgv(
   repo: GithubRepo,
   query: string,
   paginated: boolean,
@@ -1340,19 +1346,26 @@ export interface GithubReadSpec<R, T> {
   readonly map: (raw: R) => T;
 }
 
-function positiveInteger(value: unknown, label: string): number {
+/** Throw unless `value` is a positive safe integer. @internal */
+export function positiveInteger(value: unknown, label: string): number {
   if (typeof value !== 'number' || !Number.isSafeInteger(value) || value <= 0)
     throw new Error(`${label} must be a positive integer.`);
   return value;
 }
 
-function text(value: unknown, label: string): string {
+/** Throw unless `value` is a nonempty string without NUL. @internal */
+export function text(value: unknown, label: string): string {
   if (typeof value !== 'string' || value.length === 0 || value.includes('\0'))
     throw new Error(`${label} must be a nonempty string without NUL.`);
   return value;
 }
 
-function choice<const T extends string>(value: unknown, choices: readonly T[], label: string): T {
+/** Throw unless `value` is one of `choices`. @internal */
+export function choice<const T extends string>(
+  value: unknown,
+  choices: readonly T[],
+  label: string,
+): T {
   if (!choices.includes(value as T))
     throw new Error(`${label} must be one of ${choices.join(', ')}.`);
   return value as T;
