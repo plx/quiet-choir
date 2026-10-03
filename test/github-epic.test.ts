@@ -860,6 +860,8 @@ describe('parseEpicChecklist', () => {
     ['anchors are not references', '- [ ] docs/page#15 and x#16', []],
     ['no reference or no checkbox', '- [ ] plain\n- #17 no box\n-[ ] #18 no space', []],
     ['the epic itself skipped', '- [ ] #99 self\n- [ ] #19', [[19, false]]],
+    ['#0 is not an issue', '- [ ] #0 title\n- [ ] #0 then #34', [[34, false]]],
+    ['a number beyond the safe range is not an issue', '- [ ] #99999999999999999999 title', []],
     ['the first line wins', '- [x] #20 first\n- [ ] #20 again', [[20, true]]],
     ['backtick fence', '```\n- [ ] #21\n```\n- [ ] #22', [[22, false]]],
     ['tilde fence with info string', '~~~md\n- [ ] #23\n~~~\n- [ ] #24', [[24, false]]],
@@ -901,6 +903,12 @@ describe('parseDependencies', () => {
     ['other repository skipped', ['Depends on other/repo#11 and #12'], [12]],
     ['marker', ['<!-- epic:depends-on 13, 14 -->'], [13, 14]],
     ['template marker is not one', ['<!-- epic:depends-on a,b -->'], []],
+    ['invalid issue numbers dropped', ['Depends on #0 and #99999999999999999999 and #31'], [31]],
+    [
+      'invalid marker numbers dropped',
+      ['<!-- epic:depends-on 0, 99999999999999999999, 32 -->'],
+      [32],
+    ],
     ['inline code ignored', ['`Depends on #15`'], []],
     ['a double-backtick span holding a backtick', ['``Depends on `#22` `` and #23'], []],
     ['an unmatched backtick stays literal', ['` Depends on #24'], [24]],
@@ -1002,6 +1010,8 @@ describe('parseSplit', () => {
     ['fenced code', [by(VIEWER, '~~~\n<!-- epic:split 13 -->\n~~~')], null],
     ['self excluded and duplicates removed', [by(VIEWER, '<!-- epic:split 42, 14, 14 -->')], [14]],
     ['only self', [by(VIEWER, '<!-- epic:split 42 -->')], null],
+    ['invalid numbers dropped', [by(VIEWER, '<!-- epic:split 0,3 -->')], [3]],
+    ['only invalid numbers', [by(VIEWER, '<!-- epic:split 0, 99999999999999999999 -->')], null],
   ])('%s', (_name, comments, expected) => {
     expect(parseSplit(comments, VIEWER, 42)).toEqual(expected);
   });

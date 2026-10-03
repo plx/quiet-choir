@@ -297,16 +297,25 @@ const NUMBER_LIST = String.raw`(\d+(?:\s*,\s*\d+)*)`;
 const DEP_MARKER = new RegExp(String.raw`<!--\s*epic:depends-on\s+${NUMBER_LIST}\s*-->`, 'giu');
 const SPLIT_MARKER = new RegExp(String.raw`<!--\s*epic:split\s+${NUMBER_LIST}\s*-->`, 'giu');
 
-const numbersIn = (text: string): number[] => (text.match(/\d+/gu) ?? []).map(Number);
+/** Whether `number` can be an issue number: a positive safe integer, as GitHub reads require. */
+const isIssueNumber = (number: number): boolean => Number.isSafeInteger(number) && number > 0;
+/** The issue numbers in a marker's list; `0` and numbers beyond the safe range are dropped. */
+const numbersIn = (text: string): number[] =>
+  (text.match(/\d+/gu) ?? []).map(Number).filter(isIssueNumber);
 const sameRepository = (a: string, b: string): boolean => a.toLowerCase() === b.toLowerCase();
 const lines = (text: string): string[] => text.split(/\r?\n/u);
 
-/** `repo`'s issue numbers referenced in `text`, in order; other repositories are skipped. */
+/**
+ * `repo`'s issue numbers referenced in `text`, in order; other repositories are skipped, and so are
+ * `#0` and numbers beyond the safe range, which name no issue.
+ */
 function ownRefs(text: string, repo: string): number[] {
   const found: number[] = [];
   for (const match of text.matchAll(new RegExp(REF, 'gu'))) {
     const qualifier = match[1];
-    if (qualifier === undefined || sameRepository(qualifier, repo)) found.push(Number(match[2]));
+    const number = Number(match[2]);
+    if ((qualifier === undefined || sameRepository(qualifier, repo)) && isIssueNumber(number))
+      found.push(number);
   }
   return found;
 }

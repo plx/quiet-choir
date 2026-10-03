@@ -191,7 +191,8 @@ blocked from a ready one.
   removed from a line before it is read. Each line counts for its first reference to the repository,
   `#N` or `OWNER/REPO#N` (compared case-insensitively); lines naming only other repositories,
   anchors such as `page#12`, and the epic itself are skipped, and the first line wins when a number
-  is listed twice.
+  is listed twice. Everywhere, `#0` and numbers beyond JavaScript's safe-integer range name no issue
+  and are skipped, in references and in markers alike.
 - **Dependencies** (`dependsOn`), from an item's body and all its comments, by any author, with code
   removed: the phrases "depends on", "blocked by" and "requires" followed by a list such as
   `#4, #5 and #6`, and the marker `<!-- epic:depends-on 3,4 -->`. Only the repository's issues
