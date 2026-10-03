@@ -121,17 +121,8 @@ query($owner: String!, $name: String!) {
   }
 }`);
 
-/** One pull request with its closing issues and the last commit's check rollup. @internal */
-export const PR_VIEW_QUERY: string = compact(`
-query($owner: String!, $name: String!, $number: Int!) {
-  repository(owner: $owner, name: $name) {
-    pullRequest(number: $number) {
-      number title url body state isDraft mergeable mergeStateStatus
-      headRefOid headRefName baseRefName
-      closingIssuesReferences(first: 100) {
-        pageInfo { hasNextPage }
-        nodes { number repository { nameWithOwner } }
-      }
+/** The last commit's SHA and check rollup, shared by `pr.view` and the waits' `pr.head`. */
+const lastCommitRollup = `
       commits(last: 1) {
         nodes {
           commit {
@@ -151,7 +142,20 @@ query($owner: String!, $name: String!, $number: Int!) {
             }
           }
         }
+      }`;
+
+/** One pull request with its closing issues and the last commit's check rollup. @internal */
+export const PR_VIEW_QUERY: string = compact(`
+query($owner: String!, $name: String!, $number: Int!) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) {
+      number title url body state isDraft mergeable mergeStateStatus
+      headRefOid headRefName baseRefName
+      closingIssuesReferences(first: 100) {
+        pageInfo { hasNextPage }
+        nodes { number repository { nameWithOwner } }
       }
+      ${lastCommitRollup}
     }
   }
 }`);
@@ -632,6 +636,40 @@ const checkContext = z.discriminatedUnion('__typename', [
   }),
 ]);
 
+/** The last commit and its check rollup, as `pr.view` and `pr.head` select it. */
+const lastCommit = z.object({
+  nodes: z.array(
+    z.object({
+      commit: z.object({
+        oid: z.string(),
+        statusCheckRollup: z
+          .object({ state: z.string(), contexts: connection(checkContext) })
+          .nullable(),
+      }),
+    }),
+  ),
+});
+
+/** Flag a truncated check rollup of the last commit. */
+function incompleteContexts(
+  ctx: z.RefinementCtx,
+  commits: RawPullRequest['commits'],
+  at: readonly string[],
+): void {
+  commits.nodes.forEach((node, index) => {
+    if (node.commit.statusCheckRollup?.contexts.pageInfo.hasNextPage)
+      incomplete(ctx, 'pullRequest.commits.statusCheckRollup.contexts', [
+        ...at,
+        'commits',
+        'nodes',
+        index,
+        'commit',
+        'statusCheckRollup',
+        'contexts',
+      ]);
+  });
+}
+
 /** Schema of the `pr.view` response; truncated closing issues or checks fail it. */
 export const pullRequestViewResponseSchema: z.ZodType<RawPullRequestViewResponse> = z
   .object({
@@ -655,18 +693,7 @@ export const pullRequestViewResponseSchema: z.ZodType<RawPullRequestViewResponse
               repository: z.object({ nameWithOwner: z.string() }),
             }),
           ),
-          commits: z.object({
-            nodes: z.array(
-              z.object({
-                commit: z.object({
-                  oid: z.string(),
-                  statusCheckRollup: z
-                    .object({ state: z.string(), contexts: connection(checkContext) })
-                    .nullable(),
-                }),
-              }),
-            ),
-          }),
+          commits: lastCommit,
         }),
       }),
     }),
@@ -676,18 +703,7 @@ export const pullRequestViewResponseSchema: z.ZodType<RawPullRequestViewResponse
     const at = ['data', 'repository', 'pullRequest'];
     if (pr.closingIssuesReferences.pageInfo.hasNextPage)
       incomplete(ctx, 'pullRequest.closingIssuesReferences', [...at, 'closingIssuesReferences']);
-    pr.commits.nodes.forEach((node, index) => {
-      if (node.commit.statusCheckRollup?.contexts.pageInfo.hasNextPage)
-        incomplete(ctx, 'pullRequest.commits.statusCheckRollup.contexts', [
-          ...at,
-          'commits',
-          'nodes',
-          index,
-          'commit',
-          'statusCheckRollup',
-          'contexts',
-        ]);
-    });
+    incompleteContexts(ctx, pr.commits, at);
   });
 
 /**
@@ -1204,10 +1220,13 @@ export function mapPullRequest(raw: RawPullRequestViewResponse): GithubPullReque
       number: issue.number,
       repository: issue.repository.nameWithOwner,
     })),
-    checks: summarizeChecks(
-      pr.commits.nodes.at(-1)?.commit.statusCheckRollup?.contexts.nodes ?? [],
-    ),
+    checks: lastCommitChecks(pr.commits),
   };
+}
+
+/** The summarized checks of the last commit's rollup. */
+function lastCommitChecks(commits: RawPullRequest['commits']): GithubChecks {
+  return summarizeChecks(commits.nodes.at(-1)?.commit.statusCheckRollup?.contexts.nodes ?? []);
 }
 
 /** @internal */
@@ -1492,6 +1511,21 @@ export function codeScanningRead(
 // ---------------------------------------------------------------------------------------------
 // Wait reads (ADR 0045): the pull request's head and state, REST review activity and compare
 
+/**
+ * A pull request's number, state, head and last commit's check rollup, for `waitChecks` and
+ * `waitReview`: no title, body or closing issues, so only truncated check contexts fail it.
+ * @internal
+ */
+export const PR_HEAD_QUERY: string = compact(`
+query($owner: String!, $name: String!, $number: Int!) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) {
+      number state headRefOid
+      ${lastCommitRollup}
+    }
+  }
+}`);
+
 /** A pull request's state, head and merge commit, for `waitPr`. @internal */
 export const PR_STATE_QUERY: string = compact(`
 query($owner: String!, $name: String!, $number: Int!) {
@@ -1553,6 +1587,18 @@ export type RawRestReviewsResponse = readonly RawRestReview[];
 /** `gh api --paginate .../issues/N/reactions` response: every page merged into one array. */
 export type RawRestReactionsResponse = readonly RawRestReaction[];
 
+/** The `pr.head` read of `waitChecks` and `waitReview`. */
+export interface RawPullRequestHeadResponse {
+  /** GraphQL data. */
+  readonly data: {
+    /** The repository. */
+    readonly repository: {
+      /** The pull request. */
+      readonly pullRequest: Pick<RawPullRequest, 'number' | 'state' | 'headRefOid' | 'commits'>;
+    };
+  };
+}
+
 /** The pull request state read of `waitPr`. */
 export interface RawPullRequestStateResponse {
   /** GraphQL data. */
@@ -1610,6 +1656,28 @@ export const restReviewsResponseSchema: z.ZodType<RawRestReviewsResponse> = z.ar
 export const restReactionsResponseSchema: z.ZodType<RawRestReactionsResponse> = z.array(
   z.object({ user: restUser, content: z.string(), created_at: z.string() }),
 );
+
+/** Schema of the `pr.head` read; only truncated check contexts fail it. */
+export const pullRequestHeadResponseSchema: z.ZodType<RawPullRequestHeadResponse> = z
+  .object({
+    data: z.object({
+      repository: z.object({
+        pullRequest: z.object({
+          number: issueNumber,
+          state: z.string(),
+          headRefOid: z.string(),
+          commits: lastCommit,
+        }),
+      }),
+    }),
+  })
+  .superRefine((response, ctx) => {
+    incompleteContexts(ctx, response.data.repository.pullRequest.commits, [
+      'data',
+      'repository',
+      'pullRequest',
+    ]);
+  });
 
 /** Schema of the `waitPr` state read. */
 export const pullRequestStateResponseSchema: z.ZodType<RawPullRequestStateResponse> = z.object({
@@ -1696,14 +1764,14 @@ export interface GithubPullRequestState {
 const restLogin = (user: RawRestUser | null): string => user?.login ?? 'ghost';
 
 /** @internal */
-export function mapPullRequestHead(raw: RawPullRequestViewResponse): GithubPullRequestHead {
+export function mapPullRequestHead(raw: RawPullRequestHeadResponse): GithubPullRequestHead {
   const pr = raw.data.repository.pullRequest;
   return {
     number: pr.number,
     state: pr.state,
     headRefOid: pr.headRefOid,
     rollupOid: pr.commits.nodes.at(-1)?.commit.oid ?? null,
-    checks: mapPullRequest(raw).checks,
+    checks: lastCommitChecks(pr.commits),
   };
 }
 
@@ -1754,12 +1822,23 @@ export function commitSha(value: unknown, label: string): string {
   return value;
 }
 
-/** `pr.view`'s argv and schema, mapped to the head, rollup commit and checks. @internal */
+/** `pr.head`: the pull request's state, head, rollup commit and checks. @internal */
 export function prHeadRead(
   repo: GithubRepo,
   number: unknown,
-): GithubReadSpec<RawPullRequestViewResponse, GithubPullRequestHead> {
-  return { ...prViewRead(repo, number), map: mapPullRequestHead };
+): GithubReadSpec<RawPullRequestHeadResponse, GithubPullRequestHead> {
+  return {
+    op: 'pr.head',
+    argv: graphqlArgv(
+      repo,
+      PR_HEAD_QUERY,
+      false,
+      {},
+      { number: positiveInteger(number, 'pr.head number') },
+    ),
+    schema: pullRequestHeadResponseSchema,
+    map: mapPullRequestHead,
+  };
 }
 
 /** @internal */

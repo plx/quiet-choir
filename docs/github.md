@@ -136,17 +136,19 @@ such rules from a completed run, since the checkpoint holds the validated raw re
 
 | Wait                                                      | Each check reads                                                          | Result `status`                                                      |
 | --------------------------------------------------------- | ------------------------------------------------------------------------- | -------------------------------------------------------------------- |
-| `waitChecks(id, { pr, sha, timeoutMs \| deadline, ... })` | `pr.view` (plus a compare inside the stale grace)                         | `success`, `failure`, `no-checks`, `head-moved`, `closed`, `timeout` |
+| `waitChecks(id, { pr, sha, timeoutMs \| deadline, ... })` | `pr.head` (plus a compare inside the stale grace)                         | `success`, `failure`, `no-checks`, `head-moved`, `closed`, `timeout` |
 | `waitPr(id, { pr, sha, until, timeoutMs \| deadline })`   | One GraphQL read of state, head and merge commit (a command poll)         | `merged`, `closed`, `head-moved`, `timeout`                          |
-| `waitReview(id, { pr, sha, since, reviewers, ... })`      | `pr.view`, then the comments, reviews, reactions or alerts reviewers need | `clean`, `findings`, `error`, `head-moved`, `closed`, `timeout`      |
+| `waitReview(id, { pr, sha, since, reviewers, ... })`      | `pr.head`, then the comments, reviews, reactions or alerts reviewers need | `clean`, `findings`, `error`, `head-moved`, `closed`, `timeout`      |
 
 Each wait is exactly one `ctx.poll` under your ID, so it leaves one `wait` record however many
 checks it makes, suspends and resumes through `workflow tick` like any poll, and replays its result
 without reading GitHub. Its reads run inside the observation through `context.exec`; they are not
-steps. Exactly one of `timeoutMs` and `deadline` is required; at the bound the wait returns
-`timeout` with its last progress instead of a raw deadline outcome. `sha` is the full 40-character
-lowercase hex head SHA, compared with GitHub's full head SHA; a wait throws on an abbreviated one
-before it opens, since it could never match.
+steps. `pr.head` is one GraphQL read of the pull request's number, state, head and last commit's
+check rollup, without the title, body or closing issues; only truncated check contexts fail it.
+Exactly one of `timeoutMs` and `deadline` is required; at the bound the wait returns `timeout` with
+its last progress instead of a raw deadline outcome. `sha` is the full 40-character lowercase hex
+head SHA, compared with GitHub's full head SHA; a wait throws on an abbreviated one before it opens,
+since it could never match.
 
 - `waitChecks` returns `{ status, headRefOid, failed: [{ name, url, runId }], pending }`. It rolls
   up the checks of the head with the rules of `summarizeChecks`: `failure` only once nothing is
@@ -260,9 +262,10 @@ rehearsed `waitChecks`, `waitReview` or `waitPr` with `until: 'merged'` reports 
 `until: 'closed'` suspends at its first check); quiet-choir does not special-case rehearsals. To
 rehearse another path, answer the wait's reads with
 [exec fixture rules](rehearsal.md#command-fixtures) matching the wait's ID and each read's argv (for
-example the GraphQL `query=` argument or the REST path), with raw `gh` responses: the `pr.view`
-response with `headRefOid` set to `sha`, a JSON array for the REST comments, reviews and reactions,
-and `{ data: { repository: { pullRequest } } }` with `state`, `headRefOid` and `mergeCommit` for
+example the GraphQL `query=` argument or the REST path), with raw `gh` responses: the `pr.head`
+response (`{ data: { repository: { pullRequest } } }` with `number`, `state`, `headRefOid` set to
+`sha` and `commits`), a JSON array for the REST comments, reviews and reactions, and
+`{ data: { repository: { pullRequest } } }` with `state`, `headRefOid` and `mergeCommit` for
 `waitPr`.
 
 ## Gate example

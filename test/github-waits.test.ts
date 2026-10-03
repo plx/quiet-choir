@@ -105,8 +105,11 @@ const checkRun = (
 });
 const green = [checkRun('Quality and package'), checkRun('CodeQL')];
 
-/** The recorded `pr.view` response with another head, rollup commit, state and checks. */
-function prView(
+/**
+ * The recorded `pr.view` response projected to the fields `pr.head` selects, with another head,
+ * rollup commit, state and checks.
+ */
+function prHead(
   options: {
     readonly head?: string;
     readonly rollup?: string;
@@ -114,33 +117,37 @@ function prView(
     readonly checks?: readonly RawCheckContext[];
   } = {},
 ): unknown {
-  const raw = json('pr-view.json') as {
+  const recorded = json('pr-view.json') as {
+    data: { repository: { pullRequest: { number: number } } };
+  };
+  const head = options.head ?? SHA;
+  const checks = options.checks ?? green;
+  return {
     data: {
       repository: {
         pullRequest: {
-          headRefOid: string;
-          state: string;
-          commits: { nodes: { commit: { oid: string; statusCheckRollup: unknown } }[] };
-        };
-      };
-    };
-  };
-  const pr = raw.data.repository.pullRequest;
-  const head = options.head ?? SHA;
-  pr.headRefOid = head;
-  pr.state = options.state ?? 'OPEN';
-  const checks = options.checks ?? green;
-  pr.commits.nodes = [
-    {
-      commit: {
-        oid: options.rollup ?? head,
-        statusCheckRollup: checks.length
-          ? { state: 'PENDING', contexts: { pageInfo: { hasNextPage: false }, nodes: checks } }
-          : null,
+          number: recorded.data.repository.pullRequest.number,
+          state: options.state ?? 'OPEN',
+          headRefOid: head,
+          commits: {
+            nodes: [
+              {
+                commit: {
+                  oid: options.rollup ?? head,
+                  statusCheckRollup: checks.length
+                    ? {
+                        state: 'PENDING',
+                        contexts: { pageInfo: { hasNextPage: false }, nodes: checks },
+                      }
+                    : null,
+                },
+              },
+            ],
+          },
+        },
       },
     },
-  ];
-  return raw;
+  };
 }
 const prState = (state: string, head = SHA, merge: string | null = null) => ({
   data: {
@@ -222,7 +229,8 @@ function readOf(argv: readonly string[]): string {
   if (query.includes('viewer {')) return 'repo.info';
   if (query.includes('reviewThreads(')) return 'pr.reviewThreads';
   if (query.includes('mergeCommit')) return 'pr.state';
-  if (query.includes('pullRequest(number')) return 'pr.view';
+  if (query.includes('closingIssuesReferences')) return 'pr.view';
+  if (query.includes('pullRequest(number')) return 'pr.head';
   if (path.includes('/compare/')) return 'repo.compare';
   if (path.includes('/code-scanning/alerts')) return 'codeScanning.alerts';
   if (/\/issues\/\d+\/comments/u.test(path)) return 'issue.comments';
@@ -269,7 +277,8 @@ const path = argv.find((arg) => arg.startsWith('repos/')) ?? '';
 const read = query.includes('viewer {') ? 'repo.info'
   : query.includes('reviewThreads(') ? 'pr.reviewThreads'
   : query.includes('mergeCommit') ? 'pr.state'
-  : query.includes('pullRequest(number') ? 'pr.view'
+  : query.includes('closingIssuesReferences') ? 'pr.view'
+  : query.includes('pullRequest(number') ? 'pr.head'
   : path.includes('/compare/') ? 'repo.compare'
   : path.includes('/code-scanning/alerts') ? 'codeScanning.alerts'
   : /\\/issues\\/\\d+\\/comments/.test(path) ? 'issue.comments'
@@ -940,8 +949,76 @@ describe('waitPr', () => {
 });
 
 describe('waitChecks', () => {
+  it('reads only the head, so over 100 closing issues fail neither waitChecks nor waitReview', async () => {
+    // A pr.view-shaped reply whose closing issues are truncated: the head read ignores them.
+    const full = json('pr-view.json') as {
+      data: {
+        repository: {
+          pullRequest: {
+            closingIssuesReferences: { pageInfo: { hasNextPage: boolean } };
+            commits: unknown;
+            headRefOid: string;
+            state: string;
+          };
+        };
+      };
+    };
+    const pr = full.data.repository.pullRequest;
+    pr.closingIssuesReferences.pageInfo.hasNextPage = true;
+    pr.headRefOid = SHA;
+    pr.state = 'OPEN';
+    pr.commits = (prHead() as typeof full).data.repository.pullRequest.commits;
+    const { runner, log } = inProcess({
+      'pr.head': [{ json: full }],
+      'issue.comments': [{ json: [] }],
+      ...finalReads,
+    });
+    const queries: string[] = [];
+    const spy: ProcessRunner = {
+      run: (request, invocation) => {
+        const query = (request.command as readonly string[]).find((arg) =>
+          arg.startsWith('query='),
+        );
+        if (query !== undefined) queries.push(query);
+        return runner.run(request, invocation);
+      },
+    };
+    const checks = await run(
+      (gh) => gh.waitChecks('ci', { pr: 338, sha: SHA, every: 5, timeoutMs: 60_000 }),
+      spy,
+      'checks',
+    );
+    expect(checks.output).toMatchObject({ status: 'success', headRefOid: SHA });
+    const done: ReviewerBot = {
+      name: 'done',
+      login: 'done-bot[bot]',
+      reads: ['comments'],
+      identity: { done: 1 },
+      observe: () => ({ status: 'clean' }),
+    };
+    const review = await run(
+      (gh) =>
+        gh.waitReview('review', {
+          pr: 338,
+          sha: SHA,
+          since: SINCE,
+          reviewers: [done],
+          every: 5,
+          timeoutMs: 60_000,
+        }),
+      spy,
+      'review',
+    );
+    expect(review.output).toMatchObject({ status: 'clean', headRefOid: SHA });
+    expect(log.filter((read) => read === 'pr.head')).toHaveLength(2);
+    const head = queries.filter((query) => query.includes('headRefOid commits'));
+    expect(head).toHaveLength(2);
+    for (const query of head)
+      expect(query).not.toMatch(/closingIssuesReferences|\bbody\b|\btitle\b/u);
+  });
+
   it('reports no-checks only after graceMs', async () => {
-    const { runner, log } = inProcess({ 'pr.view': [{ json: prView({ checks: [] }) }] });
+    const { runner, log } = inProcess({ 'pr.head': [{ json: prHead({ checks: [] }) }] });
     const started = Date.now();
     const result = await run(
       (gh) =>
@@ -959,8 +1036,8 @@ describe('waitChecks', () => {
   });
 
   it('maps the deadline to timeout with the last progress', async () => {
-    const pending = prView({ checks: [checkRun('Quality'), checkRun('Tests', null)] });
-    const { runner } = inProcess({ 'pr.view': [{ json: pending }] });
+    const pending = prHead({ checks: [checkRun('Quality'), checkRun('Tests', null)] });
+    const { runner } = inProcess({ 'pr.head': [{ json: pending }] });
     const result = await run(
       (gh) => gh.waitChecks('ci', { pr: 338, sha: SHA, every: 10, timeoutMs: 100 }),
       runner,
@@ -986,7 +1063,7 @@ describe('waitChecks', () => {
       ],
     ] as const) {
       const { runner, log } = inProcess({
-        'pr.view': [{ json: prView({ head: ANCESTOR }) }],
+        'pr.head': [{ json: prHead({ head: ANCESTOR }) }],
         'repo.compare': [compare],
       });
       const result = await run(
@@ -1007,13 +1084,13 @@ describe('waitChecks', () => {
         failed: [],
         pending: [],
       });
-      expect(log).toEqual(['pr.view', 'repo.compare']);
+      expect(log).toEqual(['pr.head', 'repo.compare']);
     }
   });
 
   it('fails on bad credentials from the compare instead of calling the head moved', async () => {
     const { runner } = inProcess({
-      'pr.view': [{ json: prView({ head: ANCESTOR }) }],
+      'pr.head': [{ json: prHead({ head: ANCESTOR }) }],
       'repo.compare': [{ code: 1, stdout: fixture('bad-credentials.json') }],
     });
     await expect(
@@ -1033,7 +1110,7 @@ describe('waitChecks', () => {
 
   it('fails after tolerate + 1 consecutive transient errors with the gh error', async () => {
     const bad = { code: 1, stdout: '', stderr: 'gh: HTTP 502: Bad Gateway' };
-    const { runner, log } = inProcess({ 'pr.view': [bad, bad, bad, { json: prView() }] });
+    const { runner, log } = inProcess({ 'pr.head': [bad, bad, bad, { json: prHead() }] });
     await expect(
       run(
         (gh) =>
@@ -1041,12 +1118,12 @@ describe('waitChecks', () => {
         runner,
       ),
     ).rejects.toThrow('Command exited with 1.');
-    expect(log).toEqual(['pr.view', 'pr.view', 'pr.view']);
+    expect(log).toEqual(['pr.head', 'pr.head', 'pr.head']);
     expect((await readRun(setup())).status).toBe('failed');
   });
 
   it('fails at once on an incomplete collection', async () => {
-    const view = prView() as {
+    const view = prHead() as {
       data: {
         repository: {
           pullRequest: {
@@ -1062,7 +1139,7 @@ describe('waitChecks', () => {
     first(
       view.data.repository.pullRequest.commits.nodes,
     ).commit.statusCheckRollup.contexts.pageInfo.hasNextPage = true;
-    const { runner, log } = inProcess({ 'pr.view': [{ json: view }] });
+    const { runner, log } = inProcess({ 'pr.head': [{ json: view }] });
     let thrown: unknown;
     await expect(
       run(async (gh) => {
@@ -1079,7 +1156,7 @@ describe('waitChecks', () => {
       connection: 'pullRequest.commits.statusCheckRollup.contexts',
       stepId: 'ci',
     });
-    expect(log).toEqual(['pr.view']);
+    expect(log).toEqual(['pr.head']);
   });
 });
 
@@ -1216,7 +1293,7 @@ describe('arguments', () => {
 describe('waitReview', () => {
   /** Codex pending, then Completed twice: clean on the third check. */
   const codexClean = (): Scenario => ({
-    'pr.view': [{ json: prView() }],
+    'pr.head': [{ json: prHead() }],
     'issue.comments': [{ json: comments().slice(1, 3) }, { json: comments() }],
     'pr.reviews': [{ json: json('rest-reviews.json') }],
     'issue.reactions': [{ json: [] }],
@@ -1287,12 +1364,12 @@ describe('waitReview', () => {
       untriagedThreads: [],
       openAlerts: [],
     });
-    expect(log.filter((read) => read === 'pr.view')).toHaveLength(3);
+    expect(log.filter((read) => read === 'pr.head')).toHaveLength(3);
   });
 
   it('reports untriaged threads by viewer and open alerts once every reviewer is final', async () => {
     const { runner } = inProcess({
-      'pr.view': [{ json: prView() }],
+      'pr.head': [{ json: prHead() }],
       'issue.comments': [{ json: [] }],
       'pr.reviews': [{ json: [] }],
       'issue.reactions': [{ json: json('rest-reactions.json') }],
@@ -1328,7 +1405,7 @@ describe('waitReview', () => {
   });
 
   it('reports closed for a pull request closed before the reviewers finish', async () => {
-    const { runner } = inProcess({ 'pr.view': [{ json: prView({ state: 'CLOSED' }) }] });
+    const { runner } = inProcess({ 'pr.head': [{ json: prHead({ state: 'CLOSED' }) }] });
     const result = await run(
       (gh) =>
         gh.waitReview('review', {
@@ -1352,7 +1429,7 @@ describe('waitReview', () => {
 
   it('maps the deadline to timeout with the last status of each reviewer', async () => {
     const { runner } = inProcess({
-      'pr.view': [{ json: prView() }],
+      'pr.head': [{ json: prHead() }],
       'issue.comments': [{ json: [summary('⏳ **Running**')] }],
       'pr.reviews': [{ json: [] }],
       'issue.reactions': [{ json: [] }],
@@ -1380,7 +1457,7 @@ describe('waitReview', () => {
 
   it('keeps reviewers waiting through a stale view inside the grace', async () => {
     const { runner, log } = inProcess({
-      'pr.view': [{ json: prView({ head: ANCESTOR }) }, { json: prView() }],
+      'pr.head': [{ json: prHead({ head: ANCESTOR }) }, { json: prHead() }],
       'repo.compare': [{ stdout: fixture('compare-ahead.json') }],
       'issue.comments': [{ json: [] }],
       'pr.reviews': [{ json: [] }],
@@ -1401,7 +1478,7 @@ describe('waitReview', () => {
       runner,
     );
     expect(result.output).toMatchObject({ status: 'clean', headRefOid: SHA });
-    expect(log.slice(0, 3)).toEqual(['pr.view', 'repo.compare', 'pr.view']);
+    expect(log.slice(0, 3)).toEqual(['pr.head', 'repo.compare', 'pr.head']);
   });
 
   it('fails the wait when a reviewer throws, without tolerating it', async () => {
@@ -1428,7 +1505,7 @@ describe('waitReview', () => {
         runner,
       ),
     ).rejects.toThrow('reviewer bug');
-    expect(log.filter((read) => read === 'pr.view')).toHaveLength(1);
+    expect(log.filter((read) => read === 'pr.head')).toHaveLength(1);
   });
 });
 
@@ -1436,10 +1513,10 @@ describe('one wait record per wait', () => {
   it.each(['checks', 'pr', 'review'] as const)(
     'records one %s wait step over three checks and no exec steps',
     async (kind) => {
-      const pending = prView({ checks: [checkRun('Tests', null)] });
+      const pending = prHead({ checks: [checkRun('Tests', null)] });
       const scenario: Scenario =
         kind === 'checks'
-          ? { 'pr.view': [{ json: pending }, { json: pending }, { json: prView() }] }
+          ? { 'pr.head': [{ json: pending }, { json: pending }, { json: prHead() }] }
           : kind === 'pr'
             ? {
                 'pr.state': [
@@ -1449,7 +1526,7 @@ describe('one wait record per wait', () => {
                 ],
               }
             : {
-                'pr.view': [{ json: prView() }],
+                'pr.head': [{ json: prHead() }],
                 'issue.comments': [{ json: [] }, { json: comments() }],
                 'pr.reviews': [{ json: [] }],
                 'issue.reactions': [{ json: [] }],
@@ -1495,7 +1572,7 @@ describe('fake gh scenarios', { timeout: 10_000 }, () => {
 
   it('reports findings when a review follows a Completed summary on the next check', async () => {
     fake = await fakeGh({
-      'pr.view': [{ json: prView() }],
+      'pr.head': [{ json: prHead() }],
       'issue.comments': [{ json: comments() }],
       'pr.reviews': [
         { json: json('rest-reviews.json') },
@@ -1528,14 +1605,14 @@ describe('fake gh scenarios', { timeout: 10_000 }, () => {
       untriagedThreads: [],
       openAlerts: [],
     });
-    expect((await fake.log()).filter((read) => read === 'pr.view')).toHaveLength(2);
+    expect((await fake.log()).filter((read) => read === 'pr.head')).toHaveLength(2);
   });
 
   it('reports head-moved when the head moves mid-wait', async () => {
     fake = await fakeGh({
-      'pr.view': [
-        { json: prView({ checks: [checkRun('Tests', null)] }) },
-        { json: prView({ head: OTHER }) },
+      'pr.head': [
+        { json: prHead({ checks: [checkRun('Tests', null)] }) },
+        { json: prHead({ head: OTHER }) },
       ],
     });
     const result = await run(
@@ -1548,13 +1625,13 @@ describe('fake gh scenarios', { timeout: 10_000 }, () => {
       failed: [],
       pending: [],
     });
-    expect(await fake.log()).toEqual(['pr.view', 'pr.view']);
+    expect(await fake.log()).toEqual(['pr.head', 'pr.head']);
   });
 
   it('counts a CodeQL alert that lands within settleMs after the check completes', async () => {
     fake = await fakeGh({
-      'pr.view': [
-        { json: prView({ checks: [checkRun('Quality'), checkRun('CodeQL', 'FAILURE')] }) },
+      'pr.head': [
+        { json: prHead({ checks: [checkRun('Quality'), checkRun('CodeQL', 'FAILURE')] }) },
       ],
       // The check has completed at the first check, but the alert appears only on the next read.
       'codeScanning.alerts': [{ json: [] }, { json: openAlerts(7) }],
@@ -1587,13 +1664,13 @@ describe('fake gh scenarios', { timeout: 10_000 }, () => {
 
   it('tolerates one 502 and continues', async () => {
     fake = await fakeGh({
-      'pr.view': [
+      'pr.head': [
         {
           code: 1,
           stdout: '',
           stderr: 'gh: HTTP 502: Bad Gateway (https://api.github.com/graphql)\n',
         },
-        { json: prView() },
+        { json: prHead() },
       ],
     });
     const result = await run(
@@ -1601,7 +1678,7 @@ describe('fake gh scenarios', { timeout: 10_000 }, () => {
       fake.runner,
     );
     expect(result.output).toEqual({ status: 'success', headRefOid: SHA, failed: [], pending: [] });
-    expect(await fake.log()).toEqual(['pr.view', 'pr.view']);
+    expect(await fake.log()).toEqual(['pr.head', 'pr.head']);
     const wait = (await readRun(setup())).steps['ci']?.wait;
     expect(wait?.checks).toBe(2);
     expect(wait?.lastError).toBeUndefined();
@@ -1609,7 +1686,7 @@ describe('fake gh scenarios', { timeout: 10_000 }, () => {
 
   it('keeps polling through a stale ancestor head and succeeds once the head is sha', async () => {
     fake = await fakeGh({
-      'pr.view': [{ json: prView({ head: ANCESTOR }) }, { json: prView() }],
+      'pr.head': [{ json: prHead({ head: ANCESTOR }) }, { json: prHead() }],
       'repo.compare': [{ stdout: fixture('compare-ahead.json') }],
     });
     const result = await run(
@@ -1624,7 +1701,7 @@ describe('fake gh scenarios', { timeout: 10_000 }, () => {
       fake.runner,
     );
     expect(result.output).toEqual({ status: 'success', headRefOid: SHA, failed: [], pending: [] });
-    expect(await fake.log()).toEqual(['pr.view', 'repo.compare', 'pr.view']);
+    expect(await fake.log()).toEqual(['pr.head', 'repo.compare', 'pr.head']);
   });
 });
 
@@ -1674,7 +1751,7 @@ describe('workflow files', { timeout: 20_000 }, () => {
     const analysis = analyzeTypecheckEntrypoint(file, cwd);
     if (!analysis.ok) throw new Error(analysis.error.message);
     const { runner, log } = inProcess({
-      'pr.view': [{ json: prView() }],
+      'pr.head': [{ json: prHead() }],
       'issue.comments': [{ json: comments() }],
       'pr.reviews': [{ json: json('rest-reviews.json') }],
       'issue.reactions': [{ json: json('rest-reactions.json') }],
@@ -1696,14 +1773,14 @@ describe('workflow files', { timeout: 20_000 }, () => {
     });
     if (!result.ok) throw new Error(JSON.stringify(result));
     expect(result).toMatchObject({ run: { status: 'completed', output: 'land' } });
-    expect(log.filter((read) => read === 'pr.view')).toHaveLength(2);
+    expect(log.filter((read) => read === 'pr.head')).toHaveLength(2);
     const steps = (await readRun({ stateDir: join(cwd, 'state'), runId: 'gate' })).steps;
     expect(Object.keys(steps).sort()).toEqual(['ci', 'review', 'since']);
   });
 
   it('keeps the Codex two-check debounce across a suspend and a workflow tick', async () => {
     const gh = await fakeGh({
-      'pr.view': [{ json: prView() }],
+      'pr.head': [{ json: prHead() }],
       'issue.comments': [{ json: comments() }],
       'pr.reviews': [{ json: json('rest-reviews.json') }],
       'issue.reactions': [{ json: [] }],
@@ -1761,7 +1838,7 @@ export default defineWorkflow({
         by: [{ name: 'codex', status: 'clean', detail: { via: 'summary' } }],
       });
       expect(done.steps['review']?.wait?.checks).toBe(2);
-      expect((await gh.log()).filter((read) => read === 'pr.view')).toHaveLength(2);
+      expect((await gh.log()).filter((read) => read === 'pr.head')).toHaveLength(2);
     } finally {
       await gh.gh.dispose();
     }

@@ -16,8 +16,11 @@
   consecutive transient gh errors by default, classified from typed facts. `codexReviewer()` and
   `codeqlReviewer({ settleMs, checkName })` port `merge-down-pr`'s rules, with Codex's two-check
   debounce and the CodeQL settle start kept in the wait's note, so they survive suspend and tick.
-  Grace, stale grace and settle use the wall clock, not `RunOptions.clock`. `github(ctx, ...)` now
-  takes `Pick<WorkflowContext, 'exec' | 'poll'>`, so a caller passing a context with only `exec`
+  Codex judges every summary row for `sha`, and CodeQL's `no analysis found` waits for the check and
+  settle window instead of passing at once. `waitChecks` and `waitReview` read the head through a
+  focused `pr.head` GraphQL read, so unrelated truncated fields such as closing issues never fail
+  them. Grace, stale grace and settle use the wall clock, not `RunOptions.clock`. `github(ctx, ...)`
+  now takes `Pick<WorkflowContext, 'exec' | 'poll'>`, so a caller passing a context with only `exec`
   must also pass `poll`. The new REST and state response schemas and `Raw*` types are exported.
 - Built-in helpers can give a poll an internal versioned identity (`poll-identity.ts`, a registry
   symbol): its wait request's `observe` digest is then that value's, not the observer's or `done`'s
