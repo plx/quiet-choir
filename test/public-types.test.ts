@@ -101,8 +101,8 @@ function emitDeclarations(cwd: string, project: string, outDir: string): Promise
 }
 
 describe('published declarations', () => {
-  // measured: 1.3 s alone and up to 4.8 s in a full parallel coverage run (two tsc processes);
-  // CI's Node 22.13 leg is checked against this value on the PR.
+  // Fits the default timeout: 0.8 s alone and 0.9 s in a full coverage run (one native tsc emit and
+  // one compile).
   it('type every runtime export of quiet-choir, its harness kit and decision helper', async () => {
     const temp = await mkdtemp(join(tmpdir(), 'qc-public-types-'));
     try {
@@ -141,9 +141,9 @@ describe('published declarations', () => {
     } finally {
       await rm(temp, { recursive: true, force: true });
     }
-  }, 20_000);
+  });
 
-  // measured: 0.7 s alone and up to 2.9 s in a full parallel coverage run (two tsc processes).
+  // Fits the default timeout: 0.3 s alone and 0.5 s in a full coverage run.
   it('fail when an entry point re-exports a declaration that stripInternal removes', async () => {
     const temp = await mkdtemp(join(tmpdir(), 'qc-public-types-strip-'));
     try {
@@ -198,5 +198,5 @@ describe('published declarations', () => {
     } finally {
       await rm(temp, { recursive: true, force: true });
     }
-  }, 20_000);
+  });
 });
