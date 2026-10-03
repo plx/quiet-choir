@@ -88,12 +88,17 @@ identity; diagnostics and saved capability manifests contain only their names an
 Settings, MCP servers, agents, system prompts and Codex config are likewise reduced to digests and
 names. Keep rotating secrets in the inherited environment.
 
-Both modes scrub `CLAUDECODE`, Claude child/session/entrypoint/attended/messaging/executable
-variables, `CLAUDE_PID`, `CLAUDE_EFFORT`, `AI_AGENT`, `TRACEPARENT`, and the experimental
-agent-teams toggle. Codex thread/session/turn IDs and its internal originator override are also
-removed. Native authentication variables and config-home paths remain available.
-`CliHarnessOptions.scrubEnv` extends the list with an array, or explicitly disables it with `false`;
-`--harness-config` accepts the same option.
+Both modes scrub host agent-session variables by pattern: `CLAUDECODE`, `CLAUDE_PID`,
+`CLAUDE_EFFORT`, `AI_AGENT`, `TRACEPARENT`, `CODEX_THREAD_ID`, `CODEX_SESSION_ID`, `CODEX_TURN_ID`,
+and every `CLAUDE_PLUGIN_*`, `CODEX_INTERNAL_*`, `CODEX_COMPANION_*` and `CLAUDE_CODE_*` name. Four
+`CLAUDE_CODE_*` forms select authentication or behavior and are kept: `CLAUDE_CODE_USE_*`,
+`CLAUDE_CODE_OAUTH_TOKEN`, `CLAUDE_CODE_EFFORT_LEVEL` and `CLAUDE_CODE_SUBAGENT_MODEL`. Native
+authentication variables (`ANTHROPIC_*`, `OPENAI_*`, `CODEX_API_KEY`) and config-home paths
+(`CLAUDE_CONFIG_DIR`, `CODEX_HOME`) remain available. Other host `CLAUDE_CODE_*` settings, such as
+`CLAUDE_CODE_MAX_OUTPUT_TOKENS`, are removed too; restore one deliberately with `env.set`.
+`CliHarnessOptions.scrubEnv` adds exact names with an array, or explicitly disables scrubbing with
+`false`; `--harness-config` accepts the same option. Custom adapters get the same scrub from
+`childEnvironment` in `quiet-choir/harness-kit`.
 
 Harness metadata records observed names for `ANTHROPIC_*`, `OPENAI_*`, `CLAUDE_CODE_USE_*`, Claude
 effort/subagent-model/OAuth/config-home variables, `MAX_THINKING_TOKENS`, `CODEX_HOME`, and

@@ -41,9 +41,15 @@ export const agentEnvironmentSchema = z.preprocess(
   z.union([z.strictObject({ set: values.optional(), unset: z.array(name).optional() }), values]),
 );
 
-/** Normalize both public forms without reading the host environment. @internal */
+/**
+ * Normalize either public {@link AgentEnvironment} form into sorted `set` values and `unset` names,
+ * without reading the host environment. Throws on reserved or invalid names, NUL values, or a name
+ * that is both set and unset.
+ */
 export function environmentEdits(value: AgentEnvironment | undefined): {
+  /** Values to set, sorted by name. */
   set: Record<string, string>;
+  /** Names to remove, sorted and deduplicated. */
   unset: string[];
 } {
   const parsed = agentEnvironmentSchema.parse(value ?? {});

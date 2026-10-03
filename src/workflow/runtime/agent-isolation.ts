@@ -35,15 +35,25 @@ export function isolationParts<
   return { ...rest, worktree: isolation };
 }
 
-/** Resolve the configuration default before fingerprinting or planning. @internal */
+/**
+ * Split the legacy worktree shorthand out of `isolation` and apply the `restricted` default, before
+ * fingerprinting or planning. Throws when both `worktree` and a worktree shorthand are given.
+ */
 export function resolveIsolation<
   T extends {
+    /** Configuration mode or legacy worktree shorthand. */
     readonly isolation?: AgentIsolation | undefined;
+    /** Explicit checkout selection. */
     readonly worktree?: AgentWorktree | undefined;
   },
 >(
   options: T,
-): Omit<T, 'isolation' | 'worktree'> & { isolation: HarnessIsolation; worktree?: AgentWorktree } {
+): Omit<T, 'isolation' | 'worktree'> & {
+  /** Resolved configuration mode, `restricted` by default. */
+  isolation: HarnessIsolation;
+  /** Checkout selection, from `worktree` or the legacy shorthand. */
+  worktree?: AgentWorktree;
+} {
   const parts = isolationParts(options);
   return { ...parts, isolation: parts.isolation ?? 'restricted' };
 }

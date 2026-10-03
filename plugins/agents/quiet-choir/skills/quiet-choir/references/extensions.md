@@ -309,6 +309,36 @@ JSON, unavailable usage, protocol failure on exit zero, and nonzero failures on 
 it at a paid agent installation. `ClaudeAdapter` and `CodexAdapter` pass that suite; `CliHarness`
 remains their compatibility dispatcher and rejects unknown names.
 
+The kit also exports the helpers the built-in adapters use, so a third adapter need not copy them:
+
+- `childEnvironment(edits?, scrub?)` returns the child `env` with host agent-session variables
+  scrubbed and explicit edits applied (see [harness isolation](harness-isolation.md)). Pass it to
+  `runProcess` with `inheritEnv: false`; otherwise `runProcess` overlays the host environment.
+- `new JsonLines(maxLineBytes, onLine, skipOversized?)` frames JSONL stdout and awaits `onLine` for
+  each nonblank line. An oversized line fails with the output-limit error unless `skipOversized`
+  accepts its first bytes as a nonessential line.
+- `createInvocationStream({ invocation, stdout })` returns `stdout` and `stderr` consumers for
+  `runProcess`'s `stream` option, which tee raw bytes to `onOutput` before your parser sees them,
+  plus `session(id)`, which awaits `onSession` once for the first ID (call it before consuming more
+  output), and `progress(event)`, which always delivers the first `init`, otherwise keeps at most
+  one event per 100 ms and swallows observer errors.
+- `standaloneInvocation(request, signal)` supplies identity, signal and a no-op `trackProcess` when
+  `invoke` is called without an invocation.
+- `outputLimitError(message)` reports an exceeded byte budget. The contract is the error's `code`:
+  any `Error` whose `code` is `'QUIET_CHOIR_OUTPUT_LIMIT'` (`outputLimitCode`) is recorded with the
+  `output-limit` kind, distinct from malformed protocol output. `runProcess` and `JsonLines` throw
+  it for their own limits.
+- `promptedStructuredOutput(schema)` implements `capabilities: { structuredOutput: 'prompted' }` for
+  a CLI that cannot enforce a schema. Append its `instructions` to the prompt when
+  `request.outputSchema` is not null, and return `extract(answer)` as `text`; it takes the whole
+  answer, the last json fence, or the first balanced object or array that parses (trying the
+  delimiter that matches the schema's top-level type first), and throws a `SyntaxError` (kind
+  `schema`) when there is none. The runtime treats `'prompted'` exactly like `'native'`: it passes
+  `outputSchema`, then parses and Zod-validates `response.text`, and never rewrites prompts.
+
+Every value and type the kit, the root entry and `quiet-choir/decision` export is type-checked
+against the published declarations with `skipLibCheck: false`, so none resolves to `any`.
+
 CLI package config uses `--harness-config '{"harnesses":{"third":{"binary":"third-cli"}}}'` or
 `@file` / `QUIET_CHOIR_HARNESS_CONFIG`. Override selected names with repeatable
 `--harness third=fixture:FILE`; global fixture/dry-run modes remain available. Adapter code comes

@@ -88,3 +88,5 @@ part of the documentation.
 - [0041: Static durability lint at load time](0041-static-durability-lint.md)
 
 - [0042: Idle deadlines and tool-use diagnostics from the attempt stream](0042-idle-deadlines-and-tool-use-diagnostics.md)
+
+- [0043: Checked harness-kit declarations and shared adapter helpers](0043-checked-harness-kit-declarations-and-adapter-helpers.md)

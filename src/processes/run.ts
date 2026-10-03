@@ -2,6 +2,7 @@ import { OutputCapture } from './capture.js';
 import { spawn } from 'node:child_process';
 import { addAbortListener } from 'node:events';
 import { groupState, processIdentity, signalProcess } from './identity.js';
+import { outputLimitError } from './output-limit.js';
 import type { HarnessInvocation, HarnessProcess } from '../workflow/runtime/model.js';
 
 /** Resource limits and command details for a single headless invocation. */
@@ -311,13 +312,10 @@ export function runProcess(request: ProcessRequest): Promise<ProcessResult> {
             : bytes > request.maxOutputBytes;
       if (exceeded)
         stop(
-          Object.assign(
-            new Error(
-              request.stream
-                ? `${request.binary} exceeded maxStreamBytes (${String(request.stream.maxBytes)} bytes).`
-                : `${request.binary} exceeded its ${String(request.maxOutputBytes)}-byte output limit.`,
-            ),
-            { code: 'QUIET_CHOIR_OUTPUT_LIMIT' },
+          outputLimitError(
+            request.stream
+              ? `${request.binary} exceeded maxStreamBytes (${String(request.stream.maxBytes)} bytes).`
+              : `${request.binary} exceeded its ${String(request.maxOutputBytes)}-byte output limit.`,
           ),
         );
     };

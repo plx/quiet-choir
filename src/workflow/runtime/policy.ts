@@ -108,7 +108,10 @@ export function validatePolicy(value: unknown, allowModelOverride: boolean): Pol
   return parsed.data as PolicyOverride[];
 }
 
-/** Match a bounded step-ID glob shared by policy and fork invalidation. @internal */
+/**
+ * Match a step ID against the glob syntax policy rules and fork invalidation use: `*` matches
+ * within one `/` segment and `**` across segments.
+ */
 export function matchesStepGlob(pattern: string, id: string): boolean {
   let expression = '^';
   for (let i = 0; i < pattern.length; i++) {

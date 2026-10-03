@@ -3,11 +3,19 @@ import type { JsonValue } from './model.js';
 import { agentEnvironmentSchema } from './agent-environment.js';
 import { agentIsolationSchema, agentWorktreeSchema } from './agent-isolation.js';
 
-/** Shared validated effort levels. @internal */
+/** Effort levels accepted by every built-in harness. */
 export const effortValues = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
-/** Codex's additional harness-specific levels. @internal */
-export const codexEffortValues = ['none', 'minimal', ...effortValues] as const;
-/** Deliberately excludes interactive and bypass modes. @internal */
+/** Codex reasoning-effort levels: the shared levels plus Codex's `none` and `minimal`. */
+export const codexEffortValues: readonly [
+  'none',
+  'minimal',
+  'low',
+  'medium',
+  'high',
+  'xhigh',
+  'max',
+] = ['none', 'minimal', ...effortValues] as const;
+/** Claude permission modes quiet-choir accepts; interactive and bypass modes are excluded. */
 export const permissionModeValues = ['dontAsk', 'acceptEdits', 'plan'] as const;
 const strings = z.array(z.string().min(1));
 const data = z.record(z.string(), z.json());
@@ -189,7 +197,10 @@ const reservedConfig: Record<string, string> = {
   profile: 'harnessProfile',
   profiles: 'harnessProfile',
 };
-/** TOML literal for explicit JSON values; null has no TOML representation. @internal */
+/**
+ * Render a JSON value as an inline TOML literal, for `-c key=value` style CLI overrides. Throws for
+ * null, which has no TOML representation.
+ */
 export function tomlLiteral(value: JsonValue): string {
   if (value === null) throw new Error('Codex config cannot contain null.');
   if (typeof value === 'string') return JSON.stringify(value);

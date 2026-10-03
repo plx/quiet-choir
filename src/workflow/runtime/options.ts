@@ -47,7 +47,11 @@ export const codexOptionsSchema: z.ZodType = z.strictObject({
   structuredOutput: z.enum(['strict', 'compat']).optional(),
 });
 
-/** Shared validation used before checkpoint creation and before direct adapter invocations. @internal */
+/**
+ * Validate built-in Claude or Codex options with the same rules the runtime applies before a
+ * checkpoint is created. Throws a descriptive error (redacting environment values) when invalid.
+ * Pass `resolved: false` for authored options that profile defaults have not been merged into yet.
+ */
 export function validateAgentOptions(
   harness: 'claude' | 'codex',
   options: unknown,

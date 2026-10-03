@@ -70,7 +70,6 @@ async function readImage(path: string, signal: AbortSignal): Promise<Buffer> {
  * rejects with that first failure. An open, stat, or read still in flight when the signal aborts
  * is abandoned rather than awaited, so a syscall stuck on a stalled mount cannot hold the
  * snapshot; its handle is closed in the background once the operation returns.
- * @internal
  */
 export async function snapshotImages(
   paths: readonly string[],

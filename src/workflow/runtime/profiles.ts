@@ -117,7 +117,10 @@ export function toolAccess(tools: readonly string[]): AccessClass {
   return access;
 }
 
-/** Explicit allowedTools can only select exposed tools or narrow a bare tool to a rule. @internal */
+/**
+ * Check that every `allowedTools` rule selects an exposed tool or narrows a bare exposed tool to a
+ * rule such as `Bash(git status)`. Throws on the first rule that would widen access.
+ */
 export function checkAllowedTools(tools: readonly string[], allowed: readonly string[]): void {
   for (const rule of allowed) {
     if (
