@@ -453,35 +453,44 @@ function containerPrefix(line: string): {
   }
 }
 
+/** One line read through its containers by {@link containerTracker}. */
+interface ContainerLine {
+  /** The number of block quotes that open the line. */
+  readonly depth: number;
+  /** Where the last block quote's markers end: a string index after one optional space. */
+  readonly quote: number;
+  /** The line after its list markers when `marked`, else after its block-quote markers. */
+  readonly text: string;
+  /** Whether a list marker on this line opens an item. */
+  readonly marked: boolean;
+  /** Whether `text` holds only blanks. */
+  readonly blank: boolean;
+  /** The innermost open list item's content column after the block-quote markers (0 for none). */
+  readonly item: number;
+  /**
+   * The line inside its containers: after its list markers on a marker line, or after the item's
+   * content indentation on a later line, with the indentation that is left as spaces, so a line
+   * indented four or more columns past its container's content starts with four spaces.
+   */
+  readonly rest: string;
+}
+
 /**
- * For each line, whether it belongs to a fenced code block (fence lines included). A fence is three
- * or more backticks or tildes; it closes on a line of the same character at least as long, and an
- * unclosed fence runs to the end of its container, as in CommonMark. A fence may open inside block
- * quotes and list items (`> ~~~`, `- ~~~`, `> 1. ~~~`): the container markers are read first. It
- * ends with the block quotes it opened in: a later line with fewer `>` markers is outside it, and
- * its own markers are read before its closer. It also ends with the list item it opened in: a later
- * non-blank line indented less than the item's content column is outside it (fenced code has no
- * lazy continuation), and blank lines stay inside.
- *
- * The open list items are tracked across lines by their content columns after the block-quote
- * markers, so a fence on a later line of an item, with no marker of its own (`- a`, a blank line,
- * then `  ~~~`), belongs to the deepest item its indentation reaches. A list marker closes the items
- * deeper than its own indentation and opens its own; a line without one closes the items deeper than
- * its indentation, unless it lazily continues a paragraph (a fence opener never does). A marker
- * indented four or more columns past its container is code, not an item. The tracking restarts
- * whenever the block-quote depth changes, so a lazy line of a block quote falls back to a fence that
- * belongs to no item.
- *
- * An opener, like a closer, may be indented at most three columns past its container's content
- * column, as in CommonMark: past the list item's content column, or past the block quote's markers
- * when it belongs to no item. A more deeply indented fence line is indented code when it would open
- * a fence, and code inside the fence when it would close one, so `    ~~~` neither hides the lines
- * after it nor ends a fence early.
+ * Tracks the open list items across lines by their content columns after the block-quote markers,
+ * so a line of an item with no marker of its own (`- a`, a blank line, then `  ~~~`) belongs to the
+ * deepest item its indentation reaches. A list marker closes the items deeper than its own
+ * indentation and opens its own; a line without one closes the items deeper than its indentation,
+ * unless it lazily continues a paragraph, which a line that `interrupts` reports as opening a block
+ * (a fence opener, an HTML block that may interrupt a paragraph) never does. A blank line keeps the
+ * items open. A marker indented four or more columns past its container is code, not an item. The
+ * tracking restarts whenever the block-quote depth changes, so a lazy line of a block quote belongs
+ * to no item. `read` takes the lines in order; `endParagraph` records that the line just read opened
+ * a block other than a paragraph, which a less indented line cannot continue lazily.
  */
-function fenceMask(text: readonly string[]): boolean[] {
-  // The open fence's run, its block-quote depth, its list item's content column (0 for none), and
-  // the opening run's column after the block-quote markers.
-  let fence: { run: string; depth: number; item: number; column: number } | null = null;
+function containerTracker(): {
+  read: (line: string, interrupts: (text: string) => boolean) => ContainerLine;
+  endParagraph: () => void;
+} {
   // The open list items' content columns after the block-quote markers, outermost first; the
   // block-quote depth they were read at; and whether the previous line was paragraph text, which a
   // less indented line may continue lazily.
@@ -493,23 +502,7 @@ function fenceMask(text: readonly string[]): boolean[] {
     while ((items.at(-1) ?? 0) > column) items.pop();
     return items.at(-1) ?? 0;
   };
-  return text.map((line) => {
-    if (fence !== null) {
-      const quote = quotePrefix(line, fence.depth);
-      const rest = line.slice(quote.end);
-      const itemEnded = fence.item > 0 && !/^[ \t]*$/u.test(rest) && indentation(rest) < fence.item;
-      if (quote.depth === fence.depth && !itemEnded) {
-        const close =
-          indentation(rest) <= Math.max(fence.item + 3, fence.column)
-            ? /^[ \t]*(`{3,}|~{3,})\s*$/u.exec(rest)?.[1]
-            : undefined;
-        if (close?.startsWith(fence.run.charAt(0)) && close.length >= fence.run.length)
-          fence = null;
-        return true;
-      }
-      // The block quote or list item that held the fence ended, and the fence with it.
-      fence = null;
-    }
+  const read = (line: string, interrupts: (text: string) => boolean): ContainerLine => {
     const prefix = containerPrefix(line);
     if (prefix.depth !== depth) {
       items = [];
@@ -524,42 +517,126 @@ function fenceMask(text: readonly string[]): boolean[] {
       !leaf &&
       prefix.items.length > 0 &&
       prefix.indent - (items.findLast((column) => column <= prefix.indent) ?? 0) < 4;
-    const rest = marked ? line.slice(prefix.end) : quoted;
-    const blank = /^[ \t]*$/u.test(rest);
+    const text = marked ? line.slice(prefix.end) : quoted;
+    const lead = /^[ \t]*/u.exec(text)?.[0].length ?? 0;
+    const blank = lead === text.length;
+    const indent = indentation(text);
+    let item: number;
     if (!marked && blank) {
       paragraph = false;
-      return false;
+      item = items.at(-1) ?? 0;
+    } else {
+      if (marked) {
+        within(prefix.indent);
+        // One at a time: a spread of a long run of markers could overflow the call stack.
+        for (const column of prefix.items) items.push(column);
+        item = prefix.item;
+      } else item = leaf || !paragraph || interrupts(text) ? within(indent) : (items.at(-1) ?? 0);
+      // Indented code is not a paragraph, unless it continues one.
+      paragraph = !leaf && !blank && (marked || paragraph || indent < item + 4);
     }
-    const indent = indentation(rest);
-    // The run is taken whole and the info string sliced off, so no regex splits the run.
-    const open = /^[ \t]*(`{3,}|~{3,})/u.exec(rest);
-    // A backtick fence's info string cannot contain a backtick (that line is inline code).
-    const opens =
-      open?.[1] !== undefined &&
-      !(open[1].startsWith('`') && rest.slice(open[0].length).includes('`'));
-    let item: number;
-    if (marked) {
-      within(prefix.indent);
-      // One at a time: a spread of a long run of markers could overflow the call stack.
-      for (const column of prefix.items) items.push(column);
-      item = prefix.item;
-    } else item = opens || leaf || !paragraph ? within(indent) : (items.at(-1) ?? 0);
     // Columns after the block-quote markers, so a tab after a list marker counts as CommonMark has
-    // it. On a marker's line the run starts at the item's content column unless five or more
-    // columns of blanks follow the marker, which make it indented code.
-    if (opens && open[1] !== undefined) {
-      const runStart = line.length - rest.length + open[0].length - open[1].length;
-      const column = width(line.slice(prefix.quote, runStart));
-      if (column <= item + 3) {
-        fence = { run: open[1], depth: prefix.depth, item, column };
-        paragraph = false;
-        return true;
+    // it.
+    const column = width(line.slice(prefix.quote, line.length - text.length + lead));
+    const rest = ' '.repeat(Math.max(0, column - item)) + text.slice(lead);
+    return { depth: prefix.depth, quote: prefix.quote, text, marked, blank, item, rest };
+  };
+  return {
+    read,
+    endParagraph: () => {
+      paragraph = false;
+    },
+  };
+}
+
+/**
+ * The run of backticks or tildes that opens a fence at the start of `text` (after its blanks), with
+ * where the run starts, or null: a backtick fence's info string cannot contain a backtick (that line
+ * is inline code). The run is taken whole and the info string sliced off, so no regex splits it.
+ */
+function fenceOpener(text: string): { run: string; start: number } | null {
+  const open = /^[ \t]*(`{3,}|~{3,})/u.exec(text);
+  const run = open?.[1];
+  if (open === null || run === undefined) return null;
+  if (run.startsWith('`') && text.slice(open[0].length).includes('`')) return null;
+  return { run, start: open[0].length - run.length };
+}
+
+/**
+ * Each line's fenced-code flag and, for every line outside an open fence, how
+ * {@link containerTracker} read it (null inside a fence, whose lines open no containers). A fence is
+ * three or more backticks or tildes; it closes on a line of the same character at least as long,
+ * and an unclosed fence runs to the end of its container, as in CommonMark. A fence may open inside
+ * block quotes and list items (`> ~~~`, `- ~~~`, `> 1. ~~~`), on the item's marker line or on a
+ * later line of the item: the container markers are read first. It ends with the block quotes it
+ * opened in: a later line with fewer `>` markers is outside it, and its own markers are read before
+ * its closer. It also ends with the list item it opened in: a later non-blank line indented less
+ * than the item's content column is outside it (fenced code has no lazy continuation), and blank
+ * lines stay inside.
+ *
+ * An opener, like a closer, may be indented at most three columns past its container's content
+ * column, as in CommonMark: past the list item's content column, or past the block quote's markers
+ * when it belongs to no item. A more deeply indented fence line is indented code when it would open
+ * a fence, and code inside the fence when it would close one, so `    ~~~` neither hides the lines
+ * after it nor ends a fence early.
+ */
+function scanBlocks(text: readonly string[]): {
+  fenced: boolean[];
+  containers: (ContainerLine | null)[];
+} {
+  // The open fence's run, its block-quote depth, its list item's content column (0 for none), and
+  // the opening run's column after the block-quote markers.
+  let fence: { run: string; depth: number; item: number; column: number } | null = null;
+  const tracker = containerTracker();
+  const interrupts = (rest: string): boolean =>
+    fenceOpener(rest) !== null || htmlBlockStart(rest.replace(/^[ \t]*/u, ''), true) !== null;
+  const fenced: boolean[] = [];
+  const containers: (ContainerLine | null)[] = [];
+  for (const line of text) {
+    if (fence !== null) {
+      const quote = quotePrefix(line, fence.depth);
+      const rest = line.slice(quote.end);
+      const itemEnded = fence.item > 0 && !/^[ \t]*$/u.test(rest) && indentation(rest) < fence.item;
+      if (quote.depth === fence.depth && !itemEnded) {
+        const close =
+          indentation(rest) <= Math.max(fence.item + 3, fence.column)
+            ? /^[ \t]*(`{3,}|~{3,})\s*$/u.exec(rest)?.[1]
+            : undefined;
+        if (close?.startsWith(fence.run.charAt(0)) && close.length >= fence.run.length)
+          fence = null;
+        fenced.push(true);
+        containers.push(null);
+        continue;
+      }
+      // The block quote or list item that held the fence ended, and the fence with it.
+      fence = null;
+    }
+    const container = tracker.read(line, interrupts);
+    containers.push(container);
+    const open = container.blank && !container.marked ? null : fenceOpener(container.text);
+    // On a marker's line the run starts at the item's content column unless five or more columns
+    // of blanks follow the marker, which make it indented code.
+    if (open !== null) {
+      const runStart = line.length - container.text.length + open.start;
+      const column = width(line.slice(container.quote, runStart));
+      if (column <= container.item + 3) {
+        fence = { run: open.run, depth: container.depth, item: container.item, column };
+        tracker.endParagraph();
+        fenced.push(true);
+        continue;
       }
     }
-    // Indented code is not a paragraph, unless it continues one.
-    paragraph = !leaf && !blank && (marked || paragraph || indent < item + 4);
-    return false;
-  });
+    fenced.push(false);
+  }
+  return { fenced, containers };
+}
+
+/**
+ * For each line, whether it belongs to a fenced code block (fence lines included); see
+ * {@link scanBlocks}.
+ */
+function fenceMask(text: readonly string[]): boolean[] {
+  return scanBlocks(text).fenced;
 }
 
 /**
@@ -710,8 +787,10 @@ function openTagEnd(text: string, index: number): number {
 }
 
 /**
- * How `rest`, a line after its block-quote markers, opens a CommonMark HTML block, as what ends it,
- * or null when it opens none. After up to three spaces of indentation, with tag names in any case:
+ * How `rest`, a line inside its containers (after its block-quote markers, and after its list
+ * markers or its list item's content indentation, as {@link ContainerLine} has it), opens a
+ * CommonMark HTML block, as what ends it, or null when it opens none. An HTML block may open in a
+ * list item, as in `- <div>`. After up to three spaces of indentation, with tag names in any case:
  * `<script`, `<pre`, `<style` or `<textarea` (type 1) runs through a line holding one of their
  * closing tags; `<!--` (type 2) through `-->`; `<?` (type 3) through `?>`; `<!` and a letter (type
  * 4) through `>`; `<![CDATA[` (type 5) through `]]>`; an open or closing tag of a block-level element
@@ -761,8 +840,12 @@ function endsHtmlBlock(rest: string, end: readonly string[]): boolean {
  * a thematic break or an HTML block ends the paragraph, and a heading or break is a block of one
  * line. HTML blocks are CommonMark's seven types (see {@link htmlBlockStart}), among them a comment
  * block (a line opening with `<!--`, as a workflow marker does) that runs through the first line
- * holding `-->`, which may be its first, and a `<div>` block that runs to a blank line. Every HTML
- * block also ends with its block quote, and has no inline code, so its lines are kept as they are. A
+ * holding `-->`, which may be its first, and a `<div>` block that runs to a blank line. An HTML block
+ * may open in a list item, after the item's marker (`- <div>`) or on a later line of the item, as
+ * {@link scanBlocks} tracks the items, and a line that opens an item opens a block, never continuing
+ * a paragraph. Every HTML block also ends with its block quote, and with its list item: a later
+ * non-blank line indented less than the item's content column is outside it, since an HTML block has
+ * no lazy continuation. It has no inline code, so its lines are kept as they are. A
  * `=` or `-` underline of any length at the paragraph's block-quote depth makes it a setext heading
  * and ends it there (so a lone `-` there is an underline, not an empty list item, which cannot
  * interrupt a paragraph). With no paragraph open, a lone `=` or `-` run shorter than a thematic
@@ -770,28 +853,41 @@ function endsHtmlBlock(rest: string, end: readonly string[]): boolean {
  */
 function stripCode(text: string): string {
   const all = lines(text);
-  const fenced = fenceMask(all);
+  const { fenced, containers } = scanBlocks(all);
   const kept: string[] = [];
   let paragraph: string[] = [];
   // The paragraph's block-quote depth, and whether it opens a list item.
   let depth = 0;
   let inItem = false;
-  // The open HTML block's block-quote depth and what ends it, or null when none is open.
-  let html: { depth: number; end: HtmlBlockEnd } | null = null;
+  // The open HTML block's block-quote depth, its list item's content column (0 for none) and what
+  // ends it, or null when none is open.
+  let html: { depth: number; item: number; end: HtmlBlockEnd } | null = null;
   const flush = (): void => {
     if (paragraph.length) kept.push(stripInlineCode(paragraph.join('\n')));
     paragraph = [];
   };
   all.forEach((line, index) => {
-    if (fenced[index] === true) {
+    const container = containers[index];
+    // Only a line inside an open fence has no container reading.
+    if (fenced[index] === true || container === null || container === undefined) {
       flush();
       return;
     }
     const quote = quotePrefix(line);
     const rest = line.slice(quote.end);
     const blank = /^[ \t]*$/u.test(rest);
+    const itemEnded =
+      html !== null &&
+      html.item > 0 &&
+      !blank &&
+      indentation(line.slice(quotePrefix(line, html.depth).end)) < html.item;
     // A block that ends at a blank line closes on it; the blank line is read below.
-    if (html !== null && quote.depth >= html.depth && !(html.end === 'blank' && blank)) {
+    if (
+      html !== null &&
+      quote.depth >= html.depth &&
+      !itemEnded &&
+      !(html.end === 'blank' && blank)
+    ) {
       kept.push(line);
       if (html.end !== 'blank' && endsHtmlBlock(rest, html.end)) html = null;
       return;
@@ -802,12 +898,21 @@ function stripCode(text: string): string {
       kept.push(line);
       return;
     }
-    const opened = htmlBlockStart(rest, paragraph.length > 0 && quote.depth <= depth);
+    // A list marker that cannot interrupt the open paragraph (`2.` outside a list) continues it, and
+    // then the line opens no HTML block, which would have to start the line.
+    const continues = paragraph.length > 0 && quote.depth <= depth;
+    const opensItem =
+      container.marked &&
+      (!continues || blockStart(rest.replace(/^[ \t]*/u, ''), inItem) === 'item');
+    const opened =
+      container.marked && !opensItem
+        ? null
+        : htmlBlockStart(container.rest, continues && !opensItem);
     if (opened !== null) {
       flush();
       kept.push(line);
       if (opened === 'blank' || !endsHtmlBlock(rest, opened))
-        html = { depth: quote.depth, end: opened };
+        html = { depth: quote.depth, item: container.item, end: opened };
       return;
     }
     if (paragraph.length && quote.depth === depth && isSetextUnderline(rest)) {

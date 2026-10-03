@@ -204,9 +204,12 @@ blocked from a ready one.
   `<?` through `?>`, `<!DOCTYPE` and the like through `>`, `<![CDATA[` through `]]>`, and a
   block-level tag such as `<div>` or `</details>` to a blank line. Any other complete tag alone on
   its line opens a block that runs to a blank line too, but only outside a paragraph, so a lone
-  `<span>` continues one. Every HTML block also ends with its block quote, and has no inline code,
-  so a marker in one is read even after a lone backtick. A run with no closer is literal text.
-  Checklist lines are read one at a time, so a span never continues onto the next line there.
+  `<span>` continues one. An HTML block may open in a list item, after its marker (`- <div>`) or on
+  a later line of the item. Every HTML block also ends with its block quote and with its list item
+  (a later non-blank line indented less than the item's content, since an HTML block has no lazy
+  continuation), and has no inline code, so a marker in one is read even after a lone backtick. A
+  run with no closer is literal text. Checklist lines are read one at a time, so a span never
+  continues onto the next line there.
 - **Checklist.** Lines `- [ ] ...`, `* [x] ...` or `+ [X] ...` outside fenced code. Inline code is
   removed from a line before it is read. Each line counts for its first reference to the repository,
   `#N` or `OWNER/REPO#N` (compared case-insensitively); lines naming only other repositories,

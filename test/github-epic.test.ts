@@ -588,6 +588,19 @@ describe('nextTicket over the recorded #99 snapshot', () => {
         ],
       ],
       [
+        'waiting on an open item named in an HTML block after a list marker',
+        (raw) => {
+          node(raw, 163).body += '\n\n- <div>\n  `Depends on #167`';
+        },
+        {},
+        164,
+        [
+          [163, 'waiting'],
+          [167, 'ready'],
+          [168, 'waiting'],
+        ],
+      ],
+      [
         'an open linked pull request: in flight, picked before an earlier ready item',
         (raw) => {
           node(raw, 167).closedByPullRequestsReferences.nodes.push(pr(400, 'OPEN'));
@@ -1089,6 +1102,31 @@ describe('parseDependencies', () => {
     ['an unknown tag continues a paragraph', ['Example `x\n<divx>\nDepends on #136`'], []],
     ['an HTML block ends with its block quote', ['> <div>\nExample `x\nDepends on #134`'], []],
     ['a tag indented four columns is no block', ['Example `x\n    <div>\nDepends on #135`'], []],
+    // An HTML block may open in a list item (CommonMark example 175) and ends with it.
+    ['an HTML block after a list marker', ['- <div>\n  `Depends on #141`'], [141]],
+    ['an HTML comment after an ordered marker', ['1. <!-- note\n   `Depends on #142` -->'], [142]],
+    ['an HTML block on a later line of an item', ['- a\n\n  <div>\n  `Depends on #143`'], [143]],
+    ['an HTML block in a nested item', ['- a\n  - <div>\n    `Depends on #144`'], [144]],
+    ['an HTML block in a quoted item', ['> - <div>\n>   `Depends on #145`'], [145]],
+    ['an HTML block after a tab-padded marker', ['-\t<div>\n    `Depends on #146`'], [146]],
+    ['an HTML block ends with its item', ['- <div>\n`Depends on #147`'], []],
+    ['an HTML block ends at a sibling item', ['- <div>\n- `Depends on #148`'], []],
+    [
+      'a dedented HTML block line closes the item before it',
+      ['- a\n<div>\n`Depends on #149`'],
+      [149],
+    ],
+    [
+      'a lone inline tag after a marker opens a block',
+      ['- <span>\n  `x\n  Depends on #150 `'],
+      [150],
+    ],
+    [
+      'a marker that continues a paragraph opens no HTML block',
+      ['Example `x\n2. <div>\nDepends on #151`'],
+      [],
+    ],
+    ['a tag five columns past its marker is no block', ['-     <div>\n  `Depends on #152`'], []],
     ['a colon after the phrase', ['Depends on: #29', 'requires :#30'], [29, 30]],
     ['fenced code ignored', ['```\nDepends on #16\n```\nDepends on #17'], [17]],
     ['a fence in a block quote', ['> ~~~\n> Depends on #33\n>\n> ~~~\n> Depends on #34'], [34]],
