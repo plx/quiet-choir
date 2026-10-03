@@ -359,6 +359,14 @@ describe('Codex rules', () => {
       { review: 'Code Review', status: 'Completed', commit: 'c5c2233', trigger: 'Manual request' },
     ]);
     expect(parseSummaryRows('no table')).toEqual([]);
+    // Nested or malformed tags leave no angle bracket behind.
+    const malformed = (comments()[0]?.body ?? '').replace(
+      '✅ **Completed**',
+      '✅ **Completed** <scr<b>ipt>',
+    );
+    const [row] = parseSummaryRows(malformed);
+    expect(row?.status).toMatch(/^Completed/u);
+    expect(row?.status).not.toMatch(/[<>]/u);
   });
 
   it('applies the rules in order: findings, +1, usage limit, summary row, eyes, pending', () => {

@@ -226,7 +226,8 @@ export function parseSummaryRows(body: string): CodexSummaryRow[] {
   const clean = (text: string): string =>
     text
       .replace(/<relative-time[^>]*>.*?<\/relative-time>/gu, '')
-      .replace(/<[^>]+>|\*/gu, '')
+      .replace(/<[^>]*>/gu, '')
+      .replace(/[<>*]/gu, '')
       .replace(/^[^A-Za-z]+/u, '')
       .trim();
   for (const line of body.split('\n')) {
