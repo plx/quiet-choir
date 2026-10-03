@@ -1730,9 +1730,11 @@ async function workflowFile(name: string, source: string): Promise<string> {
   return file;
 }
 
-// measured: 1.4 and 2.7 s alone, 3.4 and 6.7 s in a coverage run of this file (dominated by the
-// tsImport compile of the workflow file).
-describe('workflow files', { timeout: 20_000 }, () => {
+// measured: 1.4 and 2.7 s alone, 3.4 and 6.7 s in a coverage run of this file, and in CI's full
+// coverage run 7.0 and 13.1 s on Node 22.13, 5.7 and 10.8 s on Node 26, and 13.2 and over 20 s
+// (28.2 s to the timeout) on Node 24, dominated by the tsImport compiles of the workflow file (the
+// debounce case compiles it twice: execute, then tick). 60 s is about 2x the slowest CI leg.
+describe('workflow files', { timeout: 60_000 }, () => {
   it('runs the gate example from docs/github.md, under 30 lines', async () => {
     const docs = readFileSync(join(repository, 'docs', 'github.md'), 'utf8');
     const section = docs.slice(docs.indexOf('## Gate example'));
