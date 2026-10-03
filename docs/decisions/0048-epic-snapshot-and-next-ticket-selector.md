@@ -49,10 +49,11 @@ Add `gh.epic.snapshot(id, { number }, policy?)` to `quiet-choir/github`, and the
   reported by the selector as `not-a-sub-issue`, never silently dropped. Without sub-issues, the
   items are the checklist lines themselves (`source: 'task-list'`), with checkbox-derived states and
   nothing else. The checklist parser ignores fenced code (backtick or tilde fences, with CommonMark
-  closing rules, an unclosed fence running to the end, also inside block quotes and list items, read
-  by a character loop over the container markers) and inline code (CommonMark code spans, found by a
-  linear scan rather than a backtracking regex), takes each line's first reference to the client's
-  repository, and skips the epic itself.
+  opening and closing rules, an unclosed fence running to the end of its container, also inside
+  block quotes and list items, whose open items are tracked across lines, read by a character loop
+  over the container markers) and inline code (CommonMark code spans, found by a linear scan rather
+  than a backtracking regex), takes each line's first reference to the client's repository, and
+  skips the epic itself.
 - **Rules taken from the burn-down survey, not the ticket's sketch.** The ticket proposed skipping
   items with an open linked pull request (`has-open-pr`). The survey that has been running epic #99
   instead finishes work already under way, and that is kept: an open linked pull request (drafts

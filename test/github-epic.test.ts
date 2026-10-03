@@ -465,6 +465,22 @@ describe('task-list fallback', () => {
     });
   });
 
+  it('reads the checklist after a fence opener indented four columns, which is indented code', () => {
+    const snapshot = snapshotOf((raw) => {
+      Object.assign(epicOf(raw), {
+        body: 'Example:\n\n    ```\n- [ ] #12 The real item',
+        subIssuesSummary: { total: 0, completed: 0 },
+        subIssues: { pageInfo: { hasNextPage: false }, nodes: [] },
+      });
+    });
+    expect(snapshot).toMatchObject({ source: 'task-list', total: 1 });
+    expect(nextTicket(snapshot)).toMatchObject({
+      pick: { number: 12, status: 'ready' },
+      skipped: [],
+      done: false,
+    });
+  });
+
   it('reports an epic with no checklist and no sub-issues as done', () => {
     const snapshot = snapshotOf((raw) => {
       Object.assign(epicOf(raw), {
@@ -536,6 +552,19 @@ describe('nextTicket over the recorded #99 snapshot', () => {
         'waiting on an open item by a "Depends on" line',
         (raw) => {
           node(raw, 163).body += '\n\nDepends on #167.';
+        },
+        {},
+        164,
+        [
+          [163, 'waiting'],
+          [167, 'ready'],
+          [168, 'waiting'],
+        ],
+      ],
+      [
+        'waiting on an open item named after an unclosed fence on an item continuation line',
+        (raw) => {
+          node(raw, 163).body += '\n\n- example\n\n  ```\n- Depends on #167';
         },
         {},
         164,
@@ -887,6 +916,25 @@ describe('parseEpicChecklist', () => {
       [[41, false]],
     ],
     ['a closer indented three columns closes', '~~~\n   ~~~\n- [ ] #42', [[42, false]]],
+    ['an opener indented four columns is indented code', '    ```\n- [ ] #43', [[43, false]]],
+    [
+      'an opener four columns deep on an item continuation line opens a fence',
+      '1. foo\n\n    ```\n    - [ ] #45\n    ```\n- [ ] #46',
+      [[46, false]],
+    ],
+    [
+      'an opener five columns deep after a two-digit marker opens a fence',
+      '10. foo\n\n     ```\n     - [ ] #47\n     ```\n- [ ] #48',
+      [[48, false]],
+    ],
+    [
+      'an unclosed fence on an item continuation line ends with the item',
+      '- [ ] #49 a\n\n  ```\n- [ ] #50 b',
+      [
+        [49, false],
+        [50, false],
+      ],
+    ],
     ['inline code on a fence-like line is not a fence', '```a` b\n- [ ] #29', [[29, false]]],
     ['an unmatched backtick stays literal', '- [ ] ` #30 then ``#31``', [[30, false]]],
     [
@@ -992,6 +1040,57 @@ describe('parseDependencies', () => {
       ['- a\n\n    ```\n    x\n    ```\nDepends on #78'],
       [78],
     ],
+    [
+      'an opener indented four columns is indented code',
+      ['Example:\n\n    ```\nDepends on #85'],
+      [85],
+    ],
+    [
+      'a quoted opener indented four columns is indented code',
+      ['> Example:\n>\n>     ```\n> Depends on #86'],
+      [86],
+    ],
+    [
+      'a quoted opener four columns deep on an item continuation line opens a fence',
+      ['> 1. foo\n>\n>     ```\n>     Depends on #87\n>     ```\n> Depends on #88'],
+      [88],
+    ],
+    [
+      'an opener more than three columns past its item is indented code',
+      ['- a\n\n      ```\n- Depends on #96'],
+      [96],
+    ],
+    [
+      'a continuation-line fence ends with its item',
+      ['- example\n\n  ```\n- Depends on #89'],
+      [89],
+    ],
+    [
+      'a nested continuation-line fence ends at the outer sibling',
+      ['- a\n  - b\n\n    ```\n  - Depends on #90'],
+      [90],
+    ],
+    [
+      'a lazy continuation line keeps the item open',
+      ['- a\nlazy\n\n  ```\n  x\n- Depends on #91'],
+      [91],
+    ],
+    [
+      'a blank line inside a continuation-line fence does not end it',
+      ['- a\n\n  ```\n\n  Depends on #92\n- x'],
+      [],
+    ],
+    [
+      'a quoted continuation-line fence ends with its item',
+      ['> - a\n>\n>   ```\n> - Depends on #93'],
+      [93],
+    ],
+    [
+      'a dedent after a blank line closes the item before the fence',
+      ['- a\n\nb\n\n  ```\n- Depends on #94'],
+      [],
+    ],
+    ['a thematic break opens no item', ['* * *\n\n  ```\n- Depends on #95'], []],
     ['a word between the phrase and the reference', ['depends on the #18 fix'], []],
     ['indented code is still read', ['Example:\n\n    Depends on #72'], [72]],
     ['an indented marker is still read', ['    <!-- epic:depends-on 73 -->'], [73]],

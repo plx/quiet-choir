@@ -185,15 +185,18 @@ blocked from a ready one.
   only on a line of the same character at least as long, and an unclosed fence runs to the end. It
   may open inside block quotes and list items (`> ~~~`, `- ~~~`, as in a quoted reply), and a fence
   in a block quote ends with that quote: a later line with fewer `>` markers is outside it. A fence
-  that opens after a list marker also ends with that item: a later non-blank line indented less than
-  the item's content is outside it, as in `- ~~~` followed by `- Depends on #4`. An inline code
-  span, as in CommonMark, opens at a backtick run and closes at the next run of exactly the same
-  length; it may cross a line ending within a paragraph (a block quote's lazy continuation line
-  included) but not a block boundary: a blank line, a fence, a deeper block quote, a list item
-  (ordered ones numbered 1, unless the paragraph is itself in a list item), an ATX heading, a
-  thematic break, or a setext heading's `===` underline, which ends the heading's paragraph. A run
-  with no closer is literal text. Checklist lines are read one at a time, so a span never continues
-  onto the next line there.
+  also ends with the list item it opens in, after the item's marker or on a later line of the item:
+  a later non-blank line indented less than the item's content is outside it, as in `- ~~~`, or
+  `- example`, a blank line and `  ~~~`, followed by `- Depends on #4`. Open list items are tracked
+  across lines for this, lazy paragraph continuations included. A fence line indented four or more
+  columns past its container's content (the list item's, or the block quote's markers) is indented
+  code, so `    ~~~` opens no fence and closes none. An inline code span, as in CommonMark, opens at
+  a backtick run and closes at the next run of exactly the same length; it may cross a line ending
+  within a paragraph (a block quote's lazy continuation line included) but not a block boundary: a
+  blank line, a fence, a deeper block quote, a list item (ordered ones numbered 1, unless the
+  paragraph is itself in a list item), an ATX heading, a thematic break, or a setext heading's `===`
+  underline, which ends the heading's paragraph. A run with no closer is literal text. Checklist
+  lines are read one at a time, so a span never continues onto the next line there.
 - **Checklist.** Lines `- [ ] ...`, `* [x] ...` or `+ [X] ...` outside fenced code. Inline code is
   removed from a line before it is read. Each line counts for its first reference to the repository,
   `#N` or `OWNER/REPO#N` (compared case-insensitively); lines naming only other repositories,

@@ -385,36 +385,50 @@ function width(text: string): number {
 
 /**
  * The Markdown container markers that open `line`, block quotes (`>`) and list items (`-`, `1.`)
- * in any nesting: the number of block quotes among them, where the rest of the line starts, and,
- * when list markers follow the last block quote, the column where the innermost item's content
- * starts, counted from the end of that quote's markers as {@link quotePrefix} reads them (0 when
- * no list marker follows it). As in CommonMark, the content column includes up to three more
- * spaces after a marker's own.
+ * in any nesting: the number of block quotes among them (`depth`), where the last quote's markers
+ * end (`quote`, after one optional space), where the rest of the line starts (`end`), and the list
+ * markers that follow the last block quote: the first one's indentation (`indent`) and each item's
+ * content column (`items`, outermost first), counted from `quote`, with `item` the innermost one's
+ * (0 when no list marker follows the last quote). As in CommonMark, the content column includes up
+ * to three more spaces after a marker's own.
  */
-function containerPrefix(line: string): { depth: number; end: number; item: number } {
+function containerPrefix(line: string): {
+  depth: number;
+  quote: number;
+  end: number;
+  indent: number;
+  items: number[];
+  item: number;
+} {
   let depth = 0;
   let end = 0;
-  // Where the last block quote's markers end, and whether a list marker follows them.
-  let quoteEnd = 0;
-  let inItem = false;
+  // Where the last block quote's markers end, and the list items that follow them.
+  let quote = 0;
+  let indent = 0;
+  let items: number[] = [];
   for (;;) {
     let index = end;
     while (isBlank(line.charAt(index))) index += 1;
     if (line.charAt(index) === '>') {
       depth += 1;
       end = index + 1;
-      quoteEnd = isBlank(line.charAt(end)) ? end + 1 : end;
-      inItem = false;
+      quote = isBlank(line.charAt(end)) ? end + 1 : end;
+      items = [];
       continue;
     }
     const marker = listMarkerEnd(line, index);
     if (marker === -1) {
-      if (!inItem) return { depth, end, item: 0 };
-      const extra = indentation(line.slice(end));
-      return { depth, end, item: end - quoteEnd + (extra <= 3 ? extra : 0) };
+      if (items.length) {
+        const extra = indentation(line.slice(end));
+        items[items.length - 1] = end - quote + (extra <= 3 ? extra : 0);
+      }
+      return { depth, quote, end, indent, items, item: items.at(-1) ?? 0 };
     }
+    // A nested marker on the same line starts its parent item's content.
+    if (items.length) items[items.length - 1] = index - quote;
+    else indent = width(line.slice(quote, index));
+    items.push(marker - quote);
     end = marker;
-    inItem = true;
   }
 }
 
@@ -424,24 +438,40 @@ function containerPrefix(line: string): { depth: number; end: number; item: numb
  * unclosed fence runs to the end of its container, as in CommonMark. A fence may open inside block
  * quotes and list items (`> ~~~`, `- ~~~`, `> 1. ~~~`): the container markers are read first. It
  * ends with the block quotes it opened in: a later line with fewer `>` markers is outside it, and
- * its own markers are read before its closer. A fence that opens after a list marker also ends with
- * that item: a later non-blank line indented less than the item's content column is outside it
- * (fenced code has no lazy continuation), and blank lines stay inside. A fence that opens on a
- * later line of an item, with no marker of its own, runs until its closer or its block quote ends.
+ * its own markers are read before its closer. It also ends with the list item it opened in: a later
+ * non-blank line indented less than the item's content column is outside it (fenced code has no
+ * lazy continuation), and blank lines stay inside.
  *
- * A closer may be indented at most three columns past its container's content column, as in
- * CommonMark: past the list item's content column when the fence opened after a list marker, and
- * otherwise past the block quote's markers, or as far as the opening run when that is deeper (a fence
- * on a later line of an item, whose content column is unknown, may be indented that far). A more
- * deeply indented fence line is code inside the fence, so the fence never closes before CommonMark's
- * would. The opener accepts any indentation: telling a fence on an item's later line from indented
- * code needs full list tracking, and a wrong guess there only hides text from the parsers
- * ({@link parseSplit} already ignores markers indented four or more columns).
+ * The open list items are tracked across lines by their content columns after the block-quote
+ * markers, so a fence on a later line of an item, with no marker of its own (`- a`, a blank line,
+ * then `  ~~~`), belongs to the deepest item its indentation reaches. A list marker closes the items
+ * deeper than its own indentation and opens its own; a line without one closes the items deeper than
+ * its indentation, unless it lazily continues a paragraph (a fence opener never does). A marker
+ * indented four or more columns past its container is code, not an item. The tracking restarts
+ * whenever the block-quote depth changes, so a lazy line of a block quote falls back to a fence that
+ * belongs to no item.
+ *
+ * An opener, like a closer, may be indented at most three columns past its container's content
+ * column, as in CommonMark: past the list item's content column, or past the block quote's markers
+ * when it belongs to no item. A more deeply indented fence line is indented code when it would open
+ * a fence, and code inside the fence when it would close one, so `    ~~~` neither hides the lines
+ * after it nor ends a fence early.
  */
 function fenceMask(text: readonly string[]): boolean[] {
   // The open fence's run, its block-quote depth, its list item's content column (0 for none), and
   // the opening run's column after the block-quote markers.
   let fence: { run: string; depth: number; item: number; column: number } | null = null;
+  // The open list items' content columns after the block-quote markers, outermost first; the
+  // block-quote depth they were read at; and whether the previous line was paragraph text, which a
+  // less indented line may continue lazily.
+  let items: number[] = [];
+  let depth = 0;
+  let paragraph = false;
+  /** Close the items deeper than `column`, and return the deepest one left (0 for none). */
+  const within = (column: number): number => {
+    while ((items.at(-1) ?? 0) > column) items.pop();
+    return items.at(-1) ?? 0;
+  };
   return text.map((line) => {
     if (fence !== null) {
       const quote = quotePrefix(line, fence.depth);
@@ -460,19 +490,49 @@ function fenceMask(text: readonly string[]): boolean[] {
       fence = null;
     }
     const prefix = containerPrefix(line);
-    const rest = line.slice(prefix.end);
+    if (prefix.depth !== depth) {
+      items = [];
+      depth = prefix.depth;
+    }
+    const quoted = line.slice(prefix.quote);
+    // An ATX heading or a thematic break (`* * *` is one, not two list markers) is a block of one
+    // line, never a paragraph's lazy continuation.
+    const leaf = blockStart(quoted, true) === 'line';
+    // A marker indented four or more columns past the deepest item it could belong to is code.
+    const marked =
+      !leaf &&
+      prefix.items.length > 0 &&
+      prefix.indent - (items.findLast((column) => column <= prefix.indent) ?? 0) < 4;
+    const rest = marked ? line.slice(prefix.end) : quoted;
+    const blank = /^[ \t]*$/u.test(rest);
+    if (!marked && blank) {
+      paragraph = false;
+      return false;
+    }
+    const indent = indentation(rest);
     // The run is taken whole and the info string sliced off, so no regex splits the run.
-    const open = /^\s*(`{3,}|~{3,})/u.exec(rest);
+    const open = /^[ \t]*(`{3,}|~{3,})/u.exec(rest);
     // A backtick fence's info string cannot contain a backtick (that line is inline code).
-    if (
+    const opens =
       open?.[1] !== undefined &&
-      !(open[1].startsWith('`') && rest.slice(open[0].length).includes('`'))
-    ) {
-      const runStart = prefix.end + open[0].length - open[1].length;
-      const column = width(line.slice(quotePrefix(line, prefix.depth).end, runStart));
-      fence = { run: open[1], depth: prefix.depth, item: prefix.item, column };
+      !(open[1].startsWith('`') && rest.slice(open[0].length).includes('`'));
+    let item: number;
+    if (marked) {
+      within(prefix.indent);
+      // One at a time: a spread of a long run of markers could overflow the call stack.
+      for (const column of prefix.items) items.push(column);
+      item = prefix.item;
+    } else item = opens || leaf || !paragraph ? within(indent) : (items.at(-1) ?? 0);
+    // On a marker's line the item's content column already holds up to three spaces.
+    if (opens && open[1] !== undefined && indent <= (marked ? 3 : item + 3)) {
+      const runStart = line.length - rest.length + open[0].length - open[1].length;
+      const column = width(line.slice(prefix.quote, runStart));
+      fence = { run: open[1], depth: prefix.depth, item, column };
+      paragraph = false;
       return true;
     }
+    // Indented code is not a paragraph, unless it continues one.
+    paragraph = !leaf && !blank && (marked || paragraph || indent < item + 4);
     return false;
   });
 }
