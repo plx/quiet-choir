@@ -1448,6 +1448,8 @@ export async function runWorkflow<
       readonly onError?: TMode;
       readonly legacyDependencies?: JsonValue;
       readonly exec?: ExecSummary;
+      /** Inspection labels of an exec; a local step's labels come from `local.meta`. */
+      readonly meta?: Readonly<Record<string, JsonValue>>;
       readonly isolation?: EffectIsolation;
       /**
        * Under rehearsal, the effect is synthesized instead of touching Git: a fresh isolated agent
@@ -1475,10 +1477,11 @@ export async function runWorkflow<
       // Key presence, not undefined: a plain-JS step without input must still fail jsonValue().
       const dependencies = 'dependencies' in spec ? spec.dependencies : null;
       const signal = scopes.signal;
+      const labels = spec.meta ?? local?.meta;
       const meta =
-        local?.meta === undefined
+        labels === undefined
           ? undefined
-          : z.record(z.string(), z.json()).parse(jsonValue(local.meta, `Step ${id} metadata`));
+          : z.record(z.string(), z.json()).parse(jsonValue(labels, `Step ${id} metadata`));
       const value = (output: T): EffectResult<T, TMode> =>
         (onError === 'return' ? { ok: true, value: output } : output) as EffectResult<T, TMode>;
       const replay = (step: StepRecord): EffectResult<T, TMode> =>
@@ -2235,7 +2238,8 @@ export async function runWorkflow<
             : jsonValue(helperIdentity, `Step "${id}" exec identity`);
         const prepared = await prepareExec(command, publicSettings, cwd, schema !== null);
         // The error mode is neither policy nor part of the summary; it enters identity only as 'return'.
-        const { onError: checkedOnError, ...policySettings } = prepared.settings;
+        // Labels are neither: they are recorded on the step for inspection only.
+        const { onError: checkedOnError, meta, ...policySettings } = prepared.settings;
         const onError = checkedOnError as TMode | undefined;
         const execution = resolvePolicy(
           id,
@@ -2292,6 +2296,7 @@ export async function runWorkflow<
           phase,
           ...(onError === undefined ? {} : { onError }),
           exec: prepared.summary,
+          ...(meta === undefined ? {} : { meta }),
           ...(prepared.settings.worktree === undefined
             ? {}
             : { isolation: { value: prepared.settings.worktree, cwd: prepared.summary.cwd } }),

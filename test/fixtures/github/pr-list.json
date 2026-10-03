@@ -1,0 +1,27 @@
+[
+  {
+    "data": {
+      "repository": {
+        "pullRequests": {
+          "pageInfo": {
+            "hasNextPage": false,
+            "endCursor": "Y3Vyc29yOnYyOpHPAAAAARl0lcE="
+          },
+          "nodes": [
+            {
+              "number": 329,
+              "title": "Add a static durability lint (QC001-QC006) to workflow validate",
+              "state": "MERGED",
+              "isDraft": false,
+              "headRefName": "epic-99/154-add-a-static-durability-lint-qc001-qc006",
+              "baseRefName": "main",
+              "headRefOid": "9fd831de10de270b1f355f7f7e0c56e2c36ca864",
+              "url": "https://github.com/octo-org/quiet-choir/pull/329",
+              "body": "Closes #154.\n\nPart of #99.\n\nWorkflow bodies are replayed, so code that reads the clock, discards an effect's promise, races effects, or reuses an effect ID in a loop behaves differently on resume than on the first run. Until now only runtime guards caught some of this, and only after a run had started. This adds a static lint that finds these hazards before import, using the type check's own `ts.P\n..."
+            }
+          ]
+        }
+      }
+    }
+  }
+]

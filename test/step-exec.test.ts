@@ -106,6 +106,8 @@ describe('types', () => {
           void context.exec(['gh'], { worktree: handle });
           // @ts-expect-error inner commands are never retried by the runtime.
           void context.exec(['gh'], { retry: { maxAttempts: 2 } });
+          // @ts-expect-error inner commands write no step record to label.
+          void context.exec.json(['gh'], { schema, meta: { integration: 'github' } });
           return null;
         },
       });
@@ -124,6 +126,8 @@ describe('types', () => {
         >();
         // @ts-expect-error inner commands cannot select a worktree.
         void context.exec(['gh'], { worktree: handle });
+        // @ts-expect-error inner commands write no step record to label.
+        void context.exec(['gh'], { meta: { integration: 'github' } });
         // A poll context is still usable where a step context is expected.
         expectTypeOf(context).toExtend<StepContext>();
         return { done: true, value: await context.exec.json(['gh'], { schema }) };
@@ -221,12 +225,13 @@ describe('command poll types', () => {
 });
 
 describe('step callbacks', () => {
-  it('rejects live, worktree and retry at runtime before reaching the runner', async () => {
+  it('rejects live, worktree, retry and meta at runtime before reaching the runner', async () => {
     const { seen, runner } = recorder();
     for (const [index, options] of [
       { live: true },
       { worktree: true },
       { retry: { maxAttempts: 2 } },
+      { meta: { integration: 'github' } },
     ].entries()) {
       const failure = await runWorkflow(
         definition((ctx) =>
@@ -552,6 +557,25 @@ describe('poll observers', () => {
     ]);
     expect(seen.every(({ request }) => request.nested === true)).toBe(true);
     expect(Object.keys(run.steps)).toEqual(['pr-merged']);
+  });
+
+  it('rejects meta at runtime before reaching the runner', async () => {
+    const { seen, runner } = recorder();
+    const failure = await runWorkflow(
+      definition((ctx) =>
+        poll(ctx, 'observed', z.unknown(), async (context) => ({
+          done: true,
+          // A JavaScript author can pass anything; the strict schema refuses it.
+          value: await context.exec(['gh'], {
+            meta: { integration: 'github' },
+          } as unknown as Record<string, never>),
+        })),
+      ),
+      { ...setup(), processRunner: runner, waitMode: 'block' },
+    ).catch((error: unknown) => error);
+    expect(String(failure)).toMatch(/Wait observed: invalid context\.exec options/u);
+    expect(String(failure)).toContain('meta');
+    expect(seen).toEqual([]);
   });
 
   it('stops an inner command when observeTimeoutMs aborts the observation', async () => {

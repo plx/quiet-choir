@@ -1,0 +1,5 @@
+{
+  "message": "Code scanning is not enabled for this repository. Please enable code scanning in the repository settings.",
+  "documentation_url": "https://docs.github.com/rest/code-scanning/code-scanning#list-code-scanning-alerts-for-a-repository",
+  "status": "403"
+}

@@ -1,0 +1,89 @@
+{
+  "data": {
+    "repository": {
+      "pullRequest": {
+        "number": 329,
+        "title": "Add a static durability lint (QC001-QC006) to workflow validate",
+        "url": "https://github.com/octo-org/quiet-choir/pull/329",
+        "body": "Closes #154.\n\nPart of #99.\n\nWorkflow bodies are replayed, so code that reads the clock, discards an effect's promise, races effects, or reuses an effect ID in a loop behaves differently on resume than on the first run. Until now only runtime guards caught some of this, and only after a run had started. This adds a static lint that finds these hazards before import, using the type check's own `ts.P\n...",
+        "state": "MERGED",
+        "isDraft": false,
+        "mergeable": "UNKNOWN",
+        "mergeStateStatus": "UNKNOWN",
+        "headRefOid": "9fd831de10de270b1f355f7f7e0c56e2c36ca864",
+        "headRefName": "epic-99/154-add-a-static-durability-lint-qc001-qc006",
+        "baseRefName": "main",
+        "closingIssuesReferences": {
+          "pageInfo": {
+            "hasNextPage": false,
+            "endCursor": "MQ"
+          },
+          "nodes": [
+            {
+              "number": 154,
+              "repository": {
+                "nameWithOwner": "octo-org/quiet-choir"
+              }
+            }
+          ]
+        },
+        "commits": {
+          "nodes": [
+            {
+              "commit": {
+                "oid": "9fd831de10de270b1f355f7f7e0c56e2c36ca864",
+                "statusCheckRollup": {
+                  "state": "SUCCESS",
+                  "contexts": {
+                    "pageInfo": {
+                      "hasNextPage": false,
+                      "endCursor": "OA"
+                    },
+                    "nodes": [
+                      {
+                        "__typename": "CheckRun",
+                        "name": "Quality and package",
+                        "status": "COMPLETED",
+                        "conclusion": "SUCCESS",
+                        "detailsUrl": "https://github.com/octo-org/quiet-choir/actions/runs/37078499704/job/111073630715",
+                        "checkSuite": {
+                          "workflowRun": {
+                            "databaseId": 37078499704
+                          }
+                        }
+                      },
+                      {
+                        "__typename": "CheckRun",
+                        "name": "Analyze JavaScript and TypeScript",
+                        "status": "COMPLETED",
+                        "conclusion": "SUCCESS",
+                        "detailsUrl": "https://github.com/octo-org/quiet-choir/actions/runs/37078499680/job/111073630334",
+                        "checkSuite": {
+                          "workflowRun": {
+                            "databaseId": 37078499680
+                          }
+                        }
+                      },
+                      {
+                        "__typename": "CheckRun",
+                        "name": "Review dependency changes",
+                        "status": "COMPLETED",
+                        "conclusion": "SUCCESS",
+                        "detailsUrl": "https://github.com/octo-org/quiet-choir/actions/runs/37078499735/job/111073630369",
+                        "checkSuite": {
+                          "workflowRun": {
+                            "databaseId": 37078499735
+                          }
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          ]
+        }
+      }
+    }
+  }
+}

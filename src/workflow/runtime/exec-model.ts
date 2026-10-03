@@ -43,6 +43,12 @@ export interface ExecOptions {
    * it as `Settled`, so resume replays the same branch. Policy-free: not part of the summary.
    */
   readonly onError?: ErrorMode | undefined;
+  /**
+   * JSON labels recorded on the step, like `StepDefinition.meta`: `inspect` shows a step with a
+   * string `integration` label as `integration.op`. Never part of identity or policy, so changing
+   * a label never refuses a resume. Integration helpers use `{ integration, op }`.
+   */
+  readonly meta?: Readonly<Record<string, JsonValue>>;
 }
 
 /**
@@ -112,10 +118,10 @@ export interface ExecFunction {
 
 /**
  * Options for a command a local step callback issues through `context.exec`: the options of
- * {@link ExecOptions} without `worktree` and `retry`. The command is not a durable effect, so
- * `onError: 'return'` resolves to a failure value without saving it.
+ * {@link ExecOptions} without `worktree`, `retry` and `meta`. The command is not a durable effect
+ * and writes no step record, so `onError: 'return'` resolves to a failure value without saving it.
  */
-export type StepExecOptions = Omit<ExecOptions, 'worktree' | 'retry'>;
+export type StepExecOptions = Omit<ExecOptions, 'worktree' | 'retry' | 'meta'>;
 
 /** Options for a command a poll observer issues through `context.exec`. */
 export interface PollExecOptions extends StepExecOptions {

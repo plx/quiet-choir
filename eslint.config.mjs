@@ -67,12 +67,40 @@ export default defineConfig(
         {
           patterns: [
             {
-              group: ['../**', './**', '!../index.js'],
+              // A regex, because a gitignore group cannot re-include a file below an excluded
+              // directory such as ../workflow/.
+              regex:
+                '^(?:\\./(?!github-model\\.js$)|\\.\\./(?!index\\.js$|workflow/runtime/error-brand\\.js$))',
               message:
-                'Integration helpers must use the public quiet-choir entry point, not runtime internals.',
+                'Integration helpers must use the public quiet-choir entry point, not runtime internals. The exceptions are their own pure ./github-model.js and the error-brand registry, a cross-instance contract (ADR 0028), not runtime state.',
             },
           ],
         },
+      ],
+    },
+  },
+  {
+    // The pure parts of quiet-choir/github (ADR 0044): queries, schemas and mappers. Values come
+    // only from the public entry point (for z); no I/O, clock or process.
+    files: ['src/integrations/github-model.ts'],
+    rules: {
+      '@typescript-eslint/no-restricted-imports': [
+        'error',
+        {
+          patterns: [
+            {
+              group: ['node:*', ...builtinModules, './**', '../**', '!../index.js'],
+              allowTypeImports: true,
+              message:
+                'The GitHub read model must stay free of I/O: import values only from ../index.js; everything else must be import type.',
+            },
+          ],
+        },
+      ],
+      'no-restricted-globals': [
+        'error',
+        { name: 'process', message: 'The GitHub read model must not read the process.' },
+        { name: 'Date', message: 'The GitHub read model must not read the clock.' },
       ],
     },
   },

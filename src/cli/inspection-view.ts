@@ -89,6 +89,13 @@ function commandLabel(command: ExecSummary['command']): string {
     : program;
 }
 
+/** `integration.op` for a step labelled by an integration helper, such as `github.pr.view`. */
+function integrationLabel(meta: RunSummary['steps'][number]['meta']): string | undefined {
+  return typeof meta?.['integration'] === 'string'
+    ? [meta['integration'], meta['op']].filter((part) => typeof part === 'string').join('.')
+    : undefined;
+}
+
 function agentLine(row: RunSummary['agents']['recent'][number]): string {
   return `${row.status === 'completed' ? '' : `${row.status} `}${row.id}  ${row.harness} ${row.model ?? '(native model)'} effort ${row.effort ?? '-'}${row.profile === null ? '' : ` profile ${row.profile}`}${row.elapsedMs === null ? '' : `  ${duration(row.elapsedMs)}`}  ${row.costUsd === null ? 'unknown cost' : `$${row.costUsd.toFixed(4)}`}${row.toolUses === undefined ? '' : `  tools ${String(row.toolUses)}`}${row.warnings?.length ? `  warnings: ${row.warnings.join(' ')}` : ''}`;
 }
@@ -157,7 +164,7 @@ export function formatRunSummary(run: RunSummary, verbose = false): string {
       );
     if (step.exec && !verbose && !step.worktree && !step.merge && step.status === 'completed') {
       lines.push(
-        `${step.status} ${step.id}  ${commandLabel(step.exec.command)}${step.elapsedMs === null ? '' : `  ${duration(step.elapsedMs)}`}${step.rootCause ? ' [root cause]' : ''}`,
+        `${step.status} ${step.id}  ${integrationLabel(step.meta) ?? commandLabel(step.exec.command)}${step.elapsedMs === null ? '' : `  ${duration(step.elapsedMs)}`}${step.rootCause ? ' [root cause]' : ''}`,
       );
       continue;
     }
@@ -190,12 +197,7 @@ export function formatRunSummary(run: RunSummary, verbose = false): string {
           .filter((value) => value !== null)
           .join(', ')
       : '';
-    const label =
-      typeof step.meta?.['integration'] === 'string'
-        ? [step.meta['integration'], step.meta['op']]
-            .filter((part) => typeof part === 'string')
-            .join('.')
-        : step.kind;
+    const label = integrationLabel(step.meta) ?? step.kind;
     lines.push(
       `${step.status} ${step.id}  ${request ? `${request.harness} ${request.model ?? '(native model)'}` : label}${step.elapsedMs === null ? '' : `  ${duration(step.elapsedMs)} elapsed`}${limits ? `; ${limits}` : ''}${step.errorKind ? ` [${step.errorKind}]` : ''}${step.rootCause ? ' [root cause]' : ''}${step.error ? `  ${step.error}` : ''}`,
     );

@@ -5,8 +5,13 @@ definitions to a particular agent harness.
 
 ## Current layout
 
-- `src/index.ts` is the main public package entry point; `quiet-choir/harness-kit` and
-  `quiet-choir/decision` are deliberate adapter/helper subpaths. Public exports need API comments.
+- `src/index.ts` is the main public package entry point; `quiet-choir/harness-kit`,
+  `quiet-choir/decision` and `quiet-choir/github` are deliberate adapter/helper subpaths. Public
+  exports need API comments.
+- `src/integrations/` contains helper subpaths. They import the public entry point, never runtime
+  internals; `github.ts` keeps its queries, schemas and mappers in the pure `github-model.ts` and
+  may also import the error-brand registry ([ADR 0044](decisions/0044-gh-backed-github-reads.md)).
+  See [GitHub reads](github.md).
 - `src/application/` contains framework-independent execution contracts and small executors.
 - `src/workflow/` contains workflow-specific plans, results, analysis, and executors.
 - `src/workflow/runtime/` defines the typed workflow API and local checkpoint/replay engine.

@@ -1,0 +1,190 @@
+[
+  {
+    "number": 6,
+    "created_at": "2026-09-28T01:01:16Z",
+    "updated_at": "2026-09-30T16:06:49Z",
+    "url": "https://api.github.com/repos/octo-org/quiet-choir/code-scanning/alerts/6",
+    "html_url": "https://github.com/octo-org/quiet-choir/security/code-scanning/6",
+    "state": "fixed",
+    "fixed_at": "2026-09-30T16:06:49Z",
+    "dismissed_by": null,
+    "dismissed_at": null,
+    "dismissed_reason": null,
+    "dismissed_comment": null,
+    "rule": {
+      "id": "js/bad-code-sanitization",
+      "severity": "error",
+      "description": "Improper code sanitization",
+      "name": "js/bad-code-sanitization",
+      "security_severity_level": "medium"
+    },
+    "tool": {
+      "name": "CodeQL",
+      "guid": null,
+      "version": "2.27.1"
+    },
+    "most_recent_instance": {
+      "ref": "refs/heads/main",
+      "analysis_key": ".github/workflows/codeql.yml:analyze",
+      "environment": "{}",
+      "category": ".github/workflows/codeql.yml:analyze",
+      "state": "fixed",
+      "commit_sha": "cb2579d5272cec5c9c9794868135ca77bd8b4221",
+      "message": {
+        "text": "Code construction depends on an improperly sanitized value."
+      },
+      "location": {
+        "path": "test/process-lifecycle.test.ts",
+        "start_line": 219,
+        "end_line": 219,
+        "start_column": 78,
+        "end_column": 98
+      },
+      "classifications": ["test"]
+    },
+    "instances_url": "https://api.github.com/repos/octo-org/quiet-choir/code-scanning/alerts/6/instances",
+    "dismissal_approved_by": null,
+    "assignees": []
+  },
+  {
+    "number": 5,
+    "created_at": "2026-09-28T01:01:16Z",
+    "updated_at": "2026-09-30T16:06:49Z",
+    "url": "https://api.github.com/repos/octo-org/quiet-choir/code-scanning/alerts/5",
+    "html_url": "https://github.com/octo-org/quiet-choir/security/code-scanning/5",
+    "state": "fixed",
+    "fixed_at": "2026-09-30T16:06:49Z",
+    "dismissed_by": null,
+    "dismissed_at": null,
+    "dismissed_reason": null,
+    "dismissed_comment": null,
+    "rule": {
+      "id": "js/bad-code-sanitization",
+      "severity": "error",
+      "description": "Improper code sanitization",
+      "name": "js/bad-code-sanitization",
+      "security_severity_level": "medium"
+    },
+    "tool": {
+      "name": "CodeQL",
+      "guid": null,
+      "version": "2.27.1"
+    },
+    "most_recent_instance": {
+      "ref": "refs/heads/main",
+      "analysis_key": ".github/workflows/codeql.yml:analyze",
+      "environment": "{}",
+      "category": ".github/workflows/codeql.yml:analyze",
+      "state": "fixed",
+      "commit_sha": "cb2579d5272cec5c9c9794868135ca77bd8b4221",
+      "message": {
+        "text": "Code construction depends on an improperly sanitized value."
+      },
+      "location": {
+        "path": "test/process-lifecycle.test.ts",
+        "start_line": 187,
+        "end_line": 187,
+        "start_column": 78,
+        "end_column": 98
+      },
+      "classifications": ["test"]
+    },
+    "instances_url": "https://api.github.com/repos/octo-org/quiet-choir/code-scanning/alerts/5/instances",
+    "dismissal_approved_by": null,
+    "assignees": []
+  },
+  {
+    "number": 4,
+    "created_at": "2026-09-28T01:01:16Z",
+    "updated_at": "2026-09-30T16:06:49Z",
+    "url": "https://api.github.com/repos/octo-org/quiet-choir/code-scanning/alerts/4",
+    "html_url": "https://github.com/octo-org/quiet-choir/security/code-scanning/4",
+    "state": "fixed",
+    "fixed_at": "2026-09-30T16:06:49Z",
+    "dismissed_by": null,
+    "dismissed_at": null,
+    "dismissed_reason": null,
+    "dismissed_comment": null,
+    "rule": {
+      "id": "js/bad-code-sanitization",
+      "severity": "error",
+      "description": "Improper code sanitization",
+      "name": "js/bad-code-sanitization",
+      "security_severity_level": "medium"
+    },
+    "tool": {
+      "name": "CodeQL",
+      "guid": null,
+      "version": "2.27.1"
+    },
+    "most_recent_instance": {
+      "ref": "refs/heads/main",
+      "analysis_key": ".github/workflows/codeql.yml:analyze",
+      "environment": "{}",
+      "category": ".github/workflows/codeql.yml:analyze",
+      "state": "fixed",
+      "commit_sha": "cb2579d5272cec5c9c9794868135ca77bd8b4221",
+      "message": {
+        "text": "Code construction depends on an improperly sanitized value."
+      },
+      "location": {
+        "path": "test/process-lifecycle.test.ts",
+        "start_line": 156,
+        "end_line": 156,
+        "start_column": 76,
+        "end_column": 96
+      },
+      "classifications": ["test"]
+    },
+    "instances_url": "https://api.github.com/repos/octo-org/quiet-choir/code-scanning/alerts/4/instances",
+    "dismissal_approved_by": null,
+    "assignees": []
+  },
+  {
+    "number": 3,
+    "created_at": "2026-09-27T21:59:00Z",
+    "updated_at": "2026-09-30T16:06:49Z",
+    "url": "https://api.github.com/repos/octo-org/quiet-choir/code-scanning/alerts/3",
+    "html_url": "https://github.com/octo-org/quiet-choir/security/code-scanning/3",
+    "state": "fixed",
+    "fixed_at": "2026-09-30T16:06:49Z",
+    "dismissed_by": null,
+    "dismissed_at": null,
+    "dismissed_reason": null,
+    "dismissed_comment": null,
+    "rule": {
+      "id": "js/bad-code-sanitization",
+      "severity": "error",
+      "description": "Improper code sanitization",
+      "name": "js/bad-code-sanitization",
+      "security_severity_level": "medium"
+    },
+    "tool": {
+      "name": "CodeQL",
+      "guid": null,
+      "version": "2.27.1"
+    },
+    "most_recent_instance": {
+      "ref": "refs/heads/main",
+      "analysis_key": ".github/workflows/codeql.yml:analyze",
+      "environment": "{}",
+      "category": ".github/workflows/codeql.yml:analyze",
+      "state": "fixed",
+      "commit_sha": "cb2579d5272cec5c9c9794868135ca77bd8b4221",
+      "message": {
+        "text": "Code construction depends on an improperly sanitized value."
+      },
+      "location": {
+        "path": "test/replay-loader.test.ts",
+        "start_line": 202,
+        "end_line": 202,
+        "start_column": 48,
+        "end_column": 74
+      },
+      "classifications": ["test"]
+    },
+    "instances_url": "https://api.github.com/repos/octo-org/quiet-choir/code-scanning/alerts/3/instances",
+    "dismissal_approved_by": null,
+    "assignees": []
+  }
+]

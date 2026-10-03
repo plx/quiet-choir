@@ -590,6 +590,9 @@ error and prompted structured output the built-in adapters use
 Additional service operations use one ordinary effect per helper call; the transport-injected
 `quiet-choir/decision` reference preserves answers and probability distributions. See
 [the integration decision](docs/decisions/0027-typed-harness-registry-and-integration-helpers.md).
+`quiet-choir/github` reads repositories, pull requests, review threads, issues and code-scanning
+alerts through the installed `gh`, one `ctx.exec.json` per read, and throws instead of returning a
+truncated list; see [GitHub reads](docs/github.md).
 
 ## Progress and monitoring
 

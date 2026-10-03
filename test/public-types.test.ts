@@ -103,7 +103,7 @@ function emitDeclarations(cwd: string, project: string, outDir: string): Promise
 describe('published declarations', () => {
   // Fits the default timeout: 0.8 s alone and 0.9 s in a full coverage run (one native tsc emit and
   // one compile).
-  it('type every runtime export of quiet-choir, its harness kit and decision helper', async () => {
+  it('type every runtime export of quiet-choir, its harness kit, decision and github helpers', async () => {
     const temp = await mkdtemp(join(tmpdir(), 'qc-public-types-'));
     try {
       const pkg = join(temp, 'pkg');
@@ -120,6 +120,10 @@ describe('published declarations', () => {
           specifier: 'quiet-choir/decision',
           names: Object.keys(await import('../src/integrations/decision.js')),
         },
+        {
+          specifier: 'quiet-choir/github',
+          names: Object.keys(await import('../src/integrations/github.js')),
+        },
       ];
       // Guard against a vacuous pass: the helpers this check exists for must be listed.
       expect(entries[1]?.names).toEqual(
@@ -135,6 +139,15 @@ describe('published declarations', () => {
         ]),
       );
       expect(entries[2]?.names).toContain('decision');
+      expect(entries[3]?.names).toEqual(
+        expect.arrayContaining([
+          'github',
+          'IncompleteCollectionError',
+          'parseGithubRepo',
+          'summarizeChecks',
+          'reviewThreadsResponseSchema',
+        ]),
+      );
       expect(
         await consumerDiagnostics(join(temp, 'consumer'), { 'quiet-choir': pkg }, entries),
       ).toEqual([]);

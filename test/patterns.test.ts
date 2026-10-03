@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 import { mkdtemp, mkdir, readFile, realpath, rename, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -511,11 +512,27 @@ it('bounded review/revise exits immediately when approved', async () => {
 it('replays durable command verdicts and gh JSON snapshots after a tail failure', async () => {
   const verdict = (await import('../examples/patterns/command-verdict.workflow.js')).default;
   const github = (await import('../examples/patterns/github-snapshot.workflow.js')).default;
-  for (const [name, workflow, input] of [
-    ['verdict', verdict, { argv: ['fake', 'test'] }],
-    ['github', github, { repo: 'enterprise.test/owner/repo', pr: 1 }],
+  // Recorded gh responses (test/fixtures/github), chosen by the read each argv performs.
+  const recorded = (argv: readonly string[]): string => {
+    const query = argv.find((arg) => arg.startsWith('query=')) ?? '';
+    const file = !query
+      ? 'code-scanning-alerts.json'
+      : query.includes('viewer {')
+        ? 'repo-info.json'
+        : query.includes('reviewThreads(')
+          ? 'review-threads.json'
+          : query.includes('pullRequests(')
+            ? 'pr-list.json'
+            : query.includes('issue(number')
+              ? 'issue-view-comments.json'
+              : 'pr-view.json';
+    return readFileSync(new URL(`./fixtures/github/${file}`, import.meta.url), 'utf8');
+  };
+  for (const [name, workflow, input, live] of [
+    ['verdict', verdict, { argv: ['fake', 'test'] }, 1],
+    ['github', github, { repo: 'enterprise.test/owner/repo', pr: 329 }, 6],
   ] as const) {
-    let calls = 0;
+    const argvs: (readonly string[])[] = [];
     const wrapped = tailFailure(workflow as WorkflowDefinition<unknown, unknown>);
     const setup = {
       ...options(),
@@ -523,11 +540,12 @@ it('replays durable command verdicts and gh JSON snapshots after a tail failure'
       input,
       processRunner: {
         run: (request: ProcessRunRequest) => {
-          calls++;
+          const argv = request.command as readonly string[];
+          argvs.push(argv);
           return Promise.resolve({
             code: request.schema ? 0 : 1,
             signal: null,
-            stdout: request.schema ? '{"headRefOid":"abc","state":"OPEN"}' : '',
+            stdout: request.schema ? recorded(argv) : '',
             stderr: '',
             truncated: false,
             durationMs: 1,
@@ -536,11 +554,25 @@ it('replays durable command verdicts and gh JSON snapshots after a tail failure'
       },
     };
     await expect(runWorkflow(wrapped, setup)).rejects.toThrow('Injected tail failure');
+    expect(argvs).toHaveLength(live);
     const resumed = await runWorkflow(wrapped, { ...setup, resume: true });
     expect(resumed.output).toEqual(
-      name === 'verdict' ? { green: false, code: 1 } : { headRefOid: 'abc', state: 'OPEN' },
+      name === 'verdict'
+        ? { green: false, code: 1 }
+        : {
+            head: '9fd831de10de270b1f355f7f7e0c56e2c36ca864',
+            ci: 'success',
+            scanning: 'ok: 4 alerts',
+            issue: 'Add a static durability lint (QC001-QC006) to workflow validate and execute',
+            unresolved: 0,
+            stacked: [329],
+          },
     );
-    expect(calls).toBe(1);
+    // The resume replays every completed read: no gh runs again.
+    expect(argvs).toHaveLength(live);
+    if (name === 'github')
+      for (const argv of argvs)
+        expect(argv.slice(0, 4)).toEqual(['gh', 'api', '--hostname', 'enterprise.test']);
   }
 });
 

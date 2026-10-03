@@ -336,8 +336,9 @@ The kit also exports the helpers the built-in adapters use, so a third adapter n
   `schema`) when there is none. The runtime treats `'prompted'` exactly like `'native'`: it passes
   `outputSchema`, then parses and Zod-validates `response.text`, and never rewrites prompts.
 
-Every value and type the kit, the root entry and `quiet-choir/decision` export is type-checked
-against the published declarations with `skipLibCheck: false`, so none resolves to `any`.
+Every value and type the kit, the root entry, `quiet-choir/decision` and `quiet-choir/github` export
+is type-checked against the published declarations with `skipLibCheck: false`, so none resolves to
+`any`.
 
 CLI package config uses `--harness-config '{"harnesses":{"third":{"binary":"third-cli"}}}'` or
 `@file` / `QUIET_CHOIR_HARNESS_CONFIG`. Override selected names with repeatable
@@ -367,9 +368,10 @@ make exactly one `ctx.step`, `ctx.exec` or `ctx.wait` at workflow level. Inside 
 or wait's observer, run `gh` and other commands through `context.exec`, which the run owns and
 rehearses but does not checkpoint, never through `child_process` (see
 [commands inside a callback](commands-files.md#commands-inside-a-callback-or-observer)).
-`StepDefinition.meta` can label `{ integration: 'decision', op: 'choose' }` without affecting replay
-identity. Explicit inputs/version capture meaningful service-operation changes; pass the stable
-idempotency key to services that support deduplication. Never put credentials in inputs or metadata.
+`StepDefinition.meta` can label `{ integration: 'decision', op: 'choose' }`, and `ExecOptions.meta`
+labels a helper's `ctx.exec` the same way, without affecting replay identity. Explicit
+inputs/version capture meaningful service-operation changes; pass the stable idempotency key to
+services that support deduplication. Never put credentials in inputs or metadata.
 
 `quiet-choir/decision` exports `decision(ctx, transport).choose(id, question)` as a reference with
 an injected transport and a validated answer and normalized probability distribution. It is not a
@@ -380,3 +382,12 @@ outcome, including local validation failure. Reports after the callback returns 
 separates `integrationUsage`/`byIntegration` from agent totals; helpers do not consume agent attempt
 slots, while reported cost contributes to the next agent's cost gate. Replay makes no transport
 call.
+
+`quiet-choir/github` exports `github(ctx, { repo })` with typed reads (`repo.info`, `pr.view`,
+`pr.list`, `pr.reviewThreads`, `issue.view`, `codeScanning.alerts`). Each read is one
+`ctx.exec.json` over `gh api` argv with your ID, labelled `{ integration: 'github', op }`;
+authentication stays in `gh`. A truncated connection throws `IncompleteCollectionError` and is never
+checkpointed, and code scanning that is not set up returns `status: 'unavailable'`. A completed read
+replays forever under its ID, so observe new state with a fresh ID keyed by round or head SHA. See
+[GitHub snapshots](patterns.md#github-snapshots-through-gh) and
+[GitHub reads](https://github.com/plx/quiet-choir/blob/main/docs/github.md).

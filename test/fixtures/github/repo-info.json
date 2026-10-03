@@ -1,0 +1,15 @@
+{
+  "data": {
+    "viewer": {
+      "login": "viewer-login"
+    },
+    "repository": {
+      "nameWithOwner": "octo-org/quiet-choir",
+      "isPrivate": false,
+      "viewerPermission": "ADMIN",
+      "defaultBranchRef": {
+        "name": "main"
+      }
+    }
+  }
+}
