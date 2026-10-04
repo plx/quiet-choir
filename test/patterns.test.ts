@@ -14,13 +14,17 @@ import {
   NodeProcessRunner,
   parseHarnessFixtures,
   readRun,
+  RunInterruptedError,
   runWorkflow,
+  stepId,
   z,
+  type ExecResult,
   type Harness,
   type ProcessRunRequest,
   type HarnessInvocation,
   type HarnessRequest,
   type HarnessResponse,
+  type WorkflowClock,
   type WorkflowDefinition,
 } from '../src/index.js';
 import cross from '../examples/patterns/cross-harness.workflow.js';
@@ -642,4 +646,239 @@ it('replays file publication and mutation-guard recipes without repeating mutati
   const resumed = await runWorkflow(wrappedGuard, { ...guardSetup, resume: true });
   expect(resumed.output).toBe(1);
   expect(await readFile(file, 'utf8')).toBe('new\r\nbaseline\r\n');
+});
+
+// ---------------------------------------------------------------------------------------------
+// GitHub recipes over recorded gh responses (test/fixtures/github), answered in process by the
+// step or wait ID each command runs under; nothing reaches github.com.
+
+const recordedGh = (file: string): unknown =>
+  JSON.parse(readFileSync(new URL(`./fixtures/github/${file}`, import.meta.url), 'utf8'));
+const answered = (stdout: unknown): Promise<ExecResult> =>
+  Promise.resolve({
+    code: 0,
+    signal: null,
+    stdout: typeof stdout === 'string' ? stdout : JSON.stringify(stdout),
+    stderr: '',
+    truncated: false,
+    durationMs: 1,
+  });
+/** A cancellable real-time sleep for a clock moved ahead of the wall clock. */
+const realSleep: WorkflowClock['sleep'] = (ms, signal) =>
+  new Promise((resolve, reject) => {
+    const timer = setTimeout(resolve, ms);
+    signal.addEventListener(
+      'abort',
+      () => {
+        clearTimeout(timer);
+        reject(signal.reason instanceof Error ? signal.reason : new Error('Clock cancelled'));
+      },
+      { once: true },
+    );
+  });
+
+interface RecordedPr {
+  data: {
+    repository: {
+      pullRequest: {
+        number: number;
+        headRefOid: string;
+        commits: {
+          nodes: {
+            commit: {
+              statusCheckRollup: {
+                contexts: { nodes: { name: string; status: string; conclusion: string | null }[] };
+              };
+            };
+          }[];
+        };
+      };
+    };
+  };
+}
+/** The recorded pull request (#329) projected to what `pr.head` reads, at `sha`, with "Tests". */
+function prHeadAt(sha: string, tests: 'pending' | 'failure' | 'success'): unknown {
+  const pr = (recordedGh('pr-view.json') as RecordedPr).data.repository.pullRequest;
+  const contexts = pr.commits.nodes[0]?.commit.statusCheckRollup.contexts.nodes ?? [];
+  const nodes = [
+    ...contexts,
+    {
+      __typename: 'CheckRun',
+      name: 'Tests',
+      status: tests === 'pending' ? 'IN_PROGRESS' : 'COMPLETED',
+      conclusion: tests === 'pending' ? null : tests.toUpperCase(),
+      detailsUrl: 'https://github.com/octo-org/quiet-choir/actions/runs/37078499704/job/1',
+      checkSuite: { workflowRun: { databaseId: 37078499704 } },
+    },
+  ];
+  const rollup = { state: 'PENDING', contexts: { pageInfo: { hasNextPage: false }, nodes } };
+  return {
+    data: {
+      repository: {
+        pullRequest: {
+          number: pr.number,
+          state: 'OPEN',
+          headRefOid: sha,
+          commits: { nodes: [{ commit: { oid: sha, statusCheckRollup: rollup } }] },
+        },
+      },
+    },
+  };
+}
+
+it('CI gate suspends on a pending check, fixes and pushes once under SHA-keyed IDs, and replays', async () => {
+  const gate = (await import('../examples/patterns/ci-gate.workflow.js')).default;
+  const first = (recordedGh('pr-view.json') as RecordedPr).data.repository.pullRequest.headRefOid;
+  const second = '5b4b02c0e1f2a3b4c5d6e7f8091a2b3c4d5e6f70';
+  const [ciFirst, ciSecond] = [stepId('ci', first), stepId('ci', second)];
+  const log: string[] = [];
+  const checks = new Map<string, number>();
+  const processRunner = {
+    run: (request: ProcessRunRequest, { stepId: id }: HarnessInvocation) => {
+      log.push(id);
+      if (id === 'head') return answered(recordedGh('pr-view.json'));
+      if (id === stepId('push', first)) {
+        expect((request.command as { shell?: string }).shell).toContain('git push');
+        return answered(`${second}\n`);
+      }
+      const n = (checks.get(id) ?? 0) + 1;
+      checks.set(id, n);
+      if (id === ciFirst) return answered(prHeadAt(first, n === 1 ? 'pending' : 'failure'));
+      if (id === ciSecond) return answered(prHeadAt(second, 'success'));
+      return Promise.reject(new Error(`Unexpected command ${JSON.stringify(request.command)}`));
+    },
+  };
+  const harness = new Fake(() => 'Fixed the failing test.');
+  const workflow = tailFailure(gate);
+  const setup = {
+    ...options(),
+    runId: 'ci-gate',
+    input: { repo: 'octo-org/quiet-choir', pr: 329, rounds: 2 },
+    processRunner,
+    harness,
+    grants: ['write'],
+  };
+  // The first check sees "Tests" pending; the next check is 30 s away, so the run suspends.
+  const suspended = await runWorkflow(workflow, setup);
+  expect(suspended.status).toBe('suspended');
+  expect(log).toEqual(['head', ciFirst]);
+  expect(harness.calls).toHaveLength(0);
+  // A resume with the clock past nextCheckAt: failure, one fix, one push, then success.
+  const clock: WorkflowClock = { now: () => Date.now() + 60_000, sleep: realSleep };
+  await expect(runWorkflow(workflow, { ...setup, resume: true, clock })).rejects.toThrow(
+    'Injected tail failure',
+  );
+  expect(log).toEqual(['head', ciFirst, ciFirst, stepId('push', first), ciSecond]);
+  expect(harness.calls).toHaveLength(1);
+  expect(harness.calls[0]?.call.stepId).toBe(stepId('fix', first));
+  expect(JSON.stringify(harness.calls[0]?.options)).toContain(`CI failed on ${first}: Tests.`);
+  // The final resume replays the head read, both waits, the fix and the push.
+  const result = await runWorkflow(workflow, { ...setup, resume: true });
+  assertCompleted(result);
+  expect(result.output).toEqual({ status: 'success', sha: second, fixes: 1 });
+  expect(log).toHaveLength(5);
+  expect(harness.calls).toHaveLength(1);
+  expect(Object.keys(result.steps).sort()).toEqual(
+    ['head', ciFirst, stepId('fix', first), stepId('push', first), ciSecond, 'probe/tail'].sort(),
+  );
+  expect(result.steps[ciFirst]?.wait?.checks).toBe(2);
+  expect(result.steps[ciSecond]?.wait?.checks).toBe(1);
+});
+
+interface RecordedEpic {
+  data: { repository: { issue: { subIssues: { nodes: { number: number; state: string }[] } } } };
+}
+/** A fake gh for the ticket loop: snapshots by ID, the issue with comments, and the close step. */
+function ticketGh(closed: readonly number[] = []) {
+  const log: string[] = [];
+  const epic = (after: boolean) => {
+    const raw = recordedGh('epic-snapshot.json') as RecordedEpic;
+    for (const item of raw.data.repository.issue.subIssues.nodes)
+      if (after && closed.includes(item.number)) item.state = 'CLOSED';
+    return raw;
+  };
+  const processRunner = {
+    run: (request: ProcessRunRequest, { stepId: id }: HarnessInvocation) => {
+      const argv = request.command as readonly string[];
+      const number = Number(argv.find((arg) => arg.startsWith('number='))?.slice(7));
+      const patch = argv.includes('PATCH');
+      log.push(id === 'close' ? `close ${patch ? 'PATCH' : 'state'}` : id);
+      if (id === 'before' || id === 'after') return answered(epic(id === 'after'));
+      if (id === 'issue') {
+        const pages = recordedGh('issue-view-comments.json') as {
+          data: { repository: { issue: Record<string, unknown> } };
+        }[];
+        for (const page of pages) Object.assign(page.data.repository.issue, { number });
+        return answered(pages);
+      }
+      if (id === 'close' && patch) return answered({ number: 163 });
+      if (id === 'close')
+        return answered({
+          data: { repository: { issue: { number, state: 'OPEN', stateReason: null } } },
+        });
+      return Promise.reject(new Error(`Unexpected command ${JSON.stringify(argv)}`));
+    },
+  };
+  return { log, processRunner };
+}
+
+it('ticket loop resumes after an interruption without repeating its reads or the implement call', async () => {
+  const loop = (await import('../examples/patterns/ticket-loop.workflow.js')).default;
+  const { log, processRunner } = ticketGh([163]);
+  const harness = new Fake(() => 'Implemented.');
+  const controller = new AbortController();
+  const setup = {
+    ...options(),
+    runId: 'ticket-163',
+    input: { repo: 'octo-org/quiet-choir', epic: 99, ticket: 163 },
+    processRunner,
+    harness,
+    grants: ['write'],
+  };
+  // Interrupt once the implement call completes, as a worker shutting down would.
+  await expect(
+    runWorkflow(loop, {
+      ...setup,
+      signal: controller.signal,
+      onEvent(event) {
+        if (event.type === 'step.completed' && event.stepId === 'implement')
+          controller.abort(new RunInterruptedError('Worker shutting down.'));
+      },
+    }),
+  ).rejects.toThrow();
+  const interrupted = await readRun(setup);
+  expect(interrupted.status).toBe('suspended');
+  expect(log).toEqual(['before', 'issue']);
+  expect(harness.calls).toHaveLength(1);
+  expect(JSON.stringify(harness.calls[0]?.options)).toContain('Implement #163: ');
+  // The resume replays the snapshot, the issue read and the implement call.
+  const result = await runWorkflow(loop, { ...setup, resume: true });
+  assertCompleted(result);
+  expect(result.output).toEqual({ status: 'closed', next: 164 });
+  expect(log).toEqual(['before', 'issue', 'close state', 'close PATCH', 'after']);
+  expect(harness.calls).toHaveLength(1);
+  // A further resume makes no calls at all.
+  const again = await runWorkflow(loop, { ...setup, resume: true });
+  expect(again.output).toEqual(result.output);
+  expect(log).toHaveLength(5);
+  expect(harness.calls).toHaveLength(1);
+});
+
+it('ticket loop skips a ticket that is no longer the pick and returns the next one', async () => {
+  const loop = (await import('../examples/patterns/ticket-loop.workflow.js')).default;
+  const { log, processRunner } = ticketGh();
+  const harness = new Fake(() => {
+    throw new Error('A skipped ticket must not call an agent');
+  });
+  const result = await runWorkflow(loop, {
+    ...options(),
+    runId: 'ticket-164',
+    input: { repo: 'octo-org/quiet-choir', epic: 99, ticket: 164 },
+    processRunner,
+    harness,
+  });
+  assertCompleted(result);
+  expect(result.output).toEqual({ status: 'skipped', next: 163 });
+  expect(log).toEqual(['before']);
+  expect(harness.calls).toHaveLength(0);
 });

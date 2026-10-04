@@ -88,5 +88,15 @@
     "id": "pattern-github-snapshot",
     "file": "github-snapshot.workflow.ts",
     "kind": "workflow"
+  },
+  {
+    "id": "pattern-ci-gate",
+    "file": "ci-gate.workflow.ts",
+    "kind": "workflow"
+  },
+  {
+    "id": "pattern-ticket-loop",
+    "file": "ticket-loop.workflow.ts",
+    "kind": "workflow"
   }
 ]
