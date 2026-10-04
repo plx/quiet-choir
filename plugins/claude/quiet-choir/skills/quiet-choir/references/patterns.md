@@ -767,10 +767,12 @@ and one command per fix round. A pending check suspends the run (exit 75) when t
 more than a second away (30 seconds at first); `workflow tick` resumes it when due, and
 `--wait-mode block` keeps the process waiting instead. The agent sees only the failed check names;
 give it more by reading the logs in a step first. To also wait for review bots and merge at the
-gated head, add `gh.waitReview` with `codexReviewer()` and `codeqlReviewer()`, then `gh.pr.merge`,
-as in the [gate](https://github.com/plx/quiet-choir/blob/main/docs/github.md#gate-example) and
-[land](https://github.com/plx/quiet-choir/blob/main/docs/github.md#land-example) examples of
-[GitHub waits](https://github.com/plx/quiet-choir/blob/main/docs/github.md#waits).
+gated head, add `gh.waitReview` with `codexReviewer()` and `codeqlReviewer()`, then `gh.pr.merge`;
+the [bundled `quiet-choir/github` summary](extensions.md#implement-an-integration) covers their
+arguments. The repository's
+[gate](https://github.com/plx/quiet-choir/blob/main/docs/github.md#gate-example) and
+[land](https://github.com/plx/quiet-choir/blob/main/docs/github.md#land-example) examples show them
+in full.
 
 ## Ticket loop
 

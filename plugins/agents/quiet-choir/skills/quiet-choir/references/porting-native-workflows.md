@@ -150,8 +150,7 @@ This repository's
 [merge-down-pr.js](https://github.com/plx/quiet-choir/blob/main/.claude/workflows/merge-down-pr.js)
 lands one pull request, and its execute-epic-ticket workflow takes one epic ticket to a merge. Both
 are native scripts kept as porting references. Their clerk agents exist only because a native script
-cannot run commands;
-[`quiet-choir/github`](https://github.com/plx/quiet-choir/blob/main/docs/github.md) replaces most of
+cannot run commands; [`quiet-choir/github`](extensions.md#implement-an-integration) replaces most of
 them with typed effects.
 
 | Native step                                                                   | quiet-choir                                                                                                                                                                  |
