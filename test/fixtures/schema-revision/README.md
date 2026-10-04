@@ -30,7 +30,7 @@ and the file was formatted with Prettier; nothing else was edited. The read-view
 formatted file.
 
 `record-keys.json` lists the top-level run-record keys of each schema revision. Adding or changing a
-persisted run-level field adds a revision there and bumps `SUPPORTED_SCHEMA_REVISION`; see
-`docs/storage.md`.
+persisted run-level field adds a revision there and bumps `SUPPORTED_SCHEMA_REVISION`; a revision
+that only changes a nested shape repeats the previous key list. See `docs/storage.md`.
 
 No inference was used and no test contacts an upstream model service.

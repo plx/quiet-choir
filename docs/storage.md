@@ -304,8 +304,9 @@ completed run whose only change would be the stamp is not rewritten.
 including fields nested inside run-level objects such as `runBudget` or `worktrees`, bumps
 `SUPPORTED_SCHEMA_REVISION` in `record.ts` and adds the new revision's top-level keys to
 `test/fixtures/schema-revision/record-keys.json` (with its pinned digest in
-`test/record-schema-revision.test.ts`). The test fails when the top-level keys change without a new
-revision; a nested change is caught only in review, so it must bump by this rule.
+`test/record-schema-revision.test.ts`); a nested-only change repeats the previous revision's list.
+The test fails when the top-level keys change without a new revision; a nested change is caught only
+in review, so it must bump by this rule.
 
 **Refusals.** A build must not rewrite a record it cannot fully read: its parse strips unknown
 top-level fields, and the next compaction would write the record back without them. When a record
