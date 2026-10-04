@@ -741,6 +741,7 @@ const [check0Result, firstReview, firstLocal] = await parallel([
   async () => (wantFirstLocal ? localCodexReview(reviewHead, 'r0', 'Review') : null),
 ]);
 const check0 = check0Result ?? { passed: false, error: 'local checks produced no output' };
+const firstLocalOk = wantFirstLocal && Boolean(firstLocal) && !firstLocal.error;
 if (!firstReview) return blocked('review', 'reviewer returned nothing');
 log(`Local checks ${check0.passed ? 'pass' : `fail at ${check0.failedStep ?? check0.error}`}`);
 
@@ -1120,11 +1121,12 @@ if (A.until === 'fix') return finish('stopped', { review, plannedReplies: firstR
 const codexAllowed = kind === 'change' && A.codex !== 'never';
 const ownCodeChanged = SYNC.status === 'conflict' || firstRound.changed;
 // Locally, the review stage already reviewed the head it saw (after any conflict resolution), so
-// only new commits need another pass; the GitHub app reviews the pushed head on request.
+// only new commits need another pass, unless that review failed: then the pushed head gets one.
+// The GitHub app reviews the pushed head on request.
 let wantCodex =
   codexAllowed &&
   (A.codex === 'always' ||
-    (LOCAL ? firstRound.changed || !wantFirstLocal : ownCodeChanged || !PR.codex.reviewed));
+    (LOCAL ? firstRound.changed || !firstLocalOk : ownCodeChanged || !PR.codex.reviewed));
 const closesIssue = kind === 'change' && ISSUE && review.issueDisposition.action === 'close';
 // A PR body that says "Closes #N" would close an issue the review decided to keep open.
 const keepsIssueOpen = kind === 'change' && ISSUE && review.issueDisposition.action === 'keep-open';
