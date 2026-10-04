@@ -86,22 +86,23 @@ function apply(record: RunRecord, entry: JournalEntry): void {
 }
 
 /**
- * Validate a committed journal entry, leaving out run-level fields this build does not know (a
- * newer build's): a read tolerates them but never applies them. Each such name maps to whether the
- * entry sets (true) or removes (false) it.
+ * Partition a committed journal entry into the changes this build knows and the run-level names it
+ * does not (a newer build's): a read tolerates the latter but never applies them. Each such name
+ * maps to whether the entry sets (true) or removes (false) it. Nothing is validated here, so a
+ * caller can record the names before validation can throw.
  */
 function splitJournalEntry(value: z.infer<typeof envelope>): {
-  readonly entry: JournalEntry;
+  readonly known: z.infer<typeof envelope>;
   readonly unknown: ReadonlyMap<string, boolean>;
 } {
   const unknown = new Map<string, boolean>();
-  const known = value.changes.filter((change) => {
+  const changes = value.changes.filter((change) => {
     if (change.area !== 'run' || isRecordFieldKey(change.key)) return true;
     if (unknown.has(change.key)) throw new Error('Duplicate field in storage journal entry.');
     unknown.set(change.key, change.value !== undefined);
     return false;
   });
-  return { entry: validateChanges({ ...value, changes: known }), unknown };
+  return { known: { ...value, changes }, unknown };
 }
 
 /**
@@ -133,22 +134,25 @@ export function replayJournal(snapshot: string, journal: string, runId: string):
   const complete = journal.slice(0, journal.lastIndexOf('\n') + 1);
   for (const line of complete.split('\n')) {
     if (!line) continue;
-    let read: ReturnType<typeof splitJournalEntry>;
+    let entry: JournalEntry;
     try {
       const value = envelope.parse(jsonValue(JSON.parse(line)));
       const revision = value.changes.find(
         (change) => change.area === 'run' && change.key === 'schemaRevision',
       )?.value;
-      if (value.seq > floor) newest = Math.max(newest, newerSchemaRevision(revision) ?? 1);
-      read = splitJournalEntry(value);
+      const { known, unknown } = splitJournalEntry(value);
+      if (value.seq > floor) {
+        newest = Math.max(newest, newerSchemaRevision(revision) ?? 1);
+        // Before validation, so a refusal for a known field's new shape still names them.
+        for (const [key, present] of unknown) hidden.set(key, present);
+      }
+      entry = validateChanges(known);
     } catch (cause) {
       throw upgrade(cause);
     }
-    const { entry } = read;
     if (entry.seq <= floor) continue;
     if (entry.seq !== seq + 1)
       throw new Error(`Storage journal sequence gap after ${String(seq)}.`);
-    for (const [key, present] of read.unknown) hidden.set(key, present);
     apply(record, entry);
     seq = entry.seq;
   }

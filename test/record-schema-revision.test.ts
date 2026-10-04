@@ -70,7 +70,7 @@ describe('record key snapshot', () => {
       expect(sha256(JSON.stringify(keys)), `revision ${String(revision)}`).toBe(
         revisionDigests[String(revision)],
       );
-      if (revision > 1) expect(keys).not.toEqual(revisions[String(revision - 1)]);
+      // A revision may repeat the previous key list when it only changes a nested run-level shape.
     }
     expect(RECORD_FIELD_KEYS).toContain('schemaRevision');
   });
@@ -227,8 +227,12 @@ describe('reading a record this build cannot fully read', () => {
     await appendRunChanges('journal', [
       { area: 'run', key: 'schemaRevision', value: SUPPORTED_SCHEMA_REVISION + 1 },
       { area: 'run', key: 'status', value: 'paused' },
+      { area: 'run', key: 'futureField', value: true },
     ]);
-    expect((await refusal(readRun({ stateDir, runId: 'journal' }))).code).toBe('run.incompatible');
+    const fromJournal = await refusal(readRun({ stateDir, runId: 'journal' }));
+    expect(fromJournal.code).toBe('run.incompatible');
+    expect(fromJournal.details).toMatchObject({ hiddenFields: ['futureField'] });
+    expect(fromJournal.message).toContain('futureField');
 
     // Without a newer revision the same damage is still an ordinary read failure.
     await failedRun('damaged');
