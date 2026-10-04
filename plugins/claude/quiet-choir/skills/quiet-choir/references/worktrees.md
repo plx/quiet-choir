@@ -125,6 +125,15 @@ handles are resolved to saved snapshots under their locks before integration sta
 | `target: 'checkout'`   | Explicitly fast-forward the source checkout; refuse dirty state or a changed target     |
 | `commit: { message }`  | Message of the final commit; intermediate commits keep generated messages               |
 | `commit.author`        | `'quiet-choir'` (default), `'git-config'` or `{ name, email }` for every created commit |
+| `onError: 'return'`    | Save a merge failure and return `Settled<MergeResult>`; resume replays it without Git   |
+
+`onError: 'return'` makes a failed merge a durable branch decision: an `onConflict: 'fail'`
+conflict, a dirty checkout target or a target that moved is saved as a settled failure and returned
+as `{ ok: false, error }`, and resume replays it without running Git. Cancellation, configuration
+failures (including a rehearsal Git refusal) and checkpoint failures still reject, and invalid
+options reject before the step is recorded. `'return'` changes the merge's identity; omitting it or
+passing `'throw'` does not. The default `onConflict: 'report'` already returns conflicts as data, so
+with `'return'` it yields `{ ok: true, value }` holding the same conflicts.
 
 The result is `{ commit, merged, conflicts: [{ commit, files }] }`. `commit` always names the last
 clean integrated tree, never a tree containing conflict markers. Conflict path lists can be empty

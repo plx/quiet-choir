@@ -34,23 +34,38 @@ source acceptance does not waive these checks. Completed runs with frames also r
 embedded callers cannot silently change a direct child's version. Removing a completed empty frame
 is detected even if it contained no effects.
 
-Inside a settled map, every invoked child must appear in its immediate parent's `children`
-declaration. A committed mapper is not invoked again: its saved child ownership is reclaimed, and
-the declared tree permits version/schema checks before replay skips it. Dynamic undeclared children
-remain supported outside settled maps. As with the root, library callers must supply an appropriate
-code fingerprint or bump versions for semantic body/dependency changes; the CLI hashes local source.
+Inside a settled map or a settled child frame, every invoked child must appear in its immediate
+parent's `children` declaration. A committed mapper or settled frame is not invoked again: its saved
+child ownership is reclaimed, and the declared tree permits version/schema checks before replay
+skips it. Dynamic undeclared children remain supported outside settled maps and frames. As with the
+root, library callers must supply an appropriate code fingerprint or bump versions for semantic
+body/dependency changes; the CLI hashes local source.
 
 A child failure is catchable, and its frame remains failed even if the parent completes. When a
 resumed body no longer invokes a frame that is still running, parked, failed or cancelled, a
 successful completion marks it `superseded` (terminal; `finishedAt` is the supersession time and the
 earlier `error` is kept). A skipped frame that holds a completed or settled-failed step, or a
-completed frame, still fails the run as a control-flow change. A frame that the completing body
-invoked but never awaited is `cancelled` instead. If a fixed child's frame failed, keep its name,
-version, input and schemas and resume with `--accept-code-change`; changing them is refused.
-Completed leaf effects survive. An ordinary caught child failure is retried by replaying its body;
-use settled effects/maps when the fallback decision itself must be durable. Infrastructure and
-unobserved operation failures retain the runtime's existing fatal rules. A child question can
-suspend the whole run at quiescence, then resume under the same frame after an answer arrives.
+completed or settled frame, still fails the run as a control-flow change. A frame that the
+completing body invoked but never awaited is `cancelled` instead. If a fixed child's frame failed,
+keep its name, version, input and schemas and resume with `--accept-code-change`; changing them is
+refused. Completed leaf effects survive. Infrastructure and unobserved operation failures retain the
+runtime's existing fatal rules. A child question can suspend the whole run at quiescence, then
+resume under the same frame after an answer arrives.
+
+A `try/catch` around `ctx.workflow` is not a durable decision: the frame stays `failed`, its body
+runs again on resume, and a healed failure takes the other branch. When the fallback must be
+durable, pass `{ onError: 'return' }` as the options: the call returns `Settled<O, MapStepError>`
+(by-name dispatch: the declared child's output, or JSON for a bare `WorkflowContext`), and the frame
+records a terminal `settled` outcome with the effect, settled-map and child-frame IDs it owned. A
+settled success stays `completed`; a settled failure stays `failed`, and `error.stepId` names the
+failing effect (null for a body error). Resume returns the saved outcome without running the body or
+its effects, even if the failure would now succeed. Cancellation, latched budget stops,
+configuration and checkpoint failures, authoring guards, input validation, the depth guard and
+identity refusals still reject. A settled frame's descendants must be declared. Its name, version,
+input, schemas and `onError` cannot change on resume (no `--accept-code-change` hint); an unsettled
+frame may switch modes, so resume a failed child with `onError: 'return'` added. Supersession skips
+settled frames. A fork runs a settled frame's body again, reusing its terminal steps: invalidating
+an owned step recomputes the outcome, and a plain failed step inside it runs again.
 
 `RunOptions.maxChildDepth` defaults to 8, with root depth zero. `--max-child-depth N` on execute or
 resume sets the sticky guard; zero prohibits child entry. Recursion is allowed and counts toward the
@@ -72,13 +87,15 @@ pass through role mappings, and child call limits are bounded by the delegated p
 profile definitions remain the source of its requested tools; mapping never promotes it to
 additional parent tools. Workflow JavaScript remains trusted operator code, not a security sandbox.
 
-Events carry `frame`; `child.started`, `child.completed` and `child.failed` follow frame saves, and
-`child.superseded` follows `run.completed` for each frame the completed run retired. Phase/log
-observations retain their frame, and imperative phase updates stay local to each child.
-`inspect --json` includes the raw `children` ledger. Text inspection and compact JSON show the tree
-with status, step counts, reported usage, unknown costs and phases. Frame totals include
-descendants, so do not add every row together. Child records use individual journal changes rather
-than rewriting the entire child collection. Storage remains format 7 with replay contract 6.
+Events carry `frame`; `child.started`, `child.completed`, `child.failed` and `child.settled` (a
+settled failure of an `onError: 'return'` frame) follow frame saves, and `child.superseded` follows
+`run.completed` for each frame the completed run retired. Phase/log observations retain their frame,
+and imperative phase updates stay local to each child. `inspect --json` includes the raw `children`
+ledger. Text inspection and compact JSON show the tree with status, step counts, reported usage,
+unknown costs and phases; a settled frame is marked `(settled)` and its compact row carries
+`settled: { ok: true }` or `{ ok: false, error }`. Frame totals include descendants, so do not add
+every row together. Child records use individual journal changes rather than rewriting the entire
+child collection. Storage remains format 7 with replay contract 6.
 
 ## Describe, discover and execute
 

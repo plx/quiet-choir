@@ -189,21 +189,22 @@ const draft = primary.ok
   : await ctx.codex.value('fallback', { prompt: 'Write the fallback draft.' });
 ```
 
-Every effect that can fail takes `onError: 'return'`, except child workflows and `ctx.merge`, which
-do not have it yet. `value`, `text`, `object`, `ctx.step`, `ctx.readFile`, and `ctx.writeFile`
-return `Settled<T>` in this mode: `{ ok: true, value }` or
-`{ ok: false, error: { message, kind, attempts } }`. `ctx.exec` and `ctx.exec.json` return
-`Settled<T, ExecStepError>`, whose error adds the exit `code`, `signal`, output tails and, for
-`exec.json`, the bounded `parsed` stdout (see [commands and files](commands-files.md)). The success
-value retains its normal type; `text`/`object` values include `output`, `sessionId`, and `usage`,
-while `value` returns only output. The final failure, after applicable retries, is saved as
-`settled-failed`. Replay returns that exact failure without another callback, harness, command or
-file call. `onError: 'return'` is semantic identity: adding or dropping it on a terminal step
-requires a new run/fork. Cancellation always rejects and stays retryable, except a `cancelSiblings`
-map's own cancellation inside an `onError: 'return'` map, which is journaled as described below;
-authoring errors, configuration errors (a missing harness or process adapter, or an adapter's
-pre-launch `ConfigurationError` such as a Claude schema without an object root), and checkpoint
-failures also reject instead of becoming fallback data.
+Every effect that can fail takes `onError: 'return'`. `value`, `text`, `object`, `ctx.step`,
+`ctx.readFile`, `ctx.writeFile` and `ctx.merge` return `Settled<T>` in this mode:
+`{ ok: true, value }` or `{ ok: false, error: { message, kind, attempts } }`. `ctx.exec` and
+`ctx.exec.json` return `Settled<T, ExecStepError>`, whose error adds the exit `code`, `signal`,
+output tails and, for `exec.json`, the bounded `parsed` stdout (see
+[commands and files](commands-files.md)). `ctx.workflow` returns `Settled<O, MapStepError>` and
+saves the child frame's outcome, so resume skips the child body (see
+[child workflows](child-workflows.md)). The success value retains its normal type; `text`/`object`
+values include `output`, `sessionId`, and `usage`, while `value` returns only output. The final
+failure, after applicable retries, is saved as `settled-failed`. Replay returns that exact failure
+without another callback, harness, command or file call. `onError: 'return'` is semantic identity:
+adding or dropping it on a terminal step requires a new run/fork. Cancellation always rejects and
+stays retryable, except a `cancelSiblings` map's own cancellation inside an `onError: 'return'` map,
+which is journaled as described below; authoring errors, configuration errors (a missing harness or
+process adapter, or an adapter's pre-launch `ConfigurationError` such as a Claude schema without an
+object root), and checkpoint failures also reject instead of becoming fallback data.
 
 For best-effort fan-out, use a named map with `onError: 'return'`:
 

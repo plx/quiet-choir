@@ -6,7 +6,8 @@ Amended by #274 (invalid-request, overloaded and the transient retry alias). Ame
 (healed-step dependents use launch and failure stamps, with a `seq` fallback). Amended by #149
 (commands and files take `onError: 'return'`; settled commands keep `ExecStepError` fields). Amended
 by #109 (the `idle-timeout` kind joins the transient set; see
-[0042](0042-idle-deadlines-and-tool-use-diagnostics.md)).
+[0042](0042-idle-deadlines-and-tool-use-diagnostics.md)). Amended by #170 (`ctx.merge` and child
+workflows take `onError: 'return'`; a settled child frame is terminal).
 
 ## Context
 
@@ -155,7 +156,74 @@ it and passing `'throw'` keep the identities and fingerprints of existing calls,
 from a settled call is refused as an `onError` identity change. `onError` is neither execution
 policy nor part of the recorded `ExecSummary`.
 
-Child workflows and `ctx.merge` still have no `onError`: a child frame record has no terminal
-outcome of its own, so settling it needs its own record design (#170). `workflow fixtures` does not
-yet export a settled-failed command as a fixture rule (#306), so a `"commands": "fixture"` replay of
-such a run fails at that step.
+`workflow fixtures` does not yet export a settled-failed command as a fixture rule (#306), so a
+`"commands": "fixture"` replay of such a run fails at that step.
+
+## Amendment: merges and child workflows (#170)
+
+After #149, `ctx.merge` and `ctx.workflow` were the effects that could not settle a failure. A
+`try/catch` around a failed child frame was not a durable decision: the frame stayed `failed`, its
+body ran again on resume, and a healed failure sent the parent down the other branch.
+
+`ctx.merge` takes `onError` with the same two overloads and reuses the settled step path unchanged.
+The runner removes `onError` from the merge options before it builds the merge dependencies and
+before Git sees them, and passes it to the effect, so it enters identity only as the effect's error
+mode: an omitted or `'throw'` merge keeps its fingerprint (pinned in
+`test/builtin-identity.test.ts`) and `'return'` changes it. `classifyAttemptFailure` applies as for
+any step. Ordinary Git and validation errors inside the merge settle, such as an
+`onConflict: 'fail'` conflict, a dirty checkout target or a target that moved. Cancellation, a
+`ConfigurationError` (such as a rehearsal Git refusal) and checkpoint failures reject; option and
+input schema errors reject before any step is recorded. A settled failure replays without calling
+the merge, so Git is not touched. The default `onConflict: 'report'` already returns conflicts as
+data, in either mode.
+
+`ctx.workflow` takes `onError` on both its typed and its by-name overloads. Typed calls return
+`Settled<O, MapStepError>` and name dispatch returns `Settled` of the declared child's output (JSON
+for a bare `WorkflowContext`). A child frame records no effect of its own, so it gets a terminal
+record like a settled map item ([ADR 0008](0008-scoped-fan-out.md)): the frame gains
+`onError: 'return'` and, once the body ends, `settled: { outcome, steps, maps, children }`, the
+outcome plus the leaf, settled-map and child-frame IDs the frame's owner scope collected. A settled
+success keeps status `completed`; a settled failure keeps `failed`, with the message in `error`. The
+frame emits `child.completed` or, for a failure, `child.settled` instead of `child.failed`.
+
+A failure settles only with the predicate a settled map item uses (shared in `settled-outcome.ts`):
+the parent scope is not cancelled, the error is not a cancellation, it is not this run's checkpoint
+failure, and it is not fatal (authoring guards, configuration failures and latched run-budget stops
+are marked fatal). The saved `MapStepError` is attributed to the originating effect and its started
+attempts, or to the body with one attempt. A save that fails while committing the outcome removes
+`settled` again and rejects, so a failure snapshot never claims an uncommitted settlement. Input
+validation, the depth guard, duplicate IDs and identity changes happen before the frame starts, so
+they reject and leave no settled frame. Descendants of a settled frame must be declared, as inside a
+settled map, because resume validates them without running the body.
+
+On resume, after the frame identity checks, declared-tree validation and capability delegation, a
+frame with `settled` returns its saved outcome without running the body or emitting `child.started`.
+It claims its owned steps (each emits `step.replayed`), settled maps and child frames, so the
+end-of-run visit checks and an enclosing settled map or frame see them.
+
+The frame's error mode is identity only once it is settled. A settled frame whose current call drops
+or changes `onError` is refused with the existing "Child frame ... changed" error, which names the
+`onError` change; version, input, schema and parent changes stay refused for every frame. An
+unsettled frame (running, failed, cancelled, suspended, superseded, or completed in throw mode) may
+change its mode, because its body runs again anyway and nothing about it was observed durably. This
+matches the step rule above, where only a terminal identity is immutable, and keeps the usual
+recovery open: add `onError: 'return'` to a child that failed and resume. The refusal for a settled
+frame does not suggest `--accept-code-change`, which cannot retry it.
+
+A settled frame is terminal for the run-level checks: an unvisited one fails the run as a
+control-flow change, supersession skips it, and the steps and maps it owns count as replayable
+outcomes for recovery hints, as they do for a committed map item. Inspection summaries show a
+compact `settled` field (`{ ok: true }`, or `{ ok: false, error }`) without the value or owned IDs.
+
+A fork does not copy child frames or settled-map journals: it starts with no frames and reuses only
+steps. It therefore runs a settled frame's body again. Owned terminal steps are reused per step by
+ordinary fork reuse, so the frame normally settles to the same outcome; an `--invalidate` glob that
+matches an owned step ID re-executes that step and recomputes the frame's outcome; and a plain
+failed step inside a settled-failed frame is not terminal, so the fork re-executes it. Copying
+frames would need frame-level reuse and causal-prefix rules for this one feature, while rerunning
+the body is consistent with settled maps and needs no new fork code.
+
+The nested `onError` and `settled` fields change the accepted shape of `children`, so the run-record
+schema revision becomes 3 ([ADR 0052](0052-run-record-schema-revision.md)): a build at revision 2
+refuses to rewrite such a record instead of silently dropping `settled`. Records without the fields
+load and replay as before.

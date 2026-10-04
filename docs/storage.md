@@ -313,7 +313,10 @@ nested-only change: `runBudget` gains the optional `maxWindowUtilization`, and `
 the metric `maxWindowUtilization` with optional `harness`, `window` and `resetsAt`
 ([ADR 0053](decisions/0053-window-utilization-gate-suspends-until-reset.md)). Revision-1 records
 read unchanged, since the new field is optional; a revision-1 build refuses to rewrite a revision-2
-record.
+record. Revision 3 (#170) is also nested-only: each `children` frame gains the optional
+`onError: 'return'` and the terminal `settled` outcome of an `onError: 'return'` child frame
+([ADR 0007](decisions/0007-durable-failure-outcomes.md)). Revision-2 records read and replay
+unchanged; a revision-2 build refuses to rewrite a revision-3 record instead of dropping `settled`.
 
 **Refusals.** A build must not rewrite a record it cannot fully read: its parse strips unknown
 top-level fields, and the next compaction would write the record back without them. When a record
