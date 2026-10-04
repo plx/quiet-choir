@@ -298,7 +298,11 @@ export class WorkflowExecutor implements Executor<WorkflowExecutorPlan, Workflow
           return workflowFailure('workflow.storage', outcome.message, {
             ...context,
             run: await readRun({ runId: plan.runId, stateDir: outcome.stateDir }).catch(() => null),
-            details: { caches: [...outcome.caches], warnings: [...outcome.warnings] },
+            details: {
+              caches: [...outcome.caches],
+              removedCaches: [...outcome.removed],
+              warnings: [...outcome.warnings],
+            },
           });
         return { kind: 'workflow.rm.result', ok: true, ...outcome.result };
       }

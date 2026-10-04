@@ -589,15 +589,15 @@ describe('workflow rm worktree caches', { timeout: 10_000 }, () => {
     );
   });
 
-  /** A finished run with one kept cache and its pinned ref. */
-  async function runWithCache(runId: string) {
+  /** A finished run with one kept cache per handle (one by default) and their pinned refs. */
+  async function runWithCache(runId: string, handles: readonly string[] = ['cache']) {
     const workflow = defineWorkflow({
       name: runId,
       version: '1',
       input: z.null(),
       output: z.null(),
       async run(ctx) {
-        await ctx.worktree('cache');
+        for (const handle of handles) await ctx.worktree(handle);
         return null;
       },
     });
@@ -611,11 +611,13 @@ describe('workflow rm worktree caches', { timeout: 10_000 }, () => {
     });
     const ledger = run.worktrees;
     assert(ledger);
-    const [cache] = Object.values(ledger.caches);
-    assert(cache);
+    const paths = Object.values(ledger.caches).map((cache) => cache.path);
+    expect(paths).toHaveLength(handles.length);
+    const [path] = paths;
+    assert(path);
     const refs = Object.keys(ledger.refs);
     expect(refs.length).toBeGreaterThan(0);
-    return { path: cache.path, refs, namespace: join(caches, `${runId}-${ledger.namespace}`) };
+    return { path, paths, refs, namespace: join(caches, `${runId}-${ledger.namespace}`) };
   }
 
   const repoState = async () => ({
@@ -660,7 +662,7 @@ describe('workflow rm worktree caches', { timeout: 10_000 }, () => {
     await onlyIgnoreFileLeft();
   });
 
-  it('stops before any deletion when Git cannot remove a cache, naming it', async () => {
+  it('stops before deleting the run when Git cannot remove a cache, naming it', async () => {
     const blocked = await runWithCache('blocked');
     const holder = holdAdminLock(await realpath(join(repo, '.git')), 'forever');
     await holder.held;
@@ -672,6 +674,7 @@ describe('workflow rm worktree caches', { timeout: 10_000 }, () => {
       expect(failure.message).toContain('workflow clean blocked');
       expect(failure.details).toMatchObject({
         caches: [blocked.path],
+        removedCaches: [],
         warnings: [
           expect.stringContaining('Timed out waiting for the worktree administration lock'),
         ],
@@ -688,6 +691,36 @@ describe('workflow rm worktree caches', { timeout: 10_000 }, () => {
       expect(await command('rev-parse', '--verify', ref)).toMatch(/^[0-9a-f]{40}$/u);
     expect(await gone(join(stateDir, 'blocked.json.lock'))).toBe(true);
     removed(await remove('blocked', { refs: true }));
+    await onlyIgnoreFileLeft();
+  });
+
+  it('keeps the caches Git removed before a later cache blocked the removal', async () => {
+    const partial = await runWithCache('partial', ['first', 'second']);
+    const [first, second] = partial.paths;
+    assert(first && second);
+    // Unregister the second cache from Git while its directory stays, which cleanup refuses.
+    const gitdir = /^gitdir: (.+)$/mu.exec(await readFile(join(second, '.git'), 'utf8'))?.[1];
+    assert(gitdir);
+    await rm(gitdir, { recursive: true, force: true });
+    const failure = refused(await remove('partial', { refs: true }), 'workflow.storage');
+    expect(failure.details).toMatchObject({
+      caches: [second],
+      removedCaches: [first],
+      warnings: [expect.stringContaining('Unregistered directory exists')],
+    });
+    expect(await gone(first)).toBe(true);
+    expect(await gone(second)).toBe(false);
+    const ledger = (await readRun({ stateDir, runId: 'partial' })).worktrees;
+    const states = Object.fromEntries(
+      Object.values(ledger?.caches ?? {}).map((cache) => [cache.path, cache.state]),
+    );
+    expect(states).toEqual({ [first]: 'removed', [second]: 'ready' });
+    for (const ref of partial.refs)
+      expect(await command('rev-parse', '--verify', ref)).toMatch(/^[0-9a-f]{40}$/u);
+    await rm(second, { recursive: true, force: true });
+    const retried = removed(await remove('partial', { refs: true }));
+    expect(retried.caches).toEqual([{ path: second, method: 'git' }]);
+    expect([...retried.refsRemoved].sort()).toEqual([...partial.refs].sort());
     await onlyIgnoreFileLeft();
   });
 

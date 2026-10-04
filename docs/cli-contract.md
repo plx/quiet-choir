@@ -165,9 +165,11 @@ or `suspended` or any step is `waiting` (`error.details` is `{status, waiting}`)
 wait, answer or resume may still need the run. A missing run is `run.not_found` and an unreadable
 one `run.unreadable`. rm takes the run lock without registering a project, so a dead owner's lock is
 recovered as on resume. When Git cannot remove a cache while its repository exists, rm stops before
-deleting anything and fails with `workflow.storage` (exit 74): the message and
-`error.details.caches` name each cache, `error.details.warnings` carries Git's reasons, and the
-record stays for a retry with `workflow clean ID`. Success returns
+deleting the run and fails with `workflow.storage` (exit 74): caches Git already removed stay
+removed and are recorded in the ledger (`error.details.removedCaches` names them), no ref is
+deleted, the message and `error.details.caches` name each cache that remains,
+`error.details.warnings` carries Git's reasons, and the record stays for a retry with
+`workflow clean ID`. Success returns
 `{kind:"workflow.rm.result", ok:true, runId, stateDir, dryRun, force, refs, verdict, removed, paths, caches, refsRemoved, keptRefs, bytes, tombstones, warnings}`:
 `paths` are the run's paths in the runs container, `caches` are `{path, method:"git"|"direct"}`,
 `keptRefs` lists the pins that survive without `--refs`, `bytes` is the list `bytes` measured before

@@ -268,7 +268,8 @@ exit 3 and changes nothing: `run.locked` while any lock owner or recoverer is al
 remote, even with `--force` (clear an abandoned lock with `workflow unlock` first); `run.orphans`
 for a dead owner's live child; and, without `--force`, `run.active` for a `running` or `suspended`
 run or one with a `waiting` step, which a pending answer, wait or resume may still need. A cache Git
-cannot remove while its repository exists stops rm before it deletes anything (`workflow.storage`,
-exit 74, caches in `error.details.caches`); fix the cause and retry with `workflow clean`. An
-interrupted rm leaves an intact run (run rm again) or a hidden `.<run>.<pid>.<uuid>.removing`
-directory, which the next rm in that state directory sweeps.
+cannot remove while its repository exists stops rm before it deletes the run (`workflow.storage`,
+exit 74, remaining caches in `error.details.caches`): caches Git already removed stay removed
+(`error.details.removedCaches`), no ref is deleted, and the record stays; fix the cause and retry
+with `workflow clean`. An interrupted rm leaves an intact run (run rm again) or a hidden
+`.<run>.<pid>.<uuid>.removing` directory, which the next rm in that state directory sweeps.

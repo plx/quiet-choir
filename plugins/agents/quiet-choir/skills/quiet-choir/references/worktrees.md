@@ -260,11 +260,12 @@ still match. It does not delete user branches or run Git garbage collection. Rem
 future recovery or integration impossible after Git collects otherwise unreachable objects.
 `workflow rm RUN` removes the whole run and reuses this cleanup first; it deletes pins only with
 `--refs` and otherwise reports them as `keptRefs`. If Git cannot remove a cache while the repository
-exists, rm keeps the record for a `workflow clean` retry. When the repository is gone, rm deletes
-the run's caches inside `<root>/<runId>-<namespace>/` directly, and then the empty namespace
-directory. It deletes only a real directory named by a SHA-256 digest that matches its ledger key,
-so a corrupt record cannot point it elsewhere; otherwise it refuses and deletes nothing. See
-[removing a run](operating-runs.md#remove-a-run).
+exists, rm stops before deleting the run: caches Git already removed stay removed and are recorded
+in the ledger, no ref is deleted, and the record stays for a `workflow clean` retry. When the
+repository is gone, rm deletes the run's caches inside `<root>/<runId>-<namespace>/` directly, and
+then the empty namespace directory. It deletes only a real directory named by a SHA-256 digest that
+matches its ledger key, so a corrupt record cannot point it elsewhere; otherwise it refuses and
+deletes nothing. See [removing a run](operating-runs.md#remove-a-run).
 
 ### What capture leaves out
 

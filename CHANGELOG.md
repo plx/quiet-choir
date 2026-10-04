@@ -8,9 +8,11 @@
   inbox), the legacy `<runId>.json` marker or flat record, `<runId>.json.lock`, `<runId>.inbox`,
   `<runId>.cancel.json` and `<runId>.json.v<N>` backups, and its worktree caches. Caches go through
   the same cleanup as `workflow clean` under the worktree administration lock; a cache Git cannot
-  remove while its repository exists stops the removal before anything is deleted
-  (`workflow.storage`, exit 74, naming the cache in `error.details.caches`), and when the repository
-  is gone rm deletes the run's caches in their namespace directly. Pins are deleted only with
+  remove while its repository exists stops the removal before the run is deleted
+  (`workflow.storage`, exit 74, naming the remaining caches in `error.details.caches`; caches Git
+  already removed stay removed, listed in `error.details.removedCaches`, and no ref is deleted), and
+  when the repository is gone rm deletes the run's caches in their namespace directly, only when
+  each is a real directory named by a digest that matches its ledger key. Pins are deleted only with
   `--refs`; otherwise the result lists them as `keptRefs`. rm refuses with exit 3 `run.locked` while
   any lock owner or recoverer is alive, unverifiable or remote, even with `--force`, and
   `run.orphans` for a dead owner's live recorded child. The new code `run.active` (exit 3) refuses,

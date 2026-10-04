@@ -45,16 +45,18 @@ read under the lock.
 **Caches first, and stop if Git cannot remove one.** `cleanWorktrees`' body became
 `cleanOwnedWorktrees`, which rm runs under its own ownership, so `git worktree` administration stays
 under the ADR 0032 lock and `workflow clean` is unchanged. While a cache remains and its repository
-exists, rm deletes nothing (not even refs) and fails with `workflow.storage`, naming the caches, so
-the ledger survives for `workflow clean`. When the repository is gone, Git cannot run; rm deletes
-each cache directly. The trust boundary is the operator's own state: the record is theirs and its
-namespace a schema-validated UUID, so rm adds structural checks rather than independent ownership
-metadata, refusing (and deleting nothing) unless the ledger root is absolute, every pending cache
-path is exactly `<ledger.root>/<runId>-<namespace>/<64 hex digits>`, its ledger key is the SHA-256
-digest of that path (how `RunWorktrees` keys caches), and the namespace and each cache are real
-directories rather than symbolic links. A corrupt ledger can then only name a directory
-`RunWorktrees` could have created; a cache already gone is just marked removed. Pins are deleted
-only with `--refs`.
+exists, rm stops before deleting the run and fails with `workflow.storage`, naming the remaining
+caches, so the ledger survives for `workflow clean`. Caches Git already removed in that pass stay
+removed and are recorded in the ledger (`details.removedCaches`), and no ref is deleted. A preflight
+could not make Git removal atomic, so the contract names the partial outcome instead. When the
+repository is gone, Git cannot run; rm deletes each cache directly. The trust boundary is the
+operator's own state: the record is theirs and its namespace a schema-validated UUID, so rm adds
+structural checks rather than independent ownership metadata, refusing (and deleting nothing) unless
+the ledger root is absolute, every pending cache path is exactly
+`<ledger.root>/<runId>-<namespace>/<64 hex digits>`, its ledger key is the SHA-256 digest of that
+path (how `RunWorktrees` keys caches), and the namespace and each cache are real directories rather
+than symbolic links. A corrupt ledger can then only name a directory `RunWorktrees` could have
+created; a cache already gone is just marked removed. Pins are deleted only with `--refs`.
 
 **Deletion order, with the guard held throughout.** 1. `<runId>.cancel.json` and
 `<runId>.inbox/`. 2. The flat `<runId>.json`, then a directory fsync: the commit point of an

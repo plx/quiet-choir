@@ -76,6 +76,8 @@ export type RunRemovalOutcome =
       readonly message: string;
       /** Cache paths still present while their repository exists. */
       readonly caches: readonly string[];
+      /** Caches Git removed before the failure; they stay removed and the ledger records it. */
+      readonly removed: readonly string[];
       readonly warnings: readonly string[];
     };
 
@@ -229,10 +231,11 @@ function pick(refusal: ReturnType<typeof removalRefusal>): {
  * tombstones, refuses a held lock, orphans or (without `force`) an active run, takes the run lock
  * without registering a project, re-checks the record, removes worktree caches through the shared
  * cleanup (or directly when the repository is gone) and, with `refs`, pinned refs. A cache Git
- * cannot remove stops it before any deletion. Holding the legacy guard throughout, it then deletes
- * the legacy siblings, the flat checkpoint or marker (a flat run's commit point), the backups,
- * releases the primary lock, renames `<runId>/` to a dotted tombstone (a directory run's commit
- * point) and deletes it. The signal is honoured only before the flat file goes. @internal
+ * cannot remove stops it before it deletes the run: caches Git already removed stay removed (the
+ * ledger records them), no ref is deleted and the record stays for `workflow clean`. Holding the
+ * legacy guard throughout, it then deletes the legacy siblings, the flat checkpoint or marker (a
+ * flat run's commit point), the backups, releases the primary lock, renames `<runId>/` to a dotted
+ * tombstone (a directory run's commit point) and deletes it. The signal is honoured only before the flat file goes. @internal
  */
 export async function removeRun(
   options: RemoveRunOptions,
@@ -353,6 +356,7 @@ async function removeOwned(
             stateDir,
             message: `Run ${runId} was not removed: ${String(cleanup.remaining.length)} worktree caches could not be removed while their repository ${ledger.repo} exists (${cleanup.remaining.join(', ')}). Fix the cause in the warnings, then retry with quiet-choir workflow clean ${runId} --state-dir ${stateDir} and rm again.`,
             caches: cleanup.remaining,
+            removed: cleanup.directories,
             warnings: cleanup.warnings,
           };
         caches.push(...cleanup.directories.map((path) => ({ path, method: 'git' as const })));
