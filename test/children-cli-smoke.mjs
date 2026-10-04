@@ -86,6 +86,15 @@ export default defineWorkflow({name:'sdlc',version:'1',description:'Build from a
   assert.equal(count(imported), 1, 'Matching source metadata must avoid a second import');
   ok(['list-defs', definitions, '--refresh', '--json']);
   assert.equal(count(imported), 2);
+  const esmDefinitions = join(directory, 'mts');
+  mkdirSync(esmDefinitions);
+  writeFileSync(
+    join(esmDefinitions, 'x.workflow.mts'),
+    `import {defineWorkflow,z} from 'quiet-choir';export default defineWorkflow({name:'esm-listed',version:'1',input:z.null(),output:z.null(),run:async()=>null});`,
+  );
+  const esmListing = ok(['list-defs', esmDefinitions, '--json']);
+  assert.equal(esmListing.definitions.length, 1, 'list-defs discovers x.workflow.mts');
+  assert.equal(esmListing.definitions[0].workflow.name, 'esm-listed');
   const executed = ok([
     'execute',
     'sdlc',
