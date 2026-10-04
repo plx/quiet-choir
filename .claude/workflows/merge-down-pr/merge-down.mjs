@@ -995,6 +995,34 @@ function localReviewRun(a, P, R) {
   return result;
 }
 
+// A start record names the runner by pid, and a pid is reused once its process is gone, so the
+// record also keeps the runner's start time (as `ps -o lstart=` prints it). The review is ours when
+// a process with that pid started at that time, or when no process has that pid but its group
+// still exists: POSIX does not reuse a pid while a process group with that id exists, so the
+// group outliving the runner (codex descendants left behind) is still the review's. Returns
+// 'runner' (the runner is alive), 'group' (only its group is), 'gone', or 'foreign' (the pid now
+// names another process, or the record has no start time to confirm it): never signal 'foreign'.
+const processStartTime = (pid) => {
+  const r = run('ps', ['-o', 'lstart=', '-p', String(pid)], { allowFail: true });
+  return (r.status === 0 && r.stdout.trim()) || null;
+};
+const groupAlive = (pid) => {
+  try {
+    process.kill(-pid, 0);
+    return true;
+  } catch (error) {
+    return error.code === 'EPERM';
+  }
+};
+function reviewOwnership(started) {
+  if (!Number.isInteger(started?.pid) || started.pid <= 1) return 'gone';
+  const lstart = processStartTime(started.pid);
+  if (lstart !== null) return started.lstart && lstart === started.lstart ? 'runner' : 'foreign';
+  return groupAlive(started.pid) ? 'group' : 'gone';
+}
+const staleNote = (started) =>
+  `ignored a stale start record: pid ${started.pid} is no longer the review's (start time differs or was not recorded)`;
+
 function localReviewStart(a, P) {
   const pr = requirePr(a);
   const sha = requireSha(a, P.workdir);
@@ -1005,9 +1033,9 @@ function localReviewStart(a, P) {
   // A review of the same head that is still running (a resumed run, or a retried start) is waited
   // for rather than launched twice.
   const running = readJson(`${stem}.started.json`);
-  if (running?.sha === sha && processAlive(running.pid)) {
-    return { started: false, cached: false, running: true, ...running };
-  }
+  const owner = running?.sha === sha ? reviewOwnership(running) : 'gone';
+  if (owner === 'runner') return { started: false, cached: false, running: true, ...running };
+  const notes = owner === 'foreign' ? [staleNote(running)] : [];
   rmSync(`${stem}.result.json`, { force: true });
   const args = [fileURLToPath(import.meta.url), 'local-review', '--pr', String(pr), '--sha', sha];
   args.push('--root', P.root);
@@ -1016,9 +1044,14 @@ function localReviewStart(a, P) {
   }
   const child = spawn(process.execPath, args, { detached: true, stdio: 'ignore' });
   child.unref();
-  const started = { sha, pid: child.pid, startedAt: nowIso() };
+  const started = {
+    sha,
+    pid: child.pid,
+    lstart: processStartTime(child.pid),
+    startedAt: nowIso(),
+  };
   writeJson(`${stem}.started.json`, started);
-  return { started: true, cached: false, ...started };
+  return { started: true, cached: false, ...started, ...(notes.length ? { notes } : {}) };
 }
 
 async function localReviewWait(a, P) {
@@ -1032,12 +1065,14 @@ async function localReviewWait(a, P) {
   const begin = Date.now();
   for (;;) {
     if (existsSync(file)) return { done: true, ...readJson(file) };
-    if (!processAlive(started.pid)) {
+    const owner = reviewOwnership(started);
+    if (owner !== 'runner') {
       if (existsSync(file)) return { done: true, ...readJson(file) };
       return {
         done: true,
         sha,
-        error: `the review process (pid ${started.pid}) exited without a result`,
+        error: `the review process (pid ${started?.pid}) exited without a result`,
+        ...(owner === 'foreign' ? { notes: [staleNote(started)] } : {}),
       };
     }
     const waitedSeconds = Math.round((Date.now() - begin) / 1000);
@@ -1051,39 +1086,34 @@ async function localReviewWait(a, P) {
 // A review whose wait failed or timed out is stopped, so it does not run on unobserved. The
 // review is its own process group (spawned detached), so the group signal reaches codex too.
 // Stop also reaps the leftovers of a finished, failed review: a result file only says the runner
-// ended, and a spawnSync timeout kills codex but can leave its descendants in the group.
-const groupAlive = (pid) => {
-  try {
-    process.kill(-pid, 0);
-    return true;
-  } catch (error) {
-    return error.code === 'EPERM';
-  }
-};
+// ended, and a spawnSync timeout kills codex but can leave its descendants in the group. Every
+// signal is gated on the start record still naming this review (see reviewOwnership).
 async function localReviewStop(a, P) {
   const pr = requirePr(a);
   const sha = requireSha(a, P.workdir);
   const stem = reviewStem(P, pr, sha);
-  const started = readJson(`${stem}.started.json`);
-  const pid = started?.sha === sha ? started.pid : null;
+  const record = readJson(`${stem}.started.json`);
+  const started = record?.sha === sha ? record : null;
+  const pid = started?.pid ?? null;
   let signalled = false;
-  if (pid && groupAlive(pid)) {
-    for (const [signal, seconds] of [
-      ['SIGTERM', 20],
-      ['SIGKILL', 10],
-    ]) {
-      if (!groupAlive(pid)) break;
-      try {
-        process.kill(-pid, signal);
-        signalled = true;
-      } catch (error) {
-        if (error.code !== 'ESRCH') throw error;
-      }
-      for (let i = 0; i < seconds && groupAlive(pid); i++) await sleep(1_000);
+  for (const [signal, seconds] of [
+    ['SIGTERM', 20],
+    ['SIGKILL', 10],
+  ]) {
+    const owner = reviewOwnership(started);
+    if (owner === 'gone') break;
+    if (owner === 'foreign') return { sha, pid, stopped: signalled, notes: [staleNote(started)] };
+    try {
+      process.kill(-pid, signal);
+      signalled = true;
+    } catch (error) {
+      if (error.code !== 'ESRCH') throw error;
     }
+    for (let i = 0; i < seconds && groupAlive(pid); i++) await sleep(1_000);
   }
-  const alive = pid ? groupAlive(pid) : false;
-  if (alive) fail(`the review process group ${pid} is still running after SIGKILL`);
+  if (['runner', 'group'].includes(reviewOwnership(started))) {
+    fail(`the review process group ${pid} is still running after SIGKILL`);
+  }
   removeReviewWorktree(P.workdir, reviewWorktree(P, pr, sha));
   return { sha, pid, stopped: signalled };
 }
