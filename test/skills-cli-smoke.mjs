@@ -380,8 +380,8 @@ async function portingRecipes(skillRoot) {
       { step: 'close', argvPrefix: ['gh', 'api', '-X', 'PATCH'], json: { number: 163 } },
     ],
   });
+  // Nonexistent: the driver itself must create it.
   const lagRuns = join(directory, 'lag-state');
-  await mkdir(lagRuns);
   // A shim in front of the CLI records each subcommand the driver runs.
   const shim = join(directory, 'shim');
   const calls = join(directory, 'shim-calls.log');
@@ -403,6 +403,7 @@ process.exit(status ?? 1);
     env: { ...ticketEnv, QC_RUNS: lagRuns, QC_CHECKOUT: shim },
   });
   assert.equal(stale.status, 1, stale.output);
+  assert.equal((await stat(lagRuns)).mode & 0o777, 0o700);
   assert.match(stale.output, /The epic still names #163 after it closed/u);
   // One inspect and one execute, then the stop: no resume and no run for another ticket.
   assert.deepEqual((await readFile(calls, 'utf8')).trim().split('\n'), ['inspect', 'execute']);

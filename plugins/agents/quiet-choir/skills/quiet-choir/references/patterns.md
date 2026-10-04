@@ -825,18 +825,20 @@ export default defineWorkflow({
 
 Drive it from a shell. Set `QC_REPO`, `QC_EPIC` and `QC_TICKET` (the epic's current pick) as well as
 the paths above. Each pass resumes `ticket-$n` if its record exists, so a rerun after an
-interruption continues where it stopped, and otherwise starts it. It then follows `next` from the
-last JSON line. The loop stops at `null` and at a skipped ticket, and exits with a run's nonzero
-status: 75 is a suspended run, so run `workflow tick` when it is due and then this loop again; 1 is
-a failure to fix before rerunning the loop, which resumes it. It also stops with status 1 when the
-`after` snapshot still names the ticket it just closed: wait until GitHub shows the close, then
-rerun with `QC_TICKET` set to the epic's current pick, because resuming `ticket-$n` replays its
-saved `next`.
+interruption continues where it stopped, and otherwise starts it. The driver first creates a missing
+`$QC_RUNS` owner-only, so the output redirection always opens inside an existing directory. It then
+follows `next` from the last JSON line. The loop stops at `null` and at a skipped ticket, and exits
+with a run's nonzero status: 75 is a suspended run, so run `workflow tick` when it is due and then
+this loop again; 1 is a failure to fix before rerunning the loop, which resumes it. It also stops
+with status 1 when the `after` snapshot still names the ticket it just closed: wait until GitHub
+shows the close, then rerun with `QC_TICKET` set to the epic's current pick, because resuming
+`ticket-$n` replays its saved `next`.
 
 <!-- skills-check: example ticket-driver -->
 
 ```sh
 cd "$QC_TARGET" || exit 1
+(umask 077 && mkdir -p "$QC_RUNS") || exit 1
 qc() { node "$QC_CHECKOUT/bin/run.js" workflow "$@" --state-dir "$QC_RUNS" --json; }
 n=$QC_TICKET
 while [ "$n" != null ]; do
