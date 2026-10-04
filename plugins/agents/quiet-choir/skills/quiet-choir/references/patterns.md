@@ -834,10 +834,12 @@ epic's `ticket-N` records. Each pass resumes `ticket-$n` if its record exists, s
 interruption continues where it stopped, and otherwise starts it. The driver follows `next` from the
 last JSON line. The loop stops at `null` and at a skipped ticket, and exits with a run's nonzero
 status: 75 is a suspended run, so run `workflow tick` when it is due and then this loop again; 1 is
-a failure to fix before rerunning the loop, which resumes it. It also stops with status 1 when the
-`after` snapshot still names the ticket it just closed: wait until GitHub shows the close, then
-rerun with `QC_TICKET` set to the epic's current pick, because resuming `ticket-$n` replays its
-saved `next`.
+a failure to fix before rerunning the loop, which resumes it. It also stops with status 1 when
+`next` names a ticket this pass already ran: the `after` snapshot still names the ticket it just
+closed, or an earlier ticket was reopened. Resuming that ticket's completed run would replay its
+saved `next` and go round in a cycle. Wait until GitHub shows the close, then rerun with `QC_TICKET`
+set to the epic's current pick. A reopened ticket whose run completed needs a fresh state directory,
+because its record would replay the same `next` again.
 
 <!-- skills-check: example ticket-driver -->
 
@@ -852,7 +854,9 @@ if [ "$(cat "$QC_RUNS/scope")" != "$scope" ]; then
 fi
 qc() { node "$QC_CHECKOUT/bin/run.js" workflow "$@" --state-dir "$QC_RUNS" --json; }
 n=$QC_TICKET
+seen=' '
 while [ "$n" != null ]; do
+  seen="$seen$n "
   out="$QC_RUNS/ticket-$n.out"
   if qc inspect "ticket-$n" >/dev/null 2>&1; then
     qc resume "ticket-$n" >"$out"
@@ -862,10 +866,11 @@ while [ "$n" != null ]; do
   fi || exit
   [ "$(tail -n 1 "$out" | jq -r .output.status)" = closed ] || break
   next=$(tail -n 1 "$out" | jq -r .output.next)
-  if [ "$next" = "$n" ]; then
-    echo "The epic still names #$n after it closed: GitHub has not shown the close yet, or something reopened it." >&2
+  case "$seen" in *" $next "*)
+    echo "The epic points back to #$next, which this pass already ran: GitHub has not shown a close yet, or a ticket was reopened." >&2
     exit 1
-  fi
+    ;;
+  esac
   n=$next
 done
 ```

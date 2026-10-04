@@ -404,7 +404,7 @@ process.exit(status ?? 1);
   });
   assert.equal(stale.status, 1, stale.output);
   assert.equal((await stat(lagRuns)).mode & 0o777, 0o700);
-  assert.match(stale.output, /The epic still names #163 after it closed/u);
+  assert.match(stale.output, /The epic points back to #163, which this pass already ran/u);
   // One inspect and one execute, then the stop: no resume and no run for another ticket.
   assert.deepEqual((await readFile(calls, 'utf8')).trim().split('\n'), ['inspect', 'execute']);
   assert.deepEqual((await readdir(lagRuns)).filter((entry) => entry.startsWith('ticket-')).sort(), [
@@ -435,6 +435,51 @@ process.exit(status ?? 1);
   );
   assert.equal(await readFile(calls, 'utf8'), '');
   assert.deepEqual(await records(state), saved);
+
+  // A cycle across completed runs: ticket-163 names #164 and ticket-164, run after #163 reopened,
+  // names #163 again. The driver resumes each once and stops instead of alternating forever.
+  const cycleRuns = join(directory, 'cycle-state');
+  const pages164 = structuredClone(pages);
+  for (const page of pages164) page.data.repository.issue.number = 164;
+  const reopened = await write('ticket-164.fixtures.json', {
+    ...JSON.parse(await readFile(ticketFixtures, 'utf8')),
+    exec: [
+      { step: 'before', json: closed },
+      { step: 'after', json: epic },
+      { step: 'issue', json: pages164 },
+      {
+        step: 'close',
+        argvPrefix: ['gh', 'api', 'graphql'],
+        json: {
+          data: { repository: { issue: { number: 164, state: 'OPEN', stateReason: null } } },
+        },
+      },
+      { step: 'close', argvPrefix: ['gh', 'api', '-X', 'PATCH'], json: { number: 164 } },
+    ],
+  });
+  for (const [n, fixtures, next] of [
+    [163, ticketFixtures, 164],
+    [164, reopened, 163],
+  ]) {
+    const seeded = cli(
+      `execute "${ticketEnv.QC_WORKFLOW}" --run-id ticket-${String(n)} --state-dir "${cycleRuns}" --grant write --harness fixture:"${fixtures}" --input '{"repo":"octo-org/quiet-choir","epic":99,"ticket":${String(n)}}' --json`,
+    );
+    assert.equal(seeded.status, 0, seeded.output);
+    assert.deepEqual(seeded.lines.at(-1).output, { status: 'closed', next });
+  }
+  await writeFile(calls, '');
+  const cycle = shell(driver, {
+    cwd: target,
+    env: { ...ticketEnv, QC_RUNS: cycleRuns, QC_CHECKOUT: shim },
+  });
+  assert.equal(cycle.status, 1, cycle.output);
+  assert.match(cycle.output, /The epic points back to #163, which this pass already ran/u);
+  assert.deepEqual((await readFile(calls, 'utf8')).trim().split('\n'), [
+    'inspect',
+    'resume',
+    'inspect',
+    'resume',
+  ]);
 
   // The porting reference's exec role: its --grant fence verbatim, then refused without the grant.
   const roleEnv = {
