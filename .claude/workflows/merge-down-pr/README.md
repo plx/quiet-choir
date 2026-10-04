@@ -73,11 +73,13 @@ review of the same head is reused, so a resumed run does not pay twice, and one 
 waited for rather than started again. When a wait fails or the review outlasts 54 minutes,
 `local-review-stop` kills it (its whole process group) and removes its worktree. It also reaps
 leftovers of a finished, failed review: a result file only says the runner ended, and a timeout can
-leave codex descendants alive in the group. A pid can be reused once its process is gone, so each
-start also records the runner's start time: start, wait, and stop treat the record as the review's
-only while a process with that pid has that start time, or, once the runner has exited, while its
-process group survives (a pid is not reused while its group exists). Otherwise nothing is signalled
-and the result carries a note that the stale record was ignored.
+leave codex descendants alive in the group. A start that relaunches a failed review reaps the
+previous attempt's surviving group the same way first, and fails if it survives SIGKILL. A pid can
+be reused once its process is gone, so each start also records the runner's start time: start, wait,
+and stop treat the record as the review's only while a process with that pid has that start time,
+or, once the runner has exited, while its process group survives (a pid is not reused while its
+group exists). Otherwise nothing is signalled and the result carries a note that the stale record
+was ignored.
 
 The first review runs on the rebased head in parallel with the check suite and the merge-down
 review; an Opus triage then turns its findings into fixes, follow-ups, or recorded rejections,

@@ -1020,10 +1020,33 @@ function reviewOwnership(started) {
   if (lstart !== null) return started.lstart && lstart === started.lstart ? 'runner' : 'foreign';
   return groupAlive(started.pid) ? 'group' : 'gone';
 }
+// Signals the review's process group, SIGTERM and then SIGKILL, until it is gone, re-checking before
+// each signal that the start record still names the review. Returns whether it signalled, whether
+// the group is still running afterwards, and whether the record turned out to be foreign.
+async function reapGroup(started) {
+  let signalled = false;
+  for (const [signal, seconds] of [
+    ['SIGTERM', 20],
+    ['SIGKILL', 10],
+  ]) {
+    const owner = reviewOwnership(started);
+    if (owner === 'gone') break;
+    if (owner === 'foreign') return { signalled, alive: false, foreign: true };
+    try {
+      process.kill(-started.pid, signal);
+      signalled = true;
+    } catch (error) {
+      if (error.code !== 'ESRCH') throw error;
+    }
+    for (let i = 0; i < seconds && groupAlive(started.pid); i++) await sleep(1_000);
+  }
+  const alive = ['runner', 'group'].includes(reviewOwnership(started));
+  return { signalled, alive, foreign: false };
+}
 const staleNote = (started) =>
   `ignored a stale start record: pid ${started.pid} is no longer the review's (start time differs or was not recorded)`;
 
-function localReviewStart(a, P) {
+async function localReviewStart(a, P) {
   const pr = requirePr(a);
   const sha = requireSha(a, P.workdir);
   const stem = reviewStem(P, pr, sha);
@@ -1036,7 +1059,15 @@ function localReviewStart(a, P) {
   const owner = running?.sha === sha ? reviewOwnership(running) : 'gone';
   if (owner === 'runner') return { started: false, cached: false, running: true, ...running };
   const notes = owner === 'foreign' ? [staleNote(running)] : [];
+  // The runner of an earlier attempt is gone, but codex descendants it left in its group would
+  // keep running unobserved once this record is overwritten, so they are reaped first.
+  if (owner === 'group') {
+    const reaped = await reapGroup(running);
+    if (reaped.alive) fail(`the previous review's process group ${running.pid} survived SIGKILL`);
+    if (reaped.foreign) notes.push(staleNote(running));
+  }
   rmSync(`${stem}.result.json`, { force: true });
+  removeReviewWorktree(P.workdir, reviewWorktree(P, pr, sha));
   const args = [fileURLToPath(import.meta.url), 'local-review', '--pr', String(pr), '--sha', sha];
   args.push('--root', P.root);
   for (const flag of ['repo', 'model', 'effort', 'timeout-minutes']) {
@@ -1095,27 +1126,11 @@ async function localReviewStop(a, P) {
   const record = readJson(`${stem}.started.json`);
   const started = record?.sha === sha ? record : null;
   const pid = started?.pid ?? null;
-  let signalled = false;
-  for (const [signal, seconds] of [
-    ['SIGTERM', 20],
-    ['SIGKILL', 10],
-  ]) {
-    const owner = reviewOwnership(started);
-    if (owner === 'gone') break;
-    if (owner === 'foreign') return { sha, pid, stopped: signalled, notes: [staleNote(started)] };
-    try {
-      process.kill(-pid, signal);
-      signalled = true;
-    } catch (error) {
-      if (error.code !== 'ESRCH') throw error;
-    }
-    for (let i = 0; i < seconds && groupAlive(pid); i++) await sleep(1_000);
-  }
-  if (['runner', 'group'].includes(reviewOwnership(started))) {
-    fail(`the review process group ${pid} is still running after SIGKILL`);
-  }
+  const reaped = await reapGroup(started);
+  if (reaped.foreign) return { sha, pid, stopped: reaped.signalled, notes: [staleNote(started)] };
+  if (reaped.alive) fail(`the review process group ${pid} is still running after SIGKILL`);
   removeReviewWorktree(P.workdir, reviewWorktree(P, pr, sha));
-  return { sha, pid, stopped: signalled };
+  return { sha, pid, stopped: reaped.signalled };
 }
 
 function runCheck(a, P) {
