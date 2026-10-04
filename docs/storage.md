@@ -188,8 +188,15 @@ the legacy guard throughout, it deletes in this order:
 5. A rename of `<runId>/` to `.<runId>.<pid>.<uuid>.removing` in the runs container, then a
    directory flush. For a directory run this is the commit point. A dotted name is never a valid run
    ID, so the tombstone never lists.
-6. The legacy siblings once more (a `workflow answer` racing step 2 may have linked into
-   `<runId>.inbox/`), the tombstone, and finally the guard.
+6. The legacy siblings once more, the tombstone, and finally the guard.
+
+`workflow answer` takes no lock, so rm and the answer writer meet in a handshake instead: after
+linking its delivery, the writer re-reads the run and, when the run is gone (or the ID now names a
+run with another `createdAt`), deletes the delivery and any empty inbox and run directory it
+recreated, and fails with a conflict. rm's commit point (step 2 or 5) precedes the sweep in step 6,
+so a delivery linked before the commit point is swept from `<runId>.inbox/` or renamed into the
+tombstone with `<runId>/inbox/`, and one linked after it finds the run gone at the writer's check.
+No answer outlives the run to reach a later run that reuses the ID.
 
 A crash at any step leaves either an intact run that lists and inspects normally (run rm again) or a
 tombstone. `list` and `inspect` never see a half-deleted run, because the flat marker goes before

@@ -66,6 +66,16 @@ usual token and live-child checks, at most once; the full release then frees onl
 Rename `<runId>/` to `.<runId>.<pid>.<uuid>.removing`, then a directory fsync: the commit point of a
 directory run. 6. The legacy siblings again, the tombstone, and the guard.
 
+**A handshake with the lock-free answer writer.** `workflow answer` takes no lock, so a sweep alone
+cannot stop it from recreating `<runId>/inbox/` or `<runId>.inbox/` after rm finished, leaving an
+answer that a later run reusing the ID (`--run-id` is user-chosen) with the same question
+fingerprint would ingest. After linking a delivery, the writer re-reads the run
+(`withdrawDeliveryIfRunRemoved`): when the run is gone, or the ID names a run with another
+`createdAt`, it deletes the delivery and any empty inbox and run directory it recreated, and fails
+with a conflict. rm's commit point (step 2 or 5) precedes its sweep in step 6, so a link before the
+commit point is swept or renamed into the tombstone, and a link after it sees the run gone at the
+writer's check.
+
 Holding the guard while the primary is released keeps every other writer out, because each one takes
 the guard first. Removing the flat marker before the directory, and renaming the directory to a
 dotted name, mean `list` and `inspect` see either an intact run or none. A crash leaves an intact

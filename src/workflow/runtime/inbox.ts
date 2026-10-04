@@ -1,7 +1,7 @@
 import { brandError, isBranded } from './error-brand.js';
 import { createStorageDirectory, syncDirectory, syncHandle } from './storage-io.js';
 import { createHash, randomUUID } from 'node:crypto';
-import { link, open, readFile, rm, stat } from 'node:fs/promises';
+import { link, open, readFile, rm, rmdir, stat } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { z } from 'zod';
 import { jsonValue, digest } from './json.js';
@@ -230,7 +230,48 @@ export async function writeAnswer(options: WriteAnswerOptions): Promise<AnswerDe
   } finally {
     await rm(temporary, { force: true });
   }
+  await withdrawDeliveryIfRunRemoved(stateDir, run, path);
   return { runId: run.id, stepId: options.stepId, path, questionFingerprint: step.fingerprint };
+}
+
+function isMissing(error: unknown): boolean {
+  return error instanceof Error && 'code' in error && error.code === 'ENOENT';
+}
+
+/**
+ * The lock-free half of the `workflow rm` handshake (ADR 0049): after publishing a delivery,
+ * re-read the run and withdraw the delivery when the run is gone or the ID now names another run
+ * (a different `createdAt`). rm's commit point (removing the flat file, or renaming `<runId>/` to
+ * its tombstone) precedes its final sweep of the legacy siblings. So a link before the commit point
+ * is swept with `<runId>.inbox/` or moved into the tombstone with `<runId>/inbox/`, and a link after
+ * it finds the run gone here; either way no answer outlives the run to reach a later run that reuses
+ * the ID. Empty inbox and run directories this delivery recreated are removed too.
+ * @internal
+ */
+export async function withdrawDeliveryIfRunRemoved(
+  stateDir: string,
+  run: Pick<RunRecord, 'id' | 'createdAt'>,
+  path: string,
+): Promise<void> {
+  const current = await readRun({ stateDir, runId: run.id }).catch((error: unknown) => {
+    if (isMissing(error)) return undefined;
+    throw error;
+  });
+  if (current?.createdAt === run.createdAt) return;
+  await rm(path, { force: true });
+  // Only a removed run's directories: a run that reuses the ID owns its own.
+  if (!current)
+    for (const directory of [dirname(path), runDirectory(stateDir, run.id)])
+      try {
+        await rmdir(directory);
+      } catch (error) {
+        if (!(error instanceof Error && 'code' in error)) throw error;
+        if (!['ENOENT', 'ENOTEMPTY', 'EEXIST'].includes(String(error.code))) throw error;
+      }
+  throw new AnswerError(
+    'conflict',
+    `Run ${run.id} was removed while the answer was being delivered.`,
+  );
 }
 
 /** Determine source drift from saved paths and bytes, without typechecking or importing. @internal */

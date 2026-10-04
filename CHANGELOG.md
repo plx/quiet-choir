@@ -19,11 +19,13 @@
   without `--force`, a running or suspended run or one with a waiting step. Holding the legacy
   guard, rm deletes the flat file before renaming `<runId>/` to a dotted
   `.<runId>.<pid>.<uuid>.removing` tombstone, so `list` and `inspect` see an intact run or none, and
-  each rm sweeps the tombstones of dead removals. `--dry-run` takes no lock, writes nothing and
-  exits 0 with the verdict, paths, caches, refs and bytes. `workflow list --json` rows (compact and
-  `--full`) gain `bytes`, the apparent size of the run's files in its runs container excluding
-  worktree caches (null with a warning when unmeasurable), and the text view gains a `SIZE` column.
-  A new CLI smoke covers rm and list bytes.
+  each rm sweeps the tombstones of dead removals. A `workflow answer` that links its delivery while
+  rm removes the run re-reads the run afterwards and withdraws the delivery with `answer.conflict`,
+  so no answer outlives the run to reach a later run that reuses the ID. `--dry-run` takes no lock,
+  writes nothing and exits 0 with the verdict, paths, caches, refs and bytes. `workflow list --json`
+  rows (compact and `--full`) gain `bytes`, the apparent size of the run's files in its runs
+  container excluding worktree caches (null with a warning when unmeasurable), and the text view
+  gains a `SIZE` column. A new CLI smoke covers rm and list bytes.
 - Docs and CLI drift (#165). `workflow list-defs` discovers `*.workflow.mts` and `*.workflow.cts` as
   well as `*.workflow.ts` (never `.d.ts` or `.tsx`), matching the extensions the golden path tells
   agents to use. The `configuration get` and `configuration set` placeholder commands, which only

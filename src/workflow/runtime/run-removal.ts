@@ -402,7 +402,9 @@ async function removeOwned(
   }
   await syncDirectory(stateDir);
   await step('renamed');
-  // A racing `workflow answer` may have linked into `<runId>.inbox` before the marker went.
+  // The commit point has passed. A racing `workflow answer` that linked into `<runId>.inbox` before
+  // it is swept here (one in `<runId>/inbox` went into the tombstone); one that links later finds
+  // the run gone and withdraws its delivery (withdrawDeliveryIfRunRemoved in inbox.ts).
   await removeSiblings();
   await rm(tombstone, { recursive: true, force: true });
   await step('tombstone-deleted');

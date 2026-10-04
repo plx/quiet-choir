@@ -26,6 +26,11 @@ import { groupState, processIdentity } from '../src/processes/identity.js';
 import { WorkflowExecutor } from '../src/workflow/loader/executor.js';
 import { inspectRun, listRuns } from '../src/workflow/loader/inspection.js';
 import type { WorkflowCommandResult } from '../src/workflow/loader/model.js';
+import {
+  answerPath,
+  withdrawDeliveryIfRunRemoved,
+  writeAnswer,
+} from '../src/workflow/runtime/inbox.js';
 import { defaultStateDir } from '../src/workflow/runtime/paths.js';
 import { readRequiredRun } from '../src/workflow/runtime/read-required-run.js';
 import {
@@ -452,6 +457,53 @@ describe('workflow rm deletion', () => {
     removed(await executor.execute({ ...plan('home'), stateDir: runs }));
     expect(await gone(registration)).toBe(true);
     expect(await readdir(runs)).toEqual(['.gitignore']);
+  });
+});
+
+describe('workflow rm and a racing answer', () => {
+  /** A delivery recreated at `path`, as a writer that linked after rm's final sweep leaves it. */
+  async function lateDelivery(path: string): Promise<void> {
+    await mkdir(join(path, '..'), { recursive: true });
+    await writeFile(path, '{"value":true}');
+  }
+
+  it.each([
+    ['the format-7 inbox', () => answerPath(stateDir, 'asked', 'gate')],
+    ['the legacy flat inbox', () => join(stateDir, 'asked.inbox', 'gate.answer.json')],
+  ])('withdraws a delivery linked into %s after the run was removed', async (_name, target) => {
+    await suspendedRun('asked');
+    const run = await readRun({ stateDir, runId: 'asked' });
+    removed(await remove('asked', { force: true }));
+    const path = target();
+    await lateDelivery(path);
+    await expect(withdrawDeliveryIfRunRemoved(stateDir, run, path)).rejects.toMatchObject({
+      name: 'AnswerError',
+      reason: 'conflict',
+      message: 'Run asked was removed while the answer was being delivered.',
+    });
+    await onlyIgnoreFileLeft();
+  });
+
+  it('withdraws only the delivery when the ID now names another run', async () => {
+    await suspendedRun('asked');
+    const run = await readRun({ stateDir, runId: 'asked' });
+    removed(await remove('asked', { force: true }));
+    await completedRun('asked');
+    const path = join(stateDir, 'asked', 'inbox', 'gate.answer.json');
+    await lateDelivery(path);
+    await expect(withdrawDeliveryIfRunRemoved(stateDir, run, path)).rejects.toMatchObject({
+      reason: 'conflict',
+    });
+    expect(await gone(path)).toBe(true);
+    expect((await readRun({ stateDir, runId: 'asked' })).status).toBe('completed');
+  });
+
+  it('keeps a delivery to an intact run', async () => {
+    await suspendedRun('asked');
+    const delivery = await writeAnswer({ stateDir, runId: 'asked', stepId: 'gate', value: true });
+    const run = await readRun({ stateDir, runId: 'asked' });
+    await withdrawDeliveryIfRunRemoved(stateDir, run, delivery.path);
+    expect(await gone(delivery.path)).toBe(false);
   });
 });
 
