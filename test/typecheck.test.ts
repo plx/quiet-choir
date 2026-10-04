@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import type ts from 'typescript';
+import ts from 'typescript';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { ThresholdLogger } from '../src/application/execution.js';
@@ -356,6 +356,18 @@ describe('TypeScriptExecutor', { timeout: 30_000 }, () => {
   });
 });
 
+// Lib files without lib checking or DOM declarations keep the option-set cases small.
+const smallLib = { lib: ['es2023'], skipLibCheck: true, types: [] };
+
+function diagnosticSummary(diagnostics: readonly ts.Diagnostic[]) {
+  return diagnostics.map((diagnostic) => ({
+    code: diagnostic.code,
+    file: diagnostic.file?.fileName,
+    start: diagnostic.start,
+    message: ts.flattenDiagnosticMessageText(diagnostic.messageText, '\n'),
+  }));
+}
+
 function libFile(program: ts.Program): ts.SourceFile | undefined {
   return program.getSourceFiles().find((file) => program.isSourceFileDefaultLibrary(file));
 }
@@ -391,30 +403,24 @@ describe('TypecheckProgramCache', { timeout: 30_000 }, () => {
         '',
       ].join('\n'),
     });
-    const uncached = [
-      await executeEntrypoint(root, 'clean.ts', undefined),
-      await executeEntrypoint(root, 'broken.ts', undefined),
-    ];
+    // One uncached full-engine check; the cache's first check is the other full one.
+    const uncached = await executeEntrypoint(root, 'broken.ts', undefined);
     const cache = new TypecheckProgramCache();
-    const first = [
-      await executeEntrypoint(root, 'clean.ts', cache),
-      await executeEntrypoint(root, 'broken.ts', cache),
-    ];
-    const second = [
-      await executeEntrypoint(root, 'clean.ts', cache),
-      await executeEntrypoint(root, 'broken.ts', cache),
-    ];
+    const cached = [];
+    for (const entrypoint of ['clean.ts', 'broken.ts', 'clean.ts', 'broken.ts'])
+      cached.push(await executeEntrypoint(root, entrypoint, cache));
 
-    expect(uncached[0]).toMatchObject({ ok: true, diagnostics: [] });
-    expect(uncached[1]?.ok).toBe(false);
-    expect(uncached[1]?.diagnostics).toContainEqual(
+    expect(uncached.ok).toBe(false);
+    expect(uncached.diagnostics).toContainEqual(
       expect.objectContaining({
         code: 2741,
         relatedInformation: [expect.objectContaining({ filePath: join(root, 'broken.ts') })],
       }),
     );
-    expect(first).toEqual(uncached);
-    expect(second).toEqual(uncached);
+    expect(cached[0]).toMatchObject({ ok: true, diagnostics: [] });
+    expect(cached[2]).toEqual(cached[0]);
+    expect(cached[1]).toEqual(uncached);
+    expect(cached[3]).toEqual(uncached);
   });
 
   it('reports an edit to an imported file and clears it when reverted', async () => {
@@ -480,7 +486,9 @@ describe('TypecheckProgramCache', { timeout: 30_000 }, () => {
     const defaults = await executeEntrypoint(root, 'workflow.ts', cache);
     await writeFile(
       join(root, 'tsconfig.json'),
-      JSON.stringify({ compilerOptions: { strict: true, noUncheckedIndexedAccess: false } }),
+      JSON.stringify({
+        compilerOptions: { ...smallLib, strict: true, noUncheckedIndexedAccess: false },
+      }),
     );
     const configured = await executeEntrypoint(root, 'workflow.ts', cache);
     await rm(join(root, 'tsconfig.json'));
@@ -514,10 +522,11 @@ describe('TypecheckProgramCache', { timeout: 30_000 }, () => {
 
   it('evicts the least recently used option set beyond its limit and still checks it correctly', async () => {
     const root = await createFixture({
-      'loose/tsconfig.json': '{"compilerOptions":{"skipLibCheck":true,"strict":false}}',
-      'strict/tsconfig.json': '{"compilerOptions":{"skipLibCheck":true,"strict":true}}',
-      'other/tsconfig.json':
-        '{"compilerOptions":{"skipLibCheck":true,"strict":true,"noImplicitReturns":true}}',
+      'loose/tsconfig.json': JSON.stringify({ compilerOptions: { ...smallLib, strict: false } }),
+      'strict/tsconfig.json': JSON.stringify({ compilerOptions: { ...smallLib, strict: true } }),
+      'other/tsconfig.json': JSON.stringify({
+        compilerOptions: { ...smallLib, strict: true, noImplicitReturns: true },
+      }),
       'workflow.ts': 'export function identity(value) { return value; }\n',
     });
     const check = (cache: TypecheckProgramCache, config: string) =>
@@ -537,6 +546,9 @@ describe('TypecheckProgramCache', { timeout: 30_000 }, () => {
     expect(libFile(strictKept.program)).toBe(libFile(strict.program));
     expect(libFile(strictEvicted.program)).not.toBe(libFile(strict.program));
     expect(strictEvicted.diagnostics.map((diagnostic) => diagnostic.code)).toEqual([7006]);
+    expect(diagnosticSummary(strictEvicted.diagnostics)).toEqual(
+      diagnosticSummary(ts.getPreEmitDiagnostics(strictEvicted.program)),
+    );
     expect(check(cache, 'loose').diagnostics).toEqual([]);
   });
 });
