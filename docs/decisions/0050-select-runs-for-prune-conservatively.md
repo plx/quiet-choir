@@ -91,5 +91,6 @@ listing, moves the run to `skipped`.
   removes them deliberately; they show up in `skipped` on every prune.
 - `RemoveRunOptions` gains the internal `expectedUpdatedAt`; rm's own flags, refusals and deletion
   order are unchanged, and `src/workflow/runtime/model.ts` is untouched.
-- Removing stale project roots for missing cwds (#366), size-based or keep-last-N selection,
+- Removing stale project roots for missing cwds (#366, now
+  [ADR 0051](0051-remove-stale-project-roots-by-rmdir.md)), size-based or keep-last-N selection,
   transcript-only trimming and scheduled pruning are out of scope.

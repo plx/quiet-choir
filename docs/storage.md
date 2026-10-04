@@ -69,7 +69,16 @@ retains typechecking, code/schema checks, grants, and step identity validation.
       attempts/<sha256-full-step-id>/<attempt>.<provider>.jsonl
       artifacts/<encoded-id>--<hash>/<attempt>/
       worktrees/                     # reserved; no automatic checkout creation
+  worktrees/                         # default worktree cache root of the repository with this cwd
+    <runId>-<namespace>/<digest>/    # one cache per isolated call (see worktrees.md)
 ```
+
+The default worktree cache root is keyed by repository, not by runs container:
+`defaultWorktreeRoot(repo)` is the `worktrees/` directory of the repository's own project root, and
+`RunWorktrees` creates it on demand. A run with an explicit `--state-dir` (or a project
+subdirectory) therefore still puts its caches in the repository's root, which may have no
+`project.json` and only a `worktrees/` directory; `workflow list --all` warns
+`Skipped project <root>: ...` for such a root.
 
 Artifact directories are allocated on demand. Their component uses at most 100 encoded ID characters
 and a full SHA-256 of the exact ID, distinguishing case variants on case-insensitive filesystems and
@@ -227,6 +236,27 @@ or a held lock or live orphan is never selected; it is listed in `skipped` with 
 run that rm refuses at removal time, and the batch goes on. Prune sweeps dead rm tombstones in every
 runs container it scans, and its `--dry-run` takes no lock and changes nothing. Flags, reasons and
 result are in the [CLI contract](cli-contract.md).
+
+`workflow prune --missing-cwd --all` then removes stale project roots
+([ADR 0051](decisions/0051-remove-stale-project-roots-by-rmdir.md)); without both flags it never
+touches a root. A root is stale when its `project.json` records a cwd that is missing (stat fails
+with `ENOENT` or `ENOTDIR`), or when it has no readable, valid `project.json` (the roots behind a
+`Skipped project` warning). The current project's root and roots whose cwd exists are never
+considered. A stale root is kept and reported when a run listed in its `runs/` stays (`runs-kept`:
+protected, refused or not selected), when a `worktrees/<runId>-<namespace>/` directory names a run
+that a scanned runs container still holds (`in-use`), or when it holds anything else (`files`): for
+a registered root, anything but `project.json`, `runs/`, `runs/.gitignore`, `worktrees/` and
+directories below `worktrees/`; for a root without `project.json`, anything but `worktrees/` and
+directories below it. A file, a symbolic link or an unknown directory at any depth counts, so a
+macOS `.DS_Store` keeps a root too. Otherwise prune removes it in a fixed order: unlink
+`runs/.gitignore` and rmdir `runs/`, rmdir the `worktrees/` tree bottom-up, unlink `project.json`,
+then rmdir the root. Those two files are the only ones it ever unlinks; every directory goes by
+`rmdir`, never a recursive delete, and no lock is taken. A cache that a live run (even one with an
+explicit `--state-dir`) creates meanwhile makes an `rmdir` fail with `ENOTEMPTY`, and the root is
+reported `busy` after prune puts back the file it unlinked just before (`runs/.gitignore` or
+`project.json`, with its original bytes), so a half-cleaned root keeps its `project.json` and never
+turns into a `Skipped project` root. A root without `project.json` is removed only when its
+`worktrees/` tree holds nothing but empty directories; those are recreated on demand.
 
 ## Legacy records
 

@@ -307,3 +307,22 @@ run you deliberately want gone while it is still active or waiting, inspect it a
 Pinned refs survive prune unless you pass `--refs`, and each removed run lists them as `keptRefs`.
 The pins keep the runs' worktree commits reachable; once they are deleted, Git garbage collection
 can drop those commits, so pass `--refs` only when no later recovery or integration needs them.
+
+To clean up after deleted workspaces, combine `--missing-cwd` with `--all`. After removing the runs,
+prune also removes stale XDG project roots: roots registered for a cwd that is gone, and roots
+without a valid `project.json` (the `Skipped project` warnings of `list --all`) that hold only empty
+`worktrees/` directories. Preview first, then run it:
+
+```sh
+node "$QC_CHECKOUT/bin/run.js" workflow prune --missing-cwd --all --dry-run --json
+node "$QC_CHECKOUT/bin/run.js" workflow prune --missing-cwd --all --json
+```
+
+`roots[]` lists each stale root with `removed` and a `reason`. Removed roots are `missing-cwd` or
+`empty`. A kept root is `runs-kept` (a run there stays; see `skipped[]`), `in-use` (a worktree
+namespace names a run that still exists), `files` (anything but the bare layout, such as a live
+cache; `paths` shows up to 20 blockers), `busy` (something appeared during removal; prune put the
+root's `project.json` or `runs/.gitignore` back) or `storage`. Prune unlinks only `project.json` and
+`runs/.gitignore` and removes directories with `rmdir`, so it never deletes a cache. Inspect a
+`files` root and delete what you no longer need by hand, then prune again. Without both flags prune
+never touches a root.
