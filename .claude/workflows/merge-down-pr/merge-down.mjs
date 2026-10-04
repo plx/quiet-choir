@@ -922,13 +922,21 @@ function removeReviewWorktree(W, dir) {
   run('git', ['-C', W, 'worktree', 'prune'], { allowFail: true });
 }
 
+// The model and effort a review runs with (effort null: Codex's configuration). A review is reused
+// only when both match, so a run with a different codexModel or codexEffort gets its own.
+const reviewConfig = (a) => ({
+  model: typeof a.model === 'string' ? a.model : 'gpt-6-astra',
+  effort: typeof a.effort === 'string' ? a.effort : null,
+});
+const sameConfig = (x, y) => x.model === y.model && (x.effort ?? null) === (y.effort ?? null);
+
 function localReview(a, P, R) {
   const pr = requirePr(a);
   const W = P.workdir;
   const sha = requireSha(a, W);
   const stem = reviewStem(P, pr, sha);
   const base = `origin/${R.def}`;
-  const model = typeof a.model === 'string' ? a.model : 'gpt-6-astra';
+  const { model, effort } = reviewConfig(a);
   const args = [
     'review',
     '--base',
@@ -941,7 +949,7 @@ function localReview(a, P, R) {
     '-c',
     'sandbox_mode="read-only"',
   ];
-  if (typeof a.effort === 'string') args.push('-c', `model_reasoning_effort="${a.effort}"`);
+  if (effort) args.push('-c', `model_reasoning_effort="${effort}"`);
   const RW = reviewWorktree(P, pr, sha);
   removeReviewWorktree(W, RW); // left behind by a review that was killed
   git(W, ['worktree', 'add', '--detach', RW, sha]);
@@ -962,6 +970,7 @@ function localReview(a, P, R) {
       sha,
       base,
       model,
+      effort,
       file: `${stem}.md`,
       log: `${stem}.log`,
       exitCode: r.status,
@@ -1050,18 +1059,25 @@ async function localReviewStart(a, P) {
   const pr = requirePr(a);
   const sha = requireSha(a, P.workdir);
   const stem = reviewStem(P, pr, sha);
+  const config = reviewConfig(a);
   const previous = readJson(`${stem}.result.json`);
-  // A finished review of the same head is reused: a resumed run does not pay for it twice.
-  if (previous && !previous.error) return { started: false, cached: true, done: true, ...previous };
-  // A review of the same head that is still running (a resumed run, or a retried start) is waited
-  // for rather than launched twice.
+  // A finished review of the same head, model, and effort is reused: a resumed run does not pay
+  // for it twice.
+  if (previous && !previous.error && sameConfig(previous, config)) {
+    return { started: false, cached: true, done: true, ...previous };
+  }
+  // A review of the same head and configuration that is still running (a resumed run, or a
+  // retried start) is waited for rather than launched twice.
   const running = readJson(`${stem}.started.json`);
   const owner = running?.sha === sha ? reviewOwnership(running) : 'gone';
-  if (owner === 'runner') return { started: false, cached: false, running: true, ...running };
+  if (owner === 'runner' && sameConfig(running, config)) {
+    return { started: false, cached: false, running: true, ...running };
+  }
   const notes = owner === 'foreign' ? [staleNote(running)] : [];
-  // The runner of an earlier attempt is gone, but codex descendants it left in its group would
-  // keep running unobserved once this record is overwritten, so they are reaped first.
-  if (owner === 'group') {
+  // An earlier attempt is replaced: one with another configuration that is still running, or one
+  // whose runner is gone but left codex descendants in its group. Either would keep running
+  // unobserved once this record is overwritten, so it is reaped first.
+  if (owner === 'runner' || owner === 'group') {
     const reaped = await reapGroup(running);
     if (reaped.alive) fail(`the previous review's process group ${running.pid} survived SIGKILL`);
     if (reaped.foreign) notes.push(staleNote(running));
@@ -1077,6 +1093,7 @@ async function localReviewStart(a, P) {
   child.unref();
   const started = {
     sha,
+    ...config,
     pid: child.pid,
     lstart: processStartTime(child.pid),
     startedAt: nowIso(),
