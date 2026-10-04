@@ -1226,7 +1226,7 @@ while (true) {
   replies = [];
 
   const githubCodex = wantCodex && !LOCAL;
-  const [gate, localReview] = await parallel([
+  let [gate, localReview] = await parallel([
     () => waitForGate(head, githubCodex ? pub.review.since : pub.publish.at, githubCodex),
     async () => (wantCodex && LOCAL ? localCodexReview(head, `r${record.rounds}`, 'Gate') : null),
   ]);
@@ -1238,6 +1238,22 @@ while (true) {
       'gate',
       `timed out waiting (CI ${gate.ci?.state ?? '?'}, Codex ${gate.codex?.state ?? '?'})`,
     );
+  if (wantCodex && LOCAL) {
+    // The local review usually outlasts the CI wait, so the attention snapshot above can predate
+    // threads that arrived meanwhile. CI is settled by now, so this returns after the settle delay
+    // with fresh ci and attention.
+    const fresh = await waitForGate(head, pub.publish.at, false);
+    if (!fresh || fresh.error)
+      return blocked('gate', fresh?.error ?? 'refreshing the gate produced no output');
+    if (fresh.headMoved)
+      return blocked(
+        'gate',
+        `PR head moved to ${fresh.headSha} while waiting; someone else pushed`,
+      );
+    if (!fresh.done)
+      return blocked('gate', `timed out refreshing the gate (CI ${fresh.ci?.state ?? '?'})`);
+    gate = fresh;
+  }
   log(
     `Round ${record.rounds}: CI ${gate.ci.state}; Codex ${LOCAL ? (wantCodex ? `local, ${localReview?.error ? 'failed' : `${localReview?.findings ?? 0} finding(s)`}` : 'not run') : gate.codex.state}`,
   );
