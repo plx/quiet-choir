@@ -1,0 +1,286 @@
+{
+  "allowModelOverride": false,
+  "capabilities": {
+    "defaultProfile": "text",
+    "defaults": {
+      "access": "read",
+      "claude": {
+        "allowedTools": [],
+        "isolation": "restricted",
+        "tools": []
+      },
+      "claudeAccess": "none",
+      "codex": {
+        "isolation": "restricted",
+        "sandbox": "read-only"
+      },
+      "codexAccess": "read",
+      "environment": {
+        "claude": {
+          "set": [],
+          "sha256": "2427b8a3193f4941d731ebcc7f2ea9ae4029bd00b6f30c119edb89cc70dd7247",
+          "unset": []
+        },
+        "codex": {
+          "set": [],
+          "sha256": "2427b8a3193f4941d731ebcc7f2ea9ae4029bd00b6f30c119edb89cc70dd7247",
+          "unset": []
+        }
+      },
+      "expectsToolUse": false,
+      "maxBudgetUsd": 0.5,
+      "maxTurns": 10,
+      "name": "text",
+      "onPermissionDenied": "warn",
+      "timeoutMs": 300000
+    },
+    "profiles": {
+      "edit": {
+        "access": "write",
+        "claude": {
+          "allowedTools": ["Read", "Grep", "Glob", "Edit", "Write"],
+          "isolation": "restricted",
+          "tools": ["Read", "Grep", "Glob", "Edit", "Write"]
+        },
+        "claudeAccess": "write",
+        "codex": {
+          "isolation": "restricted",
+          "sandbox": "workspace-write"
+        },
+        "codexAccess": "write",
+        "environment": {
+          "claude": {
+            "set": [],
+            "sha256": "2427b8a3193f4941d731ebcc7f2ea9ae4029bd00b6f30c119edb89cc70dd7247",
+            "unset": []
+          },
+          "codex": {
+            "set": [],
+            "sha256": "2427b8a3193f4941d731ebcc7f2ea9ae4029bd00b6f30c119edb89cc70dd7247",
+            "unset": []
+          }
+        },
+        "expectsToolUse": true,
+        "maxBudgetUsd": 5,
+        "maxTurns": 40,
+        "name": "edit",
+        "onPermissionDenied": "warn",
+        "timeoutMs": 1800000
+      },
+      "readonly": {
+        "access": "read",
+        "claude": {
+          "allowedTools": ["Read", "Grep", "Glob"],
+          "isolation": "restricted",
+          "tools": ["Read", "Grep", "Glob"]
+        },
+        "claudeAccess": "read",
+        "codex": {
+          "isolation": "restricted",
+          "sandbox": "read-only"
+        },
+        "codexAccess": "read",
+        "environment": {
+          "claude": {
+            "set": [],
+            "sha256": "2427b8a3193f4941d731ebcc7f2ea9ae4029bd00b6f30c119edb89cc70dd7247",
+            "unset": []
+          },
+          "codex": {
+            "set": [],
+            "sha256": "2427b8a3193f4941d731ebcc7f2ea9ae4029bd00b6f30c119edb89cc70dd7247",
+            "unset": []
+          }
+        },
+        "expectsToolUse": true,
+        "maxBudgetUsd": 2,
+        "maxTurns": 25,
+        "name": "readonly",
+        "onPermissionDenied": "warn",
+        "timeoutMs": 900000
+      },
+      "text": {
+        "access": "read",
+        "claude": {
+          "allowedTools": [],
+          "isolation": "restricted",
+          "tools": []
+        },
+        "claudeAccess": "none",
+        "codex": {
+          "isolation": "restricted",
+          "sandbox": "read-only"
+        },
+        "codexAccess": "read",
+        "environment": {
+          "claude": {
+            "set": [],
+            "sha256": "2427b8a3193f4941d731ebcc7f2ea9ae4029bd00b6f30c119edb89cc70dd7247",
+            "unset": []
+          },
+          "codex": {
+            "set": [],
+            "sha256": "2427b8a3193f4941d731ebcc7f2ea9ae4029bd00b6f30c119edb89cc70dd7247",
+            "unset": []
+          }
+        },
+        "expectsToolUse": false,
+        "maxBudgetUsd": 0.5,
+        "maxTurns": 10,
+        "name": "text",
+        "onPermissionDenied": "warn",
+        "timeoutMs": 300000
+      }
+    },
+    "requiredGrants": [],
+    "strictProfiles": true
+  },
+  "createdAt": "2026-10-04T10:35:54.641Z",
+  "cwd": "/",
+  "engine": {
+    "node": "v26.8.1",
+    "quietChoir": "0.0.0",
+    "tsx": "4.23.11",
+    "zod": "4.5.4"
+  },
+  "error": "fixture tail",
+  "errorStack": "Error: fixture tail\n    at Object.run (/fixture/create-schema-revision-fixture.mts:15:11)\n    at async executeOwned (/fixture/src/workflow/runtime/runner.ts:3396:22)\n    at async runWorkflow (/fixture/src/workflow/runtime/runner.ts:3614:32)\n    at async <anonymous> (/fixture/create-schema-revision-fixture.mts:18:1)",
+  "eventCounts": {},
+  "events": [
+    {
+      "at": "2026-10-04T10:35:54.645Z",
+      "data": null,
+      "execution": 1,
+      "message": null,
+      "phase": null,
+      "stepId": null,
+      "total": null,
+      "type": "run.started"
+    },
+    {
+      "at": "2026-10-04T10:35:54.699Z",
+      "data": null,
+      "execution": 1,
+      "message": "fixture tail",
+      "phase": null,
+      "stepId": null,
+      "total": null,
+      "type": "run.failed"
+    }
+  ],
+  "executions": [
+    {
+      "endedAt": "2026-10-04T10:35:54.697Z",
+      "error": "fixture tail",
+      "errorStack": "Error: fixture tail\n    at Object.run (/fixture/create-schema-revision-fixture.mts:15:11)\n    at async executeOwned (/fixture/src/workflow/runtime/runner.ts:3396:22)\n    at async runWorkflow (/fixture/src/workflow/runtime/runner.ts:3614:32)\n    at async <anonymous> (/fixture/create-schema-revision-fixture.mts:18:1)",
+      "n": 1,
+      "outcome": "failed",
+      "pid": 99188,
+      "startedAt": "2026-10-04T10:35:54.644Z"
+    }
+  ],
+  "formatVersion": 7,
+  "grantedProfiles": {},
+  "grants": [],
+  "harness": {
+    "kind": "none",
+    "previousKinds": []
+  },
+  "id": "pre-revision",
+  "input": null,
+  "maps": {},
+  "maxChildDepth": 8,
+  "nextWakeAt": null,
+  "output": null,
+  "phase": null,
+  "policy": [],
+  "policyWarnings": [],
+  "profileOverrides": [],
+  "recoveryHint": "All recorded work has terminal outcomes, including settled map items. Fix the workflow tail, output or configuration and use --resume --accept-code-change to re-finalize; unchanged identities reuse their results.",
+  "replayWarnings": [],
+  "rootCause": {
+    "effect": null,
+    "error": "fixture tail",
+    "errorKind": null,
+    "stepId": null
+  },
+  "runBudget": {
+    "maxRunAgentAttempts": null,
+    "maxRunCostUsd": null
+  },
+  "seq": 3,
+  "sessionSalt": "31aaaebd-8cad-4b07-ba0b-3e53440be83c",
+  "status": "failed",
+  "steps": {
+    "prepare": {
+      "attemptHistory": [
+        {
+          "attempt": 1,
+          "durationMs": 8,
+          "effort": null,
+          "error": null,
+          "errorStack": null,
+          "execution": 1,
+          "fingerprint": "277630d84e238994737322555ac17c9fe70071d269004da2a004f88bdb098fb6",
+          "finishedAt": "2026-10-04T10:35:54.691Z",
+          "policy": {
+            "retry": {
+              "delayMs": 100,
+              "maxAttempts": 1
+            }
+          },
+          "request": null,
+          "requestedModel": null,
+          "sources": {
+            "retry.delayMs": "runtime",
+            "retry.maxAttempts": "runtime"
+          },
+          "startedAt": "2026-10-04T10:35:54.683Z",
+          "status": "completed",
+          "usage": null
+        }
+      ],
+      "attempts": 1,
+      "durationMs": 8,
+      "error": null,
+      "errorStack": null,
+      "fingerprint": "277630d84e238994737322555ac17c9fe70071d269004da2a004f88bdb098fb6",
+      "finishedAt": "2026-10-04T10:35:54.691Z",
+      "identity": {
+        "callback": "abf1c7887089f699f3ae0aca845bf197561ce05b0a98f2173fcc20bb52c936ce",
+        "cwd": "df7e940f72aa93cbcb6d70cc35124b0767c7a0e353043c7c24b660ea9be7b952",
+        "input": "2bfd14f43d17fc7cea24e0917a8879b4b2f880b8baeec1b9d90fbaad655e71bd",
+        "kind": "0d9f50d8178cb7c5b044c4dce43f1a35c44697ac03e70407e2dda2324fa92f56",
+        "onError": "a8ae35eaddff8b9970e3075d77d711798ddfa511a5391581aef83e1a8ebbf64f",
+        "schema": "7068f465e62e0332bd1fec74011c2a15b641c49214d1941ef53026cf1d92920c",
+        "version": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b"
+      },
+      "kind": "step",
+      "launchStamp": 0,
+      "output": 2,
+      "phase": null,
+      "request": null,
+      "seq": 1,
+      "settleStamp": 1,
+      "startedAt": "2026-10-04T10:35:54.683Z",
+      "status": "completed",
+      "wakeAt": null
+    }
+  },
+  "updatedAt": "2026-10-04T10:35:54.699Z",
+  "workflow": {
+    "fingerprint": "fbd16d6260602af37e4f87392b8a896e7059d0ac8694532f2cd0e55d76565838",
+    "identity": {
+      "code": "schema-revision",
+      "engine": {
+        "formatVersion": 6,
+        "version": "0.0.0"
+      },
+      "files": {},
+      "inputSchema": "199490fad0bd9dd1925ebbce2ed02f949ef0396fcbabcd41baa5ffa3b1ea49b2",
+      "outputSchema": "199490fad0bd9dd1925ebbce2ed02f949ef0396fcbabcd41baa5ffa3b1ea49b2"
+    },
+    "name": "schema-revision",
+    "version": "1"
+  }
+}
