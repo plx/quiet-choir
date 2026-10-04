@@ -19,6 +19,9 @@ import {
   type ExecStepError,
   type Harness,
   type HarnessRequest,
+  type JsonValue,
+  type MapStepError,
+  type MergeResult,
   type ProcessRunner,
   type ReadFileResult,
   type Settled,
@@ -548,6 +551,73 @@ it('types settled exec, exec.json, readFile and writeFile results by error mode'
     void ctx.readFile('r', 'f', { onError: 'drain' });
     // @ts-expect-error onError takes only 'throw' or 'return'.
     void ctx.writeFile('w', 'f', 'c', { onError: 'abort' });
+  };
+  expect(check).toBeTypeOf('function');
+});
+
+it('types settled child frames and merges by error mode (#170)', () => {
+  // Compile-time checks: typecheck rejects a wrong overload; the body is never run.
+  const child = defineWorkflow({
+    name: 'child',
+    version: '1',
+    input: z.object({ topic: z.string() }),
+    output: z.number(),
+    run: () => Promise.resolve(1),
+  });
+  const parent = defineWorkflow({
+    name: 'parent',
+    version: '1',
+    input: z.null(),
+    output: z.null(),
+    children: [child],
+    run(ctx) {
+      // Literal children type by-name dispatch with the child's output.
+      expectTypeOf(
+        ctx.workflow('named', 'child', { topic: 'x' }, { onError: 'return' }),
+      ).toEqualTypeOf<Promise<Settled<number, MapStepError>>>();
+      expectTypeOf(ctx.workflow('named', 'child', { topic: 'x' })).toEqualTypeOf<Promise<number>>();
+      // A typed context still reaches helpers that take a bare WorkflowContext.
+      expectTypeOf(ctx).toExtend<WorkflowContext>();
+      return Promise.resolve(null);
+    },
+  });
+  expect(parent.name).toBe('parent');
+  const check = (ctx: WorkflowContext, mode: ErrorMode) => {
+    const input = { topic: 'x' };
+    expectTypeOf(ctx.workflow('c', child, input, { onError: 'return' })).toEqualTypeOf<
+      Promise<Settled<number, MapStepError>>
+    >();
+    expectTypeOf(ctx.workflow('c', child, input)).toEqualTypeOf<Promise<number>>();
+    expectTypeOf(ctx.workflow('c', child, input, { onError: 'throw' })).toEqualTypeOf<
+      Promise<number>
+    >();
+    expectTypeOf(ctx.workflow('c', child, input, { profiles: {} })).toEqualTypeOf<
+      Promise<number>
+    >();
+    expectTypeOf(ctx.workflow('c', child, input, { onError: mode })).toEqualTypeOf<
+      Promise<number | Settled<number, MapStepError>>
+    >();
+    // A bare WorkflowContext dispatches by name on JSON values.
+    expectTypeOf(ctx.workflow('n', 'child', null, { onError: 'return' })).toEqualTypeOf<
+      Promise<Settled<JsonValue, MapStepError>>
+    >();
+    expectTypeOf(ctx.workflow('n', 'child', null)).toEqualTypeOf<Promise<JsonValue>>();
+    expectTypeOf(ctx.merge('m', [], { onError: 'return' })).toEqualTypeOf<
+      Promise<Settled<MergeResult>>
+    >();
+    expectTypeOf(ctx.merge('m', [])).toEqualTypeOf<Promise<MergeResult>>();
+    expectTypeOf(ctx.merge('m', [], { onConflict: 'fail', onError: 'throw' })).toEqualTypeOf<
+      Promise<MergeResult>
+    >();
+    expectTypeOf(ctx.merge('m', [], { onError: mode })).toEqualTypeOf<
+      Promise<MergeResult | Settled<MergeResult>>
+    >();
+    // @ts-expect-error onError takes only 'throw' or 'return'.
+    void ctx.workflow('c', child, input, { onError: 'ignore' });
+    // @ts-expect-error onError takes only 'throw' or 'return'.
+    void ctx.workflow('n', 'child', null, { onError: 'settle' });
+    // @ts-expect-error onError takes only 'throw' or 'return'.
+    void ctx.merge('m', [], { onError: 'ignore' });
   };
   expect(check).toBeTypeOf('function');
 });

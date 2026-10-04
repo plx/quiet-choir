@@ -9,6 +9,7 @@ import {
   runWorkflow,
   WorkflowRunError,
   z,
+  type ErrorMode,
   type MergeCommitOptions,
   type ProcessRunner,
   type RunOptions,
@@ -723,13 +724,14 @@ describe('merge effect identity', () => {
       }),
   };
   const change = { base: 'a'.repeat(40), commit: 'b'.repeat(40), ref: null, files: [] };
-  const merge = (runId: string, commit?: MergeCommitOptions) =>
+  const merge = (runId: string, commit?: MergeCommitOptions, onError?: ErrorMode) =>
     runWorkflow(
       workflow((ctx) =>
         ctx.merge('integrate', [change], {
           strategy: 'squash',
           target: { branch: 'agent/100' },
           ...(commit === undefined ? {} : { commit }),
+          ...(onError === undefined ? {} : { onError }),
         }),
       ),
       options({ runId, processRunner }),
@@ -748,6 +750,20 @@ describe('merge effect identity', () => {
       },
       fingerprint: 'f00522fa18cac8f477f604e56c372b16d691199879b7d1ae2787fb1bf860429a',
     });
+  });
+
+  it('keeps the default identity for onError throw and changes it for return (#170)', async () => {
+    await merge('golden');
+    await merge('throw', undefined, 'throw');
+    await merge('return', undefined, 'return');
+    const plain = (await recorded('golden'))['integrate'];
+    expect((await recorded('throw'))['integrate']).toEqual(plain);
+    const settled = (await recorded('return'))['integrate'];
+    // onError stays out of the dependencies: only the error-mode component changes.
+    expect(settled?.identity['input']).toBe(plain?.identity['input']);
+    expect(settled?.identity['onError']).toBe(digest('return'));
+    expect(settled?.identity['onError']).not.toBe(plain?.identity['onError']);
+    expect(settled?.fingerprint).not.toBe(plain?.fingerprint);
   });
 
   it('adds the requested commit form, with git-config unresolved and the default spelled out', async () => {

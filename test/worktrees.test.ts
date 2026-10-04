@@ -32,6 +32,8 @@ import {
   type ProcessRunner,
   type RunOptions,
   type WorkflowContext,
+  type MergeResult,
+  type Settled,
 } from '../src/index.js';
 import { WorktreeGit } from '../src/worktrees/git.js';
 import {
@@ -905,6 +907,104 @@ it('does not publish any integration result when onConflict is fail', async () =
   expect(run.steps['publish']?.merge?.result).toBeUndefined();
   await expect(command('rev-parse', '--verify', 'refs/heads/fail-result')).rejects.toThrow();
   expect(await readFile(join(repo, 'file.txt'), 'utf8')).toBe('base\n');
+});
+
+it('settles a failing merge with onError return and replays it without touching Git', async () => {
+  const harness: Harness = {
+    invoke: async (request) => {
+      await writeFile(join(request.cwd, 'file.txt'), request.options.prompt);
+      return response;
+    },
+  };
+  let tail = true;
+  const workflow = defineWorkflow({
+    name: 'conflict',
+    version: '1',
+    input: z.null(),
+    output: z.unknown(),
+    async run(ctx) {
+      const one = await ctx.claude.text('one', { prompt: 'one', worktree: true });
+      const two = await ctx.claude.text('two', { prompt: 'two', worktree: true });
+      assert(one.worktree);
+      assert(two.worktree);
+      const changes = [one.worktree, two.worktree];
+      const failed = await ctx.merge('publish', changes, {
+        onConflict: 'fail',
+        target: { branch: 'fail-result' },
+        onError: 'return',
+      });
+      // The default onConflict: 'report' result is the same data in either error mode.
+      const reported = await ctx.merge('report', changes, {
+        target: { branch: 'report-return' },
+        onError: 'return',
+      });
+      const thrown = await ctx.merge('report-throw', changes, {
+        target: { branch: 'report-throw' },
+      });
+      if (tail) throw new Error('tail');
+      return { failed, reported, thrown };
+    },
+  });
+  await expect(
+    runWorkflow(workflow, { ...options('settled-merge'), input: null, harness }),
+  ).rejects.toThrow('tail');
+  const first = await readRun(options('settled-merge'));
+  const step = first.steps['publish'];
+  expect(step?.status).toBe('settled-failed');
+  expect(step?.settledError?.message).toContain('conflicts');
+  expect(step?.merge?.result).toBeUndefined();
+  await expect(command('rev-parse', '--verify', 'refs/heads/fail-result')).rejects.toThrow();
+  const refs = await command('for-each-ref', '--format=%(refname) %(objectname)', 'refs/heads');
+  // A live merge would now see a moved source branch; the settled outcome must replay instead.
+  await writeFile(join(repo, 'later'), 'new HEAD');
+  await commit('advance source');
+  const head = await command('rev-parse', 'HEAD');
+  const commands: string[][] = [];
+  const recording: ProcessRunner = {
+    run: (request, invocation) => {
+      commands.push('shell' in request.command ? [request.command.shell] : [...request.command]);
+      return processRunner.run(request, invocation);
+    },
+  };
+  const started: string[] = [];
+  tail = false;
+  const resumed = await runWorkflow(workflow, {
+    ...options('settled-merge'),
+    processRunner: recording,
+    resume: true,
+    harness,
+    onEvent: (event) => {
+      if (event.type === 'step.started') started.push(event.stepId);
+    },
+  });
+  const output = resumed.output as unknown as {
+    failed: Settled<MergeResult>;
+    reported: Settled<MergeResult>;
+    thrown: MergeResult;
+  };
+  expect(output.failed).toEqual({ ok: false, error: step?.settledError });
+  assert(output.reported.ok);
+  expect(output.reported.value.conflicts).toEqual(output.thrown.conflicts);
+  expect(output.reported.value.conflicts).toHaveLength(1);
+  expect(output.reported.value.merged).toEqual(output.thrown.merged);
+  expect(started).toEqual([]);
+  expect(resumed.steps['publish']?.attempts).toBe(step?.attempts);
+  // The resume runs no Git command through the run's process runner at all.
+  expect(commands).toEqual([]);
+  expect(await command('rev-parse', 'HEAD')).toBe(head);
+  expect(
+    (await command('for-each-ref', '--format=%(refname) %(objectname)', 'refs/heads'))
+      .split('\n')
+      .filter(
+        (line) => !line.startsWith('refs/heads/main ') && !line.startsWith('refs/heads/master '),
+      ),
+  ).toEqual(
+    refs
+      .split('\n')
+      .filter(
+        (line) => !line.startsWith('refs/heads/main ') && !line.startsWith('refs/heads/master '),
+      ),
+  );
 });
 
 it('reconciles publication after an interrupted result save without changing the pinned integration base', async () => {

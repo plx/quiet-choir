@@ -79,6 +79,7 @@ describe('formatEventLine', () => {
     'child.started',
     'child.completed',
     'child.failed',
+    'child.settled',
     'child.superseded',
   ] as const)('drops %s', (type) => {
     expect(formatEventLine(event({ type }), new EventLineMemory())).toBeNull();

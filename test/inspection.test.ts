@@ -1418,3 +1418,59 @@ it.skipIf(process.platform === 'win32' || process.getuid?.() === 0)(
     }
   },
 );
+
+it('shows a compact settled outcome on child rows and marks settled frames in the tree', () => {
+  const frame = {
+    declared: false,
+    label: 'kid',
+    workflow: { name: 'kid', version: '1' },
+    parent: null,
+    depth: 1,
+    inputDigest: 'input',
+    schemaDigest: 'schema',
+    startedAt: time,
+    finishedAt: time,
+    onError: 'return' as const,
+  };
+  const error = { message: 'kid broke', kind: 'unknown' as const, attempts: 1, stepId: 'kid/work' };
+  const run: RunRecord = {
+    ...record(),
+    children: {
+      kid: {
+        ...frame,
+        status: 'failed',
+        error: 'kid broke',
+        settled: {
+          outcome: { ok: false, error },
+          steps: ['kid/work'],
+          maps: [],
+          children: [],
+        },
+      },
+      ok: {
+        ...frame,
+        label: 'ok',
+        status: 'completed',
+        error: null,
+        settled: {
+          outcome: { ok: true, value: 'x'.repeat(10_000) },
+          steps: [],
+          maps: [],
+          children: [],
+        },
+      },
+    },
+  };
+  const summary = summarizeRun(run, unlocked);
+  const rows = JSON.parse(JSON.stringify(summary)) as { children: Record<string, unknown>[] };
+  expect(rows.children).toEqual([
+    expect.objectContaining({ id: 'kid', status: 'failed', settled: { ok: false, error } }),
+    expect.objectContaining({ id: 'ok', status: 'completed', settled: { ok: true } }),
+  ]);
+  // The output value and owned-ID lists stay out of the bounded summary.
+  expect(JSON.stringify(summary)).not.toContain('xxxxxxxxxx');
+  expect(JSON.stringify(summary.children)).not.toContain('kid/work"]');
+  const lines = formatRunSummary(summary).split('\n');
+  expect(lines.find((line) => line.includes('[kid]'))).toContain('kid: kid@1 failed (settled);');
+  expect(lines.find((line) => line.includes('[ok]'))).toContain('ok: kid@1 completed (settled);');
+});
