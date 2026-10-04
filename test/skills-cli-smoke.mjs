@@ -412,6 +412,30 @@ process.exit(status ?? 1);
     'ticket-163.out',
   ]);
 
+  // Another epic in the same state directory: refused before any workflow command runs.
+  const records = async (directory) => {
+    const files = {};
+    for (const entry of (await readdir(directory, { recursive: true })).sort()) {
+      const file = join(directory, entry);
+      if ((await stat(file)).isFile()) files[entry] = await readFile(file, 'utf8');
+    }
+    return files;
+  };
+  const saved = await records(state);
+  assert.equal(saved.scope, 'octo-org/quiet-choir#99\n');
+  await writeFile(calls, '');
+  const other = shell(driver, {
+    cwd: target,
+    env: { ...ticketEnv, QC_EPIC: '100', QC_CHECKOUT: shim },
+  });
+  assert.equal(other.status, 1, other.output);
+  assert.match(
+    other.output,
+    /holds runs for octo-org\/quiet-choir#99; use a separate state directory per epic\./u,
+  );
+  assert.equal(await readFile(calls, 'utf8'), '');
+  assert.deepEqual(await records(state), saved);
+
   // The porting reference's exec role: its --grant fence verbatim, then refused without the grant.
   const roleEnv = {
     ...env,
