@@ -342,7 +342,8 @@ completion or suspension (exit 75) that `execute`, `resume`, or `answer --resume
 late signal, or an answer that `workflow answer` already delivered. Inspect, validate, typecheck,
 and check-resume report `workflow.interrupted` after a first signal even when their work finishes.
 
-`check-resume` incompatibility uses exit 3 with the full comparison in `error.details`. Its
+`check-resume` incompatibility uses exit 3 with the full comparison in `error.details`; a record
+this build cannot fully read adds the `record_schema` fields (see below). Its
 compatible success retains `check`. `execute --resume --accept-code-change` (and
 `resume --accept-code-change`) first replays the accepted body against a disposable copy of the
 record. When that replay reaches a completed or settled-failed step whose identity changed, the
@@ -366,7 +367,9 @@ from the new location. A record written by a newer quiet-choir (a newer `schemaR
 top-level fields this build does not know) is `run.incompatible` (exit 3) for `resume`,
 `execute --resume`, `answer --resume`, `--fork-from`, `--dry-run` and `workflow clean`, with
 `details: {reason:"record_schema", schemaRevision, supportedSchemaRevision, hiddenFields}` and
-nothing written; `inspect` and `list` warn instead. See
+nothing written; `check-resume` reports the same refusal (exit 3, `record schema` in
+`details.changed` beside those fields, never overridable by `--accept-code-change`); `inspect` and
+`list` warn instead. See
 [record schema revision](storage.md#record-schema-revision). Storage resolves explicit options,
 environment, existing legacy runs, then the external XDG project default; relative explicit paths
 resolve against the launch directory.

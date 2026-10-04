@@ -321,6 +321,12 @@ journal entry a newer build wrote before compacting), these commands refuse with
 - a fork from the run (`--fork-from`) and a `--dry-run` resume, which would copy the record;
 - `workflow clean`, which rewrites the worktree ledger.
 
+`workflow check-resume` and `checkResume()` write nothing but report the same drift, so a compatible
+preflight is never followed by this refusal: the check is incompatible (exit 3) with `record schema`
+among `changed`, the refusal's message, and `reason`, `schemaRevision`, `supportedSchemaRevision` and
+`hiddenFields` beside the usual comparison fields. `--accept-code-change` does not override it
+(`canAcceptCodeChange` is false).
+
 `error.details` is
 `{reason: "record_schema", schemaRevision, supportedSchemaRevision, hiddenFields}`; the message
 names the revision and up to 10 hidden field names, and the only remedy is to upgrade quiet-choir.

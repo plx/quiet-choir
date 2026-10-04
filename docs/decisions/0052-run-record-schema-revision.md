@@ -40,6 +40,10 @@ with `run.incompatible`, `details.reason: "record_schema"`:
 - the runner checks next to its format check, for custom `RunStore`s;
 - `loadFork`, the dry-run copy, and the executor right after its lock-free read on resume (so the
   refusal precedes the type check and the accepted-change preflight copy);
+- `compareResume` adds a `record schema` run-level gate, outside the set `--accept-code-change` can
+  accept, so `check-resume` and `checkResume()` report `compatible: false` with the refusal's
+  message and `reason`, `schemaRevision`, `supportedSchemaRevision` and `hiddenFields`, instead of
+  assuring a preflight that the resume then refuses (the executor returns it as `run.incompatible`);
 - tick skips a due or stale run as `incompatible` and maps a refusal from a read to the same skip;
 - `workflow rm` refuses only when it would first save the worktree ledger.
 - `pinnedFork` does not refuse, because the target run is not drifted: when an existing fork's

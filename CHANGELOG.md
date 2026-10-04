@@ -10,7 +10,9 @@
   `--dry-run`, `workflow clean` and embedded `runWorkflow` resumes refuse with `run.incompatible`
   (`details: {reason: "record_schema", schemaRevision, supportedSchemaRevision, hiddenFields}`, no
   next command but upgrading) and leave `run.json` and `journal.jsonl` byte for byte unchanged;
-  `workflow tick` skips the run as `incompatible` (exit 1 with `--run`). `inspect` and `list` still
+  `workflow tick` skips the run as `incompatible` (exit 1 with `--run`); `workflow check-resume` and
+  `checkResume()` report it incompatible (`record schema` in `changed`, plus the same `reason`,
+  revisions and hidden fields; `--accept-code-change` does not override it). `inspect` and `list` still
   work and add a warning naming the newer revision or the hidden fields; such runs get no resume or
   answer follow-ups. A record with a newer revision or unknown fields that does not parse at all
   reads as the same refusal instead of `run.unreadable`. Journal replay now tolerates changes to
