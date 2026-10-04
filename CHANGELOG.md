@@ -2,6 +2,21 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- `assertHarnessConformance` (`quiet-choir/harness-kit`) passes the adapter a recording
+  `HarnessInvocation` in every scenario and adds six scenarios: `registration-before-input`,
+  `session`, `transcript`, `timeout`, `rate-limit` and `env` (#169). `HarnessConformanceCase` widens
+  to those twelve names, so existing fixtures must handle the new cases. Fixtures now receive a
+  second `HarnessConformanceProbe` argument naming marker files the fake writes (`started`, `input`,
+  `environment`), may set `expectedStdout` (required by `transcript`), and the options gain
+  `timeoutMs` (default 250, applied to both `request.options.timeoutMs` and
+  `invocation.policy.timeoutMs`). The `env` scenario sets and restores host-session variables in
+  `process.env`. Failures are `AssertionError`s whose message starts `Conformance scenario <name>:`.
+  The built-in Claude and Codex adapters pass unchanged. A registered harness's attempt policy,
+  `invocation.policy` and request options now carry `maxTurns` and `maxBudgetUsd` only when its
+  options schema declares them, so `--dry-run` no longer warns that undeclared limits remain in use;
+  an adapter that read them without declaring them no longer receives them. Claude and Codex records
+  are unchanged, except that a Codex call inside a child workflow no longer fails with
+  `Unrecognized key(s) "maxTurns", "maxBudgetUsd"` from the delegated profile ceiling.
 - `--max-window-utilization <0..1|off>` on `execute`, `start` and `resume`
   (`RunOptions.maxWindowUtilization`) is a third sticky run cap (#168; ADR 0053). Saved in
   `runBudget` and outside identity, it is kept by resume and tick, cleared by `off` or

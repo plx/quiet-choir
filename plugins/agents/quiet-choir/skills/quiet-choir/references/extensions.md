@@ -300,14 +300,41 @@ typecheck (a widened `string[]` list, an omitted list or explicit `<N, O, C>` ty
 permissive at type level; the runtime still rejects the keys). Child calls cannot exceed delegated
 roles. `policy` lists option keys excluded from semantic identity; adapter defaults and operator
 configuration are also outside identity. Custom adapters must enforce the resolved policy supplied
-in the invocation context.
+in the invocation context. `maxTurns` and `maxBudgetUsd` reach a registered harness, in its attempt
+policy record, `invocation.policy` and request options, only when its options schema declares them;
+otherwise profile, override and delegated values for them are not applied or recorded (and
+`--dry-run` does not warn about them). `timeoutMs` and the other limits are unaffected.
 
 Import `runProcess`, `createFakeBinary`, and `assertHarnessConformance` from
 `quiet-choir/harness-kit`. Pass `invocation.trackProcess` to the process runner so registration
-precedes input. The conformance suite requires caller-supplied fakes for cancellation, structured
-JSON, unavailable usage, protocol failure on exit zero, and nonzero failures on stdout. Never point
-it at a paid agent installation. `ClaudeAdapter` and `CodexAdapter` pass that suite; `CliHarness`
-remains their compatibility dispatcher and rejects unknown names.
+precedes input. The conformance suite passes the adapter a recording `HarnessInvocation` in every
+scenario and requires caller-supplied fakes for twelve scenarios, in order: `text`, `structured`,
+`missing-usage`, `protocol-error` (failure on exit zero), `nonzero-stdout`, `abort`,
+`registration-before-input`, `session`, `transcript`, `timeout`, `rate-limit` and `env`. The fixture
+receives `(scenario, probe)`; the probe holds absolute paths of marker files the fake writes, so the
+suite needs no knowledge of your protocol:
+
+- `probe.started`: create it as soon as the fake starts. `registration-before-input` holds
+  `trackProcess` open for 250 ms after it appears.
+- `probe.input`: create it when stdin first yields data or reaches EOF. It must not appear during
+  that hold, and `release()` must be called once, after the process group is reaped and before
+  `invoke` settles.
+- `probe.environment`: write `JSON.stringify(Object.keys(process.env))` in `env`.
+
+`session` must return a nonempty `sessionId` and call `onSession` exactly once with it before
+settling (no scenario may call it twice). `transcript` requires the fixture's `expectedStdout`, the
+exact stdout the fake writes, which must equal the bytes passed to `onOutput('stdout', ...)`.
+`timeout` sets a short limit (`timeoutMs`, default 250) on both `request.options.timeoutMs` and
+`invocation.policy.timeoutMs`; the fake hangs like `abort`, and the call must reject with error kind
+`timeout` without the signal being aborted. `rate-limit` fakes a native failure carrying HTTP status
+429, which must reject with kind `rate-limit` (a `HarnessError` whose failure has `apiStatus` 429,
+or kind `'rate-limit'`). `env` sets `CLAUDECODE`, `CLAUDE_CODE_BRIDGE_SESSION_ID`,
+`CLAUDE_PLUGIN_DATA`, `CODEX_COMPANION_SESSION_ID` and `CODEX_COMPANION_TRANSCRIPT_PATH` in
+`process.env`, none of which may reach the fake, and restores them afterwards; do not run the suite
+concurrently with other environment-sensitive code in the same process. A failure is an
+`AssertionError` whose message starts `Conformance scenario <name>:`. Never point the suite at a
+paid agent installation. `ClaudeAdapter` and `CodexAdapter` pass it; `CliHarness` remains their
+compatibility dispatcher and rejects unknown names.
 
 The kit also exports the helpers the built-in adapters use, so a third adapter need not copy them:
 
