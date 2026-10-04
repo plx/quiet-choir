@@ -39,6 +39,8 @@ const revisionDigests: Readonly<Record<string, string>> = {
   '1': '80010b03d1fa34c4b824b0682b5138e0c19d138186fb659c38d46eab204992ec',
   // Revision 2 (#168) changed only nested shapes (runBudget, budgetStop), so it repeats the keys.
   '2': '80010b03d1fa34c4b824b0682b5138e0c19d138186fb659c38d46eab204992ec',
+  // Revision 3 (#170) changed only the nested children shape (onError, settled), so it repeats them.
+  '3': '80010b03d1fa34c4b824b0682b5138e0c19d138186fb659c38d46eab204992ec',
 };
 // digest(readRun(...)) of the installed pre-revision fixture, computed on unmodified main 91a6d2f.
 const preRevisionReadDigest = '714b6cb068de5c933b7ba04a26d1f931f589f7c9910f76f0e5c8cc493eb13016';

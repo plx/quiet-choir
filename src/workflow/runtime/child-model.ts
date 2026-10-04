@@ -1,7 +1,8 @@
 import type { HarnessCapabilities } from './harness-model.js';
 import type { HarnessDeclaration } from './harness-model.js';
 import type { z } from 'zod';
-import type { JsonValue } from './model.js';
+import type { ErrorMode, JsonValue, Settled } from './model.js';
+import type { MapStepError } from './fan-out.js';
 import type { AgentDefaults, AgentProfile, CapabilityManifest } from './profiles-model.js';
 
 /** A child declaration with erased input/output types; typed calls use WorkflowDefinition directly. */
@@ -46,6 +47,26 @@ export interface WorkflowPhase {
 export interface ChildOptions {
   /** Child role to parent role; omitted roles use the same name. Delegation never expands capabilities. */
   readonly profiles?: Readonly<Record<string, string>>;
+  /**
+   * Throw a child failure by default, or save the frame's outcome and return it as
+   * `Settled<O, MapStepError>`. A settled frame is terminal: resume returns the saved outcome without
+   * running the body again. Its descendants must be declared. Cancellation, budget stops,
+   * configuration, checkpoint and authoring failures still reject, as do input, depth and identity
+   * errors raised before the frame starts.
+   */
+  readonly onError?: ErrorMode | undefined;
+}
+
+/** The saved terminal outcome of an `onError: 'return'` child frame. */
+export interface ChildSettledRecord {
+  /** The child's validated output, or the failure attributed to its originating effect. */
+  readonly outcome: Settled<JsonValue, MapStepError>;
+  /** Leaf effect IDs the frame owned, claimed without running them again on replay. */
+  readonly steps: readonly string[];
+  /** Settled map journal IDs the frame owned. */
+  readonly maps: readonly string[];
+  /** Descendant child frame IDs the frame owned. */
+  readonly children: readonly string[];
 }
 
 /** Persisted inline invocation; the workflow body replays, while named effects retain their outcomes. */
@@ -70,9 +91,20 @@ export interface ChildRecord {
   /** Input/output schema identity; descriptions of the workflow itself are excluded. */
   readonly schemaDigest: string;
   /**
+   * Present only for a frame invoked with `onError: 'return'`; frames in the default throw mode omit
+   * it, so their records keep their earlier shape.
+   */
+  onError?: 'return';
+  /**
+   * The committed outcome of an `onError: 'return'` frame. Its presence makes the frame terminal:
+   * resume replays the outcome and claims the owned IDs without running the body.
+   */
+  settled?: ChildSettledRecord;
+  /**
    * Last recorded frame state. Suspension applies to the enclosing run. `superseded` is terminal
    * until a later execution invokes the frame again: a successfully completed run did not invoke
-   * this unfinished frame, so it is no longer that branch's outcome.
+   * this unfinished frame, so it is no longer that branch's outcome. A settled frame is terminal
+   * too: it is `completed` for a settled success and keeps `failed` for a settled failure.
    */
   status: 'running' | 'completed' | 'failed' | 'cancelled' | 'suspended' | 'superseded';
   /** Start time of the latest body execution. */

@@ -184,7 +184,7 @@ it('rejects changed child versions even on completed embedded-run resume and che
   });
   await expect(
     runWorkflow(withoutChild, { stateDir, runId: 'version', resume: true }),
-  ).rejects.toThrow('skipped completed child frames');
+  ).rejects.toThrow('skipped completed or settled child frames');
 });
 
 it('validates child input before effects and output before returning, with ordinary catchable failures', async () => {

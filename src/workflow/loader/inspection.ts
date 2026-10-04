@@ -26,6 +26,7 @@ import { RunRefusedError, type CliErrorCode } from '../runtime/run-errors.js';
 import type { RequestSummary, RunEvent, UsageSummary } from '../runtime/observability-model.js';
 import type { ErrorKind, JsonValue } from '../runtime/model.js';
 import type { ChildRecord } from '../runtime/child-model.js';
+import type { MapStepError } from '../runtime/fan-out.js';
 import type { CodeChange } from '../runtime/replay-model.js';
 import type { CommandLauncher } from '../runtime/commands.js';
 import { runNextCommands, type NextCommand } from './next-commands.js';
@@ -93,7 +94,12 @@ export const maxAgentRowWarningChars = 200;
 
 /** Compact plain-data projection, shared by text, JSON summary, watch, and list. @internal */
 export interface RunSummary {
-  readonly children: readonly (ChildRecord & {
+  readonly children: readonly (Omit<ChildRecord, 'settled'> & {
+    /**
+     * A settled frame's outcome, without the output value or owned IDs so summaries stay bounded;
+     * `--full` shows the whole frame record.
+     */
+    readonly settled?: { readonly ok: true } | { readonly ok: false; readonly error: MapStepError };
     readonly id: string;
     readonly steps: number;
     readonly usage: UsageSummary;
@@ -389,9 +395,17 @@ function summarizeChildren(run: RunRecord): RunSummary['children'] {
     const steps = Object.fromEntries(
       Object.entries(run.steps).filter(([, step]) => inside(step.frame, id)),
     );
+    const { settled, ...rest } = frame;
     return [
       {
-        ...frame,
+        ...rest,
+        ...(settled === undefined
+          ? {}
+          : {
+              settled: settled.outcome.ok
+                ? { ok: true as const }
+                : { ok: false as const, error: settled.outcome.error },
+            }),
         id,
         steps: Object.keys(steps).length,
         usage: summarizeUsage({ ...run, steps }),

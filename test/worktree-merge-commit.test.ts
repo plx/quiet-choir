@@ -75,7 +75,7 @@ afterEach(async () => {
  * edit list merges one unchanged handle.
  */
 function integration(
-  merge: MergeOptions,
+  merge: Omit<MergeOptions, 'onError'>,
   edits: readonly string[] = ['one.txt'],
   after?: (ctx: WorkflowContext, commit: string) => Promise<void>,
   content: (file: string, index: number) => string = (file) => `${file}\n`,

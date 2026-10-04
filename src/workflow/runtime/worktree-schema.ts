@@ -175,6 +175,7 @@ export const mergeOptionsSchema = z.strictObject({
   onConflict: z.enum(['report', 'fail']).optional(),
   target: z.union([z.enum(['ref', 'checkout']), z.strictObject({ branch: text })]).optional(),
   commit: mergeCommitSchema.optional(),
+  onError: z.enum(['throw', 'return']).optional(),
 });
 /** @internal */
 export const mergeResultSchema = z.object({
