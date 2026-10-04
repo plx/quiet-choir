@@ -377,8 +377,8 @@ newer revision, or top-level fields this build does not know) makes `resume`, `e
 `answer --resume`, `tick` (skipped `incompatible`), `--fork-from`, `--dry-run` and `workflow clean`
 refuse with `run.incompatible` (`details.reason: "record_schema"`) and change nothing, because a
 rewrite would drop those fields; `check-resume` reports the same drift as incompatible, even with
-`--accept-code-change`. `inspect` and `list` still work and warn. The only remedy is to
-upgrade quiet-choir; do not edit `run.json`. Builds older than this guard still drop such fields.
+`--accept-code-change`. `inspect` and `list` still work and warn. The only remedy is to upgrade
+quiet-choir; do not edit `run.json`. Builds older than this guard still drop such fields.
 
 ## Storage, ownership, and cancellation
 

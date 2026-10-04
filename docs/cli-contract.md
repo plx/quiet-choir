@@ -343,12 +343,13 @@ late signal, or an answer that `workflow answer` already delivered. Inspect, val
 and check-resume report `workflow.interrupted` after a first signal even when their work finishes.
 
 `check-resume` incompatibility uses exit 3 with the full comparison in `error.details`; a record
-this build cannot fully read adds the `record_schema` fields (see below). Its
-compatible success retains `check`. `execute --resume --accept-code-change` (and
-`resume --accept-code-change`) first replays the accepted body against a disposable copy of the
-record. When that replay reaches a completed or settled-failed step whose identity changed, the
-command refuses with `run.incompatible` (exit 3) before writing anything: `error.details.divergent`
-is `[{stepId, components}]` for the first such step, and `error.details.next` holds one argv array,
+this build cannot fully read adds the `record_schema` fields
+([record schema revision](storage.md#record-schema-revision)). Its compatible success retains
+`check`. `execute --resume --accept-code-change` (and `resume --accept-code-change`) first replays
+the accepted body against a disposable copy of the record. When that replay reaches a completed or
+settled-failed step whose identity changed, the command refuses with `run.incompatible` (exit 3)
+before writing anything: `error.details.divergent` is `[{stepId, components}]` for the first such
+step, and `error.details.next` holds one argv array,
 `LAUNCHER workflow execute FILE --fork-from RUN --reuse matching --invalidate STEP --run-id <NEW_RUN_ID> --state-dir DIR`,
 built behind the same launcher as `resumeCommand` with a placeholder for the new run ID.
 `execute --dry-run --resume --accept-code-change` returns the same code, message and details. A
@@ -369,10 +370,9 @@ top-level fields this build does not know) is `run.incompatible` (exit 3) for `r
 `details: {reason:"record_schema", schemaRevision, supportedSchemaRevision, hiddenFields}` and
 nothing written; `check-resume` reports the same refusal (exit 3, `record schema` in
 `details.changed` beside those fields, never overridable by `--accept-code-change`); `inspect` and
-`list` warn instead. See
-[record schema revision](storage.md#record-schema-revision). Storage resolves explicit options,
-environment, existing legacy runs, then the external XDG project default; relative explicit paths
-resolve against the launch directory.
+`list` warn instead. See [record schema revision](storage.md#record-schema-revision). Storage
+resolves explicit options, environment, existing legacy runs, then the external XDG project default;
+relative explicit paths resolve against the launch directory.
 
 ## Durability lint
 
