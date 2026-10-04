@@ -663,7 +663,7 @@ function ocodeWorkflow(declared: Readonly<Record<string, z.ZodType>> = {}) {
     options: z.object({ prompt: z.string(), timeoutMs: z.number().optional(), ...declared }),
     capabilities: { structuredOutput: 'none' },
     access: () => 'none',
-    policy: ['timeoutMs', ...Object.keys(declared)],
+    policy: ['timeoutMs'],
   });
   return defineWorkflow({
     ...base,
