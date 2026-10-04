@@ -7,7 +7,13 @@ import { digest, jsonValue } from './json.js';
 import { matchesStepGlob, policyOverrideSchema } from './policy.js';
 import { forkPrefixBlockers, type MapItemScope } from './replay-decision.js';
 import type { ForkOptions, ForkProvenance } from './replay-model.js';
-import { isTerminalStep, readRun, type RunRecord, type StepRecord } from './store.js';
+import {
+  isTerminalStep,
+  readRun,
+  refuseRecordSchemaDrift,
+  type RunRecord,
+  type StepRecord,
+} from './store.js';
 
 /** Validate fork settings before acquiring a writer or running effects. @internal */
 export function validateFork(value: unknown): ForkOptions {
@@ -30,6 +36,8 @@ export async function loadFork(runId: string, stateDir: string, name: string): P
     throw new RunRefusedError('run.incompatible', runId, oldFormatMessage(source.formatVersion), {
       formatVersion: source.formatVersion,
     });
+  // A fork copies reused steps from a source this build would read only in part.
+  refuseRecordSchemaDrift(source);
   if (source.workflow.name !== name)
     throw new RunRefusedError(
       'run.incompatible',

@@ -11,6 +11,7 @@ import { legacyRunPath, runDirectory } from './paths.js';
 import { JournalWriter } from './journal.js';
 import { prepareStorageMigration, finishStorageMigration } from './storage-migration.js';
 import { writeCheckpoint } from './checkpoint.js';
+import { refuseRecordSchemaDrift } from './record.js';
 import {
   lockRun,
   readRun,
@@ -135,8 +136,9 @@ class FileOwnedRun implements ReleasableOwnedRun {
       ? Promise.reject(new Error('Run storage is closed.'))
       : this.lock.trackProcess(invocation, child);
   public async read(): Promise<RunRecord | undefined> {
+    let record: RunRecord;
     try {
-      return await readRun({ stateDir: this.stateDir, runId: this.runId });
+      record = await readRun({ stateDir: this.stateDir, runId: this.runId });
     } catch (error) {
       if (
         !(error instanceof Error && 'code' in error && error.code === 'ENOENT') ||
@@ -161,6 +163,9 @@ class FileOwnedRun implements ReleasableOwnedRun {
       if (journal.includes('\n')) throw error;
       return undefined;
     }
+    // Every owned writer reads first: refuse, before any append, a record this build would strip.
+    refuseRecordSchemaDrift(record);
+    return record;
   }
   public append(
     record: RunRecord,

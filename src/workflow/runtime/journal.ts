@@ -7,8 +7,15 @@ import { jsonValue } from './json.js';
 import type { JsonValue } from './model.js';
 import { runDirectory } from './paths.js';
 import {
+  hiddenRecordFields,
+  isRecordFieldKey,
+  markHiddenRecordFields,
+  newerSchemaRevision,
   parseRunRecord,
   normalizeStoredHarnesses,
+  recordSchemaDrift,
+  recordSchemaRefusal,
+  SUPPORTED_SCHEMA_REVISION,
   validateRunRecord,
   validateRecordChange,
   type RunRecord,
@@ -42,7 +49,10 @@ const immutableFields = new Set(['seq', 'formatVersion', 'id', 'steps', 'maps', 
 
 /** Validate only new journal data, never all previous effect outputs on every write. @internal */
 export function parseJournalEntry(value: unknown): JournalEntry {
-  const entry = envelope.parse(jsonValue(value));
+  return validateChanges(envelope.parse(jsonValue(value)));
+}
+
+function validateChanges(entry: z.infer<typeof envelope>): JournalEntry {
   const seen = new Set<string>();
   for (const change of entry.changes) {
     const key = JSON.stringify([change.area, change.key]);
@@ -75,25 +85,83 @@ function apply(record: RunRecord, entry: JournalEntry): void {
   record.seq = entry.seq;
 }
 
-/** Ignore only an incomplete final line; reject corruption and gaps in committed lines. @internal */
+/**
+ * Validate a committed journal entry, leaving out run-level fields this build does not know (a
+ * newer build's): a read tolerates them but never applies them. Each such name maps to whether the
+ * entry sets (true) or removes (false) it.
+ */
+function splitJournalEntry(value: z.infer<typeof envelope>): {
+  readonly entry: JournalEntry;
+  readonly unknown: ReadonlyMap<string, boolean>;
+} {
+  const unknown = new Map<string, boolean>();
+  const known = value.changes.filter((change) => {
+    if (change.area !== 'run' || isRecordFieldKey(change.key)) return true;
+    if (unknown.has(change.key)) throw new Error('Duplicate field in storage journal entry.');
+    unknown.set(change.key, change.value !== undefined);
+    return false;
+  });
+  return { entry: validateChanges({ ...value, changes: known }), unknown };
+}
+
+/**
+ * Ignore only an incomplete final line; reject corruption and gaps in committed lines. Run-level
+ * fields this build does not know, in the snapshot or the journal, are left out of the record and
+ * reported by `hiddenRecordFields`; writers refuse such a record (`recordSchemaDrift`). @internal
+ */
 export function replayJournal(snapshot: string, journal: string, runId: string): RunRecord {
   const record = parseRunRecord(snapshot, runId);
   if (record.formatVersion !== 7)
     throw new Error('Directory checkpoints require storage format 7.');
   const floor = record.seq ?? 0;
   let seq = floor;
+  let newest = record.schemaRevision ?? 1;
+  const hidden = new Map(hiddenRecordFields(record).map((key) => [key, true]));
+  // A newer build may have journaled a field shape this build rejects: ask for an upgrade instead.
+  const upgrade = (cause: unknown): unknown =>
+    newest > SUPPORTED_SCHEMA_REVISION
+      ? recordSchemaRefusal(
+          runId,
+          {
+            schemaRevision: newest,
+            supportedSchemaRevision: SUPPORTED_SCHEMA_REVISION,
+            hiddenFields: [...hidden].flatMap(([key, present]) => (present ? [key] : [])).sort(),
+          },
+          cause,
+        )
+      : cause;
   const complete = journal.slice(0, journal.lastIndexOf('\n') + 1);
   for (const line of complete.split('\n')) {
     if (!line) continue;
-    const entry = parseJournalEntry(JSON.parse(line));
+    let read: ReturnType<typeof splitJournalEntry>;
+    try {
+      const value = envelope.parse(jsonValue(JSON.parse(line)));
+      const revision = value.changes.find(
+        (change) => change.area === 'run' && change.key === 'schemaRevision',
+      )?.value;
+      if (value.seq > floor) newest = Math.max(newest, newerSchemaRevision(revision) ?? 1);
+      read = splitJournalEntry(value);
+    } catch (cause) {
+      throw upgrade(cause);
+    }
+    const { entry } = read;
     if (entry.seq <= floor) continue;
     if (entry.seq !== seq + 1)
       throw new Error(`Storage journal sequence gap after ${String(seq)}.`);
+    for (const [key, present] of read.unknown) hidden.set(key, present);
     apply(record, entry);
     seq = entry.seq;
   }
-  normalizeStoredHarnesses(record);
-  validateRunRecord(record);
+  try {
+    normalizeStoredHarnesses(record);
+    validateRunRecord(record);
+  } catch (cause) {
+    throw upgrade(cause);
+  }
+  markHiddenRecordFields(
+    record,
+    [...hidden].flatMap(([key, present]) => (present ? [key] : [])),
+  );
   return record;
 }
 
@@ -174,6 +242,10 @@ export class JournalWriter {
       )
         throw error;
     }
+    // Owners refuse first; this backstop keeps any other writer from truncating a torn tail or
+    // compacting away fields of a record this build cannot fully read.
+    const drift = this.#previous && recordSchemaDrift(this.#previous);
+    if (drift) throw recordSchemaRefusal(this.runId, drift);
     await using file = await open(join(directory, 'journal.jsonl'), 'a+', 0o600);
     const bytes = await file.readFile();
     const validLength = bytes.lastIndexOf(10) + 1;

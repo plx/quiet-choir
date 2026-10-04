@@ -38,6 +38,7 @@ import type {
 import { profileOverrideSchema, grantsSchema, capabilityManifestSchema } from './profiles.js';
 import type { CapabilityManifest, ProfileOverride } from './profiles-model.js';
 import { jsonValue } from './json.js';
+import { RunRefusedError } from './run-errors.js';
 import { errorKindSchema, retryOnSchema, stepErrorSchema } from './step-error.js';
 import type { MapStepError, RootCause } from './fan-out.js';
 import type { StepIdentity } from './identity.js';
@@ -371,6 +372,13 @@ export interface RunRecord {
   grantedProfiles?: Record<string, string>;
   /** Checkpoint format version. */
   formatVersion: 1 | 2 | 3 | 4 | 5 | 6 | 7;
+  /**
+   * Revision of the persisted run-level fields, independent of {@link RunRecord.formatVersion}.
+   * Absent means revision 1, which covers every record written before the field existed. A build
+   * refuses to resume, tick, fork or clean a record with a newer revision, or with top-level fields
+   * it does not know, because rewriting it would drop them; read paths warn instead.
+   */
+  schemaRevision?: number;
   /** Last applied storage journal sequence; present in the directory layout. */
   seq?: number;
   /** Informational runtime versions, excluded from workflow and step identity. */
@@ -688,6 +696,8 @@ const recordFieldsSchema = z.object({
     z.literal(6),
     z.literal(7),
   ]),
+  // Not capped at the supported revision: a newer one must parse so it can be reported and refused.
+  schemaRevision: z.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional(),
   runBudget: runBudgetSchema.optional(),
   budgetStop: z
     .object({
@@ -1034,12 +1044,159 @@ const recordSchema = recordFieldsSchema.superRefine((record, context) => {
   }
 });
 
+/**
+ * The newest run-record schema revision this build reads and writes in full. Bump it, and add a
+ * revision to `test/fixtures/schema-revision/record-keys.json`, whenever a persisted run-level
+ * field is added or the accepted shape of one changes, including fields nested inside run-level
+ * objects; see `docs/storage.md`. @internal
+ */
+export const SUPPORTED_SCHEMA_REVISION = 1;
+
+/** The top-level run-record keys this build knows. @internal */
+export const RECORD_FIELD_KEYS: readonly string[] = Object.freeze(
+  Object.keys(recordFieldsSchema.shape),
+);
+const recordFieldKeys = new Set(RECORD_FIELD_KEYS);
+
+/** Whether a top-level run-record key is one this build knows. @internal */
+export function isRecordFieldKey(key: string): boolean {
+  return recordFieldKeys.has(key);
+}
+
+// Names, never values, of the top-level fields a read dropped, keyed by the exact record object
+// that readRun returned. Values stay out of the record so no write can persist what this build
+// does not understand; a clone or a re-read loses the entry, so check the object that was read.
+const hiddenFields = new WeakMap<object, readonly string[]>();
+
+/** Remember the top-level field names a read dropped from this record object. @internal */
+export function markHiddenRecordFields(record: RunRecord, keys: Iterable<string>): void {
+  const names = [...new Set(keys)].sort();
+  if (names.length) hiddenFields.set(record, Object.freeze(names));
+  else hiddenFields.delete(record);
+}
+
+/**
+ * Top-level field names this build did not know in the stored record, sorted: those the read
+ * dropped from this exact object, plus any unknown own keys it still carries (a custom store's
+ * record). @internal
+ */
+export function hiddenRecordFields(record: RunRecord): readonly string[] {
+  const own = Object.keys(record).filter((key) => !recordFieldKeys.has(key));
+  const dropped = hiddenFields.get(record) ?? [];
+  return own.length ? [...new Set([...dropped, ...own])].sort() : dropped;
+}
+
+/** Why this build must not rewrite a record: a newer schema revision, unknown fields, or both. @internal */
+export interface RecordSchemaDrift {
+  /** The record's revision; an absent field is revision 1. */
+  readonly schemaRevision: number;
+  /** {@link SUPPORTED_SCHEMA_REVISION} of this build. */
+  readonly supportedSchemaRevision: number;
+  /** Sorted top-level field names this build does not know. */
+  readonly hiddenFields: readonly string[];
+}
+
+/** The schema drift of a record as read, or undefined when this build knows all of it. @internal */
+export function recordSchemaDrift(record: RunRecord): RecordSchemaDrift | undefined {
+  const schemaRevision = record.schemaRevision ?? 1;
+  const hidden = hiddenRecordFields(record);
+  return schemaRevision > SUPPORTED_SCHEMA_REVISION || hidden.length
+    ? { schemaRevision, supportedSchemaRevision: SUPPORTED_SCHEMA_REVISION, hiddenFields: hidden }
+    : undefined;
+}
+
+/** At most this many hidden field names are listed in a refusal or warning. @internal */
+export const maxListedHiddenFields = 10;
+
+function listFields(fields: readonly string[]): string {
+  const listed = fields.slice(0, maxListedHiddenFields).join(', ');
+  const more = fields.length - maxListedHiddenFields;
+  return more > 0 ? `${listed} and ${String(more)} more` : listed;
+}
+
+function driftReasons(drift: RecordSchemaDrift): string[] {
+  return [
+    ...(drift.schemaRevision > drift.supportedSchemaRevision
+      ? [
+          `was written by a newer quiet-choir (record schemaRevision ${String(drift.schemaRevision)}, this build supports ${String(drift.supportedSchemaRevision)})`,
+        ]
+      : []),
+    ...(drift.hiddenFields.length
+      ? [`has fields this build does not know: ${listFields(drift.hiddenFields)}`]
+      : []),
+  ];
+}
+
+/** The refusal for a write to a record this build cannot fully read. @internal */
+export function recordSchemaRefusalMessage(runId: string, drift: RecordSchemaDrift): string {
+  return `Run ${runId} ${driftReasons(drift).join(' and ')}. Upgrade quiet-choir to resume or rewrite it; nothing was changed.`;
+}
+
+/** The read-path warning for a record this build cannot fully read. @internal */
+export function recordSchemaWarning(drift: RecordSchemaDrift): string {
+  return `This run record ${driftReasons(drift).join(' and ')}; this view omits what this build does not know, and resume, tick, fork and clean refuse the run until quiet-choir is upgraded.`;
+}
+
+/** `run.incompatible` with `reason: 'record_schema'` for a record this build must not rewrite. @internal */
+export function recordSchemaRefusal(
+  runId: string,
+  drift: RecordSchemaDrift,
+  cause?: unknown,
+): RunRefusedError {
+  return new RunRefusedError(
+    'run.incompatible',
+    runId,
+    recordSchemaRefusalMessage(runId, drift),
+    {
+      reason: 'record_schema',
+      schemaRevision: drift.schemaRevision,
+      supportedSchemaRevision: drift.supportedSchemaRevision,
+      hiddenFields: [...drift.hiddenFields],
+    },
+    cause === undefined ? undefined : { cause },
+  );
+}
+
+/** Throw the record-schema refusal when this build must not rewrite the record as read. @internal */
+export function refuseRecordSchemaDrift(record: RunRecord): void {
+  const drift = recordSchemaDrift(record);
+  if (drift) throw recordSchemaRefusal(record.id, drift);
+}
+
+/** A raw schemaRevision newer than this build's, when the raw value is one. @internal */
+export function newerSchemaRevision(value: unknown): number | undefined {
+  return typeof value === 'number' &&
+    Number.isSafeInteger(value) &&
+    value > SUPPORTED_SCHEMA_REVISION
+    ? value
+    : undefined;
+}
+
 /** Validate bytes from an atomic checkpoint read, including synchronous interrupt reporting. @internal */
 export function parseRunRecord(text: string, runId: string): RunRecord {
   const raw = jsonValue(JSON.parse(text));
-  const record = recordSchema.parse(raw);
+  const fields = raw !== null && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
+  const unknown = Object.keys(fields).filter((key) => !recordFieldKeys.has(key));
+  let record: RunRecord;
+  try {
+    record = recordSchema.parse(raw) as RunRecord;
+  } catch (cause) {
+    // A newer build may have changed the shape of a field this build knows.
+    const newer = newerSchemaRevision(Reflect.get(fields, 'schemaRevision'));
+    if (newer === undefined) throw cause;
+    throw recordSchemaRefusal(
+      runId,
+      {
+        schemaRevision: newer,
+        supportedSchemaRevision: SUPPORTED_SCHEMA_REVISION,
+        hiddenFields: unknown.sort(),
+      },
+      cause,
+    );
+  }
   if (record.id !== runId) throw new Error('Checkpoint run ID does not match its filename.');
-  return normalizeStoredHarnesses(record as RunRecord);
+  markHiddenRecordFields(record, unknown);
+  return normalizeStoredHarnesses(record);
 }
 
 /**
