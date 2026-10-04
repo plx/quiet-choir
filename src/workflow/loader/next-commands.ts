@@ -125,7 +125,9 @@ export function runNextCommands(
     {
       why: run.interruptedBy
         ? 'The run was interrupted into a resumable suspension; resume it.'
-        : 'Resume once its waits are answered or due; an unanswered wait suspends it again.',
+        : run.budgetStop?.metric === 'maxWindowUtilization' && typeof run.nextWakeAt === 'number'
+          ? `The --max-window-utilization gate suspended the run until ${new Date(run.nextWakeAt).toISOString()}; workflow tick resumes it after then, and an earlier resume suspends it again.`
+          : 'Resume once its waits are answered or due; an unanswered wait suspends it again.',
       argv: resume(launcher, run, run.id, stateDir),
     },
   ];

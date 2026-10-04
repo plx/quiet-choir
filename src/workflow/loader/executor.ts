@@ -738,6 +738,9 @@ export class WorkflowExecutor implements Executor<WorkflowExecutorPlan, Workflow
         ...(plan.maxRunAgentAttempts === undefined
           ? {}
           : { maxRunAgentAttempts: plan.maxRunAgentAttempts }),
+        ...(plan.maxWindowUtilization === undefined
+          ? {}
+          : { maxWindowUtilization: plan.maxWindowUtilization }),
         ...(this.#options.clock === undefined ? {} : { clock: this.#options.clock }),
         resume: plan.resume,
         ...(plan.killGraceMs === undefined ? {} : { killGraceMs: plan.killGraceMs }),

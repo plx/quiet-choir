@@ -119,6 +119,19 @@ export class FailureOrigins {
       (error instanceof Error && error.cause !== undefined && this.isFatal(error.cause, visited))
     );
   }
+  /** Whether `error` is `target`, or reaches it through fan-out failures or causes. */
+  public reaches(error: unknown, target: unknown, visited = new Set<unknown>()): boolean {
+    if (visited.has(error)) return false;
+    visited.add(error);
+    return (
+      Object.is(error, target) ||
+      (error instanceof FanOutError &&
+        error.failures.some((failure) => this.reaches(failure.error, target, visited))) ||
+      (error instanceof Error &&
+        error.cause !== undefined &&
+        this.reaches(error.cause, target, visited))
+    );
+  }
   private readonly failures: { error: unknown; stepId: string; effect: string }[] = [];
 
   /** Attribute an error to its effect; `effect` is the call-site label RootCause reports. */

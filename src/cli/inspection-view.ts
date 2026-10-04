@@ -2,7 +2,11 @@ import type { InspectionStatus, RunSummary } from '../workflow/loader/inspection
 import type { ExecSummary } from '../workflow/runtime/exec-model.js';
 import { formatNextCommands } from './presentation.js';
 import { parseDuration } from './duration.js';
-import { formatRateLimitDetail, formatRateLimitWindows } from '../workflow/runtime/rate-limit.js';
+import {
+  formatRateLimitDetail,
+  formatRateLimitWindows,
+  windowStopDescription,
+} from '../workflow/runtime/rate-limit.js';
 
 /** Human units for elapsed time and call limits. @internal */
 function duration(ms: number): string {
@@ -265,6 +269,18 @@ export function formatRunSummary(run: RunSummary, verbose = false): string {
     const detail = formatRateLimitDetail(report);
     lines.push(`  Rate windows ${name}: ${windows}${detail === '' ? '' : ` ${detail}`}`);
   }
+  const stop = run.budgetStop;
+  if (stop)
+    lines.push(
+      `  Budget stop: ${
+        stop.metric === 'maxWindowUtilization'
+          ? windowStopDescription(
+              stop,
+              stop.resetsAt == null ? null : Math.ceil(stop.resetsAt * 1000),
+            )
+          : `${stop.metric} limit ${String(stop.limit)} reached (${String(stop.observed)} recorded)`
+      }; refused step ${stop.stepId}`,
+    );
   for (const event of run.recent)
     lines.push(
       `Recent: ${event.at}${event.phase ? ` [${event.phase}]` : ''} ${event.message ?? event.type}${event.data === null ? '' : ` ${JSON.stringify(event.data)}`}`,

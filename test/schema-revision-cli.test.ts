@@ -181,7 +181,11 @@ it('refuses every write to a record with an unknown top-level field and warns on
 
 it.each([
   ['a newer record', { schemaRevision: newer }, newer],
-  ['a record with unknown fields and no revision bump', { futureBudget: 1 }, 1],
+  [
+    'a record with unknown fields and no revision bump',
+    { futureBudget: 1 },
+    SUPPORTED_SCHEMA_REVISION,
+  ],
 ])(
   'refuses %s it cannot parse at all, and tick skips it as incompatible',
   async (_name, drift, revision) => {

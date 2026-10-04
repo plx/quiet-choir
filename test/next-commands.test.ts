@@ -116,6 +116,33 @@ describe('runNextCommands', () => {
     ]);
   });
 
+  it('explains a window-gate suspension and when tick resumes it', () => {
+    const next = runNextCommands(
+      run({
+        status: 'suspended',
+        nextWakeAt: 1_791_360_000_000,
+        budgetStop: {
+          stepId: 'two',
+          metric: 'maxWindowUtilization',
+          limit: 0.5,
+          observed: 0.84,
+          at: '2026-10-04T00:00:00.000Z',
+          harness: 'claude',
+          window: 'seven_day',
+          resetsAt: 1_791_360_000,
+        },
+      }),
+      'suspended',
+      stateDir,
+    );
+    expect(next).toEqual([
+      {
+        why: 'The --max-window-utilization gate suspended the run until 2026-10-07T08:00:00.000Z; workflow tick resumes it after then, and an earlier resume suspends it again.',
+        argv: ['quiet-choir', 'workflow', 'resume', 'r1', '--state-dir', stateDir],
+      },
+    ]);
+  });
+
   it('offers nothing for an embedded run without a stored entrypoint', () => {
     expect(runNextCommands(run({ launch: undefined }), 'failed', stateDir, launcher)).toEqual([]);
   });

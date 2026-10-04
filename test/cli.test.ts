@@ -354,6 +354,28 @@ describe('workflow lifecycle command adapters', () => {
     expect(execute).not.toHaveBeenCalled();
   });
 
+  it('passes --max-window-utilization as plain policy and rejects one above 1 before execution', async () => {
+    const file = await workflowFile();
+    const execute = vi
+      .spyOn(WorkflowExecutor.prototype, 'execute')
+      .mockResolvedValue({ kind: 'workflow.run.result', ok: true, run: runRecord });
+    const valid = await captureCommand(WorkflowExecute, [file, '--max-window-utilization', '0.5']);
+    expect(valid.error).toBeUndefined();
+    expect(execute).toHaveBeenCalledWith(expect.objectContaining({ maxWindowUtilization: 0.5 }));
+    execute.mockClear();
+    const invalid = await captureCommand(WorkflowExecute, [
+      file,
+      '--max-window-utilization',
+      '1.5',
+    ]);
+    expect(invalid.error).toMatchObject({
+      code: 'usage.flag',
+      oclif: { exit: 2 },
+      message: expect.stringContaining('--max-window-utilization') as unknown,
+    });
+    expect(execute).not.toHaveBeenCalled();
+  });
+
   it.each([false, true])(
     'prints cleanup warnings to stderr without failing the completed run (JSON=%s)',
     async (json) => {
@@ -833,8 +855,53 @@ describe('resume command exit and error codes', () => {
           ok: true,
           exitCode: 75,
           runId: 'test-run',
+          nextWakeAt: null,
         });
       else expect(output.stdout).toContain('Run test-run suspended.');
+    },
+  );
+
+  it.each([false, true])(
+    'reports a window-gate suspension with its wake time (JSON=%s)',
+    async (json) => {
+      const stateDir = await stateDirectory();
+      const gated = {
+        ...suspendedRun,
+        nextWakeAt: 1_791_360_000_000,
+        budgetStop: {
+          stepId: 'two',
+          metric: 'maxWindowUtilization',
+          limit: 0.5,
+          observed: 0.84,
+          at: '2026-10-04T00:00:00.000Z',
+          harness: 'claude',
+          window: 'seven_day',
+          resetsAt: 1_791_360_000,
+        },
+      } as const;
+      vi.spyOn(WorkflowExecutor.prototype, 'execute').mockResolvedValue({
+        kind: 'workflow.run.result',
+        ok: true,
+        run: gated,
+      });
+      const output = await captureCommand(WorkflowResume, [
+        'test-run',
+        '--state-dir',
+        stateDir,
+        ...(json ? ['--json'] : []),
+      ]);
+      expect(output.error).toBeUndefined();
+      expect(process.exitCode).toBe(75);
+      if (json)
+        expect(JSON.parse(output.stdout)).toMatchObject({
+          kind: 'workflow.run.suspended',
+          exitCode: 75,
+          nextWakeAt: 1_791_360_000_000,
+        });
+      else
+        expect(output.stdout).toContain(
+          'Run test-run suspended until 2026-10-07T08:00:00.000Z: claude seven_day window at 84% reached --max-window-utilization 0.5. workflow tick resumes it once that time has passed.',
+        );
     },
   );
 
@@ -925,6 +992,18 @@ describe('resume command exit and error codes', () => {
       'lots',
     ]);
     expect(output.error).toMatchObject({ code: 'usage.flag', oclif: { exit: 2 } });
+    const window = await captureCommand(WorkflowResume, [
+      'test-run',
+      '--state-dir',
+      stateDir,
+      '--max-window-utilization',
+      '1.5',
+    ]);
+    expect(window.error).toMatchObject({
+      code: 'usage.flag',
+      oclif: { exit: 2 },
+      message: expect.stringContaining('--max-window-utilization') as unknown,
+    });
     expect(execute).not.toHaveBeenCalled();
   });
 });

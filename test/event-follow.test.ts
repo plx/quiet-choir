@@ -268,6 +268,23 @@ describe('recordEventLines derivation', () => {
       read({ ...run, interruptedBy: { reason: 'Tick timeout reached.', at: at(30) } }).lines,
     );
     expect(interrupted[3]?.msg).toBe('Run interrupted; resumable: Tick timeout reached.');
+    const stop = {
+      stepId: 'two',
+      metric: 'maxWindowUtilization',
+      limit: 0.5,
+      observed: 0.84,
+      at: at(25),
+      harness: 'claude',
+      window: 'seven_day',
+      resetsAt: 1_791_360_000,
+    } as const;
+    const gated = parse(read({ ...run, budgetStop: stop, nextWakeAt: 1_791_360_000_000 }).lines);
+    expect(gated[3]?.msg).toBe(
+      'Run suspended until 2026-10-07T08:00:00.000Z: claude seven_day window at 84% reached --max-window-utilization 0.5.',
+    );
+    // Another cap's stop never suspends, and a resumed run is no longer suspended by the gate.
+    const capped = { ...run, budgetStop: { ...stop, metric: 'maxRunAgentAttempts' as const } };
+    expect(parse(read(capped).lines)[3]?.msg).toBe('Run suspended for external conditions.');
   });
 });
 

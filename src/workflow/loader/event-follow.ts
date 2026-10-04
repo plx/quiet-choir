@@ -1,5 +1,6 @@
 import type { JsonValue } from '../runtime/model.js';
 import type { RunEvent } from '../runtime/observability-model.js';
+import { windowSuspensionMessage } from '../runtime/rate-limit.js';
 import type { AttemptRecord, RunRecord, StepRecord } from '../runtime/record.js';
 import { eventMessage, formatEventFields, type EventLineFields } from './event-line.js';
 
@@ -79,8 +80,10 @@ function runMessage(record: RunRecord, event: RunEvent): string | undefined {
     case 'run.suspended':
       // Only the latest execution's interruption is recorded; an older one is unknowable.
       if (event.execution !== latest) return undefined;
-      return record.interruptedBy
-        ? `Run interrupted; resumable: ${record.interruptedBy.reason}`
+      if (record.interruptedBy) return `Run interrupted; resumable: ${record.interruptedBy.reason}`;
+      // The gate's stop of the latest execution, while the run is still suspended by it.
+      return record.status === 'suspended' && record.budgetStop?.metric === 'maxWindowUtilization'
+        ? windowSuspensionMessage(record.budgetStop, record.nextWakeAt ?? null)
         : 'Run suspended for external conditions.';
     default:
       return eventMessage(event);

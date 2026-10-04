@@ -703,10 +703,13 @@ const recordFieldsSchema = z.object({
   budgetStop: z
     .object({
       stepId: z.string(),
-      metric: z.enum(['maxRunCostUsd', 'maxRunAgentAttempts']),
+      metric: z.enum(['maxRunCostUsd', 'maxRunAgentAttempts', 'maxWindowUtilization']),
       limit: z.number().nonnegative(),
       observed: z.number().nonnegative(),
       at: z.iso.datetime(),
+      harness: z.string().optional(),
+      window: z.string().optional(),
+      resetsAt: z.number().nonnegative().nullable().optional(),
     })
     .optional(),
   staleRecovery: z
@@ -1049,9 +1052,10 @@ const recordSchema = recordFieldsSchema.superRefine((record, context) => {
  * The newest run-record schema revision this build reads and writes in full. Bump it, and add a
  * revision to `test/fixtures/schema-revision/record-keys.json`, whenever a persisted run-level
  * field is added or the accepted shape of one changes, including fields nested inside run-level
- * objects; see `docs/storage.md`. @internal
+ * objects; see `docs/storage.md`. Revision 2 (#168) added `runBudget.maxWindowUtilization` and
+ * the `maxWindowUtilization` budget stop with its `harness`, `window` and `resetsAt`. @internal
  */
-export const SUPPORTED_SCHEMA_REVISION = 1;
+export const SUPPORTED_SCHEMA_REVISION = 2;
 
 /** The top-level run-record keys this build knows. @internal */
 export const RECORD_FIELD_KEYS: readonly string[] = Object.freeze(

@@ -1238,6 +1238,43 @@ it('omits the key and the line when no attempt reported windows', () => {
   expect(Object.keys(summarizeRun(withSteps({}), unlocked))).toEqual(Object.keys(summary));
 });
 
+it('adds the saved budget stop as an optional key and one text line', () => {
+  const run = withSteps({ a: agentStep(1, { harness: 'claude', model: 'sonnet' }) });
+  expect(Object.keys(summarizeRun(run, unlocked))).not.toContain('budgetStop');
+  expect(formatRunSummary(summarizeRun(run, unlocked))).not.toContain('Budget stop');
+  const window = {
+    stepId: 'b',
+    metric: 'maxWindowUtilization',
+    limit: 0.5,
+    observed: 0.84,
+    at: '2026-10-04T00:00:00.000Z',
+    harness: 'claude',
+    window: 'seven_day',
+    resetsAt: 1_791_360_000,
+  } as const;
+  const gated = summarizeRun({ ...run, budgetStop: window }, unlocked);
+  expect(gated.budgetStop).toEqual(window);
+  expect(formatRunSummary(gated)).toContain(
+    '\n  Budget stop: claude seven_day window at 84% reached --max-window-utilization 0.5; the window resets at 2026-10-07T08:00:00.000Z; refused step b',
+  );
+  const capped = summarizeRun(
+    {
+      ...run,
+      budgetStop: {
+        stepId: 'b',
+        metric: 'maxRunAgentAttempts',
+        limit: 3,
+        observed: 3,
+        at: window.at,
+      },
+    },
+    unlocked,
+  );
+  expect(formatRunSummary(capped)).toContain(
+    '\n  Budget stop: maxRunAgentAttempts limit 3 reached (3 recorded); refused step b',
+  );
+});
+
 it('takes the latest settled report per harness, failed attempts included, and skips reused steps', () => {
   const step = agentStep(1, { harness: 'claude', model: 'sonnet', diagnostics: rateReport(0.2) });
   const earlier = step.attemptHistory?.[0];

@@ -22,6 +22,7 @@ export default class WorkflowResume extends WorkflowCommand {
     readonly 'max-child-depth': number | undefined;
     readonly 'max-run-cost-usd': string | undefined;
     readonly 'max-run-agent-attempts': string | undefined;
+    readonly 'max-window-utilization': string | undefined;
     readonly 'state-dir': string | undefined;
     readonly json: boolean | undefined;
     readonly full: boolean | undefined;
@@ -112,7 +113,11 @@ export default class WorkflowResume extends WorkflowCommand {
     let worktrees: ReturnType<typeof worktreePlan>;
     try {
       worktrees = worktreePlan(flags['worktree-keep'], flags['worktree-root'], process.cwd());
-      runBudget = parseRunBudget(flags['max-run-cost-usd'], flags['max-run-agent-attempts']);
+      runBudget = parseRunBudget(
+        flags['max-run-cost-usd'],
+        flags['max-run-agent-attempts'],
+        flags['max-window-utilization'],
+      );
       harness = await readHarnessSelection(
         flags.harness ?? 'cli',
         flags['harness-config'],

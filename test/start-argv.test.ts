@@ -138,6 +138,10 @@ describe('buildStartChildArgv', () => {
     expect(flags['progress']?.type).toBe('boolean');
     expect(flags['events']?.type).toBe('option');
     expect(flags['harness-limit']?.aliases).toContain('provider-limit');
+    expect(flags['max-window-utilization']?.type).toBe('option');
+    expect(
+      buildStartChildArgv(['wf.ts', '--max-window-utilization', '0.5'], flags, ids).args,
+    ).toEqual(['wf.ts', '--max-window-utilization', '0.5', ...tail]);
     expect(
       buildStartChildArgv(
         ['wf.ts', '--provider-limit', 'codex=1', '--progress', '-v', '--start-timeout', '1s'],

@@ -37,9 +37,13 @@ import {
 // edited in place: a new persisted field adds a revision and bumps SUPPORTED_SCHEMA_REVISION.
 const revisionDigests: Readonly<Record<string, string>> = {
   '1': '80010b03d1fa34c4b824b0682b5138e0c19d138186fb659c38d46eab204992ec',
+  // Revision 2 (#168) changed only nested shapes (runBudget, budgetStop), so it repeats the keys.
+  '2': '80010b03d1fa34c4b824b0682b5138e0c19d138186fb659c38d46eab204992ec',
 };
 // digest(readRun(...)) of the installed pre-revision fixture, computed on unmodified main 91a6d2f.
 const preRevisionReadDigest = '714b6cb068de5c933b7ba04a26d1f931f589f7c9910f76f0e5c8cc493eb13016';
+// digest(readRun(...)) of the installed revision-one fixture, computed on unmodified main 33b6eac.
+const revisionOneReadDigest = '73d8cec57513dde827ab1ced2a31745af52b6c8af39dad13c3e4e391cfc43310';
 
 const sha256 = (value: string): string => createHash('sha256').update(value).digest('hex');
 
@@ -164,7 +168,7 @@ describe('reading a record this build cannot fully read', () => {
     expect(record.recoveryHint).toBe('journaled');
     expect(hiddenRecordFields(record)).toEqual(['futureBudget']);
     expect(recordSchemaDrift(record)).toEqual({
-      schemaRevision: 1,
+      schemaRevision: SUPPORTED_SCHEMA_REVISION,
       supportedSchemaRevision: SUPPORTED_SCHEMA_REVISION,
       hiddenFields: ['futureBudget'],
     });
@@ -329,14 +333,14 @@ describe('writers refuse and change nothing', () => {
           raw['futureBudget'] = { maxRunMinutes: 5 };
         });
       },
-      { schemaRevision: 1, hiddenFields: ['futureBudget'] },
+      { schemaRevision: SUPPORTED_SCHEMA_REVISION, hiddenFields: ['futureBudget'] },
     ],
     [
       'an unknown journaled run field',
       async (runId: string) => {
         await appendRunChanges(runId, [{ area: 'run', key: 'futureLedger', value: [1] }]);
       },
-      { schemaRevision: 1, hiddenFields: ['futureLedger'] },
+      { schemaRevision: SUPPORTED_SCHEMA_REVISION, hiddenFields: ['futureLedger'] },
     ],
   ])('resume refuses %s', async (_name, drift, details) => {
     await failedRun('run');
@@ -371,7 +375,7 @@ describe('writers refuse and change nothing', () => {
           raw['futureBudget'] = { maxRunMinutes: 5 };
         });
       },
-      { schemaRevision: 1, hiddenFields: ['futureBudget'] },
+      { schemaRevision: SUPPORTED_SCHEMA_REVISION, hiddenFields: ['futureBudget'] },
     ],
   ])(
     'checkResume reports %s as incompatible, which no flag overrides',
@@ -589,6 +593,8 @@ describe('records written before schemaRevision', () => {
     await install();
     const record = await readRun({ stateDir, runId: 'pre-revision' });
     expect(record).not.toHaveProperty('schemaRevision');
+    // Revision 2's window cap is optional, so a read never fills it in (#168).
+    expect(record.runBudget).toEqual({ maxRunCostUsd: null, maxRunAgentAttempts: null });
     expect(recordSchemaDrift(record)).toBeUndefined();
     expect(digest(record)).toBe(preRevisionReadDigest);
   });
@@ -607,6 +613,7 @@ describe('records written before schemaRevision', () => {
     expect(result.output).toBeNull();
     const saved = await readRun({ stateDir, runId: 'pre-revision' });
     expect(saved.steps).toEqual(original.steps);
+    expect(saved.runBudget?.maxWindowUtilization).toBeNull();
     expect(saved.schemaRevision).toBe(SUPPORTED_SCHEMA_REVISION);
     expect((await rawSnapshot('pre-revision'))['schemaRevision']).toBe(SUPPORTED_SCHEMA_REVISION);
   });
@@ -616,5 +623,114 @@ describe('records written before schemaRevision', () => {
       runWorkflow(definition(false), { ...options, stateDir, runId: 'fresh', input: null }),
     ).resolves.toMatchObject({ status: 'completed' });
     expect((await rawSnapshot('fresh'))['schemaRevision']).toBe(SUPPORTED_SCHEMA_REVISION);
+  });
+});
+
+describe('revision-one records (before the window gate, #168)', () => {
+  const runId = 'revision-one';
+  async function install(): Promise<void> {
+    const fixture = await readFile(
+      new URL('./fixtures/schema-revision/revision-one-checkpoint.json', import.meta.url),
+      'utf8',
+    );
+    await mkdir(join(stateDir, runId));
+    await writeFile(paths(runId).snapshot, fixture);
+    await writeFile(paths(runId).journal, '');
+  }
+  const agentDefinition = defineWorkflow({
+    name: 'schema-revision',
+    version: '1',
+    input: z.null(),
+    output: z.null(),
+    async run(ctx) {
+      await ctx.now('prepare');
+      await ctx.claude.text('call', { prompt: 'x' });
+      return null;
+    },
+  });
+
+  it('read exactly as on main, with a two-cap runBudget and the old budgetStop', async () => {
+    await install();
+    const record = await readRun({ stateDir, runId });
+    expect(record.schemaRevision).toBe(1);
+    expect(recordSchemaDrift(record)).toBeUndefined();
+    expect(digest(record)).toBe(revisionOneReadDigest);
+    expect(record.runBudget).toEqual({ maxRunCostUsd: null, maxRunAgentAttempts: 0 });
+    expect(record.budgetStop).toMatchObject({ metric: 'maxRunAgentAttempts', stepId: 'call' });
+  });
+
+  it('resume with the window gate unlimited and are saved with the current revision', async () => {
+    await install();
+    let calls = 0;
+    const harness: Harness = {
+      invoke() {
+        calls++;
+        return Promise.resolve({
+          text: 'ok',
+          sessionId: null,
+          diagnostics: {
+            rateLimit: {
+              status: 'allowed',
+              type: null,
+              resetsAt: null,
+              windows: { five_hour: { utilization: 1 } },
+            },
+          },
+        });
+      },
+    };
+    const result = await runWorkflow(agentDefinition, {
+      ...options,
+      stateDir,
+      runId,
+      resume: true,
+      harness,
+      maxRunAgentAttempts: null,
+    });
+    expect(result.status).toBe('completed');
+    expect(calls).toBe(1);
+    const saved = await readRun({ stateDir, runId });
+    expect(saved.runBudget).toEqual({
+      maxRunCostUsd: null,
+      maxRunAgentAttempts: null,
+      maxWindowUtilization: null,
+    });
+    expect(saved.budgetStop).toBeUndefined();
+    expect((await rawSnapshot(runId))['schemaRevision']).toBe(SUPPORTED_SCHEMA_REVISION);
+  });
+
+  it('round-trip a window budgetStop through the record parser', async () => {
+    await install();
+    const stop = {
+      stepId: 'call',
+      metric: 'maxWindowUtilization',
+      limit: 0.5,
+      observed: 1.2,
+      at: '2026-10-04T00:00:00.000Z',
+      harness: 'claude',
+      window: 'seven_day',
+      resetsAt: null,
+    };
+    await editSnapshot(runId, (raw) => {
+      raw['schemaRevision'] = SUPPORTED_SCHEMA_REVISION;
+      raw['runBudget'] = {
+        maxRunCostUsd: null,
+        maxRunAgentAttempts: null,
+        maxWindowUtilization: 0.5,
+      };
+      raw['budgetStop'] = stop;
+    });
+    const record = await readRun({ stateDir, runId });
+    expect(record.budgetStop).toEqual(stop);
+    expect(record.runBudget?.maxWindowUtilization).toBe(0.5);
+    expect(recordSchemaDrift(record)).toBeUndefined();
+    await editSnapshot(runId, (raw) => {
+      raw['runBudget'] = {
+        maxRunCostUsd: null,
+        maxRunAgentAttempts: null,
+        maxWindowUtilization: 2,
+      };
+    });
+    await expect(readRun({ stateDir, runId })).rejects.toThrow();
   });
 });

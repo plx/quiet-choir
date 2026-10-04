@@ -61,7 +61,11 @@ export default class WorkflowExecute extends WorkflowCommand {
     let worktrees: ReturnType<typeof worktreePlan>;
     try {
       worktrees = worktreePlan(flags['worktree-keep'], flags['worktree-root'], process.cwd());
-      runBudget = parseRunBudget(flags['max-run-cost-usd'], flags['max-run-agent-attempts']);
+      runBudget = parseRunBudget(
+        flags['max-run-cost-usd'],
+        flags['max-run-agent-attempts'],
+        flags['max-window-utilization'],
+      );
       killGraceMs = flags['kill-grace-ms'] === undefined ? 3000 : Number(flags['kill-grace-ms']);
       if (
         !/^[1-9][0-9]*$/u.test(String(flags['kill-grace-ms'] ?? 3000)) ||
