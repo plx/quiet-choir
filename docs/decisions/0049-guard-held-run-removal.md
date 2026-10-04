@@ -40,7 +40,10 @@ host); `run.orphans` when a dead or released owner's recorded child is alive or 
 without `--force`, the new `run.active` (exit 3) when the status is running or suspended or any step
 is waiting. Then rm takes the ordinary `lockRun` without a working directory, so ADR 0030 dead-owner
 recovery applies and no project is registered, and it re-applies the `run.active` rule to the record
-read under the lock.
+read under the lock. The record read under the lock must also carry the `createdAt` of the run rm
+inspected: `--run-id` is user-chosen, so another rm can delete that run and a new run can reuse the
+ID before the lock is taken. rm then refuses with `run.exists` before touching any cache, ref or
+file, and the replacement stays intact.
 
 **Caches first, and stop if Git cannot remove one.** `cleanWorktrees`' body became
 `cleanOwnedWorktrees`, which rm runs under its own ownership, so `git worktree` administration stays

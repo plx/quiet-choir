@@ -173,11 +173,12 @@ not counted.
 
 rm refuses a held lock or live children, and without `--force` a running, suspended or waiting run.
 Then it takes the run lock (legacy guard first, without a working directory, so it never registers a
-project), re-reads the record and removes caches. If Git cannot remove one while its repository
-exists, rm stops before deleting the run: caches Git already removed stay removed and are recorded
-in the ledger, no ref is deleted, and the record stays for a retry with `workflow clean`. When the
-repository is gone, rm deletes only caches named by a digest that matches their ledger key. Holding
-the legacy guard throughout, it deletes in this order:
+project), re-reads the record, refuses (`run.exists`) if it is no longer the run rm inspected
+(another run reused the ID, so its `createdAt` differs) and removes caches. If Git cannot remove one
+while its repository exists, rm stops before deleting the run: caches Git already removed stay
+removed and are recorded in the ledger, no ref is deleted, and the record stays for a retry with
+`workflow clean`. When the repository is gone, rm deletes only caches named by a digest that matches
+their ledger key. Holding the legacy guard throughout, it deletes in this order:
 
 1. `<runId>.cancel.json` and `<runId>.inbox/`.
 2. The flat `<runId>.json`, then flushes the directory. For an unmigrated flat run this is the

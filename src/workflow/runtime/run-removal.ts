@@ -91,6 +91,8 @@ export interface RemoveRunLive {
   readonly processSupervisor?: ProcessSupervisor | undefined;
   /** @internal Test seam called after each deletion step; a throw stops the removal there. */
   readonly afterStep?: (step: RemovalStep) => void | Promise<void>;
+  /** @internal Test seam called after the inspection and before the run lock is taken. */
+  readonly beforeLock?: () => void | Promise<void>;
 }
 
 const tombstonePattern =
@@ -229,7 +231,8 @@ function pick(refusal: ReturnType<typeof removalRefusal>): {
 /**
  * Remove one saved run without importing workflow code (ADR 0049). It sweeps abandoned
  * tombstones, refuses a held lock, orphans or (without `force`) an active run, takes the run lock
- * without registering a project, re-checks the record, removes worktree caches through the shared
+ * without registering a project, re-checks the record (it must still be the inspected run, by
+ * `createdAt`, not a replacement that reused the ID, and still removable), removes worktree caches through the shared
  * cleanup (or directly when the repository is gone) and, with `refs`, pinned refs. A cache Git
  * cannot remove stops it before it deletes the run: caches Git already removed stay removed (the
  * ledger records them), no ref is deleted and the record stays for `workflow clean`. Holding the
@@ -257,6 +260,7 @@ export async function removeRun(
   const paths = await existingPaths(stateDir, runId);
   const bytes = await runBytes(stateDir, runId);
   signal?.throwIfAborted();
+  await live.beforeLock?.();
   const owned = await openFileOwnedRun(stateDir, runId, {
     ...(signal === undefined ? {} : { signal }),
     ...(live.processSupervisor === undefined ? {} : { processSupervisor: live.processSupervisor }),
@@ -266,6 +270,7 @@ export async function removeRun(
     outcome = await removeOwned(owned, runner, live, {
       runId,
       stateDir,
+      generation: initial.createdAt,
       force,
       refs: options.refs ?? false,
       paths,
@@ -314,6 +319,8 @@ async function removeOwned(
   context: {
     readonly runId: string;
     readonly stateDir: string;
+    /** The `createdAt` of the run rm inspected; the locked record must still carry it. */
+    readonly generation: string;
     readonly force: boolean;
     readonly refs: boolean;
     readonly paths: readonly string[];
@@ -326,6 +333,15 @@ async function removeOwned(
     await live.afterStep?.(name);
   };
   const record = await readRequiredRun({ runId, stateDir });
+  // The ID is user-chosen: another rm can delete the run rm inspected and a new run can reuse the
+  // ID before this lock is taken. Only the inspected generation may be removed.
+  if (record.createdAt !== context.generation)
+    throw new RunRefusedError(
+      'run.exists',
+      runId,
+      `Run ${runId} was replaced by another run with the same ID after rm inspected it; nothing was removed. Re-run rm to inspect the current run.`,
+      jsonValue({ expectedCreatedAt: context.generation, createdAt: record.createdAt }),
+    );
   const recheck = removalVerdict(
     record,
     { locked: false, owner: null, processes: [], locks: [] },

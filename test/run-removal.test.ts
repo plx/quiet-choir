@@ -652,6 +652,52 @@ describe('workflow rm ordering', () => {
   });
 });
 
+describe('workflow rm and a replaced run', () => {
+  it.each([false, true])(
+    'refuses a run that reused the ID after inspection and leaves it intact (force %s)',
+    async (force) => {
+      await completedRun('reused');
+      const inspected = (await readRequiredRun({ runId: 'reused', stateDir })).createdAt;
+      let replaced = '';
+      await expect(
+        removeRun({ runId: 'reused', stateDir, force }, processRunner, {
+          beforeLock: async () => {
+            // Another rm removed the inspected run and a new one reused its ID.
+            await rm(join(stateDir, 'reused'), { recursive: true, force: true });
+            await delay(5);
+            await completedRun('reused');
+            replaced = (await readRequiredRun({ runId: 'reused', stateDir })).createdAt;
+            expect(replaced).not.toBe(inspected);
+          },
+        }),
+      ).rejects.toMatchObject({ code: 'run.exists', runId: 'reused' });
+      expect((await readRequiredRun({ runId: 'reused', stateDir })).createdAt).toBe(replaced);
+      expect(await gone(join(stateDir, 'reused', 'lock'))).toBe(true);
+      expect(await gone(join(stateDir, 'reused.json.lock'))).toBe(true);
+      // A fresh rm inspects the replacement and removes it.
+      removed(await remove('reused', { force }));
+      await onlyIgnoreFileLeft();
+    },
+  );
+
+  it('leaves the replacement’s checkpoint files untouched when it refuses', async () => {
+    await completedRun('reused');
+    let before: Record<string, string> = {};
+    await expect(
+      removeRun({ runId: 'reused', stateDir }, processRunner, {
+        beforeLock: async () => {
+          await rm(join(stateDir, 'reused'), { recursive: true, force: true });
+          await delay(5);
+          await completedRun('reused');
+          before = await snapshot(join(stateDir, 'reused'));
+        },
+      }),
+    ).rejects.toMatchObject({ code: 'run.exists' });
+    expect(Object.keys(before).length).toBeGreaterThan(0);
+    expect(await snapshot(join(stateDir, 'reused'))).toEqual(before);
+  });
+});
+
 describe('workflow rm and a racing start', () => {
   it.each(['flat', 'primary-released'] as const)(
     'start refuses while an unmigrated flat run is removed (after %s), and succeeds after',
