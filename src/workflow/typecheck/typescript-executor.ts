@@ -3,11 +3,15 @@ import { dirname, relative, resolve, sep } from 'node:path';
 
 import ts from 'typescript';
 
-import { jsonValue } from '../runtime/json.js';
 import type { JsonValue } from '../runtime/model.js';
 
 import type { ExecutionLogger, Executor } from '../../application/execution.js';
 import { lintDurability } from './durability-lint.js';
+import {
+  normalizedCompilerOptions,
+  TypecheckProgramCache,
+  type TypecheckProgram,
+} from './program-cache.js';
 import type {
   TypecheckDiagnostic,
   TypecheckDiagnosticCategory,
@@ -78,30 +82,6 @@ function isDeclarationFile(filePath: string): boolean {
   );
 }
 
-function compilerOptions(options: ts.CompilerOptions): Readonly<Record<string, JsonValue>> {
-  const enums: Record<string, Readonly<Record<number, string>>> = {
-    target: ts.ScriptTarget,
-    module: ts.ModuleKind,
-    moduleResolution: ts.ModuleResolutionKind,
-    jsx: ts.JsxEmit,
-    newLine: ts.NewLineKind,
-    moduleDetection: ts.ModuleDetectionKind,
-  };
-  return Object.fromEntries(
-    Object.entries(options)
-      .filter(
-        ([key, value]) => key !== 'configFile' && key !== 'configFilePath' && value !== undefined,
-      )
-      .sort(([a], [b]) => a.localeCompare(b))
-      .map(([key, value]) => [
-        key,
-        typeof value === 'number' && enums[key]?.[value] !== undefined
-          ? enums[key][value]
-          : jsonValue(value),
-      ]),
-  );
-}
-
 interface CompilerAnalysis {
   readonly compilerOptions: Readonly<Record<string, JsonValue>>;
   readonly diagnostics: readonly ts.Diagnostic[];
@@ -109,11 +89,11 @@ interface CompilerAnalysis {
   readonly sourceFiles: readonly string[];
 }
 
-function analyzeProgram(program: ts.Program): CompilerAnalysis {
+function analyzeProgram({ program, diagnostics }: TypecheckProgram): CompilerAnalysis {
   return {
     program,
-    compilerOptions: compilerOptions(program.getCompilerOptions()),
-    diagnostics: ts.getPreEmitDiagnostics(program),
+    compilerOptions: normalizedCompilerOptions(program.getCompilerOptions()),
+    diagnostics: diagnostics(),
     sourceFiles: program
       .getSourceFiles()
       .map((file) => resolve(file.fileName))
@@ -125,12 +105,14 @@ function analyzeProgram(program: ts.Program): CompilerAnalysis {
 /**
  * Build the type-check program for root files under a tsconfig: the config's compiler options and
  * declaration files, with `rootNames` replacing its `files`/`include`. Returns the config read
- * error instead when the file cannot be read. @internal
+ * error instead when the file cannot be read. A shared `cache` reuses unchanged files' parsing and
+ * semantic checking from earlier calls; without one the program is built from scratch. @internal
  */
 export function configuredProgram(
   rootNames: readonly string[],
   configPath: string,
-): { readonly program: ts.Program } | { readonly error: ts.Diagnostic } {
+  cache: TypecheckProgramCache = new TypecheckProgramCache(),
+): TypecheckProgram | { readonly error: ts.Diagnostic } {
   const configDirectory = dirname(configPath);
   const readResult = ts.readConfigFile(configPath, (filePath) => ts.sys.readFile(filePath));
 
@@ -163,7 +145,7 @@ export function configuredProgram(
       ...discoveredConfig.fileNames.filter((filePath) => isDeclarationFile(filePath)),
     ]),
   ];
-  const program = ts.createProgram({
+  return cache.check({
     configFileParsingDiagnostics: parsedConfig.errors,
     options: {
       ...parsedConfig.options,
@@ -175,19 +157,21 @@ export function configuredProgram(
       : { projectReferences: parsedConfig.projectReferences }),
     rootNames: programRoots,
   });
-
-  return { program };
 }
 
-function configuredDiagnostics(entrypoint: string, configPath: string): CompilerAnalysis {
-  const configured = configuredProgram([entrypoint], configPath);
+function configuredDiagnostics(
+  entrypoint: string,
+  configPath: string,
+  cache: TypecheckProgramCache,
+): CompilerAnalysis {
+  const configured = configuredProgram([entrypoint], configPath, cache);
   if ('error' in configured)
     return { compilerOptions: {}, diagnostics: [configured.error], sourceFiles: [] };
-  return analyzeProgram(configured.program);
+  return analyzeProgram(configured);
 }
 
-function defaultDiagnostics(plan: TypecheckPlan): CompilerAnalysis {
-  const program = ts.createProgram({
+function defaultDiagnostics(plan: TypecheckPlan, cache: TypecheckProgramCache): CompilerAnalysis {
+  const checked = cache.check({
     options: {
       allowImportingTsExtensions: true,
       forceConsistentCasingInFileNames: true,
@@ -208,7 +192,7 @@ function defaultDiagnostics(plan: TypecheckPlan): CompilerAnalysis {
     rootNames: [plan.entrypoint],
   });
 
-  return analyzeProgram(program);
+  return analyzeProgram(checked);
 }
 
 /** Options of a {@link TypeScriptExecutor}. */
@@ -219,16 +203,24 @@ export interface TypeScriptExecutorOptions {
    * their output.
    */
   readonly durabilityLint?: boolean;
+  /**
+   * Internal: share parsing and semantic checking with other executors that pass the same cache.
+   * Tests use it to avoid repeating whole-engine compiles; without it each check starts from
+   * scratch. @internal
+   */
+  readonly cache?: TypecheckProgramCache | undefined;
 }
 
 /** Type-checks workflow plans with the packaged stable TypeScript compiler API. */
 export class TypeScriptExecutor implements Executor<TypecheckPlan, TypecheckResult> {
   readonly #logger: ExecutionLogger;
   readonly #durabilityLint: boolean;
+  readonly #cache: TypecheckProgramCache | undefined;
 
   public constructor(logger: ExecutionLogger, options: TypeScriptExecutorOptions = {}) {
     this.#logger = logger;
     this.#durabilityLint = options.durabilityLint === true;
+    this.#cache = options.cache;
   }
 
   public execute(plan: TypecheckPlan): Promise<TypecheckResult> {
@@ -240,10 +232,11 @@ export class TypeScriptExecutor implements Executor<TypecheckPlan, TypecheckResu
         : `Using ${plan.configuration.profile}`,
     );
 
+    const cache = this.#cache ?? new TypecheckProgramCache();
     const analysis =
       plan.configuration.kind === 'tsconfig'
-        ? configuredDiagnostics(plan.entrypoint, plan.configuration.path)
-        : defaultDiagnostics(plan);
+        ? configuredDiagnostics(plan.entrypoint, plan.configuration.path, cache)
+        : defaultDiagnostics(plan, cache);
     const diagnostics = analysis.diagnostics.map(normalizeDiagnostic);
     const ok = !diagnostics.some((diagnostic) => diagnostic.category === 'error');
     const durability =

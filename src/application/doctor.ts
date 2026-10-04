@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { analyzeTypecheckEntrypoint } from '../workflow/typecheck/plan.js';
 import { TypeScriptExecutor } from '../workflow/typecheck/typescript-executor.js';
+import type { TypecheckProgramCache } from '../workflow/typecheck/program-cache.js';
 import { importWorkflow } from '../workflow/loader/import.js';
 import { describeWorkflow } from '../workflow/runtime/definition.js';
 import { harnessDefinitions } from '../workflow/runtime/harness-registry.js';
@@ -58,6 +59,8 @@ export class DoctorExecutor implements Executor<
     private readonly logger: ExecutionLogger,
     private readonly signal?: AbortSignal | undefined,
     private readonly processSupervisor?: ProcessSupervisor | undefined,
+    /** Internal: a program cache shared with other type checks; tests pass one. @internal */
+    private readonly typecheckCache?: TypecheckProgramCache | undefined,
   ) {}
   public async execute(
     plan: DoctorPlan,
@@ -66,7 +69,9 @@ export class DoctorExecutor implements Executor<
     if (plan.workflow !== undefined) {
       const analyzed = analyzeTypecheckEntrypoint(plan.workflow, plan.cwd ?? process.cwd());
       if (!analyzed.ok) throw new Error(analyzed.error.message);
-      const checked = await new TypeScriptExecutor(this.logger).execute(analyzed.plan);
+      const checked = await new TypeScriptExecutor(this.logger, {
+        cache: this.typecheckCache,
+      }).execute(analyzed.plan);
       if (!checked.ok)
         throw new Error(
           `Workflow type check failed: ${checked.diagnostics.map((item) => item.message).join('; ')}`,
