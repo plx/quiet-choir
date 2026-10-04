@@ -104,3 +104,5 @@ part of the documentation.
 - [0049: Remove a run while holding its legacy guard](0049-guard-held-run-removal.md)
 
 - [0050: Select runs for prune conservatively](0050-select-runs-for-prune-conservatively.md)
+
+- [0051: Remove stale project roots by rmdir only](0051-remove-stale-project-roots-by-rmdir.md)

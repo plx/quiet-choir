@@ -94,7 +94,7 @@ errors, and answers; keep them private. See
 | `workflow inspect RUN_ID`                | Reads the saved run without importing workflow code or acquiring a writer lock                            |
 | `workflow unlock RUN_ID`                 | Clears an abandoned lock without importing workflow code; refuses live owners and children                |
 | `workflow rm RUN_ID`                     | Removes a saved run and its caches without importing source; `--dry-run` previews, `--force` for active   |
-| `workflow prune`                         | Removes finished runs by `--older-than`, `--status` or `--missing-cwd` through rm; never forces           |
+| `workflow prune`                         | Removes finished runs through rm, never forced; `--missing-cwd --all` also removes stale project roots    |
 | `workflow cancel RUN_ID`                 | Ends a live local run as `cancelled`; signals only an identity-verified owner on this host, else exit 3   |
 
 Entrypoints must be TypeScript source (`.ts`, `.tsx`, `.mts`, `.cts`), not declaration files. The

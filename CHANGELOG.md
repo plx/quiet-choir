@@ -2,6 +2,21 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- `workflow prune --missing-cwd --all` also removes stale XDG project roots (#366, split from #166;
+  ADR 0051). After its run removals it judges every root registered for a missing cwd and every root
+  without a valid `project.json` (the `Skipped project` roots of `list --all`), never the current
+  project's root or a root whose cwd exists. A pure, table-tested `rootDecision`
+  (`root-selection.ts`) keeps a root while a run in its `runs/` stays (`runs-kept`), a
+  `worktrees/<runId>-<namespace>/` directory names a run a scanned container still holds (`in-use`),
+  or it holds any file, symbolic link or unknown directory (`files`). Otherwise prune unlinks
+  `runs/.gitignore`, rmdirs `runs/`, rmdirs the `worktrees/` tree bottom-up, unlinks `project.json`
+  and rmdirs the root: it unlinks no other file, so a cache a live run creates meanwhile makes an
+  `rmdir` fail, and prune restores the file it just unlinked and reports the root `busy`. The result
+  gains `roots[]` (`{root, cwd, registered, removed, reason, bytes, paths, runs, message}`, empty
+  without both flags), `--dry-run` lists the roots it would remove without changing anything, the
+  text output adds a line per root after the unchanged first line, and an interrupted prune names
+  the roots already removed in `error.details.roots`. Internally, `projectRoots()` lists every XDG
+  root with its registration or problem, and `projectStateDirectories` is rebuilt on it unchanged.
 - `workflow prune` removes finished runs in bulk (#365, split from #166; ADR 0050).
   `workflow prune [--older-than DURATION] [--status S[,S]] [--missing-cwd] [--all] [--refs] [--dry-run] [--json]`
   needs at least one of `--older-than`, `--status` or `--missing-cwd` (a bare prune is `usage.flag`,

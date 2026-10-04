@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
 import {
   chmod,
   lstat,
@@ -9,10 +10,11 @@ import {
   readdir,
   realpath,
   rm,
+  symlink,
   writeFile,
 } from 'node:fs/promises';
 import { hostname, tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { inspect } from 'node:util';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -118,7 +120,11 @@ async function failedRun(runId: string, cwd = root): Promise<void> {
   );
 }
 
-async function suspendedRun(runId: string, cwd = root): Promise<void> {
+async function suspendedRun(
+  runId: string,
+  cwd = root,
+  directory: string | null = stateDir,
+): Promise<void> {
   const workflow = defineWorkflow({
     name: 'prune-ask',
     version: '1',
@@ -126,9 +132,13 @@ async function suspendedRun(runId: string, cwd = root): Promise<void> {
     output: z.unknown(),
     run: (ctx) => ctx.ask('gate', { prompt: 'Ship?', schema: z.boolean() }),
   });
-  expect((await runWorkflow(workflow, { runId, stateDir, cwd, input: null })).status).toBe(
-    'suspended',
-  );
+  const options = {
+    runId,
+    cwd,
+    input: null,
+    ...(directory === null ? {} : { stateDir: directory }),
+  };
+  expect((await runWorkflow(workflow, options)).status).toBe('suspended');
 }
 
 async function failedWaitingRun(runId: string, cwd = root): Promise<void> {
@@ -626,7 +636,10 @@ describe('workflow prune removal', () => {
     });
     const failure = await aborted.execute(plan({ statuses: ['completed'] }));
     assert(!failure.ok);
-    expect(failure).toMatchObject({ code: 'workflow.interrupted', details: { removed: [] } });
+    expect(failure).toMatchObject({
+      code: 'workflow.interrupted',
+      details: { removed: [], roots: [] },
+    });
     expect((await readRun({ stateDir, runId: 'second' })).id).toBe('second');
   });
 
@@ -661,6 +674,279 @@ describe('workflow prune removal', () => {
       expect((await readRun({ stateDir, runId: 'done' })).id).toBe('done');
     },
   );
+});
+
+describe('workflow prune project roots', () => {
+  const xdg = () => join(root, 'xdg', 'quiet-choir');
+  const namespace = (runId: string) => `${runId}-${randomUUID()}`;
+
+  /** A registered root for a cwd that never existed, with no runs. */
+  async function registeredRoot(name: string, directories: string[] = []): Promise<string> {
+    const cwd = join(root, name);
+    const project = dirname(defaultStateDir(cwd));
+    await mkdir(join(project, 'runs'), { recursive: true });
+    await writeFile(join(project, 'runs', '.gitignore'), '*\n');
+    await writeFile(join(project, 'project.json'), `${JSON.stringify({ cwd })}\n`);
+    for (const directory of directories)
+      await mkdir(join(project, 'worktrees', directory), { recursive: true });
+    return project;
+  }
+
+  /** A root without project.json that holds only the given directories under worktrees/. */
+  async function bareRoot(name: string, directories: string[]): Promise<string> {
+    const project = join(xdg(), name);
+    for (const directory of directories)
+      await mkdir(join(project, 'worktrees', directory), { recursive: true });
+    return project;
+  }
+
+  /** A deleted workspace whose registered root holds the given completed runs. */
+  async function deletedProject(name: string, runIds: string[]): Promise<string> {
+    const cwd = join(root, name);
+    await mkdir(cwd);
+    for (const runId of runIds) await completedRun(runId, cwd, null);
+    await rm(cwd, { recursive: true });
+    return dirname(defaultStateDir(cwd));
+  }
+
+  const byRoot = (result: PruneResult) =>
+    Object.fromEntries(result.roots.map((entry) => [entry.root, [entry.reason, entry.removed]]));
+
+  async function listAll() {
+    const listed = await executor.execute({ kind: 'workflow.list', stateDir, all: true });
+    assert(listed.ok && listed.kind === 'workflow.list.result');
+    return listed;
+  }
+
+  it('previews stale roots without changes, then removes them so list --all is clean', async () => {
+    const withRuns = await deletedProject('deleted-with-runs', ['lost-one', 'lost-two']);
+    const cache = namespace('lost-one');
+    const withoutRuns = await registeredRoot('deleted-empty', [cache, namespace('old')]);
+    const bare = await bareRoot('wtrepo-9c2bdb8d4801', [
+      namespace('gone'),
+      join(namespace('gone'), 'nested', 'deeper'),
+    ]);
+    const alive = join(root, 'alive');
+    await mkdir(alive);
+    await completedRun('alive-done', alive, null);
+    const aliveRoot = dirname(defaultStateDir(alive));
+    expect((await listAll()).warnings).toEqual([
+      expect.stringMatching(new RegExp(`^Skipped project ${bare}: `, 'u')) as unknown,
+    ]);
+
+    const before = await snapshot(root);
+    const preview = await prune({ missingCwd: true, all: true, dryRun: true });
+    expect(await snapshot(root)).toEqual(before);
+    expect(ids(preview.removed).sort()).toEqual(['lost-one', 'lost-two']);
+    expect(preview.skipped).toEqual([]);
+    expect(byRoot(preview)).toEqual({
+      [withRuns]: ['missing-cwd', true],
+      [withoutRuns]: ['missing-cwd', true],
+      [bare]: ['empty', true],
+    });
+    expect(preview.roots.map((entry) => entry.root)).toEqual([withRuns, withoutRuns, bare].sort());
+    const projectBytes = (await lstat(join(withoutRuns, 'project.json'))).size + 2;
+    expect(preview.roots.find((entry) => entry.root === withoutRuns)).toMatchObject({
+      cwd: join(root, 'deleted-empty'),
+      registered: true,
+      bytes: projectBytes,
+      runs: [],
+      paths: [
+        join(withoutRuns, 'runs', '.gitignore'),
+        join(withoutRuns, 'runs'),
+        expect.stringContaining(join(withoutRuns, 'worktrees', '')) as unknown,
+        expect.stringContaining(join(withoutRuns, 'worktrees', '')) as unknown,
+        join(withoutRuns, 'worktrees'),
+        join(withoutRuns, 'project.json'),
+        withoutRuns,
+      ],
+    });
+    expect(preview.roots.find((entry) => entry.root === bare)).toMatchObject({
+      cwd: null,
+      registered: false,
+      bytes: 0,
+    });
+    expect(preview.bytes).toBe(preview.removed.reduce((total, run) => total + run.bytes, 0));
+
+    const result = await prune({ missingCwd: true, all: true });
+    expect(ids(result.removed).sort()).toEqual(['lost-one', 'lost-two']);
+    const summary = (entries: PruneResult['roots']) =>
+      entries.map(({ root: path, reason, removed, bytes }) => ({ path, reason, removed, bytes }));
+    expect(summary(result.roots)).toEqual(summary(preview.roots));
+    for (const path of [withRuns, withoutRuns, bare]) expect(await gone(path)).toBe(true);
+    expect((await readRun({ stateDir: defaultStateDir(alive), runId: 'alive-done' })).id).toBe(
+      'alive-done',
+    );
+    expect(await readdir(xdg())).toEqual([aliveRoot.slice(xdg().length + 1)]);
+    const listed = await listAll();
+    expect(listed.runs.map((run) => run.id)).toEqual(['alive-done']);
+    expect(listed.warnings).toEqual([]);
+  });
+
+  it('keeps a stale root that holds a kept run or any file, with its project.json', async () => {
+    const asked = join(root, 'asked');
+    await mkdir(asked);
+    await suspendedRun('asked', asked, null);
+    await rm(asked, { recursive: true });
+    const askedRoot = dirname(defaultStateDir(asked));
+    const heldRoot = await deletedProject('held', ['held']);
+    await plant(join(heldRoot, 'runs', 'held', 'lock'), { owner: liveOwner('live') });
+    const cache = namespace('cached');
+    const cacheRoot = await registeredRoot('cached', [cache]);
+    await writeFile(join(cacheRoot, 'worktrees', cache, 'README.md'), 'live cache\n');
+    const bareFile = await bareRoot('repo-7b94ad023d34', [namespace('x')]);
+    await writeFile(join(bareFile, 'worktrees', 'note.txt'), 'x');
+    const invalid = await bareRoot('invalid-000000000000', [namespace('y')]);
+    await writeFile(join(invalid, 'project.json'), '{}\n');
+    const registered = [askedRoot, heldRoot, cacheRoot];
+    const projectJson = await Promise.all(
+      registered.map((path) => readFile(join(path, 'project.json'))),
+    );
+
+    const before = await snapshot(root);
+    const preview = await prune({ missingCwd: true, all: true, dryRun: true });
+    expect(await snapshot(root)).toEqual(before);
+    const result = await prune({ missingCwd: true, all: true });
+    for (const outcome of [preview, result]) {
+      expect(ids(outcome.removed)).toEqual([]);
+      expect(reasons(outcome)).toEqual({ held: ['locked', 'run.locked'] });
+      expect(byRoot(outcome)).toEqual({
+        [askedRoot]: ['runs-kept', false],
+        [heldRoot]: ['runs-kept', false],
+        [cacheRoot]: ['files', false],
+        [bareFile]: ['files', false],
+        [invalid]: ['files', false],
+      });
+    }
+    expect(result.roots.find((entry) => entry.root === askedRoot)).toMatchObject({
+      runs: ['asked'],
+      bytes: null,
+      paths: [join(askedRoot, 'runs', 'asked')],
+    });
+    expect(result.roots.find((entry) => entry.root === cacheRoot)).toMatchObject({
+      paths: [join(cacheRoot, 'worktrees', cache, 'README.md')],
+      message: expect.stringContaining('remove them by hand') as unknown,
+    });
+    expect(result.roots.find((entry) => entry.root === invalid)?.message).toContain(
+      'project.json must contain a cwd string.',
+    );
+    expect(await snapshot(root)).toEqual(before);
+    for (const [index, path] of registered.entries()) {
+      expect(await readFile(join(path, 'project.json'))).toEqual(projectJson[index]);
+      expect(await readFile(join(path, 'runs', '.gitignore'), 'utf8')).toBe('*\n');
+    }
+  });
+
+  it('keeps a root whose worktree namespace names a run a scanned container still holds', async () => {
+    await suspendedRun('live-one');
+    const inUse = await bareRoot('repo-111111111111', [namespace('live-one')]);
+    const result = await prune({ missingCwd: true, all: true });
+    expect(result.roots).toMatchObject([
+      { root: inUse, reason: 'in-use', removed: false, runs: ['live-one'] },
+    ]);
+    expect(await gone(inUse)).toBe(false);
+  });
+
+  it('keeps a root busy and restores what it unlinked when an entry appears during removal', async () => {
+    const late = await registeredRoot('late-root', [namespace('a')]);
+    const lateRuns = await registeredRoot('late-runs');
+    const projectJson = await readFile(join(late, 'project.json'));
+    const outcome = await pruneRuns(plan({ missingCwd: true, all: true }), processRunner, {
+      beforeRmdir: async (path) => {
+        if (path === late) await writeFile(join(late, 'intruder'), 'x');
+        if (path === join(lateRuns, 'runs')) await writeFile(join(lateRuns, 'runs', 'new'), 'x');
+      },
+    });
+    assert(outcome.kind === 'done');
+    expect(byRoot(outcome.result)).toEqual({
+      [late]: ['busy', false],
+      [lateRuns]: ['busy', false],
+    });
+    expect(outcome.result.roots.find((entry) => entry.root === late)).toMatchObject({
+      bytes: null,
+      paths: [join(late, 'intruder'), join(late, 'project.json')],
+    });
+    expect(await readFile(join(late, 'project.json'))).toEqual(projectJson);
+    expect(await gone(join(late, 'runs'))).toBe(true);
+    expect(await gone(join(late, 'worktrees'))).toBe(true);
+    expect(await readFile(join(lateRuns, 'runs', '.gitignore'), 'utf8')).toBe('*\n');
+    expect(await gone(join(lateRuns, 'project.json'))).toBe(false);
+    expect((await listAll()).warnings).toEqual([]);
+  });
+
+  it.skipIf(process.platform === 'win32' || process.getuid?.() === 0)(
+    'warns, naming the root, when it cannot restore project.json',
+    async () => {
+      const late = await registeredRoot('unrestorable');
+      try {
+        const outcome = await pruneRuns(plan({ missingCwd: true, all: true }), processRunner, {
+          beforeRmdir: async (path) => {
+            if (path !== late) return;
+            await writeFile(join(late, 'intruder'), 'x');
+            await chmod(late, 0o500);
+          },
+        });
+        assert(outcome.kind === 'done');
+        expect(byRoot(outcome.result)).toEqual({ [late]: ['busy', false] });
+        expect(outcome.result.warnings).toEqual([
+          expect.stringContaining(`Could not restore a file in project root ${late}`) as unknown,
+        ]);
+      } finally {
+        await chmod(late, 0o700);
+      }
+    },
+  );
+
+  it('stops between roots on a signal and reports the roots removed so far', async () => {
+    const first = await bareRoot('a-000000000000', [namespace('a')]);
+    const second = await bareRoot('b-000000000000', [namespace('b')]);
+    const controller = new AbortController();
+    const outcome = await pruneRuns(plan({ missingCwd: true, all: true }), processRunner, {
+      signal: controller.signal,
+      beforeRmdir: (path) => {
+        if (path === first) controller.abort();
+      },
+    });
+    assert(outcome.kind === 'interrupted');
+    expect(outcome).toMatchObject({ removed: [], roots: [first] });
+    expect(await gone(first)).toBe(true);
+    expect(await gone(second)).toBe(false);
+  });
+
+  it('touches no root without both --missing-cwd and --all, nor the current project or a symlink', async () => {
+    const stale = await registeredRoot('stale-root', [namespace('a')]);
+    const bare = await bareRoot('repo-222222222222', [namespace('b')]);
+    const current = dirname(defaultStateDir());
+    await mkdir(join(current, 'worktrees', namespace('c')), { recursive: true });
+    const target = join(root, 'elsewhere');
+    await mkdir(join(target, 'worktrees', namespace('d')), { recursive: true });
+    await symlink(target, join(xdg(), 'linked-333333333333'));
+    const linkedInside = await bareRoot('repo-444444444444', [namespace('e')]);
+    await symlink(target, join(linkedInside, 'worktrees', 'link'));
+
+    const before = await snapshot(root);
+    expect((await prune({ missingCwd: true })).roots).toEqual([]);
+    expect((await prune({ all: true, statuses: ['completed'] })).roots).toEqual([]);
+    expect(await snapshot(root)).toEqual(before);
+
+    const result = await prune({ missingCwd: true, all: true });
+    expect(byRoot(result)).toEqual({
+      [stale]: ['missing-cwd', true],
+      [bare]: ['empty', true],
+      [linkedInside]: ['files', false],
+    });
+    expect(await gone(current)).toBe(false);
+    expect(await gone(join(target, 'worktrees'))).toBe(false);
+    expect(await gone(join(linkedInside, 'worktrees', 'link'))).toBe(false);
+
+    // As in the --all test above: an empty container, so the checkout's legacy runs stay out.
+    vi.stubEnv('QUIET_CHOIR_STATE_DIR', join(root, 'empty'));
+    const text = await command(['--missing-cwd', '--all', '--dry-run']);
+    expect(text.error).toBeUndefined();
+    expect(text.stdout).toMatch(/^Would remove 0 runs \(0 B\); skipped 0\.\n/u);
+    expect(text.stdout).toContain('Would remove 0 project roots; kept 1.');
+    expect(text.stdout).toContain(`Kept project root ${linkedInside} (files): `);
+  });
 });
 
 describe('workflow prune usage', () => {

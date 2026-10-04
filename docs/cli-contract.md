@@ -212,7 +212,7 @@ failure of one removal never stops the batch: it becomes a `skipped` entry with 
 `run.*` code) or `storage` (a cache Git could not remove, or another error of that one removal,
 `workflow.storage`). Before removing anything prune sweeps abandoned rm tombstones in every scanned
 container. Success (exit 0, also with skipped runs) returns
-`{kind:"workflow.prune.result", ok:true, dryRun, stateDirs, filters:{olderThanMs, statuses, missingCwd, all, refs}, removed, skipped, bytes, tombstones, warnings}`:
+`{kind:"workflow.prune.result", ok:true, dryRun, stateDirs, filters:{olderThanMs, statuses, missingCwd, all, refs}, removed, skipped, bytes, tombstones, roots, warnings}`:
 `removed[]` entries are
 `{runId, stateDir, status, updatedAt, cwd, bytes, paths, caches, refsRemoved, keptRefs, warnings}`
 as rm reported them, `skipped[]` entries are
@@ -220,13 +220,32 @@ as rm reported them, `skipped[]` entries are
 the CLI code rm refused (or would refuse) with, `workflow.storage`, or null for `queued-answer`,
 `bytes` is the sum of `removed[].bytes`, `tombstones` are absolute paths, and `warnings` carry
 unreadable runs (which are never removed), unreadable inboxes and unknown cwds. Runs that do not
-match are not listed. `--dry-run` runs each selected removal as an rm `--dry-run`: it takes no lock,
-sweeps nothing and changes nothing, `removed[]` lists the runs a prune would remove now with their
-bytes, and a dry-run refusal moves the run to `skipped`. A runs container that cannot be read fails
-the command with `workflow.storage` (exit 74). A signal stops prune between removals (a removal past
-its commit point still finishes) with `workflow.interrupted` (exit 130), `error.details.removed`
-naming the runs already removed; run prune again to continue. See
-[storage](storage.md#removing-runs).
+match are not listed. `roots` is empty unless both `--missing-cwd` and `--all` are given; then,
+after the run removals, prune judges every stale XDG project root
+([ADR 0051](decisions/0051-remove-stale-project-roots-by-rmdir.md),
+[storage](storage.md#removing-runs)): registered roots whose recorded cwd is missing and roots
+without a readable, valid `project.json`; never the current project's root or a root whose cwd
+exists. `roots[]` entries, sorted by root, are
+`{root, cwd, registered, removed, reason, bytes, paths, runs, message}`: `cwd` is null for an
+unregistered root; `reason` is `missing-cwd` (a removed registered root), `empty` (a removed root
+without `project.json` that held only empty `worktrees/` directories), `runs-kept` (a run listed in
+its `runs/` stays), `in-use` (a `worktrees/<runId>-<namespace>/` directory names a run some scanned
+container still holds), `files` (any other file, symbolic link or unknown directory), `busy` (an
+`rmdir` found a directory no longer empty, after which prune restored the file it had unlinked) or
+`storage` (any other error); `bytes` is, for a removed root, the size of the `project.json` and
+`runs/.gitignore` it unlinked and null for a kept root; `paths` lists, for a removed root, the paths
+it unlinked or removed in order and, for a kept root, up to 20 paths that keep it; and `runs` names
+the runs behind `runs-kept` or `in-use`. Root removal unlinks only those two files and removes every
+directory with `rmdir`. `bytes` at the top level remains the sum of `removed[].bytes`, and an
+unknown cwd of a root adds a warning instead of an entry. `--dry-run` runs each selected removal as
+an rm `--dry-run`: it takes no lock, sweeps nothing and changes nothing, `removed[]` lists the runs
+a prune would remove now with their bytes, a dry-run refusal moves the run to `skipped`, and
+`roots[]` shows the roots a prune would remove now (`removed: true`), judged without the paths of
+the runs it would remove. A runs container that cannot be read fails the command with
+`workflow.storage` (exit 74). A signal stops prune between removals (a removal past its commit point
+still finishes) or between project roots with `workflow.interrupted` (exit 130),
+`error.details.removed` naming the runs and `error.details.roots` the project roots already removed;
+run prune again to continue. See [storage](storage.md#removing-runs).
 
 `workflow cancel ID [--force] [--timeout 30s] --json` ends a live local run as `cancelled` without
 importing workflow code
