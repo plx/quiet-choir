@@ -18,6 +18,9 @@
 //   publish  --pr N [--ensure-closes I | --keep-open I]   retarget, push with lease, fix keywords
 //   reply    --pr N < replies.json        reply to review threads (resolves Codex threads by default)
 //   request-review --pr N                comment "@codex review"
+//   local-review-start --pr N [--sha S] [--model M] [--effort E]   run `codex review --base
+//                                        origin/<default>` on the worktree head, detached
+//   local-review-wait  --pr N [--sha S] [--max-seconds 540]  wait for it; {done: false} on timeout
 //   rerun    --pr N --sha S              re-run failed CI jobs for S once (flake check)
 //   verify-fixes --pr N --commits a,b    reported commits are in HEAD; last check passed at HEAD
 //   await    --pr N --sha S --since ISO [--codex required|skip] [--ci wait|skip] [--stale-grace 90]
@@ -882,6 +885,136 @@ async function checkWait(a, P) {
   }
 }
 
+// ---------------------------------------------------------------------------------------------
+// Local Codex review
+
+// `codex review --base origin/<default>` over the worktree's head, instead of asking the GitHub
+// Codex app with "@codex review" and waiting for its threads. A review takes many minutes, so it
+// runs detached like the check suite: local-review-start launches it (or returns a finished review
+// of the same head at once) and local-review-wait waits in bounded slices. The review text goes to
+// codex-review-<sha>.md; the workflow's triage reads that file, not a relayed copy.
+const reviewStem = (P, pr, sha) => join(prDir(P, pr), `codex-review-${sha.slice(0, 12)}`);
+const requireSha = (a, W) => {
+  const sha = typeof a.sha === 'string' ? a.sha : git(W, ['rev-parse', 'HEAD']);
+  if (!/^[0-9a-f]{7,40}$/.test(sha)) fail(`--sha must be a commit SHA, got ${sha}`);
+  return gitOk(W, ['rev-parse', '--verify', '--quiet', `${sha}^{commit}`])
+    ? git(W, ['rev-parse', sha])
+    : fail(`commit ${sha} is not in the worktree`);
+};
+
+// Codex marks each finding with a priority tag such as "[P1]".
+export function reviewFindings(text) {
+  const counts = { P0: 0, P1: 0, P2: 0, P3: 0 };
+  for (const m of text.matchAll(/\[(P[0-3])\]/g)) counts[m[1]]++;
+  return { findings: Object.values(counts).reduce((x, y) => x + y, 0), priorities: counts };
+}
+
+function localReview(a, P, R) {
+  const pr = requirePr(a);
+  const W = P.workdir;
+  const sha = requireSha(a, W);
+  if (git(W, ['rev-parse', 'HEAD']) !== sha) fail(`the worktree is not at ${sha.slice(0, 7)}`);
+  const stem = reviewStem(P, pr, sha);
+  const base = `origin/${R.def}`;
+  const model = typeof a.model === 'string' ? a.model : 'gpt-6-astra';
+  // Codex's own sandbox (workspace-write) lets the review run tests and probes, as it does by hand.
+  const args = ['review', '--base', base, '-c', `model="${model}"`];
+  if (typeof a.effort === 'string') args.push('-c', `model_reasoning_effort="${a.effort}"`);
+  const started = Date.now();
+  const r = spawnSync('codex', args, {
+    cwd: W,
+    stdio: ['ignore', 'pipe', 'pipe'],
+    encoding: 'utf8',
+    maxBuffer: 512 * 1024 * 1024,
+    timeout: Number(a['timeout-minutes'] ?? 40) * 60_000,
+  });
+  const text = stripAnsi(r.stdout ?? '').trim();
+  writeFileSync(`${stem}.md`, `${text}\n`);
+  writeFileSync(`${stem}.log`, stripAnsi(r.stderr ?? ''));
+  const result = {
+    sha,
+    base,
+    model,
+    file: `${stem}.md`,
+    log: `${stem}.log`,
+    exitCode: r.status,
+    elapsedSeconds: Math.round((Date.now() - started) / 1000),
+    ...reviewFindings(text),
+  };
+  if (r.error) result.error = `codex review failed to run: ${r.error.message}`;
+  else if (r.status !== 0)
+    result.error = `codex review exited ${r.status}: ${tail(stripAnsi(r.stderr ?? ''), 5)}`;
+  else if (!text) result.error = 'codex review printed no review';
+  // The review must leave the branch as it found it: probes it left behind are reported and
+  // removed (this is the workflow's dedicated worktree, at a committed head).
+  const moved = git(W, ['rev-parse', 'HEAD']) !== sha;
+  const dirty = git(W, ['status', '--porcelain']);
+  if (dirty) result.cleaned = dirty.split('\n');
+  if (moved || dirty) {
+    git(W, ['reset', '--hard', sha]);
+    git(W, ['clean', '-fd']);
+  }
+  if (moved) result.error = `the review moved the worktree off ${sha.slice(0, 7)}; reset it`;
+  return result;
+}
+
+function localReviewRun(a, P, R) {
+  const pr = requirePr(a);
+  const sha = requireSha(a, P.workdir);
+  const result = localReview({ ...a, sha }, P, R);
+  const file = `${reviewStem(P, pr, sha)}.result.json`;
+  writeJson(`${file}.tmp`, result);
+  renameSync(`${file}.tmp`, file);
+  return result;
+}
+
+function localReviewStart(a, P) {
+  const pr = requirePr(a);
+  const sha = requireSha(a, P.workdir);
+  const stem = reviewStem(P, pr, sha);
+  const previous = readJson(`${stem}.result.json`);
+  // A finished review of the same head is reused: a resumed run does not pay for it twice.
+  if (previous && !previous.error) return { started: false, cached: true, done: true, ...previous };
+  rmSync(`${stem}.result.json`, { force: true });
+  const args = [fileURLToPath(import.meta.url), 'local-review', '--pr', String(pr), '--sha', sha];
+  args.push('--root', P.root);
+  for (const flag of ['repo', 'model', 'effort', 'timeout-minutes']) {
+    if (typeof a[flag] === 'string') args.push(`--${flag}`, a[flag]);
+  }
+  const child = spawn(process.execPath, args, { detached: true, stdio: 'ignore' });
+  child.unref();
+  const started = { sha, pid: child.pid, startedAt: nowIso() };
+  writeJson(`${stem}.started.json`, started);
+  return { started: true, cached: false, ...started };
+}
+
+async function localReviewWait(a, P) {
+  const pr = requirePr(a);
+  const sha = requireSha(a, P.workdir);
+  const stem = reviewStem(P, pr, sha);
+  const file = `${stem}.result.json`;
+  const started = readJson(`${stem}.started.json`);
+  if (!started && !existsSync(file)) fail(`no review of ${sha.slice(0, 7)} was started`);
+  const maxSeconds = Number(a['max-seconds'] ?? 540);
+  const begin = Date.now();
+  for (;;) {
+    if (existsSync(file)) return { done: true, ...readJson(file) };
+    if (!processAlive(started.pid)) {
+      if (existsSync(file)) return { done: true, ...readJson(file) };
+      return {
+        done: true,
+        sha,
+        error: `the review process (pid ${started.pid}) exited without a result`,
+      };
+    }
+    const waitedSeconds = Math.round((Date.now() - begin) / 1000);
+    if (waitedSeconds >= maxSeconds) {
+      return { done: false, sha, pid: started.pid, startedAt: started.startedAt, waitedSeconds };
+    }
+    await sleep(5_000);
+  }
+}
+
 function runCheck(a, P) {
   const pr = requirePr(a);
   const W = P.workdir;
@@ -1401,6 +1534,9 @@ const COMMANDS = {
   check: (a, P) => check(a, P),
   'check-start': (a, P) => checkStart(a, P),
   'check-wait': (a, P) => checkWait(a, P),
+  'local-review': localReviewRun,
+  'local-review-start': (a, P) => localReviewStart(a, P),
+  'local-review-wait': (a, P) => localReviewWait(a, P),
   publish,
   reply,
   'request-review': requestReview,

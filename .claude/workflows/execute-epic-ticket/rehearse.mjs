@@ -563,6 +563,21 @@ const SCENARIOS = {
       const child = calls.find((c) => c.label === 'workflow:merge-down-pr');
       assert.equal(child.args.parentEpic, 99);
       assert.ok(child.args.followupEpic, 'follow-up epic passed to the child');
+      // The landing reviews locally by default: no wait for the GitHub Codex app.
+      assert.ok(!calls.some((c) => c.label?.startsWith('await review')), 'no first-review wait');
+    },
+  },
+  'waits for the GitHub Codex review in github mode': {
+    world: { issues: { 102: {} } },
+    args: { mergeDown: { codexMode: 'github' } },
+    check({ result, calls }) {
+      assert.equal(result.status, 'landed', JSON.stringify(result));
+      assert.ok(
+        calls.some((c) => c.label?.startsWith('await review')),
+        'first-review wait',
+      );
+      const child = calls.find((c) => c.label === 'workflow:merge-down-pr');
+      assert.equal(child.args.codexMode, 'github');
     },
   },
   'resumes an in-flight PR at landing': {
