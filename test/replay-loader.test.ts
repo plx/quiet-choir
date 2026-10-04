@@ -17,6 +17,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { ThresholdLogger } from '../src/application/execution.js';
 import { WorkflowExecutor } from '../src/workflow/loader/executor.js';
+import { TypecheckProgramCache } from '../src/workflow/typecheck/program-cache.js';
 import { analyzeTypecheckEntrypoint } from '../src/workflow/typecheck/plan.js';
 import { readRun } from '../src/index.js';
 import { lockRun } from '../src/workflow/runtime/store.js';
@@ -27,8 +28,10 @@ const repository = dirname(dirname(fileURLToPath(import.meta.url)));
 let root: string;
 let stateDir: string;
 let file: string;
+// One program cache for the suite: the first compile checks the whole engine, later ones reuse it.
+const typecheckCache = new TypecheckProgramCache();
 const executor = () =>
-  new WorkflowExecutor({ logger: new ThresholdLogger('silent', () => undefined) });
+  new WorkflowExecutor({ logger: new ThresholdLogger('silent', () => undefined), typecheckCache });
 function plan(entrypoint = file) {
   const analysis = analyzeTypecheckEntrypoint(entrypoint, root);
   if (!analysis.ok) throw new Error('invalid fixture');

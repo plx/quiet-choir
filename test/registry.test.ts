@@ -14,6 +14,7 @@ import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ThresholdLogger } from '../src/application/execution.js';
 import { WorkflowExecutor } from '../src/workflow/loader/executor.js';
+import { TypecheckProgramCache } from '../src/workflow/typecheck/program-cache.js';
 import { definitionFiles } from '../src/workflow/loader/registry.js';
 
 const repository = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -29,8 +30,10 @@ async function project() {
 function source(name: string, body = 'return null;'): string {
   return `import {z} from 'zod'; import {defineWorkflow} from ${JSON.stringify(join(repository, 'src/workflow/runtime/model.js'))}; export default defineWorkflow({name:${JSON.stringify(name)},version:'1',input:z.null(),output:z.null(),run:async()=>{${body}}});`;
 }
+// One program cache for the suite: the first compile checks the whole engine, later ones reuse it.
+const typecheckCache = new TypecheckProgramCache();
 const executor = () =>
-  new WorkflowExecutor({ logger: new ThresholdLogger('silent', () => undefined) });
+  new WorkflowExecutor({ logger: new ThresholdLogger('silent', () => undefined), typecheckCache });
 afterEach(async () => {
   vi.unstubAllEnvs();
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
@@ -131,6 +134,8 @@ describe('trusted definition registry', { timeout: 60_000 }, () => {
           module: 'nodenext',
           moduleResolution: 'nodenext',
           target: 'es2023',
+          lib: ['es2023'],
+          skipLibCheck: true,
           types: ['node'],
           strict,
         },

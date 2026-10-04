@@ -9,10 +9,13 @@ import {
   selectedAdapters,
 } from '../src/workflow/loader/harness-selection.js';
 import { DoctorExecutor } from '../src/application/doctor.js';
+import { TypecheckProgramCache } from '../src/workflow/typecheck/program-cache.js';
 import { defineHarness, defineWorkflow, z } from '../src/index.js';
 import { describeWorkflow } from '../src/workflow/runtime/definition.js';
 
 const directories: string[] = [];
+// The doctor case type-checks one engine-importing workflow four times; later checks reuse it.
+const typecheckCache = new TypecheckProgramCache();
 async function directory() {
   const path = await mkdtemp(join(tmpdir(), 'choir-registry-cli-'));
   directories.push(path);
@@ -134,11 +137,16 @@ it('doctor typechecks a trusted registry, forwards configuration, and invokes on
       async probe(config) {return {version: z.object({version:z.string()}).parse(config).version};}});
     export default defineWorkflow({name:'probe',version:'1',harnesses:[third],input:z.null(),output:z.null(),async run(){throw new Error('doctor must not run workflows');}});`,
   );
-  const executor = new DoctorExecutor({
-    log() {
-      /* Silent diagnostic test logger. */
+  const executor = new DoctorExecutor(
+    {
+      log() {
+        /* Silent diagnostic test logger. */
+      },
     },
-  });
+    undefined,
+    undefined,
+    typecheckCache,
+  );
   const result = await executor.execute({
     kind: 'configuration.doctor',
     cwd,
