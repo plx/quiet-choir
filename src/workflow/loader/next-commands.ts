@@ -1,6 +1,7 @@
 import { launchPolicyFlags, workflowArgv, type CommandLauncher } from '../runtime/commands.js';
 import type { CliErrorCode } from '../runtime/run-errors.js';
 import type { JsonValue } from '../runtime/model.js';
+import { recordSchemaDrift } from '../runtime/record.js';
 import type { RunRecord } from '../runtime/store.js';
 
 /**
@@ -75,8 +76,10 @@ function fork(
 /**
  * Follow-ups for a saved run in a given (possibly derived) status: resume a failed or stale run;
  * answer a suspended run's waiting questions (at most {@link maxAnswerEntries}), then resume it.
- * A run without a stored entrypoint (an embedded run) cannot be resumed by ID and gets none. Resume
- * entries repeat the run's recorded launch policy (fixture harness, block wait mode).
+ * A run without a stored entrypoint (an embedded run) cannot be resumed by ID and gets none, and
+ * neither does a run this build cannot fully read (`recordSchemaDrift`): it refuses to resume it
+ * until quiet-choir is upgraded. Resume entries repeat the run's recorded launch policy (fixture
+ * harness, block wait mode).
  * @internal
  */
 export function runNextCommands(
@@ -85,7 +88,7 @@ export function runNextCommands(
   stateDir: string,
   launcher?: CommandLauncher,
 ): NextCommand[] {
-  if (!run.launch) return [];
+  if (!run.launch || recordSchemaDrift(run)) return [];
   if (status === 'failed')
     return [
       {
@@ -131,7 +134,7 @@ export function runNextCommands(
 /**
  * The follow-up for a pending row whose answer is already queued: resume so the run's owner
  * ingests it. A run without a stored entrypoint (an embedded run) cannot be resumed by ID and gets
- * none. Callers pass only suspended or failed runs: a running owner ingests the answer itself.
+ * none, and neither does a run this build cannot fully read. Callers pass only suspended or failed runs: a running owner ingests the answer itself.
  * @internal
  */
 export function queuedNextCommands(
@@ -139,7 +142,7 @@ export function queuedNextCommands(
   stateDir: string,
   launcher?: CommandLauncher,
 ): NextCommand[] {
-  return run.launch
+  return run.launch && !recordSchemaDrift(run)
     ? [
         {
           why: 'An answer is queued; resume the run so its owner ingests it.',

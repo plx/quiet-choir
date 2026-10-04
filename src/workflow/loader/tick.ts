@@ -3,7 +3,12 @@ import { stat } from 'node:fs/promises';
 import type { ExecutionPlan, ExecutionResult, Executor } from '../../application/execution.js';
 import { answerCandidates, questionCodeChanged } from '../runtime/inbox.js';
 import { FileRunStore, type OwnedRunStore, type RunStore } from '../runtime/run-store.js';
-import { inspectRunOwnership, type RunRecord } from '../runtime/store.js';
+import {
+  inspectRunOwnership,
+  recordSchemaDrift,
+  recordSchemaRefusalMessage,
+  type RunRecord,
+} from '../runtime/store.js';
 import { readRequiredRun } from '../runtime/read-required-run.js';
 import {
   isValidRunId,
@@ -404,6 +409,12 @@ export class TickWorkflowExecutor implements Executor<
           try {
             let run = await readRequiredRun({ stateDir: plan.stateDir, runId: id });
             if (await classify(run, 'not due')) continue;
+            // A due or stale run this build cannot fully read is left untouched for a newer build.
+            const drift = recordSchemaDrift(run);
+            if (drift) {
+              skip(id, 'incompatible', { message: recordSchemaRefusalMessage(id, drift) });
+              continue;
+            }
             // A running run reaching here is a stale-recovery candidate and bypasses due().
             const ownership = await inspectRunOwnership({ stateDir: plan.stateDir, runId: id });
             const recovery = classifyRecovery(ownership);
@@ -495,6 +506,9 @@ export class TickWorkflowExecutor implements Executor<
             else if (error instanceof OrphanProcessesError) skip(id, 'orphans', { message });
             else if (error instanceof RunRefusedError && error.code === 'run.locked')
               skip(id, 'locked');
+            // A record newer than this build (lock-free or owned read): the same skip as above.
+            else if (error instanceof RunRefusedError && error.code === 'run.incompatible')
+              skip(id, 'incompatible', { message });
             else skip(id, 'unreadable', { message });
           } finally {
             await claim?.release();

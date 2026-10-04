@@ -10,6 +10,8 @@ import { resolveStateDir, projectStateDirectories } from '../runtime/paths.js';
 import {
   inspectRunOwnership,
   listRunIds,
+  recordSchemaDrift,
+  recordSchemaWarning,
   type ReadRunOptions,
   type RunOwnership,
   type RunRecord,
@@ -174,6 +176,11 @@ export interface RunSummary {
   readonly recent: readonly RunEvent[];
   /** The latest accepted code changes, at most 5, as stored; a map entry names its settled map. */
   readonly codeChanges: readonly CodeChange[];
+  /**
+   * Saved policy, replay, harness, worktree and wait warnings, the ownership warning, and a
+   * record-schema warning when this build cannot fully read the record (a newer `schemaRevision`
+   * or top-level fields it does not know).
+   */
   readonly warnings: readonly string[];
   /**
    * On-disk bytes of the run's files in its runs container (`runBytes`): everything under
@@ -443,6 +450,7 @@ export function summarizeRun(
       .sort()
       .at(-1) ?? run.updatedAt;
   const rateLimits = latestRateLimits(entries);
+  const drift = recordSchemaDrift(run);
   return {
     children: summarizeChildren(run),
     cwd: run.cwd,
@@ -525,6 +533,7 @@ export function summarizeRun(
       ...(run.worktreeWarnings ?? []),
       ...(run.waitWarnings ?? []),
       ...(ownership.warning ? [ownership.warning] : []),
+      ...(drift ? [recordSchemaWarning(drift)] : []),
     ],
   };
 }

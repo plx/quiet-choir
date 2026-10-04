@@ -73,7 +73,7 @@ import type { Harness } from '../runtime/model.js';
 import { runWorkflow } from '../runtime/runner.js';
 import { legacyRunPath, resolveStateDir, runDirectory } from '../runtime/paths.js';
 import { CheckpointError, errorCode } from '../runtime/checkpoint.js';
-import { readRun, type RunRecord } from '../runtime/store.js';
+import { readRun, refuseRecordSchemaDrift, type RunRecord } from '../runtime/store.js';
 import type { RunStore } from '../runtime/run-store.js';
 import type { WorkflowClock } from '../runtime/wait-model.js';
 import { TypeScriptExecutor } from '../typecheck/typescript-executor.js';
@@ -260,6 +260,7 @@ export class WorkflowExecutor implements Executor<WorkflowExecutorPlan, Workflow
         return workflowFailure('usage.run_id', runIdMessage, context);
       if (plan.kind === 'workflow.resume') {
         const run = await readRequiredRun({ runId: plan.runId, stateDir: plan.stateDir });
+        refuseRecordSchemaDrift(run);
         if (!run.launch)
           throw new RunRefusedError(
             'run.incompatible',
@@ -530,6 +531,8 @@ export class WorkflowExecutor implements Executor<WorkflowExecutorPlan, Workflow
       let saved: RunRecord | undefined;
       if (plan.kind === 'workflow.execute' && plan.resume) {
         saved = await readRequiredRun({ runId: plan.runId, stateDir: plan.stateDir });
+        // Before the type check, a dry-run copy or an accepted-change preflight copy.
+        refuseRecordSchemaDrift(saved);
         const recorded = saved.launch?.policy;
         if (recorded && plan.inheritHarness)
           selection = await inheritHarnessSelection(selection, recorded.harness, (message) => {
