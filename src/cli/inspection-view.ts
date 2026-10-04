@@ -281,14 +281,27 @@ export function formatRunSummary(run: RunSummary, verbose = false): string {
   return lines.join('\n');
 }
 
+/** Binary human units for an on-disk size: B, KiB, MiB or GiB, one decimal above bytes. @internal */
+export function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${String(bytes)} B`;
+  const units = ['KiB', 'MiB', 'GiB'] as const;
+  let value = bytes / 1024;
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024;
+    unit++;
+  }
+  return `${value.toFixed(1)} ${units[unit] ?? 'GiB'}`;
+}
+
 /** One row per run; no source loading or result payload expansion. @internal */
 export function formatRunList(runs: readonly RunSummary[], showProject = false): string {
   if (!runs.length) return 'No runs found.';
   return [
-    `ID  WORKFLOW  STATUS  STEPS  USAGE  UPDATED  OWNER${showProject ? '  PROJECT  STATE' : ''}`,
+    `ID  WORKFLOW  STATUS  STEPS  USAGE  SIZE  UPDATED  OWNER${showProject ? '  PROJECT  STATE' : ''}`,
     ...runs.map(
       (run) =>
-        `${run.id}  ${run.workflow.name}@${run.workflow.version}  ${run.status}  ${String(run.counts.completed)}/${String(run.counts.total)} completed, ${String(run.counts.running)} running, ${String(run.counts.failed)} failed, ${String(run.counts.cancelled)} cancelled, ${String(run.counts['settled-failed'])} settled-failed, ${String(run.counts.superseded)} superseded, ${String(run.counts.waiting)} waiting, ${String(run.counts.withdrawn)} withdrawn  ${cost(run)}  ${run.updatedAt}  ${owner(run)}${showProject ? `  ${run.cwd}  ${run.stateDir ?? 'unknown'}` : ''}`,
+        `${run.id}  ${run.workflow.name}@${run.workflow.version}  ${run.status}  ${String(run.counts.completed)}/${String(run.counts.total)} completed, ${String(run.counts.running)} running, ${String(run.counts.failed)} failed, ${String(run.counts.cancelled)} cancelled, ${String(run.counts['settled-failed'])} settled-failed, ${String(run.counts.superseded)} superseded, ${String(run.counts.waiting)} waiting, ${String(run.counts.withdrawn)} withdrawn  ${cost(run)}  ${typeof run.bytes === 'number' ? formatBytes(run.bytes) : 'unknown'}  ${run.updatedAt}  ${owner(run)}${showProject ? `  ${run.cwd}  ${run.stateDir ?? 'unknown'}` : ''}`,
     ),
   ].join('\n');
 }

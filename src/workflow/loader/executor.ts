@@ -1,9 +1,11 @@
 import type { WorkflowDeclaration } from '../runtime/child-model.js';
 import { importWorkflow, WorkflowDefinitionError } from './import.js';
 import { cleanWorktrees } from '../runtime/worktree-clean.js';
+import { removeRun } from '../runtime/run-removal.js';
 import type {
   CancelWorkflowPlan,
   CleanWorkflowPlan,
+  RemoveWorkflowPlan,
   ListDefinitionsPlan,
   ExecuteNamedWorkflowPlan,
   UnlockWorkflowPlan,
@@ -156,6 +158,7 @@ export type WorkflowExecutorPlan =
   | AnswerWorkflowPlan
   | PendingWorkflowsPlan
   | CleanWorkflowPlan
+  | RemoveWorkflowPlan
   | UnlockWorkflowPlan
   | CancelWorkflowPlan
   | ListDefinitionsPlan
@@ -180,7 +183,10 @@ export class WorkflowExecutor implements Executor<WorkflowExecutorPlan, Workflow
       runId: result.runId,
       stateDir: result.stateDir,
       launcher: this.#options.commandLauncher,
-      rehearsal: result.rehearsal !== undefined || ('dryRun' in plan && plan.dryRun),
+      // An rm dry run previews a removal, not a workflow: its refusals keep their follow-ups.
+      rehearsal:
+        result.rehearsal !== undefined ||
+        (plan.kind !== 'workflow.rm' && 'dryRun' in plan && plan.dryRun),
     });
     // Absent means none; the CLI document always renders an array.
     return next.length ? { ...result, next } : result;
@@ -280,6 +286,21 @@ export class WorkflowExecutor implements Executor<WorkflowExecutorPlan, Workflow
             this.#options.processSupervisor,
           )),
         };
+      }
+      if (plan.kind === 'workflow.rm') {
+        stage = 'workflow.storage';
+        const outcome = await removeRun(
+          plan,
+          this.#options.processRunner ?? new NodeProcessRunner(),
+          { signal: this.#options.signal, processSupervisor: this.#options.processSupervisor },
+        );
+        if (outcome.kind === 'blocked')
+          return workflowFailure('workflow.storage', outcome.message, {
+            ...context,
+            run: await readRun({ runId: plan.runId, stateDir: outcome.stateDir }).catch(() => null),
+            details: { caches: [...outcome.caches], warnings: [...outcome.warnings] },
+          });
+        return { kind: 'workflow.rm.result', ok: true, ...outcome.result };
       }
       if (plan.kind === 'workflow.unlock') {
         stage = 'workflow.storage';
