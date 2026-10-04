@@ -1217,3 +1217,19 @@ it('leaves requests of profiles without roots, and rooted calls without addDirs,
   expect(saved.steps['plain']?.request).not.toHaveProperty('addDirs');
   expect(saved.steps['rooted']?.identity).not.toHaveProperty('option.addDirRoots');
 });
+
+it('never accepts addDirRoots as a call option, even with strictProfiles: false', async () => {
+  const invoke = vi.fn<Harness['invoke']>().mockResolvedValue(reply);
+  const definition = defineWorkflow({
+    ...base,
+    strictProfiles: false,
+    async run(ctx) {
+      const options = { prompt: 'x', addDirRoots: ['/'] } as { prompt: string };
+      return (await ctx.claude.text('read', options)).output;
+    },
+  });
+  await expect(runWorkflow(definition, { ...setup(), harness: { invoke } })).rejects.toThrow(
+    'Unrecognized key(s) "addDirRoots"',
+  );
+  expect(invoke).not.toHaveBeenCalled();
+});
