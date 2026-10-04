@@ -671,16 +671,20 @@ async function triageLocal(result, round) {
   }
   log(`Local Codex review r${round}: ${result.findings} finding(s) in ${result.elapsedSeconds}s`);
   if (!result.findings) return none;
-  // Earlier decisions, listed for consistency. Only note/follow-up decisions settle a repeat; a
-  // fix decision that Codex reports again may not have worked, so it is checked against the code.
+  // Earlier decisions, listed for consistency. Note, follow-up, and deferred decisions settle a
+  // repeat; a fix decision that Codex reports again may not have worked, so it is checked against
+  // the code. A fix the fixer could not finish was deferred to a follow-up issue, so it is labelled
+  // as such rather than as attempted, or every later round would reopen it.
+  const deferred = new Map((record.deferredFindings ?? []).map((d) => [d.key, d]));
+  const outcome = (f) => {
+    const d = deferred.get(`finding:${f.id}`);
+    if (d) return `, deferred to follow-up${d.issue ? ` #${d.issue}` : ''}`;
+    return f.disposition === 'fix' ? ', fix attempted' : '';
+  };
   const known = [
-    ...record.review.findings.map(
-      (f) =>
-        `- ${f.id}: ${f.title} (${f.disposition}${f.disposition === 'fix' ? ', fix attempted' : ''})`,
-    ),
+    ...record.review.findings.map((f) => `- ${f.id}: ${f.title} (${f.disposition}${outcome(f)})`),
     ...record.codexFindings.map(
-      (f) =>
-        `- ${f.id}: ${f.title} (${f.verdict}, ${f.disposition}${f.disposition === 'fix' ? ', fix attempted' : ''})`,
+      (f) => `- ${f.id}: ${f.title} (${f.verdict}, ${f.disposition}${outcome(f)})`,
     ),
   ].join('\n');
   const ask = (extra = '') =>
@@ -692,7 +696,7 @@ ${situation()}
 Read the review file and the code each finding points at; try to refute a finding before accepting it.
 Decisions this merge-down already made, listed for consistency:
 ${known || '- none'}
-A Codex finding that repeats an earlier note or follow-up decision is verdict duplicate, disposition note, naming the earlier id in detail. A finding that repeats an earlier fix decision (marked "fix attempted") must be checked against the code at the reviewed head: if the defect is still present, the fix did not work, so treat it as a new finding (verdict valid or partly-valid, disposition fix, detail naming the earlier id and why the fix was incomplete). Use duplicate only when the current code shows it is already resolved.
+A Codex finding that repeats an earlier note or follow-up decision, or an earlier fix that was deferred (marked "deferred to follow-up"), is verdict duplicate, disposition note, naming the earlier id (and its follow-up issue, if listed) in detail. A finding that repeats an earlier fix decision (marked "fix attempted") must be checked against the code at the reviewed head: if the defect is still present, the fix did not work, so treat it as a new finding (verdict valid or partly-valid, disposition fix, detail naming the earlier id and why the fix was incomplete). Use duplicate only when the current code shows it is already resolved.
 
 For each Codex finding, in the review's order: id (F1, F2, …), title, verdict (valid | partly-valid | invalid | duplicate), disposition (fix: within this PR's issue scope and intent | follow-up: valid but beyond it | note: invalid, duplicate, or not worth acting on), severity (blocker | major | minor, by your own judgment rather than Codex's tag), complexity (mechanical | subtle), detail (the problem in 1–3 sentences with path:line), plan (concrete for fix and follow-up; for note, why not), and files. This is Codex round ${round}; re-reviews stop after round ${A.maxCodexRounds} unless a round keeps finding real major problems (hard cap ${A.codexRoundsHardCap}), so be decisive and rate severity honestly. Plans cover code and docs only, never GitHub actions.${standing}${extra}`,
       { ...TIER.reviewer, label: `codex triage r${round}`, phase: 'Review', schema: CODEX_TRIAGE },
@@ -1125,8 +1129,9 @@ async function fixRoundOf(threads, work) {
         detail: `${w.detail}\n\nThe fixer ${how} this in PR #${A.pr}${d.commit?.trim() ? ` (${d.commit.trim()})` : ''}: ${d.summary}${fixed.notes?.length ? `\nFixer notes: ${fixed.notes.join(' ')}` : ''}`,
       };
     });
+    let filedDeferred = null;
     if (publishing) {
-      const filedDeferred = await fileFollowups(items);
+      filedDeferred = await fileFollowups(items);
       const keys = new Set((filedDeferred?.issues ?? []).map((i) => i.key));
       const unfiled = items.filter((i) => !keys.has(i.key)).map((i) => i.key);
       if (unfiled.length)
@@ -1134,7 +1139,12 @@ async function fixRoundOf(threads, work) {
     }
     record.deferredFindings = [
       ...(record.deferredFindings ?? []),
-      ...deferred.map((d) => ({ key: d.key, status: d.status, summary: d.summary })),
+      ...deferred.map((d) => ({
+        key: d.key,
+        status: d.status,
+        summary: d.summary,
+        issue: filedDeferred?.issues?.find((i) => i.key === d.key)?.number ?? null,
+      })),
     ];
     log(
       `Deferred ${deferred.length} minor finding(s) to follow-ups: ${deferred.map((d) => d.key).join(', ')}`,

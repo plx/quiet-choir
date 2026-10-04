@@ -89,14 +89,16 @@ shortfall is retried once with the count and the ids returned so far, and if tri
 no finding at all the run blocks at the review step. A partial shortfall (the `[P0]`–`[P3]` count
 can overcount when a tag is quoted in prose) is recorded in the ledger notes rather than blocking. A
 finding that repeats an earlier fix decision is checked against the code at the reviewed head, and
-is a new fix item if the defect is still there; only note and follow-up repeats are duplicates. Each
-gate round that pushed new code reviews the pushed head in parallel with the CI wait, bounded by
-`maxCodexRounds` / `codexRoundsHardCap` as before. A failed review is noted and the gate proceeds on
-CI. When a local review ran, the gate refreshes its CI and unanswered-thread snapshot once the
-review finishes (CI is settled by then, so this costs only the settle delay), so threads that
-arrived during the review are triaged in the same round. `codexModel` and `codexEffort` override the
-model and reasoning effort. Threads that the GitHub app (or anyone else) still posts are triaged as
-unanswered threads.
+is a new fix item if the defect is still there; only note, follow-up, and deferred repeats are
+duplicates. A fix that the fixer could not finish was deferred to a follow-up issue, so triage sees
+it as deferred (with the issue number) rather than as attempted, and its repeats do not start new
+fix rounds. Each gate round that pushed new code reviews the pushed head in parallel with the CI
+wait, bounded by `maxCodexRounds` / `codexRoundsHardCap` as before. A failed review is noted and the
+gate proceeds on CI. When a local review ran, the gate refreshes its CI and unanswered-thread
+snapshot once the review finishes (CI is settled by then, so this costs only the settle delay), so
+threads that arrived during the review are triaged in the same round. `codexModel` and `codexEffort`
+override the model and reasoning effort. Threads that the GitHub app (or anyone else) still posts
+are triaged as unanswered threads.
 
 ### Codex signals (`codexMode: 'github'`)
 
