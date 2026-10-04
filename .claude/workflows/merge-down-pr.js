@@ -96,6 +96,9 @@ export const meta = {
 
 const TIER = {
   clerk: { model: 'haiku', effort: 'low' },
+  // Re-reads after a failed relay: a model's copying mistakes repeat exactly (haiku once dropped the
+  // same '}' from a nested object three times in a row), so a retry uses a different, stronger model.
+  copyist: { model: 'sonnet', effort: 'low' },
   scribe: { model: 'sonnet', effort: 'medium' },
   mechanic: { model: 'sonnet', effort: 'high' },
   reviewer: { model: 'opus', effort: 'medium' },
@@ -188,26 +191,35 @@ const RESOLVE = obj({
   resolutions: arr(obj({ file: str, how: str })),
   concerns: arr(str),
 });
-const FIX = obj({
-  items: arr(
-    obj({ key: str, status: oneOf('fixed', 'partly', 'not-fixed'), commit: str, summary: str }),
-  ),
-  checkPassed: bool,
-  head: str,
-  notes: arr(str),
-});
-const FILED = obj({
-  epic: obj({ number: num, url: str, created: bool }),
-  issues: arr(
-    obj({
-      key: str,
-      number: num,
-      url: str,
-      title: str,
-      action: oneOf('created', 'commented-existing'),
-    }),
-  ),
-});
+// Reports must name the work items they were given: the key is constrained to those keys, so a
+// mistyped or prefix-less key is a schema retry rather than "not reported" (see canonicalizeKeys).
+const FIX = (keys) =>
+  obj({
+    items: arr(
+      obj({
+        key: oneOf(...keys),
+        status: oneOf('fixed', 'partly', 'not-fixed'),
+        commit: str,
+        summary: str,
+      }),
+    ),
+    checkPassed: bool,
+    head: str,
+    notes: arr(str),
+  });
+const FILED = (keys) =>
+  obj({
+    epic: obj({ number: num, url: str, created: bool }),
+    issues: arr(
+      obj({
+        key: oneOf(...keys),
+        number: num,
+        url: str,
+        title: str,
+        action: oneOf('created', 'commented-existing'),
+      }),
+    ),
+  });
 const REPORT = obj({ posted: bool, commentUrl: str, headline: str });
 
 // ── Run state ────────────────────────────────────────────────────────────────────────────────
@@ -317,10 +329,12 @@ ${listing}
 
 ${RELAY_RULES}`;
 
-async function relay(label, phaseName, steps, render = RUN_STEPS) {
+async function relay(label, phaseName, steps, render = RUN_STEPS, tier = TIER.clerk) {
   const listing = steps.map((c) => `<command id="${c.id}">\n${c.run}\n</command>`).join('\n\n');
   clerkRuns++;
-  const text = await agent(render(listing), { ...TIER.clerk, label, phase: phaseName });
+  const text = await agent(render(listing), { ...tier, label, phase: phaseName });
+  // A clerk that died (API error, usage limit) is not a corrupted relay: say so, don't guess.
+  if (text === null) return { verified: {}, missing: steps, dead: true };
   const copied = parseObject(text) ?? {};
   const verified = {};
   const missing = [];
@@ -336,7 +350,7 @@ async function relay(label, phaseName, steps, render = RUN_STEPS) {
       missing.push(s);
     }
   }
-  return { verified, missing };
+  return { verified, missing, dead: false };
 }
 
 // Run helper steps through a haiku clerk; returns {id: verified output}. Unverifiable outputs are
@@ -345,18 +359,30 @@ async function clerk(label, phaseName, steps, render = RUN_STEPS) {
   const first = await relay(label, phaseName, steps, render);
   const out = first.verified;
   let missing = first.missing;
+  let dead = first.dead;
   for (let i = 1; i <= 2 && missing.length; i++) {
     const rereads = missing.map((s) => ({
       ...s,
       run: `node ${sh(TOOL)} last ${toolFlags()} --cmd ${s.sub}`,
     }));
-    const again = await relay(`${label} (re-read ${i})`, phaseName, rereads);
+    const again = await relay(
+      `${label} (re-read ${i})`,
+      phaseName,
+      rereads,
+      RUN_STEPS,
+      TIER.copyist,
+    );
     Object.assign(out, again.verified);
     missing = again.missing;
+    // Two dead clerks in a row: the model API is unavailable, and more re-reads would die too.
+    if (dead && again.dead) break;
+    dead = again.dead;
   }
   for (const s of missing) {
     out[s.id] = {
-      error: `no verifiable output from "${s.sub}" (not run, or the relay was corrupted)`,
+      error: dead
+        ? `the clerk agent died before relaying "${s.sub}" (API error or usage limit); re-run once the API is available`
+        : `no verifiable output from "${s.sub}" (not run, or the relay was corrupted)`,
     };
   }
   return out;
@@ -535,9 +561,26 @@ const majorBump = (() => {
   return m ? Number(m[2]) > Number(m[1]) : false;
 })();
 
+// The suite can outlast a clerk's 10-minute shell limit. Run in one call, its output then never
+// reached the relay (#273, #279), and the landing paid for a fix round that only re-ran the suite.
+// Instead, start it detached and wait for it in 9-minute slices, each a cheap clerk call.
+async function localCheck(label, phaseName) {
+  const start = await clerk('local checks', phaseName, [
+    step('start', 'check-start', `--label ${label}`),
+  ]);
+  if (!start.start || start.start.error) return start.start;
+  for (let i = 1; i <= 5; i++) {
+    const waited = await clerk(`local checks (wait ${i})`, phaseName, [
+      step('wait', 'check-wait', `--label ${label} --max-seconds 540`),
+    ]);
+    if (!waited.wait || waited.wait.error || waited.wait.done) return waited.wait;
+  }
+  return { passed: false, error: 'the local check did not finish within 45 minutes' };
+}
+
 phase('Review');
-const [checked, firstReview] = await parallel([
-  () => clerk('local checks', 'Review', [step('check', 'check', '--label check-0')]),
+const [check0Result, firstReview] = await parallel([
+  () => localCheck('check-0', 'Review'),
   () =>
     kind === 'dependency'
       ? agent(dependencyReviewPrompt(), {
@@ -553,7 +596,7 @@ const [checked, firstReview] = await parallel([
           schema: REVIEW,
         }),
 ]);
-const check0 = checked?.check ?? { passed: false, error: 'local checks produced no output' };
+const check0 = check0Result ?? { passed: false, error: 'local checks produced no output' };
 if (!firstReview) return blocked('review', 'reviewer returned nothing');
 log(`Local checks ${check0.passed ? 'pass' : `fail at ${check0.failedStep ?? check0.error}`}`);
 
@@ -731,11 +774,11 @@ Rules:
 - Add or update tests for behavior changes, and keep docs and skill text consistent with code changes.
 - Never write to GitHub (no comments, issues, reviews, or PR edits), even if a plan asks: the workflow publishes. Mention anything that should be communicated in notes.
 - Commit on the current local branch in small logical commits with concise imperative messages. No new branches, no amending or rewriting existing commits, no push.
-- Before checking, format and lint what you touched: \`cd ${sh(W)} && npx prettier --write <files> && npx eslint --fix <files>\`.
-- Then run \`node ${sh(TOOL)} check --pr ${A.pr} --root ${sh(ROOT)} --label ${label}\` (a few minutes; prints JSON with passed, failedStep, and the log path). If it fails, fix and re-run, at most 3 runs. Never weaken or skip tests to get green.
+- Before checking, format and lint what you touched: \`cd ${sh(W)} && npx eslint --fix <files> && npx prettier --write <files>\` (prettier last: eslint --fix can leave formatting that format:check rejects).
+- Then run \`node ${sh(TOOL)} check --pr ${A.pr} --root ${sh(ROOT)} --label ${label}\` (about 11 minutes; prints JSON with passed, failedStep, and the log path). It usually outlasts the shell tool's 10-minute foreground limit and moves to the background: keep waiting until it prints its JSON, and never report while it is still running. If it fails, fix and re-run, at most 3 runs. Never weaken or skip tests to get green.
 - Finally run \`node ${sh(TOOL)} snapshot --pr ${A.pr} --root ${sh(ROOT)}\`.
 Return one entry per item key: status (fixed | partly | not-fixed), the short SHA of the commit that addresses it ('' if none), and a one-sentence summary. Also return checkPassed (from your last check run), head (from snapshot), and notes (deviations from plans, anything a reviewer should know). Write plain text (no HTML entities) and keep each summary to one sentence.`,
-      { ...t, label, phase: 'Fix', schema: FIX },
+      { ...t, label, phase: 'Fix', schema: FIX(items.map((i) => i.key)) },
     );
   let result = await run(tier, '');
   if (!result) {
@@ -774,9 +817,15 @@ Items:
 ${items.map((i) => `### [${i.key}] ${i.title}\nSeverity: ${i.severity}. Source: ${i.source}.\n${i.detail}\nSuggested direction: ${i.plan}${i.files?.length ? `\nFiles: ${i.files.join(', ')}` : ''}`).join('\n\n')}
 
 Return the epic (number, url, created) and one entry per item key.`,
-    { ...TIER.scribe, label: 'file follow-ups', phase: 'Fix', schema: FILED },
+    {
+      ...TIER.scribe,
+      label: 'file follow-ups',
+      phase: 'Fix',
+      schema: FILED(items.map((i) => i.key)),
+    },
   );
   if (filed?.epic?.number) record.followupEpic = filed.epic.number;
+  canonicalizeKeys(items, filed?.issues);
   for (const f of filed?.issues ?? [])
     record.followups.push({
       key: f.key,
@@ -806,6 +855,18 @@ function replyFor(t, fixed, filed) {
   return { threadId: t.id, body, ...(dismiss ? { dismiss } : {}) };
 }
 
+// Agents sometimes report an item key without its "finding:"/"thread:"/"check:" prefix ("F1"
+// for "finding:F1"). Map each reported key back to the one item it names, so work that was done
+// is not counted as missing. A key that matches no item, or several, is left alone.
+function canonicalizeKeys(items, reported) {
+  const keys = items.map((i) => i.key);
+  for (const r of reported ?? []) {
+    if (keys.includes(r.key)) continue;
+    const match = keys.filter((k) => k.endsWith(`:${r.key}`));
+    if (match.length === 1) r.key = match[0];
+  }
+}
+
 // Returns {replies, changed} or a blocked record.
 async function fixRoundOf(threads, work) {
   if (!work.fix.length && !work.followup.length) {
@@ -817,6 +878,7 @@ async function fixRoundOf(threads, work) {
     async () => (work.followup.length && publishing ? fileFollowups(work.followup) : null),
   ]);
   if (work.fix.length && !fixed) return { error: 'implementer returned nothing' };
+  canonicalizeKeys(work.fix, fixed?.items);
   // An omitted item is not a fixed item: own findings and check repairs have no thread to resurface.
   const reported = new Set((fixed?.items ?? []).map((i) => i.key));
   const unreported = work.fix.filter((i) => !reported.has(i.key)).map((i) => i.key);
@@ -828,9 +890,23 @@ async function fixRoundOf(threads, work) {
       return { error: `follow-up filing incomplete: ${unfiled.join(', ') || 'no result'}` };
     }
   }
+  // A minor finding from this workflow's own review that the fixer could not fully address
+  // becomes a follow-up instead of blocking the merge (#322's F1: its plan rested on a premise
+  // the fixer disproved, and the fixer covered the rest another way). Review threads still need a
+  // truthful reply, check and CI items need a green suite, and anything above minor is a real
+  // defect to fix here, so those still block.
+  const deferrable = (i) =>
+    i.status !== 'fixed' &&
+    i.key.startsWith('finding:') &&
+    work.fix.find((w) => w.key === i.key)?.severity === 'minor';
   // "partly" is unfinished, and "fixed" needs the commit that did it: otherwise the thread would
-  // be called addressed and resolved without any change behind it.
-  const unfixed = (fixed?.items ?? []).filter((i) => i.status !== 'fixed' || !i.commit?.trim());
+  // be called addressed and resolved without any change behind it. A failed check is the
+  // exception: a flake is resolved by a green re-run at the same head, with no commit, and the
+  // verification below still demands a passing check at the exact head being published.
+  const needsCommit = (i) => !/^(check|ci):/.test(i.key);
+  const unfixed = (fixed?.items ?? []).filter(
+    (i) => !deferrable(i) && (i.status !== 'fixed' || (needsCommit(i) && !i.commit?.trim())),
+  );
   if (unfixed.length)
     return { error: `could not fix: ${unfixed.map((i) => `${i.key} (${i.summary})`).join('; ')}` };
   if (fixed && !fixed.checkPassed)
@@ -851,6 +927,32 @@ async function fixRoundOf(threads, work) {
     if (!verified.checkPassedAtHead) {
       return { error: `no passing check recorded for head ${verified.head.slice(0, 7)}` };
     }
+  }
+  // Filed only once the round is otherwise sound (checks green, commits verified).
+  const deferred = (fixed?.items ?? []).filter(deferrable);
+  if (deferred.length) {
+    const items = deferred.map((d) => {
+      const w = work.fix.find((x) => x.key === d.key);
+      const how = d.status === 'partly' ? 'only partly addressed' : 'did not address';
+      return {
+        ...w,
+        detail: `${w.detail}\n\nThe fixer ${how} this in PR #${A.pr}${d.commit?.trim() ? ` (${d.commit.trim()})` : ''}: ${d.summary}${fixed.notes?.length ? `\nFixer notes: ${fixed.notes.join(' ')}` : ''}`,
+      };
+    });
+    if (publishing) {
+      const filedDeferred = await fileFollowups(items);
+      const keys = new Set((filedDeferred?.issues ?? []).map((i) => i.key));
+      const unfiled = items.filter((i) => !keys.has(i.key)).map((i) => i.key);
+      if (unfiled.length)
+        return { error: `could not file deferred findings: ${unfiled.join(', ')}` };
+    }
+    record.deferredFindings = [
+      ...(record.deferredFindings ?? []),
+      ...deferred.map((d) => ({ key: d.key, status: d.status, summary: d.summary })),
+    ];
+    log(
+      `Deferred ${deferred.length} minor finding(s) to follow-ups: ${deferred.map((d) => d.key).join(', ')}`,
+    );
   }
   if (fixed?.notes?.length) record.fixNotes = [...(record.fixNotes ?? []), ...fixed.notes];
   record.fixes = [...(record.fixes ?? []), ...(fixed?.items ?? [])];
@@ -879,7 +981,7 @@ let codexRequests = 0;
 
 const AWAIT_LOOP = (
   listing,
-) => `Run this command with the Bash tool (timeout 600000 ms). It waits up to 9 minutes and prints one line of JSON.
+) => `Run this command with the Bash tool (timeout 600000 ms). It waits up to about 8 minutes and prints one line of JSON.
 
 ${listing}
 
@@ -888,7 +990,8 @@ If that JSON contains "done":false, run the exact same command again; repeat unt
 ${RELAY_RULES} The only id is "await": relay the output of the last run.`;
 
 async function waitForGate(sha, since, codex) {
-  const flags = `--sha ${sha} --since ${since} --codex ${codex ? 'required' : 'skip'} --max-seconds 540`;
+  // --stale-grace: GitHub may still report the pre-push head for a short while after publish.
+  const flags = `--sha ${sha} --since ${since} --codex ${codex ? 'required' : 'skip'} --stale-grace 90 --max-seconds 420`;
   for (let attempt = 1; attempt <= 3; attempt++) {
     const label = `await r${record.rounds}.${attempt}`;
     const gate = (await clerk(label, 'Gate', [step('await', 'await', flags)], AWAIT_LOOP)).await;

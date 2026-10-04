@@ -13,12 +13,15 @@
 //   sync     --pr N           check out the PR in the worktree and rebase it onto the default branch
 //   snapshot --pr N           record the rebased diff (run after resolving rebase conflicts)
 //   check    --pr N [--label L] [--cmd "npm run check"]
+//   check-start --pr N [--label L] [--cmd C]    start that check detached and return at once
+//   check-wait  --pr N [--label L] [--max-seconds 540]   wait for it; {done: false} on timeout
 //   publish  --pr N [--ensure-closes I | --keep-open I]   retarget, push with lease, fix keywords
 //   reply    --pr N < replies.json        reply to review threads (resolves Codex threads by default)
 //   request-review --pr N                comment "@codex review"
 //   rerun    --pr N --sha S              re-run failed CI jobs for S once (flake check)
 //   verify-fixes --pr N --commits a,b    reported commits are in HEAD; last check passed at HEAD
-//   await    --pr N --sha S --since ISO [--codex required|skip] [--max-seconds 540]
+//   await    --pr N --sha S --since ISO [--codex required|skip] [--ci wait|skip] [--stale-grace 90]
+//            [--max-seconds 420]
 //   land     --pr N --sha S [--issue I] [--expect-close | --keep-open I]
 //   close    --pr N < comment.md          comment, then close (Dependabot commands self-close)
 //   last     --pr N --cmd C               re-print the saved output of the last C run
@@ -26,9 +29,10 @@
 // Common flags: --root DIR (default: <main checkout>-merge-down, holding worktree/ and state/),
 // --repo OWNER/NAME (default: the current directory's GitHub repository).
 
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
+import { availableParallelism, loadavg } from 'node:os';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { setTimeout as sleep } from 'node:timers/promises';
@@ -45,14 +49,50 @@ const fail = (message) => {
 // ---------------------------------------------------------------------------------------------
 // Process helpers
 
+// Reads that are safe to repeat: a transient network failure on one of them (a connection reset
+// in the middle of a 140-call survey once blocked a whole run) is retried with backoff. Writes
+// are never retried here: a lost response to a create or a comment could duplicate it.
+const READ_VERBS = new Set(['view', 'list', 'checks', 'status', 'diff']);
+const WRITE_FLAGS = new Set(['-X', '--method', '-f', '-F', '--field', '--raw-field', '--input']);
+const TRANSIENT =
+  /connection reset|ECONNRESET|ETIMEDOUT|unexpected EOF|i\/o timeout|TLS handshake timeout|timeout awaiting|\b50[234]\b|Bad Gateway|Service Unavailable|Gateway Timeout|temporarily unavailable|secondary rate limit|could not resolve host|network is unreachable/i;
+export function isRetryableRead(cmd, args) {
+  if (cmd === 'gh') {
+    if (args[0] === 'api') return !args.some((a) => WRITE_FLAGS.has(a));
+    return ['issue', 'pr', 'repo', 'run', 'label'].includes(args[0]) && READ_VERBS.has(args[1]);
+  }
+  if (cmd === 'git') {
+    const verb = args[0] === '-C' ? args[2] : args[0];
+    return verb === 'fetch' || verb === 'ls-remote';
+  }
+  return false;
+}
+// The machine running these checks is shared. Under heavy load a full-parallel vitest run times
+// out and every implementer re-ran it with fewer workers by hand, so cap the workers when the
+// 1-minute load exceeds the core count (the cap only changes scheduling, not what is tested).
+export function checkLoadEnv(load = loadavg()[0], cores = availableParallelism()) {
+  return load > cores ? { VITEST_MAX_WORKERS: '4' } : {};
+}
+const pause = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+
 function run(cmd, args, { cwd, input, env, allowFail = false } = {}) {
-  const r = spawnSync(cmd, args, {
-    cwd,
-    input,
-    env: env ? { ...process.env, ...env } : process.env,
-    encoding: 'utf8',
-    maxBuffer: 512 * 1024 * 1024,
-  });
+  const spawn = () =>
+    spawnSync(cmd, args, {
+      cwd,
+      input,
+      env: env ? { ...process.env, ...env } : process.env,
+      encoding: 'utf8',
+      maxBuffer: 512 * 1024 * 1024,
+    });
+  let r = spawn();
+  if (r.status !== 0 && !r.error && isRetryableRead(cmd, args)) {
+    for (const delay of [2000, 5000, 10000]) {
+      if (!TRANSIENT.test(`${r.stderr ?? ''}\n${r.stdout ?? ''}`)) break;
+      pause(delay);
+      r = spawn();
+      if (r.status === 0 || r.error) break;
+    }
+  }
   if (r.error) throw r.error;
   if (r.status !== 0 && !allowFail) {
     const detail = (r.stderr || r.stdout || '').trim().slice(-2000);
@@ -212,11 +252,19 @@ function codexActivity(R, pr) {
   const reactions = ghPaged(`repos/${R.repo}/issues/${pr}/reactions`)
     .filter((r) => r.user?.login === CODEX_LOGIN)
     .map((r) => ({ content: r.content, createdAt: r.created_at }));
+  // Codex answers a review request it cannot serve with a plain comment ("You have reached your
+  // Codex usage limits for code reviews…") and no summary row, reaction, or review. Without this,
+  // a gate would wait for a review that is never coming.
+  const limitNotices = comments
+    .filter((c) => c.user?.login === CODEX_LOGIN)
+    .filter((c) => /usage limits?/i.test(c.body ?? '') && !/review-summary/.test(c.body ?? ''))
+    .map((c) => ({ createdAt: c.created_at }));
   return {
     summaryUpdatedAt: summary?.updated_at ?? null,
     rows: summary ? parseSummaryRows(summary.body) : [],
     reviews,
     reactions,
+    limitNotices,
   };
 }
 
@@ -764,11 +812,81 @@ function sync(a, P, R) {
 // ---------------------------------------------------------------------------------------------
 // Local checks
 
+const checkLabel = (a) => (typeof a.label === 'string' ? a.label : 'check');
+const checkResultFile = (P, pr, label) => join(prDir(P, pr), `${label}.result.json`);
+
+// Each check also leaves its result in <label>.result.json (written whole, by rename), which is how
+// check-wait sees a detached check finish.
 function check(a, P) {
+  const pr = requirePr(a);
+  const result = runCheck(a, P);
+  const file = checkResultFile(P, pr, checkLabel(a));
+  writeJson(`${file}.tmp`, result);
+  renameSync(`${file}.tmp`, file);
+  return result;
+}
+
+// The suite can take longer than an agent's 10-minute shell limit, so a relaying clerk cannot run
+// `check` in one call: its output never arrived (#273, #279), and the landing paid for a fix round
+// that only re-ran the suite. check-start launches the same `check` detached (its own process group,
+// so it outlives the clerk's shell) and returns at once; check-wait then waits in bounded slices.
+function checkStart(a, P) {
+  const pr = requirePr(a);
+  const label = checkLabel(a);
+  const file = checkResultFile(P, pr, label);
+  rmSync(file, { force: true });
+  const args = [fileURLToPath(import.meta.url), 'check', '--pr', String(pr), '--label', label];
+  args.push('--root', P.root);
+  if (typeof a.repo === 'string') args.push('--repo', a.repo);
+  if (typeof a.cmd === 'string') args.push('--cmd', a.cmd);
+  const child = spawn(process.execPath, args, { detached: true, stdio: 'ignore' });
+  child.unref();
+  const started = { label, pid: child.pid, startedAt: nowIso() };
+  writeJson(join(prDir(P, pr), `${label}.started.json`), started);
+  return { started: true, ...started };
+}
+
+const processAlive = (pid) => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return error.code === 'EPERM';
+  }
+};
+
+async function checkWait(a, P) {
+  const pr = requirePr(a);
+  const label = checkLabel(a);
+  const file = checkResultFile(P, pr, label);
+  const started = readJson(join(prDir(P, pr), `${label}.started.json`));
+  if (!started) fail(`no check was started with label ${label}; run check-start first`);
+  const maxSeconds = Number(a['max-seconds'] ?? 540);
+  const begin = Date.now();
+  for (;;) {
+    if (existsSync(file)) return { done: true, ...readJson(file) };
+    if (!processAlive(started.pid)) {
+      if (existsSync(file)) return { done: true, ...readJson(file) };
+      return {
+        done: true,
+        passed: false,
+        failedStep: null,
+        error: `the check process (pid ${started.pid}) exited without a result`,
+      };
+    }
+    const waitedSeconds = Math.round((Date.now() - begin) / 1000);
+    if (waitedSeconds >= maxSeconds) {
+      return { done: false, label, pid: started.pid, startedAt: started.startedAt, waitedSeconds };
+    }
+    await sleep(5_000);
+  }
+}
+
+function runCheck(a, P) {
   const pr = requirePr(a);
   const W = P.workdir;
   const dir = prDir(P, pr);
-  const label = typeof a.label === 'string' ? a.label : 'check';
+  const label = checkLabel(a);
   const log = join(dir, `${label}.log`);
   const started = Date.now();
 
@@ -794,10 +912,11 @@ function check(a, P) {
   }
 
   const cmd = typeof a.cmd === 'string' ? a.cmd : 'npm run check';
+  const loadEnv = checkLoadEnv();
   const r = run('bash', ['-c', cmd], {
     cwd: W,
     allowFail: true,
-    env: { NO_COLOR: '1', FORCE_COLOR: '0' },
+    env: { NO_COLOR: '1', FORCE_COLOR: '0', ...loadEnv },
   });
   const text = stripAnsi(`${r.stdout}\n${r.stderr}`);
   writeFileSync(log, text);
@@ -806,6 +925,7 @@ function check(a, P) {
   return {
     passed,
     head: git(W, ['rev-parse', 'HEAD']),
+    maxWorkers: loadEnv.VITEST_MAX_WORKERS ?? null,
     exitCode: r.status,
     failedStep: passed ? null : (steps.at(-1) ?? null),
     seconds: Math.round((Date.now() - started) / 1000),
@@ -1049,6 +1169,9 @@ function codexProgress(R, pr, sha, since, seenComplete) {
   if (act.reactions.some((r) => r.content === '+1' && fresh(r.createdAt))) {
     return { state: 'clean', via: 'reaction' };
   }
+  if (act.limitNotices.some((n) => fresh(n.createdAt))) {
+    return { state: 'error', reason: 'Codex usage limit reached' };
+  }
   const row = act.rows.find((r) => sha.startsWith(r.commit));
   if (row && fresh(act.summaryUpdatedAt)) {
     if (/fail|error|cancel/i.test(row.status)) return { state: 'error', row };
@@ -1066,8 +1189,18 @@ async function awaitGate(a, P, R) {
   const sha = a.sha ?? fail('--sha is required');
   const since = a.since ?? nowIso();
   const codexMode = a.codex ?? 'required';
-  const maxSeconds = Number(a['max-seconds'] ?? 540);
+  // --ci skip: wait for the Codex review alone (a caller that gates on CI later, e.g. the
+  // epic workflow's first-review wait, should not sit out a slow CI queue here).
+  const ciMode = a.ci ?? 'wait';
+  const maxSeconds = Number(a['max-seconds'] ?? 420);
   const ciGraceMs = Number(a['ci-grace'] ?? 300) * 1000;
+  // GitHub can report the previous head for a while after a push. A head that is an ancestor of
+  // the one we pushed is that stale view, not someone else's push: keep polling through a short
+  // grace period (--stale-grace seconds) before calling it moved.
+  const staleGraceMs = Number(a['stale-grace'] ?? 0) * 1000;
+  const isAncestor = (older) =>
+    existsSync(join(P.workdir, '.git')) &&
+    gitOk(P.workdir, ['merge-base', '--is-ancestor', older, sha]);
   const started = Date.now();
   let seenComplete = false;
   for (;;) {
@@ -1081,10 +1214,15 @@ async function awaitGate(a, P, R) {
       'state,headRefOid,statusCheckRollup',
     ]);
     if (p.headRefOid !== sha) {
+      if (Date.now() - started < staleGraceMs && isAncestor(p.headRefOid)) {
+        await sleep(10_000);
+        continue;
+      }
       return { done: true, headMoved: true, headSha: p.headRefOid, state: p.state };
     }
     const ci = ciSummary(p.statusCheckRollup);
     const ciDone =
+      ciMode === 'skip' ||
       ci.state === 'success' ||
       ci.state === 'failure' ||
       (ci.state === 'none' && Date.now() - Date.parse(since) > ciGraceMs);
@@ -1112,7 +1250,11 @@ async function awaitGate(a, P, R) {
         threadsFile: refreshed.files.threads,
       };
     }
-    if (elapsedSeconds >= maxSeconds) {
+    // Stop before a sleep that would start the next poll past the deadline: the final poll, the
+    // 20 s code-scanning settle and the refresh can take a minute under load, and a caller that
+    // runs this under a 10-minute shell limit must get its line before that limit (#359's landing
+    // lost a round when the command outlived it and was moved to the background).
+    if (elapsedSeconds + 30 >= maxSeconds) {
       return { done: false, headMoved: false, timedOut: true, ci, codex, elapsedSeconds };
     }
     await sleep(30_000);
@@ -1257,6 +1399,8 @@ const COMMANDS = {
   sync,
   snapshot: (a, P, R) => snapshotDiff(P, R, requirePr(a)),
   check: (a, P) => check(a, P),
+  'check-start': (a, P) => checkStart(a, P),
+  'check-wait': (a, P) => checkWait(a, P),
   publish,
   reply,
   'request-review': requestReview,
