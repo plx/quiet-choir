@@ -13,24 +13,29 @@ I/O unless stubbed. Use the
 [launch-directory and external-state rules](../SKILL.md#run-a-first-workflow-against-a-project). The
 tests' fake responses prove replay behavior, not the quality of a model's review or edits.
 
-| Need                                                      | Recipe                                                       |
-| --------------------------------------------------------- | ------------------------------------------------------------ |
-| Combine Claude and Codex reviews; retry failed reviewers  | [Cross-harness fan-out/fan-in](#cross-harness-fan-outfan-in) |
-| Preserve a quorum decision despite failed reviewers       | [Failure-tolerant panel](#failure-tolerant-panel)            |
-| Discover until no new findings appear                     | [Loop until dry](#loop-until-dry)                            |
-| Run sequential stages for each item                       | [Per-item pipeline](#per-item-pipeline)                      |
-| Stop revising after approval or a round limit             | [Bounded review/revise](#bounded-reviewrevise)               |
-| Reuse a helper without ID collisions                      | [Scoped helper](#reusable-helper)                            |
-| Isolate parallel file edits                               | [Worktree per item](#worktree-per-item)                      |
-| Wait with a stable deadline                               | [Polling and deadlines](#polling-and-deadlines)              |
-| Reuse old completed work after a fix                      | [Salvage with a fork](#salvage-an-old-run)                   |
-| Freeze a failure before selecting a fallback              | [Latch an outcome](#latch-an-outcome)                        |
-| Retry a small extraction without repeating expensive work | [Work, then extract](#work-then-extract)                     |
-| Test before native calls                                  | [Rehearse for free](#rehearse-for-free)                      |
-| Keep a human decision attached to its saved plan          | [Human review](#human-review)                                |
-| Fix CI until it passes, keyed by head SHA                 | [CI-gated fix loop](#ci-gated-fix-loop)                      |
-| Burn down an epic one ticket per run                      | [Ticket loop](#ticket-loop)                                  |
-| Recognize tempting but unsafe code                        | [Traps](#traps)                                              |
+| Need                                                      | Recipe                                                              |
+| --------------------------------------------------------- | ------------------------------------------------------------------- |
+| Combine Claude and Codex reviews; retry failed reviewers  | [Cross-harness fan-out/fan-in](#cross-harness-fan-outfan-in)        |
+| Preserve a quorum decision despite failed reviewers       | [Failure-tolerant panel](#failure-tolerant-panel)                   |
+| Discover until no new findings appear                     | [Loop until dry](#loop-until-dry)                                   |
+| Run sequential stages for each item                       | [Per-item pipeline](#per-item-pipeline)                             |
+| Stop revising after approval or a round limit             | [Bounded review/revise](#bounded-reviewrevise)                      |
+| Reuse a helper without ID collisions                      | [Scoped helper](#reusable-helper)                                   |
+| Isolate parallel file edits                               | [Worktree per item](#worktree-per-item)                             |
+| Wait with a stable deadline                               | [Polling and deadlines](#polling-and-deadlines)                     |
+| Reuse old completed work after a fix                      | [Salvage with a fork](#salvage-an-old-run)                          |
+| Freeze a failure before selecting a fallback              | [Latch an outcome](#latch-an-outcome)                               |
+| Retry a small extraction without repeating expensive work | [Work, then extract](#work-then-extract)                            |
+| Test before native calls                                  | [Rehearse for free](#rehearse-for-free)                             |
+| Keep a human decision attached to its saved plan          | [Human review](#human-review)                                       |
+| Branch on a trusted command's exit code                   | [Commands and test verdicts](#commands-and-test-verdicts)           |
+| Edit existing text with an optimistic baseline guard      | [File snapshots and publication](#file-snapshots-and-publication)   |
+| Restore a Git file after a journaled mutation             | [Hash guard for mutation](#hash-guard-for-mutation)                 |
+| Read GitHub state through `gh` with typed results         | [GitHub snapshots through gh](#github-snapshots-through-gh)         |
+| Fix CI until it passes, keyed by head SHA                 | [CI-gated fix loop](#ci-gated-fix-loop)                             |
+| Burn down an epic one ticket per run                      | [Ticket loop](#ticket-loop)                                         |
+| Recognize tempting but unsafe code                        | [Traps](#traps)                                                     |
+| See the recipes expanded into strict ports                | [Workflow Lab acceptance recipes](#workflow-lab-acceptance-recipes) |
 
 ## Cross-harness fan-out/fan-in
 
@@ -65,9 +70,8 @@ export default defineWorkflow({
 ```
 
 **Cost:** one call per reviewer, plus retried attempts. A slow started sibling can delay failure.
-**Supersession:** no replacement is planned for ordinary fan-in. The former catch-every-mapper
-workaround was superseded by drain/scoped cancellation in
-[#43](https://github.com/plx/quiet-choir/issues/43).
+**Supersession:** no replacement is planned for ordinary fan-in. This recipe relies on drain/scoped
+cancellation rather than catching every mapper.
 
 ## Failure-tolerant panel
 
@@ -101,9 +105,8 @@ export default defineWorkflow({
 ```
 
 **Cost:** one call per lens. Saved failed votes cost no new calls on resume; intentionally retrying
-them requires a new run/fork with appropriate invalidation. **Supersession:** the manual catch/latch
-panel was superseded by implemented [#43](https://github.com/plx/quiet-choir/issues/43) and
-[#42](https://github.com/plx/quiet-choir/issues/42); this uses those primitives.
+them requires a new run/fork with appropriate invalidation. **Supersession:** this uses drain/scoped
+cancellation and durable failure outcomes rather than a manual catch/latch panel.
 
 ## Loop until dry
 
@@ -253,10 +256,9 @@ export default defineWorkflow({
 });
 ```
 
-**Cost:** one call per file; child frames add no inference. **Supersession:** implemented
-[#63](https://github.com/plx/quiet-choir/issues/63) adds child identity, validated I/O and profile
-delegation to the scoped-helper recipe. Plain function helpers can still use `within` or `scope`;
-see [child workflows and discovery](child-workflows.md).
+**Cost:** one call per file; child frames add no inference. **Supersession:** child workflows add
+child identity, validated I/O and profile delegation to the scoped-helper recipe. Plain function
+helpers can still use `within` or `scope`; see [child workflows and discovery](child-workflows.md).
 
 ## Worktree per item
 
@@ -303,9 +305,8 @@ makes no model calls. Each attempt gets a fresh detached checkout from its saved
 integrates in input order into a run-owned ref; the source checkout is unchanged. Conflicts are data
 and conflicting inputs are skipped. Use source commit IDs as well as filenames when designing a
 repair loop: some structural conflicts have no path list. Default cleanup removes caches after
-success and retains commit pins. **Supersession:** runtime isolation in
-[#59](https://github.com/plx/quiet-choir/issues/59) replaces the manual helper and its dirty
-retries. For shared write/test/fix handles, retention, explicit checkout publication, and
+success and retains commit pins. **Supersession:** runtime isolation replaces a manual helper and
+its dirty retries. For shared write/test/fix handles, retention, explicit checkout publication, and
 source-free cleanup, read [worktrees](worktrees.md).
 
 ## Polling and deadlines
@@ -403,8 +404,7 @@ Default reuse copies unchanged steps whose earlier causes were copied too. Add `
 for matching effects launched after a change, or `--invalidate 'answer/2'` to force an otherwise
 reusable answer live. Omit input to inherit it. See [recovery](durability.md#choose-a-recovery-path)
 for source edits and schema compatibility. **Cost:** only non-reused agent calls; a fresh run
-without fork reuse repeats all calls. **Supersession:** manual output salvage was superseded by
-implemented [#41](https://github.com/plx/quiet-choir/issues/41).
+without fork reuse repeats all calls. **Supersession:** forks replace manual output salvage.
 
 ## Latch an outcome
 
@@ -438,10 +438,8 @@ export default defineWorkflow({
 ```
 
 **Cost:** up to two primary attempts for a rate limit, otherwise one, plus one fallback call if
-needed. Replaying a saved failure pays for neither branch again. **Supersession:** the manual "call
-then record a latch" workaround was superseded by implemented
-[#42](https://github.com/plx/quiet-choir/issues/42). Retry policy is supported by
-[#40](https://github.com/plx/quiet-choir/issues/40).
+needed. Replaying a saved failure pays for neither branch again. **Supersession:** durable failure
+outcomes replace a manual "call then record a latch" step; retry policy is a step option.
 
 ## Work, then extract
 
@@ -473,8 +471,7 @@ export default defineWorkflow({
 **Cost:** one investigation and one extraction, plus repeated extraction attempts on failure. A
 failed investigation still starts a fresh native session when retried. **Superseded when:**
 [#23](https://github.com/plx/quiet-choir/issues/23) supplies applicable native-session recovery.
-[#33](https://github.com/plx/quiet-choir/issues/33) already preserves failure diagnostics/usage, but
-does not resume a native session. Use the
+Failure diagnostics and usage are preserved, but a native session is not resumed. Use the
 [logging decorator](extensions.md#keep-raw-responses-when-local-validation-fails) if raw successful
 adapter output must survive a later local validation failure.
 
@@ -527,11 +524,10 @@ node "$QC_CHECKOUT/bin/run.js" workflow execute "$QC_CHECKOUT/examples/patterns/
 ```
 
 **Cost:** no agent spend in fixture mode; imports/local callbacks still run. Fixtures cover only the
-branches they reach. **Supersession:** ad hoc embedding/PATH-shim rehearsal was superseded by
-implemented [#51](https://github.com/plx/quiet-choir/issues/51). Native contract probes still use
-repository fake APIs/CLIs; failing shims must exit nonzero (normally 1). Use `.mjs`/ESM shims or an
-explicit CommonJS package for `require`, rather than an extensionless `require` shim under
-`"type":"module"`. See [rehearsal](rehearsal.md) for the complete loop.
+branches they reach. Native contract probes still use repository fake APIs/CLIs; failing shims must
+exit nonzero (normally 1). Use `.mjs`/ESM shims or an explicit CommonJS package for `require`,
+rather than an extensionless `require` shim under `"type":"module"`. See [rehearsal](rehearsal.md)
+for the complete loop.
 
 ## Human review
 

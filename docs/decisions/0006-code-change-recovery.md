@@ -2,7 +2,8 @@
 
 ## Status
 
-Accepted. Extends ADR 0005 with callback identity, explicit code acceptance, and fork reuse. Strict
+Accepted. Superseded in part by [ADR 0007](0007-durable-failure-outcomes.md) (its checkpoint-format
+choice). Extends ADR 0005 with callback identity, explicit code acceptance, and fork reuse. Strict
 resume remains the default. Checkpoint format 3 supersedes format 2 for execution and reuse. Amended
 by #126: the CLI refuses an accepted replay that would fail on a changed completed step before it
 changes the run. Amended by #144: steps also carry launch, settle and failure stamps, and the

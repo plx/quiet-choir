@@ -135,7 +135,7 @@
     "topicSeparator": " ",
     "topics": {
       "configuration": {
-        "description": "Inspect and manage quiet-choir configuration"
+        "description": "Check quiet-choir configuration and installed harnesses"
       },
       "info": {
         "description": "Show information about quiet-choir"

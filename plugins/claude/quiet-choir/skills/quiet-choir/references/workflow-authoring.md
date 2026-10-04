@@ -158,7 +158,7 @@ identity changes remain errors; unfinished identity changes are recorded as rede
 `ctx.map` concurrency bounds only that map's mapper bodies. Nested maps can multiply active mappers.
 A separate shared limit caps live agent invocations across the whole run, including `Promise.all`
 and child helper functions using the same context. Default: min(8, max(1, available CPUs - 2)). Use
-`--max-agents 5 --provider-limit codex=1` on execute, or
+`--max-agents 5 --harness-limit codex=1` on execute, or
 `RunOptions.agentLimit: { total: 5, perProvider: { codex: 1 } }`. Limits are fresh invocation
 policy, not sticky or part of identity, so they can change on resume. Provider limits do not block
 other eligible providers; requests are FIFO among eligible waiters.

@@ -408,3 +408,19 @@ test('rejects stale cookbook code even when both distributed copies agree', asyn
     );
   });
 });
+test('rejects a patterns.md index that omits a recipe section, even one linked from the intro', async () => {
+  await fixture(async (root) => {
+    for (const pkg of packages) {
+      const file = join(root, pkg, 'skills/quiet-choir/references/patterns.md');
+      const text = await readFile(file, 'utf8');
+      const row = /^\| Test before native calls .*\(#rehearse-for-free\) +\|\n/mu;
+      assert.match(text, row);
+      assert.ok(text.includes('(#rehearse-for-free)'));
+      await writeFile(file, text.replace(row, ''));
+    }
+    await assert.rejects(
+      checkSkills(root, { compile: false }),
+      /patterns index does not link recipe section "Rehearse for free" \(#rehearse-for-free\)/u,
+    );
+  });
+});

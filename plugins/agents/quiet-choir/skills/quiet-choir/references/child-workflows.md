@@ -102,14 +102,15 @@ node "$QC_CHECKOUT/bin/run.js" workflow execute reusable-helper --registry-dir .
   --input '{"paths":["src/index.ts"]}' --max-child-depth 8
 ```
 
-`list-defs [DIR…]` defaults to the current directory, recursively discovers `*.workflow.ts`, and
-rejects duplicate names. It skips generated/state/dependency directories and does not follow
-directory symlinks. These are trusted imports; module top-level code must have no workflow effects.
-The private metadata cache under `$XDG_CACHE_HOME/quiet-choir/definitions` (default
-`~/.cache/quiet-choir/definitions`) checks source/dependency/config fingerprints and existing
-package manifests/locks. `--refresh` forces revalidation and imports. Descriptions should be static;
-use refresh if external configuration affects module exports. Cache failure falls back to
-validation. Execution always loads the selected module anew and verifies its registered name.
+`list-defs [DIR…]` defaults to the current directory, recursively discovers `*.workflow.ts`,
+`*.workflow.mts` and `*.workflow.cts`, and rejects duplicate names. It skips
+generated/state/dependency directories and does not follow directory symlinks. These are trusted
+imports; module top-level code must have no workflow effects. The private metadata cache under
+`$XDG_CACHE_HOME/quiet-choir/definitions` (default `~/.cache/quiet-choir/definitions`) checks
+source/dependency/config fingerprints and existing package manifests/locks. `--refresh` forces
+revalidation and imports. Descriptions should be static; use refresh if external configuration
+affects module exports. Cache failure falls back to validation. Execution always loads the selected
+module anew and verifies its registered name.
 
 Separate-run `ctx.child`, linked-run IDs and a `run` wait source remain later work tracked by
 [#18](https://github.com/plx/quiet-choir/issues/18). They are not implemented by inline composition.

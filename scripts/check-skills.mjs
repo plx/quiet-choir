@@ -4,7 +4,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import ts from 'typescript';
 import { parseDocument } from 'yaml';
 import { z } from 'zod';
-import { checkLinks, fences, inside } from './skill-markdown.mjs';
+import { checkLinks, fences, headingSlugs, inside, prose } from './skill-markdown.mjs';
 
 export const repository = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 export const packages = ['agents', 'claude'].map((host) => `plugins/${host}/quiet-choir`);
@@ -15,6 +15,25 @@ const bareLauncher = /^\s*(?:\$\s+)?quiet-choir(?:\s|$)/u;
 const json = async (file) => JSON.parse(await readFile(file, 'utf8'));
 function requireThat(condition, message) {
   if (!condition) throw new Error(message);
+}
+
+/**
+ * The patterns index (the table before the first H2) must link every H2 recipe section. Links in
+ * the intro's prose do not count: a section mentioned there would otherwise hide a missing row.
+ */
+function checkPatternsIndex(text, file) {
+  const intro = prose(text, file).split(/^ {0,3}## /mu)[0];
+  const rows = intro.split('\n').filter((line) => /^ {0,3}\|/u.test(line));
+  const linked = new Set(
+    rows.flatMap((row) =>
+      [...row.matchAll(/\]\(#([^)\s]+)\)/gu)].map((match) => decodeURIComponent(match[1])),
+    ),
+  );
+  for (const { level, title, slug } of headingSlugs(text))
+    requireThat(
+      level !== 2 || linked.has(slug),
+      `${file}: patterns index does not link recipe section "${title}" (#${slug})`,
+    );
 }
 async function files(root, directory = root) {
   const result = [];
@@ -304,6 +323,7 @@ export async function checkSkills(root = repository, { compile = true } = {}) {
       const text = await readFile(absolute, 'utf8');
       if (file === 'SKILL.md') frontmatter(text, absolute);
       links += await checkLinks(absolute, text, packageRoot);
+      if (file === 'references/patterns.md') checkPatternsIndex(text, absolute);
       tree.set(file, normalizeDifferences(text, file, rules, seen));
       for (const fence of fences(text, absolute)) {
         checkShellFence(fence, absolute);

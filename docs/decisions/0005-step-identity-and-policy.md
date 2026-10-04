@@ -3,7 +3,8 @@
 ## Status
 
 Accepted. Supersedes the all-options/retry compatibility rule in ADR 0002; other durability and
-ownership guarantees remain in force.
+ownership guarantees remain in force. Superseded in part by
+[ADR 0007](0007-durable-failure-outcomes.md) (its checkpoint-format choice).
 
 ## Context
 

@@ -66,8 +66,7 @@ The adapter parses stdout on both zero and nonzero normal exits. Saved errors re
 reasons, subtype, terminal reason, and API status when available, plus the exit code and bounded
 stderr. Auth, API, turn-limit, and budget failures normally exit 1. Exit zero cannot override a
 reported failure. A bare exit error means no usable protocol reason was recovered: check
-`claude auth status`, the schema, and the same invocation's flags when reproducing manually. This is
-the current behavior after issue [#33](https://github.com/plx/quiet-choir/issues/33).
+`claude auth status`, the schema, and the same invocation's flags when reproducing manually.
 
 `usage.costUsd` is Claude's `total_cost_usd`. Token categories and effective models come from
 `modelUsage`, so total input includes uncached input, cache reads and cache writes. The historical

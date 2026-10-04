@@ -71,13 +71,14 @@ const cache = z.object({
   sources: z.record(z.string(), z.string()),
   result: validation,
 });
+const definitionFile = /\.workflow\.(?:ts|mts|cts)$/u;
 const ignored = new Set(['node_modules', '.git', '.quiet-choir', '.context', 'dist', 'coverage']);
 
 function hash(bytes: Uint8Array): string {
   return createHash('sha256').update(bytes).digest('hex');
 }
 
-/** Deterministic discovery; symlink directories are not followed and overlapping roots deduplicate. @internal */
+/** Deterministic discovery of `*.workflow.ts`, `.mts` and `.cts` files (never `.d.ts` or `.tsx`); symlink directories are not followed and overlapping roots deduplicate. @internal */
 export async function definitionFiles(directories: readonly string[]): Promise<string[]> {
   const files = new Set<string>();
   const seen = new Set<string>();
@@ -87,7 +88,7 @@ export async function definitionFiles(directories: readonly string[]): Promise<s
     seen.add(canonical);
     for (const entry of await readdir(canonical, { withFileTypes: true })) {
       if (entry.isDirectory() && !ignored.has(entry.name)) await visit(join(canonical, entry.name));
-      else if (entry.isFile() && entry.name.endsWith('.workflow.ts'))
+      else if (entry.isFile() && definitionFile.test(entry.name))
         files.add(join(canonical, entry.name));
     }
   };

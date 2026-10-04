@@ -51,6 +51,22 @@ describe('trusted definition registry', { timeout: 60_000 }, () => {
     ]);
   });
 
+  it('discovers .workflow.ts, .mts and .cts files and ignores declaration and tsx files', async () => {
+    const root = await project();
+    for (const name of [
+      'a.workflow.mts',
+      'b.workflow.cts',
+      'c.workflow.d.ts',
+      'd.workflow.tsx',
+      'e.workflow.mjs',
+    ])
+      await writeFile(join(root, name), '');
+    expect(await definitionFiles([root])).toEqual([
+      await realpath(join(root, 'a.workflow.mts')),
+      await realpath(join(root, 'b.workflow.cts')),
+    ]);
+  });
+
   it('caches validated source metadata, refreshes edited dependencies, and recovers a corrupt cache', async () => {
     const root = await project();
     const marker = join(root, 'imported');

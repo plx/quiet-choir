@@ -29,7 +29,7 @@ export default class WorkflowListDefinitions extends WorkflowCommand {
     }),
   };
   public static override readonly summary =
-    'Discover trusted *.workflow.ts definitions in directories';
+    'Discover trusted *.workflow.ts, .mts and .cts definitions in directories';
   public static override readonly description =
     'Recursively type-checks and imports trusted modules without calling workflow bodies. Matching source fingerprints reuse private metadata caches. Duplicate names are errors.';
 
