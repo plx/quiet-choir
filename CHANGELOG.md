@@ -7,13 +7,15 @@
   needs at least one of `--older-than`, `--status` or `--missing-cwd` (a bare prune is `usage.flag`,
   exit 2); `--status` takes only `completed`, `failed` and `cancelled`, defaulting to all three, and
   `--all` scans every registered project. A pure, table-tested selector (`prune-selection.ts`) never
-  selects a running, stale or suspended run, one with a waiting step or any file in its inbox, or
-  one held by a lock owner, recoverer or live orphan; such matching runs are listed in `skipped`
-  with a reason. Each selected run is removed oldest first through `workflow rm`'s guarded removal,
-  one at a time and never forced, with `--refs` passed through; a refusal or failure of one removal
-  becomes a `skipped` entry and the batch exits 0, while an unreadable runs container still fails
-  the command. `--dry-run` takes no lock and changes nothing, and lists per-run and total `bytes`.
-  Prune sweeps dead rm tombstones in every scanned container. The result is
+  selects a running, stale or suspended run, one with a waiting step or an inbox file a resume could
+  still consume (an answer the record shows consumed, or a quarantined `.rejected.` delivery, does
+  not count), or one held by a lock owner, recoverer or live orphan; such matching runs are listed
+  in `skipped` with a reason. Each selected run is removed oldest first through `workflow rm`'s
+  guarded removal, one at a time and never forced, with `--refs` passed through; a refusal or
+  failure of one removal becomes a `skipped` entry and the batch exits 0, while an unreadable runs
+  container still fails the command. `--dry-run` takes no lock and changes nothing, and lists
+  per-run and total `bytes`. Prune sweeps dead rm tombstones in every scanned container. The result
+  is
   `{kind:"workflow.prune.result", dryRun, stateDirs, filters, removed, skipped, bytes, tombstones, warnings}`.
   Internally, `removeRun` gains an optional `expectedUpdatedAt` that prune pins to the record it
   selected, checked on the first read and under the lock, so a run that changed after selection is

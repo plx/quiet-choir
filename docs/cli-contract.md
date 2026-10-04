@@ -199,17 +199,19 @@ other error means unknown, which never matches, with a warning). A matching run 
 listed in `skipped` with its `reason`, when it is `active` (observed running, stale or suspended),
 `locked` (any lock owner or recoverer alive, unverifiable or remote, or unreadable lock metadata),
 `orphans` (a dead owner's live or unverifiable child), `waiting` (a step is waiting) or
-`queued-answer` (any file in `<runId>/inbox/` or `<runId>.inbox/`, even a stale one; an unreadable
-inbox counts too). Each selected run, oldest `updatedAt` first, then goes through `workflow rm`'s
-removal without `--force`, one at a time and each under its own guard, so rm re-checks its refusals
-under the lock; `--refs` is passed through. Prune also pins the record it selected: when the run's
-`updatedAt` changed before or under the lock, that removal refuses and the run is skipped with
-reason `changed` (code `run.exists`). A refusal or failure of one removal never stops the batch: it
-becomes a `skipped` entry with reason `locked`, `orphans`, `active`, `changed`, `gone` (another
-removal won, `run.not_found`), `refused` (another `run.*` code) or `storage` (a cache Git could not
-remove, or another error of that one removal, `workflow.storage`). Before removing anything prune
-sweeps abandoned rm tombstones in every scanned container. Success (exit 0, also with skipped runs)
-returns
+`queued-answer` (a file in `<runId>/inbox/` or `<runId>.inbox/` that a resume could still consume:
+every entry counts, even an unknown leftover, except the answer file of a question the record shows
+resolved through the inbox and a `.rejected.<uuid>.json` file beside one of the run's answer paths,
+which owners leave behind; an unreadable inbox or record counts too). Each selected run, oldest
+`updatedAt` first, then goes through `workflow rm`'s removal without `--force`, one at a time and
+each under its own guard, so rm re-checks its refusals under the lock; `--refs` is passed through.
+Prune also pins the record it selected: when the run's `updatedAt` changed before or under the lock,
+that removal refuses and the run is skipped with reason `changed` (code `run.exists`). A refusal or
+failure of one removal never stops the batch: it becomes a `skipped` entry with reason `locked`,
+`orphans`, `active`, `changed`, `gone` (another removal won, `run.not_found`), `refused` (another
+`run.*` code) or `storage` (a cache Git could not remove, or another error of that one removal,
+`workflow.storage`). Before removing anything prune sweeps abandoned rm tombstones in every scanned
+container. Success (exit 0, also with skipped runs) returns
 `{kind:"workflow.prune.result", ok:true, dryRun, stateDirs, filters:{olderThanMs, statuses, missingCwd, all, refs}, removed, skipped, bytes, tombstones, warnings}`:
 `removed[]` entries are
 `{runId, stateDir, status, updatedAt, cwd, bytes, paths, caches, refsRemoved, keptRefs, warnings}`

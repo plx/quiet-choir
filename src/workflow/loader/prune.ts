@@ -3,9 +3,11 @@ import { join } from 'node:path';
 import type { ProcessSupervisor } from '../../processes/supervisor.js';
 import type { ProcessRunner } from '../runtime/exec-model.js';
 import { jsonValue } from '../runtime/json.js';
+import { answerCandidates } from '../runtime/inbox.js';
 import { isErrno } from '../runtime/lock.js';
 import type { JsonValue } from '../runtime/model.js';
 import { projectStateDirectories, resolveStateDir, runDirectory } from '../runtime/paths.js';
+import { readRequiredRun } from '../runtime/read-required-run.js';
 import { ownershipHold, removalRefusal } from '../runtime/removal-decision.js';
 import { RunRefusedError, type CliErrorCode } from '../runtime/run-errors.js';
 import {
@@ -137,21 +139,59 @@ export interface PruneRunsLive {
 const message = (error: unknown): string =>
   error instanceof Error ? error.message : String(error);
 
-/** Entries in the run's two inboxes; any unreadable inbox counts as one queued delivery. */
+/** A delivery the owner quarantined: `<answer path>.rejected.<uuid>.json`. */
+const rejectedSuffix = /\.rejected\.[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\.json$/u;
+
+/**
+ * Inbox entries that a resume could still consume, in `<runId>/inbox/` and `<runId>.inbox/`. Owners
+ * leave a consumed delivery in place and rename a rejected one beside it, so two kinds of entry are
+ * settled and do not count: the answer file of a question the record shows resolved through the
+ * inbox, and a `.rejected.<uuid>.json` file next to one of the record's answer paths. Everything
+ * else counts, even an unknown leftover, and an unreadable inbox or record counts as one more.
+ */
 async function queuedAnswers(stateDir: string, runId: string, warnings: string[]): Promise<number> {
-  let total = 0;
+  const entries: string[] = [];
+  let unreadable = 0;
   for (const inbox of [
     join(runDirectory(stateDir, runId), 'inbox'),
     join(stateDir, `${runId}.inbox`),
   ])
     try {
-      total += (await readdir(inbox)).length;
+      entries.push(...(await readdir(inbox)).map((name) => join(inbox, name)));
     } catch (error) {
       if (isErrno(error, 'ENOENT')) continue;
-      total += 1;
+      unreadable += 1;
       warnings.push(`Could not read ${inbox}, so prune keeps ${runId}: ${message(error)}`);
     }
-  return total;
+  if (!entries.length) return unreadable;
+  let record;
+  try {
+    record = await readRequiredRun({ runId, stateDir });
+  } catch (error) {
+    warnings.push(
+      `Could not read ${runId} to judge its inbox, so prune keeps it: ${message(error)}`,
+    );
+    return unreadable + entries.length;
+  }
+  const answers = new Set<string>();
+  const consumed = new Set<string>();
+  for (const [stepId, step] of Object.entries(record.steps)) {
+    if (!step.question) continue;
+    let paths: string[];
+    try {
+      paths = answerCandidates(stateDir, runId, stepId);
+    } catch {
+      continue;
+    }
+    for (const path of paths) {
+      answers.add(path);
+      if (step.question.resolution?.via === 'inbox') consumed.add(path);
+    }
+  }
+  const settled = (path: string): boolean =>
+    consumed.has(path) ||
+    (rejectedSuffix.test(path) && answers.has(path.replace(rejectedSuffix, '')));
+  return unreadable + entries.filter((path) => !settled(path)).length;
 }
 
 /** Whether the recorded cwd is missing; null when stat fails for another reason. */

@@ -45,9 +45,14 @@ accepts terminal statuses only), `locked` or `orphans` (`ownershipHold`, the fir
 own verdict, extracted so both share them), `waiting`, and `queued-answer`. The orchestrator gathers
 those facts with I/O and leaves the rules to the selector.
 
-**Any inbox file protects a run.** `queued-answer` counts every entry in `<runId>/inbox/` and
-`<runId>.inbox/`, and an unreadable inbox counts as one. A leftover delivery the owner would reject
-also protects the run. That is deliberate: telling a valid queued answer from a stale one needs the
+**Every inbox file protects a run unless the record settled it.** An owner leaves a consumed
+delivery in the inbox and renames a rejected one to `<answer path>.rejected.<uuid>.json` beside it,
+so counting every entry would protect every answered run forever. `queued-answer` therefore counts
+each entry in `<runId>/inbox/` and `<runId>.inbox/` except two kinds the record proves settled: the
+answer file of a question whose `resolution` says it was answered through the inbox, and a
+`.rejected.<uuid>.json` file beside one of the run's answer paths. Everything else counts, even an
+unknown leftover or a delivery the owner would reject later, and an unreadable inbox or record
+counts as one. That is deliberate: telling a valid queued answer from a stale one needs the
 question's schema and the run's ownership, and guessing wrong loses an answer. The skip message
 points at a deliberate `workflow rm` instead.
 

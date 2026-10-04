@@ -298,7 +298,8 @@ node "$QC_CHECKOUT/bin/run.js" workflow prune --older-than 7d --json
 repeated), `--older-than` compares `updatedAt` (`7d`, `12h`, `30m`), and `--missing-cwd` picks runs
 whose recorded working directory is gone. Add `--all` to scan every registered project, or
 `--state-dir` for one runs container. Prune never selects a `running`, `stale` or `suspended` run, a
-run with a `waiting` step or any file in its inbox (`queued-answer`), or a run held by a lock owner,
+run with a `waiting` step or an inbox file a resume could still consume (`queued-answer`; answers
+the run already consumed and rejected deliveries do not count), or a run held by a lock owner,
 recoverer or live orphan. A run that changed after selection is skipped as `changed`. For the rare
 run you deliberately want gone while it is still active or waiting, inspect it and use
 `workflow rm RUN --force`; prune never forces, and nothing overrides a held lock.

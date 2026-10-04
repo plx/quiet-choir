@@ -11,7 +11,9 @@
  * 1. `active`: its observed status is running, stale or suspended;
  * 2. `locked` or `orphans`: its ownership holds it (`ownershipHold`, rm's first two guards);
  * 3. `waiting`: a step is still waiting for an answer, a signal or a deadline;
- * 4. `queued-answer`: any delivery file sits in either inbox, even one that looks stale.
+ * 4. `queued-answer`: either inbox holds a file a resume could still consume. The orchestrator
+ *    counts every entry, even an unknown leftover, except the deliveries the record shows settled:
+ *    consumed answers and quarantined `.rejected.` files.
  *
  * ESLint keeps this module free of runtime imports and of the clock: `nowMs` is a parameter.
  */
@@ -48,7 +50,10 @@ export interface PruneCandidate {
   readonly cwdMissing: boolean | null;
   /** IDs of steps whose status is `waiting`. */
   readonly waiting: readonly string[];
-  /** Entries in `<runId>/inbox` and `<runId>.inbox`; an unreadable inbox counts as queued. */
+  /**
+   * Unsettled entries in `<runId>/inbox` and `<runId>.inbox` (not a consumed answer or a rejected
+   * delivery); an unreadable inbox or record counts as queued.
+   */
   readonly queuedAnswers: number;
   /** The lock or orphan hold `workflow rm` would refuse first, or null. */
   readonly hold: OwnershipHold | null;

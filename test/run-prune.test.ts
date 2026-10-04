@@ -28,6 +28,7 @@ import { listRuns } from '../src/workflow/loader/inspection.js';
 import type { PruneWorkflowPlan, WorkflowCommandResult } from '../src/workflow/loader/model.js';
 import { pruneRuns, type PruneResult } from '../src/workflow/loader/prune.js';
 import { defaultPruneStatuses } from '../src/workflow/loader/prune-selection.js';
+import { answerPath, writeAnswer } from '../src/workflow/runtime/inbox.js';
 import { defaultStateDir } from '../src/workflow/runtime/paths.js';
 import { runBytes } from '../src/workflow/runtime/run-size.js';
 import { WorktreeGit } from '../src/worktrees/git.js';
@@ -410,6 +411,41 @@ describe('workflow prune selection', () => {
     const refused = await executor.execute(plan({ statuses: ['running' as 'completed'] }));
     assert(!refused.ok);
     expect(refused.code).toBe('usage.flag');
+  });
+
+  it('does not count consumed or quarantined deliveries as queued answers', async () => {
+    const workflow = defineWorkflow({
+      name: 'prune-answered',
+      version: '1',
+      input: z.null(),
+      output: z.unknown(),
+      run: (ctx) => ctx.ask('gate', { prompt: 'Ship?', schema: z.boolean() }),
+    });
+    for (const runId of ['answered', 'stray']) {
+      expect(
+        (await runWorkflow(workflow, { runId, stateDir, cwd: root, input: null })).status,
+      ).toBe('suspended');
+      await writeAnswer({ stateDir, runId, stepId: 'gate', value: true });
+      const resumed = await runWorkflow(workflow, {
+        runId,
+        stateDir,
+        cwd: root,
+        input: null,
+        resume: true,
+      });
+      expect(resumed.status).toBe('completed');
+      // The owner leaves the consumed delivery in the inbox.
+      expect(await gone(answerPath(stateDir, runId, 'gate'))).toBe(false);
+    }
+    await writeFile(
+      `${answerPath(stateDir, 'answered', 'gate')}.rejected.00000000-0000-4000-8000-000000000000.json`,
+      '{}',
+    );
+    await writeFile(join(stateDir, 'stray', 'inbox', 'unknown.json'), '{}');
+    const result = await prune({ statuses: ['completed'] });
+    expect(ids(result.removed)).toEqual(['answered']);
+    expect(reasons(result)).toEqual({ stray: ['queued-answer', null] });
+    expect(result.skipped[0]?.details).toEqual({ queuedAnswers: 1 });
   });
 
   it('lists missing-cwd runs with their bytes in a dry run, then removes them through rm', async () => {
