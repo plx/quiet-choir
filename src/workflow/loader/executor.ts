@@ -2,10 +2,13 @@ import type { WorkflowDeclaration } from '../runtime/child-model.js';
 import { importWorkflow, WorkflowDefinitionError } from './import.js';
 import { cleanWorktrees } from '../runtime/worktree-clean.js';
 import { removeRun } from '../runtime/run-removal.js';
+import { pruneRuns } from './prune.js';
+import { defaultPruneStatuses } from './prune-selection.js';
 import type {
   CancelWorkflowPlan,
   CleanWorkflowPlan,
   RemoveWorkflowPlan,
+  PruneWorkflowPlan,
   ListDefinitionsPlan,
   ExecuteNamedWorkflowPlan,
   UnlockWorkflowPlan,
@@ -159,6 +162,7 @@ export type WorkflowExecutorPlan =
   | PendingWorkflowsPlan
   | CleanWorkflowPlan
   | RemoveWorkflowPlan
+  | PruneWorkflowPlan
   | UnlockWorkflowPlan
   | CancelWorkflowPlan
   | ListDefinitionsPlan
@@ -183,10 +187,14 @@ export class WorkflowExecutor implements Executor<WorkflowExecutorPlan, Workflow
       runId: result.runId,
       stateDir: result.stateDir,
       launcher: this.#options.commandLauncher,
-      // An rm dry run previews a removal, not a workflow: its refusals keep their follow-ups.
+      // An rm or prune dry run previews a removal, not a workflow: its refusals keep their
+      // follow-ups.
       rehearsal:
         result.rehearsal !== undefined ||
-        (plan.kind !== 'workflow.rm' && 'dryRun' in plan && plan.dryRun),
+        (plan.kind !== 'workflow.rm' &&
+          plan.kind !== 'workflow.prune' &&
+          'dryRun' in plan &&
+          plan.dryRun),
     });
     // Absent means none; the CLI document always renders an array.
     return next.length ? { ...result, next } : result;
@@ -305,6 +313,44 @@ export class WorkflowExecutor implements Executor<WorkflowExecutorPlan, Workflow
             },
           });
         return { kind: 'workflow.rm.result', ok: true, ...outcome.result };
+      }
+      if (plan.kind === 'workflow.prune') {
+        if (
+          !plan.statuses.length ||
+          plan.statuses.some((status) => !defaultPruneStatuses.includes(status))
+        )
+          return workflowFailure(
+            'usage.flag',
+            `Prune selects only finished runs: --status takes ${defaultPruneStatuses.join(', ')}.`,
+            context,
+          );
+        if (
+          plan.olderThanMs !== null &&
+          (!Number.isFinite(plan.olderThanMs) || plan.olderThanMs < 0)
+        )
+          return workflowFailure(
+            'usage.flag',
+            '--older-than must be a duration of at least 0, such as 7d or 12h.',
+            context,
+          );
+        stage = 'workflow.storage';
+        const outcome = await pruneRuns(
+          plan,
+          this.#options.processRunner ?? new NodeProcessRunner(),
+          { signal: this.#options.signal, processSupervisor: this.#options.processSupervisor },
+        );
+        if (outcome.kind === 'interrupted') {
+          const removed = outcome.removed.map((run) => ({
+            runId: run.runId,
+            stateDir: run.stateDir,
+          }));
+          return workflowFailure(
+            'workflow.interrupted',
+            `Prune was interrupted after removing ${String(removed.length)} runs; they stay removed, and prune can run again to continue.`,
+            { ...context, details: { removed } },
+          );
+        }
+        return { kind: 'workflow.prune.result', ok: true, ...outcome.result };
       }
       if (plan.kind === 'workflow.unlock') {
         stage = 'workflow.storage';

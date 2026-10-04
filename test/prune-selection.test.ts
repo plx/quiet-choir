@@ -45,7 +45,15 @@ const locked = (reason: 'alive' | 'unknown' | 'remote' | 'unreadable'): Ownershi
   host: reason === 'remote' ? 'far' : 'here',
   warning: reason === 'unreadable' ? 'owner.json: missing' : null,
 });
-const recovering: OwnershipHold = { ...locked('alive'), role: 'recovery' };
+const recovering: OwnershipHold = {
+  kind: 'locked',
+  lock: { kind: 'primary', path: '/state/run-1/lock' },
+  role: 'recovery',
+  reason: 'alive',
+  pid: 4343,
+  host: 'here',
+  warning: null,
+};
 const orphans: OwnershipHold = {
   kind: 'orphans',
   owner: { pid: 4242, host: 'here', state: 'dead', osStartTime: null },
