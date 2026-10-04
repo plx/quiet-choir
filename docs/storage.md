@@ -317,6 +317,12 @@ record. Revision 3 (#170) is also nested-only: each `children` frame gains the o
 `onError: 'return'` and the terminal `settled` outcome of an `onError: 'return'` child frame
 ([ADR 0007](decisions/0007-durable-failure-outcomes.md)). Revision-2 records read and replay
 unchanged; a revision-2 build refuses to rewrite a revision-3 record instead of dropping `settled`.
+Revision 4 (#171) is nested-only too: a capability profile's `claude` gains the optional
+`addDirRoots`, and step and attempt request summaries gain the optional `addDirs`
+([ADR 0054](decisions/0054-bounded-call-site-adddirs.md)). Revision-3 records read, and their
+completed agent steps replay, unchanged. A revision-3 build cannot read a record whose capabilities
+declare `addDirRoots` (its strict manifest parse rejects the field), and refuses to rewrite any
+other revision-4 record instead of dropping `addDirs`.
 
 **Refusals.** A build must not rewrite a record it cannot fully read: its parse strips unknown
 top-level fields, and the next compaction would write the record back without them. When a record

@@ -52,8 +52,11 @@ strictMcpConfig, settings, addDirs, extraArgs, env and isolation; Codex's are sa
 networkAccess, config, harnessProfile, addDirs, extraArgs, env and isolation. The same exported
 lists (`claudeCapabilityKeys`, `codexCapabilityKeys`) drive the runtime check. `isolation` stays
 available as `'restricted'` only, since strict profiles own `'inherit'`; `worktree` is not a
-capability key, so every checkout selection still compiles. A registered harness's literal
-`capabilityKeys` are removed the same way. The removed keys are typed as optional `never`
+capability key, so every checkout selection still compiles. Claude's `addDirs` also stays typed: a
+profile that declares `claude.addDirRoots` accepts
+[root-bounded call-site directories](#bounded-call-site-directories), and for any other profile the
+runtime rejects them when the call runs. Codex `addDirs` stay removed. A registered harness's
+literal `capabilityKeys` are removed the same way. The removed keys are typed as optional `never`
 properties, so a pre-built options variable or an explicit `undefined` is rejected too, not only a
 fresh object literal. Only a literal `strictProfiles: false` types the raw keys; a non-literal
 `boolean` also stays permissive and leaves the decision to the runtime. A helper typed with a bare
@@ -117,10 +120,52 @@ Multiple `--grant` flags accumulate. Undeclared built-ins are listed in the mani
 built-in is disabled until granted; invoking `edit` without a grant fails before that agent call.
 Declaring an elevated named role makes this check happen before **any** workflow effects.
 
-Grants persist on resume. Named grants are pinned to exact tools, allowed rules, and sandbox; after
-those change, supply the grant again, even with `--accept-code-change`. Class/all grants
-deliberately cover roles within that class. Forks require fresh grants. Embedded callers use
-`RunOptions.grants`.
+Grants persist on resume. Named grants are pinned to exact tools, allowed rules, sandbox, the other
+declared capability controls and, when declared, `claude.addDirRoots`; after those change, supply
+the grant again, even with `--accept-code-change`. Class/all grants deliberately cover roles within
+that class. Forks require fresh grants. Embedded callers use `RunOptions.grants`.
+
+### Bounded call-site directories
+
+A directory known only at runtime, such as a per-PR state directory an earlier step created, can be
+made readable to one Claude agent without widening its `cwd`. Declare roots on the profile and pass
+`addDirs` at the call:
+
+```ts
+profiles: { reader: { extends: 'readonly', claude: { addDirRoots: ['.state/runs'] } } },
+// ...
+await ctx.claude.text('review', { profile: 'reader', prompt, addDirs: [`.state/runs/${pr}`] });
+```
+
+- **Claude only.** Codex `addDirs` are writable sandbox roots, so Codex cannot take a bounded
+  call-site directory; `codex.addDirRoots` (on a profile or on `defaults`) fails validation with
+  that reason. List Codex directories statically in `codex.addDirs`.
+- **Path policy.** `addDirRoots` is profile-only (never a call option) and is published verbatim in
+  `workflow.capabilities`. Roots resolve against the run's working directory; call entries resolve
+  against the call's `cwd`. An entry containing a `..` segment is refused before resolution. Both
+  sides are canonicalized: the real path of the deepest existing ancestor (symlinks followed) plus
+  any not-yet-created segments, so a directory a later step creates can still be named, while a
+  symlink that leaves a root, or a dangling symlink, is refused. An entry must equal or sit inside a
+  root. Errors name the entry, its canonical path, the profile and the canonical roots.
+- **Append.** Accepted entries are appended, as canonical absolute paths, to the profile's own
+  `addDirs` (exact duplicates dropped), so a call cannot drop a declared directory. Those canonical
+  paths reach `--add-dir`, step identity and the attempt's request summary (`request.addDirs`). A
+  profile without roots, a Codex call, or any other raw key keeps the existing
+  `strictProfiles forbids call-site …` error.
+- **Grants.** Access classification is unchanged: a Claude directory is `read`, so a call-site
+  directory never raises a role above what its tools give, and a write-capable role still needs its
+  grant. A tool-less rooted role is `read`. Roots are part of the named grant pin.
+- **Children.** A child's `addDirRoots` must lie inside the parent role's roots, and a child call's
+  canonical directories inside the parent's roots; otherwise delegation fails with
+  `Child profile … exceeds parent profile …: claude.addDirRoots` (or `claude.addDirs`).
+- **Limits.** The check runs when the call is resolved, not when the CLI opens the directory, so a
+  concurrent writer that swaps a path component for a symlink in between is not caught. Resolution
+  also runs on replay: a completed step whose directory is now outside its roots (a retargeted
+  symlink) fails to resolve on resume. Restricted mode is unchanged; only `--add-dir` is added. See
+  [ADR 0054](decisions/0054-bounded-call-site-adddirs.md).
+
+`strictProfiles: false` keeps its earlier behavior: a call's `addDirs` replace the profile's list
+without canonicalization, and roots are not enforced.
 
 `strictProfiles: false` is an explicit migration escape hatch. Raw capabilities still require
 class/all grants; a named grant cannot authorize arbitrary call-site replacements. The manifest then

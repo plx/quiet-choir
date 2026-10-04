@@ -18,20 +18,26 @@ using `"inherited"` for omissions.
 `profile` always selects a quiet-choir role. `harnessProfile` selects Codex's native configuration
 profile (`--profile`). Native profile names contain letters, numbers, underscores or hyphens and
 start with a letter or number. `networkAccess` requires `workspace-write`, even when false.
-`addDirs` resolves against the effect's cwd; Codex makes those directories **writable**. Codex
-`instructions: 'none'` runs the child against a private temporary `CODEX_HOME` holding only a copy
-of `auth.json`, adds `--config project_doc_max_bytes=0`, and writes a refreshed `auth.json` back
-under a lock; it requires restricted isolation and owns the `project_doc_max_bytes` config key. It
-removes context and grants nothing, so it is not a capability control. See
+`addDirs` resolves against the effect's cwd; Codex makes those directories **writable**. A Claude
+profile may declare `addDirRoots` (profile-only, not a call option) so that strict call sites can
+pass `addDirs` inside those roots; Codex cannot declare roots. Codex `instructions: 'none'` runs the
+child against a private temporary `CODEX_HOME` holding only a copy of `auth.json`, adds
+`--config project_doc_max_bytes=0`, and writes a refreshed `auth.json` back under a lock; it
+requires restricted isolation and owns the `project_doc_max_bytes` config key. It removes context
+and grants nothing, so it is not a capability control. See
 [harness isolation](harness-isolation.md).
 
 Declare capability controls in [agent profiles](agent-profiles.md), including tools, permissions,
 MCP/settings, native agents/profiles/config, additional directories, environment and escape args.
-Default `strictProfiles` rejects those fields at call sites. Role prompts, models, effort, fallbacks
-and image attachments can be supplied per call. Native configuration/agent/escape/env controls and
-enabled network access conservatively require an **exec** grant. Codex additional writable
-directories require write access; Claude directories alone grant no tools. Named grants pin these
-declared controls and require renewal when they change.
+Default `strictProfiles` rejects those fields at call sites, with one bounded exception: a Claude
+call may pass `addDirs` when its profile declares `claude.addDirRoots` and every entry canonicalizes
+(no `..` segments, symlinks resolved) inside a root; accepted entries are appended to the profile's
+`addDirs` as canonical absolute paths. See
+[bounded call-site directories](agent-profiles.md#bounded-call-site-directories). Role prompts,
+models, effort, fallbacks and image attachments can be supplied per call. Native
+configuration/agent/escape/env controls and enabled network access conservatively require an
+**exec** grant. Codex additional writable directories require write access; Claude directories alone
+grant no tools. Named grants pin these declared controls and require renewal when they change.
 
 ```ts
 // Fields on defineWorkflow:
@@ -87,10 +93,10 @@ dotted config keys, and the two prompts have only `sha256`. A profile that sets 
 `redacted` member. Live calls, grant pins and step identity still use the raw values, so a changed
 value invalidates a pin or a completed step even though the manifest shows only a new digest.
 Reviewable controls stay plaintext: tools, permission mode, `agent`, plugins, `addDirs`,
-`extraArgs`, models, limits, isolation and sandbox. Never put secret values in `extraArgs`; use
-`env`. A digest of a short value can be confirmed by guessing. Checkpoints written before this
-change keep what they saved until the run next executes, which rewrites them. Prompts and previews
-in step records are plaintext state, outside the manifest. See
+`addDirRoots`, `extraArgs`, models, limits, isolation and sandbox. Never put secret values in
+`extraArgs`; use `env`. A digest of a short value can be confirmed by guessing. Checkpoints written
+before this change keep what they saved until the run next executes, which rewrites them. Prompts
+and previews in step records are plaintext state, outside the manifest. See
 [ADR 0033](decisions/0033-redact-free-form-controls-from-public-manifests.md). Configuration
 defaults to `restricted`; `inherit` is an explicit exec-capability opt-out. See
 [harness isolation](harness-isolation.md) for provider boundaries, native authentication, protected
