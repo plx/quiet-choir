@@ -49,12 +49,15 @@ export type RemovalVerdict =
 const holding = (state: string): state is 'alive' | 'unknown' | 'remote' =>
   state === 'alive' || state === 'unknown' || state === 'remote';
 
-/** Judge one run for removal; see the module comment for the rules. @internal */
-export function removalVerdict(
-  record: Pick<RunRecord, 'status' | 'steps'>,
-  ownership: RunOwnership,
-  options: { readonly force: boolean },
-): RemovalVerdict {
+/** The part of a {@link RemovalVerdict} that ownership alone decides: a held lock or live orphans. @internal */
+export type OwnershipHold = Extract<RemovalVerdict, { readonly kind: 'locked' | 'orphans' }>;
+
+/**
+ * The first two precedence steps of {@link removalVerdict}: `locked`, then `orphans`, judged from
+ * the ownership observation alone; null when ownership does not hold the run. `workflow prune`
+ * uses it to protect a run before it asks `workflow rm` to remove it. @internal
+ */
+export function ownershipHold(ownership: RunOwnership): OwnershipHold | null {
   for (const lock of ownership.locks) {
     const where = { kind: lock.kind, path: lock.path };
     if (lock.owner === null || lock.warning !== undefined) {
@@ -106,6 +109,17 @@ export function removalVerdict(
   }
   if (ownership.processes.some((entry) => entry.state === 'alive' || entry.state === 'unknown'))
     return { kind: 'orphans', owner: ownership.owner, processes: ownership.processes };
+  return null;
+}
+
+/** Judge one run for removal; see the module comment for the rules. @internal */
+export function removalVerdict(
+  record: Pick<RunRecord, 'status' | 'steps'>,
+  ownership: RunOwnership,
+  options: { readonly force: boolean },
+): RemovalVerdict {
+  const hold = ownershipHold(ownership);
+  if (hold) return hold;
   if (!options.force) {
     const waiting = Object.entries(record.steps)
       .filter(([, step]) => step.status === 'waiting')
