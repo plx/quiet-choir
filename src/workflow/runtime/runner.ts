@@ -1285,6 +1285,7 @@ export async function runWorkflow<
       grants,
       pins: grantedProfiles,
       overrides: profileOverrides,
+      cwd,
       maxDepth: maxChildDepth,
       preflight: (owner, frame) => {
         registry.preflight(owner, existing ?? forkSource, frame);
@@ -2410,6 +2411,7 @@ export async function runWorkflow<
               children.authority?.grants ?? grants,
               children.authority?.pins ?? grantedProfiles,
               registration,
+              { callCwd: resolve(cwd, data.options.cwd ?? '.'), rootCwd: cwd },
             );
             profile = resolvedProfile.profile;
             children.authority?.check(profile.name, harness, resolvedProfile.options, registration);

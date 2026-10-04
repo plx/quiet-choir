@@ -82,7 +82,8 @@ export const strict = defineWorkflow({
     await ctx.claude.text('t', { prompt, strictMcpConfig: true });
     // @ts-expect-error -- strict: settings belongs to a named profile.
     await ctx.claude.text('t', { prompt, settings: {} });
-    // @ts-expect-error -- strict: addDirs belongs to a named profile.
+    // Claude addDirs compile under strict: the runtime bounds them by the profile's
+    // claude.addDirRoots and rejects them for a profile without roots (#171).
     await ctx.claude.text('t', { prompt, addDirs: ['docs'] });
     // @ts-expect-error -- strict: extraArgs belongs to a named profile.
     await ctx.claude.text('t', { prompt, extraArgs: ['--verbose'] });
@@ -111,6 +112,9 @@ export const strict = defineWorkflow({
     await ctx.agent('claude').text('t', { prompt, tools: ['Read'] });
     // @ts-expect-error -- strict through ctx.agent too.
     await ctx.agent('codex').text('t', { prompt, sandbox: 'workspace-write' });
+    await ctx.agent('claude').text('t', { prompt, profile: 'scout', addDirs: ['runs/pr-1'] });
+    // @ts-expect-error -- strict: Codex addDirs are writable roots and stay profile-owned.
+    await ctx.agent('codex').text('t', { prompt, addDirs: ['docs'] });
     // A registered harness's literal capabilityKeys are rejected; other options are not.
     // @ts-expect-error -- strict: tools is a declared capability key of the tool harness.
     await ctx.agent('tool').text('t', { prompt, tools: ['shell'] });
@@ -288,6 +292,19 @@ export const effortProfiles = defineWorkflow({
   run: () => Promise.resolve(null),
 });
 
+// Only Claude profiles bound call-site directories; Codex addDirs are writable roots (#171).
+export const rootedProfiles = defineWorkflow({
+  ...base,
+  name: 'rooted-profiles',
+  defaults: { claude: { addDirRoots: ['runs'] } },
+  profiles: {
+    reader: { extends: 'readonly', claude: { addDirs: ['docs'], addDirRoots: ['runs'] } },
+    // @ts-expect-error -- codex.addDirRoots is rejected; list Codex directories in codex.addDirs.
+    writer: { codex: { addDirRoots: ['runs'] } },
+  },
+  run: () => Promise.resolve(null),
+});
+
 // Declared children type by-name dispatch.
 const child = defineWorkflow({
   name: 'child',
@@ -452,16 +469,17 @@ it('carries strictness, profiles and declared children into authoring types', ()
   expectTypeOf(parent.name).toEqualTypeOf<'parent'>();
   expectTypeOf(strict.strictProfiles).toEqualTypeOf<true | undefined>();
   expectTypeOf(permissive.strictProfiles).toEqualTypeOf<false | undefined>();
-  // Strict built-in call options can set only a narrowed isolation of the shared key tuples; the
-  // other capability keys remain as optional never properties.
+  // Strict built-in call options can set only a narrowed isolation of the shared key tuples, plus
+  // Claude's root-bounded addDirs; the other capability keys remain as optional never properties.
   type StrictClaude = CallOptions<'claude', BuiltInHarnesses['claude'], never, true>;
   type StrictCodex = CallOptions<'codex', BuiltInHarnesses['codex'], never, true>;
   type Settable<T> = {
     [P in keyof T]-?: [Exclude<T[P], undefined>] extends [never] ? never : P;
   }[keyof T];
+  // Claude addDirs stay settable: the runtime bounds them by claude.addDirRoots (#171).
   expectTypeOf<
     Extract<Settable<StrictClaude>, (typeof claudeCapabilityKeys)[number]>
-  >().toEqualTypeOf<'isolation'>();
+  >().toEqualTypeOf<'isolation' | 'addDirs'>();
   expectTypeOf<
     Extract<Settable<StrictCodex>, (typeof codexCapabilityKeys)[number]>
   >().toEqualTypeOf<'isolation'>();

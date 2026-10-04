@@ -1,4 +1,5 @@
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { realpathSync } from 'node:fs';
+import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, expect, it } from 'vitest';
@@ -1152,3 +1153,55 @@ it.each([true, false])(
     );
   },
 );
+
+it('delegates root-bounded Claude directories to children and refuses wider child roots (#171)', async () => {
+  const stateDir = await directory();
+  const tree = await directory();
+  const root = join(tree, 'root');
+  await mkdir(join(root, 'pr-1'), { recursive: true });
+  const requests: (readonly string[] | undefined)[] = [];
+  const bounded = defineWorkflow({
+    name: 'bounded',
+    ...base,
+    profiles: { reader: { extends: 'readonly', claude: { addDirRoots: [join(root, 'pr-1')] } } },
+    async run(ctx) {
+      await ctx.claude.text('read', {
+        profile: 'reader',
+        prompt: 'x',
+        addDirs: [join(root, 'pr-1', 'state')],
+      });
+      return null;
+    },
+  });
+  const wider = defineWorkflow({
+    name: 'wider',
+    ...base,
+    profiles: { reader: { extends: 'readonly', claude: { addDirRoots: [tree] } } },
+    run: () => Promise.resolve(null),
+  });
+  const parent = defineWorkflow({
+    name: 'parent',
+    ...base,
+    profiles: { reader: { extends: 'readonly', claude: { addDirRoots: [root] } } },
+    async run(ctx) {
+      await expect(ctx.workflow('wider', wider, null)).rejects.toThrow(
+        'Child profile wider.reader exceeds parent profile reader: claude.addDirRoots',
+      );
+      await ctx.workflow('bounded', bounded, null);
+      return null;
+    },
+  });
+  const run = await runWorkflow(parent, {
+    stateDir,
+    runId: 'roots',
+    input: null,
+    harness: {
+      invoke: (request) => {
+        requests.push((request.options as { readonly addDirs?: readonly string[] }).addDirs);
+        return Promise.resolve({ text: 'ok', sessionId: null });
+      },
+    },
+  });
+  expect(run.status).toBe('completed');
+  expect(requests).toEqual([[join(realpathSync.native(root), 'pr-1', 'state')]]);
+});

@@ -88,8 +88,11 @@ policy, outside identity; `execute --policy-reset` restores the default before e
 Child roles map to parent roles of the same name by default. `options.profiles` maps a child's role
 to a differently named parent role. Declared/default child requirements are checked before child
 effects. Tools, permissions, sandbox and native escape controls cannot exceed the delegated role;
-opaque controls require matching configuration. Missing or insufficient roles fail explicitly.
-Optional built-ins that the parent cannot delegate disappear from the child's available roles, so a
+opaque controls require matching configuration. A child's Claude `addDirRoots` must lie inside the
+parent role's roots, and a child call's Claude directories must be listed by the parent role or,
+when absolute, lie canonically inside its roots (`claude.addDirRoots`, `claude.addDirs`); Codex
+directories need literal membership. Missing or insufficient roles fail explicitly. Optional
+built-ins that the parent cannot delegate disappear from the child's available roles, so a
 grandchild cannot recover them. Raw call-site capabilities are checked too, even with
 `strictProfiles: false`.
 

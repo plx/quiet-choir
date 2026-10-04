@@ -41,6 +41,8 @@ const revisionDigests: Readonly<Record<string, string>> = {
   '2': '80010b03d1fa34c4b824b0682b5138e0c19d138186fb659c38d46eab204992ec',
   // Revision 3 (#170) changed only the nested children shape (onError, settled), so it repeats them.
   '3': '80010b03d1fa34c4b824b0682b5138e0c19d138186fb659c38d46eab204992ec',
+  // Revision 4 (#171) changed only nested shapes (capabilities claude.addDirRoots, request addDirs).
+  '4': '80010b03d1fa34c4b824b0682b5138e0c19d138186fb659c38d46eab204992ec',
 };
 // digest(readRun(...)) of the installed pre-revision fixture, computed on unmodified main 91a6d2f.
 const preRevisionReadDigest = '714b6cb068de5c933b7ba04a26d1f931f589f7c9910f76f0e5c8cc493eb13016';
@@ -48,6 +50,8 @@ const preRevisionReadDigest = '714b6cb068de5c933b7ba04a26d1f931f589f7c9910f76f0e
 const revisionOneReadDigest = '73d8cec57513dde827ab1ced2a31745af52b6c8af39dad13c3e4e391cfc43310';
 // digest(readRun(...)) of the installed revision-two fixture, computed on unmodified main 9d054b4.
 const revisionTwoReadDigest = '7c56687992acfa40d749086b301489e9babc93fc9be8f2db2a1bc29cdb1d02ae';
+// digest(readRun(...)) of the installed revision-three fixture, computed on unmodified main 4c3ebf5.
+const revisionThreeReadDigest = 'c2f4ad7fd501352343faa55e59b25ec9a70ef781f9849bc6282b90eb8b8c7fd0';
 
 const sha256 = (value: string): string => createHash('sha256').update(value).digest('hex');
 
@@ -807,5 +811,99 @@ describe('revision-two records (child frames before settled frames, #170)', () =
     expect(saved.children?.['child']).toMatchObject({ status: 'completed' });
     expect(saved.children?.['child']).not.toHaveProperty('settled');
     expect((await rawSnapshot(runId))['schemaRevision']).toBe(SUPPORTED_SCHEMA_REVISION);
+  });
+});
+
+describe('revision-three records (static addDirs before bounded call-site roots, #171)', () => {
+  const runId = 'revision-three';
+  async function install(): Promise<void> {
+    const fixture = await readFile(
+      new URL('./fixtures/schema-revision/revision-three-checkpoint.json', import.meta.url),
+      'utf8',
+    );
+    await mkdir(join(stateDir, runId));
+    await writeFile(paths(runId).snapshot, fixture);
+    await writeFile(paths(runId).journal, '');
+  }
+  const reader = defineWorkflow({
+    name: 'schema-revision',
+    version: '1',
+    input: z.null(),
+    output: z.null(),
+    profiles: { reader: { extends: 'readonly', claude: { addDirs: ['docs'] } } },
+    async run(ctx) {
+      await ctx.claude.text('read', { prompt: 'x', profile: 'reader' });
+      return null;
+    },
+  });
+  const refuse: Harness = {
+    invoke(): never {
+      throw new Error('replay must not invoke');
+    },
+  };
+
+  it('read exactly as on main, with no roots and no request addDirs', async () => {
+    await install();
+    const record = await readRun({ stateDir, runId });
+    expect(record.schemaRevision).toBe(3);
+    expect(recordSchemaDrift(record)).toBeUndefined();
+    expect(digest(record)).toBe(revisionThreeReadDigest);
+    expect(record.capabilities?.profiles['reader']?.claude.addDirs).toEqual(['docs']);
+    expect(record.capabilities?.profiles['reader']?.claude).not.toHaveProperty('addDirRoots');
+    expect(record.steps['read']?.request).not.toHaveProperty('addDirs');
+  });
+
+  it('resume without invoking (identity unchanged) and are saved with the current revision', async () => {
+    await install();
+    const original = await readRun({ stateDir, runId });
+    const result = await runWorkflow(reader, {
+      ...options,
+      stateDir,
+      runId,
+      resume: true,
+      harness: refuse,
+    });
+    expect(result.status).toBe('completed');
+    const saved = await readRun({ stateDir, runId });
+    expect(saved.steps['read']).toEqual(original.steps['read']);
+    expect(saved.capabilities?.profiles['reader']).toEqual(
+      original.capabilities?.profiles['reader'],
+    );
+    expect((await rawSnapshot(runId))['schemaRevision']).toBe(SUPPORTED_SCHEMA_REVISION);
+  });
+
+  it('round-trip request-summary addDirs and capability roots through the record parser', async () => {
+    const rooted = defineWorkflow({
+      name: 'schema-revision',
+      version: '1',
+      input: z.null(),
+      output: z.null(),
+      profiles: {
+        reader: { extends: 'readonly', claude: { addDirs: ['docs'], addDirRoots: ['runs'] } },
+      },
+      async run(ctx) {
+        await ctx.claude.text('read', { prompt: 'x', profile: 'reader' });
+        return null;
+      },
+    });
+    const harness: Harness = {
+      invoke: () => Promise.resolve({ text: 'ok', sessionId: null }),
+    };
+    await expect(
+      runWorkflow(rooted, {
+        ...options,
+        stateDir,
+        runId: 'rooted',
+        input: null,
+        harness,
+        policy: [{ transcripts: 'off' }],
+      }),
+    ).resolves.toMatchObject({ status: 'completed' });
+    const record = await readRun({ stateDir, runId: 'rooted' });
+    expect(record.steps['read']?.request?.addDirs).toEqual(['docs']);
+    expect(record.steps['read']?.attemptHistory?.[0]?.request?.addDirs).toEqual(['docs']);
+    expect(record.capabilities?.profiles['reader']?.claude.addDirRoots).toEqual(['runs']);
+    expect(recordSchemaDrift(record)).toBeUndefined();
+    expect((await rawSnapshot('rooted'))['schemaRevision']).toBe(4);
   });
 });

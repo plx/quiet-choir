@@ -2,6 +2,21 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- A Claude profile may declare `claude.addDirRoots` (#171; ADR 0054). Under `strictProfiles`, a
+  Claude call using that profile may pass `addDirs`; each entry is refused if it has a `..` segment,
+  is canonicalized (the real path of its deepest existing ancestor plus any not-yet-created
+  segments; a dangling symlink is refused) and must equal or sit inside a canonical root. Accepted
+  entries are appended to the profile's own `addDirs` as canonical absolute paths, which reach
+  `--add-dir` and step identity. A profile without roots, a Codex call and any other raw key keep
+  the `strictProfiles forbids call-site …` error, and `strictProfiles: false` is unchanged (a call
+  replaces the list). `codex.addDirRoots` fails validation, because Codex directories are writable
+  roots. Roots appear in `workflow.capabilities` and in `profileGrantDigest` only when declared, so
+  existing named grant pins are unchanged; changing roots requires a renewed grant. A tool-less
+  rooted Claude role is `read`. Child delegation checks a child's roots and absolute call-site
+  directories by canonical containment in the parent role's roots. The strict call-site type now
+  permits Claude `addDirs` (the runtime rejects them for a profile without roots); Codex `addDirs`
+  stay `never`. Attempt and step request summaries record `addDirs` when nonempty. The record schema
+  revision becomes 4, so a revision-3 build refuses to rewrite a record written by this build.
 - `ctx.workflow` and `ctx.merge` accept `onError: 'return'` (#170; ADR 0007, ADR 0026). A merge
   failure such as an `onConflict: 'fail'` conflict, a dirty checkout target or a moved target is
   saved as a `settled-failed` step and returned as `Settled<MergeResult>`; resume replays it without

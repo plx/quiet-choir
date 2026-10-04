@@ -9,6 +9,8 @@ import type {
   ResolvedProfile,
 } from './profiles-model.js';
 import { digest } from './json.js';
+import { canonicalPath, canonicalRoots, insideRoots, within } from './add-dir-roots.js';
+import { isAbsolute, resolve } from 'node:path';
 import {
   profileGrantDigest,
   requireGrant,
@@ -77,7 +79,41 @@ function declaredDenialPolicy(
   return definition.defaults?.onPermissionDenied;
 }
 
-function subset(child: ResolvedProfile, parent: ResolvedProfile, label: string): void {
+/**
+ * Whether a child's Claude directory is delegated: literally listed by the parent, or (with the run
+ * cwd known) an absolute path whose canonical form lies inside one of the parent's roots. Relative
+ * entries need literal membership, because they resolve against an effect cwd unknown here.
+ */
+function delegatedDir(path: string, parent: ResolvedProfile, rootCwd?: string): boolean {
+  if (parent.claude.addDirs?.includes(path)) return true;
+  const roots = parent.claude.addDirRoots ?? [];
+  if (rootCwd === undefined || !roots.length || !isAbsolute(path)) return false;
+  try {
+    return insideRoots(path, roots, rootCwd);
+  } catch {
+    return false;
+  }
+}
+
+/** Whether a child's root lies inside one of the parent's roots, both canonicalized against the run cwd. */
+function delegatedRoot(root: string, parent: ResolvedProfile, rootCwd?: string): boolean {
+  const roots = parent.claude.addDirRoots ?? [];
+  if (roots.includes(root)) return true;
+  if (rootCwd === undefined || !roots.length) return false;
+  try {
+    const target = canonicalPath(resolve(rootCwd, root));
+    return canonicalRoots(roots, rootCwd).some((allowed) => within(allowed, target));
+  } catch {
+    return false;
+  }
+}
+
+function subset(
+  child: ResolvedProfile,
+  parent: ResolvedProfile,
+  label: string,
+  rootCwd?: string,
+): void {
   const reject = (field: string): never => {
     throw new Error(
       `Child profile ${label} exceeds parent profile ${parent.name}: ${field}. Delegate a sufficient parent role explicitly.`,
@@ -104,7 +140,13 @@ function subset(child: ResolvedProfile, parent: ResolvedProfile, label: string):
     const allowed = parent[harness];
     if (wanted.isolation === 'inherit' && allowed.isolation !== 'inherit')
       reject(`${harness}.isolation`);
-    if (!(wanted.addDirs ?? []).every((path) => allowed.addDirs?.includes(path)))
+    if (
+      !(wanted.addDirs ?? []).every((path) =>
+        harness === 'claude'
+          ? delegatedDir(path, parent, rootCwd)
+          : allowed.addDirs?.includes(path),
+      )
+    )
       reject(`${harness}.addDirs`);
     // Native configuration is opaque: only exactly delegated escape hatches can cross the boundary.
     for (const field of [
@@ -126,6 +168,8 @@ function subset(child: ResolvedProfile, parent: ResolvedProfile, label: string):
         reject(`${harness}.${field}`);
     }
   }
+  if (!(child.claude.addDirRoots ?? []).every((root) => delegatedRoot(root, parent, rootCwd)))
+    reject('claude.addDirRoots');
   if (
     !(parent.claude.disallowedTools ?? []).every((rule) =>
       child.claude.disallowedTools?.includes(rule),
@@ -140,7 +184,11 @@ function subset(child: ResolvedProfile, parent: ResolvedProfile, label: string):
       reject('onPermissionDenied');
 }
 
-/** Resolve declared child needs and check them against concrete parent roles before child effects. @internal */
+/**
+ * Resolve declared child needs and check them against concrete parent roles before child effects.
+ * With the run's working directory, Claude directories and `addDirRoots` are checked by canonical
+ * containment in the parent's roots; without it, only literal membership delegates. @internal
+ */
 export function delegateCapabilities(
   definition: WorkflowDeclaration,
   parent: CapabilityManifest,
@@ -148,6 +196,7 @@ export function delegateCapabilities(
   parentPins: Readonly<Record<string, string>>,
   parentOverrides: readonly ProfileOverride[],
   options: ChildOptions,
+  rootCwd?: string,
 ): ChildCapabilities {
   let manifest = resolveCapabilities(definition);
   const mapping = options.profiles ?? {};
@@ -198,7 +247,7 @@ export function delegateCapabilities(
   const checkProfile = (name: string, role: ResolvedProfile): ResolvedProfile => {
     const ceiling = bound(name);
     const inherited = inheritDenials(name, role, ceiling);
-    subset(inherited, ceiling, `${definition.name}.${name}`);
+    subset(inherited, ceiling, `${definition.name}.${name}`, rootCwd);
     requireGrant(ceiling, parentGrants, parentPins);
     return inherited;
   };

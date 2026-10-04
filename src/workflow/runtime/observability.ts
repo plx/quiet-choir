@@ -58,6 +58,7 @@ export function requestSummary(
       request.harness === 'claude' && (request.options as ClaudeOptions).tools
         ? [...((request.options as ClaudeOptions).tools ?? [])]
         : null,
+    ...(options.addDirs?.length ? { addDirs: [...options.addDirs] } : {}),
     cwd: request.cwd,
     structured: request.outputSchema !== null,
     promptSha256: createHash('sha256').update(options.prompt).digest('hex'),

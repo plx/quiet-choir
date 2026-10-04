@@ -53,6 +53,15 @@ export interface AgentProfile extends ProfileLimits {
   > & {
     /** Overrides the profile-wide configuration mode; checkout placement stays per call. */
     readonly isolation?: HarnessIsolation;
+    /**
+     * Directories that bound call-site `addDirs` under `strictProfiles`. A call using this profile
+     * may pass `addDirs` whose canonical paths (symlinks resolved, `..` segments refused) equal or
+     * sit inside one of these roots; accepted entries are appended to this profile's own `addDirs`
+     * as canonical absolute paths. Roots resolve against the run's working directory and are
+     * pinned by named grants. Without roots, strict call sites cannot pass `addDirs`. Profile-only:
+     * never a call option.
+     */
+    readonly addDirRoots?: readonly string[];
   };
   /** Codex model, sandbox, effort and native controls. */
   readonly codex?: Omit<
@@ -69,6 +78,12 @@ export interface AgentProfile extends ProfileLimits {
   > & {
     /** Overrides the profile-wide configuration mode; checkout placement stays per call. */
     readonly isolation?: HarnessIsolation;
+    /**
+     * Not supported: Codex `addDirs` are writable sandbox roots, so Codex cannot take bounded
+     * call-site directories. List them statically in `codex.addDirs`; a definition that sets this
+     * fails validation.
+     */
+    readonly addDirRoots?: never;
   };
 }
 

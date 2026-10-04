@@ -26,7 +26,7 @@ honor the resolved request itself. Native binaries/configuration still determine
 | `maxBudgetUsd`           | Positive finite USD             | Unsupported                      | Text $0.50                                   | Profile supplies; Claude enforces                              |
 | `tools` / `allowedTools` | Exposed / permitted tools       | Unsupported                      | Text empty; allowed copies tools             | Core grants; Claude enforces                                   |
 | `sandbox`                | Unsupported                     | read-only/workspace-write        | read-only                                    | Core grants; Codex enforces                                    |
-| `addDirs`                | Extra access directories        | Extra writable directories       | None                                         | Core resolves/grants; native CLI enforces                      |
+| `addDirs`                | Extra dirs; rooted at call site | Extra writable directories       | None                                         | Core resolves/bounds/grants; native CLI enforces               |
 | `extraArgs`              | `--flag` or `--flag=value`      | Same                             | None                                         | Adapter rejects owned flags/aliases; core fingerprints strings |
 | `env`                    | Environment overlay             | Same                             | Inherit parent environment                   | Adapter overlays; core fingerprints explicit values            |
 | `retry`                  | Safe-to-repeat calls only       | Same                             | One attempt; opted-in delay starts at 100 ms | Core owns retry, removes it from adapter request               |
@@ -50,8 +50,13 @@ config/agents, dirs, escape args, and environment. Call-site types enforce this:
 literal removes those keys (and `isolation: 'inherit'`) from `ctx.claude`, `ctx.codex` and
 `ctx.agent(name)` options (as optional `never` properties, so a pre-built options variable fails
 too), so a raw key fails typecheck and `workflow validate`; only a literal `strictProfiles: false`
-types them. `ctx.agent(name)` profiles accept only built-in or declared roles. A bare
-`WorkflowContext` helper stays permissive (the runtime still checks);
+types them. One bounded exception: Claude `addDirs` stay typed, and a profile declaring
+`claude: { addDirRoots: ['.state/runs'] }` accepts call-site `addDirs` whose canonical paths (no
+`..` segments, symlinks resolved, roots against the run cwd) lie inside a root, appending them to
+its own `addDirs` as absolute paths; other profiles reject them when the call runs. Codex cannot
+declare roots, because its directories are writable. Roots are pinned by named grants and bound
+child roles by containment. `ctx.agent(name)` profiles accept only built-in or declared roles. A
+bare `WorkflowContext` helper stays permissive (the runtime still checks);
 `WorkflowContext<'role', BuiltInHarnesses, true>` is a strict helper contract. Explicit
 `defineWorkflow` type arguments are all-or-nothing: with a shorter prefix such as
 `defineWorkflow<Input, Output>`, the rest take the strict, childless defaults, so

@@ -1,3 +1,6 @@
+import { mkdirSync, mkdtempSync, realpathSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { expect, it } from 'vitest';
 import { z } from '../src/index.js';
 import type { WorkflowDeclaration } from '../src/workflow/runtime/child-model.js';
@@ -159,4 +162,56 @@ it('lets a delegated child role inherit the parent role Codex effort unless it s
   );
   expect(delegated.manifest.profiles['author']?.codex).toMatchObject({ effort: 'minimal' });
   expect(delegated.manifest.profiles['tuned']?.codex).toMatchObject({ effort: 'high' });
+});
+
+it('delegates Claude directories by containment in the parent roots (#171)', () => {
+  const tree = mkdtempSync(join(tmpdir(), 'choir-child-roots-'));
+  try {
+    const root = join(tree, 'root');
+    mkdirSync(join(root, 'sub'), { recursive: true });
+    const parent = resolveCapabilities({
+      profiles: { reader: { extends: 'readonly', claude: { addDirRoots: [root] } } },
+    });
+    const ceiling = parent.profiles['reader'];
+    if (!ceiling) throw new Error('parent role missing');
+    const pins = { reader: profileGrantDigest(ceiling) };
+    const delegate = (roots: string[], withCwd = true) =>
+      delegateCapabilities(
+        declaration('child', { reader: { extends: 'readonly', claude: { addDirRoots: roots } } }),
+        parent,
+        ['reader'],
+        pins,
+        [],
+        {},
+        withCwd ? tree : undefined,
+      );
+    // Equal and nested roots (absolute, or relative to the run cwd) stay inside the parent's.
+    for (const roots of [[root], [join(root, 'sub')], ['root/sub']])
+      expect(() => delegate(roots)).not.toThrow();
+    for (const roots of [[tree], [join(tree, 'other')], [root, join(tree, 'other')]])
+      expect(() => delegate(roots)).toThrow(
+        'Child profile child.reader exceeds parent profile reader: claude.addDirRoots.',
+      );
+    // Without the run cwd only a literally delegated root passes.
+    expect(() => delegate([root], false)).not.toThrow();
+    expect(() => delegate([join(root, 'sub')], false)).toThrow('claude.addDirRoots');
+    // A child call's canonical directories are rechecked against the parent's roots.
+    const child = delegate([join(root, 'sub')]);
+    const inside = join(realpathSync.native(root), 'sub', 'pr-1');
+    expect(() => {
+      child.check('reader', 'claude', { prompt: 'x', addDirs: [inside] });
+    }).not.toThrow();
+    expect(() => {
+      child.check('reader', 'claude', {
+        prompt: 'x',
+        addDirs: [join(tree, 'outside')],
+      });
+    }).toThrow('Child profile child.reader exceeds parent profile reader: claude.addDirs.');
+    // Relative entries still need literal membership: their effect cwd is unknown here.
+    expect(() => {
+      child.check('reader', 'claude', { prompt: 'x', addDirs: ['root/sub'] });
+    }).toThrow('claude.addDirs');
+  } finally {
+    rmSync(tree, { recursive: true, force: true });
+  }
 });

@@ -30,6 +30,8 @@ interface Dependencies {
   readonly grants: readonly string[];
   readonly pins: Readonly<Record<string, string>>;
   readonly overrides: readonly ProfileOverride[];
+  /** The run's working directory, against which declared claude.addDirRoots resolve. */
+  readonly cwd: string;
   readonly maxDepth: number;
   readonly preflight: (definition: WorkflowDeclaration, frame: string | null) => void;
   readonly record: RunRecord;
@@ -249,6 +251,7 @@ export class RunChildren {
           parent?.authority.pins ?? d.pins,
           parent?.authority.overrides ?? d.overrides,
           options.profiles === undefined ? {} : { profiles: options.profiles },
+          d.cwd,
         );
         d.used.add(id);
         this.#visited.add(id);
