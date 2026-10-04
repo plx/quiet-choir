@@ -15,7 +15,7 @@ explicit.
 ## Run it
 
 ```text
-Workflow({ name: 'execute-epic-ticket', args: { epic: 99, followupEpic: 140 } })
+Workflow({ name: 'execute-epic-ticket', args: { epic: 99, followupEpic: 172 } })
 ```
 
 | Argument          | Meaning                                                                                                                                                                                                                                                    |
@@ -79,8 +79,10 @@ depends on. Here:
 - **The helper, not a prompt, enforces what gets published.** `open-pr` refuses a dirty worktree, a
   branch with no commits of its own, and a head without a passing check.
 - **Implementer reports are checked mechanically.** Every acceptance criterion must be reported
-  `done` with a commit. `verify` confirms each named commit is on the branch, the tree is clean, and
-  the last full check passed at the exact head.
+  `done`, `verify-on-pr` (handed to the landing review as an explicit check) or `deviation` (judged
+  by the landing review); anything `partial` or `not-done` blocks. `verify` confirms that every
+  commit-shaped value is on the branch (a criterion already met on main leaves the commit empty),
+  the tree is clean, and the last full check passed at the exact head.
 - **Closing a ticket needs two opinions.** An "obsolete" verdict is closed only if an independent
   skeptic agrees. If the skeptic disagrees, the ticket is re-planned instead.
 - **Relayed outputs are verified.** Every clerk copy is checked by nonce and FNV-1a hash. A failed

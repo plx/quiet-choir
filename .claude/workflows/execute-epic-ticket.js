@@ -50,7 +50,7 @@ export const meta = {
  *                 a record with the next ticket and what remains.
  *
  * INVOCATION
- *   Workflow({ name: 'execute-epic-ticket', args: { epic: 99, followupEpic: 140 } })
+ *   Workflow({ name: 'execute-epic-ticket', args: { epic: 99, followupEpic: 172 } })
  *   args.epic            required; the epic issue whose checklist/sub-issues are the tickets
  *   args.ticket          work on this ticket instead of the survey's choice
  *   args.decision        the maintainer's answer to a needs-decision question on args.ticket; it is
