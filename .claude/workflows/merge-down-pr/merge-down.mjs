@@ -950,6 +950,7 @@ function localReview(a, P, R) {
       encoding: 'utf8',
       maxBuffer: 512 * 1024 * 1024,
       timeout: Number(a['timeout-minutes'] ?? 40) * 60_000,
+      killSignal: 'SIGKILL',
     });
     const text = stripAnsi(r.stdout ?? '').trim();
     writeFileSync(`${stem}.md`, `${text}\n`);
@@ -1046,6 +1047,8 @@ async function localReviewWait(a, P) {
 
 // A review whose wait failed or timed out is stopped, so it does not run on unobserved. The
 // review is its own process group (spawned detached), so the group signal reaches codex too.
+// Stop also reaps the leftovers of a finished, failed review: a result file only says the runner
+// ended, and a spawnSync timeout kills codex but can leave its descendants in the group.
 const groupAlive = (pid) => {
   try {
     process.kill(-pid, 0);
@@ -1061,7 +1064,7 @@ async function localReviewStop(a, P) {
   const started = readJson(`${stem}.started.json`);
   const pid = started?.sha === sha ? started.pid : null;
   let signalled = false;
-  if (pid && !existsSync(`${stem}.result.json`) && groupAlive(pid)) {
+  if (pid && groupAlive(pid)) {
     for (const [signal, seconds] of [
       ['SIGTERM', 20],
       ['SIGKILL', 10],
