@@ -87,6 +87,34 @@ The journal was empty, so only `run.json` is checked in. Stack paths are scrubbe
 and the file was formatted with Prettier; its read-view digest in
 `test/record-schema-revision.test.ts` was computed on the same unmodified main from this file.
 
+`revision-three-checkpoint.json` was generated the same way at origin/main `4c3ebf5`, before bounded
+call-site Claude directories (#171) added the nested `claude.addDirRoots` profile field to
+`capabilities` and the optional `addDirs` field to attempt request summaries in revision 4. Its run
+ID is `revision-three`, and it ran this definition with the launch policy `[{ transcripts: 'off' }]`
+(so no transcript path enters the record) and a stub harness whose `invoke` returns
+`{ text: 'ok', sessionId: null }`. It carries `schemaRevision: 3`, a declared `reader` profile with
+a static `claude.addDirs`, one completed Claude call `read` with its request summary and identity,
+and a workflow-body failure after it:
+
+```ts
+defineWorkflow({
+  name: 'schema-revision',
+  version: '1',
+  input: z.null(),
+  output: z.null(),
+  profiles: { reader: { extends: 'readonly', claude: { addDirs: ['docs'] } } },
+  async run(ctx) {
+    await ctx.claude.text('read', { prompt: 'x', profile: 'reader' });
+    throw new Error('fixture tail');
+  },
+});
+```
+
+The journal was empty, so only `run.json` is checked in. Stack paths are scrubbed to `/fixture/...`
+and the file was formatted with Prettier; its read-view digest in
+`test/record-schema-revision.test.ts` was computed on the same unmodified main from this file. The
+same main also produced the golden `profileGrantDigest` values pinned in `test/profiles.test.ts`.
+
 `record-keys.json` lists the top-level run-record keys of each schema revision. Adding or changing a
 persisted run-level field adds a revision there and bumps `SUPPORTED_SCHEMA_REVISION`; a revision
 that only changes a nested shape repeats the previous key list. See `docs/storage.md`.
