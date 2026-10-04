@@ -737,6 +737,8 @@ For each Codex finding, in the review's order: id (F1, F2, …), title, verdict 
       verdict: f.verdict,
       severity: f.severity,
       disposition: f.disposition,
+      detail: f.detail,
+      plan: f.plan,
     });
     const item = {
       key: `finding:${f.id}`,
@@ -1414,6 +1416,7 @@ if (kind === 'change' && ISSUE) {
     threads: record.threads,
     fixes: record.fixes ?? [],
     findings: record.review.findings,
+    codexFindings: record.codexFindings,
     followups: record.followups,
     summaryNotes: review.summaryNotes,
     escalatedReview: record.review.escalated,
