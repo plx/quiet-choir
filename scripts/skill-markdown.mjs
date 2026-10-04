@@ -69,19 +69,29 @@ export function prose(text, file) {
   return stripToFixedPoint(lines.join('\n'), /<!--[^]*?-->/gu);
 }
 
-/** GitHub-style anchors for the headings used by the distributed references. */
-export function anchors(text) {
-  const result = new Set();
-  const body = prose(text);
-  for (const match of body.matchAll(/^ {0,3}#{1,6}[ \t]+(.+?)[ \t]*#*[ \t]*$/gmu)) {
-    const base = stripToFixedPoint(match[1].toLowerCase(), /<[^>]*>/gu)
+/**
+ * Headings of Markdown prose with their level, title and GitHub-style slug. Repeated titles get a
+ * `-1`, `-2` suffix, as on GitHub; `anchors()` and the patterns-index check share this one slugger.
+ */
+export function headingSlugs(text) {
+  const used = new Set();
+  const result = [];
+  for (const match of prose(text).matchAll(/^ {0,3}(#{1,6})[ \t]+(.+?)[ \t]*#*[ \t]*$/gmu)) {
+    const base = stripToFixedPoint(match[2].toLowerCase(), /<[^>]*>/gu)
       .replace(/[^\p{L}\p{N}_ -]/gu, '')
       .replace(/ /gu, '-');
     let slug = base;
-    for (let count = 1; result.has(slug); count++) slug = `${base}-${String(count)}`;
-    result.add(slug);
+    for (let count = 1; used.has(slug); count++) slug = `${base}-${String(count)}`;
+    used.add(slug);
+    result.push({ level: match[1].length, title: match[2], slug });
   }
-  for (const match of body.matchAll(/\bid\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>]+))/giu))
+  return result;
+}
+
+/** GitHub-style anchors for the headings used by the distributed references. */
+export function anchors(text) {
+  const result = new Set(headingSlugs(text).map(({ slug }) => slug));
+  for (const match of prose(text).matchAll(/\bid\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>]+))/giu))
     result.add(match[1] ?? match[2] ?? match[3]);
   return result;
 }
