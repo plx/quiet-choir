@@ -7,7 +7,9 @@ import type { CodexOptions } from './codex-options.js';
 
 /**
  * Claude Code options that strict profiles own: under `strictProfiles` a call site may not set them
- * (for isolation only `'inherit'` is rejected), and named profiles declare them instead.
+ * (for isolation only `'inherit'` is rejected), and named profiles declare them instead. The one
+ * exception is `addDirs`: a call site may pass it when the selected profile declares
+ * `claude.addDirRoots` and every entry canonicalizes inside one of those roots.
  */
 export const claudeCapabilityKeys: readonly [
   'tools',

@@ -219,8 +219,10 @@ export type CapabilityKeysOf<D> = D extends {
  * `profile` accepts a built-in preset or a declared role. When `TStrict` is exactly `true` (a
  * workflow that omits `strictProfiles` or sets it to a literal `true`), the harness's capability keys
  * are forbidden as optional `never` properties, mirroring the runtime check: for Claude and Codex
- * every key except `isolation`, which is narrowed to exclude `'inherit'`; for a registered harness
- * every literal `capabilityKeys` entry. Forbidding the keys structurally, not only through
+ * every key except `isolation`, which is narrowed to exclude `'inherit'`, and Claude's `addDirs`,
+ * which stays permitted because a profile that declares `claude.addDirRoots` admits call-site
+ * directories inside those roots (the runtime check rejects them for any other profile); for a
+ * registered harness every literal `capabilityKeys` entry. Forbidding the keys structurally, not only through
  * excess-property checks, also rejects a pre-built options variable and, with
  * `exactOptionalPropertyTypes`, an explicit `undefined`. A literal `false`, or a
  * non-literal `boolean`, keeps every option.
@@ -233,8 +235,23 @@ export type CallOptions<
 > = Extract<
   ([TStrict] extends [true]
     ? K extends 'claude' | 'codex'
-      ? Omit<OptionsOf<D>, 'profile' | 'isolation' | CapabilityKeysOf<D>> &
-          Readonly<Partial<Record<Exclude<CapabilityKeysOf<D>, 'isolation'>, never>>> & {
+      ? Omit<
+          OptionsOf<D>,
+          | 'profile'
+          | 'isolation'
+          | Exclude<CapabilityKeysOf<D>, K extends 'claude' ? 'addDirs' : never>
+        > &
+          Readonly<
+            Partial<
+              Record<
+                Exclude<
+                  CapabilityKeysOf<D>,
+                  'isolation' | (K extends 'claude' ? 'addDirs' : never)
+                >,
+                never
+              >
+            >
+          > & {
             /** Native configuration mode; strict profiles own `'inherit'`. */
             readonly isolation?: Exclude<HarnessIsolation, 'inherit'> | undefined;
           }

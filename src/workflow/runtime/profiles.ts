@@ -18,6 +18,7 @@ import { harnessIsolationSchema, isolationParts, resolveIsolation } from './agen
 import { environmentSummary, environmentSummarySchema } from './agent-environment.js';
 import { builtinCapabilityKeys } from '../../harnesses/builtins/capability-keys.js';
 import { codexBlock, legacyEffort, rejectRenamedEffort } from './effort-compat.js';
+import { boundCallAddDirs } from './add-dir-roots.js';
 
 const nameSchema = z.string().regex(/^[a-zA-Z][a-zA-Z0-9_-]{0,63}$/u);
 const limits = {
@@ -49,6 +50,9 @@ const fields = {
       model: z.string().min(1).optional(),
       tools: z.array(z.string().regex(/^[a-zA-Z][a-zA-Z0-9_*.-]*$/u)).optional(),
       allowedTools: z.array(z.string().min(1)).optional(),
+      // Profile-only (never a call option): roots that bound call-site addDirs under strict
+      // profiles (#171). Kept as declared so grant pins and manifests are machine-independent.
+      addDirRoots: z.array(z.string().min(1)).min(1).optional(),
     })
     .optional(),
   codex: z
@@ -169,8 +173,11 @@ export function resolveCapabilities(definition: {
   readonly harnesses?: readonly HarnessDeclaration[];
 }): CapabilityManifest {
   rejectRenamedEffort('defaults.codex', codexBlock(definition.defaults));
-  for (const [name, profile] of Object.entries(definition.profiles ?? {}))
+  rejectCodexRoots('defaults.codex', codexBlock(definition.defaults));
+  for (const [name, profile] of Object.entries(definition.profiles ?? {})) {
     rejectRenamedEffort(`Profile ${name} codex`, codexBlock(profile));
+    rejectCodexRoots(`Profile ${name} codex`, codexBlock(profile));
+  }
   const config = z
     .strictObject({
       defaults: z.strictObject({ ...fields, profile: nameSchema.optional() }).optional(),
@@ -232,10 +239,18 @@ export function resolveCapabilities(definition: {
     const tools = data.claude.tools ?? [];
     const allowedTools = data.claude.allowedTools ?? tools;
     checkAllowedTools(tools, allowedTools);
-    const claudeAccess = controlAccess('claude', { ...data.claude, tools });
+    const claudeOptions = withoutRoots(data.claude);
+    // Rooted call-site directories are read access, like static addDirs on a tool-less role.
+    const claudeAccess = controlAccess('claude', {
+      ...claudeOptions,
+      tools,
+      ...(data.claude.addDirRoots?.length && !claudeOptions.addDirs?.length
+        ? { addDirs: data.claude.addDirRoots }
+        : {}),
+    });
     const sandbox = data.codex.sandbox ?? 'read-only';
     const codexAccess = controlAccess('codex', { ...data.codex, sandbox });
-    validateAgentOptions('claude', { ...data.claude, tools, allowedTools, prompt: '' });
+    validateAgentOptions('claude', { ...claudeOptions, tools, allowedTools, prompt: '' });
     validateAgentOptions('codex', { ...data.codex, sandbox, prompt: '' });
     let access = rank[claudeAccess] > rank[codexAccess] ? claudeAccess : codexAccess;
     for (const registered of Object.keys(data.harnesses ?? {}))
@@ -386,7 +401,12 @@ export function requireGrant(
   throw new GrantRequiredError(profile.name, access);
 }
 
-/** Resolve a call's role and semantics; raw capability calls still need class grants. @internal */
+/**
+ * Resolve a call's role and semantics; raw capability calls still need class grants. Under strict
+ * profiles a Claude call may pass `addDirs` when its profile declares `claude.addDirRoots`: each
+ * entry must canonicalize inside a root (`paths.callCwd` resolves entries, `paths.rootCwd` roots),
+ * and the canonical paths are appended to the profile's own `addDirs` (#171). @internal
+ */
 export function resolveProfileCall(
   manifest: CapabilityManifest,
   harness: string,
@@ -394,6 +414,7 @@ export function resolveProfileCall(
   grants: readonly string[],
   pins: Readonly<Record<string, string>>,
   definition?: HarnessDeclaration,
+  paths?: { readonly callCwd: string; readonly rootCwd: string },
 ): { profile: ResolvedProfile; options: ClaudeOptions | CodexOptions } {
   const name = call.profile ?? manifest.defaultProfile;
   const profile = manifest.profiles[name];
@@ -419,14 +440,43 @@ export function resolveProfileCall(
     );
     return { profile, options };
   }
+  const roots = harness === 'claude' ? profile.claude.addDirRoots : undefined;
+  // A rooted Claude profile admits call-site addDirs under strict profiles, bounded by its roots.
+  const bounded =
+    manifest.strictProfiles &&
+    roots !== undefined &&
+    roots.length > 0 &&
+    Object.hasOwn(call, 'addDirs');
   const raw = builtinCapabilityKeys[harness].filter(
-    (key) => Object.hasOwn(call, key) && (key !== 'isolation' || call.isolation === 'inherit'),
+    (key) =>
+      Object.hasOwn(call, key) &&
+      (key !== 'isolation' || call.isolation === 'inherit') &&
+      !(bounded && key === 'addDirs'),
   );
   if (manifest.strictProfiles && raw.length)
     throw new Error(`strictProfiles forbids call-site ${raw.join(', ')}; declare a named profile.`);
   const overrides = isolationParts(call);
   Reflect.deleteProperty(overrides, 'profile');
   const resolved = { ...profile[harness], ...overrides };
+  // Roots are profile-only: the harness, its validator and step identity never see them.
+  Reflect.deleteProperty(resolved, 'addDirRoots');
+  if (bounded) {
+    if (!paths)
+      throw new Error(
+        'Internal error: bounded call-site addDirs need the call and run working directories.',
+      );
+    const accepted = boundCallAddDirs({
+      profile: profile.name,
+      dirs: (call as ClaudeOptions).addDirs ?? [],
+      roots,
+      callCwd: paths.callCwd,
+      rootCwd: paths.rootCwd,
+    });
+    // Append, so a call cannot drop a directory the profile declares.
+    Object.assign(resolved, {
+      addDirs: [...new Set([...(profile.claude.addDirs ?? []), ...accepted])],
+    });
+  }
   if (harness === 'claude') {
     const claude = resolved as ClaudeOptions;
     const tools = claude.tools ?? [];
@@ -563,6 +613,23 @@ export function publicCapabilityManifest(manifest: CapabilityManifest): Capabili
   return result;
 }
 
+/** Reject Codex roots before the schema parse, with the reason instead of an unknown-key error. */
+function rejectCodexRoots(where: string, value: unknown): void {
+  if (typeof value === 'object' && value !== null && Object.hasOwn(value, 'addDirRoots'))
+    throw new Error(
+      `${where}.addDirRoots: Codex addDirs are writable roots, so Codex cannot take bounded call-site directories; list them statically in codex.addDirs.`,
+    );
+}
+
+/** Claude options without the profile-only roots, for the option validator and harness. */
+function withoutRoots<T extends { readonly addDirRoots?: readonly string[] }>(
+  claude: T,
+): Omit<T, 'addDirRoots'> {
+  const options = { ...claude };
+  Reflect.deleteProperty(options, 'addDirRoots');
+  return options;
+}
+
 function capabilityExtras(
   claude: NonNullable<AgentProfile['claude']>,
   codex: NonNullable<AgentProfile['codex']>,
@@ -583,6 +650,8 @@ function capabilityExtras(
         .map(([key, value]) => [`${harness}.${key}`, value]),
     ),
   );
+  // Only when declared, so profiles without roots keep their grant digest (#171).
+  if (claude.addDirRoots !== undefined) extras['claude.addDirRoots'] = claude.addDirRoots;
   return extras;
 }
 /** Classify configuration/escape hatches conservatively without interpreting native plugins. @internal */

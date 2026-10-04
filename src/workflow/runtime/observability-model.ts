@@ -49,6 +49,12 @@ export interface RequestSummary {
   };
   /** Declared Claude tools, or null for inherited/non-Claude tool configuration. */
   readonly tools: readonly string[] | null;
+  /**
+   * Additional directories as passed to the harness: profile entries as declared (they resolve
+   * against the call's working directory) followed by root-bounded call-site entries as canonical
+   * absolute paths. Absent when there are none, and in records before schema revision 4 (#171).
+   */
+  readonly addDirs?: readonly string[];
   /** Absolute call working directory. */
   readonly cwd: string;
   /** Whether the caller requested structured output. */

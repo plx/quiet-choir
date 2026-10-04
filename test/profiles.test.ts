@@ -1,5 +1,6 @@
 import { ConfigurationError, WorkflowRunError } from '../src/index.js';
 import { GrantRequiredError } from '../src/workflow/runtime/configuration-error.js';
+import { mkdirSync, realpathSync, symlinkSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -29,6 +30,7 @@ import {
 import { claudeDefinition, codexDefinition } from '../src/harnesses/builtins/definitions.js';
 import { digest } from '../src/workflow/runtime/json.js';
 import { parseClaude } from '../src/harnesses/protocol.js';
+import { planInvocation } from '../src/harnesses/invocation.js';
 
 let stateDir: string;
 const reply = {
@@ -924,4 +926,294 @@ it('refuses a named grant for a pending step whose profile changed only in a red
   await expect(
     runWorkflow(definition, { ...options, resume: true, grants: ['all'] }),
   ).resolves.toMatchObject({ status: 'completed' });
+});
+
+// Bounded call-site Claude addDirs under strict profiles (#171, ADR 0054).
+/** A temporary tree in the state directory: root/pr-1 exists, outside is a sibling of root. */
+function rootedTree(): { tree: string; root: string; real: string; outside: string } {
+  const tree = join(stateDir, 'tree');
+  const root = join(tree, 'root');
+  const outside = join(tree, 'outside');
+  mkdirSync(join(root, 'pr-1'), { recursive: true });
+  mkdirSync(outside, { recursive: true });
+  return { tree, root, real: realpathSync.native(root), outside };
+}
+const role = (manifest: ReturnType<typeof resolveCapabilities>, name: string) => {
+  const profile = manifest.profiles[name];
+  if (!profile) throw new Error(`missing profile ${name}`);
+  return profile;
+};
+
+it.each([
+  ['present', 'pr-1'],
+  ['absent', 'pr-9'],
+])(
+  'passes a root-bounded call-site directory (%s) to --add-dir under strict profiles',
+  async (_label, leaf) => {
+    const { root, real } = rootedTree();
+    const invoke = vi.fn<Harness['invoke']>().mockResolvedValue(reply);
+    const definition = defineWorkflow({
+      ...base,
+      profiles: { reader: { extends: 'readonly', claude: { addDirRoots: [root] } } },
+      async run(ctx) {
+        return (
+          await ctx.claude.text('read', {
+            prompt: 'x',
+            profile: 'reader',
+            addDirs: [`${root}/${leaf}`],
+          })
+        ).output;
+      },
+    });
+    await expect(
+      runWorkflow(definition, { ...setup(), harness: { invoke } }),
+    ).resolves.toMatchObject({ status: 'completed' });
+    const request = invoke.mock.calls[0]?.[0];
+    if (!request) throw new Error('not invoked');
+    const expected = join(real, leaf);
+    expect(request.options.addDirs).toEqual([expected]);
+    expect(request.options).not.toHaveProperty('addDirRoots');
+    const { argv } = planInvocation(request as Parameters<typeof planInvocation>[0]);
+    expect(argv[argv.indexOf('--add-dir') + 1]).toBe(expected);
+    // The restricted boundary stays intact: only --add-dir is added.
+    expect(argv).toContain('--restricted');
+    expect(argv).toContain('--strict-mcp-config');
+    const saved = await readRun(setup());
+    expect(saved.steps['read']?.request?.addDirs).toEqual([expected]);
+    expect(saved.capabilities?.profiles['reader']?.claude.addDirRoots).toEqual([root]);
+  },
+);
+
+it('rejects strict call-site directories outside the roots, without roots, and for Codex', () => {
+  const { tree, root, real, outside } = rootedTree();
+  symlinkSync(outside, join(root, 'link'));
+  const manifest = resolveCapabilities({
+    profiles: {
+      reader: { extends: 'readonly', claude: { addDirRoots: [root] } },
+      plain: { extends: 'readonly' },
+    },
+  });
+  const paths = { callCwd: tree, rootCwd: tree };
+  const call =
+    (options: Record<string, unknown>, profile = 'reader', harness = 'claude') =>
+    () =>
+      resolveProfileCall(
+        manifest,
+        harness,
+        { prompt: 'x', profile, ...options },
+        [],
+        {},
+        undefined,
+        paths,
+      );
+  const roots = `Profile reader claude.addDirRoots ${JSON.stringify([real])}`;
+  for (const [dir, text] of [
+    [outside, 'is outside'],
+    ['outside', 'is outside'],
+    [`${root}/../outside`, "'..' segment"],
+    [`${root}/a/../b`, "'..' segment"],
+    [join(root, 'link'), 'is outside'],
+    [join(root, 'link', 'sub'), 'is outside'],
+  ] as const) {
+    expect(call({ addDirs: [dir] }), dir).toThrow(text);
+    expect(call({ addDirs: [dir] }), dir).toThrow(JSON.stringify(dir));
+    expect(call({ addDirs: [dir] }), dir).toThrow(roots);
+  }
+  expect(call({ addDirs: ['root/pr-1'] })().options.addDirs).toEqual([join(real, 'pr-1')]);
+  // A profile without roots keeps the existing strict error; Codex addDirs are always raw.
+  expect(call({ addDirs: [join(root, 'pr-1')] }, 'plain')).toThrow(
+    'strictProfiles forbids call-site addDirs;',
+  );
+  expect(call({ addDirs: [join(root, 'pr-1')] }, 'reader', 'codex')).toThrow(
+    'strictProfiles forbids call-site addDirs;',
+  );
+  // Roots admit directories only: other raw keys are still rejected, and named alone.
+  expect(call({ addDirs: [join(root, 'pr-1')], tools: ['Read'] })).toThrow(
+    'strictProfiles forbids call-site tools;',
+  );
+  expect(() =>
+    resolveProfileCall(
+      manifest,
+      'claude',
+      { prompt: 'x', profile: 'reader', addDirs: [join(root, 'pr-1')] },
+      [],
+      {},
+    ),
+  ).toThrow('Internal error: bounded call-site addDirs need');
+});
+
+it('fails a strict step with an out-of-root directory before invoking the harness', async () => {
+  const { root, outside } = rootedTree();
+  const invoke = vi.fn<Harness['invoke']>().mockResolvedValue(reply);
+  const definition = defineWorkflow({
+    ...base,
+    profiles: { reader: { extends: 'readonly', claude: { addDirRoots: [root] } } },
+    async run(ctx) {
+      return (await ctx.claude.text('read', { prompt: 'x', profile: 'reader', addDirs: [outside] }))
+        .output;
+    },
+  });
+  await expect(runWorkflow(definition, { ...setup(), harness: { invoke } })).rejects.toThrow(
+    /Step read: Call-site addDirs entry ".*" \(canonical .*\) is outside Profile reader/u,
+  );
+  expect(invoke).not.toHaveBeenCalled();
+});
+
+it('rejects codex.addDirRoots in profiles and defaults with the reason', () => {
+  const roots = ['runs'] as never;
+  const cases = [
+    [
+      { profiles: { writer: { codex: { addDirRoots: roots } } } },
+      'Profile writer codex.addDirRoots:',
+    ],
+    [{ defaults: { codex: { addDirRoots: roots } } }, 'defaults.codex.addDirRoots:'],
+  ] as const;
+  for (const [definition, where] of cases) {
+    for (const resolve of [resolveCapabilities, capabilityManifest]) {
+      expect(() => resolve(definition)).toThrow(where);
+      expect(() => resolve(definition)).toThrow('Codex addDirs are writable roots');
+      expect(() => resolve(definition)).toThrow('list them statically in codex.addDirs');
+    }
+  }
+  expect(() =>
+    resolveCapabilities({ profiles: { empty: { claude: { addDirRoots: [] } } } }),
+  ).toThrow();
+});
+
+it('appends bounded call-site directories to the profile addDirs; non-strict still replaces', () => {
+  const { tree, root, real, outside } = rootedTree();
+  const manifest = (strictProfiles: boolean) =>
+    resolveCapabilities({
+      strictProfiles,
+      profiles: {
+        reader: { extends: 'readonly', claude: { addDirs: ['docs'], addDirRoots: [root] } },
+      },
+    });
+  const resolveFor = (strictProfiles: boolean, addDirs: string[]) =>
+    resolveProfileCall(
+      manifest(strictProfiles),
+      'claude',
+      { prompt: 'x', profile: 'reader', addDirs },
+      [],
+      {},
+      undefined,
+      { callCwd: tree, rootCwd: tree },
+    ).options;
+  const pr = join(root, 'pr-1');
+  const strict = resolveFor(true, [pr, pr, join(real, 'pr-1')]);
+  expect(strict.addDirs).toEqual(['docs', join(real, 'pr-1')]);
+  expect(strict).not.toHaveProperty('addDirRoots');
+  // strictProfiles: false is unchanged: the call replaces the list, without canonicalization or roots.
+  const loose = resolveFor(false, [pr, outside]);
+  expect(loose.addDirs).toEqual([pr, outside]);
+  expect(loose).not.toHaveProperty('addDirRoots');
+});
+
+it('keeps write grants for rooted profiles and pins addDirRoots in named grants', async () => {
+  const { tree, root, real } = rootedTree();
+  const profiles: Record<string, AgentProfile> = {
+    writer: { extends: 'edit', claude: { addDirRoots: [root] } },
+  };
+  let stop = true;
+  const body = vi.fn();
+  const invoke = vi.fn<Harness['invoke']>().mockResolvedValue(reply);
+  const definition = defineWorkflow({
+    ...base,
+    profiles,
+    async run(ctx) {
+      body();
+      const result = await ctx.claude.text('write', {
+        prompt: 'x',
+        profile: 'writer',
+        addDirs: [join(root, 'pr-1')],
+      });
+      if (stop) throw new Error('pause');
+      return result.output;
+    },
+  });
+  await expect(runWorkflow(definition, { ...setup(), harness: { invoke } })).rejects.toThrow(
+    '--grant writer',
+  );
+  expect(body).not.toHaveBeenCalled();
+  const granted = { ...setup(), runId: 'granted', harness: { invoke } };
+  await expect(runWorkflow(definition, { ...granted, grants: ['writer'] })).rejects.toThrow(
+    'pause',
+  );
+  expect(invoke.mock.calls[0]?.[0].options.addDirs).toEqual([join(real, 'pr-1')]);
+  // Wider roots change the grant digest, so the saved named grant no longer authorizes the role.
+  profiles['writer'] = { extends: 'edit', claude: { addDirRoots: [root, join(tree, 'other')] } };
+  stop = false;
+  const error: unknown = await runWorkflow(definition, { ...granted, resume: true }).catch(
+    (cause: unknown) => cause,
+  );
+  let grant: unknown = error;
+  while (grant instanceof Error && !(grant instanceof GrantRequiredError)) grant = grant.cause;
+  expect(grant).toBeInstanceOf(GrantRequiredError);
+  expect(grant).toMatchObject({ profile: 'writer', access: 'write' });
+  expect(invoke).toHaveBeenCalledTimes(1);
+  await expect(
+    runWorkflow(definition, { ...granted, resume: true, grants: ['writer'] }),
+  ).resolves.toMatchObject({ status: 'completed' });
+});
+
+it('keeps grant digests of profiles without roots and pins roots when declared', () => {
+  const manifest = resolveCapabilities({
+    profiles: {
+      docsEditor: { extends: 'edit', claude: { addDirs: ['docs'] } },
+      rooted: { extends: 'edit', claude: { addDirs: ['docs'], addDirRoots: ['runs'] } },
+      rerooted: { extends: 'edit', claude: { addDirs: ['docs'], addDirRoots: ['runs', 'more'] } },
+    },
+  });
+  // Computed on unmodified main 4c3ebf5 (see test/fixtures/schema-revision/README.md).
+  expect(profileGrantDigest(role(manifest, 'edit'))).toBe(
+    '4a87c86d2adce1b7712d584da2a0cf6a16c3daf76fc049310af0af38ef53f5f9',
+  );
+  expect(profileGrantDigest(role(manifest, 'readonly'))).toBe(
+    '19aaa56680b71d1d6cba7dccaa13695368d337a391bd36ce4519707dcf0ab8b3',
+  );
+  expect(profileGrantDigest(role(manifest, 'docsEditor'))).toBe(
+    '7ce299811063fa4dfd34efcb9bb75f06c3b0552cc2882f7a87d34e6d1ca8a65c',
+  );
+  const rooted = profileGrantDigest(role(manifest, 'rooted'));
+  expect(rooted).not.toBe(profileGrantDigest(role(manifest, 'docsEditor')));
+  expect(profileGrantDigest(role(manifest, 'rerooted'))).not.toBe(rooted);
+});
+
+it('publishes addDirRoots in manifests and treats a rooted tool-less role as read', () => {
+  const manifest = capabilityManifest({
+    profiles: { scout: { claude: { addDirRoots: ['runs'] } } },
+  });
+  expect(manifest.profiles['scout']?.claude.addDirRoots).toEqual(['runs']);
+  expect(manifest.profiles['scout']).toMatchObject({ claudeAccess: 'read', access: 'read' });
+  expect(capabilityManifestSchema.parse(manifest)).toEqual(manifest);
+  expect(manifest.requiredGrants).toEqual([]);
+  const defaults = resolveCapabilities({ defaults: { claude: { addDirRoots: ['runs'] } } });
+  expect(defaults.defaults.claude.addDirRoots).toEqual(['runs']);
+});
+
+it('leaves requests of profiles without roots, and rooted calls without addDirs, unchanged', async () => {
+  const { root } = rootedTree();
+  const invoke = vi.fn<Harness['invoke']>().mockResolvedValue(reply);
+  const definition = defineWorkflow({
+    ...base,
+    profiles: {
+      docs: { extends: 'readonly', claude: { addDirs: ['docs'] } },
+      rooted: { extends: 'readonly', claude: { addDirRoots: [root] } },
+    },
+    async run(ctx) {
+      await ctx.claude.text('docs', { prompt: 'x', profile: 'docs' });
+      await ctx.claude.text('rooted', { prompt: 'x', profile: 'rooted' });
+      return (await ctx.claude.text('plain', { prompt: 'x' })).output;
+    },
+  });
+  await runWorkflow(definition, { ...setup(), harness: { invoke } });
+  const [docs, rooted, plain] = invoke.mock.calls.map(([request]) => request.options);
+  expect(docs?.addDirs).toEqual(['docs']);
+  for (const options of [docs, rooted, plain]) expect(options).not.toHaveProperty('addDirRoots');
+  expect(rooted).not.toHaveProperty('addDirs');
+  const saved = await readRun(setup());
+  expect(saved.steps['docs']?.request?.addDirs).toEqual(['docs']);
+  expect(saved.steps['rooted']?.request).not.toHaveProperty('addDirs');
+  expect(saved.steps['plain']?.request).not.toHaveProperty('addDirs');
+  expect(saved.steps['rooted']?.identity).not.toHaveProperty('option.addDirRoots');
 });

@@ -49,7 +49,7 @@ let prompt='';process.stdin.on('data',chunk=>prompt+=chunk);process.stdin.on('en
   const source = `import {defineWorkflow,z} from 'quiet-choir';
 import {writeFileSync} from 'node:fs';
 export default defineWorkflow({name:'profiles-cli',version:'1',input:z.object({}),output:z.string(),
-defaults:{claude:{model:'fixture'}},profiles:{scout:{extends:'readonly',maxTurns:30,description:'Reads code'},fixer:{extends:'edit'}},
+defaults:{claude:{model:'fixture'}},profiles:{scout:{extends:'readonly',maxTurns:30,description:'Reads code',claude:{addDirRoots:['runs']}},fixer:{extends:'edit'}},
 async run(ctx){
 // quiet-choir-ignore QC002 marker file proving whether the body ran
 writeFileSync('body-started','yes');await ctx.claude.text('saved',{prompt:'saved',profile:'scout'});return (await ctx.claude.text('pending',{prompt:'pending',profile:'scout'})).output;}});`;
@@ -59,6 +59,7 @@ writeFileSync('body-started','yes');await ctx.claude.text('saved',{prompt:'saved
   const manifest = JSON.parse(validation.stdout).workflow.capabilities;
   assert.equal(manifest.profiles.scout.description, 'Reads code');
   assert.equal(manifest.profiles.scout.claude.model, 'fixture');
+  assert.deepEqual(manifest.profiles.scout.claude.addDirRoots, ['runs']);
   assert.deepEqual(manifest.requiredGrants, ['fixer']);
   assert.equal(existsSync(join(fixture, 'body-started')), false);
   const args = ['execute', file, '--run-id', 'profiles', '--state-dir', state];

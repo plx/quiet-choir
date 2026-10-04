@@ -492,6 +492,7 @@ const requestSummarySchema = z
       killGraceMs: z.number().positive().nullable(),
     }),
     tools: z.array(z.string()).nullable(),
+    addDirs: z.array(z.string()).optional(),
     cwd: z.string(),
     structured: z.boolean(),
     promptSha256: z.string().regex(/^[a-f0-9]{64}$/u),
@@ -1087,9 +1088,11 @@ const recordSchema = recordFieldsSchema.superRefine((record, context) => {
  * field is added or the accepted shape of one changes, including fields nested inside run-level
  * objects; see `docs/storage.md`. Revision 2 (#168) added `runBudget.maxWindowUtilization` and
  * the `maxWindowUtilization` budget stop with its `harness`, `window` and `resetsAt`. Revision 3
- * (#170) added the settled child frame's `onError` and `settled` fields to `children`. @internal
+ * (#170) added the settled child frame's `onError` and `settled` fields to `children`. Revision 4
+ * (#171) added the profile field `claude.addDirRoots` to `capabilities` and the optional `addDirs`
+ * to step and attempt request summaries. @internal
  */
-export const SUPPORTED_SCHEMA_REVISION = 3;
+export const SUPPORTED_SCHEMA_REVISION = 4;
 
 /** The top-level run-record keys this build knows. @internal */
 export const RECORD_FIELD_KEYS: readonly string[] = Object.freeze(
