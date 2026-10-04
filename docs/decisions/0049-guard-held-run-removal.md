@@ -122,3 +122,6 @@ size that cannot be measured is null with a list warning, not a skipped run.
   file, no storage format change, and `src/workflow/runtime/model.ts` is untouched.
 - Removing an unreadable run, a lone `<runId>/launch/` from a start that failed before its record,
   or stale project roots is out of scope here; rm reports `run.unreadable` or `run.not_found`.
+
+See also [0050](0050-select-runs-for-prune-conservatively.md), which selects runs for
+`workflow prune` and removes each through this primitive.

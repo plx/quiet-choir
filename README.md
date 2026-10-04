@@ -168,10 +168,13 @@ concurrent edits. See [worktree isolation, policies, and cleanup](docs/worktrees
 `workflow clean RUN [--refs]` removes owned caches and optionally pins without importing source.
 `workflow rm RUN [--force] [--refs] [--dry-run]` removes a whole saved run with its caches (pins
 only with `--refs`); it never overrides a held lock, and refuses a running, suspended or waiting run
-without `--force` (see [removing runs](docs/storage.md#removing-runs)). `workflow list` shows each
-run's on-disk size. `workflow unlock RUN [--force-remote] [--json]` clears an abandoned run lock
-without importing source; it refuses while an owner, recoverer or recorded child is alive or
-unverifiable (see [process ownership](docs/process-lifecycle.md)).
+without `--force` (see [removing runs](docs/storage.md#removing-runs)).
+`workflow prune [--older-than 7d] [--status S] [--missing-cwd] [--all] [--refs] [--dry-run]` needs
+at least one filter and removes finished runs in bulk through the same guarded rm, skipping any run
+that is active, waiting, holds a queued answer or is locked. `workflow list` shows each run's
+on-disk size. `workflow unlock RUN [--force-remote] [--json]` clears an abandoned run lock without
+importing source; it refuses while an owner, recoverer or recorded child is alive or unverifiable
+(see [process ownership](docs/process-lifecycle.md)).
 `workflow cancel RUN [--force] [--timeout 30s]` ends a live local run as `cancelled`, which tick
 never resumes: it signals only a live owner on this host whose recorded OS start time still matches,
 and refuses with exit 3 otherwise (a plain signal saves a resumable suspension instead; see

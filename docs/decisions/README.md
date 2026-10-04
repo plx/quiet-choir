@@ -102,3 +102,5 @@ part of the documentation.
 - [0048: An epic snapshot and a pure next-ticket selector](0048-epic-snapshot-and-next-ticket-selector.md)
 
 - [0049: Remove a run while holding its legacy guard](0049-guard-held-run-removal.md)
+
+- [0050: Select runs for prune conservatively](0050-select-runs-for-prune-conservatively.md)
