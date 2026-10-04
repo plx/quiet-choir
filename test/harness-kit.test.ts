@@ -139,10 +139,21 @@ function builtinFixture(
   };
 }
 
+// measured: 2.4-2.6 s alone, 2.3 s in the full coverage run (twelve fake-CLI launches plus the
+// 250 ms registration hold and the 250 ms timeout)
+const builtinSuiteTimeoutMs = 7_000;
+// measured: 'ignores the timeout' 4.1 s alone, 3.9 s in the full coverage run (it waits out the
+// 250 ms timeout plus the 2 s abort deadline); the other three take 1.1-2.4 s
+const negativeSuiteTimeoutMs = 12_000;
+
 for (const harness of ['claude', 'codex'] as const)
-  it(`${harness} passes the public adapter conformance suite with fake binaries`, async () => {
-    await assertHarnessConformance({ ...conformance, fixture: builtinFixture(harness) });
-  });
+  it(
+    `${harness} passes the public adapter conformance suite with fake binaries`,
+    async () => {
+      await assertHarnessConformance({ ...conformance, fixture: builtinFixture(harness) });
+    },
+    builtinSuiteTimeoutMs,
+  );
 
 /** Wrap a built-in Claude adapter so it changes only how it treats the invocation. */
 function wrapped(
@@ -208,14 +219,18 @@ it.each([
       new ClaudeAdapter({ binary, scrubEnv: false, killGraceMs: 25 }) as unknown as HarnessAdapter,
     message: /^Conformance scenario env: .*CLAUDECODE/u,
   },
-])('fails an adapter that $failure, naming the scenario', async ({ adapter, message }) => {
-  const before = process.env['CLAUDECODE'];
-  await expect(
-    assertHarnessConformance({ ...conformance, fixture: builtinFixture('claude', adapter) }),
-  ).rejects.toThrow(message);
-  // The env scenario restores the host's variables even when the adapter fails it.
-  expect(process.env['CLAUDECODE']).toBe(before);
-});
+])(
+  'fails an adapter that $failure, naming the scenario',
+  async ({ adapter, message }) => {
+    const before = process.env['CLAUDECODE'];
+    await expect(
+      assertHarnessConformance({ ...conformance, fixture: builtinFixture('claude', adapter) }),
+    ).rejects.toThrow(message);
+    // The env scenario restores the host's variables even when the adapter fails it.
+    expect(process.env['CLAUDECODE']).toBe(before);
+  },
+  negativeSuiteTimeoutMs,
+);
 
 type Defect =
   | 'live-release'
