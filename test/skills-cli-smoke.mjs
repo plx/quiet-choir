@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
-import { mkdtemp, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -362,6 +362,54 @@ async function portingRecipes(skillRoot) {
     assert.deepEqual((await last(163)).output, { status: 'closed', next: 164 });
     assert.deepEqual((await last(164)).output, { status: 'skipped', next: 163 });
   }
+
+  // A lagging read: the recorded `after` snapshot still lists ticket 163 open, so the driver stops.
+  const lagging = await write('ticket-lag.fixtures.json', {
+    ...JSON.parse(await readFile(ticketFixtures, 'utf8')),
+    exec: [
+      { step: 'before', json: epic },
+      { step: 'after', json: epic },
+      { step: 'issue', json: pages },
+      {
+        step: 'close',
+        argvPrefix: ['gh', 'api', 'graphql'],
+        json: {
+          data: { repository: { issue: { number: 163, state: 'OPEN', stateReason: null } } },
+        },
+      },
+      { step: 'close', argvPrefix: ['gh', 'api', '-X', 'PATCH'], json: { number: 163 } },
+    ],
+  });
+  const lagRuns = join(directory, 'lag-state');
+  await mkdir(lagRuns);
+  // A shim in front of the CLI records each subcommand the driver runs.
+  const shim = join(directory, 'shim');
+  const calls = join(directory, 'shim-calls.log');
+  await mkdir(join(shim, 'bin'), { recursive: true });
+  await writeFile(
+    join(shim, 'bin/run.js'),
+    `const fs = require('node:fs');
+fs.appendFileSync(${JSON.stringify(calls)}, process.argv[3] + '\\n');
+const { status } = require('node:child_process').spawnSync(
+  process.execPath,
+  [${JSON.stringify(join(repository, 'bin/run.js'))}, ...process.argv.slice(2)],
+  { stdio: 'inherit' },
+);
+process.exit(status ?? 1);
+`,
+  );
+  const stale = shell(driver.replace(ticketFixtures, lagging), {
+    cwd: target,
+    env: { ...ticketEnv, QC_RUNS: lagRuns, QC_CHECKOUT: shim },
+  });
+  assert.equal(stale.status, 1, stale.output);
+  assert.match(stale.output, /The epic still names #163 after it closed/u);
+  // One inspect and one execute, then the stop: no resume and no run for another ticket.
+  assert.deepEqual((await readFile(calls, 'utf8')).trim().split('\n'), ['inspect', 'execute']);
+  assert.deepEqual((await readdir(lagRuns)).filter((entry) => entry.startsWith('ticket-')).sort(), [
+    'ticket-163',
+    'ticket-163.out',
+  ]);
 
   // The porting reference's exec role: its --grant fence verbatim, then refused without the grant.
   const roleEnv = {
