@@ -2,6 +2,23 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- Agent-facing docs for porting and burning down work (#164). Both skill copies gain
+  `references/porting-native-workflows.md`, which maps native Workflow's `agent`, `parallel`,
+  `pipeline`, `phase`, `log`, `args`, `budget`, model and effort, worktree isolation, `agentType`,
+  `workflow()`, `resumeFromRunId` and null-on-failure to quiet-choir, lists the parity gotchas, maps
+  the `merge-down-pr` and `execute-epic-ticket` reference workflows onto `quiet-choir/github`, and
+  shows a compiled exec role with its `--grant` command and a bounded loop under run caps. The
+  Claude skill's native comparison is now a present-tense decision table; it states that native
+  `budget` is a hard token ceiling, unlike quiet-choir's cost and attempt caps, and that restricted
+  calls see no CLAUDE.md, MCP servers, plugins, skills or memory unless a profile opts back in. Two
+  recipes join `examples/patterns/` and `patterns.md`: `ci-gate.workflow.ts` waits for CI with
+  `gh.waitChecks` under head-SHA-keyed IDs, fixes, pushes and takes the new head from
+  `git rev-parse`, and `ticket-loop.workflow.ts` works one epic ticket per run with
+  `gh.epic.snapshot`, `nextTicket` and `gh.issue.close`, with a shell driver and the costs of the
+  in-run `ctx.workflow` alternative. The skills check's `sourceExample` now maps
+  `quiet-choir/github` beside the runtime it maps the root to, so fences can import it. `waits.md`
+  says an observer's own `child_process` spawn is neither registered for orphan recovery nor stopped
+  with the observation unless given its `signal`, and `child-workflows.md` cites only the open #18.
 - `quiet-choir/github` adds an epic snapshot and a pure next-ticket selector (#163, slice D of #21;
   ADR 0048). `gh.epic.snapshot(id, { number })` is one `ctx.exec.json` over a fixed `gh api graphql`
   (`-F number=N`, no pagination), labelled `{ integration: 'github', op: 'epic.snapshot' }`,
