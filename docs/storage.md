@@ -196,7 +196,10 @@ run with another `createdAt`), deletes the delivery and any empty inbox and run 
 recreated, and fails with a conflict. rm's commit point (step 2 or 5) precedes the sweep in step 6,
 so a delivery linked before the commit point is swept from `<runId>.inbox/` or renamed into the
 tombstone with `<runId>/inbox/`, and one linked after it finds the run gone at the writer's check.
-No answer outlives the run to reach a later run that reuses the ID.
+Because that check follows the link, a run that reuses the ID at once could read the delivery first;
+the envelope's `runCreatedAt` closes that gap, since the owner rejects a delivery addressed to a run
+with another `createdAt` ([questions](questions.md#inbox-protocol-and-trust)). No answer outlives
+the run to resolve a later run that reuses the ID.
 
 A crash at any step leaves either an intact run that lists and inspects normally (run rm again) or a
 tombstone. `list` and `inspect` never see a half-deleted run, because the flat marker goes before

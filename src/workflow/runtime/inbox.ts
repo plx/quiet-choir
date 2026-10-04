@@ -183,13 +183,21 @@ export async function writeAnswer(options: WriteAnswerOptions): Promise<AnswerDe
     );
   }
   const at = new Date().toISOString();
+  // runCreatedAt binds the delivery to this run: a later run that reuses the ID rejects it.
+  const envelope = {
+    value,
+    by,
+    at,
+    questionFingerprint: step.fingerprint,
+    runCreatedAt: run.createdAt,
+  };
   try {
     validateAnswerAuthor(step.question.request.audience, by);
-    answerEnvelopeSchema.parse({ value, by, at, questionFingerprint: step.fingerprint });
+    answerEnvelopeSchema.parse(envelope);
   } catch (error) {
     throw syntheticInvalid('answer_author', error);
   }
-  const serialized = JSON.stringify({ value, by, at, questionFingerprint: step.fingerprint });
+  const serialized = JSON.stringify(envelope);
   if (Buffer.byteLength(serialized) > 1_048_576)
     throw syntheticInvalid('answer_too_large', new Error('Answer envelope exceeds 1 MiB.'));
   const path = answerPath(stateDir, run.id, options.stepId);
@@ -244,8 +252,10 @@ function isMissing(error: unknown): boolean {
  * (a different `createdAt`). rm's commit point (removing the flat file, or renaming `<runId>/` to
  * its tombstone) precedes its final sweep of the legacy siblings. So a link before the commit point
  * is swept with `<runId>.inbox/` or moved into the tombstone with `<runId>/inbox/`, and a link after
- * it finds the run gone here; either way no answer outlives the run to reach a later run that reuses
- * the ID. Empty inbox and run directories this delivery recreated are removed too.
+ * it finds the run gone here. This read cannot stop a run that reuses the ID from reading the
+ * delivery first; the envelope's `runCreatedAt` does, because that owner rejects a delivery
+ * addressed to another generation. This is the cleanup half: it removes the delivery and any empty
+ * inbox and run directories it recreated, and reports the conflict to the writer.
  * @internal
  */
 export async function withdrawDeliveryIfRunRemoved(
@@ -355,16 +365,17 @@ export interface ListPendingOptions extends StateDirectoryOptions {
 
 /**
  * Read a question's inbox delivery state. The first existing candidate file means `queued`; its
- * time and author come from the envelope, and are null when the file is unreadable or malformed
- * (a refused delivery is still in the way of a second answer). An owner consuming the file can make
- * a row read `none` for a moment, so this is advisory.
+ * time and author come from the envelope, and are null when the file is unreadable, malformed or
+ * addressed to an earlier run with this ID (the owner rejects such a delivery, but it is still in
+ * the way of a second answer). An owner consuming the file can make a row read `none` for a moment,
+ * so this is advisory.
  */
 async function readDelivery(
   stateDir: string,
-  runId: string,
+  run: Pick<RunRecord, 'id' | 'createdAt'>,
   stepId: string,
 ): Promise<PendingDelivery> {
-  for (const candidate of answerCandidates(stateDir, runId, stepId)) {
+  for (const candidate of answerCandidates(stateDir, run.id, stepId)) {
     let text: string;
     try {
       text = await readFile(candidate, 'utf8');
@@ -375,7 +386,8 @@ async function readDelivery(
     }
     try {
       const envelope = answerEnvelopeSchema.safeParse(JSON.parse(text));
-      if (envelope.success) return { state: 'queued', at: envelope.data.at, by: envelope.data.by };
+      if (envelope.success && (envelope.data.runCreatedAt ?? run.createdAt) === run.createdAt)
+        return { state: 'queued', at: envelope.data.at, by: envelope.data.by };
     } catch {
       // Not JSON: still queued, with no attribution.
     }
@@ -401,7 +413,7 @@ export async function listPendingRuns(
           ...operation,
           runStatus: run.status,
           delivery: operation.answerCommand
-            ? await readDelivery(stateDir, run.id, operation.stepId)
+            ? await readDelivery(stateDir, run, operation.stepId)
             : null,
         })),
       ),

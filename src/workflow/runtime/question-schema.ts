@@ -112,6 +112,11 @@ export const answerEnvelopeSchema = z.object({
   by: z.string().trim().min(1).max(200),
   at: z.iso.datetime(),
   questionFingerprint: z.string().regex(/^[a-f0-9]{64}$/u),
+  /**
+   * The `createdAt` of the run the writer addressed, so the owner of a later run that reuses the ID
+   * rejects the delivery (ADR 0049). Optional: deliveries from older writers carry none.
+   */
+  runCreatedAt: z.iso.datetime().optional(),
 });
 
 /** Routing guard only: attribution is self-asserted, never authentication. @internal */

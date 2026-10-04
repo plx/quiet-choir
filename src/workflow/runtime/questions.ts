@@ -445,6 +445,8 @@ export class RunQuestions {
       const envelope = answerEnvelopeSchema.parse(jsonValue(JSON.parse(text)));
       if (envelope.questionFingerprint !== step.fingerprint)
         throw new Error('Answer question fingerprint does not match the waiting question.');
+      if (envelope.runCreatedAt !== undefined && envelope.runCreatedAt !== record.createdAt)
+        throw new Error('Answer was addressed to an earlier run with this ID.');
       validateAnswerAuthor(step.question.request.audience, envelope.by);
       const value = jsonValue(
         waiter.sources.signal.schema.parse(envelope.value),

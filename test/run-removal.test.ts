@@ -28,6 +28,7 @@ import { inspectRun, listRuns } from '../src/workflow/loader/inspection.js';
 import type { WorkflowCommandResult } from '../src/workflow/loader/model.js';
 import {
   answerPath,
+  listPending,
   withdrawDeliveryIfRunRemoved,
   writeAnswer,
 } from '../src/workflow/runtime/inbox.js';
@@ -122,15 +123,16 @@ async function completedRun(runId: string): Promise<void> {
   );
 }
 
+const askWorkflow = defineWorkflow({
+  name: 'rm-ask',
+  version: '1',
+  input: z.null(),
+  output: z.unknown(),
+  run: (ctx) => ctx.ask('gate', { prompt: 'Ship?', schema: z.boolean() }),
+});
+
 async function suspendedRun(runId: string): Promise<void> {
-  const workflow = defineWorkflow({
-    name: 'rm-ask',
-    version: '1',
-    input: z.null(),
-    output: z.unknown(),
-    run: (ctx) => ctx.ask('gate', { prompt: 'Ship?', schema: z.boolean() }),
-  });
-  expect((await runWorkflow(workflow, { runId, stateDir, cwd: root, input: null })).status).toBe(
+  expect((await runWorkflow(askWorkflow, { runId, stateDir, cwd: root, input: null })).status).toBe(
     'suspended',
   );
 }
@@ -496,6 +498,68 @@ describe('workflow rm and a racing answer', () => {
     });
     expect(await gone(path)).toBe(true);
     expect((await readRun({ stateDir, runId: 'asked' })).status).toBe('completed');
+  });
+
+  it('a run that reuses the ID rejects a delivery addressed to the removed run', async () => {
+    await suspendedRun('asked');
+    const first = await readRun({ stateDir, runId: 'asked' });
+    const delivery = await writeAnswer({ stateDir, runId: 'asked', stepId: 'gate', value: true });
+    const envelope = JSON.parse(await readFile(delivery.path, 'utf8')) as Record<string, unknown>;
+    expect(envelope['runCreatedAt']).toBe(first.createdAt);
+    removed(await remove('asked', { force: true }));
+    await delay(5);
+    await suspendedRun('asked');
+    const second = await readRun({ stateDir, runId: 'asked' });
+    expect(second.createdAt).not.toBe(first.createdAt);
+    expect(second.steps['gate']?.fingerprint).toBe(delivery.questionFingerprint);
+    // The old writer's link lands after the new run registered the same question.
+    await lateDelivery(delivery.path);
+    await writeFile(delivery.path, JSON.stringify(envelope));
+    expect((await listPending({ stateDir }))[0]?.delivery).toEqual({
+      state: 'queued',
+      at: null,
+      by: null,
+    });
+    expect(
+      (
+        await runWorkflow(askWorkflow, {
+          runId: 'asked',
+          stateDir,
+          cwd: root,
+          input: null,
+          resume: true,
+        })
+      ).status,
+    ).toBe('suspended');
+    const saved = await readRun({ stateDir, runId: 'asked' });
+    expect(saved.steps['gate']?.status).toBe('waiting');
+    expect(saved.steps['gate']?.question?.rejections).toEqual([
+      expect.objectContaining({ error: 'Answer was addressed to an earlier run with this ID.' }),
+    ]);
+    expect(await gone(delivery.path)).toBe(true);
+  });
+
+  it('still accepts a delivery without runCreatedAt, as an older writer leaves it', async () => {
+    await suspendedRun('asked');
+    const delivery = await writeAnswer({ stateDir, runId: 'asked', stepId: 'gate', value: true });
+    const { runCreatedAt, ...older } = JSON.parse(await readFile(delivery.path, 'utf8')) as Record<
+      string,
+      unknown
+    >;
+    expect(runCreatedAt).toBeDefined();
+    await writeFile(delivery.path, JSON.stringify(older));
+    expect((await listPending({ stateDir }))[0]?.delivery).toMatchObject({
+      state: 'queued',
+      by: 'agent:unspecified',
+    });
+    const resumed = await runWorkflow(askWorkflow, {
+      runId: 'asked',
+      stateDir,
+      cwd: root,
+      input: null,
+      resume: true,
+    });
+    expect(resumed).toMatchObject({ status: 'completed', output: true });
   });
 
   it('keeps a delivery to an intact run', async () => {

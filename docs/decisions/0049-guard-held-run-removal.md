@@ -74,7 +74,13 @@ fingerprint would ingest. After linking a delivery, the writer re-reads the run
 `createdAt`, it deletes the delivery and any empty inbox and run directory it recreated, and fails
 with a conflict. rm's commit point (step 2 or 5) precedes its sweep in step 6, so a link before the
 commit point is swept or renamed into the tombstone, and a link after it sees the run gone at the
-writer's check.
+writer's check. That check runs after the link, so it cannot stop a run that reuses the ID at once
+from registering the same question and reading the delivery first. The envelope therefore carries
+`runCreatedAt`, the `createdAt` of the run the writer addressed, and the owner rejects a delivery
+whose `runCreatedAt` differs from its own record's (it moves to `.rejected.<uuid>.json` with a
+`question.rejections` entry, and `pending` shows it as a queued delivery without attribution). The
+binding is the guarantee and the writer's check is the cleanup. The field is optional, so envelopes
+from older writers still parse and are accepted as before.
 
 Holding the guard while the primary is released keeps every other writer out, because each one takes
 the guard first. Removing the flat marker before the directory, and renaming the directory to a
