@@ -1,5 +1,5 @@
 import type { Dirent } from 'node:fs';
-import { lstat, open, readdir, readFile, rmdir, stat, unlink } from 'node:fs/promises';
+import { lstat, open, readdir, rmdir, stat, unlink } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { isErrno } from '../runtime/lock.js';
 import type { ProjectRoot } from '../runtime/paths.js';
@@ -279,8 +279,11 @@ async function removeRoot(
   const take = async (path: string): Promise<(() => Promise<void>) | undefined> => {
     let bytes: Buffer, mode: number;
     try {
-      bytes = await readFile(path);
-      mode = (await lstat(path)).mode & 0o777;
+      {
+        await using file = await open(path, 'r');
+        bytes = await file.readFile();
+        mode = (await file.stat()).mode & 0o777;
+      }
       await unlink(path);
     } catch (error) {
       if (isErrno(error, 'ENOENT')) return undefined;

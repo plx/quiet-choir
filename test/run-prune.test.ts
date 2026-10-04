@@ -636,7 +636,10 @@ describe('workflow prune removal', () => {
     });
     const failure = await aborted.execute(plan({ statuses: ['completed'] }));
     assert(!failure.ok);
-    expect(failure).toMatchObject({ code: 'workflow.interrupted', details: { removed: [] } });
+    expect(failure).toMatchObject({
+      code: 'workflow.interrupted',
+      details: { removed: [], roots: [] },
+    });
     expect((await readRun({ stateDir, runId: 'second' })).id).toBe('second');
   });
 
@@ -870,6 +873,29 @@ describe('workflow prune project roots', () => {
     expect(await gone(join(lateRuns, 'project.json'))).toBe(false);
     expect((await listAll()).warnings).toEqual([]);
   });
+
+  it.skipIf(process.platform === 'win32' || process.getuid?.() === 0)(
+    'warns, naming the root, when it cannot restore project.json',
+    async () => {
+      const late = await registeredRoot('unrestorable');
+      try {
+        const outcome = await pruneRuns(plan({ missingCwd: true, all: true }), processRunner, {
+          beforeRmdir: async (path) => {
+            if (path !== late) return;
+            await writeFile(join(late, 'intruder'), 'x');
+            await chmod(late, 0o500);
+          },
+        });
+        assert(outcome.kind === 'done');
+        expect(byRoot(outcome.result)).toEqual({ [late]: ['busy', false] });
+        expect(outcome.result.warnings).toEqual([
+          expect.stringContaining(`Could not restore a file in project root ${late}`) as unknown,
+        ]);
+      } finally {
+        await chmod(late, 0o700);
+      }
+    },
+  );
 
   it('stops between roots on a signal and reports the roots removed so far', async () => {
     const first = await bareRoot('a-000000000000', [namespace('a')]);
