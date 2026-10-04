@@ -142,8 +142,27 @@ function normalizeDifferences(text, file, rules, seen) {
   requireThat(!differenceMarkerLike.test(normalized), `${file}: malformed difference marker`);
   return normalized;
 }
-/** Replace import specifiers only; prompt strings and executable code stay intact. */
+/** Specifiers of the package root, as documented and as written in checkout examples. */
+const rootSpecifiers = [
+  'quiet-choir',
+  '../src/index.js',
+  '../../src/index.js',
+  '/absolute/path/to/quiet-choir/dist/index.js',
+];
+/** Specifiers of the `quiet-choir/github` subpath, which sits beside the root as integrations/github.js. */
+const githubSpecifiers = [
+  'quiet-choir/github',
+  '../src/integrations/github.js',
+  '../../src/integrations/github.js',
+  '/absolute/path/to/quiet-choir/dist/integrations/github.js',
+];
+/**
+ * Replace import specifiers only; prompt strings and executable code stay intact. The root maps to
+ * `runtime` and `quiet-choir/github` to `integrations/github.js` in the same directory, so
+ * `src/index.js` pairs with `src/integrations/github.js` and `dist/index.js` with its built copy.
+ */
 export function sourceExample(code, runtime = join(repository, 'src/index.js')) {
+  const github = join(dirname(runtime), 'integrations/github.js');
   const source = ts.createSourceFile(
     'example.mts',
     code,
@@ -157,17 +176,19 @@ export function sourceExample(code, runtime = join(repository, 'src/index.js')) 
       ts.isImportDeclaration(node) || ts.isExportDeclaration(node)
         ? node.moduleSpecifier
         : undefined;
-    if (
-      specifier &&
-      ts.isStringLiteral(specifier) &&
-      ['quiet-choir', '../src/index.js', '/absolute/path/to/quiet-choir/dist/index.js'].includes(
-        specifier.text,
-      )
-    )
+    const target =
+      specifier && ts.isStringLiteral(specifier)
+        ? rootSpecifiers.includes(specifier.text)
+          ? runtime
+          : githubSpecifiers.includes(specifier.text)
+            ? github
+            : undefined
+        : undefined;
+    if (specifier && target !== undefined)
       edits.push({
         start: specifier.getStart(source),
         end: specifier.end,
-        text: JSON.stringify(runtime),
+        text: JSON.stringify(target),
       });
     ts.forEachChild(node, visit);
   }

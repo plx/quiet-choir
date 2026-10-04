@@ -40,7 +40,9 @@ Run commands such as `gh pr view` through `context.exec(argv, options)` or
 `context.exec.json(argv, { schema })`, never a raw `child_process` spawn. They use the run's process
 runner, are owned by the wait for orphan recovery, stop with the observation signal, and are
 synthesized or fixture-answered under rehearsal like `ctx.exec`; `{ live: true }` keeps a read-only
-one real under `--dry-run`. They are not durable: every check runs them again. See
+one real under `--dry-run`. They are not durable: every check runs them again. A child process the
+observer spawns itself (`child_process`, `execFile`) is not registered for orphan recovery and is
+not stopped with the observation unless you pass it the `signal`. See
 [commands inside a callback or observer](commands-files.md#commands-inside-a-callback-or-observer).
 
 ### Command polls

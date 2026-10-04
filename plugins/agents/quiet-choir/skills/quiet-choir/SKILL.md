@@ -91,6 +91,7 @@ recover, or inspect a failure.
 | Rehearse with fixtures/dry-run before paying                                  | [Rehearsal](references/rehearsal.md)                           |
 | Resume after failure, accept code edits, fork completed work                  | [Durability and resumption](references/durability.md)          |
 | Embed the engine, log responses, implement a harness                          | [Embedding and extensions](references/extensions.md)           |
+| Port a native Workflow script: map agent, parallel, pipeline and budget       | [Native ports](references/porting-native-workflows.md)         |
 
 For exit 75, use the
 [suspended-run answer loop](references/operating-runs.md#answer-a-suspended-run) or

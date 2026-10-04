@@ -112,6 +112,5 @@ use refresh if external configuration affects module exports. Cache failure fall
 validation. Execution always loads the selected module anew and verifies its registered name.
 
 Separate-run `ctx.child`, linked-run IDs and a `run` wait source remain later work tracked by
-[#57](https://github.com/plx/quiet-choir/issues/57) and
 [#18](https://github.com/plx/quiet-choir/issues/18). They are not implemented by inline composition.
 No scheduler or distributed worker is introduced.
