@@ -96,5 +96,6 @@ wait deadline), `budgetStop` naming `maxWindowUtilization`, the harness, window,
 observed utilization, and a `run.suspended` message such as
 `Run suspended until 2026-10-07T08:00:00.000Z: claude seven_day window at 84% reached --max-window-utilization 0.5.`
 `workflow tick` resumes it after that time; an earlier `resume` suspends it again without a new
-attempt. It suspends even under `--wait-mode block`. With an unknown reset it fails with
+attempt. An unrelated failure alongside the stop, such as a sibling mapper that throws, still fails
+the run. It suspends even under `--wait-mode block`. With an unknown reset it fails with
 `RunBudgetExceededError`; resume with a higher value or `off`.

@@ -4,12 +4,15 @@
 // test injects its clock: the captured fixture's resets fall in October 2026.
 import { mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
+import { setTimeout as delay } from 'node:timers/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  CancelledError,
   CliHarness,
   defineWorkflow,
+  FanOutError,
   readRun,
   RunBudgetExceededError,
   runWorkflow,
@@ -17,6 +20,7 @@ import {
   z,
   type Harness,
   type WorkflowClock,
+  type WorkflowContext,
   type WorkflowEvent,
 } from '../src/index.js';
 import { ThresholdLogger } from '../src/application/execution.js';
@@ -24,6 +28,7 @@ import { WorkflowExecutor } from '../src/workflow/loader/executor.js';
 import { TickWorkflowExecutor } from '../src/workflow/loader/tick.js';
 import { analyzeTypecheckEntrypoint } from '../src/workflow/typecheck/plan.js';
 import { MAX_EPOCH_MS } from '../src/workflow/runtime/clock.js';
+import { FailureOrigins } from '../src/workflow/runtime/fan-out.js';
 import {
   windowStop,
   windowSuspensionMessage,
@@ -198,6 +203,45 @@ describe('windowStop', () => {
   });
 });
 
+describe('FailureOrigins.onlyFrom', () => {
+  const stop = new Error('stop');
+  const other = new Error('other');
+  const cancelled = new CancelledError(null, stop, 'map');
+  const fanOut = (...errors: unknown[]) =>
+    new FanOutError(
+      'drain',
+      errors.map((error, index) => ({ index, stepId: null, error })),
+      [],
+    );
+  it.each<[string, unknown, boolean]>([
+    ['the stop itself', stop, true],
+    ['an unrelated error', other, false],
+    ['a wrapper whose cause is the stop', new Error('wrapped', { cause: stop }), true],
+    ['a fan-out of the stop alone', fanOut(stop), true],
+    ['a fan-out where siblings share the stop', fanOut(stop, stop), true],
+    ['a fan-out of the stop and cancelled siblings', fanOut(stop, cancelled), true],
+    ['a fan-out of the stop and an unrelated failure', fanOut(stop, other), false],
+    ['a fan-out whose first failure is unrelated', fanOut(other, stop), false],
+    ['a fan-out of cancellations only', fanOut(cancelled), false],
+    ['an empty fan-out', fanOut(), false],
+    ['nested fan-outs of the stop', fanOut(fanOut(stop), new Error('w', { cause: stop })), true],
+    ['a nested fan-out with an unrelated failure', fanOut(stop, fanOut(stop, other)), false],
+    [
+      'a wrapper around a mixed fan-out',
+      new Error('wrapped', { cause: fanOut(stop, other) }),
+      false,
+    ],
+  ])('%s', (_name, error, expected) => {
+    expect(new FailureOrigins().onlyFrom(error, stop)).toBe(expected);
+  });
+
+  it('answers false for a cause cycle that never reaches the stop', () => {
+    const cycle = new Error('cycle');
+    cycle.cause = new Error('back', { cause: cycle });
+    expect(new FailureOrigins().onlyFrom(cycle, stop)).toBe(false);
+  });
+});
+
 describe('the gate in a run', () => {
   it('refuses the next admission without a record and suspends until the reset', async () => {
     const stateDir = await directory();
@@ -266,6 +310,81 @@ describe('the gate in a run', () => {
     expect(completed.steps['two']?.attempts).toBe(1);
     expect(completed.budgetStop).toBeUndefined();
     expect(completed.nextWakeAt ?? null).toBeNull();
+  });
+
+  /** One admitted call records a 60% report; then a draining map runs `mapper` on two items. */
+  const gatedMap = (mapper: (ctx: WorkflowContext, item: number) => Promise<void>) =>
+    defineWorkflow({
+      ...base,
+      async run(ctx) {
+        await ctx.claude.text('seed', { prompt: 'seed' });
+        await ctx.map('items', [0, 1], { concurrency: 2 }, async (item) => {
+          await mapper(ctx, item);
+        });
+        return null;
+      },
+    });
+
+  it.each([
+    ['after the refusal', 20, 0],
+    ['before the refusal', 0, 20],
+  ])('fails, not suspends, when a sibling mapper fails %s', async (_name, failAfter, askAfter) => {
+    const stateDir = await directory();
+    const agent = harness(() => reportAt(0.6));
+    const options = { stateDir, runId: 'mixed-map', harness: agent, clock: clockAt(wake - hour) };
+    const definition = gatedMap(async (ctx, item) => {
+      if (item === 0) {
+        await delay(askAfter);
+        await ctx.claude.text('ask', { prompt: 'ask' });
+      } else {
+        await delay(failAfter);
+        throw new Error('unrelated mapper failure');
+      }
+    });
+    const error: unknown = await runWorkflow(definition, {
+      ...options,
+      input: null,
+      maxWindowUtilization: 0.5,
+    }).catch((cause: unknown) => cause);
+    expect(error).toBeInstanceOf(WorkflowRunError);
+    // Both members are present: the gate refused one, and the other failed on its own.
+    const cause = (error as WorkflowRunError).cause;
+    expect(cause).toBeInstanceOf(FanOutError);
+    const members = (cause as FanOutError).failures.map((failure) => failure.error);
+    expect(members).toHaveLength(2);
+    expect(members.some((member) => member instanceof RunBudgetExceededError)).toBe(true);
+    expect(members).toContainEqual(new Error('unrelated mapper failure'));
+    const record = await readRun(options);
+    expect(record.status).toBe('failed');
+    expect(record.nextWakeAt ?? null).toBeNull();
+    expect(record.error).toEqual(expect.any(String));
+    expect(record.rootCause).not.toBeNull();
+    expect(record.executions?.at(-1)).toMatchObject({ outcome: 'failed' });
+    // The window stop is still the saved reason the refused call did not run.
+    expect(record.budgetStop).toMatchObject({ metric: 'maxWindowUtilization', resetsAt: T });
+    if (failAfter === 0) {
+      expect(record.error).toBe('unrelated mapper failure');
+      expect(record.rootCause).toMatchObject({ error: 'unrelated mapper failure' });
+    }
+    expect(agent.calls).toEqual(['claude']);
+  });
+
+  it('suspends when every mapper of a draining map is refused by the gate', async () => {
+    const stateDir = await directory();
+    const agent = harness(() => reportAt(0.6));
+    const options = { stateDir, runId: 'refused-map', harness: agent, clock: clockAt(wake - hour) };
+    const definition = gatedMap(async (ctx, item) => {
+      await ctx.claude.text(`ask-${String(item)}`, { prompt: 'ask' });
+    });
+    const result = await runWorkflow(definition, {
+      ...options,
+      input: null,
+      maxWindowUtilization: 0.5,
+    });
+    expect(result).toMatchObject({ status: 'suspended', nextWakeAt: wake, error: null });
+    const record = await readRun(options);
+    expect(record).toMatchObject({ status: 'suspended', nextWakeAt: wake, rootCause: null });
+    expect(agent.calls).toEqual(['claude']);
   });
 
   it('fails like the other caps when the reset is unknown, and a higher cap continues', async () => {

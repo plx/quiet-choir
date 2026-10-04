@@ -183,8 +183,10 @@ notification and `--events` line read
 `Run suspended until 2026-10-07T08:00:00.000Z: claude seven_day window at 84% reached --max-window-utilization 0.5.`
 `workflow tick` resumes the run once that time has passed; the expired report no longer blocks and
 the refused step runs. A `resume` before then refuses again before any attempt and suspends with the
-same wake. The gate suspends even under `--wait-mode block`, which governs workflow waits only. If
-an exceeded window has no known reset (Claude 2.1.285 reported none per window), the run fails with
+same wake. The run suspends only when the stop is all that ended it: an unrelated failure alongside
+it, such as a sibling mapper that throws while the gate refuses another, still fails the run. The
+gate suspends even under `--wait-mode block`, which governs workflow waits only. If an exceeded
+window has no known reset (Claude 2.1.285 reported none per window), the run fails with
 `RunBudgetExceededError` like the other caps; resume with a higher value or `off`. The saved
 `budgetStop` names the metric `maxWindowUtilization`, the `harness`, the `window`, its `resetsAt`
 (null when unknown) and the `observed` utilization, which may exceed 1. `inspect` shows it as the

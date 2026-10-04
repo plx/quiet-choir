@@ -3610,9 +3610,9 @@ export async function runWorkflow<
         }
         throw error;
       }
-      // ADR 0053: the window gate latched with a known reset, and that stop is what ended the run
-      // (not a concurrent failure, a cancellation or a checkpoint error). Save a clean suspension
-      // that tick resumes at the reset, instead of a failure.
+      // ADR 0053: the window gate latched with a known reset, and that stop is the only thing that
+      // ended the run: every non-cancellation failure derives from it, with no concurrent failure,
+      // interruption or checkpoint error. Save a clean suspension that tick resumes at the reset.
       const budgetError = budget.error;
       const wakeAt = budget.wakeAt;
       if (
@@ -3621,7 +3621,7 @@ export async function runWorkflow<
         !interrupted &&
         !signal.aborted &&
         checkpointProblems.length === 0 &&
-        origins.reaches(caught, budgetError)
+        origins.onlyFrom(caught, budgetError)
       ) {
         record.status = 'suspended';
         children.finish('suspended');

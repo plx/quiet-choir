@@ -50,18 +50,19 @@ unknown); `observed` is the window's utilization and may exceed 1.
 the latest reset, and its wake is `resetsAt * 1000` rounded up (a wake past the last persisted
 millisecond counts as unknown). The runner takes a run-level suspension in its catch path, after the
 ordinary drain (questions, operations, discovery, question close, observation flush, worktree
-cleanup), when the latched error is a window stop with a wake, the caught error is that error or
-reaches it through fan-out failures or causes, and the run was neither interrupted nor cancelled and
-has no checkpoint error. It saves `suspended` with `error`, `rootCause` and `recoveryHint` cleared,
-removes `staleRecovery` (a clean suspension), keeps `budgetStop` as the durable reason, and sets
-`nextWakeAt` to the earlier of the wake and the waits' own wake time. It assigns `nextWakeAt` after
-`questions.close()`, whose last update covers only the waits, so the pump cannot overwrite it; a
-wait still parked keeps its earlier deadline or check, so the gate never delays a timeout. It emits
-`run.suspended` with a message from `windowSuspensionMessage`, which `--events` reuses, and returns
-the same suspended `WorkflowResult` as the quiescent path, so the CLI exits 75 and tick reports
-`suspended` with `nextWakeAt`. Tick resumes the run at the reset like any due suspension; by then
-the observation has expired and the refused step runs. A resume before the reset refuses again
-before any attempt and suspends with the same wake.
+cleanup), when the latched error is a window stop with a wake, the caught error is that error (or
+wraps it through causes) or a fan-out whose every non-cancellation failure derives from it, and the
+run was neither interrupted nor cancelled and has no checkpoint error. It saves `suspended` with
+`error`, `rootCause` and `recoveryHint` cleared, removes `staleRecovery` (a clean suspension), keeps
+`budgetStop` as the durable reason, and sets `nextWakeAt` to the earlier of the wake and the waits'
+own wake time. It assigns `nextWakeAt` after `questions.close()`, whose last update covers only the
+waits, so the pump cannot overwrite it; a wait still parked keeps its earlier deadline or check, so
+the gate never delays a timeout. It emits `run.suspended` with a message from
+`windowSuspensionMessage`, which `--events` reuses, and returns the same suspended `WorkflowResult`
+as the quiescent path, so the CLI exits 75 and tick reports `suspended` with `nextWakeAt`. Tick
+resumes the run at the reset like any due suspension; by then the observation has expired and the
+refused step runs. A resume before the reset refuses again before any attempt and suspends with the
+same wake.
 
 **Fail when a reset is unknown.** If any exceeded window has no known reset (Claude 2.1.285 reported
 none per window), the run cannot wait for it: it fails with `RunBudgetExceededError` exactly as the
@@ -97,8 +98,9 @@ or resumed record. A revision-1 build refuses to rewrite a revision-2 record, by
 
 - A run can now suspend without any pending wait: `pending` may be empty while `nextWakeAt` is set.
   `inspect` and the suspended document show the wake time and the saved `budgetStop`.
-- A concurrent unrelated failure is never masked: only a run whose caught error is the latched stop
-  suspends. A step that failed alongside it still fails the run.
+- A concurrent unrelated failure is never masked: only a run whose caught error is the latched stop,
+  or a fan-out whose every non-cancellation failure derives from it, suspends. A step that failed
+  alongside it still fails the run.
 - The gate reads the last report, which describes the window at the end of that call, not a
   reservation; in-flight calls may push a window past the cap, as they can overshoot the cost cap.
 - Reports with resets in the past are ignored by the injectable runtime clock, so tests and tick
