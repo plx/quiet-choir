@@ -935,6 +935,9 @@ function localReview(a, P, R) {
     base,
     '-c',
     `model="${model}"`,
+    // A user-config review_model takes precedence over model for `codex review`.
+    '-c',
+    `review_model="${model}"`,
     '-c',
     'sandbox_mode="read-only"',
   ];
