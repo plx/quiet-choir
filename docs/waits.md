@@ -211,6 +211,16 @@ execute/resume keeps all waits live. The CLI records the mode, so a later `resum
 Await tracked operations; raw asynchronous body tasks do not keep a quiescent run alive. See
 [question suspension](questions.md#suspend-and-resume).
 
+A run can also suspend without a pending wait. The sticky `--max-window-utilization` gate refuses a
+new agent attempt while the harness's latest subscription window is at or above the cap; when the
+window's reset is known, the run drains like any refusal and then saves `suspended` with
+`nextWakeAt` at that reset (or at an earlier deadline or poll of a wait it also has), keeping the
+reason in `budgetStop`. The CLI exits 75 and the suspended document carries `nextWakeAt`, so tick
+resumes the run once the window has reset. The gate suspends even under `--wait-mode block`: a reset
+can be days away and a blocked process cannot be resumed by tick. See
+[the window gate](usage-and-budgets.md#gate-new-attempts-on-the-windows) and
+[ADR 0053](decisions/0053-window-utilization-gate-suspends-until-reset.md).
+
 ```sh
 quiet-choir workflow pending --state-dir /absolute/state --json
 quiet-choir workflow tick --state-dir /absolute/state --json

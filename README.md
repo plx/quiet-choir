@@ -577,7 +577,10 @@ null. `summarizeUsage(run)` and inspection include every recorded attempt, unkno
 harness/model breakdowns. `workflow inspect ID --json` adds `usageSummary`. Use `--max-run-cost-usd`
 and `--max-run-agent-attempts` to gate new calls across resumes. These sticky caps drain admitted
 work and fail the run when tripped; raise them on resume or use `off` to clear one. In-flight calls
-can overshoot reported cost. See [usage and budgets](docs/usage-and-budgets.md).
+can overshoot reported cost. `--max-window-utilization <0..1>` is a third sticky cap on the Claude
+subscription windows: it refuses new calls while the latest reported window is at or above the cap
+and suspends the run (exit 75) until the window resets, so `workflow tick` resumes it then. See
+[usage and budgets](docs/usage-and-budgets.md).
 
 ## Additional harnesses and service helpers
 

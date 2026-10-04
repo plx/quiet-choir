@@ -72,18 +72,20 @@ agent-attempt slots. Metadata is visible in inspection but does not change step 
 
 ```sh
 quiet-choir workflow execute review.workflow.ts --run-id review \
-  --max-run-cost-usd 5 --max-run-agent-attempts 30
+  --max-run-cost-usd 5 --max-run-agent-attempts 30 --max-window-utilization 0.9
 quiet-choir workflow resume review --max-run-cost-usd 10 --max-run-agent-attempts 60
 ```
 
-Embedded runs use `RunOptions.maxRunCostUsd` and `maxRunAgentAttempts`. Both default to unlimited,
-are saved as `runBudget`, and stay outside identity. Omission on resume retains the saved cap;
-`--max-run-cost-usd off` / `--max-run-agent-attempts off` (embedded null) clears one cap.
-`execute --policy-reset` clears both along with other sticky rules. Zero allows replay/local work
-but no new agent attempts. A fork starts with its own caps and excludes reused source spend.
+Embedded runs use `RunOptions.maxRunCostUsd`, `maxRunAgentAttempts` and `maxWindowUtilization` (the
+[subscription-window gate](#gate-new-attempts-on-the-windows)). All three default to unlimited, are
+saved as `runBudget`, and stay outside identity. Omission on resume or tick retains the saved cap;
+`--max-run-cost-usd off` / `--max-run-agent-attempts off` / `--max-window-utilization off` (embedded
+null) clears one cap. `execute --policy-reset` clears all three along with other sticky rules. Zero
+allows replay/local work but no new agent attempts (for the window gate: none while any live window
+is reported). A fork starts with its own caps and excludes reused source spend.
 
 Admission compares recorded reported cost and cumulative admitted attempts before adding an attempt.
-With either cap enabled, the runtime reserves a limiter slot before the durable attempt setup,
+With any cap enabled, the runtime reserves a limiter slot before the durable attempt setup,
 including any metadata, transcript or worktree preparation. It releases the slot immediately after
 the harness settles, before response validation and outcome saves. Reserving admission before setup
 prevents queued requests from slipping past a newly reached threshold. Without run caps, the prior
@@ -96,7 +98,8 @@ request, so its `durationMs` and `startedAt` cover any queue wait the same as an
 A refusal creates no step/attempt record and saves a run-level `budgetStop`. It cancels queued
 admissions, lets all admitted agent attempts finish, then rejects with `RunBudgetExceededError`. The
 stop latches for that execution: catches, settled effects and settled maps cannot turn it into
-successful completion. The run fails rather than suspending. Resume with a higher cap replays
+successful completion. The cost and attempt caps fail the run rather than suspending it; the window
+gate suspends it until the window resets when the reset is known. Resume with a higher cap replays
 completed effects and continues; it does not reset cumulative spend or attempts.
 
 This is an after-completion gate, not a hard billing ceiling. In-flight calls can overshoot, unknown
@@ -153,6 +156,37 @@ Windows other than `five_hour` (`5h`) and `seven_day` (`7d`) print under their o
 two.
 
 Only the built-in Claude adapter reports windows. Codex attempts carry no `rateLimit`, and a custom
-adapter that writes the same shape into its diagnostics is displayed too. This is observation only:
-run caps still measure USD and attempts, and there is no utilization gate and no suspend-until-reset
-yet. Window percentages are the CLI's report at the end of that call, not a reservation.
+adapter that writes the same shape into its diagnostics is displayed (and gated) too. Window
+percentages are the CLI's report at the end of that call, not a reservation.
+
+### Gate new attempts on the windows
+
+`--max-window-utilization <0..1|off>` (embedded `RunOptions.maxWindowUtilization`) is a third sticky
+run cap. Before a new agent attempt, admission reads the latest report of the admitting harness (the
+entry `rateLimits` shows for it) and refuses the attempt when a live window reports a utilization at
+or above the cap. The evaluation rules:
+
+- A window's reset is its own `resetsAt`, or the event's `resetsAt` when the event's `type` names
+  that window.
+- A window whose known reset is at or before now (the runtime clock) has expired and is ignored, so
+  an old report never blocks after its window resets. A window with an unknown reset never expires.
+- The check is per harness: Codex, which reports no windows, is never refused by Claude's windows,
+  and a run with no report at all (including its first call) is never refused. `status` is not
+  consulted.
+- Once any admission is refused, the stop latches for every harness, as for the other caps: queued
+  admissions are cancelled, admitted attempts finish, and the refused step gets no record.
+
+When every exceeded window has a known reset, the run then ends `suspended` instead of failing, with
+`nextWakeAt` at the latest such reset (`resetsAt * 1000`), or at an earlier wait deadline the run
+also has. The CLI exits 75 and its suspended document carries `nextWakeAt`; the `run.suspended`
+notification and `--events` line read
+`Run suspended until 2026-10-07T08:00:00.000Z: claude seven_day window at 84% reached --max-window-utilization 0.5.`
+`workflow tick` resumes the run once that time has passed; the expired report no longer blocks and
+the refused step runs. A `resume` before then refuses again before any attempt and suspends with the
+same wake. The gate suspends even under `--wait-mode block`, which governs workflow waits only. If
+an exceeded window has no known reset (Claude 2.1.285 reported none per window), the run fails with
+`RunBudgetExceededError` like the other caps; resume with a higher value or `off`. The saved
+`budgetStop` names the metric `maxWindowUtilization`, the `harness`, the `window`, its `resetsAt`
+(null when unknown) and the `observed` utilization, which may exceed 1. `inspect` shows it as the
+optional `budgetStop` summary key and a `Budget stop:` line. See
+[ADR 0053](decisions/0053-window-utilization-gate-suspends-until-reset.md).
