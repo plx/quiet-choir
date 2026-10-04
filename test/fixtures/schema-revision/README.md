@@ -53,6 +53,40 @@ Stack paths are scrubbed to `/fixture/...` and the file was formatted with Prett
 digest in `test/record-schema-revision.test.ts` was computed on the same unmodified main from this
 file. No harness was invoked.
 
+`revision-two-checkpoint.json` was generated the same way at origin/main `9d054b4`, before settled
+child frames (#170) added the nested `onError` and `settled` fields to `children` in revision 3. Its
+run ID is `revision-two`, and it ran this definition, so it carries `schemaRevision: 2`, one
+completed declared child frame `child` owning the completed `child/stamp` effect, and a
+workflow-body failure after the frame:
+
+```ts
+const child = defineWorkflow({
+  name: 'stamp-child',
+  version: '1',
+  input: z.null(),
+  output: z.null(),
+  async run(ctx) {
+    await ctx.now('stamp');
+    return null;
+  },
+});
+defineWorkflow({
+  name: 'schema-revision',
+  version: '1',
+  input: z.null(),
+  output: z.null(),
+  children: [child],
+  async run(ctx) {
+    await ctx.workflow('child', child, null);
+    throw new Error('fixture tail');
+  },
+});
+```
+
+The journal was empty, so only `run.json` is checked in. Stack paths are scrubbed to `/fixture/...`
+and the file was formatted with Prettier; its read-view digest in
+`test/record-schema-revision.test.ts` was computed on the same unmodified main from this file.
+
 `record-keys.json` lists the top-level run-record keys of each schema revision. Adding or changing a
 persisted run-level field adds a revision there and bumps `SUPPORTED_SCHEMA_REVISION`; a revision
 that only changes a nested shape repeats the previous key list. See `docs/storage.md`.

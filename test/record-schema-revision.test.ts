@@ -44,6 +44,8 @@ const revisionDigests: Readonly<Record<string, string>> = {
 const preRevisionReadDigest = '714b6cb068de5c933b7ba04a26d1f931f589f7c9910f76f0e5c8cc493eb13016';
 // digest(readRun(...)) of the installed revision-one fixture, computed on unmodified main 33b6eac.
 const revisionOneReadDigest = '73d8cec57513dde827ab1ced2a31745af52b6c8af39dad13c3e4e391cfc43310';
+// digest(readRun(...)) of the installed revision-two fixture, computed on unmodified main 9d054b4.
+const revisionTwoReadDigest = '7c56687992acfa40d749086b301489e9babc93fc9be8f2db2a1bc29cdb1d02ae';
 
 const sha256 = (value: string): string => createHash('sha256').update(value).digest('hex');
 
@@ -732,5 +734,76 @@ describe('revision-one records (before the window gate, #168)', () => {
       };
     });
     await expect(readRun({ stateDir, runId })).rejects.toThrow();
+  });
+});
+
+describe('revision-two records (child frames before settled frames, #170)', () => {
+  const runId = 'revision-two';
+  async function install(): Promise<void> {
+    const fixture = await readFile(
+      new URL('./fixtures/schema-revision/revision-two-checkpoint.json', import.meta.url),
+      'utf8',
+    );
+    await mkdir(join(stateDir, runId));
+    await writeFile(paths(runId).snapshot, fixture);
+    await writeFile(paths(runId).journal, '');
+  }
+  let bodies = 0;
+  const child = defineWorkflow({
+    name: 'stamp-child',
+    version: '1',
+    input: z.null(),
+    output: z.null(),
+    async run(ctx) {
+      bodies++;
+      await ctx.now('stamp');
+      return null;
+    },
+  });
+  const root = defineWorkflow({
+    name: 'schema-revision',
+    version: '1',
+    input: z.null(),
+    output: z.null(),
+    children: [child],
+    async run(ctx) {
+      await ctx.workflow('child', child, null);
+      return null;
+    },
+  });
+
+  it('read exactly as on main, with a completed frame and no settled fields', async () => {
+    await install();
+    const record = await readRun({ stateDir, runId });
+    expect(record.schemaRevision).toBe(2);
+    expect(recordSchemaDrift(record)).toBeUndefined();
+    expect(digest(record)).toBe(revisionTwoReadDigest);
+    expect(record.children?.['child']).toMatchObject({ status: 'completed', declared: true });
+    expect(record.children?.['child']).not.toHaveProperty('settled');
+    expect(record.children?.['child']).not.toHaveProperty('onError');
+  });
+
+  it('resume by rerunning the child body with its effect replayed', async () => {
+    await install();
+    bodies = 0;
+    const original = await readRun({ stateDir, runId });
+    const replayed: string[] = [];
+    const result = await runWorkflow(root, {
+      ...options,
+      stateDir,
+      runId,
+      resume: true,
+      onEvent: (event) => {
+        if (event.type === 'step.replayed') replayed.push(event.stepId);
+      },
+    });
+    expect(result.status).toBe('completed');
+    expect(bodies).toBe(1);
+    expect(replayed).toEqual(['child/stamp']);
+    const saved = await readRun({ stateDir, runId });
+    expect(saved.steps['child/stamp']?.output).toEqual(original.steps['child/stamp']?.output);
+    expect(saved.children?.['child']).toMatchObject({ status: 'completed' });
+    expect(saved.children?.['child']).not.toHaveProperty('settled');
+    expect((await rawSnapshot(runId))['schemaRevision']).toBe(SUPPORTED_SCHEMA_REVISION);
   });
 });
