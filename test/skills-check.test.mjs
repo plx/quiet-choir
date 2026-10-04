@@ -3,7 +3,7 @@ import { cp, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/pr
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import { checkSkills, packages, repository } from '../scripts/check-skills.mjs';
+import { checkSkills, packages, repository, sourceExample } from '../scripts/check-skills.mjs';
 import { anchors, checkLinks, fences, prose } from '../scripts/skill-markdown.mjs';
 
 async function fixture(run) {
@@ -29,6 +29,43 @@ test('broken complete TypeScript is rejected at the documentation line', async (
     await append(root, '\n```ts\nexport const broken: number = "wrong";\n```\n');
     await assert.rejects(checkSkills(root), /SKILL\.md:\d+: TS2322/u);
   });
+});
+test('a fence importing quiet-choir/github compiles, and a wrong export is rejected at its line', async () => {
+  const fence = (name) =>
+    `\n\`\`\`ts\nimport { z } from 'quiet-choir';\nimport { ${name} } from 'quiet-choir/github';\n\nexport const pick = (value: unknown) => z.unknown().parse(${name}) ?? value;\n\`\`\`\n`;
+  await fixture(async (root) => {
+    await append(root, fence('nextTicket'));
+    await checkSkills(root);
+  });
+  await fixture(async (root) => {
+    const before = (await readFile(skill(root), 'utf8')).split('\n').length;
+    await append(root, fence('noSuchExport'));
+    // The appended text starts on the file's last (empty) line; the github import is three later.
+    await assert.rejects(
+      checkSkills(root),
+      new RegExp(`SKILL\\.md:${String(before + 3)}: TS2305: .*noSuchExport`, 'u'),
+    );
+  });
+});
+test('sourceExample maps quiet-choir/github beside the runtime it maps the root to', () => {
+  const code = [
+    "import { z } from 'quiet-choir';",
+    "import { github } from 'quiet-choir/github';",
+    "import { defineWorkflow } from '../../src/index.js';",
+    "import { nextTicket } from '../../src/integrations/github.js';",
+    "const prompt = 'quiet-choir/github';",
+  ].join('\n');
+  const dist = join(repository, 'dist/index.js');
+  const rewritten = sourceExample(code, dist).split('\n');
+  assert.deepEqual(rewritten.slice(0, 4), [
+    `import { z } from ${JSON.stringify(dist)};`,
+    `import { github } from ${JSON.stringify(join(repository, 'dist/integrations/github.js'))};`,
+    `import { defineWorkflow } from ${JSON.stringify(dist)};`,
+    `import { nextTicket } from ${JSON.stringify(join(repository, 'dist/integrations/github.js'))};`,
+  ]);
+  // Strings that merely look like specifiers stay intact.
+  assert.equal(rewritten[4], "const prompt = 'quiet-choir/github';");
+  assert.match(sourceExample(code), /src\/integrations\/github\.js/u);
 });
 for (const [name, path, transform] of [
   [
