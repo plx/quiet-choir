@@ -35,7 +35,7 @@ const pastClock: WorkflowClock = {
 
 let root: string;
 let stateDir: string;
-let executePlan: Parameters<WorkflowExecutor['execute']>[0];
+let executePlan: Extract<Parameters<WorkflowExecutor['execute']>[0], { kind: 'workflow.execute' }>;
 let original: { snapshot: string; journal: string };
 const snapshotPath = () => join(stateDir, runId, 'run.json');
 const journalPath = () => join(stateDir, runId, 'journal.jsonl');
@@ -133,6 +133,31 @@ it('refuses every write to a record with a newer schemaRevision and warns on rea
   expect(raw['schemaRevision']).toBe(SUPPORTED_SCHEMA_REVISION);
   await writeFile(snapshotPath(), `${JSON.stringify({ ...raw, schemaRevision: newer })}\n`);
   await expectRefusals(`schemaRevision ${String(newer)}`);
+});
+
+it('check-resume refuses a record with a newer schemaRevision even with --accept-code-change', async () => {
+  const raw = JSON.parse(original.snapshot) as Record<string, unknown>;
+  await writeFile(snapshotPath(), `${JSON.stringify({ ...raw, schemaRevision: newer })}\n`);
+  await writeFile(journalPath(), original.journal);
+  const named = `schemaRevision ${String(newer)}`;
+  const before = await bytes();
+  const executor = new WorkflowExecutor({ logger });
+  // The lock-free preflight reports the same refusal, accepted code changes included.
+  const checked = await executor.execute({
+    kind: 'workflow.check-resume',
+    typecheck: executePlan.typecheck,
+    runId,
+    stateDir,
+    cwd: root,
+    acceptCodeChange: true,
+  });
+  expect(checked).toMatchObject({
+    ok: false,
+    code: 'run.incompatible',
+    details: { reason: 'record_schema', changed: ['record schema'], compatible: false },
+  });
+  if (!checked.ok) expect(checked.message).toContain(named);
+  expect(await bytes()).toEqual(before);
 });
 
 it('refuses every write to a record with an unknown top-level field and warns on read', async () => {

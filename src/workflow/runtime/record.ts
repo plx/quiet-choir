@@ -376,7 +376,8 @@ export interface RunRecord {
    * Revision of the persisted run-level fields, independent of {@link RunRecord.formatVersion}.
    * Absent means revision 1, which covers every record written before the field existed. A build
    * refuses to resume, tick, fork or clean a record with a newer revision, or with top-level fields
-   * it does not know, because rewriting it would drop them; read paths warn instead.
+   * it does not know, because rewriting it would drop them, and check-resume reports it
+   * incompatible; read paths warn instead.
    */
   schemaRevision?: number;
   /** Last applied storage journal sequence; present in the directory layout. */
@@ -1134,7 +1135,7 @@ export function recordSchemaRefusalMessage(runId: string, drift: RecordSchemaDri
 
 /** The read-path warning for a record this build cannot fully read. @internal */
 export function recordSchemaWarning(drift: RecordSchemaDrift): string {
-  return `This run record ${driftReasons(drift).join(' and ')}; this view omits what this build does not know, and resume, tick, fork and clean refuse the run until quiet-choir is upgraded.`;
+  return `This run record ${driftReasons(drift).join(' and ')}; this view omits what this build does not know, and resume, check-resume, tick, fork and clean refuse the run until quiet-choir is upgraded.`;
 }
 
 /** `run.incompatible` with `reason: 'record_schema'` for a record this build must not rewrite. @internal */

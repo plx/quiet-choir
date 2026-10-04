@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
+  checkResume,
   defineWorkflow,
   FileRunStore,
   FixtureHarness,
@@ -352,6 +353,64 @@ describe('writers refuse and change nothing', () => {
     });
     expect(await bytes('run')).toEqual(before);
   });
+
+  it.each([
+    [
+      'a newer schemaRevision',
+      async (runId: string) => {
+        await editSnapshot(runId, (raw) => {
+          raw['schemaRevision'] = SUPPORTED_SCHEMA_REVISION + 1;
+        });
+      },
+      { schemaRevision: SUPPORTED_SCHEMA_REVISION + 1, hiddenFields: [] },
+    ],
+    [
+      'an unknown top-level field',
+      async (runId: string) => {
+        await editSnapshot(runId, (raw) => {
+          raw['futureBudget'] = { maxRunMinutes: 5 };
+        });
+      },
+      { schemaRevision: 1, hiddenFields: ['futureBudget'] },
+    ],
+  ])(
+    'checkResume reports %s as incompatible, which no flag overrides',
+    async (_name, drift, why) => {
+      await failedRun('run');
+      const check = { ...options, stateDir, runId: 'run' };
+      await expect(checkResume(definition(false), check)).resolves.toMatchObject({
+        compatible: true,
+        changed: [],
+      });
+      await drift('run');
+      const before = await bytes('run');
+      for (const accept of [{}, { acceptCodeChange: true }]) {
+        const result = await checkResume(definition(false), { ...check, ...accept });
+        expect(result).toMatchObject({
+          compatible: false,
+          changed: ['record schema'],
+          canAcceptCodeChange: false,
+          reason: 'record_schema',
+          supportedSchemaRevision: SUPPORTED_SCHEMA_REVISION,
+          ...why,
+        });
+        expect(result.message).toBe(
+          recordSchemaRefusalMessage('run', {
+            supportedSchemaRevision: SUPPORTED_SCHEMA_REVISION,
+            ...why,
+          }),
+        );
+      }
+      // The preflight agrees with the resume that follows it.
+      const error = await refusal(
+        runWorkflow(definition(false), { ...options, stateDir, runId: 'run', resume: true }),
+      );
+      expect(error.message).toBe(
+        (await checkResume(definition(false), { ...check, acceptCodeChange: true })).message,
+      );
+      expect(await bytes('run')).toEqual(before);
+    },
+  );
 
   it('refuses a fork from a drifted source', async () => {
     await failedRun('source');
