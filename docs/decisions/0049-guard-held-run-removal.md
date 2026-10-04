@@ -47,9 +47,14 @@ read under the lock.
 under the ADR 0032 lock and `workflow clean` is unchanged. While a cache remains and its repository
 exists, rm deletes nothing (not even refs) and fails with `workflow.storage`, naming the caches, so
 the ledger survives for `workflow clean`. When the repository is gone, Git cannot run; rm deletes
-each cache directly, but only one whose parent is exactly `<ledger.root>/<runId>-<namespace>` and
-only when that namespace is a real directory, so a corrupt ledger cannot delete anything else. Pins
-are deleted only with `--refs`.
+each cache directly. The trust boundary is the operator's own state: the record is theirs and its
+namespace a schema-validated UUID, so rm adds structural checks rather than independent ownership
+metadata, refusing (and deleting nothing) unless the ledger root is absolute, every pending cache
+path is exactly `<ledger.root>/<runId>-<namespace>/<64 hex digits>`, its ledger key is the SHA-256
+digest of that path (how `RunWorktrees` keys caches), and the namespace and each cache are real
+directories rather than symbolic links. A corrupt ledger can then only name a directory
+`RunWorktrees` could have created; a cache already gone is just marked removed. Pins are deleted
+only with `--refs`.
 
 **Deletion order, with the guard held throughout.** 1. `<runId>.cancel.json` and
 `<runId>.inbox/`. 2. The flat `<runId>.json`, then a directory fsync: the commit point of an

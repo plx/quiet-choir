@@ -1,10 +1,11 @@
 import { randomUUID } from 'node:crypto';
+import type { Stats } from 'node:fs';
 import { lstat, readdir, rename, rm, rmdir } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
+import { basename, dirname, isAbsolute, join } from 'node:path';
 import { pidState } from '../../processes/identity.js';
 import type { ProcessSupervisor } from '../../processes/supervisor.js';
 import type { ProcessRunner } from './exec-model.js';
-import { jsonValue } from './json.js';
+import { digest, jsonValue } from './json.js';
 import { isErrno, sweepStrays } from './lock.js';
 import { legacyRunPath, resolveStateDir, runDirectory } from './paths.js';
 import { OrphanProcessesError } from './process-registry.js';
@@ -92,6 +93,9 @@ export interface RemoveRunLive {
 
 const tombstonePattern =
   /^\.([a-zA-Z0-9][a-zA-Z0-9_-]{0,127})\.(\d+)\.[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\.removing$/u;
+
+/** A cache directory name: `RunWorktrees` names each cache by a SHA-256 digest. */
+const cacheName = /^[0-9a-f]{64}$/u;
 
 /** The tombstone a removal renames `<runId>/` to: never a valid run ID, so it never lists. */
 function tombstoneName(runId: string): string {
@@ -420,9 +424,12 @@ async function removeOwned(
 }
 
 /**
- * Delete the caches of a ledger whose repository is gone, so Git cannot remove them. Each cache
- * must sit directly in the run's namespace directory, which must be a real directory, so a corrupt
- * ledger can never delete anything else. Saves the ledger only when it changed.
+ * Delete the caches of a ledger whose repository is gone, so Git cannot remove them. The record is
+ * the operator's own state and its namespace a schema-validated UUID, so these structural checks
+ * only keep a corrupt ledger from deleting anything but a cache `RunWorktrees` could have created:
+ * an absolute root; a path that is exactly `<namespace>/<sha256 hex>`, keyed by its own digest as
+ * `RunWorktrees` keys caches; a namespace and a cache that are real directories, not symbolic
+ * links. A cache already gone is just marked removed. Saves the ledger only when it changed.
  */
 async function removeCachesDirectly(
   owned: ReleasableOwnedRun,
@@ -430,28 +437,45 @@ async function removeCachesDirectly(
   ledger: NonNullable<RunRecord['worktrees']>,
   namespace: string,
 ): Promise<RemovedCache[]> {
-  const pending = Object.values(ledger.caches).filter((cache) => cache.state !== 'removed');
+  const pending = Object.entries(ledger.caches).filter(([, cache]) => cache.state !== 'removed');
   if (!pending.length) return [];
-  for (const cache of pending)
-    if (dirname(cache.path) !== namespace)
-      throw new Error(
-        `Worktree cache ${cache.path} is outside ${namespace}; rm refuses to delete it.`,
-      );
-  const directory = await lstat(namespace).catch((error: unknown) => {
-    if (isErrno(error, 'ENOENT')) return undefined;
-    throw error;
-  });
+  const refuse = (reason: string): never => {
+    throw new Error(`${reason}; rm refuses to delete the run's worktree caches.`);
+  };
+  if (!isAbsolute(ledger.root)) refuse(`Worktree root ${ledger.root} is not absolute`);
+  for (const [key, cache] of pending) {
+    const name = basename(cache.path);
+    if (dirname(cache.path) !== namespace || cache.path !== join(namespace, name))
+      refuse(`Worktree cache ${cache.path} is outside ${namespace}`);
+    if (!cacheName.test(name))
+      refuse(`Worktree cache ${cache.path} is not named by a SHA-256 digest`);
+    if (key !== digest(cache.path))
+      refuse(`Worktree cache ${cache.path} does not match its ledger key ${key}`);
+  }
+  const directory = await lstatIfPresent(namespace);
   if (directory && (directory.isSymbolicLink() || !directory.isDirectory()))
-    throw new Error(
-      `Worktree namespace ${namespace} is not a directory; rm refuses to delete its caches.`,
-    );
+    refuse(`Worktree namespace ${namespace} is not a directory`);
+  const present: boolean[] = [];
+  for (const [, cache] of pending) {
+    const entry = directory ? await lstatIfPresent(cache.path) : undefined;
+    if (entry && (entry.isSymbolicLink() || !entry.isDirectory()))
+      refuse(`Worktree cache ${cache.path} is not a directory`);
+    present.push(entry !== undefined);
+  }
   const removed: RemovedCache[] = [];
-  for (const cache of pending) {
-    if (directory) await rm(cache.path, { recursive: true, force: true });
+  for (const [index, [, cache]] of pending.entries()) {
+    if (present[index]) await rm(cache.path, { recursive: true, force: true });
     cache.state = 'removed';
     removed.push({ path: cache.path, method: 'direct' });
   }
   record.updatedAt = new Date().toISOString();
   await owned.append(record);
   return removed;
+}
+
+async function lstatIfPresent(path: string): Promise<Stats | undefined> {
+  return lstat(path).catch((error: unknown) => {
+    if (isErrno(error, 'ENOENT')) return undefined;
+    throw error;
+  });
 }

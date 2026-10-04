@@ -257,7 +257,9 @@ future recovery or integration impossible after Git collects otherwise unreachab
 `--refs` and otherwise reports them as `keptRefs`. If Git cannot remove a cache while the repository
 exists, rm keeps the record for a `workflow clean` retry. When the repository is gone, rm deletes
 the run's caches inside `<root>/<runId>-<namespace>/` directly, and then the empty namespace
-directory. See [removing runs](storage.md#removing-runs).
+directory. It deletes only a real directory named by a SHA-256 digest that matches its ledger key,
+so a corrupt record cannot point it elsewhere; otherwise it refuses and deletes nothing. See
+[removing runs](storage.md#removing-runs).
 
 ### What capture leaves out
 

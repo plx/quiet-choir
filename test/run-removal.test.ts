@@ -728,4 +728,39 @@ describe('workflow rm worktree caches', { timeout: 10_000 }, () => {
     expect(await gone(outside)).toBe(false);
     expect((await readRun({ stateDir, runId: 'escaped' })).id).toBe('escaped');
   });
+
+  it.each([
+    [
+      'is not named by a digest',
+      (namespace: string) => join(namespace, 'not-a-digest'),
+      'not named by a SHA-256 digest',
+    ],
+    [
+      'does not match its ledger key',
+      (namespace: string) => join(namespace, '0'.repeat(64)),
+      'does not match its ledger key',
+    ],
+  ] as const)(
+    'refuses to delete a cache that %s when the repository is gone',
+    async (_name, retarget, message) => {
+      const forged = await runWithCache('forged');
+      const planted = retarget(forged.namespace);
+      await cp(forged.path, planted, { recursive: true });
+      await rm(repo, { recursive: true, force: true });
+      // Retarget the ledger's cache inside the namespace, keeping its key, as a corrupt record would.
+      for (const name of ['run.json', 'journal.jsonl']) {
+        const file = join(stateDir, 'forged', name);
+        const text = await readFile(file, 'utf8').catch(() => undefined);
+        if (text !== undefined) await writeFile(file, text.replaceAll(forged.path, planted));
+      }
+      expect(
+        Object.values((await readRun({ stateDir, runId: 'forged' })).worktrees?.caches ?? {}),
+      ).toMatchObject([{ path: planted }]);
+      const failure = refused(await remove('forged'), 'workflow.storage');
+      expect(failure.message).toContain(message);
+      expect(await gone(planted)).toBe(false);
+      expect(await gone(forged.path)).toBe(false);
+      expect((await readRun({ stateDir, runId: 'forged' })).id).toBe('forged');
+    },
+  );
 });

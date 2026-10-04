@@ -152,11 +152,13 @@ journal, `attempts/` transcripts, artifacts, `launch/`, inbox, lock), the legacy
 marker or flat record, `<runId>.json.lock`, `<runId>.inbox`, `<runId>.cancel.json` and the
 `<runId>.json.v<N>` backups, and its worktree caches. Caches are removed through the same cleanup as
 `workflow clean`, under the worktree administration lock; when the ledger's repository no longer
-exists, rm deletes the caches inside the run's own `<root>/<runId>-<namespace>/` directly. It then
-removes the empty namespace directory. Pinned refs are deleted only with `--refs`. It refuses with
-exit 3 and changes nothing, in this order: `run.locked` while any lock owner or recoverer is alive,
-unverifiable or on a foreign host, or has unreadable metadata, even with `--force` (`error.details`
-has `lockPath`, `kind`, `role`, `pid`, `host` and `state`; the message names `workflow unlock`, with
+exists, rm deletes the caches inside the run's own `<root>/<runId>-<namespace>/` directly, after
+checking that each is a real directory named by a SHA-256 digest that matches its ledger key (a
+failed check refuses with `workflow.storage` and deletes nothing). It then removes the empty
+namespace directory. Pinned refs are deleted only with `--refs`. It refuses with exit 3 and changes
+nothing, in this order: `run.locked` while any lock owner or recoverer is alive, unverifiable or on
+a foreign host, or has unreadable metadata, even with `--force` (`error.details` has `lockPath`,
+`kind`, `role`, `pid`, `host` and `state`; the message names `workflow unlock`, with
 `--force-remote` for a foreign host); `run.orphans` while a dead or released owner's recorded child
 is alive or unverifiable; and, without `--force`, `run.active` when the recorded status is `running`
 or `suspended` or any step is `waiting` (`error.details` is `{status, waiting}`), since a pending
