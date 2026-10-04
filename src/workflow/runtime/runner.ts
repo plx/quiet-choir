@@ -156,6 +156,7 @@ import {
   type StepIdentity,
 } from './identity.js';
 import {
+  agentLimitKeys,
   resolvePolicy,
   matchesStepGlob,
   validatePolicy,
@@ -2371,6 +2372,11 @@ export async function runWorkflow<
           if (structured && registration.capabilities.structuredOutput === 'none')
             throw new Error(`Harness ${harness} does not support structured output.`);
           const native = harness === 'claude' || harness === 'codex';
+          // Top-level option keys of a registered harness; request options are filtered to them.
+          const shape =
+            registration.options instanceof z.ZodObject
+              ? (registration.options.shape as Record<string, unknown>)
+              : {};
           const saved = record.steps[id];
           const replayOnly = saved !== undefined && isTerminalStep(saved);
           let adapter: Harness | undefined;
@@ -2413,6 +2419,9 @@ export async function runWorkflow<
               if (!(cause instanceof ConfigurationError)) throw cause;
               adapter = undefined;
             }
+            // Record and pass on only the limits the harness declares, keyed on its registration
+            // so records do not depend on adapter availability (replay, rehearsal).
+            const limitKeys = agentLimitKeys(harness, Object.keys(shape));
             execution = resolvePolicy(
               id,
               harness,
@@ -2422,9 +2431,13 @@ export async function runWorkflow<
               matchedPolicy,
               profile,
               children.authority?.overrides ?? profileOverrides,
+              limitKeys,
             );
             if (children.authority) {
-              const bounded = children.authority.limits(profile.name, execution.policy);
+              const bounded = { ...children.authority.limits(profile.name, execution.policy) };
+              // A delegated ceiling fills absent limits; drop the ones this harness never declares.
+              for (const field of ['maxTurns', 'maxBudgetUsd'] as const)
+                if (!limitKeys.includes(field)) Reflect.deleteProperty(bounded, field);
               const sources = { ...execution.sources };
               for (const field of [
                 'timeoutMs',
@@ -2529,10 +2542,6 @@ export async function runWorkflow<
             ...(execution.requestedModel === null ? {} : { model: execution.requestedModel }),
             ...(execution.effort === null ? {} : { effort: execution.effort }),
           };
-          const shape =
-            registration.options instanceof z.ZodObject
-              ? (registration.options.shape as Record<string, unknown>)
-              : {};
           Object.assign(
             applied,
             Object.fromEntries(

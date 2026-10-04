@@ -12,7 +12,9 @@ import {
   type AgentRequest,
   type HarnessDeclaration,
   type HarnessAdapter,
+  type HarnessInvocation,
 } from '../src/index.js';
+import { RehearsalHarness } from '../src/workflow/loader/rehearsal.js';
 
 const directories: string[] = [];
 async function setup() {
@@ -652,4 +654,72 @@ it('does not let a dynamic child with the same identity stand in for a declared 
     runWorkflow(parent, { ...options, resume: true, allowHarnessChange: true }),
   ).rejects.toThrow('No harness adapter configured for third');
   expect(gates).toBe(1);
+});
+
+function ocodeWorkflow(declared: Readonly<Record<string, z.ZodType>> = {}) {
+  const ocode = defineHarness({
+    name: 'ocode',
+    revision: 1,
+    options: z.object({ prompt: z.string(), timeoutMs: z.number().optional(), ...declared }),
+    capabilities: { structuredOutput: 'none' },
+    access: () => 'none',
+    policy: ['timeoutMs', ...Object.keys(declared)],
+  });
+  return defineWorkflow({
+    ...base,
+    harnesses: [ocode],
+    async run(ctx) {
+      // The implicit text profile sets maxTurns 10, maxBudgetUsd 0.5 and timeoutMs 300000.
+      return (await ctx.agent('ocode').text('ask', { prompt: 'hello' })).output;
+    },
+  });
+}
+
+it.each([
+  { declared: {}, recorded: {} },
+  { declared: { maxTurns: z.number().optional() }, recorded: { maxTurns: 10 } },
+])(
+  'records and passes only the limits a custom harness declares ($recorded)',
+  async ({ declared, recorded }) => {
+    const seen: { request: AgentRequest; invocation: HarnessInvocation | undefined }[] = [];
+    const options = await setup();
+    const result = await runWorkflow(ocodeWorkflow(declared), {
+      ...options,
+      adapters: {
+        ocode: {
+          invoke: async (request, _signal, invocation) => {
+            seen.push({ request, invocation });
+            return response('done');
+          },
+        },
+      },
+    });
+    expect(result.output).toBe('done');
+    const attempt = result.steps['ask']?.attemptHistory?.[0];
+    const pick = (values: object | undefined) =>
+      Object.fromEntries(
+        Object.entries(values ?? {}).filter(([key]) => ['maxTurns', 'maxBudgetUsd'].includes(key)),
+      );
+    expect(pick(attempt?.policy)).toEqual(recorded);
+    expect(Object.keys(pick(attempt?.sources))).toEqual(Object.keys(recorded));
+    expect(attempt?.policy).toHaveProperty('timeoutMs', 300_000);
+    expect(seen).toHaveLength(1);
+    expect(pick(seen[0]?.invocation?.policy)).toEqual(recorded);
+    expect(pick(seen[0]?.request.options)).toEqual(recorded);
+    expect(seen[0]?.request.options).toHaveProperty('timeoutMs', 300_000);
+  },
+);
+
+it('does not warn in rehearsal about limits a custom harness never declares', async () => {
+  const rehearsal = new RehearsalHarness({ kind: 'cli', config: {} });
+  const result = await runWorkflow(ocodeWorkflow(), {
+    ...(await setup()),
+    harness: rehearsal,
+    rehearsal: rehearsal.hooks,
+  });
+  expect(result.status).toBe('completed');
+  const { warnings, calls } = rehearsal.report(result);
+  expect(calls).toMatchObject([{ stepId: 'ask', harness: 'ocode' }]);
+  expect(warnings.filter((warning) => /maxTurns|maxBudgetUsd/u.test(warning))).toEqual([]);
+  expect(warnings).toContain('Step ask: default/profile limits remain in use for timeoutMs.');
 });

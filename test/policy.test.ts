@@ -17,10 +17,13 @@ import {
 } from '../src/index.js';
 import { agentIdentity } from '../src/workflow/runtime/identity.js';
 import {
+  agentLimitKeys,
   policyOverrideSchema,
+  resolvePolicy,
   retryPolicySchema,
   validatePolicy,
 } from '../src/workflow/runtime/policy.js';
+import { resolveCapabilities } from '../src/workflow/runtime/profiles.js';
 import { errorKindSchema, stepErrorSchema } from '../src/workflow/runtime/step-error.js';
 
 let stateDir: string;
@@ -546,6 +549,44 @@ it('reports adapter defaults and preserves custom-harness unknowns', async () =>
   });
   expect(result.steps['ask']?.attemptHistory?.[0]?.policy).toHaveProperty('timeoutMs', 300_000);
 });
+
+it.each([
+  { harness: 'claude', optionKeys: [], keys: ['maxTurns', 'maxBudgetUsd'] },
+  { harness: 'codex', optionKeys: ['maxTurns', 'maxBudgetUsd'], keys: ['effort'] },
+  { harness: 'ocode', optionKeys: ['prompt'], keys: [] },
+  { harness: 'ocode', optionKeys: ['prompt', 'maxTurns', 'effort'], keys: ['maxTurns'] },
+])(
+  'records only the declared limits of $harness with option keys $optionKeys',
+  ({ harness, optionKeys, keys }) => {
+    expect(agentLimitKeys(harness, optionKeys)).toEqual(keys);
+    const text = resolveCapabilities({}).profiles['text'];
+    if (!text) throw new Error('missing text profile');
+    const resolved = resolvePolicy(
+      'ask',
+      harness,
+      { maxBudgetUsd: 0.25 },
+      { maxTurns: 3 },
+      [{ maxTurns: 7, effort: 'high' }],
+      new Set(),
+      text,
+      [{ profile: '*', maxBudgetUsd: 0.4 }],
+      agentLimitKeys(harness, optionKeys),
+    );
+    // timeoutMs is never harness-specific: the text profile's value always applies.
+    expect(resolved.policy.timeoutMs).toBe(300_000);
+    expect(resolved.sources['timeoutMs']).toBe('profile:text');
+    expect(resolved.policy.maxTurns).toBe(keys.includes('maxTurns') ? 7 : undefined);
+    expect(resolved.sources['maxTurns']).toBe(keys.includes('maxTurns') ? 'override:0' : undefined);
+    expect(resolved.policy.maxBudgetUsd).toBe(keys.includes('maxBudgetUsd') ? 0.4 : undefined);
+    expect(resolved.sources['maxBudgetUsd']).toBe(
+      keys.includes('maxBudgetUsd') ? 'profile-override:0' : undefined,
+    );
+    expect(resolved.effort).toBe(keys.includes('effort') ? 'high' : null);
+    // The default limit keys keep the kind rule: every non-Codex agent kind is treated like Claude.
+    const legacy = resolvePolicy('ask', harness, {}, { maxTurns: 3 }, [], new Set());
+    expect(legacy.policy.maxTurns).toBe(harness === 'codex' ? undefined : 3);
+  },
+);
 
 it('uses saved policy for a still-unfinished call on bare resume, and reset restores call-site limits', async () => {
   const invoke = vi.fn<Harness['invoke']>().mockRejectedValue(new Error('offline'));

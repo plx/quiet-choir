@@ -312,6 +312,49 @@ it('maps declared profile grants, caps child limits and refuses direct or nested
   expect(calls).toBe(1);
 });
 
+it('drops delegated Claude-only limits from a Codex call in a child workflow', async () => {
+  const stateDir = await directory();
+  const seen: { options: object; policy: object | undefined }[] = [];
+  const child = defineWorkflow({
+    name: 'child',
+    ...base,
+    async run(ctx) {
+      await ctx.codex.text('ask', { prompt: 'x' });
+      return null;
+    },
+  });
+  const root = defineWorkflow({
+    name: 'parent',
+    ...base,
+    children: [child],
+    async run(ctx) {
+      // The delegated text ceiling carries maxTurns 10 and maxBudgetUsd 0.5, which Codex lacks.
+      return ctx.workflow('child', child, null);
+    },
+  });
+  const run = await runWorkflow(root, {
+    stateDir,
+    runId: 'codex-child',
+    input: null,
+    harness: {
+      invoke: (request, invocation) => {
+        seen.push({ options: request.options, policy: invocation.policy });
+        return Promise.resolve({ text: 'ok', sessionId: null });
+      },
+    },
+  });
+  expect(run.status).toBe('completed');
+  expect(seen).toHaveLength(1);
+  const attempt = run.steps['child/ask']?.attemptHistory?.[0];
+  for (const values of [attempt?.policy, attempt?.sources, seen[0]?.options, seen[0]?.policy]) {
+    expect(values).toBeDefined();
+    expect(values).not.toHaveProperty('maxTurns');
+    expect(values).not.toHaveProperty('maxBudgetUsd');
+  }
+  // Limits Codex shares, such as timeoutMs, still apply.
+  expect(attempt?.policy).toHaveProperty('timeoutMs', 300_000);
+});
+
 it('suspends and resumes a child question in the same run', async () => {
   const stateDir = await directory();
   const child = defineWorkflow({
