@@ -1,8 +1,8 @@
 # Record schema revision fixtures
 
 `pre-revision-checkpoint.json` was generated with the source runtime (through `tsx`) at origin/main
-`91a6d2f`, before run records carried a `schemaRevision` (#167). It pins how a record written by a
-build without the field reads and resumes.
+`91a6d2f` (extracted with `git archive 91a6d2f src`), before run records carried a `schemaRevision`
+(#167). It pins how a record written by a build without the field reads and resumes.
 
 The generator ran this embedded definition with `runWorkflow`, state in a temporary directory, run
 ID `pre-revision`, canonical cwd `/` and the fixed opaque source fingerprint `schema-revision`:
@@ -14,18 +14,20 @@ defineWorkflow({
   input: z.null(),
   output: z.null(),
   async run(ctx) {
-    await ctx.step('prepare', { input: { n: 1 }, schema: z.number(), run: () => 2 });
+    await ctx.now('prepare');
     throw new Error('fixture tail');
   },
 });
 ```
 
-The run holds one completed local step (`prepare`, output `2`) followed by a workflow-body failure
+The run holds one completed local effect (`ctx.now('prepare')`) followed by a workflow-body failure
 (`fixture tail`), so a resume with a body that no longer throws completes it without invoking
-anything. The journal was empty after the failure compacted the snapshot, so only `run.json` is
-checked in. Stack paths are scrubbed to `/fixture/...` and the file was formatted with Prettier;
-nothing else was edited. The read-view digest pinned in `test/record-schema-revision.test.ts` was
-computed on the same unmodified main from this scrubbed, formatted file.
+anything. `ctx.now` has a versioned identity (`now/1`) with no callback text, so the resume does not
+depend on how a test transformer prints a callback. The journal was empty after the failure
+compacted the snapshot, so only `run.json` is checked in. Stack paths are scrubbed to `/fixture/...`
+and the file was formatted with Prettier; nothing else was edited. The read-view digest pinned in
+`test/record-schema-revision.test.ts` was computed on the same unmodified main from this scrubbed,
+formatted file.
 
 `record-keys.json` lists the top-level run-record keys of each schema revision. Adding or changing a
 persisted run-level field adds a revision there and bumps `SUPPORTED_SCHEMA_REVISION`; see
