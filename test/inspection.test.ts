@@ -1,4 +1,5 @@
-import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import assert from 'node:assert/strict';
+import { chmod, mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { hostname, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -28,6 +29,7 @@ import { WorkflowExecutor } from '../src/workflow/loader/executor.js';
 import { fileURLToPath } from 'node:url';
 import { maxRateLimitText, maxRateLimitWindows } from '../src/workflow/runtime/rate-limit.js';
 import {
+  formatBytes,
   formatRunList,
   formatRunSummary,
   parseWatchInterval,
@@ -1317,3 +1319,65 @@ it('bounds the rate-limit projection independently of the run size', () => {
   expect(size(calls(20, maximal))).toBeLessThan(10_240);
   expect(size(calls(40, realistic))).toBeLessThan(10_240);
 });
+
+it('lists on-disk bytes that grow with a transcript, shows SIZE, and leaves inspect without them', async () => {
+  const definition = defineWorkflow({
+    name: 'sized',
+    version: '1',
+    input: z.null(),
+    output: z.number(),
+    run: (ctx) => ctx.step('one', { input: null, schema: z.number(), run: () => 1 }),
+  });
+  await runWorkflow(definition, { stateDir, runId: 'sized', input: null });
+  const before = (await listRuns({ stateDir })).runs[0];
+  expect(before?.bytes).toEqual(expect.any(Number));
+  const transcript = 'x'.repeat(4096);
+  await mkdir(join(stateDir, 'sized', 'attempts', 'one'), { recursive: true });
+  await writeFile(join(stateDir, 'sized', 'attempts', 'one', '1.jsonl'), transcript);
+  const listed = await listRuns({ stateDir });
+  const after = listed.runs[0];
+  expect(listed.warnings).toEqual([]);
+  assert(before && after && typeof before.bytes === 'number' && typeof after.bytes === 'number');
+  expect(after.bytes - before.bytes).toBeGreaterThanOrEqual(transcript.length);
+  expect(toRunListRow(after).bytes).toBe(after.bytes);
+  expect(formatRunList([after])).toMatch(/ USAGE {2}SIZE {2}UPDATED /u);
+  expect(formatRunList([after])).toContain(`  ${(after.bytes / 1024).toFixed(1)} KiB  `);
+  expect((await inspectRun({ stateDir, runId: 'sized' })).summary).not.toHaveProperty('bytes');
+});
+
+it('formats sizes in binary units', () => {
+  expect(formatBytes(0)).toBe('0 B');
+  expect(formatBytes(1023)).toBe('1023 B');
+  expect(formatBytes(1536)).toBe('1.5 KiB');
+  expect(formatBytes(5 * 1024 ** 2)).toBe('5.0 MiB');
+  expect(formatBytes(3 * 1024 ** 3)).toBe('3.0 GiB');
+  expect(formatBytes(2048 * 1024 ** 3)).toBe('2048.0 GiB');
+});
+
+it.skipIf(process.platform === 'win32' || process.getuid?.() === 0)(
+  'keeps a run whose size cannot be measured, with null bytes and a warning',
+  async () => {
+    const definition = defineWorkflow({
+      name: 'sealed',
+      version: '1',
+      input: z.null(),
+      output: z.number(),
+      run: (ctx) => ctx.step('one', { input: null, schema: z.number(), run: () => 1 }),
+    });
+    await runWorkflow(definition, { stateDir, runId: 'sealed', input: null });
+    const sealed = join(stateDir, 'sealed', 'attempts');
+    await mkdir(join(sealed, 'one'), { recursive: true });
+    await chmod(sealed, 0o000);
+    try {
+      const listed = await listRuns({ stateDir });
+      expect(listed.runs.map((run) => [run.id, run.bytes])).toEqual([['sealed', null]]);
+      const [row] = listed.runs;
+      assert(row);
+      expect(toRunListRow(row).bytes).toBeNull();
+      expect(listed.warnings).toEqual([expect.stringMatching(/^Could not measure sealed in /u)]);
+      expect(formatRunList(listed.runs)).toContain('  unknown  ');
+    } finally {
+      await chmod(sealed, 0o700);
+    }
+  },
+);
