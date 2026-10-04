@@ -311,6 +311,19 @@ it('refuses an unowned cancel with exit 3, like the other run refusals', () => {
   });
 });
 
+it('refuses an active run removal with exit 3, like the other run refusals', () => {
+  expect(isCliErrorCode('run.active')).toBe(true);
+  expect(workflowExitCodes['run.active']).toBe(3);
+  expect(
+    workflowErrorDocument(
+      workflowFailure('run.active', 'Run r1 is suspended; rerun with --force to remove it.', {
+        runId: 'r1',
+        details: { status: 'suspended', waiting: [] },
+      }),
+    ),
+  ).toMatchObject({ ok: false, exitCode: 3, error: { code: 'run.active' } });
+});
+
 it('gives the watch bounds their own exits, distinct from stale, suspended and interrupted', () => {
   expect(workflowExitCodes['watch.timeout']).toBe(79);
   expect(workflowExitCodes['watch.record_not_created']).toBe(66);
