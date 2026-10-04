@@ -380,11 +380,13 @@ failure before the record exists, such as `load.typecheck` (exit 4) or a `usage.
 carries the runner's error, diagnostics and `next`, the exit code of that error, and top-level
 `runId: null`, so no run is reported as started. Top-level `runId` is set only when a record is
 readable. An existing run (`run.json` or a legacy flat checkpoint) is refused with `run.exists`
-(exit 3) before anything is launched, without `launch`. Without an owned record within
-`--start-timeout` (default `60s`), start sends SIGTERM to the runner's process group, waits
-`--kill-grace-ms` (default 3000) plus 2 s for it to save, sends SIGKILL if needed, and fails with
-`start.timeout` (exit 124). A runner that exits without a record or a readable document is
-`start.exited` (exit 70). A first signal to start stops the runner the same way and reports
+(exit 3) before anything is launched, without `launch`. Start checks for the run and creates its
+launch files while holding the run's legacy guard, so a held guard (for example a `workflow rm` of
+that ID still in progress) is refused with `run.locked` (exit 3), also without `launch`. Without an
+owned record within `--start-timeout` (default `60s`), start sends SIGTERM to the runner's process
+group, waits `--kill-grace-ms` (default 3000) plus 2 s for it to save, sends SIGKILL if needed, and
+fails with `start.timeout` (exit 124). A runner that exits without a record or a readable document
+is `start.exited` (exit 70). A first signal to start stops the runner the same way and reports
 `workflow.interrupted` (exit 130); a second one kills it at once. A runner that had saved a record
 leaves a resumable suspension, reported with its `runId` and a resume entry in `next`. The launch
 directory of a pre-record failure has no `run.json`, so `list` and `inspect` ignore it; a retry with

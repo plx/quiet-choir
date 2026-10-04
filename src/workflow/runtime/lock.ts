@@ -338,6 +338,41 @@ export async function lockGone(lockPath: string): Promise<boolean> {
 }
 
 /**
+ * Run `fn` while holding only the legacy guard `<runId>.json.lock`, then release it on every path.
+ * Every writer and `workflow rm` take the guard first, and rm holds it until the run is gone, so a
+ * caller that must not interleave with them (start's existence check and launch-file allocation)
+ * runs under it. A held guard refuses with `run.locked`, as for any writer. @internal
+ */
+export async function withRunGuard<T>(
+  stateDir: string,
+  runId: string,
+  fn: () => Promise<T>,
+  options: RunLockOptions = {},
+): Promise<T> {
+  const release = await acquireLock(
+    stateDir,
+    runId,
+    `${legacyRunPath(stateDir, runId)}.lock`,
+    options,
+  );
+  let result: T;
+  try {
+    result = await fn();
+  } catch (error) {
+    try {
+      await release();
+    } catch (releaseError) {
+      throw new AggregateError([error, releaseError], 'Could not release the legacy guard.', {
+        cause: releaseError,
+      });
+    }
+    throw error;
+  }
+  await release();
+  return result;
+}
+
+/**
  * Acquire both the legacy guard and current ownership, always in the same order, for every run —
  * migrated or not — so a pre-format-7 binary starting the same run ID in the same explicit state
  * container is excluded even when no legacy record exists yet. @internal

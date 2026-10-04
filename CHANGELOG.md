@@ -24,10 +24,13 @@
   Answer envelopes gain an optional `runCreatedAt`, the `createdAt` of the run the writer addressed,
   and the owner rejects a delivery whose `runCreatedAt` differs from its own, so no answer outlives
   the run to resolve a later run that reuses the ID; envelopes without it are still accepted.
-  `--dry-run` takes no lock, writes nothing and exits 0 with the verdict, paths, caches, refs and
-  bytes. `workflow list --json` rows (compact and `--full`) gain `bytes`, the apparent size of the
-  run's files in its runs container excluding worktree caches (null with a warning when
-  unmeasurable), and the text view gains a `SIZE` column. A new CLI smoke covers rm and list bytes.
+  `workflow start` checks for an existing run and creates its launch files under the run's legacy
+  guard, refusing with `run.locked` while an rm of that ID is in progress, so rm never renames a new
+  launch directory into its tombstone. `--dry-run` takes no lock, writes nothing and exits 0 with
+  the verdict, paths, caches, refs and bytes. `workflow list --json` rows (compact and `--full`)
+  gain `bytes`, the apparent size of the run's files in its runs container excluding worktree caches
+  (null with a warning when unmeasurable), and the text view gains a `SIZE` column. A new CLI smoke
+  covers rm and list bytes.
 - Docs and CLI drift (#165). `workflow list-defs` discovers `*.workflow.mts` and `*.workflow.cts` as
   well as `*.workflow.ts` (never `.d.ts` or `.tsx`), matching the extensions the golden path tells
   agents to use. The `configuration get` and `configuration set` placeholder commands, which only

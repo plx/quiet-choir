@@ -9,7 +9,8 @@ import { signalProcess } from '../../processes/identity.js';
 import { workflowArgv, type CommandLauncher } from '../runtime/commands.js';
 import type { JsonValue } from '../runtime/model.js';
 import { legacyRunPath, prepareStateDirectory, runDirectory } from '../runtime/paths.js';
-import { isCliErrorCode } from '../runtime/run-errors.js';
+import { withRunGuard } from '../runtime/lock.js';
+import { isCliErrorCode, RunRefusedError } from '../runtime/run-errors.js';
 import { createStorageDirectory } from '../runtime/storage-io.js';
 import { inspectRunOwnership, readRun, type RunRecord } from '../runtime/store.js';
 import type { DurabilityDiagnostic, TypecheckDiagnostic } from '../typecheck/model.js';
@@ -108,7 +109,8 @@ export async function observeStartedRun(
   };
 }
 
-interface LaunchFiles {
+/** A launch's evidence files, created exclusively; the caller closes the two handles. @internal */
+export interface LaunchFiles {
   readonly log: string;
   readonly result: string;
   readonly input: string | null;
@@ -152,6 +154,75 @@ async function allocateLaunchFiles(
       if (errno(error, 'EEXIST')) continue;
       throw error;
     }
+  }
+}
+
+function runExists(stateDir: string, runId: string): boolean {
+  return (
+    existsSync(join(runDirectory(stateDir, runId), 'run.json')) ||
+    existsSync(legacyRunPath(stateDir, runId))
+  );
+}
+
+function existsFailure(stateDir: string, runId: string): WorkflowFailure {
+  return workflowFailure(
+    'run.exists',
+    `Run ${runId} already exists; use resume or choose a new run ID.`,
+    { runId, stateDir, details: { stateDir } },
+  );
+}
+
+/**
+ * Check that the run does not exist and allocate its launch files, under the run's legacy guard.
+ * `workflow rm` holds that guard until the run is gone, and an unmigrated flat run's `<runId>/`
+ * (holding only the primary lock) outlives its `<runId>.json` there, so without the guard this
+ * check could pass mid-removal and rm's rename would carry the new `launch/` into its tombstone.
+ * The guard is released before the runner is spawned, since the runner takes it itself. A held
+ * guard fails with `run.locked`. @internal
+ */
+export async function prepareStartLaunch(
+  plan: Pick<StartWorkflowPlan, 'runId' | 'stateDir' | 'cwd' | 'stdinInput'>,
+  signal?: AbortSignal,
+): Promise<{ readonly ok: true; readonly files: LaunchFiles } | WorkflowFailure> {
+  const { runId, stateDir } = plan;
+  // Fast path outside the guard: a live run's writer holds the guard, and its ID is simply taken.
+  if (runExists(stateDir, runId)) return existsFailure(stateDir, runId);
+  try {
+    return await withRunGuard(
+      stateDir,
+      runId,
+      async () => {
+        if (runExists(stateDir, runId)) return existsFailure(stateDir, runId);
+        try {
+          await prepareStateDirectory(stateDir, plan.cwd);
+          const launchDir = join(runDirectory(stateDir, runId), 'launch');
+          await createStorageDirectory(launchDir);
+          return {
+            ok: true as const,
+            files: await allocateLaunchFiles(launchDir, plan.stdinInput?.value),
+          };
+        } catch (error) {
+          return workflowFailure(
+            'workflow.storage',
+            `Could not create the launch files of run ${runId}: ${error instanceof Error ? error.message : String(error)}`,
+            { stateDir },
+          );
+        }
+      },
+      { cwd: plan.cwd, ...(signal === undefined ? {} : { signal }) },
+    );
+  } catch (error) {
+    if (error instanceof RunRefusedError)
+      return workflowFailure(
+        error.code,
+        `Run ID ${runId} is locked or being removed; retry once it is free. ${error.message}`,
+        { stateDir, details: error.details },
+      );
+    return workflowFailure(
+      'workflow.storage',
+      `Could not take the legacy guard of run ${runId}: ${error instanceof Error ? error.message : String(error)}`,
+      { stateDir },
+    );
   }
 }
 
@@ -227,26 +298,9 @@ export class StartWorkflowExecutor implements Executor<
     const { runId, stateDir } = plan;
     const signal = this.#options.signal;
     const observe = this.#options.observeRun ?? observeStartedRun;
-    const runDir = runDirectory(stateDir, runId);
-    if (existsSync(join(runDir, 'run.json')) || existsSync(legacyRunPath(stateDir, runId)))
-      return workflowFailure(
-        'run.exists',
-        `Run ${runId} already exists; use resume or choose a new run ID.`,
-        { runId, stateDir, details: { stateDir } },
-      );
-    let files: LaunchFiles;
-    try {
-      await prepareStateDirectory(stateDir, plan.cwd);
-      const launchDir = join(runDir, 'launch');
-      await createStorageDirectory(launchDir);
-      files = await allocateLaunchFiles(launchDir, plan.stdinInput?.value);
-    } catch (error) {
-      return workflowFailure(
-        'workflow.storage',
-        `Could not create the launch files of run ${runId}: ${error instanceof Error ? error.message : String(error)}`,
-        { stateDir },
-      );
-    }
+    const prepared = await prepareStartLaunch(plan, signal);
+    if (!prepared.ok) return prepared;
+    const { files } = prepared;
     const argv = [...plan.argv];
     if (plan.stdinInput && files.input !== null)
       argv[plan.stdinInput.argvIndex] = `@${files.input}`;

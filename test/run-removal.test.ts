@@ -26,6 +26,7 @@ import { groupState, processIdentity } from '../src/processes/identity.js';
 import { WorkflowExecutor } from '../src/workflow/loader/executor.js';
 import { inspectRun, listRuns } from '../src/workflow/loader/inspection.js';
 import type { WorkflowCommandResult } from '../src/workflow/loader/model.js';
+import { prepareStartLaunch } from '../src/workflow/loader/start.js';
 import {
   answerPath,
   listPending,
@@ -649,6 +650,47 @@ describe('workflow rm ordering', () => {
     expect(removed(await remove('second')).tombstones).toEqual([dead]);
     await onlyIgnoreFileLeft();
   });
+});
+
+describe('workflow rm and a racing start', () => {
+  it.each(['flat', 'primary-released'] as const)(
+    'start refuses while an unmigrated flat run is removed (after %s), and succeeds after',
+    async (stop) => {
+      await flatRecord('flat', 'completed');
+      const directory = join(stateDir, 'flat');
+      let attempted = false;
+      await removeRun({ runId: 'flat', stateDir }, processRunner, {
+        afterStep: async (name) => {
+          if (name === stop) {
+            // The flat record is gone, but rm still holds the legacy guard.
+            expect(await gone(join(stateDir, 'flat.json'))).toBe(true);
+            const prepared = await prepareStartLaunch({ runId: 'flat', stateDir, cwd: root });
+            assert(!prepared.ok, 'start must refuse mid-removal');
+            expect(prepared.code).toBe('run.locked');
+            expect(prepared.message).toContain('Run ID flat is locked or being removed');
+            expect(await gone(join(directory, 'launch'))).toBe(true);
+            attempted = true;
+          }
+          if (name === 'renamed') {
+            const [tombstone] = (await readdir(stateDir)).filter((entry) =>
+              entry.endsWith('.removing'),
+            );
+            assert(tombstone);
+            const entries = await readdir(join(stateDir, tombstone), { recursive: true });
+            expect(entries.filter((entry) => entry.includes('launch'))).toEqual([]);
+          }
+        },
+      });
+      expect(attempted).toBe(true);
+      await onlyIgnoreFileLeft();
+      const prepared = await prepareStartLaunch({ runId: 'flat', stateDir, cwd: root });
+      assert(prepared.ok);
+      await Promise.all(prepared.files.handles.map((handle) => handle.close()));
+      expect(prepared.files.log).toBe(join(directory, 'launch', '1.log'));
+      expect(await readdir(join(directory, 'launch'))).toEqual(['1.log', '1.result.json']);
+      expect(await gone(join(stateDir, 'flat.json.lock'))).toBe(true);
+    },
+  );
 });
 
 describe('workflow rm dry run', () => {

@@ -184,7 +184,9 @@ the legacy guard throughout, it deletes in this order:
    commit point: `<runId>/` then holds only the lock, so the run no longer lists.
 3. The `<runId>.json.v<N>` backups.
 4. The primary `<runId>/lock`, released with the usual token and live-child checks. The guard stays
-   held, and every writer takes the guard first, so no writer can start meanwhile.
+   held, and every writer takes the guard first, so no writer can start meanwhile. `workflow start`
+   checks that the run is absent and creates `<runId>/launch/` under the guard as well, so it
+   refuses with `run.locked` rather than creating launch files that step 5 would rename away.
 5. A rename of `<runId>/` to `.<runId>.<pid>.<uuid>.removing` in the runs container, then a
    directory flush. For a directory run this is the commit point. A dotted name is never a valid run
    ID, so the tombstone never lists.

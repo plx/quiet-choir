@@ -25,7 +25,8 @@ after `--kill-grace-ms` plus 2 s) and fails with `start.timeout` (exit 124); a r
 without a record or a readable document is `start.exited` (exit 70). An interrupted start stops its
 runner the same way (exit 130), so start never leaves an unreported runner; if the runner had
 already saved a record, the failure carries its `runId` and a resume entry in `next`. An existing
-run is refused with `run.exists` before anything is launched.
+run is refused with `run.exists` before anything is launched, and a run ID whose guard is held (such
+as a `workflow rm` still in progress) with `run.locked`.
 
 `--json` writes one completion, suspension, or failure document to stdout; logs and workflow console
 output go to stderr. Execute, resume and `answer --resume` print a compact result by default

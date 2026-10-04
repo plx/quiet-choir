@@ -90,6 +90,13 @@ live and unknown ones so a concurrent rm is never disturbed. The signal is honou
 2; after that the removal finishes, so an interrupt (including a `workflow cancel` aimed at rm's own
 lock) cannot leave a half-deleted run.
 
+**Start is excluded too.** `workflow start` is not a writer: it checks that the run does not exist
+and creates `<runId>/launch/` before its detached runner takes the lock. For an unmigrated flat run,
+whose `<runId>/` (holding only the primary lock) outlives `<runId>.json` from step 2 to step 5, that
+check could pass mid-removal and step 5 would carry the new launch files into the tombstone. So
+start makes its check and launch-file allocation under the guard (`withRunGuard`), releases it
+before spawning the runner, and refuses a held guard with `run.locked`.
+
 **Dry run and bytes.** `--dry-run` takes no lock, creates nothing and sweeps nothing. It exits 0
 whenever the run exists and reports the verdict (`remove`, or the refusal), the paths, caches, refs
 and bytes, so `prune` can preview many runs from the same plan. `workflow list` reports each run's
