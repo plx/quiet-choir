@@ -570,7 +570,7 @@ describe('workflow rm and a racing answer', () => {
     expect(second.createdAt).not.toBe(first.createdAt);
     expect(second.steps['gate']?.fingerprint).toBe(delivery.questionFingerprint);
     // The old writer's link lands after the new run registered the same question.
-    await lateDelivery(delivery.path);
+    await mkdir(join(delivery.path, '..'), { recursive: true });
     await writeFile(delivery.path, JSON.stringify(envelope));
     expect((await listPending({ stateDir }))[0]?.delivery).toEqual({
       state: 'queued',
