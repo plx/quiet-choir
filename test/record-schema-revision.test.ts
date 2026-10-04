@@ -17,7 +17,9 @@ import {
   type RunRecord,
   type RunStore,
 } from '../src/index.js';
+import { rehearsalState } from '../src/workflow/loader/rehearsal.js';
 import { JournalWriter } from '../src/workflow/runtime/journal.js';
+import { cleanWorktrees } from '../src/workflow/runtime/worktree-clean.js';
 import { digest } from '../src/workflow/runtime/json.js';
 import {
   hiddenRecordFields,
@@ -317,6 +319,24 @@ describe('writers refuse and change nothing', () => {
     expect(error.code).toBe('run.incompatible');
     expect(error.runId).toBe('source');
     expect(await bytes('source')).toEqual(before);
+  });
+
+  it('refuses workflow clean under the lock and a dry-run copy of the record', async () => {
+    await failedRun('run');
+    await editSnapshot('run', (raw) => {
+      raw['schemaRevision'] = SUPPORTED_SCHEMA_REVISION + 1;
+    });
+    const before = await bytes('run');
+    const runner = {
+      run(): never {
+        throw new Error('clean must not run a command');
+      },
+    };
+    expect((await refusal(cleanWorktrees({ runId: 'run', stateDir }, runner))).code).toBe(
+      'run.incompatible',
+    );
+    expect((await refusal(rehearsalState('run', stateDir, true))).code).toBe('run.incompatible');
+    expect(await bytes('run')).toEqual(before);
   });
 
   it('refuses in JournalWriter before repairing a torn tail or appending', async () => {
