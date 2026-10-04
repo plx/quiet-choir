@@ -671,23 +671,57 @@ async function triageLocal(result, round) {
   }
   log(`Local Codex review r${round}: ${result.findings} finding(s) in ${result.elapsedSeconds}s`);
   if (!result.findings) return none;
+  // Earlier decisions, listed for consistency. Only note/follow-up decisions settle a repeat; a
+  // fix decision that Codex reports again may not have worked, so it is checked against the code.
   const known = [
-    ...record.review.findings.map((f) => `- ${f.id}: ${f.title} (${f.disposition})`),
-    ...record.codexFindings.map((f) => `- ${f.id}: ${f.title} (${f.verdict}, ${f.disposition})`),
+    ...record.review.findings.map(
+      (f) =>
+        `- ${f.id}: ${f.title} (${f.disposition}${f.disposition === 'fix' ? ', fix attempted' : ''})`,
+    ),
+    ...record.codexFindings.map(
+      (f) =>
+        `- ${f.id}: ${f.title} (${f.verdict}, ${f.disposition}${f.disposition === 'fix' ? ', fix attempted' : ''})`,
+    ),
   ].join('\n');
-  const triage = await agent(
-    `Codex reviewed PR #${A.pr} locally (\`codex review --base origin/${DEF}\` at ${result.sha.slice(0, 12)}). Its review is in ${result.file}: ${result.findings} finding(s), each tagged [P0]–[P3]. Decide what to do with each one. You do not edit code.
+  const ask = (extra = '') =>
+    agent(
+      `Codex reviewed PR #${A.pr} locally (\`codex review --base origin/${DEF}\` at ${result.sha.slice(0, 12)}). Its review is in ${result.file}: ${result.findings} finding(s), each tagged [P0]–[P3]. Decide what to do with each one. You do not edit code.
 
 ${situation()}
 
 Read the review file and the code each finding points at; try to refute a finding before accepting it.
-Findings this merge-down already decided (don't decide them again; a Codex finding that repeats one is verdict duplicate, disposition note, naming the earlier id in detail):
+Decisions this merge-down already made, listed for consistency:
 ${known || '- none'}
+A Codex finding that repeats an earlier note or follow-up decision is verdict duplicate, disposition note, naming the earlier id in detail. A finding that repeats an earlier fix decision (marked "fix attempted") must be checked against the code at the reviewed head: if the defect is still present, the fix did not work, so treat it as a new finding (verdict valid or partly-valid, disposition fix, detail naming the earlier id and why the fix was incomplete). Use duplicate only when the current code shows it is already resolved.
 
-For each Codex finding, in the review's order: id (F1, F2, …), title, verdict (valid | partly-valid | invalid | duplicate), disposition (fix: within this PR's issue scope and intent | follow-up: valid but beyond it | note: invalid, duplicate, or not worth acting on), severity (blocker | major | minor, by your own judgment rather than Codex's tag), complexity (mechanical | subtle), detail (the problem in 1–3 sentences with path:line), plan (concrete for fix and follow-up; for note, why not), and files. This is Codex round ${round}; re-reviews stop after round ${A.maxCodexRounds} unless a round keeps finding real major problems (hard cap ${A.codexRoundsHardCap}), so be decisive and rate severity honestly. Plans cover code and docs only, never GitHub actions.${standing}`,
-    { ...TIER.reviewer, label: `codex triage r${round}`, phase: 'Review', schema: CODEX_TRIAGE },
-  );
+For each Codex finding, in the review's order: id (F1, F2, …), title, verdict (valid | partly-valid | invalid | duplicate), disposition (fix: within this PR's issue scope and intent | follow-up: valid but beyond it | note: invalid, duplicate, or not worth acting on), severity (blocker | major | minor, by your own judgment rather than Codex's tag), complexity (mechanical | subtle), detail (the problem in 1–3 sentences with path:line), plan (concrete for fix and follow-up; for note, why not), and files. This is Codex round ${round}; re-reviews stop after round ${A.maxCodexRounds} unless a round keeps finding real major problems (hard cap ${A.codexRoundsHardCap}), so be decisive and rate severity honestly. Plans cover code and docs only, never GitHub actions.${standing}${extra}`,
+      { ...TIER.reviewer, label: `codex triage r${round}`, phase: 'Review', schema: CODEX_TRIAGE },
+    );
+  let triage = await ask();
   if (!triage) return { error: 'triage of the local Codex review returned nothing' };
+  // Every tagged finding needs an entry, or one could merge unhandled. The count can overcount
+  // (a tag quoted in prose), so a shortfall is retried once and then blocks only when triage
+  // returned no finding at all; a partial shortfall is recorded in the notes instead.
+  if (triage.findings.length < result.findings) {
+    log(
+      `Local Codex triage r${round} covered ${triage.findings.length} of ${result.findings} finding(s); retrying`,
+    );
+    const again = await ask(
+      `\nThe review has ${result.findings} tagged findings and every one needs an entry in findings. Your previous answer covered only ${triage.findings.length}${triage.findings.length ? ` (${triage.findings.map((f) => f.id).join(', ')})` : ''}.`,
+    );
+    if (!again) return { error: 'triage of the local Codex review returned nothing on retry' };
+    triage = again;
+  }
+  if (!triage.findings.length) {
+    return {
+      error: `triage of the local Codex review covered 0 of ${result.findings} findings`,
+    };
+  }
+  if (triage.findings.length < result.findings) {
+    record.notes.push(
+      `triage of the local Codex review in round ${round} covered ${triage.findings.length} of ${result.findings} tagged finding(s); proceeding with those`,
+    );
+  }
   if (triage.notes?.length) record.triageNotes = [...(record.triageNotes ?? []), ...triage.notes];
   const findings = triage.findings.map((f) => ({
     ...f,
@@ -1252,7 +1286,10 @@ while (true) {
     }
   }
   if (!ciFailed && !needsTriage && !localFindings) {
-    if (localReview) await triageLocal(localReview, codexRequests);
+    if (localReview) {
+      const local = await triageLocal(localReview, codexRequests);
+      if (local.error) return blocked('review', local.error);
+    }
     break;
   }
 

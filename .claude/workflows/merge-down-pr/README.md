@@ -71,15 +71,22 @@ the same time. The review text lands in `state/pr-N/codex-review-<sha>.md`; the 
 its path, exit code, elapsed time, and a count of `[P0]`–`[P3]` findings, or the error. A finished
 review of the same head is reused, so a resumed run does not pay twice, and one still running is
 waited for rather than started again. When a wait fails or the review outlasts 54 minutes,
-`local-review-stop` kills it (its whole process group) and removes its worktree.
+`local-review-stop` kills it (its whole process group) and removes its worktree. It also reaps
+leftovers of a finished, failed review: a result file only says the runner ended, and a timeout can
+leave codex descendants alive in the group.
 
 The first review runs on the rebased head in parallel with the check suite and the merge-down
 review; an Opus triage then turns its findings into fixes, follow-ups, or recorded rejections,
-deduplicated against the review's own findings. Each gate round that pushed new code reviews the
-pushed head in parallel with the CI wait, bounded by `maxCodexRounds` / `codexRoundsHardCap` as
-before. A failed review is noted and the gate proceeds on CI. `codexModel` and `codexEffort`
-override the model and reasoning effort. Threads that the GitHub app (or anyone else) still posts
-are triaged as unanswered threads.
+deduplicated against the review's own findings. Triage must give every tagged finding an entry: a
+shortfall is retried once with the count and the ids returned so far, and if triage still returned
+no finding at all the run blocks at the review step. A partial shortfall (the `[P0]`–`[P3]` count
+can overcount when a tag is quoted in prose) is recorded in the ledger notes rather than blocking. A
+finding that repeats an earlier fix decision is checked against the code at the reviewed head, and
+is a new fix item if the defect is still there; only note and follow-up repeats are duplicates. Each
+gate round that pushed new code reviews the pushed head in parallel with the CI wait, bounded by
+`maxCodexRounds` / `codexRoundsHardCap` as before. A failed review is noted and the gate proceeds on
+CI. `codexModel` and `codexEffort` override the model and reasoning effort. Threads that the GitHub
+app (or anyone else) still posts are triaged as unanswered threads.
 
 ### Codex signals (`codexMode: 'github'`)
 
