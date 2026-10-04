@@ -14,20 +14,26 @@ dashboard, including the completed run's `output` (null otherwise), an `agents` 
 attempt reported Claude subscription rate-limit windows, a per-harness `rateLimits` map.
 `workflow list --json` returns `{kind, ok, stateDir, runs, warnings}` with compact rows: `id`,
 `workflow`, `status`, `recordedStatus`, `counts`, `updatedAt`, `ownership`, `nextWakeAt`, `cwd`,
-`stateDir`, `warnings` and a six-field `usage`; `--full` restores whole run summaries.
-`validate --json` and `list-defs --json` omit each `harnesses[].options` JSON Schema, at every depth
-of `children`, unless `--harness-schemas` is given. `list-defs` discovers `*.workflow.ts`,
-`*.workflow.mts` and `*.workflow.cts` files (not `.d.ts` or `.tsx`). The `configuration` topic has
-one command, `configuration doctor`. `list --all` discovers registered XDG projects without imports;
-rows include `cwd` and `stateDir`. `execute --resume --run-id ID` may omit FILE and use stored
-launch paths, as does `resume ID`. A supplied different FILE is refused before import. See
-[storage](storage.md). `inspect --watch --json` emits JSONL per checkpoint/ownership change, ending
-with a snapshot and exit 0/1/75/130/3 for completed/failed/suspended/cancelled/stale (an interrupted
-run ends as suspended). It does not add an error document for an observed failure. An interrupted
-watcher emits an error document and leaves the observed run untouched. Three opt-in flags bound the
-watch for hosts with time limits. `--timeout DURATION` is measured from the first successful read: a
-run still running then ends the watch with `watch.timeout` (exit 79), whose error document carries
-the last observed `status` (`running`) and `details.timeoutMs`; the run keeps running.
+`stateDir`, `warnings`, `bytes` and a six-field `usage`; `--full` restores whole run summaries,
+which carry `bytes` too. `bytes` is the apparent size of the run's regular files in its runs
+container: everything under `<runId>/` (record, journal, `attempts/` transcripts, artifacts,
+`launch/`, inbox) plus the legacy `<runId>.json`, `<runId>.json.v<N>`, `<runId>.cancel.json` and
+`<runId>.inbox/`, without following symbolic links. Worktree caches are not counted. It is null,
+with a list warning, when the size cannot be measured; inspect and watch do not compute it. The text
+view shows it in a `SIZE` column (B, KiB, MiB or GiB). `validate --json` and `list-defs --json` omit
+each `harnesses[].options` JSON Schema, at every depth of `children`, unless `--harness-schemas` is
+given. `list-defs` discovers `*.workflow.ts`, `*.workflow.mts` and `*.workflow.cts` files (not
+`.d.ts` or `.tsx`). The `configuration` topic has one command, `configuration doctor`. `list --all`
+discovers registered XDG projects without imports; rows include `cwd` and `stateDir`.
+`execute --resume --run-id ID` may omit FILE and use stored launch paths, as does `resume ID`. A
+supplied different FILE is refused before import. See [storage](storage.md).
+`inspect --watch --json` emits JSONL per checkpoint/ownership change, ending with a snapshot and
+exit 0/1/75/130/3 for completed/failed/suspended/cancelled/stale (an interrupted run ends as
+suspended). It does not add an error document for an observed failure. An interrupted watcher emits
+an error document and leaves the observed run untouched. Three opt-in flags bound the watch for
+hosts with time limits. `--timeout DURATION` is measured from the first successful read: a run still
+running then ends the watch with `watch.timeout` (exit 79), whose error document carries the last
+observed `status` (`running`) and `details.timeoutMs`; the run keeps running.
 `--wait-created DURATION` is measured from the start of the watch: until the first successful read,
 a missing record is retried at the interval instead of failing with `run.not_found` (exit 3), and
 when the bound expires the watch fails with `watch.record_not_created` (exit 66), `status: null` and
@@ -140,6 +146,36 @@ on a foreign host without `--force-remote` (`error.details` has `lockPath`, `kin
 has `processes` and `owner`); and `run.not_found` when the run has neither a lock nor a checkpoint.
 See [process ownership](process-lifecycle.md).
 
+`workflow rm ID [--force] [--refs] [--dry-run] --json` removes one saved run without importing
+workflow code ([ADR 0049](decisions/0049-guard-held-run-removal.md)): the run directory (record,
+journal, `attempts/` transcripts, artifacts, `launch/`, inbox, lock), the legacy `<runId>.json`
+marker or flat record, `<runId>.json.lock`, `<runId>.inbox`, `<runId>.cancel.json` and the
+`<runId>.json.v<N>` backups, and its worktree caches. Caches are removed through the same cleanup as
+`workflow clean`, under the worktree administration lock; when the ledger's repository no longer
+exists, rm deletes the caches inside the run's own `<root>/<runId>-<namespace>/` directly. It then
+removes the empty namespace directory. Pinned refs are deleted only with `--refs`. It refuses with
+exit 3 and changes nothing, in this order: `run.locked` while any lock owner or recoverer is alive,
+unverifiable or on a foreign host, or has unreadable metadata, even with `--force` (`error.details`
+has `lockPath`, `kind`, `role`, `pid`, `host` and `state`; the message names `workflow unlock`, with
+`--force-remote` for a foreign host); `run.orphans` while a dead or released owner's recorded child
+is alive or unverifiable; and, without `--force`, `run.active` when the recorded status is `running`
+or `suspended` or any step is `waiting` (`error.details` is `{status, waiting}`), since a pending
+wait, answer or resume may still need the run. A missing run is `run.not_found` and an unreadable
+one `run.unreadable`. rm takes the run lock without registering a project, so a dead owner's lock is
+recovered as on resume. When Git cannot remove a cache while its repository exists, rm stops before
+deleting anything and fails with `workflow.storage` (exit 74): the message and
+`error.details.caches` name each cache, `error.details.warnings` carries Git's reasons, and the
+record stays for a retry with `workflow clean ID`. Success returns
+`{kind:"workflow.rm.result", ok:true, runId, stateDir, dryRun, force, refs, verdict, removed, paths, caches, refsRemoved, keptRefs, bytes, tombstones, warnings}`:
+`paths` are the run's paths in the runs container, `caches` are `{path, method:"git"|"direct"}`,
+`keptRefs` lists the pins that survive without `--refs`, `bytes` is the list `bytes` measured before
+removal, and `tombstones` names the abandoned removals this rm swept. `--dry-run` takes no lock,
+sweeps nothing and writes nothing; it exits 0 whenever the run exists, with `removed: false` and
+`verdict` either `"remove"` or the `{code, message}` refusal a removal would meet now (taking
+`--force` into account), and lists what would be removed, with `refsRemoved` naming the refs that
+`--refs` would delete and `tombstones` the ones a removal would sweep. See
+[storage](storage.md#removing-runs).
+
 `workflow cancel ID [--force] [--timeout 30s] --json` ends a live local run as `cancelled` without
 importing workflow code
 ([ADR 0039](decisions/0039-cancel-a-live-run-through-a-token-bound-request.md)). It signals only a
@@ -196,19 +232,19 @@ Failures have these fields:
 
 The error codes map to numeric exits in one CLI table:
 
-| Exit | Codes                                                                                                                                                                                                                                                   | Next step                                                                                                                                                                                                                                           |
-| ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1    | `workflow.failed`                                                                                                                                                                                                                                       | A failed checkpoint was saved. Fix the workflow or execution policy and resume.                                                                                                                                                                     |
-| 2    | `usage.flag`, `usage.file_not_found`, `usage.entrypoint`, `usage.run_id`, `usage.input_json`, `usage.input_file`, `usage.input_schema`, `usage.resume_requires_run_id`, `answer.invalid` (the answer was not written)                                   | Correct arguments/input. No execution checkpoint was written.                                                                                                                                                                                       |
-| 3    | `run.exists`, `run.not_found`, `run.locked`, `run.incompatible`, `run.input_changed`, `run.unreadable`, `run.orphans`, `run.unowned` (`workflow cancel` found no live owner), `answer.conflict` (the question is not waiting or already has a delivery) | Correct run/storage selection, wait for the owner, or explicitly resolve compatibility/ownership. No workflow body ran.                                                                                                                             |
-| 4    | `load.typecheck`, `load.import`, `load.definition`                                                                                                                                                                                                      | Fix trusted source or its definition. No execution checkpoint was written.                                                                                                                                                                          |
-| 66   | `watch.record_not_created`                                                                                                                                                                                                                              | `inspect --watch --wait-created` saw no record within the bound. Check the run ID and `--state-dir`, or whether the launch failed.                                                                                                                  |
-| 70   | `start.exited`                                                                                                                                                                                                                                          | The `workflow start` runner exited without a record or a readable result document; read `launch.log`.                                                                                                                                               |
-| 74   | `workflow.storage`                                                                                                                                                                                                                                      | Inspect saved state and fix storage/ownership before deciding how to resume. External effects may already have happened.                                                                                                                            |
-| 75   | `workflow.run.suspended`                                                                                                                                                                                                                                | Saved suspension with pending waits, including a run that `inspect --watch` saw end suspended; answer questions, deliver signals, or tick when due.                                                                                                 |
-| 79   | `watch.timeout`                                                                                                                                                                                                                                         | `inspect --watch --timeout`, `events --follow --timeout` or `cancel --timeout` stopped waiting while the run had not ended; the run continues. Wait again or inspect it later; a repeated `cancel` is the owner's second SIGINT and force-kills it. |
-| 130  | `workflow.interrupted`                                                                                                                                                                                                                                  | A first signal saved a resumable `suspended` run; the next tick or `resume` continues it. An owner stopped by `workflow cancel` saved `cancelled` instead.                                                                                          |
-| 124  | `start.timeout`                                                                                                                                                                                                                                         | `workflow start` stopped a runner that owned no record within `--start-timeout`; read `launch.log`.                                                                                                                                                 |
+| Exit | Codes                                                                                                                                                                                                                                                                                                                                             | Next step                                                                                                                                                                                                                                           |
+| ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1    | `workflow.failed`                                                                                                                                                                                                                                                                                                                                 | A failed checkpoint was saved. Fix the workflow or execution policy and resume.                                                                                                                                                                     |
+| 2    | `usage.flag`, `usage.file_not_found`, `usage.entrypoint`, `usage.run_id`, `usage.input_json`, `usage.input_file`, `usage.input_schema`, `usage.resume_requires_run_id`, `answer.invalid` (the answer was not written)                                                                                                                             | Correct arguments/input. No execution checkpoint was written.                                                                                                                                                                                       |
+| 3    | `run.exists`, `run.not_found`, `run.locked`, `run.incompatible`, `run.input_changed`, `run.unreadable`, `run.orphans`, `run.unowned` (`workflow cancel` found no live owner), `run.active` (`workflow rm` without `--force` found a running, suspended or waiting run), `answer.conflict` (the question is not waiting or already has a delivery) | Correct run/storage selection, wait for the owner, or explicitly resolve compatibility/ownership. No workflow body ran.                                                                                                                             |
+| 4    | `load.typecheck`, `load.import`, `load.definition`                                                                                                                                                                                                                                                                                                | Fix trusted source or its definition. No execution checkpoint was written.                                                                                                                                                                          |
+| 66   | `watch.record_not_created`                                                                                                                                                                                                                                                                                                                        | `inspect --watch --wait-created` saw no record within the bound. Check the run ID and `--state-dir`, or whether the launch failed.                                                                                                                  |
+| 70   | `start.exited`                                                                                                                                                                                                                                                                                                                                    | The `workflow start` runner exited without a record or a readable result document; read `launch.log`.                                                                                                                                               |
+| 74   | `workflow.storage`                                                                                                                                                                                                                                                                                                                                | Inspect saved state and fix storage/ownership before deciding how to resume. External effects may already have happened.                                                                                                                            |
+| 75   | `workflow.run.suspended`                                                                                                                                                                                                                                                                                                                          | Saved suspension with pending waits, including a run that `inspect --watch` saw end suspended; answer questions, deliver signals, or tick when due.                                                                                                 |
+| 79   | `watch.timeout`                                                                                                                                                                                                                                                                                                                                   | `inspect --watch --timeout`, `events --follow --timeout` or `cancel --timeout` stopped waiting while the run had not ended; the run continues. Wait again or inspect it later; a repeated `cancel` is the owner's second SIGINT and force-kills it. |
+| 130  | `workflow.interrupted`                                                                                                                                                                                                                                                                                                                            | A first signal saved a resumable `suspended` run; the next tick or `resume` continues it. An owner stopped by `workflow cancel` saved `cancelled` instead.                                                                                          |
+| 124  | `start.timeout`                                                                                                                                                                                                                                                                                                                                   | `workflow start` stopped a runner that owned no record within `--start-timeout`; read `launch.log`.                                                                                                                                                 |
 
 Typechecking and import are distinct from workflow execution. Imports can have arbitrary side
 effects; no exit status promises to undo them. Run-ID and input-JSON validation happen before

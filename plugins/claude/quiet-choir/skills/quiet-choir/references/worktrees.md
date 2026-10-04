@@ -258,6 +258,11 @@ discipline. It never runs under `--dry-run`.
 without loading workflow source. `--refs` additionally deletes recorded pins only if their values
 still match. It does not delete user branches or run Git garbage collection. Removing pins can make
 future recovery or integration impossible after Git collects otherwise unreachable objects.
+`workflow rm RUN` removes the whole run and reuses this cleanup first; it deletes pins only with
+`--refs` and otherwise reports them as `keptRefs`. If Git cannot remove a cache while the repository
+exists, rm keeps the record for a `workflow clean` retry. When the repository is gone, rm deletes
+the run's caches inside `<root>/<runId>-<namespace>/` directly, and then the empty namespace
+directory. See [removing a run](operating-runs.md#remove-a-run).
 
 ### What capture leaves out
 

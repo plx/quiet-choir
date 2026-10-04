@@ -100,3 +100,5 @@ part of the documentation.
 - [0047: Pull request writes and a head-pinned merge](0047-pull-request-writes-and-head-pinned-merge.md)
 
 - [0048: An epic snapshot and a pure next-ticket selector](0048-epic-snapshot-and-next-ticket-selector.md)
+
+- [0049: Remove a run while holding its legacy guard](0049-guard-held-run-removal.md)

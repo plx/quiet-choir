@@ -11,8 +11,10 @@ node "$QC_CHECKOUT/bin/run.js" workflow list --state-dir "$QC_RUNS" --status sta
 ```
 
 List does not import workflow source. A missing directory gives an empty list; unreadable records
-produce warnings. Do not accidentally use `npm run cli` from the runtime checkout to inspect a
-relative state path belonging to another project.
+produce warnings. Each row carries `bytes`, the run's on-disk size in the state directory (worktree
+caches excluded; null with a warning when unmeasurable), shown as `SIZE` in the text view. Do not
+accidentally use `npm run cli` from the runtime checkout to inspect a relative state path belonging
+to another project.
 
 ## Read
 

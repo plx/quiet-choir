@@ -249,3 +249,26 @@ count; with `--run`, exit 75 means the run is still pending (including interrupt
 --timeout), locked, blocked by orphans or skipped for the claim-margin `deadline`, and exit 1 means
 it failed, was cancelled, or is crash-looping, incompatible or unreadable. Tick also recovers stale
 `running` runs, up to 3 consecutive times without a new completed step (`crash-loop`).
+
+## Remove a run
+
+Nothing deletes runs automatically; `workflow list` shows each run's on-disk `bytes` (its files in
+the state directory, not worktree caches). Preview a removal first; the dry run takes no lock,
+changes nothing and exits 0 with the `verdict` a removal would meet:
+
+```sh
+node "$QC_CHECKOUT/bin/run.js" workflow rm first --state-dir "$QC_RUNS" --dry-run --json
+node "$QC_CHECKOUT/bin/run.js" workflow rm first --state-dir "$QC_RUNS" --json
+```
+
+rm imports no workflow code and never registers a project. It deletes the run directory
+(transcripts, artifacts, `launch/`, inbox), the legacy flat files and backups, and the run's
+worktree caches; pinned refs only with `--refs` (otherwise listed as `keptRefs`). It refuses with
+exit 3 and changes nothing: `run.locked` while any lock owner or recoverer is alive, unverifiable or
+remote, even with `--force` (clear an abandoned lock with `workflow unlock` first); `run.orphans`
+for a dead owner's live child; and, without `--force`, `run.active` for a `running` or `suspended`
+run or one with a `waiting` step, which a pending answer, wait or resume may still need. A cache Git
+cannot remove while its repository exists stops rm before it deletes anything (`workflow.storage`,
+exit 74, caches in `error.details.caches`); fix the cause and retry with `workflow clean`. An
+interrupted rm leaves an intact run (run rm again) or a hidden `.<run>.<pid>.<uuid>.removing`
+directory, which the next rm in that state directory sweeps.

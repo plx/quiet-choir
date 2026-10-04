@@ -178,7 +178,7 @@ codes above. After `answer --resume`, add `--after-execution N` with the suspend
 | Task                                                                          | Reference                                                      |
 | ----------------------------------------------------------------------------- | -------------------------------------------------------------- |
 | Locate/build the runtime, import it into another project, choose CLI flags    | [Setup and CLI](references/setup-and-cli.md)                   |
-| Launch in the background, poll, diagnose stalls, recover orphaned children    | [Operating a run](references/operating-runs.md)                |
+| Launch in the background, poll, diagnose stalls, recover orphans, remove runs | [Operating a run](references/operating-runs.md)                |
 | Locate a run, classify its state, act on exact errors                         | [Inspection and triage](references/inspection.md)              |
 | Park for readiness, a deadline, or an external signal                         | [Durable waits and tick](references/waits.md)                  |
 | Write loops, fan-out, failure handling, or waits                              | [Verified patterns and traps](references/patterns.md)          |
