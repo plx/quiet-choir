@@ -11,7 +11,14 @@ import { legacyRunPath, runDirectory } from './paths.js';
 import { JournalWriter } from './journal.js';
 import { prepareStorageMigration, finishStorageMigration } from './storage-migration.js';
 import { writeCheckpoint } from './checkpoint.js';
-import { lockRun, readRun, listRunIds, type RunLock, type RunRecord } from './store.js';
+import {
+  lockRun,
+  readRun,
+  listRunIds,
+  type OwnedRunLock,
+  type RunLock,
+  type RunRecord,
+} from './store.js';
 
 /** Live ownership options, separate from serializable workflow plans. */
 export interface RunStoreOpenOptions {
@@ -85,14 +92,33 @@ export class FileRunStore implements RunStore {
   public list(): Promise<string[]> {
     return listRunIds(this.stateDir);
   }
-  public async open(runId: string, options: RunStoreOpenOptions = {}): Promise<OwnedRunStore> {
-    const lock = await lockRun(this.stateDir, runId, options);
-    const writer = new JournalWriter(this.stateDir, runId);
-    return new FileOwnedRun(this.stateDir, runId, lock, writer);
+  public open(runId: string, options: RunStoreOpenOptions = {}): Promise<OwnedRunStore> {
+    return openFileOwnedRun(this.stateDir, runId, options);
   }
 }
 
-class FileOwnedRun implements OwnedRunStore {
+/** An owned file run that can also give up its primary lock while it keeps the guard. @internal */
+export interface ReleasableOwnedRun extends OwnedRunStore {
+  /**
+   * Drain queued writes, close the store and release only the primary lock (`OwnedRunLock`); a
+   * later `release()` releases only the legacy guard.
+   */
+  releaseOwner(): Promise<void>;
+}
+
+/** `FileRunStore.open` with the primary-only release that `workflow rm` needs. @internal */
+export async function openFileOwnedRun(
+  stateDir: string,
+  runId: string,
+  options: RunStoreOpenOptions = {},
+): Promise<ReleasableOwnedRun> {
+  const root = resolve(stateDir);
+  const lock = await lockRun(root, runId, options);
+  const writer = new JournalWriter(root, runId);
+  return new FileOwnedRun(root, runId, lock, writer);
+}
+
+class FileOwnedRun implements ReleasableOwnedRun {
   #queue = Promise.resolve();
   #pending:
     { record: RunRecord; durable: boolean; context: string; promise: Promise<void> } | undefined;
@@ -101,7 +127,7 @@ class FileOwnedRun implements OwnedRunStore {
   public constructor(
     private readonly stateDir: string,
     private readonly runId: string,
-    private readonly lock: RunLock,
+    private readonly lock: OwnedRunLock,
     private readonly writer: JournalWriter,
   ) {}
   public readonly trackProcess: RunLock['trackProcess'] = (invocation, child) =>
@@ -213,6 +239,11 @@ class FileOwnedRun implements OwnedRunStore {
     );
     await mkdir(path, { recursive: true, mode: 0o700 });
     return path;
+  }
+  public async releaseOwner(): Promise<void> {
+    this.#closed = true;
+    await this.#queue.catch(() => undefined);
+    await this.lock.releaseOwner();
   }
   public async release(): Promise<void> {
     this.#closed = true;

@@ -42,6 +42,7 @@ function failRelease(error: Error): void {
     const release = await actualStore.lockRun(...args);
     return Object.assign(() => Promise.reject(error), {
       trackProcess: release.trackProcess.bind(release),
+      releaseOwner: release.releaseOwner.bind(release),
     });
   });
 }

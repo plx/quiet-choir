@@ -299,6 +299,19 @@ export interface RunLock {
   ): ReturnType<HarnessInvocation['trackProcess']>;
 }
 
+/**
+ * The handle `lockRun` returns: the run lock plus a primary-only release. `workflow rm` uses it to
+ * give up the primary lock while it keeps the legacy guard, which every writer takes first. @internal
+ */
+export interface OwnedRunLock extends RunLock {
+  /**
+   * Release only the primary lock, with the usual token and live-child checks (a live or unknown
+   * child marks the owner released and throws `OrphanProcessesError`). It runs at most once; the
+   * full release then releases only the guard.
+   */
+  releaseOwner(): Promise<void>;
+}
+
 /** Live local owner/recovery configuration. @internal */
 export interface RunLockOptions {
   readonly killOrphans?: boolean;
@@ -333,7 +346,7 @@ export async function lockRun(
   stateDir: string,
   runId: string,
   options: RunLockOptions = {},
-): Promise<RunLock> {
+): Promise<OwnedRunLock> {
   const legacy = legacyRunPath(stateDir, runId);
   const primary = join(runDirectory(stateDir, runId), 'lock');
   const guard = await acquireLock(stateDir, runId, `${legacy}.lock`, options);
@@ -352,13 +365,17 @@ export async function lockRun(
     }
     throw error;
   }
+  // Set once the primary's release has been attempted; the full release then skips it.
+  let ownerRelease: Promise<void> | undefined;
+  const releaseOwner = (): Promise<void> => (ownerRelease ??= owner());
   const release = async (): Promise<void> => {
     const errors: unknown[] = [];
-    try {
-      await owner();
-    } catch (error) {
-      errors.push(error);
-    }
+    if (ownerRelease === undefined)
+      try {
+        await releaseOwner();
+      } catch (error) {
+        errors.push(error);
+      }
     try {
       await guard();
     } catch (error) {
@@ -377,7 +394,7 @@ export async function lockRun(
         cause: errors[0],
       });
   };
-  return Object.assign(release, { trackProcess: owner.trackProcess.bind(owner) });
+  return Object.assign(release, { trackProcess: owner.trackProcess.bind(owner), releaseOwner });
 }
 
 /**

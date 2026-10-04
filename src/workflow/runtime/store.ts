@@ -15,7 +15,7 @@ import { JournalWriter, readJournalRun, readJournalRunSync } from './journal.js'
 import { parseRunRecord, validateRunRecord, type RunRecord } from './record.js';
 export * from './record.js';
 /** @internal */
-export { lockRun } from './lock.js';
+export { lockRun, type OwnedRunLock } from './lock.js';
 export { inspectRunOwnership, type RunOwnership, type RunLockView, type RunLock } from './lock.js';
 
 /** Locate a run using the same cwd and stateDir defaults as runWorkflow. */
