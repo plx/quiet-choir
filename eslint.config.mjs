@@ -176,6 +176,7 @@ export default defineConfig(
       'src/workflow/runtime/replay-decision.ts',
       'src/workflow/runtime/recovery-decision.ts',
       'src/workflow/runtime/recovery-hint.ts',
+      'src/workflow/runtime/removal-decision.ts',
       'src/workflow/loader/start-readiness.ts',
     ],
     rules: {
@@ -194,7 +195,7 @@ export default defineConfig(
               ],
               allowTypeImports: true,
               message:
-                'Pure decision modules (ADR 0007 attempt failures, replay decisions, recovery decisions, recovery hints, start readiness) must stay free of I/O: import values only from ./step-error.js and ./configuration-error.js; everything else must be import type.',
+                'Pure decision modules (ADR 0007 attempt failures, replay decisions, recovery decisions, recovery hints, removal decisions, start readiness) must stay free of I/O: import values only from ./step-error.js and ./configuration-error.js; everything else must be import type.',
             },
           ],
         },
