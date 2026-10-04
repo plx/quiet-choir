@@ -28,6 +28,8 @@ tests' fake responses prove replay behavior, not the quality of a model's review
 | Retry a small extraction without repeating expensive work | [Work, then extract](#work-then-extract)                     |
 | Test before native calls                                  | [Rehearse for free](#rehearse-for-free)                      |
 | Keep a human decision attached to its saved plan          | [Human review](#human-review)                                |
+| Fix CI until it passes, keyed by head SHA                 | [CI-gated fix loop](#ci-gated-fix-loop)                      |
+| Burn down an epic one ticket per run                      | [Ticket loop](#ticket-loop)                                  |
 | Recognize tempting but unsafe code                        | [Traps](#traps)                                              |
 
 ## Cross-harness fan-out/fan-in
@@ -704,6 +706,186 @@ export default defineWorkflow({
 
 Full [command/file contracts](commands-files.md) cover caps, identity, process ownership, and
 rehearsal.
+
+## CI-gated fix loop
+
+**Rule:** key each CI wait and each fix by the head SHA, and take the next head from Git, never from
+a model. `gh.waitChecks` from `quiet-choir/github` is one `ctx.poll` pinned to `sha`: it reads the
+pull request's head and check rollup on every check and never reports `success` for another commit.
+Under `ctx.id('ci', sha)` a resume replays that head's verdict without reading GitHub, and a pushed
+fix waits under a new ID. The fix agent only edits, with the built-in `edit` profile; one durable
+`ctx.exec` commits the tracked changes, pushes, and prints `git rev-parse HEAD`, so the next SHA is
+checkpointed command output. When the agent changed nothing, the head does not move and the recipe
+returns `stuck`: waiting again would reuse the wait's ID, which fails the run as a duplicate.
+`staleGraceMs` covers GitHub reporting the previous head for a while after a push. Within that
+window, a head that `sha` descends from keeps the wait waiting instead of ending it as `head-moved`.
+
+Launch it from a checkout of the pull request's head branch with an upstream, with `--grant write`.
+`git diff --quiet` sees tracked files only, so a fix that adds a file needs a different commit
+command. `rounds` bounds the fixes. Every other status returns as data: `success`; `no-checks`
+(reported only after a 5-minute grace); `head-moved` (someone else pushed, so start a new run for
+the new head); `closed`; `timeout` (one hour after the wait first opened); `failure` once the rounds
+are spent; and `stuck`.
+
+<!-- skills-check: example pattern-ci-gate -->
+
+```ts
+import { defineWorkflow, z } from '../../src/index.js';
+import { github } from '../../src/integrations/github.js';
+
+const verdict = z.enum(['success', 'failure', 'no-checks', 'head-moved', 'closed', 'timeout']);
+const commit = "(git diff --quiet || git commit -qam 'Fix CI') && git push && git rev-parse HEAD";
+export default defineWorkflow({
+  name: 'ci-gate',
+  version: '1',
+  input: z.object({ repo: z.string(), pr: z.int().positive(), rounds: z.int().min(0).max(5) }),
+  output: z.object({ status: verdict.or(z.literal('stuck')), sha: z.string(), fixes: z.int() }),
+  async run(ctx, { repo, pr, rounds }) {
+    const gh = github(ctx, { repo });
+    let sha = (await gh.pr.view('head', { number: pr })).headRefOid;
+    for (let fixes = 0; ; fixes++) {
+      // Keyed by head SHA: a resume replays this verdict, and a pushed fix waits under a new ID.
+      const bound = { pr, sha, timeoutMs: 3_600_000, staleGraceMs: 120_000 };
+      const ci = await gh.waitChecks(ctx.id('ci', sha), bound);
+      if (ci.status !== 'failure' || fixes === rounds) return { status: ci.status, sha, fixes };
+      const failed = ci.failed.map((check) => check.name).join(', ');
+      const prompt = `CI failed on ${sha}: ${failed}. Fix the cause. Do not commit.`;
+      await ctx.claude.text(ctx.id('fix', sha), { profile: 'edit', prompt });
+      // The new head comes from git, never from the model.
+      const pushed = await ctx.exec(ctx.id('push', sha), { shell: commit });
+      const next = pushed.stdout.trim();
+      // An unchanged head would reuse this wait's ID; return instead of waiting again.
+      if (next === sha) return { status: 'stuck', sha, fixes: fixes + 1 };
+      sha = next;
+    }
+  },
+});
+```
+
+**Cost:** one head read, one wait record per head however many checks it makes, and one agent call
+and one command per fix round. A pending check suspends the run (exit 75) when the next check is
+more than a second away (30 seconds at first); `workflow tick` resumes it when due, and
+`--wait-mode block` keeps the process waiting instead. The agent sees only the failed check names;
+give it more by reading the logs in a step first. To also wait for review bots and merge at the
+gated head, add `gh.waitReview` with `codexReviewer()` and `codeqlReviewer()`, then `gh.pr.merge`,
+as in the [gate](https://github.com/plx/quiet-choir/blob/main/docs/github.md#gate-example) and
+[land](https://github.com/plx/quiet-choir/blob/main/docs/github.md#land-example) examples of
+[GitHub waits](https://github.com/plx/quiet-choir/blob/main/docs/github.md#waits).
+
+## Ticket loop
+
+**Rule:** run one ticket per run, with the deterministic run ID `ticket-N`, and drive the loop from
+outside. The run reads the epic snapshot under `before` and checks that `nextTicket` still picks
+this ticket. If not, it returns `skipped` with the current pick and makes no agent call: someone
+else moved the epic. Otherwise it reads the issue with every comment, makes one `edit` call, closes
+the issue and returns the next pick from an `after` snapshot. `gh.issue.close` is check-then-act: a
+resume after a crash finds the issue closed and does not write again. Each ID occurs once per run,
+so literal IDs are safe. The recipe keeps only the loop's shape. A real ticket opens and lands a
+pull request between the implement call and the close, with the
+[CI-gated fix loop](#ci-gated-fix-loop) and `gh.pr.create` and `gh.pr.merge`; when GitHub closes the
+issue on merge, `close` returns `acted: false`. Here `nextTicket` gets no `outside` states, so an
+item that depends on an issue outside the epic counts as waiting;
+[next-ticket.workflow.ts](https://github.com/plx/quiet-choir/blob/main/examples/patterns/next-ticket.workflow.ts)
+reads those states first.
+
+<!-- skills-check: example pattern-ticket-loop -->
+
+```ts
+import { defineWorkflow, z } from '../../src/index.js';
+import { github, nextTicket } from '../../src/integrations/github.js';
+
+export default defineWorkflow({
+  name: 'ticket-loop',
+  version: '1',
+  input: z.object({ repo: z.string(), epic: z.int().positive(), ticket: z.int().positive() }),
+  output: z.object({ status: z.enum(['closed', 'skipped']), next: z.int().nullable() }),
+  async run(ctx, { repo, epic, ticket }) {
+    const gh = github(ctx, { repo });
+    // One run per ticket (run ID ticket-N): each snapshot ID occurs once in the run.
+    const pick = async (id: string) =>
+      nextTicket(await gh.epic.snapshot(id, { number: epic })).pick?.number ?? null;
+    const before = await pick('before');
+    if (before !== ticket) return { status: 'skipped', next: before };
+    const issue = await gh.issue.view('issue', { number: ticket, comments: true });
+    const thread = issue.comments.map((comment) => comment.body).join('\n\n---\n\n');
+    await ctx.claude.text('implement', {
+      profile: 'edit',
+      prompt: `Implement #${String(ticket)}: ${issue.title}\n\n${issue.body}\n\n${thread}`,
+    });
+    // A real loop opens and lands a pull request here; close is check-then-act.
+    await gh.issue.close('close', { number: ticket });
+    return { status: 'closed', next: await pick('after') };
+  },
+});
+```
+
+Drive it from a shell. Set `QC_REPO`, `QC_EPIC` and `QC_TICKET` (the epic's current pick) as well as
+the paths above. Each pass resumes `ticket-$n` if its record exists, so a rerun after an
+interruption continues where it stopped, and otherwise starts it. It then follows `next` from the
+last JSON line. The loop stops at `null`, at a skipped ticket, and at any nonzero exit: 75 is a
+suspended run, so run `workflow tick` when it is due and then this loop again; 1 is a failure to fix
+and resume.
+
+<!-- skills-check: example ticket-driver -->
+
+```sh
+cd "$QC_TARGET" || exit 1
+qc() { node "$QC_CHECKOUT/bin/run.js" workflow "$@" --state-dir "$QC_RUNS" --json; }
+n=$QC_TICKET
+while [ "$n" != null ]; do
+  out="$QC_RUNS/ticket-$n.out"
+  if qc inspect "ticket-$n" >/dev/null 2>&1; then
+    qc resume "ticket-$n" >"$out"
+  else
+    qc execute "$QC_WORKFLOW" --run-id "ticket-$n" --grant write \
+      --input "{\"repo\":\"$QC_REPO\",\"epic\":$QC_EPIC,\"ticket\":$n}" >"$out"
+  fi || break
+  [ "$(tail -n 1 "$out" | jq -r .output.status)" = closed ] || break
+  n=$(tail -n 1 "$out" | jq -r .output.next)
+done
+```
+
+The alternative is one long run that loops inside the workflow, with a round-keyed snapshot and a
+typed child per ticket:
+
+```ts
+import { defineWorkflow, z } from 'quiet-choir';
+import { github, nextTicket } from 'quiet-choir/github';
+
+const ticket = defineWorkflow({
+  name: 'ticket',
+  version: '1',
+  input: z.object({ number: z.int().positive() }),
+  output: z.string(),
+  run: (ctx, { number }) =>
+    ctx.claude.value('implement', { profile: 'edit', prompt: `Implement #${String(number)}.` }),
+});
+
+export default defineWorkflow({
+  name: 'epic-burndown',
+  version: '1',
+  input: z.object({ repo: z.string(), epic: z.int().positive(), rounds: z.int().positive() }),
+  output: z.array(z.int()),
+  async run(ctx, { repo, epic, rounds }) {
+    const gh = github(ctx, { repo });
+    const closed: number[] = [];
+    for (let round = 0; round < rounds; round++) {
+      // Keyed by round: each round reads fresh epic state, and a resume replays every round.
+      const snapshot = await gh.epic.snapshot(ctx.id('epic', round), { number: epic });
+      const { pick } = nextTicket(snapshot);
+      if (!pick) break;
+      await ctx.workflow(ctx.id('ticket', round, pick.number), ticket, { number: pick.number });
+      await gh.issue.close(ctx.id('close', round, pick.number), { number: pick.number });
+      closed.push(pick.number);
+    }
+    return closed;
+  },
+});
+```
+
+It works, but every resume replays the whole body, so the record and its execution diagnostics grow
+with every ticket and there is no history compaction. `workflow list` and `inspect` then show one
+run, not a status per ticket. Prefer one run per ticket.
 
 ## Traps
 
