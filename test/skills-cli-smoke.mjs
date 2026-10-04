@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { pathToFileURL } from 'node:url';
 import { tsImport } from 'tsx/esm/api';
-import { CliHarness, defineWorkflow, readRun, runWorkflow, z } from '../dist/index.js';
+import { CliHarness, defineWorkflow, readRun, runWorkflow, stepId, z } from '../dist/index.js';
 import { packages, repository, sourceExample } from '../scripts/check-skills.mjs';
 import { fences } from '../scripts/skill-markdown.mjs';
 
@@ -216,6 +216,211 @@ export default defineWorkflow({ name: 'ask', version: '1', input: z.object({}), 
   assert.deepEqual([...executed].sort(), shell.map((candidate) => candidate.id).sort());
   assert.equal(command('git', ['status', '--porcelain'], { cwd: target }), '');
 }
+const recorded = async (name) =>
+  JSON.parse(await readFile(join(repository, 'test/fixtures/github', name), 'utf8'));
+/** Run a shell fence; return its exit status and parsed stdout lines. */
+function shell(code, options) {
+  const result = spawnSync('sh', ['-c', code], { encoding: 'utf8', timeout: 120_000, ...options });
+  assert.equal(result.error, undefined, result.error?.message);
+  const lines = result.stdout
+    .trim()
+    .split('\n')
+    .filter(Boolean)
+    .map((line) => JSON.parse(line));
+  return { status: result.status, lines, output: `${result.stdout}\n${result.stderr}` };
+}
+/** The recorded pull request #329 as `pr.head` reads it, at `sha`, with a "Tests" check. */
+async function prHeadAt(sha, conclusion) {
+  const pr = (await recorded('pr-view.json')).data.repository.pullRequest;
+  const nodes = [
+    ...pr.commits.nodes[0].commit.statusCheckRollup.contexts.nodes,
+    {
+      __typename: 'CheckRun',
+      name: 'Tests',
+      status: 'COMPLETED',
+      conclusion,
+      detailsUrl: 'https://github.com/octo-org/quiet-choir/actions/runs/37078499704/job/1',
+      checkSuite: { workflowRun: { databaseId: 37078499704 } },
+    },
+  ];
+  const statusCheckRollup = {
+    state: 'PENDING',
+    contexts: { pageInfo: { hasNextPage: false }, nodes },
+  };
+  return {
+    data: {
+      repository: {
+        pullRequest: {
+          number: pr.number,
+          state: 'OPEN',
+          headRefOid: sha,
+          commits: { nodes: [{ commit: { oid: sha, statusCheckRollup } }] },
+        },
+      },
+    },
+  };
+}
+/**
+ * Run the GitHub recipes of patterns.md and the porting reference's fences once, against
+ * fixture files written here from the recorded gh responses. `commands: 'fixture'` refuses any
+ * command no rule answers, so no gh or git runs and nothing reaches github.com.
+ */
+async function portingRecipes(skillRoot) {
+  const directory = join(root, 'porting'),
+    target = join(directory, 'target'),
+    state = join(directory, 'state');
+  await mkdir(target, { recursive: true });
+  command('git', ['init', '--quiet'], { cwd: target });
+  const write = async (name, data) => {
+    const file = join(directory, name);
+    await writeFile(file, typeof data === 'string' ? data : JSON.stringify(data));
+    return file;
+  };
+  const workflowFile = async (name, file, id) =>
+    write(
+      name,
+      sourceExample(await example(skillRoot, file, id), join(repository, 'dist/index.js')),
+    );
+  const env = { ...process.env, QC_CHECKOUT: repository, QC_TARGET: target, QC_RUNS: state };
+  const cli = (args) =>
+    shell(`node "$QC_CHECKOUT/bin/run.js" workflow ${args}`, { cwd: target, env });
+
+  // CI-gated fix loop: the first head fails "Tests", one fix and push, the new head passes.
+  const first = (await recorded('pr-view.json')).data.repository.pullRequest.headRefOid;
+  const second = '5b4b02c0e1f2a3b4c5d6e7f8091a2b3c4d5e6f70';
+  const gate = await workflowFile(
+    'ci-gate.workflow.mts',
+    'references/patterns.md',
+    'pattern-ci-gate',
+  );
+  const gateFixtures = await write('ci-gate.fixtures.json', {
+    version: 1,
+    calls: [{ step: stepId('fix', first), text: 'Fixed the failing test.' }],
+    exec: [
+      { step: 'head', json: await recorded('pr-view.json') },
+      { step: stepId('ci', first), json: await prHeadAt(first, 'FAILURE') },
+      { step: stepId('push', first), stdout: `${second}\n` },
+      { step: stepId('ci', second), json: await prHeadAt(second, 'SUCCESS') },
+    ],
+    commands: 'fixture',
+  });
+  const gated = cli(
+    `execute "${gate}" --run-id ci-gate --state-dir "$QC_RUNS" --harness fixture:"${gateFixtures}" --grant write --input '{"repo":"octo-org/quiet-choir","pr":329,"rounds":2}' --json`,
+  );
+  assert.equal(gated.status, 0, gated.output);
+  assert.equal(gated.lines.at(-1).status, 'completed');
+  assert.deepEqual(gated.lines.at(-1).output, { status: 'success', sha: second, fixes: 1 });
+
+  // Ticket loop: the documented driver, with only a fixture harness added to its launch.
+  const epic = await recorded('epic-snapshot.json');
+  const closed = structuredClone(epic);
+  closed.data.repository.issue.subIssues.nodes.find((item) => item.number === 163).state = 'CLOSED';
+  const pages = await recorded('issue-view-comments.json');
+  for (const page of pages) page.data.repository.issue.number = 163;
+  const ticketFixtures = await write('ticket.fixtures.json', {
+    version: 1,
+    calls: [{ step: 'implement', text: 'Implemented.' }],
+    exec: [
+      { step: 'before', json: epic },
+      { step: 'after', json: closed },
+      { step: 'issue', json: pages },
+      {
+        step: 'close',
+        argvPrefix: ['gh', 'api', 'graphql'],
+        json: {
+          data: { repository: { issue: { number: 163, state: 'OPEN', stateReason: null } } },
+        },
+      },
+      { step: 'close', argvPrefix: ['gh', 'api', '-X', 'PATCH'], json: { number: 163 } },
+    ],
+    commands: 'fixture',
+  });
+  const driverFence = await example(skillRoot, 'references/patterns.md', 'ticket-driver');
+  const driver = driverFence.replace(
+    '--grant write',
+    `--grant write --harness fixture:"${ticketFixtures}"`,
+  );
+  assert.notEqual(driver, driverFence);
+  const ticketEnv = {
+    ...env,
+    QC_WORKFLOW: await workflowFile(
+      'ticket-loop.workflow.mts',
+      'references/patterns.md',
+      'pattern-ticket-loop',
+    ),
+    QC_REPO: 'octo-org/quiet-choir',
+    QC_EPIC: '99',
+    QC_TICKET: '163',
+  };
+  const last = async (n) =>
+    JSON.parse((await readFile(join(state, `ticket-${n}.out`), 'utf8')).trim().split('\n').at(-1));
+  // A second pass resumes the saved runs instead of starting them again.
+  for (const pass of [1, 2]) {
+    const driven = shell(driver, { cwd: target, env: ticketEnv });
+    assert.equal(driven.status, 0, `pass ${String(pass)}: ${driven.output}`);
+    // ticket-163 closes and names #164; ticket-164 sees #163 still picked in the recording and skips.
+    assert.deepEqual((await last(163)).output, { status: 'closed', next: 164 });
+    assert.deepEqual((await last(164)).output, { status: 'skipped', next: 163 });
+  }
+
+  // The porting reference's exec role: its --grant fence verbatim, then refused without the grant.
+  const roleEnv = {
+    ...env,
+    QC_WORKFLOW: await workflowFile(
+      'fix.workflow.mts',
+      'references/porting-native-workflows.md',
+      'porting-exec-profile',
+    ),
+  };
+  const grantFence = await example(
+    skillRoot,
+    'references/porting-native-workflows.md',
+    'porting-exec-grant',
+  );
+  const granted = shell(grantFence, { cwd: target, env: roleEnv });
+  assert.equal(granted.status, 0, granted.output);
+  assert.equal(granted.lines.at(-1).ok, true);
+  const refused = shell(grantFence.replace(' --grant fixer', ''), { cwd: target, env: roleEnv });
+  assert.equal(refused.status, 2, refused.output);
+  assert.match(refused.lines.at(-1).error.message, /Profile fixer requires exec access/u);
+
+  // The bounded loop: its run-cap fence with a fixture harness and an attempt cap of 2, then a resume.
+  const huntEnv = {
+    ...env,
+    QC_WORKFLOW: await workflowFile(
+      'hunt.workflow.mts',
+      'references/porting-native-workflows.md',
+      'porting-budget-loop',
+    ),
+  };
+  const huntFixtures = await write('hunt.fixtures.json', {
+    version: 1,
+    calls: [
+      { step: 'find/1', output: { findings: ['a'] } },
+      { step: 'find/2', output: { findings: ['b'] } },
+      { step: 'find/*', output: { findings: [] } },
+    ],
+  });
+  const capsFence = await example(
+    skillRoot,
+    'references/porting-native-workflows.md',
+    'porting-budget-caps',
+  );
+  const capped = capsFence.replace(
+    '--max-run-agent-attempts 8',
+    `--max-run-agent-attempts 2 --harness fixture:"${huntFixtures}"`,
+  );
+  assert.notEqual(capped, capsFence);
+  const stopped = shell(capped, { cwd: target, env: huntEnv });
+  assert.equal(stopped.status, 1, stopped.output);
+  assert.match(stopped.lines.at(-1).error.message, /maxRunAgentAttempts limit 2 reached/u);
+  const resumed = cli('resume hunt-1 --state-dir "$QC_RUNS" --max-run-agent-attempts 16 --json');
+  assert.equal(resumed.status, 0, resumed.output);
+  assert.deepEqual(resumed.lines.at(-1).output, ['a', 'b']);
+  assert.equal(resumed.lines.at(-1).usage.attempts, 3);
+  assert.equal(command('git', ['status', '--porcelain'], { cwd: target }), '');
+  console.log('porting reference and GitHub recipes passed');
+}
 try {
   for (const [index, pkg] of packages.entries()) {
     const skillRoot = join(repository, pkg, 'skills/quiet-choir');
@@ -406,6 +611,8 @@ try {
       `${pkg}: documented golden path, ${pkg === packages[1] ? 'Claude launch and Monitor, /quiet-choir:run blocks, ' : ''}jq, logging, and resume recipes passed`,
     );
   }
+  // Both copies carry the same references (skills:check), so run these recipes once.
+  await portingRecipes(join(repository, packages[1], 'skills/quiet-choir'));
 } finally {
   await rm(root, { recursive: true, force: true });
 }

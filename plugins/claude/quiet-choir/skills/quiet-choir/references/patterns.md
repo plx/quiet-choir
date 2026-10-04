@@ -822,9 +822,9 @@ export default defineWorkflow({
 Drive it from a shell. Set `QC_REPO`, `QC_EPIC` and `QC_TICKET` (the epic's current pick) as well as
 the paths above. Each pass resumes `ticket-$n` if its record exists, so a rerun after an
 interruption continues where it stopped, and otherwise starts it. It then follows `next` from the
-last JSON line. The loop stops at `null`, at a skipped ticket, and at any nonzero exit: 75 is a
-suspended run, so run `workflow tick` when it is due and then this loop again; 1 is a failure to fix
-and resume.
+last JSON line. The loop stops at `null` and at a skipped ticket, and exits with a run's nonzero
+status: 75 is a suspended run, so run `workflow tick` when it is due and then this loop again; 1 is
+a failure to fix before rerunning the loop, which resumes it.
 
 <!-- skills-check: example ticket-driver -->
 
@@ -839,7 +839,7 @@ while [ "$n" != null ]; do
   else
     qc execute "$QC_WORKFLOW" --run-id "ticket-$n" --grant write \
       --input "{\"repo\":\"$QC_REPO\",\"epic\":$QC_EPIC,\"ticket\":$n}" >"$out"
-  fi || break
+  fi || exit
   [ "$(tail -n 1 "$out" | jq -r .output.status)" = closed ] || break
   n=$(tail -n 1 "$out" | jq -r .output.next)
 done
