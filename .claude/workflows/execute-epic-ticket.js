@@ -802,9 +802,11 @@ async function implementTicket(plan) {
     };
   }
   // Don't take the implementer's word: commits on the branch, clean tree, green check at head.
-  const commits = [...new Set(result.criteria.map((c) => c.commit.trim()).filter(Boolean))].join(
-    ',',
-  );
+  // Only commit-shaped values are verified. A criterion already met on main before this ticket has
+  // no commit of its own, and implementers sometimes say so in the field ("already on main (#138)",
+  // #165): that is not a commit to look for on the branch.
+  const isSha = (c) => /^[0-9a-f]{7,40}$/i.test(c);
+  const commits = [...new Set(result.criteria.map((c) => c.commit.trim()).filter(isSha))].join(',');
   const v = await one(
     `verify #${T.number}`,
     'Implement',

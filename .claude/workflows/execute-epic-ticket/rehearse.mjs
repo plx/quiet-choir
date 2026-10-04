@@ -793,6 +793,32 @@ const SCENARIOS = {
       );
     },
   },
+  'does not look for a commit when a criterion was already met on main': {
+    world: { issues: { 102: {} } },
+    agents: {
+      impl: () =>
+        IMPL_DONE({
+          criteria: [
+            { id: 'a1', status: 'done', commit: 'aaaaaaa', evidence: 't' },
+            { id: 'a2', status: 'done', commit: 'already on main (#138)', evidence: 'docs/x.md' },
+          ],
+        }),
+    },
+    exec: (c) =>
+      c.sub === 'verify'
+        ? {
+            head: 'a'.repeat(40),
+            ahead: 1,
+            dirty: [],
+            missingCommits: /already/.test(c.flags.commits ?? '') ? ['already on main (#138)'] : [],
+            checkPassedAtHead: true,
+            checkHead: 'a'.repeat(40),
+          }
+        : undefined,
+    check({ result }) {
+      assert.equal(result.status, 'landed');
+    },
+  },
   'gives a surgeon whose check was still running one finishing round': {
     world: { issues: { 102: {} } },
     agents: {
