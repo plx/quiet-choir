@@ -10,6 +10,7 @@ import type { ForkOptions, ForkProvenance } from './replay-model.js';
 import {
   isTerminalStep,
   readRun,
+  recordSchemaDrift,
   refuseRecordSchemaDrift,
   type RunRecord,
   type StepRecord,
@@ -53,13 +54,19 @@ export async function pinnedFork(provenance: ForkProvenance): Promise<RunRecord 
   if (provenance.reuseClosed) return undefined;
   try {
     const source = await readRun(provenance);
-    if (
+    // The digest covers the record as read, which omits fields this build does not know, so a
+    // source that gained such a field (or a newer revision) after the pin still matches it.
+    if (recordSchemaDrift(source))
+      provenance.warning =
+        'Fork source was rewritten by a newer quiet-choir or has fields this build does not know; remaining effects will execute live.';
+    else if (
       digest(source) === provenance.sourceDigest ||
       priorHarnessDigest(source) === provenance.sourceDigest
     )
       return source;
-    provenance.warning =
-      'Fork source changed since this run began; remaining effects will execute live.';
+    else
+      provenance.warning =
+        'Fork source changed since this run began; remaining effects will execute live.';
   } catch {
     provenance.warning = 'Fork source is unavailable; remaining effects will execute live.';
   }

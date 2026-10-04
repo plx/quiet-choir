@@ -42,6 +42,9 @@ with `run.incompatible`, `details.reason: "record_schema"`:
   refusal precedes the type check and the accepted-change preflight copy);
 - tick skips a due or stale run as `incompatible` and maps a refusal from a read to the same skip;
 - `workflow rm` refuses only when it would first save the worktree ledger.
+- `pinnedFork` does not refuse, because the target run is not drifted: when an existing fork's
+  source has drifted since the fork pinned it, reuse closes with a warning and the remaining effects
+  run live (the pinned digest covers the record as read, so it cannot see hidden fields).
 
 Read paths (`readRun`, inspect, list, pending) keep working; summaries add a warning and drop resume
 and answer follow-ups. When a newer revision also changed a known field's shape, so the record does

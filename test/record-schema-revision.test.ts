@@ -9,10 +9,12 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   defineWorkflow,
   FileRunStore,
+  FixtureHarness,
   readRun,
   RunRefusedError,
   runWorkflow,
   z,
+  type Harness,
   type OwnedRunStore,
   type RunRecord,
   type RunStore,
@@ -322,6 +324,68 @@ describe('writers refuse and change nothing', () => {
     );
     expect(error.code).toBe('run.incompatible');
     expect(error.runId).toBe('source');
+    expect(await bytes('source')).toEqual(before);
+  });
+
+  it.each([
+    [
+      'an unknown top-level field',
+      (raw: Record<string, unknown>) => {
+        raw['futureBudget'] = { maxRunMinutes: 5 };
+      },
+    ],
+    [
+      'a newer schemaRevision with every known field unchanged',
+      (raw: Record<string, unknown>) => {
+        raw['schemaRevision'] = SUPPORTED_SCHEMA_REVISION + 1;
+      },
+    ],
+  ])('closes reuse when a fork source later gains %s', async (_name, drift) => {
+    const live: string[] = [];
+    const fixture = new FixtureHarness({ version: 1, calls: [{ step: '**', text: 'ok' }] });
+    const harness: Harness = {
+      invoke(request, invocation) {
+        live.push(request.call.stepId);
+        return fixture.invoke(request, invocation);
+      },
+    };
+    const state = { pause: false };
+    const forked = defineWorkflow({
+      name: 'schema-revision-fork',
+      version: '1',
+      input: z.null(),
+      output: z.null(),
+      async run(ctx) {
+        for (const id of ['a', 'b', 'c', 'd']) {
+          if (state.pause && id === 'c') throw new Error('pause');
+          await ctx.claude.text(id, { prompt: id });
+        }
+        return null;
+      },
+    });
+    const base = { ...options, harness, stateDir } as const;
+    await runWorkflow(forked, { ...base, runId: 'source', input: null });
+    live.length = 0;
+    state.pause = true;
+    await expect(
+      runWorkflow(forked, { ...base, runId: 'target', input: null, forkFrom: { runId: 'source' } }),
+    ).rejects.toThrow('pause');
+    expect(live).toEqual([]);
+    const paused = await readRun({ runId: 'target', stateDir });
+    expect(paused.forkedFrom).toMatchObject({ cursor: 2, reuseClosed: false });
+    expect(Object.keys(paused.steps).sort()).toEqual(['a', 'b']);
+
+    await editSnapshot('source', drift);
+    const before = await bytes('source');
+    state.pause = false;
+    const resumed = await runWorkflow(forked, { ...base, runId: 'target', resume: true });
+    expect(resumed.status).toBe('completed');
+    expect(resumed.forkedFrom?.reuseClosed).toBe(true);
+    expect(resumed.forkedFrom?.warning).toContain('newer quiet-choir or has fields');
+    expect(resumed.warnings?.join('\n')).toContain('remaining effects will execute live');
+    expect(live.sort()).toEqual(['c', 'd']);
+    for (const id of ['c', 'd']) expect(resumed.steps[id]?.reusedFrom).toBeUndefined();
+    for (const id of ['a', 'b']) expect(resumed.steps[id]?.reusedFrom).toBeDefined();
     expect(await bytes('source')).toEqual(before);
   });
 

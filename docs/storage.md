@@ -328,6 +328,10 @@ The refusal comes after the lock-free read and again under the run lock, before 
 truncation or compaction; the lock itself is taken and released as usual. A custom `RunStore`'s
 record gets the same check in the runner.
 
+An existing fork is not refused when its pinned source later drifts (the source gains an unknown
+field or a newer `schemaRevision` after the fork began): the resume closes reuse, warns that the
+remaining effects will execute live, and copies nothing more from the source.
+
 **Reads.** `readRun`, `workflow inspect`, `list` and `pending` still work. The read view leaves out
 what this build does not know (never its values, which are not kept in memory), `inspect` and `list`
 rows add a warning naming the newer revision or the hidden fields, and the run gets no `resume` or
