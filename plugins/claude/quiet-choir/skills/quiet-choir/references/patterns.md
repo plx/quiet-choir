@@ -768,7 +768,7 @@ more than a second away (30 seconds at first); `workflow tick` resumes it when d
 `--wait-mode block` keeps the process waiting instead. The agent sees only the failed check names;
 give it more by reading the logs in a step first. To also wait for review bots and merge at the
 gated head, add `gh.waitReview` with `codexReviewer()` and `codeqlReviewer()`, then `gh.pr.merge`;
-the [bundled `quiet-choir/github` summary](extensions.md#implement-an-integration) covers their
+the [bundled `quiet-choir/github` summary](extensions.md#service-helper-pattern) covers their
 arguments. The repository's
 [gate](https://github.com/plx/quiet-choir/blob/main/docs/github.md#gate-example) and
 [land](https://github.com/plx/quiet-choir/blob/main/docs/github.md#land-example) examples show them
@@ -786,7 +786,9 @@ so literal IDs are safe. The recipe keeps only the loop's shape. A real ticket o
 pull request between the implement call and the close, with the
 [CI-gated fix loop](#ci-gated-fix-loop) and `gh.pr.create` and `gh.pr.merge`; when GitHub closes the
 issue on merge, `close` returns `acted: false`. Here `nextTicket` gets no `outside` states, so an
-item that depends on an issue outside the epic counts as waiting;
+item that depends on an issue outside the epic counts as waiting. The
+[bundled `quiet-choir/github` summary](extensions.md#service-helper-pattern) says how to pass
+`outside`, and the repository's
 [next-ticket.workflow.ts](https://github.com/plx/quiet-choir/blob/main/examples/patterns/next-ticket.workflow.ts)
 reads those states first.
 
