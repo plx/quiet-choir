@@ -117,7 +117,7 @@ GiB, and private attempt transcripts at 64 MiB. CLI flags `--max-retained-bytes`
 `--max-stream-bytes`, `--max-transcript-bytes`, and `--transcripts` are sticky execution policy.
 `maxOutputBytes` is now a legacy alias for agent retention, not the whole trace. See
 [streaming and attempt evidence](agent-streaming.md). The per-call timeout starts on agent
-admission, not while queued. `--max-agents` and `--provider-limit` share slots across nested maps;
+admission, not while queued. `--max-agents` and `--harness-limit` share slots across nested maps;
 each map's mapper concurrency remains a separate local limit.
 
 Every leader exit reaps owned process groups on macOS/Linux; Windows cleanup reaches the immediate

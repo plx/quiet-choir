@@ -221,9 +221,9 @@ empty native profile; selected user/profile defaults are inspected separately, w
 secrets. Project/managed layers can override those defaults. Exported `probeHarnessContracts`
 supports CI. `harnesses` in run metadata and inspect records first live-use binary/version; version
 drift warns on resume without invalidating completed results, and a run on an untested version
-records one `harnessWarnings` entry naming `configuration doctor`. Only `configuration get/set`
-remain stubs. See [durability](durability.md) before recovery and [inspection](inspection.md) for
-saved status.
+records one `harnessWarnings` entry naming `configuration doctor`. The configuration topic has one
+command, `configuration doctor`. See [durability](durability.md) before recovery and
+[inspection](inspection.md) for saved status.
 
 ## Execution policy flags
 
@@ -264,7 +264,7 @@ previews the step checks.
 
 ## Agent admission flags
 
-`workflow execute --max-agents 5 --provider-limit codex=1 --provider-limit claude=3` caps live agent
+`workflow execute --max-agents 5 --harness-limit codex=1 --harness-limit claude=3` caps live agent
 calls across the entire run, including nested maps. Values must be positive safe decimal integers;
 repeat provider rules and the last value wins. Omitted total uses min(8, max(1, available CPUs -
 2)); unspecified providers share that total. The effective limits are logged at info level before

@@ -2,6 +2,18 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- Docs and CLI drift (#165). `workflow list-defs` discovers `*.workflow.mts` and `*.workflow.cts` as
+  well as `*.workflow.ts` (never `.d.ts` or `.tsx`), matching the extensions the golden path tells
+  agents to use. The `configuration get` and `configuration set` placeholder commands, which only
+  printed "not implemented yet" and exited 2, are removed, so `configuration --help` lists only
+  `doctor`; the internal `StubExecutor` and the unused `src/harnesses/index.ts` re-export are
+  deleted. `skills:check` requires the `patterns.md` index table to link every H2 recipe section,
+  and the five missing rows (commands and test verdicts, file snapshots, hash guard, GitHub
+  snapshots, Workflow Lab recipes) are added. Corrections: the README's checkpoint paragraph now
+  says new runs use storage format 7 with replay contract 6 and lists which older formats resume and
+  seed forks; the docs and skills teach `--harness-limit` instead of the hidden `--provider-limit`
+  alias (still accepted); closed-issue links and their history are removed from the skills; ADRs
+  0002, 0005 and 0006 link forward with "Superseded in part by".
 - Agent-facing docs for porting and burning down work (#164). Both skill copies gain
   `references/porting-native-workflows.md`, which maps native Workflow's `agent`, `parallel`,
   `pipeline`, `phase`, `log`, `args`, `budget`, model and effort, worktree isolation, `agentType`,

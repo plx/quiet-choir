@@ -274,10 +274,12 @@ budget. `readonly` and `edit` supply larger limits. Custom harnesses receive tho
 must enforce them, and can report adapter-specific defaults through `policyDefaults(harness)`. See
 [agent profiles and launch grants](docs/agent-profiles.md) for declarations, `--profile` recovery,
 and strict capability checks. `inspect --json` exposes saved rules and each step's `attemptHistory`,
-including resolved policy and its sources. New checkpoints use version 6. Versions 1, 2, 3, 4, and 5
-remain inspectable but cannot resume or supply fork reuse with this runtime; retain the original
-runtime or choose a new run ID. See
-[the policy decision](docs/decisions/0005-step-identity-and-policy.md).
+including resolved policy and its sources. New runs use storage format 7 with replay contract 6.
+Flat format-6 runs migrate on resume and can seed forks. Format 1 resumes (migrating) but must be
+resumed before it can seed a fork. Formats 2-5 remain inspectable but cannot resume or supply fork
+reuse with this runtime; retain the original runtime or choose a new run ID. See
+[the policy decision](docs/decisions/0005-step-identity-and-policy.md) and
+[legacy records](docs/storage.md#legacy-records).
 
 To recover after editing workflow code, choose an explicit reuse path:
 
@@ -665,7 +667,7 @@ code and does not predict dynamic step compatibility. Incompatibility returns ex
 comparison in `error.details`; loading failures return exit 4.
 
 Inherited `--log-level trace|debug|info|warn|error|fatal|silent` and `-v, --verbose` go after the
-command name and are mutually exclusive. Configuration commands remain explicit stubs (exit 2);
+command name and are mutually exclusive. `configuration doctor` is the only configuration command;
 layered project/user settings are deferred.
 
 | Exit | Meaning                                                                                                                                                                                                                                                                                    |

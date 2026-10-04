@@ -189,8 +189,8 @@ and the next step; or `blocked: ...`. `--json` adds `verdict` (`ok`, `usable-wit
 `blocked`) and `warnings` (one `<harness> <check>: <message>` per warning) to the report, and `ok`
 is `verdict !== 'blocked'`. The exit code is 1 only when the verdict is `blocked`, so a warning
 exits 0. `--strict` (`DoctorOptions.strict`) turns an untested patch version into a failure, so
-scripts that want the old behavior exit 1. Configuration get/set remain stubs. Executable overrides
-are available as `--claude-binary` and `--codex-binary`.
+scripts that want the old behavior exit 1. Executable overrides are available as `--claude-binary`
+and `--codex-binary`.
 
 Probing an untested CLI carries a small cost risk. The Claude probe caps spend with
 `maxBudgetUsd: 0.01` and a nonexistent model. The Codex probe sends `model_reasoning_effort="bogus"`

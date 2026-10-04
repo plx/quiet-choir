@@ -14,13 +14,13 @@ a new slot; the previous attempt releases in `finally` when the harness returns 
 ## Set the limits
 
 ```sh
-quiet-choir workflow execute workflow.ts --max-agents 5 --provider-limit codex=1
+quiet-choir workflow execute workflow.ts --max-agents 5 --harness-limit codex=1
 quiet-choir workflow execute workflow.ts --resume --run-id review-1 --max-agents 2
 ```
 
-Both flags require positive safe decimal integers. Repeat `--provider-limit provider=n` for several
-providers; the last rule for a provider wins. Unspecified providers share the total ceiling. A
-provider ceiling greater than the total does not raise the total. The CLI logs the effective limits
+Both flags require positive safe decimal integers. Repeat `--harness-limit harness=n` for several
+harnesses; the last rule for a harness wins. Unspecified harnesses share the total ceiling. A
+harness ceiling greater than the total does not raise the total. The CLI logs the effective limits
 at info level before loading the workflow.
 
 Embedded callers use `agentLimit: 5` or `agentLimit: { total: 5, perProvider: { codex: 1 } }` in
