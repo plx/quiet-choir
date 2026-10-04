@@ -659,19 +659,52 @@ const recordFieldsSchema = z.object({
   children: z
     .record(
       z.string(),
-      z.object({
-        declared: z.boolean(),
-        label: z.string().min(1),
-        workflow: z.object({ name: z.string().min(1), version: z.string().min(1) }),
-        parent: z.string().nullable(),
-        depth: z.number().int().positive(),
-        inputDigest: z.string(),
-        schemaDigest: z.string(),
-        status: z.enum(['running', 'completed', 'failed', 'cancelled', 'suspended', 'superseded']),
-        startedAt: z.iso.datetime(),
-        finishedAt: z.iso.datetime().nullable(),
-        error: z.string().nullable(),
-      }),
+      z
+        .object({
+          declared: z.boolean(),
+          label: z.string().min(1),
+          workflow: z.object({ name: z.string().min(1), version: z.string().min(1) }),
+          parent: z.string().nullable(),
+          depth: z.number().int().positive(),
+          inputDigest: z.string(),
+          schemaDigest: z.string(),
+          // Revision 3 (#170): a settled frame's mode and terminal outcome.
+          onError: z.literal('return').optional(),
+          settled: z
+            .object({
+              outcome: z.discriminatedUnion('ok', [
+                z.object({ ok: z.literal(true), value: jsonSchema }),
+                z.object({
+                  ok: z.literal(false),
+                  error: stepErrorSchema.extend({ stepId: z.string().nullable() }),
+                }),
+              ]),
+              steps: z.array(z.string()),
+              maps: z.array(z.string()),
+              children: z.array(z.string()),
+            })
+            .optional(),
+          status: z.enum([
+            'running',
+            'completed',
+            'failed',
+            'cancelled',
+            'suspended',
+            'superseded',
+          ]),
+          startedAt: z.iso.datetime(),
+          finishedAt: z.iso.datetime().nullable(),
+          error: z.string().nullable(),
+        })
+        .refine(
+          (frame) =>
+            frame.settled === undefined ||
+            (frame.onError === 'return' &&
+              frame.finishedAt !== null &&
+              frame.status === (frame.settled.outcome.ok ? 'completed' : 'failed') &&
+              (frame.settled.outcome.ok || frame.settled.outcome.error.kind !== 'cancelled')),
+          'A settled child frame needs onError return, a finish time, a matching status and a non-cancellation outcome.',
+        ),
     )
     .optional(),
   worktrees: worktreeLedgerSchema.optional(),
@@ -1053,9 +1086,10 @@ const recordSchema = recordFieldsSchema.superRefine((record, context) => {
  * revision to `test/fixtures/schema-revision/record-keys.json`, whenever a persisted run-level
  * field is added or the accepted shape of one changes, including fields nested inside run-level
  * objects; see `docs/storage.md`. Revision 2 (#168) added `runBudget.maxWindowUtilization` and
- * the `maxWindowUtilization` budget stop with its `harness`, `window` and `resetsAt`. @internal
+ * the `maxWindowUtilization` budget stop with its `harness`, `window` and `resetsAt`. Revision 3
+ * (#170) added the settled child frame's `onError` and `settled` fields to `children`. @internal
  */
-export const SUPPORTED_SCHEMA_REVISION = 2;
+export const SUPPORTED_SCHEMA_REVISION = 3;
 
 /** The top-level run-record keys this build knows. @internal */
 export const RECORD_FIELD_KEYS: readonly string[] = Object.freeze(
@@ -1267,6 +1301,11 @@ export function hasTerminalOutcomes(record: RunRecord): boolean {
       for (const id of item.steps) steps.add(id);
       for (const id of item.maps) maps.add(id);
     }
+  }
+  // A settled child frame replays its outcome without running the effects it owned.
+  for (const frame of Object.values(record.children ?? {})) {
+    for (const id of frame.settled?.steps ?? []) steps.add(id);
+    for (const id of frame.settled?.maps ?? []) maps.add(id);
   }
   return (
     Object.entries(record.steps).every(([id, step]) => isTerminalStep(step) || steps.has(id)) &&

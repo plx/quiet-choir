@@ -7,12 +7,15 @@ import { digest, jsonValue } from './json.js';
 import { schemaJson } from './schema.js';
 import type { JsonValue, WorkflowContext, WorkflowDefinition } from './model.js';
 import type { CapabilityManifest, ProfileOverride } from './profiles-model.js';
-import type { RunRecord } from './record.js';
+import type { RunRecord, StepRecord } from './record.js';
 import type { ExecutionScopes } from './scopes.js';
 import type { NameScopes } from './names.js';
 import type { OperationTracker } from './tracking.js';
-import { CancelledError, type FailureOrigins } from './fan-out.js';
+import { CancelledError, type FailureOrigins, type MapStepError } from './fan-out.js';
 import { RunRefusedError } from './run-errors.js';
+import { duplicateStepId } from './identity.js';
+import { ownedRecords, settledFailure, settlesFailure } from './settled-outcome.js';
+import type { Settled } from './model.js';
 
 interface Frame {
   readonly id: string;
@@ -35,6 +38,12 @@ interface Dependencies {
   readonly operations: OperationTracker;
   readonly origins: FailureOrigins;
   readonly used: Set<string>;
+  /** Settled map journal IDs visited in this execution, shared with ctx.map. */
+  readonly visitedMaps: Set<string>;
+  /** Whether an error is this run's own checkpoint failure, not a domain error reusing the class. */
+  readonly isCheckpointFailure: (error: unknown) => boolean;
+  /** Claim a replayed leaf step: emits step.replayed and marks matched policy, as map replay does. */
+  readonly replayed: (id: string, step: StepRecord) => void;
   readonly isInEffect: () => boolean;
   readonly context: () => WorkflowContext;
   /** Launch an operation; `effect` is the call-site effect kind, null for a child frame. */
@@ -42,7 +51,8 @@ interface Dependencies {
   readonly save: () => Promise<void>;
   readonly isolatePhase: <T>(body: () => Promise<T>) => Promise<T>;
   readonly emit: (
-    type: 'child.started' | 'child.completed' | 'child.failed' | 'child.superseded',
+    type:
+      'child.started' | 'child.completed' | 'child.failed' | 'child.settled' | 'child.superseded',
     id: string,
     child: ChildRecord,
   ) => void;
@@ -60,15 +70,19 @@ interface Supersession {
 
 const SUPERSEDED_REASON = 'Superseded: the completed workflow no longer invoked this child frame.';
 
-/** Resume guidance for an identity refusal on a frame that never completed. */
+/**
+ * Resume guidance for an identity refusal on a frame that never completed. A settled frame is
+ * terminal, so accepting a code change cannot retry it.
+ */
 function unfinishedHint(saved: ChildRecord, alternatives: boolean): string {
-  return saved.status === 'completed'
+  return saved.status === 'completed' || saved.settled !== undefined
     ? ''
     : ` The saved frame is ${saved.status}, not completed: to retry a fixed child, keep its name, version, input and schemas and resume with --accept-code-change${alternatives ? '; otherwise use a new run or an explicit fork' : ''}.`;
 }
 
 const optionsSchema = z.strictObject({
   profiles: z.record(z.string().min(1), z.string().min(1)).optional(),
+  onError: z.enum(['throw', 'return']).optional(),
 });
 
 /** Inline frame ownership shares the root run's effects, cancellation, admission and budget. @internal */
@@ -163,7 +177,7 @@ export class RunChildren {
           ) ?? false;
         if (d.scopes.requiresDeclaredChildren && !declared) {
           const error = new Error(
-            `Child ${definition.name} must appear in its parent's children declaration inside a settled map, so resume can validate it without rerunning a committed mapper.`,
+            `Child ${definition.name} must appear in its parent's children declaration inside a settled map or settled child frame, so resume can validate it without rerunning a committed mapper or frame.`,
           );
           d.origins.markFatal(error);
           throw error;
@@ -182,6 +196,7 @@ export class RunChildren {
           );
         const id = d.names.childId(leaf);
         const options = optionsSchema.parse(settings);
+        const mode = options.onError ?? 'throw';
         let parsed: JsonValue;
         try {
           parsed = jsonValue(
@@ -208,16 +223,21 @@ export class RunChildren {
         };
         if (d.used.has(id) || d.record.steps[id] || d.record.maps?.[id])
           invalid(`Duplicate child frame/effect ID: ${id}.`);
+        // Only a settled frame pins its mode: an unsettled frame reruns its body anyway, so it may
+        // switch, for example to settle a failure on resume (ADR 0007).
+        const priorMode = prior?.onError ?? 'throw';
+        const modeChanged = prior?.settled !== undefined && priorMode !== mode;
         if (
           prior &&
           (prior.workflow.name !== definition.name ||
             prior.workflow.version !== definition.version ||
             prior.inputDigest !== inputDigest ||
             prior.schemaDigest !== schemaDigest ||
-            prior.parent !== (parent?.id ?? null))
+            prior.parent !== (parent?.id ?? null) ||
+            modeChanged)
         )
           invalid(
-            `Child frame ${id} changed: ${prior.workflow.name}@${prior.workflow.version} -> ${definition.name}@${definition.version}; child name, version, input and schemas must match on resume. Use a new run or an explicit fork.${unfinishedHint(prior, false)}`,
+            `Child frame ${id} changed: ${prior.workflow.name}@${prior.workflow.version} -> ${definition.name}@${definition.version}${modeChanged ? ` (onError ${priorMode} -> ${mode})` : ''}; child name, version, input and schemas, and the onError of a settled frame, must match on resume. Use a new run or an explicit fork.${unfinishedHint(prior, false)}`,
           );
         // Dynamic parents become known only at invocation. Validate their declared descendants
         // before a committed settled map can skip those descendants' bodies.
@@ -233,6 +253,13 @@ export class RunChildren {
         d.used.add(id);
         this.#visited.add(id);
         d.scopes.child(id);
+        if (prior?.settled !== undefined) {
+          // A settled frame is terminal: claim what it owned and replay its outcome (ADR 0007).
+          this.#claim(prior.settled);
+          return structuredClone(prior.settled.outcome);
+        }
+        // Captured at invocation, like a settled map's parent signal.
+        const parentSignal = d.scopes.signal;
         const frame: ChildRecord = {
           declared,
           label: leaf,
@@ -241,6 +268,7 @@ export class RunChildren {
           depth,
           inputDigest,
           schemaDigest,
+          ...(mode === 'return' ? { onError: 'return' as const } : {}),
           status: 'running',
           startedAt: new Date().toISOString(),
           finishedAt: null,
@@ -254,7 +282,8 @@ export class RunChildren {
         });
         await d.save();
         d.emit('child.started', id, frame);
-        const owner = d.scopes.create(d.scopes.signal);
+        // A settled frame's owner requires declared descendants, as a settled map item does.
+        const owner = d.scopes.create(d.scopes.signal, mode === 'return');
         try {
           const output = await this.#storage.run({ id, definition, chain, authority }, () =>
             d.names.run(`${id}/`, () =>
@@ -295,14 +324,45 @@ export class RunChildren {
           );
           frame.status = 'completed';
           frame.finishedAt = new Date().toISOString();
-          await d.save();
+          const outcome: Settled<JsonValue, MapStepError> = { ok: true, value: output };
+          if (mode === 'return') frame.settled = { outcome, ...ownedRecords(owner, d.record) };
+          try {
+            await d.save();
+          } catch (error) {
+            // Never claim a settlement that did not commit; the failure path below records it.
+            delete frame.settled;
+            throw error;
+          }
           d.emit('child.completed', id, frame);
-          return output;
+          return mode === 'return' ? structuredClone(outcome) : output;
         } catch (cause) {
           // Match the root: a callback's own AbortError fails the frame; only scope cancellation cancels it.
           frame.status = cause instanceof CancelledError ? 'cancelled' : 'failed';
           frame.finishedAt = new Date().toISOString();
           frame.error = cause instanceof Error ? cause.message : String(cause);
+          if (
+            mode === 'return' &&
+            settlesFailure(cause, {
+              parentAborted: parentSignal.aborted,
+              ownCancellation: false,
+              checkpointFailure: d.isCheckpointFailure(cause),
+              origins: d.origins,
+            })
+          ) {
+            const outcome = settledFailure(d.origins.find(cause), d.record);
+            // The schema requires a started attempt; a body error without an effect counts as one.
+            outcome.error = { ...outcome.error, attempts: Math.max(1, outcome.error.attempts) };
+            frame.settled = { outcome, ...ownedRecords(owner, d.record) };
+            try {
+              await d.save();
+            } catch {
+              /* The runner owns the checkpoint failure; preserve the original child error. */
+              delete frame.settled;
+              throw cause;
+            }
+            d.emit('child.settled', id, frame);
+            return structuredClone(outcome);
+          }
           try {
             await d.save();
             d.emit('child.failed', id, frame);
@@ -315,6 +375,32 @@ export class RunChildren {
       null,
     );
   }) as WorkflowContext['workflow'];
+
+  /** Claim the effects, maps and frames a settled frame owned, as settled map replay does. */
+  #claim(settled: NonNullable<ChildRecord['settled']>): void {
+    const d = this.#deps;
+    for (const id of settled.steps) {
+      if (d.used.has(id)) {
+        const error = duplicateStepId(id, d.names.describe(id));
+        d.origins.markFatal(error);
+        throw error;
+      }
+      d.used.add(id);
+      d.scopes.step(id);
+      const step = d.record.steps[id];
+      if (step) d.replayed(id, step);
+    }
+    for (const id of settled.maps) {
+      if (d.visitedMaps.has(id)) {
+        const error = new Error(`Duplicate settled map ID: ${id}.`);
+        d.origins.markFatal(error);
+        throw error;
+      }
+      d.visitedMaps.add(id);
+      d.scopes.map(id);
+    }
+    for (const id of settled.children) this.replay(id);
+  }
 
   public replay(id: string): void {
     if (this.#visited.has(id)) throw new Error(`Duplicate replayed child frame ${id}.`);
@@ -359,7 +445,12 @@ export class RunChildren {
       error: string | null;
     }[] = [];
     for (const [id, frame] of Object.entries(this.#deps.record.children ?? {})) {
-      if (this.#visited.has(id) || frame.status === 'completed' || frame.status === 'superseded')
+      if (
+        this.#visited.has(id) ||
+        frame.status === 'completed' ||
+        frame.status === 'superseded' ||
+        frame.settled !== undefined
+      )
         continue;
       previous.push({
         frame,
@@ -389,11 +480,14 @@ export class RunChildren {
 
   public assertVisited(): void {
     const missing = Object.entries(this.#deps.record.children ?? {})
-      .filter(([id, frame]) => frame.status === 'completed' && !this.#visited.has(id))
+      .filter(
+        ([id, frame]) =>
+          (frame.status === 'completed' || frame.settled !== undefined) && !this.#visited.has(id),
+      )
       .map(([id]) => id);
     if (missing.length)
       throw new Error(
-        `Replay skipped completed child frames (${missing.join(', ')}); workflow control flow changed.`,
+        `Replay skipped completed or settled child frames (${missing.join(', ')}); workflow control flow changed.`,
       );
   }
 }

@@ -17,7 +17,8 @@ import {
   type MapItemScope,
 } from './replay-decision.js';
 import type { OperationTracker } from './tracking.js';
-import { errorKind, stepError } from './step-error.js';
+import { errorKind } from './step-error.js';
+import { ownedRecords, settledFailure, settlesFailure } from './settled-outcome.js';
 import type { JsonValue, Settled, MapOptions, WorkflowContext } from './model.js';
 import type { MapComponents, MapRecord, RunRecord, StepRecord } from './store.js';
 
@@ -378,48 +379,31 @@ export function createMap(dependencies: MapDependencies): WorkflowContext['map']
                       if (saved && item) {
                         item.outcome = { ok: true, value: jsonData(output) };
                         item.status = 'completed';
-                        item.steps = [...itemScope.steps].filter((id) =>
-                          Object.hasOwn(record.steps, id),
-                        );
-                        item.maps = [...itemScope.maps].filter((id) => Object.hasOwn(maps, id));
-                        item.children = [...itemScope.children];
+                        Object.assign(item, ownedRecords(itemScope, record));
                         await save();
                         results[index] = structuredClone(item.outcome) as Settled<U, MapStepError>;
                       } else results[index] = output as U;
                     } catch (error) {
-                      const cancelled = errorKind(error) === 'cancelled';
                       if (
                         saved &&
                         item?.status === 'running' &&
-                        !parentSignal.aborted &&
-                        // Only this map's own cancelSiblings cancellation becomes item data.
-                        (!cancelled || controller.signal.aborted) &&
-                        !isCheckpointFailure(error) &&
-                        !origins.isFatal(error)
+                        settlesFailure(error, {
+                          parentAborted: parentSignal.aborted,
+                          // Only this map's own cancelSiblings cancellation becomes item data.
+                          ownCancellation: controller.signal.aborted,
+                          checkpointFailure: isCheckpointFailure(error),
+                          origins,
+                        })
                       ) {
                         // A cancelled leaf keeps its own step: the cause chain leads to the
                         // initiating failure, which must not be attributed to this item.
-                        const origin = cancelled
-                          ? { error, stepId: origins.exact(error) }
-                          : origins.find(error);
-                        item.outcome = {
-                          ok: false,
-                          error: {
-                            ...stepError(
-                              origin.error,
-                              origin.stepId === null
-                                ? 1
-                                : (record.steps[origin.stepId]?.attempts ?? 1),
-                            ),
-                            stepId: origin.stepId,
-                          },
-                        };
+                        const origin =
+                          errorKind(error) === 'cancelled'
+                            ? { error, stepId: origins.exact(error) }
+                            : origins.find(error);
+                        item.outcome = settledFailure(origin, record);
                         item.status = 'completed';
-                        item.steps = [...itemScope.steps].filter((id) =>
-                          Object.hasOwn(record.steps, id),
-                        );
-                        item.maps = [...itemScope.maps].filter((id) => Object.hasOwn(maps, id));
-                        item.children = [...itemScope.children];
+                        Object.assign(item, ownedRecords(itemScope, record));
                         try {
                           await save();
                         } catch {

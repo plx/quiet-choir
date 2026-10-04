@@ -108,7 +108,10 @@ dependencies/results must be lossless JSON.
 Terminal steps are `completed` successes or `settled-failed` outcomes explicitly requested with
 `onError: 'return'`. Both are immutable on resume and eligible for fork reuse. A failed/running
 record is retryable; a settled failure is a saved branch decision. Invalidate it in a new prefix
-fork to request another attempt. See [failure handling](workflow-authoring.md#failure-handling).
+fork to request another attempt. See [failure handling](workflow-authoring.md#failure-handling). A
+child frame invoked with `onError: 'return'` is terminal the same way once it saves its outcome: its
+body is skipped on resume, and its owned steps are claimed (see
+[child workflows](child-workflows.md)).
 
 When a previously failed step succeeds, the runner looks for recorded steps that may depend on its
 earlier failure: those launched at or after that failure settled. Each step record carries

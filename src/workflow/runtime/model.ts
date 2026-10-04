@@ -527,7 +527,11 @@ export interface WorkflowContext<
   agent<K extends keyof R & string>(
     name: K,
   ): RegisteredAgentClient<CallOptions<K, R[K], TProfile, TStrict>, CapabilitiesOf<R[K]>>;
-  /** Run a typed child inline with validated I/O, recorded identity, and a scoped effect namespace. */
+  /**
+   * Run a typed child inline with validated I/O, recorded identity, and a scoped effect namespace.
+   * With `onError: 'return'`, the frame's outcome is saved and returned as
+   * `Settled<O, MapStepError>`; resume replays it without running the child body again.
+   */
   workflow<
     I,
     O,
@@ -540,27 +544,61 @@ export interface WorkflowContext<
     id: string,
     child: WorkflowDefinition<I, O, P, H, S, C, M>,
     input: NoInfer<I>,
-    options?: ChildOptions,
-  ): Promise<O>;
+    options: ChildOptions & { readonly onError: 'return' },
+  ): Promise<Settled<O, MapStepError>>;
+  /** Run a typed child inline with an inferred or dynamic error mode. */
+  workflow<
+    I,
+    O,
+    P extends string,
+    H extends readonly HarnessDeclaration[],
+    S extends boolean,
+    C extends readonly WorkflowDeclaration[],
+    M extends string,
+    TMode extends ErrorMode = 'throw',
+  >(
+    id: string,
+    child: WorkflowDefinition<I, O, P, H, S, C, M>,
+    input: NoInfer<I>,
+    options?: ChildOptions & { readonly onError?: TMode | undefined },
+  ): Promise<EffectResult<O, TMode, MapStepError>>;
   /**
    * Dispatch only among the current workflow's declared children; the runtime validates input and
    * output with the child's schemas. In a workflow defined with literal `children`, the name must be
    * declared, the input must match that child's input type, and the result has its output type. A
    * bare `WorkflowContext`, or a child typed as an erased {@link WorkflowDeclaration}, falls back to
-   * any name and {@link JsonValue} input and output.
+   * any name and {@link JsonValue} input and output. `onError: 'return'` returns the saved frame
+   * outcome as a `Settled` result with a `MapStepError`.
    */
   workflow<const N extends string>(
     id: string,
     childName: N & ChildNamesOf<TChildren>,
     input: NoInfer<ChildInputOf<TChildren, N>>,
-    options?: ChildOptions,
-  ): Promise<ChildOutputOf<TChildren, N>>;
-  /** Integrate pinned changes in input order; only target checkout modifies the source working tree. */
+    options: ChildOptions & { readonly onError: 'return' },
+  ): Promise<Settled<ChildOutputOf<TChildren, N>, MapStepError>>;
+  /** Dispatch a declared child by name with an inferred or dynamic error mode. */
+  workflow<const N extends string, TMode extends ErrorMode = 'throw'>(
+    id: string,
+    childName: N & ChildNamesOf<TChildren>,
+    input: NoInfer<ChildInputOf<TChildren, N>>,
+    options?: ChildOptions & { readonly onError?: TMode | undefined },
+  ): Promise<EffectResult<ChildOutputOf<TChildren, N>, TMode, MapStepError>>;
+  /**
+   * Integrate pinned changes in input order; only target checkout modifies the source working tree.
+   * With `onError: 'return'`, a failure such as an `onConflict: 'fail'` conflict is saved and
+   * replayed as a settled result without touching Git again.
+   */
   merge(
     id: string,
     changes: readonly (WorktreeChange | WorktreeHandle)[],
-    options?: MergeOptions,
-  ): Promise<MergeResult>;
+    options: MergeOptions & { readonly onError: 'return' },
+  ): Promise<Settled<MergeResult>>;
+  /** Integrate pinned changes with an inferred or dynamic error mode. */
+  merge<TMode extends ErrorMode = 'throw'>(
+    id: string,
+    changes: readonly (WorktreeChange | WorktreeHandle)[],
+    options?: MergeOptions & { readonly onError?: TMode | undefined },
+  ): Promise<EffectResult<MergeResult, TMode>>;
   /** Create a run-owned shared checkout; completed effects on it become pinned snapshots. */
   worktree(id: string, options?: WorktreeCreateOptions): Promise<WorktreeHandle>;
   /** Canonical workflow working directory. */

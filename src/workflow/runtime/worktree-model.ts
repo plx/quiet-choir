@@ -1,4 +1,4 @@
-import type { StepContext } from './model.js';
+import type { ErrorMode, StepContext } from './model.js';
 
 /** A ref resolved once, or an explicitly pinned commit. */
 export type WorktreeBase =
@@ -141,6 +141,12 @@ export interface MergeOptions {
    * fixed `quiet-choir` identity. Supplying it changes the step identity.
    */
   readonly commit?: MergeCommitOptions;
+  /**
+   * Throw failures by default, or save the final failure and return it as `Settled`, such as an
+   * `onConflict: 'fail'` conflict, a dirty checkout target or a target that moved. Cancellation,
+   * configuration and checkpoint failures still reject. `'return'` changes the step identity.
+   */
+  readonly onError?: ErrorMode | undefined;
 }
 
 /** Ordered, durable integration outcome. */

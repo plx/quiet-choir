@@ -43,7 +43,13 @@ import {
   worktreeCreateSchema,
   type ResolvedWorktree,
 } from './worktree-schema.js';
-import type { WorktreePolicy, MergeOptions } from './worktree-model.js';
+import type {
+  WorktreePolicy,
+  MergeOptions,
+  MergeResult,
+  WorktreeChange,
+  WorktreeHandle,
+} from './worktree-model.js';
 import type {
   ReadFileOptions,
   ReadFileResult,
@@ -300,10 +306,13 @@ export type WorkflowEvent = {
       /** Child lifecycle notifications refer to their frame rather than a leaf effect. */
       readonly stepId: null;
       /**
-       * Inline invocation lifecycle after its frame checkpoint. `child.superseded` follows
-       * `run.completed` for each unfinished frame the completed run no longer invoked.
+       * Inline invocation lifecycle after its frame checkpoint. `child.settled` reports an
+       * `onError: 'return'` frame whose failure was saved as its outcome (a settled success reports
+       * `child.completed`). `child.superseded` follows `run.completed` for each unfinished frame the
+       * completed run no longer invoked.
        */
-      readonly type: 'child.started' | 'child.completed' | 'child.failed' | 'child.superseded';
+      readonly type:
+        'child.started' | 'child.completed' | 'child.failed' | 'child.settled' | 'child.superseded';
     }
 );
 
@@ -1286,6 +1295,11 @@ export async function runWorkflow<
       operations,
       origins,
       used,
+      visitedMaps,
+      isCheckpointFailure: (error) => checkpointProblems.includes(error as CheckpointError),
+      replayed: (id, step) => {
+        replayedStep(id, step);
+      },
       isInEffect: () => !!inEffect.getStore(),
       context: () => context,
       launch: (id, work, effect) => launch(id, effect, work),
@@ -2883,6 +2897,22 @@ export async function runWorkflow<
       };
     }
 
+    /**
+     * Claim a step owned by a committed settled map item or settled child frame without visiting
+     * its call site: mark matching policy rules and emit step.replayed.
+     */
+    function replayedStep(id: string, step: StepRecord): void {
+      if (step.kind !== 'sleep')
+        policy.forEach((rule, index) => {
+          if (
+            (rule.kind === undefined || rule.kind === step.kind) &&
+            matchesStepGlob(rule.match ?? '**', id)
+          )
+            matchedPolicy.add(index);
+        });
+      emit('step.replayed', id, step);
+    }
+
     const map = createMap({
       isClosed: () => closed,
       isInEffect: () => inEffect.getStore() !== undefined,
@@ -2903,17 +2933,7 @@ export async function runWorkflow<
       replayChild: (id) => {
         children.replay(id);
       },
-      replayed: (id, step) => {
-        if (step.kind !== 'sleep')
-          policy.forEach((rule, index) => {
-            if (
-              (rule.kind === undefined || rule.kind === step.kind) &&
-              matchesStepGlob(rule.match ?? '**', id)
-            )
-              matchedPolicy.add(index);
-          });
-        emit('step.replayed', id, step);
-      },
+      replayed: replayedStep,
     });
 
     function scopeEntry<T>(action: () => T): T {
@@ -3168,10 +3188,20 @@ export async function runWorkflow<
           });
         });
       }) as WorkflowContext['writeFile'],
-      merge: (leaf, changes, settings = {}) => {
+      // Cast: TypeScript cannot match one generic implementation against the overload pair.
+      merge: (<TMode extends ErrorMode = 'throw'>(
+        leaf: string,
+        changes: readonly (WorktreeChange | WorktreeHandle)[],
+        settings: MergeOptions & { readonly onError?: TMode | undefined } = {},
+      ): Promise<EffectResult<MergeResult, TMode>> => {
         const id = names.qualify(leaf);
         return launch(id, 'merge', () => {
-          const checked = mergeOptionsSchema.parse(settings) as MergeOptions;
+          // onError is the effect's failure mode: it enters identity through effect(), never the
+          // dependencies, and Git never sees it.
+          const { onError: checkedOnError, ...checked } = mergeOptionsSchema.parse(
+            settings,
+          ) as MergeOptions;
+          const onError = checkedOnError as TMode | undefined;
           const inputs = z
             .array(z.union([worktreeChangeSchema, worktreeHandleSchema]))
             .parse(changes);
@@ -3195,11 +3225,12 @@ export async function runWorkflow<
                 }
               : {}),
           });
-          return effect({
+          return effect<MergeResult, TMode>({
             id,
             kind: 'merge',
             dependencies,
             schema: mergeResultSchema,
+            ...(onError === undefined ? {} : { onError }),
             execution: resolvePolicy(id, 'step', {}, {}, [], matchedPolicy),
             ...(rehearsalWorktrees && canSynthesizeMerge(inputs)
               ? {
@@ -3226,7 +3257,7 @@ export async function runWorkflow<
                 }),
           });
         });
-      },
+      }) as WorkflowContext['merge'],
       worktree: (leaf, settings = {}) => {
         const id = names.qualify(leaf);
         return launch(id, 'worktree', () => {

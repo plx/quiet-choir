@@ -2,6 +2,24 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- `ctx.workflow` and `ctx.merge` accept `onError: 'return'` (#170; ADR 0007, ADR 0026). A merge
+  failure such as an `onConflict: 'fail'` conflict, a dirty checkout target or a moved target is
+  saved as a `settled-failed` step and returned as `Settled<MergeResult>`; resume replays it without
+  running Git. Only `'return'` changes a merge's fingerprint. A child call returns
+  `Settled<O, MapStepError>` (by name: the declared output, or JSON) and records the frame's
+  terminal outcome in the new optional `ChildRecord.onError` and `ChildRecord.settled` (outcome plus
+  owned step, map and frame IDs; type `ChildSettledRecord`). Resume returns the saved outcome
+  without running the body or emitting `child.started`; a settled failure emits the new
+  `child.settled` event instead of `child.failed`. Cancellation, budget stops, configuration and
+  checkpoint failures, authoring guards, input validation, the depth guard and identity refusals
+  still reject. A settled frame's descendants must be declared, its `onError` cannot change on
+  resume (an unsettled frame may switch), supersession skips it, and skipping it fails the run with
+  "Replay skipped completed or settled child frames" (formerly "Replay skipped completed child
+  frames"). A fork reruns a settled frame's body, reusing its terminal steps. Inspection summaries
+  show a compact `settled` field on child rows and mark `(settled)` in the text tree. The record
+  schema revision becomes 3, so a revision-2 build refuses to rewrite a record written by this
+  build. Code that passes a variable typed `MergeOptions` or `ChildOptions` now gets the
+  `EffectResult` union, because both types gained `onError`.
 - `assertHarnessConformance` (`quiet-choir/harness-kit`) passes the adapter a recording
   `HarnessInvocation` in every scenario and adds six scenarios: `registration-before-input`,
   `session`, `transcript`, `timeout`, `rate-limit` and `env` (#169). `HarnessConformanceCase` widens

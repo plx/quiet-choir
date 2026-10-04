@@ -31,6 +31,7 @@ export { z } from 'zod';
 export type {
   ChildOptions,
   ChildRecord,
+  ChildSettledRecord,
   WorkflowDeclaration,
   WorkflowDescription,
   WorkflowPhase,

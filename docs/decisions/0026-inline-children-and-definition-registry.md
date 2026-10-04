@@ -3,6 +3,8 @@
 ## Status
 
 Accepted. Extends scope, profile, observation and journal decisions 0009, 0010, 0015 and 0019.
+Amended by #170 (settled child frames; see the amendment below and
+[ADR 0007](0007-durable-failure-outcomes.md)).
 
 ## Context
 
@@ -38,23 +40,41 @@ shows an earlier attempt's failure as the live outcome of a branch the workflow 
 covers frames that failed or were cancelled before recording any terminal effect, and frames that a
 crash or an earlier suspension left running or parked. The replay checks run first and are
 unchanged: an unvisited completed frame, or a frame whose descendants hold a completed or
-settled-failed step or a settled map item, still fails the run with "Replay skipped completed child
-frames", "Replay skipped recorded steps" or "Replay skipped settled maps", and keeps its old status.
-Supersession is applied last, after output validation and worktree cleanup, and is undone if the
-completion checkpoint fails, so a failure snapshot never claims a retirement. Frames visited in the
-completing execution keep their live outcome: an unawaited running or parked frame is `cancelled`,
-and a failed frame the parent caught stays `failed`. One `child.superseded` event per retired frame
-follows `run.completed`. Already superseded frames are skipped, so a later resume emits nothing
-again; a later execution that invokes the frame with the same identity replays it like any other
-unfinished frame. Failed, cancelled and superseded frames still must keep their name, version, input
-and schemas on resume; the refusal for such a frame points at keeping that identity and resuming
-with `--accept-code-change`. Redefining an unfinished frame's identity is not supported.
+settled-failed step or a settled map item, still fails the run with "Replay skipped completed or
+settled child frames", "Replay skipped recorded steps" or "Replay skipped settled maps", and keeps
+its old status. Supersession is applied last, after output validation and worktree cleanup, and is
+undone if the completion checkpoint fails, so a failure snapshot never claims a retirement. Frames
+visited in the completing execution keep their live outcome: an unawaited running or parked frame is
+`cancelled`, and a failed frame the parent caught stays `failed`. One `child.superseded` event per
+retired frame follows `run.completed`. Already superseded frames are skipped, so a later resume
+emits nothing again; a later execution that invokes the frame with the same identity replays it like
+any other unfinished frame. Failed, cancelled and superseded frames still must keep their name,
+version, input and schemas on resume; the refusal for such a frame points at keeping that identity
+and resuming with `--accept-code-change`. Redefining an unfinished frame's identity is not
+supported.
 
 Publish optional descriptive metadata and I/O schemas through validate. The directory registry
 discovers trusted `*.workflow.ts` files, rejects duplicate names, and caches only JSON metadata
 after checking source hashes. It never caches execution authority: executing a name reimports the
 selected source and verifies its name. Recursive declarations become finite reference nodes in
 discovery.
+
+## Amendment: settled child frames (#170)
+
+`ctx.workflow(id, child, input, { onError: 'return' })` makes a frame's outcome a durable branch
+decision. Frame records gain two optional fields, written only for that mode so existing records
+keep their shape: `onError: 'return'` and, once the body ends with a settleable outcome,
+`settled: { outcome, steps, maps, children }`. The outcome is `Settled<JsonValue, MapStepError>`,
+and the lists are the effect, settled-map and child-frame IDs that the frame's owner scope
+collected. A settled success keeps status `completed`; a settled failure keeps `failed`. A frame
+with `settled` is terminal: resume returns the outcome without running the body or emitting
+`child.started`, claims the owned IDs like a committed settled map item, and reclaims the frame
+itself for an enclosing settled map or frame. Its owner scope is a settled scope, so its descendants
+must be declared, as inside a settled map. An unvisited settled frame fails the run as "Replay
+skipped completed or settled child frames", supersession skips it, and its identity, including
+`onError`, cannot change on resume. A settled failure emits `child.settled` in place of
+`child.failed`. The settle predicate, the identity rule for unsettled frames and the fork decision
+are in ADR 0007.
 
 ## Consequences
 
