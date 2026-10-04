@@ -91,7 +91,19 @@ action exactly once.
 
 Adding a harness requires a definition and adapter package, without runtime or command edits. A fake
 third CLI verifies that boundary. Built-ins pass the same public conformance suite for text,
-structured JSON, unknown usage, exit-zero protocol failure, nonzero stdout failure and cancellation.
+structured JSON, unknown usage, exit-zero protocol failure, nonzero stdout failure, cancellation,
+registration before input, session reporting, the raw stdout transcript, a timeout on both request
+and policy channels, 429 rate-limit classification and host-environment scrubbing. Since #169 the
+suite passes every scenario a recording `HarnessInvocation` and observes the fake through marker
+files rather than its protocol, so an adapter that skips registration, ignores the timeout or leaks
+host-session variables fails with a message naming the scenario.
+
+A harness's attempt policy records, and its invocation receives, only the agent limits it declares:
+`effort` for Codex, `maxTurns` and `maxBudgetUsd` for Claude, and for a registered harness whichever
+of `maxTurns` and `maxBudgetUsd` its options schema declares (#169). The rule is keyed on the
+registration, not the adapter, so records do not depend on adapter availability during replay or
+rehearsal; delegated child ceilings are filtered the same way. `timeoutMs` and the other limits
+apply to every agent.
 
 A helper generic over an unresolved registry may lose structured-client inference because its
 capability conditional type is deferred. Helpers should accept a concrete registry or only the

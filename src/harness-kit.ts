@@ -23,6 +23,7 @@ export type {
   HarnessConformanceCase,
   HarnessConformanceFixture,
   HarnessConformanceOptions,
+  HarnessConformanceProbe,
 } from './harness-kit/conformance.js';
 export type * from './workflow/runtime/harness-model.js';
 export type * from './workflow/runtime/model.js';

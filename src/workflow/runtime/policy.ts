@@ -138,7 +138,28 @@ export function matchesStepGlob(pattern: string, id: string): boolean {
   return new RegExp(`${expression}$`, 'u').test(id);
 }
 
-/** Resolve policy without importing any adapter into the core. @internal */
+/** The per-harness agent limits: Claude's turn and spend caps, or Codex's effort. */
+const claudeLimitKeys = ['maxTurns', 'maxBudgetUsd'] as const;
+
+/**
+ * The harness-specific limit keys an agent call records and passes on: `effort` for Codex,
+ * `maxTurns` and `maxBudgetUsd` for Claude, and for a registered harness whichever of `maxTurns`
+ * and `maxBudgetUsd` its options schema declares (`optionKeys` are that schema's top-level keys).
+ * Keying on the registration rather than the adapter keeps records independent of whether an
+ * adapter is available, as on replay or under rehearsal. Effort stays Codex-only. @internal
+ */
+export function agentLimitKeys(harness: string, optionKeys: readonly string[]): readonly string[] {
+  if (harness === 'codex') return ['effort'];
+  if (harness === 'claude') return claudeLimitKeys;
+  return claudeLimitKeys.filter((key) => optionKeys.includes(key));
+}
+
+/**
+ * Resolve policy without importing any adapter into the core. `limitKeys` lists the harness-specific
+ * agent limits that apply (see {@link agentLimitKeys}); its default treats every non-Codex agent kind
+ * like Claude. Other keys such as `timeoutMs`, `model`, output limits and retry are unaffected.
+ * @internal
+ */
 export function resolvePolicy(
   id: string,
   kind: string,
@@ -150,6 +171,7 @@ export function resolvePolicy(
   matched: Set<number>,
   profile?: ResolvedProfile,
   profileOverrides: readonly ProfileOverride[] = [],
+  limitKeys: readonly string[] = kind === 'codex' ? ['effort'] : claudeLimitKeys,
 ): AttemptPolicy {
   const agent = !['step', 'sleep', 'exec'].includes(kind);
   validateStepId(id);
@@ -184,8 +206,7 @@ export function resolvePolicy(
       ...Object.keys(streaming),
     ])
       applicable.add(key);
-    for (const key of kind === 'codex' ? ['effort'] : ['maxTurns', 'maxBudgetUsd'])
-      applicable.add(key);
+    for (const key of limitKeys) applicable.add(key);
   }
   if (kind === 'exec') {
     applicable.add('timeoutMs');
