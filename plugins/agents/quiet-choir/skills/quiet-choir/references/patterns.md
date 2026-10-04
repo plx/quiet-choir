@@ -714,11 +714,12 @@ a model. `gh.waitChecks` from `quiet-choir/github` is one `ctx.poll` pinned to `
 pull request's head and check rollup on every check and never reports `success` for another commit.
 Under `ctx.id('ci', sha)` a resume replays that head's verdict without reading GitHub, and a pushed
 fix waits under a new ID. The fix agent only edits, with the built-in `edit` profile; one durable
-`ctx.exec` commits the tracked changes, pushes, and prints `git rev-parse HEAD`, so the next SHA is
-checkpointed command output. When the agent changed nothing, the head does not move and the recipe
-returns `stuck`: waiting again would reuse the wait's ID, which fails the run as a duplicate.
-`staleGraceMs` covers GitHub reporting the previous head for a while after a push. Within that
-window, a head that `sha` descends from keeps the wait waiting instead of ending it as `head-moved`.
+`ctx.exec` commits the tracked changes and pushes, with their output (hooks included) sent to
+stderr, and prints `git rev-parse HEAD`, so stdout holds only the next SHA and it is checkpointed
+command output. When the agent changed nothing, the head does not move and the recipe returns
+`stuck`: waiting again would reuse the wait's ID, which fails the run as a duplicate. `staleGraceMs`
+covers GitHub reporting the previous head for a while after a push. Within that window, a head that
+`sha` descends from keeps the wait waiting instead of ending it as `head-moved`.
 
 Launch it from a checkout of the pull request's head branch with an upstream, with `--grant write`.
 `git diff --quiet` sees tracked files only, so a fix that adds a file needs a different commit
@@ -734,7 +735,8 @@ import { defineWorkflow, z } from '../../src/index.js';
 import { github } from '../../src/integrations/github.js';
 
 const verdict = z.enum(['success', 'failure', 'no-checks', 'head-moved', 'closed', 'timeout']);
-const commit = "(git diff --quiet || git commit -qam 'Fix CI') && git push && git rev-parse HEAD";
+const push =
+  "((git diff --quiet || git commit -qam 'Fix CI') && git push) >&2 && git rev-parse HEAD";
 export default defineWorkflow({
   name: 'ci-gate',
   version: '1',
@@ -752,8 +754,7 @@ export default defineWorkflow({
       const prompt = `CI failed on ${sha}: ${failed}. Fix the cause. Do not commit.`;
       await ctx.claude.text(ctx.id('fix', sha), { profile: 'edit', prompt });
       // The new head comes from git, never from the model.
-      const pushed = await ctx.exec(ctx.id('push', sha), { shell: commit });
-      const next = pushed.stdout.trim();
+      const next = (await ctx.exec(ctx.id('push', sha), { shell: push })).stdout.trim();
       // An unchanged head would reuse this wait's ID; return instead of waiting again.
       if (next === sha) return { status: 'stuck', sha, fixes: fixes + 1 };
       sha = next;

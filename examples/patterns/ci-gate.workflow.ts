@@ -2,7 +2,8 @@ import { defineWorkflow, z } from '../../src/index.js';
 import { github } from '../../src/integrations/github.js';
 
 const verdict = z.enum(['success', 'failure', 'no-checks', 'head-moved', 'closed', 'timeout']);
-const commit = "(git diff --quiet || git commit -qam 'Fix CI') && git push && git rev-parse HEAD";
+const push =
+  "((git diff --quiet || git commit -qam 'Fix CI') && git push) >&2 && git rev-parse HEAD";
 export default defineWorkflow({
   name: 'ci-gate',
   version: '1',
@@ -20,8 +21,7 @@ export default defineWorkflow({
       const prompt = `CI failed on ${sha}: ${failed}. Fix the cause. Do not commit.`;
       await ctx.claude.text(ctx.id('fix', sha), { profile: 'edit', prompt });
       // The new head comes from git, never from the model.
-      const pushed = await ctx.exec(ctx.id('push', sha), { shell: commit });
-      const next = pushed.stdout.trim();
+      const next = (await ctx.exec(ctx.id('push', sha), { shell: push })).stdout.trim();
       // An unchanged head would reuse this wait's ID; return instead of waiting again.
       if (next === sha) return { status: 'stuck', sha, fixes: fixes + 1 };
       sha = next;

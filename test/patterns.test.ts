@@ -738,7 +738,10 @@ it('CI gate suspends on a pending check, fixes and pushes once under SHA-keyed I
       log.push(id);
       if (id === 'head') return answered(recordedGh('pr-view.json'));
       if (id === stepId('push', first)) {
-        expect((request.command as { shell?: string }).shell).toContain('git push');
+        const shell = (request.command as { shell?: string }).shell;
+        expect(shell).toContain('git push');
+        // Hook output must not reach stdout: only the final rev-parse line is the SHA.
+        expect(shell).toMatch(/git push\) >&2 && git rev-parse HEAD$/u);
         return answered(`${second}\n`);
       }
       const n = (checks.get(id) ?? 0) + 1;
