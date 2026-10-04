@@ -18,6 +18,11 @@
 //   publish  --pr N [--ensure-closes I | --keep-open I]   retarget, push with lease, fix keywords
 //   reply    --pr N < replies.json        reply to review threads (resolves Codex threads by default)
 //   request-review --pr N                comment "@codex review"
+//   local-review-start --pr N [--sha S] [--model M] [--effort E]   run `codex review --base
+//                                        origin/<default>` on the worktree head, detached, in a
+//                                        throwaway worktree of its own
+//   local-review-wait  --pr N [--sha S] [--max-seconds 540]  wait for it; {done: false} on timeout
+//   local-review-stop  --pr N [--sha S]  kill that review if it is still running
 //   rerun    --pr N --sha S              re-run failed CI jobs for S once (flake check)
 //   verify-fixes --pr N --commits a,b    reported commits are in HEAD; last check passed at HEAD
 //   await    --pr N --sha S --since ISO [--codex required|skip] [--ci wait|skip] [--stale-grace 90]
@@ -882,6 +887,269 @@ async function checkWait(a, P) {
   }
 }
 
+// ---------------------------------------------------------------------------------------------
+// Local Codex review
+
+// `codex review --base origin/<default>` over the worktree's head, instead of asking the GitHub
+// Codex app with "@codex review" and waiting for its threads. A review takes many minutes, so it
+// runs detached like the check suite: local-review-start launches it (or returns a finished review
+// of the same head at once) and local-review-wait waits in bounded slices. The review text goes to
+// codex-review-<sha>.md; the workflow's triage reads that file, not a relayed copy.
+const reviewStem = (P, pr, sha) => join(prDir(P, pr), `codex-review-${sha.slice(0, 12)}`);
+const requireSha = (a, W) => {
+  const sha = typeof a.sha === 'string' ? a.sha : git(W, ['rev-parse', 'HEAD']);
+  if (!/^[0-9a-f]{7,40}$/.test(sha)) fail(`--sha must be a commit SHA, got ${sha}`);
+  return gitOk(W, ['rev-parse', '--verify', '--quiet', `${sha}^{commit}`])
+    ? git(W, ['rev-parse', sha])
+    : fail(`commit ${sha} is not in the worktree`);
+};
+
+// Codex marks each finding with a priority tag such as "[P1]".
+export function reviewFindings(text) {
+  const counts = { P0: 0, P1: 0, P2: 0, P3: 0 };
+  for (const m of text.matchAll(/\[(P[0-3])\]/g)) counts[m[1]]++;
+  return { findings: Object.values(counts).reduce((x, y) => x + y, 0), priorities: counts };
+}
+
+// Each review runs in a throwaway worktree of its own at the reviewed head (removed afterwards),
+// under Codex's read-only sandbox. The workflow's worktree is shared with the check suite running
+// at the same time and with later fix rounds, and a review can outlive a failed or timed-out wait,
+// so a review never reads from or writes to it.
+const reviewWorktree = (P, pr, sha) => join(prDir(P, pr), `review-${sha.slice(0, 12)}`);
+function removeReviewWorktree(W, dir) {
+  run('git', ['-C', W, 'worktree', 'remove', '--force', dir], { allowFail: true });
+  rmSync(dir, { recursive: true, force: true });
+  run('git', ['-C', W, 'worktree', 'prune'], { allowFail: true });
+}
+
+// The model and effort a review runs with (effort null: Codex's configuration). A review is reused
+// only when both match, so a run with a different codexModel or codexEffort gets its own.
+const reviewConfig = (a) => ({
+  model: typeof a.model === 'string' ? a.model : 'gpt-6-astra',
+  effort: typeof a.effort === 'string' ? a.effort : null,
+});
+const sameConfig = (x, y) => x.model === y.model && (x.effort ?? null) === (y.effort ?? null);
+
+function localReview(a, P, R) {
+  const pr = requirePr(a);
+  const W = P.workdir;
+  const sha = requireSha(a, W);
+  const stem = reviewStem(P, pr, sha);
+  const base = `origin/${R.def}`;
+  const { model, effort } = reviewConfig(a);
+  const args = [
+    'review',
+    '--base',
+    base,
+    '-c',
+    `model="${model}"`,
+    // A user-config review_model takes precedence over model for `codex review`.
+    '-c',
+    `review_model="${model}"`,
+    '-c',
+    'sandbox_mode="read-only"',
+  ];
+  if (effort) args.push('-c', `model_reasoning_effort="${effort}"`);
+  const RW = reviewWorktree(P, pr, sha);
+  removeReviewWorktree(W, RW); // left behind by a review that was killed
+  git(W, ['worktree', 'add', '--detach', RW, sha]);
+  try {
+    const started = Date.now();
+    const r = spawnSync('codex', args, {
+      cwd: RW,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      encoding: 'utf8',
+      maxBuffer: 512 * 1024 * 1024,
+      timeout: Number(a['timeout-minutes'] ?? 40) * 60_000,
+      killSignal: 'SIGKILL',
+    });
+    const text = stripAnsi(r.stdout ?? '').trim();
+    writeFileSync(`${stem}.md`, `${text}\n`);
+    writeFileSync(`${stem}.log`, stripAnsi(r.stderr ?? ''));
+    const result = {
+      sha,
+      base,
+      model,
+      effort,
+      file: `${stem}.md`,
+      log: `${stem}.log`,
+      exitCode: r.status,
+      elapsedSeconds: Math.round((Date.now() - started) / 1000),
+      ...reviewFindings(text),
+    };
+    if (r.error) result.error = `codex review failed to run: ${r.error.message}`;
+    else if (r.status !== 0)
+      result.error = `codex review exited ${r.status}: ${tail(stripAnsi(r.stderr ?? ''), 5)}`;
+    else if (!text) result.error = 'codex review printed no review';
+    // Both are about the review's own worktree, which is discarded: reported for information.
+    const dirty = git(RW, ['status', '--porcelain']);
+    if (dirty) result.dirty = dirty.split('\n');
+    if (git(RW, ['rev-parse', 'HEAD']) !== sha) {
+      result.moved = true;
+      result.error ??= `the review moved its worktree off ${sha.slice(0, 7)}`;
+    }
+    return result;
+  } finally {
+    removeReviewWorktree(W, RW);
+  }
+}
+
+function localReviewRun(a, P, R) {
+  const pr = requirePr(a);
+  const sha = requireSha(a, P.workdir);
+  const result = localReview({ ...a, sha }, P, R);
+  const file = `${reviewStem(P, pr, sha)}.result.json`;
+  writeJson(`${file}.tmp`, result);
+  renameSync(`${file}.tmp`, file);
+  return result;
+}
+
+// A start record names the runner by pid, and a pid is reused once its process is gone, so the
+// record also keeps the runner's start time (as `ps -o lstart=` prints it). The review is ours when
+// a process with that pid started at that time, or when no process has that pid but its group
+// still exists: POSIX does not reuse a pid while a process group with that id exists, so the
+// group outliving the runner (codex descendants left behind) is still the review's. Returns
+// 'runner' (the runner is alive), 'group' (only its group is), 'gone', or 'foreign' (the pid now
+// names another process, or the record has no start time to confirm it): never signal 'foreign'.
+const processStartTime = (pid) => {
+  const r = run('ps', ['-o', 'lstart=', '-p', String(pid)], { allowFail: true });
+  return (r.status === 0 && r.stdout.trim()) || null;
+};
+const groupAlive = (pid) => {
+  try {
+    process.kill(-pid, 0);
+    return true;
+  } catch (error) {
+    return error.code === 'EPERM';
+  }
+};
+function reviewOwnership(started) {
+  if (!Number.isInteger(started?.pid) || started.pid <= 1) return 'gone';
+  const lstart = processStartTime(started.pid);
+  if (lstart !== null) return started.lstart && lstart === started.lstart ? 'runner' : 'foreign';
+  return groupAlive(started.pid) ? 'group' : 'gone';
+}
+// Signals the review's process group, SIGTERM and then SIGKILL, until it is gone, re-checking before
+// each signal that the start record still names the review. Returns whether it signalled, whether
+// the group is still running afterwards, and whether the record turned out to be foreign.
+async function reapGroup(started) {
+  let signalled = false;
+  for (const [signal, seconds] of [
+    ['SIGTERM', 20],
+    ['SIGKILL', 10],
+  ]) {
+    const owner = reviewOwnership(started);
+    if (owner === 'gone') break;
+    if (owner === 'foreign') return { signalled, alive: false, foreign: true };
+    try {
+      process.kill(-started.pid, signal);
+      signalled = true;
+    } catch (error) {
+      if (error.code !== 'ESRCH') throw error;
+    }
+    for (let i = 0; i < seconds && groupAlive(started.pid); i++) await sleep(1_000);
+  }
+  const alive = ['runner', 'group'].includes(reviewOwnership(started));
+  return { signalled, alive, foreign: false };
+}
+const staleNote = (started) =>
+  `ignored a stale start record: pid ${started.pid} is no longer the review's (start time differs or was not recorded)`;
+
+async function localReviewStart(a, P) {
+  const pr = requirePr(a);
+  const sha = requireSha(a, P.workdir);
+  const stem = reviewStem(P, pr, sha);
+  const config = reviewConfig(a);
+  const previous = readJson(`${stem}.result.json`);
+  // A finished review of the same head, model, and effort is reused: a resumed run does not pay
+  // for it twice.
+  if (previous && !previous.error && sameConfig(previous, config)) {
+    return { started: false, cached: true, done: true, ...previous };
+  }
+  // A review of the same head and configuration that is still running (a resumed run, or a
+  // retried start) is waited for rather than launched twice.
+  const running = readJson(`${stem}.started.json`);
+  const owner = running?.sha === sha ? reviewOwnership(running) : 'gone';
+  if (owner === 'runner' && sameConfig(running, config)) {
+    return { started: false, cached: false, running: true, ...running };
+  }
+  const notes = owner === 'foreign' ? [staleNote(running)] : [];
+  // An earlier attempt is replaced: one with another configuration that is still running, or one
+  // whose runner is gone but left codex descendants in its group. Either would keep running
+  // unobserved once this record is overwritten, so it is reaped first.
+  if (owner === 'runner' || owner === 'group') {
+    const reaped = await reapGroup(running);
+    if (reaped.alive) fail(`the previous review's process group ${running.pid} survived SIGKILL`);
+    if (reaped.foreign) notes.push(staleNote(running));
+  }
+  rmSync(`${stem}.result.json`, { force: true });
+  removeReviewWorktree(P.workdir, reviewWorktree(P, pr, sha));
+  const args = [fileURLToPath(import.meta.url), 'local-review', '--pr', String(pr), '--sha', sha];
+  args.push('--root', P.root);
+  for (const flag of ['repo', 'model', 'effort', 'timeout-minutes']) {
+    if (typeof a[flag] === 'string') args.push(`--${flag}`, a[flag]);
+  }
+  const child = spawn(process.execPath, args, { detached: true, stdio: 'ignore' });
+  child.unref();
+  const started = {
+    sha,
+    ...config,
+    pid: child.pid,
+    lstart: processStartTime(child.pid),
+    startedAt: nowIso(),
+  };
+  writeJson(`${stem}.started.json`, started);
+  return { started: true, cached: false, ...started, ...(notes.length ? { notes } : {}) };
+}
+
+async function localReviewWait(a, P) {
+  const pr = requirePr(a);
+  const sha = requireSha(a, P.workdir);
+  const stem = reviewStem(P, pr, sha);
+  const file = `${stem}.result.json`;
+  const started = readJson(`${stem}.started.json`);
+  if (!started && !existsSync(file)) fail(`no review of ${sha.slice(0, 7)} was started`);
+  const maxSeconds = Number(a['max-seconds'] ?? 540);
+  const begin = Date.now();
+  for (;;) {
+    if (existsSync(file)) return { done: true, ...readJson(file) };
+    const owner = reviewOwnership(started);
+    if (owner !== 'runner') {
+      if (existsSync(file)) return { done: true, ...readJson(file) };
+      return {
+        done: true,
+        sha,
+        error: `the review process (pid ${started?.pid}) exited without a result`,
+        ...(owner === 'foreign' ? { notes: [staleNote(started)] } : {}),
+      };
+    }
+    const waitedSeconds = Math.round((Date.now() - begin) / 1000);
+    if (waitedSeconds >= maxSeconds) {
+      return { done: false, sha, pid: started.pid, startedAt: started.startedAt, waitedSeconds };
+    }
+    await sleep(5_000);
+  }
+}
+
+// A review whose wait failed or timed out is stopped, so it does not run on unobserved. The
+// review is its own process group (spawned detached), so the group signal reaches codex too.
+// Stop also reaps the leftovers of a finished, failed review: a result file only says the runner
+// ended, and a spawnSync timeout kills codex but can leave its descendants in the group. Every
+// signal is gated on the start record still naming this review (see reviewOwnership).
+async function localReviewStop(a, P) {
+  const pr = requirePr(a);
+  const sha = requireSha(a, P.workdir);
+  const stem = reviewStem(P, pr, sha);
+  const record = readJson(`${stem}.started.json`);
+  const started = record?.sha === sha ? record : null;
+  const pid = started?.pid ?? null;
+  const reaped = await reapGroup(started);
+  if (reaped.foreign) return { sha, pid, stopped: reaped.signalled, notes: [staleNote(started)] };
+  if (reaped.alive) fail(`the review process group ${pid} is still running after SIGKILL`);
+  removeReviewWorktree(P.workdir, reviewWorktree(P, pr, sha));
+  return { sha, pid, stopped: reaped.signalled };
+}
+
 function runCheck(a, P) {
   const pr = requirePr(a);
   const W = P.workdir;
@@ -1401,6 +1669,10 @@ const COMMANDS = {
   check: (a, P) => check(a, P),
   'check-start': (a, P) => checkStart(a, P),
   'check-wait': (a, P) => checkWait(a, P),
+  'local-review': localReviewRun,
+  'local-review-start': (a, P) => localReviewStart(a, P),
+  'local-review-wait': (a, P) => localReviewWait(a, P),
+  'local-review-stop': (a, P) => localReviewStop(a, P),
   publish,
   reply,
   'request-review': requestReview,

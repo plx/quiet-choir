@@ -21,7 +21,10 @@ Workflow({ name: 'merge-down-pr', args: { pr: 66, parentEpic: 32, followupEpic: 
 | `followupEpicTitle`  | Title for a newly created follow-up epic.                                                                                                                                                                                                                                                                                                                                                                  |
 | `parentEpic`         | Epic the landed issues belong to (context for follow-ups).                                                                                                                                                                                                                                                                                                                                                 |
 | `until`              | `prepare`, `review`, `fix`, or `merge` (default). Anything before `merge` is a dry run: nothing is pushed, commented, filed, or merged.                                                                                                                                                                                                                                                                    |
-| `codex`              | `auto` (default: request a review when the PR's own code changed or Codex never reviewed it), `always`, or `never`.                                                                                                                                                                                                                                                                                        |
+| `codex`              | `auto` (default: review again when the PR's own code changed, or Codex never reviewed it), `always`, or `never`.                                                                                                                                                                                                                                                                                           |
+| `codexMode`          | `local` (default): a clerk runs `codex review` locally (see below). `github`: comment `@codex review` and wait for the Codex app.                                                                                                                                                                                                                                                                          |
+| `codexModel`         | Model for the local review (default `gpt-6-astra`); overrides both `model` and `review_model`.                                                                                                                                                                                                                                                                                                             |
+| `codexEffort`        | Reasoning effort for the local review (default: Codex's configuration).                                                                                                                                                                                                                                                                                                                                    |
 | `maxCodexRounds`     | Base number of Codex re-reviews per run (default 3). Codex reports a few findings per pass, so on intricate PRs later rounds keep finding real problems that were already there. Beyond the base, re-reviews continue only while the latest round found a real major or blocker, up to `codexRoundsHardCap` (default 5). When re-reviews stop, new findings are still triaged and fixed, gated on CI only. |
 | `codexRoundsHardCap` | Upper bound on Codex re-reviews when major findings keep appearing (default 5).                                                                                                                                                                                                                                                                                                                            |
 | `maxCiRepairs`       | CI repair attempts (default 2).                                                                                                                                                                                                                                                                                                                                                                            |
@@ -49,14 +52,55 @@ and retargets the child to the default branch.
 | Rebase  | opus / high (sonnet / high for dependency PRs) | Only on conflicts. A semantic merge: adapt the PR to what changed beneath it (`upstream-delta.patch`).                                                                                                                                                                                                                                                        |
 | Review  | haiku ∥ opus / medium → opus / xhigh           | The local check suite runs in parallel with one reviewer that triages every unresolved thread and reviews the PR against its issue. Suspected blockers, poor alignment, or many major fixes escalate.                                                                                                                                                         |
 | Fix     | sonnet / high or opus / high ∥ sonnet / medium | The implementer is chosen by the reviewer's complexity rating; the scribe files follow-ups (deduplicated, as sub-issues of the follow-up epic). A minor finding of the workflow's own review that the implementer could not fully fix (partly or not at all) becomes a follow-up instead of blocking; threads, check/CI items and major findings still block. |
-| Gate    | haiku / low                                    | Retarget, push with lease, reply to threads (Codex threads are resolved), request `@codex review`, and wait for CI and Codex. New threads or red CI loop back through triage and fix.                                                                                                                                                                         |
+| Gate    | haiku / low                                    | Retarget, push with lease, reply to threads (Codex threads are resolved), and wait for CI while a clerk runs a local `codex review` of the pushed head. New findings, threads, or red CI loop back through triage and fix.                                                                                                                                    |
 | Land    | haiku / low                                    | Squash-merge pinned to the gated SHA; confirm the issue closed (close it explicitly if GitHub did not).                                                                                                                                                                                                                                                       |
 | Report  | sonnet / medium                                | Post an issue comment when something is worth recording; write the ledger headline.                                                                                                                                                                                                                                                                           |
 
 Dependabot PRs replace the review with a dependency review (`merge`, `fix`, `close` with an
 `@dependabot ignore …` command, or `defer`) and skip Codex.
 
-### Codex signals
+### Local Codex review
+
+By default (`codexMode: 'local'`) the workflow does not ask the Codex GitHub app for reviews.
+Instead a Haiku clerk runs `merge-down.mjs local-review-start`, which launches
+`codex review --base origin/<default> -c model="gpt-6-astra"` detached under a read-only sandbox,
+then `local-review-wait` in 9-minute slices (a review at xhigh effort can take well over 10
+minutes). Each review runs in a throwaway worktree of its own (`state/pr-N/review-<sha>`, removed
+when it ends), never in the workflow's worktree, which the check suite and later fix rounds use at
+the same time. The review text lands in `state/pr-N/codex-review-<sha>.md`; the relayed JSON carries
+its path, exit code, elapsed time, and a count of `[P0]`–`[P3]` findings, or the error. A finished
+review is cached by head, model, and effort: one of the same head with the same `codexModel` and
+`codexEffort` is reused, so a resumed run does not pay twice, and one still running is waited for
+rather than started again. A review with another model or effort is replaced (a running one is
+stopped first). When a wait fails or the review outlasts 54 minutes, `local-review-stop` kills it
+(its whole process group) and removes its worktree. It also reaps leftovers of a finished, failed
+review: a result file only says the runner ended, and a timeout can leave codex descendants alive in
+the group. A start that relaunches a failed review reaps the previous attempt's surviving group the
+same way first, and fails if it survives SIGKILL. A pid can be reused once its process is gone, so
+each start also records the runner's start time: start, wait, and stop treat the record as the
+review's only while a process with that pid has that start time, or, once the runner has exited,
+while its process group survives (a pid is not reused while its group exists). Otherwise nothing is
+signalled and the result carries a note that the stale record was ignored.
+
+The first review runs on the rebased head in parallel with the check suite and the merge-down
+review; an Opus triage then turns its findings into fixes, follow-ups, or recorded rejections,
+deduplicated against the review's own findings. Triage must give every tagged finding an entry: a
+shortfall is retried once with the count and the ids returned so far, and if triage still returned
+no finding at all the run blocks at the review step. A partial shortfall (the `[P0]`–`[P3]` count
+can overcount when a tag is quoted in prose) is recorded in the ledger notes rather than blocking. A
+finding that repeats an earlier fix decision is checked against the code at the reviewed head, and
+is a new fix item if the defect is still there; only note, follow-up, and deferred repeats are
+duplicates. A fix that the fixer could not finish was deferred to a follow-up issue, so triage sees
+it as deferred (with the issue number) rather than as attempted, and its repeats do not start new
+fix rounds. Each gate round that pushed new code reviews the pushed head in parallel with the CI
+wait, bounded by `maxCodexRounds` / `codexRoundsHardCap` as before. A failed review is noted and the
+gate proceeds on CI. When a local review ran, the gate refreshes its CI and unanswered-thread
+snapshot once the review finishes (CI is settled by then, so this costs only the settle delay), so
+threads that arrived during the review are triaged in the same round. `codexModel` and `codexEffort`
+override the model and reasoning effort. Threads that the GitHub app (or anyone else) still posts
+are triaged as unanswered threads.
+
+### Codex signals (`codexMode: 'github'`)
 
 Codex reviews only when a PR is opened or marked ready, or when someone comments `@codex review`;
 pushes do not trigger it. It keeps a summary comment (`<!-- codex-pull-request-review-summary -->`)

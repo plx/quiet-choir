@@ -13,7 +13,8 @@ export const meta = {
     },
     {
       title: 'Publish',
-      detail: 'PR description ∥ follow-ups (sonnet), open the PR, await the first Codex review',
+      detail:
+        'PR description ∥ follow-ups (sonnet), open the PR (GitHub Codex mode: await its review)',
     },
     { title: 'Land', detail: 'merge-down-pr as an inline child workflow' },
     { title: 'Report', detail: 'tick the epic, append the ledger, re-survey (haiku)' },
@@ -42,8 +43,9 @@ export const meta = {
  *                 the worktree is clean, and a check passed at the exact head.
  *   4. Publish    A scribe writes the PR description while another files out-of-scope follow-ups
  *                 under the follow-up epic. The helper opens the PR (only for a verified, green
- *                 head) and the workflow waits for Codex's automatic first review, so the landing
- *                 review can triage it in its first pass.
+ *                 head). With merge-down-pr's default local Codex review the landing reviews the
+ *                 head itself; with mergeDown.codexMode 'github' the workflow first waits for
+ *                 Codex's automatic review, so the landing review can triage it in its first pass.
  *   5. Land       merge-down-pr runs as an inline child workflow: review against the issue, thread
  *                 triage and fixes, CI + Codex + CodeQL gate, squash-merge, issue summary.
  *   6. Report     Tick the ticket in the epic's checklist, append the ledger, re-survey, and return
@@ -74,7 +76,7 @@ export const meta = {
  *
  * OUTCOMES (record.status)
  *   landed           the ticket's PR merged and the issue closed; epic ticked
- *   pr-open          until: 'pr' — the PR is open and has had its first Codex review
+ *   pr-open          until: 'pr' — the PR is open (and, in GitHub Codex mode, reviewed)
  *   closed-obsolete  the ticket was already done / no longer applies; closed with the evidence
  *   closed-split     a split ticket whose slices have all closed; closed and ticked
  *   needs-decision   a question for the maintainer (record.decision); rerun with args.ticket +
@@ -1135,7 +1137,10 @@ log(
   `PR #${ticketResult.pr} ${ticketResult.inFlight ? '(already open)' : 'opened'}: ${ticketResult.url}`,
 );
 
-if (!T.inFlight) {
+// With a local Codex review (merge-down-pr's default codexMode), the landing reviews the head
+// itself, so there is no GitHub review to wait for here.
+const githubCodex = A.mergeDown.codexMode === 'github';
+if (!T.inFlight && githubCodex) {
   const first = await awaitFirstReview(ticketResult.pr, ticketResult.head, ticketResult.openedAt);
   if (first.error) record.notes.push(`waiting for the first Codex review failed: ${first.error}`);
   else if (!first.done)

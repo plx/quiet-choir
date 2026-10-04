@@ -1,7 +1,7 @@
 export const meta = {
   name: 'merge-down-pr',
   description:
-    'Land one PR: rebase onto main, triage Codex threads, review against its issue, fix, gate on CI + Codex, squash-merge, report',
+    'Land one PR: rebase onto main, review against its issue with a local Codex review, triage threads, fix, gate on CI + Codex, squash-merge, report',
   whenToUse:
     'Merging down a stack of agent-authored PRs (or Dependabot PRs) one PR per run, in stack order. Args: {pr, followupEpic?, parentEpic?, until?}.',
   phases: [
@@ -12,13 +12,14 @@ export const meta = {
     },
     {
       title: 'Review',
-      detail: 'local checks ∥ thread triage + review (opus medium → xhigh on escalation)',
+      detail:
+        'local checks ∥ thread triage + review (opus medium → xhigh) ∥ local codex review (haiku)',
     },
     {
       title: 'Fix',
       detail: 'implement decisions (sonnet high or opus high) ∥ file follow-ups (sonnet)',
     },
-    { title: 'Gate', detail: 'push, reply, request Codex, wait for CI + Codex (haiku)' },
+    { title: 'Gate', detail: 'push, reply, wait for CI ∥ local codex review (haiku)' },
     { title: 'Land', detail: 'squash-merge and verify the issue closed (haiku)' },
     { title: 'Report', detail: 'issue summary comment and ledger line (sonnet)' },
   ],
@@ -34,7 +35,8 @@ export const meta = {
  *               keeps the rebase to the PR's own commits.
  *   2. Rebase   If git stops on conflicts, an agent resolves them semantically (adapting the PR to
  *               whatever changed beneath it), not by picking sides.
- *   3. Review   In parallel: the local check suite, and one reviewer that triages every
+ *   3. Review   In parallel: the local check suite, a local `codex review` of the rebased head
+ *               (triaged into fixes and follow-ups once it finishes), and one reviewer that triages every
  *               unresolved review thread (valid → fix / out of scope → follow-up / invalid →
  *               explain) and reviews the PR against its issue. Suspected blockers escalate to a
  *               deeper reviewer whose assessment replaces the first.
@@ -42,9 +44,10 @@ export const meta = {
  *               reviewer's complexity rating), and a scribe files out-of-scope follow-ups under a
  *               follow-up epic (created on first use).
  *   5. Gate     Retarget to the default branch, push with lease, reply to and resolve threads,
- *               request "@codex review" when the PR's own code changed (or Codex never reviewed
- *               it), then wait for CI and Codex. New Codex threads or red CI loop back through
- *               triage and fix, bounded by maxCodexRounds / maxCiRepairs.
+ *               then wait for CI while a clerk runs a local `codex review` of the pushed head
+ *               when the PR's own code changed (codexMode 'github': request "@codex review" and
+ *               wait for Codex's threads instead). New Codex findings, unanswered threads, or red
+ *               CI loop back through triage and fix, bounded by maxCodexRounds / maxCiRepairs.
  *   6. Land     Squash-merge pinned to the gated head SHA; confirm the issue closed (closing it
  *               explicitly if GitHub did not).
  *   7. Report   Post a summary comment on the issue when there is something worth recording, and
@@ -64,6 +67,12 @@ export const meta = {
  *   args.until            'prepare' | 'review' | 'fix' | 'merge' (default). Anything short of
  *                         'merge' publishes nothing: no pushes, comments, issues, or merges.
  *   args.codex            'auto' (default) | 'always' | 'never' — when to request a Codex review
+ *   args.codexMode        'local' (default): a clerk runs `codex review --base origin/<default>`
+ *                         in the worktree (before the first review and after each push that
+ *                         changed code) and the triage reads its output; 'github': comment
+ *                         "@codex review" and wait for the Codex app's threads
+ *   args.codexModel       model for the local review (default gpt-6-astra)
+ *   args.codexEffort      reasoning effort for the local review (default: Codex's config)
  *   args.maxCodexRounds   Codex re-reviews per run (default 3). Past that, re-reviews continue
  *                         only while the latest round found a real major or blocker, up to
  *   args.codexRoundsHardCap  (default 5). When re-reviews stop, remaining findings are still
@@ -112,6 +121,11 @@ const A = {
   root: args?.root ?? null,
   until: args?.until ?? 'merge',
   codex: args?.codex ?? 'auto',
+  // 'local' (default): run `codex review` in the worktree through a clerk after each push.
+  // 'github': comment "@codex review" and wait for the Codex app's threads.
+  codexMode: args?.codexMode ?? 'local',
+  codexModel: args?.codexModel ?? 'gpt-6-astra',
+  codexEffort: args?.codexEffort ?? null,
   maxCodexRounds: args?.maxCodexRounds ?? 3,
   codexRoundsHardCap: args?.codexRoundsHardCap ?? 5,
   maxCiRepairs: args?.maxCiRepairs ?? 2,
@@ -127,6 +141,10 @@ if (!Number.isInteger(A.pr) || A.pr <= 0) {
 if (!STAGES.includes(A.until)) {
   return { status: 'error', reason: `args.until must be one of ${STAGES.join(', ')}` };
 }
+if (!['local', 'github'].includes(A.codexMode)) {
+  return { status: 'error', reason: "args.codexMode must be 'local' or 'github'" };
+}
+const LOCAL = A.codexMode === 'local';
 const publishing = A.until === 'merge';
 
 // ── Schemas ──────────────────────────────────────────────────────────────────────────────────
@@ -177,6 +195,24 @@ const REVIEW = obj({
   summaryNotes: arr(str),
 });
 const TRIAGE = obj({ threads: arr(THREAD), notes: arr(str) });
+// Decisions on a local `codex review`'s findings. They are not GitHub threads, so there is
+// nothing to reply to: each becomes a fix, a follow-up, or a recorded rejection.
+const CODEX_TRIAGE = obj({
+  findings: arr(
+    obj({
+      id: str,
+      title: str,
+      verdict: oneOf('valid', 'partly-valid', 'invalid', 'duplicate'),
+      disposition: oneOf('fix', 'follow-up', 'note'),
+      severity: SEVERITY,
+      complexity: COMPLEXITY,
+      detail: str,
+      plan: str,
+      files: arr(str),
+    }),
+  ),
+  notes: arr(str),
+});
 const DEPENDENCY_REVIEW = obj({
   decision: oneOf('merge', 'fix', 'close', 'defer'),
   rationale: str,
@@ -236,6 +272,9 @@ const record = {
   review: { escalated: false, alignment: null, findings: [] },
   threads: [],
   codexReviewsRequested: 0,
+  codexMode: A.codexMode,
+  localReviews: [],
+  codexFindings: [],
   rounds: 0,
   ciRepairs: 0,
   followups: [],
@@ -402,6 +441,8 @@ const REPO = prep.repo;
 const DEF = prep.defaultBranch;
 const W = prep.paths.workdir;
 const DIR = PR.files.dir;
+// The head the first review sees (moved by conflict resolution); a local Codex review runs on it.
+let reviewHead = SYNC.newHead ?? null;
 const ISSUE = PR.issue;
 const kind = PR.isDependency ? 'dependency' : 'change';
 TOOL = `${prep.paths.toolsDir}/merge-down.mjs`;
@@ -495,6 +536,7 @@ Return completed, head, one entry per file you resolved non-trivially (what you 
       `rebase kept ${verified.ownCommits} of ${SYNC.originalCommits} commits (some became empty); check the history`,
     );
   }
+  reviewHead = verified.head;
   record.rebase.resolutions = resolution.resolutions;
   record.rebase.concerns = resolution.concerns;
 }
@@ -578,8 +620,149 @@ async function localCheck(label, phaseName) {
   return { passed: false, error: 'the local check did not finish within 45 minutes' };
 }
 
+// Local Codex review: a haiku clerk runs `codex review` on one head (detached, like the check
+// suite, since a review can outlast the shell limit) and relays where its text landed. A review
+// that could not be started or waited for is stopped, so it does not run on unobserved.
+async function localCodexReview(sha, label, phaseName) {
+  const flags = `--sha ${sha} --model ${sh(A.codexModel)}${A.codexEffort ? ` --effort ${sh(A.codexEffort)}` : ''}`;
+  const stopped = async (failure) => {
+    const stop = (
+      await clerk(`codex review ${label} (stop)`, phaseName, [
+        step('stop', 'local-review-stop', `--sha ${sha}`),
+      ])
+    ).stop;
+    if (stop?.error) log(`Could not stop the local Codex review ${label}: ${stop.error}`);
+    return failure;
+  };
+  const start = (
+    await clerk(`codex review ${label}`, phaseName, [step('start', 'local-review-start', flags)])
+  ).start;
+  if (!start || start.error) return stopped(start ?? { error: 'no output from start' });
+  if (start.done) return start;
+  for (let i = 1; i <= 6; i++) {
+    const waited = (
+      await clerk(`codex review ${label} (wait ${i})`, phaseName, [
+        step('wait', 'local-review-wait', `--sha ${sha} --max-seconds 540`),
+      ])
+    ).wait;
+    if (!waited || waited.error) return stopped(waited ?? { error: 'no output from wait' });
+    if (waited.done) return waited;
+  }
+  return stopped({ error: 'the local Codex review did not finish within 54 minutes' });
+}
+
+// Turns a local Codex review into work items. Returns {fix, followup, findings} or {error}.
+async function triageLocal(result, round) {
+  const none = { fix: [], followup: [], findings: [] };
+  record.localReviews.push({
+    round,
+    sha: result?.sha?.slice(0, 12) ?? null,
+    findings: result?.findings ?? 0,
+    priorities: result?.priorities ?? null,
+    elapsedSeconds: result?.elapsedSeconds ?? null,
+    file: result?.file ?? null,
+    error: result?.error ?? null,
+  });
+  if (!result || result.error) {
+    record.notes.push(
+      `local Codex review in round ${round} failed (${result?.error ?? 'no output'}); proceeding without it`,
+    );
+    return none;
+  }
+  log(`Local Codex review r${round}: ${result.findings} finding(s) in ${result.elapsedSeconds}s`);
+  if (!result.findings) return none;
+  // Earlier decisions, listed for consistency. Note, follow-up, and deferred decisions settle a
+  // repeat; a fix decision that Codex reports again may not have worked, so it is checked against
+  // the code. A fix the fixer could not finish was deferred to a follow-up issue, so it is labelled
+  // as such rather than as attempted, or every later round would reopen it.
+  const deferred = new Map((record.deferredFindings ?? []).map((d) => [d.key, d]));
+  const outcome = (f) => {
+    const d = deferred.get(`finding:${f.id}`);
+    if (d) return `, deferred to follow-up${d.issue ? ` #${d.issue}` : ''}`;
+    return f.disposition === 'fix' ? ', fix attempted' : '';
+  };
+  const known = [
+    ...record.review.findings.map((f) => `- ${f.id}: ${f.title} (${f.disposition}${outcome(f)})`),
+    ...record.codexFindings.map(
+      (f) => `- ${f.id}: ${f.title} (${f.verdict}, ${f.disposition}${outcome(f)})`,
+    ),
+  ].join('\n');
+  const ask = (extra = '') =>
+    agent(
+      `Codex reviewed PR #${A.pr} locally (\`codex review --base origin/${DEF}\` at ${result.sha.slice(0, 12)}). Its review is in ${result.file}: ${result.findings} finding(s), each tagged [P0]–[P3]. Decide what to do with each one. You do not edit code.
+
+${situation()}
+
+Read the review file and the code each finding points at; try to refute a finding before accepting it.
+Decisions this merge-down already made, listed for consistency:
+${known || '- none'}
+A Codex finding that repeats an earlier note or follow-up decision, or an earlier fix that was deferred (marked "deferred to follow-up"), is verdict duplicate, disposition note, naming the earlier id (and its follow-up issue, if listed) in detail. A finding that repeats an earlier fix decision (marked "fix attempted") must be checked against the code at the reviewed head: if the defect is still present, the fix did not work, so treat it as a new finding (verdict valid or partly-valid, disposition fix, detail naming the earlier id and why the fix was incomplete). Use duplicate only when the current code shows it is already resolved.
+
+For each Codex finding, in the review's order: id (F1, F2, …), title, verdict (valid | partly-valid | invalid | duplicate), disposition (fix: within this PR's issue scope and intent | follow-up: valid but beyond it | note: invalid, duplicate, or not worth acting on), severity (blocker | major | minor, by your own judgment rather than Codex's tag), complexity (mechanical | subtle), detail (the problem in 1–3 sentences with path:line), plan (concrete for fix and follow-up; for note, why not), and files. This is Codex round ${round}; re-reviews stop after round ${A.maxCodexRounds} unless a round keeps finding real major problems (hard cap ${A.codexRoundsHardCap}), so be decisive and rate severity honestly. Plans cover code and docs only, never GitHub actions.${standing}${extra}`,
+      { ...TIER.reviewer, label: `codex triage r${round}`, phase: 'Review', schema: CODEX_TRIAGE },
+    );
+  let triage = await ask();
+  if (!triage) return { error: 'triage of the local Codex review returned nothing' };
+  // Every tagged finding needs an entry, or one could merge unhandled. The count can overcount
+  // (a tag quoted in prose), so a shortfall is retried once and then blocks only when triage
+  // returned no finding at all; a partial shortfall is recorded in the notes instead.
+  if (triage.findings.length < result.findings) {
+    log(
+      `Local Codex triage r${round} covered ${triage.findings.length} of ${result.findings} finding(s); retrying`,
+    );
+    const again = await ask(
+      `\nThe review has ${result.findings} tagged findings and every one needs an entry in findings. Your previous answer covered only ${triage.findings.length}${triage.findings.length ? ` (${triage.findings.map((f) => f.id).join(', ')})` : ''}.`,
+    );
+    if (!again) return { error: 'triage of the local Codex review returned nothing on retry' };
+    triage = again;
+  }
+  if (!triage.findings.length) {
+    return {
+      error: `triage of the local Codex review covered 0 of ${result.findings} findings`,
+    };
+  }
+  if (triage.findings.length < result.findings) {
+    record.notes.push(
+      `triage of the local Codex review in round ${round} covered ${triage.findings.length} of ${result.findings} tagged finding(s); proceeding with those`,
+    );
+  }
+  if (triage.notes?.length) record.triageNotes = [...(record.triageNotes ?? []), ...triage.notes];
+  const findings = triage.findings.map((f) => ({
+    ...f,
+    id: `cx${round}-${f.id}`,
+    disposition: ['invalid', 'duplicate'].includes(f.verdict) ? 'note' : f.disposition,
+  }));
+  const out = { ...none, findings };
+  for (const f of findings) {
+    record.codexFindings.push({
+      id: f.id,
+      round,
+      title: f.title,
+      verdict: f.verdict,
+      severity: f.severity,
+      disposition: f.disposition,
+      detail: f.detail,
+      plan: f.plan,
+    });
+    const item = {
+      key: `finding:${f.id}`,
+      source: 'local Codex review',
+      title: f.title,
+      severity: f.severity,
+      complexity: f.complexity,
+      plan: f.plan,
+      detail: f.detail,
+      files: f.files,
+    };
+    if (f.disposition === 'fix') out.fix.push(item);
+    if (f.disposition === 'follow-up') out.followup.push(item);
+  }
+  return out;
+}
+
 phase('Review');
-const [check0Result, firstReview] = await parallel([
+const wantFirstLocal = kind === 'change' && LOCAL && A.codex !== 'never' && Boolean(reviewHead);
+const [check0Result, firstReview, firstLocal] = await parallel([
   () => localCheck('check-0', 'Review'),
   () =>
     kind === 'dependency'
@@ -595,8 +778,10 @@ const [check0Result, firstReview] = await parallel([
           phase: 'Review',
           schema: REVIEW,
         }),
+  async () => (wantFirstLocal ? localCodexReview(reviewHead, 'r0', 'Review') : null),
 ]);
 const check0 = check0Result ?? { passed: false, error: 'local checks produced no output' };
+const firstLocalOk = wantFirstLocal && Boolean(firstLocal) && !firstLocal.error;
 if (!firstReview) return blocked('review', 'reviewer returned nothing');
 log(`Local checks ${check0.passed ? 'pass' : `fail at ${check0.failedStep ?? check0.error}`}`);
 
@@ -745,7 +930,12 @@ if (kind === 'dependency') {
 } else {
   rememberThreads(review.threads, 0);
   const found = itemsFrom(review.threads, review.findings);
-  work = { fix: [...found.fix, ...checkItem(check0, 'check-0')], followup: found.followup };
+  const local = wantFirstLocal ? await triageLocal(firstLocal, 0) : { fix: [], followup: [] };
+  if (local.error) return blocked('review', local.error);
+  work = {
+    fix: [...found.fix, ...local.fix, ...checkItem(check0, 'check-0')],
+    followup: [...found.followup, ...local.followup],
+  };
 }
 log(`Plan: ${work.fix.length} fix item(s), ${work.followup.length} follow-up(s)`);
 if (A.until === 'review') return finish('stopped', { review, check: check0, plannedWork: work });
@@ -939,8 +1129,9 @@ async function fixRoundOf(threads, work) {
         detail: `${w.detail}\n\nThe fixer ${how} this in PR #${A.pr}${d.commit?.trim() ? ` (${d.commit.trim()})` : ''}: ${d.summary}${fixed.notes?.length ? `\nFixer notes: ${fixed.notes.join(' ')}` : ''}`,
       };
     });
+    let filedDeferred = null;
     if (publishing) {
-      const filedDeferred = await fileFollowups(items);
+      filedDeferred = await fileFollowups(items);
       const keys = new Set((filedDeferred?.issues ?? []).map((i) => i.key));
       const unfiled = items.filter((i) => !keys.has(i.key)).map((i) => i.key);
       if (unfiled.length)
@@ -948,7 +1139,12 @@ async function fixRoundOf(threads, work) {
     }
     record.deferredFindings = [
       ...(record.deferredFindings ?? []),
-      ...deferred.map((d) => ({ key: d.key, status: d.status, summary: d.summary })),
+      ...deferred.map((d) => ({
+        key: d.key,
+        status: d.status,
+        summary: d.summary,
+        issue: filedDeferred?.issues?.find((i) => i.key === d.key)?.number ?? null,
+      })),
     ];
     log(
       `Deferred ${deferred.length} minor finding(s) to follow-ups: ${deferred.map((d) => d.key).join(', ')}`,
@@ -970,7 +1166,13 @@ if (A.until === 'fix') return finish('stopped', { review, plannedReplies: firstR
 
 const codexAllowed = kind === 'change' && A.codex !== 'never';
 const ownCodeChanged = SYNC.status === 'conflict' || firstRound.changed;
-let wantCodex = codexAllowed && (A.codex === 'always' || ownCodeChanged || !PR.codex.reviewed);
+// Locally, the review stage already reviewed the head it saw (after any conflict resolution), so
+// only new commits need another pass, unless that review failed: then the pushed head gets one.
+// The GitHub app reviews the pushed head on request.
+let wantCodex =
+  codexAllowed &&
+  (A.codex === 'always' ||
+    (LOCAL ? firstRound.changed || !firstLocalOk : ownCodeChanged || !PR.codex.reviewed));
 const closesIssue = kind === 'change' && ISSUE && review.issueDisposition.action === 'close';
 // A PR body that says "Closes #N" would close an issue the review decided to keep open.
 const keepsIssueOpen = kind === 'change' && ISSUE && review.issueDisposition.action === 'keep-open';
@@ -1018,13 +1220,13 @@ while (true) {
     ),
   ];
   if (replies.length) commands.push(step('reply', 'reply', '', JSON.stringify(replies, null, 1)));
-  if (wantCodex) commands.push(step('review', 'request-review'));
+  if (wantCodex && !LOCAL) commands.push(step('review', 'request-review'));
   const pub = await clerk(`publish r${record.rounds}`, 'Gate', commands);
   if (pub.publish.error) return blocked('publish', pub.publish.error);
   if (replies.length && (pub.reply.error || pub.reply.failures)) {
     record.notes.push(`thread replies: ${pub.reply.error ?? `${pub.reply.failures} failed`}`);
   }
-  if (wantCodex && pub.review.error)
+  if (wantCodex && !LOCAL && pub.review.error)
     return blocked('publish', `could not request a Codex review: ${pub.review.error}`);
   if (closesIssue && pub.publish.linked === false)
     record.notes.push(`issue #${ISSUE.number} is not linked as closing; land will verify`);
@@ -1033,7 +1235,11 @@ while (true) {
   record.codexReviewsRequested = codexRequests;
   replies = [];
 
-  const gate = await waitForGate(head, wantCodex ? pub.review.since : pub.publish.at, wantCodex);
+  const githubCodex = wantCodex && !LOCAL;
+  let [gate, localReview] = await parallel([
+    () => waitForGate(head, githubCodex ? pub.review.since : pub.publish.at, githubCodex),
+    async () => (wantCodex && LOCAL ? localCodexReview(head, `r${record.rounds}`, 'Gate') : null),
+  ]);
   if (!gate || gate.error) return blocked('gate', gate?.error ?? 'waiting produced no output');
   if (gate.headMoved)
     return blocked('gate', `PR head moved to ${gate.headSha} while waiting; someone else pushed`);
@@ -1042,12 +1248,32 @@ while (true) {
       'gate',
       `timed out waiting (CI ${gate.ci?.state ?? '?'}, Codex ${gate.codex?.state ?? '?'})`,
     );
-  log(`Round ${record.rounds}: CI ${gate.ci.state}; Codex ${gate.codex.state}`);
+  if (wantCodex && LOCAL) {
+    // The local review usually outlasts the CI wait, so the attention snapshot above can predate
+    // threads that arrived meanwhile. CI is settled by now, so this returns after the settle delay
+    // with fresh ci and attention.
+    const fresh = await waitForGate(head, pub.publish.at, false);
+    if (!fresh || fresh.error)
+      return blocked('gate', fresh?.error ?? 'refreshing the gate produced no output');
+    if (fresh.headMoved)
+      return blocked(
+        'gate',
+        `PR head moved to ${fresh.headSha} while waiting; someone else pushed`,
+      );
+    if (!fresh.done)
+      return blocked('gate', `timed out refreshing the gate (CI ${fresh.ci?.state ?? '?'})`);
+    gate = fresh;
+  }
+  log(
+    `Round ${record.rounds}: CI ${gate.ci.state}; Codex ${LOCAL ? (wantCodex ? `local, ${localReview?.error ? 'failed' : `${localReview?.findings ?? 0} finding(s)`}` : 'not run') : gate.codex.state}`,
+  );
 
   let ciFailed = gate.ci.state === 'failure';
-  if (gate.codex.state === 'error')
+  if (!LOCAL && gate.codex.state === 'error')
     record.notes.push(`Codex review errored in round ${record.rounds}; proceeding on CI`);
-  const codexFindings = wantCodex && gate.codex.state === 'findings';
+  // GitHub Codex findings arrive as threads; local ones as a review file triaged separately.
+  const codexFindings = githubCodex && gate.codex.state === 'findings';
+  const localFindings = Boolean(localReview && !localReview.error && localReview.findings);
   // Anything else unanswered: code-scanning (CodeQL) threads or alerts, other bots, humans.
   const attention = (gate.attention?.untriagedThreads ?? 0) + (gate.attention?.openAlerts ?? 0);
   let needsTriage = codexFindings || attention > 0;
@@ -1087,10 +1313,24 @@ while (true) {
       }
     }
   }
-  if (!ciFailed && !needsTriage) break;
+  if (!ciFailed && !needsTriage && !localFindings) {
+    if (localReview) {
+      const local = await triageLocal(localReview, codexRequests);
+      if (local.error) return blocked('review', local.error);
+    }
+    break;
+  }
 
   let threads = [];
   const roundWork = { fix: [], followup: [] };
+  let localTriaged = [];
+  if (localReview) {
+    const local = await triageLocal(localReview, codexRequests);
+    if (local.error) return blocked('review', local.error);
+    roundWork.fix.push(...local.fix);
+    roundWork.followup.push(...local.followup);
+    localTriaged = local.findings;
+  }
   if (needsTriage) {
     phase('Review');
     const settled = record.threads.map((t) => `- ${t.title}: ${t.verdict}, ${t.action}`).join('\n');
@@ -1139,7 +1379,7 @@ Threads by github-advanced-security are CodeQL code-scanning alerts (threads.md 
   // Codex reports a few findings per pass, so intricate PRs show a long tail of real,
   // pre-existing problems rather than churn. Past the base limit, keep asking only while the
   // latest round still found something major.
-  const latestMajor = threads.some(
+  const latestMajor = [...threads, ...localTriaged].some(
     (t) =>
       ['major', 'blocker'].includes(t.severity) && ['valid', 'partly-valid'].includes(t.verdict),
   );
@@ -1151,7 +1391,7 @@ Threads by github-advanced-security are CodeQL code-scanning alerts (threads.md 
       `Codex round ${codexRequests} found a major problem; requesting another review`,
     );
   }
-  if (codexFindings && next.changed && !wantCodex) {
+  if ((codexFindings || localFindings) && next.changed && !wantCodex) {
     record.notes.push(
       latestMajor
         ? `Codex hard cap (${A.codexRoundsHardCap}) reached with a major finding in the last round; its fixes were gated on CI only`
@@ -1202,6 +1442,7 @@ if (kind === 'change' && ISSUE) {
     threads: record.threads,
     fixes: record.fixes ?? [],
     findings: record.review.findings,
+    codexFindings: record.codexFindings,
     followups: record.followups,
     summaryNotes: review.summaryNotes,
     escalatedReview: record.review.escalated,
