@@ -621,22 +621,34 @@ async function localCheck(label, phaseName) {
 }
 
 // Local Codex review: a haiku clerk runs `codex review` on one head (detached, like the check
-// suite, since a review can outlast the shell limit) and relays where its text landed.
+// suite, since a review can outlast the shell limit) and relays where its text landed. A review
+// that could not be started or waited for is stopped, so it does not run on unobserved.
 async function localCodexReview(sha, label, phaseName) {
   const flags = `--sha ${sha} --model ${sh(A.codexModel)}${A.codexEffort ? ` --effort ${sh(A.codexEffort)}` : ''}`;
+  const stopped = async (failure) => {
+    const stop = (
+      await clerk(`codex review ${label} (stop)`, phaseName, [
+        step('stop', 'local-review-stop', `--sha ${sha}`),
+      ])
+    ).stop;
+    if (stop?.error) log(`Could not stop the local Codex review ${label}: ${stop.error}`);
+    return failure;
+  };
   const start = (
     await clerk(`codex review ${label}`, phaseName, [step('start', 'local-review-start', flags)])
   ).start;
-  if (!start || start.error || start.done) return start ?? { error: 'no output from start' };
+  if (!start || start.error) return stopped(start ?? { error: 'no output from start' });
+  if (start.done) return start;
   for (let i = 1; i <= 6; i++) {
     const waited = (
       await clerk(`codex review ${label} (wait ${i})`, phaseName, [
         step('wait', 'local-review-wait', `--sha ${sha} --max-seconds 540`),
       ])
     ).wait;
-    if (!waited || waited.error || waited.done) return waited ?? { error: 'no output from wait' };
+    if (!waited || waited.error) return stopped(waited ?? { error: 'no output from wait' });
+    if (waited.done) return waited;
   }
-  return { error: 'the local Codex review did not finish within 54 minutes' };
+  return stopped({ error: 'the local Codex review did not finish within 54 minutes' });
 }
 
 // Turns a local Codex review into work items. Returns {fix, followup, findings} or {error}.

@@ -63,11 +63,15 @@ Dependabot PRs replace the review with a dependency review (`merge`, `fix`, `clo
 
 By default (`codexMode: 'local'`) the workflow does not ask the Codex GitHub app for reviews.
 Instead a Haiku clerk runs `merge-down.mjs local-review-start`, which launches
-`codex review --base origin/<default> -c model="gpt-6-astra"` detached in the worktree under a
-read-only sandbox, then `local-review-wait` in 9-minute slices (a review at xhigh effort can take
-well over 10 minutes). The review text lands in `state/pr-N/codex-review-<sha>.md`; the relayed JSON
-carries its path, exit code, elapsed time, and a count of `[P0]`–`[P3]` findings, or the error. A
-finished review of the same head is reused, so a resumed run does not pay twice.
+`codex review --base origin/<default> -c model="gpt-6-astra"` detached under a read-only sandbox,
+then `local-review-wait` in 9-minute slices (a review at xhigh effort can take well over 10
+minutes). Each review runs in a throwaway worktree of its own (`state/pr-N/review-<sha>`, removed
+when it ends), never in the workflow's worktree, which the check suite and later fix rounds use at
+the same time. The review text lands in `state/pr-N/codex-review-<sha>.md`; the relayed JSON carries
+its path, exit code, elapsed time, and a count of `[P0]`–`[P3]` findings, or the error. A finished
+review of the same head is reused, so a resumed run does not pay twice, and one still running is
+waited for rather than started again. When a wait fails or the review outlasts 54 minutes,
+`local-review-stop` kills it (its whole process group) and removes its worktree.
 
 The first review runs on the rebased head in parallel with the check suite and the merge-down
 review; an Opus triage then turns its findings into fixes, follow-ups, or recorded rejections,

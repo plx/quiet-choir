@@ -19,8 +19,10 @@
 //   reply    --pr N < replies.json        reply to review threads (resolves Codex threads by default)
 //   request-review --pr N                comment "@codex review"
 //   local-review-start --pr N [--sha S] [--model M] [--effort E]   run `codex review --base
-//                                        origin/<default>` on the worktree head, detached
+//                                        origin/<default>` on the worktree head, detached, in a
+//                                        throwaway worktree of its own
 //   local-review-wait  --pr N [--sha S] [--max-seconds 540]  wait for it; {done: false} on timeout
+//   local-review-stop  --pr N [--sha S]  kill that review if it is still running
 //   rerun    --pr N --sha S              re-run failed CI jobs for S once (flake check)
 //   verify-fixes --pr N --commits a,b    reported commits are in HEAD; last check passed at HEAD
 //   await    --pr N --sha S --since ISO [--codex required|skip] [--ci wait|skip] [--stale-grace 90]
@@ -909,53 +911,74 @@ export function reviewFindings(text) {
   return { findings: Object.values(counts).reduce((x, y) => x + y, 0), priorities: counts };
 }
 
+// Each review runs in a throwaway worktree of its own at the reviewed head (removed afterwards),
+// under Codex's read-only sandbox. The workflow's worktree is shared with the check suite running
+// at the same time and with later fix rounds, and a review can outlive a failed or timed-out wait,
+// so a review never reads from or writes to it.
+const reviewWorktree = (P, pr, sha) => join(prDir(P, pr), `review-${sha.slice(0, 12)}`);
+function removeReviewWorktree(W, dir) {
+  run('git', ['-C', W, 'worktree', 'remove', '--force', dir], { allowFail: true });
+  rmSync(dir, { recursive: true, force: true });
+  run('git', ['-C', W, 'worktree', 'prune'], { allowFail: true });
+}
+
 function localReview(a, P, R) {
   const pr = requirePr(a);
   const W = P.workdir;
   const sha = requireSha(a, W);
-  if (git(W, ['rev-parse', 'HEAD']) !== sha) fail(`the worktree is not at ${sha.slice(0, 7)}`);
   const stem = reviewStem(P, pr, sha);
   const base = `origin/${R.def}`;
   const model = typeof a.model === 'string' ? a.model : 'gpt-6-astra';
-  // Codex's own sandbox (workspace-write) lets the review run tests and probes, as it does by hand.
-  const args = ['review', '--base', base, '-c', `model="${model}"`];
-  if (typeof a.effort === 'string') args.push('-c', `model_reasoning_effort="${a.effort}"`);
-  const started = Date.now();
-  const r = spawnSync('codex', args, {
-    cwd: W,
-    stdio: ['ignore', 'pipe', 'pipe'],
-    encoding: 'utf8',
-    maxBuffer: 512 * 1024 * 1024,
-    timeout: Number(a['timeout-minutes'] ?? 40) * 60_000,
-  });
-  const text = stripAnsi(r.stdout ?? '').trim();
-  writeFileSync(`${stem}.md`, `${text}\n`);
-  writeFileSync(`${stem}.log`, stripAnsi(r.stderr ?? ''));
-  const result = {
-    sha,
+  const args = [
+    'review',
+    '--base',
     base,
-    model,
-    file: `${stem}.md`,
-    log: `${stem}.log`,
-    exitCode: r.status,
-    elapsedSeconds: Math.round((Date.now() - started) / 1000),
-    ...reviewFindings(text),
-  };
-  if (r.error) result.error = `codex review failed to run: ${r.error.message}`;
-  else if (r.status !== 0)
-    result.error = `codex review exited ${r.status}: ${tail(stripAnsi(r.stderr ?? ''), 5)}`;
-  else if (!text) result.error = 'codex review printed no review';
-  // The review must leave the branch as it found it: probes it left behind are reported and
-  // removed (this is the workflow's dedicated worktree, at a committed head).
-  const moved = git(W, ['rev-parse', 'HEAD']) !== sha;
-  const dirty = git(W, ['status', '--porcelain']);
-  if (dirty) result.cleaned = dirty.split('\n');
-  if (moved || dirty) {
-    git(W, ['reset', '--hard', sha]);
-    git(W, ['clean', '-fd']);
+    '-c',
+    `model="${model}"`,
+    '-c',
+    'sandbox_mode="read-only"',
+  ];
+  if (typeof a.effort === 'string') args.push('-c', `model_reasoning_effort="${a.effort}"`);
+  const RW = reviewWorktree(P, pr, sha);
+  removeReviewWorktree(W, RW); // left behind by a review that was killed
+  git(W, ['worktree', 'add', '--detach', RW, sha]);
+  try {
+    const started = Date.now();
+    const r = spawnSync('codex', args, {
+      cwd: RW,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      encoding: 'utf8',
+      maxBuffer: 512 * 1024 * 1024,
+      timeout: Number(a['timeout-minutes'] ?? 40) * 60_000,
+    });
+    const text = stripAnsi(r.stdout ?? '').trim();
+    writeFileSync(`${stem}.md`, `${text}\n`);
+    writeFileSync(`${stem}.log`, stripAnsi(r.stderr ?? ''));
+    const result = {
+      sha,
+      base,
+      model,
+      file: `${stem}.md`,
+      log: `${stem}.log`,
+      exitCode: r.status,
+      elapsedSeconds: Math.round((Date.now() - started) / 1000),
+      ...reviewFindings(text),
+    };
+    if (r.error) result.error = `codex review failed to run: ${r.error.message}`;
+    else if (r.status !== 0)
+      result.error = `codex review exited ${r.status}: ${tail(stripAnsi(r.stderr ?? ''), 5)}`;
+    else if (!text) result.error = 'codex review printed no review';
+    // Both are about the review's own worktree, which is discarded: reported for information.
+    const dirty = git(RW, ['status', '--porcelain']);
+    if (dirty) result.dirty = dirty.split('\n');
+    if (git(RW, ['rev-parse', 'HEAD']) !== sha) {
+      result.moved = true;
+      result.error ??= `the review moved its worktree off ${sha.slice(0, 7)}`;
+    }
+    return result;
+  } finally {
+    removeReviewWorktree(W, RW);
   }
-  if (moved) result.error = `the review moved the worktree off ${sha.slice(0, 7)}; reset it`;
-  return result;
 }
 
 function localReviewRun(a, P, R) {
@@ -1013,6 +1036,44 @@ async function localReviewWait(a, P) {
     }
     await sleep(5_000);
   }
+}
+
+// A review whose wait failed or timed out is stopped, so it does not run on unobserved. The
+// review is its own process group (spawned detached), so the group signal reaches codex too.
+const groupAlive = (pid) => {
+  try {
+    process.kill(-pid, 0);
+    return true;
+  } catch (error) {
+    return error.code === 'EPERM';
+  }
+};
+async function localReviewStop(a, P) {
+  const pr = requirePr(a);
+  const sha = requireSha(a, P.workdir);
+  const stem = reviewStem(P, pr, sha);
+  const started = readJson(`${stem}.started.json`);
+  const pid = started?.sha === sha ? started.pid : null;
+  let signalled = false;
+  if (pid && !existsSync(`${stem}.result.json`) && groupAlive(pid)) {
+    for (const [signal, seconds] of [
+      ['SIGTERM', 20],
+      ['SIGKILL', 10],
+    ]) {
+      if (!groupAlive(pid)) break;
+      try {
+        process.kill(-pid, signal);
+        signalled = true;
+      } catch (error) {
+        if (error.code !== 'ESRCH') throw error;
+      }
+      for (let i = 0; i < seconds && groupAlive(pid); i++) await sleep(1_000);
+    }
+  }
+  const alive = pid ? groupAlive(pid) : false;
+  if (alive) fail(`the review process group ${pid} is still running after SIGKILL`);
+  removeReviewWorktree(P.workdir, reviewWorktree(P, pr, sha));
+  return { sha, pid, stopped: signalled };
 }
 
 function runCheck(a, P) {
@@ -1537,6 +1598,7 @@ const COMMANDS = {
   'local-review': localReviewRun,
   'local-review-start': (a, P) => localReviewStart(a, P),
   'local-review-wait': (a, P) => localReviewWait(a, P),
+  'local-review-stop': (a, P) => localReviewStop(a, P),
   publish,
   reply,
   'request-review': requestReview,
