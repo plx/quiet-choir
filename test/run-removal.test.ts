@@ -1,0 +1,731 @@
+import assert from 'node:assert/strict';
+import { spawn, type ChildProcess } from 'node:child_process';
+import { once } from 'node:events';
+import {
+  cp,
+  lstat,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  realpath,
+  rename,
+  rm,
+  writeFile,
+} from 'node:fs/promises';
+import { hostname, tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { z } from 'zod';
+
+import { ThresholdLogger } from '../src/application/execution.js';
+import { workflowExitCodes } from '../src/cli/workflow-errors.js';
+import { defineWorkflow, NodeProcessRunner, readRun, runWorkflow } from '../src/index.js';
+import { groupState, processIdentity } from '../src/processes/identity.js';
+import { WorkflowExecutor } from '../src/workflow/loader/executor.js';
+import { inspectRun, listRuns } from '../src/workflow/loader/inspection.js';
+import type { WorkflowCommandResult } from '../src/workflow/loader/model.js';
+import { defaultStateDir } from '../src/workflow/runtime/paths.js';
+import { readRequiredRun } from '../src/workflow/runtime/read-required-run.js';
+import {
+  removeRun,
+  type RemovalStep,
+  type RunRemovalResult,
+} from '../src/workflow/runtime/run-removal.js';
+import { runBytes } from '../src/workflow/runtime/run-size.js';
+import { cleanupAdminWait } from '../src/workflow/runtime/worktrees.js';
+import { WorktreeGit } from '../src/worktrees/git.js';
+import { testInvocation } from './harness-invocation.js';
+import { holdAdminLock } from './worktree-admin-holder.js';
+
+const DEAD = 2_000_000_000;
+const processRunner = new NodeProcessRunner();
+const executor = new WorkflowExecutor({ logger: new ThresholdLogger('silent', () => undefined) });
+let root: string;
+let stateDir: string;
+const children: ChildProcess[] = [];
+
+beforeEach(async () => {
+  root = await realpath(await mkdtemp(join(tmpdir(), 'quiet-choir-rm-')));
+  stateDir = join(root, 'runs');
+  vi.stubEnv('XDG_STATE_HOME', join(root, 'xdg'));
+});
+afterEach(async () => {
+  vi.restoreAllMocks();
+  vi.unstubAllEnvs();
+  for (const child of children.splice(0))
+    if (child.pid && groupState({ pid: child.pid, pgid: child.pid }) !== 'dead') {
+      const exited = once(child, 'exit');
+      try {
+        process.kill(-child.pid, 'SIGKILL');
+      } catch {
+        /* reaped already */
+      }
+      await exited;
+    }
+  await rm(root, { recursive: true, force: true });
+});
+
+function plan(runId: string, flags: { force?: boolean; refs?: boolean; dryRun?: boolean } = {}) {
+  return {
+    kind: 'workflow.rm' as const,
+    runId,
+    stateDir,
+    force: flags.force ?? false,
+    refs: flags.refs ?? false,
+    dryRun: flags.dryRun ?? false,
+  };
+}
+
+async function remove(
+  runId: string,
+  flags: { force?: boolean; refs?: boolean; dryRun?: boolean } = {},
+): Promise<WorkflowCommandResult> {
+  return executor.execute(plan(runId, flags));
+}
+
+function removed(result: WorkflowCommandResult): RunRemovalResult {
+  if (!result.ok) throw new Error(`${result.code}: ${result.message}`);
+  assert(result.kind === 'workflow.rm.result');
+  return result;
+}
+
+function refused(result: WorkflowCommandResult, code: string) {
+  assert(!result.ok, 'expected a refusal');
+  expect(result.code).toBe(code);
+  expect(workflowExitCodes[result.code]).toBe(code === 'workflow.storage' ? 74 : 3);
+  return result;
+}
+
+const step = <T>(value: T) => ({
+  input: null,
+  schema: z.unknown(),
+  run: () => value,
+});
+
+async function completedRun(runId: string): Promise<void> {
+  const workflow = defineWorkflow({
+    name: 'rm',
+    version: '1',
+    input: z.null(),
+    output: z.unknown(),
+    run: (ctx) => ctx.step('one', step(1)),
+  });
+  expect((await runWorkflow(workflow, { runId, stateDir, cwd: root, input: null })).status).toBe(
+    'completed',
+  );
+}
+
+async function suspendedRun(runId: string): Promise<void> {
+  const workflow = defineWorkflow({
+    name: 'rm-ask',
+    version: '1',
+    input: z.null(),
+    output: z.unknown(),
+    run: (ctx) => ctx.ask('gate', { prompt: 'Ship?', schema: z.boolean() }),
+  });
+  expect((await runWorkflow(workflow, { runId, stateDir, cwd: root, input: null })).status).toBe(
+    'suspended',
+  );
+}
+
+async function failedWaitingRun(runId: string): Promise<void> {
+  const workflow = defineWorkflow({
+    name: 'rm-failed',
+    version: '1',
+    input: z.null(),
+    output: z.unknown(),
+    run: (ctx) =>
+      Promise.all([
+        ctx.ask('gate', { prompt: 'Ship?', schema: z.boolean() }),
+        ctx.step('fail', {
+          input: null,
+          schema: z.null(),
+          run: async () => {
+            await delay(10);
+            throw new Error('body failed');
+          },
+        }),
+      ]),
+  });
+  await expect(runWorkflow(workflow, { runId, stateDir, cwd: root, input: null })).rejects.toThrow(
+    'body failed',
+  );
+  const saved = await readRun({ stateDir, runId });
+  expect(saved.status).toBe('failed');
+  expect(saved.steps['gate']?.status).toBe('waiting');
+}
+
+/** An unmigrated flat format-1 record, as an old binary left it. */
+async function flatRecord(runId: string, status: 'running' | 'completed'): Promise<void> {
+  await mkdir(stateDir, { recursive: true });
+  const time = '2026-01-01T00:00:00.000Z';
+  await writeFile(
+    join(stateDir, `${runId}.json`),
+    JSON.stringify({
+      formatVersion: 1,
+      id: runId,
+      workflow: { name: 'flat', version: '1', fingerprint: null },
+      status,
+      cwd: '/',
+      input: null,
+      output: null,
+      error: null,
+      steps: {},
+      createdAt: time,
+      updatedAt: time,
+    }),
+  );
+}
+
+const legacyFixture = new URL('./fixtures/storage/v1.json', import.meta.url);
+
+/** The captured format-1 run `legacy`, flat and unmigrated, with a legacy inbox and cancel request. */
+async function unmigratedLegacy(): Promise<void> {
+  await mkdir(join(stateDir, 'legacy.inbox'), { recursive: true });
+  await writeFile(join(stateDir, 'legacy.json'), await readFile(legacyFixture, 'utf8'));
+  await writeFile(join(stateDir, 'legacy.inbox', 'answer.json'), '{"value":true}');
+  await writeFile(join(stateDir, 'legacy.cancel.json'), '{}');
+}
+
+/** The same capture migrated as test/journal.test.ts does: a marker, `.v1` and `legacy/`. */
+async function migratedLegacy(): Promise<void> {
+  await unmigratedLegacy();
+  const definition = defineWorkflow({
+    name: 'legacy-v1',
+    version: '1',
+    input: z.null(),
+    output: z.string(),
+    run: async (ctx) => {
+      const value = await ctx.step('local', { input: null, schema: z.number(), run: () => 7 });
+      const agent = await ctx.claude.text('agent', { prompt: 'legacy question' });
+      await ctx.sleep('pause', 0);
+      return `${String(value)}/${agent.output}`;
+    },
+  });
+  await expect(
+    runWorkflow(definition, {
+      stateDir,
+      runId: 'legacy',
+      cwd: '/quiet-choir/legacy-project',
+      input: null,
+      resume: true,
+      fingerprint: 'fixed-source',
+      acceptCodeChange: true,
+    }),
+  ).rejects.toThrow('no pinned isolation mode');
+  expect((await readRun({ stateDir, runId: 'legacy' })).formatVersion).toBe(7);
+  expect((await readdir(stateDir)).sort()).toEqual(
+    expect.arrayContaining(['legacy', 'legacy.json', 'legacy.json.v1', 'legacy.inbox']),
+  );
+}
+
+interface Planted {
+  readonly owner?: object | null;
+  readonly recovery?: object;
+  readonly files?: Record<string, string>;
+}
+
+/** A lock directory in the style of test/unlock.test.ts. */
+async function plant(path: string, planted: Planted = {}): Promise<void> {
+  await mkdir(path, { recursive: true });
+  if (planted.owner !== null)
+    await writeFile(join(path, 'owner.json'), JSON.stringify(planted.owner ?? owner(DEAD, 'old')));
+  if (planted.recovery)
+    await writeFile(join(path, 'recovery.json'), JSON.stringify(planted.recovery));
+  for (const [name, value] of Object.entries(planted.files ?? {})) {
+    await mkdir(join(path, name, '..'), { recursive: true });
+    await writeFile(join(path, name), value);
+  }
+}
+
+function owner(pid: number, token: string, host = hostname(), extra: object = {}): object {
+  return { pid, host, token, ...extra };
+}
+
+/** Every entry below `path` with its size, mode and modification time. */
+async function snapshot(path: string): Promise<Record<string, string>> {
+  const entries: Record<string, string> = {};
+  for (const entry of await readdir(path, { recursive: true, withFileTypes: true }).catch(
+    () => [],
+  )) {
+    const file = join(entry.parentPath, entry.name);
+    const stat = await lstat(file);
+    entries[file] = `${String(stat.size)} ${String(stat.mode)} ${String(stat.mtimeMs)}`;
+  }
+  return entries;
+}
+
+async function gone(path: string): Promise<boolean> {
+  return lstat(path).then(
+    () => false,
+    () => true,
+  );
+}
+
+/** What the runs container holds after a run was removed: only the ignore file. */
+async function onlyIgnoreFileLeft(): Promise<void> {
+  expect(await readdir(stateDir)).toEqual(['.gitignore']);
+}
+
+describe('workflow rm guards', () => {
+  it('refuses a suspended run without --force and removes it with --force', async () => {
+    await suspendedRun('asked');
+    const refusal = refused(await remove('asked'), 'run.active');
+    expect(refusal.message).toContain('is suspended');
+    expect(refusal.details).toMatchObject({ status: 'suspended', waiting: ['gate'] });
+    expect((await readRun({ stateDir, runId: 'asked' })).status).toBe('suspended');
+    expect(removed(await remove('asked', { force: true }))).toMatchObject({
+      removed: true,
+      force: true,
+      verdict: 'remove',
+    });
+    await onlyIgnoreFileLeft();
+  });
+
+  it('refuses a failed run that still has a waiting step, and removes it with --force', async () => {
+    await failedWaitingRun('waiting');
+    expect(refused(await remove('waiting'), 'run.active').details).toMatchObject({
+      status: 'failed',
+      waiting: ['gate'],
+    });
+    removed(await remove('waiting', { force: true }));
+    await onlyIgnoreFileLeft();
+  });
+
+  it('refuses a running run, and with --force recovers its dead owner’s lock to remove it', async () => {
+    await flatRecord('busy', 'running');
+    await plant(join(stateDir, 'busy.json.lock'));
+    expect(refused(await remove('busy'), 'run.active').details).toMatchObject({
+      status: 'running',
+    });
+    expect(await gone(join(stateDir, 'busy.json.lock'))).toBe(false);
+    removed(await remove('busy', { force: true }));
+    await onlyIgnoreFileLeft();
+  });
+
+  it('removes a completed run without --force', async () => {
+    await completedRun('done');
+    removed(await remove('done'));
+    await onlyIgnoreFileLeft();
+    await expect(readRequiredRun({ stateDir, runId: 'done' })).rejects.toMatchObject({
+      code: 'run.not_found',
+    });
+  });
+
+  it.each([
+    [
+      'a live local owner',
+      () => ({
+        owner: owner(process.pid, 'live', hostname(), {
+          osStartTime: processIdentity(process.pid)?.start ?? null,
+        }),
+      }),
+      'alive',
+    ],
+    ['an unverifiable owner', () => ({ owner: owner(23_456, 'eperm') }), 'unknown'],
+    ['a foreign host', () => ({ owner: owner(DEAD, 'far', `${hostname()}-gone`) }), 'remote'],
+    ['a live recoverer', () => ({ recovery: owner(process.pid, 'rec') }), 'alive'],
+  ] as const)('refuses %s even with --force, changing nothing', async (_name, planted, state) => {
+    await completedRun('held');
+    await plant(join(stateDir, 'held', 'lock'), planted());
+    const real = process.kill.bind(process);
+    vi.spyOn(process, 'kill').mockImplementation((pid, signal) => {
+      if (pid === 23_456) throw Object.assign(new Error('EPERM'), { code: 'EPERM' });
+      return real(pid, signal);
+    });
+    const before = await snapshot(stateDir);
+    const refusal = refused(await remove('held', { force: true }), 'run.locked');
+    expect(refusal.details).toMatchObject({ kind: 'primary', state });
+    if (state === 'remote')
+      expect(refusal.message).toContain(
+        `quiet-choir workflow unlock held --state-dir ${stateDir} --force-remote`,
+      );
+    expect(await snapshot(stateDir)).toEqual(before);
+  });
+
+  it.skipIf(process.platform === 'win32')(
+    'refuses a dead owner’s live recorded child as run.orphans, changing nothing',
+    async () => {
+      await completedRun('orphan');
+      const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {
+        detached: true,
+        stdio: 'ignore',
+      });
+      children.push(child);
+      assert(child.pid);
+      await delay(50);
+      await plant(join(stateDir, 'orphan', 'lock'), {
+        files: {
+          [`processes/${String(child.pid)}.json`]: JSON.stringify({
+            pid: child.pid,
+            pgid: child.pid,
+            binary: 'fake-harness',
+            cwd: stateDir,
+            startedAt: new Date().toISOString(),
+            osStartTime: processIdentity(child.pid)?.start ?? null,
+            runId: 'orphan',
+            stepId: 'review',
+            attempt: 1,
+            ownerToken: 'old',
+          }),
+        },
+      });
+      const before = await snapshot(stateDir);
+      const refusal = refused(await remove('orphan', { force: true }), 'run.orphans');
+      expect(refusal.message).toContain('--kill-orphans');
+      expect(refusal.details).toMatchObject({ processes: [{ state: 'alive' }] });
+      expect(await snapshot(stateDir)).toEqual(before);
+    },
+  );
+
+  it('reports a missing run as run.not_found without creating the runs container', async () => {
+    refused(await remove('nothing'), 'run.not_found');
+    refused(await remove('nothing', { dryRun: true }), 'run.not_found');
+    expect(await gone(stateDir)).toBe(true);
+  });
+});
+
+describe('workflow rm deletion', () => {
+  it('deletes a directory run with its transcripts, artifacts, launch files and inbox', async () => {
+    await completedRun('full');
+    const directory = join(stateDir, 'full');
+    for (const [name, value] of [
+      ['attempts/one/1.jsonl', 'transcript\n'],
+      ['artifacts/one/1/report.txt', 'artifact'],
+      ['launch/1.json', '{}'],
+      ['inbox/gate.json', '{}'],
+    ] as const) {
+      await mkdir(join(directory, name, '..'), { recursive: true });
+      await writeFile(join(directory, name), value);
+    }
+    const bytes = await runBytes(stateDir, 'full');
+    const result = removed(await remove('full'));
+    expect(result).toMatchObject({ paths: [directory], bytes, caches: [], tombstones: [] });
+    await onlyIgnoreFileLeft();
+    expect(await gone(join(root, 'xdg'))).toBe(true);
+  });
+
+  it('deletes an unmigrated flat run with its legacy inbox and cancel request', async () => {
+    await unmigratedLegacy();
+    const result = removed(await remove('legacy'));
+    expect([...result.paths].sort()).toEqual(
+      ['legacy.cancel.json', 'legacy.inbox', 'legacy.json'].map((name) => join(stateDir, name)),
+    );
+    await onlyIgnoreFileLeft();
+    await expect(readRequiredRun({ stateDir, runId: 'legacy' })).rejects.toMatchObject({
+      code: 'run.not_found',
+    });
+    expect(await gone(join(root, 'xdg'))).toBe(true);
+  });
+
+  it('deletes a migrated run: marker, backup, directory, inbox and cancel request', async () => {
+    await migratedLegacy();
+    const result = removed(await remove('legacy'));
+    expect([...result.paths].sort()).toEqual(
+      ['legacy', 'legacy.cancel.json', 'legacy.inbox', 'legacy.json', 'legacy.json.v1'].map(
+        (name) => join(stateDir, name),
+      ),
+    );
+    await onlyIgnoreFileLeft();
+    await expect(readRequiredRun({ stateDir, runId: 'legacy' })).rejects.toMatchObject({
+      code: 'run.not_found',
+    });
+  });
+
+  it('never registers a project, even for a run in the default runs container', async () => {
+    const project = join(root, 'project');
+    await mkdir(project);
+    const workflow = defineWorkflow({
+      name: 'rm',
+      version: '1',
+      input: z.null(),
+      output: z.unknown(),
+      run: (ctx) => ctx.step('one', step(1)),
+    });
+    await runWorkflow(workflow, { runId: 'home', cwd: project, input: null });
+    const runs = defaultStateDir(project);
+    const registration = join(runs, '..', 'project.json');
+    expect(await gone(registration)).toBe(false);
+    await rm(registration);
+    removed(await executor.execute({ ...plan('home'), stateDir: runs }));
+    expect(await gone(registration)).toBe(true);
+    expect(await readdir(runs)).toEqual(['.gitignore']);
+  });
+});
+
+describe('workflow rm ordering', () => {
+  const steps: readonly RemovalStep[] = [
+    'siblings',
+    'flat',
+    'backups',
+    'primary-released',
+    'renamed',
+    'tombstone-deleted',
+  ];
+  const cases = steps.flatMap((stop) =>
+    (['migrated', 'flat'] as const).map((layout) => [layout, stop] as const),
+  );
+
+  it.each(cases)(
+    'a %s run stopped after %s lists and inspects as intact or not found',
+    async (layout, stop) => {
+      await (layout === 'migrated' ? migratedLegacy() : unmigratedLegacy());
+      await expect(
+        removeRun({ runId: 'legacy', stateDir }, processRunner, {
+          afterStep: (name) => {
+            if (name === stop) throw new Error(`stopped after ${name}`);
+          },
+        }),
+      ).rejects.toThrow(`stopped after ${stop}`);
+      // The seam's error released every lock through the normal path.
+      expect(await gone(join(stateDir, 'legacy.json.lock'))).toBe(true);
+      expect(await gone(join(stateDir, 'legacy', 'lock'))).toBe(true);
+      const listed = await listRuns({ stateDir });
+      expect(listed.warnings).toEqual([]);
+      const present = listed.runs.some((run) => run.id === 'legacy');
+      const inspected = await inspectRun({ stateDir, runId: 'legacy' }).then(
+        () => 'intact',
+        (error: unknown) => {
+          expect(error).toMatchObject({ code: 'run.not_found' });
+          return 'not found';
+        },
+      );
+      expect(inspected).toBe(present ? 'intact' : 'not found');
+      const intactUntil = layout === 'migrated' ? 'primary-released' : 'siblings';
+      expect(present).toBe(steps.indexOf(stop) <= steps.indexOf(intactUntil));
+      if (present) {
+        removed(await remove('legacy'));
+        expect((await listRuns({ stateDir })).runs).toEqual([]);
+      }
+      const tombstones = (await readdir(stateDir)).filter((name) => name.endsWith('.removing'));
+      expect(tombstones).toHaveLength(stop === 'renamed' ? 1 : 0);
+    },
+  );
+
+  it('sweeps a dead removal’s tombstone on the next rm, even of a missing run', async () => {
+    await completedRun('first');
+    await expect(
+      removeRun({ runId: 'first', stateDir }, processRunner, {
+        afterStep: (name) => {
+          if (name === 'renamed') throw new Error('crash');
+        },
+      }),
+    ).rejects.toThrow('crash');
+    const [live] = (await readdir(stateDir)).filter((name) => name.endsWith('.removing'));
+    assert(live);
+    expect(live).toMatch(
+      new RegExp(`^\\.first\\.${String(process.pid)}\\.[0-9a-f-]{36}\\.removing$`, 'u'),
+    );
+    // This process is alive, so its tombstone is not swept; a dead one is.
+    refused(await remove('missing'), 'run.not_found');
+    expect(await gone(join(stateDir, live))).toBe(false);
+    const dead = live.replace(`.${String(process.pid)}.`, `.${String(DEAD)}.`);
+    await rename(join(stateDir, live), join(stateDir, dead));
+    refused(await remove('missing', { dryRun: true }), 'run.not_found');
+    expect(await gone(join(stateDir, dead))).toBe(false);
+    refused(await remove('missing'), 'run.not_found');
+    expect(await gone(join(stateDir, dead))).toBe(true);
+    // An rm of another run sweeps too, and reports what it swept.
+    await completedRun('second');
+    await mkdir(join(stateDir, dead));
+    expect(removed(await remove('second')).tombstones).toEqual([dead]);
+    await onlyIgnoreFileLeft();
+  });
+});
+
+describe('workflow rm dry run', () => {
+  it('reports the verdict, paths, bytes and sweepable tombstones, changing nothing', async () => {
+    await completedRun('keep');
+    await suspendedRun('active');
+    const tombstone = `.old.${String(DEAD)}.00000000-0000-4000-8000-000000000000.removing`;
+    await mkdir(join(stateDir, tombstone, 'journal'), { recursive: true });
+    const before = await snapshot(root);
+    const preview = removed(await remove('keep', { dryRun: true }));
+    expect(preview).toMatchObject({
+      dryRun: true,
+      removed: false,
+      verdict: 'remove',
+      paths: [join(stateDir, 'keep')],
+      caches: [],
+      refsRemoved: [],
+      keptRefs: [],
+      bytes: await runBytes(stateDir, 'keep'),
+      tombstones: [tombstone],
+    });
+    expect(preview.bytes).toBeGreaterThan(0);
+    const active = removed(await remove('active', { dryRun: true }));
+    expect(active.verdict).toMatchObject({ code: 'run.active' });
+    expect(removed(await remove('active', { dryRun: true, force: true })).verdict).toBe('remove');
+    expect(await snapshot(root)).toEqual(before);
+  });
+});
+
+// measured: 0.14-0.61 s per case alone (Git processes, and a forked tsx lock holder for the blocked
+// case); the same Git work in test/worktrees.test.ts reaches 3.1 s in loaded full coverage runs.
+describe('workflow rm worktree caches', { timeout: 10_000 }, () => {
+  let repo: string;
+  let caches: string;
+  const git = new WorktreeGit(processRunner);
+  const invocation = testInvocation();
+  const command = (...args: string[]) => git.text(repo, args, invocation);
+
+  beforeEach(async () => {
+    repo = join(root, 'repo');
+    caches = join(root, 'caches');
+    await mkdir(repo);
+    await command('init', '-q');
+    await writeFile(join(repo, 'file.txt'), 'base\n');
+    await command('add', '--all');
+    await command(
+      '-c',
+      'user.name=test',
+      '-c',
+      'user.email=test@localhost',
+      'commit',
+      '-qm',
+      'base',
+    );
+  });
+
+  /** A finished run with one kept cache and its pinned ref. */
+  async function runWithCache(runId: string) {
+    const workflow = defineWorkflow({
+      name: runId,
+      version: '1',
+      input: z.null(),
+      output: z.null(),
+      async run(ctx) {
+        await ctx.worktree('cache');
+        return null;
+      },
+    });
+    const run = await runWorkflow(workflow, {
+      runId,
+      cwd: repo,
+      stateDir,
+      processRunner,
+      input: null,
+      worktrees: { root: caches, keep: 'all' },
+    });
+    const ledger = run.worktrees;
+    assert(ledger);
+    const [cache] = Object.values(ledger.caches);
+    assert(cache);
+    const refs = Object.keys(ledger.refs);
+    expect(refs.length).toBeGreaterThan(0);
+    return { path: cache.path, refs, namespace: join(caches, `${runId}-${ledger.namespace}`) };
+  }
+
+  const repoState = async () => ({
+    refs: await command('for-each-ref', '--format=%(refname) %(objectname)'),
+    worktrees: await command('worktree', 'list', '--porcelain'),
+  });
+
+  it('previews, then removes caches through Git and keeps pins unless --refs', async () => {
+    const kept = await runWithCache('kept');
+    const before = { tree: await snapshot(root), repo: await repoState() };
+    expect(removed(await remove('kept', { dryRun: true }))).toMatchObject({
+      caches: [{ path: kept.path, method: 'git' }],
+      refsRemoved: [],
+      keptRefs: kept.refs,
+    });
+    expect(removed(await remove('kept', { dryRun: true, refs: true }))).toMatchObject({
+      refsRemoved: kept.refs,
+      keptRefs: [],
+    });
+    expect({ tree: await snapshot(root), repo: await repoState() }).toEqual(before);
+
+    expect(removed(await remove('kept'))).toMatchObject({
+      caches: [{ path: kept.path, method: 'git' }],
+      refsRemoved: [],
+      keptRefs: kept.refs,
+      warnings: [],
+    });
+    expect(await gone(kept.path)).toBe(true);
+    expect(await gone(kept.namespace)).toBe(true);
+    for (const ref of kept.refs)
+      expect(await command('rev-parse', '--verify', ref)).toMatch(/^[0-9a-f]{40}$/u);
+
+    const pinned = await runWithCache('pinned');
+    expect(removed(await remove('pinned', { refs: true }))).toMatchObject({
+      caches: [{ path: pinned.path, method: 'git' }],
+      refsRemoved: pinned.refs,
+      keptRefs: [],
+    });
+    expect(await gone(pinned.namespace)).toBe(true);
+    for (const ref of pinned.refs)
+      expect(await command('for-each-ref', '--format=%(refname)', ref)).toBe('');
+    await onlyIgnoreFileLeft();
+  });
+
+  it('stops before any deletion when Git cannot remove a cache, naming it', async () => {
+    const blocked = await runWithCache('blocked');
+    const holder = holdAdminLock(await realpath(join(repo, '.git')), 'forever');
+    await holder.held;
+    const original = cleanupAdminWait.ms;
+    cleanupAdminWait.ms = 200;
+    try {
+      const failure = refused(await remove('blocked', { refs: true }), 'workflow.storage');
+      expect(failure.message).toContain(blocked.path);
+      expect(failure.message).toContain('workflow clean blocked');
+      expect(failure.details).toMatchObject({
+        caches: [blocked.path],
+        warnings: [
+          expect.stringContaining('Timed out waiting for the worktree administration lock'),
+        ],
+      });
+    } finally {
+      cleanupAdminWait.ms = original;
+      holder.child.kill('SIGKILL');
+      await holder.exited;
+    }
+    expect((await readRun({ stateDir, runId: 'blocked' })).worktrees?.caches).toBeDefined();
+    expect(await gone(blocked.path)).toBe(false);
+    // Refs are kept while a cache remains, so a retry can still pin the work.
+    for (const ref of blocked.refs)
+      expect(await command('rev-parse', '--verify', ref)).toMatch(/^[0-9a-f]{40}$/u);
+    expect(await gone(join(stateDir, 'blocked.json.lock'))).toBe(true);
+    removed(await remove('blocked', { refs: true }));
+    await onlyIgnoreFileLeft();
+  });
+
+  it('deletes caches directly when their repository is gone', async () => {
+    const orphaned = await runWithCache('orphaned');
+    await rm(repo, { recursive: true, force: true });
+    expect(removed(await remove('orphaned', { dryRun: true })).caches).toEqual([
+      { path: orphaned.path, method: 'direct' },
+    ]);
+    const result = removed(await remove('orphaned'));
+    expect(result).toMatchObject({
+      caches: [{ path: orphaned.path, method: 'direct' }],
+      keptRefs: [],
+      warnings: [expect.stringContaining('pinned refs went with it')],
+    });
+    expect(await gone(orphaned.namespace)).toBe(true);
+    expect(await readdir(caches)).toEqual([]);
+    await onlyIgnoreFileLeft();
+  });
+
+  it('refuses to delete a cache outside its namespace when the repository is gone', async () => {
+    const escaped = await runWithCache('escaped');
+    const outside = join(root, 'outside');
+    await cp(escaped.path, outside, { recursive: true });
+    await rm(repo, { recursive: true, force: true });
+    // Point the ledger's cache at a directory beside the namespace, as a corrupt record would.
+    for (const name of ['run.json', 'journal.jsonl']) {
+      const file = join(stateDir, 'escaped', name);
+      const text = await readFile(file, 'utf8').catch(() => undefined);
+      if (text !== undefined) await writeFile(file, text.replaceAll(escaped.path, outside));
+    }
+    expect(
+      Object.values((await readRun({ stateDir, runId: 'escaped' })).worktrees?.caches ?? {}),
+    ).toMatchObject([{ path: outside }]);
+    const failure = await remove('escaped');
+    assert(!failure.ok);
+    expect(failure.message).toContain('outside');
+    expect(await gone(outside)).toBe(false);
+    expect((await readRun({ stateDir, runId: 'escaped' })).id).toBe('escaped');
+  });
+});
