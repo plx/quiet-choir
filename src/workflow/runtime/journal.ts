@@ -118,19 +118,24 @@ export function replayJournal(snapshot: string, journal: string, runId: string):
   let seq = floor;
   let newest = record.schemaRevision ?? 1;
   const hidden = new Map(hiddenRecordFields(record).map((key) => [key, true]));
-  // A newer build may have journaled a field shape this build rejects: ask for an upgrade instead.
-  const upgrade = (cause: unknown): unknown =>
-    newest > SUPPORTED_SCHEMA_REVISION
+  const presentHidden = (): string[] =>
+    [...hidden].flatMap(([key, present]) => (present ? [key] : [])).sort();
+  // A newer build may have journaled a field shape this build rejects, and a record with fields
+  // this build does not know is drifted even without a revision bump: ask for an upgrade instead.
+  const upgrade = (cause: unknown): unknown => {
+    const hiddenFields = presentHidden();
+    return newest > SUPPORTED_SCHEMA_REVISION || hiddenFields.length
       ? recordSchemaRefusal(
           runId,
           {
             schemaRevision: newest,
             supportedSchemaRevision: SUPPORTED_SCHEMA_REVISION,
-            hiddenFields: [...hidden].flatMap(([key, present]) => (present ? [key] : [])).sort(),
+            hiddenFields,
           },
           cause,
         )
       : cause;
+  };
   const complete = journal.slice(0, journal.lastIndexOf('\n') + 1);
   for (const line of complete.split('\n')) {
     if (!line) continue;
@@ -162,10 +167,7 @@ export function replayJournal(snapshot: string, journal: string, runId: string):
   } catch (cause) {
     throw upgrade(cause);
   }
-  markHiddenRecordFields(
-    record,
-    [...hidden].flatMap(([key, present]) => (present ? [key] : [])),
-  );
+  markHiddenRecordFields(record, presentHidden());
   return record;
 }
 

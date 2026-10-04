@@ -47,8 +47,9 @@ with `run.incompatible`, `details.reason: "record_schema"`:
   run live (the pinned digest covers the record as read, so it cannot see hidden fields).
 
 Read paths (`readRun`, inspect, list, pending) keep working; summaries add a warning and drop resume
-and answer follow-ups. When a newer revision also changed a known field's shape, so the record does
-not parse, the read error becomes the same refusal with an upgrade message instead of a Zod error.
+and answer follow-ups. When the record has a newer revision or unknown fields and a known field also
+fails validation, so the record does not parse, the read error becomes the same refusal with an
+upgrade message instead of a Zod error.
 
 **The bump rule.** Adding or changing the accepted shape of any persisted run-level field, nested
 fields included, bumps the revision. A unit test ties the sorted top-level keys to the newest

@@ -151,36 +151,39 @@ it('refuses every write to a record with an unknown top-level field and warns on
   await expectRefusals('futureLedger');
 });
 
-it('refuses a newer record it cannot parse at all, and tick skips it as incompatible', async () => {
-  const raw = JSON.parse(original.snapshot) as Record<string, unknown>;
-  await writeFile(
-    snapshotPath(),
-    `${JSON.stringify({ ...raw, schemaRevision: newer, status: 'paused' })}\n`,
-  );
-  await writeFile(journalPath(), original.journal);
-  const before = await bytes();
-  const resumed = await new WorkflowExecutor({ logger }).execute({
-    kind: 'workflow.resume',
-    runId,
-    stateDir,
-  });
-  expect(resumed).toMatchObject({
-    ok: false,
-    code: 'run.incompatible',
-    details: { reason: 'record_schema', schemaRevision: newer },
-  });
-  const ticked = await new TickWorkflowExecutor({ logger }).execute({
-    kind: 'workflow.tick',
-    runId,
-    stateDir,
-  });
-  expect(ticked).toMatchObject({
-    ok: true,
-    exitCode: 1,
-    skipped: [{ runId, reason: 'incompatible' }],
-  });
-  const listed = await listRuns({ stateDir });
-  expect(listed.runs).toEqual([]);
-  expect(listed.warnings).toEqual([expect.stringContaining('Upgrade quiet-choir')]);
-  expect(await bytes()).toEqual(before);
-});
+it.each([
+  ['a newer record', { schemaRevision: newer }, newer],
+  ['a record with unknown fields and no revision bump', { futureBudget: 1 }, 1],
+])(
+  'refuses %s it cannot parse at all, and tick skips it as incompatible',
+  async (_name, drift, revision) => {
+    const raw = JSON.parse(original.snapshot) as Record<string, unknown>;
+    await writeFile(snapshotPath(), `${JSON.stringify({ ...raw, ...drift, status: 'paused' })}\n`);
+    await writeFile(journalPath(), original.journal);
+    const before = await bytes();
+    const resumed = await new WorkflowExecutor({ logger }).execute({
+      kind: 'workflow.resume',
+      runId,
+      stateDir,
+    });
+    expect(resumed).toMatchObject({
+      ok: false,
+      code: 'run.incompatible',
+      details: { reason: 'record_schema', schemaRevision: revision },
+    });
+    const ticked = await new TickWorkflowExecutor({ logger }).execute({
+      kind: 'workflow.tick',
+      runId,
+      stateDir,
+    });
+    expect(ticked).toMatchObject({
+      ok: true,
+      exitCode: 1,
+      skipped: [{ runId, reason: 'incompatible' }],
+    });
+    const listed = await listRuns({ stateDir });
+    expect(listed.runs).toEqual([]);
+    expect(listed.warnings).toEqual([expect.stringContaining('Upgrade quiet-choir')]);
+    expect(await bytes()).toEqual(before);
+  },
+);

@@ -335,11 +335,12 @@ remaining effects will execute live, and copies nothing more from the source.
 **Reads.** `readRun`, `workflow inspect`, `list` and `pending` still work. The read view leaves out
 what this build does not know (never its values, which are not kept in memory), `inspect` and `list`
 rows add a warning naming the newer revision or the hidden fields, and the run gets no `resume` or
-`answer` follow-ups. If a newer revision also changed the shape of a field this build knows, so the
-record does not parse at all, every read is the same `run.incompatible` refusal instead of
-`run.unreadable`, and `list` reports it among its skipped runs. `workflow rm` and `prune` still
-remove such a run, except when rm would first have to update its worktree ledger (caches not yet
-removed, or `--refs` with recorded refs): that rm refuses the same way before deleting anything.
+`answer` follow-ups. If the record has a newer revision or unknown fields and a known field also
+fails validation, so the record does not parse at all, every read is the same `run.incompatible`
+refusal instead of `run.unreadable`, and `list` reports it among its skipped runs. `workflow rm` and
+`prune` still remove such a run, except when rm would first have to update its worktree ledger
+(caches not yet removed, or `--refs` with recorded refs): that rm refuses the same way before
+deleting anything.
 
 **Older builds.** A build that has this guard treats a newer build's record as above. A build that
 predates it (every build before #167) still strips unknown top-level fields and deletes them at its

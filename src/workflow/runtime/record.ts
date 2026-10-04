@@ -1181,13 +1181,14 @@ export function parseRunRecord(text: string, runId: string): RunRecord {
   try {
     record = recordSchema.parse(raw) as RunRecord;
   } catch (cause) {
-    // A newer build may have changed the shape of a field this build knows.
+    // A newer build may have changed the shape of a field this build knows, with or without
+    // bumping the revision; unknown fields are drift on their own. Without either it is corruption.
     const newer = newerSchemaRevision(Reflect.get(fields, 'schemaRevision'));
-    if (newer === undefined) throw cause;
+    if (newer === undefined && unknown.length === 0) throw cause;
     throw recordSchemaRefusal(
       runId,
       {
-        schemaRevision: newer,
+        schemaRevision: newer ?? SUPPORTED_SCHEMA_REVISION,
         supportedSchemaRevision: SUPPORTED_SCHEMA_REVISION,
         hiddenFields: unknown.sort(),
       },

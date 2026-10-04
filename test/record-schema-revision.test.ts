@@ -236,7 +236,7 @@ describe('reading a record this build cannot fully read', () => {
     expect(fromJournal.details).toMatchObject({ hiddenFields: ['futureField'] });
     expect(fromJournal.message).toContain('futureField');
 
-    // Without a newer revision the same damage is still an ordinary read failure.
+    // Without a newer revision or unknown fields the same damage is an ordinary read failure.
     await failedRun('damaged');
     await editSnapshot('damaged', (raw) => {
       raw['status'] = 'paused';
@@ -246,6 +246,52 @@ describe('reading a record this build cannot fully read', () => {
     );
     expect(damaged).toBeInstanceOf(Error);
     expect(damaged).not.toBeInstanceOf(RunRefusedError);
+  });
+
+  it('treats unknown fields as drift when a known field also fails validation', async () => {
+    // No revision bump: the unknown key alone makes the failed parse a schema refusal.
+    await failedRun('snapshot');
+    await editSnapshot('snapshot', (raw) => {
+      raw['status'] = 'paused';
+      raw['futureBudget'] = 5;
+    });
+    const fromSnapshot = await refusal(readRun({ stateDir, runId: 'snapshot' }));
+    expect(fromSnapshot.code).toBe('run.incompatible');
+    expect(fromSnapshot.details).toEqual({
+      reason: 'record_schema',
+      schemaRevision: SUPPORTED_SCHEMA_REVISION,
+      supportedSchemaRevision: SUPPORTED_SCHEMA_REVISION,
+      hiddenFields: ['futureBudget'],
+    });
+    expect(fromSnapshot.message).toContain('futureBudget');
+    expect(fromSnapshot.message).not.toContain('newer quiet-choir');
+    expect(fromSnapshot.cause).toBeInstanceOf(Error);
+
+    await failedRun('journal');
+    await appendRunChanges('journal', [
+      { area: 'run', key: 'status', value: 'paused' },
+      { area: 'run', key: 'futureBudget', value: 5 },
+    ]);
+    const fromJournal = await refusal(readRun({ stateDir, runId: 'journal' }));
+    expect(fromJournal.code).toBe('run.incompatible');
+    expect(fromJournal.details).toMatchObject({
+      schemaRevision: SUPPORTED_SCHEMA_REVISION,
+      hiddenFields: ['futureBudget'],
+    });
+    expect(fromJournal.message).not.toContain('newer quiet-choir');
+
+    // A key a later entry removed no longer counts: that damage is plain corruption again.
+    await failedRun('removed');
+    await appendRunChanges('removed', [{ area: 'run', key: 'futureBudget', value: 5 }]);
+    await appendRunChanges('removed', [
+      { area: 'run', key: 'futureBudget' },
+      { area: 'run', key: 'status', value: 'paused' },
+    ]);
+    const removed: unknown = await readRun({ stateDir, runId: 'removed' }).catch(
+      (error: unknown) => error,
+    );
+    expect(removed).toBeInstanceOf(Error);
+    expect(removed).not.toBeInstanceOf(RunRefusedError);
   });
 
   it('builds a bounded refusal message', () => {
