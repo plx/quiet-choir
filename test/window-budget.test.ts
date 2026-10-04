@@ -472,6 +472,73 @@ describe('the gate in a run', () => {
     expect(record.budgetStop).toMatchObject({ stepId: 'named', harness: 'claude' });
   });
 
+  it.each([
+    ['suspends on the new harness window', 0.1, 0.9, 'suspended'],
+    ['admits when only the prior harness window is exceeded', 0.9, 0.1, 'completed'],
+  ] as const)(
+    'redefining a step across harnesses %s',
+    async (_name, claudeUtilization, codexUtilization, status) => {
+      const stateDir = await directory();
+      const utilization = { claude: claudeUtilization, codex: codexUtilization };
+      const calls: string[] = [];
+      const agent: Harness = {
+        invoke(request) {
+          calls.push(`${request.harness}:${request.stepId}`);
+          if (request.stepId === 'tuned' && request.harness === 'claude')
+            return Promise.reject(new Error('tuned failed'));
+          const report = reportAt(utilization[request.harness as 'claude' | 'codex']);
+          return Promise.resolve({
+            text: 'ok',
+            sessionId: null,
+            diagnostics: { rateLimit: report },
+          });
+        },
+      };
+      const workflowWith = (tuned: 'claude' | 'codex') =>
+        defineWorkflow({
+          ...base,
+          async run(ctx) {
+            await ctx.claude.text('seed-claude', { prompt: 'x' });
+            await ctx.codex.text('seed-codex', { prompt: 'x' });
+            await ctx[tuned].text('tuned', { prompt: 'x' });
+            return null;
+          },
+        });
+      const options = { stateDir, runId: 'redefine', harness: agent, clock: clockAt(wake - hour) };
+      await expect(
+        runWorkflow(workflowWith('claude'), { ...options, input: null, fingerprint: 'code-1' }),
+      ).rejects.toThrow();
+      expect((await readRun(options)).steps['tuned']?.status).toBe('failed');
+      calls.length = 0;
+
+      const result = await runWorkflow(workflowWith('codex'), {
+        ...options,
+        resume: true,
+        fingerprint: 'code-2',
+        acceptCodeChange: true,
+        maxWindowUtilization: 0.5,
+      });
+      expect(result.status).toBe(status);
+      const record = await readRun(options);
+      if (status === 'suspended') {
+        // The refusal names the window of the harness the step now runs on, never the prior one;
+        // the step stays unredefined because it was never admitted.
+        expect(calls).toEqual([]);
+        expect(record.steps['tuned']?.redefinitions).toBeUndefined();
+        expect(record.budgetStop).toMatchObject({
+          stepId: 'tuned',
+          harness: 'codex',
+          observed: 0.9,
+        });
+        expect(result).toMatchObject({ nextWakeAt: wake });
+      } else {
+        expect(calls).toEqual(['codex:tuned']);
+        expect(record.steps['tuned']?.redefinitions).toHaveLength(1);
+        expect(record.budgetStop).toBeUndefined();
+      }
+    },
+  );
+
   it('wakes at an earlier wait deadline, so the gate does not delay a timeout', async () => {
     const stateDir = await directory();
     const clock = clockAt(wake - hour);

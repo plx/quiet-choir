@@ -1739,9 +1739,12 @@ export async function runWorkflow<
         const attemptStarted = performance.now();
         let admitted: Awaited<ReturnType<typeof budgetAdmission>> | undefined;
         try {
+          // A redefined step is admitted under the harness it is about to run, not the prior one.
+          const admittingHarness =
+            kind === 'agent' && observedRequest ? observedRequest.harness : (step.harness ?? kind);
           admitted =
             agent && budget.enabled
-              ? await budgetAdmission(id, step, step.harness ?? kind, signal)
+              ? await budgetAdmission(id, step, admittingHarness, signal)
               : undefined;
         } catch (cause) {
           // A queued first attempt leaves no record; a queued retry must not stay 'failed'.
