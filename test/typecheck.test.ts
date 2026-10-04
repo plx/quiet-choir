@@ -1,18 +1,27 @@
 import { mkdtemp, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
+import type ts from 'typescript';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { ThresholdLogger } from '../src/application/execution.js';
 import { analyzeTypecheckEntrypoint } from '../src/workflow/typecheck/plan.js';
-import { TypeScriptExecutor } from '../src/workflow/typecheck/typescript-executor.js';
+import { TypecheckProgramCache } from '../src/workflow/typecheck/program-cache.js';
+import {
+  configuredProgram,
+  TypeScriptExecutor,
+} from '../src/workflow/typecheck/typescript-executor.js';
 
 const silentLogger = new ThresholdLogger('silent', () => {
   throw new Error('The silent logger must not write.');
 });
 
 const temporaryDirectories: string[] = [];
+const engineEntry = fileURLToPath(new URL('../src/index.js', import.meta.url));
+// The small compiler cases share parsed lib and @types/node files, as the loader suites do.
+const typecheckCache = new TypecheckProgramCache();
 
 async function createFixture(files: Readonly<Record<string, string>>): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), 'quiet-choir-typecheck-'));
@@ -29,7 +38,7 @@ async function createFixture(files: Readonly<Record<string, string>>): Promise<s
   return root;
 }
 
-async function executeEntrypoint(root: string, entrypoint = 'workflow.ts') {
+function planFor(root: string, entrypoint = 'workflow.ts') {
   const analysis = analyzeTypecheckEntrypoint(join(root, entrypoint), root);
   expect(analysis.ok).toBe(true);
 
@@ -37,7 +46,15 @@ async function executeEntrypoint(root: string, entrypoint = 'workflow.ts') {
     throw new Error(analysis.error.message);
   }
 
-  return new TypeScriptExecutor(silentLogger).execute(analysis.plan);
+  return analysis.plan;
+}
+
+async function executeEntrypoint(
+  root: string,
+  entrypoint = 'workflow.ts',
+  cache: TypecheckProgramCache | undefined = typecheckCache,
+) {
+  return new TypeScriptExecutor(silentLogger, { cache }).execute(planFor(root, entrypoint));
 }
 
 afterEach(async () => {
@@ -159,6 +176,7 @@ describe('TypeScriptExecutor', { timeout: 30_000 }, () => {
     });
   });
 
+  // The suite's one uncached full-engine check under the repository tsconfig.
   it('checks schema-only inference and agent value overloads with the packaged TypeScript 6 compiler', async () => {
     const fixture = join(process.cwd(), 'test/fixtures/schema-first-types.ts');
     const analysis = analyzeTypecheckEntrypoint(fixture, process.cwd());
@@ -335,5 +353,190 @@ describe('TypeScriptExecutor', { timeout: 30_000 }, () => {
     await executeEntrypoint(root, 'workflow.cts');
 
     await expect(readFile(join(root, 'workflow.cts'), 'utf8')).resolves.toBe(source);
+  });
+});
+
+function libFile(program: ts.Program): ts.SourceFile | undefined {
+  return program.getSourceFiles().find((file) => program.isSourceFileDefaultLibrary(file));
+}
+
+function checkedProgram(
+  root: string,
+  entrypoint: string,
+  cache: TypecheckProgramCache,
+  config = 'tsconfig.json',
+) {
+  const checked = configuredProgram([join(root, entrypoint)], join(root, config), cache);
+  if ('error' in checked) throw new Error('The fixture tsconfig must be readable.');
+  return { program: checked.program, diagnostics: checked.diagnostics() };
+}
+
+// measured: see the TypeScriptExecutor suite; the parity case compiles the engine twice.
+describe('TypecheckProgramCache', { timeout: 30_000 }, () => {
+  it('returns the same results as an uncached check, also when reused', async () => {
+    const root = await createFixture({
+      'package.json': '{"type":"module"}',
+      'clean.ts': [
+        `import { defineWorkflow, z } from ${JSON.stringify(engineEntry)};`,
+        "export default defineWorkflow({ name: 'clean', version: '1', input: z.null(), output: z.null(), async run() { return null; } });",
+        '',
+      ].join('\n'),
+      'broken.ts': [
+        `import { defineWorkflow, z } from ${JSON.stringify(engineEntry)};`,
+        'interface Named {',
+        '  name: string;',
+        '}',
+        'export const named: Named = {};',
+        "export default defineWorkflow({ version: '1', input: z.null(), output: z.null(), async run() { return null; } });",
+        '',
+      ].join('\n'),
+    });
+    const uncached = [
+      await executeEntrypoint(root, 'clean.ts', undefined),
+      await executeEntrypoint(root, 'broken.ts', undefined),
+    ];
+    const cache = new TypecheckProgramCache();
+    const first = [
+      await executeEntrypoint(root, 'clean.ts', cache),
+      await executeEntrypoint(root, 'broken.ts', cache),
+    ];
+    const second = [
+      await executeEntrypoint(root, 'clean.ts', cache),
+      await executeEntrypoint(root, 'broken.ts', cache),
+    ];
+
+    expect(uncached[0]).toMatchObject({ ok: true, diagnostics: [] });
+    expect(uncached[1]?.ok).toBe(false);
+    expect(uncached[1]?.diagnostics).toContainEqual(
+      expect.objectContaining({
+        code: 2741,
+        relatedInformation: [expect.objectContaining({ filePath: join(root, 'broken.ts') })],
+      }),
+    );
+    expect(first).toEqual(uncached);
+    expect(second).toEqual(uncached);
+  });
+
+  it('reports an edit to an imported file and clears it when reverted', async () => {
+    const root = await createFixture({
+      'helper.ts': 'export const value: number = 1;\n',
+      'workflow.ts': "import { value } from './helper.js';\nexport const total: number = value;\n",
+    });
+    const cache = new TypecheckProgramCache();
+
+    expect(await executeEntrypoint(root, 'workflow.ts', cache)).toMatchObject({ ok: true });
+    await writeFile(join(root, 'helper.ts'), "export const value: string = 'one';\n");
+    const edited = await executeEntrypoint(root, 'workflow.ts', cache);
+    expect(edited.ok).toBe(false);
+    expect(edited.diagnostics).toContainEqual(
+      expect.objectContaining({ code: 2322, filePath: join(root, 'workflow.ts'), line: 2 }),
+    );
+    await writeFile(join(root, 'helper.ts'), 'export const value: number = 1;\n');
+    expect(await executeEntrypoint(root, 'workflow.ts', cache)).toMatchObject({
+      ok: true,
+      diagnostics: [],
+    });
+  });
+
+  it('locates related information in a file that moved without changing its declarations', async () => {
+    const helper = (blankLines: number) =>
+      `${'\n'.repeat(blankLines)}export interface Named {\n  name: string;\n}\n`;
+    const root = await createFixture({
+      'helper.ts': helper(0),
+      'workflow.ts': "import type { Named } from './helper.js';\nexport const named: Named = {};\n",
+    });
+    const cache = new TypecheckProgramCache();
+
+    // The first edit changes the helper's recorded signature from its version to its declaration
+    // text; later layout-only edits keep that signature, so the builder keeps workflow.ts's results.
+    for (const blankLines of [0, 2, 5, 9]) {
+      await writeFile(join(root, 'helper.ts'), helper(blankLines));
+      const cached = await executeEntrypoint(root, 'workflow.ts', cache);
+      expect(cached).toEqual(await executeEntrypoint(root, 'workflow.ts', undefined));
+      expect(cached.diagnostics).toContainEqual(
+        expect.objectContaining({
+          code: 2741,
+          relatedInformation: [
+            expect.objectContaining({ filePath: join(root, 'helper.ts'), line: blankLines + 2 }),
+          ],
+        }),
+      );
+    }
+  });
+
+  it('leaves unreadable files to the compiler host', async () => {
+    const root = await createFixture({ 'present.ts': 'export const value = 1;\n' });
+    const cached = await executeEntrypoint(root, 'missing.ts', new TypecheckProgramCache());
+
+    expect(cached.ok).toBe(false);
+    expect(cached).toEqual(await executeEntrypoint(root, 'missing.ts', undefined));
+  });
+
+  it('keeps default-profile and tsconfig option sets apart', async () => {
+    const root = await createFixture({
+      'workflow.ts': 'export const first = ([] as string[])[0].split(".");',
+    });
+    const cache = new TypecheckProgramCache();
+    const defaults = await executeEntrypoint(root, 'workflow.ts', cache);
+    await writeFile(
+      join(root, 'tsconfig.json'),
+      JSON.stringify({ compilerOptions: { strict: true, noUncheckedIndexedAccess: false } }),
+    );
+    const configured = await executeEntrypoint(root, 'workflow.ts', cache);
+    await rm(join(root, 'tsconfig.json'));
+    const defaultsAgain = await executeEntrypoint(root, 'workflow.ts', cache);
+
+    expect(defaults.diagnostics).toContainEqual(expect.objectContaining({ code: 2532 }));
+    expect(configured).toMatchObject({ ok: true, diagnostics: [] });
+    expect(defaultsAgain).toEqual(defaults);
+  });
+
+  it('reuses parsed files across entrypoints under the same options', async () => {
+    const root = await createFixture({
+      'a.ts': "import { value } from './shared.js';\nexport const a = value;\n",
+      'b.ts': "import { value } from './shared.js';\nexport const b = value;\n",
+      'shared.ts': 'export const value = 1;\n',
+      'tsconfig.json':
+        '{"compilerOptions":{"skipLibCheck":true,"strict":true,"module":"NodeNext"}}',
+    });
+    const cache = new TypecheckProgramCache();
+    const a = checkedProgram(root, 'a.ts', cache);
+    const b = checkedProgram(root, 'b.ts', cache);
+    const uncached = checkedProgram(root, 'b.ts', new TypecheckProgramCache());
+    const shared = join(root, 'shared.ts');
+
+    expect([a.diagnostics, b.diagnostics]).toEqual([[], []]);
+    expect(b.program.getSourceFile(shared)).toBe(a.program.getSourceFile(shared));
+    expect(libFile(a.program)).toBeDefined();
+    expect(libFile(b.program)).toBe(libFile(a.program));
+    expect(uncached.program.getSourceFile(shared)).not.toBe(a.program.getSourceFile(shared));
+  });
+
+  it('evicts the least recently used option set beyond its limit and still checks it correctly', async () => {
+    const root = await createFixture({
+      'loose/tsconfig.json': '{"compilerOptions":{"skipLibCheck":true,"strict":false}}',
+      'strict/tsconfig.json': '{"compilerOptions":{"skipLibCheck":true,"strict":true}}',
+      'other/tsconfig.json':
+        '{"compilerOptions":{"skipLibCheck":true,"strict":true,"noImplicitReturns":true}}',
+      'workflow.ts': 'export function identity(value) { return value; }\n',
+    });
+    const check = (cache: TypecheckProgramCache, config: string) =>
+      checkedProgram(root, 'workflow.ts', cache, join(config, 'tsconfig.json'));
+    const cache = new TypecheckProgramCache(2);
+    const strict = check(cache, 'strict');
+    check(cache, 'loose');
+    const strictAgain = check(cache, 'strict');
+    check(cache, 'other');
+    const strictKept = check(cache, 'strict');
+    check(cache, 'loose');
+    check(cache, 'other');
+    const strictEvicted = check(cache, 'strict');
+
+    expect(strict.diagnostics.map((diagnostic) => diagnostic.code)).toEqual([7006]);
+    expect(libFile(strictAgain.program)).toBe(libFile(strict.program));
+    expect(libFile(strictKept.program)).toBe(libFile(strict.program));
+    expect(libFile(strictEvicted.program)).not.toBe(libFile(strict.program));
+    expect(strictEvicted.diagnostics.map((diagnostic) => diagnostic.code)).toEqual([7006]);
+    expect(check(cache, 'loose').diagnostics).toEqual([]);
   });
 });
