@@ -998,6 +998,12 @@ function localReviewStart(a, P) {
   const previous = readJson(`${stem}.result.json`);
   // A finished review of the same head is reused: a resumed run does not pay for it twice.
   if (previous && !previous.error) return { started: false, cached: true, done: true, ...previous };
+  // A review of the same head that is still running (a resumed run, or a retried start) is waited
+  // for rather than launched twice.
+  const running = readJson(`${stem}.started.json`);
+  if (running?.sha === sha && processAlive(running.pid)) {
+    return { started: false, cached: false, running: true, ...running };
+  }
   rmSync(`${stem}.result.json`, { force: true });
   const args = [fileURLToPath(import.meta.url), 'local-review', '--pr', String(pr), '--sha', sha];
   args.push('--root', P.root);
