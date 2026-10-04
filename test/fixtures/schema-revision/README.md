@@ -29,6 +29,30 @@ and the file was formatted with Prettier; nothing else was edited. The read-view
 `test/record-schema-revision.test.ts` was computed on the same unmodified main from this scrubbed,
 formatted file.
 
+`revision-one-checkpoint.json` was generated the same way at origin/main `33b6eac`, before the
+`--max-window-utilization` gate (#168) changed the nested `runBudget` and `budgetStop` shapes in
+revision 2. Its run ID is `revision-one`, and it ran this definition with `maxRunAgentAttempts: 0`
+and a harness that throws if invoked, so it carries `schemaRevision: 1`, a two-cap `runBudget` and a
+`maxRunAgentAttempts` `budgetStop` on step `call`:
+
+```ts
+defineWorkflow({
+  name: 'schema-revision',
+  version: '1',
+  input: z.null(),
+  output: z.null(),
+  async run(ctx) {
+    await ctx.now('prepare');
+    await ctx.claude.text('call', { prompt: 'x' });
+    return null;
+  },
+});
+```
+
+Stack paths are scrubbed to `/fixture/...` and the file was formatted with Prettier; its read-view
+digest in `test/record-schema-revision.test.ts` was computed on the same unmodified main from this
+file. No harness was invoked.
+
 `record-keys.json` lists the top-level run-record keys of each schema revision. Adding or changing a
 persisted run-level field adds a revision there and bumps `SUPPORTED_SCHEMA_REVISION`; a revision
 that only changes a nested shape repeats the previous key list. See `docs/storage.md`.

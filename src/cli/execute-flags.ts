@@ -54,6 +54,7 @@ export interface WorkflowExecuteFlags {
   readonly 'registry-dir': string[] | undefined;
   readonly 'max-run-cost-usd': string | undefined;
   readonly 'max-run-agent-attempts': string | undefined;
+  readonly 'max-window-utilization': string | undefined;
   readonly progress: boolean | undefined;
   readonly transcripts: 'on' | 'on-failure' | 'off' | undefined;
   readonly 'max-retained-bytes': string | undefined;

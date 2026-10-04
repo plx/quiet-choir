@@ -2,6 +2,23 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- `--max-window-utilization <0..1|off>` on `execute`, `start` and `resume`
+  (`RunOptions.maxWindowUtilization`) is a third sticky run cap (#168; ADR 0053). Saved in
+  `runBudget` and outside identity, it is kept by resume and tick, cleared by `off` or
+  `--policy-reset`. Agent admission reads the admitting harness's latest recorded rate-limit report
+  (#156) and refuses a new attempt while a window whose reset has not passed reports a utilization
+  at or above the cap; a run without a report, and Codex, are never refused by it. The refusal
+  latches like the other caps, and its `budgetStop` names the metric `maxWindowUtilization`, the
+  `harness`, `window`, `resetsAt` and the `observed` utilization. When every exceeded window has a
+  known reset, the run then ends `suspended` instead of failing, with `nextWakeAt` at the latest
+  reset (or an earlier wait deadline), exit 75 and a `run.suspended` message naming the window;
+  `workflow tick` resumes it after the reset, and an earlier `resume` suspends it again without a
+  new attempt. It suspends even under `--wait-mode block`. With an unknown reset the run fails with
+  `RunBudgetExceededError` as the other caps do. The `workflow.run.suspended` document gains a
+  top-level `nextWakeAt` for every suspension, inspection summaries an optional `budgetStop` key and
+  a `Budget stop:` text line, and a gated run's resume follow-up says when tick resumes it. Records
+  are written with `schemaRevision` 2 (nested `runBudget` and `budgetStop` changes); revision-1
+  records read and resume unchanged, and a revision-1 build refuses to rewrite a revision-2 record.
 - Run records carry a `schemaRevision` (#167; ADR 0052). New records, and resumed records at their
   next save, are written with `SUPPORTED_SCHEMA_REVISION` (1); an absent field means 1, reads never
   fill it in, and existing records resume unchanged. A record with a newer revision, or with

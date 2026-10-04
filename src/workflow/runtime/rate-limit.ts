@@ -1,10 +1,12 @@
 import type { AgentDiagnostics } from './agent-stream-model.js';
 import type { StepRecord } from './record.js';
+import type { RunBudgetStop } from './run-budget.js';
 
 // Subscription rate-limit windows that Claude Code reports in its stream (#156). One pure module
 // owns the stored shape, its validation and its formatting, so the stream handler (recording), the
-// inspection summary (projection) and the text views (printing) cannot drift apart. Observation
-// only: nothing here gates, retries or suspends a run.
+// inspection summary (projection) and the text views (printing) cannot drift apart. The
+// `--max-window-utilization` gate (ADR 0053) evaluates a report with `windowStop`; the run budget
+// owns the gate itself, and nothing here retries or suspends a run.
 
 /** One rate-limit window as stored: a fraction of the window used and, when reported, its reset. @internal */
 // eslint-disable-next-line @typescript-eslint/consistent-type-definitions -- stored as JSON: only an alias keeps the implicit index signature that JsonValue needs
@@ -156,8 +158,12 @@ export function formatRateLimitWindows(
 
 /** Unix epoch seconds as an ISO time, or null when the date is out of range. */
 function iso(seconds: number | null): string | null {
-  if (seconds === null) return null;
-  const date = new Date(seconds * 1000);
+  return seconds === null ? null : isoMs(seconds * 1000);
+}
+
+/** Epoch milliseconds as an ISO time, or null when the date is out of range. */
+function isoMs(milliseconds: number): string | null {
+  const date = new Date(milliseconds);
   return Number.isNaN(date.getTime()) ? null : date.toISOString();
 }
 
@@ -223,4 +229,94 @@ function compare(a: readonly number[], b: readonly number[]): number {
     if (delta !== 0) return delta;
   }
   return 0;
+}
+
+/** The window that closes the utilization gate, as {@link windowStop} found it. @internal */
+export interface WindowStop {
+  /** Native window name, such as `seven_day`. */
+  readonly window: string;
+  /** Reported utilization of that window; may exceed 1. */
+  readonly observed: number;
+  /** Unix epoch seconds at which the window resets, as reported; null when unknown. */
+  readonly resetsAt: number | null;
+  /**
+   * Epoch milliseconds at which the window resets (`resetsAt * 1000`, rounded up), or null when
+   * the reset is unknown or later than `maxWakeMs`. Null means the run cannot wait for it.
+   */
+  readonly wakeAt: number | null;
+}
+
+/**
+ * Evaluate the `--max-window-utilization` gate against one harness's latest report. A window's
+ * reset is its own `resetsAt`, or the event's `resetsAt` when the event's `type` names that window.
+ * A window whose known reset is at or before `nowMs` has expired and is ignored; a window with an
+ * unknown reset never expires. A live window is exceeded when its utilization is not below `limit`,
+ * the rule the other run caps use. Without a report or an exceeded window the gate admits
+ * (undefined). When any exceeded window has no known reset, the first such window is the stop and
+ * has no wake; otherwise the exceeded window with the latest reset is the stop, so the run wakes
+ * once every exceeded window has reset. `status` is never consulted. @internal
+ */
+export function windowStop(
+  report: Pick<RateLimitDiagnostics, 'type' | 'resetsAt' | 'windows'> | undefined,
+  limit: number,
+  nowMs: number,
+  maxWakeMs: number,
+): WindowStop | undefined {
+  if (!report) return undefined;
+  let unknown: WindowStop | undefined;
+  let latest: (WindowStop & { readonly resetsAt: number }) | undefined;
+  for (const [window, value] of Object.entries(report.windows)) {
+    const resetsAt = value.resetsAt ?? (report.type === window ? report.resetsAt : null);
+    if (resetsAt !== null && resetsAt * 1000 <= nowMs) continue;
+    if (value.utilization < limit) continue;
+    if (resetsAt === null) {
+      unknown ??= { window, observed: value.utilization, resetsAt: null, wakeAt: null };
+      continue;
+    }
+    if (latest && latest.resetsAt >= resetsAt) continue;
+    const wake = Math.ceil(resetsAt * 1000);
+    latest = {
+      window,
+      observed: value.utilization,
+      resetsAt,
+      wakeAt: Number.isSafeInteger(wake) && wake <= maxWakeMs ? wake : null,
+    };
+  }
+  return unknown ?? latest;
+}
+
+/** A fraction as a whole percentage, such as `84%`. */
+function percent(value: number): string {
+  return `${String(Math.round(value * 100))}%`;
+}
+
+/** `claude seven_day window at 84% reached --max-window-utilization 0.5`. */
+function windowStopSummary(stop: RunBudgetStop): string {
+  return `${stop.harness ?? 'agent'} ${stop.window ?? 'rate-limit'} window at ${percent(stop.observed)} reached --max-window-utilization ${String(stop.limit)}`;
+}
+
+/**
+ * The `run.suspended` message of a run the utilization gate suspended, shared by the runtime's
+ * notification and `--events` so both say the same thing; the CLI adds `runId`. @internal
+ */
+export function windowSuspensionMessage(
+  stop: RunBudgetStop,
+  nextWakeAt: number | null,
+  runId?: string,
+): string {
+  const wake = nextWakeAt === null ? null : isoMs(nextWakeAt);
+  return `Run${runId === undefined ? '' : ` ${runId}`} suspended${wake === null ? '' : ` until ${wake}`}: ${windowStopSummary(stop)}.`;
+}
+
+/**
+ * The gate's part of a refusal message: which window was at what utilization, and when it resets
+ * or that it reported no usable reset time, so the run cannot wait for it. @internal
+ */
+export function windowStopDescription(stop: RunBudgetStop, wakeAt: number | null): string {
+  const reset = wakeAt === null ? null : isoMs(wakeAt);
+  return `${windowStopSummary(stop)}; ${
+    reset === null
+      ? 'the window reported no usable reset time, so the run cannot wait for it'
+      : `the window resets at ${reset}`
+  }`;
 }

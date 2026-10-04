@@ -11,6 +11,7 @@ import {
   WorkflowCommandError,
 } from './workflow-errors.js';
 import { summarizeRunResult } from '../workflow/loader/run-result.js';
+import { windowSuspensionMessage } from '../workflow/runtime/rate-limit.js';
 import { formatNextCommands } from './presentation.js';
 import { workflowFailure, type WorkflowFailure } from '../workflow/loader/failure.js';
 import { isValidRunId, runIdMessage, type CliErrorCode } from '../workflow/runtime/run-errors.js';
@@ -251,14 +252,18 @@ export abstract class WorkflowCommand extends BaseCommand {
         stateDir: rehearsal === undefined ? this.failureContext.stateDir : null,
         pending: run.pending ?? [],
         resumeCommand: run.resumeCommand ?? null,
+        // When tick will resume the run on its own; null when only an answer or signal can.
+        nextWakeAt: run.nextWakeAt ?? null,
         ...(rehearsal === undefined && this.compactRunDocuments()
           ? { summary: summarizeRunResult(run, this.failureContext.stateDir) }
           : { run }),
         ...(rehearsal === undefined ? {} : { rehearsal }),
       },
-      rehearsal === undefined
-        ? `Run ${run.id} suspended. Use workflow pending to review waits, workflow answer for signals, and workflow tick to resume when due.`
-        : `Rehearsal ${run.id} reached an external wait. Temporary state was removed; start a real run to request the decision.`,
+      rehearsal !== undefined
+        ? `Rehearsal ${run.id} reached an external wait. Temporary state was removed; start a real run to request the decision.`
+        : run.budgetStop?.metric === 'maxWindowUtilization'
+          ? `${windowSuspensionMessage(run.budgetStop, run.nextWakeAt ?? null, run.id)} workflow tick resumes it once that time has passed.`
+          : `Run ${run.id} suspended. Use workflow pending to review waits, workflow answer for signals, and workflow tick to resume when due.`,
     );
     // Oclif's exit() throws through catch(), which would misclassify suspension as a usage error.
     process.exitCode = 75;

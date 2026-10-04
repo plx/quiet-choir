@@ -6,7 +6,13 @@ import {
 } from './harness-registry.js';
 import type { HarnessDeclaration, WorkflowHarnesses } from './harness-model.js';
 import type { WorkflowDeclaration } from './child-model.js';
-import { RunBudget, RunBudgetExceededError, runBudgetSchema } from './run-budget.js';
+import {
+  RunBudget,
+  RunBudgetExceededError,
+  runBudgetSchema,
+  type RunBudgetPolicy,
+} from './run-budget.js';
+import { windowSuspensionMessage } from './rate-limit.js';
 import { RunChildren } from './children.js';
 import { checkedDefinition, describeWorkflow } from './definition.js';
 import { agentUsageSchema, normalizeUsage } from './usage.js';
@@ -344,6 +350,12 @@ export interface RunOptions extends WorkflowCodeOptions {
   /** Sticky cap on locally admitted agent attempts across resumes; null clears it. */
   readonly maxRunAgentAttempts?: number | null;
   /**
+   * Sticky subscription-window gate, 0 to 1; null clears it. A new agent attempt is refused while
+   * its harness's latest recorded rate-limit window reports at least this utilization; the run then
+   * suspends until the window resets, or fails when the reset is unknown (ADR 0053).
+   */
+  readonly maxWindowUtilization?: number | null;
+  /**
    * Runtime-owned checkout cache and dependency provisioning policy. Each field that is not
    * undefined replaces the same field of the root definition's `worktrees`.
    */
@@ -664,6 +676,9 @@ export async function runWorkflow<
     ...(options.maxRunAgentAttempts === undefined
       ? {}
       : { maxRunAgentAttempts: options.maxRunAgentAttempts }),
+    ...(options.maxWindowUtilization === undefined
+      ? {}
+      : { maxWindowUtilization: options.maxWindowUtilization }),
   });
   const incomingChildDepth = z
     .number()
@@ -897,12 +912,18 @@ export async function runWorkflow<
       // Stamped only in memory: the revision reaches disk with the next real save.
       existing.schemaRevision = SUPPORTED_SCHEMA_REVISION;
     }
-    const runBudget = runBudgetSchema.parse({
+    const mergedBudget = runBudgetSchema.parse({
       maxRunCostUsd: null,
       maxRunAgentAttempts: null,
+      maxWindowUtilization: null,
       ...(options.policyReset ? {} : existing?.runBudget),
       ...incomingBudget,
     });
+    // New and resumed records always carry every cap, as an explicit null when unlimited.
+    const runBudget: RunBudgetPolicy = {
+      ...mergedBudget,
+      maxWindowUtilization: mergedBudget.maxWindowUtilization ?? null,
+    };
     const maxChildDepth =
       incomingChildDepth ?? (options.policyReset ? undefined : existing?.maxChildDepth) ?? 8;
     registry.preflight(checkedDefinition(definition), existing ?? forkSource, null);
@@ -1042,7 +1063,7 @@ export async function runWorkflow<
             'Agent attempt ended without a durable outcome; usage may be incomplete.';
         }
       }
-    const budget = new RunBudget(record, runBudget);
+    const budget = new RunBudget(record, runBudget, clock);
     const sessionSalt = (record.sessionSalt ??= randomUUID());
     if (options.launch) record.launch = structuredClone(options.launch);
     const priorHarness = record.harness ?? forkSource?.harness;
@@ -1325,7 +1346,7 @@ export async function runWorkflow<
         origins.markFatal(budget.error);
         return budget.refuse();
       };
-      if (budget.check(id)) return refuse();
+      if (budget.check(id, harness)) return refuse();
       const admission = limiter.acquire(harness, AbortSignal.any([signal, budget.signal]));
       emitAdmission('agent.queued', id, step, harness, 0);
       let permit: AgentPermit;
@@ -1335,7 +1356,7 @@ export async function runWorkflow<
         if (budget.error) return refuse();
         throw error;
       }
-      if (budget.check(id)) {
+      if (budget.check(id, harness)) {
         permit.release();
         return refuse();
       }
@@ -1718,9 +1739,12 @@ export async function runWorkflow<
         const attemptStarted = performance.now();
         let admitted: Awaited<ReturnType<typeof budgetAdmission>> | undefined;
         try {
+          // A redefined step is admitted under the harness it is about to run, not the prior one.
+          const admittingHarness =
+            kind === 'agent' && observedRequest ? observedRequest.harness : (step.harness ?? kind);
           admitted =
             agent && budget.enabled
-              ? await budgetAdmission(id, step, step.harness ?? kind, signal)
+              ? await budgetAdmission(id, step, admittingHarness, signal)
               : undefined;
         } catch (cause) {
           // A queued first attempt leaves no record; a queued retry must not stay 'failed'.
@@ -3380,6 +3404,23 @@ export async function runWorkflow<
       () => questions.shouldSuspend,
       () => questions.scan(),
     );
+    /** The result of a saved suspension, for the quiescent path and the window gate alike. */
+    const suspendedResult = async (): Promise<WorkflowResult<TOutput>> => ({
+      ...structuredClone(record),
+      status: 'suspended',
+      output: null,
+      pending: await pendingOperations(record, stateDir, options.commandLauncher),
+      resumeCommand: record.launch
+        ? workflowArgv(
+            options.commandLauncher,
+            'resume',
+            record.id,
+            '--state-dir',
+            stateDir,
+            ...launchPolicyFlags(record.launch),
+          )
+        : null,
+    });
     try {
       signal.throwIfAborted();
       let bodyOutput: { value: TOutput } | undefined;
@@ -3440,22 +3481,7 @@ export async function runWorkflow<
             attempt: 0,
             runId: record.id,
           });
-          return {
-            ...structuredClone(record),
-            status: 'suspended',
-            output: null,
-            pending: await pendingOperations(record, stateDir, options.commandLauncher),
-            resumeCommand: record.launch
-              ? workflowArgv(
-                  options.commandLauncher,
-                  'resume',
-                  record.id,
-                  '--state-dir',
-                  stateDir,
-                  ...launchPolicyFlags(record.launch),
-                )
-              : null,
-          };
+          return await suspendedResult();
         }
       }
       const output = result.kind === 'completed' ? result.value : bodyOutput?.value;
@@ -3586,6 +3612,49 @@ export async function runWorkflow<
           });
         }
         throw error;
+      }
+      // ADR 0053: the window gate latched with a known reset, and that stop is the only thing that
+      // ended the run: every non-cancellation failure derives from it, with no concurrent failure,
+      // interruption or checkpoint error. Save a clean suspension that tick resumes at the reset.
+      const budgetError = budget.error;
+      const wakeAt = budget.wakeAt;
+      if (
+        budgetError &&
+        wakeAt !== null &&
+        !interrupted &&
+        !signal.aborted &&
+        checkpointProblems.length === 0 &&
+        origins.onlyFrom(caught, budgetError)
+      ) {
+        record.status = 'suspended';
+        children.finish('suspended');
+        record.error = null;
+        record.rootCause = null;
+        delete record.recoveryHint;
+        record.output = null;
+        // After questions.close(), whose last wake update covers only the waits: a wait still
+        // parked keeps its own earlier deadline or check, so its timeout is not delayed.
+        record.nextWakeAt = Math.min(wakeAt, record.nextWakeAt ?? wakeAt);
+        warnUnmatched();
+        const priorEvents = [...(record.events ?? [])];
+        // A clean suspension ends a crash loop, as on the quiescent path.
+        const priorStaleRecovery = record.staleRecovery;
+        delete record.staleRecovery;
+        const suspended = observations.lifecycle('run.suspended');
+        try {
+          await save();
+        } catch (failure) {
+          record.events = priorEvents;
+          if (priorStaleRecovery) record.staleRecovery = priorStaleRecovery;
+          throw failure;
+        }
+        notify({
+          ...suspended,
+          message: windowSuspensionMessage(budgetError.stop, record.nextWakeAt),
+          attempt: 0,
+          runId: record.id,
+        });
+        return await suspendedResult();
       }
       // A callback's own AbortError is a failure; only scope cancellation cancels the run.
       record.status = interrupted || error instanceof CancelledError ? 'cancelled' : 'failed';

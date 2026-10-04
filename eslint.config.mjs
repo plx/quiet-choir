@@ -265,7 +265,8 @@ export default defineConfig(
   },
   {
     // The event line formatter and the record follower's derivation: no I/O, clock or store, so
-    // `--events` and `workflow events` share one pure line shape.
+    // `--events` and `workflow events` share one pure line shape. The pure rate-limit module
+    // supplies the window gate's suspension message, which the runtime's notification also uses.
     files: ['src/workflow/loader/event-line.ts', 'src/workflow/loader/event-follow.ts'],
     rules: {
       '@typescript-eslint/no-restricted-imports': [
@@ -273,10 +274,17 @@ export default defineConfig(
         {
           patterns: [
             {
-              group: ['node:*', ...builtinModules, './**', '../**', '!./event-line.js'],
+              group: ['node:*', ...builtinModules],
               allowTypeImports: true,
               message:
-                'Event line modules must stay free of I/O: import values only from ./event-line.js; everything else must be import type.',
+                'Event line modules must stay free of I/O: import values only from ./event-line.js and the pure ../runtime/rate-limit.js; everything else must be import type.',
+            },
+            {
+              // A regex, because a gitignore group cannot re-include a file below ../runtime/.
+              regex: '^(?:\\./(?!event-line\\.js$)|\\.\\./(?!runtime/rate-limit\\.js$))',
+              allowTypeImports: true,
+              message:
+                'Event line modules must stay free of I/O: import values only from ./event-line.js and the pure ../runtime/rate-limit.js; everything else must be import type.',
             },
           ],
         },

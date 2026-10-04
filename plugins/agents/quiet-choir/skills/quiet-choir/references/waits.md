@@ -129,6 +129,12 @@ body cleanup. Waits due within **1000 ms** stay live by default. Frequent polls 
 process. `--wait-mode block` on execute/resume (or RunOptions.waitMode) keeps all waits live. Old
 saved sleeps replay; unfinished old sleep records retain the previous blocking path.
 
+A run can also suspend with no pending wait: the `--max-window-utilization` gate refuses a new agent
+call while the latest subscription window is at or above the cap and, when the window's reset is
+known, saves `suspended` with `nextWakeAt` at that reset (or an earlier wait deadline) and the
+reason in `budgetStop`. Tick resumes it after the reset. It suspends even under `--wait-mode block`;
+see [the window gate](usage-budgets.md#gate-on-the-windows).
+
 `workflow pending --json` includes general waits with kind=wait, deadline, nextCheckAt, checks,
 note, lastError (latest tolerated error or null), command (a command poll's command or null), and an
 optional signal/answer command. `nextWakeAt` is the earliest deadline/check, null for pure signals.

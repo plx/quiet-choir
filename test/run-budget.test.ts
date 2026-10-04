@@ -393,3 +393,18 @@ it('allows local work and replays with a zero cap and validates policy before cr
   for (const value of ['-1', 'NaN', '1.5'])
     expect(() => parseRunBudget(undefined, value)).toThrow();
 });
+
+it.each<[string, number | null]>([
+  ['0.5', 0.5],
+  ['0', 0],
+  ['1', 1],
+  ['off', null],
+])('parses --max-window-utilization %s', (value, expected) => {
+  expect(parseRunBudget(undefined, undefined, value)).toEqual({ maxWindowUtilization: expected });
+});
+
+it.each(['-1', '1.5', 'abc'])('rejects --max-window-utilization %s with the flag name', (value) => {
+  expect(() => parseRunBudget(undefined, undefined, value)).toThrow(
+    '--max-window-utilization must be a number from 0 to 1 or off.',
+  );
+});

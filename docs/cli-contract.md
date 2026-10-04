@@ -11,44 +11,44 @@ a run with current ownership diagnostics, validate returns workflow metadata wit
 (see [durability lint](#durability-lint)), typecheck returns its compiler result, and check-resume
 returns a compatible comparison in `check`. `inspect --json --summary` returns the compact
 dashboard, including the completed run's `output` (null otherwise), an `agents` roll-up and, when an
-attempt reported Claude subscription rate-limit windows, a per-harness `rateLimits` map.
-`workflow list --json` returns `{kind, ok, stateDir, runs, warnings}` with compact rows: `id`,
-`workflow`, `status`, `recordedStatus`, `counts`, `updatedAt`, `ownership`, `nextWakeAt`, `cwd`,
-`stateDir`, `warnings`, `bytes` and a six-field `usage`; `--full` restores whole run summaries,
-which carry `bytes` too. `bytes` is the apparent size of the run's regular files in its runs
-container: everything under `<runId>/` (record, journal, `attempts/` transcripts, artifacts,
-`launch/`, inbox) plus the legacy `<runId>.json`, `<runId>.json.v<N>`, `<runId>.cancel.json` and
-`<runId>.inbox/`, without following symbolic links. Worktree caches are not counted. It is null,
-with a list warning, when the size cannot be measured; inspect and watch do not compute it. The text
-view shows it in a `SIZE` column (B, KiB, MiB or GiB). `validate --json` and `list-defs --json` omit
-each `harnesses[].options` JSON Schema, at every depth of `children`, unless `--harness-schemas` is
-given. `list-defs` discovers `*.workflow.ts`, `*.workflow.mts` and `*.workflow.cts` files (not
-`.d.ts` or `.tsx`). The `configuration` topic has one command, `configuration doctor`. `list --all`
-discovers registered XDG projects without imports; rows include `cwd` and `stateDir`.
-`execute --resume --run-id ID` may omit FILE and use stored launch paths, as does `resume ID`. A
-supplied different FILE is refused before import. See [storage](storage.md).
-`inspect --watch --json` emits JSONL per checkpoint/ownership change, ending with a snapshot and
-exit 0/1/75/130/3 for completed/failed/suspended/cancelled/stale (an interrupted run ends as
-suspended). It does not add an error document for an observed failure. An interrupted watcher emits
-an error document and leaves the observed run untouched. Three opt-in flags bound the watch for
-hosts with time limits. `--timeout DURATION` is measured from the first successful read: a run still
-running then ends the watch with `watch.timeout` (exit 79), whose error document carries the last
-observed `status` (`running`) and `details.timeoutMs`; the run keeps running.
-`--wait-created DURATION` is measured from the start of the watch: until the first successful read,
-a missing record is retried at the interval instead of failing with `run.not_found` (exit 3), and
-when the bound expires the watch fails with `watch.record_not_created` (exit 66), `status: null` and
-`details.waitCreatedMs`. A record that disappears after it was read stays `run.not_found`. Both take
-`ms`, `s`, `m` or `h` durations up to 2147483647 ms and sleep at most until their deadline, then
-read once more, so a run that finishes at the deadline is reported as finished and the watch ends
-within one read after it. `--final` prints only the final snapshot, or only the error document on a
-bound, an interrupt or a missing record. With `--summary`, inspect error documents carry the compact
-`summary` instead of the whole `run`. 79 is the first exit after the sysexits block and has no
-meaning in sh, Node, `timeout(1)` or xargs; 124 stays `start.timeout`, so a host can tell "runner
-stopped without a record" from "run still running". See [run observability](observability.md) for
-polling, stale detection, and partial usage. Non-watching inspect exits 0 for any readable
-checkpoint status, including `failed`, `cancelled`, and `running`. `workflow pending --json` returns
-`{kind:"workflow.pending.result", ok, pending, hidden}`, and `workflow answer --json` without
-`--resume` returns `{kind:"workflow.answer.result", ok, delivery}`.
+attempt reported Claude subscription rate-limit windows, a per-harness `rateLimits` map, and, when
+the latest execution was refused by a run cap, its saved `budgetStop`. `workflow list --json`
+returns `{kind, ok, stateDir, runs, warnings}` with compact rows: `id`, `workflow`, `status`,
+`recordedStatus`, `counts`, `updatedAt`, `ownership`, `nextWakeAt`, `cwd`, `stateDir`, `warnings`,
+`bytes` and a six-field `usage`; `--full` restores whole run summaries, which carry `bytes` too.
+`bytes` is the apparent size of the run's regular files in its runs container: everything under
+`<runId>/` (record, journal, `attempts/` transcripts, artifacts, `launch/`, inbox) plus the legacy
+`<runId>.json`, `<runId>.json.v<N>`, `<runId>.cancel.json` and `<runId>.inbox/`, without following
+symbolic links. Worktree caches are not counted. It is null, with a list warning, when the size
+cannot be measured; inspect and watch do not compute it. The text view shows it in a `SIZE` column
+(B, KiB, MiB or GiB). `validate --json` and `list-defs --json` omit each `harnesses[].options` JSON
+Schema, at every depth of `children`, unless `--harness-schemas` is given. `list-defs` discovers
+`*.workflow.ts`, `*.workflow.mts` and `*.workflow.cts` files (not `.d.ts` or `.tsx`). The
+`configuration` topic has one command, `configuration doctor`. `list --all` discovers registered XDG
+projects without imports; rows include `cwd` and `stateDir`. `execute --resume --run-id ID` may omit
+FILE and use stored launch paths, as does `resume ID`. A supplied different FILE is refused before
+import. See [storage](storage.md). `inspect --watch --json` emits JSONL per checkpoint/ownership
+change, ending with a snapshot and exit 0/1/75/130/3 for completed/failed/suspended/cancelled/stale
+(an interrupted run ends as suspended). It does not add an error document for an observed failure.
+An interrupted watcher emits an error document and leaves the observed run untouched. Three opt-in
+flags bound the watch for hosts with time limits. `--timeout DURATION` is measured from the first
+successful read: a run still running then ends the watch with `watch.timeout` (exit 79), whose error
+document carries the last observed `status` (`running`) and `details.timeoutMs`; the run keeps
+running. `--wait-created DURATION` is measured from the start of the watch: until the first
+successful read, a missing record is retried at the interval instead of failing with `run.not_found`
+(exit 3), and when the bound expires the watch fails with `watch.record_not_created` (exit 66),
+`status: null` and `details.waitCreatedMs`. A record that disappears after it was read stays
+`run.not_found`. Both take `ms`, `s`, `m` or `h` durations up to 2147483647 ms and sleep at most
+until their deadline, then read once more, so a run that finishes at the deadline is reported as
+finished and the watch ends within one read after it. `--final` prints only the final snapshot, or
+only the error document on a bound, an interrupt or a missing record. With `--summary`, inspect
+error documents carry the compact `summary` instead of the whole `run`. 79 is the first exit after
+the sysexits block and has no meaning in sh, Node, `timeout(1)` or xargs; 124 stays `start.timeout`,
+so a host can tell "runner stopped without a record" from "run still running". See
+[run observability](observability.md) for polling, stale detection, and partial usage. Non-watching
+inspect exits 0 for any readable checkpoint status, including `failed`, `cancelled`, and `running`.
+`workflow pending --json` returns `{kind:"workflow.pending.result", ok, pending, hidden}`, and
+`workflow answer --json` without `--resume` returns `{kind:"workflow.answer.result", ok, delivery}`.
 
 Each `pending` row keeps the question or wait fields and adds `runStatus` (the owning run's
 checkpoint status), `delivery` and `next`. `delivery` is `{state, at, by}`: `state` is `queued` when
@@ -119,9 +119,13 @@ attempt to read it from) or null, and `warnings` the run's warnings, de-duplicat
 followed by a note that says how many more exist.
 
 A suspension (exit 75) returns
-`{kind:"workflow.run.suspended", ok:true, exitCode:75, runId, stateDir, pending, resumeCommand, summary}`,
+`{kind:"workflow.run.suspended", ok:true, exitCode:75, runId, stateDir, pending, resumeCommand, nextWakeAt, summary}`,
 where `summary` is the same projection (`runId`, `stateDir`, `status`, `output`, `usage`, `counts`,
-`rootCause`, `warnings`) and each `pending` entry keeps its `answerCommand`.
+`rootCause`, `warnings`) and each `pending` entry keeps its `answerCommand`. `nextWakeAt` is the
+epoch millisecond time at which `workflow tick` resumes the run, or null when only an answer or
+signal can. A run the `--max-window-utilization` gate suspended has no pending wait and a
+`nextWakeAt` at the window's reset
+([ADR 0053](decisions/0053-window-utilization-gate-suspends-until-reset.md)).
 
 `--full` prints the whole record instead, exactly as earlier releases did: `{...run, stateDir}` for
 a successful run (no `kind` or `ok`; `answer --resume --full` now includes `stateDir` too), and the

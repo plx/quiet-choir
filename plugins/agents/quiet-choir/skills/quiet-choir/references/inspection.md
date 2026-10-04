@@ -113,18 +113,19 @@ harness, requested model, effort, profile, elapsed time and cost, plus `toolUses
 `warnings` when recorded, bounded to 3 entries of 200 characters with a `+K more warnings` entry and
 always keeping `no-tool-use`, the full list being in `inspect --full`; the model is never assumed
 effective), and, only when an attempt reported subscription rate-limit windows, a `rateLimits` map
-by harness (see [usage budgets](usage-budgets.md#subscription-rate-limit-windows)). Text prints a
-completed command on one line and the last 20 completed agent calls, with `tools N` and any
-`no-tool-use` warning, then a `Rate windows` line per harness after the usage lines when windows
-were reported; `-v` restores two-line commands with absolute argv and cwd, all recent agent rows and
-saved stacks. For embedding, `await readRun({ runId, cwd, stateDir })` returns the validated
-checkpoint alone; `inspectRunOwnership({ runId, cwd, stateDir })` returns the separate current
-ownership view. Like `runWorkflow`, it resolves explicit options, then `QUIET_CHOIR_STATE_DIR`, an
-existing run's legacy location, and the external XDG project default. Relative state paths resolve
-against `cwd` (default: `process.cwd()`). `resolveStateDir({ cwd, stateDir, runId })` returns the
-absolute directory; include `runId` to discover its legacy location. A missing CLI inspection names
-that directory and lists the run IDs present; embedded `readRun` retains the filesystem error's
-`code: 'ENOENT'`.
+by harness (see [usage budgets](usage-budgets.md#subscription-rate-limit-windows)), and, only when
+the latest execution was refused by a run cap, its `budgetStop`. Text prints a completed command on
+one line and the last 20 completed agent calls, with `tools N` and any `no-tool-use` warning, then a
+`Rate windows` line per harness after the usage lines when windows were reported and a
+`Budget stop:` line for a saved `budgetStop`; `-v` restores two-line commands with absolute argv and
+cwd, all recent agent rows and saved stacks. For embedding,
+`await readRun({ runId, cwd, stateDir })` returns the validated checkpoint alone;
+`inspectRunOwnership({ runId, cwd, stateDir })` returns the separate current ownership view. Like
+`runWorkflow`, it resolves explicit options, then `QUIET_CHOIR_STATE_DIR`, an existing run's legacy
+location, and the external XDG project default. Relative state paths resolve against `cwd` (default:
+`process.cwd()`). `resolveStateDir({ cwd, stateDir, runId })` returns the absolute directory;
+include `runId` to discover its legacy location. A missing CLI inspection names that directory and
+lists the run IDs present; embedded `readRun` retains the filesystem error's `code: 'ENOENT'`.
 
 Current checkpoints combine `<stateDir>/<runId>/run.json` and `journal.jsonl`; use the reader, since
 the snapshot alone can lag. Ownership lives in `<runId>/lock/`. Migrated runs also retain a legacy
@@ -349,9 +350,11 @@ known spend occurred; requested aliases are not assumed effective.
 
 A run stopped by `RunBudgetExceededError` remains failed even if its body caught the refusal.
 `budgetStop` identifies the refused effect and limit; that refusal created no new attempt. Inspect
-known/unknown totals, then resume with a chosen higher `--max-run-cost-usd` or
-`--max-run-agent-attempts`. Omission retains saved caps; `off` clears one. Completed work replays.
-See [usage and budgets](usage-budgets.md) for provider semantics, drain behavior and cost overshoot.
+known/unknown totals, then resume with a chosen higher `--max-run-cost-usd`,
+`--max-run-agent-attempts` or `--max-window-utilization`. A window-gate stop with a known reset
+leaves the run `suspended` with `nextWakeAt` at the reset instead; tick resumes it then. Omission
+retains saved caps; `off` clears one. Completed work replays. See
+[usage and budgets](usage-budgets.md) for provider semantics, drain behavior and cost overshoot.
 
 Both synchronous observer throws and observer promise rejections are handled, and `readRun` shares
 execution's path resolution. Neither guarantee covers unowned async work that a workflow creates.

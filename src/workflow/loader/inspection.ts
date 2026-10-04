@@ -19,6 +19,7 @@ import {
 } from '../runtime/store.js';
 import { summarizeUsage } from '../runtime/usage-summary.js';
 import { latestRateLimits, type RateLimitSummary } from '../runtime/rate-limit.js';
+import type { RunBudgetStop } from '../runtime/run-budget.js';
 import { classifyRecovery } from '../runtime/recovery-decision.js';
 import { brandError, isBranded } from '../runtime/error-brand.js';
 import { RunRefusedError, type CliErrorCode } from '../runtime/run-errors.js';
@@ -173,6 +174,12 @@ export interface RunSummary {
    * reported windows, so a run without them serializes as before.
    */
   readonly rateLimits?: Readonly<Record<string, RateLimitSummary>>;
+  /**
+   * The latest execution's run-cap refusal (`budgetStop`) as saved: the refused step, the metric,
+   * its limit and observed value, and for `maxWindowUtilization` the harness, window and reset. The
+   * key is absent when the run has none, so a run without one serializes as before.
+   */
+  readonly budgetStop?: RunBudgetStop;
   readonly recent: readonly RunEvent[];
   /** The latest accepted code changes, at most 5, as stored; a map entry names its settled map. */
   readonly codeChanges: readonly CodeChange[];
@@ -524,6 +531,7 @@ export function summarizeRun(
     agents: summarizeAgents(run, entries, now),
     usage: summarizeUsage(run),
     ...(Object.keys(rateLimits).length > 0 ? { rateLimits } : {}),
+    ...(run.budgetStop ? { budgetStop: run.budgetStop } : {}),
     recent,
     codeChanges: (run.codeChanges ?? []).slice(-5),
     warnings: [

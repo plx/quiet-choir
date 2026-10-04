@@ -308,6 +308,13 @@ including fields nested inside run-level objects such as `runBudget` or `worktre
 The test fails when the top-level keys change without a new revision; a nested change is caught only
 in review, so it must bump by this rule.
 
+**Revisions so far.** Revision 1 is every record up to and including #167. Revision 2 (#168) is a
+nested-only change: `runBudget` gains the optional `maxWindowUtilization`, and `budgetStop` gains
+the metric `maxWindowUtilization` with optional `harness`, `window` and `resetsAt`
+([ADR 0053](decisions/0053-window-utilization-gate-suspends-until-reset.md)). Revision-1 records
+read unchanged, since the new field is optional; a revision-1 build refuses to rewrite a revision-2
+record.
+
 **Refusals.** A build must not rewrite a record it cannot fully read: its parse strips unknown
 top-level fields, and the next compaction would write the record back without them. When a record
 has a newer `schemaRevision`, or top-level fields this build does not know (in `run.json` or in a

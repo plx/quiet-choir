@@ -39,21 +39,23 @@ reconciler.
 
 ```sh
 node "$QC_CHECKOUT/bin/run.js" workflow execute review.workflow.ts --run-id review \
-  --max-run-cost-usd 5 --max-run-agent-attempts 30
+  --max-run-cost-usd 5 --max-run-agent-attempts 30 --max-window-utilization 0.9
 node "$QC_CHECKOUT/bin/run.js" workflow inspect review --json
 node "$QC_CHECKOUT/bin/run.js" workflow resume review \
   --max-run-cost-usd 10 --max-run-agent-attempts 60
 ```
 
-The corresponding embedded options are `maxRunCostUsd` and `maxRunAgentAttempts`. Caps are sticky
-run policy outside identity: omission on resume retains them, `off` (embedded null) clears one, and
-execute's `--policy-reset` clears both along with other sticky policy. Zero permits replay and local
-work but no new agents. A fork starts with its own caps and local spend.
+The corresponding embedded options are `maxRunCostUsd`, `maxRunAgentAttempts` and
+`maxWindowUtilization` ([the window gate](#gate-on-the-windows)). Caps are sticky run policy outside
+identity: omission on resume or tick retains them, `off` (embedded null) clears one, and execute's
+`--policy-reset` clears all three along with other sticky policy. Zero permits replay and local work
+but no new agents. A fork starts with its own caps and local spend.
 
 A reached gate refuses new attempts without adding a step/attempt record, cancels queued admissions,
-drains admitted work and throws `RunBudgetExceededError`. The run is failed even if the body catches
-it; `onError: 'return'` and settled maps cannot consume this operator stop. Inspect `budgetStop` and
-reported/unknown usage, then choose a higher cap to continue the same run. Completed calls replay.
+drains admitted work and throws `RunBudgetExceededError`. The run is failed (or, for the window gate
+with a known reset, suspended) even if the body catches it; `onError: 'return'` and settled maps
+cannot consume this operator stop. Inspect `budgetStop` and reported/unknown usage, then choose a
+higher cap to continue the same run. Completed calls replay.
 
 With a run cap enabled, a limiter reservation includes durable attempt setup and native invocation;
 release precedes result validation/outcome saves. This prevents queued calls crossing a newly
@@ -79,5 +81,21 @@ are kept, the latest valid event wins, and a malformed event is ignored without 
 `inspect --json --summary` adds an optional per-harness `rateLimits` map (absent when nothing was
 reported; the latest settled attempt wins, failed ones included), and text inspect prints
 `Rate windows claude: 5h window 1%, 7d 84% (allowed_warning; seven_day resets <ISO time>)` after the
-usage lines. Only Claude reports windows; Codex attempts are unchanged. This is observation only:
-run caps still measure USD and attempts, with no utilization gate or suspend-until-reset yet.
+usage lines. Only Claude reports windows; Codex attempts are unchanged.
+
+### Gate on the windows
+
+`--max-window-utilization <0..1|off>` (embedded `maxWindowUtilization`) refuses a new agent attempt
+while the admitting harness's latest report has a live window at or above the cap. A window's reset
+is its own `resetsAt`, or the event's when the event's `type` names it; a window whose reset has
+passed (by the runtime clock) is ignored, and one with no known reset never expires. The check is
+per harness: Codex and a run with no report are never refused by it, and `status` is not consulted.
+A refusal latches for every harness like the other caps. When every exceeded window has a known
+reset, the run then ends `suspended` (exit 75) with `nextWakeAt` at the latest reset (or an earlier
+wait deadline), `budgetStop` naming `maxWindowUtilization`, the harness, window, `resetsAt` and
+observed utilization, and a `run.suspended` message such as
+`Run suspended until 2026-10-07T08:00:00.000Z: claude seven_day window at 84% reached --max-window-utilization 0.5.`
+`workflow tick` resumes it after that time; an earlier `resume` suspends it again without a new
+attempt. An unrelated failure alongside the stop, such as a sibling mapper that throws, still fails
+the run. It suspends even under `--wait-mode block`. With an unknown reset it fails with
+`RunBudgetExceededError`; resume with a higher value or `off`.

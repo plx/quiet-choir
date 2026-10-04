@@ -119,6 +119,36 @@ export class FailureOrigins {
       (error instanceof Error && error.cause !== undefined && this.isFatal(error.cause, visited))
     );
   }
+  /**
+   * Whether `error` derives only from `target`: it is `target`, wraps it through a cause chain, or is
+   * a fan-out with at least one non-cancellation failure, every one of which derives only from it.
+   * A fan-out's own `cause` (its first failure) is not followed, so one unrelated member is enough
+   * to answer false.
+   */
+  public onlyFrom(error: unknown, target: unknown, path = new Set<unknown>()): boolean {
+    if (Object.is(error, target)) return true;
+    // Guard cycles along this path only: siblings may share one error object.
+    if (path.has(error)) return false;
+    path.add(error);
+    try {
+      if (error instanceof FanOutError) {
+        const failures = error.failures.filter(
+          (failure) => !(failure.error instanceof CancelledError),
+        );
+        return (
+          failures.length > 0 &&
+          failures.every((failure) => this.onlyFrom(failure.error, target, path))
+        );
+      }
+      return (
+        error instanceof Error &&
+        error.cause !== undefined &&
+        this.onlyFrom(error.cause, target, path)
+      );
+    } finally {
+      path.delete(error);
+    }
+  }
   private readonly failures: { error: unknown; stepId: string; effect: string }[] = [];
 
   /** Attribute an error to its effect; `effect` is the call-site label RootCause reports. */

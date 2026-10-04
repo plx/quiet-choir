@@ -108,3 +108,5 @@ part of the documentation.
 - [0051: Remove stale project roots by rmdir only](0051-remove-stale-project-roots-by-rmdir.md)
 
 - [0052: A run-record schema revision that writers refuse to outrun](0052-run-record-schema-revision.md)
+
+- [0053: Suspend on the subscription-window gate until the window resets](0053-window-utilization-gate-suspends-until-reset.md)

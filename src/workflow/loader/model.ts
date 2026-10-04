@@ -55,6 +55,8 @@ export interface ExecuteWorkflowPlan extends ExecutionPlan {
   readonly registryName?: string;
   readonly maxRunCostUsd?: number | null;
   readonly maxRunAgentAttempts?: number | null;
+  /** Sticky subscription-window utilization gate, 0 to 1; null clears it (ADR 0053). */
+  readonly maxWindowUtilization?: number | null;
   readonly progress?: boolean;
   readonly kind: 'workflow.execute';
   readonly harness?: HarnessSelection;

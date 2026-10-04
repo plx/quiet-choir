@@ -1,0 +1,251 @@
+{
+  "allowModelOverride": false,
+  "budgetStop": {
+    "at": "2026-10-04T13:34:43.670Z",
+    "limit": 0,
+    "metric": "maxRunAgentAttempts",
+    "observed": 0,
+    "stepId": "call"
+  },
+  "capabilities": {
+    "defaultProfile": "text",
+    "defaults": {
+      "access": "read",
+      "claude": { "allowedTools": [], "isolation": "restricted", "tools": [] },
+      "claudeAccess": "none",
+      "codex": { "isolation": "restricted", "sandbox": "read-only" },
+      "codexAccess": "read",
+      "environment": {
+        "claude": {
+          "set": [],
+          "sha256": "2427b8a3193f4941d731ebcc7f2ea9ae4029bd00b6f30c119edb89cc70dd7247",
+          "unset": []
+        },
+        "codex": {
+          "set": [],
+          "sha256": "2427b8a3193f4941d731ebcc7f2ea9ae4029bd00b6f30c119edb89cc70dd7247",
+          "unset": []
+        }
+      },
+      "expectsToolUse": false,
+      "maxBudgetUsd": 0.5,
+      "maxTurns": 10,
+      "name": "text",
+      "onPermissionDenied": "warn",
+      "timeoutMs": 300000
+    },
+    "profiles": {
+      "edit": {
+        "access": "write",
+        "claude": {
+          "allowedTools": ["Read", "Grep", "Glob", "Edit", "Write"],
+          "isolation": "restricted",
+          "tools": ["Read", "Grep", "Glob", "Edit", "Write"]
+        },
+        "claudeAccess": "write",
+        "codex": { "isolation": "restricted", "sandbox": "workspace-write" },
+        "codexAccess": "write",
+        "environment": {
+          "claude": {
+            "set": [],
+            "sha256": "2427b8a3193f4941d731ebcc7f2ea9ae4029bd00b6f30c119edb89cc70dd7247",
+            "unset": []
+          },
+          "codex": {
+            "set": [],
+            "sha256": "2427b8a3193f4941d731ebcc7f2ea9ae4029bd00b6f30c119edb89cc70dd7247",
+            "unset": []
+          }
+        },
+        "expectsToolUse": true,
+        "maxBudgetUsd": 5,
+        "maxTurns": 40,
+        "name": "edit",
+        "onPermissionDenied": "warn",
+        "timeoutMs": 1800000
+      },
+      "readonly": {
+        "access": "read",
+        "claude": {
+          "allowedTools": ["Read", "Grep", "Glob"],
+          "isolation": "restricted",
+          "tools": ["Read", "Grep", "Glob"]
+        },
+        "claudeAccess": "read",
+        "codex": { "isolation": "restricted", "sandbox": "read-only" },
+        "codexAccess": "read",
+        "environment": {
+          "claude": {
+            "set": [],
+            "sha256": "2427b8a3193f4941d731ebcc7f2ea9ae4029bd00b6f30c119edb89cc70dd7247",
+            "unset": []
+          },
+          "codex": {
+            "set": [],
+            "sha256": "2427b8a3193f4941d731ebcc7f2ea9ae4029bd00b6f30c119edb89cc70dd7247",
+            "unset": []
+          }
+        },
+        "expectsToolUse": true,
+        "maxBudgetUsd": 2,
+        "maxTurns": 25,
+        "name": "readonly",
+        "onPermissionDenied": "warn",
+        "timeoutMs": 900000
+      },
+      "text": {
+        "access": "read",
+        "claude": { "allowedTools": [], "isolation": "restricted", "tools": [] },
+        "claudeAccess": "none",
+        "codex": { "isolation": "restricted", "sandbox": "read-only" },
+        "codexAccess": "read",
+        "environment": {
+          "claude": {
+            "set": [],
+            "sha256": "2427b8a3193f4941d731ebcc7f2ea9ae4029bd00b6f30c119edb89cc70dd7247",
+            "unset": []
+          },
+          "codex": {
+            "set": [],
+            "sha256": "2427b8a3193f4941d731ebcc7f2ea9ae4029bd00b6f30c119edb89cc70dd7247",
+            "unset": []
+          }
+        },
+        "expectsToolUse": false,
+        "maxBudgetUsd": 0.5,
+        "maxTurns": 10,
+        "name": "text",
+        "onPermissionDenied": "warn",
+        "timeoutMs": 300000
+      }
+    },
+    "requiredGrants": [],
+    "strictProfiles": true
+  },
+  "createdAt": "2026-10-04T13:34:43.635Z",
+  "cwd": "/",
+  "engine": { "node": "v26.8.1", "quietChoir": "0.0.0", "tsx": "4.23.11", "zod": "4.5.4" },
+  "error": "Run revision-one: maxRunAgentAttempts limit 0 reached (0 recorded); refused agent step call. Active attempts were allowed to finish. Resume with a higher --max-run-agent-attempts value or --max-run-agent-attempts off; completed calls replay without new spend.",
+  "errorStack": "RunBudgetExceededError: Run revision-one: maxRunAgentAttempts limit 0 reached (0 recorded); refused agent step call. Active attempts were allowed to finish. Resume with a higher --max-run-agent-attempts value or --max-run-agent-attempts off; completed calls replay without new spend.\n    at RunBudget.check (/fixture/src/workflow/runtime/run-budget.ts:103:21)\n    at budgetAdmission (/fixture/src/workflow/runtime/runner.ts:1328:18)\n    at effect (/fixture/src/workflow/runtime/runner.ts:1723:23)\n    at async <anonymous> (/fixture/src/workflow/runtime/runner.ts:2521:26)\n    at async <anonymous> (/fixture/src/workflow/runtime/runner.ts:1211:20)",
+  "eventCounts": {},
+  "events": [
+    {
+      "at": "2026-10-04T13:34:43.636Z",
+      "data": null,
+      "execution": 1,
+      "message": null,
+      "phase": null,
+      "stepId": null,
+      "total": null,
+      "type": "run.started"
+    },
+    {
+      "at": "2026-10-04T13:34:43.673Z",
+      "data": null,
+      "execution": 1,
+      "message": "Run revision-one: maxRunAgentAttempts limit 0 reached (0 recorded); refused agent step call. Active attempts were allowed to finish. Resume with a higher --max-run-agent-attempts value or --max-run-agent-attempts off; completed calls replay without new spend.",
+      "phase": null,
+      "stepId": "call",
+      "total": null,
+      "type": "run.failed"
+    }
+  ],
+  "executions": [
+    {
+      "endedAt": "2026-10-04T13:34:43.671Z",
+      "error": "Run revision-one: maxRunAgentAttempts limit 0 reached (0 recorded); refused agent step call. Active attempts were allowed to finish. Resume with a higher --max-run-agent-attempts value or --max-run-agent-attempts off; completed calls replay without new spend.",
+      "errorStack": "RunBudgetExceededError: Run revision-one: maxRunAgentAttempts limit 0 reached (0 recorded); refused agent step call. Active attempts were allowed to finish. Resume with a higher --max-run-agent-attempts value or --max-run-agent-attempts off; completed calls replay without new spend.\n    at RunBudget.check (/fixture/src/workflow/runtime/run-budget.ts:103:21)\n    at budgetAdmission (/fixture/src/workflow/runtime/runner.ts:1328:18)\n    at effect (/fixture/src/workflow/runtime/runner.ts:1723:23)\n    at async <anonymous> (/fixture/src/workflow/runtime/runner.ts:2521:26)\n    at async <anonymous> (/fixture/src/workflow/runtime/runner.ts:1211:20)",
+      "n": 1,
+      "outcome": "failed",
+      "pid": 96995,
+      "startedAt": "2026-10-04T13:34:43.636Z"
+    }
+  ],
+  "formatVersion": 7,
+  "grantedProfiles": {},
+  "grants": [],
+  "harness": { "kind": "custom", "previousKinds": [] },
+  "id": "revision-one",
+  "input": null,
+  "maps": {},
+  "maxChildDepth": 8,
+  "nextWakeAt": null,
+  "output": null,
+  "phase": null,
+  "policy": [],
+  "policyWarnings": [],
+  "profileOverrides": [],
+  "recoveryHint": "All recorded work has terminal outcomes, including settled map items. Fix the workflow tail, output or configuration and use --resume --accept-code-change to re-finalize; unchanged identities reuse their results.",
+  "replayWarnings": [],
+  "rootCause": {
+    "effect": "claude",
+    "error": "Run revision-one: maxRunAgentAttempts limit 0 reached (0 recorded); refused agent step call. Active attempts were allowed to finish. Resume with a higher --max-run-agent-attempts value or --max-run-agent-attempts off; completed calls replay without new spend.",
+    "errorKind": "unknown",
+    "stepId": "call"
+  },
+  "runBudget": { "maxRunAgentAttempts": 0, "maxRunCostUsd": null },
+  "schemaRevision": 1,
+  "seq": 3,
+  "sessionSalt": "ff2bd888-04e8-4102-941c-f8a124aaa620",
+  "status": "failed",
+  "steps": {
+    "prepare": {
+      "attemptHistory": [
+        {
+          "attempt": 1,
+          "durationMs": 3,
+          "effort": null,
+          "error": null,
+          "errorStack": null,
+          "execution": 1,
+          "fingerprint": "dc5dfe8f6cc3a702a19c34ad8722dd72c8ae1e808163fb818161ebbd31b94b3f",
+          "finishedAt": "2026-10-04T13:34:43.663Z",
+          "policy": { "retry": { "delayMs": 100, "maxAttempts": 1 } },
+          "request": null,
+          "requestedModel": null,
+          "sources": { "retry.delayMs": "runtime", "retry.maxAttempts": "runtime" },
+          "startedAt": "2026-10-04T13:34:43.660Z",
+          "status": "completed",
+          "usage": null
+        }
+      ],
+      "attempts": 1,
+      "durationMs": 3,
+      "error": null,
+      "errorStack": null,
+      "fingerprint": "dc5dfe8f6cc3a702a19c34ad8722dd72c8ae1e808163fb818161ebbd31b94b3f",
+      "finishedAt": "2026-10-04T13:34:43.663Z",
+      "identity": {
+        "cwd": "df7e940f72aa93cbcb6d70cc35124b0767c7a0e353043c7c24b660ea9be7b952",
+        "input": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+        "kind": "0d9f50d8178cb7c5b044c4dce43f1a35c44697ac03e70407e2dda2324fa92f56",
+        "onError": "a8ae35eaddff8b9970e3075d77d711798ddfa511a5391581aef83e1a8ebbf64f",
+        "schema": "63cd27a58e68ba86d947651d017132f4047c5f4f75d0984e107921b3293f20c4",
+        "version": "ef6a278dd5d8158fa3434604272b65ef77886edc6efaf60cee77ea6e6f0d8e27"
+      },
+      "kind": "step",
+      "launchStamp": 0,
+      "output": 1791120883663,
+      "phase": null,
+      "request": null,
+      "seq": 1,
+      "settleStamp": 1,
+      "startedAt": "2026-10-04T13:34:43.660Z",
+      "status": "completed",
+      "wakeAt": null
+    }
+  },
+  "updatedAt": "2026-10-04T13:34:43.673Z",
+  "workflow": {
+    "fingerprint": "fbd16d6260602af37e4f87392b8a896e7059d0ac8694532f2cd0e55d76565838",
+    "identity": {
+      "code": "schema-revision",
+      "engine": { "formatVersion": 6, "version": "0.0.0" },
+      "files": {},
+      "inputSchema": "199490fad0bd9dd1925ebbce2ed02f949ef0396fcbabcd41baa5ffa3b1ea49b2",
+      "outputSchema": "199490fad0bd9dd1925ebbce2ed02f949ef0396fcbabcd41baa5ffa3b1ea49b2"
+    },
+    "name": "schema-revision",
+    "version": "1"
+  }
+}
