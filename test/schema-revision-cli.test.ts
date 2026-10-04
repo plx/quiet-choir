@@ -135,6 +135,9 @@ it('refuses every write to a record with a newer schemaRevision and warns on rea
   await expectRefusals(`schemaRevision ${String(newer)}`);
 });
 
+// measured: 0.3 s alone, 0.9 s in a single-file coverage run, 5.4 s on the Node 24 CI leg (it
+// timed out at the 5 s default; this is the only case that re-imports the workflow through
+// check-resume's loader, so it pays a tsImport compile on a loaded runner).
 it('check-resume refuses a record with a newer schemaRevision even with --accept-code-change', async () => {
   const raw = JSON.parse(original.snapshot) as Record<string, unknown>;
   await writeFile(snapshotPath(), `${JSON.stringify({ ...raw, schemaRevision: newer })}\n`);
@@ -158,7 +161,7 @@ it('check-resume refuses a record with a newer schemaRevision even with --accept
   });
   if (!checked.ok) expect(checked.message).toContain(named);
   expect(await bytes()).toEqual(before);
-});
+}, 20_000);
 
 it('refuses every write to a record with an unknown top-level field and warns on read', async () => {
   await writeFile(snapshotPath(), original.snapshot);
