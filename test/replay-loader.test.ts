@@ -96,11 +96,13 @@ afterEach(async () => {
   await rm(root, { recursive: true, force: true });
 });
 
-// Each case type-checks fixtures that import the whole engine source several times (up to four full
-// compiler passes), so compiles, not storage, dominate. measured: the heaviest case takes 4.0 s alone,
-// 17.9-39.6 s in local full coverage runs, and 57.7 s on the Node 22.13 CI leg (43-50 s on Node
-// 24/26). This is a correctness suite, not a compiler latency benchmark.
-describe('source-aware loader recovery', { timeout: 120_000 }, () => {
+// Each case type-checks fixtures that import the whole engine source up to four times. The suite's
+// shared program cache makes only the first compile a full engine check; that compile, tsImport and
+// the run itself dominate. measured: the heaviest case (symlink spellings) takes 2.8 s alone,
+// 7.5-8.8 s in local full coverage runs (28.2-34.0 s for the slowest case before the cache); before
+// it the slowest CI case took 30.0 s on Node 22.13 and 73.3 s on Node 24. This is a correctness suite,
+// not a benchmark.
+describe('source-aware loader recovery', { timeout: 50_000 }, () => {
   it('normalizes symlink spellings, excludes engine sources, and validates the exact stored fingerprint', async () => {
     const alias = join(root, 'alias');
     await symlink(root, alias);

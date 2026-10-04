@@ -124,10 +124,10 @@ describe('typecheck plan analysis', () => {
   );
 });
 
-// Compiler integration tests share CI CPUs with the loader suites under coverage. measured: the
-// slowest case takes 1.2 s alone, 4.0-9.9 s in local full coverage runs and 15.1 s on the Node 22.13
-// CI leg (full TypeScript programs).
-describe('TypeScriptExecutor', { timeout: 30_000 }, () => {
+// Compiler integration tests share CI CPUs with the loader suites under coverage. measured: apart from
+// schema-only inference, the slowest case takes 0.6 s alone, 1.7-2.1 s in local full coverage runs
+// and up to 8.6 s on the Node 24 CI leg before the shared cache (lib and @types/node parsing).
+describe('TypeScriptExecutor', { timeout: 20_000 }, () => {
   it('checks Node workflows with strict defaults and returns plain data', async () => {
     const root = await createFixture({
       'workflow.ts': [
@@ -184,7 +184,10 @@ describe('TypeScriptExecutor', { timeout: 30_000 }, () => {
     const result = await new TypeScriptExecutor(silentLogger).execute(analysis.plan);
     expect(result.diagnostics).toEqual([]);
     expect(result.ok).toBe(true);
-  });
+    // measured: 1.8 s alone and 5.2-6.5 s in local full coverage runs, both unchanged by the cache,
+    // and 8.1-9.6 s on the Node 22.13 and 12.2-15.8 s on the Node 24 CI legs before it (one whole
+    // engine compile under the repository tsconfig)
+  }, 32_000);
 
   it('targets the minimum supported Node declarations in the default profile', async () => {
     const root = await createFixture({
@@ -383,8 +386,10 @@ function checkedProgram(
   return { program: checked.program, diagnostics: checked.diagnostics() };
 }
 
-// measured: see the TypeScriptExecutor suite; the parity case compiles the engine twice.
-describe('TypecheckProgramCache', { timeout: 30_000 }, () => {
+// measured: the parity case, the only one importing the engine, takes 2.4 s alone and 6.8-7.6 s in
+// local full coverage runs (one full engine compile, then cached checks); the others stay under 0.6 s
+// alone and 2 s in full runs.
+describe('TypecheckProgramCache', { timeout: 40_000 }, () => {
   it('returns the same results as an uncached check, also when reused', async () => {
     const root = await createFixture({
       'package.json': '{"type":"module"}',

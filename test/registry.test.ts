@@ -39,9 +39,10 @@ afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
-// measured: the slowest case takes 1.8 s alone, 10.2-19.6 s in local full coverage runs and 30.6 s on
-// the Node 22.13 CI leg (dominated by repeated TypeScript compiles for cache invalidation).
-describe('trusted definition registry', { timeout: 60_000 }, () => {
+// measured: the slowest case (cache refresh) takes 1.3 s alone and 3.3-3.6 s in local full coverage
+// runs; before the shared program cache it took 10.1-13.1 s locally and up to 13.1 s on the Node 22.13
+// and 28.3 s on the Node 24 CI legs (dominated by the suite's first full engine compile and tsImport).
+describe('trusted definition registry', { timeout: 20_000 }, () => {
   it('deduplicates overlapping directories and ignores generated trees and directory symlinks', async () => {
     const root = await project();
     await mkdir(join(root, 'nested'));
