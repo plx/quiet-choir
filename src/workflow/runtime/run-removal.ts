@@ -29,9 +29,10 @@ export interface RemoveRunOptions {
   /** Report what would be removed, taking no lock and writing nothing. */
   readonly dryRun?: boolean;
   /**
-   * @internal `workflow prune` only: the `updatedAt` of the record it selected. A real removal
-   * refuses with `run.exists` when the record carries another value, on the first read or under
-   * the lock, so prune never deletes a run that changed after it was selected. `workflow rm` never
+   * @internal `workflow prune` only: the `updatedAt` of the record it selected. A removal refuses
+   * with `run.exists` when the record carries another value, on the first read (a dry run too, so a
+   * preview never lists a run a real prune would refuse) or, for a real removal, again under the
+   * lock, so prune never deletes a run that changed after it was selected. `workflow rm` never
    * sets it.
    */
   readonly expectedUpdatedAt?: string;
@@ -214,6 +215,8 @@ function namespaceDirectory(
 async function planRemoval(stateDir: string, options: RemoveRunOptions): Promise<RunRemovalResult> {
   const { runId } = options;
   const record = await readRequiredRun({ runId, stateDir });
+  if (options.expectedUpdatedAt !== undefined)
+    checkUpdatedAt(runId, options.expectedUpdatedAt, record.updatedAt);
   const ownership = await inspectRunOwnership({ runId, stateDir });
   const verdict = removalVerdict(record, ownership, { force: options.force ?? false });
   const ledger = record.worktrees;

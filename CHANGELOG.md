@@ -18,11 +18,11 @@
   is
   `{kind:"workflow.prune.result", dryRun, stateDirs, filters, removed, skipped, bytes, tombstones, warnings}`.
   Internally, `removeRun` gains an optional `expectedUpdatedAt` that prune pins to the record it
-  selected, checked on the first read and under the lock, so a run that changed after selection is
-  skipped as `changed` (`run.exists`) instead of removed; rm never sets it. CLI durations
-  (`tick --timeout`, `start --start-timeout`, watch bounds and `--older-than`) also accept a `d`
-  (day) unit; the existing upper bounds still apply. The operating-runs skill reference gains a
-  retention recipe, and a new CLI smoke covers prune.
+  selected, checked on the first read (a dry run too) and under the lock, so a run that changed
+  after selection is skipped as `changed` (`run.exists`) instead of removed; rm never sets it. CLI
+  durations (`tick --timeout`, `start --start-timeout`, watch bounds and `--older-than`) also accept
+  a `d` (day) unit; the existing upper bounds still apply. The operating-runs skill reference gains
+  a retention recipe, and a new CLI smoke covers prune.
 - A guarded `workflow rm` and on-disk bytes in `workflow list` (#364, split from #166; ADR 0049).
   `workflow rm RUN [--force] [--refs] [--dry-run] [--json]` removes one saved run without importing
   workflow code: the run directory (record, journal, `attempts/` transcripts, artifacts, `launch/`,

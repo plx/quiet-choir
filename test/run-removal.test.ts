@@ -783,6 +783,33 @@ describe('workflow rm with an expected updatedAt (prune)', () => {
     expect(await snapshot(stateDir)).toEqual(before);
   });
 
+  it('refuses a changed record in a dry run too, changing nothing', async () => {
+    await completedRun('pinned');
+    const selected = (await readRun({ stateDir, runId: 'pinned' })).updatedAt;
+    const updatedAt = await touch('pinned');
+    const before = await snapshot(stateDir);
+    await expect(
+      removeRun(
+        { runId: 'pinned', stateDir, dryRun: true, expectedUpdatedAt: selected },
+        processRunner,
+      ),
+    ).rejects.toMatchObject({
+      code: 'run.exists',
+      details: { expectedUpdatedAt: selected, updatedAt },
+    });
+    expect(await snapshot(stateDir)).toEqual(before);
+  });
+
+  it('plans a dry run when the record still carries the expected updatedAt', async () => {
+    await completedRun('pinned');
+    const selected = (await readRun({ stateDir, runId: 'pinned' })).updatedAt;
+    const outcome = await removeRun(
+      { runId: 'pinned', stateDir, dryRun: true, expectedUpdatedAt: selected },
+      processRunner,
+    );
+    expect(outcome).toMatchObject({ kind: 'removed', result: { dryRun: true, removed: false } });
+  });
+
   it('refuses a record that changed before the lock, and releases every lock', async () => {
     await completedRun('pinned');
     const selected = (await readRun({ stateDir, runId: 'pinned' })).updatedAt;

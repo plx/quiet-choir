@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync, writeFileSync } from 'node:fs';
 import {
   chmod,
   lstat,
@@ -572,6 +573,36 @@ describe('workflow prune removal', () => {
     expect((await readRun({ stateDir, runId: 'first' })).id).toBe('first');
     expect((await readRun({ stateDir, runId: 'second' })).updatedAt).toBe(changed);
     expect(await gone(join(stateDir, 'third'))).toBe(true);
+  });
+
+  it('skips a run that changed after listing in a dry run, as a real prune would', async () => {
+    await completedRun('first');
+    await setUpdatedAt('first', daysAgo(2));
+    const before = (await readRun({ stateDir, runId: 'first' })).updatedAt;
+    const changed = daysAgo(1);
+    // The clock is read after listing and before removal: the seam that sits between them.
+    const now = () => {
+      for (const name of ['run.json', 'journal.jsonl']) {
+        const file = join(stateDir, 'first', name);
+        try {
+          writeFileSync(file, readFileSync(file, 'utf8').replaceAll(before, changed));
+        } catch {
+          // A record without that file has nothing to rewrite.
+        }
+      }
+      return Date.now();
+    };
+    const outcome = await pruneRuns(
+      plan({ statuses: ['completed'], dryRun: true }),
+      processRunner,
+      {
+        now,
+      },
+    );
+    assert(outcome.kind === 'done');
+    expect(outcome.result.removed).toEqual([]);
+    expect(reasons(outcome.result)).toEqual({ first: ['changed', 'run.exists'] });
+    expect((await readRun({ stateDir, runId: 'first' })).updatedAt).toBe(changed);
   });
 
   it('stops between removals on a signal and reports the runs removed so far', async () => {
