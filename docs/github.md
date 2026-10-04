@@ -14,7 +14,9 @@ in [ADR 0044](decisions/0044-gh-backed-github-reads.md),
 [ADR 0046](decisions/0046-reconciled-github-writes.md) and
 [ADR 0047](decisions/0047-pull-request-writes-and-head-pinned-merge.md).
 
-Epic selection is planned separately (#163).
+For epics, [`epic.snapshot`](#epics) reads an epic's items in one command and the pure `nextTicket`
+picks the next ticket, saying why every other open one was skipped
+([ADR 0048](decisions/0048-epic-snapshot-and-next-ticket-selector.md)).
 
 ## Install and authenticate
 
@@ -59,6 +61,7 @@ output for `pr view` or `pr list` hides nested page information, so the reads ne
 | `pr.reviewThreads(id, { number })`         | `gh api graphql --paginate --slurp`                             | Every thread with every comment: `id`, `isResolved`, `isOutdated`, `path`, `line` (current, else original), `author`, `isBot`, `lastAuthor`, the first comment's `alert`, `priority` badge, `title` and `url` |
 | `issue.view(id, { number, comments? })`    | `gh api graphql`, paginated over comments with `comments: true` | Number, title, state, body, URL, author and labels, plus every comment with `comments: true`                                                                                                                  |
 | `codeScanning.alerts(id, { ref, state? })` | `gh api --paginate repos/O/R/code-scanning/alerts?...`          | `{ status: 'ok', alerts }` with number, rule, severity, path, line, message, state and URL; or `{ status: 'unavailable', reason, alerts: [] }`                                                                |
+| `epic.snapshot(id, { number })`            | `gh api graphql` (no pagination)                                | The epic and its items: sub-issues with state, labels, assignees, blocked-by relations, linked pull requests, declared dependencies and split markers, in checklist order; see [epics](#epics)                |
 
 `checks` follows one set of rules, exported as `summarizeChecks`: a commit status passes when
 `SUCCESS`, is pending when `PENDING` or `EXPECTED`, and fails otherwise; a check run is pending
@@ -107,9 +110,10 @@ A read is a memoized snapshot, not a live view:
   guessing from messages. Reads are safe to repeat, so pass one when you want it, such as
   `{ retry: { maxAttempts: 3, on: ['process', 'timeout'] } }`. A network failure that leaves no JSON
   on stdout has kind `schema`, the same kind as an incomplete collection.
-- **Output caps.** A read keeps up to `maxOutputBytes` of stdout (1 MiB by default). Larger output
-  rejects the read instead of shrinking it, so raise the cap for pull requests with many or long
-  review comments, for example `{ maxOutputBytes: 16 * 1024 * 1024 }`.
+- **Output caps.** A read keeps up to `maxOutputBytes` of stdout (1 MiB by default, 8 MiB for
+  `epic.snapshot`). Larger output rejects the read instead of shrinking it, so raise the cap for
+  pull requests with many or long review comments, for example
+  `{ maxOutputBytes: 16 * 1024 * 1024 }`.
 
 The third argument accepts only `timeoutMs`, `maxOutputBytes` and `retry`. They are policy, never
 identity, so raising them for a resume keeps completed reads. A read's identity is its argv, its
@@ -131,11 +135,175 @@ real data; a branch that compares two of them (such as a closing issue's reposit
 repository's name) takes the "different" path.
 
 To rehearse a specific path, answer a read with an exec fixture rule whose `json` is the raw `gh`
-response: one object for `repo.info`, `pr.view` and `issue.view`, an array of pages for the
-paginated GraphQL reads, and one alert array (or a GitHub error body) for code scanning. Match by
-step ID, or by `argvPrefix` such as `["gh", "api", "graphql"]`. `workflow fixtures export` writes
-such rules from a completed run, since the checkpoint holds the validated raw response. See
+response: one object for `repo.info`, `pr.view`, `issue.view` and `epic.snapshot`, an array of pages
+for the paginated GraphQL reads, and one alert array (or a GitHub error body) for code scanning.
+Match by step ID, or by `argvPrefix` such as `["gh", "api", "graphql"]`. `workflow fixtures export`
+writes such rules from a completed run, since the checkpoint holds the validated raw response. See
 [command fixtures](rehearsal.md#command-fixtures).
+
+## Epics
+
+`gh.epic.snapshot(id, { number }, policy?)` reads one epic for burning it down ticket by ticket, and
+the pure `nextTicket(snapshot, policy?)` picks the next ticket. The rules are those of the burn-down
+survey that ran epic #99: the epic body's checklist orders the items, "Depends on #N" lines and
+GitHub's blocked-by relations hold an item back, hold labels park it, a split marker replaces it
+with its slices, and work already under way is finished before new work starts.
+
+### The snapshot
+
+The snapshot is exactly one `gh api graphql` (`-F number=N`, no `--paginate`): the viewer, the epic
+(number, title, state, URL, body, `subIssuesSummary`) and up to 100 sub-issues, each with its state
+and close reason, repository, labels, assignees, blocked-by relations
+(`blockedBy { number state repository }`), linked pull requests
+(`closedByPullRequestsReferences(includeClosedPrs: true) { number state isDraft url headRefName }`,
+in any state) and comments, up to 100 of each. Its identity is that argv, the response schema and
+the plain exec defaults, like every other read.
+
+The checkpoint keeps the raw response; the mapper parses it into a compact result with no bodies or
+comments:
+
+| Field        | Meaning                                                                                                                                                                                                                           |
+| ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `repository` | The client's `OWNER/REPO`                                                                                                                                                                                                         |
+| `viewer`     | The authenticated login; only its split markers count                                                                                                                                                                             |
+| `epic`       | `{ number, title, state, url }`                                                                                                                                                                                                   |
+| `source`     | `sub-issues` when the epic has native sub-issues, else `task-list`                                                                                                                                                                |
+| `total`      | `subIssuesSummary.total`, or the checklist length for `task-list`                                                                                                                                                                 |
+| `checklist`  | The body's checklist lines that name an issue of the repository: `{ number, checked, title, isItem }`                                                                                                                             |
+| `items`      | `{ number, title, state, stateReason, url, repository, labels, assignees, checked, dependsOn, blockedBy, pullRequests, split }` in listing order: sub-issues the checklist names, in its order, then the others in GitHub's order |
+
+With sub-issues, the items are exactly the sub-issues; a checklist line naming an issue that is not
+one stays in `checklist` with `isItem: false`. An epic with no sub-issues falls back to its
+checklist (`source: 'task-list'`): each line is an item whose title is the line's text, whose state
+is `CLOSED` when checked and `OPEN` otherwise, and which has no URL, labels, dependencies, linked
+pull requests or split. That fallback sees only checkboxes, so it cannot tell a ticket under way or
+blocked from a ready one.
+
+### Text rules
+
+- **Code.** Text in code is never read. A fenced block is three or more backticks or tildes, closes
+  only on a line of the same character at least as long, and an unclosed fence runs to the end. It
+  may open inside block quotes and list items (`> ~~~`, `- ~~~`, as in a quoted reply), and a fence
+  in a block quote ends with that quote: a later line with fewer `>` markers is outside it. A fence
+  also ends with the list item it opens in, after the item's marker or on a later line of the item:
+  a later non-blank line indented less than the item's content is outside it, as in `- ~~~`, or
+  `- example`, a blank line and `  ~~~`, followed by `- Depends on #4`. Open list items are tracked
+  across lines for this, lazy paragraph continuations included. Columns count a tab to the next
+  multiple of four, as in CommonMark, so after `-` and a tab an item's content starts at column 4. A
+  fence line indented four or more columns past its container's content (the list item's, or the
+  block quote's markers) is indented code, so `    ~~~` opens no fence and closes none. A `>`
+  indented four or more columns past the previous marker is no block-quote marker, so `    > ~~~` is
+  indented code as well. An inline code span, as in CommonMark, opens at a backtick run and closes
+  at the next run of exactly the same length; it may cross a line ending within a paragraph (a block
+  quote's lazy continuation line included) but not a block boundary: a blank line, a fence, a deeper
+  block quote, a list item (ordered ones numbered 1, unless the paragraph is itself in a list item),
+  an ATX heading, a thematic break, a setext heading's `===` underline, which ends the heading's
+  paragraph, or an HTML block of any CommonMark type. A comment block opens on a line starting with
+  `<!--` (as a workflow marker does) and runs through the first line holding `-->`; a `<script>`,
+  `<pre>`, `<style>` or `<textarea>` block runs through a line holding one of their closing tags,
+  `<?` through `?>`, `<!DOCTYPE` and the like through `>`, `<![CDATA[` through `]]>`, and a
+  block-level tag such as `<div>` or `</details>` to a blank line. Any other complete tag alone on
+  its line opens a block that runs to a blank line too, but only outside a paragraph, so a lone
+  `<span>` continues one. An HTML block may open in a list item, after its marker (`- <div>`) or on
+  a later line of the item. Every HTML block also ends with its block quote and with its list item
+  (a later non-blank line indented less than the item's content, since an HTML block has no lazy
+  continuation), and has no inline code, so a marker in one is read even after a lone backtick. A
+  run with no closer is literal text. Checklist lines are read one at a time, so a span never
+  continues onto the next line there.
+- **Checklist.** Lines `- [ ] ...`, `* [x] ...` or `+ [X] ...` outside fenced code. Inline code is
+  removed from a line before it is read. Each line counts for its first reference to the repository,
+  `#N` or `OWNER/REPO#N` (compared case-insensitively); lines naming only other repositories,
+  anchors such as `page#12`, and the epic itself are skipped, and the first line wins when a number
+  is listed twice. Everywhere, `#0` and numbers beyond JavaScript's safe-integer range name no issue
+  and are skipped, in references and in markers alike.
+- **Dependencies** (`dependsOn`), from an item's body and all its comments, by any author, with code
+  removed: the phrases "depends on", "blocked by" and "requires" followed by a list such as
+  `#4, #5 and #6`, and the marker `<!-- epic:depends-on 3,4 -->`. Only the repository's issues
+  count, and never the item itself. A misread dependency only delays an item, so indented code is
+  read here: telling an indented code block from an indented line of a list item needs full list
+  tracking, and a wrong guess would hide a real blocker.
+- **Splits** (`split`): the last `<!-- epic:split a,b -->` marker outside code in a comment by the
+  viewer. Only the viewer counts, because a split closes an item once its slices close: someone
+  quoting the syntax must not close an unfinished issue. For the same reason a marker on a line
+  indented four or more columns after its `>` markers is ignored, as indented code would be; the
+  workflow writes its markers at column 0, and a missed split only leaves the parent open. A `>`
+  indented four or more columns past the previous marker is no marker, as in CommonMark, so
+  `    > <!-- epic:split 1 -->` is indented code too.
+- **Blocked-by relations** (`blockedBy`) keep their own states; the selector counts the ones not
+  `CLOSED`.
+
+### Picking the next ticket
+
+`nextTicket(snapshot, { order?, holdLabels?, outside? })` gives each open item a status, in this
+precedence:
+
+| Status        | When                                                                                       |
+| ------------- | ------------------------------------------------------------------------------------------ |
+| `in-flight`   | A linked pull request is open (drafts included); a merged or closed one is ignored         |
+| `close-split` | The item is split and every slice is closed                                                |
+| `split`       | The item is split and a slice is open                                                      |
+| `held`        | A hold label, compared case-insensitively (default `blocked`, `needs-decision`, `on-hold`) |
+| `waiting`     | A dependency or blocked-by relation is open, or a dependency is unknown                    |
+| `ready`       | None of the above                                                                          |
+
+`in-flight` sees only the pull requests GitHub links to the issue: one whose description uses a
+closing keyword (such as `Closes #N`) and whose base is the default branch, or one linked by hand. A
+pull request stacked on another branch, or one without a closing reference, is not seen, so its
+ticket can be picked again.
+
+A closed item is done. The pick is the first `in-flight` item, else the first `close-split`, else
+the first `ready`, in `order`: `listing` (default) or `number`. It returns
+`{ pick, skipped, done }`, where `pick` is
+`{ number, title, url, status, pullRequests, openSlices }` or null. Every other open item is in
+`skipped` as `{ number, title, reason }`:
+
+| Reason                                | Meaning                                                                                    | Detail                |
+| ------------------------------------- | ------------------------------------------------------------------------------------------ | --------------------- |
+| `in-flight`, `close-split` or `ready` | Ranked after the pick                                                                      | `pullRequests` (open) |
+| `split`                               | A slice is still open                                                                      | `openSlices`          |
+| `held`                                | A hold label                                                                               |                       |
+| `waiting`                             | An open or unknown dependency                                                              | `waitingOn`           |
+| `other-repository`                    | A sub-issue of another repository: the client reads one repository, so it is never picked  |                       |
+| `not-a-sub-issue`                     | An unchecked checklist line naming an issue that is not a sub-issue (with sub-issues only) |                       |
+
+`done` is true only when there is no pick and nothing is skipped, that is, every item is closed.
+Open items with no pick (all waiting, held or split) are a stall, not done. Assignees are recorded
+but not used: claims are out of scope.
+
+A dependency or slice resolves from a snapshot item of the same repository, then from
+`policy.outside`; one that neither knows counts as open, since it is not known to be done.
+`outsideReferences(snapshot)` returns those numbers, sorted, so a workflow can read their states
+with `issue.view` and pass the results, which already have `number` and `state`, as `outside`. That
+keeps the snapshot one command and the selector pure.
+
+### Completeness, size and freshness
+
+- **Complete or throw.** The read throws `IncompleteCollectionError` when the sub-issue page or any
+  sub-issue's labels, assignees, blocked-by relations, linked pull requests or comments report
+  another page (`connection` names it, such as `epic.subIssues[163].comments`), and when fewer
+  sub-issues are listed than `subIssuesSummary.total` (`epic.subIssues`). The count rule is "fewer
+  listed than counted" rather than "not equal": only a shortfall can hide an item, and a `--dry-run`
+  synthesizes one sub-issue with a total of 0, which equality would reject. `nextTicket` also throws
+  for a snapshot holding fewer items than its `total`, so an edited or hand-built snapshot cannot
+  report an incomplete epic as done.
+- **Size.** `maxOutputBytes` defaults to 8 MiB for this read; epic #99 measured 687 KB with 80
+  sub-issues and their comments. An oversized response throws and never shrinks; raise the cap with
+  the policy argument.
+- **Freshness.** A completed snapshot replays forever under its ID, and the mapper and selector
+  re-run deterministically on replay. To see fresh epic state, use a fresh occurrence ID, such as
+  `ctx.id('epic', n, round)`; a resumed run keeps acting on the snapshot it recorded.
+- **Hosts.** GitHub Enterprise Server versions or accounts without sub-issues or issue dependencies
+  lack the `subIssues` or `blockedBy` fields; gh exits 1 and the read rejects. There is no fallback
+  query.
+
+[`examples/patterns/next-ticket.workflow.ts`](../examples/patterns/next-ticket.workflow.ts) reads
+the repository, the epic snapshot keyed by round, the outside references and the picked ticket with
+its comments, and returns the pick and every skip reason:
+
+```sh
+node bin/run.js workflow execute examples/patterns/next-ticket.workflow.ts \
+  --input '{"repo":"OWNER/REPO","epic":N,"round":1}' --dry-run --json
+```
 
 ## Waits
 

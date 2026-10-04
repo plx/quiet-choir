@@ -114,7 +114,8 @@ export function graphqlArgv(
 // its nodes and before every other connection. Nested connections request only `hasNextPage`;
 // the response schemas fail a read when any of them reports more.
 
-const compact = (query: string): string => query.replace(/\s+/gu, ' ').trim();
+/** A query with its whitespace runs collapsed, as it enters argv and identity. @internal */
+export const compact = (query: string): string => query.replace(/\s+/gu, ' ').trim();
 
 const commentFields = 'databaseId author { login __typename } body url createdAt';
 
@@ -586,7 +587,8 @@ export const INCOMPLETE_COLLECTION_PARAM = 'incompleteCollection';
 export const CODE_SCANNING_UNAVAILABLE =
   /no analysis found|code scanning is not enabled|advanced security must be enabled/iu;
 
-function incomplete(
+/** Flag a truncated connection; `read` rethrows it as `IncompleteCollectionError`. @internal */
+export function incomplete(
   ctx: z.RefinementCtx,
   connection: string,
   path: readonly (string | number)[],
@@ -600,9 +602,15 @@ function incomplete(
 }
 
 const pageInfo = z.object({ hasNextPage: z.boolean() });
-const connection = <T extends z.ZodType>(node: T) => z.object({ pageInfo, nodes: z.array(node) });
-const count = z.int().nonnegative();
-const issueNumber = z.int().positive();
+/** One page of a connection: its page information and nodes. @internal */
+export const connection = <T extends z.ZodType>(
+  node: T,
+): z.ZodObject<{ pageInfo: typeof pageInfo; nodes: z.ZodArray<T> }> =>
+  z.object({ pageInfo, nodes: z.array(node) });
+/** A nonnegative integer. @internal */
+export const count = z.int().nonnegative();
+/** An issue or pull request number. @internal */
+export const issueNumber = z.int().positive();
 const actor = z.object({ login: z.string(), __typename: z.string() });
 const comment = z.object({
   databaseId: count.nullable(),
@@ -1342,6 +1350,11 @@ export interface GithubReadSpec<R, T> {
   readonly schema: z.ZodType<R>;
   /** Accepted exit codes, when not the default `[0]`. */
   readonly okExitCodes?: readonly number[];
+  /**
+   * Default retained stdout bytes, when not the exec default; the caller's policy overrides it.
+   * Policy, never identity.
+   */
+  readonly maxOutputBytes?: number;
   /** Pure mapper from the validated response to the result. */
   readonly map: (raw: R) => T;
 }

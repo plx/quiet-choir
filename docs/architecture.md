@@ -14,7 +14,9 @@ definitions to a particular agent harness.
   (one version-identified `ctx.step` per op) over the pure `github-write-model.ts` (marker, request
   builders, schemas and decisions; [ADR 0046](decisions/0046-reconciled-github-writes.md)),
   including the pull request writes, the head-pinned merge and the failed-run rerun
-  ([ADR 0047](decisions/0047-pull-request-writes-and-head-pinned-merge.md)). It may also import two
+  ([ADR 0047](decisions/0047-pull-request-writes-and-head-pinned-merge.md)). The epic snapshot's
+  query, schema, parsers and the `nextTicket` selector live in the pure `github-epic-model.ts`
+  ([ADR 0048](decisions/0048-epic-snapshot-and-next-ticket-selector.md)). It may also import two
   cross-instance registries: error brands ([ADR 0044](decisions/0044-gh-backed-github-reads.md)) and
   the internal poll-identity key ([ADR 0045](decisions/0045-head-pinned-github-waits.md)). See
   [GitHub reads, waits and writes](github.md).

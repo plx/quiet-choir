@@ -434,3 +434,17 @@ runs at or below the run attempt you saw failing and skips runs past it, so pass
 run below it that was rerun before a crash and failed again is rerun again). A rehearsed edit or
 merge reports `head-moved`. See
 [merging](https://github.com/plx/quiet-choir/blob/main/docs/github.md#merging).
+
+Its epic read `gh.epic.snapshot(id, { number })` is one `ctx.exec.json` (one `gh api graphql`) that
+returns the epic's sub-issues with state, labels, linked pull requests, blocked-by relations,
+"Depends on #N" lines and the viewer's `<!-- epic:split a,b -->` markers, in the epic body's
+checklist order; an epic without sub-issues falls back to its `- [ ] #N` checklist (fenced and
+inline code ignored). Any truncated connection, or fewer sub-issues than GitHub counts, throws
+`IncompleteCollectionError`. The pure `nextTicket(snapshot, { order?, holdLabels?, outside? })`
+picks the first `in-flight` item (an open linked pull request), else a `close-split` parent, else
+the first `ready` one, and lists every other open item in `skipped` with its reason (`waiting`,
+`held`, `split`, `other-repository`, `not-a-sub-issue`, or a later `ready`); `done` is true only
+when nothing is open. A dependency outside the epic counts as open until you read it: pass the
+`gh.issue.view` results for `outsideReferences(snapshot)` as `outside`. Key the snapshot by round
+(`ctx.id('epic', n, round)`) to see fresh state. See
+[epics](https://github.com/plx/quiet-choir/blob/main/docs/github.md#epics).
