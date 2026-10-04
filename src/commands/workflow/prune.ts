@@ -33,7 +33,8 @@ export default class WorkflowPrune extends WorkflowCommand {
       multiple: true,
     }),
     'missing-cwd': Flags.boolean({
-      description: 'Only runs whose recorded working directory no longer exists',
+      description:
+        'Only runs whose recorded working directory no longer exists; with --all, also remove stale project roots afterwards',
     }),
     all: Flags.boolean({
       description: 'Scan every registered XDG project plus the current project, as list --all does',
@@ -56,7 +57,7 @@ export default class WorkflowPrune extends WorkflowCommand {
   public static override readonly summary =
     'Remove finished runs by age, status or missing cwd, each through workflow rm';
   public static override readonly description =
-    'Selects runs whose observed status is completed, failed or cancelled (or those given to --status), and that match every other filter given, then removes each through the guarded workflow rm path, oldest first, without --force. Needs at least one of --older-than, --status or --missing-cwd (exit 2, usage.flag): there is no delete-everything mode. A matching run stays, listed in skipped with its reason, while it is running, stale or suspended, has a waiting step or a queued answer delivery, or is held by a lock owner, recoverer or live orphan; a refusal or failure while removing one run is reported the same way and the rest continue. Exits 0 whenever the runs containers could be read. Also sweeps abandoned rm tombstones in each scanned container. --dry-run takes no lock and changes nothing.';
+    'Selects runs whose observed status is completed, failed or cancelled (or those given to --status), and that match every other filter given, then removes each through the guarded workflow rm path, oldest first, without --force. Needs at least one of --older-than, --status or --missing-cwd (exit 2, usage.flag): there is no delete-everything mode. A matching run stays, listed in skipped with its reason, while it is running, stale or suspended, has a waiting step or a queued answer delivery, or is held by a lock owner, recoverer or live orphan; a refusal or failure while removing one run is reported the same way and the rest continue. Exits 0 whenever the runs containers could be read. Also sweeps abandoned rm tombstones in each scanned container. With --missing-cwd --all it then removes stale XDG project roots (registered for a missing cwd, or without a valid project.json) that hold no kept run and nothing but empty directories, unlinking only project.json and runs/.gitignore and removing every directory with rmdir; other stale roots are listed in roots with the reason they stay. --dry-run takes no lock and changes nothing.';
 
   public async run(): Promise<void> {
     const { flags } = await this.parse(WorkflowPrune);
@@ -112,6 +113,7 @@ export default class WorkflowPrune extends WorkflowCommand {
     if (!result.ok) this.failResult(result);
     if (result.kind !== 'workflow.prune.result') return;
     const count = (n: number) => `${String(n)} run${n === 1 ? '' : 's'}`;
+    const removedRoots = result.roots.filter((root) => root.removed).length;
     const lines = [
       `${result.dryRun ? 'Would remove' : 'Removed'} ${count(result.removed.length)} (${formatBytes(result.bytes)}); skipped ${String(result.skipped.length)}.`,
       ...result.removed.map(
@@ -127,13 +129,23 @@ export default class WorkflowPrune extends WorkflowCommand {
       ...result.tombstones.map(
         (path) => `${result.dryRun ? 'Sweepable tombstone' : 'Swept tombstone'}: ${path}`,
       ),
+      ...(result.roots.length
+        ? [
+            `${result.dryRun ? 'Would remove' : 'Removed'} ${String(removedRoots)} project root${removedRoots === 1 ? '' : 's'}; kept ${String(result.roots.length - removedRoots)}.`,
+          ]
+        : []),
+      ...result.roots.map((root) =>
+        root.removed
+          ? `${result.dryRun ? 'Would remove' : 'Removed'} project root ${root.root} (${root.reason}) ${formatBytes(root.bytes ?? 0)}`
+          : `Kept project root ${root.root} (${root.reason}): ${root.message}`,
+      ),
       ...result.removed.flatMap((run) =>
         run.warnings.map((warning) => `Warning: ${run.runId}: ${warning}`),
       ),
       ...result.warnings.map((warning) => `Warning: ${warning}`),
     ];
-    // Runs already removed stand even when a signal arrived afterwards.
-    if (result.removed.length && !result.dryRun)
+    // Runs and roots already removed stand even when a signal arrived afterwards.
+    if ((result.removed.length || removedRoots) && !result.dryRun)
       this.outputSavedCompletion(result, lines.join('\n'));
     else this.output(result, lines.join('\n'));
   }

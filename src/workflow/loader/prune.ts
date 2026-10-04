@@ -1,12 +1,18 @@
 import { readdir, stat } from 'node:fs/promises';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import type { ProcessSupervisor } from '../../processes/supervisor.js';
 import type { ProcessRunner } from '../runtime/exec-model.js';
 import { jsonValue } from '../runtime/json.js';
 import { answerCandidates } from '../runtime/inbox.js';
 import { isErrno } from '../runtime/lock.js';
 import type { JsonValue } from '../runtime/model.js';
-import { projectStateDirectories, resolveStateDir, runDirectory } from '../runtime/paths.js';
+import {
+  defaultStateDir,
+  projectRoots,
+  registeredProjects,
+  resolveStateDir,
+  runDirectory,
+} from '../runtime/paths.js';
 import { readRequiredRun } from '../runtime/read-required-run.js';
 import { ownershipHold, removalRefusal } from '../runtime/removal-decision.js';
 import { RunRefusedError, type CliErrorCode } from '../runtime/run-errors.js';
@@ -17,6 +23,7 @@ import {
   type RemovedCache,
 } from '../runtime/run-removal.js';
 import { listRuns, type InspectionStatus, type RunSummary } from './inspection.js';
+import { pruneRoots, type PruneRoot } from './prune-roots.js';
 import {
   pruneDecision,
   type PruneCandidate,
@@ -40,7 +47,10 @@ export interface PruneRunsOptions {
   readonly olderThanMs: number | null;
   /** Observed statuses to consider: a non-empty subset of the terminal ones. */
   readonly statuses: readonly PruneStatus[];
-  /** Only runs whose recorded cwd is missing. */
+  /**
+   * Only runs whose recorded cwd is missing. With `all`, also remove the stale XDG project roots
+   * afterwards (ADR 0051).
+   */
   readonly missingCwd: boolean;
   /** Also delete each removed run's pinned Git refs. */
   readonly refs: boolean;
@@ -113,6 +123,11 @@ export interface PruneResult {
   readonly bytes: number;
   /** Absolute paths of abandoned rm tombstones swept (or, in a dry run, sweepable). */
   readonly tombstones: readonly string[];
+  /**
+   * Stale XDG project roots removed or kept, by root path; always empty unless both `missingCwd`
+   * and `all` are set (ADR 0051).
+   */
+  readonly roots: readonly PruneRoot[];
   readonly warnings: readonly string[];
 }
 
@@ -123,6 +138,8 @@ export type PruneOutcome =
       readonly kind: 'interrupted';
       /** Runs removed before the interruption; they stay removed. */
       readonly removed: readonly PrunedRun[];
+      /** Project roots removed before the interruption; they stay removed. */
+      readonly roots: readonly string[];
       readonly error: unknown;
     };
 
@@ -134,6 +151,8 @@ export interface PruneRunsLive {
   readonly now?: () => number;
   /** @internal Test seam passed to each removal as `beforeLock`. */
   readonly beforeLock?: (runId: string, stateDir: string) => void | Promise<void>;
+  /** @internal Test seam called before each `rmdir` of a project root removal. */
+  readonly beforeRmdir?: (path: string) => void | Promise<void>;
 }
 
 const message = (error: unknown): string =>
@@ -306,7 +325,9 @@ function refusalReason(code: CliErrorCode): PruneSkipReason {
  * `expectedUpdatedAt` pinned to the listed record. A refusal or a failure of one removal becomes a
  * skipped entry and the batch goes on. A signal stops it between removals (a removal past its
  * commit point still finishes) and reports the runs removed so far. A dry run passes `dryRun` to
- * every removal, so it takes no lock and changes nothing. @internal
+ * every removal, so it takes no lock and changes nothing. With both `missingCwd` and `all`, it then
+ * hands the stale XDG project roots to `pruneRoots` (ADR 0051), which skips the paths of the runs
+ * removed here, so a dry run predicts the real one. @internal
  */
 export async function pruneRuns(
   options: PruneRunsOptions,
@@ -315,9 +336,8 @@ export async function pruneRuns(
 ): Promise<PruneOutcome> {
   const { signal } = live;
   const stateDir = resolveStateDir({ stateDir: options.stateDir });
-  const projects = options.all
-    ? await projectStateDirectories()
-    : { directories: [], warnings: [] };
+  const discovered = options.all ? await projectRoots() : [];
+  const projects = registeredProjects(discovered);
   const stateDirs = [
     ...new Set(
       [stateDir, ...(options.additionalStateDirs ?? []), ...projects.directories].map((directory) =>
@@ -361,7 +381,7 @@ export async function pruneRuns(
   const removed: PrunedRun[] = [];
   const skipped = protectedRows.map(([row, protection]) => protectedEntry(row, protection));
   for (const row of selected) {
-    if (signal?.aborted) return { kind: 'interrupted', removed, error: signal.reason };
+    if (signal?.aborted) return { kind: 'interrupted', removed, roots: [], error: signal.reason };
     const { summary } = row;
     try {
       const beforeLock = live.beforeLock;
@@ -423,7 +443,7 @@ export async function pruneRuns(
         warnings: result.warnings,
       });
     } catch (error) {
-      if (signal?.aborted) return { kind: 'interrupted', removed, error };
+      if (signal?.aborted) return { kind: 'interrupted', removed, roots: [], error };
       skipped.push(
         error instanceof RunRefusedError
           ? {
@@ -443,6 +463,34 @@ export async function pruneRuns(
       );
     }
   }
+  let roots: PruneRoot[] = [];
+  if (options.missingCwd && options.all) {
+    const gone = new Set(removed.map((run) => `${run.stateDir}\0${run.runId}`));
+    const outcome = await pruneRoots(
+      {
+        roots: discovered,
+        current: dirname(defaultStateDir()),
+        held: listing.runs
+          .map((summary) => ({ runId: summary.id, stateDir: summary.stateDir ?? stateDir }))
+          .filter((run) => !gone.has(`${run.stateDir}\0${run.runId}`)),
+        attributed: new Set([
+          ...removed.flatMap((run) => [...run.paths, ...run.caches.map((cache) => cache.path)]),
+          ...tombstones,
+        ]),
+        dryRun: options.dryRun,
+      },
+      { signal, beforeRmdir: live.beforeRmdir },
+    );
+    if (outcome.kind === 'interrupted')
+      return {
+        kind: 'interrupted',
+        removed,
+        roots: outcome.roots.filter((root) => root.removed).map((root) => root.root),
+        error: outcome.error,
+      };
+    roots = outcome.roots;
+    warnings.push(...outcome.warnings);
+  }
   return {
     kind: 'done',
     result: {
@@ -459,6 +507,7 @@ export async function pruneRuns(
       skipped: skipped.sort(compareAge),
       bytes: removed.reduce((total, run) => total + run.bytes, 0),
       tombstones: [...tombstones],
+      roots,
       warnings,
     },
   };

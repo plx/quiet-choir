@@ -250,7 +250,9 @@ export interface RemoveWorkflowPlan extends ExecutionPlan {
  * workflow code (`workflow prune`, ADR 0050). Each selected run goes through the guarded removal of
  * {@link RemoveWorkflowPlan} without `force`, one at a time. `statuses` is a non-empty subset of
  * the terminal statuses; `olderThanMs`, when not null, is a finite number of at least 0; `refs`
- * also deletes pinned refs; `dryRun` takes no lock and changes nothing.
+ * also deletes pinned refs; `dryRun` takes no lock and changes nothing. With both `missingCwd` and
+ * `all`, prune then removes stale XDG project roots by `rmdir`, unlinking only `project.json` and
+ * `runs/.gitignore` (ADR 0051).
  */
 export interface PruneWorkflowPlan extends ExecutionPlan {
   readonly kind: 'workflow.prune';
