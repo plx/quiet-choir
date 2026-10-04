@@ -14,11 +14,13 @@
   recipes join `examples/patterns/` and `patterns.md`: `ci-gate.workflow.ts` waits for CI with
   `gh.waitChecks` under head-SHA-keyed IDs, fixes, pushes and takes the new head from
   `git rev-parse`, and `ticket-loop.workflow.ts` works one epic ticket per run with
-  `gh.epic.snapshot`, `nextTicket` and `gh.issue.close`, with a shell driver and the costs of the
-  in-run `ctx.workflow` alternative. The skills check's `sourceExample` now maps
-  `quiet-choir/github` beside the runtime it maps the root to, so fences can import it. `waits.md`
-  says an observer's own `child_process` spawn is neither registered for orphan recovery nor stopped
-  with the observation unless given its `signal`, and `child-workflows.md` cites only the open #18.
+  `gh.epic.snapshot`, `nextTicket` and `gh.issue.close`, with a shell driver that keeps one state
+  directory per repository and epic and stops when the epic points back to a ticket it already ran,
+  and the costs of the in-run `ctx.workflow` alternative. The skills check's `sourceExample` now
+  maps `quiet-choir/github` beside the runtime it maps the root to, so fences can import it.
+  `waits.md` says an observer's own `child_process` spawn is neither registered for orphan recovery
+  nor stopped with the observation unless given its `signal`, and `child-workflows.md` cites only
+  the open #18.
 - `quiet-choir/github` adds an epic snapshot and a pure next-ticket selector (#163, slice D of #21;
   ADR 0048). `gh.epic.snapshot(id, { number })` is one `ctx.exec.json` over a fixed `gh api graphql`
   (`-F number=N`, no pagination), labelled `{ integration: 'github', op: 'epic.snapshot' }`,
