@@ -1,17 +1,11 @@
 import { relative } from 'node:path';
 
-import type { StubResult } from '../application/stub.js';
 import {
   formatDurabilityDiagnostic,
   type DurabilityDiagnostic,
   type TypecheckDiagnosticDetails,
 } from '../workflow/typecheck/model.js';
 import { formatArgv, type NextCommand } from '../workflow/loader/next-commands.js';
-
-/** Render a placeholder execution result for a human. */
-export function formatStubResult(result: StubResult): string {
-  return `${result.command.replace('.', ' ')} is not implemented yet.`;
-}
 
 /** Render a normalized TypeScript diagnostic for a human. */
 export function formatTypecheckDiagnostic(

@@ -12,8 +12,6 @@ import { inspect } from 'node:util';
 import { ExitError } from '@oclif/core/errors';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import ConfigurationGet from '../src/commands/configuration/get.js';
-import ConfigurationSet from '../src/commands/configuration/set.js';
 import InfoVersion from '../src/commands/info/version.js';
 import WorkflowAnswer from '../src/commands/workflow/answer.js';
 import WorkflowExecute from '../src/commands/workflow/execute.js';
@@ -84,35 +82,24 @@ afterEach(async () => {
   );
 });
 
-describe('stub command adapters', () => {
-  it.each([
-    [ConfigurationGet, 'configuration get'],
-    [ConfigurationSet, 'configuration set'],
-  ] as const)('runs %s through a plan and executor', async (command, commandName) => {
-    const output = await captureCommand(command);
-
-    expect(output.error).toBeInstanceOf(ExitError);
-    expect(output.error).toMatchObject({ oclif: { exit: 2 } });
-    expect(output.stdout).toBe(`${commandName} is not implemented yet.`);
-    expect(output.stderr).toBe('');
-  });
-
+describe('inherited verbosity flags', () => {
   it('maps --verbose to trace logging', async () => {
-    const output = await captureCommand(ConfigurationGet, ['--verbose']);
+    const output = await captureCommand(InfoVersion, ['--verbose']);
 
-    expect(output.error).toMatchObject({ oclif: { exit: 2 } });
-    expect(output.stderr).toBe('[trace] Executing plan for configuration.get');
+    expect(output.error).toBeUndefined();
+    expect(output.stdout).toBe('0.0.0');
+    expect(output.stderr).toBe('[trace] Executing info.version');
   });
 
   it('accepts an explicit inherited log level', async () => {
-    const output = await captureCommand(ConfigurationGet, ['--log-level', 'debug']);
+    const output = await captureCommand(InfoVersion, ['--log-level', 'debug']);
 
-    expect(output.error).toMatchObject({ oclif: { exit: 2 } });
+    expect(output.error).toBeUndefined();
     expect(output.stderr).toBe('');
   });
 
   it('rejects mutually exclusive verbosity flags', async () => {
-    const output = await captureCommand(ConfigurationGet, ['--verbose', '--log-level', 'debug']);
+    const output = await captureCommand(InfoVersion, ['--verbose', '--log-level', 'debug']);
 
     expect(output.error).toBeInstanceOf(Error);
     if (output.error instanceof Error) {

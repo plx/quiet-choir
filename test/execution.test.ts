@@ -1,9 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
 import { ThresholdLogger } from '../src/application/execution.js';
-import { createStubPlan, StubExecutor } from '../src/application/stub.js';
 import { createVersionPlan, VersionExecutor } from '../src/application/version.js';
-import { formatStubResult, formatTypecheckDiagnostic } from '../src/cli/presentation.js';
+import { formatTypecheckDiagnostic } from '../src/cli/presentation.js';
 
 const silentLogger = new ThresholdLogger('silent', () => {
   throw new Error('The silent logger must not write.');
@@ -32,14 +31,6 @@ describe('execution primitives', () => {
     logger.log('fatal', 'hidden fatal');
 
     expect(lines).toEqual([]);
-  });
-
-  it('executes and renders a serializable stub plan', async () => {
-    const plan = createStubPlan('workflow.execute');
-    const result = await new StubExecutor(silentLogger).execute(plan);
-
-    expect(JSON.parse(JSON.stringify(result))).toEqual(result);
-    expect(formatStubResult(result)).toBe('workflow execute is not implemented yet.');
   });
 
   it('executes a version plan with its configured runtime version', async () => {
