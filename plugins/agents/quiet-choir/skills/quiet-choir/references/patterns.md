@@ -903,7 +903,8 @@ export default defineWorkflow({
       // Keyed by round: each round reads fresh epic state, and a resume replays every round.
       const snapshot = await gh.epic.snapshot(ctx.id('epic', round), { number: epic });
       const { pick } = nextTicket(snapshot);
-      if (!pick) break;
+      // A lagging snapshot can still name the ticket this run just closed.
+      if (!pick || closed.includes(pick.number)) break;
       await ctx.workflow(ctx.id('ticket', round, pick.number), ticket, { number: pick.number });
       await gh.issue.close(ctx.id('close', round, pick.number), { number: pick.number });
       closed.push(pick.number);
@@ -912,6 +913,10 @@ export default defineWorkflow({
   },
 });
 ```
+
+The loop stops on a repeat, as the shell driver does: a snapshot that still lists the ticket it just
+closed ends the run before another child starts. Resume or restart the run once GitHub shows the
+close.
 
 It works, but every resume replays the whole body, so the record and its execution diagnostics grow
 with every ticket and there is no history compaction. `workflow list` and `inspect` then show one
