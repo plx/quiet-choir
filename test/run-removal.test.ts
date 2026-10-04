@@ -14,7 +14,7 @@ import {
   writeFile,
 } from 'node:fs/promises';
 import { hostname, tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
@@ -465,9 +465,9 @@ describe('workflow rm deletion', () => {
 
 describe('workflow rm and a racing answer', () => {
   /** A delivery recreated at `path`, as a writer that linked after rm's final sweep leaves it. */
-  async function lateDelivery(path: string): Promise<void> {
+  async function lateDelivery(path: string, runCreatedAt: string): Promise<void> {
     await mkdir(join(path, '..'), { recursive: true });
-    await writeFile(path, '{"value":true}');
+    await writeFile(path, JSON.stringify({ value: true, runCreatedAt }));
   }
 
   it.each([
@@ -478,7 +478,7 @@ describe('workflow rm and a racing answer', () => {
     const run = await readRun({ stateDir, runId: 'asked' });
     removed(await remove('asked', { force: true }));
     const path = target();
-    await lateDelivery(path);
+    await lateDelivery(path, run.createdAt);
     await expect(withdrawDeliveryIfRunRemoved(stateDir, run, path)).rejects.toMatchObject({
       name: 'AnswerError',
       reason: 'conflict',
@@ -493,12 +493,68 @@ describe('workflow rm and a racing answer', () => {
     removed(await remove('asked', { force: true }));
     await completedRun('asked');
     const path = join(stateDir, 'asked', 'inbox', 'gate.answer.json');
-    await lateDelivery(path);
+    await lateDelivery(path, run.createdAt);
     await expect(withdrawDeliveryIfRunRemoved(stateDir, run, path)).rejects.toMatchObject({
       reason: 'conflict',
     });
     expect(await gone(path)).toBe(true);
     expect((await readRun({ stateDir, runId: 'asked' })).status).toBe('completed');
+  });
+
+  it('keeps a delivery to the run that reuses the ID, byte for byte', async () => {
+    await suspendedRun('asked');
+    const run = await readRun({ stateDir, runId: 'asked' });
+    removed(await remove('asked', { force: true }));
+    await delay(5);
+    await suspendedRun('asked');
+    const replacement = await readRun({ stateDir, runId: 'asked' });
+    expect(replacement.createdAt).not.toBe(run.createdAt);
+    // The replacement rejected the stale envelope and a new writer published at the same path.
+    const delivery = await writeAnswer({ stateDir, runId: 'asked', stepId: 'gate', value: true });
+    const bytes = await readFile(delivery.path);
+    expect(JSON.parse(bytes.toString('utf8'))).toMatchObject({
+      runCreatedAt: replacement.createdAt,
+    });
+    await expect(withdrawDeliveryIfRunRemoved(stateDir, run, delivery.path)).rejects.toMatchObject({
+      reason: 'conflict',
+    });
+    expect(await readFile(delivery.path)).toEqual(bytes);
+    expect(await readdir(join(delivery.path, '..'))).toEqual([basename(delivery.path)]);
+    expect(
+      (
+        await runWorkflow(askWorkflow, {
+          runId: 'asked',
+          stateDir,
+          cwd: root,
+          input: null,
+          resume: true,
+        })
+      ).status,
+    ).toBe('completed');
+  });
+
+  it('keeps an envelope it cannot read at the path', async () => {
+    await suspendedRun('asked');
+    const run = await readRun({ stateDir, runId: 'asked' });
+    removed(await remove('asked', { force: true }));
+    const path = answerPath(stateDir, 'asked', 'gate');
+    await mkdir(join(path, '..'), { recursive: true });
+    await writeFile(path, 'not json');
+    await expect(withdrawDeliveryIfRunRemoved(stateDir, run, path)).rejects.toMatchObject({
+      reason: 'conflict',
+    });
+    expect(await readFile(path, 'utf8')).toBe('not json');
+    expect(await readdir(join(path, '..'))).toEqual([basename(path)]);
+  });
+
+  it('still reports the conflict when nothing is left at the path', async () => {
+    await suspendedRun('asked');
+    const run = await readRun({ stateDir, runId: 'asked' });
+    removed(await remove('asked', { force: true }));
+    await expect(
+      withdrawDeliveryIfRunRemoved(stateDir, run, answerPath(stateDir, 'asked', 'gate')),
+    ).rejects.toMatchObject({ reason: 'conflict' });
+    await onlyIgnoreFileLeft();
   });
 
   it('a run that reuses the ID rejects a delivery addressed to the removed run', async () => {

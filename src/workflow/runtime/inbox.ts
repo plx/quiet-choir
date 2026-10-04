@@ -1,7 +1,7 @@
 import { brandError, isBranded } from './error-brand.js';
 import { createStorageDirectory, syncDirectory, syncHandle } from './storage-io.js';
 import { createHash, randomUUID } from 'node:crypto';
-import { link, open, readFile, rm, rmdir, stat } from 'node:fs/promises';
+import { link, open, readFile, rename, rm, rmdir, stat } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { z } from 'zod';
 import { jsonValue, digest } from './json.js';
@@ -254,8 +254,10 @@ function isMissing(error: unknown): boolean {
  * is swept with `<runId>.inbox/` or moved into the tombstone with `<runId>/inbox/`, and a link after
  * it finds the run gone here. This read cannot stop a run that reuses the ID from reading the
  * delivery first; the envelope's `runCreatedAt` does, because that owner rejects a delivery
- * addressed to another generation. This is the cleanup half: it removes the delivery and any empty
- * inbox and run directories it recreated, and reports the conflict to the writer.
+ * addressed to another generation. This is the cleanup half: it withdraws the delivery only while
+ * the path still holds an envelope addressed to this generation (see `withdrawOwnDelivery`), removes
+ * any empty inbox and run directories it recreated for a removed run, and reports the conflict to
+ * the writer.
  * @internal
  */
 export async function withdrawDeliveryIfRunRemoved(
@@ -268,7 +270,7 @@ export async function withdrawDeliveryIfRunRemoved(
     throw error;
   });
   if (current?.createdAt === run.createdAt) return;
-  await rm(path, { force: true });
+  await withdrawOwnDelivery(run.createdAt, path);
   // Only a removed run's directories: a run that reuses the ID owns its own.
   if (!current)
     for (const directory of [dirname(path), runDirectory(stateDir, run.id)])
@@ -282,6 +284,49 @@ export async function withdrawDeliveryIfRunRemoved(
     'conflict',
     `Run ${run.id} was removed while the answer was being delivered.`,
   );
+}
+
+/**
+ * Delete the envelope at `path` only if it is addressed to the generation `createdAt`. A run that
+ * reuses the ID can reject the stale envelope and a new writer can publish its own at the same path
+ * before this runs, so the path is first renamed to a private name: from then on no other writer
+ * can change what is examined. An envelope addressed to this generation is stale whoever wrote it
+ * and is deleted; any other (another generation's, or one that does not parse) is linked back, or
+ * left at the private name if a new delivery already took the path, so nothing is overwritten.
+ */
+async function withdrawOwnDelivery(createdAt: string, path: string): Promise<void> {
+  const directory = dirname(path);
+  const claimed = join(directory, `.withdraw-${randomUUID()}.tmp`);
+  try {
+    await rename(path, claimed);
+  } catch (error) {
+    if (isMissing(error)) return;
+    throw error;
+  }
+  const addressed = await readFile(claimed, 'utf8').then(
+    (text) => {
+      try {
+        const envelope: unknown = JSON.parse(text);
+        return (
+          typeof envelope === 'object' &&
+          envelope !== null &&
+          (envelope as { runCreatedAt?: unknown }).runCreatedAt === createdAt
+        );
+      } catch {
+        return false;
+      }
+    },
+    () => false,
+  );
+  if (!addressed)
+    try {
+      await link(claimed, path);
+      await syncDirectory(directory);
+    } catch (error) {
+      if (error instanceof Error && 'code' in error && error.code === 'EEXIST') return;
+      throw error;
+    }
+  await rm(claimed, { force: true });
 }
 
 /** Determine source drift from saved paths and bytes, without typechecking or importing. @internal */

@@ -80,9 +80,10 @@ codes `answer_not_json`, `question_schema_invalid`, `answer_author` and `answer_
 `[]`), so a caller can re-ask for the right field; the library `AnswerError` carries the same
 `issues`. An unknown, withdrawn, completed, or already delivered question exits 3
 (`answer.conflict`), as does a delivery whose run `workflow rm` removed meanwhile; that delivery is
-withdrawn ([storage](storage.md#removing-runs)). Successful delivery exits 0. `--resume` on `answer`
-combines delivery with resume and returns the resumed outcome. If resume fails, the delivery remains
-queued; run `resume` after fixing the cause, without answering again.
+withdrawn while its path still holds an envelope addressed to the removed run
+([storage](storage.md#removing-runs)). Successful delivery exits 0. `--resume` on `answer` combines
+delivery with resume and returns the resumed outcome. If resume fails, the delivery remains queued;
+run `resume` after fixing the cause, without answering again.
 
 `pending` lists only rows still awaiting an answer: a row whose answer is already queued, and rows
 of failed, cancelled or completed runs, are hidden (counted in `hidden`); `pending --all` lists

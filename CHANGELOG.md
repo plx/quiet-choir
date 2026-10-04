@@ -20,10 +20,11 @@
   guard, rm deletes the flat file before renaming `<runId>/` to a dotted
   `.<runId>.<pid>.<uuid>.removing` tombstone, so `list` and `inspect` see an intact run or none, and
   each rm sweeps the tombstones of dead removals. A `workflow answer` that links its delivery while
-  rm removes the run re-reads the run afterwards and withdraws the delivery with `answer.conflict`.
-  Answer envelopes gain an optional `runCreatedAt`, the `createdAt` of the run the writer addressed,
-  and the owner rejects a delivery whose `runCreatedAt` differs from its own, so no answer outlives
-  the run to resolve a later run that reuses the ID; envelopes without it are still accepted.
+  rm removes the run re-reads the run afterwards and fails with `answer.conflict`, withdrawing the
+  delivery only while its path still holds an envelope addressed to the removed run. Answer
+  envelopes gain an optional `runCreatedAt`, the `createdAt` of the run the writer addressed, and
+  the owner rejects a delivery whose `runCreatedAt` differs from its own, so no answer outlives the
+  run to resolve a later run that reuses the ID; envelopes without it are still accepted.
   `workflow start` checks for an existing run and creates its launch files under the run's legacy
   guard, refusing with `run.locked` while an rm of that ID is in progress, so rm never renames a new
   launch directory into its tombstone. `--dry-run` takes no lock, writes nothing and exits 0 with
