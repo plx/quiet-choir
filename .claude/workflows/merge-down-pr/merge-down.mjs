@@ -861,7 +861,7 @@ async function checkWait(a, P) {
   const file = checkResultFile(P, pr, label);
   const started = readJson(join(prDir(P, pr), `${label}.started.json`));
   if (!started) fail(`no check was started with label ${label}; run check-start first`);
-  const maxSeconds = Number(a['max-seconds'] ?? 420);
+  const maxSeconds = Number(a['max-seconds'] ?? 540);
   const begin = Date.now();
   for (;;) {
     if (existsSync(file)) return { done: true, ...readJson(file) };
@@ -1192,7 +1192,7 @@ async function awaitGate(a, P, R) {
   // --ci skip: wait for the Codex review alone (a caller that gates on CI later, e.g. the
   // epic workflow's first-review wait, should not sit out a slow CI queue here).
   const ciMode = a.ci ?? 'wait';
-  const maxSeconds = Number(a['max-seconds'] ?? 540);
+  const maxSeconds = Number(a['max-seconds'] ?? 420);
   const ciGraceMs = Number(a['ci-grace'] ?? 300) * 1000;
   // GitHub can report the previous head for a while after a push. A head that is an ancestor of
   // the one we pushed is that stale view, not someone else's push: keep polling through a short
