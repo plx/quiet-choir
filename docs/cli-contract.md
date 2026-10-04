@@ -362,8 +362,14 @@ is skipped rather than changing the code. The message then ends with
 `--state-dir` and `QUIET_CHOIR_STATE_DIR` win, and the default root still hashes the exact working
 directory. A resume whose stored entrypoint no longer exists (a moved checkout or deleted file) is
 `run.incompatible` (exit 3) with `details: {storedEntrypoint, reason:"entrypoint_missing"}`; fork
-from the new location. Storage resolves explicit options, environment, existing legacy runs, then
-the external XDG project default; relative explicit paths resolve against the launch directory.
+from the new location. A record written by a newer quiet-choir (a newer `schemaRevision`, or
+top-level fields this build does not know) is `run.incompatible` (exit 3) for `resume`,
+`execute --resume`, `answer --resume`, `--fork-from`, `--dry-run` and `workflow clean`, with
+`details: {reason:"record_schema", schemaRevision, supportedSchemaRevision, hiddenFields}` and
+nothing written; `inspect` and `list` warn instead. See
+[record schema revision](storage.md#record-schema-revision). Storage resolves explicit options,
+environment, existing legacy runs, then the external XDG project default; relative explicit paths
+resolve against the launch directory.
 
 ## Durability lint
 
@@ -525,6 +531,7 @@ placeholders. Text inspect and human failure messages print each entry as
 | `run.incompatible`, divergent completed step    | the fork command from `error.details.next`                                                            |
 | `run.incompatible`, different requested FILE    | `resume` with the stored entrypoint, then a fork from the requested FILE                              |
 | `run.incompatible`, `entrypoint_missing`        | `execute <ENTRYPOINT> --fork-from RUN --run-id <NEW_RUN_ID> --state-dir DIR`                          |
+| `run.incompatible`, `record_schema`             | none: upgrade quiet-choir                                                                             |
 | `run.not_found` with `details.candidates`       | `inspect RUN --state-dir CANDIDATE` for at most 5 candidates, RUN being `details.runId`               |
 | Failed or stale summary                         | `resume RUN --state-dir DIR`                                                                          |
 | Suspended summary                               | `answer RUN STEP --state-dir DIR --json <ANSWER_JSON>` for at most 5 waiting questions, then `resume` |
@@ -632,9 +639,11 @@ unchanged in-flight run can be blocked by these stricter defaults before import 
 `workflow tick` returns a single aggregate JSON document: `resumed` entries with each started
 resume's outcome (completed, suspended, failed, cancelled or incompatible), `skipped` entries with a
 reason (not due, no longer due, locked, orphans, crash-loop, deadline, incompatible or unreadable),
-and an `observed` count of already-terminal runs. Each run appears in at most one entry. Tick also
-recovers `running` runs whose owner is gone, up to 3 consecutive times without a new completed step;
-then it reports `crash-loop` with a message naming `workflow resume`. With --run, exits are 0
+and an `observed` count of already-terminal runs. A due or stale run whose record this build cannot
+fully read ([record schema revision](storage.md#record-schema-revision)) is skipped `incompatible`
+with the `run.incompatible` message and left unchanged. Each run appears in at most one entry. Tick
+also recovers `running` runs whose owner is gone, up to 3 consecutive times without a new completed
+step; then it reports `crash-loop` with a message naming `workflow resume`. With --run, exits are 0
 completed (now or earlier), 75 pending, interrupted, locked, orphans or deadline, and 1 failed,
 cancelled, crash-loop, incompatible or unreadable; batch per-run failures remain data with exit 0.
 Usage/infrastructure errors retain the command failure document. Every tick is bounded by --timeout

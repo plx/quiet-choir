@@ -290,6 +290,59 @@ before supplying fork reuse. Intermediate private formats 2–5 remain inspectab
 runtime to resume them. Backups and markers are retained for inspection, not automatically deleted;
 `workflow rm` removes them with their run.
 
+## Record schema revision
+
+A run record carries `schemaRevision` beside `formatVersion`
+([ADR 0052](decisions/0052-run-record-schema-revision.md)). `formatVersion` changes when the layout
+or replay contract changes; `schemaRevision` changes when the set of persisted run-level fields
+does. A record without the field is revision 1, which covers every record written before it existed,
+so reads never fill it in and fork source pins keep their digests. Every new record, and every
+resumed record at its next save, is written with this build's `SUPPORTED_SCHEMA_REVISION`; a
+completed run whose only change would be the stamp is not rewritten.
+
+**The bump rule.** Adding a persisted run-level field, or changing the accepted shape of one,
+including fields nested inside run-level objects such as `runBudget` or `worktrees`, bumps
+`SUPPORTED_SCHEMA_REVISION` in `record.ts` and adds the new revision's top-level keys to
+`test/fixtures/schema-revision/record-keys.json` (with its pinned digest in
+`test/record-schema-revision.test.ts`). The test fails when the top-level keys change without a new
+revision; a nested change is caught only in review, so it must bump by this rule.
+
+**Refusals.** A build must not rewrite a record it cannot fully read: its parse strips unknown
+top-level fields, and the next compaction would write the record back without them. When a record
+has a newer `schemaRevision`, or top-level fields this build does not know (in `run.json` or in a
+journal entry a newer build wrote before compacting), these commands refuse with `run.incompatible`
+(exit 3) and leave `run.json` and `journal.jsonl` byte for byte unchanged:
+
+- `workflow resume`, `execute --resume` and `answer --resume` (the answer file is still delivered to
+  the inbox, and a newer build consumes it);
+- `workflow tick`, which reports the run as skipped `incompatible` with the same message (exit 1
+  with `--run`);
+- a fork from the run (`--fork-from`) and a `--dry-run` resume, which would copy the record;
+- `workflow clean`, which rewrites the worktree ledger.
+
+`error.details` is
+`{reason: "record_schema", schemaRevision, supportedSchemaRevision, hiddenFields}`; the message
+names the revision and up to 10 hidden field names, and the only remedy is to upgrade quiet-choir.
+The refusal comes after the lock-free read and again under the run lock, before any journal append,
+truncation or compaction; the lock itself is taken and released as usual. A custom `RunStore`'s
+record gets the same check in the runner.
+
+**Reads.** `readRun`, `workflow inspect`, `list` and `pending` still work. The read view leaves out
+what this build does not know (never its values, which are not kept in memory), `inspect` and `list`
+rows add a warning naming the newer revision or the hidden fields, and the run gets no `resume` or
+`answer` follow-ups. If a newer revision also changed the shape of a field this build knows, so the
+record does not parse at all, every read is the same `run.incompatible` refusal instead of
+`run.unreadable`, and `list` reports it among its skipped runs. `workflow rm` and `prune` still
+remove such a run, except when rm would first have to update its worktree ledger (caches not yet
+removed, or `--refs` with recorded refs): that rm refuses the same way before deleting anything.
+
+**Older builds.** A build that has this guard treats a newer build's record as above. A build that
+predates it (every build before #167) still strips unknown top-level fields and deletes them at its
+next compaction, exit 0 and without a warning; the guard protects only builds that contain it.
+Unknown fields inside step records survive any build, because steps are not stripped.
+`formatVersion`, the accepted formats (resume 1, 6 and 7; forks 6 and 7) and the replay contract are
+unchanged.
+
 ## Storage implementations and verification
 
 `RunOptions.store` accepts a `RunStore`; the default is `FileRunStore`. Its owned handle exposes
