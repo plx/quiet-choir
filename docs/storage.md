@@ -215,6 +215,19 @@ disturbed. `--dry-run` lists them without deleting anything. A start that failed
 existed (a lone `<runId>/launch/`) is not a run; rm reports `run.not_found` for it, so remove it by
 hand.
 
+`workflow prune` removes runs in bulk, still only when asked
+([ADR 0050](decisions/0050-select-runs-for-prune-conservatively.md)). It selects finished runs by
+age (`--older-than 7d`), status (`--status completed,failed,cancelled`) or a missing recorded cwd
+(`--missing-cwd`), and needs at least one of them. It never deletes a file itself: each selected run
+goes through the rm removal above, oldest first, one run at a time, each under its own guard and
+never with `--force`, and with the record's `updatedAt` pinned so a run that changed after selection
+is skipped rather than removed. A running, stale or suspended run, a run with a waiting step, a file
+in either inbox that a resume could still consume (consumed and rejected deliveries do not count),
+or a held lock or live orphan is never selected; it is listed in `skipped` with its reason, as is a
+run that rm refuses at removal time, and the batch goes on. Prune sweeps dead rm tombstones in every
+runs container it scans, and its `--dry-run` takes no lock and changes nothing. Flags, reasons and
+result are in the [CLI contract](cli-contract.md).
+
 ## Legacy records
 
 Flat format-6 records migrate automatically on their first compatible resume. The original bytes

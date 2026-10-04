@@ -4,6 +4,7 @@ import type { RunLockView, RunOwnership } from '../src/workflow/runtime/lock.js'
 import type { HarnessProcessInspection } from '../src/workflow/runtime/process-registry.js';
 import type { RunRecord, StepRecord } from '../src/workflow/runtime/record.js';
 import {
+  ownershipHold,
   removalRefusal,
   removalVerdict,
   type RemovalVerdict,
@@ -160,6 +161,43 @@ describe('removalVerdict', () => {
         force: false,
       }).kind,
     ).toBe('orphans');
+  });
+});
+
+describe('ownershipHold', () => {
+  it.each<[string, RunOwnership, string | null, string | null]>([
+    ['no lock', unlocked, null, null],
+    ['dead owners', dead, null, null],
+    ['a live owner', observed([lock('primary', 'alive')]), 'locked', 'alive'],
+    ['an unknown owner', observed([lock('primary', 'unknown')]), 'locked', 'unknown'],
+    ['a remote owner', observed([lock('guard', 'remote')]), 'locked', 'remote'],
+    ['an unreadable owner', observed([lock('primary', 'unreadable')]), 'locked', 'unreadable'],
+    ['a live recoverer', observed([lock('primary', 'dead', 'alive')]), 'locked', 'alive'],
+    ['a live orphan', observed([lock('primary', 'dead')], 'alive'), 'orphans', null],
+    ['an unknown orphan', observed([lock('primary', 'released')], 'unknown'), 'orphans', null],
+    ['a dead child', observed([lock('primary', 'dead')], 'dead'), null, null],
+  ])('%s: %s', (_name, ownership, kind, reason) => {
+    const hold = ownershipHold(ownership);
+    expect(hold?.kind ?? null).toBe(kind);
+    if (hold?.kind === 'locked') expect(hold.reason).toBe(reason);
+  });
+
+  it('is exactly the lock and orphan part of removalVerdict, whatever the record says', () => {
+    const observations = [
+      unlocked,
+      dead,
+      observed([lock('primary', 'alive')]),
+      observed([lock('primary', 'dead', 'unknown')]),
+      observed([lock('primary', 'dead')], 'alive'),
+    ];
+    for (const ownership of observations)
+      for (const record of [run('completed'), run('running'), run('failed', true)])
+        for (const force of [false, true]) {
+          const verdict = removalVerdict(record, ownership, { force });
+          const hold = ownershipHold(ownership);
+          if (hold) expect(verdict).toEqual(hold);
+          else expect(['remove', 'active']).toContain(verdict.kind);
+        }
   });
 });
 

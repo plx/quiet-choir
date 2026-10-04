@@ -25,6 +25,7 @@ const expectedCommands = [
   'workflow:list',
   'workflow:list-defs',
   'workflow:pending',
+  'workflow:prune',
   'workflow:resume',
   'workflow:rm',
   'workflow:start',

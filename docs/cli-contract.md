@@ -182,6 +182,52 @@ sweeps nothing and writes nothing; it exits 0 whenever the run exists, with `rem
 `--refs` would delete and `tombstones` the ones a removal would sweep. See
 [storage](storage.md#removing-runs).
 
+`workflow prune [--older-than DURATION] [--status S[,S]] [--missing-cwd] [--all] [--refs] [--dry-run] --json`
+removes finished runs in bulk without importing workflow code
+([ADR 0050](decisions/0050-select-runs-for-prune-conservatively.md)). It needs at least one of
+`--older-than`, `--status` or `--missing-cwd`; a bare prune fails with `usage.flag` (exit 2) before
+reading anything, because prune has no delete-everything mode. `--status` is comma-separated or
+repeated and takes only `completed`, `failed` and `cancelled` (the default is all three); any other
+value, and an `--older-than` that is not a duration (`ms`, `s`, `m`, `h` or `d`, such as `7d`), fail
+with `usage.flag`. `--all` scans every registered XDG project as `workflow list --all` does and
+cannot be combined with `--state-dir`; without it prune scans the resolved runs container plus, when
+neither `--state-dir` nor `QUIET_CHOIR_STATE_DIR` is set, the current project's legacy
+`.quiet-choir/runs`. A run is selected when its observed status is one of the statuses, its
+`updatedAt` is strictly older than `--older-than` (an unparseable `updatedAt` never matches), and,
+with `--missing-cwd`, its recorded cwd is missing (a stat that fails with `ENOENT` or `ENOTDIR`; any
+other error means unknown, which never matches, with a warning). A matching run is still kept, and
+listed in `skipped` with its `reason`, when it is `active` (observed running, stale or suspended),
+`locked` (any lock owner or recoverer alive, unverifiable or remote, or unreadable lock metadata),
+`orphans` (a dead owner's live or unverifiable child), `waiting` (a step is waiting) or
+`queued-answer` (a file in `<runId>/inbox/` or `<runId>.inbox/` that a resume could still consume:
+every entry counts, even an unknown leftover, except the answer file of a question the record shows
+resolved through the inbox and a `.rejected.<uuid>.json` file beside one of the run's answer paths,
+which owners leave behind; an unreadable inbox or record counts too). Each selected run, oldest
+`updatedAt` first, then goes through `workflow rm`'s removal without `--force`, one at a time and
+each under its own guard, so rm re-checks its refusals under the lock; `--refs` is passed through.
+Prune also pins the record it selected: when the run's `updatedAt` changed before or under the lock,
+that removal refuses and the run is skipped with reason `changed` (code `run.exists`). A refusal or
+failure of one removal never stops the batch: it becomes a `skipped` entry with reason `locked`,
+`orphans`, `active`, `changed`, `gone` (another removal won, `run.not_found`), `refused` (another
+`run.*` code) or `storage` (a cache Git could not remove, or another error of that one removal,
+`workflow.storage`). Before removing anything prune sweeps abandoned rm tombstones in every scanned
+container. Success (exit 0, also with skipped runs) returns
+`{kind:"workflow.prune.result", ok:true, dryRun, stateDirs, filters:{olderThanMs, statuses, missingCwd, all, refs}, removed, skipped, bytes, tombstones, warnings}`:
+`removed[]` entries are
+`{runId, stateDir, status, updatedAt, cwd, bytes, paths, caches, refsRemoved, keptRefs, warnings}`
+as rm reported them, `skipped[]` entries are
+`{runId, stateDir, status, updatedAt, cwd, bytes, reason, code, message, details}` where `code` is
+the CLI code rm refused (or would refuse) with, `workflow.storage`, or null for `queued-answer`,
+`bytes` is the sum of `removed[].bytes`, `tombstones` are absolute paths, and `warnings` carry
+unreadable runs (which are never removed), unreadable inboxes and unknown cwds. Runs that do not
+match are not listed. `--dry-run` runs each selected removal as an rm `--dry-run`: it takes no lock,
+sweeps nothing and changes nothing, `removed[]` lists the runs a prune would remove now with their
+bytes, and a dry-run refusal moves the run to `skipped`. A runs container that cannot be read fails
+the command with `workflow.storage` (exit 74). A signal stops prune between removals (a removal past
+its commit point still finishes) with `workflow.interrupted` (exit 130), `error.details.removed`
+naming the runs already removed; run prune again to continue. See
+[storage](storage.md#removing-runs).
+
 `workflow cancel ID [--force] [--timeout 30s] --json` ends a live local run as `cancelled` without
 importing workflow code
 ([ADR 0039](decisions/0039-cancel-a-live-run-through-a-token-bound-request.md)). It signals only a

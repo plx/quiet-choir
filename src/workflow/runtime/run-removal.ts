@@ -28,6 +28,14 @@ export interface RemoveRunOptions {
   readonly refs?: boolean;
   /** Report what would be removed, taking no lock and writing nothing. */
   readonly dryRun?: boolean;
+  /**
+   * @internal `workflow prune` only: the `updatedAt` of the record it selected. A removal refuses
+   * with `run.exists` when the record carries another value, on the first read (a dry run too, so a
+   * preview never lists a run a real prune would refuse) or, for a real removal, again under the
+   * lock, so prune never deletes a run that changed after it was selected. `workflow rm` never
+   * sets it.
+   */
+  readonly expectedUpdatedAt?: string;
 }
 
 /** A worktree cache that rm removed, or would remove. @internal */
@@ -106,8 +114,11 @@ function tombstoneName(runId: string): string {
   return `.${runId}.${String(process.pid)}.${randomUUID()}.removing`;
 }
 
-/** Tombstones in the runs container whose removing process is dead; live and unknown are kept. */
-async function deadTombstones(stateDir: string): Promise<string[]> {
+/**
+ * Names of the tombstones in the runs container whose removing process is dead; live and unknown
+ * ones are kept. @internal
+ */
+export async function deadTombstones(stateDir: string): Promise<string[]> {
   const entries = await readdir(stateDir).catch((error: unknown) => {
     if (isErrno(error, 'ENOENT')) return [];
     throw error;
@@ -120,8 +131,8 @@ async function deadTombstones(stateDir: string): Promise<string[]> {
     .sort();
 }
 
-/** Best effort: delete abandoned tombstones, returning the names that are gone now. */
-async function sweepTombstones(stateDir: string): Promise<string[]> {
+/** Best effort: delete abandoned tombstones, returning the names that are gone now. @internal */
+export async function sweepTombstones(stateDir: string): Promise<string[]> {
   const swept: string[] = [];
   for (const name of await deadTombstones(stateDir).catch((): string[] => []))
     try {
@@ -181,6 +192,17 @@ function refusalError(
   return new RunRefusedError(refusal.code, runId, refusal.message, jsonValue(refusal.details));
 }
 
+/** Refuse a run whose record changed after `workflow prune` selected it. */
+function checkUpdatedAt(runId: string, expected: string, updatedAt: string): void {
+  if (updatedAt !== expected)
+    throw new RunRefusedError(
+      'run.exists',
+      runId,
+      `Run ${runId} changed after prune selected it (updatedAt ${expected}, now ${updatedAt}); nothing was removed. Re-run prune to judge the current record.`,
+      jsonValue({ expectedUpdatedAt: expected, updatedAt }),
+    );
+}
+
 /** The namespace directory that holds every cache of the run's ledger. */
 function namespaceDirectory(
   record: RunRecord,
@@ -193,6 +215,8 @@ function namespaceDirectory(
 async function planRemoval(stateDir: string, options: RemoveRunOptions): Promise<RunRemovalResult> {
   const { runId } = options;
   const record = await readRequiredRun({ runId, stateDir });
+  if (options.expectedUpdatedAt !== undefined)
+    checkUpdatedAt(runId, options.expectedUpdatedAt, record.updatedAt);
   const ownership = await inspectRunOwnership({ runId, stateDir });
   const verdict = removalVerdict(record, ownership, { force: options.force ?? false });
   const ledger = record.worktrees;
@@ -252,6 +276,8 @@ export async function removeRun(
   const { signal } = live;
   const tombstones = await sweepTombstones(stateDir);
   const initial = await readRequiredRun({ runId, stateDir });
+  if (options.expectedUpdatedAt !== undefined)
+    checkUpdatedAt(runId, options.expectedUpdatedAt, initial.updatedAt);
   const verdict = removalVerdict(initial, await inspectRunOwnership({ runId, stateDir }), {
     force,
   });
@@ -271,6 +297,7 @@ export async function removeRun(
       runId,
       stateDir,
       generation: initial.createdAt,
+      expectedUpdatedAt: options.expectedUpdatedAt,
       force,
       refs: options.refs ?? false,
       paths,
@@ -321,6 +348,8 @@ async function removeOwned(
     readonly stateDir: string;
     /** The `createdAt` of the run rm inspected; the locked record must still carry it. */
     readonly generation: string;
+    /** As on {@link RemoveRunOptions.expectedUpdatedAt}: checked again under the lock. */
+    readonly expectedUpdatedAt: string | undefined;
     readonly force: boolean;
     readonly refs: boolean;
     readonly paths: readonly string[];
@@ -342,6 +371,8 @@ async function removeOwned(
       `Run ${runId} was replaced by another run with the same ID after rm inspected it; nothing was removed. Re-run rm to inspect the current run.`,
       jsonValue({ expectedCreatedAt: context.generation, createdAt: record.createdAt }),
     );
+  if (context.expectedUpdatedAt !== undefined)
+    checkUpdatedAt(runId, context.expectedUpdatedAt, record.updatedAt);
   const recheck = removalVerdict(
     record,
     { locked: false, owner: null, processes: [], locks: [] },

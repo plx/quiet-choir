@@ -754,6 +754,99 @@ describe('workflow rm and a replaced run', () => {
   });
 });
 
+describe('workflow rm with an expected updatedAt (prune)', () => {
+  /** Rewrite the saved record's updatedAt in place, as a resume or answer that saved would. */
+  async function touch(runId: string): Promise<string> {
+    const run = await readRun({ stateDir, runId });
+    const updatedAt = new Date(Date.parse(run.updatedAt) + 1000).toISOString();
+    for (const name of ['run.json', 'journal.jsonl']) {
+      const file = join(stateDir, runId, name);
+      const text = await readFile(file, 'utf8').catch(() => undefined);
+      if (text !== undefined) await writeFile(file, text.replaceAll(run.updatedAt, updatedAt));
+    }
+    expect((await readRun({ stateDir, runId })).updatedAt).toBe(updatedAt);
+    return updatedAt;
+  }
+
+  it('refuses a record that changed before the first read, changing nothing', async () => {
+    await completedRun('pinned');
+    const selected = (await readRun({ stateDir, runId: 'pinned' })).updatedAt;
+    const updatedAt = await touch('pinned');
+    const before = await snapshot(stateDir);
+    await expect(
+      removeRun({ runId: 'pinned', stateDir, expectedUpdatedAt: selected }, processRunner),
+    ).rejects.toMatchObject({
+      code: 'run.exists',
+      message: `Run pinned changed after prune selected it (updatedAt ${selected}, now ${updatedAt}); nothing was removed. Re-run prune to judge the current record.`,
+      details: { expectedUpdatedAt: selected, updatedAt },
+    });
+    expect(await snapshot(stateDir)).toEqual(before);
+  });
+
+  it('refuses a changed record in a dry run too, changing nothing', async () => {
+    await completedRun('pinned');
+    const selected = (await readRun({ stateDir, runId: 'pinned' })).updatedAt;
+    const updatedAt = await touch('pinned');
+    const before = await snapshot(stateDir);
+    await expect(
+      removeRun(
+        { runId: 'pinned', stateDir, dryRun: true, expectedUpdatedAt: selected },
+        processRunner,
+      ),
+    ).rejects.toMatchObject({
+      code: 'run.exists',
+      details: { expectedUpdatedAt: selected, updatedAt },
+    });
+    expect(await snapshot(stateDir)).toEqual(before);
+  });
+
+  it('plans a dry run when the record still carries the expected updatedAt', async () => {
+    await completedRun('pinned');
+    const selected = (await readRun({ stateDir, runId: 'pinned' })).updatedAt;
+    const outcome = await removeRun(
+      { runId: 'pinned', stateDir, dryRun: true, expectedUpdatedAt: selected },
+      processRunner,
+    );
+    expect(outcome).toMatchObject({ kind: 'removed', result: { dryRun: true, removed: false } });
+  });
+
+  it('refuses a record that changed before the lock, and releases every lock', async () => {
+    await completedRun('pinned');
+    const selected = (await readRun({ stateDir, runId: 'pinned' })).updatedAt;
+    let updatedAt = '';
+    const refusal: unknown = await removeRun(
+      { runId: 'pinned', stateDir, expectedUpdatedAt: selected },
+      processRunner,
+      {
+        beforeLock: async () => {
+          updatedAt = await touch('pinned');
+        },
+      },
+    ).then(
+      () => null,
+      (error: unknown) => error,
+    );
+    expect(refusal).toMatchObject({
+      code: 'run.exists',
+      details: { expectedUpdatedAt: selected, updatedAt },
+    });
+    expect((await readRun({ stateDir, runId: 'pinned' })).updatedAt).toBe(updatedAt);
+    expect(await gone(join(stateDir, 'pinned', 'lock'))).toBe(true);
+    expect(await gone(join(stateDir, 'pinned.json.lock'))).toBe(true);
+  });
+
+  it('removes a record that still carries the expected updatedAt', async () => {
+    await completedRun('pinned');
+    const selected = (await readRun({ stateDir, runId: 'pinned' })).updatedAt;
+    const outcome = await removeRun(
+      { runId: 'pinned', stateDir, expectedUpdatedAt: selected },
+      processRunner,
+    );
+    expect(outcome).toMatchObject({ kind: 'removed', result: { removed: true } });
+    await onlyIgnoreFileLeft();
+  });
+});
+
 describe('workflow rm and a racing start', () => {
   it.each(['flat', 'primary-released'] as const)(
     'start refuses while an unmigrated flat run is removed (after %s), and succeeds after',

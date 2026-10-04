@@ -274,3 +274,36 @@ exit 74, remaining caches in `error.details.caches`): caches Git already removed
 (`error.details.removedCaches`), no ref is deleted, and the record stays; fix the cause and retry
 with `workflow clean`. An interrupted rm leaves an intact run (run rm again) or a hidden
 `.<run>.<pid>.<uuid>.removing` directory, which the next rm in that state directory sweeps.
+
+### Retention recipe
+
+`workflow prune` removes finished runs in bulk through the same guarded rm, one run at a time. It
+needs at least one filter (`--older-than`, `--status`, `--missing-cwd`); a bare prune is
+`usage.flag` (exit 2). Work in this order:
+
+1. List sizes. `workflow list --all --json` gives each run's `bytes`, `status`, `updatedAt` and
+   `cwd` across every registered project.
+2. Dry run. It takes no lock and changes nothing; `removed[]` lists what would go, with per-run and
+   total `bytes`, and `skipped[]` lists the matching runs that stay, with a `reason`.
+3. Prune with the same flags. It exits 0 even when some runs were skipped.
+
+```sh
+node "$QC_CHECKOUT/bin/run.js" workflow list --all --json
+node "$QC_CHECKOUT/bin/run.js" workflow prune --older-than 7d --dry-run --json
+node "$QC_CHECKOUT/bin/run.js" workflow prune --missing-cwd --dry-run --json
+node "$QC_CHECKOUT/bin/run.js" workflow prune --older-than 7d --json
+```
+
+`--status` takes only `completed`, `failed` and `cancelled` (default all three; comma-separated or
+repeated), `--older-than` compares `updatedAt` (`7d`, `12h`, `30m`), and `--missing-cwd` picks runs
+whose recorded working directory is gone. Add `--all` to scan every registered project, or
+`--state-dir` for one runs container. Prune never selects a `running`, `stale` or `suspended` run, a
+run with a `waiting` step or an inbox file a resume could still consume (`queued-answer`; answers
+the run already consumed and rejected deliveries do not count), or a run held by a lock owner,
+recoverer or live orphan. A run that changed after selection is skipped as `changed`. For the rare
+run you deliberately want gone while it is still active or waiting, inspect it and use
+`workflow rm RUN --force`; prune never forces, and nothing overrides a held lock.
+
+Pinned refs survive prune unless you pass `--refs`, and each removed run lists them as `keptRefs`.
+The pins keep the runs' worktree commits reachable; once they are deleted, Git garbage collection
+can drop those commits, so pass `--refs` only when no later recovery or integration needs them.

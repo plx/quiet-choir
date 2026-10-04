@@ -2,6 +2,27 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- `workflow prune` removes finished runs in bulk (#365, split from #166; ADR 0050).
+  `workflow prune [--older-than DURATION] [--status S[,S]] [--missing-cwd] [--all] [--refs] [--dry-run] [--json]`
+  needs at least one of `--older-than`, `--status` or `--missing-cwd` (a bare prune is `usage.flag`,
+  exit 2); `--status` takes only `completed`, `failed` and `cancelled`, defaulting to all three, and
+  `--all` scans every registered project. A pure, table-tested selector (`prune-selection.ts`) never
+  selects a running, stale or suspended run, one with a waiting step or an inbox file a resume could
+  still consume (an answer the record shows consumed, or a quarantined `.rejected.` delivery, does
+  not count), or one held by a lock owner, recoverer or live orphan; such matching runs are listed
+  in `skipped` with a reason. Each selected run is removed oldest first through `workflow rm`'s
+  guarded removal, one at a time and never forced, with `--refs` passed through; a refusal or
+  failure of one removal becomes a `skipped` entry and the batch exits 0, while an unreadable runs
+  container still fails the command. `--dry-run` takes no lock and changes nothing, and lists
+  per-run and total `bytes`. Prune sweeps dead rm tombstones in every scanned container. The result
+  is
+  `{kind:"workflow.prune.result", dryRun, stateDirs, filters, removed, skipped, bytes, tombstones, warnings}`.
+  Internally, `removeRun` gains an optional `expectedUpdatedAt` that prune pins to the record it
+  selected, checked on the first read (a dry run too) and under the lock, so a run that changed
+  after selection is skipped as `changed` (`run.exists`) instead of removed; rm never sets it. CLI
+  durations (`tick --timeout`, `start --start-timeout`, watch bounds and `--older-than`) also accept
+  a `d` (day) unit; the existing upper bounds still apply. The operating-runs skill reference gains
+  a retention recipe, and a new CLI smoke covers prune.
 - A guarded `workflow rm` and on-disk bytes in `workflow list` (#364, split from #166; ADR 0049).
   `workflow rm RUN [--force] [--refs] [--dry-run] [--json]` removes one saved run without importing
   workflow code: the run directory (record, journal, `attempts/` transcripts, artifacts, `launch/`,
