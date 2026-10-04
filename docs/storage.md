@@ -160,6 +160,61 @@ held only around each Git administration command and a contender waits instead o
 records no child processes and changes no storage format. See
 [ADR 0032](decisions/0032-interprocess-worktree-administration-lock.md).
 
+## Removing runs
+
+Nothing deletes a run automatically. `workflow rm RUN` removes one saved run without importing
+workflow code ([ADR 0049](decisions/0049-guard-held-run-removal.md); flags, refusals and result in
+the [CLI contract](cli-contract.md)). It deletes `<runId>/` with everything listed above, the legacy
+`<runId>.json` (a format-7 marker or an unmigrated flat record), `<runId>.json.v<N>` backups,
+`<runId>.json.lock`, `<runId>.inbox/` and `<runId>.cancel.json`, and the run's worktree caches.
+`workflow list` reports each run's on-disk `bytes`: the apparent size of those files in the runs
+container, without following symbolic links. Worktree caches live in their own cache root and are
+not counted.
+
+rm refuses a held lock or live children, and without `--force` a running, suspended or waiting run.
+Then it takes the run lock (legacy guard first, without a working directory, so it never registers a
+project), re-reads the record, refuses (`run.exists`) if it is no longer the run rm inspected
+(another run reused the ID, so its `createdAt` differs) and removes caches. If Git cannot remove one
+while its repository exists, rm stops before deleting the run: caches Git already removed stay
+removed and are recorded in the ledger, no ref is deleted, and the record stays for a retry with
+`workflow clean`. When the repository is gone, rm deletes only caches named by a digest that matches
+their ledger key. Holding the legacy guard throughout, it deletes in this order:
+
+1. `<runId>.cancel.json` and `<runId>.inbox/`.
+2. The flat `<runId>.json`, then flushes the directory. For an unmigrated flat run this is the
+   commit point: `<runId>/` then holds only the lock, so the run no longer lists.
+3. The `<runId>.json.v<N>` backups.
+4. The primary `<runId>/lock`, released with the usual token and live-child checks. The guard stays
+   held, and every writer takes the guard first, so no writer can start meanwhile. `workflow start`
+   checks that the run is absent and creates `<runId>/launch/` under the guard as well, so it
+   refuses with `run.locked` rather than creating launch files that step 5 would rename away.
+5. A rename of `<runId>/` to `.<runId>.<pid>.<uuid>.removing` in the runs container, then a
+   directory flush. For a directory run this is the commit point. A dotted name is never a valid run
+   ID, so the tombstone never lists.
+6. The legacy siblings once more, the tombstone, and finally the guard.
+
+`workflow answer` takes no lock, so rm and the answer writer meet in a handshake instead: after
+linking its delivery, the writer re-reads the run and, when the run is gone (or the ID now names a
+run with another `createdAt`), withdraws the delivery and removes any empty inbox and run directory
+it recreated, and fails with a conflict. It deletes only an envelope addressed to the removed run's
+`createdAt`: it first renames the path to a private name, and puts back anything else, such as a
+delivery a run reusing the ID has since received there. rm's commit point (step 2 or 5) precedes the
+sweep in step 6, so a delivery linked before the commit point is swept from `<runId>.inbox/` or
+renamed into the tombstone with `<runId>/inbox/`, and one linked after it finds the run gone at the
+writer's check. Because that check follows the link, a run that reuses the ID at once could read the
+delivery first; the envelope's `runCreatedAt` closes that gap, since the owner rejects a delivery
+addressed to a run with another `createdAt` ([questions](questions.md#inbox-protocol-and-trust)). No
+answer outlives the run to resolve a later run that reuses the ID.
+
+A crash at any step leaves either an intact run that lists and inspects normally (run rm again) or a
+tombstone. `list` and `inspect` never see a half-deleted run, because the flat marker goes before
+the directory. A signal stops rm only before step 2; after that the removal finishes. Each rm,
+before reading its target, deletes the tombstones in its runs container whose PID is dead (best
+effort), leaving live and unverifiable ones alone, so a concurrent rm of another run is never
+disturbed. `--dry-run` lists them without deleting anything. A start that failed before its record
+existed (a lone `<runId>/launch/`) is not a run; rm reports `run.not_found` for it, so remove it by
+hand.
+
 ## Legacy records
 
 Flat format-6 records migrate automatically on their first compatible resume. The original bytes
@@ -189,7 +244,8 @@ Format 1 stored only an aggregate code/schema fingerprint. If it differs, explic
 in force. Older CLI source hashing included absolute paths and engine files, so an engine upgrade
 can require this acceptance even when workflow source is unchanged. Format-1 sources must migrate
 before supplying fork reuse. Intermediate private formats 2–5 remain inspectable; use their original
-runtime to resume them. Backups and markers are retained for inspection, not automatically deleted.
+runtime to resume them. Backups and markers are retained for inspection, not automatically deleted;
+`workflow rm` removes them with their run.
 
 ## Storage implementations and verification
 

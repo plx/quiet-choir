@@ -79,9 +79,11 @@ list of `{code, path, message}` (`path` is `["approved"]` for a non-boolean `app
 codes `answer_not_json`, `question_schema_invalid`, `answer_author` and `answer_too_large` have path
 `[]`), so a caller can re-ask for the right field; the library `AnswerError` carries the same
 `issues`. An unknown, withdrawn, completed, or already delivered question exits 3
-(`answer.conflict`). Successful delivery exits 0. `--resume` on `answer` combines delivery with
-resume and returns the resumed outcome. If resume fails, the delivery remains queued; run `resume`
-after fixing the cause, without answering again.
+(`answer.conflict`), as does a delivery whose run `workflow rm` removed meanwhile; that delivery is
+withdrawn while its path still holds an envelope addressed to the removed run
+([storage](storage.md#removing-runs)). Successful delivery exits 0. `--resume` on `answer` combines
+delivery with resume and returns the resumed outcome. If resume fails, the delivery remains queued;
+run `resume` after fixing the cause, without answering again.
 
 `pending` lists only rows still awaiting an answer: a row whose answer is already queued, and rows
 of failed, cancelled or completed runs, are hidden (counted in `hidden`); `pending --all` lists
@@ -116,18 +118,23 @@ the first link wins; as before the upgrade, that name does not separate case var
 case-insensitive filesystems. Owners also scan the other name and inbox for older deliveries. See
 [storage](storage.md) for layout, defaults, and migration.
 
-An envelope is `{ value, by, at, questionFingerprint }`. The writer validates lossless JSON and the
-stored schema, creates a private temporary file, flushes it, and links it exclusively to the final
-path, then flushes the directory. Writers never acquire the run lock. Only one concurrent delivery
-wins; the temporary name is removed afterward. Files use 0600 and new directories 0700. Envelopes
-are capped at 1 MiB. These modes do not repair existing directory permissions.
+An envelope is `{ value, by, at, questionFingerprint, runCreatedAt }`. `runCreatedAt` is the
+`createdAt` of the run the writer addressed; the owner rejects a delivery whose `runCreatedAt`
+differs from its own, so an answer meant for a removed run never resolves a later run that reuses
+the ID. Envelopes from older writers omit it and are still accepted. The writer validates lossless
+JSON and the stored schema, creates a private temporary file, flushes it, and links it exclusively
+to the final path, then flushes the directory. Writers never acquire the run lock. Only one
+concurrent delivery wins; the temporary name is removed afterward. Files use 0600 and new
+directories 0700. Envelopes are capped at 1 MiB. These modes do not repair existing directory
+permissions.
 
 Only the run owner ingests answers. It polls every 200 ms while questions are open, and scans again
-at quiescence. It checks the envelope, fingerprint, attribution, and actual Zod schema, then saves
-the answer and `question.resolution` before continuing the body. JSON Schema loses refinements, so
-early validation cannot replace this authoritative check. Invalid deliveries move to
-`.rejected.<uuid>.json`; the last 20 explanations appear in `question.rejections` and `pending`.
-Submit a corrected answer after rejection. Accepted files remain beside the checkpoint for audit.
+at quiescence. It checks the envelope, fingerprint, run generation, attribution, and actual Zod
+schema, then saves the answer and `question.resolution` before continuing the body. JSON Schema
+loses refinements, so early validation cannot replace this authoritative check. Invalid deliveries
+move to `.rejected.<uuid>.json`; the last 20 explanations appear in `question.rejections` and
+`pending`. Submit a corrected answer after rejection. Accepted files remain beside the checkpoint
+for audit.
 
 `by` is self-asserted. A human question requires `human:<name>` as a guardrail; it is not proof that
 a human answered. Filesystem access is the trust boundary. Calling agents must ask the human and

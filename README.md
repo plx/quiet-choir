@@ -166,12 +166,15 @@ run-owned ref by default. The source checkout changes only with explicit `target
 sharding for structurally disjoint files; isolate overlapping writers or commands that observe
 concurrent edits. See [worktree isolation, policies, and cleanup](docs/worktrees.md).
 `workflow clean RUN [--refs]` removes owned caches and optionally pins without importing source.
-`workflow unlock RUN [--force-remote] [--json]` clears an abandoned run lock without importing
-source; it refuses while an owner, recoverer or recorded child is alive or unverifiable (see
-[process ownership](docs/process-lifecycle.md)). `workflow cancel RUN [--force] [--timeout 30s]`
-ends a live local run as `cancelled`, which tick never resumes: it signals only a live owner on this
-host whose recorded OS start time still matches, and refuses with exit 3 otherwise (a plain signal
-saves a resumable suspension instead; see
+`workflow rm RUN [--force] [--refs] [--dry-run]` removes a whole saved run with its caches (pins
+only with `--refs`); it never overrides a held lock, and refuses a running, suspended or waiting run
+without `--force` (see [removing runs](docs/storage.md#removing-runs)). `workflow list` shows each
+run's on-disk size. `workflow unlock RUN [--force-remote] [--json]` clears an abandoned run lock
+without importing source; it refuses while an owner, recoverer or recorded child is alive or
+unverifiable (see [process ownership](docs/process-lifecycle.md)).
+`workflow cancel RUN [--force] [--timeout 30s]` ends a live local run as `cancelled`, which tick
+never resumes: it signals only a live owner on this host whose recorded OS start time still matches,
+and refuses with exit 3 otherwise (a plain signal saves a resumable suspension instead; see
 [ADR 0039](docs/decisions/0039-cancel-a-live-run-through-a-token-bound-request.md)).
 `workflow start FILE [execute flags] [--json]` runs `workflow execute` as a detached background
 runner and returns the run ID once the run's record exists, so an immediate `workflow inspect` reads

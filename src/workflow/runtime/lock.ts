@@ -299,6 +299,19 @@ export interface RunLock {
   ): ReturnType<HarnessInvocation['trackProcess']>;
 }
 
+/**
+ * The handle `lockRun` returns: the run lock plus a primary-only release. `workflow rm` uses it to
+ * give up the primary lock while it keeps the legacy guard, which every writer takes first. @internal
+ */
+export interface OwnedRunLock extends RunLock {
+  /**
+   * Release only the primary lock, with the usual token and live-child checks (a live or unknown
+   * child marks the owner released and throws `OrphanProcessesError`). It runs at most once; the
+   * full release then releases only the guard.
+   */
+  releaseOwner(): Promise<void>;
+}
+
 /** Live local owner/recovery configuration. @internal */
 export interface RunLockOptions {
   readonly killOrphans?: boolean;
@@ -325,6 +338,41 @@ export async function lockGone(lockPath: string): Promise<boolean> {
 }
 
 /**
+ * Run `fn` while holding only the legacy guard `<runId>.json.lock`, then release it on every path.
+ * Every writer and `workflow rm` take the guard first, and rm holds it until the run is gone, so a
+ * caller that must not interleave with them (start's existence check and launch-file allocation)
+ * runs under it. A held guard refuses with `run.locked`, as for any writer. @internal
+ */
+export async function withRunGuard<T>(
+  stateDir: string,
+  runId: string,
+  fn: () => Promise<T>,
+  options: RunLockOptions = {},
+): Promise<T> {
+  const release = await acquireLock(
+    stateDir,
+    runId,
+    `${legacyRunPath(stateDir, runId)}.lock`,
+    options,
+  );
+  let result: T;
+  try {
+    result = await fn();
+  } catch (error) {
+    try {
+      await release();
+    } catch (releaseError) {
+      throw new AggregateError([error, releaseError], 'Could not release the legacy guard.', {
+        cause: releaseError,
+      });
+    }
+    throw error;
+  }
+  await release();
+  return result;
+}
+
+/**
  * Acquire both the legacy guard and current ownership, always in the same order, for every run —
  * migrated or not — so a pre-format-7 binary starting the same run ID in the same explicit state
  * container is excluded even when no legacy record exists yet. @internal
@@ -333,7 +381,7 @@ export async function lockRun(
   stateDir: string,
   runId: string,
   options: RunLockOptions = {},
-): Promise<RunLock> {
+): Promise<OwnedRunLock> {
   const legacy = legacyRunPath(stateDir, runId);
   const primary = join(runDirectory(stateDir, runId), 'lock');
   const guard = await acquireLock(stateDir, runId, `${legacy}.lock`, options);
@@ -352,13 +400,17 @@ export async function lockRun(
     }
     throw error;
   }
+  // Set once the primary's release has been attempted; the full release then skips it.
+  let ownerRelease: Promise<void> | undefined;
+  const releaseOwner = (): Promise<void> => (ownerRelease ??= owner());
   const release = async (): Promise<void> => {
     const errors: unknown[] = [];
-    try {
-      await owner();
-    } catch (error) {
-      errors.push(error);
-    }
+    if (ownerRelease === undefined)
+      try {
+        await releaseOwner();
+      } catch (error) {
+        errors.push(error);
+      }
     try {
       await guard();
     } catch (error) {
@@ -377,7 +429,7 @@ export async function lockRun(
         cause: errors[0],
       });
   };
-  return Object.assign(release, { trackProcess: owner.trackProcess.bind(owner) });
+  return Object.assign(release, { trackProcess: owner.trackProcess.bind(owner), releaseOwner });
 }
 
 /**

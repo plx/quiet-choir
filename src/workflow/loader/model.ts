@@ -1,4 +1,5 @@
 import type { WorktreeCleanResult } from '../runtime/worktree-clean.js';
+import type { RunRemovalResult } from '../runtime/run-removal.js';
 import type { UnlockedLock } from '../runtime/lock.js';
 import type { HarnessFixtures } from '../../harnesses/fixture.js';
 import type { RehearsalReport } from './rehearsal.js';
@@ -228,6 +229,21 @@ export interface CleanWorkflowPlan extends ExecutionPlan {
 }
 
 /**
+ * Plain-data request to remove one saved run and its worktree caches without importing workflow
+ * code (`workflow rm`). `force` also removes a running, suspended or waiting run but never
+ * overrides a held lock; `refs` also deletes pinned refs; `dryRun` takes no lock and writes
+ * nothing, and reports the verdict a removal would meet.
+ */
+export interface RemoveWorkflowPlan extends ExecutionPlan {
+  readonly kind: 'workflow.rm';
+  readonly runId: string;
+  readonly stateDir: string;
+  readonly force: boolean;
+  readonly refs: boolean;
+  readonly dryRun: boolean;
+}
+
+/**
  * Plain-data request to clear an abandoned lock of one run without importing workflow code.
  * `forceRemote` asserts that a foreign recorded host is this machine under an old name or is gone.
  */
@@ -262,6 +278,7 @@ export type WorkflowCommandResult = ExecutionResult &
         readonly definitions: readonly ValidatedWorkflow[];
       }
     | (WorktreeCleanResult & { readonly kind: 'workflow.clean.result'; readonly ok: true })
+    | (RunRemovalResult & { readonly kind: 'workflow.rm.result'; readonly ok: true })
     | {
         readonly kind: 'workflow.unlock.result';
         readonly ok: true;

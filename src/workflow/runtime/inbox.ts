@@ -1,7 +1,7 @@
 import { brandError, isBranded } from './error-brand.js';
 import { createStorageDirectory, syncDirectory, syncHandle } from './storage-io.js';
 import { createHash, randomUUID } from 'node:crypto';
-import { link, open, readFile, rm, stat } from 'node:fs/promises';
+import { link, open, readFile, rename, rm, rmdir, stat } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { z } from 'zod';
 import { jsonValue, digest } from './json.js';
@@ -183,13 +183,21 @@ export async function writeAnswer(options: WriteAnswerOptions): Promise<AnswerDe
     );
   }
   const at = new Date().toISOString();
+  // runCreatedAt binds the delivery to this run: a later run that reuses the ID rejects it.
+  const envelope = {
+    value,
+    by,
+    at,
+    questionFingerprint: step.fingerprint,
+    runCreatedAt: run.createdAt,
+  };
   try {
     validateAnswerAuthor(step.question.request.audience, by);
-    answerEnvelopeSchema.parse({ value, by, at, questionFingerprint: step.fingerprint });
+    answerEnvelopeSchema.parse(envelope);
   } catch (error) {
     throw syntheticInvalid('answer_author', error);
   }
-  const serialized = JSON.stringify({ value, by, at, questionFingerprint: step.fingerprint });
+  const serialized = JSON.stringify(envelope);
   if (Buffer.byteLength(serialized) > 1_048_576)
     throw syntheticInvalid('answer_too_large', new Error('Answer envelope exceeds 1 MiB.'));
   const path = answerPath(stateDir, run.id, options.stepId);
@@ -230,7 +238,95 @@ export async function writeAnswer(options: WriteAnswerOptions): Promise<AnswerDe
   } finally {
     await rm(temporary, { force: true });
   }
+  await withdrawDeliveryIfRunRemoved(stateDir, run, path);
   return { runId: run.id, stepId: options.stepId, path, questionFingerprint: step.fingerprint };
+}
+
+function isMissing(error: unknown): boolean {
+  return error instanceof Error && 'code' in error && error.code === 'ENOENT';
+}
+
+/**
+ * The lock-free half of the `workflow rm` handshake (ADR 0049): after publishing a delivery,
+ * re-read the run and withdraw the delivery when the run is gone or the ID now names another run
+ * (a different `createdAt`). rm's commit point (removing the flat file, or renaming `<runId>/` to
+ * its tombstone) precedes its final sweep of the legacy siblings. So a link before the commit point
+ * is swept with `<runId>.inbox/` or moved into the tombstone with `<runId>/inbox/`, and a link after
+ * it finds the run gone here. This read cannot stop a run that reuses the ID from reading the
+ * delivery first; the envelope's `runCreatedAt` does, because that owner rejects a delivery
+ * addressed to another generation. This is the cleanup half: it withdraws the delivery only while
+ * the path still holds an envelope addressed to this generation (see `withdrawOwnDelivery`), removes
+ * any empty inbox and run directories it recreated for a removed run, and reports the conflict to
+ * the writer.
+ * @internal
+ */
+export async function withdrawDeliveryIfRunRemoved(
+  stateDir: string,
+  run: Pick<RunRecord, 'id' | 'createdAt'>,
+  path: string,
+): Promise<void> {
+  const current = await readRun({ stateDir, runId: run.id }).catch((error: unknown) => {
+    if (isMissing(error)) return undefined;
+    throw error;
+  });
+  if (current?.createdAt === run.createdAt) return;
+  await withdrawOwnDelivery(run.createdAt, path);
+  // Only a removed run's directories: a run that reuses the ID owns its own.
+  if (!current)
+    for (const directory of [dirname(path), runDirectory(stateDir, run.id)])
+      try {
+        await rmdir(directory);
+      } catch (error) {
+        if (!(error instanceof Error && 'code' in error)) throw error;
+        if (!['ENOENT', 'ENOTEMPTY', 'EEXIST'].includes(String(error.code))) throw error;
+      }
+  throw new AnswerError(
+    'conflict',
+    `Run ${run.id} was removed while the answer was being delivered.`,
+  );
+}
+
+/**
+ * Delete the envelope at `path` only if it is addressed to the generation `createdAt`. A run that
+ * reuses the ID can reject the stale envelope and a new writer can publish its own at the same path
+ * before this runs, so the path is first renamed to a private name: from then on no other writer
+ * can change what is examined. An envelope addressed to this generation is stale whoever wrote it
+ * and is deleted; any other (another generation's, or one that does not parse) is linked back, or
+ * left at the private name if a new delivery already took the path, so nothing is overwritten.
+ */
+async function withdrawOwnDelivery(createdAt: string, path: string): Promise<void> {
+  const directory = dirname(path);
+  const claimed = join(directory, `.withdraw-${randomUUID()}.tmp`);
+  try {
+    await rename(path, claimed);
+  } catch (error) {
+    if (isMissing(error)) return;
+    throw error;
+  }
+  const addressed = await readFile(claimed, 'utf8').then(
+    (text) => {
+      try {
+        const envelope: unknown = JSON.parse(text);
+        return (
+          typeof envelope === 'object' &&
+          envelope !== null &&
+          (envelope as { runCreatedAt?: unknown }).runCreatedAt === createdAt
+        );
+      } catch {
+        return false;
+      }
+    },
+    () => false,
+  );
+  if (!addressed)
+    try {
+      await link(claimed, path);
+      await syncDirectory(directory);
+    } catch (error) {
+      if (error instanceof Error && 'code' in error && error.code === 'EEXIST') return;
+      throw error;
+    }
+  await rm(claimed, { force: true });
 }
 
 /** Determine source drift from saved paths and bytes, without typechecking or importing. @internal */
@@ -314,16 +410,17 @@ export interface ListPendingOptions extends StateDirectoryOptions {
 
 /**
  * Read a question's inbox delivery state. The first existing candidate file means `queued`; its
- * time and author come from the envelope, and are null when the file is unreadable or malformed
- * (a refused delivery is still in the way of a second answer). An owner consuming the file can make
- * a row read `none` for a moment, so this is advisory.
+ * time and author come from the envelope, and are null when the file is unreadable, malformed or
+ * addressed to an earlier run with this ID (the owner rejects such a delivery, but it is still in
+ * the way of a second answer). An owner consuming the file can make a row read `none` for a moment,
+ * so this is advisory.
  */
 async function readDelivery(
   stateDir: string,
-  runId: string,
+  run: Pick<RunRecord, 'id' | 'createdAt'>,
   stepId: string,
 ): Promise<PendingDelivery> {
-  for (const candidate of answerCandidates(stateDir, runId, stepId)) {
+  for (const candidate of answerCandidates(stateDir, run.id, stepId)) {
     let text: string;
     try {
       text = await readFile(candidate, 'utf8');
@@ -334,7 +431,8 @@ async function readDelivery(
     }
     try {
       const envelope = answerEnvelopeSchema.safeParse(JSON.parse(text));
-      if (envelope.success) return { state: 'queued', at: envelope.data.at, by: envelope.data.by };
+      if (envelope.success && (envelope.data.runCreatedAt ?? run.createdAt) === run.createdAt)
+        return { state: 'queued', at: envelope.data.at, by: envelope.data.by };
     } catch {
       // Not JSON: still queued, with no attribution.
     }
@@ -360,7 +458,7 @@ export async function listPendingRuns(
           ...operation,
           runStatus: run.status,
           delivery: operation.answerCommand
-            ? await readDelivery(stateDir, run.id, operation.stepId)
+            ? await readDelivery(stateDir, run, operation.stepId)
             : null,
         })),
       ),

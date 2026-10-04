@@ -2,6 +2,36 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- A guarded `workflow rm` and on-disk bytes in `workflow list` (#364, split from #166; ADR 0049).
+  `workflow rm RUN [--force] [--refs] [--dry-run] [--json]` removes one saved run without importing
+  workflow code: the run directory (record, journal, `attempts/` transcripts, artifacts, `launch/`,
+  inbox), the legacy `<runId>.json` marker or flat record, `<runId>.json.lock`, `<runId>.inbox`,
+  `<runId>.cancel.json` and `<runId>.json.v<N>` backups, and its worktree caches. Caches go through
+  the same cleanup as `workflow clean` under the worktree administration lock; a cache Git cannot
+  remove while its repository exists stops the removal before the run is deleted
+  (`workflow.storage`, exit 74, naming the remaining caches in `error.details.caches`; caches Git
+  already removed stay removed, listed in `error.details.removedCaches`, and no ref is deleted), and
+  when the repository is gone rm deletes the run's caches in their namespace directly, only when
+  each is a real directory named by a digest that matches its ledger key. Pins are deleted only with
+  `--refs`; otherwise the result lists them as `keptRefs`. rm refuses with exit 3 `run.locked` while
+  any lock owner or recoverer is alive, unverifiable or remote, even with `--force`, and
+  `run.orphans` for a dead owner's live recorded child. The new code `run.active` (exit 3) refuses,
+  without `--force`, a running or suspended run or one with a waiting step. Holding the legacy
+  guard, rm deletes the flat file before renaming `<runId>/` to a dotted
+  `.<runId>.<pid>.<uuid>.removing` tombstone, so `list` and `inspect` see an intact run or none, and
+  each rm sweeps the tombstones of dead removals. A `workflow answer` that links its delivery while
+  rm removes the run re-reads the run afterwards and fails with `answer.conflict`, withdrawing the
+  delivery only while its path still holds an envelope addressed to the removed run. Answer
+  envelopes gain an optional `runCreatedAt`, the `createdAt` of the run the writer addressed, and
+  the owner rejects a delivery whose `runCreatedAt` differs from its own, so no answer outlives the
+  run to resolve a later run that reuses the ID; envelopes without it are still accepted.
+  `workflow start` checks for an existing run and creates its launch files under the run's legacy
+  guard, refusing with `run.locked` while an rm of that ID is in progress, so rm never renames a new
+  launch directory into its tombstone. `--dry-run` takes no lock, writes nothing and exits 0 with
+  the verdict, paths, caches, refs and bytes. `workflow list --json` rows (compact and `--full`)
+  gain `bytes`, the apparent size of the run's files in its runs container excluding worktree caches
+  (null with a warning when unmeasurable), and the text view gains a `SIZE` column. A new CLI smoke
+  covers rm and list bytes.
 - Docs and CLI drift (#165). `workflow list-defs` discovers `*.workflow.mts` and `*.workflow.cts` as
   well as `*.workflow.ts` (never `.d.ts` or `.tsx`), matching the extensions the golden path tells
   agents to use. The `configuration get` and `configuration set` placeholder commands, which only

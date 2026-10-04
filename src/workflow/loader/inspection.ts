@@ -1,4 +1,6 @@
 import { existsSync } from 'node:fs';
+import { readdir } from 'node:fs/promises';
+import { runBytes } from '../runtime/run-size.js';
 import type { WorktreeStep } from '../runtime/worktree-schema.js';
 import type { ExecSummary, ExecDiagnostics } from '../runtime/exec-model.js';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -173,6 +175,12 @@ export interface RunSummary {
   /** The latest accepted code changes, at most 5, as stored; a map entry names its settled map. */
   readonly codeChanges: readonly CodeChange[];
   readonly warnings: readonly string[];
+  /**
+   * On-disk bytes of the run's files in its runs container (`runBytes`): everything under
+   * `<runId>/` plus the legacy flat files, excluding worktree caches. Set only by `listRuns`, and
+   * null there when the size could not be measured; inspect and watch never compute it.
+   */
+  readonly bytes?: number | null;
 }
 
 /** Bounded list row: the fields a script needs to find and triage runs. @internal */
@@ -188,6 +196,8 @@ export interface RunListRow {
   readonly cwd: string;
   readonly stateDir?: string;
   readonly warnings: readonly string[];
+  /** As on {@link RunSummary.bytes}: present on every `listRuns` row, null when unmeasurable. */
+  readonly bytes?: number | null;
   readonly usage: Pick<
     UsageSummary,
     | 'attempts'
@@ -214,6 +224,7 @@ export function toRunListRow(summary: RunSummary): RunListRow {
     cwd: summary.cwd,
     ...(summary.stateDir === undefined ? {} : { stateDir: summary.stateDir }),
     warnings: summary.warnings,
+    ...(summary.bytes === undefined ? {} : { bytes: summary.bytes }),
     usage: {
       attempts: usage.attempts,
       costUsd: usage.costUsd,
@@ -581,14 +592,27 @@ export async function listRuns(options: {
   const runs: RunSummary[] = [];
   const warnings: string[] = [...projects.warnings];
   for (const directory of roots) {
-    for (const runId of await listRunIds(directory)) {
+    const runIds = await listRunIds(directory);
+    // One listing per container finds every run's backups without reading it once per run.
+    const entries = runIds.length ? await readdir(directory).catch((): string[] => []) : [];
+    for (const runId of runIds) {
       try {
         const { summary } = await inspectRun({
           stateDir: directory,
           runId,
           commandLauncher: options.commandLauncher,
         });
-        if (options.status === undefined || summary.status === options.status) runs.push(summary);
+        if (options.status !== undefined && summary.status !== options.status) continue;
+        let bytes: number | null;
+        try {
+          bytes = await runBytes(directory, runId, entries);
+        } catch (error) {
+          bytes = null;
+          warnings.push(
+            `Could not measure ${runId} in ${directory}: ${error instanceof Error ? error.message : String(error)}`,
+          );
+        }
+        runs.push({ ...summary, bytes });
       } catch (error) {
         warnings.push(
           `Skipped ${runId} in ${directory}: ${error instanceof Error ? error.message : String(error)}`,

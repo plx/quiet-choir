@@ -25,7 +25,8 @@ after `--kill-grace-ms` plus 2 s) and fails with `start.timeout` (exit 124); a r
 without a record or a readable document is `start.exited` (exit 70). An interrupted start stops its
 runner the same way (exit 130), so start never leaves an unreported runner; if the runner had
 already saved a record, the failure carries its `runId` and a resume entry in `next`. An existing
-run is refused with `run.exists` before anything is launched.
+run is refused with `run.exists` before anything is launched, and a run ID whose guard is held (such
+as a `workflow rm` still in progress) with `run.locked`.
 
 `--json` writes one completion, suspension, or failure document to stdout; logs and workflow console
 output go to stderr. Execute, resume and `answer --resume` print a compact result by default
@@ -249,3 +250,27 @@ count; with `--run`, exit 75 means the run is still pending (including interrupt
 --timeout), locked, blocked by orphans or skipped for the claim-margin `deadline`, and exit 1 means
 it failed, was cancelled, or is crash-looping, incompatible or unreadable. Tick also recovers stale
 `running` runs, up to 3 consecutive times without a new completed step (`crash-loop`).
+
+## Remove a run
+
+Nothing deletes runs automatically; `workflow list` shows each run's on-disk `bytes` (its files in
+the state directory, not worktree caches). Preview a removal first; the dry run takes no lock,
+changes nothing and exits 0 with the `verdict` a removal would meet:
+
+```sh
+node "$QC_CHECKOUT/bin/run.js" workflow rm first --state-dir "$QC_RUNS" --dry-run --json
+node "$QC_CHECKOUT/bin/run.js" workflow rm first --state-dir "$QC_RUNS" --json
+```
+
+rm imports no workflow code and never registers a project. It deletes the run directory
+(transcripts, artifacts, `launch/`, inbox), the legacy flat files and backups, and the run's
+worktree caches; pinned refs only with `--refs` (otherwise listed as `keptRefs`). It refuses with
+exit 3 and changes nothing: `run.locked` while any lock owner or recoverer is alive, unverifiable or
+remote, even with `--force` (clear an abandoned lock with `workflow unlock` first); `run.orphans`
+for a dead owner's live child; and, without `--force`, `run.active` for a `running` or `suspended`
+run or one with a `waiting` step, which a pending answer, wait or resume may still need. A cache Git
+cannot remove while its repository exists stops rm before it deletes the run (`workflow.storage`,
+exit 74, remaining caches in `error.details.caches`): caches Git already removed stay removed
+(`error.details.removedCaches`), no ref is deleted, and the record stays; fix the cause and retry
+with `workflow clean`. An interrupted rm leaves an intact run (run rm again) or a hidden
+`.<run>.<pid>.<uuid>.removing` directory, which the next rm in that state directory sweeps.

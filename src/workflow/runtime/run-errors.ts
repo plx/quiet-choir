@@ -8,8 +8,10 @@ import type { RunRecord } from './store.js';
  * `watch.timeout` means a bounded wait (`workflow inspect --watch --timeout`, `workflow events
  * --follow --timeout` or `workflow cancel --timeout`) stopped while the run had not ended; the run
  * itself keeps running. `run.unowned` means `workflow cancel` found no live local process owning a
- * run that has not ended, so there was nothing to signal. `watch.record_not_created` means a
- * `--wait-created` watch never saw the run's record appear within its bound.
+ * run that has not ended, so there was nothing to signal. `run.active` means `workflow rm` refused,
+ * without `--force`, a run that is running or suspended or still has a waiting step.
+ * `watch.record_not_created` means a `--wait-created` watch never saw the run's record appear
+ * within its bound.
  */
 export type CliErrorCode =
   | 'answer.invalid'
@@ -30,6 +32,7 @@ export type CliErrorCode =
   | 'run.unreadable'
   | 'run.orphans'
   | 'run.unowned'
+  | 'run.active'
   | 'load.typecheck'
   | 'load.import'
   | 'load.definition'
@@ -60,6 +63,7 @@ const cliErrorCodes: Readonly<Record<CliErrorCode, true>> = {
   'run.unreadable': true,
   'run.orphans': true,
   'run.unowned': true,
+  'run.active': true,
   'load.typecheck': true,
   'load.import': true,
   'load.definition': true,
