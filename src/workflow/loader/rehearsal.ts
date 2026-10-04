@@ -17,7 +17,7 @@ import type {
 import { matchesStepGlob, policyOverrideSchema, type ExecutionPolicy } from '../runtime/policy.js';
 import type { RunOptions, WorkflowEvent } from '../runtime/runner.js';
 import { readRequiredRun } from '../runtime/read-required-run.js';
-import { writeRun, type RunRecord } from '../runtime/store.js';
+import { refuseRecordSchemaDrift, writeRun, type RunRecord } from '../runtime/store.js';
 import { runDirectory } from '../runtime/paths.js';
 import type { HarnessSelection } from './harness-selection.js';
 
@@ -424,7 +424,10 @@ export async function rehearsalState(
   try {
     if (resume) {
       await mkdir(runDirectory(stateDir, runId), { recursive: true, mode: 0o700 });
-      await writeRun(stateDir, await readRequiredRun({ runId, stateDir: sourceStateDir }));
+      const source = await readRequiredRun({ runId, stateDir: sourceStateDir });
+      // The copy would drop what this build does not know and rehearse a different run.
+      refuseRecordSchemaDrift(source);
+      await writeRun(stateDir, source);
     }
     return { stateDir, dispose };
   } catch (error) {

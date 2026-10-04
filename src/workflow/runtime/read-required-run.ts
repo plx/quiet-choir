@@ -111,6 +111,8 @@ export async function readRequiredRun(options: ReadRunOptions): Promise<RunRecor
   try {
     return await readRun(options);
   } catch (cause) {
+    // A record newer than this build that it cannot parse is already a run.incompatible refusal.
+    if (cause instanceof RunRefusedError) throw cause;
     if (errorCode(cause) === 'ENOENT') throw await missingRunError(options, cause);
     throw unreadableRunError(options, cause);
   }

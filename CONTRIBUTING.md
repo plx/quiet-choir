@@ -56,6 +56,16 @@ primitive supersedes a workaround, update its recipe and traps in the same PR.
   core workflow model.
 - Add or update an architecture decision record under `docs/decisions/` when a choice has durable,
   cross-cutting consequences.
+- Persisted run records: adding a run-level field, or changing the accepted shape of one (including
+  fields nested inside run-level objects), bumps `SUPPORTED_SCHEMA_REVISION` in
+  `src/workflow/runtime/record.ts` and adds a revision to
+  `test/fixtures/schema-revision/record-keys.json` with its digest pinned in
+  `test/record-schema-revision.test.ts`; never edit a released revision. Builds with the guard then
+  refuse to rewrite newer records, but builds that predate it still drop unknown fields (see
+  [record schema revision](docs/storage.md#record-schema-revision)). Any persisted-shape change also
+  pins a fixture or golden digest generated with the unmodified main runtime before the edit, as
+  `test/fixtures/schema-revision/` and `test/fixtures/codex-effort/` do, and keeps old records
+  readable.
 
 ## Dependency pin policy
 

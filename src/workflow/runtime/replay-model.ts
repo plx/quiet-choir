@@ -129,4 +129,16 @@ export interface ResumeCheck {
   readonly refinalizable: boolean;
   /** Human-readable diagnosis and recovery choices. */
   readonly message: string;
+  /**
+   * `record_schema` when this build cannot fully read the record (a newer `schemaRevision` or
+   * unknown top-level fields), which no flag overrides; the next three fields then say why, as in
+   * the `run.incompatible` refusal a resume returns.
+   */
+  readonly reason?: 'record_schema';
+  /** The record's schema revision, when `reason` is `record_schema`. */
+  readonly schemaRevision?: number;
+  /** The newest schema revision this build supports, when `reason` is `record_schema`. */
+  readonly supportedSchemaRevision?: number;
+  /** Sorted names of the top-level fields this build does not know, when `reason` is `record_schema`. */
+  readonly hiddenFields?: readonly string[];
 }

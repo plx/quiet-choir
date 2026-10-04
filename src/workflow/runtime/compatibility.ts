@@ -9,7 +9,12 @@ import type { WorkflowDefinition } from './model.js';
 import type { StateDirectoryOptions } from './paths.js';
 import type { ResumeCheck, SourceFingerprint, WorkflowIdentity } from './replay-model.js';
 import { schemaJson } from './schema.js';
-import { hasTerminalOutcomes, type RunRecord } from './store.js';
+import {
+  hasTerminalOutcomes,
+  recordSchemaDrift,
+  recordSchemaRefusalMessage,
+  type RunRecord,
+} from './store.js';
 
 /** Run-level code metadata for embedding and compatibility inspection. */
 export interface WorkflowCodeOptions {
@@ -65,6 +70,9 @@ export function compareResume(
   saved: RunRecord,
 ): ResumeCheck {
   const current = workflowSnapshot(definition, options);
+  // A record this build cannot fully read is refused by every writer, so a resume would fail on
+  // it; no flag overrides that, and the read object is the one that remembers dropped fields.
+  const drift = recordSchemaDrift(saved);
   const prior = saved.workflow.identity;
   const legacy = saved.formatVersion === 1;
   const legacyMatches =
@@ -96,6 +104,7 @@ export function compareResume(
     engine:
       legacy || (prior !== undefined && digest(prior.engine) === digest(current.identity.engine)),
     'checkpoint format': [1, 6, 7].includes(saved.formatVersion),
+    'record schema': drift === undefined,
   };
   const changed = Object.keys(tests).filter((key) => !tests[key]);
   const unchanged = Object.keys(tests).filter((key) => tests[key]);
@@ -111,13 +120,15 @@ export function compareResume(
   const hint = refinalizable
     ? ' All recorded effects have terminal outcomes; a tail/output fix can re-finalize with --resume --accept-code-change and zero repeated effects if step identities and replay order remain compatible.'
     : '';
-  const message = ![1, 6, 7].includes(saved.formatVersion)
-    ? oldFormatMessage(saved.formatVersion)
-    : legacy && changed.length > 0
-      ? `Checkpoint format version 1: workflow ${changes} changed. ${canAcceptCodeChange ? 'Its original aggregate cannot separate code from schema drift; --accept-code-change authorizes migration while preserving original per-step checks. Source hashes from older CLIs include engine files and absolute paths.' : 'Restore the original name, version, cwd and input, or start a new run.'}`
-      : changed.length === 0
-        ? `Run ${saved.id} is compatible at run level; step identity and replay checks still run during execution.${hint}`
-        : `Workflow ${changes} changed; ${unchanged.join(', ')} unchanged.${!inputValid ? ' Saved/supplied input does not validate.' : ''} ${canAcceptCodeChange ? acceptAdvice(saved) : `Start a new run${tests['name'] ? `, optionally with --fork-from ${saved.id}` : ''}.`}${hint}`;
+  const message = drift
+    ? recordSchemaRefusalMessage(saved.id, drift)
+    : ![1, 6, 7].includes(saved.formatVersion)
+      ? oldFormatMessage(saved.formatVersion)
+      : legacy && changed.length > 0
+        ? `Checkpoint format version 1: workflow ${changes} changed. ${canAcceptCodeChange ? 'Its original aggregate cannot separate code from schema drift; --accept-code-change authorizes migration while preserving original per-step checks. Source hashes from older CLIs include engine files and absolute paths.' : 'Restore the original name, version, cwd and input, or start a new run.'}`
+        : changed.length === 0
+          ? `Run ${saved.id} is compatible at run level; step identity and replay checks still run during execution.${hint}`
+          : `Workflow ${changes} changed; ${unchanged.join(', ')} unchanged.${!inputValid ? ' Saved/supplied input does not validate.' : ''} ${canAcceptCodeChange ? acceptAdvice(saved) : `Start a new run${tests['name'] ? `, optionally with --fork-from ${saved.id}` : ''}.`}${hint}`;
   return {
     compatible,
     changed,
@@ -128,6 +139,14 @@ export function compareResume(
     canAcceptCodeChange,
     refinalizable,
     message,
+    ...(drift
+      ? {
+          reason: 'record_schema' as const,
+          schemaRevision: drift.schemaRevision,
+          supportedSchemaRevision: drift.supportedSchemaRevision,
+          hiddenFields: [...drift.hiddenFields],
+        }
+      : {}),
   };
 }
 

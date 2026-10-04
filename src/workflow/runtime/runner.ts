@@ -200,6 +200,8 @@ import type {
 import {
   hasTerminalOutcomes,
   isTerminalStep,
+  refuseRecordSchemaDrift,
+  SUPPORTED_SCHEMA_REVISION,
   type RunRecord,
   type StepRecord,
   type AttemptRecord,
@@ -740,6 +742,8 @@ export async function runWorkflow<
     try {
       existing = await storage.read();
     } catch (error) {
+      // FileRunStore refuses a record this build cannot fully read before any write.
+      if (error instanceof RunRefusedError) throw error;
       throw unreadableRunError({ stateDir, runId: options.runId }, error);
     }
     if (existing && !options.resume)
@@ -758,6 +762,8 @@ export async function runWorkflow<
         oldFormatMessage(existing.formatVersion),
         { formatVersion: existing.formatVersion },
       );
+    // A custom RunStore's record gets the same schema-revision refusal as FileRunStore's.
+    if (existing) refuseRecordSchemaDrift(existing);
     const forkStateDir =
       fork === undefined
         ? undefined
@@ -888,6 +894,8 @@ export async function runWorkflow<
       existing.formatVersion = 7;
       existing.seq ??= 0;
       existing.engine = engine;
+      // Stamped only in memory: the revision reaches disk with the next real save.
+      existing.schemaRevision = SUPPORTED_SCHEMA_REVISION;
     }
     const runBudget = runBudgetSchema.parse({
       maxRunCostUsd: null,
@@ -997,6 +1005,7 @@ export async function runWorkflow<
     const now = new Date().toISOString();
     const record: RunRecord = existing ?? {
       formatVersion: 7,
+      schemaRevision: SUPPORTED_SCHEMA_REVISION,
       seq: 0,
       engine,
       rootCause: null,

@@ -15,7 +15,7 @@ import { RunRefusedError } from './run-errors.js';
 import { openFileOwnedRun, type ReleasableOwnedRun } from './run-store.js';
 import { runBytes, runSiblingPaths } from './run-size.js';
 import { syncDirectory } from './storage-io.js';
-import { inspectRunOwnership, type RunRecord } from './store.js';
+import { inspectRunOwnership, refuseRecordSchemaDrift, type RunRecord } from './store.js';
 import { cleanOwnedWorktrees } from './worktree-clean.js';
 
 /** A plain-data request to remove one saved run (`workflow rm`). @internal */
@@ -389,6 +389,8 @@ async function removeOwned(
     if (await exists(ledger.repo)) {
       const pending = Object.values(ledger.caches).some((cache) => cache.state !== 'removed');
       if (pending || (context.refs && Object.keys(ledger.refs).length)) {
+        // Cleanup saves the ledger, which would drop what this build does not know.
+        refuseRecordSchemaDrift(record);
         const cleanup = await cleanOwnedWorktrees(
           owned,
           record,
@@ -492,6 +494,8 @@ async function removeCachesDirectly(
 ): Promise<RemovedCache[]> {
   const pending = Object.entries(ledger.caches).filter(([, cache]) => cache.state !== 'removed');
   if (!pending.length) return [];
+  // Marking caches removed saves the ledger, which would drop what this build does not know.
+  refuseRecordSchemaDrift(record);
   const refuse = (reason: string): never => {
     throw new Error(`${reason}; rm refuses to delete the run's worktree caches.`);
   };

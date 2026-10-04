@@ -372,6 +372,14 @@ original runtime to resume. Backups and markers are retained, never automaticall
 interrupted initial migration can recover its original backup; a finished marker cannot substitute
 for missing current state.
 
+Records also carry a `schemaRevision` (absent means 1). A record written by a newer quiet-choir (a
+newer revision, or top-level fields this build does not know) makes `resume`, `execute --resume`,
+`answer --resume`, `tick` (skipped `incompatible`), `--fork-from`, `--dry-run` and `workflow clean`
+refuse with `run.incompatible` (`details.reason: "record_schema"`) and change nothing, because a
+rewrite would drop those fields; `check-resume` reports the same drift as incompatible, even with
+`--accept-code-change`. `inspect` and `list` still work and warn. The only remedy is to upgrade
+quiet-choir; do not edit `run.json`. Builds older than this guard still drop such fields.
+
 ## Storage, ownership, and cancellation
 
 The target is a local POSIX filesystem. Storage resolves explicit `stateDir`, then

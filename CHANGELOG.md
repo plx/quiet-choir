@@ -2,6 +2,24 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- Run records carry a `schemaRevision` (#167; ADR 0052). New records, and resumed records at their
+  next save, are written with `SUPPORTED_SCHEMA_REVISION` (1); an absent field means 1, reads never
+  fill it in, and existing records resume unchanged. A record with a newer revision, or with
+  top-level fields this build does not know (in `run.json` or in a journal entry), is no longer
+  stripped and rewritten: `resume`, `execute --resume`, `answer --resume`, `--fork-from`,
+  `--dry-run`, `workflow clean` and embedded `runWorkflow` resumes refuse with `run.incompatible`
+  (`details: {reason: "record_schema", schemaRevision, supportedSchemaRevision, hiddenFields}`, no
+  next command but upgrading) and leave `run.json` and `journal.jsonl` byte for byte unchanged;
+  `workflow tick` skips the run as `incompatible` (exit 1 with `--run`); `workflow check-resume` and
+  `checkResume()` report it incompatible (`record schema` in `changed`, plus the same `reason`,
+  revisions and hidden fields; `--accept-code-change` does not override it). `inspect` and `list`
+  still work and add a warning naming the newer revision or the hidden fields; such runs get no
+  resume or answer follow-ups. A record with a newer revision or unknown fields that does not parse
+  at all reads as the same refusal instead of `run.unreadable`. Journal replay now tolerates changes
+  to unknown run-level keys on read (writers stay strict). `workflow rm` refuses such a run only
+  when it would first save its worktree ledger. Builds that predate this guard still drop unknown
+  fields. Contributors bump the revision for any persisted run-level field change; a key snapshot
+  test enforces it for top-level keys.
 - `workflow prune --missing-cwd --all` also removes stale XDG project roots (#366, split from #166;
   ADR 0051). After its run removals it judges every root registered for a missing cwd and every root
   without a valid `project.json` (the `Skipped project` roots of `list --all`), never the current
