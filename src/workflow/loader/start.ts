@@ -187,6 +187,7 @@ export async function prepareStartLaunch(
   const { runId, stateDir } = plan;
   // Fast path outside the guard: a live run's writer holds the guard, and its ID is simply taken.
   if (runExists(stateDir, runId)) return existsFailure(stateDir, runId);
+  let allocated: LaunchFiles | undefined;
   try {
     return await withRunGuard(
       stateDir,
@@ -197,10 +198,8 @@ export async function prepareStartLaunch(
           await prepareStateDirectory(stateDir, plan.cwd);
           const launchDir = join(runDirectory(stateDir, runId), 'launch');
           await createStorageDirectory(launchDir);
-          return {
-            ok: true as const,
-            files: await allocateLaunchFiles(launchDir, plan.stdinInput?.value),
-          };
+          allocated = await allocateLaunchFiles(launchDir, plan.stdinInput?.value);
+          return { ok: true as const, files: allocated };
         } catch (error) {
           return workflowFailure(
             'workflow.storage',
@@ -212,6 +211,8 @@ export async function prepareStartLaunch(
       { cwd: plan.cwd, ...(signal === undefined ? {} : { signal }) },
     );
   } catch (error) {
+    // Only a failed guard release reaches here with files open; nothing will launch with them.
+    if (allocated) await Promise.all(allocated.handles.map((handle) => handle.close()));
     if (error instanceof RunRefusedError)
       return workflowFailure(
         error.code,
@@ -220,7 +221,7 @@ export async function prepareStartLaunch(
       );
     return workflowFailure(
       'workflow.storage',
-      `Could not take the legacy guard of run ${runId}: ${error instanceof Error ? error.message : String(error)}`,
+      `Could not take or release the legacy guard of run ${runId}: ${error instanceof Error ? error.message : String(error)}`,
       { stateDir },
     );
   }
