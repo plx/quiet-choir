@@ -403,24 +403,23 @@ describe('TypecheckProgramCache', { timeout: 30_000 }, () => {
         '',
       ].join('\n'),
     });
-    // One uncached full-engine check; the cache's first check is the other full one.
-    const uncached = await executeEntrypoint(root, 'broken.ts', undefined);
+    // An executor without a cache checks through a fresh one, so the first check of a fresh cache is
+    // the uncached result. Only that check compiles the whole engine; the others reuse it.
     const cache = new TypecheckProgramCache();
-    const cached = [];
-    for (const entrypoint of ['clean.ts', 'broken.ts', 'clean.ts', 'broken.ts'])
-      cached.push(await executeEntrypoint(root, entrypoint, cache));
+    const results = [];
+    for (const entrypoint of ['broken.ts', 'clean.ts', 'broken.ts', 'clean.ts', 'broken.ts'])
+      results.push(await executeEntrypoint(root, entrypoint, cache));
+    const [uncached, clean, ...reused] = results;
 
-    expect(uncached.ok).toBe(false);
-    expect(uncached.diagnostics).toContainEqual(
+    expect(uncached?.ok).toBe(false);
+    expect(uncached?.diagnostics).toContainEqual(
       expect.objectContaining({
         code: 2741,
         relatedInformation: [expect.objectContaining({ filePath: join(root, 'broken.ts') })],
       }),
     );
-    expect(cached[0]).toMatchObject({ ok: true, diagnostics: [] });
-    expect(cached[2]).toEqual(cached[0]);
-    expect(cached[1]).toEqual(uncached);
-    expect(cached[3]).toEqual(uncached);
+    expect(clean).toMatchObject({ ok: true, diagnostics: [] });
+    expect(reused).toEqual([uncached, clean, uncached]);
   });
 
   it('reports an edit to an imported file and clears it when reverted', async () => {
