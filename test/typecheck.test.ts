@@ -185,9 +185,9 @@ describe('TypeScriptExecutor', { timeout: 20_000 }, () => {
     expect(result.diagnostics).toEqual([]);
     expect(result.ok).toBe(true);
     // measured: 1.8 s alone and 5.2-6.5 s in local full coverage runs, both unchanged by the cache,
-    // and 8.1-9.6 s on the Node 22.13 and 12.2-15.8 s on the Node 24 CI legs before it (one whole
-    // engine compile under the repository tsconfig)
-  }, 32_000);
+    // and 8.6 s on the Node 22.13 and 16.6 s on the Node 24 CI legs with it (8.1-9.6 s and
+    // 12.2-15.8 s before it; one whole engine compile under the repository tsconfig)
+  }, 35_000);
 
   it('targets the minimum supported Node declarations in the default profile', async () => {
     const root = await createFixture({
