@@ -790,8 +790,11 @@ async function acquireLock(
   );
 }
 
-/** The operator command that clears an abandoned lock of this run, spelled like `resumeCommand`. */
-function unlockCommand(stateDir: string, runId: string): string {
+/**
+ * The operator command that clears an abandoned lock of this run, spelled like `resumeCommand`;
+ * shared by the `run.locked` messages and the inspect text hint. @internal
+ */
+export function unlockCommand(stateDir: string, runId: string): string {
   return `quiet-choir workflow unlock ${runId} --state-dir ${resolve(stateDir)}`;
 }
 

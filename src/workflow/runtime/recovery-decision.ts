@@ -58,6 +58,44 @@ export function classifyRecovery(ownership: RunOwnership): RecoveryClass {
     : 'reclaimable';
 }
 
+/** What the inspect text view may suggest for a locked run. @internal */
+export type UnlockAdvice =
+  { readonly kind: 'unlock' } | { readonly kind: 'force-remote'; readonly host: string };
+
+/**
+ * Decide whether `workflow unlock` could clear the observed locks, from what inspection can see.
+ * It mirrors `decideUnlock`'s precedence so the hint never names a command that unlock is certain
+ * to refuse, and returns null when no hint is warranted:
+ * - Not locked: null.
+ * - Holders are each lock's owner then recovery marker, primary lock first; with no per-lock view
+ *   the top-level owner stands in, as in `classifyRecovery`. A holder that is `alive` or `unknown`
+ *   suppresses the hint, even when the lock also carries a warning.
+ * - Otherwise the first `remote` holder yields `force-remote` with its host. This precedes the
+ *   child check because inspection masks a remote owner's children as `unknown`, and unlock also
+ *   refuses a foreign host before it looks at children.
+ * - Otherwise an `alive` or `unknown` child suppresses the hint (unlock would refuse the orphans).
+ * - Otherwise `unlock`: dead or released holders, and missing or unreadable metadata, never hold an
+ *   unlock. @internal
+ */
+export function unlockAdvice(ownership: RunOwnership): UnlockAdvice | null {
+  if (!ownership.locked && ownership.locks.length === 0) return null;
+  const holders =
+    ownership.locks.length === 0
+      ? ownership.owner === null
+        ? []
+        : [ownership.owner]
+      : ownership.locks.flatMap((lock) => [
+          ...(lock.owner === null ? [] : [lock.owner]),
+          ...(lock.recovery === null ? [] : [lock.recovery]),
+        ]);
+  if (holders.some((holder) => holder.state === 'alive' || holder.state === 'unknown')) return null;
+  const remote = holders.find((holder) => holder.state === 'remote');
+  if (remote !== undefined) return { kind: 'force-remote', host: remote.host };
+  if (ownership.processes.some((entry) => entry.state === 'alive' || entry.state === 'unknown'))
+    return null;
+  return { kind: 'unlock' };
+}
+
 /** Consecutive stale recoveries without a new completed step before tick stops. @internal */
 export const STALE_RECOVERY_CAP = 3;
 
