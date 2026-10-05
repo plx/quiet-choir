@@ -218,7 +218,21 @@ export async function prepareStartLaunch(
       return workflowFailure(
         error.code,
         `Run ID ${runId} is locked or being removed; retry once it is free. ${error.message}`,
-        { stateDir, details: error.details },
+        {
+          stateDir,
+          details: error.details,
+          // The run is not this start's to own (the failure keeps no run ID), but its unlock entry
+          // names the run the guard refused.
+          next: failureNextCommands({
+            code: error.code,
+            details: error.details,
+            run: null,
+            runId,
+            stateDir,
+            launcher: commandLauncher,
+            rehearsal: false,
+          }),
+        },
       );
     return workflowFailure(
       'workflow.storage',

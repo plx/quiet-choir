@@ -1,6 +1,6 @@
 import { existsSync } from 'node:fs';
 import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { hostname, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -329,6 +329,24 @@ describe('StartWorkflowExecutor', () => {
     await mkdir(stateDir, { recursive: true });
     await writeFile(join(stateDir, 'r1.json'), '{}');
     expect(failed(await executor().execute(plan(forever))).code).toBe('run.exists');
+  });
+
+  it('names the unlock entry of a held legacy guard at the top level', async () => {
+    const guard = join(stateDir, 'r1.json.lock');
+    await mkdir(guard, { recursive: true });
+    await writeFile(
+      join(guard, 'owner.json'),
+      JSON.stringify({ pid: 2_000_000_000, host: `${hostname()}-gone`, token: 'far' }),
+    );
+    const failure = failed(await executor().execute(plan(`${own} ${forever}`)));
+    expect(failure).toMatchObject({ code: 'run.locked', stateDir });
+    expect(failure.runId ?? null).toBeNull();
+    const details = failure.details as { next: { argv: string[] }[] };
+    expect(details.next.length).toBeGreaterThan(0);
+    expect(failure.next).toEqual(details.next);
+    expect(failure.next?.some((entry) => entry.argv.includes('--force-remote'))).toBe(true);
+    expect(failure.next?.[0]?.argv.slice(0, 4)).toEqual(['qc', 'workflow', 'unlock', 'r1']);
+    expect(existsSync(marker())).toBe(false);
   });
 
   it('reports a runner that cannot be spawned', async () => {
