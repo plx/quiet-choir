@@ -49,12 +49,15 @@ function planFor(root: string, entrypoint = 'workflow.ts') {
   return analysis.plan;
 }
 
+/** Check an entrypoint through the suite's cache, a given one, or, for `null`, no shared cache. */
 async function executeEntrypoint(
   root: string,
   entrypoint = 'workflow.ts',
-  cache: TypecheckProgramCache | undefined = typecheckCache,
+  cache: TypecheckProgramCache | null = typecheckCache,
 ) {
-  return new TypeScriptExecutor(silentLogger, { cache }).execute(planFor(root, entrypoint));
+  return new TypeScriptExecutor(silentLogger, { cache: cache ?? undefined }).execute(
+    planFor(root, entrypoint),
+  );
 }
 
 afterEach(async () => {
@@ -462,7 +465,7 @@ describe('TypecheckProgramCache', { timeout: 40_000 }, () => {
     for (const blankLines of [0, 2, 5, 9]) {
       await writeFile(join(root, 'helper.ts'), helper(blankLines));
       const cached = await executeEntrypoint(root, 'workflow.ts', cache);
-      expect(cached).toEqual(await executeEntrypoint(root, 'workflow.ts', undefined));
+      expect(cached).toEqual(await executeEntrypoint(root, 'workflow.ts', null));
       expect(cached.diagnostics).toContainEqual(
         expect.objectContaining({
           code: 2741,
@@ -479,7 +482,7 @@ describe('TypecheckProgramCache', { timeout: 40_000 }, () => {
     const cached = await executeEntrypoint(root, 'missing.ts', new TypecheckProgramCache());
 
     expect(cached.ok).toBe(false);
-    expect(cached).toEqual(await executeEntrypoint(root, 'missing.ts', undefined));
+    expect(cached).toEqual(await executeEntrypoint(root, 'missing.ts', null));
   });
 
   it('keeps default-profile and tsconfig option sets apart', async () => {
