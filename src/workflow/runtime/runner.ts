@@ -1002,12 +1002,44 @@ export async function runWorkflow<
             });
             if (recoveryHint !== undefined) existing.recoveryHint = recoveryHint;
           }
+          // The lifecycle record the body's catch would add: an execution entry that ends with the
+          // abort and its run event. Neither stays in memory, nor reaches onEvent, unless saved.
+          const suspended = existing.status === 'suspended';
+          const prior = {
+            executions: existing.executions?.slice(),
+            events: existing.events?.slice(),
+            eventCounts: existing.eventCounts,
+            phase: existing.phase,
+            errorStack: existing.errorStack,
+          };
+          const ended = new RunObservations(
+            existing,
+            () => Promise.resolve(),
+            () => undefined,
+          ).lifecycle(suspended ? 'run.suspended' : 'run.cancelled', suspended ? null : reason);
           existing.updatedAt = new Date().toISOString();
           const context = `Could not save run ${existing.id}`;
           try {
             await storage.append(existing, { context });
             savedFailure = structuredClone(existing);
+            try {
+              void Promise.resolve(
+                options.onEvent?.({
+                  ...ended,
+                  message: suspended
+                    ? `Run interrupted; resumable: ${message(reason)}`
+                    : (existing.error ?? ''),
+                  attempt: 0,
+                  runId: existing.id,
+                }),
+              ).catch(() => {
+                /* Observers do not own outcomes. */
+              });
+            } catch {
+              /* Observers cannot invalidate persisted work. */
+            }
           } catch (error) {
+            Object.assign(existing, prior);
             checkpointProblems.push(
               error instanceof CheckpointError
                 ? error

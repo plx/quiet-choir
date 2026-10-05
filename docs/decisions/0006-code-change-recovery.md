@@ -258,7 +258,8 @@ the workflow body, including any top-level code outside effects, once more per a
 An honored abort of the run's signal while the copy replays ends the real run as an abort in the
 body would: suspended and due now for a marked `RunInterruptedError`, otherwise `cancelled` (as a
 `workflow cancel` bound to the execution's lock token is), saved and reported as a
-`WorkflowRunError` with the abort reason as its cause. The acceptance stays unrecorded: the
-fingerprint, `codeChanges`, output and steps are as they were, so the next accepted resume
-preflights again. A format-1 record, which can be saved only through the migration that adopts the
-new source, is left untouched instead.
+`WorkflowRunError` with the abort reason as its cause. The save closes a new execution entry with
+that outcome and appends its `run.suspended` or `run.cancelled` event, which reaches `onEvent` only
+after it commits. The acceptance stays unrecorded: the fingerprint, `codeChanges`, output and steps
+are as they were, so the next accepted resume preflights again. A format-1 record, which can be
+saved only through the migration that adopts the new source, is left untouched instead.

@@ -806,7 +806,13 @@ it.each([
     await expect(runWorkflow(definition, options())).rejects.toThrow('tail');
     const before = await readRun(options());
     callback = () => 'two';
-    const rejected = await acceptedRejection(definition, { signal: controller.signal });
+    const events: WorkflowEvent[] = [];
+    const rejected = await acceptedRejection(definition, {
+      signal: controller.signal,
+      onEvent: (event) => {
+        events.push(event);
+      },
+    });
     expect(bodies).toBe(2);
     // The abort ends this execution, as one in the body would: the saved run, with the reason.
     expect(rejected).toBeInstanceOf(WorkflowRunError);
@@ -825,6 +831,30 @@ it.each([
       });
       expect(after.nextWakeAt).toEqual(expect.any(Number));
     }
+    // The execution ends with its lifecycle record, which the observer sees once saved.
+    const type = status === 'cancelled' ? 'run.cancelled' : 'run.suspended';
+    expect(after.events?.at(-1)).toMatchObject({
+      type,
+      execution: (before.executions?.length ?? 0) + 1,
+      message: status === 'cancelled' ? 'stop' : null,
+    });
+    expect(after.executions).toHaveLength((before.executions?.length ?? 0) + 1);
+    expect(after.executions?.at(-1)).toMatchObject({
+      outcome: status,
+      error: status === 'cancelled' ? 'stop' : null,
+    });
+    expect(after.executions?.at(-1)?.endedAt).not.toBeNull();
+    expect(events).toEqual([
+      expect.objectContaining({
+        type,
+        runId: 'source',
+        attempt: 0,
+        message:
+          status === 'cancelled'
+            ? 'stop'
+            : 'Run interrupted; resumable: Workflow interrupted by SIGINT.',
+      }),
+    ]);
     // The acceptance was never recorded.
     expect(after.workflow.fingerprint).toBe(before.workflow.fingerprint);
     expect(after.output).toEqual(before.output);

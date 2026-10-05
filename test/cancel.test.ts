@@ -729,6 +729,10 @@ describe('cancelling a live execution', { timeout: 60_000 }, () => {
     expect(saved.status).toBe('cancelled');
     expect(saved.error).toMatch(/^Run run-1 cancelled by workflow cancel \(requested .+\)\.$/u);
     expect(saved.interruptedBy).toBeUndefined();
+    // The execution ends with the lifecycle record a cancellation in the body would leave.
+    expect(saved.executions).toHaveLength((before.executions?.length ?? 0) + 1);
+    expect(saved.executions?.at(-1)).toMatchObject({ outcome: 'cancelled', error: saved.error });
+    expect(saved.events?.at(-1)).toMatchObject({ type: 'run.cancelled', message: saved.error });
     // The acceptance was never recorded, and the real body never ran.
     expect(saved.workflow.fingerprint).toBe(before.workflow.fingerprint);
     expect(saved.codeChanges).toEqual(before.codeChanges);
