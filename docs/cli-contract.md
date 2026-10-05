@@ -665,12 +665,17 @@ suspensions: each is reported `suspended` with `message: "Tick timeout reached."
 next tick, which reuses its completed steps. `--claim-margin` (same duration syntax; default 10% of
 --timeout, `0ms` disables it, and it must be smaller than --timeout) stops new claims once less than
 the margin remains: a ready run is then left untouched and reported as skipped `deadline`, and
---watch ends there. `--harness-config` supplies CLI harness configuration (JSON or `@file`) for
-resumed CLI runs, and omitting it means the defaults. It must match the configuration digest the run
-recorded at its latest live execution: otherwise the run is reported `incompatible` and left
-unchanged, unless `--allow-harness-config-change` accepts the change for every run that tick
-resumes. `--harness` (repeatable, the same values as on `resume`) selects the harness for every run
-that tick resumes; without it, each run uses its recorded [launch policy](#launch-policy).
+--watch ends there. Inside the margin tick still reads each record (terminal runs are observed,
+not-due runs not due) but checks no locks, orphans, crash-loop count or sources, so a due or stale
+run is reported `deadline` with its `nextWakeAt` even if a full scan would have found it locked or
+incompatible. After the timeout tick reads no more records: each run not yet reported is skipped
+`deadline` with a `message` and no `nextWakeAt` (an earlier --watch pass's entry is kept), and the
+exit codes above are unchanged. `--harness-config` supplies CLI harness configuration (JSON or
+`@file`) for resumed CLI runs, and omitting it means the defaults. It must match the configuration
+digest the run recorded at its latest live execution: otherwise the run is reported `incompatible`
+and left unchanged, unless `--allow-harness-config-change` accepts the change for every run that
+tick resumes. `--harness` (repeatable, the same values as on `resume`) selects the harness for every
+run that tick resumes; without it, each run uses its recorded [launch policy](#launch-policy).
 `workflow resume`, `execute --resume` and `answer --resume` refuse the same mismatch with
 `run.incompatible` (exit 3, `error.details.previousConfigDigest` and
 `error.details.requestedConfigDigest`) and accept the same flag. See [waits](waits.md) for due

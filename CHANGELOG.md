@@ -2,6 +2,14 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- `workflow tick` no longer overruns `--timeout` by scanning the remaining runs. Inside the claim
+  margin it still reads each run's record, so terminal runs are observed and not-due runs reported
+  `not due`, but it skips the lock, orphan, crash-loop and source checks and reports a due or stale
+  run as skipped `deadline` with its `nextWakeAt`, even one a full scan would report `locked`,
+  `orphans`, `crash-loop` or `incompatible`. Once the timeout fires, it reads no more records: each
+  run not yet reported is skipped `deadline` with a message saying tick did not read it and no
+  `nextWakeAt`. The report shape and exit codes are unchanged (#205).
+
 - A `workflow tick` skipped entry with reason `orphans` now says that tick never signals a process
   and names `quiet-choir workflow resume RUN --state-dir DIR --kill-orphans`, instead of advising
   `--kill-orphans`, a flag tick does not have. The `resume`, `unlock` and `rm` messages are

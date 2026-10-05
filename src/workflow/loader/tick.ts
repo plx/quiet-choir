@@ -89,9 +89,9 @@ export interface TickResumedEntry {
  * incomplete lock metadata, or a live, unknown or remote recoverer. `orphans`: the owner is gone, but a child process is
  * alive or unverified. `crash-loop`: the run was already recovered from a stale `running` state
  * the maximum number of consecutive times without completing a new step. `deadline`: the run was
- * due or stale when read but less than the claim margin of this tick's timeout remained, so its
- * locks, orphans, crash-loop count and sources went unchecked; or the timeout passed before the run
- * was read. @internal
+ * due or stale when read but less than the claim margin of this tick's timeout remained (a run first
+ * seen inside the margin also gets no lock, orphan, crash-loop or source check), or the timeout
+ * passed before the run was read. @internal
  */
 export type TickSkipReason =
   | 'not due'

@@ -188,10 +188,13 @@ A first SIGINT/SIGTERM/SIGHUP to execute, resume or tick saves the same resumabl
 execute/resume still exit 130). Explicit or workflow-scoped cancellation still saves `cancelled`,
 which tick never retries. `--claim-margin` (same syntax; default 10% of --timeout; `0ms` disables;
 must be smaller than --timeout) stops new claims once less than the margin remains: ready runs are
-left untouched and reported as skipped `deadline`, and --watch ends there. Size --timeout for the
-longest step one tick should finish; a longer agent call is interrupted and restarted each tick. No
-process runs after tick exits. For periodic operation, install a user-authorized cron or launchd
-task using absolute paths and a working PATH, for example:
+left untouched and reported as skipped `deadline`, and --watch ends there. Inside the margin tick
+still reads records (terminal runs observed, not-due runs not due) but checks no locks, orphans or
+sources, so a due run is `deadline` with its nextWakeAt; after the timeout it reads no more, and
+each unreported run is `deadline` with a message and no nextWakeAt. Size --timeout for the longest
+step one tick should finish; a longer agent call is interrupted and restarted each tick. No process
+runs after tick exits. For periodic operation, install a user-authorized cron or launchd task using
+absolute paths and a working PATH, for example:
 
 ```cron
 * * * * * cd /absolute/project && /absolute/node /absolute/quiet-choir/bin/run.js workflow tick --state-dir /absolute/state --json >> /absolute/tick.log 2>&1

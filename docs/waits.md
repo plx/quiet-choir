@@ -281,16 +281,17 @@ resume started, with outcome `completed`, `suspended` (plus `nextWakeAt`, and a 
 interruption caused it), `failed`, `cancelled` or `incompatible` (each with a `message`). `skipped`
 has `{ runId, reason }` entries for runs left alone: `not due`, `no longer due` and `deadline` (with
 `nextWakeAt`), `locked`, and `orphans`, `crash-loop`, `incompatible` or `unreadable` (with a
-`message`). `observed` counts runs that were already completed, failed or cancelled. Each run
-appears in at most one entry; a later resume of the same run during `--watch` replaces its entry.
-Without `--run`, each scan visits runs in ascending run-ID order (by character code, so uppercase
-sorts before lowercase), whatever order the file system lists them in; `--max-runs N` therefore
-resumes the first N due runs in that order. It bounds executed resumes across the invocation;
-refusals before import do not count. With `--run`, exit is 0 when the run completed (in this tick or
-earlier), 75 when it is still pending (not due, suspended again or interrupted, locked, blocked by
-orphans, or skipped for the deadline), and 1 when it failed, was cancelled, or is crash-looping,
-incompatible or unreadable. `--watch` stops retrying a crash-looping run. Without `--run`,
-individual run outcomes do not change exit 0. Command errors retain the
+`message`). A `deadline` entry for a run tick never read, because the timeout had already fired, has
+a `message` instead of `nextWakeAt`. `observed` counts runs that were already completed, failed or
+cancelled. Each run appears in at most one entry; a later resume of the same run during `--watch`
+replaces its entry. Without `--run`, each scan visits runs in ascending run-ID order (by character
+code, so uppercase sorts before lowercase), whatever order the file system lists them in;
+`--max-runs N` therefore resumes the first N due runs in that order. It bounds executed resumes
+across the invocation; refusals before import do not count. With `--run`, exit is 0 when the run
+completed (in this tick or earlier), 75 when it is still pending (not due, suspended again or
+interrupted, locked, blocked by orphans, or skipped for the deadline), and 1 when it failed, was
+cancelled, or is crash-looping, incompatible or unreadable. `--watch` stops retrying a crash-looping
+run. Without `--run`, individual run outcomes do not change exit 0. Command errors retain the
 [CLI error contract](cli-contract.md).
 
 `--watch` waits for the next due time or an inbox filesystem event, with a one-second fallback scan
@@ -326,9 +327,17 @@ either. Embedders opt in by aborting `RunOptions.signal` with a `RunInterruptedE
 remains, so a resume is not started only to be interrupted at once. It accepts the same ms/s/m/h
 syntax, defaults to 10% of `--timeout` (54s for the default 540s), must be smaller than `--timeout`,
 and `0ms` disables it. A ready run seen inside the margin is left untouched and reported as skipped
-`deadline` with its `nextWakeAt`; the next tick picks it up. `--watch` ends when the margin starts
-instead of idling until the timeout. Size the timeout for the longest step you expect a tick to
-finish: a longer agent call is interrupted at the deadline and restarted by the next tick.
+`deadline` with its `nextWakeAt`; the next tick picks it up. Inside the margin tick still reads each
+run's record, so terminal runs are still `observed`, not-due runs `not due` and unreadable record
+revisions `incompatible`, but it checks no locks, orphan processes, crash-loop count or workflow
+sources: a due or stale run that a full scan would report `locked`, `orphans`, `crash-loop` or
+`incompatible` (changed sources) is reported `deadline` (75 with `--run`), and the next tick
+classifies it. Once the timeout has fired, tick reads no more records: each run not yet reported is
+skipped `deadline` with a message saying tick did not read it and no `nextWakeAt`, while a run an
+earlier `--watch` pass reported keeps that entry. So tick overruns `--timeout` by at most the read
+in progress, not by a scan of the remaining runs. Exit codes are unchanged. `--watch` ends when the
+margin starts instead of idling until the timeout. Size the timeout for the longest step you expect
+a tick to finish: a longer agent call is interrupted at the deadline and restarted by the next tick.
 
 `workflow pending --json` returns legacy question projections and general waits distinguished by
 `kind: "wait"`, including deadline, next check, count, last note, `lastError` (the latest tolerated
