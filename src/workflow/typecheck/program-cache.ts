@@ -78,9 +78,12 @@ function textHash(text: string): string {
  *   JSDoc parsing mode and a SHA-256 of the file text all match; and
  * - the previous `SemanticDiagnosticsBuilderProgram`, from which TypeScript's builder (the `tsc
  *   --watch` model) copies semantic diagnostics only for files whose text and references are
- *   unchanged and that no changed file affects. If any file both programs share resolves an import
- *   or type reference differently, the builder is not used and every file is checked again; so too
- *   if a copied diagnostic still points into a source file that was parsed again.
+ *   unchanged and that no changed file affects. The builder is not used, and every file is checked
+ *   again, if any file both programs share resolves an import or type reference differently, or if
+ *   an added, removed or changed file affects the global scope in its old or new version (a script,
+ *   or a module with a `declare global` block).
+ *   Every file is also checked again if a copied diagnostic still points into a source file that
+ *   was parsed again.
  *
  * After each check the parsed files are pruned to those of the new program, and at most
  * `maxOptionSets` option sets are kept, evicting the least recently used. Nothing is persisted.
@@ -146,12 +149,13 @@ export class TypecheckProgramCache {
       program,
       diagnostics: () => {
         // The builder diffs file versions against whichever builder this option set kept last. It
-        // does not compare module resolutions, so a changed one makes this a full check.
+        // does not compare module resolutions or see that a replaced file affected the global scope
+        // before, so either makes this a full check.
         const previous = optionSet.builder;
         const builder = ts.createSemanticDiagnosticsBuilderProgram(
           program,
           host,
-          previous !== undefined && sameResolutions(previous.getProgram(), program)
+          previous !== undefined && canReuseBuilder(previous.getProgram(), program)
             ? previous
             : undefined,
           request.configFileParsingDiagnostics,
@@ -284,6 +288,54 @@ function sameResolutions(previous: ts.Program, next: ts.Program): boolean {
     if (old !== undefined && old !== fingerprint) return false;
   }
   return true;
+}
+
+/** Whether a module declaration is a `declare global` block. */
+function isGlobalAugmentation(statement: ts.Statement): boolean {
+  return (
+    ts.isModuleDeclaration(statement) && (statement.flags & ts.NodeFlags.GlobalAugmentation) !== 0
+  );
+}
+
+/**
+ * Whether a file declares into the global scope: a script, or a module with a `declare global`
+ * block at its top level or in an ambient module declaration. JSON files never do.
+ */
+function affectsGlobalScope(sourceFile: ts.SourceFile): boolean {
+  if (sourceFile.fileName.endsWith('.json')) return false;
+  if (!ts.isExternalModule(sourceFile)) return true;
+  return sourceFile.statements.some(
+    (statement) =>
+      isGlobalAugmentation(statement) ||
+      (ts.isModuleDeclaration(statement) &&
+        statement.body !== undefined &&
+        ts.isModuleBlock(statement.body) &&
+        statement.body.statements.some(isGlobalAugmentation)),
+  );
+}
+
+/**
+ * Whether a file that only one program has, or that the programs parsed differently, affects the
+ * global scope in either version. The builder decides from the new version alone, so a file that
+ * stops declaring globals would leave the results of files that used them stale.
+ */
+function replacedGlobalScope(previous: ts.Program, next: ts.Program): boolean {
+  const before = new Map(previous.getSourceFiles().map((file) => [file.fileName, file]));
+  for (const file of next.getSourceFiles()) {
+    const old = before.get(file.fileName);
+    before.delete(file.fileName);
+    if (old === file) continue;
+    if (affectsGlobalScope(file) || (old !== undefined && affectsGlobalScope(old))) return true;
+  }
+  return [...before.values()].some(affectsGlobalScope);
+}
+
+/**
+ * Whether the builder may copy results from the previous program: resolutions are unchanged, and no
+ * replaced file affects the global scope.
+ */
+function canReuseBuilder(previous: ts.Program, next: ts.Program): boolean {
+  return sameResolutions(previous, next) && !replacedGlobalScope(previous, next);
 }
 
 /** Whether a diagnostic or its related information points into a file the program replaced. */

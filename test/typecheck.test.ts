@@ -364,6 +364,7 @@ describe('TypeScriptExecutor', { timeout: 20_000 }, () => {
 
 // Lib files without lib checking or DOM declarations keep the option-set cases small.
 const smallLib = { lib: ['es2023'], skipLibCheck: true, types: [] };
+const nodeNext = { module: 'nodenext', moduleResolution: 'nodenext', strict: true };
 
 function diagnosticSummary(diagnostics: readonly ts.Diagnostic[]) {
   return diagnostics.map((diagnostic) => ({
@@ -550,6 +551,64 @@ describe('TypecheckProgramCache', { timeout: 40_000 }, () => {
       expect.objectContaining({ code: 5097, filePath: join(root, 'workflow.ts'), line: 1 }),
     );
     expect(cached).toEqual(await executeEntrypoint(root, 'workflow.ts', null));
+  });
+
+  it('checks every file again when a module stops augmenting the global scope', async () => {
+    const root = await createFixture({
+      'tsconfig.json': JSON.stringify({ compilerOptions: { ...smallLib, ...nodeNext } }),
+      'package.json': '{"type":"module"}',
+      'augment.ts': 'export {};\ndeclare global {\n  var gv: number;\n}\n',
+      'use.ts': 'export const total: number = gv;\n',
+      'workflow.ts': "import './augment.js';\nexport { total } from './use.js';\n",
+    });
+    const cache = new TypecheckProgramCache();
+
+    expect(await executeEntrypoint(root, 'workflow.ts', cache)).toMatchObject({
+      ok: true,
+      diagnostics: [],
+    });
+    // The new augment.ts no longer affects the global scope, but its previous version did.
+    await writeFile(join(root, 'augment.ts'), 'export {};\n');
+    const cached = await executeEntrypoint(root, 'workflow.ts', cache);
+
+    expect(cached.diagnostics).toContainEqual(
+      expect.objectContaining({ code: 2304, filePath: join(root, 'use.ts'), line: 1 }),
+    );
+    expect(cached).toEqual(await executeEntrypoint(root, 'workflow.ts', null));
+  });
+
+  it('checks every file again when a global script file is edited', async () => {
+    const root = await createFixture({
+      // TypeScript 6 detects every file as a module by default; under 'auto' a file without imports
+      // or exports is a script, but under nodenext only in a CommonJS package.
+      'tsconfig.json': JSON.stringify({
+        compilerOptions: { ...smallLib, ...nodeNext, moduleDetection: 'auto' },
+      }),
+      'package.json': '{"type":"commonjs"}',
+      'globals.ts': 'declare var gv: number;\n',
+      'use.ts': 'export const total: number = gv;\n',
+      'workflow.ts': "import './globals.js';\nexport { total } from './use.js';\n",
+    });
+    const cache = new TypecheckProgramCache();
+
+    expect(await executeEntrypoint(root, 'workflow.ts', cache)).toMatchObject({
+      ok: true,
+      diagnostics: [],
+    });
+    // A changed type in the script, then the script turned into a module that declares nothing
+    // globally; each time use.ts's result changes while use.ts and its imports stay the same.
+    for (const [globals, code] of [
+      ['declare var gv: string;\n', 2322],
+      ['export {};\ndeclare var gv: number;\n', 2304],
+    ] as const) {
+      await writeFile(join(root, 'globals.ts'), globals);
+      const cached = await executeEntrypoint(root, 'workflow.ts', cache);
+
+      expect(cached.diagnostics).toContainEqual(
+        expect.objectContaining({ code, filePath: join(root, 'use.ts'), line: 1 }),
+      );
+      expect(cached).toEqual(await executeEntrypoint(root, 'workflow.ts', null));
+    }
   });
 
   it('leaves unreadable files to the compiler host', async () => {
