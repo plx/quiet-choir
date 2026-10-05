@@ -477,6 +477,45 @@ describe('TypecheckProgramCache', { timeout: 40_000 }, () => {
     }
   });
 
+  it('checks every file again when an import stops resolving but the referenced files stay the same', async () => {
+    const manifest = (subpaths: readonly string[]) =>
+      JSON.stringify({
+        name: 'pkg',
+        type: 'module',
+        exports: Object.fromEntries(
+          subpaths.map((subpath) => [subpath, { types: './index.d.ts', default: './index.js' }]),
+        ),
+      });
+    const root = await createFixture({
+      'package.json': '{"type":"module"}',
+      'node_modules/pkg/package.json': manifest(['.', './new']),
+      'node_modules/pkg/index.d.ts': 'export declare const value: number;\n',
+      'node_modules/pkg/index.js': 'export const value = 1;\n',
+      'workflow.ts': [
+        "import { value } from 'pkg';",
+        "import { value as again } from 'pkg/new';",
+        'export const total: number = value + again;',
+        '',
+      ].join('\n'),
+    });
+    const cache = new TypecheckProgramCache();
+
+    expect(await executeEntrypoint(root, 'workflow.ts', cache)).toMatchObject({
+      ok: true,
+      diagnostics: [],
+    });
+    // Dropping './new' leaves workflow.ts's text and its one referenced file, index.d.ts, unchanged;
+    // only the resolution of 'pkg/new' differs.
+    await writeFile(join(root, 'node_modules/pkg/package.json'), manifest(['.']));
+    const cached = await executeEntrypoint(root, 'workflow.ts', cache);
+
+    expect(cached.ok).toBe(false);
+    expect(cached.diagnostics).toContainEqual(
+      expect.objectContaining({ code: 2307, filePath: join(root, 'workflow.ts'), line: 2 }),
+    );
+    expect(cached).toEqual(await executeEntrypoint(root, 'workflow.ts', null));
+  });
+
   it('leaves unreadable files to the compiler host', async () => {
     const root = await createFixture({ 'present.ts': 'export const value = 1;\n' });
     const cached = await executeEntrypoint(root, 'missing.ts', new TypecheckProgramCache());

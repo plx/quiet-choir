@@ -78,8 +78,9 @@ function textHash(text: string): string {
  *   JSDoc parsing mode and a SHA-256 of the file text all match; and
  * - the previous `SemanticDiagnosticsBuilderProgram`, from which TypeScript's builder (the `tsc
  *   --watch` model) copies semantic diagnostics only for files whose text and references are
- *   unchanged and that no changed file affects. If a copied diagnostic still points into a source
- *   file that was parsed again, the new program checks every file instead.
+ *   unchanged and that no changed file affects. If any file both programs share resolves an import
+ *   or type reference differently, the builder is not used and every file is checked again; so too
+ *   if a copied diagnostic still points into a source file that was parsed again.
  *
  * After each check the parsed files are pruned to those of the new program, and at most
  * `maxOptionSets` option sets are kept, evicting the least recently used. Nothing is persisted.
@@ -144,11 +145,15 @@ export class TypecheckProgramCache {
     return {
       program,
       diagnostics: () => {
-        // The builder diffs file versions against whichever builder this option set kept last.
+        // The builder diffs file versions against whichever builder this option set kept last. It
+        // does not compare module resolutions, so a changed one makes this a full check.
+        const previous = optionSet.builder;
         const builder = ts.createSemanticDiagnosticsBuilderProgram(
           program,
           host,
-          optionSet.builder,
+          previous !== undefined && sameResolutions(previous.getProgram(), program)
+            ? previous
+            : undefined,
           request.configFileParsingDiagnostics,
         );
         optionSet.builder = builder;
@@ -186,6 +191,80 @@ function sourceFileKey(
     options.jsDocParsingMode ?? null,
     textHash(text),
   ]);
+}
+
+/**
+ * TypeScript 6 `Program` methods that list every file's module and type reference resolutions. They
+ * are not in the public declarations, so {@link sameResolutions} checks they exist.
+ */
+interface ResolutionListing {
+  readonly forEachResolvedModule?: (
+    callback: (
+      resolution: ts.ResolvedModuleWithFailedLookupLocations,
+      name: string,
+      mode: ts.ResolutionMode,
+      filePath: string,
+    ) => void,
+  ) => void;
+  readonly forEachResolvedTypeReferenceDirective?: (
+    callback: (
+      resolution: ts.ResolvedTypeReferenceDirectiveWithFailedLookupLocations,
+      name: string,
+      mode: ts.ResolutionMode,
+      filePath: string,
+    ) => void,
+  ) => void;
+}
+
+/** Each file's module and type reference resolutions as one string, or undefined if unlisted. */
+function resolutionFingerprints(program: ts.Program): ReadonlyMap<string, string> | undefined {
+  const listing = program as ts.Program & ResolutionListing;
+  if (
+    typeof listing.forEachResolvedModule !== 'function' ||
+    typeof listing.forEachResolvedTypeReferenceDirective !== 'function'
+  )
+    return undefined;
+  const resolutions = new Map<string, string[]>();
+  const add = (filePath: string, entry: readonly (string | number | null)[]) => {
+    const entries = resolutions.get(filePath) ?? [];
+    entries.push(JSON.stringify(entry));
+    resolutions.set(filePath, entries);
+  };
+  listing.forEachResolvedModule((resolution, name, mode, filePath) => {
+    add(filePath, [
+      'module',
+      name,
+      mode ?? null,
+      resolution.resolvedModule?.resolvedFileName ?? null,
+    ]);
+  });
+  listing.forEachResolvedTypeReferenceDirective((resolution, name, mode, filePath) => {
+    add(filePath, [
+      'types',
+      name,
+      mode ?? null,
+      resolution.resolvedTypeReferenceDirective?.resolvedFileName ?? null,
+    ]);
+  });
+  return new Map(
+    [...resolutions].map(([filePath, entries]) => [filePath, entries.sort().join('\n')]),
+  );
+}
+
+/**
+ * Whether every file both programs list resolves its imports and type references as before. A file
+ * only one of them lists was added, removed or edited, which the builder already sees. When the
+ * resolutions cannot be listed this answers false, so the caller checks every file.
+ */
+function sameResolutions(previous: ts.Program, next: ts.Program): boolean {
+  const before = resolutionFingerprints(previous);
+  const after = resolutionFingerprints(next);
+  if (before === undefined || after === undefined) return false;
+  for (const [filePath, fingerprint] of after) {
+    const old = before.get(filePath);
+    if (old !== undefined && old !== fingerprint) return false;
+  }
+  return true;
 }
 
 /** Whether a diagnostic or its related information points into a file the program replaced. */
