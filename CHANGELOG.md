@@ -2,6 +2,11 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- `workflow tick` (and every run listing built on `FileRunStore.list`) visits runs in ascending
+  run-ID order, by character code, whatever order the file system lists them in. The order is now
+  documented and covered by tests, and without `--run`, `--max-runs N` resumes the first N due runs
+  in that order (#200).
+
 - Evidence a custom adapter attaches to a frozen (non-extensible) error under `workflow execute` now
   reaches the attempt record (#195, ADR 0028). It was previously kept in a store that only the
   workflow's own quiet-choir copy could read, so the host recorded none of it. Frozen-error evidence

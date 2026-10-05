@@ -49,7 +49,7 @@ export default class WorkflowTick extends WorkflowCommand {
         'Stop claiming new runs when less than this much of --timeout remains, e.g. 30s or 0ms; defaults to 10% of --timeout',
     }),
     'max-runs': Flags.integer({
-      description: 'Maximum resume attempts in this invocation',
+      description: 'Maximum resume attempts in this invocation, taken in run-ID order',
       min: 1,
     }),
     harness: Flags.string({
