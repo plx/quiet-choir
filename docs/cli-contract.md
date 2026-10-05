@@ -146,9 +146,14 @@ where `owner` and `recovery` are `{pid, host, state}` (the local judgment) or nu
 reports missing or unreadable metadata; it is empty when the run was not locked. It refuses with
 exit 3 and removes nothing: `run.locked` while an owner or recoverer is alive or unverifiable, or is
 on a foreign host without `--force-remote` (`error.details` has `lockPath`, `kind`, `role`, `pid`,
-`host` and `state`); `run.orphans` while a recorded child is alive or unverifiable (`error.details`
-has `processes` and `owner`); and `run.not_found` when the run has neither a lock nor a checkpoint.
-See [process ownership](process-lifecycle.md).
+`host` and `state`, and `next`, below); `run.orphans` while a recorded child is alive or
+unverifiable (`error.details` has `processes` and `owner`); and `run.not_found` when the run has
+neither a lock nor a checkpoint. Every `run.locked` refusal carries `error.details.next`, a list of
+`{why, argv}` entries whose `argv` is the `workflow unlock` command to run once the holder is gone,
+and the failure document's top-level `next` repeats it. The entry has `--force-remote` only when the
+holder is on a foreign host, and then it is the only entry; a transient race
+(`lock ownership changed during unlock`) carries the plain command. See
+[Next commands](#next-commands) and [process ownership](process-lifecycle.md).
 
 `workflow rm ID [--force] [--refs] [--dry-run] --json` removes one saved run without importing
 workflow code ([ADR 0049](decisions/0049-guard-held-run-removal.md)): the run directory (record,
@@ -163,11 +168,12 @@ namespace directory. Pinned refs are deleted only with `--refs`. It refuses with
 nothing, in this order: `run.locked` while any lock owner or recoverer is alive, unverifiable or on
 a foreign host, or has unreadable metadata, even with `--force` (`error.details` has `lockPath`,
 `kind`, `role`, `pid`, `host` and `state`; the message names `workflow unlock`, with
-`--force-remote` for a foreign host); `run.orphans` while a dead or released owner's recorded child
-is alive or unverifiable; and, without `--force`, `run.active` when the recorded status is `running`
-or `suspended` or any step is `waiting` (`error.details` is `{status, waiting}`), since a pending
-wait, answer or resume may still need the run. After taking the lock rm refuses with `run.exists`
-and removes nothing when another run reused the ID since rm inspected it (`error.details` has
+`--force-remote` for a foreign host, and `error.details.next` lists the same command, with none for
+an alive or unverifiable owner); `run.orphans` while a dead or released owner's recorded child is
+alive or unverifiable; and, without `--force`, `run.active` when the recorded status is `running` or
+`suspended` or any step is `waiting` (`error.details` is `{status, waiting}`), since a pending wait,
+answer or resume may still need the run. After taking the lock rm refuses with `run.exists` and
+removes nothing when another run reused the ID since rm inspected it (`error.details` has
 `expectedCreatedAt` and `createdAt`). A missing run is `run.not_found` and an unreadable one
 `run.unreadable`. rm takes the run lock without registering a project, so a dead owner's lock is
 recovered as on resume. When Git cannot remove a cache while its repository exists, rm stops before
@@ -262,16 +268,18 @@ cancel request bound to that owner's lock token, re-verifies the owner, sends on
 `{pid, host, osStartTime}`. A run that already ended is a no-op with `signalsSent: 0` and
 `owner: null`. Refusals exit 3 and send nothing: `run.not_found`; `run.locked` for an unreadable,
 foreign-host, released, dead or unobservable owner, or one without a recorded or with a mismatched
-`osStartTime` (`error.details` has `lockPath`, `pid`, `host`, `state`, `osStartTime` and `reason`);
-and `run.unowned` for an unfinished run that no lock holds (`details.reason: "unlocked"`). After the
-signal, an owner that exits without saving a terminal status is `run.unowned` with
-`details.reason: "owner-exited"`, `signalsSent` and `forced`, and the next tick may resume the run.
-The wait is bounded by `--timeout` per signal: past it, `watch.timeout` (exit 79) with
-`details: {timeoutMs, signalsSent, forced, pid}` and the last saved `status`; the request stays for
-the owner to honour late. With `--force`, cancel first sends a second SIGINT if the same verified
-owner still holds the run at the deadline; the owner then force-kills its groups and exits 130,
-usually leaving `running` for tick's stale recovery. The cancelled owner itself exits 130 with
-`workflow.interrupted` and a saved `cancelled` status, which tick observes and never resumes.
+`osStartTime` (`error.details` has `lockPath`, `pid`, `host`, `state`, `osStartTime` and `reason`,
+plus `next` with the `workflow unlock` command for a released, dead or mismatched owner, the cases
+whose message names it); and `run.unowned` for an unfinished run that no lock holds
+(`details.reason: "unlocked"`). After the signal, an owner that exits without saving a terminal
+status is `run.unowned` with `details.reason: "owner-exited"`, `signalsSent` and `forced`, and the
+next tick may resume the run. The wait is bounded by `--timeout` per signal: past it,
+`watch.timeout` (exit 79) with `details: {timeoutMs, signalsSent, forced, pid}` and the last saved
+`status`; the request stays for the owner to honour late. With `--force`, cancel first sends a
+second SIGINT if the same verified owner still holds the run at the deadline; the owner then
+force-kills its groups and exits 130, usually leaving `running` for tick's stale recovery. The
+cancelled owner itself exits 130 with `workflow.interrupted` and a saved `cancelled` status, which
+tick observes and never resumes.
 
 `execute --dry-run --json` returns a `workflow.rehearsal` document with `ok:true`, calls (each with
 `worktree`, `{synthesized: true, base, baseSource}` for a synthesized isolated call or null),
@@ -534,6 +542,9 @@ placeholders. Text inspect and human failure messages print each entry as
 | `workflow.interrupted` with a saved suspension  | as for a suspended summary                                                                            |
 | `start.timeout` with a saved suspension         | as for a suspended summary                                                                            |
 | `run.orphans`                                   | `resume RUN --state-dir DIR --kill-orphans`                                                           |
+| `run.locked`, holder local, gone or damaged     | `unlock RUN --state-dir DIR` from `error.details.next`                                                |
+| `run.locked`, holder on a foreign host          | `unlock RUN --state-dir DIR --force-remote` from `error.details.next`, and no other entry             |
+| `run.locked` from `cancel` or `rm`, live owner  | none: the message does not name `workflow unlock`                                                     |
 | `run.incompatible`, code or schema change only  | `resume … --accept-code-change` (unless the run completed), then a fork                               |
 | `run.incompatible`, other run-level changes     | a fork from the stored entrypoint; none when the workflow name changed or for a legacy checkpoint     |
 | `run.incompatible`, divergent completed step    | the fork command from `error.details.next`                                                            |
@@ -551,8 +562,20 @@ answer data), `<NEW_RUN_ID>` and `<ENTRYPOINT>` (the workflow file's new path). 
 also needs `--by human:<name>`, added after asking the human. A run without stored launch paths (an
 embedded run) gets no entries, since it cannot be resumed by ID.
 
-Emitted argv, including `resumeCommand`, `answerCommand` and the divergence fork command, start with
-the launcher of the invocation that produced them. When `process.argv[1]` is an installed
+`run.locked` refusals from `resume`, `execute`, `start`, `tick`, `clean`, `rm`, `cancel` and
+`unlock` build the unlock entry once, in the runtime, and render both the prose and
+`error.details.next` from it, so the two cannot drift; the top-level `next` passes it through, and a
+malformed entry is dropped. The skipped entries of `prune` carry the same `details.next`. Its
+`details.next` holds `{why, argv}` entries, unlike the older bare argv list that the
+`run.incompatible` divergence refusal keeps in its own `error.details.next`. A transient race
+(`lock ownership changed during recovery`, `Could not acquire run`) lists the plain command, which
+is safe: unlock never removes a live lock and never signals. Library callers choose the launcher
+with `RunOptions.commandLauncher` or `RunStoreOpenOptions.commandLauncher`; a custom `RunStore` may
+ignore it and fall back to the default.
+
+Emitted argv, including `resumeCommand`, `answerCommand`, the divergence fork command, the
+`workflow unlock` command in `run.locked` messages and in `inspect`'s `Unlock:` text line, start
+with the launcher of the invocation that produced them. When `process.argv[1]` is an installed
 `quiet-choir` that a PATH lookup resolves to the same file, the launcher is `quiet-choir`.
 Otherwise, including `node "$QC_CHECKOUT/bin/run.js"`, npx and `node_modules/.bin` shims, it is
 `[node, realpath(bin/run.js)]` with absolute paths (development mode keeps the tsx loader flags), so
