@@ -17,6 +17,7 @@ import {
   RunRefusedError,
 } from '../runtime/run-errors.js';
 import { clockNow, systemClock } from '../runtime/clock.js';
+import { workflowArgv } from '../runtime/commands.js';
 import {
   describeOrphanProcesses,
   OrphanProcessesError,
@@ -31,6 +32,7 @@ import {
 import { WorkflowExecutor, type WorkflowExecutorOptions } from './executor.js';
 import { workflowFailure, type WorkflowFailure } from './failure.js';
 import type { HarnessSelection } from './harness-selection.js';
+import { formatArgv } from './next-commands.js';
 
 /** One pass or bounded watch over plain checkpoint readiness. No scheduler is installed. */
 export interface TickWorkflowsPlan extends ExecutionPlan {
@@ -150,7 +152,10 @@ function tickOrphansMessage(
   stateDir: string,
   processes: readonly HarnessProcessInspection[],
 ): string {
-  return `${describeOrphanProcesses(runId, processes)} Tick never signals a process: a later tick retries the run once they exit, or stop confirmed ones with quiet-choir workflow resume ${runId} --state-dir ${stateDir} --kill-orphans. Unverified identities are never signaled; inspect the retained lock.`;
+  const resume = formatArgv(
+    workflowArgv(undefined, 'resume', runId, '--state-dir', stateDir, '--kill-orphans'),
+  );
+  return `${describeOrphanProcesses(runId, processes)} Tick never signals a process: a later tick retries the run once they exit, or stop confirmed ones with ${resume}. Unverified identities are never signaled; inspect the retained lock.`;
 }
 
 function terminalStatus(run: RunRecord): TerminalStatus | undefined {

@@ -988,6 +988,19 @@ export default defineWorkflow({ name: 'debounce', version: '1', input: z.null(),
     expect((await readRun(f.plan)).status).toBe('suspended');
   });
 
+  it('shell-quotes the state directory in the orphans recovery command', async () => {
+    const parent = await mkdtemp(join(tmpdir(), 'choir-tick-'));
+    roots.push(parent);
+    const stateDir = join(parent, 'state dir');
+    const f = await fixture('due', false, { stateDir });
+    const lock = await deadOwnerLock(f.stateDir, 'run');
+    await mkdir(join(lock, 'processes'));
+    await writeFile(join(lock, 'processes', 'x.json'), '{not json');
+    const result = oneEntryPerRun(await tick.execute(f.tickPlan));
+    const message = result.skipped[0]?.message ?? '';
+    expect(message).toContain(`workflow resume run --state-dir '${stateDir}' --kill-orphans.`);
+  });
+
   it('words an orphans refusal raised while claiming a run for tick, not for resume', async () => {
     const f = await fixture();
     const before = await runBytes(f.stateDir, 'run');
