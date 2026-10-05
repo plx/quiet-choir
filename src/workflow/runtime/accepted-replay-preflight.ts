@@ -8,7 +8,8 @@
  *
  * The probe needs no fixtures and no live integration: its harness, process runner and rehearsal
  * hooks synthesize every unfinished agent call, command, local step, file effect and poll observer
- * from its schema, and worktree effects are synthesized by the runtime's rehearsal path. Only a
+ * from its schema. The runtime recognizes the probe's hooks ({@link isPreflightProbe}) and
+ * synthesizes every Git worktree effect with placeholders and no Git command (#217). Only a
  * completed-step identity change ({@link StepIdentityChangedError}) or a skipped completed step,
  * settled map or child frame ({@link ReplaySkippedError}) counts as a finding. Completion,
  * suspension, a refusal, a
@@ -125,6 +126,14 @@ const probeHooks: NonNullable<RunOptions['rehearsal']> = {
   localStep: (stepId, schema) => ({ output: synthesizeOutput(schema, stepId) }),
   onWorktree: () => undefined,
 };
+
+/**
+ * Whether `hooks` are the probe's own rehearsal hooks, so the runner may synthesize every Git
+ * worktree effect (#217). Detected by identity: no public option can ask for it. @internal
+ */
+export function isPreflightProbe(hooks: RunOptions['rehearsal']): boolean {
+  return hooks === probeHooks;
+}
 
 /**
  * The options that point a preflight's nested run at a disposable copy: the probe harness, hooks
