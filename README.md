@@ -311,14 +311,14 @@ the target normally after interruption; source changes close further reuse.
 `--accept-code-change` waives only source/run-schema gates, keeping name/version, engine, cwd,
 validated input, terminal-step identity, and replay checks. Each use that actually changes code,
 schemas, or files is recorded in `codeChanges`. A tail/output fix can finish with zero repeated
-effects. An edit that changes a completed step cannot be accepted: the command replays the body on a
-disposable copy first and refuses with `run.incompatible`, leaving the run unchanged, and
-`error.details.next` gives the `--fork-from RUN --reuse matching --invalidate STEP` command to use
-instead. Local step identity now hashes callback source and optional `version` as well as
-input/schema/cwd. The CLI loader removes callback comments and formatting; captured values, helper
-implementations, native/bound functions, and environment remain invisible. Declare dependencies in
-input, bump the step version, or invalidate in a fork. See
-[the recovery decision](docs/decisions/0006-code-change-recovery.md).
+effects. An edit that changes a completed step, or skips a completed step, settled map or child
+frame, cannot be accepted: the command replays the body on a disposable copy first and refuses with
+`run.incompatible`, leaving the run unchanged, and `error.details.next` gives the
+`--fork-from RUN --reuse matching --invalidate STEP` command to use instead. Local step identity now
+hashes callback source and optional `version` as well as input/schema/cwd. The CLI loader removes
+callback comments and formatting; captured values, helper implementations, native/bound functions,
+and environment remain invisible. Declare dependencies in input, bump the step version, or
+invalidate in a fork. See [the recovery decision](docs/decisions/0006-code-change-recovery.md).
 
 ## Scoped IDs and reusable helpers
 

@@ -242,11 +242,12 @@ normal meanings. A preview deliberately allows the harness change only in its di
 never grants future native execution.
 
 `--dry-run --resume --accept-code-change` previews an accepted code change. When the replay reaches
-a completed or settled-failed step whose identity changed, it returns the same `run.incompatible`
-refusal as the real command, with `error.details.divergent` and `error.details.next` spelled for the
-real state directory (see [durability](durability.md#choose-a-recovery-path)). The real command runs
-the same replay on its own before it changes anything, with every unfinished local step, file
-effect, poll observer and command stubbed and fixtures disabled.
+a completed or settled-failed step whose identity changed, or skips a completed step, settled map or
+child frame, it returns the same `run.incompatible` refusal as the real command, with
+`error.details.divergent` and `error.details.next` spelled for the real state directory (see
+[durability](durability.md#choose-a-recovery-path)). The real command runs the same replay on its
+own before it changes anything, with every unfinished local step, file effect, poll observer and
+command stubbed and fixtures disabled.
 
 New records save `harness.kind`: `cli`, `fixture`, `dry-run`, `custom` for an unnamed embedded
 adapter, or `none` without an adapter. A different kind on resume or fork requires

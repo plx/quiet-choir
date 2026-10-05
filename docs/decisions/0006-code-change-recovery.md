@@ -11,7 +11,8 @@ healed-step check uses them instead of `seq` (ADR 0007). Amended by #145: defaul
 is causal and treats named-map items as independent, instead of closing at the first miss. Amended
 by #146: explicit acceptance reaches settled maps, which record their own `codeChanges` entries.
 Amended by #215: `runWorkflow` itself runs the #126 preflight, so embedded accepted resumes refuse
-without changing the run too.
+without changing the run too. Amended by #216: the preflight also refuses an accepted body that
+would skip a completed step, settled map or child frame (`ReplaySkippedError`).
 
 ## Context
 
@@ -263,3 +264,41 @@ that outcome and appends its `run.suspended` or `run.cancelled` event, which rea
 after it commits. The acceptance stays unrecorded: the fingerprint, `codeChanges`, output and steps
 are as they were, so the next accepted resume preflights again. A format-1 record, which can be
 saved only through the migration that adopts the new source, is left untouched instead.
+
+## Amendment: refuse skipped recorded paths (#216)
+
+An accepted edit can also leave the recorded path without changing a recorded identity: the body
+stops calling a completed step, a settled map or a child frame. The end-of-body checks caught that
+only after the accepted invocation had recorded the change, replaced the fingerprint and cleared the
+saved output, with a plain `Error` (child frames) or the internal `ReplayDivergenceError`, so a
+completed run still ended `failed` with no output.
+
+Those checks now raise a public, branded `ReplaySkippedError` with `kind` (`steps`, `maps` or
+`child-frames`), `skipped` (the recorded IDs not revisited, in record order) and `healed` (failed
+steps that now succeeded, only for `steps`). The message text is unchanged. The checks run in the
+order child frames, maps, steps, and the first failing one is reported, so `skipped` lists only that
+check's IDs. `ReplayDivergenceError` keeps only strict replay's `before-live` and `healed` stops. A
+plain resume still fails with `WorkflowRunError`, its cause now typed; a skipped child frame now
+gets the divergence recovery hint instead of the authoring hint's re-finalize advice.
+
+The #215 preflight treats `ReplaySkippedError` like `StepIdentityChangedError`: when the copy ends
+on one, `runWorkflow` rejects with a bare `ReplaySkippedError` (same fields, the copy's error as
+cause, the fork recipe appended to the message) before anything is saved. The CLI maps it to the
+same `run.incompatible` refusal shape: `details.divergent` has one `{stepId, skipped}` entry per
+skipped ID, with `skipped` set to `step`, `map` or `child-frame` (an identity entry stays
+`{stepId, components}`), and `details.next` holds the
+`--fork-from RUN --reuse matching --invalidate ID` command naming the first skipped ID. Forking is
+the remedy because a fork does not require its body to revisit source steps; invalidating the
+skipped ID is harmless when the fork never calls it and forces it live when a moved call reaches it.
+`--dry-run --resume --accept-code-change` returns the same refusal.
+
+This includes the healed-fallback case: an accepted fix to a failed step whose `catch` fallback had
+already completed used to record the acceptance and then fail on the skipped fallback. It is now
+refused up front, with `healed` naming the fixed step, and the fork is the way to adopt the fix.
+
+The fail-open limits are unchanged and now cover more ground. The copy synthesizes every unfinished
+effect, so a body that decides whether to call a completed step from an unfinished effect's output
+can skip it in the copy and be refused although a real run would revisit it; there is no override,
+and the fork in `details.next` is the escape. A copy that suspends or stops before the end of the
+body finds no skip. Strict replay's `before-live` and `healed` stops under
+`--strict-replay --accept-code-change` still fail open: the real run records the acceptance first.

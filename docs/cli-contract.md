@@ -364,22 +364,27 @@ settled-failed step whose identity changed, the command refuses with `run.incomp
 before writing anything: `error.details.divergent` is `[{stepId, components}]` for the first such
 step, and `error.details.next` holds one argv array,
 `LAUNCHER workflow execute FILE --fork-from RUN --reuse matching --invalidate STEP --run-id <NEW_RUN_ID> --state-dir DIR`,
-built behind the same launcher as `resumeCommand` with a placeholder for the new run ID.
-`execute --dry-run --resume --accept-code-change` returns the same code, message and details. A
-missing run includes `details.runId` (the run that was not found, which is a `--fork-from` source
-when that is what is missing), `details.stateDir`, sorted `details.available` (at most 20 IDs),
-`details.count`, and `details.candidates`: at most 10 other runs containers that hold the ID, as
-`{stateDir, cwd}` sorted by `stateDir`, or an empty array. The search covers every registered XDG
-project root and its legacy `.quiet-choir/runs`, plus the default and legacy roots of the current
-directory and its ancestors; it never lists the root already searched, and an unreadable candidate
-is skipped rather than changing the code. The message then ends with
-`Found in DIR (project CWD); rerun with --state-dir DIR.` Resolution itself is unchanged: explicit
-`--state-dir` and `QUIET_CHOIR_STATE_DIR` win, and the default root still hashes the exact working
-directory. A resume whose stored entrypoint no longer exists (a moved checkout or deleted file) is
-`run.incompatible` (exit 3) with `details: {storedEntrypoint, reason:"entrypoint_missing"}`; fork
-from the new location. A record written by a newer quiet-choir (a newer `schemaRevision`, or
-top-level fields this build does not know) is `run.incompatible` (exit 3) for `resume`,
-`execute --resume`, `answer --resume`, `--fork-from`, `--dry-run` and `workflow clean`, with
+built behind the same launcher as `resumeCommand` with a placeholder for the new run ID. When the
+replay instead finishes without revisiting a completed step, settled map or completed or settled
+child frame (a `ReplaySkippedError`), the refusal is the same except that `error.details.divergent`
+has one `{stepId, skipped}` entry per skipped ID, where `skipped` is `step`, `map` or `child-frame`
+and the IDs come from the first failing check (child frames, then maps, then steps), and the fork
+command invalidates the first skipped ID. `execute --dry-run --resume --accept-code-change` returns
+the same code, message and details. A missing run includes `details.runId` (the run that was not
+found, which is a `--fork-from` source when that is what is missing), `details.stateDir`, sorted
+`details.available` (at most 20 IDs), `details.count`, and `details.candidates`: at most 10 other
+runs containers that hold the ID, as `{stateDir, cwd}` sorted by `stateDir`, or an empty array. The
+search covers every registered XDG project root and its legacy `.quiet-choir/runs`, plus the default
+and legacy roots of the current directory and its ancestors; it never lists the root already
+searched, and an unreadable candidate is skipped rather than changing the code. The message then
+ends with `Found in DIR (project CWD); rerun with --state-dir DIR.` Resolution itself is unchanged:
+explicit `--state-dir` and `QUIET_CHOIR_STATE_DIR` win, and the default root still hashes the exact
+working directory. A resume whose stored entrypoint no longer exists (a moved checkout or deleted
+file) is `run.incompatible` (exit 3) with
+`details: {storedEntrypoint, reason:"entrypoint_missing"}`; fork from the new location. A record
+written by a newer quiet-choir (a newer `schemaRevision`, or top-level fields this build does not
+know) is `run.incompatible` (exit 3) for `resume`, `execute --resume`, `answer --resume`,
+`--fork-from`, `--dry-run` and `workflow clean`, with
 `details: {reason:"record_schema", schemaRevision, supportedSchemaRevision, hiddenFields}` and
 nothing written; `check-resume` reports the same refusal (exit 3, `record schema` in
 `details.changed` beside those fields, never overridable by `--accept-code-change`); `inspect` and
@@ -547,7 +552,7 @@ placeholders. Text inspect and human failure messages print each entry as
 | `run.locked` from `cancel` or `rm`, live owner  | none: the message does not name `workflow unlock`                                                     |
 | `run.incompatible`, code or schema change only  | `resume … --accept-code-change` (unless the run completed), then a fork                               |
 | `run.incompatible`, other run-level changes     | a fork from the stored entrypoint; none when the workflow name changed or for a legacy checkpoint     |
-| `run.incompatible`, divergent completed step    | the fork command from `error.details.next`                                                            |
+| `run.incompatible`, divergent or skipped path   | the fork command from `error.details.next`                                                            |
 | `run.incompatible`, different requested FILE    | `resume` with the stored entrypoint, then a fork from the requested FILE                              |
 | `run.incompatible`, `entrypoint_missing`        | `execute <ENTRYPOINT> --fork-from RUN --run-id <NEW_RUN_ID> --state-dir DIR`                          |
 | `run.incompatible`, `record_schema`             | none: upgrade quiet-choir                                                                             |
