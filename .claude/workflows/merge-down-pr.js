@@ -962,7 +962,7 @@ ${extra}
 Rules:
 - Stay within this PR's scope. Do not refactor unrelated code or reformat untouched files.
 - Add or update tests for behavior changes, and keep docs and skill text consistent with code changes.
-- Never write to GitHub (no comments, issues, reviews, or PR edits), even if a plan asks: the workflow publishes. Mention anything that should be communicated in notes.
+- Never write to GitHub (no comments, issues, reviews, or PR edits), even if a plan asks: the workflow publishes. Mention anything that should be communicated in notes. When the only part of an item left undone is such a GitHub-side edit (for example a PR description value), report the item fixed and put the exact edit in notes; don't report it partly fixed for that.
 - Commit on the current local branch in small logical commits with concise imperative messages. No new branches, no amending or rewriting existing commits, no push.
 - Before checking, format and lint what you touched: \`cd ${sh(W)} && npx eslint --fix <files> && npx prettier --write <files>\` (prettier last: eslint --fix can leave formatting that format:check rejects).
 - Then run \`node ${sh(TOOL)} check --pr ${A.pr} --root ${sh(ROOT)} --label ${label}\` (about 11 minutes; prints JSON with passed, failedStep, and the log path). It usually outlasts the shell tool's 10-minute foreground limit and moves to the background: keep waiting until it prints its JSON, and never report while it is still running. If it fails, fix and re-run, at most 3 runs. Never weaken or skip tests to get green.

@@ -912,7 +912,7 @@ export function reviewFindings(text) {
 }
 
 // Each review runs in a throwaway worktree of its own at the reviewed head (removed afterwards),
-// under Codex's read-only sandbox. The workflow's worktree is shared with the check suite running
+// with its own dependencies so it can run tests. The workflow's worktree is shared with the check suite running
 // at the same time and with later fix rounds, and a review can outlive a failed or timed-out wait,
 // so a review never reads from or writes to it.
 const reviewWorktree = (P, pr, sha) => join(prDir(P, pr), `review-${sha.slice(0, 12)}`);
@@ -930,6 +930,25 @@ const reviewConfig = (a) => ({
 });
 const sameConfig = (x, y) => x.model === y.model && (x.effort ?? null) === (y.effort ?? null);
 
+// A review that can run the tests finds more than one that can only read them. The workflow
+// worktree's node_modules is cloned (copy-on-write on APFS, so cheap) when it was installed from
+// the same lockfile; otherwise the review worktree gets its own `npm ci`. Returns how.
+function reviewDeps(W, RW) {
+  const lock = join(RW, 'package-lock.json');
+  if (!existsSync(lock)) return 'none';
+  const hash = createHash('sha256').update(readFileSync(lock)).digest('hex');
+  const stamp = join(W, 'node_modules', '.merge-down-lock-hash');
+  if (existsSync(stamp) && readFileSync(stamp, 'utf8').trim() === hash) {
+    const cloned = run('cp', ['-c', '-R', join(W, 'node_modules'), join(RW, 'node_modules')], {
+      allowFail: true,
+    });
+    if (cloned.status === 0) return 'cloned';
+    rmSync(join(RW, 'node_modules'), { recursive: true, force: true });
+  }
+  const installed = run('npm', ['ci', '--no-audit', '--no-fund'], { cwd: RW, allowFail: true });
+  return installed.status === 0 ? 'installed' : 'missing';
+}
+
 function localReview(a, P, R) {
   const pr = requirePr(a);
   const W = P.workdir;
@@ -946,14 +965,16 @@ function localReview(a, P, R) {
     // A user-config review_model takes precedence over model for `codex review`.
     '-c',
     `review_model="${model}"`,
+    // workspace-write: the review's worktree is its own and discarded, so it may run tests there.
     '-c',
-    'sandbox_mode="read-only"',
+    'sandbox_mode="workspace-write"',
   ];
   if (effort) args.push('-c', `model_reasoning_effort="${effort}"`);
   const RW = reviewWorktree(P, pr, sha);
   removeReviewWorktree(W, RW); // left behind by a review that was killed
   git(W, ['worktree', 'add', '--detach', RW, sha]);
   try {
+    const deps = reviewDeps(W, RW);
     const started = Date.now();
     const r = spawnSync('codex', args, {
       cwd: RW,
@@ -975,6 +996,7 @@ function localReview(a, P, R) {
       log: `${stem}.log`,
       exitCode: r.status,
       elapsedSeconds: Math.round((Date.now() - started) / 1000),
+      deps,
       ...reviewFindings(text),
     };
     if (r.error) result.error = `codex review failed to run: ${r.error.message}`;
