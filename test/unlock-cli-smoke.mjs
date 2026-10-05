@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { hostname, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -23,6 +23,9 @@ const stateDir = join(root, 'state');
 const cliPath = join(repository, 'bin/run.js');
 const dist = JSON.stringify(join(repository, 'dist/index.js'));
 const DEAD = 2_000_000_000;
+// Run through bin/run.js with no installed quiet-choir, every printed unlock command starts with the
+// launcher `node <realpath of bin/run.js>` (#135, #213).
+const unlockProgram = `${process.execPath} ${realpathSync(cliPath)}`;
 const sleepers = [];
 
 function command(args) {
@@ -103,7 +106,16 @@ async function stop({ child }) {
 /** A resume refusal that names the unlock command. */
 function resumeNamesUnlock(runId, ...extra) {
   const error = refused('run.locked', 'resume', runId);
-  assert.match(error.message, new RegExp(`quiet-choir workflow unlock ${runId} --state-dir `, 'u'));
+  assert.ok(
+    error.message.includes(`${unlockProgram} workflow unlock ${runId} --state-dir `),
+    error.message,
+  );
+  // The message embeds the very command that details.next lists.
+  assert.ok(error.details.next.length >= 1, JSON.stringify(error.details));
+  for (const entry of error.details.next) {
+    assert.deepEqual(entry.argv.slice(0, 2), [process.execPath, realpathSync(cliPath)]);
+    assert.ok(error.message.includes(entry.argv.join(' ')), error.message);
+  }
   for (const text of extra) assert.ok(error.message.includes(text), error.message);
   return error;
 }
@@ -116,7 +128,7 @@ function inspectText(runId) {
 }
 const unlockLines = (text) => text.split('\n').filter((line) => line.startsWith('Unlock:'));
 const unlockPrefix = (runId) =>
-  `Unlock: quiet-choir workflow unlock ${runId} --state-dir ${stateDir}`;
+  `Unlock: ${unlockProgram} workflow unlock ${runId} --state-dir ${stateDir}`;
 
 const workflow = join(root, 'nap.mts');
 writeFileSync(
@@ -153,6 +165,9 @@ try {
   const remote = refused('run.locked', 'unlock', 'F');
   assert.match(remote.message, /is on foreign host .+--force-remote\.$/u);
   assert.equal(remote.details.host, foreign);
+  assert.equal(remote.details.next.length, 1);
+  assert.equal(remote.details.next[0].argv.at(-1), '--force-remote');
+  assert.ok(remote.message.includes(remote.details.next[0].argv.join(' ')), remote.message);
   const forced = document(0, 'unlock', 'F', '--force-remote', '--json');
   assert.equal(forced.kind, 'workflow.unlock.result');
   assert.equal(forced.forceRemote, true);

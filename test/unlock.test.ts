@@ -3,13 +3,15 @@ import { once } from 'node:events';
 import * as fs from 'node:fs/promises';
 import { writeFileSync } from 'node:fs';
 import { hostname, tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { ThresholdLogger } from '../src/application/execution.js';
+import { defineWorkflow, runWorkflow, z } from '../src/index.js';
 import { groupState, processIdentity } from '../src/processes/identity.js';
 import { WorkflowExecutor } from '../src/workflow/loader/executor.js';
+import { formatArgv, type CommandLauncher } from '../src/workflow/runtime/commands.js';
 import { unlockRun } from '../src/workflow/runtime/lock.js';
 import { OrphanProcessesError } from '../src/workflow/runtime/process-registry.js';
 import { lockRun } from '../src/workflow/runtime/store.js';
@@ -442,6 +444,170 @@ describe('run.locked messages name workflow unlock', () => {
       message: expect.stringMatching(/^Run run-1 lock recovery is in progress/u) as unknown,
     });
     await expect(lockRun(stateDir, 'run-1')).rejects.toThrow(pattern);
+  });
+});
+
+/** The launchers whose unlock argv must come out right: the default, an installed bin, a checkout. */
+const noInstall = [process.execPath, '/abs/bin/run.js'];
+const launchers: [string, CommandLauncher | undefined, readonly string[]][] = [
+  ['the default launcher', undefined, ['quiet-choir']],
+  ['an installed bin', ['quiet-choir'], ['quiet-choir']],
+  ['a no-install checkout', noInstall, noInstall],
+];
+
+describe.each(launchers)('run.locked details.next under %s', (_, launcher, program) => {
+  const argv = (forceRemote = false): string[] => [
+    ...program,
+    'workflow',
+    'unlock',
+    'run-1',
+    '--state-dir',
+    resolve(stateDir),
+    ...(forceRemote ? ['--force-remote'] : []),
+  ];
+  const options = (): { commandLauncher?: CommandLauncher } =>
+    launcher === undefined ? {} : { commandLauncher: launcher };
+  const acquire = (): Promise<unknown> => lockRun(stateDir, 'run-1', options());
+  const release = (forceRemote = false): Promise<unknown> =>
+    unlockRun({ runId: 'run-1', stateDir, forceRemote, ...options() });
+
+  /** The refusal's details.next must be exactly one entry, and the message must embed its argv. */
+  async function expectNext(
+    attempt: Promise<unknown>,
+    forceRemote: boolean,
+    why: RegExp,
+  ): Promise<void> {
+    const error = (await attempt.then(
+      () => undefined,
+      (caught: unknown) => caught,
+    )) as { code?: string; message: string; details: { next?: unknown } } | undefined;
+    expect(error?.code).toBe('run.locked');
+    expect(error?.details.next).toEqual([
+      { why: expect.stringMatching(why) as unknown, argv: argv(forceRemote) },
+    ]);
+    // Prose that names unlock embeds the very command it lists; the transient races and the live-holder
+    // unlock refusal only list it.
+    if (!/ownership changed|Could not acquire|is alive|unverifiable/u.test(error?.message ?? ''))
+      expect(error?.message).toContain(formatArgv(argv(forceRemote)));
+    expect(argv(forceRemote).includes('--force-remote')).toBe(forceRemote);
+  }
+
+  it('for incomplete metadata', async () => {
+    await plant(guard, { owner: null, files: { stray: 'x' } });
+    await expectNext(acquire(), false, /no process owns it/u);
+  });
+
+  it('for a live local owner and a foreign owner', async () => {
+    await plant(guard, { owner: owner(process.pid, 'live') });
+    await expectNext(acquire(), false, /has exited/u);
+    await fs.writeFile(join(guard, 'owner.json'), JSON.stringify(owner(DEAD, 'far', 'elsewhere')));
+    await expectNext(acquire(), true, /only if elsewhere is this machine/iu);
+  });
+
+  it.each<[string, object | string, boolean, RegExp]>([
+    ['live', owner(process.pid, 'rec'), false, /recoverer PID \d+ on .+ has exited/u],
+    ['foreign', owner(DEAD, 'rec', 'elsewhere'), true, /only if elsewhere is this machine/iu],
+    ['unreadable', '{bad', false, /damaged recovery marker/u],
+  ])('for a %s recoverer', async (_kind, recovery, forceRemote, why) => {
+    await plant(guard, { recovery });
+    await expectNext(acquire(), forceRemote, why);
+  });
+
+  it('for ownership that changed during recovery', async () => {
+    await plant(guard, { owner: owner(DEAD, 'old') });
+    onTombstone(guard, () => {
+      writeFileSync(join(guard, 'owner.json'), JSON.stringify(owner(process.pid, 'new')));
+    });
+    await expectNext(acquire(), false, /never removes a live lock or signals/u);
+  });
+
+  it('for a lock that kept vanishing while it was acquired', async () => {
+    vi.mocked(fs.rename).mockImplementation(async (from, to) => {
+      if (String(to) === guard)
+        throw Object.assign(new Error('exists'), { code: 'EEXIST' as const });
+      return actualFs.rename(from, to);
+    });
+    const attempt = acquire();
+    await expectNext(attempt, false, /never removes a live lock or signals/u);
+    await expect(attempt).rejects.toThrow(/Could not acquire run run-1; retry/u);
+  });
+
+  it('from unlock for an alive or unverifiable holder, and for a foreign one', async () => {
+    await plant(primary, { owner: owner(process.pid, 'live') });
+    await expectNext(release(), false, /PID \d+ on .+ has exited/u);
+    await fs.writeFile(join(primary, 'owner.json'), JSON.stringify(owner(23_457, 'eperm')));
+    pids({ 23_457: 'EPERM' });
+    await expectNext(release(), false, /has exited/u);
+    await fs.writeFile(
+      join(primary, 'owner.json'),
+      JSON.stringify(owner(DEAD, 'far', 'elsewhere')),
+    );
+    await expectNext(release(), true, /only if elsewhere is this machine/iu);
+    await fs.rm(primary, { recursive: true });
+    await plant(primary, { recovery: owner(DEAD, 'far', 'elsewhere') });
+    await expectNext(release(), true, /only if elsewhere is this machine/iu);
+  });
+
+  it('from unlock for ownership that changed during unlock', async () => {
+    await plant(guard, { owner: null });
+    onTombstone(guard, () => {
+      writeFileSync(join(guard, 'recovery.json'), JSON.stringify(owner(process.pid, 'rec')));
+    });
+    await expectNext(release(), false, /never removes a live lock or signals/u);
+  });
+});
+
+it('adds --force-remote to next only for a foreign holder', async () => {
+  await plant(guard, { owner: owner(process.pid, 'live') });
+  const local = await lockRun(stateDir, 'run-1').catch((error: unknown) => error);
+  expect(JSON.stringify(local)).not.toContain('--force-remote');
+  await fs.writeFile(join(guard, 'owner.json'), JSON.stringify(owner(DEAD, 'far', 'elsewhere')));
+  const foreign = (await lockRun(stateDir, 'run-1').catch((error: unknown) => error)) as {
+    details: { next: { argv: string[] }[] };
+  };
+  expect(foreign.details.next).toHaveLength(1);
+  expect(foreign.details.next[0]?.argv.filter((word) => word === '--force-remote')).toHaveLength(1);
+});
+
+describe('runWorkflow refusals', () => {
+  const definition = defineWorkflow({
+    name: 'nap',
+    version: '1',
+    input: z.null(),
+    output: z.null(),
+    run() {
+      return Promise.resolve(null);
+    },
+  });
+  const embedded = (options: { commandLauncher?: CommandLauncher }): Promise<unknown> =>
+    runWorkflow(definition, { stateDir, runId: 'run-1', input: null, ...options }).catch(
+      (error: unknown) => error,
+    );
+
+  it('puts the embedder launcher in details.next, and the documented default without one', async () => {
+    await plant(primary, { owner: owner(DEAD, 'far', 'elsewhere') });
+    const launcher = [process.execPath, '/abs/bin/run.js'];
+    for (const [options, program] of [
+      [{ commandLauncher: launcher }, launcher],
+      [{}, ['quiet-choir']],
+    ] as const) {
+      const refusal = (await embedded(options)) as { code: string; details: { next: unknown } };
+      expect(refusal.code).toBe('run.locked');
+      expect(refusal.details.next).toEqual([
+        {
+          why: expect.any(String) as unknown,
+          argv: [
+            ...program,
+            'workflow',
+            'unlock',
+            'run-1',
+            '--state-dir',
+            resolve(stateDir),
+            '--force-remote',
+          ],
+        },
+      ]);
+    }
   });
 });
 

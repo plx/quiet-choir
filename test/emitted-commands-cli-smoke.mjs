@@ -10,9 +10,10 @@ import {
   realpathSync,
   renameSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { hostname, tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -115,6 +116,91 @@ try {
   assert.deepEqual(
     inspected.next.map((entry) => entry.argv[3]),
     ['answer', 'resume'],
+  );
+
+  // A foreign-host lock refuses resume as run.locked (exit 3). Its details.next, mirrored at the
+  // top level, is the unlock command behind this checkout's launcher with --force-remote, and it
+  // clears the lock when run exactly as printed.
+  const foreignHost = `${hostname()}-gone`;
+  documentOf(
+    launch(project, ['execute', file, '--run-id', 'locked', '--state-dir', stateDir, '--json']),
+    75,
+  );
+  const plantLocks = () => {
+    for (const lock of [join(stateDir, 'locked', 'lock'), join(stateDir, 'locked.json.lock')]) {
+      mkdirSync(lock, { recursive: true });
+      writeFileSync(
+        join(lock, 'owner.json'),
+        JSON.stringify({ pid: 2_000_000_000, host: foreignHost, token: 'far' }),
+      );
+    }
+  };
+  plantLocks();
+  const locked = documentOf(
+    launch(elsewhere, ['resume', 'locked', '--state-dir', stateDir, '--json']),
+    3,
+  );
+  assert.equal(locked.error.code, 'run.locked');
+  assert.equal(locked.error.details.next.length, 1);
+  assert.deepEqual(locked.next, locked.error.details.next);
+  const [unlock] = locked.next;
+  assert.deepEqual(unlock.argv.slice(0, 2), [process.execPath, realpathSync(cli)]);
+  assert.deepEqual(unlock.argv.slice(2), [
+    'workflow',
+    'unlock',
+    'locked',
+    '--state-dir',
+    stateDir,
+    '--force-remote',
+  ]);
+  assert.ok(
+    locked.error.message.includes(`${process.execPath} ${realpathSync(cli)} workflow unlock`),
+  );
+  const unlocked = emitted(unlock.argv);
+  assert.equal(unlocked.status, 0, unlocked.stderr);
+  assert.match(unlocked.stdout, /locked/u);
+  assert.equal(existsSync(join(stateDir, 'locked', 'lock')), false);
+  assert.equal(existsSync(join(stateDir, 'locked.json.lock')), false);
+
+  // Behind an installed quiet-choir on PATH (a symlink to this checkout's bin/run.js), the same
+  // refusal names the bare program word.
+  const installed = join(root, 'installed-bin');
+  mkdirSync(installed);
+  symlinkSync(cli, join(installed, 'quiet-choir'));
+  plantLocks();
+  // Node is started on the symlink itself, the way a shebang or an npm shim would.
+  const viaPath = spawnSync(
+    process.execPath,
+    [
+      join(installed, 'quiet-choir'),
+      'workflow',
+      'resume',
+      'locked',
+      '--state-dir',
+      stateDir,
+      '--json',
+    ],
+    {
+      cwd: elsewhere,
+      env: { ...env, PATH: `${installed}:${env.PATH}` },
+      encoding: 'utf8',
+      timeout,
+    },
+  );
+  const installedLocked = documentOf(viaPath, 3);
+  assert.equal(installedLocked.error.code, 'run.locked');
+  assert.deepEqual(installedLocked.next, installedLocked.error.details.next);
+  assert.deepEqual(installedLocked.next[0].argv, [
+    'quiet-choir',
+    'workflow',
+    'unlock',
+    'locked',
+    '--state-dir',
+    stateDir,
+    '--force-remote',
+  ]);
+  assert.ok(
+    installedLocked.error.message.includes('quiet-choir workflow unlock locked --state-dir'),
   );
 
   // A moved stored entrypoint is run.incompatible (exit 3), with a runnable fork entry.

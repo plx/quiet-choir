@@ -35,7 +35,7 @@ import {
   parseWatchInterval,
   watchExitCodes,
 } from '../src/cli/inspection-view.js';
-import { unlockCommand } from '../src/workflow/runtime/lock.js';
+import { formatArgv, unlockNext } from '../src/workflow/runtime/commands.js';
 import * as store from '../src/workflow/runtime/store.js';
 
 vi.mock('../src/workflow/runtime/store.js', async (importOriginal) => {
@@ -439,6 +439,9 @@ const withStateDir = (ownership: RunOwnership) => ({
   ...summarizeRun(record(), ownership),
   stateDir: '/state',
 });
+/** The command the hint must print, built by the same builder the refusals use. */
+const unlockCommand = (stateDir: string, runId: string): string =>
+  formatArgv(unlockNext(undefined, stateDir, runId, { why: '' }).argv);
 const unlockLines = (text: string) => text.split('\n').filter((line) => line.startsWith('Unlock:'));
 
 it('prints one plain Unlock line after the lock lines for abandoned locks', () => {
@@ -455,6 +458,30 @@ it('prints one plain Unlock line after the lock lines for abandoned locks', () =
   const unlock = lines.findIndex((line) => line.startsWith('Unlock:'));
   expect(lines.findLastIndex((line) => line.startsWith('Lock '))).toBe(unlock - 1);
   expect(lines[unlock + 1]).toMatch(/^Process:/u);
+});
+
+it('prints the Unlock line behind the inspect command launcher and quotes unusual paths', () => {
+  const launcher = [process.execPath, '/abs/bin/run.js'];
+  const abandoned = held([lockView('primary', holder('dead'))]);
+  const foreign = held([lockView('primary', holder('remote', 'far'))]);
+  const summary = { ...summarizeRun(record(), abandoned), stateDir: '/state dir' };
+  const expected = formatArgv([
+    ...launcher,
+    'workflow',
+    'unlock',
+    'run',
+    '--state-dir',
+    '/state dir',
+  ]);
+  expect(expected).toContain("'/state dir'");
+  expect(unlockLines(formatRunSummary(summary, false, launcher))).toEqual([`Unlock: ${expected}`]);
+  expect(unlockLines(formatRunSummary(withStateDir(foreign), false, launcher))).toEqual([
+    `Unlock: ${formatArgv([...launcher, 'workflow', 'unlock', 'run', '--state-dir', '/state', '--force-remote'])} (only if far is this machine under an old name or is permanently gone)`,
+  ]);
+  // Without a launcher, the documented default.
+  expect(unlockLines(formatRunSummary(withStateDir(abandoned)))).toEqual([
+    'Unlock: quiet-choir workflow unlock run --state-dir /state',
+  ]);
 });
 
 it('adds --force-remote and its caveat only for a foreign host', () => {

@@ -33,6 +33,7 @@ import {
   withdrawDeliveryIfRunRemoved,
   writeAnswer,
 } from '../src/workflow/runtime/inbox.js';
+import { formatArgv } from '../src/workflow/runtime/commands.js';
 import { defaultStateDir } from '../src/workflow/runtime/paths.js';
 import { readRequiredRun } from '../src/workflow/runtime/read-required-run.js';
 import {
@@ -351,6 +352,79 @@ describe('workflow rm guards', () => {
         `quiet-choir workflow unlock held --state-dir ${stateDir} --force-remote`,
       );
     expect(await snapshot(stateDir)).toEqual(before);
+  });
+
+  it('lists the unlock command behind the invocation launcher for a foreign or unreadable lock', async () => {
+    const launcher = [process.execPath, '/abs/bin/run.js'];
+    const behind = new WorkflowExecutor({
+      logger: new ThresholdLogger('silent', () => undefined),
+      commandLauncher: launcher,
+    });
+    await completedRun('held');
+    const lock = join(stateDir, 'held', 'lock');
+    const unlock = [...launcher, 'workflow', 'unlock', 'held', '--state-dir', stateDir];
+    for (const [planted, argv] of [
+      [{ owner: owner(DEAD, 'far', `${hostname()}-gone`) }, [...unlock, '--force-remote']],
+      [{ owner: null, files: { 'owner.json': '{bad' } }, unlock],
+    ] as const) {
+      await rm(lock, { recursive: true, force: true });
+      await plant(lock, planted);
+      for (const dryRun of [false, true]) {
+        const result = await behind.execute({ ...plan('held', { force: true }), dryRun });
+        if (dryRun) {
+          // A dry run reports the verdict's code and message only.
+          assert(result.ok && result.kind === 'workflow.rm.result');
+          expect(result.verdict).toMatchObject({ code: 'run.locked' });
+          expect((result.verdict as { message: string }).message).toContain(formatArgv(argv));
+          continue;
+        }
+        const refusal = refused(result, 'run.locked');
+        expect(refusal.details).toMatchObject({ next: [{ argv }] });
+        expect(refusal.message).toContain(formatArgv(argv));
+        expect(refusal.next).toEqual([{ why: expect.any(String) as unknown, argv }]);
+      }
+    }
+  });
+
+  it('hands the launcher to start and clean refusals as well', async () => {
+    const launcher = [process.execPath, '/abs/bin/run.js'];
+    const behind = new WorkflowExecutor({
+      logger: new ThresholdLogger('silent', () => undefined),
+      commandLauncher: launcher,
+    });
+    await completedRun('held');
+    await plant(join(stateDir, 'held', 'lock'), { owner: owner(DEAD, 'far', 'elsewhere') });
+    await plant(join(stateDir, 'held.json.lock'), { owner: owner(DEAD, 'far', 'elsewhere') });
+    const argv = [
+      ...launcher,
+      'workflow',
+      'unlock',
+      'held',
+      '--state-dir',
+      stateDir,
+      '--force-remote',
+    ];
+    // Start only reaches the guard for a run ID that has no record yet.
+    await plant(join(stateDir, 'fresh.json.lock'), { owner: owner(DEAD, 'far', 'elsewhere') });
+    const started = await prepareStartLaunch(
+      { runId: 'fresh', stateDir, cwd: root },
+      undefined,
+      launcher,
+    );
+    assert(!started.ok);
+    expect(started.details).toMatchObject({
+      next: [{ argv: [...argv.slice(0, 4), 'fresh', ...argv.slice(5)] }],
+    });
+    const cleaned = await behind.execute({
+      kind: 'workflow.clean',
+      runId: 'held',
+      stateDir,
+      refs: false,
+    });
+    assert(!cleaned.ok);
+    expect(cleaned.code).toBe('run.locked');
+    expect(cleaned.details).toMatchObject({ next: [{ argv }] });
+    expect(cleaned.next).toEqual([{ why: expect.any(String) as unknown, argv }]);
   });
 
   it.skipIf(process.platform === 'win32')(
