@@ -2,6 +2,15 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- An embedded `runWorkflow({ resume: true, acceptCodeChange: true })` now refuses without changing
+  the run when the accepted replay would meet a changed completed or settled-failed step: it replays
+  the body once on a disposable copy of the record, with every unfinished effect synthesized, and
+  rejects with a bare `StepIdentityChangedError` (no longer a `WorkflowRunError` after a saved
+  failure) while status, fingerprint, output, `codeChanges`, waiting questions and the journal stay
+  as they were. Embedded accepted resumes therefore run the workflow body once more. The CLI's
+  `--accept-code-change` behaves as before (`run.incompatible`, exit 3, same details) but now
+  preflights once, through the runtime, on the record read under the writer lock (#215).
+
 - `run.locked` refusals from `workflow resume`, `execute`, `start`, `tick`, `clean`, `rm`, `cancel`
   and `unlock` (and the skipped entries of `prune`) now carry `error.details.next`, a list of
   `{why, argv}` entries, and the failure document's top-level `next` repeats it. The entry is the

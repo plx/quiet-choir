@@ -204,20 +204,20 @@ fingerprints, `files` is empty, `components` is `['mapper']`) once, independentl
 entry, so a map entry can appear when nothing changed at run level. It runs the body even for a
 previously completed run, first clearing any stale output so a failed re-finalization never reports
 a prior result. A fixed unfinished callback can execute again. A changed completed step (callback,
-prompt, input, schema, options) can never be reused, so the CLI first replays the accepted body
-against a disposable copy, with fixtures off and every unfinished local step, file effect, poll
-observer and command stubbed. If the copy meets such a step, the command refuses with
-`run.incompatible` (exit 3) and changes nothing: status, fingerprint, output, `codeChanges` and
-waiting questions stay as they were. `error.details.divergent` names the step and its changed
-components, and `error.details.next` holds the replacement command,
+prompt, input, schema, options) can never be reused, so `runWorkflow`, and therefore the CLI, first
+replays the accepted body against a disposable copy of the record, with every unfinished agent call,
+local step, file effect, poll observer and command synthesized. If the copy meets such a step, the
+command refuses with `run.incompatible` (exit 3) and changes nothing: status, fingerprint, output,
+`codeChanges` and waiting questions stay as they were. `error.details.divergent` names the step and
+its changed components, and `error.details.next` holds the replacement command,
 `quiet-choir workflow execute FILE --fork-from RUN --reuse matching --invalidate STEP --run-id <NEW_RUN_ID> --state-dir DIR`.
 `--dry-run --resume --accept-code-change` returns the same refusal. Any other preflight outcome lets
-the real resume proceed; the check is a lock-free snapshot, and the workflow body (not its
-unfinished callbacks) runs once more. If only the body tail/output validation failed, a tail-only
-fix can finish with zero repeated effects. `recoveryHint` and CLI errors identify this case, subject
-to step checks. The hint follows the typed failure cause: a grant, replay-divergence, settled-map
-change or effect failure gets its own advice instead, and a run with nothing recorded or a dry-run
-gets none. The accepted source becomes the basis for later strict resumes.
+the real resume proceed; the copy is taken under the run's writer lock, and the workflow body (not
+its unfinished callbacks) runs once more. If only the body tail/output validation failed, a
+tail-only fix can finish with zero repeated effects. `recoveryHint` and CLI errors identify this
+case, subject to step checks. The hint follows the typed failure cause: a grant, replay-divergence,
+settled-map change or effect failure gets its own advice instead, and a run with nothing recorded or
+a dry-run gets none. The accepted source becomes the basis for later strict resumes.
 
 Local callback identity uses the loaded function's `toString()` plus optional `version`. Under the
 CLI's tsx loader, comment/formatting-only callback edits preserve that source string; logic changes
@@ -234,6 +234,10 @@ Embedded equivalents are `forkFrom: { runId, stateDir?, reuse?, invalidate? }`,
 `resume: true, acceptCodeChange: true`, and `strictReplay: true`. Exported
 `checkResume(definition, { runId, stateDir, cwd, fingerprint?, source?, acceptCodeChange? })` checks
 run gates without executing the supplied definition. `forkFrom` and `resume` are mutually exclusive.
+An embedded accepted resume runs the same preflight: on a changed completed or settled-failed step
+it rejects with a bare `StepIdentityChangedError` (not a `WorkflowRunError`) and changes nothing. A
+`WorkflowRunError` whose cause is that error means the preflight could not reach the step and the
+run did fail.
 
 ## Settled map replay
 
