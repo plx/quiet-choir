@@ -108,6 +108,16 @@ function resumeNamesUnlock(runId, ...extra) {
   return error;
 }
 
+/** `workflow inspect` text, whatever the run's status makes the exit code. */
+function inspectText(runId) {
+  const result = command(['inspect', runId]);
+  assert.ok(result.stdout.includes(`Run ${runId}:`), result.stderr || result.stdout);
+  return result.stdout;
+}
+const unlockLines = (text) => text.split('\n').filter((line) => line.startsWith('Unlock:'));
+const unlockPrefix = (runId) =>
+  `Unlock: quiet-choir workflow unlock ${runId} --state-dir ${stateDir}`;
+
 const workflow = join(root, 'nap.mts');
 writeFileSync(
   workflow,
@@ -129,6 +139,17 @@ try {
   plant(primary('F'), { 'owner.json': owner(DEAD, foreign) });
   plant(guard('F'), { 'owner.json': owner(DEAD, foreign) });
   resumeNamesUnlock('F', '--force-remote', foreign);
+  // Inspect text hints the same command with the foreign-host caveat; JSON gains nothing.
+  assert.deepEqual(unlockLines(inspectText('F')), [
+    `${unlockPrefix('F')} --force-remote (only if ${foreign} is this machine under an old name or is permanently gone)`,
+  ]);
+  const inspected = command(['inspect', 'F', '--json']);
+  const inspection = JSON.parse(inspected.stdout);
+  assert.ok(!inspected.stdout.includes('Unlock:'));
+  assert.deepEqual(
+    Object.keys(inspection).sort(),
+    [...Object.keys(await readRun({ stateDir, runId: 'F' })), 'ownership', 'usageSummary'].sort(),
+  );
   const remote = refused('run.locked', 'unlock', 'F');
   assert.match(remote.message, /is on foreign host .+--force-remote\.$/u);
   assert.equal(remote.details.host, foreign);
@@ -143,6 +164,7 @@ try {
     ],
   );
   await completes('F');
+  assert.deepEqual(unlockLines(inspectText('F')), []);
 
   // Orphans: a dead owner with a live recorded child is refused with both; nothing is removed.
   const child = await sleeper();
@@ -169,7 +191,10 @@ try {
   );
   assert.match(orphans.message, /--kill-orphans/u);
   assert.ok(existsSync(join(primary('O'), 'owner.json')));
+  // A live child makes unlock refuse, so inspect offers no hint; once it is dead, the plain one.
+  assert.deepEqual(unlockLines(inspectText('O')), []);
   await stop(child);
+  assert.deepEqual(unlockLines(inspectText('O')), [unlockPrefix('O')]);
   assert.equal(document(0, 'unlock', 'O', '--json').locks[0].action, 'removed');
   await completes('O');
 
@@ -179,6 +204,7 @@ try {
     'owner.json': owner(live.child.pid, hostname(), { osStartTime: live.start }),
   });
   resumeNamesUnlock('L', 'Wait for it or stop it');
+  assert.deepEqual(unlockLines(inspectText('L')), []);
   const alive = refused('run.locked', 'unlock', 'L', '--force-remote');
   assert.equal(alive.details.state, 'alive');
   await stop(live);
