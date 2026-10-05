@@ -216,7 +216,16 @@ interface ResolutionListing {
   ) => void;
 }
 
-/** Each file's module and type reference resolutions as one string, or undefined if unlisted. */
+/** A resolved package's identity as fingerprint parts. */
+function packageIdParts(packageId: ts.PackageId | undefined): readonly (string | null)[] {
+  return [packageId?.name ?? null, packageId?.subModuleName ?? null, packageId?.version ?? null];
+}
+
+/**
+ * Each file's module and type reference resolutions as one string, or undefined if unlisted. An
+ * entry holds the resolved file and the metadata that decides which diagnostics it yields, such as
+ * the extension, whether a TypeScript extension was written, and the package it came from.
+ */
 function resolutionFingerprints(program: ts.Program): ReadonlyMap<string, string> | undefined {
   const listing = program as ts.Program & ResolutionListing;
   if (
@@ -225,25 +234,34 @@ function resolutionFingerprints(program: ts.Program): ReadonlyMap<string, string
   )
     return undefined;
   const resolutions = new Map<string, string[]>();
-  const add = (filePath: string, entry: readonly (string | number | null)[]) => {
+  const add = (filePath: string, entry: readonly (string | number | boolean | null)[]) => {
     const entries = resolutions.get(filePath) ?? [];
     entries.push(JSON.stringify(entry));
     resolutions.set(filePath, entries);
   };
   listing.forEachResolvedModule((resolution, name, mode, filePath) => {
+    const resolved = resolution.resolvedModule;
     add(filePath, [
       'module',
       name,
       mode ?? null,
-      resolution.resolvedModule?.resolvedFileName ?? null,
+      resolved?.resolvedFileName ?? null,
+      resolved?.extension ?? null,
+      resolved?.resolvedUsingTsExtension ?? null,
+      resolved?.isExternalLibraryImport ?? null,
+      ...packageIdParts(resolved?.packageId),
     ]);
   });
   listing.forEachResolvedTypeReferenceDirective((resolution, name, mode, filePath) => {
+    const resolved = resolution.resolvedTypeReferenceDirective;
     add(filePath, [
       'types',
       name,
       mode ?? null,
-      resolution.resolvedTypeReferenceDirective?.resolvedFileName ?? null,
+      resolved?.resolvedFileName ?? null,
+      resolved?.primary ?? null,
+      resolved?.isExternalLibraryImport ?? null,
+      ...packageIdParts(resolved?.packageId),
     ]);
   });
   return new Map(
@@ -252,9 +270,10 @@ function resolutionFingerprints(program: ts.Program): ReadonlyMap<string, string
 }
 
 /**
- * Whether every file both programs list resolves its imports and type references as before. A file
- * only one of them lists was added, removed or edited, which the builder already sees. When the
- * resolutions cannot be listed this answers false, so the caller checks every file.
+ * Whether every file both programs list resolves its imports and type references to the same target
+ * with the same resolution metadata as before. A file only one of them lists was added, removed or
+ * edited, which the builder already sees. When the resolutions cannot be listed this answers false,
+ * so the caller checks every file.
  */
 function sameResolutions(previous: ts.Program, next: ts.Program): boolean {
   const before = resolutionFingerprints(previous);

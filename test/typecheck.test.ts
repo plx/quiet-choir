@@ -516,6 +516,42 @@ describe('TypecheckProgramCache', { timeout: 40_000 }, () => {
     expect(cached).toEqual(await executeEntrypoint(root, 'workflow.ts', null));
   });
 
+  it('checks every file again when only the resolution metadata of an import changes', async () => {
+    const manifest = (exports: Record<string, unknown> | undefined) =>
+      JSON.stringify({ name: 'pkg', type: 'module', ...(exports ? { exports } : {}) });
+    const root = await createFixture({
+      'tsconfig.json': JSON.stringify({
+        compilerOptions: {
+          ...smallLib,
+          module: 'nodenext',
+          moduleResolution: 'nodenext',
+          strict: true,
+          allowImportingTsExtensions: false,
+        },
+      }),
+      'package.json': '{"type":"module"}',
+      'node_modules/pkg/package.json': manifest({ './foo.ts': { types: './foo.ts' } }),
+      'node_modules/pkg/foo.ts': 'export const value = 1;\n',
+      'workflow.ts': "import { value } from 'pkg/foo.ts';\nexport const total: number = value;\n",
+    });
+    const cache = new TypecheckProgramCache();
+
+    expect(await executeEntrypoint(root, 'workflow.ts', cache)).toMatchObject({
+      ok: true,
+      diagnostics: [],
+    });
+    // Without the exports mapping 'pkg/foo.ts' resolves to the same file, but now by the extension
+    // written in the import, which the compiler options forbid.
+    await writeFile(join(root, 'node_modules/pkg/package.json'), manifest(undefined));
+    const cached = await executeEntrypoint(root, 'workflow.ts', cache);
+
+    expect(cached.ok).toBe(false);
+    expect(cached.diagnostics).toContainEqual(
+      expect.objectContaining({ code: 5097, filePath: join(root, 'workflow.ts'), line: 1 }),
+    );
+    expect(cached).toEqual(await executeEntrypoint(root, 'workflow.ts', null));
+  });
+
   it('leaves unreadable files to the compiler host', async () => {
     const root = await createFixture({ 'present.ts': 'export const value = 1;\n' });
     const cached = await executeEntrypoint(root, 'missing.ts', new TypecheckProgramCache());
