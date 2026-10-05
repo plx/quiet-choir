@@ -1,4 +1,5 @@
 import type { RunRecord } from '../runtime/store.js';
+import { recordWarnings } from '../runtime/record-warnings.js';
 import { summarizeUsage } from '../runtime/usage-summary.js';
 import type { JsonValue } from '../runtime/model.js';
 import { rootCauseSummary, type RootCauseSummary } from './failure-kind.js';
@@ -34,17 +35,7 @@ export interface RunResultSummary {
 type ResultRun = RunRecord & { readonly warnings?: readonly string[] | undefined };
 
 function resultWarnings(run: ResultRun): readonly string[] {
-  const all = [
-    ...new Set(
-      run.warnings ?? [
-        ...(run.policyWarnings ?? []),
-        ...(run.replayWarnings ?? []),
-        ...(run.harnessWarnings ?? []),
-        ...(run.worktreeWarnings ?? []),
-        ...(run.waitWarnings ?? []),
-      ],
-    ),
-  ];
+  const all = [...new Set(run.warnings ?? recordWarnings(run))];
   return all.length <= maxWarnings
     ? all
     : [

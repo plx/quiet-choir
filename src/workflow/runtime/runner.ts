@@ -199,6 +199,7 @@ import {
   type ReplayInput,
 } from './replay-decision.js';
 import { digest, jsonValue } from './json.js';
+import { recordWarnings } from './record-warnings.js';
 import type {
   AgentClient,
   ErrorMode,
@@ -331,7 +332,11 @@ export type WorkflowRun<TOutput> = RunRecord & {
   readonly status: 'completed';
   /** Final validated output, inferred from the workflow schema. */
   readonly output: TOutput;
-  /** Policy warnings plus invocation-only cleanup warnings, returned after a persisted completion. */
+  /**
+   * The record's persisted policy, replay, harness, worktree and wait warnings plus
+   * invocation-only cleanup warnings, returned after a persisted completion and when a completed
+   * run is re-read.
+   */
   readonly warnings?: readonly string[];
 };
 
@@ -1159,21 +1164,12 @@ export async function runWorkflow<
         existing.updatedAt = new Date().toISOString();
         await storage.append(existing, { context: 'Could not save completed run metadata' });
       }
+      const warnings = recordWarnings(existing);
       return {
         ...existing,
         status: 'completed',
         output: output as TOutput & JsonValue,
-        ...(existing.policyWarnings?.length ||
-        existing.replayWarnings?.length ||
-        existing.harnessWarnings?.length
-          ? {
-              warnings: [
-                ...(existing.policyWarnings ?? []),
-                ...(existing.replayWarnings ?? []),
-                ...(existing.harnessWarnings ?? []),
-              ],
-            }
-          : {}),
+        ...(warnings.length ? { warnings } : {}),
       };
     }
     const now = new Date().toISOString();
@@ -3758,24 +3754,11 @@ export async function runWorkflow<
       notify({ ...completed, message: 'Run completed.', attempt: 0, runId: record.id });
       for (const [id, step] of superseded) emit('step.superseded', id, step);
       retired.announce();
+      const warnings = recordWarnings(record);
       return {
         ...structuredClone(record),
         status: 'completed',
-        ...(record.policyWarnings.length ||
-        record.replayWarnings.length ||
-        record.harnessWarnings?.length ||
-        record.worktreeWarnings?.length ||
-        record.waitWarnings?.length
-          ? {
-              warnings: [
-                ...record.policyWarnings,
-                ...record.replayWarnings,
-                ...(record.harnessWarnings ?? []),
-                ...(record.worktreeWarnings ?? []),
-                ...(record.waitWarnings ?? []),
-              ],
-            }
-          : {}),
+        ...(warnings.length ? { warnings } : {}),
         output: jsonValue(
           definition.output.parse(structuredClone(record.output)),
           'Workflow output',

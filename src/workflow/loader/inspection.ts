@@ -20,6 +20,7 @@ import {
 import { summarizeUsage } from '../runtime/usage-summary.js';
 import { latestRateLimits, type RateLimitSummary } from '../runtime/rate-limit.js';
 import type { RunBudgetStop } from '../runtime/run-budget.js';
+import { recordWarnings } from '../runtime/record-warnings.js';
 import { classifyRecovery } from '../runtime/recovery-decision.js';
 import { brandError, isBranded } from '../runtime/error-brand.js';
 import { RunRefusedError, type CliErrorCode } from '../runtime/run-errors.js';
@@ -549,11 +550,7 @@ export function summarizeRun(
     recent,
     codeChanges: (run.codeChanges ?? []).slice(-5),
     warnings: [
-      ...(run.policyWarnings ?? []),
-      ...(run.replayWarnings ?? []),
-      ...(run.harnessWarnings ?? []),
-      ...(run.worktreeWarnings ?? []),
-      ...(run.waitWarnings ?? []),
+      ...recordWarnings(run),
       ...(ownership.warning ? [ownership.warning] : []),
       ...(drift ? [recordSchemaWarning(drift)] : []),
     ],
