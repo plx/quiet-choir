@@ -1,7 +1,7 @@
 import { OutputCapture } from './capture.js';
 import { spawn } from 'node:child_process';
 import { addAbortListener } from 'node:events';
-import { groupState, processIdentity, signalProcess } from './identity.js';
+import { groupMembersExited, groupState, processIdentity, signalProcess } from './identity.js';
 import { outputLimitError } from './output-limit.js';
 import type { HarnessInvocation, HarnessProcess } from '../workflow/runtime/model.js';
 
@@ -28,7 +28,11 @@ export interface ProcessRequest {
   readonly args: readonly string[];
   /** Working directory for the executable. */
   readonly cwd: string;
-  /** Prompt sent to stdin after durable process registration. */
+  /**
+   * Prompt sent to stdin only after durable process registration; an empty input closes stdin
+   * without a write, still after registration. A child that closes stdin or exits before reading
+   * it (`EPIPE`, `ENOTCONN`) does not fail the call: its exit status decides the outcome.
+   */
   readonly input: string;
   /** Leader wall-clock deadline in milliseconds. */
   readonly timeoutMs: number;
@@ -135,6 +139,14 @@ export function runProcess(request: ProcessRequest): Promise<ProcessResult> {
         }
         signalProcess(descriptor, sent);
       } catch (error) {
+        // macOS refuses to signal a group that holds only zombies, such as a leader Node has not yet
+        // waited for. That group has already exited; the exit handler and the refresh poll still
+        // confirm reaping before the ownership record is released.
+        if (
+          (error as NodeJS.ErrnoException | undefined)?.code === 'EPERM' &&
+          groupMembersExited(descriptor)
+        )
+          return;
         warn(
           `Could not send ${sent} to ${request.binary}: ${error instanceof Error ? error.message : String(error)}`,
         );
@@ -366,7 +378,14 @@ export function runProcess(request: ProcessRequest): Promise<ProcessResult> {
       });
     }
     child.stdin.on('error', (error: NodeJS.ErrnoException) => {
-      if (error.code !== 'EPIPE' && error.code !== 'ERR_STREAM_DESTROYED') stop(error);
+      // EPIPE and ENOTCONN (macOS, for a socket whose peer is gone) mean the child closed its read
+      // end or already exited, possibly before Node reports 'exit'; its exit status decides.
+      if (
+        error.code !== 'EPIPE' &&
+        error.code !== 'ENOTCONN' &&
+        error.code !== 'ERR_STREAM_DESTROYED'
+      )
+        stop(error);
     });
     child.once('error', (error: NodeJS.ErrnoException) => {
       if (settled) return;
@@ -417,6 +436,12 @@ export function runProcess(request: ProcessRequest): Promise<ProcessResult> {
     void Promise.resolve(registration).then(
       () => {
         if (settled || failure) return;
+        // A leader that has already exited has no reader left for the input. (Node also destroys
+        // stdin when it reports 'exit'; this does not rely on that.)
+        if (exited) {
+          child.stdin.destroy();
+          return;
+        }
         // The child cannot produce protocol output before it has its input, and registration
         // (a checkpoint save) may be slow under load, so idleness is measured once stdin has been
         // fully flushed to the child ('finish') or closed. A large prompt the child reads slowly is
@@ -430,7 +455,9 @@ export function runProcess(request: ProcessRequest): Promise<ProcessResult> {
         child.stdin.once('finish', startIdle);
         child.stdin.once('close', startIdle);
         child.stdin.once('error', startIdle);
-        child.stdin.end(request.input);
+        // An empty input closes stdin with no zero-length write; EOF still follows registration.
+        if (request.input === '') child.stdin.end();
+        else child.stdin.end(request.input);
       },
       (error: unknown) => {
         // Registration may itself abort the run synchronously. Preserve its infrastructure

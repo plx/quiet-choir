@@ -94,6 +94,24 @@ export function processIdentity(pid: number): ProcessIdentity | null {
   return null;
 }
 
+/** Every process in group `pgid`, undefined where members cannot be enumerated; throws on a read failure. */
+function groupMembers(pgid: number): ProcessIdentity[] | undefined {
+  let members: ProcessIdentity[];
+  if (process.platform === 'linux') {
+    members = [];
+    for (const name of readdirSync('/proc')) {
+      if (!/^\d+$/u.test(name)) continue;
+      try {
+        members.push(linuxIdentity(Number(name)));
+      } catch (error) {
+        if (code(error) !== 'ENOENT' && code(error) !== 'ESRCH') throw error;
+      }
+    }
+  } else if (process.platform === 'darwin') members = darwinIdentities();
+  else return undefined;
+  return members.filter((member) => member.pgid === pgid);
+}
+
 /** Observe an owned group, treating zombie-only groups as reaped. @internal */
 export function groupState(
   child: Pick<HarnessProcess, 'pid' | 'pgid'>,
@@ -102,24 +120,26 @@ export function groupState(
   if (state !== 'alive') return state;
   if (child.pgid === null) return processIdentity(child.pid)?.zombie ? 'dead' : 'alive';
   try {
-    let members: ProcessIdentity[];
-    if (process.platform === 'linux') {
-      members = [];
-      for (const name of readdirSync('/proc')) {
-        if (!/^\d+$/u.test(name)) continue;
-        try {
-          members.push(linuxIdentity(Number(name)));
-        } catch (error) {
-          if (code(error) !== 'ENOENT' && code(error) !== 'ESRCH') throw error;
-        }
-      }
-    } else if (process.platform === 'darwin') members = darwinIdentities();
-    else return 'unknown';
-    const group = members.filter((member) => member.pgid === child.pgid);
+    const group = groupMembers(child.pgid);
+    if (!group) return 'unknown';
     if (!group.length) return pidState(-child.pgid) === 'dead' ? 'dead' : 'unknown';
     return group.some((member) => !member.zombie) ? 'alive' : 'dead';
   } catch {
     return 'unknown';
+  }
+}
+
+/**
+ * Whether a complete member listing shows no live process left in the group: every member has
+ * exited, at most as a zombie its parent has not yet waited for. False whenever that cannot be
+ * shown (no group, no enumeration on this platform, or a failed read). @internal
+ */
+export function groupMembersExited(child: Pick<HarnessProcess, 'pid' | 'pgid'>): boolean {
+  if (child.pgid === null) return false;
+  try {
+    return groupMembers(child.pgid)?.every((member) => member.zombie) ?? false;
+  } catch {
+    return false;
   }
 }
 
