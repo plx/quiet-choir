@@ -1089,6 +1089,13 @@
   full check, and their timeouts come down. The CLI passes no cache, so its type-check results and
   behavior are unchanged; see CONTRIBUTING.md, "Test timeouts and storage sync".
 
+- Development and test infrastructure: add a per-test state directory fixture,
+  `test/setup/state-dir.ts` (#174). Its `runs` scope passes the test's abort signal to `runWorkflow`
+  and to forked children, then waits (up to 10 s) for them to settle before the directory is
+  removed, so a timed-out test no longer turns into ENOTEMPTY failures. The journal suite uses it,
+  and `test/state-dir-fixture.test.ts` forces timeouts to check it. No runtime behavior changes; see
+  CONTRIBUTING.md, "Per-test state directories".
+
 - Add Workflow Lab Batch 02: six idiomatic ports with domain schemas, named roles, code-owned
   commands/writes, approved isolated setup, recoverable mutation tests, inline lifecycle children
   and settled bug panels. Record paired fixture metrics and actual SIGKILL recovery; keep model
