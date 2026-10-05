@@ -70,10 +70,14 @@ export type UnlockAdvice =
  * - Holders are each lock's owner then recovery marker, primary lock first; with no per-lock view
  *   the top-level owner stands in, as in `classifyRecovery`. A holder that is `alive` or `unknown`
  *   suppresses the hint, even when the lock also carries a warning.
- * - Otherwise the first `remote` holder yields `force-remote` with its host. This precedes the
- *   child check because inspection masks a remote owner's children as `unknown`, and unlock also
- *   refuses a foreign host before it looks at children.
+ * - A remote owner masks its children: inspection reports them as `unknown` without observing
+ *   them, and unlock refuses the foreign host before it looks at children. So when the top-level
+ *   owner is `remote` and a remote holder exists, the hint is `force-remote` with that holder's
+ *   host, whatever the children say. A remote recoverer does not mask children.
  * - Otherwise an `alive` or `unknown` child suppresses the hint (unlock would refuse the orphans).
+ *   The hint judges only the children inspection observes; it cannot see a remote
+ *   owner's.
+ * - Otherwise the first `remote` holder yields `force-remote` with its host.
  * - Otherwise `unlock`: dead or released holders, and missing or unreadable metadata, never hold an
  *   unlock. @internal
  */
@@ -90,10 +94,11 @@ export function unlockAdvice(ownership: RunOwnership): UnlockAdvice | null {
         ]);
   if (holders.some((holder) => holder.state === 'alive' || holder.state === 'unknown')) return null;
   const remote = holders.find((holder) => holder.state === 'remote');
-  if (remote !== undefined) return { kind: 'force-remote', host: remote.host };
+  if (remote !== undefined && ownership.owner?.state === 'remote')
+    return { kind: 'force-remote', host: remote.host };
   if (ownership.processes.some((entry) => entry.state === 'alive' || entry.state === 'unknown'))
     return null;
-  return { kind: 'unlock' };
+  return remote === undefined ? { kind: 'unlock' } : { kind: 'force-remote', host: remote.host };
 }
 
 /** Consecutive stale recoveries without a new completed step before tick stops. @internal */

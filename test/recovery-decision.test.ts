@@ -501,6 +501,26 @@ describe('unlockAdvice', () => {
     ).toEqual({ kind: 'force-remote', host: 'elsewhere' });
   });
 
+  it('lets a local child block a remote recoverer but not a remote owner', () => {
+    const remoteRecoverer = (state: HarnessProcessInspection['state']): RunOwnership => ({
+      ...ownership('dead', 'none'),
+      processes: processesOf(state),
+      locks: [remoteLock('primary', 'dead', 'remote')],
+    });
+    // The owner is dead, so its children are really observed: unlock would refuse the orphans.
+    expect(advice(remoteRecoverer('alive'))).toBeNull();
+    expect(advice(remoteRecoverer('unknown'))).toBeNull();
+    expect(advice(remoteRecoverer('dead'))).toEqual({ kind: 'force-remote', host: 'elsewhere' });
+    // A remote owner masks its children, however they read.
+    expect(
+      advice({
+        ...ownership('remote', 'none'),
+        processes: processesOf('alive'),
+        locks: [remoteLock('primary', 'remote')],
+      }),
+    ).toEqual({ kind: 'force-remote', host: 'elsewhere' });
+  });
+
   it('lets a live local holder beat a remote one in another lock', () => {
     expect(
       advice({
