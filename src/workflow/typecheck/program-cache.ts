@@ -80,9 +80,10 @@ function textHash(text: string): string {
  *   --watch` model) copies semantic diagnostics only for files whose text and references are
  *   unchanged and that no changed file affects. The builder is not used, and every file is checked
  *   again, if any file both programs share resolves an import or type reference differently; if an
- *   added, removed or changed file affects the global scope in its old or new version (a script, or
- *   a module with a `declare global` block); or if `assumeChangesOnlyAffectDirectDependencies` is
- *   set, under which the builder would skip consumers that see a change only through re-exports.
+ *   added, removed or changed file affects the global scope in its old or new version (a script, a
+ *   module with a `declare global` block, or a UMD `export as namespace`); or if
+ *   `assumeChangesOnlyAffectDirectDependencies` is set, under which the builder would skip
+ *   consumers that see a change only through re-exports.
  *   Every file is also checked again if a copied diagnostic still points into a source file that
  *   was parsed again.
  *
@@ -302,14 +303,16 @@ function isGlobalAugmentation(statement: ts.Statement): boolean {
 }
 
 /**
- * Whether a file declares into the global scope: a script, or a module with a `declare global`
- * block at its top level or in an ambient module declaration. JSON files never do.
+ * Whether a file declares into the global scope: a script, or a module with a top-level UMD
+ * namespace export (`export as namespace X`) or a `declare global` block at its top level or in an
+ * ambient module declaration. JSON files never do.
  */
 function affectsGlobalScope(sourceFile: ts.SourceFile): boolean {
   if (sourceFile.fileName.endsWith('.json')) return false;
   if (!ts.isExternalModule(sourceFile)) return true;
   return sourceFile.statements.some(
     (statement) =>
+      ts.isNamespaceExportDeclaration(statement) ||
       isGlobalAugmentation(statement) ||
       (ts.isModuleDeclaration(statement) &&
         statement.body !== undefined &&

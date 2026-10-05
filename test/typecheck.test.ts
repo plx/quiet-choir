@@ -611,6 +611,38 @@ describe('TypecheckProgramCache', { timeout: 40_000 }, () => {
     }
   });
 
+  it('checks every file again when a UMD namespace export is edited', async () => {
+    const root = await createFixture({
+      'tsconfig.json': JSON.stringify({
+        compilerOptions: { ...smallLib, ...nodeNext, allowUmdGlobalAccess: true },
+      }),
+      'package.json': '{"type":"module"}',
+      // The tsconfig includes umd.d.ts; nothing imports it, so only its global name links the files.
+      'umd.d.ts': 'export as namespace UMD;\nexport declare const value: number;\n',
+      'workflow.ts': 'export const total: number = UMD.value;\n',
+    });
+    const cache = new TypecheckProgramCache();
+
+    expect(await executeEntrypoint(root, 'workflow.ts', cache)).toMatchObject({
+      ok: true,
+      diagnostics: [],
+    });
+    // A changed type behind the global name, then the global name removed from a file that stays a
+    // module; each time workflow.ts's result changes while workflow.ts stays the same.
+    for (const [umd, code] of [
+      ['export as namespace UMD;\nexport declare const value: string;\n', 2322],
+      ['export declare const value: number;\n', 2304],
+    ] as const) {
+      await writeFile(join(root, 'umd.d.ts'), umd);
+      const cached = await executeEntrypoint(root, 'workflow.ts', cache);
+
+      expect(cached.diagnostics).toContainEqual(
+        expect.objectContaining({ code, filePath: join(root, 'workflow.ts'), line: 1 }),
+      );
+      expect(cached).toEqual(await executeEntrypoint(root, 'workflow.ts', null));
+    }
+  });
+
   it('checks every file again when changes are assumed to affect only direct importers', async () => {
     const root = await createFixture({
       'tsconfig.json': JSON.stringify({
