@@ -11,8 +11,10 @@
   kind `schema`, the Zod error as `cause`) that `onError` never tolerates. `noteSchema` is policy,
   not identity, so it is not persisted and may change on resume. The note type parameter `N` of
   `PollContext`, `PollSource`, `CommandPollSource`, `PollOptions`, `CommandPollOptions` and the
-  `ctx.poll` overloads now accepts `JsonInput`, so a schema with optional fields type-checks.
-  Without `noteSchema` nothing changes (#222).
+  `ctx.poll` overloads now accepts `JsonInput`, so a schema with optional fields type-checks;
+  `WaitSources` and `ctx.wait` gain the same `N`, inferred from the poll source's `noteSchema`. A
+  nonterminal result's `note` may be null, or `previous.note`, whatever the schema. Without
+  `noteSchema` nothing changes (#222).
 
 - A body failure now aborts an in-flight poll observation as soon as the failure drain starts,
   instead of waiting for it to settle or for `observeTimeoutMs` (60 s by default). The aborted

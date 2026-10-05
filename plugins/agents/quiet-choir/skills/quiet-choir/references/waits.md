@@ -101,13 +101,15 @@ export default defineWorkflow({
 `previous` holds the persisted progress before this check: `note` (null on the first check),
 `checks` (0 on the first check, tolerated errors included) and `openedAt`. It survives suspend, tick
 and resume, so keep debounce flags and other timestamps in the note, not in closures. It is frozen;
-`noteSchema` (a Zod schema) infers `N`, so `previous.note` is `{ green: boolean } | null` with no
-type arguments, and it validates notes both ways: a returned note is parsed before it is saved, and
-the saved note is parsed again before the next check, so an older shape fails before `done` runs.
-Null passes through unparsed. A failure throws code `QUIET_CHOIR_POLL_NOTE_INVALID` (error kind
-`schema`). The schema is reapplied to its own output, so avoid non-idempotent transforms; to migrate
-a changed shape accept the old one (a union) or use `.catch(null)`, else use a new wait ID. It is
-policy, not identity. Without it `previous.note` is `JsonValue`: narrow or parse it.
+`noteSchema` (a Zod schema) infers `N`, in `ctx.poll` and in a `ctx.wait` poll source, so
+`previous.note` is `{ green: boolean } | null` with no type arguments; returning `note: null` or
+forwarding `previous.note` is allowed whatever the schema. It validates notes both ways: a returned
+note is parsed before it is saved, and the saved note is parsed again before the next check, so an
+older shape fails before `done` runs. Null passes through unparsed. A failure throws code
+`QUIET_CHOIR_POLL_NOTE_INVALID` (error kind `schema`). The schema is reapplied to its own output, so
+avoid non-idempotent transforms; to migrate a changed shape accept the old one (a union) or use
+`.catch(null)`, else use a new wait ID. It is policy, not identity. Without it `previous.note` is
+`JsonValue`: narrow or parse it.
 
 `onError: { tolerate, classify?, retryAfterMs? }` tolerates transient observation errors. Candidates
 are a rejected observation and an `observeTimeoutMs` expiry (code

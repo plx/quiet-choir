@@ -73,23 +73,25 @@ flag in the note. `previous` is frozen. Keep any other timestamps you need in th
 Pass `noteSchema`, a Zod schema, to type and validate the note. `N` is inferred from it, so
 `ctx.poll('ci', { …, noteSchema: z.object({ seen: z.boolean() }), observe: ({ previous }) => … })`
 types `previous.note` as `{ seen: boolean } | null` with no type arguments, and a note you return
-must match it. Without `noteSchema`, `N` is `JsonValue` and the saved note is trusted: narrow or
-parse `previous.note` yourself. With it, the schema runs in both directions. A nonterminal note you
-return is parsed before it is saved, and the saved output replaces it (a `z.object` drops unknown
-keys); the saved note is parsed again before the next check sees it, so a note left by an older
-version of the body is checked against the current schema before your observer runs. Null is outside
-the schema: the first check's `null`, and the null saved for a `{ done: false }` without a note,
-pass through unparsed, so the schema need not be nullable. A note that fails the schema fails the
-wait with an error whose `code` is `QUIET_CHOIR_POLL_NOTE_INVALID` and whose `cause` is the Zod
-error, recorded with error kind `schema`; the message says whether the note was returned by
-`observe`/`done` or saved by an earlier check. A read-back failure happens before the observer runs
-and does not count as a check, and `onError` never tolerates either failure. A valid signal still
-wins first. Because the schema is applied to its own output on the next check, it should accept what
-it produces: avoid transforms that are not idempotent. `noteSchema` is policy, so you may change it
-on resume. To migrate a changed note shape, make the schema accept the old shape (a union), or reset
-an incompatible note with `.catch(null)`; otherwise use a new wait ID. Notes are still limited to 16
-KiB after parsing, and the optional-field output type of a schema is accepted
-(`{ label?: string | undefined }`), since undefined members are dropped when the note is saved.
+must match it; a `ctx.wait` poll source infers it the same way. Returning `note: null`, or
+forwarding `previous.note` as the note, is allowed whatever the schema. Without `noteSchema`, `N` is
+`JsonValue` and the saved note is trusted: narrow or parse `previous.note` yourself. With it, the
+schema runs in both directions. A nonterminal note you return is parsed before it is saved, and the
+saved output replaces it (a `z.object` drops unknown keys); the saved note is parsed again before
+the next check sees it, so a note left by an older version of the body is checked against the
+current schema before your observer runs. Null is outside the schema: the first check's `null`, and
+the null saved for a `{ done: false }` without a note, pass through unparsed, so the schema need not
+be nullable. A note that fails the schema fails the wait with an error whose `code` is
+`QUIET_CHOIR_POLL_NOTE_INVALID` and whose `cause` is the Zod error, recorded with error kind
+`schema`; the message says whether the note was returned by `observe`/`done` or saved by an earlier
+check. A read-back failure happens before the observer runs and does not count as a check, and
+`onError` never tolerates either failure. A valid signal still wins first. Because the schema is
+applied to its own output on the next check, it should accept what it produces: avoid transforms
+that are not idempotent. `noteSchema` is policy, so you may change it on resume. To migrate a
+changed note shape, make the schema accept the old shape (a union), or reset an incompatible note
+with `.catch(null)`; otherwise use a new wait ID. Notes are still limited to 16 KiB after parsing,
+and the optional-field output type of a schema is accepted (`{ label?: string | undefined }`), since
+undefined members are dropped when the note is saved.
 
 `every` is a positive integer interval, or `{ initialMs, maxMs, factor? }` with factor defaulting to
 two. Spacing grows after nonterminal checks up to `maxMs`, measured from check completion. It is a
@@ -187,6 +189,7 @@ keeps the command real under `--dry-run`. `input`, `schema`, `every`, `noteSchem
 `observeTimeoutMs`, `onError` and the time bound mean what they mean for an observer; `noteSchema`
 types and validates the notes `done` returns and `previous.note`. `ctx.wait(id, { poll })` accepts
 the same source, but there `done`'s output is typed `unknown`; `ctx.poll` infers it from `output`.
+`noteSchema` types `previous.note` in both.
 
 Each check runs the command as an observer's `context.exec.json(command, { schema: output })` would:
 through `RunOptions.execRunner` (or `processRunner`), registered under the wait ID and attempt 1 so
