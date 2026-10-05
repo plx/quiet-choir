@@ -89,7 +89,9 @@ export interface TickResumedEntry {
  * incomplete lock metadata, or a live, unknown or remote recoverer. `orphans`: the owner is gone, but a child process is
  * alive or unverified. `crash-loop`: the run was already recovered from a stale `running` state
  * the maximum number of consecutive times without completing a new step. `deadline`: the run was
- * ready, but less than the claim margin of this tick's timeout remained. @internal
+ * due or stale when read but less than the claim margin of this tick's timeout remained, so its
+ * locks, orphans, crash-loop count and sources went unchecked; or the timeout passed before the run
+ * was read. @internal
  */
 export type TickSkipReason =
   | 'not due'
@@ -106,11 +108,12 @@ export interface TickSkippedEntry {
   readonly runId: string;
   readonly reason: TickSkipReason;
   /**
-   * Present for orphans, crash-loop, incompatible and unreadable runs. An orphans message says tick
-   * never signals a process and names the `workflow resume` command with `--kill-orphans`.
+   * Present for orphans, crash-loop, incompatible and unreadable runs, and for a deadline skip of a
+   * run tick never read. An orphans message says tick never signals a process and names the
+   * `workflow resume` command with `--kill-orphans`.
    */
   readonly message?: string;
-  /** Present for runs that are not due, no longer due, or skipped at the deadline. */
+  /** Present for runs that are not due or no longer due, and for deadline skips of runs read. */
   readonly nextWakeAt?: number | null;
 }
 
@@ -158,6 +161,10 @@ function tickOrphansMessage(
   );
   return `${describeOrphanProcesses(runId, processes)} Tick never signals a process: a later tick retries the run once they exit, or stop confirmed ones with ${resume}. Unverified identities are never signaled; inspect the retained lock.`;
 }
+
+/** The message of a `deadline` skip for a run tick's fired timeout left unread. */
+const unreadDeadlineMessage =
+  "Tick's timeout passed before this run was read; a later tick checks it.";
 
 function terminalStatus(run: RunRecord): TerminalStatus | undefined {
   return run.status === 'completed' || run.status === 'failed' || run.status === 'cancelled'
@@ -426,9 +433,19 @@ export class TickWorkflowExecutor implements Executor<
       for (;;) {
         const ids = plan.runId === undefined ? await store.list() : [plan.runId];
         for (const id of ids) {
-          // Not the deadline: runs seen after it are still reported, as skipped for the deadline.
+          // Only the external signal and maxRuns end the scan; past the deadline every remaining run
+          // is still reported, as skipped for the deadline.
           if (this.options.signal?.aborted || attempts >= maxRuns) break;
           if (final.has(id)) continue;
+          // Two deadline phases. Inside the claim margin each record is still read, so terminal,
+          // not-due and drifted runs keep their classification, but no lock, orphan, crash-loop or
+          // source check runs. Once the timeout has fired no record is read at all: a run without
+          // an entry is reported unread, and one an earlier --watch pass reported keeps that entry,
+          // the data already in hand, even if it is now slightly stale.
+          if (timer.signal.aborted) {
+            if (!entries.has(id)) skip(id, 'deadline', { message: unreadDeadlineMessage });
+            continue;
+          }
           let claim: ReturnType<typeof claimedStore> | undefined;
           let executing = false;
           try {
@@ -438,6 +455,12 @@ export class TickWorkflowExecutor implements Executor<
             const drift = recordSchemaDrift(run);
             if (drift) {
               skip(id, 'incompatible', { message: recordSchemaRefusalMessage(id, drift) });
+              continue;
+            }
+            // A due or stale run seen inside the margin is left unexamined: tick inspects no
+            // ownership, orphans, crash-loop count or sources, and a later tick classifies it.
+            if (insideMargin()) {
+              skip(id, 'deadline', { nextWakeAt: run.nextWakeAt ?? null });
               continue;
             }
             // A running run reaching here is a stale-recovery candidate and bypasses due().
@@ -468,7 +491,8 @@ export class TickWorkflowExecutor implements Executor<
               });
               continue;
             }
-            // Leave a ready run untouched rather than claim it with too little time to progress.
+            // Leave a ready run untouched rather than claim it with too little time to progress:
+            // the margin may have started during the checks above.
             if (insideMargin()) {
               skip(id, 'deadline', { nextWakeAt: run.nextWakeAt ?? null });
               continue;
