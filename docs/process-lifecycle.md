@@ -25,6 +25,13 @@ starts the same SIGTERM, grace and SIGKILL sequence with code `QUIET_CHOIR_IDLE_
 `idle-timeout`). Leader exit clears it, so draining a leftover group is bounded only by the cleanup
 periods below.
 
+Input reaches stdin only after durable registration. An empty input closes stdin without a write,
+and that EOF also waits for registration. A child may close stdin or exit before its input is
+written, as a fast `git rev-parse` can under load; the resulting `EPIPE` or `ENOTCONN` does not fail
+the call, so a `ctx.exec`, runtime Git call or harness process is judged by its exit status. When a
+cleanup signal fails with `EPERM` because the group holds only exited (zombie) members, as macOS
+reports for a leader not yet waited for, no cleanup warning is recorded.
+
 A 500ms backstop after escalation closes inherited pipes and settles the invocation even when an
 escaped descendant holds them. It is skipped when a leader exited without failure and its group is
 already reaped; the two-second drain alone then bounds settlement. A deadline therefore initiates a

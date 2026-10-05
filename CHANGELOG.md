@@ -2,6 +2,12 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- A short-lived child that exits before its stdin is written, such as `git rev-parse` under load, no
+  longer fails a successful `ctx.exec`, runtime Git call or harness process with `write ENOTCONN`
+  (#189): `EPIPE` and `ENOTCONN` on stdin are ignored and the exit status decides. Empty input
+  closes stdin without a zero-length write, still after durable registration. Cleanup no longer
+  warns `Could not send SIGTERM … kill EPERM` for a group whose members have all exited.
+
 - A Claude profile may declare `claude.addDirRoots` (#171; ADR 0054). Under `strictProfiles`, a
   Claude call using that profile may pass `addDirs`; each entry is refused if it has a `..` segment,
   is canonicalized (the real path of its deepest existing ancestor plus any not-yet-created
