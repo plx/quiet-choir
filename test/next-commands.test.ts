@@ -9,7 +9,10 @@ import {
   type FailureNextContext,
 } from '../src/workflow/loader/next-commands.js';
 import { divergenceRefusal, forkCommand } from '../src/workflow/loader/code-change-preflight.js';
-import { StepIdentityChangedError } from '../src/workflow/runtime/run-errors.js';
+import {
+  ReplaySkippedError,
+  StepIdentityChangedError,
+} from '../src/workflow/runtime/run-errors.js';
 import type { JsonValue } from '../src/workflow/runtime/model.js';
 import type { RunRecord } from '../src/workflow/runtime/store.js';
 
@@ -344,6 +347,31 @@ describe('failureNextCommands', () => {
     const expected = forkCommand(change, { runId: 'r1', stateDir, entrypoint }, launcher);
     expect(expected.slice(0, 3)).toEqual(prefix);
     expect(refusal.message).toContain(formatArgv(expected));
+    expect(failure({ code: 'run.incompatible', details: refusal.details })).toEqual([expected]);
+  });
+
+  it('carries a skip refusal fork command naming the first skipped ID, built with the same launcher', () => {
+    const skip = new ReplaySkippedError('skipped', {
+      kind: 'maps',
+      skipped: ['reviews', 'audits'],
+    });
+    const refusal = divergenceRefusal(skip, { runId: 'r1', stateDir, entrypoint }, launcher);
+    const expected = forkCommand(skip, { runId: 'r1', stateDir, entrypoint }, launcher);
+    expect(expected.slice(0, 3)).toEqual(prefix);
+    expect(
+      expected.slice(expected.indexOf('--invalidate'), expected.indexOf('--invalidate') + 2),
+    ).toEqual(['--invalidate', 'reviews']);
+    expect(refusal.message).toContain(
+      'The changed workflow skipped settled maps (reviews, audits).',
+    );
+    expect(refusal.message).toContain(formatArgv(expected));
+    expect(refusal.details).toEqual({
+      divergent: [
+        { stepId: 'reviews', skipped: 'map' },
+        { stepId: 'audits', skipped: 'map' },
+      ],
+      next: [expected],
+    });
     expect(failure({ code: 'run.incompatible', details: refusal.details })).toEqual([expected]);
   });
 

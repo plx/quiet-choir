@@ -1,5 +1,5 @@
-import { WorkflowRunError } from '../src/index.js';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { ReplaySkippedError, WorkflowRunError } from '../src/index.js';
+import { mkdtemp, readdir, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setImmediate as nextTurn, setTimeout as delay } from 'node:timers/promises';
@@ -573,6 +573,51 @@ it.each([false, true])(
     }
   },
 );
+
+it('refuses an accepted resume that skips a settled map without changing the run', async () => {
+  let branch = true;
+  const definition = workflow(async (ctx) => {
+    if (branch)
+      await ctx.map('reviews', [0, 1], { concurrency: 2, onError: 'return' }, (value) =>
+        Promise.resolve(value * 2),
+      );
+    return ctx.step('publish', { input: null, schema: z.string(), run: () => 'published' });
+  });
+  expect((await runWorkflow(definition, options())).status).toBe('completed');
+  const files = async (): Promise<Record<string, string>> => {
+    const directory = join(stateDir, 'fanout');
+    const names = (await readdir(directory, { recursive: true, withFileTypes: true }))
+      .filter((entry) => entry.isFile())
+      .map((entry) => join(entry.parentPath, entry.name))
+      .sort();
+    return Object.fromEntries(
+      await Promise.all(names.map(async (name) => [name, await readFile(name, 'utf8')] as const)),
+    );
+  };
+  const before = { record: await readRun(options()), files: await files() };
+  branch = false;
+  const rejected: unknown = await runWorkflow(definition, {
+    ...options(),
+    resume: true,
+    fingerprint: 'code-2',
+    acceptCodeChange: true,
+  }).catch((error: unknown) => error);
+  expect(rejected).toBeInstanceOf(ReplaySkippedError);
+  expect(rejected).not.toBeInstanceOf(WorkflowRunError);
+  expect(rejected).toMatchObject({ kind: 'maps', skipped: ['reviews'], healed: [] });
+  expect((rejected as Error).cause).toBeInstanceOf(ReplaySkippedError);
+  expect((rejected as Error).message).toContain(
+    'Replay skipped settled maps (reviews); workflow control flow changed. The accepted replay was refused before run fanout was changed.',
+  );
+  const after = await readRun(options());
+  expect(after.status).toBe('completed');
+  expect(after.workflow.fingerprint).toBe(before.record.workflow.fingerprint);
+  expect(after.output).toEqual(before.record.output);
+  expect(after.codeChanges).toEqual(before.record.codeChanges);
+  expect(await files()).toEqual(before.files);
+  // The saved outcome is still served to a plain resume.
+  expect((await runWorkflow(definition, { ...options(), resume: true })).output).toBe('published');
+});
 
 it('keeps empty-map identity and path checks, and allows concurrency changes', async () => {
   let skip = false;

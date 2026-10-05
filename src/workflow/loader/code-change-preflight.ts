@@ -1,12 +1,33 @@
 import { formatArgv } from './next-commands.js';
 import { workflowArgv, type CommandLauncher } from '../runtime/commands.js';
-import { RunRefusedError, type StepIdentityChangedError } from '../runtime/run-errors.js';
+import {
+  ReplaySkippedError,
+  RunRefusedError,
+  type StepIdentityChangedError,
+} from '../runtime/run-errors.js';
 
 const divergenceRefusals = new WeakSet<Error>();
 
+/** The singular `skipped` value of a `details.divergent` entry for each kind of skipped record. */
+const skippedEntry = { steps: 'step', maps: 'map', 'child-frames': 'child-frame' } as const;
+
+/** How a refusal message names each kind of skipped record. */
+const skippedNoun = {
+  steps: 'recorded steps',
+  maps: 'settled maps',
+  'child-frames': 'completed or settled child frames',
+} as const;
+
+/** The ID a fork invalidates: the changed step, or the first skipped record. */
+function invalidatedId(
+  change: Pick<StepIdentityChangedError, 'stepId'> | ReplaySkippedError,
+): string {
+  return change instanceof ReplaySkippedError ? (change.skipped[0] ?? '<STEP_ID>') : change.stepId;
+}
+
 /** The fork command that replaces a refused accepted resume, spelled like `resumeCommand`. @internal */
 export function forkCommand(
-  change: Pick<StepIdentityChangedError, 'stepId'>,
+  change: Pick<StepIdentityChangedError, 'stepId'> | ReplaySkippedError,
   target: { readonly runId: string; readonly stateDir: string; readonly entrypoint: string },
   launcher?: CommandLauncher,
 ): string[] {
@@ -19,7 +40,7 @@ export function forkCommand(
     '--reuse',
     'matching',
     '--invalidate',
-    change.stepId,
+    invalidatedId(change),
     '--run-id',
     '<NEW_RUN_ID>',
     '--state-dir',
@@ -29,24 +50,41 @@ export function forkCommand(
 
 /**
  * The `run.incompatible` refusal for an accepted resume whose replay would fail on a changed
- * completed step. `details.divergent` names the step and `details.next` the fork command. @internal
+ * completed step, or on recorded work the changed body skips. `details.divergent` names the changed
+ * step (`{stepId, components}`) or each skipped ID (`{stepId, skipped}`, where `skipped` is `step`,
+ * `map` or `child-frame`), and `details.next` the fork command. @internal
  */
 export function divergenceRefusal(
-  change: StepIdentityChangedError,
+  change: StepIdentityChangedError | ReplaySkippedError,
   target: { readonly runId: string; readonly stateDir: string; readonly entrypoint: string },
   launcher?: CommandLauncher,
 ): RunRefusedError {
   const next = forkCommand(change, target, launcher);
-  const error = new RunRefusedError(
-    'run.incompatible',
-    target.runId,
-    `Step ${change.stepId}: ${change.components.join(', ') || 'identity'} changed on a ${change.status} step. --accept-code-change never reuses a changed ${change.status} step, so this resume would record the change, clear the saved outcome and then fail; nothing was changed. Fork a new run instead: ${formatArgv(next)}`,
-    {
-      divergent: [{ stepId: change.stepId, components: [...change.components] }],
-      next: [next],
-    },
-    { cause: change },
-  );
+  const error =
+    change instanceof ReplaySkippedError
+      ? new RunRefusedError(
+          'run.incompatible',
+          target.runId,
+          `The changed workflow skipped ${skippedNoun[change.kind]} (${change.skipped.join(', ')})${change.healed.length ? ` after healed steps (${change.healed.join(', ')})` : ''}. --accept-code-change still requires the body to revisit every completed step, settled map and child frame, so this resume would record the change, clear the saved outcome and then fail; nothing was changed. Fork a new run instead: ${formatArgv(next)}`,
+          {
+            divergent: change.skipped.map((stepId) => ({
+              stepId,
+              skipped: skippedEntry[change.kind],
+            })),
+            next: [next],
+          },
+          { cause: change },
+        )
+      : new RunRefusedError(
+          'run.incompatible',
+          target.runId,
+          `Step ${change.stepId}: ${change.components.join(', ') || 'identity'} changed on a ${change.status} step. --accept-code-change never reuses a changed ${change.status} step, so this resume would record the change, clear the saved outcome and then fail; nothing was changed. Fork a new run instead: ${formatArgv(next)}`,
+          {
+            divergent: [{ stepId: change.stepId, components: [...change.components] }],
+            next: [next],
+          },
+          { cause: change },
+        );
   divergenceRefusals.add(error);
   return error;
 }
