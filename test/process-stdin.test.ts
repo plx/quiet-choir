@@ -237,18 +237,18 @@ describe('a child that exits before its stdin is written', () => {
 
   it('delivers EOF for empty input only after registration resolves', async () => {
     const marker = join(directory, 'eof');
+    const source =
+      "process.stdin.on('end',()=>require('node:fs').writeFileSync(process.argv[1],''));process.stdin.resume();";
     let seenDuringHold: boolean | undefined;
     const result = await runProcess(
-      request(
-        `process.stdin.on('end',()=>require('node:fs').writeFileSync(${JSON.stringify(marker)},''));process.stdin.resume();`,
-        {
-          trackProcess: async () => {
-            await delay(200);
-            seenDuringHold = existsSync(marker);
-            return lease;
-          },
+      request(source, {
+        args: ['-e', source, marker],
+        trackProcess: async () => {
+          await delay(200);
+          seenDuringHold = existsSync(marker);
+          return lease;
         },
-      ),
+      }),
     );
     expect(seenDuringHold).toBe(false);
     expect(result).toMatchObject({ code: 0, warnings: [] });
