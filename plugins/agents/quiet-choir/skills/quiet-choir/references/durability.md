@@ -237,7 +237,9 @@ run gates without executing the supplied definition. `forkFrom` and `resume` are
 An embedded accepted resume runs the same preflight: on a changed completed or settled-failed step
 it rejects with a bare `StepIdentityChangedError` (not a `WorkflowRunError`) and changes nothing. A
 `WorkflowRunError` whose cause is that error means the preflight could not reach the step and the
-run did fail.
+run did fail. An abort of the run's signal during the preflight ends the run `cancelled` (or
+suspended and due now for a `RunInterruptedError`) without recording the acceptance: the
+fingerprint, `codeChanges`, output and steps stay as they were.
 
 ## Settled map replay
 

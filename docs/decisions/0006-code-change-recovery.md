@@ -254,3 +254,11 @@ synthesized values can steer the copy onto another branch, so it can miss a chan
 or refuse one a real run would not reach; worktree effects and delivered but unconsumed answers can
 stop it early; and detection is still only `StepIdentityChangedError`. Embedded callers now also run
 the workflow body, including any top-level code outside effects, once more per accepted resume.
+
+An honored abort of the run's signal while the copy replays ends the real run as an abort in the
+body would: suspended and due now for a marked `RunInterruptedError`, otherwise `cancelled` (as a
+`workflow cancel` bound to the execution's lock token is), saved and reported as a
+`WorkflowRunError` with the abort reason as its cause. The acceptance stays unrecorded: the
+fingerprint, `codeChanges`, output and steps are as they were, so the next accepted resume
+preflights again. A format-1 record, which can be saved only through the migration that adopts the
+new source, is left untouched instead.

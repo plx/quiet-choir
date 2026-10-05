@@ -654,4 +654,76 @@ describe('cancelling a live execution', { timeout: 60_000 }, () => {
     // The body never ran again.
     expect(await f.calls()).toBe(1);
   });
+
+  it("cancels an accepted resume during runWorkflow's preflight without recording the acceptance", async () => {
+    const root = await mkdtemp(join(tmpdir(), 'choir-cancel-preflight-'));
+    roots.push(root);
+    await symlink(join(project, 'node_modules'), join(root, 'node_modules'));
+    await writeFile(join(root, 'package.json'), '{"type":"module"}');
+    const file = join(root, 'workflow.ts');
+    const bodies = join(root, 'bodies.txt');
+    const plan = async (value: string, resume: boolean) => {
+      await writeFile(
+        file,
+        `
+import { appendFileSync, readFileSync } from 'node:fs';
+import { setTimeout as delay } from 'node:timers/promises';
+import { z } from 'zod';
+import { defineWorkflow } from ${JSON.stringify(join(project, 'src/workflow/runtime/model.js'))};
+export default defineWorkflow({ name: 'accepted', version: '1', input: z.null(), output: z.string(),
+  run: async (ctx) => {
+    appendFileSync(${JSON.stringify(bodies)}, 'body\\n');
+    // The second body is the accepted resume's preflight: hold it until the run is cancelled.
+    if (readFileSync(${JSON.stringify(bodies)}, 'utf8').split('\\n').length - 1 === 2)
+      while (!ctx.signal.aborted) await delay(10);
+    await ctx.step('effect', { input: null, schema: z.string(), run: () => ${JSON.stringify(value)} });
+    return ctx.ask('q', { prompt: 'Text?', schema: z.string() });
+  }
+});
+`,
+      );
+      const analysis = analyzeTypecheckEntrypoint(file, root);
+      if (!analysis.ok) throw new Error(analysis.error.message);
+      return {
+        kind: 'workflow.execute' as const,
+        typecheck: analysis.plan,
+        runId: 'run-1',
+        stateDir,
+        cwd: root,
+        resume,
+        input: null,
+        ...(resume ? { acceptCodeChange: true } : {}),
+      };
+    };
+    const count = async (): Promise<number> =>
+      existsSync(bodies) ? (await readFile(bodies, 'utf8')).split('\n').length - 1 : 0;
+    // A suspended run: workflow cancel leaves an ended one alone, even while it is being resumed.
+    expect(await new WorkflowExecutor({ logger }).execute(await plan('one', false))).toMatchObject({
+      ok: true,
+      run: { status: 'suspended' },
+    });
+    const before = await readRun({ stateDir, runId: 'run-1' });
+
+    const outer = new AbortController();
+    const owner = new WorkflowExecutor({ logger, signal: outer.signal }).execute(
+      await plan('two', true),
+    );
+    await waitFor(async () => (await count()) === 2, 'the preflight body');
+    const sendSignal = vi.fn(() => {
+      outer.abort(interrupt());
+    });
+    expect(await cancel(sendSignal)).toMatchObject({ status: 'cancelled', signalsSent: 1 });
+    expect(failed(await owner).code).toBe('workflow.interrupted');
+    const saved = await readRun({ stateDir, runId: 'run-1' });
+    expect(saved.status).toBe('cancelled');
+    expect(saved.error).toMatch(/^Run run-1 cancelled by workflow cancel \(requested .+\)\.$/u);
+    expect(saved.interruptedBy).toBeUndefined();
+    // The acceptance was never recorded, and the real body never ran.
+    expect(saved.workflow.fingerprint).toBe(before.workflow.fingerprint);
+    expect(saved.codeChanges).toEqual(before.codeChanges);
+    expect(saved.steps).toEqual(before.steps);
+    expect(saved.steps['q']?.status).toBe('waiting');
+    expect(await count()).toBe(2);
+    expect(existsSync(requestPath())).toBe(false);
+  });
 });

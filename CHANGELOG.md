@@ -9,7 +9,9 @@
   failure) while status, fingerprint, output, `codeChanges`, waiting questions and the journal stay
   as they were. Embedded accepted resumes therefore run the workflow body once more. The CLI's
   `--accept-code-change` behaves as before (`run.incompatible`, exit 3, same details) but now
-  preflights once, through the runtime, on the record read under the writer lock (#215).
+  preflights once, through the runtime, on the record read under the writer lock. An abort during
+  that preflight ends the run `cancelled` (or suspended for a `RunInterruptedError`) without
+  recording the acceptance (#215).
 
 - `run.locked` refusals from `workflow resume`, `execute`, `start`, `tick`, `clean`, `rm`, `cancel`
   and `unlock` (and the skipped entries of `prune`) now carry `error.details.next`, a list of

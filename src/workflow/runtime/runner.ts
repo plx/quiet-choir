@@ -532,6 +532,25 @@ function message(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+/**
+ * Record an honored run-signal abort on `record`. A marked {@link RunInterruptedError} is a
+ * resumable suspension that is due at `now` and keeps `staleRecovery` (ADR 0029); any other reason,
+ * such as a `workflow cancel` request bound to this execution's lock (ADR 0039), cancels the run.
+ */
+function recordHonoredAbort(record: RunRecord, reason: unknown, now: number): void {
+  if (reason instanceof RunInterruptedError) {
+    record.status = 'suspended';
+    record.error = null;
+    record.rootCause = null;
+    record.interruptedBy = { reason: message(reason), at: new Date().toISOString() };
+    record.nextWakeAt = now;
+    return;
+  }
+  record.status = 'cancelled';
+  record.error = message(reason);
+  record.rootCause = { stepId: null, error: message(reason), errorKind: null, effect: null };
+}
+
 async function waitUntil(
   timestamp: number,
   signal: AbortSignal,
@@ -942,12 +961,59 @@ export async function runWorkflow<
           ...preflightProbeOptions(copy.stateDir),
         });
       } catch (error) {
-        // The copy may hold an interrupted or cancelled record; report the abort, never the copy.
-        options.signal?.throwIfAborted();
         change = findStepIdentityChange(error);
       } finally {
         // A temporary directory left behind must not fail the real run.
         await copy?.dispose().catch(() => undefined);
+      }
+      if (options.signal?.aborted) {
+        // The copy may hold an interrupted or cancelled record; the abort belongs to the real run.
+        // It ends this execution as the body's catch would (suspended for a marked interruption,
+        // otherwise cancelled), but the acceptance stays unrecorded: the fingerprint, codeChanges,
+        // output and steps are as they were. A format-1 record cannot be saved without the
+        // migration that adopts the changed workflow, so it stays untouched.
+        const reason: unknown = options.signal.reason;
+        if (existing.formatVersion !== 1) {
+          existing.formatVersion = 7;
+          existing.seq ??= 0;
+          existing.engine = engine;
+          existing.schemaRevision = SUPPORTED_SCHEMA_REVISION;
+          recordHonoredAbort(existing, reason, clockNow(clock));
+          delete existing.recoveryHint;
+          if (existing.status === 'cancelled') {
+            const finishedAt = new Date().toISOString();
+            for (const frame of Object.values(existing.children ?? {}))
+              if (frame.status === 'running' || frame.status === 'suspended') {
+                frame.status = 'cancelled';
+                frame.finishedAt = finishedAt;
+                frame.error ??= existing.error;
+              }
+            const recoveryHint = chooseRecoveryHint({
+              cause: recoveryCause([reason], existing),
+              rehearsal: false,
+              recordedWork:
+                Object.keys(existing.steps).length > 0 ||
+                Object.keys(existing.maps ?? {}).length > 0,
+              allTerminal: hasTerminalOutcomes(existing),
+              sourceChanged: (compatibility?.changed.length ?? 0) > 0,
+              runId: existing.id,
+            });
+            if (recoveryHint !== undefined) existing.recoveryHint = recoveryHint;
+          }
+          existing.updatedAt = new Date().toISOString();
+          const context = `Could not save run ${existing.id}`;
+          try {
+            await storage.append(existing, { context });
+            savedFailure = structuredClone(existing);
+          } catch (error) {
+            checkpointProblems.push(
+              error instanceof CheckpointError
+                ? error
+                : await checkpointError('save', stateDir, existing.id, error, context),
+            );
+          }
+        }
+        throw reason;
       }
       // Before savedFailure is set: the caller gets this bare error and the record is untouched.
       if (change) throw acceptedReplayRefusal(change, options.runId);
@@ -3676,14 +3742,10 @@ export async function runWorkflow<
       // A marked external interruption (a CLI signal or tick's deadline) is not a failure: save a
       // resumable suspension that is due now. It keeps staleRecovery, since it shows no progress.
       if (interrupted && options.signal.reason instanceof RunInterruptedError) {
-        record.status = 'suspended';
-        children.finish('suspended');
-        record.error = null;
-        record.rootCause = null;
-        record.output = null;
-        record.interruptedBy = { reason: message(error), at: new Date().toISOString() };
         // After questions.close(): the question pump would otherwise rewrite the wake time.
-        record.nextWakeAt = clockNow(clock);
+        recordHonoredAbort(record, error, clockNow(clock));
+        children.finish('suspended');
+        record.output = null;
         warnUnmatched();
         const suspended = observations.lifecycle('run.suspended');
         if (await trySave()) {

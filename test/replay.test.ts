@@ -13,6 +13,7 @@ import {
   FileRunStore,
   FixtureHarness,
   readRun,
+  RunInterruptedError,
   runWorkflow,
   StepIdentityChangedError,
   WorkflowRunError,
@@ -782,24 +783,60 @@ it('re-finalizes an embedded tail-only fix with zero repeated effects and runs a
   expect(events.filter((event) => event.type === 'run.started')).toHaveLength(1);
 });
 
-it('reports an abort during the preflight without changing the run', async () => {
-  let bodies = 0;
-  const controller = new AbortController();
-  let callback = (): string => 'one';
-  const definition = workflow(async (ctx) => {
-    // The second body is the preflight's: abort there, before it meets the changed step.
-    if (++bodies === 2) controller.abort(new Error('stop'));
-    await ctx.step('local', { input: null, schema: z.string(), run: callback });
-    throw new Error('tail');
-  });
-  await expect(runWorkflow(definition, options())).rejects.toThrow('tail');
-  const before = { record: await readRun(options()), files: await runFiles('source') };
-  callback = () => 'two';
-  const rejected = await acceptedRejection(definition, { signal: controller.signal });
-  expect(rejected).toMatchObject({ message: 'stop' });
-  expect(bodies).toBe(2);
-  expect(await runFiles('source')).toEqual(before.files);
-});
+it.each([
+  { abort: 'a cancel', reason: () => new Error('stop'), status: 'cancelled' },
+  {
+    abort: 'a marked interruption',
+    reason: () => new RunInterruptedError('Workflow interrupted by SIGINT.'),
+    status: 'suspended',
+  },
+] as const)(
+  'ends the run on $abort during the preflight without recording the acceptance',
+  async ({ reason, status }) => {
+    let bodies = 0;
+    const controller = new AbortController();
+    const cause = reason();
+    let callback = (): string => 'one';
+    const definition = workflow(async (ctx) => {
+      // The second body is the preflight's: abort there, before it meets the changed step.
+      if (++bodies === 2) controller.abort(cause);
+      await ctx.step('local', { input: null, schema: z.string(), run: callback });
+      throw new Error('tail');
+    });
+    await expect(runWorkflow(definition, options())).rejects.toThrow('tail');
+    const before = await readRun(options());
+    callback = () => 'two';
+    const rejected = await acceptedRejection(definition, { signal: controller.signal });
+    expect(bodies).toBe(2);
+    // The abort ends this execution, as one in the body would: the saved run, with the reason.
+    expect(rejected).toBeInstanceOf(WorkflowRunError);
+    expect((rejected as WorkflowRunError).cause).toBe(cause);
+    expect((rejected as WorkflowRunError).run.status).toBe(status);
+    const after = await readRun(options());
+    expect(after.status).toBe(status);
+    if (status === 'cancelled') {
+      expect(after).toMatchObject({ error: 'stop', rootCause: { stepId: null, error: 'stop' } });
+      expect(after.interruptedBy).toBeUndefined();
+    } else {
+      expect(after).toMatchObject({
+        error: null,
+        rootCause: null,
+        interruptedBy: { reason: 'Workflow interrupted by SIGINT.' },
+      });
+      expect(after.nextWakeAt).toEqual(expect.any(Number));
+    }
+    // The acceptance was never recorded.
+    expect(after.workflow.fingerprint).toBe(before.workflow.fingerprint);
+    expect(after.output).toEqual(before.output);
+    expect(after.codeChanges).toEqual(before.codeChanges);
+    expect(after.steps).toEqual(before.steps);
+    // So a later accepted resume still meets the changed step on its preflight.
+    const refused = await acceptedRejection(definition);
+    expect(refused).toBeInstanceOf(StepIdentityChangedError);
+    expect(refused).not.toBeInstanceOf(WorkflowRunError);
+    expect((await readRun(options())).status).toBe(status);
+  },
+);
 
 it('still fails and changes the run when the preflight cannot reach a changed completed step', async () => {
   let callback = (): string => 'one';
