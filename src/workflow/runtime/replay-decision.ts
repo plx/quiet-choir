@@ -18,7 +18,8 @@
  * - Original format-one steps migrate only on an exact old-fingerprint match, never for a terminal
  *   agent step (its isolation mode was never pinned).
  * - Dry-run refuses Git effects after terminal replay but before fork reuse, unless the runner
- *   synthesizes the effect (a fresh isolated agent call, or a merge of unchanged changes).
+ *   synthesizes the effect (a fresh isolated agent call, or a merge of unchanged changes; the
+ *   accepted-replay probe synthesizes every Git effect, `ctx.worktree` included).
  * - Fork reuse is considered only for an absent step in a forked run.
  * - Strict healed divergence permits terminal replay and fork reuse but stops before the next live
  *   effect.
@@ -77,8 +78,9 @@ export interface ReplayInput {
   readonly isolated: boolean;
   /**
    * Whether a dry-run synthesizes this Git effect instead of running it: a fresh isolated agent
-   * call, or a merge whose inputs are all unchanged changes. Meaningful only under `rehearsal`; a
-   * `worktree` effect is refused regardless.
+   * call, or a merge whose inputs are all unchanged changes. The accepted-replay probe (#217)
+   * synthesizes every Git effect, and only it synthesizes a `worktree` effect. Meaningful only
+   * under `rehearsal`.
    */
   readonly rehearsalSynthesized: boolean;
   /** Whether a strict replay has already recorded a healed divergence. */
@@ -200,10 +202,11 @@ export function decideReplay(input: ReplayInput): ReplayDecision {
     });
   }
   if (prior && isTerminal(prior)) return { migrateLegacy, outcome: { kind: 'replay' } };
-  // ctx.worktree creates a real handle, so it is never synthesized.
+  // ctx.worktree creates a real handle, so only the accepted-replay probe synthesizes it.
   if (
     input.rehearsal &&
-    (kind === 'worktree' || ((input.isolated || kind === 'merge') && !input.rehearsalSynthesized))
+    (kind === 'worktree' || input.isolated || kind === 'merge') &&
+    !input.rehearsalSynthesized
   )
     return refuse(migrateLegacy, { reason: 'rehearsal-git' });
   if (!prior && input.forkedFrom) {
