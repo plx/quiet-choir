@@ -1,5 +1,7 @@
 import type { InspectionStatus, RunSummary } from '../workflow/loader/inspection.js';
 import type { ExecSummary } from '../workflow/runtime/exec-model.js';
+import { unlockCommand } from '../workflow/runtime/lock.js';
+import { unlockAdvice } from '../workflow/runtime/recovery-decision.js';
 import { formatNextCommands } from './presentation.js';
 import { parseDuration } from './duration.js';
 import {
@@ -127,6 +129,20 @@ function lockLine(lock: RunSummary['ownership']['locks'][number]): string {
   const holder = (value: { pid: number; host: string; state: string }): string =>
     `pid ${String(value.pid)} (${value.state}) on ${value.host}`;
   return `Lock ${lock.kind} ${lock.path}: ${lock.owner ? `owner ${holder(lock.owner)}` : 'owner unreadable'}${lock.recovery ? `; recovery ${holder(lock.recovery)}` : ''}${lock.warning ? `; warning: ${lock.warning}` : ''}`;
+}
+
+/**
+ * The one `Unlock:` line for a run whose locks `workflow unlock` could clear, or null. View-only:
+ * nothing reaches JSON. Needs `stateDir`, since the command carries it. @internal
+ */
+function unlockHint(run: RunSummary): string | null {
+  if (run.stateDir === undefined) return null;
+  const advice = unlockAdvice(run.ownership);
+  if (advice === null) return null;
+  const command = unlockCommand(run.stateDir, run.id);
+  return advice.kind === 'unlock'
+    ? `Unlock: ${command}`
+    : `Unlock: ${command} --force-remote (only if ${advice.host} is this machine under an old name or is permanently gone)`;
 }
 
 /** Render only known values: a running workflow never ends in a bare null. @internal */
@@ -286,6 +302,8 @@ export function formatRunSummary(run: RunSummary, verbose = false): string {
       `Recent: ${event.at}${event.phase ? ` [${event.phase}]` : ''} ${event.message ?? event.type}${event.data === null ? '' : ` ${JSON.stringify(event.data)}`}`,
     );
   for (const lock of run.ownership.locks) lines.push(lockLine(lock));
+  const hint = unlockHint(run);
+  if (hint !== null) lines.push(hint);
   for (const process of run.ownership.processes)
     lines.push(
       process.process

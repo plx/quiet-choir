@@ -135,7 +135,10 @@ or unverified children refuse execution (exit 3); explicit `--resume --kill-orph
 birth-identity-confirmed survivors. A reused PID is not signaled. Text inspection names the owner
 PID and state (with `stale` run status for a missing lock or dead/released owner), then child
 binary, PID/group, step, attempt and state, and one line per existing lock with its owner and any
-recovery marker. JSON adds `ownership: { locked, owner, processes, warning?, locks }`; this field is
+recovery marker. When no lock owner or recoverer is alive or unverifiable locally and no child is
+alive or unverifiable, it then adds one `Unlock:` line with the exact `workflow unlock` command
+(`--force-remote` and its caveat appear only when a holder is on a foreign host); JSON is unchanged
+by that line. JSON adds `ownership: { locked, owner, processes, warning?, locks }`; this field is
 not saved in the checkpoint. `locks` lists the existing `primary` lock and legacy `guard`, each as
 `{ kind, path, owner, recovery, warning? }`, where `owner` and `recovery` (a `recovery.json`
 recoverer) are `{ pid, host, state }` or null. Tick skips a run as `locked` while any lock's owner

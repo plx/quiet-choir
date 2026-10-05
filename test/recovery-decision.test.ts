@@ -10,6 +10,7 @@ import {
   decideStaleRecovery,
   decideUnlock,
   STALE_RECOVERY_CAP,
+  unlockAdvice,
   type RecoveryClass,
   type UnlockDecision,
   type UnlockHolder,
@@ -391,5 +392,141 @@ describe('decideUnlock', () => {
       reason: 'remote',
       holder: { token: 'primary-marker', host: 'elsewhere' },
     });
+  });
+});
+
+describe('unlockAdvice', () => {
+  const hostOf = (state: OwnerState) => ({ pid: 1, host: 'elsewhere', state, osStartTime: null });
+  const remoteLock = (kind: RunLockView['kind'], owner: OwnerState, recovery?: MarkerState) => ({
+    kind,
+    path: `/state/${kind}`,
+    owner: owner === 'remote' ? hostOf('remote') : hostOf(owner),
+    recovery: recovery === undefined ? null : { pid: 2, host: 'elsewhere', state: recovery },
+  });
+  const advice = (value: RunOwnership) => unlockAdvice(value);
+  const processesOf = (state: HarnessProcessInspection['state']): HarnessProcessInspection[] => [
+    { file: '1.json', process: null, state },
+  ];
+
+  it('gives no hint for an unlocked run', () => {
+    expect(advice({ locked: false, owner: null, processes: [], locks: [] })).toBeNull();
+  });
+
+  it('gives no hint for an alive or unknown owner', () => {
+    expect(advice(ownership('alive', 'none'))).toBeNull();
+    expect(advice(ownership('unknown', 'none'))).toBeNull();
+  });
+
+  it('suggests unlock for a dead or released owner', () => {
+    expect(advice(ownership('dead', 'none'))).toEqual({ kind: 'unlock' });
+    expect(advice(ownership('released', 'none'))).toEqual({ kind: 'unlock' });
+    expect(advice(ownership('dead', 'dead'))).toEqual({ kind: 'unlock' });
+  });
+
+  it('names the host of a remote owner', () => {
+    const value: RunOwnership = {
+      ...ownership('remote', 'none'),
+      locks: [remoteLock('primary', 'remote')],
+    };
+    expect(advice(value)).toEqual({ kind: 'force-remote', host: 'elsewhere' });
+  });
+
+  it('judges the recovery marker as well as the owner', () => {
+    expect(advice(ownership('dead', 'none', { recovery: 'alive' }))).toBeNull();
+    expect(advice(ownership('dead', 'none', { recovery: 'unknown' }))).toBeNull();
+    expect(advice(ownership('dead', 'none', { recovery: 'dead' }))).toEqual({ kind: 'unlock' });
+    expect(
+      advice({ ...ownership('dead', 'none'), locks: [remoteLock('primary', 'dead', 'remote')] }),
+    ).toEqual({
+      kind: 'force-remote',
+      host: 'elsewhere',
+    });
+  });
+
+  it('suggests unlock for damaged metadata when nothing is alive', () => {
+    // owner.json unreadable: owner null, lock warning.
+    const damagedOwner: RunLockView = { ...lock('primary', null), warning: 'owner.json: bad JSON' };
+    expect(advice({ ...ownership(null, 'none'), locks: [damagedOwner] })).toEqual({
+      kind: 'unlock',
+    });
+    // recovery.json unreadable: recovery null, lock warning, dead owner.
+    const damagedMarker: RunLockView = {
+      ...lock('primary', 'dead'),
+      warning: 'recovery.json: bad JSON',
+    };
+    expect(advice({ ...ownership('dead', 'none'), locks: [damagedMarker] })).toEqual({
+      kind: 'unlock',
+    });
+    // A live owner wins over a warning on the same lock.
+    const aliveWarned: RunLockView = {
+      ...lock('primary', 'alive'),
+      warning: 'recovery.json: bad JSON',
+    };
+    expect(advice({ ...ownership('alive', 'none'), locks: [aliveWarned] })).toBeNull();
+  });
+
+  it('handles observations without a per-lock view', () => {
+    expect(
+      advice({ locked: true, owner: null, processes: [], warning: 'lock: EACCES', locks: [] }),
+    ).toEqual({ kind: 'unlock' });
+    expect(
+      advice({
+        locked: true,
+        owner: { pid: 1, host: 'here', state: 'dead', osStartTime: null },
+        processes: [],
+        locks: [],
+      }),
+    ).toEqual({ kind: 'unlock' });
+    expect(
+      advice({
+        locked: true,
+        owner: { pid: 1, host: 'here', state: 'alive', osStartTime: null },
+        processes: [],
+        locks: [],
+      }),
+    ).toBeNull();
+  });
+
+  it('gives no hint while a child is alive or unknown, unless the owner is remote', () => {
+    expect(advice(ownership('dead', 'alive'))).toBeNull();
+    expect(advice(ownership('dead', 'unknown'))).toBeNull();
+    expect(advice(ownership('dead', 'reused'))).toEqual({ kind: 'unlock' });
+    // Inspection masks a remote owner's children as unknown; unlock refuses the host first.
+    expect(
+      advice({
+        ...ownership('remote', 'none'),
+        processes: processesOf('unknown'),
+        locks: [remoteLock('primary', 'remote')],
+      }),
+    ).toEqual({ kind: 'force-remote', host: 'elsewhere' });
+  });
+
+  it('lets a local child block a remote recoverer but not a remote owner', () => {
+    const remoteRecoverer = (state: HarnessProcessInspection['state']): RunOwnership => ({
+      ...ownership('dead', 'none'),
+      processes: processesOf(state),
+      locks: [remoteLock('primary', 'dead', 'remote')],
+    });
+    // The owner is dead, so its children are really observed: unlock would refuse the orphans.
+    expect(advice(remoteRecoverer('alive'))).toBeNull();
+    expect(advice(remoteRecoverer('unknown'))).toBeNull();
+    expect(advice(remoteRecoverer('dead'))).toEqual({ kind: 'force-remote', host: 'elsewhere' });
+    // A remote owner masks its children, however they read.
+    expect(
+      advice({
+        ...ownership('remote', 'none'),
+        processes: processesOf('alive'),
+        locks: [remoteLock('primary', 'remote')],
+      }),
+    ).toEqual({ kind: 'force-remote', host: 'elsewhere' });
+  });
+
+  it('lets a live local holder beat a remote one in another lock', () => {
+    expect(
+      advice({
+        ...ownership('remote', 'none'),
+        locks: [remoteLock('primary', 'remote'), lock('guard', 'alive')],
+      }),
+    ).toBeNull();
   });
 });

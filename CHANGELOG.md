@@ -2,6 +2,13 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- `workflow inspect` text now prints one `Unlock:` line naming the exact `workflow unlock` command
+  after the `Lock` lines when no lock owner or recoverer is alive or unverifiable locally and no
+  child is alive or unverifiable: a dead or released owner, a dead recoverer, or missing or damaged
+  lock metadata. The line adds `--force-remote` and its caveat only when a holder is on a foreign
+  host, and is omitted for a live local owner, an unlocked run, or a summary without a state
+  directory. `--json` output is unchanged (#212).
+
 - A `workflow tick` resume that the deadline interrupts after tick saved its stale-recovery count,
   but before the runtime reopened the run, is now reported as resumed outcome `interrupted` (exit 75
   with `--run`) instead of a final `cancelled`. The run stays `running` and the next tick recovers

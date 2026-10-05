@@ -35,6 +35,7 @@ import {
   parseWatchInterval,
   watchExitCodes,
 } from '../src/cli/inspection-view.js';
+import { unlockCommand } from '../src/workflow/runtime/lock.js';
 import * as store from '../src/workflow/runtime/store.js';
 
 vi.mock('../src/workflow/runtime/store.js', async (importOriginal) => {
@@ -387,6 +388,8 @@ it('prints one line per lock with its owner, recovery marker and warning', () =>
   expect(summary.status).toBe('running');
   const text = formatRunSummary(summary);
   expect(text).toContain('Owner: pid 10 (dead) on h');
+  // A live recoverer means unlock would refuse, so no hint.
+  expect(text).not.toContain('Unlock:');
   expect(text).toContain(
     'Lock primary /state/run/lock: owner pid 10 (dead) on h; recovery pid 11 (alive) on h',
   );
@@ -394,6 +397,120 @@ it('prints one line per lock with its owner, recovery marker and warning', () =>
     'Lock guard /state/run.json.lock: owner unreadable; warning: owner.json: bad JSON',
   );
   expect(formatRunSummary(summarizeRun(record(), unlocked))).not.toContain('Lock ');
+});
+
+type LockOwner = NonNullable<RunOwnership['owner']>;
+const holder = (state: LockOwner['state'], host = 'h'): LockOwner => ({
+  pid: 10,
+  host,
+  state,
+  osStartTime: null,
+});
+function lockView(
+  kind: 'primary' | 'guard',
+  owner: LockOwner | null,
+  extra: { recovery?: LockOwner | null; warning?: string } = {},
+): RunOwnership['locks'][number] {
+  const { recovery = null, warning } = extra;
+  return {
+    kind,
+    path: kind === 'primary' ? '/state/run/lock' : '/state/run.json.lock',
+    owner,
+    recovery:
+      recovery === null
+        ? null
+        : { pid: recovery.pid, host: recovery.host, state: recovery.state as 'alive' },
+    ...(warning === undefined ? {} : { warning }),
+  };
+}
+function held(
+  locks: RunOwnership['locks'],
+  options: { processes?: RunOwnership['processes']; warning?: string } = {},
+): RunOwnership {
+  return {
+    locked: true,
+    owner: locks[0]?.owner ?? null,
+    processes: options.processes ?? [],
+    locks,
+    ...(options.warning === undefined ? {} : { warning: options.warning }),
+  };
+}
+const withStateDir = (ownership: RunOwnership) => ({
+  ...summarizeRun(record(), ownership),
+  stateDir: '/state',
+});
+const unlockLines = (text: string) => text.split('\n').filter((line) => line.startsWith('Unlock:'));
+
+it('prints one plain Unlock line after the lock lines for abandoned locks', () => {
+  const text = formatRunSummary(
+    withStateDir(
+      held([lockView('primary', holder('dead')), lockView('guard', holder('released'))], {
+        processes: [{ file: '1.json', process: null, state: 'dead', detail: 'gone' }],
+      }),
+    ),
+  );
+  const lines = text.split('\n');
+  expect(unlockLines(text)).toEqual([`Unlock: ${unlockCommand('/state', 'run')}`]);
+  expect(text).not.toContain('--force-remote');
+  const unlock = lines.findIndex((line) => line.startsWith('Unlock:'));
+  expect(lines.findLastIndex((line) => line.startsWith('Lock '))).toBe(unlock - 1);
+  expect(lines[unlock + 1]).toMatch(/^Process:/u);
+});
+
+it('adds --force-remote and its caveat only for a foreign host', () => {
+  const caveat = (host: string) =>
+    `Unlock: ${unlockCommand('/state', 'run')} --force-remote (only if ${host} is this machine under an old name or is permanently gone)`;
+  expect(
+    unlockLines(
+      formatRunSummary(withStateDir(held([lockView('primary', holder('remote', 'far'))]))),
+    ),
+  ).toEqual([caveat('far')]);
+  expect(
+    unlockLines(
+      formatRunSummary(
+        withStateDir(
+          held([lockView('primary', holder('dead'), { recovery: holder('remote', 'other') })]),
+        ),
+      ),
+    ),
+  ).toEqual([caveat('other')]);
+});
+
+it('prints the plain Unlock line for a damaged marker, a warning lock or a bare lock warning', () => {
+  const plain = [`Unlock: ${unlockCommand('/state', 'run')}`];
+  const damagedMarker = held([
+    lockView('primary', holder('dead'), { warning: 'recovery.json: bad JSON' }),
+  ]);
+  const deadRecoverer = held([lockView('primary', holder('dead'), { recovery: holder('dead') })]);
+  const warned = held([
+    lockView('primary', holder('dead')),
+    lockView('guard', null, { warning: 'owner.json: bad JSON' }),
+  ]);
+  const bare: RunOwnership = {
+    locked: true,
+    owner: null,
+    processes: [],
+    warning: 'lock: EACCES',
+    locks: [],
+  };
+  for (const ownership of [damagedMarker, deadRecoverer, warned, bare]) {
+    const text = formatRunSummary(withStateDir(ownership));
+    expect(unlockLines(text)).toEqual(plain);
+    expect(text).not.toContain('--force-remote');
+  }
+});
+
+it('prints no Unlock line for a live owner, a live child, no lock or no state directory', () => {
+  const alive = held([lockView('primary', holder('alive'))]);
+  const warnedAlive = held([lockView('primary', holder('alive'), { warning: 'recovery.json: x' })]);
+  const orphans = held([lockView('primary', holder('dead'))], {
+    processes: [{ file: '1.json', process: null, state: 'alive' }],
+  });
+  for (const ownership of [alive, warnedAlive, orphans, unlocked])
+    expect(formatRunSummary(withStateDir(ownership))).not.toContain('Unlock:');
+  // summarizeRun alone carries no state directory, so there is no runnable command.
+  const abandoned = held([lockView('primary', holder('dead'))]);
+  expect(formatRunSummary(summarizeRun(record(), abandoned))).not.toContain('Unlock:');
 });
 
 it('adopts a checkpoint that completed between the record read and the ownership read, instead of reporting stale', async () => {
