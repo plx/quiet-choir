@@ -97,14 +97,44 @@ function observeRunner(child) {
   });
   return { child, done, stderr: () => stderr };
 }
+// 'unknown' is a failed observation (for example a slow ps under load), not a state: re-read until
+// every reading is definite. A definite wrong reading fails at once, so each check stays as strict
+// as a single read. The 10 s budget only bounds a host where ps keeps failing; a healthy read takes
+// milliseconds.
+async function expectGroups(records, expected, context, budget = 10_000) {
+  const until = performance.now() + budget;
+  for (;;) {
+    const states = records.map(({ pid }) => groupState({ pid, pgid: pid }));
+    const wrong = records.filter((_, index) => !['unknown', expected].includes(states[index]));
+    const summary = records.map(({ pid }, index) => `${pid}=${states[index]}`).join(', ');
+    if (wrong.length) throw new Error(`${context}: groups not ${expected} (${summary})`);
+    if (!states.includes('unknown')) return;
+    if (performance.now() >= until)
+      throw new Error(`${context}: groups not ${expected} within ${budget} ms (${summary})`);
+    await delay(25);
+  }
+}
+// The same treatment for a live inspect: re-run it while any ownership state is 'unknown'.
+async function inspectOwnership(runId, budget = 10_000) {
+  const until = performance.now() + budget;
+  for (;;) {
+    const result = cli(['inspect', runId, '--state-dir', state, '--json']);
+    assert.equal(result.status, 0, result.stderr);
+    const { ownership } = JSON.parse(result.stdout);
+    const states = [ownership.owner.state, ...ownership.processes.map((entry) => entry.state)];
+    if (!states.includes('unknown')) return ownership;
+    if (performance.now() >= until)
+      throw new Error(`${runId}: inspect ownership still unknown after ${budget} ms (${states})`);
+    await delay(25);
+  }
+}
 async function ready(runId) {
   await waitFor(() => calls(runId).length === 3, `${runId}: three recorded live agents`);
   const records = calls(runId);
   records.forEach(({ pid, osStartTime }) => allPids.set(pid, osStartTime));
-  for (const call of records) {
+  for (const call of records)
     assert.equal(call.registered, true, 'task input arrived before durable process registration');
-    assert.equal(groupState({ pid: call.pid, pgid: call.pid }), 'alive');
-  }
+  await expectGroups(records, 'alive', `${runId}: ready`);
   return records;
 }
 function gone(records) {
@@ -128,7 +158,9 @@ process.stdin.resume();process.stdin.on('end',()=>{
  const record=JSON.parse(fs.readFileSync(path.join(process.env.QC_PROCESS_STATE,run+'/lock/processes/'+process.pid+'.json'),'utf8'));
  if(process.env.QC_PROCESS_MODE==='finish'&&fs.existsSync(run+'.calls')) {
   const old=fs.readFileSync(run+'.calls','utf8').trim().split('\\n').map(JSON.parse).filter(call=>call.mode==='hang');
-  if(old.some(({pid})=>groupState({pid,pgid:pid})!=='dead'))throw Error('Replacement started before original processes stopped');
+  // Re-read an 'unknown' (failed) observation for up to 10 s, like the smoke's expectGroups.
+  const settled=(pid)=>{const until=Date.now()+10000;let state;while((state=groupState({pid,pgid:pid}))==='unknown'&&Date.now()<until)Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,25);return state;};
+  if(old.some(({pid})=>settled(pid)!=='dead'))throw Error('Replacement started before original processes stopped');
  }
  fs.appendFileSync(run+'.calls',JSON.stringify({pid:process.pid,osStartTime:record.osStartTime,mode:process.env.QC_PROCESS_MODE,registered:record.runId===run&&record.stepId.startsWith('agents/')&&record.attempt>=1})+'\\n');
  if(process.env.QC_PROCESS_MODE==='finish'){console.log(JSON.stringify({type:'result',subtype:'success',result:'ok'}));process.exit(0);}
@@ -151,13 +183,9 @@ export default defineWorkflow({name:'process-lifecycle-cli',version:'1',input:z.
   }
   const killed = start('killed');
   const original = await ready('killed');
-  const active = cli(['inspect', 'killed', '--state-dir', state, '--json']);
-  assert.equal(active.status, 0, active.stderr);
-  assert.equal(JSON.parse(active.stdout).ownership.owner.state, 'alive');
-  assert.equal(
-    JSON.parse(active.stdout).ownership.processes.filter((p) => p.state === 'alive').length,
-    3,
-  );
+  const active = await inspectOwnership('killed');
+  assert.equal(active.owner.state, 'alive');
+  assert.equal(active.processes.filter((p) => p.state === 'alive').length, 3);
   killed.child.kill('SIGKILL');
   assert.equal((await killed.done).signal, 'SIGKILL');
   const checkpoint = readFileSync(join(state, 'killed', 'run.json'), 'utf8');
@@ -184,7 +212,7 @@ export default defineWorkflow({name:'process-lifecycle-cli',version:'1',input:z.
   assert.equal(recovered.status, 0, recovered.stderr);
   assert.equal(JSON.parse(recovered.stdout).output, 3);
   assert.equal(calls('killed').length, 6);
-  assert.ok(gone(original));
+  await expectGroups(original, 'dead', 'killed: orphans after --kill-orphans');
   assert.equal(existsSync(join(state, 'killed', 'lock')), false);
   for (const step of Object.values(JSON.parse(recovered.stdout).steps))
     assert.equal(step.attemptHistory.at(-1).policy.killGraceMs, 200);
@@ -197,7 +225,7 @@ export default defineWorkflow({name:'process-lifecycle-cli',version:'1',input:z.
     const result = await running.done;
     assert.equal(result.code, 130, result.stderr);
     assert.match(result.stderr, /Send again to force/);
-    assert.ok(gone(records));
+    await expectGroups(records, 'dead', `${id}: after first signal exit`);
     const record = readRunSync({ stateDir: state, runId: id });
     // A first signal saves a resumable suspension; the in-flight steps are still cancelled.
     assert.equal(record.status, 'suspended');
@@ -213,7 +241,7 @@ export default defineWorkflow({name:'process-lifecycle-cli',version:'1',input:z.
     () => forced.stderr().includes('Send again to force'),
     'first interrupt diagnostic',
   );
-  assert.ok(forcing.every(({ pid }) => groupState({ pid, pgid: pid }) === 'alive'));
+  await expectGroups(forcing, 'alive', 'forced: still alive after the first signal');
   const begin = performance.now();
   forced.child.kill('SIGHUP');
   assert.equal((await forced.done).code, 130);
@@ -229,7 +257,7 @@ export default defineWorkflow({name:'process-lifecycle-cli',version:'1',input:z.
   closed.child.stdout.destroy();
   closed.child.kill('SIGHUP');
   assert.equal((await closed.done).code, 130);
-  assert.ok(gone(closedRecords));
+  await expectGroups(closedRecords, 'dead', 'closed: after exit with closed pipes');
   assert.equal(existsSync(join(state, 'closed', 'lock')), false);
   const doctorBinary = join(bin, 'doctor-harness');
   writeFileSync(
