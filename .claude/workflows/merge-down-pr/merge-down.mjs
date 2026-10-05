@@ -912,9 +912,10 @@ export function reviewFindings(text) {
 }
 
 // Each review runs in a throwaway worktree of its own at the reviewed head (removed afterwards),
-// with its own dependencies so it can run tests. The workflow's worktree is shared with the check suite running
-// at the same time and with later fix rounds, and a review can outlive a failed or timed-out wait,
-// so a review never reads from or writes to it.
+// with its own dependencies so it can run tests. The workflow's worktree is shared with the
+// concurrent check suite and later fix rounds, and a review can outlive a failed wait, so a review
+// never runs in or writes to it. The only thing taken from it is a copy-on-write clone of its
+// node_modules when the lockfile matches (see reviewDeps).
 const reviewWorktree = (P, pr, sha) => join(prDir(P, pr), `review-${sha.slice(0, 12)}`);
 function removeReviewWorktree(W, dir) {
   run('git', ['-C', W, 'worktree', 'remove', '--force', dir], { allowFail: true });
