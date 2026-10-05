@@ -8,6 +8,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import { readRun } from '../dist/index.js';
 import { processIdentity } from '../dist/processes/identity.js';
+import { formatArgv } from '../dist/workflow/runtime/commands.js';
 
 if (process.platform === 'win32') {
   console.log('SKIP POSIX process-group unlock fixtures on Windows');
@@ -25,7 +26,7 @@ const dist = JSON.stringify(join(repository, 'dist/index.js'));
 const DEAD = 2_000_000_000;
 // Run through bin/run.js with no installed quiet-choir, every printed unlock command starts with the
 // launcher `node <realpath of bin/run.js>` (#135, #213).
-const unlockProgram = `${process.execPath} ${realpathSync(cliPath)}`;
+const unlockProgram = formatArgv([process.execPath, realpathSync(cliPath)]);
 const sleepers = [];
 
 function command(args) {
@@ -114,7 +115,7 @@ function resumeNamesUnlock(runId, ...extra) {
   assert.ok(error.details.next.length >= 1, JSON.stringify(error.details));
   for (const entry of error.details.next) {
     assert.deepEqual(entry.argv.slice(0, 2), [process.execPath, realpathSync(cliPath)]);
-    assert.ok(error.message.includes(entry.argv.join(' ')), error.message);
+    assert.ok(error.message.includes(formatArgv(entry.argv)), error.message);
   }
   for (const text of extra) assert.ok(error.message.includes(text), error.message);
   return error;
@@ -167,7 +168,7 @@ try {
   assert.equal(remote.details.host, foreign);
   assert.equal(remote.details.next.length, 1);
   assert.equal(remote.details.next[0].argv.at(-1), '--force-remote');
-  assert.ok(remote.message.includes(remote.details.next[0].argv.join(' ')), remote.message);
+  assert.ok(remote.message.includes(formatArgv(remote.details.next[0].argv)), remote.message);
   const forced = document(0, 'unlock', 'F', '--force-remote', '--json');
   assert.equal(forced.kind, 'workflow.unlock.result');
   assert.equal(forced.forceRemote, true);

@@ -16,6 +16,7 @@ import {
 import { hostname, tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { formatArgv } from '../dist/workflow/runtime/commands.js';
 
 const repository = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const cli = join(repository, 'bin/run.js');
@@ -154,7 +155,9 @@ try {
     '--force-remote',
   ]);
   assert.ok(
-    locked.error.message.includes(`${process.execPath} ${realpathSync(cli)} workflow unlock`),
+    locked.error.message.includes(
+      formatArgv([process.execPath, realpathSync(cli), 'workflow', 'unlock']),
+    ),
   );
   const unlocked = emitted(unlock.argv);
   assert.equal(unlocked.status, 0, unlocked.stderr);
