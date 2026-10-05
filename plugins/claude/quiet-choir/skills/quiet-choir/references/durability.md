@@ -206,8 +206,9 @@ previously completed run, first clearing any stale output so a failed re-finaliz
 a prior result. A fixed unfinished callback can execute again. A changed completed step (callback,
 prompt, input, schema, options) can never be reused, so `runWorkflow`, and therefore the CLI, first
 replays the accepted body against a disposable copy of the record, with every unfinished agent call,
-local step, file effect, poll observer and command synthesized. If the copy meets such a step, the
-command refuses with `run.incompatible` (exit 3) and changes nothing: status, fingerprint, output,
+local step, file effect, poll observer, command and worktree effect synthesized (no Git runs) and
+the run's delivered but unconsumed answers copied in. If the copy meets such a step, the command
+refuses with `run.incompatible` (exit 3) and changes nothing: status, fingerprint, output,
 `codeChanges` and waiting questions stay as they were. `error.details.divergent` names the step and
 its changed components (`[{stepId, components}]`), and `error.details.next` holds the replacement
 command,

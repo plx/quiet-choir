@@ -109,7 +109,8 @@ const probeHarness: Harness = {
 
 /**
  * Answers every command without spawning: exit 0 with empty plain stdout, or a synthesized value
- * for a structured command. Worktree Git gets the same answers, as the CLI's preflight did.
+ * for a structured command. Worktree Git never reaches it: the runtime synthesizes every worktree
+ * effect under the probe without a process runner.
  */
 const probeProcessRunner: ProcessRunner = {
   run: (request, invocation) =>
