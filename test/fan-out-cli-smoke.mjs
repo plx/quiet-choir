@@ -22,6 +22,10 @@ const file = join(fixture, 'fanout.ts');
 const binaryDirectory = join(fixture, 'bin');
 const entry = join(root, 'bin/run.js');
 const env = { ...process.env, PATH: `${binaryDirectory}:${process.env.PATH}` };
+// A writer that should be cancelled holds for HOLD_LINES lines (one per 60 ms, about 15 s), half the
+// 30 s CLI bound below, so it cannot finish on its own before any plausible cancellation arrives.
+// A writer that is never cancelled completes at the cap and fails the 'cancelled' status assertion.
+const HOLD_LINES = 250;
 // This fixture makes CI wait for two sibling writers; it explicitly needs three live agents.
 const cli = (...args) =>
   spawnSync(
@@ -40,6 +44,9 @@ const lines = (prefix, name) =>
     .trim()
     .split('\n').length;
 async function interrupt(id, sleep) {
+  // The agent case holds both writers until the SIGINT, and the healed marker makes ci succeed at
+  // once, so neither lint completing nor ci failing can race the interrupt.
+  if (!sleep) writeFileSync(join(fixture, `${id}-healed`), 'yes');
   const child = spawn(
     process.execPath,
     [
@@ -54,7 +61,7 @@ async function interrupt(id, sleep) {
       '--state-dir',
       state,
       '--input',
-      JSON.stringify({ prefix: id, sleep }),
+      JSON.stringify(sleep ? { prefix: id, sleep } : { prefix: id, hold: true }),
       '--wait-mode',
       'block',
     ],
@@ -106,6 +113,8 @@ async function interrupt(id, sleep) {
     const target = record.steps[sleep ? 'nap' : 'checks/lint/run'];
     assert.equal(target.status, sleep ? 'waiting' : 'cancelled');
     assert.equal(target.cancelledBy ?? null, null);
+    if (!sleep)
+      assert.ok(lines(id, 'lint') < HOLD_LINES, 'SIGINT stopped lint before it completed');
     assert.equal(existsSync(join(state, id, 'lock')), false);
   } finally {
     if (child.exitCode === null && child.signalCode === null) {
@@ -128,7 +137,7 @@ import fs from 'node:fs';
 let prompt = '';
 process.stdin.on('data', chunk => prompt += chunk);
 process.stdin.on('end', () => {
-  const {prefix,name} = JSON.parse(prompt);
+  const {prefix,name,lines} = JSON.parse(prompt);
   fs.appendFileSync(prefix + '-calls.txt', name + '\\n');
   const ok = () => { console.log(JSON.stringify({type:'result',subtype:'success',is_error:false,result:name})); };
   process.on('SIGTERM', () => { fs.appendFileSync(prefix+'-signals.txt', name+'\\n'); process.exit(143); });
@@ -145,7 +154,7 @@ process.stdin.on('end', () => {
     let count = 0;
     const timer = setInterval(() => {
       fs.appendFileSync(prefix+'-'+name+'.txt', 'line\\n');
-      if (++count === 10) { clearInterval(timer); ok(); }
+      if (++count === lines) { clearInterval(timer); ok(); }
     },60);
   }
 });
@@ -155,9 +164,9 @@ process.stdin.on('end', () => {
   writeFileSync(
     file,
     `import { defineWorkflow, z } from 'quiet-choir';
-export default defineWorkflow({name:'fanout-cli',version:'1',input:z.object({prefix:z.string(),policy:z.enum(['drain','abort']).default('drain'),sleep:z.boolean().default(false)}),output:z.array(z.string()),async run(ctx,input) {
+export default defineWorkflow({name:'fanout-cli',version:'1',input:z.object({prefix:z.string(),policy:z.enum(['drain','abort']).default('drain'),sleep:z.boolean().default(false),hold:z.boolean().default(false)}),output:z.array(z.string()),async run(ctx,input) {
   if(input.sleep) { await ctx.sleep('nap',10000); return []; }
-  return ctx.map('checks',['ci','lint','tests'],{concurrency:3,key:(name)=>name,cancelSiblings:input.policy==='abort'},async(name)=>(await ctx.claude.text('run',{prompt:JSON.stringify({prefix:input.prefix,name})})).output);
+  return ctx.map('checks',['ci','lint','tests'],{concurrency:3,key:(name)=>name,cancelSiblings:input.policy==='abort'},async(name)=>(await ctx.claude.text('run',{prompt:JSON.stringify({prefix:input.prefix,name,lines:input.policy==='abort'||input.hold?${HOLD_LINES}:10})})).output);
 }});
 `,
   );
@@ -220,7 +229,11 @@ export default defineWorkflow({name:'fanout-cli',version:'1',input:z.object({pre
     assert.equal(step.status, 'cancelled');
     assert.equal(step.cancelledBy, 'checks/ci/run');
     assert.doesNotMatch(step.error, /CI failed/);
-    assert.ok(lines('abort', name) < 10);
+    // Order-independent: cancellation, not completion, stopped the writer.
+    assert.ok(
+      lines('abort', name) < HOLD_LINES,
+      `${name} ran to completion; cancellation must stop it first`,
+    );
   }
   const inspected = cli('inspect', 'abort', '--state-dir', state);
   assert.equal(inspected.status, 0, inspected.stderr);
