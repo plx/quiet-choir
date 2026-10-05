@@ -661,8 +661,14 @@ async function triageLocal(result, round) {
     priorities: result?.priorities ?? null,
     elapsedSeconds: result?.elapsedSeconds ?? null,
     file: result?.file ?? null,
+    deps: result?.deps ?? null,
     error: result?.error ?? null,
   });
+  if (result?.deps === 'missing') {
+    record.notes.push(
+      `local Codex review in round ${round} ran without dependencies (npm ci failed)`,
+    );
+  }
   if (!result || result.error) {
     record.notes.push(
       `local Codex review in round ${round} failed (${result?.error ?? 'no output'}); proceeding without it`,
