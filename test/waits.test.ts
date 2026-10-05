@@ -733,6 +733,8 @@ it(
     expect(run?.warnings).toEqual([warning]);
     expect((await readRun(options)).waitWarnings).toEqual([warning]);
     expect(unhandled).toEqual([]);
+    const replayed = await runWorkflow(definition, { ...options, resume: true });
+    expect(replayed.warnings).toEqual([warning]);
   },
 );
 
