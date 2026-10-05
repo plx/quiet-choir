@@ -28,3 +28,18 @@ export function agentResultIdentitySchema<T extends z.ZodType>(
 ): Result<T> | Isolated<T> {
   return isolated ? isolatedSchema(output) : resultSchema(output);
 }
+
+const legacyResultSchema = <T extends z.ZodType>(output: T) =>
+  z.object({ output, sessionId: z.string().nullable(), usage: usageIdentitySchema });
+type LegacyResult<T extends z.ZodType> = ReturnType<typeof legacyResultSchema<T>>;
+
+/**
+ * The frozen agent result wrapper that original format-one hashed into an agent step's
+ * fingerprint, used only to verify a legacy agent step during migration. It predates diagnostics
+ * and worktree isolation. Key order and construction are that identity: never edit it, or every
+ * unfinished format-one agent step is refused instead of migrated. `test/fixtures/storage/v1.json`
+ * pins it. @internal
+ */
+export function legacyAgentResultSchema<T extends z.ZodType>(output: T): LegacyResult<T> {
+  return legacyResultSchema(output);
+}
