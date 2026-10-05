@@ -34,7 +34,9 @@ is. Every `Error` subclass exported from `quiet-choir` or `quiet-choir/harness-k
 
 Adapter evidence is a non-enumerable, writable property keyed by
 `Symbol.for('quiet-choir.evidence')`. For a non-extensible (frozen) error, `attachHarnessEvidence`
-falls back to a module-local `WeakMap`, which only the same module instance can read.
+falls back to a `WeakMap` kept on `globalThis` under `Symbol.for('quiet-choir.frozenEvidence')`
+(#195), so every copy in the process shares one store. It is created lazily on the first such write,
+never by a read, and is weakly keyed, so an error is not kept alive by its evidence.
 
 Making the loader resolve `quiet-choir` to the host instance would also work. It would couple the
 loader to tsx resolution internals and would not cover other duplicate installs, so it is left out.
@@ -44,8 +46,12 @@ loader to tsx resolution internals and would not cover other duplicate installs,
 - Every new public error class must be branded; `test/error-brand.test.ts` fails when an exported
   `Error` class lacks its own brand. Internal host-only errors, such as the loader's
   `WorkflowDefinitionError`, stay unbranded. Zod v4 already brands its own errors.
-- The three `Symbol.for` keys and the name-chain layout are a contract between quiet-choir copies,
-  including different installed versions. Change them only with a compatibility plan.
+- The four `Symbol.for` keys (error, error-name, evidence, frozenEvidence) and the name-chain layout
+  are a contract between quiet-choir copies, including different installed versions. Change them
+  only with a compatibility plan. A value under the store key that is not a `WeakMap` is ignored
+  rather than trusted or overwritten: reads find nothing and writes are dropped. A copy that
+  predates the shared store still keeps frozen-error evidence in its own map, which a newer host
+  cannot see.
 - An error from any quiet-choir copy is trusted by class name. `errorKind` accepts a branded error's
   `kind` only when it is a known error kind and otherwise records `unknown`, so another version
   cannot write an invalid kind into a checkpoint. Other fields, such as diagnostics, `failure`,

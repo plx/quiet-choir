@@ -2,6 +2,12 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- Evidence a custom adapter attaches to a frozen (non-extensible) error under `workflow execute` now
+  reaches the attempt record (#195, ADR 0028). It was previously kept in a store that only the
+  workflow's own quiet-choir copy could read, so the host recorded none of it. Frozen-error evidence
+  now lives in a lazily created, weakly keyed `WeakMap` on `globalThis` under
+  `Symbol.for('quiet-choir.frozenEvidence')`, shared by every copy in the process.
+
 - A forced second signal under `--json` no longer truncates a large failure document piped to a slow
   reader (#193, #122). A single `writeSync` on the non-blocking fd 1 wrote only what fit in the pipe
   buffer, about 64 KiB. The document is now written in full, retrying short writes and `EAGAIN` for
