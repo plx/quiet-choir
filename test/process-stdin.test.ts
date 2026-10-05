@@ -127,14 +127,17 @@ describe('a child that exits before its stdin is written', () => {
     failWrites.enabled = true;
     failWrites.writes = 0;
     try {
-      // The child exits without reading, as the input write fails; its exit status decides.
+      // The child exits on stdin EOF without consuming input, so it is still alive when the write
+      // fails (the stream is then destroyed, closing the pipe); its exit status decides.
+      const exitOnEof =
+        "process.stdin.on('close',()=>process.exit(Number(process.argv[1]))).resume()";
       for (const input of ['', 'x'.repeat(4096)])
         expect(
           await runProcess(
-            request('process.exit(Number(process.argv[1]))', {
-              args: ['-e', 'process.exit(Number(process.argv[1]))', input ? '3' : '0'],
+            request(exitOnEof, {
+              args: ['-e', exitOnEof, input ? '3' : '0'],
               input,
-              trackProcess: delayed(50),
+              trackProcess: () => Promise.resolve(lease),
             }),
           ),
         ).toMatchObject({ code: input ? 3 : 0, signal: null, warnings: [] });
