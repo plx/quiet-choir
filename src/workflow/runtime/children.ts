@@ -12,7 +12,7 @@ import type { ExecutionScopes } from './scopes.js';
 import type { NameScopes } from './names.js';
 import type { OperationTracker } from './tracking.js';
 import { CancelledError, type FailureOrigins, type MapStepError } from './fan-out.js';
-import { RunRefusedError } from './run-errors.js';
+import { ReplaySkippedError, RunRefusedError } from './run-errors.js';
 import { duplicateStepId } from './identity.js';
 import { ownedRecords, settledFailure, settlesFailure } from './settled-outcome.js';
 import type { Settled } from './model.js';
@@ -489,8 +489,9 @@ export class RunChildren {
       )
       .map(([id]) => id);
     if (missing.length)
-      throw new Error(
+      throw new ReplaySkippedError(
         `Replay skipped completed or settled child frames (${missing.join(', ')}); workflow control flow changed.`,
+        { kind: 'child-frames', skipped: missing },
       );
   }
 }
