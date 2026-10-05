@@ -559,21 +559,38 @@ export default defineWorkflow({ name: 'debounce', version: '1', input: z.null(),
     const f = await fixture('failure');
     const executor = new WorkflowExecutor({ logger, clock: pastClock });
     expect(await executor.execute({ ...f.plan, runId: 'second' })).toMatchObject({ ok: true });
+    // Created last but first in ascending run-ID order, so the file system's listing order and
+    // creation order both disagree with the order tick must follow.
+    expect(await executor.execute({ ...f.plan, runId: 'early' })).toMatchObject({ ok: true });
     const batch = { kind: 'workflow.tick' as const, stateDir: f.stateDir, maxRuns: 1 };
     const first = oneEntryPerRun(await tick.execute(batch));
     expect(first).toMatchObject({
       resumed: [
-        { outcome: 'failed', message: expect.stringContaining('failed action') as unknown },
+        {
+          runId: 'early',
+          outcome: 'failed',
+          message: expect.stringContaining('failed action') as unknown,
+        },
       ],
+      skipped: [],
       exitCode: 0,
     });
-    const [attempted] = first.resumed;
-    const untouched = attempted?.runId === 'run' ? 'second' : 'run';
-    expect(first.skipped.map(({ runId }) => runId)).not.toContain(untouched);
-    expect((await readRun({ stateDir: f.stateDir, runId: untouched })).status).toBe('suspended');
-    expect(
-      oneEntryPerRun(await tick.execute({ ...f.tickPlan, runId: attempted?.runId ?? 'run' })),
-    ).toMatchObject({ resumed: [], skipped: [], observed: 1, exitCode: 1 });
+    for (const runId of ['run', 'second'])
+      expect((await readRun({ stateDir: f.stateDir, runId })).status).toBe('suspended');
+    // The failed run is observed as terminal and does not use up the budget: the next run in
+    // ascending order is resumed.
+    const second = oneEntryPerRun(await tick.execute(batch));
+    expect(second).toMatchObject({
+      resumed: [{ runId: 'run', outcome: 'failed' }],
+      skipped: [],
+    });
+    expect((await readRun({ stateDir: f.stateDir, runId: 'second' })).status).toBe('suspended');
+    expect(oneEntryPerRun(await tick.execute({ ...f.tickPlan, runId: 'early' }))).toMatchObject({
+      resumed: [],
+      skipped: [],
+      observed: 1,
+      exitCode: 1,
+    });
   });
 
   it('delivers opened/suspended/completed hooks and deduplicates the first signal notification', async () => {

@@ -108,19 +108,23 @@ try {
   );
   assert.equal(hooks[0].data.question.prompt, 'Continue?');
 
-  document(
-    75,
-    'execute',
-    file,
-    '--run-id',
-    'failing',
-    '--input',
-    '{"fail":true}',
-    '--json',
-    '--notify-command',
-    'exit 9',
-  );
-  assert.equal(command('answer', 'failing', 'ready', '--json', 'true').status, 0);
+  // Two due failing runs, created in the opposite order to their run-ID order: tick visits runs in
+  // ascending run-ID order, so --max-runs 1 resumes 'failing' and leaves 'zeta-failing' alone.
+  for (const runId of ['zeta-failing', 'failing']) {
+    document(
+      75,
+      'execute',
+      file,
+      '--run-id',
+      runId,
+      '--input',
+      '{"fail":true}',
+      '--json',
+      '--notify-command',
+      'exit 9',
+    );
+    assert.equal(command('answer', runId, 'ready', '--json', 'true').status, 0);
+  }
   // A per-run failure is data in batch mode: exit 0.
   const batch = document(0, 'tick', '--max-runs', '1', '--json');
   assert.deepEqual(
@@ -132,6 +136,17 @@ try {
     readFileSync(events, 'utf8').trim().split('\n').map(JSON.parse).at(-1).type,
     'run.failed',
   );
+  assert.equal(
+    JSON.parse(readFileSync(join(stateDir, 'zeta-failing', 'run.json'), 'utf8')).status,
+    'suspended',
+  );
+  // The failed run is observed, not counted: the next batch resumes the next run in order.
+  const next = document(0, 'tick', '--max-runs', '1', '--json');
+  assert.deepEqual(
+    next.resumed.map(({ runId, outcome }) => ({ runId, outcome })),
+    [{ runId: 'zeta-failing', outcome: 'failed' }],
+  );
+  assert.deepEqual(next.skipped, []);
   const failed = document(1, 'tick', '--run', 'failing', '--json');
   assert.deepEqual(failed.resumed, []);
   assert.equal(failed.observed, 1);

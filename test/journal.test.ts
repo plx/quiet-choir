@@ -10,7 +10,7 @@ import {
   type RunStore,
 } from '../src/index.js';
 import { JournalWriter, readJournalRun } from '../src/workflow/runtime/journal.js';
-import { artifactName } from '../src/workflow/runtime/run-store.js';
+import { FileRunStore, artifactName } from '../src/workflow/runtime/run-store.js';
 import { writeRun } from '../src/workflow/runtime/store.js';
 import { enableRealStorageSync } from './setup/durable-sync.js';
 import { it } from './setup/state-dir.js';
@@ -247,6 +247,33 @@ it('migrates a flat format-six run under its old owner and preserves exact backu
     formatVersion: 7,
   });
   expect((await readRun(options)).formatVersion).toBe(7);
+});
+
+it('lists run ids in ascending code-unit order whatever their creation order or layout', async ({
+  stateDir,
+}) => {
+  // Created out of sorted order and in both layouts. Only the ids matter to the listing: a
+  // directory run needs its run.json, a legacy run is a <id>.json file. The ids tell byte order
+  // from locale or case-insensitive order: '10' < '9' (no numeric order), 'Zeta' < 'alpha'
+  // (uppercase first), and 'beta-2' < 'beta_1' ('-' is 0x2d, '_' is 0x5f).
+  const layouts = [
+    ['beta_1', 'directory'],
+    ['alpha', 'directory'],
+    ['10', 'legacy'],
+    ['Zeta', 'directory'],
+    ['beta-2', 'legacy'],
+    ['9', 'directory'],
+  ] as const;
+  for (const [id, layout] of layouts) {
+    if (layout === 'legacy') await fs.writeFile(join(stateDir, `${id}.json`), '{}');
+    else {
+      await fs.mkdir(join(stateDir, id));
+      await fs.writeFile(join(stateDir, id, 'run.json'), '{}');
+    }
+  }
+  const expected = ['10', '9', 'Zeta', 'alpha', 'beta-2', 'beta_1'];
+  expect(await new FileRunStore(stateDir).list()).toEqual(expected);
+  expect(layouts.map(([id]) => id)).not.toEqual(expected);
 });
 
 it('keeps artifact path components bounded and distinct under case folding', () => {

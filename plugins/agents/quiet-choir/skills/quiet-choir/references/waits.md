@@ -175,9 +175,11 @@ incompatible or unreadable) and an `observed` count of already-terminal runs, wi
 most one entry. With --run, exits are 0 completed (now or earlier), 75
 pending/interrupted/locked/orphans/deadline, 1 failed/cancelled/crash-loop/incompatible/unreadable.
 Without it, run failures are data and the batch exits 0 unless the command fails. --max-runs bounds
-executed resumes across one invocation. --watch uses inbox events, next due time, and a one-second
-fallback scan; --timeout (default 540s) bounds the invocation. Active callbacks must cooperate with
-cancellation to exit promptly.
+executed resumes across one invocation. Without --run, each scan visits runs in ascending run-ID
+order (by character code, so uppercase sorts before lowercase), so --max-runs resumes the first due
+runs in that order. --watch uses inbox events, next due time, and a one-second fallback scan;
+--timeout (default 540s) bounds the invocation. Active callbacks must cooperate with cancellation to
+exit promptly.
 
 When --timeout fires, tick interrupts in-flight resumes: each run drains and is saved `suspended`
 with `nextWakeAt` = now and `interruptedBy: {reason, at}`, reported as `suspended` with

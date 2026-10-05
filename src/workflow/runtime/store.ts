@@ -85,7 +85,13 @@ export async function writeRun(
   );
 }
 
-/** Enumerate both directory and legacy layouts once, excluding backups and temporary files. @internal */
+/**
+ * Enumerate both directory and legacy layouts once, excluding backups and temporary files.
+ *
+ * Ids come back in ascending code-unit (byte) order, independent of the order `readdir` returns:
+ * case-sensitive (digits, then uppercase, then lowercase; `-` before `_`) and not locale order.
+ * @internal
+ */
 export async function listRunIds(stateDir: string): Promise<string[]> {
   const entries = await readdir(stateDir, { withFileTypes: true }).catch((error: unknown) => {
     if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return [];
