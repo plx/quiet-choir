@@ -90,6 +90,7 @@ export class FileRunStore implements RunStore {
   public read(runId: string): Promise<RunRecord> {
     return readRun({ stateDir: this.stateDir, runId });
   }
+  /** Run ids in ascending code-unit (byte) order, whatever the filesystem's directory order. */
   public list(): Promise<string[]> {
     return listRunIds(this.stateDir);
   }
