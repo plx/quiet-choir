@@ -63,24 +63,27 @@ Dependabot PRs replace the review with a dependency review (`merge`, `fix`, `clo
 
 By default (`codexMode: 'local'`) the workflow does not ask the Codex GitHub app for reviews.
 Instead a Haiku clerk runs `merge-down.mjs local-review-start`, which launches
-`codex review --base origin/<default> -c model="gpt-6-astra"` detached under a read-only sandbox,
-then `local-review-wait` in 9-minute slices (a review at xhigh effort can take well over 10
+`codex review --base origin/<default> -c model="gpt-6-astra"` detached under Codex's workspace-write
+sandbox, then `local-review-wait` in 9-minute slices (a review at xhigh effort can take well over 10
 minutes). Each review runs in a throwaway worktree of its own (`state/pr-N/review-<sha>`, removed
 when it ends), never in the workflow's worktree, which the check suite and later fix rounds use at
-the same time. The review text lands in `state/pr-N/codex-review-<sha>.md`; the relayed JSON carries
-its path, exit code, elapsed time, and a count of `[P0]`–`[P3]` findings, or the error. A finished
-review is cached by head, model, and effort: one of the same head with the same `codexModel` and
-`codexEffort` is reused, so a resumed run does not pay twice, and one still running is waited for
-rather than started again. A review with another model or effort is replaced (a running one is
-stopped first). When a wait fails or the review outlasts 54 minutes, `local-review-stop` kills it
-(its whole process group) and removes its worktree. It also reaps leftovers of a finished, failed
-review: a result file only says the runner ended, and a timeout can leave codex descendants alive in
-the group. A start that relaunches a failed review reaps the previous attempt's surviving group the
-same way first, and fails if it survives SIGKILL. A pid can be reused once its process is gone, so
-each start also records the runner's start time: start, wait, and stop treat the record as the
-review's only while a process with that pid has that start time, or, once the runner has exited,
-while its process group survives (a pid is not reused while its group exists). Otherwise nothing is
-signalled and the result carries a note that the stale record was ignored.
+the same time. The review worktree gets dependencies (a copy-on-write clone of the workflow
+worktree's `node_modules` when the lockfile matches, else `npm ci`) so Codex can run tests; the
+result's `deps` says which. The review text lands in `state/pr-N/codex-review-<sha>.md`; the relayed
+JSON carries its path, exit code, elapsed time, and a count of `[P0]`–`[P3]` findings, or the error.
+A finished review is cached by head, model, and effort: one of the same head with the same
+`codexModel` and `codexEffort` is reused, so a resumed run does not pay twice, and one still running
+is waited for rather than started again. A review with another model or effort is replaced (a
+running one is stopped first). When a wait fails or the review outlasts 54 minutes,
+`local-review-stop` kills it (its whole process group) and removes its worktree. It also reaps
+leftovers of a finished, failed review: a result file only says the runner ended, and a timeout can
+leave codex descendants alive in the group. A start that relaunches a failed review reaps the
+previous attempt's surviving group the same way first, and fails if it survives SIGKILL. A pid can
+be reused once its process is gone, so each start also records the runner's start time: start, wait,
+and stop treat the record as the review's only while a process with that pid has that start time,
+or, once the runner has exited, while its process group survives (a pid is not reused while its
+group exists). Otherwise nothing is signalled and the result carries a note that the stale record
+was ignored.
 
 The first review runs on the rebased head in parallel with the check suite and the merge-down
 review; an Opus triage then turns its findings into fixes, follow-ups, or recorded rejections,
