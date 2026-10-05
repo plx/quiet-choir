@@ -135,23 +135,43 @@ An A/B on the old code (stubbing `FileHandle.sync` and `datasync` in a temporary
 the cost: 25.2 s wall and 182 s summed without coverage, 69.5 s and 294 s with coverage, all with
 unchanged CPU. So fsync was about 81% of summed test time without coverage and 67% with it. Alone, a
 single test barely notices, because an uncontended APFS flush is cheap; the cost appears when 50
-files flush concurrently, which is why the raised timeouts only showed up in full runs. Coverage
-wall time is now dominated by TypeScript compiles in the loader, registry and typecheck suites. The
-same profile shows `journal.ts` persisting whole `MapRecord`s per settled item (quadratic journal
-bytes); that is tracked separately and does not affect the timeouts.
+files flush concurrently, which is why the raised timeouts only showed up in full runs. TypeScript
+compiles in the loader, registry and typecheck suites then dominated coverage wall time; a shared
+program cache now covers them (see below). The same profile shows `journal.ts` persisting whole
+`MapRecord`s per settled item (quadratic journal bytes); that is tracked separately and does not
+affect the timeouts.
 
 Linux CI runners behave differently. On `e68aba0`'s CI run (ext4, about two Vitest workers), the
 fsync-heavy tests were already fast even with real syncs (144-leaf 1.5 s, 500 × 5 KiB 1.9 s), while
-the compile-dominated tests were slowest on the Node 22.13 leg: the heaviest replay-loader case took
-57.7 s, the registry doctor case 50.0 s, registry cache invalidation 30.6 s, tick 19.5 s, typecheck
-15.1 s and the loader 10.0 s. Those suites keep a raised value of about 2x their slowest CI time.
+the compile-dominated tests were slowest. Since the Node 24 leg gained coverage it is the slowest
+leg: on `81c3f5a`, before the program cache, the replay-loader symlink case took 30.0 s on Node
+22.13 and 60.6 s on Node 24, the registry doctor case 30.3 s and 60.3 s, registry cache invalidation
+13.1 s and 28.3 s, and typecheck schema-only inference 8.1 s and 15.8 s. Raised timeouts must cover
+twice the Node 24 value.
+
+Compile-heavy suites share one internal `TypecheckProgramCache`
+(`src/workflow/typecheck/program-cache.ts`) per file, passed as `typecheckCache` to
+`WorkflowExecutor`, as the last `DoctorExecutor` argument or as `cache` to `TypeScriptExecutor`. The
+first compile per compiler-options set is a full check. Later compiles build a new program with
+fresh module resolution but reuse the parsed text of unchanged files and, through TypeScript's
+builder program (the `tsc --watch` model), their semantic diagnostics, so an edited file and the
+files that depend on it are checked again. A changed module or type reference resolution in a file
+both programs share, such as a removed package.json export, forces a full check, as does an added,
+removed or changed file that affects the global scope in its old or new version (a script, a module
+with a `declare global` block, or a UMD `export as namespace`), and the
+`assumeChangesOnlyAffectDirectDependencies` option. The replay-loader, registry, registry-cli and
+typecheck suites do this; typecheck keeps schema-only inference as an uncached full-engine check.
+Locally (macOS, Node 26.10, worst of three `npm run test:coverage` runs on a shared machine) the
+symlink case fell from 31.5 s to 8.7 s, doctor from 24.2 s to 6.4 s, the slowest registry
+invalidation case from 13.1 s to 3.6 s, and the whole run from 247-270 s to 163-164 s; schema-only
+inference stayed at about 6 s. The CLI passes no cache.
 
 Timeout rule: a test or suite timeout above Vitest's 5 s default needs an adjacent comment of the
 form `// measured: 1.2 s alone, 4.1 s in the full coverage run (dominated by tsImport compile)`.
 Measure in a full parallel `npm run test:coverage` run and check the per-test durations in the CI
-log, where the Node 22.13 leg is usually slowest. Remove the raise when the test fits the default
-with at least 3x headroom, and otherwise set the value to about 3x the local full-run time and at
-least 2x the slowest CI leg. A timeout that flakes on a CI leg gets a new measured value and
+log, where the Node 24 coverage leg is now usually slowest. Remove the raise when the test fits the
+default with at least 3x headroom, and otherwise set the value to about 3x the local full-run time
+and at least 2x the slowest CI leg. A timeout that flakes on a CI leg gets a new measured value and
 comment, not the old number. Subprocess, `tsImport`, typecheck and Git suites usually keep a raised
 value because compiles and process startup, not fsync, dominate them.
 

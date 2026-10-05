@@ -14,6 +14,7 @@ import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ThresholdLogger } from '../src/application/execution.js';
 import { WorkflowExecutor } from '../src/workflow/loader/executor.js';
+import { TypecheckProgramCache } from '../src/workflow/typecheck/program-cache.js';
 import { definitionFiles } from '../src/workflow/loader/registry.js';
 
 const repository = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -29,16 +30,20 @@ async function project() {
 function source(name: string, body = 'return null;'): string {
   return `import {z} from 'zod'; import {defineWorkflow} from ${JSON.stringify(join(repository, 'src/workflow/runtime/model.js'))}; export default defineWorkflow({name:${JSON.stringify(name)},version:'1',input:z.null(),output:z.null(),run:async()=>{${body}}});`;
 }
+// One program cache for the suite: the first compile checks the whole engine, later ones reuse it.
+const typecheckCache = new TypecheckProgramCache();
 const executor = () =>
-  new WorkflowExecutor({ logger: new ThresholdLogger('silent', () => undefined) });
+  new WorkflowExecutor({ logger: new ThresholdLogger('silent', () => undefined), typecheckCache });
 afterEach(async () => {
   vi.unstubAllEnvs();
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
-// measured: the slowest case takes 1.8 s alone, 10.2-19.6 s in local full coverage runs and 30.6 s on
-// the Node 22.13 CI leg (dominated by repeated TypeScript compiles for cache invalidation).
-describe('trusted definition registry', { timeout: 60_000 }, () => {
+// measured: the slowest case (cache refresh) takes 1.3 s alone, 3.3-3.6 s in local full coverage
+// runs, and 8.0 s on the Node 22.13 and 12.7 s on the Node 24 CI legs; before the shared program cache
+// it took 10.1-13.1 s locally and up to 13.1 s on the Node 22.13 and 28.3 s on the Node 24 CI legs
+// (dominated by the suite's first full engine compile and tsImport).
+describe('trusted definition registry', { timeout: 30_000 }, () => {
   it('deduplicates overlapping directories and ignores generated trees and directory symlinks', async () => {
     const root = await project();
     await mkdir(join(root, 'nested'));
@@ -131,6 +136,8 @@ describe('trusted definition registry', { timeout: 60_000 }, () => {
           module: 'nodenext',
           moduleResolution: 'nodenext',
           target: 'es2023',
+          lib: ['es2023'],
+          skipLibCheck: true,
           types: ['node'],
           strict,
         },

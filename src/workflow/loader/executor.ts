@@ -77,6 +77,7 @@ import { readRun, refuseRecordSchemaDrift, type RunRecord } from '../runtime/sto
 import type { RunStore } from '../runtime/run-store.js';
 import type { WorkflowClock } from '../runtime/wait-model.js';
 import { TypeScriptExecutor } from '../typecheck/typescript-executor.js';
+import type { TypecheckProgramCache } from '../typecheck/program-cache.js';
 import { formatDurabilityDiagnostic } from '../typecheck/model.js';
 import { fingerprintSources, workflowLaunch } from './source.js';
 import { formatRateLimitWindows, readRateLimit } from '../runtime/rate-limit.js';
@@ -145,6 +146,12 @@ export interface WorkflowExecutorOptions {
    * `process.kill`. Tests stub it.
    */
   readonly sendSignal?: (pid: number, signal: NodeJS.Signals) => void;
+  /**
+   * Internal: a program cache shared by every workflow type check this executor runs. Tests pass one
+   * per suite so fixtures that import the whole engine reuse its compile; the CLI passes none, so
+   * each check starts from scratch. @internal
+   */
+  readonly typecheckCache?: TypecheckProgramCache;
 }
 
 /** Every plain-data plan the workflow executor accepts. */
@@ -601,6 +608,7 @@ export class WorkflowExecutor implements Executor<WorkflowExecutorPlan, Workflow
       stage = 'load.typecheck';
       const checked = await new TypeScriptExecutor(this.#options.logger, {
         durabilityLint: true,
+        cache: this.#options.typecheckCache,
       }).execute(plan.typecheck);
       if (!checked.ok)
         return workflowFailure('load.typecheck', 'Workflow type check failed.', {

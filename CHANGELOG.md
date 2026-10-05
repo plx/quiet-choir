@@ -1083,6 +1083,12 @@
   raised test timeouts to the default or a measured, commented value. Production still syncs and no
   runtime behavior changes; see CONTRIBUTING.md, "Test timeouts and storage sync".
 
+- Development and test infrastructure: add an internal, opt-in `TypecheckProgramCache` that reuses
+  unchanged files' parsing and semantic diagnostics between type checks (#173). The replay-loader,
+  registry, doctor and typecheck suites share one per suite, so only their first engine compile is a
+  full check, and their timeouts come down. The CLI passes no cache, so its type-check results and
+  behavior are unchanged; see CONTRIBUTING.md, "Test timeouts and storage sync".
+
 - Add Workflow Lab Batch 02: six idiomatic ports with domain schemas, named roles, code-owned
   commands/writes, approved isolated setup, recoverable mutation tests, inline lifecycle children
   and settled bug panels. Record paired fixture metrics and actual SIGKILL recovery; keep model

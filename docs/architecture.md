@@ -205,7 +205,11 @@ programmatic API is explicitly unstable. Keeping the compiler behind the executo
 later native implementation without changing the command contract. After a clean type check the
 loader runs the pure durability lint (`src/workflow/typecheck/durability-lint.ts`) on the same
 program, before import: findings fail `workflow validate` and are logged as warnings by every other
-loading command (see [ADR 0041](decisions/0041-static-durability-lint.md)).
+loading command (see [ADR 0041](decisions/0041-static-durability-lint.md)). An internal, opt-in
+`TypecheckProgramCache` (`src/workflow/typecheck/program-cache.ts`) lets successive checks reuse
+unchanged files' parsing and, through TypeScript's `SemanticDiagnosticsBuilderProgram`, their
+semantic diagnostics; test suites share one, while the CLI does not use it yet and checks each
+workflow from scratch.
 
 ## Rehearsal
 
