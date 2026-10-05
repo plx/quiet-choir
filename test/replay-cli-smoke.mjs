@@ -184,6 +184,48 @@ process.stdin.on('end', () => { appendFileSync(process.env.QC_REPLAY_CALLS, prom
   assert.equal(readFileSync(effects, 'utf8'), effectsBefore);
   writeFileSync(file, source('review', 'return `${value}-fixed`;'));
 
+  // #217: the preflight consumes a delivered but unconsumed answer on its copy, so an edited
+  // completed step moved after the question is still refused before any write.
+  const asked = join(root, 'asked.ts');
+  const askedEffects = join(root, 'asked-effects.txt');
+  const askedSource = (moved) => `import { appendFileSync } from 'node:fs';
+import { defineWorkflow, z } from 'quiet-choir';
+const local = { input: null, schema: z.string(), run: () => { appendFileSync(${JSON.stringify(askedEffects)}, '${moved ? 'moved' : 'asked'}\\n'); return 's'; } };
+export default defineWorkflow({ name: 'cli-asked', version: '1', input: z.object({}), output: z.string(), async run(ctx) {
+  ${moved ? '' : "await ctx.step('s', local);"}
+  const answer = await ctx.ask('q', { prompt: 'Text?', schema: z.string() });
+  ${moved ? "await ctx.step('s', local);" : ''}
+  return answer;
+}});`;
+  writeFileSync(asked, askedSource(false));
+  const suspended = cli('execute', asked, '--state-dir', state, '--run-id', 'asked', '--json');
+  assert.equal(suspended.status, 75, suspended.stderr);
+  const answered = cli('answer', 'asked', 'q', '--json', '"yes"', '--state-dir', state);
+  assert.equal(answered.status, 0, answered.stderr);
+  const askedBytes = readFileSync(join(state, 'asked', 'run.json'), 'utf8');
+  const delivery = JSON.parse(answered.stdout).delivery.path;
+  const deliveryBytes = readFileSync(delivery, 'utf8');
+  writeFileSync(asked, askedSource(true));
+  const moved = cli(
+    'execute',
+    asked,
+    '--run-id',
+    'asked',
+    '--state-dir',
+    state,
+    '--resume',
+    '--accept-code-change',
+    '--json',
+  );
+  assert.equal(moved.status, 3, moved.stderr);
+  const movedRefusal = JSON.parse(moved.stdout).error;
+  assert.equal(movedRefusal.code, 'run.incompatible');
+  assert.deepEqual(movedRefusal.details.divergent, [{ stepId: 's', components: ['callback'] }]);
+  assert(movedRefusal.details.next[0].includes('--fork-from'));
+  assert.equal(readFileSync(join(state, 'asked', 'run.json'), 'utf8'), askedBytes);
+  assert.equal(readFileSync(delivery, 'utf8'), deliveryBytes);
+  assert.equal(readFileSync(askedEffects, 'utf8'), 'asked\n');
+
   const alias = join(root, 'alias');
   symlinkSync(root, alias);
   const normal = cli('validate', file, '--json');
@@ -229,7 +271,7 @@ export default defineWorkflow({ name: 'fan-in', version: '1', input: z.object({}
   assert.equal(healed.output, 'implship');
   assert.deepEqual(healed.warnings, []);
   console.log(
-    'PASS CLI fork prefix/matching/invalidation, immutable source, canonical hash, check-resume, zero-effect re-finalization, divergent accept refusal, and strict workflow resume after a healed fan-in',
+    'PASS CLI fork prefix/matching/invalidation, immutable source, canonical hash, check-resume, zero-effect re-finalization, divergent accept refusals (also past a delivered answer), and strict workflow resume after a healed fan-in',
   );
 } finally {
   rmSync(root, { recursive: true, force: true });
