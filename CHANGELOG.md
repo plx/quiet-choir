@@ -2,6 +2,12 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- Re-reading a completed run (`runWorkflow({ resume: true })` on a run that already completed) now
+  returns its worktree and wait warnings in `warnings`, as the original completion and
+  `workflow inspect` do; it previously returned only the policy, replay and harness warnings. One
+  internal helper now builds that list for the fresh completion, the re-read, inspection and the
+  compact run result (#219).
+
 - The accepted-replay preflight (`runWorkflow({ resume: true, acceptCodeChange: true })` and the
   CLI's `--accept-code-change`) no longer stops early, and so fails open, at a Git worktree effect
   or at a question whose answer was delivered but not yet consumed. Its probe now synthesizes

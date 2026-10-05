@@ -15,6 +15,7 @@ import {
   type Harness,
   type WorkflowContext,
 } from '../src/index.js';
+import { summarizeRun } from '../src/workflow/loader/inspection.js';
 import { writeRun } from '../src/workflow/runtime/store.js';
 
 const directories: string[] = [];
@@ -744,5 +745,24 @@ describe('durable TypeScript workflows', () => {
     expect((await readRun({ stateDir: options.stateDir, runId: 'abort' })).status).toBe(
       'cancelled',
     );
+  });
+
+  it('returns every persisted warning source, in order, when a completed run is re-read', async () => {
+    const options = await setup();
+    const definition = workflow(() => Promise.resolve(1));
+    expect((await runWorkflow(definition, options)).output).toBe(1);
+    const saved = await readRun(options);
+    saved.policyWarnings = ['policy'];
+    saved.replayWarnings = ['replay'];
+    saved.harnessWarnings = ['harness'];
+    saved.worktreeWarnings = ['worktree'];
+    saved.waitWarnings = ['wait'];
+    await writeRun(options.stateDir, saved);
+    const expected = ['policy', 'replay', 'harness', 'worktree', 'wait'];
+    const replayed = await runWorkflow(definition, { ...options, resume: true });
+    expect(replayed.status).toBe('completed');
+    expect(replayed.warnings).toEqual(expected);
+    const ownership = { locked: false, owner: null, processes: [], locks: [] };
+    expect(summarizeRun(await readRun(options), ownership).warnings).toEqual(expected);
   });
 });

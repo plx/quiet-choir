@@ -190,6 +190,13 @@ it('maps monorepo cwd, warns about dirty source files, and snapshots only commit
   expect(actual.endsWith('/packages/a')).toBe(true);
   expect(actual.startsWith(root)).toBe(true);
   expect(run.worktreeWarnings).toEqual([expect.stringContaining('uncommitted')]);
+  const replayed = await runWorkflow(definition, {
+    ...options('mono'),
+    input: null,
+    harness,
+    resume: true,
+  });
+  expect(replayed.warnings).toEqual(run.warnings);
   expect(run.steps['edit']?.worktree?.files).toEqual([{ path: 'packages/a/new', status: 'added' }]);
 });
 
