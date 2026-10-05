@@ -71,6 +71,11 @@ const flaky=defineHarness({name:'flaky',revision:1,options:z.object({prompt:z.st
    attachHarnessEvidence(error,{sessionId:'sess-evidence',rawText:'raw evidence',diagnostics:{marker:'x'},usage:null,responseTruncated:false});
    throw error;
   }
+  if(prompt==='frozen-evidence'){
+   const error=Object.freeze(new Error('frozen adapter failure'));
+   attachHarnessEvidence(error,{sessionId:'sess-frozen',rawText:'raw frozen',diagnostics:{marker:'frozen'},usage:null,responseTruncated:false});
+   throw error;
+  }
   if(prompt==='config') throw new ConfigurationError('adapter misconfigured');
   return {text:JSON.stringify({answer:prompt}),sessionId:null};
  }};}});
@@ -82,9 +87,10 @@ export default defineWorkflow({name:'error-identity',version:'1',harnesses:[flak
   return ctx.agent('flaky').value('configure',{prompt:'config',schema:answer,onError:'return',retry:{maxAttempts:3,delayMs:1}});
  const retried=await ctx.agent('flaky').value('retried',{prompt:'rate-limit',schema:answer,onError:'return',retry:{maxAttempts:3,delayMs:1,on:['rate-limit']}});
  const evidence=await ctx.agent('flaky').value('evidence',{prompt:'evidence',schema:answer,onError:'return'});
+ const frozenEvidence=await ctx.agent('flaky').value('frozenEvidence',{prompt:'frozen-evidence',schema:answer,onError:'return'});
  let execIsExecError=false;
  try{await ctx.exec('x',['false']);}catch(error){execIsExecError=error instanceof ExecError;}
- return {retried:retried.ok?retried.value.answer:null,evidenceOk:evidence.ok,execIsExecError};
+ return {retried:retried.ok?retried.value.answer:null,evidenceOk:evidence.ok,frozenEvidenceOk:frozenEvidence.ok,execIsExecError};
 }});`,
   );
 
@@ -119,6 +125,13 @@ export default defineWorkflow({name:'error-identity',version:'1',harnesses:[flak
     assert.equal(evidence.sessionId, 'sess-evidence');
     assert.equal(evidence.response, 'raw evidence');
     assert.equal(evidence.diagnostics?.marker, 'x');
+  });
+  const frozenAttempt = okRun.steps.frozenEvidence.attemptHistory[0];
+  check('attachHarnessEvidence on a frozen error reaches the attempt record', () => {
+    assert.equal(okOutput.frozenEvidenceOk, false);
+    assert.equal(frozenAttempt.sessionId, 'sess-frozen');
+    assert.equal(frozenAttempt.response, 'raw frozen');
+    assert.equal(frozenAttempt.diagnostics?.marker, 'frozen');
   });
   check('e instanceof ExecError holds in workflow code', () =>
     assert.equal(okOutput.execIsExecError, true),
