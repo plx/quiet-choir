@@ -10,6 +10,7 @@ import { workflowErrorDocument, workflowExitCodes } from '../src/cli/workflow-er
 import { processIdentity } from '../src/processes/identity.js';
 import { cancellableRunSignal } from '../src/workflow/loader/cancel-signal.js';
 import { WorkflowExecutor } from '../src/workflow/loader/executor.js';
+import { inspectRun } from '../src/workflow/loader/inspection.js';
 import type { WorkflowFailure } from '../src/workflow/loader/failure.js';
 import type { WorkflowCommandResult } from '../src/workflow/loader/model.js';
 import { TickWorkflowExecutor } from '../src/workflow/loader/tick.js';
@@ -533,6 +534,56 @@ async function lockToken(runId = 'run-1'): Promise<string> {
 
 const interrupt = () => new RunInterruptedError('Workflow interrupted by SIGINT.');
 
+/**
+ * A workflow file that suspends on `ask`, the `plan` that executes it (resuming and accepting a
+ * changed source when `resume`), and a body counter. Bodies whose 1-based count is in `held` wait
+ * until the run is aborted.
+ */
+async function preflightFixture(held: readonly number[]) {
+  const root = await mkdtemp(join(tmpdir(), 'choir-cancel-preflight-'));
+  roots.push(root);
+  await symlink(join(project, 'node_modules'), join(root, 'node_modules'));
+  await writeFile(join(root, 'package.json'), '{"type":"module"}');
+  const file = join(root, 'workflow.ts');
+  const bodies = join(root, 'bodies.txt');
+  const plan = async (value: string, resume: boolean) => {
+    await writeFile(
+      file,
+      `
+import { appendFileSync, readFileSync } from 'node:fs';
+import { setTimeout as delay } from 'node:timers/promises';
+import { z } from 'zod';
+import { defineWorkflow } from ${JSON.stringify(join(project, 'src/workflow/runtime/model.js'))};
+export default defineWorkflow({ name: 'accepted', version: '1', input: z.null(), output: z.string(),
+run: async (ctx) => {
+  appendFileSync(${JSON.stringify(bodies)}, 'body\\n');
+  // Hold the listed bodies until the run is aborted.
+  if (${JSON.stringify(held)}.includes(readFileSync(${JSON.stringify(bodies)}, 'utf8').split('\\n').length - 1))
+    while (!ctx.signal.aborted) await delay(10);
+  await ctx.step('effect', { input: null, schema: z.string(), run: () => ${JSON.stringify(value)} });
+  return ctx.ask('q', { prompt: 'Text?', schema: z.string() });
+}
+});
+`,
+    );
+    const analysis = analyzeTypecheckEntrypoint(file, root);
+    if (!analysis.ok) throw new Error(analysis.error.message);
+    return {
+      kind: 'workflow.execute' as const,
+      typecheck: analysis.plan,
+      runId: 'run-1',
+      stateDir,
+      cwd: root,
+      resume,
+      input: null,
+      ...(resume ? { acceptCodeChange: true } : {}),
+    };
+  };
+  const count = async (): Promise<number> =>
+    existsSync(bodies) ? (await readFile(bodies, 'utf8')).split('\n').length - 1 : 0;
+  return { plan, count };
+}
+
 // measured: about 1 s per case alone; the whole file took 39 s in a full coverage run on a loaded
 // machine, dominated by these cases' tsImport compiles (each type-checks and imports the workflow
 // once or twice).
@@ -656,47 +707,7 @@ describe('cancelling a live execution', { timeout: 60_000 }, () => {
   });
 
   it("cancels an accepted resume during runWorkflow's preflight without recording the acceptance", async () => {
-    const root = await mkdtemp(join(tmpdir(), 'choir-cancel-preflight-'));
-    roots.push(root);
-    await symlink(join(project, 'node_modules'), join(root, 'node_modules'));
-    await writeFile(join(root, 'package.json'), '{"type":"module"}');
-    const file = join(root, 'workflow.ts');
-    const bodies = join(root, 'bodies.txt');
-    const plan = async (value: string, resume: boolean) => {
-      await writeFile(
-        file,
-        `
-import { appendFileSync, readFileSync } from 'node:fs';
-import { setTimeout as delay } from 'node:timers/promises';
-import { z } from 'zod';
-import { defineWorkflow } from ${JSON.stringify(join(project, 'src/workflow/runtime/model.js'))};
-export default defineWorkflow({ name: 'accepted', version: '1', input: z.null(), output: z.string(),
-  run: async (ctx) => {
-    appendFileSync(${JSON.stringify(bodies)}, 'body\\n');
-    // The second body is the accepted resume's preflight: hold it until the run is cancelled.
-    if (readFileSync(${JSON.stringify(bodies)}, 'utf8').split('\\n').length - 1 === 2)
-      while (!ctx.signal.aborted) await delay(10);
-    await ctx.step('effect', { input: null, schema: z.string(), run: () => ${JSON.stringify(value)} });
-    return ctx.ask('q', { prompt: 'Text?', schema: z.string() });
-  }
-});
-`,
-      );
-      const analysis = analyzeTypecheckEntrypoint(file, root);
-      if (!analysis.ok) throw new Error(analysis.error.message);
-      return {
-        kind: 'workflow.execute' as const,
-        typecheck: analysis.plan,
-        runId: 'run-1',
-        stateDir,
-        cwd: root,
-        resume,
-        input: null,
-        ...(resume ? { acceptCodeChange: true } : {}),
-      };
-    };
-    const count = async (): Promise<number> =>
-      existsSync(bodies) ? (await readFile(bodies, 'utf8')).split('\n').length - 1 : 0;
+    const { plan, count } = await preflightFixture([2]);
     // A suspended run: workflow cancel leaves an ended one alone, even while it is being resumed.
     expect(await new WorkflowExecutor({ logger }).execute(await plan('one', false))).toMatchObject({
       ok: true,
@@ -725,5 +736,43 @@ export default defineWorkflow({ name: 'accepted', version: '1', input: z.null(),
     expect(saved.steps['q']?.status).toBe('waiting');
     expect(await count()).toBe(2);
     expect(existsSync(requestPath())).toBe(false);
+  });
+
+  it("clears an earlier interruption when a cancellation ends runWorkflow's preflight", async () => {
+    // Bodies 2 (the interrupted resume) and 3 (the accepted resume's preflight) wait for an abort.
+    const { plan, count } = await preflightFixture([2, 3]);
+    expect(await new WorkflowExecutor({ logger }).execute(await plan('one', false))).toMatchObject({
+      ok: true,
+      run: { status: 'suspended' },
+    });
+
+    // A marked interruption saves the run suspended with interruptedBy.
+    const interrupted = new AbortController();
+    const first = new WorkflowExecutor({ logger, signal: interrupted.signal }).execute(
+      await plan('one', true),
+    );
+    await waitFor(async () => (await count()) === 2, 'the interrupted body');
+    interrupted.abort(interrupt());
+    expect(failed(await first).code).toBe('workflow.interrupted');
+    const before = await readRun({ stateDir, runId: 'run-1' });
+    expect(before.status).toBe('suspended');
+    expect(before.interruptedBy).toMatchObject({ reason: 'Workflow interrupted by SIGINT.' });
+
+    // The source changes; an unmarked abort during the accepted resume's preflight cancels it.
+    const cancelled = new AbortController();
+    const second = new WorkflowExecutor({ logger, signal: cancelled.signal }).execute(
+      await plan('two', true),
+    );
+    await waitFor(async () => (await count()) === 3, 'the preflight body');
+    cancelled.abort(new Error('Stopped by the operator.'));
+    await second;
+    const saved = await readRun({ stateDir, runId: 'run-1' });
+    expect(saved.status).toBe('cancelled');
+    expect(saved.error).toBe('Stopped by the operator.');
+    expect(saved.interruptedBy).toBeUndefined();
+    expect(saved.workflow.fingerprint).toBe(before.workflow.fingerprint);
+    expect(saved.codeChanges).toEqual(before.codeChanges);
+    expect((await inspectRun({ stateDir, runId: 'run-1' })).summary.interruptedBy).toBeNull();
+    expect(await count()).toBe(3);
   });
 });

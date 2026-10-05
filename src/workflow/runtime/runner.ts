@@ -978,6 +978,8 @@ export async function runWorkflow<
           existing.seq ??= 0;
           existing.engine = engine;
           existing.schemaRevision = SUPPORTED_SCHEMA_REVISION;
+          // A cancellation leaves no stale marker from an earlier interruption.
+          delete existing.interruptedBy;
           recordHonoredAbort(existing, reason, clockNow(clock));
           delete existing.recoveryHint;
           if (existing.status === 'cancelled') {
