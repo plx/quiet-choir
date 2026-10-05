@@ -1258,6 +1258,68 @@ describe('noteSchema', () => {
     expect(saved.steps['ready']?.wait).toMatchObject({ checks: 1, note: { n: 1 } });
   });
 
+  describe('nested context operations in noteSchema', () => {
+    /** A poll whose noteSchema transform calls ctx.step; `ran` counts the step actions that ran. */
+    const nestingPoll = (name: string, nest: boolean, ran: { count: number }) =>
+      defineWorkflow({
+        name,
+        version: '1',
+        input: z.null(),
+        output: z.unknown(),
+        run: (ctx) =>
+          ctx.poll('ready', {
+            input: null,
+            schema: z.literal('ok'),
+            every: 30_000,
+            timeoutMs: 600_000,
+            ...(nest
+              ? {
+                  noteSchema: z.object({ n: z.number() }).transform((note) => {
+                    void ctx.step('inner', {
+                      input: null,
+                      schema: z.null(),
+                      run: () => {
+                        ran.count++;
+                        return null;
+                      },
+                    });
+                    return note;
+                  }),
+                }
+              : {}),
+            observe: (() =>
+              Promise.resolve({ done: false, note: { n: 1 } })) as unknown as () => Promise<{
+              done: true;
+              value: 'ok';
+            }>,
+          }),
+      });
+
+    it('fails the wait when parsing a returned note calls ctx.step', async () => {
+      const ran = { count: 0 };
+      const options = { stateDir, runId: 'note-nest-returned', input: null };
+      await expect(
+        runWorkflow(nestingPoll('note-nest-returned', true, ran), options),
+      ).rejects.toThrow('Nested durable');
+      expect(ran.count).toBe(0);
+      expect((await readRun(options)).steps['inner']).toBeUndefined();
+    });
+
+    it('fails the wait when parsing a saved note calls ctx.step', async () => {
+      const clock = new Clock();
+      const ran = { count: 0 };
+      const options = { stateDir, runId: 'note-nest-saved', input: null, clock };
+      const first = nestingPoll('note-nest-saved', false, ran);
+      expect((await runWorkflow(first, options)).status).toBe('suspended');
+      clock.time += 31_000;
+      await expect(
+        runWorkflow(nestingPoll('note-nest-saved', true, ran), { ...options, resume: true }),
+      ).rejects.toThrow('Nested durable');
+      expect(ran.count).toBe(0);
+      expect((await readRun(options)).steps['inner']).toBeUndefined();
+    });
+  });
+
   it('lets a catch(null) schema reset an incompatible saved note', async () => {
     const clock = new Clock();
     const options = { stateDir, runId: 'note-reset', input: null, clock };

@@ -93,6 +93,9 @@ with `.catch(null)`; otherwise use a new wait ID. Notes are still limited to 16 
 and the optional-field output type of a schema is accepted (`{ label?: string | undefined }`), since
 undefined members are dropped when the note is saved.
 
+`noteSchema` callbacks (refinements and transforms) run under the same guard as observers and must
+not call `ctx` operations; one that does fails the wait with the nested-operation error.
+
 `every` is a positive integer interval, or `{ initialMs, maxMs, factor? }` with factor defaulting to
 two. Spacing grows after nonterminal checks up to `maxMs`, measured from check completion. It is a
 minimum interval, not scheduler latency. `ctx.poll` requires a finite time bound. General `ctx.wait`
