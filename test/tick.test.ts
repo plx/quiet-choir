@@ -20,6 +20,7 @@ import { ThresholdLogger } from '../src/application/execution.js';
 import { WorkflowExecutor } from '../src/workflow/loader/executor.js';
 import { TickWorkflowExecutor } from '../src/workflow/loader/tick.js';
 import { analyzeTypecheckEntrypoint } from '../src/workflow/typecheck/plan.js';
+import { TypecheckProgramCache } from '../src/workflow/typecheck/program-cache.js';
 import type { TickWorkflowsResult } from '../src/workflow/loader/tick.js';
 import type { WorkflowFailure } from '../src/workflow/loader/failure.js';
 import {
@@ -37,6 +38,32 @@ import {
   readHarnessSelection,
 } from '../src/workflow/loader/harness-selection.js';
 import type { CliHarnessOptions } from '../src/harnesses/cli.js';
+import * as store from '../src/workflow/runtime/store.js';
+import * as inbox from '../src/workflow/runtime/inbox.js';
+import * as requiredRun from '../src/workflow/runtime/read-required-run.js';
+
+// Spy through to the real implementations, so the deadline tests can count (or slow) tick's
+// per-run reads and checks; every other test sees the actual behaviour.
+vi.mock('../src/workflow/runtime/store.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof store>();
+  return { ...actual, inspectRunOwnership: vi.fn(actual.inspectRunOwnership) };
+});
+vi.mock('../src/workflow/runtime/inbox.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof inbox>();
+  return { ...actual, questionCodeChanged: vi.fn(actual.questionCodeChanged) };
+});
+vi.mock('../src/workflow/runtime/read-required-run.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof requiredRun>();
+  return { ...actual, readRequiredRun: vi.fn(actual.readRequiredRun) };
+});
+const actualStore = await vi.importActual<typeof store>('../src/workflow/runtime/store.js');
+const actualInbox = await vi.importActual<typeof inbox>('../src/workflow/runtime/inbox.js');
+const actualRequiredRun = await vi.importActual<typeof requiredRun>(
+  '../src/workflow/runtime/read-required-run.js',
+);
+const ownershipSpy = vi.mocked(store.inspectRunOwnership);
+const sourcesSpy = vi.mocked(inbox.questionCodeChanged);
+const readSpy = vi.mocked(requiredRun.readRequiredRun);
 
 const project = dirname(dirname(fileURLToPath(import.meta.url)));
 const roots: string[] = [];
@@ -277,6 +304,9 @@ async function crashedWhileRunning(
 }
 
 afterEach(async () => {
+  ownershipSpy.mockReset().mockImplementation(actualStore.inspectRunOwnership);
+  sourcesSpy.mockReset().mockImplementation(actualInbox.questionCodeChanged);
+  readSpy.mockReset().mockImplementation(actualRequiredRun.readRequiredRun);
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
@@ -1181,10 +1211,51 @@ function jumpAfterDeadline(offsetMs: number): () => void {
   };
 }
 
+/**
+ * Make `count` due runs in one state directory: one fixture, then the analysed plan executed again
+ * under a new id for each extra run, which saves a compile per run.
+ */
+async function manyDueRuns(count: number) {
+  const f = await fixture('due', false, { runId: 'due-00' });
+  // The shared program cache turns every start after the first into an incremental type check.
+  const executor = new WorkflowExecutor({
+    logger,
+    clock: pastClock,
+    typecheckCache: new TypecheckProgramCache(),
+  });
+  const ids = Array.from({ length: count }, (_, i) => `due-${String(i).padStart(2, '0')}`);
+  for (const runId of ids.slice(1))
+    expect(await executor.execute({ ...f.plan, runId })).toMatchObject({
+      ok: true,
+      run: { status: 'suspended' },
+    });
+  return { f, executor, ids };
+}
+
+/** The spied calls whose options name this state directory and, if given, one of these runs. */
+function callsFor(
+  spy: typeof ownershipSpy | typeof readSpy,
+  stateDir: string,
+  runIds?: readonly string[],
+) {
+  return spy.mock.calls.filter(
+    ([options]) =>
+      options.stateDir === stateDir && (runIds === undefined || runIds.includes(options.runId)),
+  );
+}
+
+/** The spied source checks for runs whose working directory is this fixture root. */
+function sourceChecksFor(root: string) {
+  return sourcesSpy.mock.calls.filter(([run]) => run.cwd === root);
+}
+
+const unreadDeadline = "Tick's timeout passed before this run was read; a later tick checks it.";
+
 // Issue #199: tick's deadline interrupts into a resumable suspension, and a margin stops claims.
 // measured: 6.7 s alone for the timeout case (a fixed 6 s tick timeout, sized for a slow import on
 // a loaded CI leg, plus tsImport compiles) and 2.3 s for the margin case; the loader suite's 40 s
-// raise covers the compile-heavy tail.
+// raise covers the compile-heavy tail. Issue #205's many-run cases measured 4.6 s and 3.6 s alone
+// (twelve run starts with a shared program cache dominate), and the watch case 1.9 s.
 describe('tick deadline interruption and claim margin', { timeout: 40_000 }, () => {
   it('suspends a run interrupted by the tick timeout and completes it on the next tick', async () => {
     const f = await fixture('gated');
@@ -1330,12 +1401,150 @@ describe('tick deadline interruption and claim margin', { timeout: 40_000 }, () 
       timers.mockRestore();
       now.mockRestore();
     }
-    expect(oneEntryPerRun(result)).toMatchObject({
+    // Past the fired deadline tick reads nothing: the run is reported unread, still pending.
+    expect(oneEntryPerRun(result)).toEqual({
+      kind: 'workflow.tick.result',
+      ok: true,
       resumed: [],
-      skipped: [{ runId: 'run', reason: 'deadline' }],
+      skipped: [{ runId: 'run', reason: 'deadline', message: unreadDeadline }],
+      observed: 0,
       exitCode: 75,
     });
+    expect(callsFor(readSpy, f.stateDir)).toEqual([]);
+    expect(callsFor(ownershipSpy, f.stateDir)).toEqual([]);
+    expect(sourceChecksFor(f.root)).toEqual([]);
     expect(await runBytes(f.stateDir, 'run')).toEqual(before);
+  });
+
+  // Issue #205: past the margin and the timeout, tick's per-run scan stops costing I/O.
+  it('skips lock and source checks for runs seen inside the margin', async () => {
+    const { f, executor, ids } = await manyDueRuns(12);
+    const { stateDir } = f;
+    // A completed run and a run whose timer is still in the future share the directory.
+    const done = await executor.execute({ ...f.plan, runId: 'done' });
+    expect(done).toMatchObject({ ok: true, run: { status: 'suspended' } });
+    expect(
+      oneEntryPerRun(await tick.execute({ kind: 'workflow.tick', stateDir, runId: 'done' })),
+    ).toMatchObject({ resumed: [{ runId: 'done', outcome: 'completed' }], exitCode: 0 });
+    const later = await new WorkflowExecutor({ logger }).execute({ ...f.plan, runId: 'later' });
+    expect(later).toMatchObject({ ok: true, run: { status: 'suspended' } });
+    const before = Object.fromEntries(
+      await Promise.all(ids.map(async (id) => [id, await runBytes(stateDir, id)] as const)),
+    );
+    const imports = await readFile(f.imports, 'utf8');
+    ownershipSpy.mockClear();
+    sourcesSpy.mockClear();
+    readSpy.mockClear();
+    // 4 s of a 10 s timeout remain, inside the 6 s margin, and the deadline timer has not fired.
+    const restore = jumpAfterDeadline(6_000);
+    let result: TickWorkflowsResult | WorkflowFailure;
+    try {
+      result = await tick.execute({
+        kind: 'workflow.tick',
+        stateDir,
+        timeoutMs: 10_000,
+        claimMarginMs: 6_000,
+      });
+    } finally {
+      restore();
+    }
+    const report = oneEntryPerRun(result);
+    expect(report).toMatchObject({ resumed: [], observed: 1, exitCode: 0 });
+    // Every record is still read and classified, but no lock, orphan or source check runs.
+    expect(callsFor(readSpy, stateDir)).toHaveLength(ids.length + 2);
+    expect(callsFor(ownershipSpy, stateDir)).toEqual([]);
+    expect(sourceChecksFor(f.root)).toEqual([]);
+    expect(byRunId(report.skipped)).toEqual([
+      ...ids.map((runId) => ({
+        runId,
+        reason: 'deadline',
+        nextWakeAt: expect.any(Number) as unknown,
+      })),
+      { runId: 'later', reason: 'not due', nextWakeAt: expect.any(Number) as unknown },
+    ]);
+    for (const id of ids) expect(await runBytes(stateDir, id)).toEqual(before[id]);
+    expect(await readFile(f.imports, 'utf8')).toBe(imports);
+  });
+
+  it('stops reading runs once the timeout fires and reports the rest as deadline', async () => {
+    const { f, ids } = await manyDueRuns(12);
+    const { stateDir } = f;
+    const before = Object.fromEntries(
+      await Promise.all(ids.map(async (id) => [id, await runBytes(stateDir, id)] as const)),
+    );
+    readSpy.mockClear();
+    ownershipSpy.mockClear();
+    sourcesSpy.mockClear();
+    // Each read takes at least 200 ms, so a scan that kept reading would take 2.4 s or more.
+    readSpy.mockImplementation(async (options) => {
+      await delay(200);
+      return actualRequiredRun.readRequiredRun(options);
+    });
+    const started = Date.now();
+    // A 299 ms margin of a 300 ms timeout: nothing is claimed, and the timeout fires mid-scan.
+    const result = oneEntryPerRun(
+      await tick.execute({ kind: 'workflow.tick', stateDir, timeoutMs: 300, claimMarginMs: 299 }),
+    );
+    const elapsed = Date.now() - started;
+    expect(result).toMatchObject({ resumed: [], observed: 0, exitCode: 0 });
+    expect(byRunId(result.skipped).map(({ runId }) => runId)).toEqual(ids);
+    const read = new Set(callsFor(readSpy, stateDir).map(([options]) => options.runId));
+    expect(read.size).toBeGreaterThan(0);
+    expect(read.size).toBeLessThan(ids.length);
+    for (const entry of result.skipped)
+      expect(entry).toEqual(
+        read.has(entry.runId)
+          ? { runId: entry.runId, reason: 'deadline', nextWakeAt: expect.any(Number) as unknown }
+          : { runId: entry.runId, reason: 'deadline', message: unreadDeadline },
+      );
+    expect(callsFor(ownershipSpy, stateDir)).toEqual([]);
+    expect(sourceChecksFor(f.root)).toEqual([]);
+    // The bound rests on the read count above; the time only has to stay well below a full scan.
+    expect(elapsed).toBeLessThan(1_500);
+    for (const id of ids) expect(await runBytes(stateDir, id)).toEqual(before[id]);
+  });
+
+  it('keeps an earlier watch pass entry for a run left unread after the timeout', async () => {
+    const f = await fixture('future', false, { runId: 'a-later' });
+    const { stateDir } = f;
+    expect(
+      await new WorkflowExecutor({ logger }).execute({ ...f.plan, runId: 'b-later' }),
+    ).toMatchObject({ ok: true, run: { status: 'suspended' } });
+    // Capture the deadline timer and fire it from the third read: the first read of the second
+    // watch pass, so b-later is never read again.
+    let fire: (() => void) | undefined;
+    const realSetTimeout = globalThis.setTimeout;
+    const timers = vi
+      .spyOn(globalThis, 'setTimeout')
+      .mockImplementation((handler: () => void, ms?: number) => {
+        if (ms !== 10_000) return realSetTimeout(handler, ms);
+        fire = handler;
+        return realSetTimeout(() => undefined, 0);
+      });
+    readSpy.mockClear();
+    readSpy.mockImplementation((options) => {
+      if (callsFor(readSpy, stateDir).length === 3) fire?.();
+      return actualRequiredRun.readRequiredRun(options);
+    });
+    let result: TickWorkflowsResult | WorkflowFailure;
+    try {
+      result = await tick.execute({
+        kind: 'workflow.tick',
+        stateDir,
+        watch: true,
+        timeoutMs: 10_000,
+        claimMarginMs: 0,
+      });
+    } finally {
+      timers.mockRestore();
+    }
+    const reads = callsFor(readSpy, stateDir).map(([options]) => options.runId);
+    expect(reads).toEqual(['a-later', 'b-later', 'a-later']);
+    expect(oneEntryPerRun(result)).toMatchObject({ resumed: [], observed: 0, exitCode: 0 });
+    expect(byRunId(result.ok ? result.skipped : [])).toEqual([
+      { runId: 'a-later', reason: 'not due', nextWakeAt: expect.any(Number) as unknown },
+      { runId: 'b-later', reason: 'not due', nextWakeAt: expect.any(Number) as unknown },
+    ]);
   });
 
   it.each([

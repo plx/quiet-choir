@@ -52,9 +52,11 @@ Tick reports a resume that ends in an interruption as `suspended` with the reaso
 75 with `--run`), including a deadline that fires after the claim but before the runtime reopens the
 run. To avoid starting work only to interrupt it, tick stops claiming once less than a claim margin
 of its timeout remains (`--claim-margin`, default 10% of `--timeout`, `0ms` disables it). Ready runs
-seen inside the margin are left untouched and reported as skipped `deadline`; the per-run scan
-continues after the deadline so they are reported rather than dropped, and `--watch` ends when the
-margin starts.
+seen inside the margin are left untouched and reported as skipped `deadline`, and `--watch` ends
+when the margin starts. Since #205 the scan does not let those reports overrun the timeout: inside
+the margin tick reads each record but skips the lock, orphan, crash-loop and source checks, and
+after the deadline it reads no more records, reporting each remaining run as skipped `deadline` with
+a message instead of dropping it.
 
 ## Consequences
 
