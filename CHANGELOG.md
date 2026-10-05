@@ -1055,27 +1055,28 @@
   inside the margin are left untouched and reported as skipped `deadline` (`--run` exits 75), and
   `--watch` ends when the margin starts. See docs/waits.md.
 
-- CLI (breaking): `workflow tick` recovers crashed runs. A `running` run whose owner is gone (no
-  lock, or a dead or released owner) is resumed through ordinary lock recovery, and a due suspended
-  run behind a lock left by a dead owner is resumed instead of skipped. The `running` skip reason is
-  replaced by `locked` (live, unknown or remote owner, or incomplete lock metadata), `orphans` (the
-  owner is gone but a child process is alive or unverified; tick never kills it; `--run` exits 75)
-  and `crash-loop` (3 consecutive recoveries without a new completed step; `--run` exits 1 and
-  `--watch` stops retrying it until an explicit `workflow resume`). See docs/waits.md.
-
-- Runtime: `RunRecord` has an optional `staleRecovery { count, completedSteps, at }` counter. Tick
-  saves it durably under ownership before each stale recovery, and the runner removes it on a clean
-  suspension or completion. `inspect` and `list` still derive `stale` without writing it.
-
-- CLI (breaking): `workflow tick --json` now reports only what the tick did. The resumed count and
-  the `completed`, `suspended`, `failed` and `incompatible` buckets are replaced by `resumed`
-  entries (`{ runId, outcome, nextWakeAt?, message? }` for each run whose resume started), `skipped`
-  entries (`{ runId, reason, message?, nextWakeAt? }`, with reasons not due, no longer due, locked,
-  running, incompatible and unreadable) and an `observed` count of already-terminal runs. Each run
+- CLI (breaking): `workflow tick` recovers crashed runs and `--json` reports only what the tick did
+  (#197, #198). A `running` run whose owner is gone (no lock, or a dead or released owner) is
+  resumed through ordinary lock recovery, and a due suspended run behind a lock left by a dead owner
+  is resumed instead of skipped; a stale `running` run is recovered or skipped, never reported as
+  `running`. The resumed count and the `completed`, `suspended`, `failed` and `incompatible` buckets
+  are replaced by `resumed` entries (`{ runId, outcome, nextWakeAt?, message? }` for each run whose
+  resume started), `skipped` entries (`{ runId, reason, message?, nextWakeAt? }`) and an `observed`
+  count of already-terminal runs. The skip reasons are not due, no longer due, locked, orphans,
+  crash-loop, deadline, incompatible and unreadable. `nextWakeAt` goes with not due, no longer due
+  and deadline (see `--claim-margin`), and `message` with orphans, crash-loop, incompatible and
+  unreadable. `locked` means a live, unknown or remote owner, or incomplete lock metadata. `orphans`
+  means the owner is gone but a child process is alive or unverified; tick never kills it, and
+  `--run` exits 75. `crash-loop` means 3 consecutive recoveries without a new completed step;
+  `--run` exits 1 and `--watch` stops retrying it until an explicit `workflow resume`. Each run
   appears in at most one entry, so a not-due or incompatible run is no longer also listed as
   suspended. A cancelled resume is reported as `cancelled`, not failed. `--run` on a run that
   already failed or was cancelled exits 1, and on one that already completed exits 0. `--max-runs`
   counts only executed resumes. See docs/waits.md.
+
+- Runtime: `RunRecord` has an optional `staleRecovery { count, completedSteps, at }` counter. Tick
+  saves it durably under ownership before each stale recovery, and the runner removes it on a clean
+  suspension or completion. `inspect` and `list` still derive `stale` without writing it.
 
 - Runtime: under `workflow execute`, errors and evidence from workflow and custom-adapter code now
   behave as they do embedded. tsx gives that code its own copy of quiet-choir, so identity checks
