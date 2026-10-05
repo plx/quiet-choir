@@ -10,6 +10,8 @@ changes the run. Amended by #144: steps also carry launch, settle and failure st
 healed-step check uses them instead of `seq` (ADR 0007). Amended by #145: default fork prefix reuse
 is causal and treats named-map items as independent, instead of closing at the first miss. Amended
 by #146: explicit acceptance reaches settled maps, which record their own `codeChanges` entries.
+Amended by #215: `runWorkflow` itself runs the #126 preflight, so embedded accepted resumes refuse
+without changing the run too.
 
 ## Context
 
@@ -178,8 +180,8 @@ answer delivered but not yet consumed is not copied, so a divergence past that p
 missed; the real run then fails as before, now with the typed cause and the fork recipe. The
 preflight reads without the writer lock, so like check-resume it is a snapshot, not a reservation
 against concurrent writers. The workflow body, but no unfinished callback, runs once more per
-accepted resume. Embedded `runWorkflow({ acceptCodeChange: true })` callers get the typed
-`StepIdentityChangedError` cause but no preflight.
+accepted resume. #215 moved this preflight into `runWorkflow`, so embedded callers get the same
+guarantee; see its amendment below.
 
 ## Amendment: recovery hints by typed cause (#276)
 
@@ -217,3 +219,47 @@ change, or a journal saved without components, suggests restoring the map or `--
 `--accept-code-change`. The #126 preflight replays with acceptance, so it now passes a mapper-only
 map change; a non-mapper map refusal under acceptance still fails the real run after the run-level
 entry is written, as before.
+
+## Amendment: embedded accepted-replay preflight (#215)
+
+The #126 preflight lived in the CLI executor, so an embedded
+`runWorkflow({ resume: true, acceptCodeChange: true })` still recorded the acceptance, cleared the
+saved output and then failed the run on a changed completed step. `runWorkflow` now runs the
+preflight itself, after every gate that refuses before the body (format, record schema, harness kind
+and configuration digest, compatibility, input, policy and grants) and before it changes anything in
+the record it read under the writer lock. The copy is written from that record, so the preflight is
+no longer a lock-free snapshot, and a custom `RunStore` is never written to. Restoring the old
+record after a failed replay was rejected: the accepted body may already have settled new or fixed
+unfinished effects, possibly paid ones, before reaching the changed step, and erasing them would
+repeat them on the next resume.
+
+The core owns a small synthesizing probe for this (`accepted-replay-preflight.ts`): a `dry-run`
+catch-all harness with no policy defaults (limits are policy, not identity), a process runner that
+answers every command with exit 0 and empty or synthesized output, and rehearsal hooks that stub
+every unfinished local step, file effect and poll observer. The nested run drops every live-only
+option: the bound store, named or declared adapters and their configurations, process supervision,
+orphan recovery, the caller's agent limiter, event observers, launch metadata and worktree policy.
+It suspends instead of blocking. Its rehearsal hooks also stop it from preflighting again, and a CLI
+dry run, which is already a disposable copy, skips the preflight the same way.
+
+When the copy meets a changed completed or settled-failed step, `runWorkflow` rejects with a bare
+`StepIdentityChangedError` (same step, components and status; the copy's error is its cause) before
+anything is saved. It is not wrapped in `WorkflowRunError`, and status, fingerprint, output,
+`codeChanges`, waiting questions and journal bytes are unchanged. The CLI no longer runs a preflight
+of its own: it maps only this marked refusal to the same `run.incompatible` refusal as before, so an
+accepted resume preflights once and the body runs twice. A `WorkflowRunError` whose cause is a
+`StepIdentityChangedError`, because the preflight failed open and the real run then changed the
+record, still reports `workflow.failed`. The fail-open rules and their limits are unchanged:
+synthesized values can steer the copy onto another branch, so it can miss a change a real run meets
+or refuse one a real run would not reach; worktree effects and delivered but unconsumed answers can
+stop it early; and detection is still only `StepIdentityChangedError`. Embedded callers now also run
+the workflow body, including any top-level code outside effects, once more per accepted resume.
+
+An honored abort of the run's signal while the copy replays ends the real run as an abort in the
+body would: suspended and due now for a marked `RunInterruptedError`, otherwise `cancelled` (as a
+`workflow cancel` bound to the execution's lock token is), saved and reported as a
+`WorkflowRunError` with the abort reason as its cause. The save closes a new execution entry with
+that outcome and appends its `run.suspended` or `run.cancelled` event, which reaches `onEvent` only
+after it commits. The acceptance stays unrecorded: the fingerprint, `codeChanges`, output and steps
+are as they were, so the next accepted resume preflights again. A format-1 record, which can be
+saved only through the migration that adopts the new source, is left untouched instead.

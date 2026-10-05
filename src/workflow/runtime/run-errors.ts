@@ -203,9 +203,11 @@ export class WorkflowRunError extends Error {
 
 /**
  * A resumed body reached a completed or settled-failed step whose identity no longer matches its
- * record. Replay never reuses such a step, even with `acceptCodeChange`, so the run fails; the CLI's
- * `--accept-code-change` detects this on a disposable copy first and refuses with
- * `run.incompatible` instead. A saved run reports it as the cause of {@link WorkflowRunError}.
+ * record. Replay never reuses such a step, even with `acceptCodeChange`. An accepted resume detects
+ * this on a disposable copy first and rejects with this error itself, before the run is changed;
+ * the CLI's `--accept-code-change` reports that as `run.incompatible`. A plain resume, or an
+ * accepted one whose preflight could not reach the step, fails the run and reports it as the cause
+ * of {@link WorkflowRunError}.
  *
  * @example
  * ```ts

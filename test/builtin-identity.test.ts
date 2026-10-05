@@ -7,7 +7,7 @@ import {
   defineWorkflow,
   readRun,
   runWorkflow,
-  WorkflowRunError,
+  StepIdentityChangedError,
   z,
   type ErrorMode,
   type MergeCommitOptions,
@@ -230,7 +230,8 @@ describe('version-identified steps', () => {
       definition('r9/2'),
       options({ resume: true, fingerprint: 'code-3', acceptCodeChange: true }),
     ).catch((error: unknown) => error);
-    expect(rejected).toBeInstanceOf(WorkflowRunError);
+    // The accepted resume's preflight refuses before the run changes (#215).
+    expect(rejected).toBeInstanceOf(StepIdentityChangedError);
     expect((rejected as Error).message).toContain('version changed on a completed step');
     expect(calls).toBe(1);
   });
@@ -299,7 +300,7 @@ describe('version-identified steps', () => {
       definition,
       options({ resume: true, fingerprint: 'code-2', acceptCodeChange: true }),
     ).catch((error: unknown) => error);
-    expect(rejected).toBeInstanceOf(WorkflowRunError);
+    expect(rejected).toBeInstanceOf(StepIdentityChangedError);
     expect((rejected as Error).message).toContain('callback, version changed on a completed step');
     expect(await readFile(join(directory, 'run.json'), 'utf8')).toContain('started-at');
   });

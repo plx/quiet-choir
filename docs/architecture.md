@@ -221,7 +221,9 @@ copies source record data without acquiring its owner lock. Core rehearsal hooks
 identity while optionally replacing callbacks, skipping durable sleeps, and synthesizing fresh
 worktree isolation and unchanged merges with read-only `git rev-parse` only. Call metadata and
 harness-kind provenance live outside semantic fingerprints. See [workflow rehearsal](rehearsal.md)
-and [ADR 0016](decisions/0016-workflow-rehearsal.md).
+and [ADR 0016](decisions/0016-workflow-rehearsal.md). The core also owns one small synthesizing
+probe (a dry-run harness, process runner and stub-everything hooks) for the accepted-replay
+preflight that `runWorkflow` runs before an accepted code change mutates a run (ADR 0006).
 
 ## Deferred configuration discovery
 

@@ -652,12 +652,13 @@ not invent a saved run.
 
 `RunRefusedError` has a stable `run.*` code, run ID, plain details, and an optional underlying
 cause. `WorkflowInputError` has `usage.input_schema`, validation issues, and the validator cause.
-`StepIdentityChangedError` (a `WorkflowRunError` cause) names the `stepId`, changed `components` and
-terminal `status` of a replayed step whose identity changed; an embedded
-`runWorkflow({ resume: true, acceptCodeChange: true })` has no preflight, so it records the
-acceptance and then fails with this cause. `isValidRunId` and `CliErrorCode` are exported for
-callers. `readRun` retains its low-level ENOENT contract. See [the changelog](../CHANGELOG.md) for
-the prototype API break.
+`StepIdentityChangedError` names the `stepId`, changed `components` and terminal `status` of a
+replayed step whose identity changed. An embedded
+`runWorkflow({ resume: true, acceptCodeChange: true })` finds such a step on a disposable copy first
+and rejects with this error itself, before it changes the run (the CLI maps that to
+`run.incompatible`); otherwise, as in a plain resume, it is the cause of a saved run's
+`WorkflowRunError`. `isValidRunId` and `CliErrorCode` are exported for callers. `readRun` retains
+its low-level ENOENT contract. See [the changelog](../CHANGELOG.md) for the prototype API break.
 
 `workflow typecheck` lists effective compiler flags in human output. JSON success includes
 `compilerOptions`; a typecheck failure includes it in `error.details`, alongside compiler version

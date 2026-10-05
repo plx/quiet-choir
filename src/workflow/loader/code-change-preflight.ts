@@ -1,81 +1,8 @@
-import type { HarnessSelection } from './harness-selection.js';
-import { RehearsalHarness, rehearsalState } from './rehearsal.js';
 import { formatArgv } from './next-commands.js';
 import { workflowArgv, type CommandLauncher } from '../runtime/commands.js';
-import { runWorkflow, type RunOptions } from '../runtime/runner.js';
-import type { WorkflowDefinition } from '../runtime/model.js';
-import {
-  findStepIdentityChange,
-  RunRefusedError,
-  type StepIdentityChangedError,
-} from '../runtime/run-errors.js';
-
-/**
- * The real run's options that an accepted-replay preflight shares. Everything that could reach the
- * real record or a live harness (a bound store, named adapters, factory configurations, blocking
- * waits, event observers, orphan recovery) is excluded by type; the preflight supplies its own
- * state directory, harness, hooks and process runner. @internal
- */
-export type PreflightRunOptions = Omit<
-  RunOptions,
-  | 'stateDir'
-  | 'store'
-  | 'harness'
-  | 'adapters'
-  | 'harnessConfigurations'
-  | 'rehearsal'
-  | 'processRunner'
-  | 'execRunner'
-  | 'processSupervisor'
-  | 'killOrphans'
-  | 'waitMode'
-  | 'allowHarnessChange'
-  | 'forkFrom'
-  | 'onEvent'
->;
+import { RunRefusedError, type StepIdentityChangedError } from '../runtime/run-errors.js';
 
 const divergenceRefusals = new WeakSet<Error>();
-
-/**
- * Replay an accepted code change against a disposable copy of the run, with fixtures disabled and
- * every unfinished local step, file effect, poll observer and command stubbed, and report the first
- * completed-step identity change it meets. Any other outcome (completion, suspension, a refusal
- * before the body, a rehearsal limitation or an ordinary failure) finds nothing, so the real run
- * proceeds and reproduces any genuine problem itself. Only an abort propagates. @internal
- */
-export async function preflightAcceptedReplay(
-  definition: WorkflowDefinition<unknown, unknown>,
-  options: PreflightRunOptions,
-  context: { readonly stateDir: string; readonly selection?: HarnessSelection },
-): Promise<StepIdentityChangedError | undefined> {
-  let copy: Awaited<ReturnType<typeof rehearsalState>> | undefined;
-  try {
-    copy = await rehearsalState(options.runId, context.stateDir, true);
-    const rehearsal = new RehearsalHarness(
-      { kind: 'cli', config: context.selection?.config ?? {} },
-      ['**'],
-    );
-    await runWorkflow(definition, {
-      ...options,
-      stateDir: copy.stateDir,
-      harness: rehearsal,
-      rehearsal: rehearsal.hooks,
-      processRunner: rehearsal.processRunner,
-      allowHarnessChange: true,
-      // A blocking wait would never end: rehearsal skips timers and nobody answers the copy.
-      waitMode: 'suspend',
-      resume: true,
-      acceptCodeChange: true,
-    });
-    return undefined;
-  } catch (error) {
-    // The copy may hold an interrupted or cancelled record; report the abort, never the copy.
-    options.signal?.throwIfAborted();
-    return findStepIdentityChange(error);
-  } finally {
-    await copy?.dispose();
-  }
-}
 
 /** The fork command that replaces a refused accepted resume, spelled like `resumeCommand`. @internal */
 export function forkCommand(

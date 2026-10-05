@@ -31,12 +31,8 @@ import { checkWorktreeKeep, checkWorktreeRoot } from '../runtime/worktree-policy
 import { FixtureHarness } from '../../harnesses/fixture.js';
 import { FixtureProcessRunner } from '../../harnesses/fixture-exec.js';
 import { RehearsalHarness, rehearsalState } from './rehearsal.js';
-import {
-  divergenceRefusal,
-  isDivergenceRefusal,
-  preflightAcceptedReplay,
-  type PreflightRunOptions,
-} from './code-change-preflight.js';
+import { divergenceRefusal, isDivergenceRefusal } from './code-change-preflight.js';
+import { isAcceptedReplayRefusal } from '../runtime/accepted-replay-preflight.js';
 import { jsonValue } from '../runtime/json.js';
 import {
   inspectRun,
@@ -741,14 +737,22 @@ export class WorkflowExecutor implements Executor<WorkflowExecutorPlan, Workflow
             'warn',
             `Harness ${name} is not declared in the static workflow tree; this setting only applies if a child invoked dynamically (via ctx.workflow) declares it.`,
           );
-      // Options shared with the accepted-replay preflight; live-only ones are added below.
       const policy = launchPolicyOf(selection, waitMode ?? 'suspend', worktreeFlags);
-      const shared: PreflightRunOptions = {
+      const launch = {
+        ...(await workflowLaunch(plan.typecheck, source)),
+        ...(policy === undefined ? {} : { policy }),
+      };
+      if (plan.resume && plan.acceptCodeChange && !plan.dryRun)
+        // runWorkflow replays an accepted change on a disposable copy before it changes the run.
+        this.#options.logger.log(
+          'info',
+          'Preflighting the accepted code change against a disposable copy.',
+        );
+      // A one-execution mode (tick's suspend) applies now; the recorded policy keeps waitMode.
+      const effectiveWaitMode = plan.waitModeOnce ?? waitMode;
+      const run = await runWorkflow(definition, {
         runId: plan.runId,
-        launch: {
-          ...(await workflowLaunch(plan.typecheck, source)),
-          ...(policy === undefined ? {} : { policy }),
-        },
+        launch,
         cwd: plan.cwd,
         ...(plan.maxRunCostUsd === undefined ? {} : { maxRunCostUsd: plan.maxRunCostUsd }),
         ...(plan.maxChildDepth === undefined ? {} : { maxChildDepth: plan.maxChildDepth }),
@@ -774,33 +778,6 @@ export class WorkflowExecutor implements Executor<WorkflowExecutorPlan, Workflow
         source,
         ...(plan.acceptCodeChange === undefined ? {} : { acceptCodeChange: plan.acceptCodeChange }),
         ...(plan.strictReplay === undefined ? {} : { strictReplay: plan.strictReplay }),
-      };
-      if (plan.resume && plan.acceptCodeChange && !plan.dryRun) {
-        // An accepted replay that meets a changed completed step would fail only after recording
-        // the change and clearing the saved outcome; find that on a disposable copy first.
-        this.#options.logger.log(
-          'info',
-          'Preflighting the accepted code change against a disposable copy.',
-        );
-        const change = await preflightAcceptedReplay(definition, shared, {
-          stateDir: plan.stateDir,
-          ...(selection === undefined ? {} : { selection }),
-        });
-        if (change)
-          throw divergenceRefusal(
-            change,
-            {
-              runId: plan.runId,
-              stateDir: resolveStateDir({ stateDir: plan.stateDir }),
-              entrypoint: await realpath(plan.typecheck.entrypoint),
-            },
-            this.#options.commandLauncher,
-          );
-      }
-      // A one-execution mode (tick's suspend) applies now; the recorded policy keeps waitMode.
-      const effectiveWaitMode = plan.waitModeOnce ?? waitMode;
-      const run = await runWorkflow(definition, {
-        ...shared,
         ...(Object.keys(adapters).length ? { adapters } : {}),
         ...(selection?.configurations === undefined
           ? {}
@@ -820,7 +797,7 @@ export class WorkflowExecutor implements Executor<WorkflowExecutorPlan, Workflow
             : { execRunner }
           : { execRunner: rehearsal.processRunner }),
         ...(effectiveWaitMode === undefined ? {} : { waitMode: effectiveWaitMode }),
-        // The CLI's worktree flags replace the definition's fields; the preflight never runs Git.
+        // The CLI's worktree flags replace the definition's fields.
         ...(worktreeFlags?.keep === undefined && worktreeFlags?.root === undefined
           ? {}
           : { worktrees: worktreeFlags }),
@@ -831,8 +808,8 @@ export class WorkflowExecutor implements Executor<WorkflowExecutorPlan, Workflow
         ...(rehearsal === undefined ? {} : { rehearsal: rehearsal.hooks }),
         allowHarnessChange: rehearsal !== undefined || (plan.allowHarnessChange ?? false),
         // Only a live CLI execution knows its configuration: a rehearsal ignores it, and an injected
-        // fallback harness carries its own. The accepted-replay preflight needs no check, because
-        // this call refuses before it changes the checkpoint.
+        // fallback harness carries its own. runWorkflow checks it before its accepted-replay
+        // preflight, which never sees it.
         ...(plan.dryRun || this.#options.harness !== undefined
           ? {}
           : {
@@ -892,16 +869,22 @@ export class WorkflowExecutor implements Executor<WorkflowExecutorPlan, Workflow
         ...(rehearsal === undefined ? {} : { rehearsal: rehearsal.report(run) }),
       };
     } catch (thrown: unknown) {
-      // A dry-run of an accepted resume reports a changed completed step the way the real command
-      // refuses it, with the real state directory and entrypoint.
-      const dryRunChange =
-        plan.kind === 'workflow.execute' && plan.dryRun && plan.resume && plan.acceptCodeChange
-          ? findStepIdentityChange(thrown)
+      // An accepted resume reports a changed completed step as run.incompatible, with the real
+      // state directory and entrypoint: from a dry run's failure, or from runWorkflow's own
+      // preflight refusal. Only that marked refusal left the run unchanged; a real run that failed
+      // on the change after its preflight found nothing stays workflow.failed.
+      const divergence =
+        plan.kind === 'workflow.execute' && plan.resume && plan.acceptCodeChange
+          ? plan.dryRun
+            ? findStepIdentityChange(thrown)
+            : isAcceptedReplayRefusal(thrown)
+              ? thrown
+              : undefined
           : undefined;
       const error =
-        dryRunChange && plan.kind === 'workflow.execute'
+        divergence && plan.kind === 'workflow.execute'
           ? divergenceRefusal(
-              dryRunChange,
+              divergence,
               {
                 runId: plan.runId,
                 stateDir: resolveStateDir({ stateDir: plan.stateDir }),
