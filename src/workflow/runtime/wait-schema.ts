@@ -118,6 +118,11 @@ export function waitRequest(
     if (retryAfterMs !== undefined && typeof retryAfterMs !== 'function')
       throw new Error('Poll onError.retryAfterMs must be a function.');
   }
+  // noteSchema is policy as well: checked here, never part of the request, so it may change on
+  // resume (a saved note is revalidated against it on the next check).
+  const noteSchema = poll?.noteSchema as unknown;
+  if (noteSchema !== undefined && !(noteSchema instanceof z.ZodType))
+    throw new Error('Poll noteSchema must be a Zod schema.');
   const every = poll?.every;
   // A built-in helper's internal identity (poll-identity.ts), read as a plain value.
   const helperValue =

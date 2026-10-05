@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { prepareExec } from './exec.js';
 import { commandSchema, stepExecOptionsSchema } from './exec-schema.js';
 import { schemaJson } from './schema.js';
+import { pollNoteInvalidCode } from './step-error.js';
 import type {
   CommandPollSource,
   PollContext,
@@ -66,6 +67,35 @@ export async function commandPollIdentity(
   validateCommandPoll(poll);
   const { summary } = await prepareExec(poll.command, poll.commandOptions ?? {}, cwd, true);
   return { exec: summary, output: schemaJson(poll.output) };
+}
+
+/**
+ * Apply the poll's `noteSchema` to a note, returning the parsed output. Without a schema, or for a
+ * null note (the first check, or a nonterminal result with no note), the note is returned as is:
+ * null is outside the schema. A failure throws an error with code `QUIET_CHOIR_POLL_NOTE_INVALID`
+ * and the ZodError as its cause. `phase` says whether the note came from this check's result or
+ * from an earlier check's saved progress. @internal
+ */
+export function parsePollNote(
+  id: string,
+  poll: AnyPollSource,
+  note: unknown,
+  phase: 'returned' | 'saved',
+): unknown {
+  const schema = poll.noteSchema as z.ZodType | undefined;
+  if (schema === undefined || note === null || note === undefined) return note;
+  const parsed = schema.safeParse(note);
+  if (parsed.success) return parsed.data;
+  const origin =
+    phase === 'saved'
+      ? 'the saved note from an earlier check'
+      : `the note returned by ${isCommandPoll(poll) ? 'done' : 'observe'}`;
+  throw Object.assign(
+    new Error(`Wait ${id}: ${origin} does not match noteSchema: ${z.prettifyError(parsed.error)}`, {
+      cause: parsed.error,
+    }),
+    { code: pollNoteInvalidCode },
+  );
 }
 
 /**

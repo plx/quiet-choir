@@ -18,6 +18,7 @@ import {
   defaultObserveTimeoutMs,
   isCommandPoll,
   observePoll,
+  parsePollNote,
   type AnyPollSource,
   type PollObservation,
 } from './poll-command.js';
@@ -504,9 +505,12 @@ export class RunQuestions {
       // A failure drain stops new observations; this one stays due and runs again on resume.
       if (this.#draining) return;
       waiter.signal.throwIfAborted();
-      // Read before counting this check: observers see what earlier checks persisted.
+      // Read before counting this check: observers see what earlier checks persisted. A saved note
+      // that fails noteSchema fails the wait here, before the observer runs and without counting.
       const previous = Object.freeze({
-        note: deepFreeze(structuredClone(progress.note)),
+        note: deepFreeze(
+          structuredClone(parsePollNote(id, poll, progress.note, 'saved')),
+        ) as JsonValue,
         checks: progress.checks,
         openedAt: progress.openedAt,
       });
@@ -559,7 +563,7 @@ export class RunQuestions {
         await this.#complete(id, step, waiter, { by: 'poll', value, at, checks: progress.checks });
         return;
       }
-      progress.note = waitNote(result.note);
+      progress.note = waitNote(parsePollNote(id, poll, result.note ?? null, 'returned'));
       if (progress.deadline !== null && at >= progress.deadline) {
         await this.#complete(id, step, waiter, { by: 'deadline', at, note: progress.note });
         return;
