@@ -3468,8 +3468,17 @@ export async function runWorkflow<
           schema: z.number().int().nonnegative(),
           run: () => clockNow(clock),
         }),
-      wait: <const S extends WaitSources>(id: string, sources: S) =>
-        waitOperation(id, sources, (outcome) => outcome as WaitOutcome<S>),
+      // Cast: WaitSources<N> types previous.note for the author from noteSchema; the runtime passes
+      // stored JSON, validated with noteSchema when the poll has one.
+      wait: <const S extends WaitSources<N>, N extends JsonInput = JsonValue>(
+        id: string,
+        sources: S & WaitSources<N>,
+      ) =>
+        waitOperation(
+          id,
+          sources as unknown as WaitSources,
+          (outcome) => outcome as WaitOutcome<S>,
+        ),
       sleepUntil: (id, deadline) => waitOperation(id, { deadline }, () => null),
       // Cast: one implementation serves the observer and command overloads.
       poll: <T, N extends JsonInput = JsonValue>(

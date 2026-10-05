@@ -119,7 +119,7 @@ export interface PollSource<T, N extends JsonInput = JsonValue> {
    * again before the next check sees it. Parsed output replaces the note, so a `z.object` strips
    * unknown keys. Null is outside the schema: the first check's `null`, and the null saved for a
    * `{ done: false }` with no note, are passed through unparsed, so the schema need not be
-   * nullable. A note that fails the schema fails the wait with code
+   * nullable, and a check may return `note: null` or forward `previous.note` whatever the schema. A note that fails the schema fails the wait with code
    * `QUIET_CHOIR_POLL_NOTE_INVALID` (error kind `schema`) and the Zod error as `cause`; `onError`
    * never tolerates it. The schema is reapplied to its own output on the next check, so it should
    * accept what it produces and avoid non-idempotent transforms. It is policy, not identity: it is
@@ -139,7 +139,8 @@ export interface PollSource<T, N extends JsonInput = JsonValue> {
     (
       context: PollContext<N>,
     ) => Promise<
-      { readonly done: true; readonly value: T } | { readonly done: false; readonly note?: N }
+      | { readonly done: true; readonly value: T }
+      | { readonly done: false; readonly note?: N | null }
     >
   >;
   /** Only a {@link CommandPollSource} runs a command; an observer poll has none. */
@@ -199,17 +200,21 @@ export interface CommandPollSource<T, O = unknown, N extends JsonInput = JsonVal
       previous: PollContext<N>['previous'],
     ) =>
       | { readonly done: true; readonly value: T }
-      | { readonly done: false; readonly note?: N }
+      | { readonly done: false; readonly note?: N | null }
       | Promise<
-          { readonly done: true; readonly value: T } | { readonly done: false; readonly note?: N }
+          | { readonly done: true; readonly value: T }
+          | { readonly done: false; readonly note?: N | null }
         >
   >;
   /** Only an observer {@link PollSource} has `observe`. */
   readonly observe?: never;
 }
 
-/** Sources competing inside one durable wait; at least one must be supplied. */
-export interface WaitSources {
+/**
+ * Sources competing inside one durable wait; at least one must be supplied. `N` is the poll's note
+ * type, which `ctx.wait` infers from the poll source's `noteSchema` as `ctx.poll` does.
+ */
+export interface WaitSources<N extends JsonInput = JsonValue> {
   /** Relative duration, pinned to an absolute deadline when first opened. */
   readonly timeoutMs?: number;
   /** Absolute Unix epoch deadline; cannot be combined with timeoutMs. */
@@ -217,7 +222,7 @@ export interface WaitSources {
   /** An optional external answer, with its subject and presentation fingerprinted. */
   readonly signal?: SignalSource<unknown>;
   /** An optional changing-state observation, by an observer or by a command. */
-  readonly poll?: PollSource<unknown> | CommandPollSource<unknown>;
+  readonly poll?: PollSource<unknown, N> | CommandPollSource<unknown, unknown, N>;
 }
 
 /** A terminal external answer; its timestamp is supplied by the inbox writer. */

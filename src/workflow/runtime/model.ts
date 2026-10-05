@@ -641,8 +641,14 @@ export interface WorkflowContext<
   ): Promise<EffectResult<ReadFileResult, TMode>>;
   /** Record the current clock once and replay it as a stable deadline anchor. */
   now(id: string): Promise<number>;
-  /** Choose and persist one signal, poll, or deadline outcome. Never race durable operations yourself. */
-  wait<const S extends WaitSources>(id: string, sources: S): Promise<WaitOutcome<S>>;
+  /**
+   * Choose and persist one signal, poll, or deadline outcome. Never race durable operations yourself.
+   * A poll source's `noteSchema` types its `previous.note`, as in `ctx.poll`.
+   */
+  wait<const S extends WaitSources<N>, N extends JsonInput = JsonValue>(
+    id: string,
+    sources: S & WaitSources<N>,
+  ): Promise<WaitOutcome<S>>;
   /** Wait until a fixed epoch timestamp, suspending when quiescent unless due shortly. */
   sleepUntil(id: string, epochMs: number): Promise<null>;
   /**

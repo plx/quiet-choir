@@ -2103,6 +2103,97 @@ it('types the poll context and the onError policy', () => {
         // @ts-expect-error the returned note must match noteSchema
         observe: () => Promise.resolve({ done: false, note: { seen: 'yes' } }),
       });
+      // Null, or the previous note forwarded as is, is allowed whatever the schema.
+      await ctx.poll('schema-null-note', {
+        input: null,
+        schema: z.null(),
+        every: 1,
+        timeoutMs: 1,
+        noteSchema,
+        observe: ({ previous }) =>
+          Promise.resolve(
+            previous.checks === 0
+              ? { done: false, note: null }
+              : { done: false, note: previous.note },
+          ),
+      });
+      await ctx.poll('command-null-note', {
+        input: null,
+        schema: z.null(),
+        every: 1,
+        timeoutMs: 1,
+        command: ['true'],
+        output: z.unknown(),
+        noteSchema,
+        done: (_output, previous) =>
+          previous.checks === 0
+            ? { done: false, note: null }
+            : { done: false, note: previous.note },
+      });
+      await ctx.poll('command-async-null-note', {
+        input: null,
+        schema: z.null(),
+        every: 1,
+        timeoutMs: 1,
+        command: ['true'],
+        output: z.unknown(),
+        noteSchema,
+        done: (_output, previous) => Promise.resolve({ done: false, note: previous.note }),
+      });
+      // ctx.wait poll sources infer the note type from noteSchema too, optional fields included.
+      const waited = await ctx.wait('wait-schema-typed', {
+        timeoutMs: 1,
+        poll: {
+          input: null,
+          schema: z.literal('ok'),
+          every: 1,
+          noteSchema: z.object({ label: z.string().optional() }),
+          observe: ({ previous }) => {
+            expectTypeOf(previous.note).toEqualTypeOf<{ label?: string | undefined } | null>();
+            return Promise.resolve({ done: false, note: { label: previous.note?.label ?? 'x' } });
+          },
+        },
+      });
+      expectTypeOf(waited.by).toEqualTypeOf<'poll' | 'deadline'>();
+      if (waited.by === 'poll') expectTypeOf(waited.value).toEqualTypeOf<'ok'>();
+      await ctx.wait('wait-command-schema-typed', {
+        timeoutMs: 1,
+        poll: {
+          input: null,
+          schema: z.null(),
+          every: 1,
+          command: ['true'],
+          output: z.unknown(),
+          noteSchema: z.object({ label: z.string().optional() }),
+          done: (_output, previous) => {
+            expectTypeOf(previous.note).toEqualTypeOf<{ label?: string | undefined } | null>();
+            return { done: false, note: {} };
+          },
+        },
+      });
+      await ctx.wait('wait-default-note', {
+        timeoutMs: 1,
+        poll: {
+          input: null,
+          schema: z.null(),
+          every: 1,
+          observe: ({ previous }) => {
+            expectTypeOf(previous.note).toEqualTypeOf<JsonValue | null>();
+            return Promise.resolve({ done: false, note: null });
+          },
+        },
+      });
+      await ctx.wait('wait-wrong-note', {
+        timeoutMs: 1,
+        poll: {
+          input: null,
+          schema: z.null(),
+          every: 1,
+          noteSchema,
+          // @ts-expect-error the returned note must match noteSchema
+          observe: () => Promise.resolve({ done: false, note: { seen: 'yes' } }),
+        },
+      });
       await ctx.poll('missing-tolerate', {
         input: null,
         schema: z.null(),
