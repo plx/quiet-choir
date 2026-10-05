@@ -2,6 +2,12 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- A body failure now aborts an in-flight poll observation as soon as the failure drain starts,
+  instead of waiting for it to settle or for `observeTimeoutMs` (60 s by default). The aborted
+  observation records no `error` or `lastError` and leaves the wait due, so it reruns on resume; an
+  observer that ignores its signal is abandoned after the usual 2 s grace with a `(run failing)`
+  `waitWarnings` entry. Other operations still drain to completion without a signal (#220).
+
 - Re-reading a completed run (`runWorkflow({ resume: true })` on a run that already completed) now
   returns its worktree and wait warnings in `warnings`, as the original completion and
   `workflow inspect` do; it previously returned only the policy, replay and harness warnings. One

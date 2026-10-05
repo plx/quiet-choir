@@ -100,8 +100,9 @@ export interface PollSource<T, N extends JsonValue = JsonValue> {
    * Upper bound, in milliseconds, for one observation: a positive integer. When it elapses before
    * the wait's deadline, the observation's `signal` aborts and the wait fails as if `observe` had
    * thrown. It defaults to 60 seconds and never runs past the deadline, where the signal also
-   * aborts and the wait resolves by `deadline`. It is execution policy, not identity: it is not
-   * persisted and may change on resume.
+   * aborts and the wait resolves by `deadline`. A body failure does not wait for it: the failure
+   * drain aborts the signal at once. It is execution policy, not identity: it is not persisted and
+   * may change on resume.
    */
   readonly observeTimeoutMs?: number;
   /**
@@ -112,7 +113,9 @@ export interface PollSource<T, N extends JsonValue = JsonValue> {
   /**
    * Read external state without writes or nested workflow operations. Honor `context.signal`: an
    * observation that ignores its aborted signal is abandoned after a short grace, with a run
-   * warning. `context.previous` carries the persisted note and check count from earlier checks.
+   * warning. The signal also aborts when a body failure starts draining the run; that observation
+   * records nothing and reruns on resume. `context.previous` carries the persisted note and check
+   * count from earlier checks.
    */
   readonly observe: NoInfer<
     (
