@@ -12,7 +12,9 @@ is causal and treats named-map items as independent, instead of closing at the f
 by #146: explicit acceptance reaches settled maps, which record their own `codeChanges` entries.
 Amended by #215: `runWorkflow` itself runs the #126 preflight, so embedded accepted resumes refuse
 without changing the run too. Amended by #216: the preflight also refuses an accepted body that
-would skip a completed step, settled map or child frame (`ReplaySkippedError`).
+would skip a completed step, settled map or child frame (`ReplaySkippedError`). Amended by #217: the
+preflight synthesizes every Git worktree effect and consumes delivered but unconsumed answers, so it
+no longer stops early at either.
 
 ## Context
 
@@ -175,14 +177,15 @@ fingerprint, output and `codeChanges` stay unchanged. `--dry-run --resume --acce
 returns the same refusal, and check-resume stays body-free but points at that preview.
 
 The preflight fails open: completion, suspension, a refusal before the body, a rehearsal limitation
-(such as a Git worktree effect) or any other failure admits the real invocation, which reproduces
-any genuine problem itself. Synthesized outputs can steer the copy down another branch, and an
-answer delivered but not yet consumed is not copied, so a divergence past that point can still be
-missed; the real run then fails as before, now with the typed cause and the fork recipe. The
-preflight reads without the writer lock, so like check-resume it is a snapshot, not a reservation
-against concurrent writers. The workflow body, but no unfinished callback, runs once more per
-accepted resume. #215 moved this preflight into `runWorkflow`, so embedded callers get the same
-guarantee; see its amendment below.
+or any other failure admits the real invocation, which reproduces any genuine problem itself.
+Synthesized outputs can steer the copy down another branch, so a divergence past that point can
+still be missed; the real run then fails as before, now with the typed cause and the fork recipe.
+(This section first named a Git worktree effect and an answer delivered but not yet consumed as such
+limits; since #217 the preflight passes both, see its amendment below.) The preflight reads without
+the writer lock, so like check-resume it is a snapshot, not a reservation against concurrent
+writers. The workflow body, but no unfinished callback, runs once more per accepted resume. #215
+moved this preflight into `runWorkflow`, so embedded callers get the same guarantee; see its
+amendment below.
 
 ## Amendment: recovery hints by typed cause (#276)
 
@@ -252,9 +255,10 @@ accepted resume preflights once and the body runs twice. A `WorkflowRunError` wh
 `StepIdentityChangedError`, because the preflight failed open and the real run then changed the
 record, still reports `workflow.failed`. The fail-open rules and their limits are unchanged:
 synthesized values can steer the copy onto another branch, so it can miss a change a real run meets
-or refuse one a real run would not reach; worktree effects and delivered but unconsumed answers can
-stop it early; and detection is still only `StepIdentityChangedError`. Embedded callers now also run
-the workflow body, including any top-level code outside effects, once more per accepted resume.
+or refuse one a real run would not reach; worktree effects and delivered but unconsumed answers
+stopped it early until #217 (see its amendment below); and detection is still only
+`StepIdentityChangedError`. Embedded callers now also run the workflow body, including any top-level
+code outside effects, once more per accepted resume.
 
 An honored abort of the run's signal while the copy replays ends the real run as an abort in the
 body would: suspended and due now for a marked `RunInterruptedError`, otherwise `cancelled` (as a
@@ -302,3 +306,39 @@ can skip it in the copy and be refused although a real run would revisit it; the
 and the fork in `details.next` is the escape. A copy that suspends or stops before the end of the
 body finds no skip. Strict replay's `before-live` and `healed` stops under
 `--strict-replay --accept-code-change` still fail open: the real run records the acceptance first.
+
+## Amendment: preflight past worktree effects and delivered answers (#217)
+
+The preflight still stopped early, and so failed open, in two common places. Rehearsal refused
+`ctx.worktree`, isolation on a worktree handle and merges of captured commits (`rehearsal-git`, ADR
+0016), and the copy held only the run record, so a question whose answer had been delivered but not
+yet consumed suspended the copy where the real run would continue. An edit to a completed step after
+either point still recorded the acceptance and then failed the run.
+
+The probe now synthesizes every Git worktree effect. The runtime recognizes the probe by the
+identity of its rehearsal hooks (no public option asks for this), and gives its `WorktreeRehearsal`
+no process runner, so no Git command can be issued, not even `rev-parse`. `ctx.worktree` returns a
+placeholder handle whose directory is never created and whose base is a `{ commit }` base's commit
+or forty zeros. An agent call, command or local step isolated on a handle gets a lease in the
+handle's directory whose capture reports an unchanged tree. Any merge returns the clean-integration
+shape: the placeholder commit, every captured input commit as merged in order (a handle contributes
+none, since its latest commit is unknown without Git), and no conflicts. The replay decision admits
+a `worktree` effect only when the runner marks it synthesized, which only the probe does. A
+`--dry-run` keeps its refusals and report: its synthesized values would misreport a preview to a
+user, while the probe reports nothing.
+
+The disposable copy also holds the pending answer deliveries of the run's waiting questions. For
+each waiting question the copy gets the first existing answer candidate, in the order the question
+reads them, across both inbox layouts and names, copied (never linked or renamed) to the same
+relative path. The copy consumes or rejects only its own file, and the real run later consumes the
+source delivery. Rejected deliveries and cancel requests are not copied. A copy failure other than a
+delivery withdrawn mid-copy is treated as no finding.
+
+The preflight stays fail-open, and still reports nothing about why it stopped. What can still stop
+it before a changed step is a synthesized value that fails validation (such as a refinement), a
+question with no delivery, an unresolved external wait, a non-mapper settled-map refusal (#303), or
+a failure to copy the run. The path-parity caveat now covers synthesized worktree values too: a
+placeholder handle or a conflict-free merge result can steer the copy onto a branch the real run
+would not take, which can miss a divergence or, when that branch skips completed work, refuse an
+edit the real run would accept. That needs completed work ordered after an unfinished Git effect
+whose result decides the branch; the fork in `details.next` is the escape.

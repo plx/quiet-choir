@@ -251,8 +251,11 @@ because it skipped a completed step, settled map or child frame, it returns the 
 `error.details.next` spelled for the real state directory (see
 [ADR 0006](decisions/0006-code-change-recovery.md)). The real command, like any `runWorkflow`
 accepted resume, runs the same replay on its own before it changes anything, with every unfinished
-agent call, local step, file effect, poll observer and command synthesized and no fixtures. A
-preview skips that inner replay, since it is already a disposable copy.
+agent call, local step, file effect, poll observer and command synthesized and no fixtures. That
+inner replay also synthesizes every worktree effect without Git, including the `ctx.worktree`,
+handle isolation and captured-commit merges a preview refuses, and consumes copies of the run's
+delivered but unconsumed answers. A preview skips that inner replay, since it is already a
+disposable copy.
 
 New records save `harness.kind`: `cli`, `fixture`, `dry-run`, `custom` for an unnamed embedded
 adapter, or `none` without an adapter. A different kind on resume or fork requires

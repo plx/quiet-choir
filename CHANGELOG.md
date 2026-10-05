@@ -2,6 +2,16 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- The accepted-replay preflight (`runWorkflow({ resume: true, acceptCodeChange: true })` and the
+  CLI's `--accept-code-change`) no longer stops early, and so fails open, at a Git worktree effect
+  or at a question whose answer was delivered but not yet consumed. Its probe now synthesizes
+  `ctx.worktree`, isolation on a handle and merges of captured commits with placeholders and no Git
+  command, and its disposable copy holds the run's pending answer deliveries (copied, so the real
+  run still consumes the source delivery). An edit to a completed step, or one that skips completed
+  work, after such a point is now refused without changing the run (`run.incompatible`, exit 3, in
+  the CLI) instead of recording the acceptance and then failing. `--dry-run` keeps its refusals of
+  those worktree effects (#217).
+
 - An accepted resume (`runWorkflow({ resume: true, acceptCodeChange: true })` and the CLI's
   `--accept-code-change`) now also refuses without changing the run when the changed body would
   finish without revisiting a completed step, settled map or completed or settled child frame.

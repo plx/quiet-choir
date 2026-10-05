@@ -3,7 +3,7 @@
 ## Status
 
 Accepted. Amended by #147 (command fixtures and typed fixture failures) and #148 (synthesized
-worktree isolation).
+worktree isolation; since #217 the accepted-replay probe synthesizes every worktree effect).
 
 ## Context
 
@@ -140,3 +140,10 @@ integration over real commits would misreport `merged` and `conflicts`, and comp
 objects. A branch on a captured change takes the unchanged path in rehearsal. The CLI also prints
 the rehearsal warnings and summary on the failure path; the failure document keeps its shape, and,
 as before (#276), a dry-run failure carries no resume advice.
+
+The accepted-replay preflight's probe (ADR 0006, #217) is the one exception: the runtime recognizes
+its rehearsal hooks and synthesizes every worktree effect, `ctx.worktree`, handle isolation and
+merges of captured commits included, with placeholders and no Git command at all (its synthesis gets
+no process runner). The probe only looks for a changed or skipped completed step and reports
+nothing, so placeholder values cannot misreport a preview. `--dry-run` and embedders passing their
+own `rehearsal` hooks keep the refusals above.

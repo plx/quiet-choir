@@ -342,9 +342,29 @@ const rows: Row[] = [
     expected: refused({ reason: 'rehearsal-git' }),
   },
   {
-    name: 'rehearsal refuses a worktree effect even when marked synthesized',
-    input: { kind: 'worktree', rehearsal: true, rehearsalSynthesized: true },
+    name: 'rehearsal refuses an unsynthesized worktree effect',
+    input: { kind: 'worktree', rehearsal: true, rehearsalSynthesized: false },
     expected: refused({ reason: 'rehearsal-git' }),
+  },
+  {
+    name: 'the accepted-replay probe runs a synthesized worktree effect',
+    input: { kind: 'worktree', rehearsal: true, rehearsalSynthesized: true },
+    expected: fresh(false),
+  },
+  {
+    name: 'the accepted-replay probe resumes an unfinished synthesized worktree effect',
+    input: {
+      kind: 'worktree',
+      prior: step({ kind: 'worktree', status: 'failed' }),
+      rehearsal: true,
+      rehearsalSynthesized: true,
+    },
+    expected: fresh(true),
+  },
+  {
+    name: 'the accepted-replay probe runs a synthesized handle-isolated exec',
+    input: { kind: 'exec', rehearsal: true, isolated: true, rehearsalSynthesized: true },
+    expected: fresh(false),
   },
   {
     name: 'synthesis without rehearsal changes nothing',

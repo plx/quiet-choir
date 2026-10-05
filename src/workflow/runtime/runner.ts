@@ -105,6 +105,7 @@ import type { PhaseInfo, PhaseOptions, RequestSummary, RunEvent } from './observ
 import {
   acceptedReplayRefusal,
   disposableRunCopy,
+  isPreflightProbe,
   preflightProbeOptions,
   preflightRunOptions,
 } from './accepted-replay-preflight.js';
@@ -959,7 +960,7 @@ export async function runWorkflow<
       let copy: Awaited<ReturnType<typeof disposableRunCopy>> | undefined;
       let change: StepIdentityChangedError | ReplaySkippedError | undefined;
       try {
-        copy = await disposableRunCopy(existing);
+        copy = await disposableRunCopy(existing, stateDir);
         await runWorkflow(definition, {
           ...preflightRunOptions(options),
           ...preflightProbeOptions(copy.stateDir),
@@ -1579,17 +1580,20 @@ export async function runWorkflow<
       signal,
       options.rehearsal !== undefined,
     );
-    // Dry-run synthesizes fresh isolation and unchanged merges with read-only rev-parse only.
+    // Dry-run synthesizes fresh isolation and unchanged merges with read-only rev-parse only. The
+    // accepted-replay probe synthesizes every Git effect and gets no runner, so it runs no Git.
+    const probe = isPreflightProbe(options.rehearsal);
     const rehearsalWorktrees =
       options.rehearsal === undefined
         ? undefined
         : new WorktreeRehearsal(
             record,
-            options.processRunner,
+            probe ? undefined : options.processRunner,
             worktreePolicy,
             save,
             processInvocation,
             signal,
+            probe,
           );
     const notifyWorktree = (event: RehearsalWorktreeEvent): void => {
       try {
@@ -1643,7 +1647,8 @@ export async function runWorkflow<
       readonly isolation?: EffectIsolation;
       /**
        * Under rehearsal, the effect is synthesized instead of touching Git: a fresh isolated agent
-       * call, or a merge of unchanged changes. Omitted means false.
+       * call, or a merge of unchanged changes; under the accepted-replay probe, every Git effect.
+       * Omitted means false.
        */
       readonly rehearsalSynthesized?: boolean;
     }
@@ -2055,7 +2060,8 @@ export async function runWorkflow<
                   attempt: step.attempts,
                 };
                 if (isolation && rehearsalWorktrees) {
-                  // decideReplay refused every unsynthesized isolation under rehearsal.
+                  // decideReplay refused every unsynthesized isolation under rehearsal; only the
+                  // accepted-replay probe reaches here with isolation on a handle.
                   const synthesized = await rehearsalWorktrees.isolate(
                     id,
                     isolation.value,
@@ -2493,7 +2499,11 @@ export async function runWorkflow<
           ...(meta === undefined ? {} : { meta }),
           ...(prepared.settings.worktree === undefined
             ? {}
-            : { isolation: { value: prepared.settings.worktree, cwd: prepared.summary.cwd } }),
+            : {
+                isolation: { value: prepared.settings.worktree, cwd: prepared.summary.cwd },
+                // Only the accepted-replay probe synthesizes an isolated command.
+                rehearsalSynthesized: probe,
+              }),
         });
       });
     }
@@ -2967,7 +2977,8 @@ export async function runWorkflow<
               : {
                   isolation: { value: isolation, cwd: request.cwd, agent: true },
                   rehearsalSynthesized:
-                    rehearsalWorktrees !== undefined && canSynthesizeIsolation(isolation),
+                    probe ||
+                    (rehearsalWorktrees !== undefined && canSynthesizeIsolation(isolation)),
                 }),
           });
           return select(result);
@@ -3380,13 +3391,13 @@ export async function runWorkflow<
             schema: mergeResultSchema,
             ...(onError === undefined ? {} : { onError }),
             execution: resolvePolicy(id, 'step', {}, {}, [], matchedPolicy),
-            ...(rehearsalWorktrees && canSynthesizeMerge(inputs)
+            ...(rehearsalWorktrees && (probe || canSynthesizeMerge(inputs))
               ? {
                   rehearsalSynthesized: true,
                   action: async (context: StepContext) => {
                     const synthesized = await rehearsalWorktrees.merge(
                       id,
-                      inputs.flatMap((input) => ('id' in input ? [] : [input])),
+                      inputs,
                       checked,
                       context,
                     );
@@ -3416,8 +3427,17 @@ export async function runWorkflow<
             dependencies: parsed,
             schema: worktreeHandleSchema,
             execution: resolvePolicy(id, 'step', {}, {}, [], matchedPolicy),
-            action: (context, step, attempt) =>
-              worktrees.create(id, parsed.base, context, step, attempt),
+            // Only the accepted-replay probe synthesizes a handle; it reports no worktree event.
+            ...(rehearsalWorktrees && probe
+              ? {
+                  rehearsalSynthesized: true,
+                  action: (_context: StepContext, step: StepRecord, attempt: AttemptRecord) =>
+                    rehearsalWorktrees.handle(id, parsed.base, step, attempt),
+                }
+              : {
+                  action: (context: StepContext, step: StepRecord, attempt: AttemptRecord) =>
+                    worktrees.create(id, parsed.base, context, step, attempt),
+                }),
           });
         });
       },
@@ -3537,7 +3557,11 @@ export async function runWorkflow<
             ...(step.onError === undefined ? {} : { onError: step.onError }),
             ...(step.worktree === undefined
               ? {}
-              : { isolation: { value: worktreeHandleSchema.parse(step.worktree), cwd } }),
+              : {
+                  isolation: { value: worktreeHandleSchema.parse(step.worktree), cwd },
+                  // Only the accepted-replay probe synthesizes an isolated local step.
+                  rehearsalSynthesized: probe,
+                }),
           }),
         );
       },

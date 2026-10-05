@@ -34,7 +34,11 @@ import {
   type WorkflowContext,
   type MergeResult,
   type Settled,
+  ReplaySkippedError,
+  StepIdentityChangedError,
 } from '../src/index.js';
+import { findAcceptedReplayDivergence } from '../src/workflow/runtime/run-errors.js';
+import { isAcceptedReplayRefusal } from '../src/workflow/runtime/accepted-replay-preflight.js';
 import { WorktreeGit } from '../src/worktrees/git.js';
 import {
   RunWorktrees,
@@ -1577,6 +1581,263 @@ it.each([
   expect((failure as Error).message).toContain('fixture harness in a temporary repository');
   expect(spy.commands).toEqual([]);
   expect(invoke).not.toHaveBeenCalled();
+});
+
+/** Every checkpoint file of a run, by name, so a refusal can prove it wrote nothing. */
+async function runFiles(runId: string): Promise<Record<string, string>> {
+  const run = join(stateDir, runId);
+  const names = (await readdir(run, { recursive: true, withFileTypes: true }))
+    .filter((entry) => entry.isFile())
+    .map((entry) => join(entry.parentPath, entry.name))
+    .sort();
+  return Object.fromEntries(
+    await Promise.all(
+      names.map(async (name): Promise<[string, string]> => [
+        name.slice(run.length + 1),
+        await readFile(name, 'utf8'),
+      ]),
+    ),
+  );
+}
+/** Registered worktrees, refs and the cache root's entries: what a real Git effect would change. */
+async function gitState(): Promise<Record<string, unknown>> {
+  return {
+    worktrees: await command('worktree', 'list', '--porcelain'),
+    refs: await command('for-each-ref'),
+    caches: (await exists(root)) ? (await readdir(root, { recursive: true })).sort() : [],
+  };
+}
+/** A harness that edits the call's checkout, so an isolated call captures a commit. */
+function editingHarness() {
+  const invoke = vi.fn<Harness['invoke']>(async (request) => {
+    await appendFile(join(request.cwd, 'file.txt'), `${request.call.stepId}\n`);
+    return response;
+  });
+  return { invoke };
+}
+// The accepted-replay preflight (#217) synthesizes every Git effect, so an edited completed step
+// after a new or unfinished one is refused before the run, a ref, a worktree or a cache changes.
+it.each([
+  {
+    effect: 'a new ctx.worktree',
+    prefix: async (ctx: WorkflowContext, edited: boolean) => {
+      if (edited) await ctx.worktree('cache');
+    },
+  },
+  {
+    effect: 'an agent call isolated on a ctx.worktree handle',
+    prefix: async (ctx: WorkflowContext, edited: boolean) => {
+      const handle = await ctx.worktree('cache');
+      if (edited) await ctx.codex.text('edit', { prompt: 'edit', worktree: handle });
+    },
+  },
+  {
+    effect: 'a local step isolated on a ctx.worktree handle',
+    prefix: async (ctx: WorkflowContext, edited: boolean) => {
+      const handle = await ctx.worktree('cache');
+      if (edited)
+        await ctx.step('inside', {
+          input: null,
+          schema: z.null(),
+          worktree: handle,
+          run: () => null,
+        });
+    },
+  },
+  {
+    effect: 'a command isolated on a ctx.worktree handle',
+    prefix: async (ctx: WorkflowContext, edited: boolean) => {
+      const handle = await ctx.worktree('cache');
+      if (edited) await ctx.exec('probe', ['true'], { worktree: handle });
+    },
+  },
+  {
+    effect: 'a merge of a captured commit',
+    prefix: async (ctx: WorkflowContext, edited: boolean) => {
+      const edit = await ctx.codex.text('edit', { prompt: 'edit', worktree: true });
+      if (!edit.worktree?.commit) throw new Error('missing captured change');
+      if (edited) await ctx.merge('integrate', [edit.worktree]);
+    },
+  },
+])(
+  'refuses an accepted edit of a completed step after $effect before any Git',
+  async ({ prefix }) => {
+    let edited = false;
+    let ran = 0;
+    const harness = editingHarness();
+    const workflow = defineWorkflow({
+      name: 'preflight-git',
+      version: '1',
+      input: z.null(),
+      output: z.string(),
+      async run(ctx) {
+        await prefix(ctx, edited);
+        const value = await ctx.step('local', {
+          input: null,
+          schema: z.string(),
+          run: edited
+            ? () => {
+                ran++;
+                return 'edited';
+              }
+            : () => {
+                ran++;
+                return 'original';
+              },
+        });
+        if (!edited) throw new Error('tail');
+        return value;
+      },
+    });
+    const run = { ...options('preflight-git'), harness, input: null, fingerprint: 'code-1' };
+    await expect(runWorkflow(workflow, run)).rejects.toThrow('tail');
+    const calls = harness.invoke.mock.calls.length;
+    const files = await runFiles('preflight-git');
+    const git = await gitState();
+    edited = true;
+    const spy = spyRunner();
+    const rejected: unknown = await runWorkflow(workflow, {
+      ...run,
+      processRunner: spy.runner,
+      resume: true,
+      fingerprint: 'code-2',
+      acceptCodeChange: true,
+    }).catch((error: unknown) => error);
+    expect(rejected).toBeInstanceOf(StepIdentityChangedError);
+    expect(isAcceptedReplayRefusal(rejected)).toBe(true);
+    expect(findAcceptedReplayDivergence(rejected)).toBe(rejected);
+    expect(rejected).toMatchObject({ stepId: 'local', components: ['callback'] });
+    expect(await runFiles('preflight-git')).toEqual(files);
+    expect(ran).toBe(1);
+    expect(harness.invoke).toHaveBeenCalledTimes(calls);
+    expect(spy.commands).toEqual([]);
+    expect(await gitState()).toEqual(git);
+  },
+);
+
+it('refuses an accepted edit that skips a completed step behind a new ctx.worktree before any Git', async () => {
+  let edited = false;
+  const workflow = defineWorkflow({
+    name: 'preflight-skip',
+    version: '1',
+    input: z.null(),
+    output: z.string(),
+    async run(ctx) {
+      if (edited) await ctx.worktree('cache');
+      else await ctx.step('early', { input: null, schema: z.string(), run: () => 'e' });
+      const shared = await ctx.step('shared', { input: null, schema: z.string(), run: () => 's' });
+      if (!edited) throw new Error('tail');
+      return shared;
+    },
+  });
+  const run = { ...options('preflight-skip'), input: null, fingerprint: 'code-1' };
+  await expect(runWorkflow(workflow, run)).rejects.toThrow('tail');
+  const files = await runFiles('preflight-skip');
+  const git = await gitState();
+  edited = true;
+  const spy = spyRunner();
+  const rejected: unknown = await runWorkflow(workflow, {
+    ...run,
+    processRunner: spy.runner,
+    resume: true,
+    fingerprint: 'code-2',
+    acceptCodeChange: true,
+  }).catch((error: unknown) => error);
+  expect(rejected).toBeInstanceOf(ReplaySkippedError);
+  expect(isAcceptedReplayRefusal(rejected)).toBe(true);
+  expect(rejected).toMatchObject({ kind: 'steps', skipped: ['early'] });
+  expect(await runFiles('preflight-skip')).toEqual(files);
+  expect(spy.commands).toEqual([]);
+  expect(await gitState()).toEqual(git);
+});
+
+it('re-finalizes a tail-only fix after completed worktree, handle and merge effects with none repeated', async () => {
+  const base = await command('rev-parse', 'HEAD');
+  await command('branch', 'integration');
+  let late = (): string => {
+    throw new Error('bug');
+  };
+  const harness = editingHarness();
+  const workflow = defineWorkflow({
+    name: 'preflight-tail',
+    version: '1',
+    input: z.null(),
+    output: z.string(),
+    async run(ctx) {
+      const handle = await ctx.worktree('cache');
+      await ctx.codex.text('shared', { prompt: 'shared', worktree: handle });
+      const fresh = await ctx.codex.text('fresh', { prompt: 'fresh', worktree: true });
+      if (!fresh.worktree?.commit) throw new Error('missing captured change');
+      const merged = await ctx.merge('integrate', [fresh.worktree], {
+        target: { branch: 'integration' },
+      });
+      return `${merged.commit}/${await ctx.step('late', { input: null, schema: z.string(), run: late })}`;
+    },
+  });
+  const run = { ...options('preflight-tail'), harness, input: null, fingerprint: 'code-1' };
+  await expect(runWorkflow(workflow, run)).rejects.toThrow('bug');
+  const integrated = await command('rev-parse', 'integration');
+  expect(integrated).not.toBe(base);
+  expect(harness.invoke).toHaveBeenCalledTimes(2);
+  late = () => 'late';
+  const spy = spyRunner();
+  const result = await runWorkflow(workflow, {
+    ...run,
+    processRunner: spy.runner,
+    resume: true,
+    fingerprint: 'code-2',
+    acceptCodeChange: true,
+  });
+  expect(result).toMatchObject({ status: 'completed', output: `${integrated}/late` });
+  expect(harness.invoke).toHaveBeenCalledTimes(2);
+  expect(result.codeChanges).toHaveLength(1);
+  // Nothing was created or merged again: no worktree add, no merge computation, no branch move.
+  expect(spy.commands.filter(([verb, sub]) => verb === 'worktree' && sub === 'add')).toEqual([]);
+  expect(spy.commands.filter(([verb]) => verb === 'merge-tree')).toEqual([]);
+  expect(await command('rev-parse', 'integration')).toBe(integrated);
+});
+
+it('runs one real merge when a tail-only fix adds it after completed work', async () => {
+  const base = await command('rev-parse', 'HEAD');
+  await command('branch', 'integration');
+  let fixed = false;
+  const harness = editingHarness();
+  const workflow = defineWorkflow({
+    name: 'preflight-new-merge',
+    version: '1',
+    input: z.null(),
+    output: z.string(),
+    async run(ctx) {
+      const fresh = await ctx.codex.text('fresh', { prompt: 'fresh', worktree: true });
+      if (!fresh.worktree?.commit) throw new Error('missing captured change');
+      const value = await ctx.step('local', { input: null, schema: z.string(), run: () => 'v' });
+      if (!fixed) throw new Error('tail');
+      const merged = await ctx.merge('integrate', [fresh.worktree], {
+        target: { branch: 'integration' },
+      });
+      expect(merged.merged).toEqual([fresh.worktree.commit]);
+      return `${value}/${merged.commit}`;
+    },
+  });
+  const run = { ...options('preflight-new-merge'), harness, input: null, fingerprint: 'code-1' };
+  await expect(runWorkflow(workflow, run)).rejects.toThrow('tail');
+  expect(await command('rev-parse', 'integration')).toBe(base);
+  fixed = true;
+  const spy = spyRunner();
+  const result = await runWorkflow(workflow, {
+    ...run,
+    processRunner: spy.runner,
+    resume: true,
+    fingerprint: 'code-2',
+    acceptCodeChange: true,
+  });
+  const integrated = await command('rev-parse', 'integration');
+  expect(result).toMatchObject({ status: 'completed', output: `v/${integrated}` });
+  expect(integrated).not.toBe(base);
+  expect(harness.invoke).toHaveBeenCalledTimes(1);
+  // The preflight synthesized the merge without Git; only the real run computed it, once.
+  expect(spy.commands.filter(([verb]) => verb === 'merge-tree')).toHaveLength(1);
+  expect(spy.commands.filter(([verb, sub]) => verb === 'worktree' && sub === 'add')).toEqual([]);
 });
 
 it('snapshots a local step handle before asynchronous preparation', async () => {

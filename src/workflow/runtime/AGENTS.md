@@ -141,7 +141,8 @@ Git merge computations leave checkouts alone; only an explicit clean checkout ta
 tree. Cleanup touches only ledger-owned caches/refs, and failed cleanup cannot repeat valid work.
 Rehearsal never mutates Git: `worktree-rehearsal.ts` synthesizes fresh isolation and unchanged
 merges through a read-only `rev-parse` driver, and `RunWorktrees` refuses every command under it.
-See [ADR 0022](../../../docs/decisions/0022-runtime-owned-worktree-isolation.md).
+Only the accepted-replay probe synthesizes every worktree effect, with no process runner at all. See
+[ADR 0022](../../../docs/decisions/0022-runtime-owned-worktree-isolation.md).
 
 Resolve restricted/inherit mode before agent identity and preserve it through checkout preparation.
 Host environment values never enter semantic identity; explicit edits do. Persist only environment

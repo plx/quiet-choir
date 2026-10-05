@@ -8,6 +8,15 @@
  * and returns an unchanged change; a merge whose inputs are all unchanged changes returns the real
  * no-op integration (`commit` is the target's current commit). Everything else that touches Git
  * stays refused by the replay decision.
+ *
+ * The accepted-replay preflight's probe (#217) constructs this class with `synthesizeAll` and no
+ * process runner, so it never resolves a repository and issues no Git command at all. It also
+ * synthesizes the effects a dry run refuses, so the probe can replay past them to a changed
+ * completed step: `ctx.worktree` returns a placeholder handle, an isolation on a handle gets a
+ * lease in the handle's (never created) directory that captures an unchanged tree, and any merge
+ * reports every captured input commit as merged with no conflicts. The probe reports none of these
+ * values, so low-fidelity placeholders (the forty-zero commit, uncreated paths) suffice; they can
+ * still steer the copy onto a branch the real run would not take (ADR 0006's path-parity caveat).
  */
 import { realpath } from 'node:fs/promises';
 import { isAbsolute, join, relative, resolve } from 'node:path';
@@ -62,6 +71,11 @@ export class WorktreeRehearsal {
   private repository: Promise<string | null> | undefined;
   private readonly revisions = new Map<string, Promise<string | null>>();
 
+  /**
+   * @param synthesizeAll - Set only for the accepted-replay probe: also synthesize `ctx.worktree`,
+   *   isolation on a handle and merges of captured commits or handles. Pass no `runner` with it, so
+   *   no Git command can be issued.
+   */
   public constructor(
     private readonly record: RunRecord,
     runner: ProcessRunner | undefined,
@@ -72,6 +86,7 @@ export class WorktreeRehearsal {
       context: Omit<StepContext, 'exec'>,
     ) => HarnessInvocation,
     private readonly runSignal?: AbortSignal,
+    private readonly synthesizeAll = false,
   ) {
     this.git = runner === undefined ? undefined : new WorktreeGit(runner, true);
   }
@@ -148,8 +163,38 @@ export class WorktreeRehearsal {
   }
 
   /**
+   * The accepted-replay probe's `ctx.worktree`: a placeholder handle recorded in the temporary
+   * checkpoint, without Git. Its directory is never created; its base is a `{ commit }` base's
+   * commit, otherwise the placeholder commit.
+   */
+  public async handle(
+    id: string,
+    base: WorktreeBase | undefined,
+    step: StepRecord,
+    attempt: AttemptRecord,
+  ): Promise<WorktreeHandle> {
+    if (!this.synthesizeAll) throw new Error('Dry-run never synthesizes ctx.worktree.');
+    const handle: WorktreeHandle = {
+      id: `dry-run:${digest([id, step.fingerprint])}`,
+      path: join(this.root(null), `${this.record.id}-dry-run`, digest(`handle:${id}`)),
+      base: typeof base === 'object' ? base.commit : placeholderCommit,
+    };
+    step.worktree = attempt.worktree = {
+      base: handle.base,
+      path: handle.path,
+      handleId: handle.id,
+      commit: null,
+      ref: null,
+      files: [],
+    };
+    await this.save();
+    return handle;
+  }
+
+  /**
    * Plan a fresh isolated attempt without Git: record its base and placeholder directory in the
-   * temporary checkpoint and return a lease whose capture reports an unchanged tree.
+   * temporary checkpoint and return a lease whose capture reports an unchanged tree. Under
+   * `synthesizeAll`, an isolation on a handle gets the same kind of lease in the handle's directory.
    */
   public async isolate(
     id: string,
@@ -160,8 +205,11 @@ export class WorktreeRehearsal {
     attempt: AttemptRecord,
   ): Promise<{ lease: WorktreeLease; event: RehearsalWorktreeEvent }> {
     const parsed = resolveWorktree(isolation);
-    if ('id' in parsed)
-      throw new Error('Dry-run never synthesizes isolation on a worktree handle.');
+    if ('id' in parsed) {
+      if (!this.synthesizeAll)
+        throw new Error('Dry-run never synthesizes isolation on a worktree handle.');
+      return this.isolateHandle(id, parsed, context, step, attempt);
+    }
     const invocation = this.invocation(id, context);
     const repo = await this.repo(invocation);
     const root = this.root(repo);
@@ -209,18 +257,80 @@ export class WorktreeRehearsal {
     };
   }
 
+  /** The probe's lease on a handle: its directory as cwd, its base, an unchanged capture. */
+  private async isolateHandle(
+    id: string,
+    handle: WorktreeHandle,
+    context: Omit<StepContext, 'exec'>,
+    step: StepRecord,
+    attempt: AttemptRecord,
+  ): Promise<{ lease: WorktreeLease; event: RehearsalWorktreeEvent }> {
+    const state: WorktreeStep = {
+      base: handle.base,
+      path: handle.path,
+      handleId: handle.id,
+      commit: null,
+      ref: null,
+      files: [],
+    };
+    step.worktree = attempt.worktree = state;
+    await this.save();
+    const none = (): void => {
+      /* No cache, handle or lock exists to settle. */
+    };
+    return {
+      lease: {
+        cwd: handle.path,
+        capture: () => Promise.resolve(state),
+        completed: none,
+        failed: none,
+        release: none,
+      },
+      event: {
+        kind: 'isolation',
+        stepId: id,
+        attempt: context.attempt,
+        base: handle.base,
+        baseSource: 'placeholder',
+        cwd: handle.path,
+      },
+    };
+  }
+
   /**
    * The real integration result of unchanged inputs: nothing merged, no conflicts, and the target's
-   * current commit (an existing branch target, otherwise HEAD).
+   * current commit (an existing branch target, otherwise HEAD). Under `synthesizeAll`, any inputs
+   * merge cleanly onto the placeholder commit: every captured commit is reported merged, in order,
+   * and a handle contributes nothing, since its latest commit is unknown without Git.
    */
   public async merge(
     id: string,
-    inputs: readonly WorktreeChange[],
+    inputs: readonly (WorktreeChange | WorktreeHandle)[],
     options: MergeOptions,
     context: Omit<StepContext, 'exec'>,
   ): Promise<{ result: MergeResult; event: RehearsalWorktreeEvent }> {
     const target = options.target ?? 'ref';
     const kind = typeof target === 'object' ? 'branch' : target;
+    if (this.synthesizeAll) {
+      const merged = inputs.flatMap((input) =>
+        'id' in input || input.commit === null ? [] : [input.commit],
+      );
+      return {
+        result: { commit: placeholderCommit, merged, conflicts: [] },
+        event: {
+          kind: 'merge',
+          stepId: id,
+          attempt: context.attempt,
+          commit: placeholderCommit,
+          inputs: inputs.length,
+          target: kind,
+          baseSource: 'placeholder',
+        },
+      };
+    }
+    if (!canSynthesizeMerge(inputs))
+      throw new Error('Dry-run synthesizes only merges of unchanged changes.');
+    const changes = inputs.flatMap((input) => ('id' in input ? [] : [input]));
     const invocation = this.invocation(id, context);
     const repo = await this.repo(invocation);
     let commit = placeholderCommit;
@@ -232,7 +342,7 @@ export class WorktreeRehearsal {
       const head = branch ?? (await this.revision(repo, 'HEAD', invocation));
       if (head === null)
         throw new Error('Merge requires a committed HEAD or existing target branch.');
-      for (const input of inputs)
+      for (const input of changes)
         if ((await this.revision(repo, input.base, invocation)) !== input.base)
           throw new Error('Merge input commit is unavailable in this repository.');
       commit = head;
