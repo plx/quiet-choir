@@ -38,9 +38,9 @@ poll's input, schema, normalized spacing, and observer source. Captured dependen
 `input`; source hashing cannot inspect closures. Waiting and completed identities are pinned even
 with code-change acceptance. Use new IDs and immutable subjects for new decisions, such as an exact
 commit SHA. Changing an explicit deadline under the same ID fails instead of silently extending it.
-The poll's `observeTimeoutMs` and `onError` are execution policy, not identity: neither is persisted
-in the wait request, and both may change on resume. A command poll fingerprints its prepared command
-and `done` in place of an observer; see [command polls](#command-polls).
+The poll's `observeTimeoutMs`, `onError` and `noteSchema` are execution policy, not identity: none
+is persisted in the wait request, and all may change on resume. A command poll fingerprints its
+prepared command and `done` in place of an observer; see [command polls](#command-polls).
 
 ## Checks and outcomes
 
@@ -68,9 +68,28 @@ nonterminal note, `previous.checks` the number of earlier checks (tolerated erro
 `previous.openedAt` the wait's first-open time. On the first check `note` is null and `checks` is 0.
 The values come from the checkpoint, so they survive suspend, tick and resume, unlike closure state
 in a freshly imported observer; a debounce such as "Completed on two consecutive checks" keeps its
-flag in the note. `previous` is frozen. Keep any other timestamps you need in the note. The note's
-type parameter `N` is not inferred from the notes you return: it is `JsonValue` unless you pass type
-arguments to `ctx.poll`, so narrow or parse `previous.note`, for example with a Zod schema.
+flag in the note. `previous` is frozen. Keep any other timestamps you need in the note.
+
+Pass `noteSchema`, a Zod schema, to type and validate the note. `N` is inferred from it, so
+`ctx.poll('ci', { …, noteSchema: z.object({ seen: z.boolean() }), observe: ({ previous }) => … })`
+types `previous.note` as `{ seen: boolean } | null` with no type arguments, and a note you return
+must match it. Without `noteSchema`, `N` is `JsonValue` and the saved note is trusted: narrow or
+parse `previous.note` yourself. With it, the schema runs in both directions. A nonterminal note you
+return is parsed before it is saved, and the saved output replaces it (a `z.object` drops unknown
+keys); the saved note is parsed again before the next check sees it, so a note left by an older
+version of the body is checked against the current schema before your observer runs. Null is outside
+the schema: the first check's `null`, and the null saved for a `{ done: false }` without a note,
+pass through unparsed, so the schema need not be nullable. A note that fails the schema fails the
+wait with an error whose `code` is `QUIET_CHOIR_POLL_NOTE_INVALID` and whose `cause` is the Zod
+error, recorded with error kind `schema`; the message says whether the note was returned by
+`observe`/`done` or saved by an earlier check. A read-back failure happens before the observer runs
+and does not count as a check, and `onError` never tolerates either failure. A valid signal still
+wins first. Because the schema is applied to its own output on the next check, it should accept what
+it produces: avoid transforms that are not idempotent. `noteSchema` is policy, so you may change it
+on resume. To migrate a changed note shape, make the schema accept the old shape (a union), or reset
+an incompatible note with `.catch(null)`; otherwise use a new wait ID. Notes are still limited to 16
+KiB after parsing, and the optional-field output type of a schema is accepted
+(`{ label?: string | undefined }`), since undefined members are dropped when the note is saved.
 
 `every` is a positive integer interval, or `{ initialMs, maxMs, factor? }` with factor defaulting to
 two. Spacing grows after nonterminal checks up to `maxMs`, measured from check completion. It is a
@@ -113,9 +132,9 @@ at or after the deadline, including on the final check after a missed deadline, 
 `deadline` with the last good note. `classify` and `retryAfterMs` run under the same guard as
 observers and cannot call context operations. Never tolerated, with or without a policy: run
 cancellation or interruption, context-operation violations inside an observer, an `observe` result
-of the wrong shape, a terminal value that fails the schema, and an invalid or oversized note. A
-tolerated `observeTimeoutMs` expiry can leave the abandoned observer running while the next check
-starts; the usual `waitWarnings` entry records it.
+of the wrong shape, a terminal value that fails the schema, a note that fails `noteSchema` (returned
+or saved), and an invalid or oversized note. A tolerated `observeTimeoutMs` expiry can leave the
+abandoned observer running while the next check starts; the usual `waitWarnings` entry records it.
 
 Each check uses fixed precedence:
 
@@ -164,9 +183,10 @@ const outcome = await ctx.poll('ci', {
 `command` is an argv or `{ shell }`, and `output` the Zod schema of its stdout. `commandOptions`
 takes `cwd`, `env`, `inheritEnv`, `input`, `okExitCodes` and `maxOutputBytes`, but no `timeoutMs`
 (`observeTimeoutMs` bounds each check) and no `onError` (the poll's `onError` applies). `live: true`
-keeps the command real under `--dry-run`. `input`, `schema`, `every`, `observeTimeoutMs`, `onError`
-and the time bound mean what they mean for an observer. `ctx.wait(id, { poll })` accepts the same
-source, but there `done`'s output is typed `unknown`; `ctx.poll` infers it from `output`.
+keeps the command real under `--dry-run`. `input`, `schema`, `every`, `noteSchema`,
+`observeTimeoutMs`, `onError` and the time bound mean what they mean for an observer; `noteSchema`
+types and validates the notes `done` returns and `previous.note`. `ctx.wait(id, { poll })` accepts
+the same source, but there `done`'s output is typed `unknown`; `ctx.poll` infers it from `output`.
 
 Each check runs the command as an observer's `context.exec.json(command, { schema: output })` would:
 through `RunOptions.execRunner` (or `processRunner`), registered under the wait ID and attempt 1 so

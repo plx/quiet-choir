@@ -2,6 +2,18 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- `ctx.poll` (both forms) and `ctx.wait` poll sources take an optional `noteSchema`, a Zod schema
+  that infers the note type, so `previous.note` is `z.infer<typeof schema> | null` without type
+  arguments, and validates it in both directions: a nonterminal note is parsed before it is saved
+  (unknown keys are dropped), and the saved note is parsed again before the next check, so a note
+  left by an older body fails before the observer runs, without counting as a check. A null note
+  bypasses the schema. A failure throws an error with code `QUIET_CHOIR_POLL_NOTE_INVALID` (error
+  kind `schema`, the Zod error as `cause`) that `onError` never tolerates. `noteSchema` is policy,
+  not identity, so it is not persisted and may change on resume. The note type parameter `N` of
+  `PollContext`, `PollSource`, `CommandPollSource`, `PollOptions`, `CommandPollOptions` and the
+  `ctx.poll` overloads now accepts `JsonInput`, so a schema with optional fields type-checks.
+  Without `noteSchema` nothing changes (#222).
+
 - A body failure now aborts an in-flight poll observation as soon as the failure drain starts,
   instead of waiting for it to settle or for `observeTimeoutMs` (60 s by default). The aborted
   observation records no `error` or `lastError` and leaves the wait due, so it reruns on resume; an

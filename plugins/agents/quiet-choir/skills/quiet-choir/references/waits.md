@@ -69,7 +69,6 @@ command. In `ctx.wait`, `done`'s output is `unknown`; `ctx.poll` infers it.
 import { defineWorkflow, z } from 'quiet-choir';
 
 const checks = z.array(z.object({ name: z.string(), bucket: z.string() }));
-const seen = z.object({ green: z.boolean() }).nullable();
 
 export default defineWorkflow({
   name: 'await-ci',
@@ -84,6 +83,7 @@ export default defineWorkflow({
       timeoutMs: 3_600_000,
       command: ['gh', 'pr', 'checks', String(input.pr), '--json', 'name,bucket'],
       output: checks,
+      noteSchema: z.object({ green: z.boolean() }),
       // gh exits 8 while checks are pending; that is data, not a failure.
       commandOptions: { okExitCodes: [0, 8] },
       done: (output, previous) => {
@@ -91,7 +91,7 @@ export default defineWorkflow({
           return { done: true, value: 'fail' };
         const green = output.every((check) => ['pass', 'skipping'].includes(check.bucket));
         // Debounce: report pass only on the second green check in a row.
-        if (green && seen.parse(previous.note)?.green) return { done: true, value: 'pass' };
+        if (green && previous.note?.green) return { done: true, value: 'pass' };
         return { done: false, note: { green } };
       },
     }),
@@ -101,7 +101,13 @@ export default defineWorkflow({
 `previous` holds the persisted progress before this check: `note` (null on the first check),
 `checks` (0 on the first check, tolerated errors included) and `openedAt`. It survives suspend, tick
 and resume, so keep debounce flags and other timestamps in the note, not in closures. It is frozen;
-`N` is not inferred from returned notes, so narrow or parse `previous.note` (for example with Zod).
+`noteSchema` (a Zod schema) infers `N`, so `previous.note` is `{ green: boolean } | null` with no
+type arguments, and it validates notes both ways: a returned note is parsed before it is saved, and
+the saved note is parsed again before the next check, so an older shape fails before `done` runs.
+Null passes through unparsed. A failure throws code `QUIET_CHOIR_POLL_NOTE_INVALID` (error kind
+`schema`). The schema is reapplied to its own output, so avoid non-idempotent transforms; to migrate
+a changed shape accept the old one (a union) or use `.catch(null)`, else use a new wait ID. It is
+policy, not identity. Without it `previous.note` is `JsonValue`: narrow or parse it.
 
 `onError: { tolerate, classify?, retryAfterMs? }` tolerates transient observation errors. Candidates
 are a rejected observation and an `observeTimeoutMs` expiry (code
@@ -112,7 +118,7 @@ least 0; null keeps spacing). Error `tolerate + 1` in a row, a `'fatal'` result 
 callback fails the wait. A success resets the count, which persists across resumes. The deadline
 still wins, including on the final check. The callbacks are guarded like observers. Never tolerated:
 run cancellation or interruption, context-operation violations, wrong `observe` result shape,
-terminal schema failures, and invalid or oversized notes.
+terminal schema failures, `noteSchema` failures, and invalid or oversized notes.
 
 Outcomes are discriminated by `by`: signal has value/at/actor, poll has value/at/checks, deadline
 has at/note. A valid signal timestamped at or before the deadline wins first, then a terminal poll,
