@@ -3,7 +3,7 @@ import { chmod, mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/
 import { hostname, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
-import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, expect, it, onTestFinished, vi } from 'vitest';
 import {
   CliHarness,
   defineWorkflow,
@@ -69,6 +69,22 @@ async function lock(runId: string, pid = process.pid, host = hostname()) {
   const path = join(stateDir, `${runId}.json.lock`);
   await mkdir(path, { recursive: true });
   await writeFile(join(path, 'owner.json'), JSON.stringify({ pid, host, token: 'test' }));
+}
+/**
+ * Wait until `count` more watch polls have finished. For a running record locked by this process,
+ * watchRun's inspectRun calls inspectRunOwnership exactly once per poll, and the next call starts
+ * only after the previous poll finished its change check and slept, so reaching baseline + count + 1
+ * calls proves that `count` polls completed. A fixed sleep cannot promise that under load.
+ */
+async function waitForPolls(count: number): Promise<void> {
+  const ownership = vi.mocked(store.inspectRunOwnership);
+  const start = ownership.mock.calls.length;
+  await vi.waitFor(
+    () => {
+      expect(ownership.mock.calls.length).toBeGreaterThanOrEqual(start + count + 1);
+    },
+    { timeout: 5000 },
+  );
 }
 beforeEach(async () => {
   stateDir = await mkdtemp(join(tmpdir(), 'choir-inspection-'));
@@ -452,14 +468,24 @@ it('watches only actual changes and stops after completion with one final snapsh
   await save(run);
   await lock('run');
   const changes: string[] = [];
-  const watching = watchRun({ stateDir, runId: 'run', intervalMs: 5 }, (snapshot) => {
-    changes.push(snapshot.summary.status);
+  const controller = new AbortController();
+  onTestFinished(() => {
+    controller.abort();
   });
-  // Wait for the first snapshot, then let several polls pass: none may report an unchanged run.
+  const watching = watchRun(
+    { stateDir, runId: 'run', intervalMs: 5 },
+    (snapshot) => {
+      changes.push(snapshot.summary.status);
+    },
+    controller.signal,
+  );
+  // A failed assertion must not leave an unhandled rejection from the abandoned watcher.
+  void watching.catch(() => undefined);
+  // Wait for the first snapshot, then for at least three unchanged polls: none may report a change.
   await vi.waitFor(() => {
     expect(changes).toEqual(['running']);
   });
-  await delay(35);
+  await waitForPolls(3);
   expect(changes).toEqual(['running']);
   run.status = 'completed';
   run.updatedAt = '2026-02-01T00:00:00.000Z';
@@ -474,13 +500,22 @@ it('stops on owner loss even when checkpoint bytes do not change, but interrupti
   await save(run);
   await lock('run');
   const changed: string[] = [];
-  const watching = watchRun({ stateDir, runId: 'run', intervalMs: 5 }, (snapshot) => {
-    changed.push(snapshot.summary.status);
+  const controller = new AbortController();
+  onTestFinished(() => {
+    controller.abort();
   });
+  const watching = watchRun(
+    { stateDir, runId: 'run', intervalMs: 5 },
+    (snapshot) => {
+      changed.push(snapshot.summary.status);
+    },
+    controller.signal,
+  );
+  void watching.catch(() => undefined);
   await vi.waitFor(() => {
     expect(changed).toEqual(['running']);
   });
-  await delay(20);
+  await waitForPolls(2);
   // Lose the owner atomically: a recursive rm briefly exposes an owner-less lock, a real change.
   await rename(join(stateDir, 'run.json.lock'), join(stateDir, 'released.lock'));
   expect((await watching).summary.status).toBe('stale');
