@@ -9,19 +9,27 @@
  * The probe needs no fixtures and no live integration: its harness, process runner and rehearsal
  * hooks synthesize every unfinished agent call, command, local step, file effect and poll observer
  * from its schema. The runtime recognizes the probe's hooks ({@link isPreflightProbe}) and
- * synthesizes every Git worktree effect with placeholders and no Git command (#217). Only a
- * completed-step identity change ({@link StepIdentityChangedError}) or a skipped completed step,
- * settled map or child frame ({@link ReplaySkippedError}) counts as a finding. Completion,
- * suspension, a refusal, a
- * synthesis gap, a rehearsal limitation or any other failure finds nothing, so the real run
- * proceeds and reproduces any genuine problem itself; only an abort propagates. Synthesized values
- * can steer the copy onto a different branch from a real run, so a finding is as good as the
+ * synthesizes every Git worktree effect with placeholders and no Git command (#217): `ctx.worktree`,
+ * isolation on a fresh checkout or a handle, and any merge, which a `--dry-run` partly refuses.
+ * The copy also holds the pending answer deliveries of the run's waiting questions, so it consumes
+ * a delivered but unconsumed answer as the real run would. Only a completed-step identity change
+ * ({@link StepIdentityChangedError}) or a skipped completed step, settled map or child frame
+ * ({@link ReplaySkippedError}) counts as a finding.
+ *
+ * Completion, suspension, a refusal, a synthesis gap, a rehearsal limitation or any other failure
+ * finds nothing, so the real run proceeds and reproduces any genuine problem itself; only an abort
+ * propagates. What can still stop the probe before a changed step: a synthesized value that fails
+ * validation (such as a refinement), a question with no delivery, an unresolved external wait, a
+ * non-mapper settled-map refusal (#303), or a failure to copy the run. Synthesized values can also
+ * steer the copy onto a different branch from a real run, so a finding is as good as the
  * rehearsal's path parity (ADR 0006). @internal
  */
-import { mkdir, mkdtemp, rm } from 'node:fs/promises';
+import { constants } from 'node:fs';
+import { copyFile, mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join, relative, resolve } from 'node:path';
 import type { ProcessRunner } from './exec-model.js';
+import { answerCandidates } from './inbox.js';
 import type { Harness, HarnessResponse } from './model.js';
 import { runDirectory } from './paths.js';
 import type { RunRecord } from './record.js';
@@ -171,11 +179,42 @@ export function preflightProbeOptions(
 }
 
 /**
+ * Copy each waiting question's pending delivery from `sourceStateDir` to the same relative path
+ * under `stateDir`: the first existing answer candidate, which is the one the real run's question
+ * reads first. A copy, never a rename or link, so the copy's consumption or rejection leaves the
+ * source delivery for the real run. Rejected deliveries and cancel requests are not copied.
+ */
+async function copyPendingDeliveries(
+  record: RunRecord,
+  sourceStateDir: string,
+  stateDir: string,
+): Promise<void> {
+  const source = resolve(sourceStateDir);
+  for (const [stepId, step] of Object.entries(record.steps)) {
+    if (step.status !== 'waiting' || !step.question) continue;
+    for (const candidate of answerCandidates(source, record.id, stepId)) {
+      const target = join(stateDir, relative(source, candidate));
+      try {
+        await mkdir(dirname(target), { recursive: true, mode: 0o700 });
+        await copyFile(candidate, target, constants.COPYFILE_EXCL);
+        break;
+      } catch (error) {
+        // A missing candidate, or a delivery withdrawn or consumed mid-copy: try the next one.
+        if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;
+      }
+    }
+  }
+}
+
+/**
  * Write `record` (the one the real run read under its lock, so a custom store works too) into a
- * fresh temporary state directory. `dispose` removes the directory. @internal
+ * fresh temporary state directory, with the pending answer deliveries of its waiting questions
+ * from `sourceStateDir` (the real run's resolved state directory, which its questions read).
+ * `dispose` removes the directory. @internal
  */
 export async function disposableRunCopy(
   record: RunRecord,
+  sourceStateDir: string,
 ): Promise<{ readonly stateDir: string; readonly dispose: () => Promise<void> }> {
   const stateDir = await mkdtemp(join(tmpdir(), 'quiet-choir-preflight-'));
   const dispose = async (): Promise<void> => {
@@ -185,6 +224,7 @@ export async function disposableRunCopy(
     await mkdir(runDirectory(stateDir, record.id), { recursive: true, mode: 0o700 });
     // A clone, so the copy's journal writer never touches the real run's in-memory record.
     await writeRun(stateDir, structuredClone(record));
+    await copyPendingDeliveries(record, sourceStateDir, stateDir);
     return { stateDir, dispose };
   } catch (error) {
     await dispose();

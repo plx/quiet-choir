@@ -1,6 +1,6 @@
-import { mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join, relative } from 'node:path';
 
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 
@@ -22,7 +22,10 @@ import {
   type Harness,
   type RunOptions,
   type WorkflowContext,
+  writeAnswer,
 } from '../src/index.js';
+import { disposableRunCopy } from '../src/workflow/runtime/accepted-replay-preflight.js';
+import { answerCandidates } from '../src/workflow/runtime/inbox.js';
 import {
   findAcceptedReplayDivergence,
   findStepIdentityChange,
@@ -720,6 +723,130 @@ it('refuses an embedded accepted resume without changing a suspended run or its 
   const after = await readRun(options());
   expect(after.status).toBe('suspended');
   expect(after.steps['q']?.status).toBe('waiting');
+});
+
+// #217: the preflight's copy holds the run's pending deliveries, so it consumes a delivered but
+// unconsumed answer as the real run would and reaches the changed step or the end of the body.
+it.each([
+  {
+    edit: 'moves an edited completed step after it',
+    change: { stepId: 's', components: ['callback'], status: 'completed' },
+  },
+  {
+    edit: 'drops a completed step before it',
+    change: { kind: 'steps', skipped: ['early'], healed: [] },
+  },
+] as const)(
+  'refuses an accepted resume over a delivered answer that $edit, leaving the delivery',
+  async ({ change }) => {
+    let edited = false;
+    let ran = 0;
+    let callback = (): string => {
+      ran++;
+      return 'one';
+    };
+    const skips = 'kind' in change;
+    const definition = workflow(async (ctx) => {
+      if (!(edited && skips))
+        await ctx.step('early', { input: null, schema: z.string(), run: () => 'e' });
+      if (!(edited && !skips))
+        await ctx.step('s', { input: null, schema: z.string(), run: callback });
+      const answer = await ctx.ask('q', { prompt: 'Text?', schema: z.string() });
+      if (edited && !skips) await ctx.step('s', { input: null, schema: z.string(), run: callback });
+      return answer;
+    });
+    expect((await runWorkflow(definition, options())).status).toBe('suspended');
+    const delivery = await writeAnswer({ stateDir, runId: 'source', stepId: 'q', value: 'yes' });
+    const before = { record: await readRun(options()), files: await runFiles('source') };
+    edited = true;
+    if (!skips)
+      callback = () => {
+        ran++;
+        return 'two';
+      };
+    await expectUnchanged(await acceptedRejection(definition), before, change);
+    // The preflight consumed its own copy; the source delivery waits for the real run.
+    expect(await readFile(delivery.path, 'utf8')).toBe(
+      before.files[delivery.path.slice(join(stateDir, 'source').length + 1)],
+    );
+    expect(ran).toBe(1);
+    const after = await readRun(options());
+    expect(after.status).toBe('suspended');
+    expect(after.steps['q']?.status).toBe('waiting');
+  },
+);
+
+it('re-finalizes a tail-only fix over a delivered answer, consuming the source delivery', async () => {
+  let ran = 0;
+  let tail = (answer: string): string => answer;
+  const definition = workflow(async (ctx) => {
+    await ctx.step('s', {
+      input: null,
+      schema: z.string(),
+      run: () => {
+        ran++;
+        return 's';
+      },
+    });
+    return tail(await ctx.ask('q', { prompt: 'Text?', schema: z.string() }));
+  });
+  expect((await runWorkflow(definition, options())).status).toBe('suspended');
+  const delivery = await writeAnswer({ stateDir, runId: 'source', stepId: 'q', value: 'yes' });
+  tail = (answer) => `${answer}!`;
+  const result = await runWorkflow(definition, {
+    ...options(),
+    resume: true,
+    fingerprint: 'code-2',
+    acceptCodeChange: true,
+  });
+  expect(result).toMatchObject({ status: 'completed', output: 'yes!' });
+  expect(result.steps['q']).toMatchObject({ status: 'completed', output: 'yes' });
+  expect(result.codeChanges).toHaveLength(1);
+  expect(ran).toBe(1);
+  // The real run consumed the source delivery, which stays as its audit file.
+  expect(JSON.parse(await readFile(delivery.path, 'utf8'))).toMatchObject({ value: 'yes' });
+});
+
+it('copies the first pending delivery from either inbox layout and never a rejected one', async () => {
+  const definition = workflow((ctx) => ctx.ask('q', { prompt: 'Text?', schema: z.string() }));
+  expect((await runWorkflow(definition, options())).status).toBe('suspended');
+  const delivery = await writeAnswer({ stateDir, runId: 'source', stepId: 'q', value: 'yes' });
+  const candidates = answerCandidates(stateDir, 'source', 'q');
+  expect(candidates[0]).toBe(delivery.path);
+  // Move the delivery into the legacy flat inbox under its format-6 name, the last candidate.
+  const flat = candidates.at(-1) ?? '';
+  expect(flat).toContain('source.inbox');
+  await mkdir(dirname(flat), { recursive: true });
+  await rename(delivery.path, flat);
+  await writeFile(`${flat}.rejected.0.json`, 'rejected');
+  await writeFile(`${delivery.path}.rejected.1.json`, 'rejected');
+  const record = await readRun(options());
+  const copied = async (): Promise<Record<string, string>> => {
+    const copy = await disposableRunCopy(record, stateDir);
+    try {
+      const names = (await readdir(copy.stateDir, { recursive: true, withFileTypes: true }))
+        .filter((entry) => entry.isFile() && entry.name.includes('.answer.json'))
+        .map((entry) => join(entry.parentPath, entry.name));
+      return Object.fromEntries(
+        await Promise.all(
+          names.map(async (name): Promise<[string, string]> => [
+            relative(copy.stateDir, name),
+            await readFile(name, 'utf8'),
+          ]),
+        ),
+      );
+    } finally {
+      await copy.dispose();
+    }
+  };
+  const flatText = await readFile(flat, 'utf8');
+  expect(await copied()).toEqual({ [relative(stateDir, flat)]: flatText });
+  // With deliveries in both layouts, only the one the question reads first is copied.
+  await writeFile(delivery.path, 'first');
+  expect(await copied()).toEqual({ [relative(stateDir, delivery.path)]: 'first' });
+  // The source deliveries are untouched.
+  expect(await readFile(flat, 'utf8')).toBe(flatText);
+  expect(await readFile(delivery.path, 'utf8')).toBe('first');
 });
 
 it('refuses an embedded accepted resume through a bound store without writing to it', async () => {

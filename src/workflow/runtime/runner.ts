@@ -960,7 +960,7 @@ export async function runWorkflow<
       let copy: Awaited<ReturnType<typeof disposableRunCopy>> | undefined;
       let change: StepIdentityChangedError | ReplaySkippedError | undefined;
       try {
-        copy = await disposableRunCopy(existing);
+        copy = await disposableRunCopy(existing, stateDir);
         await runWorkflow(definition, {
           ...preflightRunOptions(options),
           ...preflightProbeOptions(copy.stateDir),
