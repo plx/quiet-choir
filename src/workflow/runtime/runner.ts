@@ -392,7 +392,8 @@ export interface RunOptions extends WorkflowCodeOptions {
   /** Optional entrypoint metadata supplied by the CLI or embedder for resume by ID. */
   readonly launch?: WorkflowLaunch;
   /**
-   * Program words that start the emitted `resumeCommand` and each `answerCommand`, such as
+   * Program words that start the emitted `resumeCommand`, each `answerCommand` and the
+   * `workflow unlock` command in a `run.locked` refusal's message and `details.next`, such as
    * `[process.execPath, '/abs/bin/run.js']`. Defaults to `['quiet-choir']`. Emitted commands are
    * computed per call and never saved in the record.
    */

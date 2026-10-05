@@ -296,7 +296,7 @@ export class WorkflowExecutor implements Executor<WorkflowExecutorPlan, Workflow
           kind: 'workflow.clean.result',
           ok: true,
           ...(await cleanWorktrees(
-            plan,
+            { ...plan, commandLauncher: this.#options.commandLauncher },
             this.#options.processRunner ?? new NodeProcessRunner(),
             this.#options.signal,
             this.#options.processSupervisor,
@@ -308,7 +308,11 @@ export class WorkflowExecutor implements Executor<WorkflowExecutorPlan, Workflow
         const outcome = await removeRun(
           plan,
           this.#options.processRunner ?? new NodeProcessRunner(),
-          { signal: this.#options.signal, processSupervisor: this.#options.processSupervisor },
+          {
+            signal: this.#options.signal,
+            processSupervisor: this.#options.processSupervisor,
+            commandLauncher: this.#options.commandLauncher,
+          },
         );
         if (outcome.kind === 'blocked')
           return workflowFailure('workflow.storage', outcome.message, {
@@ -345,7 +349,11 @@ export class WorkflowExecutor implements Executor<WorkflowExecutorPlan, Workflow
         const outcome = await pruneRuns(
           plan,
           this.#options.processRunner ?? new NodeProcessRunner(),
-          { signal: this.#options.signal, processSupervisor: this.#options.processSupervisor },
+          {
+            signal: this.#options.signal,
+            processSupervisor: this.#options.processSupervisor,
+            commandLauncher: this.#options.commandLauncher,
+          },
         );
         if (outcome.kind === 'interrupted') {
           const removed = outcome.removed.map((run) => ({
@@ -364,7 +372,7 @@ export class WorkflowExecutor implements Executor<WorkflowExecutorPlan, Workflow
       if (plan.kind === 'workflow.unlock') {
         stage = 'workflow.storage';
         const stateDir = resolveStateDir({ stateDir: plan.stateDir });
-        const locks = await unlockRun(plan);
+        const locks = await unlockRun({ ...plan, commandLauncher: this.#options.commandLauncher });
         // Nothing locked and nothing saved is most likely a mistyped run ID, not a no-op. Checked
         // here, not in the lock module, so an unreadable record never blocks an unlock.
         if (!locks.length && !(await hasCheckpoint(stateDir, plan.runId)))
@@ -397,6 +405,7 @@ export class WorkflowExecutor implements Executor<WorkflowExecutorPlan, Workflow
               process.kill(pid, signal);
             }),
           signal: this.#options.signal,
+          commandLauncher: this.#options.commandLauncher,
         });
       }
       if (plan.kind === 'workflow.pending') {

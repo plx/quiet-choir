@@ -346,6 +346,58 @@ describe('failureNextCommands', () => {
     expect(refusal.message).toContain(formatArgv(expected));
     expect(failure({ code: 'run.incompatible', details: refusal.details })).toEqual([expected]);
   });
+
+  describe('run.locked', () => {
+    const unlock = ['quiet-choir', 'workflow', 'unlock', 'r1', '--state-dir', stateDir];
+    const entry = { why: 'Rerun once the owner has exited.', argv: unlock };
+    const locked = (details: JsonValue, overrides: Partial<FailureNextContext> = {}) =>
+      failureNextCommands({
+        code: 'run.locked',
+        details,
+        run: null,
+        runId: 'r1',
+        stateDir,
+        launcher,
+        rehearsal: false,
+        ...overrides,
+      });
+
+    it('passes the details.next entries the runtime built through', () => {
+      const forced = { why: 'Only if far is gone.', argv: [...unlock, '--force-remote'] };
+      expect(locked({ next: [entry, forced] })).toEqual([entry, forced]);
+    });
+
+    it.each<[string, JsonValue]>([
+      ['no details', null],
+      ['details without next', { lockPath: '/lock' }],
+      ['a next that is not a list', { next: 'quiet-choir workflow unlock r1' }],
+      ['a bare argv list, as run.incompatible divergence uses', { next: [unlock] }],
+    ])('gives nothing for %s', (_label, details) => {
+      expect(locked(details)).toEqual([]);
+    });
+
+    it('drops malformed entries and keeps the valid ones', () => {
+      expect(
+        locked({
+          next: [
+            { why: 'no argv' },
+            { why: 'empty argv', argv: [] },
+            { why: 'non-string argv', argv: ['quiet-choir', 1] },
+            { argv: unlock },
+            { why: 7, argv: unlock },
+            'quiet-choir',
+            null,
+            entry,
+          ],
+        }),
+      ).toEqual([entry]);
+    });
+
+    it('gives nothing for a rehearsal or without a run ID', () => {
+      expect(locked({ next: [entry] }, { rehearsal: true })).toEqual([]);
+      expect(locked({ next: [entry] }, { runId: null })).toEqual([]);
+    });
+  });
 });
 
 describe('launch policy on next entries', () => {

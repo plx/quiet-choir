@@ -2,6 +2,16 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- `run.locked` refusals from `workflow resume`, `execute`, `start`, `tick`, `clean`, `rm`, `cancel`
+  and `unlock` (and the skipped entries of `prune`) now carry `error.details.next`, a list of
+  `{why, argv}` entries, and the failure document's top-level `next` repeats it. The entry is the
+  `workflow unlock` command behind the invocation's launcher (`node` plus the absolute `bin/run.js`
+  outside an installed `quiet-choir`), with `--force-remote` only when the holder is on a foreign
+  host. The refusal prose and `workflow inspect`'s `Unlock:` line embed the same command, so a path
+  that needs shell quoting is quoted. Embedders get the same through `RunOptions.commandLauncher`
+  and the new `RunStoreOpenOptions.commandLauncher`; without one the argv starts with `quiet-choir`
+  (#213).
+
 - `workflow inspect` text now prints one `Unlock:` line naming the exact `workflow unlock` command
   after the `Lock` lines when no lock owner or recoverer is alive or unverifiable locally and no
   child is alive or unverifiable: a dead or released owner, a dead recoverer, or missing or damaged

@@ -1,7 +1,7 @@
 import { existsSync } from 'node:fs';
 import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { hostname, tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -13,6 +13,7 @@ import { WorkflowExecutor } from '../src/workflow/loader/executor.js';
 import type { WorkflowFailure } from '../src/workflow/loader/failure.js';
 import type { WorkflowCommandResult } from '../src/workflow/loader/model.js';
 import { TickWorkflowExecutor } from '../src/workflow/loader/tick.js';
+import { formatArgv } from '../src/workflow/runtime/commands.js';
 import { lockRun } from '../src/workflow/runtime/store.js';
 import { analyzeTypecheckEntrypoint } from '../src/workflow/typecheck/plan.js';
 import { defineWorkflow, readRun, runWorkflow, RunInterruptedError, z } from '../src/index.js';
@@ -42,9 +43,18 @@ const ownStart = (): string => {
 
 function cancel(
   sendSignal: (pid: number, signal: NodeJS.Signals) => void,
-  options: { readonly runId?: string; readonly force?: boolean; readonly timeoutMs?: number } = {},
+  options: {
+    readonly runId?: string;
+    readonly force?: boolean;
+    readonly timeoutMs?: number;
+    readonly launcher?: readonly string[];
+  } = {},
 ): Promise<WorkflowCommandResult> {
-  return new WorkflowExecutor({ logger, sendSignal }).execute({
+  return new WorkflowExecutor({
+    logger,
+    sendSignal,
+    ...(options.launcher === undefined ? {} : { commandLauncher: options.launcher }),
+  }).execute({
     kind: 'workflow.cancel',
     runId: options.runId ?? 'run-1',
     stateDir,
@@ -170,6 +180,48 @@ describe('workflow cancel refusals', () => {
     expect(sendSignal).not.toHaveBeenCalled();
     expect(existsSync(requestPath())).toBe(false);
   });
+
+  it.each([
+    ['a dead owner', () => ({ pid: DEAD }), true],
+    ['a released owner', () => ({ released: true }), true],
+    ['a mismatched osStartTime', () => ({ osStartTime: 'bogus' }), true],
+    ['a foreign-host owner', () => ({ host: 'elsewhere' }), false],
+    ['a live owner without osStartTime', () => ({ osStartTime: undefined }), false],
+  ] as const)(
+    'lists the unlock command behind the launcher only where the message names it: %s',
+    async (_name, change, namesUnlock) => {
+      await suspendedRun();
+      await plantOwner({
+        pid: process.pid,
+        host: hostname(),
+        token: 'held',
+        osStartTime: ownStart(),
+        ...change(),
+      });
+      for (const launcher of [undefined, ['quiet-choir'], [process.execPath, '/abs/bin/run.js']]) {
+        const failure = failed(await cancel(vi.fn(), launcher ? { launcher } : {}));
+        expect(failure.code).toBe('run.locked');
+        if (!namesUnlock) {
+          expect(failure.details).not.toHaveProperty('next');
+          expect(failure.next ?? []).toEqual([]);
+          continue;
+        }
+        const argv = [
+          ...(launcher ?? ['quiet-choir']),
+          'workflow',
+          'unlock',
+          'run-1',
+          '--state-dir',
+          resolve(stateDir),
+        ];
+        expect(failure.details).toMatchObject({ next: [{ argv }] });
+        expect(failure.message).toContain(formatArgv(argv));
+        expect(failure.message).not.toContain('--force-remote');
+        // The document's top-level next is the same list, so JSON callers need no parsing.
+        expect(failure.next).toEqual([{ why: expect.any(String) as unknown, argv }]);
+      }
+    },
+  );
 
   it('refuses a lock whose owner.json is unreadable with run.locked', async () => {
     await suspendedRun();

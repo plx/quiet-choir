@@ -1,6 +1,6 @@
 import type { InspectionStatus, RunSummary } from '../workflow/loader/inspection.js';
 import type { ExecSummary } from '../workflow/runtime/exec-model.js';
-import { unlockCommand } from '../workflow/runtime/lock.js';
+import { formatArgv, unlockNext, type CommandLauncher } from '../workflow/runtime/commands.js';
 import { unlockAdvice } from '../workflow/runtime/recovery-decision.js';
 import { formatNextCommands } from './presentation.js';
 import { parseDuration } from './duration.js';
@@ -135,18 +135,26 @@ function lockLine(lock: RunSummary['ownership']['locks'][number]): string {
  * The one `Unlock:` line for a run whose locks `workflow unlock` could clear, or null. View-only:
  * nothing reaches JSON. Needs `stateDir`, since the command carries it. @internal
  */
-function unlockHint(run: RunSummary): string | null {
+function unlockHint(run: RunSummary, launcher: CommandLauncher | undefined): string | null {
   if (run.stateDir === undefined) return null;
   const advice = unlockAdvice(run.ownership);
   if (advice === null) return null;
-  const command = unlockCommand(run.stateDir, run.id);
-  return advice.kind === 'unlock'
-    ? `Unlock: ${command}`
-    : `Unlock: ${command} --force-remote (only if ${advice.host} is this machine under an old name or is permanently gone)`;
+  const forceRemote = advice.kind !== 'unlock';
+  const command = formatArgv(
+    unlockNext(launcher, run.stateDir, run.id, { forceRemote, why: 'Clear the abandoned lock.' })
+      .argv,
+  );
+  return forceRemote
+    ? `Unlock: ${command} (only if ${advice.host} is this machine under an old name or is permanently gone)`
+    : `Unlock: ${command}`;
 }
 
 /** Render only known values: a running workflow never ends in a bare null. @internal */
-export function formatRunSummary(run: RunSummary, verbose = false): string {
+export function formatRunSummary(
+  run: RunSummary,
+  verbose = false,
+  launcher?: CommandLauncher,
+): string {
   const lines = [
     `Run ${run.id}: ${run.status}  ${run.workflow.name}@${run.workflow.version}`,
     `Owner: ${owner(run)}  started ${run.startedAt} (${duration(run.elapsedMs)})  last activity ${duration(run.lastActivityAgeMs)} ago`,
@@ -302,7 +310,7 @@ export function formatRunSummary(run: RunSummary, verbose = false): string {
       `Recent: ${event.at}${event.phase ? ` [${event.phase}]` : ''} ${event.message ?? event.type}${event.data === null ? '' : ` ${JSON.stringify(event.data)}`}`,
     );
   for (const lock of run.ownership.locks) lines.push(lockLine(lock));
-  const hint = unlockHint(run);
+  const hint = unlockHint(run, launcher);
   if (hint !== null) lines.push(hint);
   for (const process of run.ownership.processes)
     lines.push(

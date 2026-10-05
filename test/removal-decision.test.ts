@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
+import { formatArgv } from '../src/workflow/runtime/commands.js';
 import type { RunLockView, RunOwnership } from '../src/workflow/runtime/lock.js';
 import type { HarnessProcessInspection } from '../src/workflow/runtime/process-registry.js';
 import type { RunRecord, StepRecord } from '../src/workflow/runtime/record.js';
@@ -229,6 +230,66 @@ describe('removalRefusal', () => {
       removalVerdict(run('completed'), observed([lock('guard', 'alive')]), { force: true }),
     );
     expect(live.message).toMatch(/guard lock owner PID 4242 on here is alive; --force does not/u);
+  });
+
+  describe('behind a launcher', () => {
+    const launcher = [process.execPath, '/abs/bin/run.js'];
+    const unlock = [...launcher, 'workflow', 'unlock', 'run-1', '--state-dir', '/state'];
+    const refuseWith = (verdict: RemovalVerdict, program?: readonly string[]) => {
+      if (verdict.kind === 'remove') throw new Error('expected a refusal');
+      return removalRefusal('run-1', stateDir, verdict, program);
+    };
+
+    it('builds the remote and unreadable commands from details.next', () => {
+      const remote = refuseWith(
+        removalVerdict(run('completed'), observed([lock('primary', 'remote')]), { force: true }),
+        launcher,
+      );
+      expect(remote.details).toMatchObject({
+        next: [{ why: expect.any(String) as unknown, argv: [...unlock, '--force-remote'] }],
+      });
+      expect(remote.message).toContain(formatArgv([...unlock, '--force-remote']));
+      const unreadable = refuseWith(
+        removalVerdict(run('completed'), observed([lock('primary', 'unreadable')]), {
+          force: true,
+        }),
+        launcher,
+      );
+      expect(unreadable.details).toMatchObject({
+        next: [{ why: expect.any(String) as unknown, argv: unlock }],
+      });
+      expect(unreadable.message).toContain(`${formatArgv(unlock)},`);
+      expect(JSON.stringify(unreadable.details)).not.toContain('--force-remote');
+    });
+
+    it('falls back to the default launcher and gives live owners no entry', () => {
+      const remote = refuseWith(
+        removalVerdict(run('completed'), observed([lock('primary', 'remote')]), { force: true }),
+      );
+      expect(remote.details).toMatchObject({
+        next: [
+          {
+            argv: [
+              'quiet-choir',
+              'workflow',
+              'unlock',
+              'run-1',
+              '--state-dir',
+              '/state',
+              '--force-remote',
+            ],
+          },
+        ],
+      });
+      for (const state of ['alive', 'unknown'] as const) {
+        const live = refuseWith(
+          removalVerdict(run('completed'), observed([lock('guard', state)]), { force: true }),
+          launcher,
+        );
+        expect(live.details).not.toHaveProperty('next');
+        expect(live.message).not.toContain('unlock');
+      }
+    });
   });
 
   it('explains orphans and active runs with their details', () => {

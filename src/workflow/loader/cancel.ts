@@ -3,6 +3,7 @@ import { hostname } from 'node:os';
 import { setTimeout as delay } from 'node:timers/promises';
 import { pidState, processIdentity } from '../../processes/identity.js';
 import { removeCancelRequest, writeCancelRequest } from '../runtime/cancel-request.js';
+import { formatArgv, nextDetail, unlockNext, type CommandLauncher } from '../runtime/commands.js';
 import { isErrno, ownerState, readContended, type Owner } from '../runtime/lock.js';
 import { resolveStateDir, runLockPath } from '../runtime/paths.js';
 import { readRequiredRun } from '../runtime/read-required-run.js';
@@ -25,6 +26,8 @@ export interface CancelRunOptions {
   readonly signal?: AbortSignal | undefined;
   /** Polling interval of the wait; 100 ms by default. */
   readonly intervalMs?: number;
+  /** Shapes the `workflow unlock` command that a `run.locked` refusal names. */
+  readonly commandLauncher?: CommandLauncher | undefined;
 }
 
 type TerminalStatus = CancelResult['status'];
@@ -87,9 +90,21 @@ function lockedRefusal(
   reason: Unverified | 'unreadable-owner',
   owner?: Owner,
   cause?: unknown,
+  launcher?: CommandLauncher,
 ): RunRefusedError {
   const pid = owner === undefined ? '' : `PID ${String(owner.pid)}`;
-  const unlock = `quiet-choir workflow unlock ${runId} --state-dir ${stateDir}`;
+  // Only the refusals that name unlock carry the entry; the live-owner and foreign-host ones do not.
+  const entry =
+    reason === 'released'
+      ? unlockNext(launcher, stateDir, runId, {
+          why: `Works once the children of PID ${String(owner?.pid)} are gone; inspect the run first.`,
+        })
+      : reason === 'dead' || reason === 'os-start-time-mismatch'
+        ? unlockNext(launcher, stateDir, runId, {
+            why: `Clears the lock of PID ${String(owner?.pid)}, which is gone.`,
+          })
+        : undefined;
+  const unlock = entry === undefined ? '' : formatArgv(entry.argv);
   const messages: Record<typeof reason, string> = {
     'foreign-host': `Run ${runId} is owned by ${pid} on foreign host ${owner?.host ?? ''}; workflow cancel signals only a live owner on this host.`,
     released: `Run ${runId}'s owner ${pid} released its lock while child processes survive; there is no live owner to cancel. Inspect the run, then clear the lock with ${unlock} once its children are gone.`,
@@ -110,6 +125,7 @@ function lockedRefusal(
       state: owner === undefined ? null : ownerState(owner),
       osStartTime: owner?.osStartTime ?? null,
       reason,
+      ...(entry === undefined ? {} : { next: nextDetail([entry]) }),
     },
     cause === undefined ? undefined : { cause },
   );
@@ -159,11 +175,27 @@ export async function cancelRun(
     );
   }
   if (observed.kind === 'unreadable')
-    throw lockedRefusal(runId, stateDir, lockPath, 'unreadable-owner', undefined, observed.error);
+    throw lockedRefusal(
+      runId,
+      stateDir,
+      lockPath,
+      'unreadable-owner',
+      undefined,
+      observed.error,
+      options.commandLauncher,
+    );
   const { owner } = observed;
   const unverified = verifyOwner(owner);
   if (unverified !== undefined || !owner.osStartTime)
-    throw lockedRefusal(runId, stateDir, lockPath, unverified ?? 'os-start-time-missing', owner);
+    throw lockedRefusal(
+      runId,
+      stateDir,
+      lockPath,
+      unverified ?? 'os-start-time-missing',
+      owner,
+      undefined,
+      options.commandLauncher,
+    );
   const target = { pid: owner.pid, host: owner.host, osStartTime: owner.osStartTime };
   const requestId = randomUUID();
   const requestPath = await writeCancelRequest(stateDir, runId, {

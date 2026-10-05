@@ -189,7 +189,8 @@ the current clock and inspect logs. A live owner means wait or intentionally can
 `workflow cancel` (below); a foreign-host owner needs investigation on that host. Missing/incomplete
 `owner.json` in a lock is damage or an older build's interrupted acquire. Never delete lock
 directories by hand, and do not clear a lock on age alone. When resume refuses an abandoned lock
-with `run.locked`, clear it with the command its message prints:
+with `run.locked`, clear it with the command its message prints, which `error.details.next` and the
+failure's top-level `next` also list as `{why, argv}` behind the invocation's launcher:
 
 ```sh
 node "$QC_CHECKOUT/bin/run.js" workflow unlock first --state-dir "$QC_RUNS" --json

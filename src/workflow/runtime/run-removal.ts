@@ -4,6 +4,7 @@ import { lstat, readdir, rename, rm, rmdir } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join } from 'node:path';
 import { pidState } from '../../processes/identity.js';
 import type { ProcessSupervisor } from '../../processes/supervisor.js';
+import type { CommandLauncher } from './commands.js';
 import type { ProcessRunner } from './exec-model.js';
 import { digest, jsonValue } from './json.js';
 import { isErrno, sweepStrays } from './lock.js';
@@ -97,6 +98,8 @@ export type RemovalStep =
 export interface RemoveRunLive {
   readonly signal?: AbortSignal | undefined;
   readonly processSupervisor?: ProcessSupervisor | undefined;
+  /** Program words behind the `workflow unlock` command that a `run.locked` refusal names. */
+  readonly commandLauncher?: CommandLauncher | undefined;
   /** @internal Test seam called after each deletion step; a throw stops the removal there. */
   readonly afterStep?: (step: RemovalStep) => void | Promise<void>;
   /** @internal Test seam called after the inspection and before the run lock is taken. */
@@ -174,6 +177,7 @@ function refusalError(
   runId: string,
   stateDir: string,
   verdict: Exclude<RemovalVerdict, { readonly kind: 'remove' }>,
+  launcher?: CommandLauncher,
 ): RunRefusedError {
   if (verdict.kind === 'orphans') {
     const error = new OrphanProcessesError(
@@ -185,10 +189,10 @@ function refusalError(
         state: verdict.owner.state,
       },
     );
-    error.message = removalRefusal(runId, stateDir, verdict).message;
+    error.message = removalRefusal(runId, stateDir, verdict, launcher).message;
     return error;
   }
-  const refusal = removalRefusal(runId, stateDir, verdict);
+  const refusal = removalRefusal(runId, stateDir, verdict, launcher);
   return new RunRefusedError(refusal.code, runId, refusal.message, jsonValue(refusal.details));
 }
 
@@ -212,7 +216,11 @@ function namespaceDirectory(
 }
 
 /** Plan a removal without a lock, a sweep or any write. */
-async function planRemoval(stateDir: string, options: RemoveRunOptions): Promise<RunRemovalResult> {
+async function planRemoval(
+  stateDir: string,
+  options: RemoveRunOptions,
+  launcher?: CommandLauncher,
+): Promise<RunRemovalResult> {
   const { runId } = options;
   const record = await readRequiredRun({ runId, stateDir });
   if (options.expectedUpdatedAt !== undefined)
@@ -228,7 +236,10 @@ async function planRemoval(stateDir: string, options: RemoveRunOptions): Promise
     dryRun: true,
     force: options.force ?? false,
     refs: options.refs ?? false,
-    verdict: verdict.kind === 'remove' ? 'remove' : pick(removalRefusal(runId, stateDir, verdict)),
+    verdict:
+      verdict.kind === 'remove'
+        ? 'remove'
+        : pick(removalRefusal(runId, stateDir, verdict, launcher)),
     removed: false,
     paths: await existingPaths(stateDir, runId),
     caches: Object.values(ledger?.caches ?? {})
@@ -271,7 +282,8 @@ export async function removeRun(
 ): Promise<RunRemovalOutcome> {
   const { runId } = options;
   const stateDir = resolveStateDir({ stateDir: options.stateDir });
-  if (options.dryRun) return { kind: 'removed', result: await planRemoval(stateDir, options) };
+  if (options.dryRun)
+    return { kind: 'removed', result: await planRemoval(stateDir, options, live.commandLauncher) };
   const force = options.force ?? false;
   const { signal } = live;
   const tombstones = await sweepTombstones(stateDir);
@@ -281,13 +293,14 @@ export async function removeRun(
   const verdict = removalVerdict(initial, await inspectRunOwnership({ runId, stateDir }), {
     force,
   });
-  if (verdict.kind !== 'remove') throw refusalError(runId, stateDir, verdict);
+  if (verdict.kind !== 'remove') throw refusalError(runId, stateDir, verdict, live.commandLauncher);
   // Measured before the lock exists, so a real removal reports what its dry run reports.
   const paths = await existingPaths(stateDir, runId);
   const bytes = await runBytes(stateDir, runId);
   signal?.throwIfAborted();
   await live.beforeLock?.();
   const owned = await openFileOwnedRun(stateDir, runId, {
+    commandLauncher: live.commandLauncher,
     ...(signal === undefined ? {} : { signal }),
     ...(live.processSupervisor === undefined ? {} : { processSupervisor: live.processSupervisor }),
   });
@@ -378,7 +391,7 @@ async function removeOwned(
     { locked: false, owner: null, processes: [], locks: [] },
     { force },
   );
-  if (recheck.kind !== 'remove') throw refusalError(runId, stateDir, recheck);
+  if (recheck.kind !== 'remove') throw refusalError(runId, stateDir, recheck, live.commandLauncher);
   const warnings: string[] = [];
   const caches: RemovedCache[] = [];
   let refsRemoved: readonly string[] = [];
