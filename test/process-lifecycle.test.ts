@@ -62,6 +62,8 @@ async function waitForFile(file: string): Promise<string> {
 
 describe.skipIf(process.platform === 'win32')('bounded POSIX process ownership', () => {
   it('succeeds within the drain period after a leader exits with inherited pipes and reaps leftovers', async () => {
+    // The bound sits far above any loaded run, so it only catches a drain that waited out the full period.
+    const drainMs = 10_000;
     const start = performance.now();
     const result = await runProcess(
       request(
@@ -69,16 +71,18 @@ describe.skipIf(process.platform === 'win32')('bounded POSIX process ownership',
       const child = require('node:child_process').spawn('/bin/sleep', ['30'], { stdio: ['ignore', 1, 2] });
       console.log(child.pid); child.unref(); process.exit(0);
     `,
-        { drainMs: 1200 },
+        { drainMs },
       ),
     );
     expect(result.code).toBe(0);
-    expect(performance.now() - start).toBeLessThan(1200);
+    expect(result.warnings.join(' ')).not.toContain('drain deadline');
+    expect(result.truncated).toBe(false);
+    expect(performance.now() - start).toBeLessThan(drainMs);
     const pid = Number(result.stdout.trim());
     expect(pid).toBeGreaterThan(1);
     expect(processIdentity(pid)?.zombie ?? groupState({ pid, pgid: null }) === 'dead').toBe(true);
     expect(result.warnings).toContain('Reaping leftover process group after leader exit.');
-  });
+  }, 20_000);
 
   it('reaps same-group children even when their pipes were redirected away', async () => {
     const result = await runProcess(
