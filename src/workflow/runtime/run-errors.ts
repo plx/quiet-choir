@@ -250,10 +250,60 @@ export class StepIdentityChangedError extends Error {
 }
 
 /**
- * A resumed body left the recorded replay path: strict replay stopped before a live step
- * (`before-live`) or after a healed step (`healed`), or the body finished without visiting
- * recorded steps (`skipped-steps`) or settled maps (`skipped-maps`). The runner reads `reason`
- * to choose a recovery hint instead of parsing the message. @internal
+ * A resumed body finished without revisiting recorded work, so its control flow changed: completed
+ * steps or settled-failed steps (`steps`), settled maps with committed items (`maps`), or completed
+ * or settled child frames (`child-frames`). The end-of-body checks run in the order child frames,
+ * maps, steps, and only the first failing check is reported. An accepted resume detects this on a
+ * disposable copy first and rejects with this error itself, before the run is changed; the CLI's
+ * `--accept-code-change` reports that as `run.incompatible`. A plain resume, or an accepted one
+ * whose preflight could not reach the end of the body, fails the run and reports it as the cause of
+ * {@link WorkflowRunError}.
+ *
+ * @example
+ * ```ts
+ * for (let error: unknown = failure; error instanceof Error; error = error.cause)
+ *   if (error instanceof ReplaySkippedError) console.log(error.kind, error.skipped, error.healed);
+ * ```
+ */
+export class ReplaySkippedError extends Error {
+  static {
+    brandError(this, 'ReplaySkippedError');
+  }
+
+  /** Recognize an instance from any quiet-choir module instance, such as a CLI workflow's own import. */
+  public static override [Symbol.hasInstance](value: unknown): value is ReplaySkippedError {
+    return isBranded(this, value);
+  }
+
+  /** What the body skipped: recorded steps, settled maps, or child frames. */
+  public readonly kind: 'steps' | 'maps' | 'child-frames';
+  /** Step, map-journal or child-frame IDs that were recorded but not revisited, in record order. */
+  public readonly skipped: readonly string[];
+  /** Failed steps that now succeeded in this execution; only a `steps` skip names any. */
+  public readonly healed: readonly string[];
+
+  public constructor(
+    message: string,
+    details: {
+      readonly kind: 'steps' | 'maps' | 'child-frames';
+      readonly skipped: readonly string[];
+      readonly healed?: readonly string[];
+    },
+    options?: ErrorOptions,
+  ) {
+    super(message, options);
+    this.name = 'ReplaySkippedError';
+    this.kind = details.kind;
+    this.skipped = Object.freeze([...details.skipped]);
+    this.healed = Object.freeze([...(details.healed ?? [])]);
+  }
+}
+
+/**
+ * Strict replay left the recorded path: it stopped before a live step (`before-live`) or after a
+ * healed step (`healed`). A body that finishes without revisiting recorded work raises
+ * {@link ReplaySkippedError} instead. The runner reads the class to choose a recovery hint instead
+ * of parsing the message. @internal
  */
 export class ReplayDivergenceError extends Error {
   static {
@@ -268,7 +318,7 @@ export class ReplayDivergenceError extends Error {
   /** Keep the divergence text exactly as the replay warning or skip check words it. */
   public constructor(
     /** Where replay left the recorded path. */
-    public readonly reason: 'before-live' | 'healed' | 'skipped-steps' | 'skipped-maps',
+    public readonly reason: 'before-live' | 'healed',
     message: string,
   ) {
     super(message);
@@ -295,6 +345,32 @@ export function findStepIdentityChange(
   ];
   for (const entry of nested) {
     const found = findStepIdentityChange(entry, seen);
+    if (found) return found;
+  }
+  return undefined;
+}
+
+/**
+ * The first {@link StepIdentityChangedError} or {@link ReplaySkippedError} in an error's causes,
+ * aggregate members and `WorkflowRunError` cause: the divergences an accepted resume refuses before
+ * it changes the run. @internal
+ */
+export function findAcceptedReplayDivergence(
+  error: unknown,
+  seen = new Set<unknown>(),
+): StepIdentityChangedError | ReplaySkippedError | undefined {
+  if (!(error instanceof Error) || seen.has(error)) return undefined;
+  seen.add(error);
+  if (error instanceof StepIdentityChangedError || error instanceof ReplaySkippedError)
+    return error;
+  const nested: unknown[] = [
+    error.cause,
+    ...(error instanceof AggregateError && Array.isArray(error.errors)
+      ? (error.errors as unknown[])
+      : []),
+  ];
+  for (const entry of nested) {
+    const found = findAcceptedReplayDivergence(entry, seen);
     if (found) return found;
   }
   return undefined;

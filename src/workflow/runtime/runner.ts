@@ -109,9 +109,10 @@ import {
   preflightRunOptions,
 } from './accepted-replay-preflight.js';
 import {
-  findStepIdentityChange,
+  findAcceptedReplayDivergence,
   isValidRunId,
   ReplayDivergenceError,
+  ReplaySkippedError,
   runIdMessage,
   RunInterruptedError,
   RunRefusedError,
@@ -511,9 +512,11 @@ export interface RunOptions extends WorkflowCodeOptions {
   /**
    * Explicitly accept only source/schema changes on resume; local callback identity still applies.
    * The changed body first replays once on a disposable copy of the run, with every unfinished
-   * effect synthesized; if it meets a changed completed or settled-failed step, the resume rejects
-   * with a bare {@link StepIdentityChangedError} and the run is left unchanged. Top-level code
-   * outside effects therefore runs one extra time.
+   * effect synthesized. If it meets a changed completed or settled-failed step, the resume rejects
+   * with a bare {@link StepIdentityChangedError}; if it finishes without revisiting a completed
+   * step, settled map or completed or settled child frame, with a bare {@link ReplaySkippedError}.
+   * Either way the run is left unchanged. Top-level code outside effects therefore runs one extra
+   * time.
    */
   readonly acceptCodeChange?: boolean;
   /** Fail before a live effect when earlier terminal steps have not been visited. */
@@ -948,12 +951,13 @@ export async function runWorkflow<
         existing.engine.zod !== engine.zod ||
         existing.engine.tsx !== engine.tsx);
     // #215: every gate above has passed and nothing has touched `existing` yet. An accepted replay
-    // that would meet a changed completed step is found on a disposable copy of the record read
-    // under this lock, and refused before the acceptance is recorded. The probe's own nested run
+    // that would meet a changed completed step, or skip a completed step, settled map or child
+    // frame (#216), is found on a disposable copy of the record read under this lock, and refused
+    // before the acceptance is recorded. The probe's own nested run
     // carries rehearsal hooks, as does a dry run, which is already a disposable copy.
     if (options.acceptCodeChange && existing && options.rehearsal === undefined) {
       let copy: Awaited<ReturnType<typeof disposableRunCopy>> | undefined;
-      let change: StepIdentityChangedError | undefined;
+      let change: StepIdentityChangedError | ReplaySkippedError | undefined;
       try {
         copy = await disposableRunCopy(existing);
         await runWorkflow(definition, {
@@ -961,7 +965,7 @@ export async function runWorkflow<
           ...preflightProbeOptions(copy.stateDir),
         });
       } catch (error) {
-        change = findStepIdentityChange(error);
+        change = findAcceptedReplayDivergence(error);
       } finally {
         // A temporary directory left behind must not fail the real run.
         await copy?.dispose().catch(() => undefined);
@@ -3691,17 +3695,17 @@ export async function runWorkflow<
             maps[id]?.items.some((item) => item.status === 'completed')),
       );
       if (missingMaps.length)
-        throw new ReplayDivergenceError(
-          'skipped-maps',
+        throw new ReplaySkippedError(
           `Replay skipped settled maps (${missingMaps.join(', ')}); workflow control flow changed.`,
+          { kind: 'maps', skipped: missingMaps },
         );
       const missing = Object.entries(record.steps)
         .filter(([id, step]) => !used.has(id) && isTerminalStep(step))
         .map(([id]) => id);
       if (missing.length)
-        throw new ReplayDivergenceError(
-          'skipped-steps',
+        throw new ReplaySkippedError(
           `Replay skipped recorded steps (${missing.join(', ')}); workflow control flow changed.${healed.size ? ` Healed steps: ${[...healed].join(', ')}.` : ''}`,
+          { kind: 'steps', skipped: missing, healed: [...healed] },
         );
       const superseded = Object.entries(record.steps).filter(
         ([id, step]) =>
@@ -3928,7 +3932,9 @@ function recoveryCause(errors: readonly unknown[], record: RunRecord): RecoveryC
   if (
     found.some(
       (error) =>
-        error instanceof ReplayDivergenceError || error instanceof StepIdentityChangedError,
+        error instanceof ReplayDivergenceError ||
+        error instanceof StepIdentityChangedError ||
+        error instanceof ReplaySkippedError,
     )
   )
     return { kind: 'divergence' };

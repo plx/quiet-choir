@@ -76,6 +76,11 @@ function samples(api: Api): Record<string, Error> {
       components: ['prompt'],
       status: 'completed',
     }),
+    ReplaySkippedError: new api.ReplaySkippedError('skipped', {
+      kind: 'steps',
+      skipped: ['step'],
+      healed: ['healer'],
+    }),
     WorkflowInputError: new api.WorkflowInputError(null, new Error('invalid')),
     AnswerError: new api.AnswerError('invalid', 'bad answer', [
       { code: 'invalid_type', path: ['approved'], message: 'Invalid input' },

@@ -2,6 +2,22 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- An accepted resume (`runWorkflow({ resume: true, acceptCodeChange: true })` and the CLI's
+  `--accept-code-change`) now also refuses without changing the run when the changed body would
+  finish without revisiting a completed step, settled map or completed or settled child frame.
+  Previously it recorded the acceptance, replaced the fingerprint and cleared the saved output, then
+  failed at the end of the body. The end-of-body checks now throw the new public, branded
+  `ReplaySkippedError` (`kind`: `steps`, `maps` or `child-frames`; `skipped` IDs; `healed` steps),
+  with unchanged message text, so a plain resume still fails with the same `WorkflowRunError`
+  message, its cause now typed; a skipped child frame's `recoveryHint` is now the replay-divergence
+  advice instead of re-finalize advice. Embedded callers get a bare `ReplaySkippedError` whose
+  message adds the fork recipe. The CLI reports `run.incompatible` (exit 3) with one
+  `error.details.divergent` entry `{stepId, skipped}` per skipped ID (`skipped` is `step`, `map` or
+  `child-frame`; identity entries keep `{stepId, components}`) and an `error.details.next` fork
+  command that invalidates the first skipped ID; `--dry-run --resume --accept-code-change` returns
+  the same refusal. This includes an accepted fix to a failed step whose `catch` fallback already
+  completed, which is now refused up front; fork to adopt it (#216).
+
 - An embedded `runWorkflow({ resume: true, acceptCodeChange: true })` now refuses without changing
   the run when the accepted replay would meet a changed completed or settled-failed step: it replays
   the body once on a disposable copy of the record, with every unfinished effect synthesized, and

@@ -15,6 +15,7 @@ import {
   readRun,
   RunInterruptedError,
   runWorkflow,
+  ReplaySkippedError,
   StepIdentityChangedError,
   WorkflowRunError,
   z,
@@ -23,6 +24,7 @@ import {
   type WorkflowContext,
 } from '../src/index.js';
 import {
+  findAcceptedReplayDivergence,
   findStepIdentityChange,
   ReplayDivergenceError,
 } from '../src/workflow/runtime/run-errors.js';
@@ -628,17 +630,23 @@ async function acceptedRejection(
   );
 }
 
-/** The rejection is the preflight's bare refusal, and the record and lock are as they were. */
+/**
+ * The rejection is the preflight's bare refusal, and the record and lock are as they were. A
+ * `kind` in `change` expects a skip ({@link ReplaySkippedError}), otherwise an identity change.
+ */
 async function expectUnchanged(
   rejected: unknown,
   before: { readonly record: RunRecord; readonly files: Record<string, string> },
-  change: Pick<StepIdentityChangedError, 'stepId' | 'components' | 'status'>,
+  change:
+    | Pick<StepIdentityChangedError, 'stepId' | 'components' | 'status'>
+    | Pick<ReplaySkippedError, 'kind' | 'skipped' | 'healed'>,
 ): Promise<void> {
-  expect(rejected).toBeInstanceOf(StepIdentityChangedError);
+  const type = 'kind' in change ? ReplaySkippedError : StepIdentityChangedError;
+  expect(rejected).toBeInstanceOf(type);
   expect(rejected).not.toBeInstanceOf(WorkflowRunError);
   expect(rejected).toMatchObject(change);
-  expect(findStepIdentityChange(rejected)).toBe(rejected);
-  expect((rejected as Error).cause).toBeInstanceOf(StepIdentityChangedError);
+  expect(findAcceptedReplayDivergence(rejected)).toBe(rejected);
+  expect((rejected as Error).cause).toBeInstanceOf(type);
   expect((rejected as Error).message).toContain('refused before run source was changed');
   const after = await readRun(options());
   expect(after.status).toBe(before.record.status);
@@ -740,6 +748,67 @@ it('refuses an embedded accepted resume through a bound store without writing to
   });
   // Only the real run opened the store; the preflight copy lives in its own directory.
   expect(store.opened).toBe(1);
+});
+
+it.each([
+  { status: 'completed', failing: false },
+  { status: 'failed', failing: true },
+] as const)(
+  'refuses an embedded accepted resume that skips a completed step without changing a $status run',
+  async ({ status, failing }) => {
+    let early = true;
+    let tail = failing;
+    const definition = workflow(async (ctx) => {
+      if (early) await ctx.step('early', { input: null, schema: z.string(), run: () => 'e' });
+      const shared = await ctx.step('shared', { input: null, schema: z.string(), run: () => 's' });
+      if (tail) throw new Error('tail');
+      return shared;
+    });
+    await runWorkflow(definition, options()).catch(() => undefined);
+    const before = { record: await readRun(options()), files: await runFiles('source') };
+    expect(before.record.status).toBe(status);
+    // The accepted edit fixes the tail and drops the completed call, so replay would fail only at
+    // the end of the body.
+    early = false;
+    tail = false;
+    const rejected = await acceptedRejection(definition);
+    await expectUnchanged(rejected, before, { kind: 'steps', skipped: ['early'], healed: [] });
+    // The plain-resume text stays first, followed by the refusal and the fork that replaces it.
+    expect((rejected as Error).message).toMatch(
+      /^Replay skipped recorded steps \(early\); workflow control flow changed\. The accepted replay was refused before run source was changed\. Fork a new run with --fork-from RUN --reuse matching --invalidate early\.$/u,
+    );
+  },
+);
+
+it('refuses an accepted fix to a failed step whose catch fallback already completed', async () => {
+  let fixed = false;
+  const definition = workflow(async (ctx) => {
+    try {
+      await ctx.step('primary', {
+        input: null,
+        schema: z.string(),
+        run: fixed
+          ? () => 'primary'
+          : () => {
+              throw new Error('primary failed');
+            },
+      });
+    } catch {
+      await ctx.step('fallback', { input: null, schema: z.string(), run: () => 'fallback' });
+    }
+    if (!fixed) throw new Error('tail');
+    return 'done';
+  });
+  await expect(runWorkflow(definition, options())).rejects.toThrow('tail');
+  const before = { record: await readRun(options()), files: await runFiles('source') };
+  // The fix heals primary, so the body no longer reaches the completed fallback.
+  fixed = true;
+  await expectUnchanged(await acceptedRejection(definition), before, {
+    kind: 'steps',
+    skipped: ['fallback'],
+    healed: ['primary'],
+  });
+  expect((await readRun(options())).steps['primary']?.status).toBe('failed');
 });
 
 it('re-finalizes an embedded tail-only fix with zero repeated effects and runs a fixed callback once', async () => {
@@ -1328,7 +1397,11 @@ it.each([false, true])(
       expect(ran).toEqual(['primary']);
     } else {
       // The plain resume runs on and then reports the skipped fallback with the healed step.
-      expect(divergence(outcome)?.message).toContain('Healed steps: primary');
+      expect(outcome).toBeInstanceOf(WorkflowRunError);
+      const skipped = findAcceptedReplayDivergence(outcome);
+      expect(skipped).toBeInstanceOf(ReplaySkippedError);
+      expect(skipped).toMatchObject({ kind: 'steps', skipped: ['fallback'], healed: ['primary'] });
+      expect(skipped?.message).toContain('Healed steps: primary');
       expect(ran).toEqual(['primary', 'later']);
     }
   },

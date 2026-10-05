@@ -181,6 +181,7 @@ export {
   WorkflowInputError,
   RunRefusedError,
   StepIdentityChangedError,
+  ReplaySkippedError,
   isValidRunId,
 } from './workflow/runtime/run-errors.js';
 export type { CliErrorCode } from './workflow/runtime/run-errors.js';

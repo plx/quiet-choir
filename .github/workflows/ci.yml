@@ -65,7 +65,9 @@ jobs:
   smokes:
     name: CLI smokes
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # measured: the 43 smokes took 565 s wall on main (a 9m44s job) and 590 s on this PR's run, whose
+    # job hit the old 10 minute limit after every smoke had passed, so 10 minutes left no room.
+    timeout-minutes: 15
 
     steps:
       - name: Check out repository

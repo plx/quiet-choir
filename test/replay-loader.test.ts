@@ -249,6 +249,78 @@ describe('source-aware loader recovery', { timeout: 50_000 }, () => {
     expect(await readFile(counter, 'utf8')).toBe('run\nrun\n');
   });
 
+  it.for([
+    {
+      kind: 'step',
+      id: 'early',
+      recorded: "await ctx.step('early', { input: null, schema: z.string(), run: () => 'e' });",
+      noun: 'recorded steps (early)',
+    },
+    {
+      kind: 'map',
+      id: 'reviews',
+      recorded:
+        "await ctx.map('reviews', [0, 1], { concurrency: 2, onError: 'return' }, (item) => Promise.resolve(item * 2));",
+      noun: 'settled maps (reviews)',
+    },
+  ] as const)(
+    'refuses an accepted resume whose edit skips a completed $kind, without changes and alike in a dry run',
+    async ({ kind, id, recorded, noun }) => {
+      await writeFile(file, source(undefined, undefined, `${recorded}\nreturn value;`));
+      expect(await execute('source')).toMatchObject({ ok: true, run: { status: 'completed' } });
+      const saved = await readRun({ stateDir, runId: 'source' });
+      // The edit drops the recorded call, so the body would finish without revisiting it.
+      await writeFile(file, source());
+      const bytes = await runFiles('source');
+      const refused = await execute('source', { resume: true, acceptCodeChange: true });
+      if (refused.ok) throw new Error(JSON.stringify(refused));
+      expect(refused.code).toBe('run.incompatible');
+      expect(workflowExitCodes[refused.code]).toBe(3);
+      const details = refused.details as {
+        divergent: { stepId: string; skipped: string }[];
+        next: string[][];
+      };
+      expect(details.divergent).toEqual([{ stepId: id, skipped: kind }]);
+      expect(details.next).toHaveLength(1);
+      const next = details.next[0] ?? [];
+      const at = next.indexOf('--fork-from');
+      expect(next.slice(at, at + 6)).toEqual([
+        '--fork-from',
+        'source',
+        '--reuse',
+        'matching',
+        '--invalidate',
+        id,
+      ]);
+      expect(next.slice(0, 4)).toEqual([
+        'quiet-choir',
+        'workflow',
+        'execute',
+        await realpath(file),
+      ]);
+      expect(next.slice(-4)).toEqual(['--run-id', '<NEW_RUN_ID>', '--state-dir', stateDir]);
+      expect(refused.message).toContain(`The changed workflow skipped ${noun}.`);
+      expect(refused.message).toContain('nothing was changed');
+      expect(refused.message).toContain(`--fork-from source --reuse matching --invalidate ${id}`);
+      expect(refused.message).not.toContain('re-finalize');
+      expect(await runFiles('source')).toEqual(bytes);
+      const kept = await readRun({ stateDir, runId: 'source' });
+      expect(kept.status).toBe('completed');
+      expect(kept.workflow.fingerprint).toBe(saved.workflow.fingerprint);
+      expect(kept.output).toBe(saved.output);
+      expect(kept.codeChanges).toEqual(saved.codeChanges);
+
+      const preview = await execute('source', {
+        resume: true,
+        acceptCodeChange: true,
+        dryRun: true,
+      });
+      expect(preview).toMatchObject({ ok: false, code: refused.code, message: refused.message });
+      expect(preview.ok ? null : preview.details).toEqual(refused.details);
+      expect(await runFiles('source')).toEqual(bytes);
+    },
+  );
+
   it('refuses an accepted resume whose completed agent step changed, leaving the suspended run intact', async () => {
     const ops = join(root, 'ops.workflow.ts');
     const opsSource = (

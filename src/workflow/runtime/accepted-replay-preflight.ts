@@ -1,14 +1,17 @@
 /**
  * The accepted-replay preflight's parts (#215). `runWorkflow({ resume: true, acceptCodeChange:
  * true })` replays the changed body against a disposable copy of the run before it touches the
- * real record, so a changed completed or settled-failed step is refused without recording the
- * acceptance, clearing the saved output or failing the run. The CLI's `--accept-code-change`
+ * real record, so a changed completed or settled-failed step, or a body that would skip a completed
+ * step, settled map or child frame (#216), is refused without recording the acceptance, clearing
+ * the saved output or failing the run. The CLI's `--accept-code-change`
  * relies on the same preflight and maps its refusal to `run.incompatible`.
  *
  * The probe needs no fixtures and no live integration: its harness, process runner and rehearsal
  * hooks synthesize every unfinished agent call, command, local step, file effect and poll observer
  * from its schema, and worktree effects are synthesized by the runtime's rehearsal path. Only a
- * completed-step identity change counts as a finding. Completion, suspension, a refusal, a
+ * completed-step identity change ({@link StepIdentityChangedError}) or a skipped completed step,
+ * settled map or child frame ({@link ReplaySkippedError}) counts as a finding. Completion,
+ * suspension, a refusal, a
  * synthesis gap, a rehearsal limitation or any other failure finds nothing, so the real run
  * proceeds and reproduces any genuine problem itself; only an abort propagates. Synthesized values
  * can steer the copy onto a different branch from a real run, so a finding is as good as the
@@ -21,7 +24,7 @@ import type { ProcessRunner } from './exec-model.js';
 import type { Harness, HarnessResponse } from './model.js';
 import { runDirectory } from './paths.js';
 import type { RunRecord } from './record.js';
-import { StepIdentityChangedError } from './run-errors.js';
+import { ReplaySkippedError, StepIdentityChangedError } from './run-errors.js';
 import type { RunOptions } from './runner.js';
 import { writeRun } from './store.js';
 import { synthesizeOutput } from './synthesize.js';
@@ -184,27 +187,38 @@ const refusals = new WeakSet<Error>();
 
 /**
  * The rejection for an accepted resume whose preflight met a changed completed or settled-failed
- * step: a {@link StepIdentityChangedError} with the same step, components and status, the probe's
- * error as its cause, and a message saying the run was left unchanged. @internal
+ * step, or skipped recorded work: an error of the same class and fields, the probe's error as its
+ * cause, and a message saying the run was left unchanged. A skip's message also names the fork that
+ * replaces the resume, as a changed step's message already does. @internal
  */
 export function acceptedReplayRefusal(
-  change: StepIdentityChangedError,
+  change: StepIdentityChangedError | ReplaySkippedError,
   runId: string,
-): StepIdentityChangedError {
-  const error = new StepIdentityChangedError(
-    `${change.message} The accepted replay was refused before run ${runId} was changed.`,
-    { stepId: change.stepId, components: change.components, status: change.status },
-    { cause: change },
-  );
+): StepIdentityChangedError | ReplaySkippedError {
+  const refused = `${change.message} The accepted replay was refused before run ${runId} was changed.`;
+  const error =
+    change instanceof ReplaySkippedError
+      ? new ReplaySkippedError(
+          `${refused} Fork a new run with --fork-from RUN --reuse matching --invalidate ${change.skipped[0] ?? '<STEP_ID>'}.`,
+          { kind: change.kind, skipped: change.skipped, healed: change.healed },
+          { cause: change },
+        )
+      : new StepIdentityChangedError(
+          refused,
+          { stepId: change.stepId, components: change.components, status: change.status },
+          { cause: change },
+        );
   refusals.add(error);
   return error;
 }
 
 /**
  * Whether `error` is the runner's own preflight refusal, thrown before the run was changed. A
- * {@link StepIdentityChangedError} reached any other way, such as the cause of a saved failure
- * after the preflight failed open, is not. @internal
+ * {@link StepIdentityChangedError} or {@link ReplaySkippedError} reached any other way, such as the
+ * cause of a saved failure after the preflight failed open, is not. @internal
  */
-export function isAcceptedReplayRefusal(error: unknown): error is StepIdentityChangedError {
+export function isAcceptedReplayRefusal(
+  error: unknown,
+): error is StepIdentityChangedError | ReplaySkippedError {
   return error instanceof Error && refusals.has(error);
 }

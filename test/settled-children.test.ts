@@ -1,6 +1,6 @@
 // Settled child frames (#170): ctx.workflow(..., { onError: 'return' }) saves the frame's outcome,
 // and resume replays it without running the child body or its effects again.
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readdir, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, expect, it } from 'vitest';
@@ -8,7 +8,9 @@ import {
   defineWorkflow,
   FileRunStore,
   readRun,
+  ReplaySkippedError,
   runWorkflow,
+  WorkflowRunError,
   z,
   type OwnedRunStore,
   type RunRecord,
@@ -430,6 +432,68 @@ it('treats settled frames as terminal for visits, settled maps and declared desc
   expect((await readRun({ stateDir, runId: 'dynamic' })).children?.['parent']).not.toHaveProperty(
     'settled',
   );
+});
+
+it('refuses an accepted resume that skips a settled frame without changing the run', async () => {
+  const child = failingChild({ broken: true, bodies: 0, effects: 0 });
+  let skip = false;
+  const root = defineWorkflow({
+    name: 'root',
+    version: '1',
+    input: z.null(),
+    output: z.null(),
+    async run(ctx) {
+      if (!skip) await ctx.workflow('child', child, null, { onError: 'return' });
+      if (!skip) throw new Error('tail');
+      return null;
+    },
+  });
+  const options = { stateDir, runId: 'accepted', input: null, fingerprint: 'code-1' };
+  await expect(runWorkflow(root, options)).rejects.toThrow('tail');
+  const files = async (): Promise<Record<string, string>> => {
+    const directory = join(stateDir, 'accepted');
+    const names = (await readdir(directory, { recursive: true, withFileTypes: true }))
+      .filter((entry) => entry.isFile())
+      .map((entry) => join(entry.parentPath, entry.name))
+      .sort();
+    return Object.fromEntries(
+      await Promise.all(names.map(async (name) => [name, await readFile(name, 'utf8')] as const)),
+    );
+  };
+  const before = { record: await readRun(options), files: await files() };
+  // The accepted edit drops the settled child call and the tail: the frame check runs first.
+  skip = true;
+  const rejected: unknown = await runWorkflow(root, {
+    ...options,
+    resume: true,
+    fingerprint: 'code-2',
+    acceptCodeChange: true,
+  }).catch((error: unknown) => error);
+  expect(rejected).toBeInstanceOf(ReplaySkippedError);
+  expect(rejected).not.toBeInstanceOf(WorkflowRunError);
+  expect(rejected).toMatchObject({ kind: 'child-frames', skipped: ['child'], healed: [] });
+  expect((rejected as Error).message).toContain(
+    'Replay skipped completed or settled child frames (child); workflow control flow changed. The accepted replay was refused before run accepted was changed.',
+  );
+  const after = await readRun(options);
+  expect(after.status).toBe('failed');
+  expect(after.workflow.fingerprint).toBe(before.record.workflow.fingerprint);
+  expect(after.output).toEqual(before.record.output);
+  expect(after.codeChanges).toEqual(before.record.codeChanges);
+  expect(await files()).toEqual(before.files);
+  // A plain resume fails the run with the unchanged message and the typed cause.
+  const failed: unknown = await runWorkflow(root, { ...options, resume: true }).catch(
+    (error: unknown) => error,
+  );
+  expect(failed).toBeInstanceOf(WorkflowRunError);
+  expect((failed as Error).message).toBe(
+    'Replay skipped completed or settled child frames (child); workflow control flow changed.',
+  );
+  expect((failed as Error).cause).toMatchObject({ kind: 'child-frames', skipped: ['child'] });
+  // Typed, the skip gets the divergence hint, not advice to re-finalize with --accept-code-change.
+  const hint = (await readRun(options)).recoveryHint;
+  for (const phrase of ['ctx.now', 'ctx.step', '--strict-replay']) expect(hint).toContain(phrase);
+  expect(hint).not.toContain('accept-code-change');
 });
 
 it('does not keep a settled outcome whose checkpoint failed', async () => {

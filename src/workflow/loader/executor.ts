@@ -50,7 +50,7 @@ import type { CommandLauncher } from '../runtime/commands.js';
 import { missingRunError, readRequiredRun } from '../runtime/read-required-run.js';
 import { unlockRun } from '../runtime/lock.js';
 import {
-  findStepIdentityChange,
+  findAcceptedReplayDivergence,
   isValidRunId,
   runIdMessage,
   RunRefusedError,
@@ -869,14 +869,15 @@ export class WorkflowExecutor implements Executor<WorkflowExecutorPlan, Workflow
         ...(rehearsal === undefined ? {} : { rehearsal: rehearsal.report(run) }),
       };
     } catch (thrown: unknown) {
-      // An accepted resume reports a changed completed step as run.incompatible, with the real
-      // state directory and entrypoint: from a dry run's failure, or from runWorkflow's own
-      // preflight refusal. Only that marked refusal left the run unchanged; a real run that failed
-      // on the change after its preflight found nothing stays workflow.failed.
+      // An accepted resume reports a changed completed step, or a skipped completed step, settled
+      // map or child frame, as run.incompatible, with the real state directory and entrypoint:
+      // from a dry run's failure, or from runWorkflow's own preflight refusal. Only that marked
+      // refusal left the run unchanged; a real run that failed on the divergence after its
+      // preflight found nothing stays workflow.failed.
       const divergence =
         plan.kind === 'workflow.execute' && plan.resume && plan.acceptCodeChange
           ? plan.dryRun
-            ? findStepIdentityChange(thrown)
+            ? findAcceptedReplayDivergence(thrown)
             : isAcceptedReplayRefusal(thrown)
               ? thrown
               : undefined
