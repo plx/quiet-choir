@@ -175,6 +175,38 @@ and at least 2x the slowest CI leg. A timeout that flakes on a CI leg gets a new
 comment, not the old number. Subprocess, `tsImport`, typecheck and Git suites usually keep a raised
 value because compiles and process startup, not fsync, dominate them.
 
+## Per-test state directories
+
+A test that starts a run or forks a process that writes into a state directory should take its
+directory from the fixture in `test/setup/state-dir.ts` instead of a module-level `stateDir` with
+`beforeEach`/`afterEach` hooks (#174). Import `it` from that module and destructure the fixtures in
+the handler's first parameter: `async ({ stateDir, runs }) => …`. Vitest finds a test's fixtures by
+parsing that destructuring, so `(context) => …` gets none. Parameterised cases must use
+`it.for(cases)(name, async (value, { stateDir, runs }) => …)`, because `it.each` passes no fixtures;
+`it.for` takes a raised timeout as `{ timeout }` before the handler.
+
+- `stateDir` is a fresh `mkdtemp` directory per test, named after the test file.
+- `runs.run` is `runWorkflow` with `runs.signal` combined into `options.signal`. That signal aborts
+  when the test times out or is cancelled (`TestContext.signal`) and when teardown starts. Every
+  `runWorkflow` call that writes into the directory goes through it, including runs the test does
+  not await.
+- `runs.child(child)` records a child process; create it with
+  `{ signal: runs.signal, killSignal: 'SIGKILL' }` so a timeout kills it. `runs.track(promise)`
+  records any other work.
+
+At teardown, `runs` aborts its signal, then waits for every tracked run and child to settle, and
+only then is `stateDir` removed, without retries. Before the fixture, a timed-out run kept writing
+while `afterEach` removed the shared directory, so `rm` failed with ENOTEMPTY and one timeout became
+several failures. The wait is bounded by `SETTLE_TIMEOUT_MS` (10 s), because Vitest gives fixture
+teardown no timeout. Past it, teardown fails that test with an error naming the directory and leaves
+the directory in place rather than removing it under a live writer. `test/state-dir-fixture.test.ts`
+forces timeouts with an in-process run and with a child process, and checks that only the timeout is
+reported and that the directory is removed after the writer settles.
+
+The journal suite uses the fixture. The other suites still keep a module-level directory and move to
+the fixture incrementally; any suite that forks writers or can leave a run unawaited is a good next
+candidate.
+
 ## Harness protocol captures
 
 `test/fixtures/harness/` contains sanitized stdout/stderr and process exit codes captured with

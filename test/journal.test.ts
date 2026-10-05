@@ -1,33 +1,21 @@
 import * as fs from 'node:fs/promises';
-import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import {
-  defineWorkflow,
-  readRun,
-  runWorkflow,
-  z,
-  type RunRecord,
-  type RunStore,
-} from '../src/index.js';
+import { beforeEach, expect, vi } from 'vitest';
+import { defineWorkflow, readRun, z, type RunRecord, type RunStore } from '../src/index.js';
 import { JournalWriter, readJournalRun } from '../src/workflow/runtime/journal.js';
 import { artifactName } from '../src/workflow/runtime/run-store.js';
 import { writeRun } from '../src/workflow/runtime/store.js';
 import { enableRealStorageSync } from './setup/durable-sync.js';
+import { it } from './setup/state-dir.js';
 
 vi.mock('node:fs/promises', async (importOriginal) => {
   const actual = await importOriginal<typeof fs>();
   return { ...actual, open: vi.fn(actual.open), readFile: vi.fn(actual.readFile) };
 });
 const actualFs = await vi.importActual<typeof fs>('node:fs/promises');
-let stateDir: string;
-beforeEach(async () => {
-  stateDir = await fs.mkdtemp(join(tmpdir(), 'choir-journal-'));
+beforeEach(() => {
   vi.mocked(fs.open).mockImplementation(actualFs.open);
   vi.mocked(fs.readFile).mockImplementation(actualFs.readFile);
-});
-afterEach(async () => {
-  await fs.rm(stateDir, { recursive: true, force: true });
 });
 function deferred() {
   let resolve!: () => void;
@@ -37,7 +25,10 @@ function deferred() {
   return { promise, resolve };
 }
 
-it('group commits sibling completions before any effect promise resolves', async () => {
+it('group commits sibling completions before any effect promise resolves', async ({
+  stateDir,
+  runs,
+}) => {
   enableRealStorageSync();
   const syncing = deferred(),
     permit = deferred();
@@ -87,7 +78,7 @@ it('group commits sibling completions before any effect promise resolves', async
       return resolved;
     },
   });
-  const running = runWorkflow(definition, { stateDir, runId: 'group', input: null });
+  const running = runs.run(definition, { stateDir, runId: 'group', input: null });
   await syncing.promise;
   expect(resolved).toBe(0);
   expect(commits).toBe(1);
@@ -96,7 +87,10 @@ it('group commits sibling completions before any effect promise resolves', async
   expect((await readRun({ stateDir, runId: 'group' })).seq).toBeGreaterThan(0);
 });
 
-it('writes less than ten times the final state for 500 local 5KB results at concurrency eight', async () => {
+it('writes less than ten times the final state for 500 local 5KB results at concurrency eight', async ({
+  stateDir,
+  runs,
+}) => {
   let bytes = 0;
   vi.mocked(fs.open).mockImplementation(async (...args) => {
     const file = await actualFs.open(...args);
@@ -138,9 +132,7 @@ it('writes less than ten times the final state for 500 local 5KB results at conc
         )
       ).length,
   });
-  expect((await runWorkflow(definition, { stateDir, runId: 'bytes', input: null })).output).toBe(
-    500,
-  );
+  expect((await runs.run(definition, { stateDir, runId: 'bytes', input: null })).output).toBe(500);
   const final = (await fs.stat(join(stateDir, 'bytes', 'run.json'))).size;
   expect(bytes).toBeLessThan(final * 10);
   expect(await fs.readFile(join(stateDir, 'bytes', 'journal.jsonl'), 'utf8')).toBe('');
@@ -148,7 +140,10 @@ it('writes less than ten times the final state for 500 local 5KB results at conc
   // (dominated by serializing the growing map record into the journal)
 }, 10_000);
 
-it('ignores a torn final journal line and repairs it before the next owner appends', async () => {
+it('ignores a torn final journal line and repairs it before the next owner appends', async ({
+  stateDir,
+  runs,
+}) => {
   let fail = true,
     calls = 0;
   const definition = defineWorkflow({
@@ -167,19 +162,22 @@ it('ignores a torn final journal line and repairs it before the next owner appen
     },
   });
   const options = { stateDir, runId: 'torn', input: null };
-  await expect(runWorkflow(definition, options)).rejects.toThrow('tail');
+  await expect(runs.run(definition, options)).rejects.toThrow('tail');
   const path = join(stateDir, 'torn', 'journal.jsonl');
   await fs.appendFile(path, '{"seq":100,"changes":[');
   expect((await readRun(options)).steps['saved']?.output).toBe(1);
   fail = false;
-  expect((await runWorkflow(definition, { ...options, resume: true })).output).toBe(1);
+  expect((await runs.run(definition, { ...options, resume: true })).output).toBe(1);
   expect(calls).toBe(1);
   expect(await fs.readFile(path, 'utf8')).toBe('');
   await fs.appendFile(path, '{corrupt}\n');
   await expect(readRun(options)).rejects.toThrow();
 });
 
-it('retries lock-free reads when compaction changes the snapshot during a journal read', async () => {
+it('retries lock-free reads when compaction changes the snapshot during a journal read', async ({
+  stateDir,
+  runs,
+}) => {
   const definition = defineWorkflow({
     name: 'race',
     version: '1',
@@ -187,7 +185,7 @@ it('retries lock-free reads when compaction changes the snapshot during a journa
     output: z.null(),
     run: () => Promise.resolve(null),
   });
-  await runWorkflow(definition, { stateDir, runId: 'race', input: null });
+  await runs.run(definition, { stateDir, runId: 'race', input: null });
   const original = await readRun({ stateDir, runId: 'race' });
   const writer = new JournalWriter(stateDir, 'race');
   let changed = false;
@@ -204,7 +202,10 @@ it('retries lock-free reads when compaction changes the snapshot during a journa
   expect(current.seq).toBeGreaterThan(original.seq ?? 0);
 });
 
-it('migrates a flat format-six run under its old owner and preserves exact backup bytes', async () => {
+it('migrates a flat format-six run under its old owner and preserves exact backup bytes', async ({
+  stateDir,
+  runs,
+}) => {
   let fail = true,
     calls = 0;
   const definition = defineWorkflow({
@@ -223,7 +224,7 @@ it('migrates a flat format-six run under its old owner and preserves exact backu
     },
   });
   const options = { stateDir, runId: 'legacy', input: null };
-  await expect(runWorkflow(definition, options)).rejects.toThrow('tail');
+  await expect(runs.run(definition, options)).rejects.toThrow('tail');
   const record = await readRun(options);
   record.formatVersion = 6;
   delete record.seq;
@@ -232,7 +233,7 @@ it('migrates a flat format-six run under its old owner and preserves exact backu
   await writeRun(stateDir, record);
   const bytes = await fs.readFile(join(stateDir, 'legacy.json'), 'utf8');
   fail = false;
-  expect((await runWorkflow(definition, { ...options, resume: true })).output).toBe(1);
+  expect((await runs.run(definition, { ...options, resume: true })).output).toBe(1);
   expect(calls).toBe(1);
   expect(await fs.readFile(join(stateDir, 'legacy.json.v6'), 'utf8')).toBe(bytes);
   expect(JSON.parse(await fs.readFile(join(stateDir, 'legacy.json'), 'utf8'))).toMatchObject({
@@ -249,7 +250,10 @@ it('keeps artifact path components bounded and distinct under case folding', () 
   expect(() => artifactName('../escape')).toThrow();
 });
 
-it('refuses a missing journal instead of silently falling back to a stale migration marker', async () => {
+it('refuses a missing journal instead of silently falling back to a stale migration marker', async ({
+  stateDir,
+  runs,
+}) => {
   const definition = defineWorkflow({
     name: 'missing',
     version: '1',
@@ -258,15 +262,15 @@ it('refuses a missing journal instead of silently falling back to a stale migrat
     run: () => Promise.resolve(null),
   });
   const options = { stateDir, runId: 'missing', input: null };
-  const run = await runWorkflow(definition, options);
+  const run = await runs.run(definition, options);
   await fs.writeFile(join(stateDir, 'missing.json'), JSON.stringify(run));
   await fs.rm(join(stateDir, 'missing', 'journal.jsonl'));
   await expect(readRun(options)).rejects.toMatchObject({ code: 'ENOENT' });
 });
 
-it.each(['empty', 'torn'])(
+it.for(['empty', 'torn'])(
   'starts fresh over a %s journal orphaned before the first directory snapshot',
-  async (shape) => {
+  async (shape, { stateDir, runs }) => {
     const definition = defineWorkflow({
       name: 'orphan',
       version: '1',
@@ -275,7 +279,7 @@ it.each(['empty', 'torn'])(
       run: (ctx) => ctx.step('count', { input: null, schema: z.number(), run: () => 1 }),
     });
     const options = { stateDir, runId: 'orphan', input: null };
-    const first = await runWorkflow(definition, options);
+    const first = await runs.run(definition, options);
     expect(first.output).toBe(1);
     // compact() truncates the journal on completion, so this reproduces the pre-snapshot crash
     // window directly: run.json is gone and only an empty or torn journal remains.
@@ -284,23 +288,30 @@ it.each(['empty', 'torn'])(
       join(stateDir, 'orphan', 'journal.jsonl'),
       shape === 'torn' ? '{"seq":1,"at":' : '',
     );
-    const resumed = await runWorkflow(definition, options);
+    const resumed = await runs.run(definition, options);
     expect(resumed.status).toBe('completed');
     expect(resumed.output).toBe(1);
   },
 );
 
-it.each([3, 11, 29])(
+it.for([3, 11, 29])(
   'keeps every resolved fan-out result after SIGKILL near completion %s',
-  async (stopAfter) => {
+  // measured: 1.1 s alone, 1.6-1.9 s in local full coverage runs and 1.7 s on the Node 22.13 CI leg,
+  // but over 5 s in a full run on a heavily loaded machine (two forked tsx children with real fsync)
+  { timeout: 20_000 },
+  async (stopAfter, { stateDir, runs }) => {
     const { fork } = await import('node:child_process');
     const { fileURLToPath } = await import('node:url');
     const childPath = fileURLToPath(new URL('./storage-crash-child.mjs', import.meta.url));
     const launch = (resume: boolean) =>
-      fork(childPath, [stateDir, resume ? 'resume' : 'start'], {
-        execArgv: ['--import', 'tsx'],
-        stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
-      });
+      runs.child(
+        fork(childPath, [stateDir, resume ? 'resume' : 'start'], {
+          execArgv: ['--import', 'tsx'],
+          stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
+          signal: runs.signal,
+          killSignal: 'SIGKILL',
+        }),
+      );
     const child = launch(false);
     let messages = 0,
       stderr = '';
@@ -340,12 +351,12 @@ it.each([3, 11, 29])(
     for (const id of acknowledged) expect(actions.filter((value) => value === id)).toHaveLength(1);
     expect((await readRun({ stateDir, runId: 'crash' })).output).toBe(80);
   },
-  // measured: 1.1 s alone, 1.6-1.9 s in local full coverage runs and 1.7 s on the Node 22.13 CI leg,
-  // but over 5 s in a full run on a heavily loaded machine (two forked tsx children with real fsync)
-  20_000,
 );
 
-it('recovers a crash after the old-binary guard but before the first directory snapshot', async () => {
+it('recovers a crash after the old-binary guard but before the first directory snapshot', async ({
+  stateDir,
+  runs,
+}) => {
   const { prepareStorageMigration } = await import('../src/workflow/runtime/storage-migration.js');
   const { lockRun } = await import('../src/workflow/runtime/store.js');
   const definition = defineWorkflow({
@@ -356,7 +367,7 @@ it('recovers a crash after the old-binary guard but before the first directory s
     run: () => Promise.resolve(null),
   });
   const options = { stateDir, runId: 'guard', input: null };
-  const next = await runWorkflow(definition, options);
+  const next = await runs.run(definition, options);
   const previous = { ...next, formatVersion: 6 as const };
   delete previous.seq;
   delete previous.engine;
@@ -370,14 +381,17 @@ it('recovers a crash after the old-binary guard but before the first directory s
     migrationPending: 6,
   });
   expect((await readRun(options)).formatVersion).toBe(6);
-  expect((await runWorkflow(definition, { ...options, resume: true })).status).toBe('completed');
+  expect((await runs.run(definition, { ...options, resume: true })).status).toBe('completed');
   expect((await readRun(options)).formatVersion).toBe(7);
   expect(JSON.parse(await fs.readFile(join(stateDir, 'guard.json'), 'utf8'))).not.toHaveProperty(
     'migrationPending',
   );
 });
 
-it('migrates a real format-one local identity but refuses a completed agent without pinned isolation', async () => {
+it('migrates a real format-one local identity but refuses a completed agent without pinned isolation', async ({
+  stateDir,
+  runs,
+}) => {
   const original = await fs.readFile(
     new URL('./fixtures/storage/v1.json', import.meta.url),
     'utf8',
@@ -411,9 +425,9 @@ it('migrates a real format-one local identity but refuses a completed agent with
     resume: true,
     fingerprint: 'fixed-source',
   };
-  await expect(runWorkflow(definition, options)).rejects.toThrow('format version 1');
+  await expect(runs.run(definition, options)).rejects.toThrow('format version 1');
   expect(await fs.readFile(join(stateDir, 'legacy.json'), 'utf8')).toBe(original);
-  await expect(runWorkflow(definition, { ...options, acceptCodeChange: true })).rejects.toThrow(
+  await expect(runs.run(definition, { ...options, acceptCodeChange: true })).rejects.toThrow(
     'no pinned isolation mode',
   );
   const migrated = await readRun(options);
@@ -426,7 +440,10 @@ it('migrates a real format-one local identity but refuses a completed agent with
   expect((await readRun(options)).codeChanges).toHaveLength(1);
 });
 
-it('retains original format-one step checks even when source drift is explicitly accepted', async () => {
+it('retains original format-one step checks even when source drift is explicitly accepted', async ({
+  stateDir,
+  runs,
+}) => {
   const original = await fs.readFile(
     new URL('./fixtures/storage/v1.json', import.meta.url),
     'utf8',
@@ -443,7 +460,7 @@ it('retains original format-one step checks even when source drift is explicitly
     },
   });
   await expect(
-    runWorkflow(definition, {
+    runs.run(definition, {
       stateDir,
       runId: 'legacy',
       cwd: '/quiet-choir/legacy-project',
@@ -455,7 +472,10 @@ it('retains original format-one step checks even when source drift is explicitly
   expect((await readRun({ stateDir, runId: 'legacy' })).steps['local']?.legacyIdentity).toBe(1);
 });
 
-it('runs and resumes local effects with an injected in-memory store and no state directory', async () => {
+it('runs and resumes local effects with an injected in-memory store and no state directory', async ({
+  stateDir,
+  runs,
+}) => {
   const records = new Map<string, RunRecord>();
   const locked = new Set<string>();
   let releases = 0,
@@ -511,16 +531,18 @@ it('runs and resumes local effects with an injected in-memory store and no state
     runId: 'memory',
     input: null,
   };
-  await expect(runWorkflow(definition, options)).rejects.toThrow('tail');
+  await expect(runs.run(definition, options)).rejects.toThrow('tail');
   fail = false;
-  expect((await runWorkflow(definition, { ...options, resume: true })).output).toBe(1);
+  expect((await runs.run(definition, { ...options, resume: true })).output).toBe(1);
   expect(calls).toBe(1);
   expect(releases).toBe(2);
   expect(locked.size).toBe(0);
   await expect(fs.stat(options.stateDir)).rejects.toMatchObject({ code: 'ENOENT' });
 });
 
-it('allocates private case-distinct artifact directories and refuses mutations after release', async () => {
+it('allocates private case-distinct artifact directories and refuses mutations after release', async ({
+  stateDir,
+}) => {
   const { FileRunStore } = await import('../src/index.js');
   const store = new FileRunStore(stateDir);
   const owner = await store.open('artifacts', { probeOwner: false });
@@ -536,7 +558,7 @@ it('allocates private case-distinct artifact directories and refuses mutations a
   await expect(owner.artifacts('Case', 2)).rejects.toThrow('closed');
 });
 
-it('does not let a dead legacy lock bypass a live directory owner', async () => {
+it('does not let a dead legacy lock bypass a live directory owner', async ({ stateDir }) => {
   const { lockRun } = await import('../src/workflow/runtime/store.js');
   const { hostname } = await import('node:os');
   // Simulate a migrated run mid-crash: a pre-format-7 binary's guard died while a current-format
@@ -554,9 +576,9 @@ it('does not let a dead legacy lock bypass a live directory owner', async () => 
   expect(await fs.readFile(primary, 'utf8')).toBe(before);
 });
 
-it.each(['partial-write', 'flush'])(
+it.for(['partial-write', 'flush'])(
   'retries a %s failure without repeating a successful action',
-  async (failure) => {
+  async (failure, { stateDir, runs }) => {
     if (failure === 'flush') enableRealStorageSync();
     let ready = false,
       injected = false,
@@ -602,16 +624,18 @@ it.each(['partial-write', 'flush'])(
         }),
     });
     const options = { stateDir, runId: 'retry', input: null };
-    expect((await runWorkflow(definition, options)).output).toBe(1);
+    expect((await runs.run(definition, options)).output).toBe(1);
     expect(injected).toBe(true);
     expect(calls).toBe(1);
     expect((await readRun(options)).steps['saved']?.attempts).toBe(1);
-    expect((await runWorkflow(definition, { ...options, resume: true })).output).toBe(1);
+    expect((await runs.run(definition, { ...options, resume: true })).output).toBe(1);
     expect(calls).toBe(1);
   },
 );
 
-it('resolves canonical projects and honors explicit, environment, and legacy precedence', async () => {
+it('resolves canonical projects and honors explicit, environment, and legacy precedence', async ({
+  stateDir,
+}) => {
   const { resolveStateDir } = await import('../src/index.js');
   const project = join(stateDir, 'project'),
     alias = join(stateDir, 'alias');
@@ -638,7 +662,10 @@ it('resolves canonical projects and honors explicit, environment, and legacy pre
   }
 });
 
-it('registers the default project for an embedded run that omits cwd and stateDir', async () => {
+it('registers the default project for an embedded run that omits cwd and stateDir', async ({
+  stateDir,
+  runs,
+}) => {
   const { defaultStateDir, projectStateDirectories } =
     await import('../src/workflow/runtime/paths.js');
   vi.stubEnv('XDG_STATE_HOME', join(stateDir, 'external'));
@@ -652,13 +679,13 @@ it('registers the default project for an embedded run that omits cwd and stateDi
       run: () => Promise.resolve(null),
     });
     expect(
-      (await runWorkflow(definition, { runId: 'embedded-default-root', input: null })).status,
+      (await runs.run(definition, { runId: 'embedded-default-root', input: null })).status,
     ).toBe('completed');
-    const runs = defaultStateDir();
-    expect(JSON.parse(await fs.readFile(join(runs, '..', 'project.json'), 'utf8'))).toEqual({
+    const defaultRuns = defaultStateDir();
+    expect(JSON.parse(await fs.readFile(join(defaultRuns, '..', 'project.json'), 'utf8'))).toEqual({
       cwd: await fs.realpath(process.cwd()),
     });
-    expect((await projectStateDirectories()).directories).toEqual([runs]);
+    expect((await projectStateDirectories()).directories).toEqual([defaultRuns]);
   } finally {
     vi.unstubAllEnvs();
   }
