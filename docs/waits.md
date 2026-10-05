@@ -334,8 +334,8 @@ sources: a due or stale run that a full scan would report `locked`, `orphans`, `
 `incompatible` (changed sources) is reported `deadline` (75 with `--run`), and the next tick
 classifies it. Once the timeout has fired, tick reads no more records: each run not yet reported is
 skipped `deadline` with a message saying tick did not read it and no `nextWakeAt`, while a run an
-earlier `--watch` pass reported keeps that entry. So tick overruns `--timeout` by at most the read
-in progress, not by a scan of the remaining runs. Exit codes are unchanged. `--watch` ends when the
+earlier `--watch` pass reported keeps that entry. So past `--timeout` the scan adds at most the read
+in progress, not a read of every remaining run. Exit codes are unchanged. `--watch` ends when the
 margin starts instead of idling until the timeout. Size the timeout for the longest step you expect
 a tick to finish: a longer agent call is interrupted at the deadline and restarted by the next tick.
 
