@@ -291,9 +291,9 @@ run during `--watch` replaces its entry. Without `--run`, each scan visits runs 
 order (by character code, so uppercase sorts before lowercase), whatever order the file system lists
 them in; `--max-runs N` therefore resumes the first N due runs in that order. It bounds executed
 resumes across the invocation; refusals before import do not count. With `--run`, exit is 0 when the
-run completed (in this tick or earlier), 75 when it is still pending (not due, suspended again or
-interrupted (the `interrupted` outcome too), locked, blocked by orphans, or skipped for the
-deadline), and 1 when it failed, was cancelled, or is crash-looping, incompatible or unreadable.
+run completed (in this tick or earlier), 75 when it is still pending (not due, suspended again,
+interrupted by the deadline or reported `interrupted`, locked, blocked by orphans, or skipped for
+the deadline), and 1 when it failed, was cancelled, or is crash-looping, incompatible or unreadable.
 `--watch` stops retrying a crash-looping run. Without `--run`, individual run outcomes do not change
 exit 0. Command errors retain the [CLI error contract](cli-contract.md).
 

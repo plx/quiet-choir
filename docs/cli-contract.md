@@ -656,9 +656,9 @@ An `orphans` entry's message says tick never signals a process and names
 `workflow resume RUN --state-dir DIR --kill-orphans`, behind the detected launcher like other
 emitted commands and with the state directory shell-quoted when it needs quoting. With --run, exits
 are 0 completed (now or earlier), 75 pending, interrupted, locked, orphans or deadline, and 1
-failed, cancelled (a run saved as cancelled), crash-loop, incompatible or unreadable. An
-`interrupted` outcome is a resume the deadline stopped before the runtime reopened a stale run,
-which stays `running` for the next tick; batch per-run failures remain data with exit 0.
+failed, cancelled (a run saved as cancelled), crash-loop, incompatible or unreadable; batch per-run
+failures remain data with exit 0. An `interrupted` outcome is a resume the deadline stopped before
+the runtime reopened a stale run, which stays `running` for the next tick.
 Usage/infrastructure errors retain the command failure document. Every tick is bounded by --timeout
 (default 540s), including --watch, with --max-runs limiting executed resumes. Without --run, runs
 are visited in ascending run-ID order (by character code), so --max-runs takes the first due runs in
