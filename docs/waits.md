@@ -83,16 +83,19 @@ diagnostics still grow with resumes: this is not history compaction or a claim t
 stays constant indefinitely.
 
 Each observation gets its own `signal`, and observers must honor it. It aborts when the run is
-cancelled or interrupted, when the wait's deadline passes during the observation, and when the
-poll's `observeTimeoutMs` elapses. `observeTimeoutMs` is a positive integer that defaults to 60
-seconds (`60_000`); an observation never runs past a deadline still ahead of it. If the deadline
-passes during an observation, the observation's outcome is ignored and the wait resolves by
-`deadline` with the last note. If `observeTimeoutMs` elapses first, the wait fails like a thrown
-observer, with an error naming `observeTimeoutMs`. Raise it for an observer that legitimately takes
-longer than a minute. An observer that ignores its aborted signal is abandoned after a fixed
-2-second grace, also when the run closes or is interrupted, and the run records a warning in
-`waitWarnings` (shown in the completed result's `warnings` and by `inspect`). Its JavaScript may
-keep running, but it can no longer affect the run.
+cancelled or interrupted, when a body failure starts draining the run, when the wait's deadline
+passes during the observation, and when the poll's `observeTimeoutMs` elapses. An observation
+aborted by the failure drain records nothing (no check result, error or `lastError`) and reruns on
+resume, so a hung observer no longer holds the failure for up to `observeTimeoutMs`; operations
+still drain without a signal. `observeTimeoutMs` is a positive integer that defaults to 60 seconds
+(`60_000`); an observation never runs past a deadline still ahead of it. If the deadline passes
+during an observation, the observation's outcome is ignored and the wait resolves by `deadline` with
+the last note. If `observeTimeoutMs` elapses first, the wait fails like a thrown observer, with an
+error naming `observeTimeoutMs`. Raise it for an observer that legitimately takes longer than a
+minute. An observer that ignores its aborted signal is abandoned after a fixed 2-second grace, also
+when the run closes, fails or is interrupted, and the run records a warning in `waitWarnings` (shown
+in the completed result's `warnings` and by `inspect`). Its JavaScript may keep running, but it can
+no longer affect the run.
 
 `onError: { tolerate, classify?, retryAfterMs? }` opts a poll into tolerating transient observation
 errors, such as a 502 from an API or a status file that is briefly missing. Only a rejected

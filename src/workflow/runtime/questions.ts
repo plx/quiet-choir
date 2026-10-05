@@ -51,7 +51,8 @@ const observerSettleMs = 2000;
 /** Extra real time close() allows beyond the observer grace before it abandons a stalled scan. */
 const closeMarginMs = 250;
 /** Why an in-flight observation's signal was aborted. */
-type Interruption = 'deadline' | 'observeTimeoutMs' | 'run cancelled' | 'run closing';
+type Interruption =
+  'deadline' | 'observeTimeoutMs' | 'run cancelled' | 'run closing' | 'run failing';
 interface Inflight {
   readonly interrupt: (reason: Interruption) => void;
 }
@@ -59,6 +60,8 @@ type Observed =
   | { readonly kind: 'settled'; readonly observation: Promise<unknown> }
   | { readonly kind: 'cancelled' }
   | { readonly kind: 'closed' }
+  /** Aborted because a body failure started draining the run; nothing is recorded. */
+  | { readonly kind: 'drained' }
   | { readonly kind: 'deadline' }
   | { readonly kind: 'observeTimeoutMs' };
 
@@ -498,6 +501,8 @@ export class RunQuestions {
         (this.#deps.skipTimers === true && !waiter.sources.poll && !waiter.sources.signal));
     const poll = waiter.sources.poll;
     if (poll && (expired || progress.nextCheckAt === null || now >= progress.nextCheckAt)) {
+      // A failure drain stops new observations; this one stays due and runs again on resume.
+      if (this.#draining) return;
       waiter.signal.throwIfAborted();
       // Read before counting this check: observers see what earlier checks persisted.
       const previous = Object.freeze({
@@ -507,7 +512,9 @@ export class RunQuestions {
       });
       progress.checks++;
       const observed = await this.#observe(id, poll, progress.deadline, waiter, previous);
-      if (this.#isClosed() || observed.kind === 'closed') return;
+      // A drain-aborted observation records nothing, like a closed one: no check result, error or
+      // lastError, and nextCheckAt stays due, so it reruns on resume. It never reaches #tolerate.
+      if (this.#isClosed() || observed.kind === 'closed' || observed.kind === 'drained') return;
       if (observed.kind === 'cancelled')
         throw waiter.signal.reason instanceof CancelledError
           ? waiter.signal.reason
@@ -641,9 +648,10 @@ export class RunQuestions {
   }
   /**
    * Run one observation under its own signal, which aborts when the run scope aborts, when the
-   * time limit passes (the wait deadline, or observeTimeoutMs), or when the run closes. After an
-   * abort the observer gets a bounded real-time grace to settle; one that ignores its signal is
-   * abandoned with a run warning, and its promise keeps a handler so it never surfaces unhandled.
+   * time limit passes (the wait deadline, or observeTimeoutMs), when a body failure starts draining
+   * the run, or when the run closes. After an abort the observer gets a bounded real-time grace to
+   * settle; one that ignores its signal is abandoned with a run warning, and its promise keeps a
+   * handler so it never surfaces unhandled.
    */
   async #observe(
     id: string,
@@ -670,7 +678,12 @@ export class RunQuestions {
     };
     this.#inflight = {
       interrupt: (reason) => {
-        interrupt(reason, new Error(`Wait ${id}: the run is closing; poll observation aborted.`));
+        interrupt(
+          reason,
+          new Error(
+            `Wait ${id}: the run is ${reason === 'run failing' ? 'failing' : 'closing'}; poll observation aborted.`,
+          ),
+        );
       },
     };
     waiter.signal.addEventListener('abort', forward, { once: true });
@@ -723,6 +736,8 @@ export class RunQuestions {
       else if (reason === 'run cancelled') return { kind: 'settled', observation };
       if (reason === 'run cancelled') return { kind: 'cancelled' };
       if (reason === 'run closing') return { kind: 'closed' };
+      // Even an honoring observer's outcome is discarded: it was cut short, not a real result.
+      if (reason === 'run failing') return { kind: 'drained' };
       return { kind: reason };
     } finally {
       timer.abort();
@@ -802,10 +817,15 @@ export class RunQuestions {
     }
     this.#updateWake();
   }
-  /** Stop scheduling observations while preserving already-active work during failure drain. */
+  /**
+   * Start the failure drain: stop scheduling observations and abort an in-flight one, while the
+   * runner keeps draining operations without a signal. Poll observers are read-only, so an aborted
+   * observation records nothing and simply reruns on resume.
+   */
   public drain(): void {
     this.#draining = true;
     this.#timer.abort();
+    this.#inflight?.interrupt('run failing');
     this.#deps.activity.touch();
   }
   /** Stop polling and drain the scan, abandoning an observer that ignores its signal. */

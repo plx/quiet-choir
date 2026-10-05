@@ -31,8 +31,9 @@ or deadline; `ctx.wait` may be unbounded. Progress overwrites checks/nextCheckAt
 limit); naps do not save. By default a thrown observation fails the invocation and can be retried on
 explicit resume; tick never retries failed runs. Body-execution diagnostics can still grow across
 resumes; there is no history compaction. Honor the observation `signal`: it aborts on run
-cancellation, when the deadline passes during the observation (the wait resolves by deadline with
-the last note), and after `observeTimeoutMs` (positive integer, default 60 s, never past the
+cancellation, when a body failure starts draining the run (the observation records nothing and
+reruns on resume), when the deadline passes during the observation (the wait resolves by deadline
+with the last note), and after `observeTimeoutMs` (positive integer, default 60 s, never past the
 deadline), which fails the wait like a throw. An observer that ignores its aborted signal is
 abandoned after a 2 s grace, also when the run closes, with a `waitWarnings` run warning.
 

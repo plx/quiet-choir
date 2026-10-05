@@ -3776,7 +3776,9 @@ export async function runWorkflow<
         ? { stepId: null, error: message(error), errorKind: null, effect: null }
         : origins.root(error, errorKind);
       // Body failures stop new launches but preserve in-flight work. Only explicit cancellation
-      // or checkpoint failure aborts a scope; draining here does not send a signal.
+      // or checkpoint failure aborts a scope; draining here sends operations no signal. The one
+      // exception is a read-only poll observation: questions.drain() aborts it, and it reruns on
+      // resume.
       questions.drain();
       await Promise.race([operations.drain(), quiet.catch(() => operations.drain())]);
       await drainDiscovery();

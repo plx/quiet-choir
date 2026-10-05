@@ -23,8 +23,9 @@ current-state poll; the winner commits before its promise resolves and is never 
 replay. A signal delivered after the pinned deadline is quarantined like any other invalid delivery,
 since the deadline is fixed and the late answer can never become eligible. Polls perform read-only
 observations under the nested-operation guard. Timer naps never save state. Each observation has its
-own signal, aborted on cancellation, at the deadline (the wait resolves by deadline) and after the
-`observeTimeoutMs` policy (the wait fails like a throw); one that ignores it is abandoned after a
+own signal, aborted on cancellation, at the deadline (the wait resolves by deadline), after the
+`observeTimeoutMs` policy (the wait fails like a throw) and when a body failure starts draining the
+run (the observation records nothing and reruns on resume); one that ignores it is abandoned after a
 fixed real-time grace with a persisted `waitWarnings` entry, so a hung observer holds a run or its
 close at most one grace past its deadline or timeout. One wait also stores the latest tolerated
 observation error and its consecutive count; observers receive the previous note and check count;
