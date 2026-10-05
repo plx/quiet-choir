@@ -63,7 +63,7 @@ export interface ReplayInput {
   readonly request: StepRecord['request'];
   /**
    * Computes the original format-one fingerprint. Called exactly once for a legacy prior that
-   * passes the agent check, and never otherwise; it may throw (a schema without a JSON Schema
+   * passes the agent check, and never otherwise; it may throw (a user schema without a JSON Schema
    * form).
    */
   readonly legacyFingerprint: () => string;

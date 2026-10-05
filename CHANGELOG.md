@@ -2,6 +2,12 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- An unfinished original format-one agent step now migrates on resume when its request and output
+  schema are unchanged, and runs live; otherwise it gets the `original format-one identity changed`
+  refusal (#191). It previously failed with a raw `Transforms cannot be represented in JSON Schema`
+  error, because the legacy check hashed the runtime result schema. Agent steps are now compared
+  against the frozen format-one result wrapper. Terminal format-one agent steps are still refused.
+
 - A short-lived child that exits before its stdin is written, such as `git rev-parse` under load, no
   longer fails a successful `ctx.exec`, runtime Git call or harness process with `write ENOTCONN`
   (#189): `EPIPE` and `ENOTCONN` on stdin are ignored and the exit status decides. Empty input

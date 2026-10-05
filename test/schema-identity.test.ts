@@ -1,7 +1,10 @@
 import { createRequire } from 'node:module';
 import { describe, expect, it } from 'vitest';
 import { z, type HarnessDeclaration } from '../src/index.js';
-import { agentResultIdentitySchema } from '../src/workflow/runtime/agent-result-schema.js';
+import {
+  agentResultIdentitySchema,
+  legacyAgentResultSchema,
+} from '../src/workflow/runtime/agent-result-schema.js';
 import { agentDiagnosticsSchema } from '../src/workflow/runtime/agent-stream-schema.js';
 import { execResultSchema } from '../src/workflow/runtime/exec-schema.js';
 import { readFileResultSchema, writeFileResultSchema } from '../src/workflow/runtime/files.js';
@@ -473,6 +476,29 @@ describe('agent result identity wrapper', () => {
       'registered harness agent identity',
       digest(identity),
       '75d2ba829239b9c070e44dd0890c4a6b5d4cc04b4819f9d1048dec6f5de74a0c',
+    );
+  });
+});
+
+describe('format-one agent result wrapper', () => {
+  it('reproduces the agent fingerprint of the real format-one capture', () => {
+    // The legacy fingerprint of test/fixtures/storage/v1.json's text agent step: the frozen
+    // wrapper, never the runtime result schema, whose usage normalization is a transform.
+    const schema = schemaJson(legacyAgentResultSchema(z.string()));
+    pinned(
+      'format-one agent fingerprint',
+      digest({
+        kind: 'claude',
+        dependencies: {
+          provider: 'claude',
+          options: { prompt: 'legacy question' },
+          cwd: '/quiet-choir/legacy-project',
+          outputSchema: null,
+        },
+        schema,
+        retry: { maxAttempts: 1, delayMs: 100 },
+      }),
+      '7ab06c6cbf66f63a0a49a1001be053124d782f2000c6c7ce5144700c527dc69e',
     );
   });
 });

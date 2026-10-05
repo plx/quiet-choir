@@ -21,7 +21,7 @@ import { mergeOptionsSchema, mergeResultSchema } from './worktree-schema.js';
 import { randomUUID } from 'node:crypto';
 import { deriveAgentSessionId } from './agent-session.js';
 import { agentDiagnosticsSchema } from './agent-stream-schema.js';
-import { agentResultIdentitySchema } from './agent-result-schema.js';
+import { agentResultIdentitySchema, legacyAgentResultSchema } from './agent-result-schema.js';
 import type {
   AgentDiagnostics,
   AgentProgress,
@@ -1493,6 +1493,8 @@ export async function runWorkflow<
       readonly local?: StepDefinition<T>;
       readonly onError?: TMode;
       readonly legacyDependencies?: JsonValue;
+      /** The schema original format-one hashed for this effect; omitted means `schema`. */
+      readonly legacySchema?: z.ZodType;
       readonly exec?: ExecSummary;
       /** Inspection labels of an exec; a local step's labels come from `local.meta`. */
       readonly meta?: Readonly<Record<string, JsonValue>>;
@@ -1611,13 +1613,14 @@ export async function runWorkflow<
         fingerprint: stepFingerprint,
         onError,
         request: observedRequest,
-        // Lazy: an agent result schema cannot always become JSON Schema, and a terminal legacy
-        // agent step must be refused before anything tries.
+        // Lazy: a terminal legacy agent step must be refused before anything computes it, and a
+        // user schema may lack a JSON Schema form. An agent hashes its frozen format-one wrapper,
+        // never the runtime result schema, whose usage normalization is a transform.
         legacyFingerprint: () =>
           digest({
             kind: legacyKind(kind, observedRequest),
             dependencies: legacyDependencies ?? jsonValue(dependencies),
-            schema: schemaJson(schema),
+            schema: schemaJson(spec.legacySchema ?? schema),
             retry: {
               maxAttempts: local?.retry?.maxAttempts ?? 1,
               delayMs: local?.retry?.delayMs ?? 100,
@@ -2816,6 +2819,7 @@ export async function runWorkflow<
             request: requestSummary(request, execution),
             phase,
             legacyDependencies: legacyRequest,
+            legacySchema: legacyAgentResultSchema(schema),
             ...(isolation === undefined
               ? {}
               : {

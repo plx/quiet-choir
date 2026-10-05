@@ -1,7 +1,14 @@
 import * as fs from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { beforeEach, expect, vi } from 'vitest';
-import { defineWorkflow, readRun, z, type RunRecord, type RunStore } from '../src/index.js';
+import {
+  defineWorkflow,
+  readRun,
+  z,
+  type Harness,
+  type RunRecord,
+  type RunStore,
+} from '../src/index.js';
 import { JournalWriter, readJournalRun } from '../src/workflow/runtime/journal.js';
 import { artifactName } from '../src/workflow/runtime/run-store.js';
 import { writeRun } from '../src/workflow/runtime/store.js';
@@ -438,6 +445,113 @@ it('migrates a real format-one local identity but refuses a completed agent with
   expect(migrated.steps['agent']?.legacyAttempts).toBe(1);
   expect(await fs.readFile(join(stateDir, 'legacy.json.v1'), 'utf8')).toBe(original);
   expect((await readRun(options)).codeChanges).toHaveLength(1);
+});
+
+/** The real format-one capture with its agent step left unfinished, as a crash or failure would. */
+async function unfinishedLegacyAgent(stateDir: string) {
+  const record = JSON.parse(
+    await fs.readFile(new URL('./fixtures/storage/v1.json', import.meta.url), 'utf8'),
+  ) as { steps: Record<string, Record<string, unknown>> };
+  record.steps['agent'] = {
+    ...record.steps['agent'],
+    status: 'failed',
+    output: null,
+    error: 'boom',
+  };
+  await fs.writeFile(join(stateDir, 'legacy.json'), JSON.stringify(record, null, 2));
+  let calls = 0;
+  const invoke = vi.fn<Harness['invoke']>().mockResolvedValue({
+    text: 'fresh answer',
+    sessionId: 'session',
+    usage: { inputTokens: 2, outputTokens: 3, costUsd: null },
+  });
+  const legacy = (prompt: string, onError?: 'return') =>
+    defineWorkflow({
+      name: 'legacy-v1',
+      version: '1',
+      input: z.null(),
+      output: z.string(),
+      run: async (ctx) => {
+        const value = await ctx.step('local', {
+          input: null,
+          schema: z.number(),
+          run: () => {
+            calls++;
+            return 7;
+          },
+        });
+        const output =
+          onError === 'return'
+            ? await ctx.claude
+                .text('agent', { prompt, onError })
+                .then((agent) => (agent.ok ? agent.value.output : 'failed'))
+            : (await ctx.claude.text('agent', { prompt })).output;
+        await ctx.sleep('pause', 0);
+        return `${String(value)}/${output}`;
+      },
+    });
+  const options = {
+    stateDir,
+    runId: 'legacy',
+    cwd: '/quiet-choir/legacy-project',
+    input: null,
+    resume: true,
+    fingerprint: 'fixed-source',
+    acceptCodeChange: true,
+    harness: { invoke },
+  };
+  return { legacy, options, invoke, calls: () => calls };
+}
+
+const v1AgentFingerprint = '7ab06c6cbf66f63a0a49a1001be053124d782f2000c6c7ce5144700c527dc69e';
+
+it('migrates an unfinished format-one agent step whose identity is unchanged and runs it live', async ({
+  stateDir,
+  runs,
+}) => {
+  const { legacy, options, invoke, calls } = await unfinishedLegacyAgent(stateDir);
+  const run = await runs.run(legacy('legacy question'), options);
+  expect(run.status).toBe('completed');
+  expect(run.output).toBe('7/fresh answer');
+  expect(invoke).toHaveBeenCalledTimes(1);
+  expect(calls()).toBe(0);
+  const agent = (await readRun(options)).steps['agent'];
+  expect(agent).toMatchObject({
+    kind: 'agent',
+    harness: 'claude',
+    revision: 1,
+    status: 'completed',
+    output: { output: 'fresh answer', sessionId: 'session' },
+  });
+  expect(agent?.legacyIdentity).toBeUndefined();
+  expect(Object.keys(agent?.identity ?? {})).not.toHaveLength(0);
+  expect(agent?.fingerprint).not.toBe(v1AgentFingerprint);
+});
+
+it('refuses an unfinished format-one agent step whose identity changed', async ({
+  stateDir,
+  runs,
+}) => {
+  const { legacy, options, invoke } = await unfinishedLegacyAgent(stateDir);
+  const refused = runs.run(legacy('changed question'), options);
+  await expect(refused).rejects.toThrow('original format-one identity changed');
+  await expect(refused).rejects.not.toThrow('Transforms');
+  expect(invoke).not.toHaveBeenCalled();
+  const agent = (await readRun(options)).steps['agent'];
+  expect(agent?.legacyIdentity).toBe(1);
+  expect(agent?.fingerprint).toBe(v1AgentFingerprint);
+});
+
+it("refuses an unfinished format-one agent step resumed with onError: 'return'", async ({
+  stateDir,
+  runs,
+}) => {
+  const { legacy, options, invoke } = await unfinishedLegacyAgent(stateDir);
+  await expect(runs.run(legacy('legacy question', 'return'), options)).rejects.toThrow(
+    'original format-one identity changed',
+  );
+  expect(invoke).not.toHaveBeenCalled();
+  expect((await readRun(options)).steps['agent']?.legacyIdentity).toBe(1);
 });
 
 it('retains original format-one step checks even when source drift is explicitly accepted', async ({
