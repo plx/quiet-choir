@@ -103,6 +103,13 @@ import type { AskOptions, WorkflowLaunch } from './question-model.js';
 import { RunObservations, errorStack, requestSummary } from './observability.js';
 import type { PhaseInfo, PhaseOptions, RequestSummary, RunEvent } from './observability-model.js';
 import {
+  acceptedReplayRefusal,
+  disposableRunCopy,
+  preflightProbeOptions,
+  preflightRunOptions,
+} from './accepted-replay-preflight.js';
+import {
+  findStepIdentityChange,
   isValidRunId,
   ReplayDivergenceError,
   runIdMessage,
@@ -501,7 +508,13 @@ export interface RunOptions extends WorkflowCodeOptions {
   readonly signal?: AbortSignal;
   /** Create a new run, reusing completed effects from an immutable source snapshot. */
   readonly forkFrom?: ForkOptions;
-  /** Explicitly accept only source/schema changes on resume; local callback identity still applies. */
+  /**
+   * Explicitly accept only source/schema changes on resume; local callback identity still applies.
+   * The changed body first replays once on a disposable copy of the run, with every unfinished
+   * effect synthesized; if it meets a changed completed or settled-failed step, the resume rejects
+   * with a bare {@link StepIdentityChangedError} and the run is left unchanged. Top-level code
+   * outside effects therefore runs one extra time.
+   */
   readonly acceptCodeChange?: boolean;
   /** Fail before a live effect when earlier terminal steps have not been visited. */
   readonly strictReplay?: boolean;
@@ -915,6 +928,30 @@ export async function runWorkflow<
         existing.engine.node !== engine.node ||
         existing.engine.zod !== engine.zod ||
         existing.engine.tsx !== engine.tsx);
+    // #215: every gate above has passed and nothing has touched `existing` yet. An accepted replay
+    // that would meet a changed completed step is found on a disposable copy of the record read
+    // under this lock, and refused before the acceptance is recorded. The probe's own nested run
+    // carries rehearsal hooks, as does a dry run, which is already a disposable copy.
+    if (options.acceptCodeChange && existing && options.rehearsal === undefined) {
+      let copy: Awaited<ReturnType<typeof disposableRunCopy>> | undefined;
+      let change: StepIdentityChangedError | undefined;
+      try {
+        copy = await disposableRunCopy(existing);
+        await runWorkflow(definition, {
+          ...preflightRunOptions(options),
+          ...preflightProbeOptions(copy.stateDir),
+        });
+      } catch (error) {
+        // The copy may hold an interrupted or cancelled record; report the abort, never the copy.
+        options.signal?.throwIfAborted();
+        change = findStepIdentityChange(error);
+      } finally {
+        // A temporary directory left behind must not fail the real run.
+        await copy?.dispose().catch(() => undefined);
+      }
+      // Before savedFailure is set: the caller gets this bare error and the record is untouched.
+      if (change) throw acceptedReplayRefusal(change, options.runId);
+    }
     if (existing && legacyReplay) prepareLegacyReplay(existing);
     if (existing) {
       existing.formatVersion = 7;

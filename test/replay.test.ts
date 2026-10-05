@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -10,6 +10,7 @@ import {
   type WorkflowEvent,
   ConfigurationError,
   defineWorkflow,
+  FileRunStore,
   FixtureHarness,
   readRun,
   runWorkflow,
@@ -567,13 +568,15 @@ it('rejects edited completed callbacks on accepted resume and runs them live in 
     fingerprint: 'code-2',
     acceptCodeChange: true,
   }).catch((error: unknown) => error);
-  expect(rejected).toBeInstanceOf(WorkflowRunError);
+  // The preflight refuses before the run changes, with the typed error itself (#215).
+  expect(rejected).toBeInstanceOf(StepIdentityChangedError);
+  expect(rejected).not.toBeInstanceOf(WorkflowRunError);
   expect((rejected as Error).message).toContain('callback changed on a completed step');
   expect((rejected as Error).message).toContain(
     '--fork-from RUN --reuse matching --invalidate local',
   );
   const change = findStepIdentityChange(rejected);
-  expect(change).toBeInstanceOf(StepIdentityChangedError);
+  expect(change).toBe(rejected);
   expect(change).toMatchObject({ stepId: 'local', components: ['callback'], status: 'completed' });
   expect(findStepIdentityChange(new AggregateError([new Error('x'), change]))).toBe(change);
   expect(findStepIdentityChange(new Error('plain'))).toBeUndefined();
@@ -586,6 +589,239 @@ it('rejects edited completed callbacks on accepted resume and runs them live in 
   );
   expect(forked.output).toBe('two');
   expect(forked.steps['local']?.reusedFrom).toBeUndefined();
+});
+
+/** Every checkpoint file of a run, by name, so a refusal can prove it wrote nothing. */
+async function runFiles(runId: string): Promise<Record<string, string>> {
+  const directory = join(stateDir, runId);
+  const names = (await readdir(directory, { recursive: true, withFileTypes: true }))
+    .filter((entry) => entry.isFile())
+    .map((entry) => join(entry.parentPath, entry.name))
+    .sort();
+  return Object.fromEntries(
+    await Promise.all(
+      names.map(async (name): Promise<[string, string]> => [
+        name.slice(directory.length + 1),
+        await readFile(name, 'utf8'),
+      ]),
+    ),
+  );
+}
+
+/** Resume `definition` with an accepted code change and return what it rejected with. */
+async function acceptedRejection(
+  definition: ReturnType<typeof workflow>,
+  extra: Partial<RunOptions> = {},
+): Promise<unknown> {
+  return runWorkflow(definition, {
+    ...options(),
+    resume: true,
+    fingerprint: 'code-2',
+    acceptCodeChange: true,
+    ...extra,
+  }).then(
+    () => {
+      throw new Error('expected a rejection');
+    },
+    (error: unknown) => error,
+  );
+}
+
+/** The rejection is the preflight's bare refusal, and the record and lock are as they were. */
+async function expectUnchanged(
+  rejected: unknown,
+  before: { readonly record: RunRecord; readonly files: Record<string, string> },
+  change: Pick<StepIdentityChangedError, 'stepId' | 'components' | 'status'>,
+): Promise<void> {
+  expect(rejected).toBeInstanceOf(StepIdentityChangedError);
+  expect(rejected).not.toBeInstanceOf(WorkflowRunError);
+  expect(rejected).toMatchObject(change);
+  expect(findStepIdentityChange(rejected)).toBe(rejected);
+  expect((rejected as Error).cause).toBeInstanceOf(StepIdentityChangedError);
+  expect((rejected as Error).message).toContain('refused before run source was changed');
+  const after = await readRun(options());
+  expect(after.status).toBe(before.record.status);
+  expect(after.workflow.fingerprint).toBe(before.record.workflow.fingerprint);
+  expect(after.output).toEqual(before.record.output);
+  expect(after.codeChanges).toEqual(before.record.codeChanges);
+  expect(await runFiles('source')).toEqual(before.files);
+  // The writer lock was released: another owner can take it at once.
+  const release = await lockRun(stateDir, 'source');
+  await release();
+}
+
+it('refuses an embedded accepted resume over an edited completed callback without changing a completed run', async () => {
+  let ran = 0;
+  let callback = (): string => {
+    ran++;
+    return 'one';
+  };
+  const definition = workflow((ctx) =>
+    ctx.step('local', { input: null, schema: z.string(), run: callback }),
+  );
+  expect((await runWorkflow(definition, options())).output).toBe('one');
+  const before = { record: await readRun(options()), files: await runFiles('source') };
+  callback = () => {
+    ran++;
+    return 'two';
+  };
+  await expectUnchanged(await acceptedRejection(definition), before, {
+    stepId: 'local',
+    components: ['callback'],
+    status: 'completed',
+  });
+  expect(ran).toBe(1);
+  // The saved output is still served to a plain resume of the original code.
+  const kept = await runWorkflow(definition, { ...options(), resume: true });
+  expect(kept.output).toBe('one');
+  expect(ran).toBe(1);
+});
+
+it('refuses an embedded accepted resume without changing a failed run', async () => {
+  let callback = (): string => 'one';
+  const definition = workflow(async (ctx) => {
+    await ctx.step('local', { input: null, schema: z.string(), run: callback });
+    throw new Error('tail');
+  });
+  await expect(runWorkflow(definition, options())).rejects.toThrow('tail');
+  const before = { record: await readRun(options()), files: await runFiles('source') };
+  expect(before.record.status).toBe('failed');
+  callback = () => 'two';
+  await expectUnchanged(await acceptedRejection(definition), before, {
+    stepId: 'local',
+    components: ['callback'],
+    status: 'completed',
+  });
+});
+
+it('refuses an embedded accepted resume without changing a suspended run or its waiting question', async () => {
+  let callback = (): string => 'one';
+  const definition = workflow(async (ctx) => {
+    await ctx.step('local', { input: null, schema: z.string(), run: callback });
+    return ctx.ask('q', { prompt: 'Text?', schema: z.string() });
+  });
+  expect((await runWorkflow(definition, options())).status).toBe('suspended');
+  const before = { record: await readRun(options()), files: await runFiles('source') };
+  callback = () => 'two';
+  await expectUnchanged(await acceptedRejection(definition), before, {
+    stepId: 'local',
+    components: ['callback'],
+    status: 'completed',
+  });
+  const after = await readRun(options());
+  expect(after.status).toBe('suspended');
+  expect(after.steps['q']?.status).toBe('waiting');
+});
+
+it('refuses an embedded accepted resume through a bound store without writing to it', async () => {
+  class CountingStore extends FileRunStore {
+    public opened = 0;
+    public override open(
+      ...args: Parameters<FileRunStore['open']>
+    ): ReturnType<FileRunStore['open']> {
+      this.opened++;
+      return super.open(...args);
+    }
+  }
+  let callback = (): string => 'one';
+  const definition = workflow(async (ctx) => {
+    await ctx.step('local', { input: null, schema: z.string(), run: callback });
+    throw new Error('tail');
+  });
+  await expect(runWorkflow(definition, options())).rejects.toThrow('tail');
+  const before = { record: await readRun(options()), files: await runFiles('source') };
+  callback = () => 'two';
+  const store = new CountingStore(stateDir);
+  await expectUnchanged(await acceptedRejection(definition, { store }), before, {
+    stepId: 'local',
+    components: ['callback'],
+    status: 'completed',
+  });
+  // Only the real run opened the store; the preflight copy lives in its own directory.
+  expect(store.opened).toBe(1);
+});
+
+it('re-finalizes an embedded tail-only fix with zero repeated effects and runs a fixed callback once', async () => {
+  const counted = vi.fn(() => 'counted');
+  let lateRuns = 0;
+  let late = (): string => {
+    lateRuns++;
+    throw new Error('bug');
+  };
+  const invoke = vi.fn<Harness['invoke']>().mockResolvedValue(reply);
+  const harness: Harness = { invoke };
+  const definition = workflow(async (ctx) => {
+    const value = await ctx.step('counted', { input: null, schema: z.string(), run: counted });
+    const agent = await ctx.claude.text('agent', { prompt: 'p' });
+    const repaired = await ctx.step('late', { input: null, schema: z.string(), run: late });
+    return `${value}/${agent.output}/${repaired}`;
+  });
+  await expect(runWorkflow(definition, { ...options(), harness })).rejects.toThrow('bug');
+  late = () => {
+    lateRuns++;
+    return 'late';
+  };
+  const events: WorkflowEvent[] = [];
+  const result = await runWorkflow(definition, {
+    ...options(),
+    harness,
+    resume: true,
+    fingerprint: 'code-2',
+    acceptCodeChange: true,
+    onEvent(event) {
+      events.push(event);
+    },
+  });
+  expect(result).toMatchObject({ status: 'completed', output: 'counted/ok/late' });
+  expect(counted).toHaveBeenCalledTimes(1);
+  expect(invoke).toHaveBeenCalledTimes(1);
+  // The preflight stubbed the fixed callback; only the real resume ran it.
+  expect(lateRuns).toBe(2);
+  expect(result.codeChanges).toHaveLength(1);
+  // The probe drops onEvent: only the real resume reported a start.
+  expect(events.filter((event) => event.type === 'run.started')).toHaveLength(1);
+});
+
+it('reports an abort during the preflight without changing the run', async () => {
+  let bodies = 0;
+  const controller = new AbortController();
+  let callback = (): string => 'one';
+  const definition = workflow(async (ctx) => {
+    // The second body is the preflight's: abort there, before it meets the changed step.
+    if (++bodies === 2) controller.abort(new Error('stop'));
+    await ctx.step('local', { input: null, schema: z.string(), run: callback });
+    throw new Error('tail');
+  });
+  await expect(runWorkflow(definition, options())).rejects.toThrow('tail');
+  const before = { record: await readRun(options()), files: await runFiles('source') };
+  callback = () => 'two';
+  const rejected = await acceptedRejection(definition, { signal: controller.signal });
+  expect(rejected).toMatchObject({ message: 'stop' });
+  expect(bodies).toBe(2);
+  expect(await runFiles('source')).toEqual(before.files);
+});
+
+it('still fails and changes the run when the preflight cannot reach a changed completed step', async () => {
+  let callback = (): string => 'one';
+  let gap = false;
+  const definition = workflow(async (ctx) => {
+    // A pattern the preflight cannot synthesize: its copy fails here and finds nothing.
+    if (gap)
+      await ctx.step('gap', { input: null, schema: z.string().regex(/^x$/u), run: () => 'x' });
+    await ctx.step('local', { input: null, schema: z.string(), run: callback });
+    throw new Error('tail');
+  });
+  await expect(runWorkflow(definition, options())).rejects.toThrow('tail');
+  gap = true;
+  callback = () => 'two';
+  const rejected = await acceptedRejection(definition);
+  expect(rejected).toBeInstanceOf(WorkflowRunError);
+  expect(findStepIdentityChange(rejected)).toMatchObject({ stepId: 'local', status: 'completed' });
+  const after = await readRun(options());
+  expect(after.status).toBe('failed');
+  expect(after.workflow.identity?.code).toBe('code-2');
+  expect(after.codeChanges).toHaveLength(1);
+  expect(after.steps['gap']?.status).toBe('completed');
 });
 
 it('honors local versions and revalidates candidates even when callback source cannot see captured values', async () => {

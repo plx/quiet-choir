@@ -326,7 +326,8 @@ it('pins named grants to capabilities across explicit source acceptance', async 
     acceptCodeChange: true,
     grants: ['fixer'],
   });
-  expect(body).toHaveBeenCalledTimes(2);
+  // Once on the accepted-replay preflight's disposable copy and once for real (#215).
+  expect(body).toHaveBeenCalledTimes(3);
 });
 
 it('checks elevated built-ins at invocation and does not treat write as exec permission', async () => {

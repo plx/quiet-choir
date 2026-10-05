@@ -348,6 +348,51 @@ return approved ? scan.output : 'rejected';
     expect(await runFiles('ops2')).toEqual(bytes);
   });
 
+  it('preflights an accepted resume exactly once, and reports a change it could not reach as a failure', async () => {
+    const bodies = join(root, 'bodies');
+    const counted = (callback: string, tail: string, gap = '') =>
+      `import { appendFileSync } from 'node:fs';
+import { defineWorkflow, z } from ${JSON.stringify(join(repository, 'src/index.js'))};
+export default defineWorkflow({ name: 'loader-replay', version: '1', input: z.null(), output: z.string(), async run(ctx) {
+appendFileSync(new URL('./bodies', import.meta.url), 'body\\n');
+${gap}
+const value = await ctx.step('effect', { input: null, schema: z.string(), run: ${callback} });
+${tail}
+}});`;
+    const lines = async () => (await readFile(bodies, 'utf8')).split('\n').length - 1;
+    await writeFile(file, counted('() => "one"', 'throw new Error("tail");'));
+    expect(await execute('source')).toMatchObject({ ok: false });
+    expect(await lines()).toBe(1);
+    await writeFile(file, counted('() => "one"', 'return value;'));
+    expect(await execute('source', { resume: true, acceptCodeChange: true })).toMatchObject({
+      ok: true,
+      run: { output: 'one' },
+    });
+    // Once on runWorkflow's disposable copy and once for real; a second preflight would make three.
+    expect(await lines()).toBe(3);
+
+    // A pattern the preflight cannot synthesize stops its copy before the changed step, so it finds
+    // nothing and the real run changes the record before it fails: that is no refusal.
+    await writeFile(
+      file,
+      counted(
+        '() => "two"',
+        'return value;',
+        "await ctx.step('gap', { input: null, schema: z.string().regex(/^x$/u), run: () => 'x' });",
+      ),
+    );
+    const failed = await execute('source', { resume: true, acceptCodeChange: true });
+    expect(failed).toMatchObject({
+      ok: false,
+      code: 'workflow.failed',
+      message: expect.stringContaining('callback changed on a completed step') as unknown,
+    });
+    expect(await lines()).toBe(5);
+    const saved = await readRun({ stateDir, runId: 'source' });
+    expect(saved.status).toBe('failed');
+    expect(saved.codeChanges).toHaveLength(2);
+  });
+
   it('re-finalizes a tail validation failure and surfaces the recovery hint', async () => {
     const effectPath = join(root, 'effects');
     const prefix = "import { appendFileSync } from 'node:fs';\n";
