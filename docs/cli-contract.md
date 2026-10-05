@@ -658,14 +658,14 @@ emitted commands and with the state directory shell-quoted when it needs quoting
 are 0 completed (now or earlier), 75 pending, interrupted, locked, orphans or deadline, and 1
 failed, cancelled (a run saved as cancelled), crash-loop, incompatible or unreadable; batch per-run
 failures remain data with exit 0. An `interrupted` outcome is a resume the deadline stopped before
-the runtime reopened a stale run, which stays `running` for the next tick.
-Usage/infrastructure errors retain the command failure document. Every tick is bounded by --timeout
-(default 540s), including --watch, with --max-runs limiting executed resumes. Without --run, runs
-are visited in ascending run-ID order (by character code), so --max-runs takes the first due runs in
-that order. When the timeout fires, tick interrupts in-flight resumes into resumable suspensions:
-each is reported `suspended` with `message: "Tick timeout reached."` and is due on the next tick,
-which reuses its completed steps. `--claim-margin` (same duration syntax; default 10% of --timeout,
-`0ms` disables it, and it must be smaller than --timeout) stops new claims once less than the margin
+the runtime reopened a stale run, which stays `running` for the next tick. Usage/infrastructure
+errors retain the command failure document. Every tick is bounded by --timeout (default 540s),
+including --watch, with --max-runs limiting executed resumes. Without --run, runs are visited in
+ascending run-ID order (by character code), so --max-runs takes the first due runs in that order.
+When the timeout fires, tick interrupts in-flight resumes into resumable suspensions: each is
+reported `suspended` with `message: "Tick timeout reached."` and is due on the next tick, which
+reuses its completed steps. `--claim-margin` (same duration syntax; default 10% of --timeout, `0ms`
+disables it, and it must be smaller than --timeout) stops new claims once less than the margin
 remains: a ready run is then left untouched and reported as skipped `deadline`, and --watch ends
 there. Inside the margin tick still reads each record (terminal runs are observed, not-due runs not
 due) but checks no locks, orphans, crash-loop count or sources, so a due or stale run is reported
