@@ -19,12 +19,23 @@ export interface HarnessEvidence {
   readonly responseTruncated: boolean;
 }
 /**
- * Evidence lives on a registry-symbol property, so the host reads what another quiet-choir module
- * instance (a CLI workflow's own import) attached. See ADR 0028.
+ * Evidence lives on a registry-symbol property, or for a frozen error in a registry-global
+ * `WeakMap`, so the host reads what another quiet-choir module instance (a CLI workflow's own
+ * import) attached, and the reverse. See ADR 0028.
  */
 const evidenceKey = Symbol.for('quiet-choir.evidence');
-/** Evidence for non-extensible (frozen) errors, readable only within this module instance. */
-const frozenEvidence = new WeakMap<object, HarnessEvidence>();
+const frozenEvidenceKey = Symbol.for('quiet-choir.frozenEvidence');
+
+/**
+ * The process-wide store of evidence for non-extensible errors. It is created only on a write, and
+ * a value that is not a `WeakMap` (another version, foreign code) is ignored, never replaced.
+ */
+function frozenEvidenceStore(create: boolean): WeakMap<object, HarnessEvidence> | undefined {
+  const scope = globalThis as unknown as Record<symbol, unknown>;
+  if (create) scope[frozenEvidenceKey] ??= new WeakMap<object, HarnessEvidence>();
+  const store = scope[frozenEvidenceKey];
+  return store instanceof WeakMap ? (store as WeakMap<object, HarnessEvidence>) : undefined;
+}
 
 /**
  * Bound response evidence to 256 KiB without splitting a UTF-8 sequence. Returns the retained text
@@ -47,7 +58,8 @@ export function boundedResponse(text: string | null): {
 /**
  * Attach native evidence to an error that must propagate unchanged, such as a cancellation, so its
  * identity and handling are kept while the runtime still records the session, usage and response.
- * Evidence is readable across quiet-choir module instances; non-objects are ignored.
+ * Evidence is readable across quiet-choir module instances, frozen errors included; non-objects
+ * are ignored.
  */
 export function attachHarnessEvidence(error: unknown, value: HarnessEvidence): void {
   if (typeof error !== 'object' || error === null) return;
@@ -57,7 +69,7 @@ export function attachHarnessEvidence(error: unknown, value: HarnessEvidence): v
     writable: true,
     configurable: true,
   });
-  if (!attached) frozenEvidence.set(error, value);
+  if (!attached) frozenEvidenceStore(true)?.set(error, value);
 }
 
 /** Read adapter evidence without inferring error handling from cause chains. @internal */
@@ -73,7 +85,7 @@ export function harnessEvidence(error: unknown): HarnessEvidence | undefined {
   if (typeof error !== 'object' || error === null) return undefined;
   if (Object.hasOwn(error, evidenceKey))
     return Reflect.get(error, evidenceKey) as HarnessEvidence | undefined;
-  return frozenEvidence.get(error);
+  return frozenEvidenceStore(false)?.get(error);
 }
 
 /** Terminal failure reported by a harness protocol, independent of process exit status. */

@@ -18,11 +18,14 @@ type Kit = typeof hostKit;
 let second: Api;
 let secondKit: Kit;
 let secondGithub: typeof hostGithub;
+let secondHarnessEvidence: typeof harnessEvidence;
 beforeAll(async () => {
   vi.resetModules();
   second = await import('../src/index.js');
   secondKit = await import('../src/harness-kit.js');
   secondGithub = await import('../src/integrations/github.js');
+  ({ harnessEvidence: secondHarnessEvidence } =
+    await import('../src/workflow/runtime/harness-error.js'));
 });
 
 const errorBrand = Symbol.for('quiet-choir.error');
@@ -257,14 +260,64 @@ describe('public error brands (ADR 0028)', () => {
     expect(harnessEvidence(error)).toBe(next);
   });
 
-  it('keeps evidence for a frozen error within the same module instance', () => {
+  it('shares evidence for a frozen error across module instances in both directions', () => {
     const frozen = Object.freeze(new Error('frozen'));
-    hostKit.attachHarnessEvidence(frozen, evidence);
+    secondKit.attachHarnessEvidence(frozen, evidence);
     expect(harnessEvidence(frozen)).toBe(evidence);
+    expect(secondHarnessEvidence(frozen)).toBe(evidence);
+
+    const hostFrozen = Object.freeze(new Error('host frozen'));
+    hostKit.attachHarnessEvidence(hostFrozen, evidence);
+    expect(secondHarnessEvidence(hostFrozen)).toBe(evidence);
+    expect(harnessEvidence(hostFrozen)).toBe(evidence);
+
     expect(Object.getOwnPropertySymbols(frozen)).toEqual([]);
+    expect(Object.getOwnPropertySymbols(hostFrozen)).toEqual([]);
+
+    // Attaching again, from either copy, replaces the evidence.
+    const next = { ...evidence, sessionId: 'sess-2' };
+    secondKit.attachHarnessEvidence(hostFrozen, next);
+    expect(harnessEvidence(hostFrozen)).toBe(next);
+    expect(secondHarnessEvidence(hostFrozen)).toBe(next);
+
     hostKit.attachHarnessEvidence('not an object', evidence);
     expect(harnessEvidence('not an object')).toBeUndefined();
+    expect(harnessEvidence(Object.freeze(new Error('none')))).toBeUndefined();
     expect(harnessEvidence(new Error('none'))).toBeUndefined();
+  });
+
+  it('creates the frozen evidence store lazily and ignores a foreign value under its key', () => {
+    const scope = globalThis as unknown as Record<symbol, unknown>;
+    const key = Symbol.for('quiet-choir.frozenEvidence');
+    const had = Object.hasOwn(scope, key);
+    const saved = scope[key];
+    try {
+      Reflect.deleteProperty(scope, key);
+      const frozen = Object.freeze(new Error('frozen'));
+      expect(harnessEvidence(frozen)).toBeUndefined();
+      expect(Object.hasOwn(scope, key)).toBe(false);
+      // An extensible error never needs the store.
+      hostKit.attachHarnessEvidence(new Error('extensible'), evidence);
+      expect(Object.hasOwn(scope, key)).toBe(false);
+
+      hostKit.attachHarnessEvidence(frozen, evidence);
+      expect(scope[key]).toBeInstanceOf(WeakMap);
+      expect(harnessEvidence(frozen)).toBe(evidence);
+
+      const planted = { get: () => evidence, set: () => undefined };
+      scope[key] = planted;
+      const other = Object.freeze(new Error('other'));
+      expect(() => {
+        hostKit.attachHarnessEvidence(other, evidence);
+      }).not.toThrow();
+      expect(() => harnessEvidence(other)).not.toThrow();
+      expect(harnessEvidence(other)).toBeUndefined();
+      expect(harnessEvidence(frozen)).toBeUndefined();
+      expect(scope[key]).toBe(planted);
+    } finally {
+      if (had) scope[key] = saved;
+      else Reflect.deleteProperty(scope, key);
+    }
   });
 });
 
