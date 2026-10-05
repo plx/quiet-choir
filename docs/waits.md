@@ -278,21 +278,24 @@ resumable and adopt the next execution's digest.
 
 The result reports what this tick did. `resumed` has one `{ runId, outcome }` entry per run whose
 resume started, with outcome `completed`, `suspended` (plus `nextWakeAt`, and a `message` when an
-interruption caused it), `failed`, `cancelled` or `incompatible` (each with a `message`). `skipped`
-has `{ runId, reason }` entries for runs left alone: `not due`, `no longer due` and `deadline` (with
-`nextWakeAt`), `locked`, and `orphans`, `crash-loop`, `incompatible` or `unreadable` (with a
-`message`). A `deadline` entry for a run tick never read, because the timeout had already fired, has
-a `message` instead of `nextWakeAt`. `observed` counts runs that were already completed, failed or
-cancelled. Each run appears in at most one entry; a later resume of the same run during `--watch`
-replaces its entry. Without `--run`, each scan visits runs in ascending run-ID order (by character
-code, so uppercase sorts before lowercase), whatever order the file system lists them in;
-`--max-runs N` therefore resumes the first N due runs in that order. It bounds executed resumes
-across the invocation; refusals before import do not count. With `--run`, exit is 0 when the run
-completed (in this tick or earlier), 75 when it is still pending (not due, suspended again or
-interrupted, locked, blocked by orphans, or skipped for the deadline), and 1 when it failed, was
-cancelled, or is crash-looping, incompatible or unreadable. `--watch` stops retrying a crash-looping
-run. Without `--run`, individual run outcomes do not change exit 0. Command errors retain the
-[CLI error contract](cli-contract.md).
+interruption caused it), `interrupted` (with a `message`: the deadline fired after tick claimed a
+stale `running` run but before the runtime reopened it, so the run stays `running` with no owner,
+keeps the stale-recovery count tick saved, and the next tick recovers it as stale), `failed`,
+`cancelled` (only for a run saved as `cancelled`) or `incompatible` (each with a `message`).
+`skipped` has `{ runId, reason }` entries for runs left alone: `not due`, `no longer due` and
+`deadline` (with `nextWakeAt`), `locked`, and `orphans`, `crash-loop`, `incompatible` or
+`unreadable` (with a `message`). A `deadline` entry for a run tick never read, because the timeout
+had already fired, has a `message` instead of `nextWakeAt`. `observed` counts runs that were already
+completed, failed or cancelled. Each run appears in at most one entry; a later resume of the same
+run during `--watch` replaces its entry. Without `--run`, each scan visits runs in ascending run-ID
+order (by character code, so uppercase sorts before lowercase), whatever order the file system lists
+them in; `--max-runs N` therefore resumes the first N due runs in that order. It bounds executed
+resumes across the invocation; refusals before import do not count. With `--run`, exit is 0 when the
+run completed (in this tick or earlier), 75 when it is still pending (not due, suspended again or
+interrupted (the `interrupted` outcome too), locked, blocked by orphans, or skipped for the
+deadline), and 1 when it failed, was cancelled, or is crash-looping, incompatible or unreadable.
+`--watch` stops retrying a crash-looping run. Without `--run`, individual run outcomes do not change
+exit 0. Command errors retain the [CLI error contract](cli-contract.md).
 
 `--watch` waits for the next due time or an inbox filesystem event, with a one-second fallback scan
 for missed events. `--timeout` defaults to 540s and accepts ms/s/m/h; it bounds the whole
@@ -322,6 +325,13 @@ tick imports it and it parks again, at the cost of one extra import. A new execu
 with any other reason) still saves `cancelled`, and a failure saves `failed`; tick never retries
 either. Embedders opt in by aborting `RunOptions.signal` with a `RunInterruptedError`. See
 [ADR 0029](decisions/0029-persist-interruptions-as-resumable-suspensions.md).
+
+If the deadline fires after tick saved the stale-recovery count for a `running` run but before the
+runtime reopened it, nothing was saved as `suspended`: tick reports the resume as `interrupted`
+(exit 75 with `--run`), the run stays `running` with no owner and no lock, and the next tick
+recovers it as stale. The count tick saved stays, so the next recovery counts again, as for any
+interruption that shows no progress. A resume interrupted while the saved record cannot be re-read
+is reported `failed`.
 
 `--claim-margin` stops tick from claiming a new run once less than the margin of its `--timeout`
 remains, so a resume is not started only to be interrupted at once. It accepts the same ms/s/m/h

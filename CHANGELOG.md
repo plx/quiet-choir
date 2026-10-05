@@ -2,6 +2,12 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- A `workflow tick` resume that the deadline interrupts after tick saved its stale-recovery count,
+  but before the runtime reopened the run, is now reported as resumed outcome `interrupted` (exit 75
+  with `--run`) instead of a final `cancelled`. The run stays `running` and the next tick recovers
+  it. `cancelled` is reported only for a run saved as `cancelled`, and an interrupted resume whose
+  record cannot be re-read reports `failed` (#206).
+
 - `workflow tick` no longer overruns `--timeout` by scanning the remaining runs. Inside the claim
   margin it still reads each run's record, so terminal runs are observed and not-due runs reported
   `not due`, but it skips the lock, orphan, crash-loop and source checks and reports a due or stale

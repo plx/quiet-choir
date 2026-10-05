@@ -247,9 +247,10 @@ since an uncheckpointed action can repeat.
 For parked deadlines and polls, use [workflow tick](waits.md#operate-a-parked-run); pending JSON
 includes their progress. `tick --json` reports resumed outcomes, skipped reasons and an observed
 count; with `--run`, exit 75 means the run is still pending (including interrupted by the tick's
---timeout), locked, blocked by orphans or skipped for the claim-margin `deadline`, and exit 1 means
-it failed, was cancelled, or is crash-looping, incompatible or unreadable. Tick also recovers stale
-`running` runs, up to 3 consecutive times without a new completed step (`crash-loop`).
+--timeout, also before the runtime reopened a stale run: outcome `interrupted`), locked, blocked by
+orphans or skipped for the claim-margin `deadline`, and exit 1 means it failed, was cancelled, or is
+crash-looping, incompatible or unreadable. Tick also recovers stale `running` runs, up to 3
+consecutive times without a new completed step (`crash-loop`).
 
 ## Remove a run
 
