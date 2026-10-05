@@ -1001,6 +1001,22 @@ export default defineWorkflow({ name: 'debounce', version: '1', input: z.null(),
     expect(message).toContain(`workflow resume run --state-dir '${stateDir}' --kill-orphans.`);
   });
 
+  it('starts the orphans recovery command with the detected command launcher', async () => {
+    const f = await fixture();
+    const lock = await deadOwnerLock(f.stateDir, 'run');
+    await mkdir(join(lock, 'processes'));
+    await writeFile(join(lock, 'processes', 'x.json'), '{not json');
+    const launched = new TickWorkflowExecutor({
+      logger,
+      commandLauncher: ['node', '/opt/qc/bin/run.js'],
+    });
+    const result = oneEntryPerRun(await launched.execute(f.tickPlan));
+    const message = result.skipped[0]?.message ?? '';
+    expect(message).toContain(
+      `node /opt/qc/bin/run.js workflow resume run --state-dir ${f.stateDir} --kill-orphans`,
+    );
+  });
+
   it('words an orphans refusal raised while claiming a run for tick, not for resume', async () => {
     const f = await fixture();
     const before = await runBytes(f.stateDir, 'run');

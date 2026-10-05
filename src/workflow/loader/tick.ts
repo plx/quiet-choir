@@ -17,7 +17,7 @@ import {
   RunRefusedError,
 } from '../runtime/run-errors.js';
 import { clockNow, systemClock } from '../runtime/clock.js';
-import { workflowArgv } from '../runtime/commands.js';
+import { workflowArgv, type CommandLauncher } from '../runtime/commands.js';
 import {
   describeOrphanProcesses,
   OrphanProcessesError,
@@ -151,9 +151,10 @@ function tickOrphansMessage(
   runId: string,
   stateDir: string,
   processes: readonly HarnessProcessInspection[],
+  launcher: CommandLauncher | undefined,
 ): string {
   const resume = formatArgv(
-    workflowArgv(undefined, 'resume', runId, '--state-dir', stateDir, '--kill-orphans'),
+    workflowArgv(launcher, 'resume', runId, '--state-dir', stateDir, '--kill-orphans'),
   );
   return `${describeOrphanProcesses(runId, processes)} Tick never signals a process: a later tick retries the run once they exit, or stop confirmed ones with ${resume}. Unverified identities are never signaled; inspect the retained lock.`;
 }
@@ -448,7 +449,12 @@ export class TickWorkflowExecutor implements Executor<
             }
             if (recovery === 'orphans') {
               skip(id, 'orphans', {
-                message: tickOrphansMessage(id, plan.stateDir, ownership.processes),
+                message: tickOrphansMessage(
+                  id,
+                  plan.stateDir,
+                  ownership.processes,
+                  this.options.commandLauncher,
+                ),
               });
               continue;
             }
@@ -529,7 +535,12 @@ export class TickWorkflowExecutor implements Executor<
             // Children appeared or stayed unverified between inspection and lock recovery.
             else if (error instanceof OrphanProcessesError)
               skip(id, 'orphans', {
-                message: tickOrphansMessage(id, plan.stateDir, error.processes),
+                message: tickOrphansMessage(
+                  id,
+                  plan.stateDir,
+                  error.processes,
+                  this.options.commandLauncher,
+                ),
               });
             else if (error instanceof RunRefusedError && error.code === 'run.locked')
               skip(id, 'locked');
