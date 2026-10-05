@@ -2,6 +2,11 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- A forced second signal under `--json` no longer truncates a large failure document piped to a slow
+  reader (#193, #122). A single `writeSync` on the non-blocking fd 1 wrote only what fit in the pipe
+  buffer, about 64 KiB. The document is now written in full, retrying short writes and `EAGAIN` for
+  up to 5 seconds. `EPIPE` is ignored. Exit code 130 and the kill-before-write order are unchanged.
+
 - An unfinished original format-one agent step now migrates on resume when its request and output
   schema are unchanged, and runs live; otherwise it gets the `original format-one identity changed`
   refusal (#191). It previously failed with a raw `Transforms cannot be represented in JSON Schema`

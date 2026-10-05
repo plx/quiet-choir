@@ -332,19 +332,20 @@ A first SIGINT, SIGTERM or SIGHUP drains owned work and, when storage permits, s
 `workflow tick` treats the run as due and resumes it, reusing completed steps; `resume` works too.
 Explicit or workflow-scoped cancellation still saves `cancelled`, which tick never retries. See
 [ADR 0029](decisions/0029-persist-interruptions-as-resumable-suspensions.md). A second signal kills
-tracked groups and writes the last readable checkpoint synchronously before exit 130;
-`error.details.forced` is true and `status` may still be `running`, which tick recovers as a stale
-run. SIGKILL, process crashes, and a closed output pipe cannot deliver a JSON document. Failure
-documents, like success documents, are written in full before the process exits, including when
-stdout is a pipe. Storage failures use exit 74 so that a failed save never masquerades as exit 1,
-and a storage failure during an interrupt keeps exit 74 rather than 130 because the interruption
-checkpoint may not have been saved. A run whose saved status is `failed` reports `workflow.failed`
-(exit 1) even when a signal arrived, because the runner saves an interrupted suspension (or
-`cancelled`) only when the interrupt caused the failure. Saved completion with a known cleanup
-warning still succeeds under the [process ownership contract](process-lifecycle.md), as does a
-completion or suspension (exit 75) that `execute`, `resume`, or `answer --resume` saved before a
-late signal, or an answer that `workflow answer` already delivered. Inspect, validate, typecheck,
-and check-resume report `workflow.interrupted` after a first signal even when their work finishes.
+tracked groups and writes the last readable checkpoint synchronously and in full, retrying a full
+pipe for up to 5 seconds, before exit 130; `error.details.forced` is true and `status` may still be
+`running`, which tick recovers as a stale run. SIGKILL, process crashes, and a closed output pipe
+cannot deliver a JSON document. Failure documents, like success documents, are written in full
+before the process exits, including when stdout is a pipe. Storage failures use exit 74 so that a
+failed save never masquerades as exit 1, and a storage failure during an interrupt keeps exit 74
+rather than 130 because the interruption checkpoint may not have been saved. A run whose saved
+status is `failed` reports `workflow.failed` (exit 1) even when a signal arrived, because the runner
+saves an interrupted suspension (or `cancelled`) only when the interrupt caused the failure. Saved
+completion with a known cleanup warning still succeeds under the
+[process ownership contract](process-lifecycle.md), as does a completion or suspension (exit 75)
+that `execute`, `resume`, or `answer --resume` saved before a late signal, or an answer that
+`workflow answer` already delivered. Inspect, validate, typecheck, and check-resume report
+`workflow.interrupted` after a first signal even when their work finishes.
 
 `check-resume` incompatibility uses exit 3 with the full comparison in `error.details`; a record
 this build cannot fully read adds the `record_schema` fields

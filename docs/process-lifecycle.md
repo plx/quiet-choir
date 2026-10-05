@@ -51,10 +51,11 @@ run with `nextWakeAt` set to now and `interruptedBy` naming the signal; the comm
 and the next `workflow tick` or `resume` continues from the completed steps. The in-flight steps are
 recorded as `cancelled` and run again on resume. stderr prints “Send again to force.” A
 signal-ignoring local callback can still prevent graceful completion. A second signal sends SIGKILL
-synchronously to every in-memory tracked group and exits 130 without waiting for checkpoints. The
-lock and an older `running` checkpoint may remain; tick recovers such a stale run. Embedders that
-abort `RunOptions.signal` with a `RunInterruptedError` get the same resumable suspension, while any
-other abort reason saves `cancelled`. See
+synchronously to every in-memory tracked group and exits 130 without waiting for checkpoints; under
+`--json` it first writes the whole failure document to stdout, retrying a full pipe for up to five
+seconds. The lock and an older `running` checkpoint may remain; tick recovers such a stale run.
+Embedders that abort `RunOptions.signal` with a `RunInterruptedError` get the same resumable
+suspension, while any other abort reason saves `cancelled`. See
 [ADR 0029](decisions/0029-persist-interruptions-as-resumable-suspensions.md). EIO/EPIPE from a
 closed terminal do not interrupt cleanup. Embedders own their signal handlers and may supply a
 `ProcessSupervisor` to `runWorkflow`, then call `forceKill()` on a second signal.
