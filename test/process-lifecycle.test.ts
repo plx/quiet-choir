@@ -4,11 +4,11 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { runProcess, type ProcessRequest } from '../src/harnesses/process.js';
 import { groupState, processIdentity, signalProcess } from '../src/processes/identity.js';
 import { CliHarness, ProcessSupervisor, RunInterruptedError } from '../src/index.js';
-import { executionSignals, terminalError } from '../src/cli/signals.js';
+import { executionSignals, terminalError, writeAllSync } from '../src/cli/signals.js';
 
 let directory: string;
 const leftovers = new Map<number, string | null>();
@@ -287,4 +287,165 @@ it('recognizes only dead-terminal EIO/EPIPE errors', () => {
   expect(terminalError(Object.assign(new Error(), { code: 'EIO' }))).toBe(true);
   expect(terminalError(Object.assign(new Error(), { code: 'EACCES' }))).toBe(false);
   expect(terminalError('EPIPE')).toBe(false);
+});
+
+const errno = (code: string): Error => Object.assign(new Error(code), { code });
+
+/** A scripted write: each entry is a byte count to accept, 'drain' for everything left, or an error. */
+function scriptedWrite(...script: (number | 'drain' | Error)[]): {
+  readonly write: (fd: number, buffer: Buffer, offset: number, length: number) => number;
+  readonly received: Buffer[];
+  readonly calls: () => number;
+} {
+  const received: Buffer[] = [];
+  let calls = 0;
+  return {
+    received,
+    calls: () => calls,
+    write(fd, buffer, offset, length) {
+      expect(fd).toBe(1);
+      const step = script[Math.min(calls, script.length - 1)];
+      calls += 1;
+      if (step instanceof Error) throw step;
+      const count = step === 'drain' ? length : Math.min(step ?? length, length);
+      received.push(buffer.subarray(offset, offset + count));
+      return count;
+    },
+  };
+}
+
+describe('writeAllSync', () => {
+  it('advances by each short count and writes every byte in order', () => {
+    const text = 'abcdefghij';
+    const { write, received } = scriptedWrite(3, 1, 'drain');
+    const sleeps: number[] = [];
+    expect(writeAllSync(1, text, { write, sleep: (ms) => sleeps.push(ms) })).toBe('complete');
+    expect(received.map((chunk) => chunk.length)).toEqual([3, 1, 6]);
+    expect(Buffer.concat(received).toString('utf8')).toBe(text);
+    expect(sleeps).toEqual([]);
+  });
+
+  it('retries a thrown EAGAIN and a zero-byte write after a sleep', () => {
+    const { write, received, calls } = scriptedWrite(errno('EAGAIN'), errno('EAGAIN'), 0, 'drain');
+    const sleeps: number[] = [];
+    expect(writeAllSync(1, 'payload', { write, sleep: (ms) => sleeps.push(ms) })).toBe('complete');
+    expect(calls()).toBe(4);
+    expect(sleeps).toHaveLength(3);
+    expect(sleeps.every((ms) => ms > 0)).toBe(true);
+    expect(Buffer.concat(received).toString('utf8')).toBe('payload');
+  });
+
+  it('accepts EWOULDBLOCK as no progress too', () => {
+    const { write } = scriptedWrite(errno('EWOULDBLOCK'), 'drain');
+    expect(writeAllSync(1, 'x', { write, sleep: () => undefined })).toBe('complete');
+  });
+
+  it('returns timeout without throwing once a persistent EAGAIN outlasts the deadline', () => {
+    const { write, calls } = scriptedWrite(errno('EAGAIN'));
+    let clock = 0;
+    const outcome = writeAllSync(1, 'stuck', {
+      write,
+      sleep: (ms) => {
+        clock += ms;
+      },
+      now: () => clock,
+      timeoutMs: 50,
+    });
+    expect(outcome).toBe('timeout');
+    const attempts = calls();
+    expect(attempts).toBeGreaterThan(1);
+    // The deadline is a bound on retries: it stops calling write once it has passed.
+    expect(clock).toBeGreaterThanOrEqual(50);
+    expect(attempts).toBeLessThanOrEqual(50);
+  });
+
+  it('bounds a reader that accepts one byte at a time, not only a fully stalled one', () => {
+    let clock = 0;
+    const outcome = writeAllSync(1, 'a'.repeat(1000), {
+      write: () => {
+        clock += 10;
+        return 1;
+      },
+      now: () => clock,
+      timeoutMs: 100,
+    });
+    expect(outcome).toBe('timeout');
+  });
+
+  it('reports closed for EPIPE and EIO and rethrows anything else', () => {
+    for (const code of ['EPIPE', 'EIO']) {
+      const { write } = scriptedWrite(2, errno(code));
+      expect(writeAllSync(1, 'abcd', { write })).toBe('closed');
+    }
+    const failure = errno('EACCES');
+    expect(() => writeAllSync(1, 'abcd', { write: scriptedWrite(failure).write })).toThrow(failure);
+  });
+
+  it('reproduces multibyte text exactly through one-byte writes', () => {
+    const text = '\u00e9\u{1f600}'.repeat(50);
+    const { write, received } = scriptedWrite(1);
+    expect(writeAllSync(1, text, { write })).toBe('complete');
+    expect(Buffer.concat(received).equals(Buffer.from(text, 'utf8'))).toBe(true);
+  });
+
+  it('completes an empty document without writing', () => {
+    const { write, calls } = scriptedWrite(1);
+    expect(writeAllSync(1, '', { write })).toBe('complete');
+    expect(calls()).toBe(0);
+  });
+});
+
+describe('executionSignals second signal', () => {
+  function force(onForce: () => void): { order: string[]; exits: unknown[] } {
+    const order: string[] = [];
+    const exits: unknown[] = [];
+    const supervisor = new ProcessSupervisor();
+    const forceKill = vi.spyOn(supervisor, 'forceKill').mockImplementation(() => {
+      order.push('forceKill');
+      return [];
+    });
+    const exit = vi.spyOn(process, 'exit').mockImplementation(((code?: number) => {
+      order.push('exit');
+      exits.push(code);
+      return undefined as never;
+    }) as typeof process.exit);
+    const handler = executionSignals(
+      supervisor,
+      () => undefined,
+      'Workflow',
+      () => {
+        order.push('onForce');
+        onForce();
+      },
+    );
+    try {
+      process.emit('SIGINT');
+      expect(order).toEqual([]);
+      // The mocked exit returns, so the listener falls through to abort; the real one never does.
+      try {
+        process.emit('SIGINT');
+      } catch (error) {
+        order.push(`threw:${(error as Error).message}`);
+      }
+    } finally {
+      handler.dispose();
+      exit.mockRestore();
+      forceKill.mockRestore();
+    }
+    return { order, exits };
+  }
+
+  it('kills groups, then writes the document, then exits 130', () => {
+    const { order, exits } = force(() => undefined);
+    expect(order.slice(0, 3)).toEqual(['forceKill', 'onForce', 'exit']);
+    expect(exits).toEqual([130]);
+  });
+
+  it('still exits 130 when writing the document throws', () => {
+    const { order, exits } = force(() => {
+      throw errno('EAGAIN');
+    });
+    expect(order.slice(0, 3)).toEqual(['forceKill', 'onForce', 'exit']);
+    expect(exits).toEqual([130]);
+  });
 });

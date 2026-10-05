@@ -1,6 +1,5 @@
 import { resolveStateDir } from '../workflow/runtime/paths.js';
 import { stat } from 'node:fs/promises';
-import { writeSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { BaseCommand } from './base-command.js';
 import {
@@ -18,7 +17,7 @@ import { isValidRunId, runIdMessage, type CliErrorCode } from '../workflow/runti
 import type { JsonValue } from '../workflow/runtime/model.js';
 import { analyzeTypecheckEntrypoint } from '../workflow/typecheck/plan.js';
 import type { TypecheckPlan } from '../workflow/typecheck/model.js';
-import { tolerateClosedTerminal, executionSignals } from './signals.js';
+import { tolerateClosedTerminal, executionSignals, writeAllSync } from './signals.js';
 import { ProcessSupervisor } from '../processes/supervisor.js';
 import { readRunSync, readRun, type RunRecord } from '../workflow/runtime/store.js';
 import { commandLauncher as detectedCommandLauncher } from './launcher.js';
@@ -285,8 +284,9 @@ export abstract class WorkflowCommand extends BaseCommand {
       'Workflow interrupted; forced process cleanup.',
       { ...this.failureContext, run, details: { forced: true } },
     );
-    // A second signal exits synchronously: do not lose a buffered JSON document on process.exit.
-    writeSync(
+    // A second signal exits synchronously, so write the whole document, retrying a full pipe,
+    // before process.exit. The outcome is ignored: a gone or stalled reader must not block exit 130.
+    writeAllSync(
       1,
       `${JSON.stringify(workflowErrorDocument(failure, { compact: this.compactRunDocuments() }))}\n`,
     );
