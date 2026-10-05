@@ -611,6 +611,42 @@ describe('TypecheckProgramCache', { timeout: 40_000 }, () => {
     }
   });
 
+  it('checks every file again when changes are assumed to affect only direct importers', async () => {
+    const root = await createFixture({
+      'tsconfig.json': JSON.stringify({
+        compilerOptions: {
+          ...smallLib,
+          ...nodeNext,
+          assumeChangesOnlyAffectDirectDependencies: true,
+        },
+      }),
+      'package.json': '{"type":"module"}',
+      'a.ts': 'export const value: number = 1;\n',
+      'b.ts': "export { value } from './a.js';\n",
+      'workflow.ts': "import { value } from './b.js';\nexport const total: number = value;\n",
+    });
+    const cache = new TypecheckProgramCache();
+
+    expect(await executeEntrypoint(root, 'workflow.ts', cache)).toMatchObject({
+      ok: true,
+      diagnostics: [],
+    });
+    // The same-type edit records a.ts's declaration text as its signature, so the next edit changes
+    // that signature and reaches workflow.ts only through b.ts's re-export.
+    await writeFile(join(root, 'a.ts'), 'export const value: number = 2;\n');
+    expect(await executeEntrypoint(root, 'workflow.ts', cache)).toMatchObject({
+      ok: true,
+      diagnostics: [],
+    });
+    await writeFile(join(root, 'a.ts'), "export const value: string = 'two';\n");
+    const cached = await executeEntrypoint(root, 'workflow.ts', cache);
+
+    expect(cached.diagnostics).toContainEqual(
+      expect.objectContaining({ code: 2322, filePath: join(root, 'workflow.ts'), line: 2 }),
+    );
+    expect(cached).toEqual(await executeEntrypoint(root, 'workflow.ts', null));
+  });
+
   it('leaves unreadable files to the compiler host', async () => {
     const root = await createFixture({ 'present.ts': 'export const value = 1;\n' });
     const cached = await executeEntrypoint(root, 'missing.ts', new TypecheckProgramCache());

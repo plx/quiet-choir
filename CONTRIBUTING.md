@@ -158,12 +158,12 @@ builder program (the `tsc --watch` model), their semantic diagnostics, so an edi
 files that depend on it are checked again. A changed module or type reference resolution in a file
 both programs share, such as a removed package.json export, forces a full check, as does an added,
 removed or changed file that affects the global scope in its old or new version (a script, or a
-module with a `declare global` block). The replay-loader, registry, registry-cli and typecheck
-suites do this; typecheck keeps schema-only inference as an uncached full-engine check. Locally
-(macOS, Node 26.10, worst of three `npm run test:coverage` runs on a shared machine) the symlink
-case fell from 31.5 s to 8.7 s, doctor from 24.2 s to 6.4 s, the slowest registry invalidation case
-from 13.1 s to 3.6 s, and the whole run from 247-270 s to 163-164 s; schema-only inference stayed at
-about 6 s. The CLI passes no cache.
+module with a `declare global` block), and the `assumeChangesOnlyAffectDirectDependencies` option.
+The replay-loader, registry, registry-cli and typecheck suites do this; typecheck keeps schema-only
+inference as an uncached full-engine check. Locally (macOS, Node 26.10, worst of three
+`npm run test:coverage` runs on a shared machine) the symlink case fell from 31.5 s to 8.7 s, doctor
+from 24.2 s to 6.4 s, the slowest registry invalidation case from 13.1 s to 3.6 s, and the whole run
+from 247-270 s to 163-164 s; schema-only inference stayed at about 6 s. The CLI passes no cache.
 
 Timeout rule: a test or suite timeout above Vitest's 5 s default needs an adjacent comment of the
 form `// measured: 1.2 s alone, 4.1 s in the full coverage run (dominated by tsImport compile)`.

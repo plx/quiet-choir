@@ -79,9 +79,10 @@ function textHash(text: string): string {
  * - the previous `SemanticDiagnosticsBuilderProgram`, from which TypeScript's builder (the `tsc
  *   --watch` model) copies semantic diagnostics only for files whose text and references are
  *   unchanged and that no changed file affects. The builder is not used, and every file is checked
- *   again, if any file both programs share resolves an import or type reference differently, or if
- *   an added, removed or changed file affects the global scope in its old or new version (a script,
- *   or a module with a `declare global` block).
+ *   again, if any file both programs share resolves an import or type reference differently; if an
+ *   added, removed or changed file affects the global scope in its old or new version (a script, or
+ *   a module with a `declare global` block); or if `assumeChangesOnlyAffectDirectDependencies` is
+ *   set, under which the builder would skip consumers that see a change only through re-exports.
  *   Every file is also checked again if a copied diagnostic still points into a source file that
  *   was parsed again.
  *
@@ -150,7 +151,7 @@ export class TypecheckProgramCache {
       diagnostics: () => {
         // The builder diffs file versions against whichever builder this option set kept last. It
         // does not compare module resolutions or see that a replaced file affected the global scope
-        // before, so either makes this a full check.
+        // before, so either makes this a full check, as do options that narrow what it rechecks.
         const previous = optionSet.builder;
         const builder = ts.createSemanticDiagnosticsBuilderProgram(
           program,
@@ -331,11 +332,15 @@ function replacedGlobalScope(previous: ts.Program, next: ts.Program): boolean {
 }
 
 /**
- * Whether the builder may copy results from the previous program: resolutions are unchanged, and no
- * replaced file affects the global scope.
+ * Whether the builder may copy results from the previous program: the options let it recheck every
+ * file a change affects, resolutions are unchanged, and no replaced file affects the global scope.
  */
 function canReuseBuilder(previous: ts.Program, next: ts.Program): boolean {
-  return sameResolutions(previous, next) && !replacedGlobalScope(previous, next);
+  return (
+    next.getCompilerOptions().assumeChangesOnlyAffectDirectDependencies !== true &&
+    sameResolutions(previous, next) &&
+    !replacedGlobalScope(previous, next)
+  );
 }
 
 /** Whether a diagnostic or its related information points into a file the program replaced. */
