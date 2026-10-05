@@ -183,6 +183,7 @@ function existsFailure(stateDir: string, runId: string): WorkflowFailure {
 export async function prepareStartLaunch(
   plan: Pick<StartWorkflowPlan, 'runId' | 'stateDir' | 'cwd' | 'stdinInput'>,
   signal?: AbortSignal,
+  commandLauncher?: CommandLauncher,
 ): Promise<{ readonly ok: true; readonly files: LaunchFiles } | WorkflowFailure> {
   const { runId, stateDir } = plan;
   // Fast path outside the guard: a live run's writer holds the guard, and its ID is simply taken.
@@ -208,7 +209,7 @@ export async function prepareStartLaunch(
           );
         }
       },
-      { cwd: plan.cwd, ...(signal === undefined ? {} : { signal }) },
+      { cwd: plan.cwd, commandLauncher, ...(signal === undefined ? {} : { signal }) },
     );
   } catch (error) {
     // Only a failed guard release reaches here with files open; nothing will launch with them.
@@ -299,7 +300,7 @@ export class StartWorkflowExecutor implements Executor<
     const { runId, stateDir } = plan;
     const signal = this.#options.signal;
     const observe = this.#options.observeRun ?? observeStartedRun;
-    const prepared = await prepareStartLaunch(plan, signal);
+    const prepared = await prepareStartLaunch(plan, signal, this.#options.commandLauncher);
     if (!prepared.ok) return prepared;
     const { files } = prepared;
     const argv = [...plan.argv];

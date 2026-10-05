@@ -1,3 +1,5 @@
+import { resolve } from 'node:path';
+import type { JsonValue } from './model.js';
 import type { WorkflowLaunch } from './question-model.js';
 
 /**
@@ -47,4 +49,59 @@ export function launchPolicyFlags(launch: WorkflowLaunch | undefined): string[] 
     ...(policy.worktrees?.keep === undefined ? [] : ['--worktree-keep', policy.worktrees.keep]),
     ...(policy.worktrees?.root === undefined ? [] : ['--worktree-root', policy.worktrees.root]),
   ];
+}
+
+/**
+ * One runnable follow-up: why it applies and the exact argument vector to run, built behind the
+ * launcher of the invocation that produced it. `<ANSWER_JSON>`, `<NEW_RUN_ID>` and `<ENTRYPOINT>`
+ * are placeholders to substitute first. @internal
+ */
+export interface NextCommand {
+  readonly why: string;
+  readonly argv: readonly string[];
+}
+
+const placeholder = /^<[A-Z][A-Z_]*>$/u;
+
+/**
+ * Quote an argument vector for a POSIX shell, leaving placeholders bare so they read as slots to
+ * fill. Display only: run the argv itself whenever possible. @internal
+ */
+export function formatArgv(argv: readonly string[]): string {
+  return argv
+    .map((value) =>
+      placeholder.test(value) || /^[\w./:@%+=,-]+$/u.test(value)
+        ? value
+        : `'${value.replaceAll("'", "'\\''")}'`,
+    )
+    .join(' ');
+}
+
+/**
+ * The follow-up that clears an abandoned run lock: `workflow unlock <runId> --state-dir <abs>` behind
+ * the launcher, with `--force-remote` only when the holder is on a foreign host. Refusal prose embeds
+ * `formatArgv(entry.argv)` and `details.next` carries the entry, so the two cannot drift. @internal
+ */
+export function unlockNext(
+  launcher: CommandLauncher | undefined,
+  stateDir: string,
+  runId: string,
+  options: { readonly forceRemote?: boolean; readonly why: string },
+): NextCommand {
+  return {
+    why: options.why,
+    argv: workflowArgv(
+      launcher,
+      'unlock',
+      runId,
+      '--state-dir',
+      resolve(stateDir),
+      ...(options.forceRemote ? ['--force-remote'] : []),
+    ),
+  };
+}
+
+/** Plain-JSON copy of next-command entries, for a refusal's `details.next`. @internal */
+export function nextDetail(entries: readonly NextCommand[]): JsonValue[] {
+  return entries.map((entry) => ({ why: entry.why, argv: [...entry.argv] }));
 }

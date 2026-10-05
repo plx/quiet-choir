@@ -74,7 +74,7 @@ export default class WorkflowInspect extends WorkflowCommand {
     const waitCreatedMs = this.#bound('wait-created', flags['wait-created']);
     const stream = flags.watch === true && flags.final !== true;
     const render = (value: RunInspection): void => {
-      const human = `${stream && !flags.json && process.stdout.isTTY ? '\u001b[2J\u001b[H' : ''}${formatRunSummary(value.summary, flags.verbose)}`;
+      const human = `${stream && !flags.json && process.stdout.isTTY ? '\u001b[2J\u001b[H' : ''}${formatRunSummary(value.summary, flags.verbose, this.commandLauncher)}`;
       this.output(
         flags.summary
           ? value.summary

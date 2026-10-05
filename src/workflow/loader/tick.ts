@@ -528,6 +528,7 @@ export class TickWorkflowExecutor implements Executor<
             const owned = await store.open(id, {
               cwd: run.cwd,
               signal,
+              commandLauncher: this.options.commandLauncher,
               ...(this.options.processSupervisor === undefined
                 ? {}
                 : { processSupervisor: this.options.processSupervisor }),

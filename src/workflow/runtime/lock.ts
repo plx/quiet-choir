@@ -15,6 +15,13 @@ import {
   type HarnessProcessInspection,
 } from './process-registry.js';
 import { RunRefusedError } from './run-errors.js';
+import {
+  formatArgv,
+  nextDetail,
+  unlockNext,
+  type CommandLauncher,
+  type NextCommand,
+} from './commands.js';
 import { decideUnlock, type UnlockHolder, type UnlockObservation } from './recovery-decision.js';
 import {
   resolveStateDir,
@@ -312,6 +319,10 @@ export interface OwnedRunLock extends RunLock {
   releaseOwner(): Promise<void>;
 }
 
+/** Why a plain unlock entry accompanies a refusal for a race that a retry usually clears. */
+const transientWhy =
+  'If a retry is refused again, unlock reports who holds the lock and clears it only once no process owns it; it never removes a live lock or signals.';
+
 /** Live local owner/recovery configuration. @internal */
 export interface RunLockOptions {
   readonly killOrphans?: boolean;
@@ -320,6 +331,11 @@ export interface RunLockOptions {
   readonly processSupervisor?: ProcessSupervisor;
   readonly probeOwner?: boolean;
   readonly cwd?: string;
+  /**
+   * The program words behind the `workflow unlock` command that a `run.locked` refusal names in its
+   * message and `details.next`. Only shapes that text; absent means `['quiet-choir']`.
+   */
+  readonly commandLauncher?: CommandLauncher | undefined;
 }
 
 /** Whether `error` is a Node system error with this errno code. @internal */
@@ -639,58 +655,83 @@ async function acquireLock(
       options.probeOwner === false ? null : (processIdentity(process.pid)?.start ?? null),
   };
   const supervisor = options.processSupervisor ?? new ProcessSupervisor();
+  const unlock = (why: string, forceRemote = false): NextCommand =>
+    unlockNext(options.commandLauncher, stateDir, runId, { why, forceRemote });
+  const transient = unlock(transientWhy);
   const changed = (cause?: unknown): RunRefusedError =>
     new RunRefusedError(
       'run.locked',
       runId,
       `Run ${runId} lock ownership changed during recovery; retry.`,
-      { lockPath },
+      { lockPath, next: nextDetail([transient]) },
       cause === undefined ? undefined : { cause },
     );
   const lost = (): Error => new Error(`Run ${runId} lock ownership was lost.`);
-  const unlock = unlockCommand(stateDir, runId);
-  const inProgress = (existing: Marker | undefined, cause?: unknown): RunRefusedError =>
-    new RunRefusedError(
+  const inProgress = (existing: Marker | undefined, cause?: unknown): RunRefusedError => {
+    const remote = existing !== undefined && existing.host !== hostname();
+    const entry = unlock(
+      existing === undefined
+        ? 'Clear the damaged recovery marker after confirming no process owns the lock.'
+        : remote
+          ? `Only if ${existing.host} is this machine under an old name or is permanently gone.`
+          : `Rerun once recoverer PID ${String(existing.pid)} on ${existing.host} has exited.`,
+      remote,
+    );
+    const command = formatArgv(entry.argv);
+    return new RunRefusedError(
       'run.locked',
       runId,
       `Run ${runId} lock recovery is in progress; retry, or ${
         existing === undefined
-          ? `clear the damaged marker in ${lockPath} with ${unlock}`
-          : existing.host === hostname()
-            ? `once recoverer PID ${String(existing.pid)} on ${existing.host} is gone, clear it with ${unlock}`
-            : `once recoverer PID ${String(existing.pid)} on ${existing.host} is gone, clear it with ${unlock} --force-remote (only if ${existing.host} is this machine under an old name or is permanently gone)`
+          ? `clear the damaged marker in ${lockPath} with ${command}`
+          : remote
+            ? `once recoverer PID ${String(existing.pid)} on ${existing.host} is gone, clear it with ${command} (only if ${existing.host} is this machine under an old name or is permanently gone)`
+            : `once recoverer PID ${String(existing.pid)} on ${existing.host} is gone, clear it with ${command}`
       }.`,
-      existing === undefined ? { lockPath } : { lockPath, pid: existing.pid, host: existing.host },
+      existing === undefined
+        ? { lockPath, next: nextDetail([entry]) }
+        : { lockPath, pid: existing.pid, host: existing.host, next: nextDetail([entry]) },
       cause === undefined ? undefined : { cause },
     );
+  };
   for (let attempt = 0; attempt < 3; attempt++) {
     if ((await publishLock(lockPath, owner)) === 'contended') {
       let previous;
       try {
         previous = await readContended(lockPath);
       } catch (cause) {
+        const entry = unlock('Clear the lock after confirming no process owns it.');
         throw new RunRefusedError(
           'run.locked',
           runId,
-          `Run ${runId} is locked with incomplete ownership metadata (damage or an older build); after confirming no process owns ${lockPath}, clear it with ${unlock}.`,
-          { lockPath },
+          `Run ${runId} is locked with incomplete ownership metadata (damage or an older build); after confirming no process owns ${lockPath}, clear it with ${formatArgv(entry.argv)}.`,
+          { lockPath, next: nextDetail([entry]) },
           { cause },
         );
       }
       // Released between the failed publish and this read: look again.
       if (previous === 'gone') continue;
       const previousState = ownerState(previous);
-      if (previousState !== 'dead' && previousState !== 'released')
+      if (previousState !== 'dead' && previousState !== 'released') {
+        const remote = previousState === 'remote';
+        const entry = unlock(
+          remote
+            ? `Only if ${previous.host} is this machine under an old name or is permanently gone.`
+            : `Works only once PID ${String(previous.pid)} on ${previous.host} has exited.`,
+          remote,
+        );
+        const command = formatArgv(entry.argv);
         throw new RunRefusedError(
           'run.locked',
           runId,
           `Run ${runId} is locked by PID ${String(previous.pid)} on ${previous.host}. ${
-            previousState === 'remote'
-              ? `If ${previous.host} is this machine under an old name or is permanently gone, clear it with ${unlock} --force-remote.`
-              : `Wait for it or stop it; ${unlock} clears the lock only once that owner is gone.`
+            remote
+              ? `If ${previous.host} is this machine under an old name or is permanently gone, clear it with ${command}.`
+              : `Wait for it or stop it; ${command} clears the lock only once that owner is gone.`
           }`,
-          { pid: previous.pid, host: previous.host, lockPath },
+          { pid: previous.pid, host: previous.host, lockPath, next: nextDetail([entry]) },
         );
+      }
       // Only one contender may retire a dead owner's lock. Recheck ownership after winning recovery.
       const marker = {
         pid: owner.pid,
@@ -786,16 +827,8 @@ async function acquireLock(
     'run.locked',
     runId,
     `Could not acquire run ${runId}; retry after competing writers finish.`,
-    { lockPath },
+    { lockPath, next: nextDetail([transient]) },
   );
-}
-
-/**
- * The operator command that clears an abandoned lock of this run, spelled like `resumeCommand`;
- * shared by the `run.locked` messages and the inspect text hint. @internal
- */
-export function unlockCommand(stateDir: string, runId: string): string {
-  return `quiet-choir workflow unlock ${runId} --state-dir ${resolve(stateDir)}`;
 }
 
 function unlockHolder(
@@ -914,10 +947,11 @@ export async function unlockRun(options: {
   readonly runId: string;
   readonly stateDir: string;
   readonly forceRemote?: boolean;
+  /** The program words behind the commands a refusal names; absent means `['quiet-choir']`. */
+  readonly commandLauncher?: CommandLauncher | undefined;
 }): Promise<UnlockedLock[]> {
   const { runId } = options;
   const stateDir = resolveStateDir({ stateDir: options.stateDir });
-  const unlock = unlockCommand(stateDir, runId);
   const locks = (
     await Promise.all([
       observeUnlock('primary', join(runDirectory(stateDir, runId), 'lock'), runId),
@@ -928,11 +962,18 @@ export async function unlockRun(options: {
   if (decision.kind === 'locked') {
     const { lock, role, holder, reason } = decision;
     const who = `Run ${runId} ${lock.kind} lock ${role === 'owner' ? 'owner' : 'recoverer'} PID ${String(holder.pid)}`;
+    const entry = unlockNext(options.commandLauncher, stateDir, runId, {
+      forceRemote: reason === 'remote',
+      why:
+        reason === 'remote'
+          ? `Only if ${holder.host} is this machine under an old name or is permanently gone.`
+          : `Rerun once PID ${String(holder.pid)} on ${holder.host} has exited.`,
+    });
     throw new RunRefusedError(
       'run.locked',
       runId,
       reason === 'remote'
-        ? `${who} is on foreign host ${holder.host}. If ${holder.host} is this machine under an old name or is permanently gone, rerun with ${unlock} --force-remote.`
+        ? `${who} is on foreign host ${holder.host}. If ${holder.host} is this machine under an old name or is permanently gone, rerun with ${formatArgv(entry.argv)}.`
         : `${who} on ${holder.host} is ${reason === 'alive' ? 'alive' : 'unverifiable'}; unlock never stops a process. Wait for it to exit or stop it, then retry.`,
       {
         lockPath: lock.path,
@@ -941,6 +982,7 @@ export async function unlockRun(options: {
         pid: holder.pid,
         host: holder.host,
         state: reason,
+        next: nextDetail([entry]),
       },
     );
   }
@@ -966,7 +1008,12 @@ export async function unlockRun(options: {
         'run.locked',
         runId,
         `Run ${runId} lock ownership changed during unlock; retry.`,
-        { lockPath: lock.path },
+        {
+          lockPath: lock.path,
+          next: nextDetail([
+            unlockNext(options.commandLauncher, stateDir, runId, { why: transientWhy }),
+          ]),
+        },
       );
     let action: UnlockedLock['action'] = 'removed';
     const current = await currentTokens(lock.path);

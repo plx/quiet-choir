@@ -12,8 +12,10 @@
  *    still waiting, so a pending wait or answer may still need the run.
  * 4. `remove`.
  *
- * ESLint keeps this module free of runtime imports.
+ * ESLint keeps this module free of runtime imports, except the argv builders in `./commands.js`
+ * that spell the `workflow unlock` command of a lock refusal.
  */
+import { formatArgv, nextDetail, unlockNext, type CommandLauncher } from './commands.js';
 import type { RunLockView, RunOwnership } from './lock.js';
 import type { HarnessProcessInspection } from './process-registry.js';
 import type { RunRecord } from './record.js';
@@ -146,8 +148,8 @@ export function removalRefusal(
   runId: string,
   stateDir: string,
   verdict: Exclude<RemovalVerdict, { readonly kind: 'remove' }>,
+  launcher?: CommandLauncher,
 ): RemovalRefusal {
-  const unlock = `quiet-choir workflow unlock ${runId} --state-dir ${stateDir}`;
   if (verdict.kind === 'active') {
     const why =
       verdict.status === 'running' || verdict.status === 'suspended'
@@ -194,21 +196,34 @@ export function removalRefusal(
     host: verdict.host,
     state: verdict.reason,
   };
-  if (verdict.reason === 'unreadable')
+  if (verdict.reason === 'unreadable') {
+    const entry = unlockNext(launcher, stateDir, runId, {
+      why: 'Clear the lock after confirming no process owns it.',
+    });
     return {
       code: 'run.locked',
-      message: `${who} metadata is missing or unreadable (${verdict.warning ?? 'unknown'}); --force does not override a lock. After confirming no process owns it, clear it with ${unlock}, then retry.`,
-      details,
+      message: `${who} metadata is missing or unreadable (${verdict.warning ?? 'unknown'}); --force does not override a lock. After confirming no process owns it, clear it with ${formatArgv(entry.argv)}, then retry.`,
+      details: { ...details, next: nextDetail([entry]) },
     };
+  }
   const pid = String(verdict.pid);
+  if (verdict.reason === 'remote') {
+    const host = verdict.host ?? 'unknown';
+    const entry = unlockNext(launcher, stateDir, runId, {
+      forceRemote: true,
+      why: `Only if ${host} is this machine under an old name or is permanently gone.`,
+    });
+    return {
+      code: 'run.locked',
+      message: `${who} PID ${pid} is on foreign host ${host}; --force does not override a lock. If that host is this machine under an old name or is permanently gone, clear it with ${formatArgv(entry.argv)}, then retry.`,
+      details: { ...details, next: nextDetail([entry]) },
+    };
+  }
   return {
     code: 'run.locked',
-    message:
-      verdict.reason === 'remote'
-        ? `${who} PID ${pid} is on foreign host ${verdict.host ?? 'unknown'}; --force does not override a lock. If that host is this machine under an old name or is permanently gone, clear it with ${unlock} --force-remote, then retry.`
-        : `${who} PID ${pid} on ${verdict.host ?? 'unknown'} is ${
-            verdict.reason === 'alive' ? 'alive' : 'unverifiable'
-          }; --force does not override a lock, and rm never stops a process. Wait for it to exit or stop it, then retry.`,
+    message: `${who} PID ${pid} on ${verdict.host ?? 'unknown'} is ${
+      verdict.reason === 'alive' ? 'alive' : 'unverifiable'
+    }; --force does not override a lock, and rm never stops a process. Wait for it to exit or stop it, then retry.`,
     details,
   };
 }

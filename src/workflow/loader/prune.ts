@@ -1,6 +1,7 @@
 import { readdir, stat } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import type { ProcessSupervisor } from '../../processes/supervisor.js';
+import type { CommandLauncher } from '../runtime/commands.js';
 import type { ProcessRunner } from '../runtime/exec-model.js';
 import { jsonValue } from '../runtime/json.js';
 import { answerCandidates } from '../runtime/inbox.js';
@@ -147,6 +148,8 @@ export type PruneOutcome =
 export interface PruneRunsLive {
   readonly signal?: AbortSignal | undefined;
   readonly processSupervisor?: ProcessSupervisor | undefined;
+  /** Program words behind the `workflow unlock` command that a `run.locked` refusal names. */
+  readonly commandLauncher?: CommandLauncher | undefined;
   /** The clock for `olderThanMs`; defaults to `Date.now`. */
   readonly now?: () => number;
   /** @internal Test seam passed to each removal as `beforeLock`. */
@@ -244,7 +247,11 @@ function compareAge(
 }
 
 /** The skipped entry of a protected run, with rm's own explanation for a lock or orphans. */
-function protectedEntry(row: Row, protection: PruneProtection): PruneSkippedRun {
+function protectedEntry(
+  row: Row,
+  protection: PruneProtection,
+  launcher?: CommandLauncher,
+): PruneSkippedRun {
   const { id: runId } = row.summary;
   const { stateDir } = row;
   const rm = `quiet-choir workflow rm ${runId} --state-dir ${stateDir}`;
@@ -252,7 +259,7 @@ function protectedEntry(row: Row, protection: PruneProtection): PruneSkippedRun 
   switch (protection.reason) {
     case 'locked':
     case 'orphans': {
-      const refusal = removalRefusal(runId, stateDir, protection.hold);
+      const refusal = removalRefusal(runId, stateDir, protection.hold, launcher);
       return {
         ...base,
         reason: protection.reason,
@@ -379,7 +386,9 @@ export async function pruneRuns(
     for (const name of await (options.dryRun ? deadTombstones : sweepTombstones)(directory))
       tombstones.add(join(directory, name));
   const removed: PrunedRun[] = [];
-  const skipped = protectedRows.map(([row, protection]) => protectedEntry(row, protection));
+  const skipped = protectedRows.map(([row, protection]) =>
+    protectedEntry(row, protection, live.commandLauncher),
+  );
   for (const row of selected) {
     if (signal?.aborted) return { kind: 'interrupted', removed, roots: [], error: signal.reason };
     const { summary } = row;
@@ -398,6 +407,7 @@ export async function pruneRuns(
         {
           signal,
           processSupervisor: live.processSupervisor,
+          commandLauncher: live.commandLauncher,
           ...(beforeLock === undefined
             ? {}
             : { beforeLock: () => beforeLock(summary.id, row.stateDir) }),

@@ -12,6 +12,7 @@ import { JournalWriter } from './journal.js';
 import { prepareStorageMigration, finishStorageMigration } from './storage-migration.js';
 import { writeCheckpoint } from './checkpoint.js';
 import { refuseRecordSchemaDrift } from './record.js';
+import type { CommandLauncher } from './commands.js';
 import {
   lockRun,
   readRun,
@@ -35,6 +36,12 @@ export interface RunStoreOpenOptions {
   readonly probeOwner?: boolean;
   /** Canonical project working directory, used to register default state roots. */
   readonly cwd?: string;
+  /**
+   * The program words behind the `workflow unlock` command that a `run.locked` refusal prints and
+   * lists in `details.next`, such as `['quiet-choir']` or `[node, '/abs/bin/run.js']`. It only shapes
+   * that refusal text. Absent means `['quiet-choir']`; a custom store may ignore it.
+   */
+  readonly commandLauncher?: CommandLauncher | undefined;
 }
 
 /** One exclusive writer, with all queued writes drained before release. */

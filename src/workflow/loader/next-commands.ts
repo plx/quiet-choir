@@ -1,39 +1,22 @@
-import { launchPolicyFlags, workflowArgv, type CommandLauncher } from '../runtime/commands.js';
+import {
+  formatArgv,
+  launchPolicyFlags,
+  workflowArgv,
+  type CommandLauncher,
+  type NextCommand,
+} from '../runtime/commands.js';
 import type { CliErrorCode } from '../runtime/run-errors.js';
 import type { JsonValue } from '../runtime/model.js';
 import { recordSchemaDrift } from '../runtime/record.js';
 import type { RunRecord } from '../runtime/store.js';
 
-/**
- * One runnable follow-up: why it applies and the exact argument vector to run, built behind the
- * launcher of the invocation that produced it. `<ANSWER_JSON>`, `<NEW_RUN_ID>` and `<ENTRYPOINT>`
- * are placeholders to substitute first. @internal
- */
-export interface NextCommand {
-  readonly why: string;
-  readonly argv: readonly string[];
-}
+// The runtime builds its own refusal commands, so these live there; they stay importable here.
+export { formatArgv, type NextCommand };
 
 /** At most this many answer entries precede a suspended run's resume entry. @internal */
 export const maxAnswerEntries = 5;
 /** At most this many `run.not_found` candidates become inspect entries. @internal */
 export const maxCandidateEntries = 5;
-
-const placeholder = /^<[A-Z][A-Z_]*>$/u;
-
-/**
- * Quote an argument vector for a POSIX shell, leaving placeholders bare so they read as slots to
- * fill. Display only: run the argv itself whenever possible. @internal
- */
-export function formatArgv(argv: readonly string[]): string {
-  return argv
-    .map((value) =>
-      placeholder.test(value) || /^[\w./:@%+=,-]+$/u.test(value)
-        ? value
-        : `'${value.replaceAll("'", "'\\''")}'`,
-    )
-    .join(' ');
-}
 
 /** A resume argv that repeats the run's recorded launch policy, when the record is known. */
 function resume(
@@ -240,6 +223,20 @@ function incompatibleNext(
 }
 
 /**
+ * The `{why, argv}` entries a `run.locked` refusal carries in `details.next`, built by the runtime
+ * with the invocation's launcher. A malformed entry, or a `next` that is not a list, is dropped.
+ */
+function lockedNext(details: Record<string, JsonValue> | undefined): NextCommand[] {
+  const entries = details?.['next'];
+  if (!Array.isArray(entries)) return [];
+  return entries.flatMap((value) => {
+    const entry = record(value);
+    const argv = strings(entry?.['argv']);
+    return typeof entry?.['why'] === 'string' && argv?.length ? [{ why: entry['why'], argv }] : [];
+  });
+}
+
+/**
  * Follow-ups for a failure document, by error code. A rehearsal, and any code without a runnable
  * remedy, gets none. @internal
  */
@@ -283,6 +280,8 @@ export function failureNextCommands(context: FailureNextContext): NextCommand[] 
         : [];
     case 'run.incompatible':
       return details ? incompatibleNext(context, details, runId, stateDir) : [];
+    case 'run.locked':
+      return lockedNext(details);
     default:
       return [];
   }

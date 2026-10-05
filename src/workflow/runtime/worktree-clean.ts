@@ -1,5 +1,6 @@
 import { WorktreeGit } from '../../worktrees/git.js';
 import type { ProcessRunner } from './exec-model.js';
+import type { CommandLauncher } from './commands.js';
 import type { HarnessInvocation } from './model.js';
 import { FileRunStore, type OwnedRunStore } from './run-store.js';
 import { readRequiredRun } from './read-required-run.js';
@@ -128,7 +129,13 @@ export async function cleanOwnedWorktrees(
 
 /** Acquire the usual run writer and orphan guards before removing owned caches or pins. @internal */
 export async function cleanWorktrees(
-  options: { readonly runId: string; readonly stateDir: string; readonly refs?: boolean },
+  options: {
+    readonly runId: string;
+    readonly stateDir: string;
+    readonly refs?: boolean;
+    /** Shapes the `workflow unlock` command of a `run.locked` refusal. */
+    readonly commandLauncher?: CommandLauncher | undefined;
+  },
   runner: ProcessRunner,
   signal?: AbortSignal,
   supervisor?: ProcessSupervisor,
@@ -136,6 +143,7 @@ export async function cleanWorktrees(
   const initial = await readRequiredRun(options);
   const owned = await new FileRunStore(options.stateDir).open(options.runId, {
     cwd: initial.cwd,
+    commandLauncher: options.commandLauncher,
     ...(signal === undefined ? {} : { signal }),
     ...(supervisor === undefined ? {} : { processSupervisor: supervisor }),
   });
