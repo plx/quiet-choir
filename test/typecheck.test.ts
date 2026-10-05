@@ -647,6 +647,48 @@ describe('TypecheckProgramCache', { timeout: 40_000 }, () => {
     expect(cached).toEqual(await executeEntrypoint(root, 'workflow.ts', null));
   });
 
+  it('reports only the global diagnostics an uncached check reports before checking files', async () => {
+    const root = await createFixture({
+      'tsconfig.json': JSON.stringify({
+        compilerOptions: {
+          ...smallLib,
+          ...nodeNext,
+          rewriteRelativeImportExtensions: true,
+          paths: { '#*': ['./*'] },
+        },
+      }),
+      'package.json': '{"type":"module"}',
+      'helper.ts': 'export const value = 1;\n',
+      // Resolving this import records TS2877 both in the file, where the directive suppresses it,
+      // and as a global diagnostic, which ts.getPreEmitDiagnostics reads before checking any file.
+      'workflow.ts': [
+        '// @ts-expect-error TS2877: emit keeps the non-relative .ts import.',
+        "import { value } from '#helper.ts';",
+        'export const total: number = value;',
+        '',
+      ].join('\n'),
+    });
+    const fresh = configuredProgram(
+      [join(root, 'workflow.ts')],
+      join(root, 'tsconfig.json'),
+      new TypecheckProgramCache(),
+    );
+    if ('error' in fresh) throw new Error('The fixture tsconfig must be readable.');
+    const expected = diagnosticSummary(ts.getPreEmitDiagnostics(fresh.program));
+    const cache = new TypecheckProgramCache();
+
+    expect(expected).toEqual([]);
+    for (const checkCache of [new TypecheckProgramCache(), cache, cache])
+      expect(
+        diagnosticSummary(checkedProgram(root, 'workflow.ts', checkCache).diagnostics),
+      ).toEqual(expected);
+    for (const checkCache of [null, cache])
+      expect(await executeEntrypoint(root, 'workflow.ts', checkCache)).toMatchObject({
+        ok: true,
+        diagnostics: [],
+      });
+  });
+
   it('leaves unreadable files to the compiler host', async () => {
     const root = await createFixture({ 'present.ts': 'export const value = 1;\n' });
     const cached = await executeEntrypoint(root, 'missing.ts', new TypecheckProgramCache());

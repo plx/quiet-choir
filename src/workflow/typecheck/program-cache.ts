@@ -149,6 +149,9 @@ export class TypecheckProgramCache {
     return {
       program,
       diagnostics: () => {
+        // Read before the builder exists: building it already runs the checker (see
+        // diagnosticsBeforeChecking).
+        const beforeChecking = diagnosticsBeforeChecking(program);
         // The builder diffs file versions against whichever builder this option set kept last. It
         // does not compare module resolutions or see that a replaced file affected the global scope
         // before, so either makes this a full check, as do options that narrow what it rechecks.
@@ -162,7 +165,7 @@ export class TypecheckProgramCache {
           request.configFileParsingDiagnostics,
         );
         optionSet.builder = builder;
-        return preEmitDiagnostics(program, builder);
+        return preEmitDiagnostics(program, beforeChecking, builder);
       },
     };
   }
@@ -366,17 +369,35 @@ function semanticDiagnostics(
     : diagnostics;
 }
 
-/** `ts.getPreEmitDiagnostics`, taking semantic diagnostics from the builder. */
-function preEmitDiagnostics(
-  program: ts.Program,
-  builder: ts.SemanticDiagnosticsBuilderProgram,
-): readonly ts.Diagnostic[] {
-  const options = program.getCompilerOptions();
-  return ts.sortAndDeduplicateDiagnostics([
+/**
+ * The diagnostics `ts.getPreEmitDiagnostics` reads before it checks any file, in its order: config
+ * file parsing, options, syntactic and global. The order matters because checking a file can record
+ * diagnostics without a file, which only a later global read reports. Constructing a builder
+ * already runs parts of the checker, which for example records TS2877 for a non-relative `.ts`
+ * import under `rewriteRelativeImportExtensions` even where `@ts-expect-error` suppresses it in the
+ * file, so these are read before the builder is built.
+ */
+function diagnosticsBeforeChecking(program: ts.Program): readonly ts.Diagnostic[] {
+  return [
     ...program.getConfigFileParsingDiagnostics(),
     ...program.getOptionsDiagnostics(),
     ...program.getSyntacticDiagnostics(),
     ...program.getGlobalDiagnostics(),
+  ];
+}
+
+/**
+ * `ts.getPreEmitDiagnostics`, from the {@link diagnosticsBeforeChecking} read before the builder was
+ * built and semantic diagnostics taken from the builder.
+ */
+function preEmitDiagnostics(
+  program: ts.Program,
+  beforeChecking: readonly ts.Diagnostic[],
+  builder: ts.SemanticDiagnosticsBuilderProgram,
+): readonly ts.Diagnostic[] {
+  const options = program.getCompilerOptions();
+  return ts.sortAndDeduplicateDiagnostics([
+    ...beforeChecking,
     ...semanticDiagnostics(program, builder),
     ...(options.declaration === true || options.composite === true
       ? program.getDeclarationDiagnostics()
