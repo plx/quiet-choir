@@ -341,3 +341,19 @@ it('names the owner in an orphan refusal when the caller gives one', () => {
   expect(ownerless.details).toEqual({ processes, owner: null });
   expect(ownerless.message).toMatch(/no readable owner metadata/u);
 });
+
+it('keeps the resume wording of an orphan refusal byte for byte', () => {
+  const processes = [
+    { file: '1.json', process: null, state: 'unknown' as const, detail: 'bad record' },
+  ];
+  const remedy =
+    ' Stop confirmed processes with --kill-orphans, or wait. Unverified identities are never signaled; inspect the retained lock.';
+  const head = 'Run run has 1 live or unverified harness processes (1.json: bad record).';
+  expect(new OrphanProcessesError('run', processes).message).toBe(`${head}${remedy}`);
+  expect(
+    new OrphanProcessesError('run', processes, { pid: 42, host: 'here', state: 'dead' }).message,
+  ).toBe(`${head} Owner PID 42 on here (dead).${remedy}`);
+  expect(new OrphanProcessesError('run', processes, null).message).toBe(
+    `${head} The lock has no readable owner metadata.${remedy}`,
+  );
+});

@@ -17,7 +17,12 @@ import {
   RunRefusedError,
 } from '../runtime/run-errors.js';
 import { clockNow, systemClock } from '../runtime/clock.js';
-import { OrphanProcessesError } from '../runtime/process-registry.js';
+import { workflowArgv, type CommandLauncher } from '../runtime/commands.js';
+import {
+  describeOrphanProcesses,
+  OrphanProcessesError,
+  type HarnessProcessInspection,
+} from '../runtime/process-registry.js';
 import {
   classifyRecovery,
   countCompletedSteps,
@@ -27,6 +32,7 @@ import {
 import { WorkflowExecutor, type WorkflowExecutorOptions } from './executor.js';
 import { workflowFailure, type WorkflowFailure } from './failure.js';
 import type { HarnessSelection } from './harness-selection.js';
+import { formatArgv } from './next-commands.js';
 
 /** One pass or bounded watch over plain checkpoint readiness. No scheduler is installed. */
 export interface TickWorkflowsPlan extends ExecutionPlan {
@@ -99,7 +105,10 @@ export type TickSkipReason =
 export interface TickSkippedEntry {
   readonly runId: string;
   readonly reason: TickSkipReason;
-  /** Present for orphans, crash-loop, incompatible and unreadable runs. */
+  /**
+   * Present for orphans, crash-loop, incompatible and unreadable runs. An orphans message says tick
+   * never signals a process and names the `workflow resume` command with `--kill-orphans`.
+   */
   readonly message?: string;
   /** Present for runs that are not due, no longer due, or skipped at the deadline. */
   readonly nextWakeAt?: number | null;
@@ -133,6 +142,22 @@ type TickEntry =
   | { readonly type: 'resumed'; readonly entry: TickResumedEntry }
   | { readonly type: 'skipped'; readonly entry: TickSkippedEntry }
   | { readonly type: 'observed'; readonly status: TerminalStatus };
+
+/**
+ * The message of an `orphans` skip. Tick has no `--kill-orphans` flag and never signals a process,
+ * so it names the `resume` command that does instead of the flag-only advice a resume refusal gives.
+ */
+function tickOrphansMessage(
+  runId: string,
+  stateDir: string,
+  processes: readonly HarnessProcessInspection[],
+  launcher: CommandLauncher | undefined,
+): string {
+  const resume = formatArgv(
+    workflowArgv(launcher, 'resume', runId, '--state-dir', stateDir, '--kill-orphans'),
+  );
+  return `${describeOrphanProcesses(runId, processes)} Tick never signals a process: a later tick retries the run once they exit, or stop confirmed ones with ${resume}. Unverified identities are never signaled; inspect the retained lock.`;
+}
 
 function terminalStatus(run: RunRecord): TerminalStatus | undefined {
   return run.status === 'completed' || run.status === 'failed' || run.status === 'cancelled'
@@ -424,7 +449,12 @@ export class TickWorkflowExecutor implements Executor<
             }
             if (recovery === 'orphans') {
               skip(id, 'orphans', {
-                message: new OrphanProcessesError(id, ownership.processes).message,
+                message: tickOrphansMessage(
+                  id,
+                  plan.stateDir,
+                  ownership.processes,
+                  this.options.commandLauncher,
+                ),
               });
               continue;
             }
@@ -503,7 +533,15 @@ export class TickWorkflowExecutor implements Executor<
             if (executing)
               record(id, { type: 'resumed', entry: { runId: id, outcome: 'failed', message } });
             // Children appeared or stayed unverified between inspection and lock recovery.
-            else if (error instanceof OrphanProcessesError) skip(id, 'orphans', { message });
+            else if (error instanceof OrphanProcessesError)
+              skip(id, 'orphans', {
+                message: tickOrphansMessage(
+                  id,
+                  plan.stateDir,
+                  error.processes,
+                  this.options.commandLauncher,
+                ),
+              });
             else if (error instanceof RunRefusedError && error.code === 'run.locked')
               skip(id, 'locked');
             // A record newer than this build (lock-free or owned read): the same skip as above.

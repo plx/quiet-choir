@@ -2,6 +2,11 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- A `workflow tick` skipped entry with reason `orphans` now says that tick never signals a process
+  and names `quiet-choir workflow resume RUN --state-dir DIR --kill-orphans`, instead of advising
+  `--kill-orphans`, a flag tick does not have. The `resume`, `unlock` and `rm` messages are
+  unchanged (#202).
+
 - `workflow tick` (and every run listing built on `FileRunStore.list`) visits runs in ascending
   run-ID order, by character code, whatever order the file system lists them in. The order is now
   documented and covered by tests, and without `--run`, `--max-runs N` resumes the first N due runs

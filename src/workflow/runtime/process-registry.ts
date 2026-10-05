@@ -52,6 +52,39 @@ const processSchema = z
     'Group must belong to its leader',
   );
 
+/**
+ * Describe the live or unverified processes that block a run, without any remedy.
+ *
+ * `OrphanProcessesError` appends the `resume` remedy; callers that cannot pass `--kill-orphans`,
+ * such as tick, append their own. Internal to the package: not exported from `src/index.ts`.
+ *
+ * @param runId - Run whose lock retains the records.
+ * @param processes - Current observations of the lock's child records.
+ * @param owner - Optional owner context; see {@link OrphanProcessesError}.
+ * @returns The sentence naming the processes, plus the owner sentence when `owner` is given.
+ */
+export function describeOrphanProcesses(
+  runId: string,
+  processes: readonly HarnessProcessInspection[],
+  owner?: {
+    /** Owner's recorded process ID. */
+    readonly pid: number;
+    /** Host on which the owner acquired the lock. */
+    readonly host: string;
+    /** Owner liveness as the caller judged it. */
+    readonly state: 'alive' | 'dead' | 'unknown' | 'remote' | 'released';
+  } | null,
+): string {
+  const pending = processes.filter((entry) => entry.state === 'alive' || entry.state === 'unknown');
+  const ownerText =
+    owner === undefined
+      ? ''
+      : owner === null
+        ? ' The lock has no readable owner metadata.'
+        : ` Owner PID ${String(owner.pid)} on ${owner.host} (${owner.state}).`;
+  return `Run ${runId} has ${String(pending.length)} live or unverified harness processes (${pending.map((entry) => (entry.process ? `${entry.process.binary} pid ${String(entry.process.pid)}, step ${entry.process.stepId}, attempt ${String(entry.process.attempt)}: ${entry.state}` : `${entry.file}: ${entry.detail ?? 'invalid record'}`)).join('; ')}).${ownerText}`;
+}
+
 /** A live or unverifiable process record prevents replacement work. */
 export class OrphanProcessesError extends RunRefusedError {
   static {
@@ -89,19 +122,10 @@ export class OrphanProcessesError extends RunRefusedError {
       readonly state: 'alive' | 'dead' | 'unknown' | 'remote' | 'released';
     } | null,
   ) {
-    const pending = processes.filter(
-      (entry) => entry.state === 'alive' || entry.state === 'unknown',
-    );
-    const ownerText =
-      owner === undefined
-        ? ''
-        : owner === null
-          ? ' The lock has no readable owner metadata.'
-          : ` Owner PID ${String(owner.pid)} on ${owner.host} (${owner.state}).`;
     super(
       'run.orphans',
       runId,
-      `Run ${runId} has ${String(pending.length)} live or unverified harness processes (${pending.map((entry) => (entry.process ? `${entry.process.binary} pid ${String(entry.process.pid)}, step ${entry.process.stepId}, attempt ${String(entry.process.attempt)}: ${entry.state}` : `${entry.file}: ${entry.detail ?? 'invalid record'}`)).join('; ')}).${ownerText} Stop confirmed processes with --kill-orphans, or wait. Unverified identities are never signaled; inspect the retained lock.`,
+      `${describeOrphanProcesses(runId, processes, owner)} Stop confirmed processes with --kill-orphans, or wait. Unverified identities are never signaled; inspect the retained lock.`,
       jsonValue(owner === undefined ? { processes } : { processes, owner }),
     );
     this.name = 'OrphanProcessesError';

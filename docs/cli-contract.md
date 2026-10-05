@@ -651,23 +651,27 @@ and an `observed` count of already-terminal runs. A due or stale run whose recor
 fully read ([record schema revision](storage.md#record-schema-revision)) is skipped `incompatible`
 with the `run.incompatible` message and left unchanged. Each run appears in at most one entry. Tick
 also recovers `running` runs whose owner is gone, up to 3 consecutive times without a new completed
-step; then it reports `crash-loop` with a message naming `workflow resume`. With --run, exits are 0
-completed (now or earlier), 75 pending, interrupted, locked, orphans or deadline, and 1 failed,
-cancelled, crash-loop, incompatible or unreadable; batch per-run failures remain data with exit 0.
-Usage/infrastructure errors retain the command failure document. Every tick is bounded by --timeout
-(default 540s), including --watch, with --max-runs limiting executed resumes. Without --run, runs
-are visited in ascending run-ID order (by character code), so --max-runs takes the first due runs in
-that order. When the timeout fires, tick interrupts in-flight resumes into resumable suspensions:
-each is reported `suspended` with `message: "Tick timeout reached."` and is due on the next tick,
-which reuses its completed steps. `--claim-margin` (same duration syntax; default 10% of --timeout,
-`0ms` disables it, and it must be smaller than --timeout) stops new claims once less than the margin
-remains: a ready run is then left untouched and reported as skipped `deadline`, and --watch ends
-there. `--harness-config` supplies CLI harness configuration (JSON or `@file`) for resumed CLI runs,
-and omitting it means the defaults. It must match the configuration digest the run recorded at its
-latest live execution: otherwise the run is reported `incompatible` and left unchanged, unless
-`--allow-harness-config-change` accepts the change for every run that tick resumes. `--harness`
-(repeatable, the same values as on `resume`) selects the harness for every run that tick resumes;
-without it, each run uses its recorded [launch policy](#launch-policy). `workflow resume`,
-`execute --resume` and `answer --resume` refuse the same mismatch with `run.incompatible` (exit 3,
-`error.details.previousConfigDigest` and `error.details.requestedConfigDigest`) and accept the same
-flag. See [waits](waits.md) for due detection and notification hooks.
+step; then it reports `crash-loop` with a message naming `workflow resume`. An `orphans` entry's
+message says tick never signals a process and names
+`workflow resume RUN --state-dir DIR --kill-orphans`, behind the detected launcher like other
+emitted commands and with the state directory shell-quoted when it needs quoting. With --run, exits
+are 0 completed (now or earlier), 75 pending, interrupted, locked, orphans or deadline, and 1
+failed, cancelled, crash-loop, incompatible or unreadable; batch per-run failures remain data with
+exit 0. Usage/infrastructure errors retain the command failure document. Every tick is bounded by
+--timeout (default 540s), including --watch, with --max-runs limiting executed resumes. Without
+--run, runs are visited in ascending run-ID order (by character code), so --max-runs takes the first
+due runs in that order. When the timeout fires, tick interrupts in-flight resumes into resumable
+suspensions: each is reported `suspended` with `message: "Tick timeout reached."` and is due on the
+next tick, which reuses its completed steps. `--claim-margin` (same duration syntax; default 10% of
+--timeout, `0ms` disables it, and it must be smaller than --timeout) stops new claims once less than
+the margin remains: a ready run is then left untouched and reported as skipped `deadline`, and
+--watch ends there. `--harness-config` supplies CLI harness configuration (JSON or `@file`) for
+resumed CLI runs, and omitting it means the defaults. It must match the configuration digest the run
+recorded at its latest live execution: otherwise the run is reported `incompatible` and left
+unchanged, unless `--allow-harness-config-change` accepts the change for every run that tick
+resumes. `--harness` (repeatable, the same values as on `resume`) selects the harness for every run
+that tick resumes; without it, each run uses its recorded [launch policy](#launch-policy).
+`workflow resume`, `execute --resume` and `answer --resume` refuse the same mismatch with
+`run.incompatible` (exit 3, `error.details.previousConfigDigest` and
+`error.details.requestedConfigDigest`) and accept the same flag. See [waits](waits.md) for due
+detection and notification hooks.
