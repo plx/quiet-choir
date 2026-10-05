@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import { mkdtemp, readdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -26,6 +26,7 @@ import {
   type CommandPollSource,
 } from '../src/index.js';
 import { RunActivity } from '../src/workflow/runtime/activity.js';
+import { answerCandidates } from '../src/workflow/runtime/inbox.js';
 import { RunQuestions } from '../src/workflow/runtime/questions.js';
 import { stepIdentity } from '../src/workflow/runtime/identity.js';
 import { digest, jsonValue } from '../src/workflow/runtime/json.js';
@@ -791,6 +792,202 @@ it.each([
   },
 );
 
+/** A latch the test awaits until an observer or step reaches a chosen point. */
+function latch(): { reached: Promise<void>; reach: () => void } {
+  let reach!: () => void;
+  const reached = new Promise<void>((resolve) => {
+    reach = resolve;
+  });
+  return { reached, reach };
+}
+
+it(
+  'a body failure aborts an in-flight first poll observation instead of waiting for observeTimeoutMs',
+  { timeout: 10_000 },
+  async () => {
+    let failing = true;
+    let siblingAborted: boolean | undefined;
+    let captured: AbortSignal | undefined;
+    const entered = latch();
+    const definition = defineWorkflow({
+      name: 'drain-first-observation',
+      version: '1',
+      input: z.null(),
+      output: z.unknown(),
+      run: async (ctx) => {
+        const [outcome] = await Promise.all([
+          ctx.poll('ready', {
+            input: null,
+            schema: z.null(),
+            every: 50,
+            timeoutMs: 600_000,
+            observeTimeoutMs: 30_000,
+            observe: ({ signal }) => {
+              if (!failing) return Promise.resolve({ done: true as const, value: null });
+              captured = signal;
+              entered.reach();
+              return rejectOnAbort(signal);
+            },
+          }),
+          ctx.step('failing', {
+            input: null,
+            schema: z.null(),
+            run: async () => {
+              if (!failing) return null;
+              await entered.reached;
+              await delay(10);
+              throw new Error('initiating failure');
+            },
+          }),
+          ctx.step('sibling', {
+            input: null,
+            schema: z.null(),
+            run: async ({ signal }) => {
+              await entered.reached;
+              await delay(40);
+              siblingAborted = signal.aborted;
+              return null;
+            },
+          }),
+        ]);
+        return outcome;
+      },
+    });
+    const options = { stateDir, runId: 'drain-first-observation', input: null };
+    const started = Date.now();
+    await expect(runWorkflow(definition, options)).rejects.toThrow('initiating failure');
+    expect(Date.now() - started).toBeLessThan(1500);
+    expect(captured?.aborted).toBe(true);
+    expect(siblingAborted).toBe(false);
+    const saved = await readRun(options);
+    expect(saved.status).toBe('failed');
+    expect(saved.steps['sibling']?.status).toBe('completed');
+    const wait = saved.steps['ready'];
+    expect(wait?.status).toBe('waiting');
+    expect(wait?.error).toBeNull();
+    expect(wait?.output).toBeNull();
+    expect(wait?.wait?.lastError).toBeUndefined();
+    expect(wait?.wait?.note).toBeNull();
+    expect(wait?.wait?.checks).toBe(1);
+    expect(wait?.wait?.nextCheckAt).toBeLessThanOrEqual(Date.now());
+    expect(saved.waitWarnings).toBeUndefined();
+    failing = false;
+    const resumed = await runWorkflow(definition, { ...options, resume: true });
+    expect(resumed.status).toBe('completed');
+    expect(resumed.output).toMatchObject({ by: 'poll', value: null, checks: 2 });
+  },
+);
+
+it(
+  'a body failure aborts a later poll observation inside a map item',
+  { timeout: 10_000 },
+  async () => {
+    let checks = 0;
+    let captured: AbortSignal | undefined;
+    const entered = latch();
+    const definition = defineWorkflow({
+      name: 'drain-map-observation',
+      version: '1',
+      input: z.null(),
+      output: z.null(),
+      run: async (ctx) => {
+        await Promise.all([
+          ctx.map('m', [0], { concurrency: 1 }, () =>
+            ctx.poll('ready', {
+              input: null,
+              schema: z.null(),
+              every: 50,
+              timeoutMs: 600_000,
+              observeTimeoutMs: 30_000,
+              observe: ({ signal }) => {
+                if (++checks === 1) return Promise.resolve({ done: false as const, note: 1 });
+                captured = signal;
+                entered.reach();
+                return rejectOnAbort(signal);
+              },
+            }),
+          ),
+          ctx.step('failing', {
+            input: null,
+            schema: z.null(),
+            run: async () => {
+              await entered.reached;
+              throw new Error('initiating failure');
+            },
+          }),
+        ]);
+        return null;
+      },
+    });
+    const options = { stateDir, runId: 'drain-map-observation', input: null };
+    const running = runWorkflow(definition, options);
+    await entered.reached;
+    const started = Date.now();
+    await expect(running).rejects.toThrow('initiating failure');
+    expect(Date.now() - started).toBeLessThan(1500);
+    expect(captured?.aborted).toBe(true);
+    const saved = await readRun(options);
+    const waits = Object.values(saved.steps).filter((step) => step.kind === 'wait');
+    expect(waits).toHaveLength(1);
+    expect(waits[0]?.status).toBe('waiting');
+    expect(waits[0]?.error).toBeNull();
+    expect(waits[0]?.wait?.lastError).toBeUndefined();
+    expect(waits[0]?.wait?.note).toBe(1);
+    expect(waits[0]?.wait?.checks).toBe(2);
+    expect(saved.waitWarnings).toBeUndefined();
+  },
+);
+
+it(
+  'a body failure abandons a signal-ignoring poll observer after the grace',
+  // measured: 2.0 s alone (the fixed 2 s observer grace)
+  { timeout: 10_000 },
+  async () => {
+    const entered = latch();
+    const definition = defineWorkflow({
+      name: 'drain-hung-observer',
+      version: '1',
+      input: z.null(),
+      output: z.unknown(),
+      run: (ctx) =>
+        Promise.all([
+          ctx.poll('ready', {
+            input: null,
+            schema: z.null(),
+            every: 50,
+            timeoutMs: 600_000,
+            observeTimeoutMs: 30_000,
+            observe: () => {
+              entered.reach();
+              return new Promise<never>(() => undefined);
+            },
+          }),
+          ctx.step('failing', {
+            input: null,
+            schema: z.null(),
+            run: async () => {
+              await entered.reached;
+              throw new Error('initiating failure');
+            },
+          }),
+        ]),
+    });
+    const options = { stateDir, runId: 'drain-hung-observer', input: null };
+    const running = runWorkflow(definition, options);
+    await entered.reached;
+    const started = Date.now();
+    await expect(running).rejects.toThrow('initiating failure');
+    expect(Date.now() - started).toBeLessThan(4000);
+    const saved = await readRun(options);
+    expect(saved.waitWarnings).toEqual([
+      'Poll observer for wait ready did not settle within 2000ms after its signal was aborted (run failing); abandoned.',
+    ]);
+    expect(saved.steps['ready']?.status).toBe('waiting');
+    expect(saved.steps['ready']?.error).toBeNull();
+    expect(saved.steps['ready']?.wait?.lastError).toBeUndefined();
+  },
+);
+
 it('fails a wait whose observation exceeds observeTimeoutMs before the deadline', async () => {
   let captured: AbortSignal | undefined;
   const definition = defineWorkflow({
@@ -1022,6 +1219,84 @@ it(
     expect(warnings).toHaveLength(1);
   },
 );
+
+it('drain() aborts an in-flight observation and records nothing for it', async () => {
+  const { questions, warnings, record } = bareQuestions(() => Promise.resolve());
+  const entered = latch();
+  let captured: AbortSignal | undefined;
+  const registered = questions.wait(
+    'w',
+    {
+      timeoutMs: 60_000,
+      poll: {
+        input: null,
+        schema: z.null(),
+        every: 50,
+        observe: ({ signal }) => {
+          captured = signal;
+          entered.reach();
+          return rejectOnAbort(signal);
+        },
+      },
+    },
+    null,
+    new AbortController().signal,
+  );
+  await entered.reached;
+  questions.drain();
+  // Registration ends once the aborted observation's scan unwinds; the wait stays parked.
+  await registered;
+  expect(captured?.aborted).toBe(true);
+  expect(questions.waiting('w')).toBe(true);
+  const started = Date.now();
+  await questions.close();
+  expect(Date.now() - started).toBeLessThan(1000);
+  expect(warnings).toEqual([]);
+  const step = record.steps['w'];
+  expect(step?.status).toBe('waiting');
+  expect(step?.error).toBeNull();
+  expect(step?.wait?.lastError).toBeUndefined();
+  expect(step?.wait?.checks).toBe(1);
+});
+
+it('starts no observation and counts no check once the drain begins mid-scan', async () => {
+  let saves = 0;
+  let observed = 0;
+  // The second save records the rejected answer below, while the scan is inside its signal read.
+  const { questions, record } = bareQuestions(() => {
+    if (++saves === 2) questions.drain();
+    return Promise.resolve();
+  });
+  const path = answerCandidates(stateDir, 'bare', 'w')[0] ?? '';
+  await mkdir(dirname(path), { recursive: true });
+  await writeFile(path, 'not json');
+  await questions.wait(
+    'w',
+    {
+      timeoutMs: 60_000,
+      signal: { prompt: 'Ready?', schema: z.null() },
+      poll: {
+        input: null,
+        schema: z.null(),
+        every: 50,
+        observe: () => {
+          observed++;
+          return Promise.resolve({ done: false as const });
+        },
+      },
+    },
+    null,
+    new AbortController().signal,
+  );
+  expect(saves).toBe(2);
+  expect(observed).toBe(0);
+  expect(questions.waiting('w')).toBe(true);
+  const step = record.steps['w'];
+  expect(step?.status).toBe('waiting');
+  expect(step?.question?.rejections).toHaveLength(1);
+  expect(step?.wait?.checks).toBe(0);
+  await questions.close();
+});
 
 it(
   'close() abandons a scan stalled outside the observer after a backstop',
