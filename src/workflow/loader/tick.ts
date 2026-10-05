@@ -69,7 +69,8 @@ export interface TickWorkflowsPlan extends ExecutionPlan {
 }
 
 /** What a resume started by this tick ended as. @internal */
-export type TickResumeOutcome = 'completed' | 'suspended' | 'failed' | 'cancelled' | 'incompatible';
+export type TickResumeOutcome =
+  'completed' | 'suspended' | 'interrupted' | 'failed' | 'cancelled' | 'incompatible';
 
 /** One run whose resume this tick actually started, with its latest outcome. @internal */
 export interface TickResumedEntry {
@@ -78,8 +79,10 @@ export interface TickResumedEntry {
   /** Present exactly for a suspended outcome; null when only a signal can wake the run. */
   readonly nextWakeAt?: number | null;
   /**
-   * Present for failed, cancelled, and incompatible outcomes, and for a suspended outcome caused by
-   * an interruption (tick's deadline or a signal), whose run is due again at once.
+   * Present for failed, cancelled, incompatible and interrupted outcomes, and for a suspended outcome
+   * caused by an interruption (tick's deadline or a signal), whose run is due again at once. An
+   * interrupted outcome means the resume stopped before the runtime reopened a run tick had claimed
+   * as stale: the run is still saved as running with no owner, and the next tick recovers it.
    */
   readonly message?: string;
 }
@@ -132,9 +135,10 @@ export interface TickWorkflowsResult extends ExecutionResult {
   readonly observed: number;
   /**
    * Batch operation returns 0. With --run: 0 when the run completed, in this tick or before; 1 when
-   * it failed, was cancelled, or is incompatible, unreadable or crash-looping; 75 when it is still
-   * pending (not due, no longer due, suspended again or interrupted by the deadline, locked, blocked
-   * by orphan processes, or skipped inside the claim margin).
+   * it failed, was saved as cancelled, or is incompatible, unreadable or crash-looping; 75 when it is
+   * still pending (not due, no longer due, suspended again or interrupted by the deadline, including
+   * a resume interrupted before the runtime reopened the run, locked, blocked by orphan processes,
+   * or skipped inside the claim margin).
    */
   readonly exitCode: 0 | 75 | 1;
 }
@@ -172,25 +176,44 @@ function terminalStatus(run: RunRecord): TerminalStatus | undefined {
     : undefined;
 }
 
-/** Map one resume result to its outcome; an unexpected result shape throws. */
-function resumeOutcome(
+/**
+ * Map one resume result to its outcome; an unexpected result shape throws. An interruption is
+ * classified by the status saved on disk, not by the failure code alone. @internal
+ */
+export function resumeOutcome(
   runId: string,
   result: Awaited<ReturnType<WorkflowExecutor['execute']>>,
 ): TickResumedEntry {
   if (!result.ok) {
-    // An interruption (the deadline or a signal) leaves a resumable suspension that is due now. This
-    // also covers an interruption before the runtime reopened the run, which stays suspended.
-    if (result.code === 'workflow.interrupted' && result.run?.status === 'suspended')
+    if (result.code === 'workflow.interrupted') {
+      // An interruption (the deadline or a signal) leaves a resumable suspension that is due now. This
+      // also covers an interruption before the runtime reopened the run, which stays suspended.
+      if (result.run?.status === 'suspended')
+        return {
+          runId,
+          outcome: 'suspended',
+          nextWakeAt: result.run.nextWakeAt ?? null,
+          message: result.message,
+        };
+      // An interruption before the runtime reopened a stale run leaves it running with no owner; the
+      // next tick recovers it as stale, so it is not final.
+      if (result.run?.status === 'running')
+        return {
+          runId,
+          outcome: 'interrupted',
+          message: `${result.message} The resume stopped before the run was saved as suspended; it is still saved as running with no owner, and the next tick recovers it as stale.`,
+        };
+      // Anything else, including a record that could not be re-read, cannot be shown to be resumable.
       return {
         runId,
-        outcome: 'suspended',
-        nextWakeAt: result.run.nextWakeAt ?? null,
+        outcome: result.run?.status === 'cancelled' ? 'cancelled' : 'failed',
         message: result.message,
       };
+    }
     const outcome: TickResumeOutcome =
       result.code === 'run.incompatible'
         ? 'incompatible'
-        : result.code === 'workflow.interrupted' || result.run?.status === 'cancelled'
+        : result.run?.status === 'cancelled'
           ? 'cancelled'
           : 'failed';
     return { runId, outcome, message: result.message };
@@ -219,7 +242,11 @@ function exitFor(entry: TickEntry): 0 | 75 | 1 {
       ? 1
       : 75;
   const { outcome } = entry.entry;
-  return outcome === 'completed' ? 0 : outcome === 'suspended' ? 75 : 1;
+  return outcome === 'completed'
+    ? 0
+    : outcome === 'suspended' || outcome === 'interrupted'
+      ? 75
+      : 1;
 }
 
 /** Whether later watch passes must leave the run alone, as tick never retries a finished run. */

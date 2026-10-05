@@ -18,11 +18,13 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ThresholdLogger } from '../src/application/execution.js';
 import { WorkflowExecutor } from '../src/workflow/loader/executor.js';
-import { TickWorkflowExecutor } from '../src/workflow/loader/tick.js';
+import { resumeOutcome, TickWorkflowExecutor } from '../src/workflow/loader/tick.js';
+import { workflowFailure } from '../src/workflow/loader/failure.js';
 import { analyzeTypecheckEntrypoint } from '../src/workflow/typecheck/plan.js';
 import { TypecheckProgramCache } from '../src/workflow/typecheck/program-cache.js';
 import type { TickWorkflowsResult } from '../src/workflow/loader/tick.js';
 import type { WorkflowFailure } from '../src/workflow/loader/failure.js';
+import type { RunRecord } from '../src/workflow/runtime/store.js';
 import {
   FileRunStore,
   OrphanProcessesError,
@@ -308,6 +310,64 @@ afterEach(async () => {
   sourcesSpy.mockReset().mockImplementation(actualInbox.questionCodeChanged);
   readSpy.mockReset().mockImplementation(actualRequiredRun.readRequiredRun);
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
+});
+
+// Issue #206: an interruption is classified by the status the run was actually saved with.
+describe('resumeOutcome', () => {
+  const failure = (
+    code: 'workflow.interrupted' | 'workflow.failed' | 'run.incompatible',
+    status: string | null,
+  ): WorkflowFailure =>
+    workflowFailure(code, 'Tick timeout reached.', {
+      runId: 'run',
+      run: status === null ? null : ({ id: 'run', status, nextWakeAt: 5 } as unknown as RunRecord),
+    });
+
+  it.each([
+    [
+      'interrupted while saved suspended',
+      failure('workflow.interrupted', 'suspended'),
+      { outcome: 'suspended', nextWakeAt: 5, message: 'Tick timeout reached.' },
+    ],
+    [
+      'interrupted while saved running',
+      failure('workflow.interrupted', 'running'),
+      {
+        outcome: 'interrupted',
+        message: expect.stringContaining('recovers it as stale') as unknown,
+      },
+    ],
+    [
+      'interrupted while saved cancelled',
+      failure('workflow.interrupted', 'cancelled'),
+      { outcome: 'cancelled', message: 'Tick timeout reached.' },
+    ],
+    [
+      'interrupted with an unreadable record',
+      failure('workflow.interrupted', null),
+      { outcome: 'failed', message: 'Tick timeout reached.' },
+    ],
+    [
+      'failed while saved cancelled',
+      failure('workflow.failed', 'cancelled'),
+      { outcome: 'cancelled', message: 'Tick timeout reached.' },
+    ],
+    [
+      'incompatible',
+      failure('run.incompatible', 'suspended'),
+      { outcome: 'incompatible', message: 'Tick timeout reached.' },
+    ],
+  ])('maps %s', (_name, result, expected) => {
+    const entry = resumeOutcome('run', result);
+    expect(entry).toMatchObject({ runId: 'run', ...expected });
+    if (entry.outcome !== 'suspended') expect(entry).not.toHaveProperty('nextWakeAt');
+  });
+
+  it('keeps the original message in an interrupted outcome', () => {
+    expect(resumeOutcome('run', failure('workflow.interrupted', 'running')).message).toContain(
+      'Tick timeout reached.',
+    );
+  });
 });
 
 // Each test spawns real tick-loader child processes against temporary fixtures.
@@ -1302,6 +1362,72 @@ describe('tick deadline interruption and claim margin', { timeout: 40_000 }, () 
     expect(completed.interruptedBy).toBeUndefined();
     expect(await readFile(f.before, 'utf8')).toBe('before\n');
     expect(await readFile(f.effects, 'utf8')).toBe('effect\n');
+  });
+
+  // Issue #206: the deadline fires after tick saved the stale-recovery count, before the runtime open.
+  it('reports a deadline between the stale-recovery save and the runtime open as interrupted', async () => {
+    const f = await fixture();
+    await crashedWhileRunning(f.stateDir, 'run');
+    const realSetTimeout = globalThis.setTimeout;
+    let fire: (() => void) | undefined;
+    const timers = vi
+      .spyOn(globalThis, 'setTimeout')
+      .mockImplementation((handler: () => void, ms?: number) => {
+        if (ms !== 30_000) return realSetTimeout(handler, ms);
+        fire = handler;
+        return realSetTimeout(() => undefined, 0);
+      });
+    // eslint-disable-next-line @typescript-eslint/unbound-method -- called with the instance below
+    const realOpen = FileRunStore.prototype.open;
+    const opened = vi.spyOn(FileRunStore.prototype, 'open').mockImplementation(async function (
+      this: FileRunStore,
+      ...args
+    ) {
+      const owned = await realOpen.apply(this, args);
+      const append = owned.append.bind(owned);
+      owned.append = async (record, options) => {
+        await append(record, options);
+        if (options?.context === 'Could not save stale recovery count') fire?.();
+      };
+      return owned;
+    });
+    let result: TickWorkflowsResult | WorkflowFailure;
+    try {
+      result = await tick.execute({ ...f.tickPlan, timeoutMs: 30_000, claimMarginMs: 0 });
+    } finally {
+      opened.mockRestore();
+      timers.mockRestore();
+    }
+    expect(fire).toBeDefined();
+    expect(oneEntryPerRun(result)).toEqual({
+      kind: 'workflow.tick.result',
+      ok: true,
+      resumed: [
+        {
+          runId: 'run',
+          outcome: 'interrupted',
+          message: expect.stringContaining('Tick timeout reached.') as unknown,
+        },
+      ],
+      skipped: [],
+      observed: 0,
+      exitCode: 75,
+    });
+    expect(await readRun(f.plan)).toMatchObject({ status: 'running', staleRecovery: { count: 1 } });
+    await expect(readFile(f.effects, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
+    expect(
+      await actualStore.inspectRunOwnership({ stateDir: f.stateDir, runId: 'run' }),
+    ).toMatchObject({
+      locked: false,
+    });
+
+    // The run is still recoverable: the next tick takes it as stale and completes it.
+    expect(oneEntryPerRun(await tick.execute(f.tickPlan))).toMatchObject({
+      resumed: [{ runId: 'run', outcome: 'completed' }],
+      exitCode: 0,
+    });
+    expect(await readFile(f.effects, 'utf8')).toBe('effect\n');
+    expect((await readRun(f.plan)).staleRecovery).toBeUndefined();
   });
 
   it('stops claiming inside the margin and reports the rest as skipped for the deadline', async () => {
