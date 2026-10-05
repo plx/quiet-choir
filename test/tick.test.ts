@@ -24,6 +24,7 @@ import type { TickWorkflowsResult } from '../src/workflow/loader/tick.js';
 import type { WorkflowFailure } from '../src/workflow/loader/failure.js';
 import {
   FileRunStore,
+  OrphanProcessesError,
   readRun,
   writeAnswer,
   type LaunchPolicy,
@@ -977,10 +978,52 @@ export default defineWorkflow({ name: 'debounce', version: '1', input: z.null(),
       observed: 0,
       exitCode: 75,
     });
+    const message = result.skipped[0]?.message ?? '';
+    expect(message).toContain(`workflow resume run --state-dir ${f.stateDir} --kill-orphans`);
+    expect(message).toContain('Tick never signals a process');
+    expect(message).not.toContain('Stop confirmed processes with --kill-orphans');
     expect(await runBytes(f.stateDir, 'run')).toEqual(before);
     expect(before['lock/processes/x.json']).toBe('{not json');
     expect(await readFile(f.imports, 'utf8')).toBe('import\n');
     expect((await readRun(f.plan)).status).toBe('suspended');
+  });
+
+  it('words an orphans refusal raised while claiming a run for tick, not for resume', async () => {
+    const f = await fixture();
+    const before = await runBytes(f.stateDir, 'run');
+    const open = vi
+      .spyOn(FileRunStore.prototype, 'open')
+      .mockRejectedValueOnce(
+        new OrphanProcessesError('run', [
+          { file: '1.json', process: null, state: 'unknown', detail: 'bad record' },
+        ]),
+      );
+    let result: TickWorkflowsResult;
+    try {
+      result = oneEntryPerRun(await tick.execute(f.tickPlan));
+    } finally {
+      open.mockRestore();
+    }
+    expect(result).toEqual({
+      kind: 'workflow.tick.result',
+      ok: true,
+      resumed: [],
+      skipped: [
+        {
+          runId: 'run',
+          reason: 'orphans',
+          message: expect.stringContaining('1.json: bad record') as unknown,
+        },
+      ],
+      observed: 0,
+      exitCode: 75,
+    });
+    const message = result.skipped[0]?.message ?? '';
+    expect(message).toContain(`workflow resume run --state-dir ${f.stateDir} --kill-orphans`);
+    expect(message).toContain('Tick never signals a process');
+    expect(message).not.toContain('Stop confirmed processes with --kill-orphans');
+    expect(await runBytes(f.stateDir, 'run')).toEqual(before);
+    expect(await readFile(f.imports, 'utf8')).toBe('import\n');
   });
 
   it('resumes a run whose recoverer died, reclaiming its recovery marker', async () => {
