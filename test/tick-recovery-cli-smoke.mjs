@@ -6,6 +6,7 @@ import {
   mkdtempSync,
   readdirSync,
   readFileSync,
+  realpathSync,
   rmSync,
   statSync,
   writeFileSync,
@@ -15,6 +16,7 @@ import { join, relative } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import { readRun } from '../dist/index.js';
+import { formatArgv } from '../dist/workflow/runtime/commands.js';
 
 // Tick recovers runs whose owner process died, and stops after three recoveries without progress.
 const repository = fileURLToPath(new URL('..', import.meta.url));
@@ -154,7 +156,16 @@ export default defineWorkflow({ name: 'crash', version: '1', input: z.object({})
   assert.equal(skipped.runId, 'C');
   assert.equal(skipped.reason, 'crash-loop');
   assert.match(skipped.message, /cap 3/u);
-  assert.match(skipped.message, /quiet-choir workflow resume C/u);
+  const resume = formatArgv([
+    process.execPath,
+    realpathSync(cliPath),
+    'workflow',
+    'resume',
+    'C',
+    '--state-dir',
+    stateDir,
+  ]);
+  assert.ok(skipped.message.includes(`run ${resume} to retry`), skipped.message);
   assert.deepEqual(runBytes('C'), before);
   assert.equal(readFileSync(imports, 'utf8'), importsBefore);
 
