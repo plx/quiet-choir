@@ -284,8 +284,9 @@ export interface MapRecord {
    */
   components?: MapComponents;
   /**
-   * Inline child frame that first ran the map, absent at the root and in journals saved before
-   * revision 8. A bound view can give the map an ID outside the frame's prefix.
+   * Inline child frame that ran the map, absent at the root and in journals saved before revision
+   * 8. A bound view can give the map an ID outside the frame's prefix. A journal with nothing
+   * committed adopts the frame that runs it next; a committed one refuses to run in another frame.
    */
   frame?: string;
   /** First-use ordering shared with step seq values; absent in journals saved before it existed. */
@@ -879,7 +880,7 @@ const recordFieldsSchema = z.object({
             keys: z.string().optional(),
           })
           .optional(),
-        // Revision 8 (#240): the inline child frame that first ran the map.
+        // Revision 8 (#240): the inline child frame that ran the map.
         frame: z.string().optional(),
         seq: z.number().int().positive().optional(),
         status: z.enum(['running', 'completed']),

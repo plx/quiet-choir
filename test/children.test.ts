@@ -1545,6 +1545,108 @@ it.each([true, false])(
   },
 );
 
+type Context = Parameters<WorkflowDefinition<null, null>['run']>[0];
+
+/**
+ * One settled map call, `shared/items` through a parent-bound view, with an effect-free mapper whose
+ * source never changes. While `state.broken`, the mapper fails fatally, so its item stays running.
+ */
+function sharedItems(state: { broken: boolean }) {
+  return (view: Context) =>
+    view.map('items', [0], { concurrency: 1, onError: 'return' }, async () => {
+      if (state.broken) await view.map('bad', [], { concurrency: 0 }, () => Promise.resolve(null));
+      return null;
+    });
+}
+
+it('lets a child adopt an unfinished root map it commits through a bound view', async () => {
+  const stateDir = await directory();
+  const state = { broken: true };
+  const items = sharedItems(state);
+  let inChild = false;
+  let n = 1;
+  const root = () => {
+    const kid = defineWorkflow({
+      name: 'kid',
+      version: '1',
+      input: z.object({ n: z.number() }),
+      output: z.null(),
+      async run() {
+        if (shared) await items(shared);
+        throw new Error('kid broke');
+      },
+    });
+    let shared: Context | undefined;
+    return defineWorkflow({
+      name: 'parent',
+      ...base,
+      async run(ctx) {
+        shared = ctx.within('shared');
+        if (!inChild) await items(shared);
+        return ctx.workflow('kid', kid, { n });
+      },
+    });
+  };
+  const options = { stateDir, runId: 'adopted-map' };
+  await expect(runWorkflow(root(), { ...options, input: null })).rejects.toThrow(
+    'Map concurrency must be a positive integer.',
+  );
+  const unfinished = (await readRun(options)).maps?.['shared/items'];
+  expect(unfinished?.items).toMatchObject([{ status: 'running' }]);
+  expect(unfinished).not.toHaveProperty('frame');
+  // The root never committed an item, so the child that commits it now owns the journal.
+  state.broken = false;
+  inChild = true;
+  await expect(runWorkflow(root(), { ...options, resume: true })).rejects.toThrow('kid broke');
+  expect((await readRun(options)).maps?.['shared/items']).toMatchObject({
+    frame: 'kid',
+    seq: unfinished?.seq,
+    items: [{ status: 'completed', steps: [], maps: [] }],
+  });
+  n = 2;
+  const refusal = runWorkflow(root(), { ...options, resume: true });
+  await expect(refusal).rejects.toThrow(/Child frame kid changed: kid@1 -> kid@1/u);
+  await expect(refusal).rejects.toThrow(
+    'Its identity cannot be redefined because it holds completed or settled work (shared/items).',
+  );
+  expect((await readRun(options)).children?.['kid']).not.toHaveProperty('redefinitions');
+});
+
+it('refuses to run a settled map committed in a child frame from another frame', async () => {
+  const stateDir = await directory();
+  const items = sharedItems({ broken: false });
+  let atRoot = false;
+  const root = () => {
+    let shared: Context | undefined;
+    const kid = defineWorkflow({
+      name: 'kid',
+      ...base,
+      async run() {
+        if (shared) await items(shared);
+        throw new Error('kid broke');
+      },
+    });
+    return defineWorkflow({
+      name: 'parent',
+      ...base,
+      async run(ctx) {
+        shared = ctx.within('shared');
+        if (atRoot) await items(shared);
+        return ctx.workflow('kid', kid, null);
+      },
+    });
+  };
+  const options = { stateDir, runId: 'moved-map' };
+  await expect(runWorkflow(root(), { ...options, input: null })).rejects.toThrow('kid broke');
+  const committed = (await readRun(options)).maps?.['shared/items'];
+  expect(committed).toMatchObject({ frame: 'kid', items: [{ status: 'completed' }] });
+  atRoot = true;
+  await expect(runWorkflow(root(), { ...options, resume: true })).rejects.toThrow(
+    'Settled map shared/items committed work in child frame kid but is now invoked at the root; a settled map stays in the frame that committed it.',
+  );
+  expect((await readRun(options)).maps?.['shared/items']).toEqual(committed);
+});
+
 it.each([true, false])(
   'refuses to redefine a suspended child frame (declared: %s)',
   async (declared) => {
