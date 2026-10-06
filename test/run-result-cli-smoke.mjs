@@ -116,6 +116,12 @@ export default defineWorkflow({name:'many',version:'1',input:z.object({calls:z.n
   assert.equal(suspension.summary.status, 'suspended');
   assert.equal(suspension.summary.counts.total, 61);
   assert.ok(Array.isArray(suspension.pending[0].answerCommand));
+  assert.deepStrictEqual(suspension.pending[0].answerCommand.slice(-4), [
+    '--json',
+    '<ANSWER_JSON>',
+    '--by',
+    'human:<NAME>',
+  ]);
   assert.ok(Array.isArray(suspension.resumeCommand));
   assert.equal(Object.hasOwn(suspension, 'run'), false);
   const suspendedFull = document(cli('resume', 'gate', '--harness', harness, '--full'), 75);
@@ -185,6 +191,33 @@ export default defineWorkflow({name:'many',version:'1',input:z.object({calls:z.n
   assert.equal(answeredFull.stateDir, completed.stateDir);
   assert.equal(Object.hasOwn(answeredFull, 'kind'), false);
   assert.equal(Object.keys(answeredFull.steps).length, 61);
+
+  // The emitted human answerCommand is runnable once its placeholders are substituted: with only
+  // <ANSWER_JSON> replaced it is refused as answer_author, and replacing <NAME> too delivers.
+  const emitted = document(execute('gate-cmd', 60), 75).pending[0].answerCommand;
+  const emittedRun = (replacements, ...extra) => {
+    const argv = emitted.slice(1).map((word) => replacements[word] ?? word);
+    return spawnSync(process.execPath, [join(project, 'bin/run.js'), ...argv, ...extra], {
+      cwd: root,
+      encoding: 'utf8',
+      timeout: 60_000,
+      env: { ...process.env, XDG_STATE_HOME: join(root, 'xdg') },
+    });
+  };
+  const approved = '{"approved":true}';
+  const unnamed = document(emittedRun({ '<ANSWER_JSON>': approved }), 2);
+  assert.equal(unnamed.error.code, 'answer.invalid');
+  assert.match(JSON.stringify(unnamed.error), /answer_author/u);
+  const named = document(
+    emittedRun(
+      { '<ANSWER_JSON>': approved, 'human:<NAME>': 'human:Pat' },
+      '--resume',
+      '--harness',
+      harness,
+    ),
+    0,
+  );
+  assert.equal(named.status, 'completed');
 
   console.log(
     'Run result CLI: compact success, suspension and answer.invalid documents and --full passed.',

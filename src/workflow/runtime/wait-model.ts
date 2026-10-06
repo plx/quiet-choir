@@ -432,7 +432,11 @@ export interface PendingWait {
   readonly rejections: readonly QuestionRejection[];
   /** Whether stored source bytes changed; null without launch metadata. */
   readonly codeChanged: boolean | null;
-  /** Delivery command for a signal, or null for timer/poll-only and disposed rehearsals. */
+  /**
+   * Delivery command for a signal, or null for timer/poll-only and disposed rehearsals. Replace
+   * ANSWER_JSON with serialized data and, for a human signal, NAME in `--by human:<NAME>` with the
+   * human's name.
+   */
   readonly answerCommand: readonly string[] | null;
 }
 

@@ -55,7 +55,7 @@ const fork = (from: string) => [
   '--state-dir',
   stateDir,
 ];
-const answer = (stepId: string) => [
+const answer = (stepId: string, human = false) => [
   ...prefix,
   'answer',
   'r1',
@@ -64,6 +64,7 @@ const answer = (stepId: string) => [
   stateDir,
   '--json',
   '<ANSWER_JSON>',
+  ...(human ? ['--by', 'human:<NAME>'] : []),
 ];
 
 describe('runNextCommands', () => {
@@ -97,10 +98,14 @@ describe('runNextCommands', () => {
       launcher,
     );
     expect(next.map((entry) => entry.argv)).toEqual([
-      ...Array.from({ length: maxAnswerEntries }, (_, index) => answer(`ask-${String(index)}`)),
+      ...Array.from({ length: maxAnswerEntries }, (_, index) =>
+        answer(`ask-${String(index)}`, index === 0),
+      ),
       resume(),
     ]);
-    expect(next[0]?.why).toContain('--by human:<name>');
+    expect(next[0]?.why).toBe(
+      'Answer ask-0: substitute <ANSWER_JSON> with a human decision and <NAME> with the name of the human who gave it.',
+    );
     expect(next[1]?.why).not.toContain('--by');
     expect(next.at(-1)?.why).toContain('answered or due');
   });
@@ -563,5 +568,12 @@ describe('formatArgv', () => {
     expect(
       formatArgv(['/a b/node', "it's", 'plain-1.2/x', '<ANSWER_JSON>', '<lower>', '$HOME', '']),
     ).toBe(`'/a b/node' 'it'\\''s' plain-1.2/x <ANSWER_JSON> '<lower>' '$HOME' ''`);
+  });
+
+  it('leaves the human author placeholder bare but still quotes other angle-bracket values', () => {
+    expect(formatArgv(['--by', 'human:<NAME>'])).toBe('--by human:<NAME>');
+    expect(
+      formatArgv(['human:<name>', 'human:Pat<x>', 'Human:<NAME>', 'human:<NAME>x', 'a:b:<NAME>']),
+    ).toBe(`'human:<name>' 'human:Pat<x>' 'Human:<NAME>' 'human:<NAME>x' 'a:b:<NAME>'`);
   });
 });

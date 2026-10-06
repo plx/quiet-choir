@@ -17,7 +17,7 @@ import { isValidRunId, runIdMessage } from './run-errors.js';
 import { answerEnvelopeSchema, validateAnswerAuthor } from './question-schema.js';
 import type { JsonValue } from './model.js';
 import type { PendingDelivery, PendingListing, PendingOperation } from './wait-model.js';
-import { workflowArgv, type CommandLauncher } from './commands.js';
+import { answerArgv, type CommandLauncher } from './commands.js';
 
 /**
  * One reason an answer was refused as invalid. Zod issues are normalized to this shape so the
@@ -358,16 +358,7 @@ export async function pendingOperations(
   for (const [stepId, step] of Object.entries(run.steps)) {
     if (step.status !== 'waiting') continue;
     const answerCommand = step.question
-      ? workflowArgv(
-          launcher,
-          'answer',
-          run.id,
-          stepId,
-          '--state-dir',
-          stateDir,
-          '--json',
-          '<ANSWER_JSON>',
-        )
+      ? answerArgv(launcher, run.id, stepId, stateDir, step.question.request.audience)
       : null;
     if (step.kind === 'wait' && step.wait) {
       pending.push({

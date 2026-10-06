@@ -1,4 +1,5 @@
 import {
+  answerArgv,
   formatArgv,
   launchPolicyFlags,
   workflowArgv,
@@ -91,16 +92,13 @@ export function runNextCommands(
     .filter(([, step]) => step.status === 'waiting' && step.question)
     .slice(0, maxAnswerEntries)
     .map(([stepId, step]) => ({
-      why: `Answer ${stepId}: substitute <ANSWER_JSON>${step.question?.request.audience === 'human' ? ' with a human decision and add --by human:<name>' : ''}.`,
-      argv: workflowArgv(
+      why: `Answer ${stepId}: substitute <ANSWER_JSON>${step.question?.request.audience === 'human' ? ' with a human decision and <NAME> with the name of the human who gave it' : ''}.`,
+      argv: answerArgv(
         launcher,
-        'answer',
         run.id,
         stepId,
-        '--state-dir',
         stateDir,
-        '--json',
-        '<ANSWER_JSON>',
+        step.question?.request.audience ?? 'any',
       ),
     }));
   return [
