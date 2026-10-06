@@ -99,7 +99,7 @@ try {
       },
     }),
   );
-  plant({ pid: 4242, host: 'elsewhere.invalid' });
+  plant({ pid: dead, host: 'elsewhere.invalid' });
   const inspected = document(0, 'inspect', 'run', '--state-dir', stateDir);
   assert.equal(inspected.worktreeAdminLock.path, lockPath);
   assert.equal(inspected.worktreeAdminLock.owner.token, 'tok');
@@ -110,7 +110,10 @@ try {
   assert.equal(inspectText.status, 0, inspectText.stderr);
   assert.match(
     inspectText.stdout,
-    new RegExp(`Worktree admin lock .*: owner pid 4242 \\(remote\\) on elsewhere\\.invalid`, 'u'),
+    new RegExp(
+      `Worktree admin lock .*: owner pid ${String(dead)} \\(remote\\) on elsewhere\\.invalid`,
+      'u',
+    ),
   );
   assert.match(
     inspectText.stdout,
