@@ -102,6 +102,19 @@ export function unlockNext(
 }
 
 /**
+ * The argv of the `workflow resume <runId> --state-dir <abs> --kill-orphans` command that stops
+ * confirmed harness processes, behind the launcher. The unlock, rm, prune and tick orphans hints all
+ * build it here, so the three spellings cannot drift. @internal
+ */
+export function killOrphansArgv(
+  launcher: CommandLauncher | undefined,
+  stateDir: string,
+  runId: string,
+): string[] {
+  return workflowArgv(launcher, 'resume', runId, '--state-dir', resolve(stateDir), '--kill-orphans');
+}
+
+/**
  * The follow-up that clears a repository's abandoned worktree administration lock:
  * `workflow unlock --worktree-admin <abs common Git dir>` behind the launcher, with
  * `--force-remote` only when the holder is on a foreign host. @internal

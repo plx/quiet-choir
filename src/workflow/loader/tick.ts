@@ -17,7 +17,7 @@ import {
   RunRefusedError,
 } from '../runtime/run-errors.js';
 import { clockNow, systemClock } from '../runtime/clock.js';
-import { workflowArgv, type CommandLauncher } from '../runtime/commands.js';
+import { killOrphansArgv, type CommandLauncher } from '../runtime/commands.js';
 import {
   describeOrphanProcesses,
   OrphanProcessesError,
@@ -163,9 +163,7 @@ function tickOrphansMessage(
   processes: readonly HarnessProcessInspection[],
   launcher: CommandLauncher | undefined,
 ): string {
-  const resume = formatArgv(
-    workflowArgv(launcher, 'resume', runId, '--state-dir', stateDir, '--kill-orphans'),
-  );
+  const resume = formatArgv(killOrphansArgv(launcher, stateDir, runId));
   return `${describeOrphanProcesses(runId, processes)} Tick never signals a process: a later tick retries the run once they exit, or stop confirmed ones with ${resume}. Unverified identities are never signaled; inspect the retained lock.`;
 }
 
@@ -491,7 +489,8 @@ export class TickWorkflowExecutor implements Executor<
         new Date(clockNow(clock)).toISOString(),
       );
       if (decision.kind === 'crash-loop')
-        skip(run.id, 'crash-loop', { message: crashLoopMessage(run.id, decision.count) });
+        skip(run.id, 'crash-loop', { message: crashLoopMessage(run.id, decision.count, plan.stateDir, this.options.commandLauncher),
+        });
       return decision;
     };
     try {

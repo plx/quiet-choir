@@ -15,7 +15,13 @@
  * ESLint keeps this module free of runtime imports, except the argv builders in `./commands.js`
  * that spell the `workflow unlock` command of a lock refusal.
  */
-import { formatArgv, nextDetail, unlockNext, type CommandLauncher } from './commands.js';
+import {
+  formatArgv,
+  killOrphansArgv,
+  nextDetail,
+  unlockNext,
+  type CommandLauncher,
+} from './commands.js';
 import type { RunLockView, RunOwnership } from './lock.js';
 import type { HarnessProcessInspection } from './process-registry.js';
 import type { RunRecord } from './record.js';
@@ -178,7 +184,7 @@ export function removalRefusal(
         )
         .join('; ')})${
         owner ? ` under owner PID ${String(owner.pid)} on ${owner.host} (${owner.state})` : ''
-      }. rm never signals a process: wait for them to exit, or stop confirmed ones with quiet-choir workflow resume ${runId} --state-dir ${stateDir} --kill-orphans, then retry.`,
+      }. rm never signals a process: wait for them to exit, or stop confirmed ones with ${formatArgv(killOrphansArgv(launcher, stateDir, runId))}, then retry.`,
       details: {
         owner: owner && { pid: owner.pid, host: owner.host, state: owner.state },
         processes: verdict.processes,
