@@ -8,6 +8,8 @@
   `.agents/skills` from the Git root to `cwd` and `<cwd>/.codex/skills`. The private home does not
   remove them, so `'none'` no longer makes results independent of who runs a workflow; it removes
   the `AGENTS` files and `CODEX_HOME` skills only. See [harness isolation](../harness-isolation.md).
+- Amended by #229: a lock file that is not a valid owner record (corrupt, or another user's file) is
+  reclaimed once it is older than 60 s, instead of making every call wait out the timeout.
 
 ## Context
 
@@ -57,10 +59,15 @@ renames it over `auth.json` and fsyncs the directory. The lock is a file in `os.
 a SHA-256 prefix of the real home's path, published complete by `link` from a private draft and
 holding the owner PID, OS birth identity and a nonce. A lock whose owner is dead, or whose PID now
 has a different birth identity, is moved aside and reclaimed (and put back if a live owner replaced
-it meanwhile). Acquisition waits about 10 s with backoff; on timeout the call records a warning that
-the refreshed credentials could not be saved and leaves the real file alone. The only change to the
-real home is the atomic replacement of `auth.json`. Settle warnings join `response.warnings` on
-success and the `HarnessError` message (`Cleanup:`) on failure; they never fail a valid result.
+it meanwhile). Our own code never leaves an unparseable lock, so a lock file that is not an owner
+record and is older than 60 s is moved aside the same way, with a warning naming it; a younger one
+is waited on, and a valid live owner is never reclaimed whatever its age. A lock that cannot be
+moved aside (another user's file in a sticky shared `/tmp`) fails fast with a warning naming the
+path to remove. Acquisition waits about 10 s with backoff; on timeout the call records a warning
+that the refreshed credentials could not be saved, naming the lock path, and leaves the real file
+alone. The only change to the real home is the atomic replacement of `auth.json`. Settle warnings
+join `response.warnings` on success and the `HarnessError` message (`Cleanup:`) on failure; they
+never fail a valid result.
 
 **Validation and identity.** `'none'` is rejected under `isolation: 'inherit'`: inherit loads
 `config.toml`, which can carry instructions of its own, and copying it would not mean `'none'` while
