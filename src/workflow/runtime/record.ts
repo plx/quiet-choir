@@ -668,7 +668,7 @@ const stepSchema = z
 /** One recorded instruction source, as a path and digest. @internal */
 export const instructionSourceSchema = z.object({
   scope: z.enum(['user', 'project']),
-  kind: z.enum(['agents', 'agents-override', 'skill']),
+  kind: z.enum(['agents', 'agents-override', 'skill', 'claude-md']),
   path: z.string(),
   sha256: z.string().regex(/^[a-f0-9]{64}$/u),
 });
@@ -1137,9 +1137,10 @@ export function withProjectInstructions(
  * (#171) added the profile field `claude.addDirRoots` to `capabilities` and the optional `addDirs`
  * to step and attempt request summaries. Revision 5 (#223) added the run event type
  * `wait.tolerated` to `events`. Revision 6 (#226) added the top-level `projectInstructions` list of
- * per-cwd project instruction sources. @internal
+ * per-cwd project instruction sources. Revision 7 (#227) changed only a nested shape: the
+ * instruction source kind `claude-md`, in `harnesses` and `projectInstructions`. @internal
  */
-export const SUPPORTED_SCHEMA_REVISION = 6;
+export const SUPPORTED_SCHEMA_REVISION = 7;
 
 /** The top-level run-record keys this build knows. @internal */
 export const RECORD_FIELD_KEYS: readonly string[] = Object.freeze(

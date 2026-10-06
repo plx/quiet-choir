@@ -49,6 +49,8 @@ const revisionDigests: Readonly<Record<string, string>> = {
   '5': '80010b03d1fa34c4b824b0682b5138e0c19d138186fb659c38d46eab204992ec',
   // Revision 6 (#226) added the top-level projectInstructions list.
   '6': '14ecaff04c78634fdbaaca9796e99503df2c253e4c7db6208169ca21b74a9b1a',
+  // Revision 7 (#227) changed only the nested instruction source kind (claude-md), so it repeats 6.
+  '7': '14ecaff04c78634fdbaaca9796e99503df2c253e4c7db6208169ca21b74a9b1a',
 };
 // digest(readRun(...)) of the installed pre-revision fixture, computed on unmodified main 91a6d2f.
 const preRevisionReadDigest = '714b6cb068de5c933b7ba04a26d1f931f589f7c9910f76f0e5c8cc493eb13016';
@@ -62,6 +64,8 @@ const revisionThreeReadDigest = 'c2f4ad7fd501352343faa55e59b25ec9a70ef781f9849bc
 const revisionFourReadDigest = '813c73ae37120ba658d75502e4a0757e6657a93d9f1e69ab41671716c4ebfc98';
 // digest(readRun(...)) of the installed revision-five fixture, computed on unmodified main 6a05a54.
 const revisionFiveReadDigest = 'b249d588cfd7dbcd1375f27b3dfccb9634b502ddd174c689ea2b4108cebadea0';
+// digest(readRun(...)) of the installed revision-six fixture, computed on unmodified main 2c6be06.
+const revisionSixReadDigest = 'aa4a92b3d3d284be8403ccbd2b3ad86cd048414202074063d95cbbf17089d855';
 
 const sha256 = (value: string): string => createHash('sha256').update(value).digest('hex');
 
@@ -1164,5 +1168,88 @@ describe('revision-five records (project instruction sources inside harnesses, #
     const saved = await readRun({ stateDir, runId });
     expect(saved.harnesses?.['codex']?.instructionSources).toEqual([user]);
     expect(saved.harnessWarnings).toEqual([]);
+  });
+});
+
+describe('revision-six records (instruction source kinds before claude-md, #227)', () => {
+  const runId = 'revision-six';
+  async function install(): Promise<void> {
+    const fixture = await readFile(
+      new URL('./fixtures/schema-revision/revision-six-checkpoint.json', import.meta.url),
+      'utf8',
+    );
+    await mkdir(join(stateDir, runId));
+    await writeFile(paths(runId).snapshot, fixture);
+    await writeFile(paths(runId).journal, '');
+  }
+  const sources = [
+    { kind: 'agents', path: '/AGENTS.md', scope: 'project', sha256: 'b'.repeat(64) },
+    {
+      kind: 'skill',
+      path: '/.agents/skills/review/SKILL.md',
+      scope: 'project',
+      sha256: 'd'.repeat(64),
+    },
+  ] as const;
+
+  it('read exactly as on main', async () => {
+    await install();
+    const record = await readRun({ stateDir, runId });
+    expect(record.schemaRevision).toBe(6);
+    expect(recordSchemaDrift(record)).toBeUndefined();
+    expect(digest(record)).toBe(revisionSixReadDigest);
+    expect(record.projectInstructions).toEqual([{ harness: 'codex', cwd: '/', sources }]);
+    expect(record.steps['write']?.status).toBe('failed');
+  });
+
+  it('resume, add a claude-md entry beside the old one, saved with the current revision', async () => {
+    await install();
+    const original = await readRun({ stateDir, runId });
+    const invoked: string[] = [];
+    const claudeMd = {
+      scope: 'user',
+      kind: 'claude-md',
+      path: '/home/fixture/.claude/CLAUDE.md',
+      sha256: 'e'.repeat(64),
+    } as const;
+    const resumed = defineWorkflow({
+      name: 'schema-revision',
+      version: '1',
+      input: z.null(),
+      output: z.null(),
+      async run(ctx) {
+        await ctx.codex.text('read', { prompt: 'x' });
+        await ctx.codex.text('write', { prompt: 'y' });
+        await ctx.claude.text('note', { prompt: 'z' });
+        return null;
+      },
+    });
+    const harness: Harness = {
+      projectInstructions: (request) =>
+        Promise.resolve(request.harness === 'claude' ? { sources: [claudeMd] } : undefined),
+      invoke: (request) => {
+        invoked.push(request.stepId);
+        return Promise.resolve({ text: 'ok', sessionId: null });
+      },
+    };
+    const result = await runWorkflow(resumed, {
+      ...options,
+      stateDir,
+      runId,
+      resume: true,
+      harness,
+      policy: [{ transcripts: 'off' }],
+    });
+    expect(result.status).toBe('completed');
+    expect(invoked).toEqual(['write', 'note']);
+    const saved = await readRun({ stateDir, runId });
+    expect(saved.steps['read']).toEqual(original.steps['read']);
+    // The Codex detection resolved undefined, so the revision-six entry stays as it was.
+    expect(saved.projectInstructions).toEqual([
+      { harness: 'codex', cwd: '/', sources },
+      { harness: 'claude', cwd: '/', sources: [claudeMd] },
+    ]);
+    expect(recordSchemaDrift(saved)).toBeUndefined();
+    expect((await rawSnapshot(runId))['schemaRevision']).toBe(SUPPORTED_SCHEMA_REVISION);
   });
 });

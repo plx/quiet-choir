@@ -119,8 +119,11 @@ export type Effort = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 export interface InstructionSource {
   /** User-level files depend on who runs the workflow; project files belong to the checkout. */
   readonly scope: 'user' | 'project';
-  /** Plain AGENTS.md, an AGENTS.override.md that replaces it in its directory, or a skill description file. */
-  readonly kind: 'agents' | 'agents-override' | 'skill';
+  /**
+   * Plain AGENTS.md, an AGENTS.override.md that replaces it in its directory, a skill description
+   * file (SKILL.md), or the user-level CLAUDE.md that Claude loads in inherit mode.
+   */
+  readonly kind: 'agents' | 'agents-override' | 'skill' | 'claude-md';
   /** Absolute path of the file. */
   readonly path: string;
   /** SHA-256 hex digest of the file bytes. */
@@ -142,11 +145,12 @@ export interface HarnessMetadata {
 }
 
 /**
- * Project-level instruction files a harness loads for one working directory, as paths and digests.
- * Recorded per distinct cwd in the run's `projectInstructions`, outside semantic identity.
+ * Instruction files a harness loads for one working directory and isolation mode, as paths and
+ * digests. Recorded per harness and cwd in the run's `projectInstructions`, outside semantic
+ * identity.
  */
 export interface ProjectInstructions {
-  /** Files found for the call's cwd, such as AGENTS.md from the Git root down to it. */
+  /** Files found for the call, such as AGENTS.md from the Git root down to cwd; user-scoped entries are allowed. */
   readonly sources: readonly InstructionSource[];
   /** Nonfatal read problems, merged into the run's harness warnings. */
   readonly warnings?: readonly string[];
@@ -348,10 +352,12 @@ export interface Harness {
    */
   metadata?(request: HarnessRequest, invocation: HarnessInvocation): Promise<HarnessMetadata>;
   /**
-   * Detect the project-level instruction files the harness loads from `request.cwd`. Called once
-   * per distinct resolved cwd per run invocation, before the first live call there, with the run's
-   * shared discovery signal; never on replay, and never part of step identity. Resolve `undefined`
-   * to record nothing; a rejection becomes a run warning and never fails the call.
+   * Detect the instruction files the harness loads for one call that depend on the call, such as
+   * project files under `request.cwd` or files only an inherit-mode call reads. Called once per
+   * distinct resolved cwd and isolation mode per run invocation, before the first live call there,
+   * with the run's shared discovery signal; never on replay, and never part of step identity.
+   * Resolve `undefined` to record nothing; a rejection becomes a run warning and never fails the
+   * call.
    */
   projectInstructions?(
     request: HarnessRequest,
