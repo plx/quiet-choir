@@ -619,7 +619,8 @@ policy replaces the previous one, so an explicit flag becomes the new sticky val
   names the file and both digests, and its new digest is recorded.
 - A run started with a custom `--harness-config` must be resumed with the same configuration: a
   plain `resume` or `tick` is refused (`run.incompatible`, naming `--harness-config`) before any
-  agent starts, because the configuration is not recorded.
+  agent starts, because the configuration is not recorded. Tick skips such a run as `incompatible`
+  before importing it.
 - `tick` always resumes with `suspend` for that execution only, so one run's waits never hold the
   batch; the recorded wait mode stays, and a later plain `resume` of a `block` run blocks again.
 - A run recorded by an older build (or launched by an embedder, which supplies no policy) behaves as
@@ -681,7 +682,9 @@ this build cannot fully read ([record schema revision](storage.md#record-schema-
 skipped `incompatible` with the `run.incompatible` message and left unchanged. Each run appears in
 at most one entry. Tick also recovers `running` runs whose owner is gone, up to 3 consecutive times
 without a new completed step; then it reports `crash-loop` with a message naming `workflow resume`.
-An `orphans` entry's message says tick never signals a process and names
+The count is saved before the resume starts, so any crash during it counts, but a harness
+configuration mismatch (below) is skipped before the count and never counts. An `orphans` entry's
+message says tick never signals a process and names
 `workflow resume RUN --state-dir DIR --kill-orphans`, behind the detected launcher like other
 emitted commands and with the state directory shell-quoted when it needs quoting. With --run, exits
 are 0 completed (now or earlier), 75 pending, interrupted, locked, orphans or deadline, and 1
@@ -703,11 +706,12 @@ After the timeout tick reads no more records: each run not yet reported is skipp
 `message` and no `nextWakeAt` (an earlier --watch pass's entry is kept), and the exit codes above
 are unchanged. `--harness-config` supplies CLI harness configuration (JSON or `@file`) for resumed
 CLI runs, and omitting it means the defaults. It must match the configuration digest the run
-recorded at its latest live execution: otherwise the run is reported `incompatible` and left
-unchanged, unless `--allow-harness-config-change` accepts the change for every run that tick
-resumes. `--harness` (repeatable, the same values as on `resume`) selects the harness for every run
-that tick resumes; without it, each run uses its recorded [launch policy](#launch-policy).
-`workflow resume`, `execute --resume` and `answer --resume` refuse the same mismatch with
-`run.incompatible` (exit 3, `error.details.previousConfigDigest` and
-`error.details.requestedConfigDigest`) and accept the same flag. See [waits](waits.md) for due
-detection and notification hooks.
+recorded at its latest live execution: otherwise the run is reported as skipped `incompatible` with
+the `run.incompatible` message and left unchanged, before tick imports it, counts a stale recovery
+or uses a `--max-runs` attempt (with a fixture selection the resume itself ends `incompatible`),
+unless `--allow-harness-config-change` accepts the change for every run that tick resumes.
+`--harness` (repeatable, the same values as on `resume`) selects the harness for every run that tick
+resumes; without it, each run uses its recorded [launch policy](#launch-policy). `workflow resume`,
+`execute --resume` and `answer --resume` refuse the same mismatch with `run.incompatible` (exit 3,
+`error.details.previousConfigDigest` and `error.details.requestedConfigDigest`) and accept the same
+flag. See [waits](waits.md) for due detection and notification hooks.

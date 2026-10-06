@@ -167,16 +167,18 @@ tick never kills them. A `running` run whose owner is gone (no lock, or a dead o
 stale: tick recovers it without a due time. Before each such recovery it durably saves a
 `staleRecovery` counter; after 3 consecutive recoveries with no new completed step it stops with
 `crash-loop` until an explicit `workflow resume RUN`. A completed step restarts the count, and a
-clean suspension or completion removes it. With no `workflow cancel` yet, a run killed on purpose is
-recovered too. Changed source reports incompatible without changing the checkpoint: use the explicit
-[recovery path](durability.md#recovery-procedure). Tick does not retry failed runs, accept edits,
-change grants, or kill orphans. Custom/fixture adapters need their embedding application; tick's
-standalone CLI uses saved local/default-CLI provenance, not undisclosed adapter configuration. The
-checkpoint stores a digest of the CLI configuration (`harness.configDigest`), never its values. Pass
-the same `--harness-config` again on `tick` (as on `resume` and `answer --resume`) to reach a run
-started with custom binaries or limits; an omitted one means the defaults. A mismatch is reported
-`incompatible` (exit 1 with `--run`; `run.incompatible`, exit 3, on resume) and leaves the run
-unchanged. `--allow-harness-config-change` accepts a new configuration; on tick it applies to every
+clean suspension or completion removes it. The count is saved before the resume, so any crash during
+it counts; a harness configuration mismatch is skipped first and never counts. With no
+`workflow cancel` yet, a run killed on purpose is recovered too. Changed source reports incompatible
+without changing the checkpoint: use the explicit [recovery path](durability.md#recovery-procedure).
+Tick does not retry failed runs, accept edits, change grants, or kill orphans. Custom/fixture
+adapters need their embedding application; tick's standalone CLI uses saved local/default-CLI
+provenance, not undisclosed adapter configuration. The checkpoint stores a digest of the CLI
+configuration (`harness.configDigest`), never its values. Pass the same `--harness-config` again on
+`tick` (as on `resume` and `answer --resume`) to reach a run started with custom binaries or limits;
+an omitted one means the defaults. A mismatch leaves the run unchanged: tick reports it as skipped
+`incompatible` before importing it (exit 1 with `--run`), and resume refuses with `run.incompatible`
+(exit 3). `--allow-harness-config-change` accepts a new configuration; on tick it applies to every
 resumed run, so pair it with `--run`. Tick reads no `QUIET_CHOIR_HARNESS_CONFIG`. `killGraceMs`,
 fixtures and harness selection are not digested, and a kind change still needs
 `--allow-harness-change`.

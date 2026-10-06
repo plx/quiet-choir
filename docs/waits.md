@@ -293,7 +293,11 @@ of completed steps is unchanged, and restarts at 1 when a step has completed sin
 recovery. After 3 consecutive recoveries without a new completed step, tick neither resumes nor
 writes the run and reports it as `crash-loop`; inspect it and run `quiet-choir workflow resume RUN`
 to retry explicitly. A clean suspension or completion removes the counter. A due suspended run
-behind a dead lock never touches it.
+behind a dead lock never touches it. The counter is saved before the resume starts, so a crash
+anywhere in it (import, type check or workflow body) counts. A harness configuration mismatch (see
+below) is detected before the counter is saved and never counts toward the cap; a refusal that tick
+can find only after importing the workflow, such as a harness kind change requested with an explicit
+`--harness`, still counts.
 
 Tick uses stored entrypoint/tsconfig/cwd. Local-only and default CLI-harness runs can resume
 directly; custom/fixture adapters require the original embedding application to supply that live
@@ -305,11 +309,13 @@ are reported per run.
 Each live CLI execution records `harness.configDigest`, a SHA-256 of its resolved CLI harness
 configuration (custom binaries, output limits, `scrubEnv`, `harnesses.<name>`), never the values.
 `tick`, `resume` and `answer --resume` compare the configuration they supply with it, and an omitted
-`--harness-config` means the defaults. A mismatch refuses with `run.incompatible` (tick reports the
-run as `incompatible`, exit 1 with `--run`) without changing the checkpoint; `error.details` has
-`previousConfigDigest` and `requestedConfigDigest`. So a cron line for a run started with custom
-binaries or limits must repeat the same `--harness-config` on every `tick` call: tick reads no
-`QUIET_CHOIR_HARNESS_CONFIG`. To accept a different configuration, pass
+`--harness-config` means the defaults. A mismatch refuses with `run.incompatible` without changing
+the checkpoint; `error.details` has `previousConfigDigest` and `requestedConfigDigest`. Tick reports
+a run it would resume with the CLI harness as skipped `incompatible` with the same message (exit 1
+with `--run`), before importing the workflow, counting a stale recovery or using a `--max-runs`
+attempt; with a fixture selection the resume itself ends `incompatible`. So a cron line for a run
+started with custom binaries or limits must repeat the same `--harness-config` on every `tick` call:
+tick reads no `QUIET_CHOIR_HARNESS_CONFIG`. To accept a different configuration, pass
 `--allow-harness-config-change`; on tick it applies to every run that invocation resumes, so pair it
 with `--run`. `killGraceMs`, fixtures and the harness selection are not part of the digest, a binary
 named without a `/` is digested by name rather than by its PATH lookup, and a harness kind change
