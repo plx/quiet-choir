@@ -394,6 +394,18 @@ describe('skill roots', () => {
     ]);
   });
 
+  it('stops a skill listing after 2000 directories with a warning', async () => {
+    const skills = join(root, 'work', '.agents', 'skills');
+    for (let index = 0; index < 2000; index += 1)
+      await mkdir(join(skills, `d${String(index).padStart(4, '0')}`), { recursive: true });
+    await skill(join(skills, 'z-late'));
+    const found = await detectCodexProjectInstructionSources({ cwd: join(root, 'work'), home });
+    expect(found.sources).toEqual([]);
+    expect(found.warnings).toEqual([
+      `Stopped listing Codex skills under ${skills} after 2000 directories; more skill files may load.`,
+    ]);
+  });
+
   it('lists nested CODEX_HOME skills as user skills', async () => {
     await skill(join(codexHome, 'skills', 'group', 'nested'));
     expect(names(await detect(root))).toEqual([
