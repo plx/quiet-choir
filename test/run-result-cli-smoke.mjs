@@ -196,8 +196,8 @@ export default defineWorkflow({name:'many',version:'1',input:z.object({calls:z.n
   // <ANSWER_JSON> replaced it is refused as answer_author, and replacing <NAME> too delivers.
   const emitted = document(execute('gate-cmd', 60), 75).pending[0].answerCommand;
   const emittedRun = (replacements, ...extra) => {
-    const argv = emitted.slice(1).map((word) => replacements[word] ?? word);
-    return spawnSync(process.execPath, [join(project, 'bin/run.js'), ...argv, ...extra], {
+    const [program, ...argv] = emitted.map((word) => replacements[word] ?? word);
+    return spawnSync(program, [...argv, ...extra], {
       cwd: root,
       encoding: 'utf8',
       timeout: 60_000,
