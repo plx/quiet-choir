@@ -36,6 +36,7 @@ import {
   type RehearsalWorktreeEvent,
 } from './worktree-rehearsal.js';
 import { isolationIdentity } from './worktree-identity.js';
+import { resolveIsolation } from './agent-isolation.js';
 import {
   resolveWorktree,
   worktreeChangeSchema,
@@ -2511,7 +2512,7 @@ export async function runWorkflow<
 
     // Keyed by registration; a Map (not WeakMap) so draining can release abandoned discovery.
     const metadataRequests = new Map<object, Promise<HarnessMetadata | undefined>>();
-    // Project instruction detection, keyed by registration and then by resolved cwd.
+    // Project instruction detection, keyed by registration and then by isolation mode and cwd.
     const projectRequests = new Map<object, Map<string, Promise<void>>>();
     // Discovery is run-owned; an aborted scope may abandon its wait, so draining releases the rest.
     const discoveryController = new AbortController();
@@ -2754,15 +2755,17 @@ export async function runWorkflow<
               };
               const processContext = processInvocation(id, context);
               let cliVersion: string | null = null;
-              // Project files follow the cwd, so detection runs once per distinct cwd. It starts
-              // before metadata is awaited, so a first call waits for the slower of the two.
+              // Project files follow the cwd, and some files load only in one isolation mode (Claude's
+              // user CLAUDE.md in inherit), so detection runs once per distinct cwd and mode. It
+              // starts before metadata is awaited, so a first call waits for the slower of the two.
               let projectDetection: Promise<void> | undefined;
               if (liveAdapter.projectInstructions) {
                 const cwd = resolve(liveRequest.cwd);
+                const key = `${resolveIsolation(liveRequest.options).isolation}\0${cwd}`;
                 let byCwd = projectRequests.get(registration);
                 if (!byCwd)
                   projectRequests.set(registration, (byCwd = new Map<string, Promise<void>>()));
-                projectDetection = byCwd.get(cwd);
+                projectDetection = byCwd.get(key);
                 if (!projectDetection) {
                   projectDetection = (async () => {
                     const warnings: string[] = [];
@@ -2797,7 +2800,7 @@ export async function runWorkflow<
                   })();
                   // Abandoned waits must not leave an unobserved rejection behind.
                   projectDetection.catch(() => undefined);
-                  byCwd.set(cwd, projectDetection);
+                  byCwd.set(key, projectDetection);
                 }
               }
               if (liveAdapter.metadata) {

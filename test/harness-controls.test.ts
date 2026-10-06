@@ -917,6 +917,75 @@ it('detects project instructions once per distinct cwd, sequentially and in a pa
   ]);
 });
 
+it('detects again for the same cwd when the isolation mode differs, once per mode', async () => {
+  const harness = projectSpy(new Map([['a', 'rules a']]));
+  const definition = defineWorkflow({
+    ...base,
+    async run(ctx) {
+      await ctx.codex.text('one', { prompt: 'one', cwd: 'a' });
+      await ctx.codex.text('two', { prompt: 'two', cwd: 'a', isolation: 'restricted' });
+      await ctx.codex.text('three', { prompt: 'three', cwd: 'a', isolation: 'inherit' });
+      await ctx.codex.text('four', { prompt: 'four', cwd: 'a', isolation: 'inherit' });
+      return 'done';
+    },
+  });
+  expect((await runWorkflow(definition, { ...setup(), harness })).status).toBe('completed');
+  // Unset and explicit restricted resolve to the same mode.
+  expect(harness.projectInstructions).toHaveBeenCalledTimes(2);
+  expect(
+    harness.projectInstructions.mock.calls.map(
+      ([request]) => (request.options as { readonly isolation?: string }).isolation,
+    ),
+  ).toEqual(['restricted', 'inherit']);
+  // Both detections at one cwd keep one entry, replaced by the later one.
+  const record = await readRun(setup());
+  expect(record.projectInstructions).toEqual([
+    {
+      harness: 'codex',
+      cwd: join(record.cwd, 'a'),
+      sources: [expect.objectContaining({ path: join(record.cwd, 'a', 'AGENTS.md') })],
+    },
+  ]);
+});
+
+it('records only the inherit entry when restricted detection reports nothing', async () => {
+  const claudeMd = {
+    scope: 'user',
+    kind: 'claude-md',
+    path: '/home/fixture/.claude/CLAUDE.md',
+    sha256: 'e'.repeat(64),
+  } as const;
+  const harness = {
+    ...projectSpy(),
+    // Like CliHarness for Claude: the user CLAUDE.md loads only in inherit mode.
+    projectInstructions: vi
+      .fn<NonNullable<Harness['projectInstructions']>>()
+      .mockImplementation((request) =>
+        Promise.resolve(
+          (request.options as { readonly isolation?: string }).isolation === 'inherit'
+            ? { sources: [claudeMd] }
+            : undefined,
+        ),
+      ),
+  };
+  const definition = defineWorkflow({
+    ...base,
+    async run(ctx) {
+      await ctx.claude.text('restricted', { prompt: 'one' });
+      await ctx.claude.text('inherit', { prompt: 'two', isolation: 'inherit' });
+      await ctx.claude.text('restricted-again', { prompt: 'three' });
+      return 'done';
+    },
+  });
+  expect((await runWorkflow(definition, { ...setup(), harness })).status).toBe('completed');
+  expect(harness.projectInstructions).toHaveBeenCalledTimes(2);
+  const record = await readRun(setup());
+  expect(record.projectInstructions).toEqual([
+    { harness: 'claude', cwd: record.cwd, sources: [claudeMd] },
+  ]);
+  expect(record.harnessWarnings ?? []).toEqual([]);
+});
+
 it('keeps project detection out of step identity and replay', async () => {
   const files = new Map([
     ['a', 'rules a'],

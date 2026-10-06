@@ -32,6 +32,8 @@ const reply = {
 };
 beforeEach(async () => {
   directory = await mkdtemp(join(tmpdir(), 'choir-isolation-'));
+  // Instruction detection reads HOME/.agents/skills and HOME/.claude; keep the real ones out.
+  vi.stubEnv('HOME', join(directory, 'user-home'));
 });
 afterEach(async () => {
   vi.unstubAllEnvs();
@@ -479,7 +481,7 @@ it('records one user-level instruction warning per run, and flags a change on re
   }
 });
 
-it('reports Codex project files through projectInstructions without spawning, and none for Claude', async () => {
+it('reports Codex project files through projectInstructions without spawning, and none for restricted Claude', async () => {
   const spawned = join(directory, 'spawned');
   const binary = join(directory, 'spawn-marker');
   await writeFile(
@@ -524,6 +526,131 @@ it('reports Codex project files through projectInstructions without spawning, an
   expect(metadata.instructionSources).toEqual([
     expect.objectContaining({ scope: 'user', path: join(home, 'AGENTS.md') }),
   ]);
+});
+
+it('reports repository and HOME .agents skills for Codex at the right levels', async () => {
+  const home = await codexHome();
+  vi.stubEnv('CODEX_HOME', home);
+  const userHome = join(directory, 'user-home');
+  await mkdir(join(userHome, '.agents', 'skills', 'personal'), { recursive: true });
+  await writeFile(join(userHome, '.agents', 'skills', 'personal', 'SKILL.md'), 'personal');
+  const repo = join(directory, 'repo');
+  await mkdir(join(repo, '.git'), { recursive: true });
+  await mkdir(join(repo, '.agents', 'skills', 'review'), { recursive: true });
+  await writeFile(join(repo, '.agents', 'skills', 'review', 'SKILL.md'), 'review');
+  const harness = new CliHarness({ codexBinary: join(directory, 'missing-binary') });
+  const request = {
+    harness: 'codex',
+    cwd: repo,
+    outputSchema: null,
+    options: { prompt: 'x' },
+  } as const;
+  expect(await harness.projectInstructions(request, testInvocation())).toEqual({
+    sources: [
+      {
+        scope: 'project',
+        kind: 'skill',
+        path: join(repo, '.agents', 'skills', 'review', 'SKILL.md'),
+        sha256: sha256('review'),
+      },
+    ],
+  });
+  const metadata = await harness.metadata(request, testInvocation());
+  expect(metadata.instructionSources).toEqual([
+    expect.objectContaining({ scope: 'user', kind: 'agents', path: join(home, 'AGENTS.md') }),
+    {
+      scope: 'user',
+      kind: 'skill',
+      path: join(userHome, '.agents', 'skills', 'personal', 'SKILL.md'),
+      sha256: sha256('personal'),
+    },
+  ]);
+  expect(metadata.warnings).toContainEqual(expect.stringContaining('1 skill description file'));
+});
+
+it('reports the user CLAUDE.md for inherit-mode Claude only, honoring CLAUDE_CONFIG_DIR', async () => {
+  const userHome = join(directory, 'user-home');
+  const text = 'CLAUDE_USER_RULES_CANARY';
+  await mkdir(join(userHome, '.claude'), { recursive: true });
+  await writeFile(join(userHome, '.claude', 'CLAUDE.md'), text);
+  const configured = join(directory, 'configured');
+  await mkdir(configured);
+  await writeFile(join(configured, 'CLAUDE.md'), `${text} configured`);
+  vi.stubEnv('CLAUDE_CONFIG_DIR', undefined);
+  const harness = new CliHarness({ claudeBinary: join(directory, 'missing-binary') });
+  const request = (options: Record<string, unknown>) => ({
+    harness: 'claude' as const,
+    cwd: directory,
+    outputSchema: null,
+    options: { prompt: 'x', ...options },
+  });
+  const claudeMd = (path: string, content: string) => ({
+    sources: [{ scope: 'user', kind: 'claude-md', path, sha256: sha256(content) }],
+  });
+  expect(
+    await harness.projectInstructions(request({ isolation: 'inherit' }), testInvocation()),
+  ).toEqual(claudeMd(join(userHome, '.claude', 'CLAUDE.md'), text));
+  // Restricted Claude never loads it, so nothing is reported.
+  expect(await harness.projectInstructions(request({}), testInvocation())).toBeUndefined();
+  expect(
+    await harness.projectInstructions(request({ isolation: 'restricted' }), testInvocation()),
+  ).toBeUndefined();
+  // A per-call env.set wins over the inherited environment, as it does for the child.
+  expect(
+    await harness.projectInstructions(
+      request({ isolation: 'inherit', env: { set: { CLAUDE_CONFIG_DIR: configured } } }),
+      testInvocation(),
+    ),
+  ).toEqual(claudeMd(join(configured, 'CLAUDE.md'), `${text} configured`));
+  vi.stubEnv('CLAUDE_CONFIG_DIR', configured);
+  expect(
+    await harness.projectInstructions(request({ isolation: 'inherit' }), testInvocation()),
+  ).toEqual(claudeMd(join(configured, 'CLAUDE.md'), `${text} configured`));
+});
+
+it('records the Claude user CLAUDE.md for an inherit call after a restricted call at the same cwd', async () => {
+  const binary = join(directory, await fakeBinary());
+  const config = join(directory, 'claude-config');
+  await mkdir(config);
+  await writeFile(join(config, 'CLAUDE.md'), 'USER_CLAUDE_RULES');
+  vi.stubEnv('CLAUDE_CONFIG_DIR', config);
+  const workflow = defineWorkflow({
+    name: 'claude-inherit',
+    version: '1',
+    strictProfiles: false,
+    input: z.null(),
+    output: z.null(),
+    async run(ctx) {
+      await ctx.claude.text('restricted', { prompt: 'one' });
+      await ctx.claude.text('inherit', { prompt: 'two', isolation: 'inherit' });
+      await ctx.claude.text('again', { prompt: 'three' });
+      return null;
+    },
+  });
+  const options = {
+    runId: 'claude-inherit',
+    stateDir: join(directory, 'runs'),
+    cwd: directory,
+    grants: ['all'],
+    harness: new CliHarness({ claudeBinary: binary }),
+  };
+  expect((await runWorkflow(workflow, { ...options, input: null })).status).toBe('completed');
+  const record = await readRun(options);
+  expect(record.projectInstructions).toEqual([
+    {
+      harness: 'claude',
+      cwd: record.cwd,
+      sources: [
+        {
+          scope: 'user',
+          kind: 'claude-md',
+          path: join(config, 'CLAUDE.md'),
+          sha256: sha256('USER_CLAUDE_RULES'),
+        },
+      ],
+    },
+  ]);
+  expect(JSON.stringify(record)).not.toContain('USER_CLAUDE_RULES');
 });
 
 it('records project instruction sources for each distinct Codex cwd and warns about user files once', async () => {
@@ -794,7 +921,9 @@ it('points the user-level instruction warning at the opt-out', () => {
     warnings: [],
   });
   expect(warning).toContain('every isolation mode, including restricted');
-  expect(warning).toContain("Set codex instructions: 'none' to run a call without them.");
+  expect(warning).toContain(
+    "Set codex instructions: 'none' to run a call without the CODEX_HOME files; skills under $HOME/.agents/skills still load.",
+  );
 });
 
 const untestedClaude = (() => {

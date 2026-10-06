@@ -20,6 +20,7 @@ beforeEach(async () => {
 afterEach(async () => {
   process.exitCode = undefined;
   vi.restoreAllMocks();
+  vi.unstubAllEnvs();
   await rm(directory, { recursive: true, force: true });
 });
 const projectRoot = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -418,6 +419,8 @@ it.skipIf(process.platform === 'win32')(
 it('names user-level Codex instruction files in the inherited-defaults check without leaking contents', async () => {
   const home = join(directory, 'codex-home');
   await mkdir(home);
+  // Keep the real ~/.agents/skills out of the user-level sources.
+  vi.stubEnv('HOME', join(directory, 'user-home'));
   const options = {
     harness: 'codex',
     codexBinary: await binary('codex'),
@@ -449,4 +452,26 @@ it('names user-level Codex instruction files in the inherited-defaults check wit
     },
   ]);
   expect(JSON.stringify(present)).not.toContain(canary);
+});
+
+it('names the inherit-only Claude user CLAUDE.md in the inherited-defaults check without leaking contents', async () => {
+  const config = join(directory, 'claude-config');
+  await mkdir(config);
+  vi.stubEnv('CLAUDE_CONFIG_DIR', config);
+  const options = { harness: 'claude', claudeBinary: await binary('claude') } as const;
+  const check = (report: DoctorReport) =>
+    report.checks.find((entry) => entry.check === 'inherited-defaults')?.message ?? '';
+
+  const absent = check(await probeHarnessContracts(options));
+  expect(absent).toContain('Restricted mode skips user/project settings');
+  expect(absent).not.toContain('CLAUDE.md');
+
+  const canary = 'DOCTOR_CLAUDE_MD_CANARY_5521';
+  await writeFile(join(config, 'CLAUDE.md'), canary);
+  const report = await probeHarnessContracts(options);
+  const message = check(report);
+  expect(message).toContain(
+    `Inherit-mode calls also load the user instruction file ${join(config, 'CLAUDE.md')} (sha256 ${createHash('sha256').update(canary).digest('hex').slice(0, 12)}); restricted calls skip it.`,
+  );
+  expect(JSON.stringify(report)).not.toContain(canary);
 });
