@@ -66,6 +66,7 @@ afterEach(async () => {
   renameHook.current = undefined;
   vi.restoreAllMocks();
   await chmod(dirname(lockPath), 0o700).catch(() => undefined);
+  await chmod(lockPath, 0o700).catch(() => undefined);
   await rm(common, { recursive: true, force: true });
 });
 
@@ -93,6 +94,28 @@ async function plant(
       join(lockPath, 'recovery.json'),
       JSON.stringify({ host: hostname(), token: randomUUID(), osStartTime: null, ...recovery }),
     );
+}
+
+/** The lock's current `owner.json`, parsed. */
+async function ownerJson(): Promise<Record<string, unknown>> {
+  return JSON.parse(await readFile(join(lockPath, 'owner.json'), 'utf8')) as Record<
+    string,
+    unknown
+  >;
+}
+
+/** Fail the next retire of the lock (its rename to a tombstone) with an errno-coded EIO. */
+function failNextRetire(): void {
+  beforeRename(lockPath, '.gone', () => {
+    throw Object.assign(new Error('EIO: injected i/o error, rename'), { code: 'EIO' });
+  });
+}
+
+/** Another process acquires and releases the lock, without this one acquiring it again. */
+async function anotherProcessAcquires(): Promise<void> {
+  const holder = holdAdminLock(common, 0);
+  await holder.held;
+  expect(await holder.exited).toMatchObject({ code: 0 });
 }
 
 /** The lock's directory holds nothing: no lock, no publish directory, no tombstone. */
@@ -145,15 +168,70 @@ it('reclaims a lock this process leaked instead of waiting for itself', async ()
   await expectNoResidue();
 });
 
-it.skipIf(process.platform === 'win32' || process.getuid?.() === 0)(
-  'never hangs a later acquire after a release fails',
+it('hands a lock whose release fails to recovery so another process acquires it', async () => {
+  const release = await acquireWorktreeAdminLock(common, { signal });
+  const { token } = await ownerJson();
+  failNextRetire();
+  await expect(release()).rejects.toMatchObject({ code: 'EIO' });
+  // The verified lock now names this live process as released, with no temporary file left.
+  expect(await ownerJson()).toMatchObject({
+    pid: process.pid,
+    host: hostname(),
+    token,
+    released: true,
+  });
+  expect(await readdir(lockPath)).toEqual(['owner.json']);
+  expect(await inspectWorktreeAdminLock(common)).toMatchObject({
+    owner: { pid: process.pid, token, state: 'released' },
+  });
+  await anotherProcessAcquires();
+  await expectNoResidue();
+});
+
+/** Directory modes do not stop writes: on Windows, or as root. */
+const modesUnenforced = process.platform === 'win32' || process.getuid?.() === 0;
+
+it.skipIf(modesUnenforced)(
+  'never hangs a later acquire in another process after a release fails',
   async () => {
     const release = await acquireWorktreeAdminLock(common, { signal });
+    const { token } = await ownerJson();
     // The retire rename needs a writable parent; without it the lock stays behind.
     await chmod(dirname(lockPath), 0o500);
     await expect(release()).rejects.toMatchObject({ code: 'EACCES' });
+    // The hand-off renames only inside the lock directory, whose mode is its own.
+    expect(await ownerJson()).toMatchObject({ pid: process.pid, token, released: true });
     await chmod(dirname(lockPath), 0o700);
     expect(await readdir(dirname(lockPath))).toEqual(['worktree-admin.lock']);
+    await anotherProcessAcquires();
+    await expectNoResidue();
+  },
+);
+
+it.skipIf(modesUnenforced)(
+  'falls back to recovering its own leaked lock when the hand-off also fails',
+  async () => {
+    const release = await acquireWorktreeAdminLock(common, { signal });
+    const before = await readFile(join(lockPath, 'owner.json'), 'utf8');
+    // Neither the retire nor the hand-off's temporary file can be written.
+    await chmod(lockPath, 0o500);
+    await chmod(dirname(lockPath), 0o500);
+    const error = await release().then(
+      () => undefined,
+      (cause: unknown) => cause,
+    );
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toContain(`${lockPath} could not be released (`);
+    expect((error as Error).message).toContain(') or handed to recovery (');
+    expect((error as Error).cause).toMatchObject({ code: 'EACCES' });
+    expect(await readFile(join(lockPath, 'owner.json'), 'utf8')).toBe(before);
+    expect(await inspectWorktreeAdminLock(common)).toMatchObject({
+      owner: { pid: process.pid, state: 'alive' },
+    });
+    await chmod(dirname(lockPath), 0o700);
+    await chmod(lockPath, 0o700);
+    expect(await readdir(lockPath)).toEqual(['owner.json']);
+    // Only this process knows the token is no longer held, so its own next acquire recovers it.
     const again = await acquireWorktreeAdminLock(common, { signal, stuckAfterMs: 0 });
     await again();
     await expectNoResidue();
@@ -392,6 +470,17 @@ describe('unlockWorktreeAdminLock', () => {
     await plant({ pid: process.pid, released: true });
     expect((await unlockWorktreeAdminLock({ commonGitDir: common })).lock).toMatchObject({
       owner: { pid: process.pid, state: 'released' },
+      action: 'removed',
+    });
+    await expectNoResidue();
+  });
+
+  it('clears a lock handed to recovery by a failed release', async () => {
+    const release = await acquireWorktreeAdminLock(common, { signal });
+    failNextRetire();
+    await expect(release()).rejects.toMatchObject({ code: 'EIO' });
+    expect((await unlockWorktreeAdminLock({ commonGitDir: common })).lock).toMatchObject({
+      owner: { pid: process.pid, host: hostname(), state: 'released' },
       action: 'removed',
     });
     await expectNoResidue();
