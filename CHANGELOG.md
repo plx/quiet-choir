@@ -2,6 +2,10 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- `workflow answer --harness` (addition; no identity or storage-format change): the flag is now
+  repeatable and takes `cli`, `fixture:<file>` and `name=fixture:<file>` like `resume`, `execute`
+  and `tick`, so `answer --resume` can override a run's named fixtures. Omitted, it still inherits
+  the recorded selection (#259).
 - Launch policy (behavior change; no identity or storage-format change): an embedder's
   `RunOptions.launch` without a `policy` now keeps the policy the run record holds instead of
   erasing it, so a later CLI resume continues under the harness selection and wait mode the run

@@ -655,7 +655,10 @@ passes null for a selection built from data, which a later resume could not repr
   `--wait-mode` they use the recorded wait mode. `tick` without `--harness` does the same for each
   run.
 - Explicit `--harness` or `--wait-mode` replaces the recorded value. A different harness kind still
-  needs `--allow-harness-change`.
+  needs `--allow-harness-change`. `--harness` is repeatable with the same values (`cli`,
+  `fixture:<file>`, `name=fixture:<file>`) on `execute`, `resume`, `answer --resume` and `tick`, so
+  `answer --resume` can override a run's named fixtures. Two global values or a repeated name is
+  `usage.flag`, before the answer is delivered.
 - `execute`, `start` and `resume` accept `--worktree-keep all|failed|none` and `--worktree-root DIR`
   (resolved against the working directory; an empty value or an unknown keep is `usage.flag`). They
   replace the root definition's `worktrees.keep` and `worktrees.root` for that run. Only the flags
