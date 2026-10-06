@@ -307,11 +307,16 @@ tuple type, so a strict workflow's `ctx.agent(name)` options omit those keys and
 typecheck (a widened `string[]` list, an omitted list or explicit `<N, O, C>` type arguments stay
 permissive at type level; the runtime still rejects the keys). Child calls cannot exceed delegated
 roles. `policy` lists option keys excluded from semantic identity; adapter defaults and operator
-configuration are also outside identity. Custom adapters must enforce the resolved policy supplied
-in the invocation context. `maxTurns` and `maxBudgetUsd` reach a registered harness, in its attempt
-policy record, `invocation.policy` and request options, only when its options schema declares them;
-otherwise profile, override and delegated values for them are not applied or recorded (and
-`--dry-run` does not warn about them). `timeoutMs` and the other limits are unaffected.
+configuration are also outside identity. `sensitiveOptions` lists option keys (tokens, headers,
+connection strings) that checkpoints, `workflow validate --json` and `check-resume --json` show only
+as `redacted.harnesses.<name>.<key>` (`{ sha256, keys? }`, `keys` for objects); live calls, grant
+pins and step identity keep the raw values. `defineHarness` rejects unknown and duplicate keys and
+those that never reach a manifest: `prompt`, `model`, `env` and call options profiles cannot set.
+Step records, prompts and argv are not redacted. Custom adapters must enforce the resolved policy
+supplied in the invocation context. `maxTurns` and `maxBudgetUsd` reach a registered harness, in its
+attempt policy record, `invocation.policy` and request options, only when its options schema
+declares them; otherwise profile, override and delegated values for them are not applied or recorded
+(and `--dry-run` does not warn about them). `timeoutMs` and the other limits are unaffected.
 
 Import `runProcess`, `createFakeBinary`, and `assertHarnessConformance` from
 `quiet-choir/harness-kit`. Pass `invocation.trackProcess` to the process runner so registration

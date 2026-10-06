@@ -354,7 +354,14 @@ adopts the frame that runs it next, and a committed one refuses to run in anothe
 run through a bound view outside the frame's ID prefix still counts as that frame's terminal work.
 Revision-7 records read and resume unchanged, and a failed frame in one can be redefined. A
 revision-7 build reads a revision-8 record without the history or map frames and refuses to rewrite
-it instead of dropping `redefinitions` and `frame`.
+it instead of dropping `redefinitions` and `frame`. Revision 9 (#247) is nested-only: `capabilities`
+profiles gain the optional `redacted.harnesses`, digests and key names of the registered harness
+options a declaration lists in `sensitiveOptions`, which no longer appear under the profile's
+`harnesses` or `harnessCapabilities` ([harness controls](harness-controls.md)). Revision-8 records
+read and resume unchanged, and the next execution rewrites `capabilities` without the plaintext
+values. A revision-8 build cannot parse a record that holds `redacted.harnesses` (its strict
+`redacted` shape rejects the key), so every read of that record is the `run.incompatible` upgrade
+refusal described below; it refuses to rewrite any other revision-9 record.
 
 **Refusals.** A build must not rewrite a record it cannot fully read: its parse strips unknown
 top-level fields, and the next compaction would write the record back without them. When a record

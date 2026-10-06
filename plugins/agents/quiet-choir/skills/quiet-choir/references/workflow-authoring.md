@@ -59,11 +59,12 @@ version requires a new run ID (a fork can reuse compatible steps). See [durabili
 Call-site task prompts and identity options are stored as component hashes. Resolved execution
 policy and requested model/effort are stored in plaintext per attempt. Profile declarations are
 saved in the capability manifest, with free-form controls reduced to names and digests: Claude
-settings, MCP servers, agents, system prompts and Codex config appear under `redacted` as
-`{ sha256, keys? }`, and environment values appear as names and a digest. Tools, permission mode,
-plugins, `extraArgs`, models and limits stay plaintext, so never put secret values in `extraArgs`.
-Checkpoints written before this change are scrubbed the next time the run executes. Keep rotating
-secrets in the parent environment; inspection cannot reconstruct hashed call-site prompts.
+settings, MCP servers, agents, system prompts, Codex config and a registered harness's declared
+`sensitiveOptions` appear under `redacted` as `{ sha256, keys? }`, and environment values appear as
+names and a digest. Tools, permission mode, plugins, `extraArgs`, models and limits stay plaintext,
+so never put secret values in `extraArgs`. Checkpoints written before this change are scrubbed the
+next time the run executes. Keep rotating secrets in the parent environment; inspection cannot
+reconstruct hashed call-site prompts.
 
 Agent operations are already durable: call them directly from the workflow, not from inside
 `ctx.step`. Local `run` receives `{ signal, attempt, idempotencyKey, cwd, exec, reportUsage }`.
