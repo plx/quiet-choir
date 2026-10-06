@@ -17,6 +17,7 @@ export const eventLineTypes = [
   'step.failed',
   'step.settled',
   'wait.opened',
+  'wait.tolerated',
   'phase',
   'log',
 ] as const;
@@ -58,7 +59,10 @@ export interface EventLine {
   readonly costUsd?: number;
   /** Phase at the call site. */
   readonly phase?: string;
-  /** Truncated message: the run error, phase title, log text plus data, or the open question. */
+  /**
+   * Truncated message: the run error, phase title, log text plus data, the open question, or the
+   * tolerated poll error with its count.
+   */
   readonly msg?: string;
 }
 
@@ -152,7 +156,9 @@ function fit(line: Record<string, unknown>): string {
 
 /**
  * The untruncated `msg` of an event: the compact JSON of `question` in a `wait.opened` payload,
- * the message plus the compact JSON of non-null data for `log`, and the message otherwise.
+ * the message plus the compact JSON of non-null data for `log`, `tolerated N/LIMIT: message` (with
+ * ` [code]` after LIMIT when the error had a code) for `wait.tolerated`, and the message otherwise.
+ * A `wait.tolerated` entry whose data lacks the counts falls back to its message.
  * @internal
  */
 export function eventMessage(event: {
@@ -167,6 +173,15 @@ export function eventMessage(event: {
     return question === null || question === undefined ? undefined : JSON.stringify(question);
   }
   const text = event.message ?? '';
+  if (event.type === 'wait.tolerated') {
+    const data = event.data;
+    if (data === null || data === undefined || typeof data !== 'object' || Array.isArray(data))
+      return text;
+    const { consecutive, tolerate, code } = data;
+    if (typeof consecutive !== 'number' || typeof tolerate !== 'number') return text;
+    const suffix = typeof code === 'string' && code ? ` [${code}]` : '';
+    return `tolerated ${String(consecutive)}/${String(tolerate)}${suffix}: ${text}`;
+  }
   if (event.type === 'log' && event.data !== undefined && event.data !== null)
     return `${text} ${JSON.stringify(event.data)}`;
   return text;

@@ -781,6 +781,7 @@ const recordFieldsSchema = z.object({
           'run.suspended',
           'phase',
           'log',
+          'wait.tolerated',
         ]),
         phase: z.string().nullable(),
         total: z.number().int().nonnegative().nullable(),
@@ -1090,9 +1091,10 @@ const recordSchema = recordFieldsSchema.superRefine((record, context) => {
  * the `maxWindowUtilization` budget stop with its `harness`, `window` and `resetsAt`. Revision 3
  * (#170) added the settled child frame's `onError` and `settled` fields to `children`. Revision 4
  * (#171) added the profile field `claude.addDirRoots` to `capabilities` and the optional `addDirs`
- * to step and attempt request summaries. @internal
+ * to step and attempt request summaries. Revision 5 (#223) added the run event type
+ * `wait.tolerated` to `events`. @internal
  */
-export const SUPPORTED_SCHEMA_REVISION = 4;
+export const SUPPORTED_SCHEMA_REVISION = 5;
 
 /** The top-level run-record keys this build knows. @internal */
 export const RECORD_FIELD_KEYS: readonly string[] = Object.freeze(

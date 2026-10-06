@@ -5,6 +5,9 @@
 Accepted. Extends [ADR 0018](0018-durable-questions.md), retaining question identities and inbox
 ownership. Supersedes the in-process-only sleep behavior in
 [ADR 0002](0002-durable-external-workflows.md). Storage format 7 and replay contract 6 remain.
+Amended by #223: each poll error that `onError` tolerates appends a `wait.tolerated` run event in
+the same save as `lastError`, outside the replay ledger and the wait's identity, announced after
+that save.
 
 ## Context
 

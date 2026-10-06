@@ -103,6 +103,7 @@ function runEventCandidates(record: RunRecord): Candidate[] {
       event.data,
       event.phase,
       event.frame ?? null,
+      event.stepId,
     ]);
     const occurrence = (occurrences.get(base) ?? 0) + 1;
     occurrences.set(base, occurrence);
@@ -218,7 +219,8 @@ function stepCandidates(record: RunRecord, id: string, step: StepRecord): Candid
 
 /**
  * Derive `--events` lines from a persisted run record, for a follower that never imports the
- * workflow. Sources: every `record.events` entry (run lifecycle, phase, log); every settled step
+ * workflow. Sources: every `record.events` entry (run lifecycle, phase, log, and `wait.tolerated`
+ * for each tolerated poll error); every settled step
  * attempt (`step.completed`, `step.failed`, and `step.settled` for the final attempt of a settled
  * failure); and every question that notified (`wait.opened`). Fork-reused steps and cancelled or
  * interrupted attempts write nothing, and fields the record cannot supply are omitted. Lines are

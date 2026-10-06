@@ -187,6 +187,7 @@ export interface RunSummary {
    * key is absent when the run has none, so a run without one serializes as before.
    */
   readonly budgetStop?: RunBudgetStop;
+  /** The last 5 `log`, `phase` and `wait.tolerated` (tolerated poll error) entries, as stored. */
   readonly recent: readonly RunEvent[];
   /** The latest accepted code changes, at most 5, as stored; a map entry names its settled map. */
   readonly codeChanges: readonly CodeChange[];
@@ -459,7 +460,9 @@ export function summarizeRun(
     ([, step]) => run.phase !== null && run.phase !== undefined && step.phase === run.phase.title,
   );
   const recent = (run.events ?? [])
-    .filter((event) => event.type === 'log' || event.type === 'phase')
+    .filter(
+      (event) => event.type === 'log' || event.type === 'phase' || event.type === 'wait.tolerated',
+    )
     .slice(-5);
   const lastActivityAt =
     [

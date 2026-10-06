@@ -1653,3 +1653,46 @@ it('shows a compact settled outcome on child rows and marks settled frames in th
   expect(lines.find((line) => line.includes('[kid]'))).toContain('kid: kid@1 failed (settled);');
   expect(lines.find((line) => line.includes('[ok]'))).toContain('ok: kid@1 completed (settled);');
 });
+
+it('lists tolerated poll errors among recent entries and prints them with their wait', () => {
+  const entry = (
+    type: 'log' | 'phase' | 'wait.tolerated' | 'run.started',
+    message: string,
+    fields: Partial<NonNullable<RunRecord['events']>[number]> = {},
+  ): NonNullable<RunRecord['events']>[number] => ({
+    at: time,
+    execution: 1,
+    type,
+    phase: null,
+    total: null,
+    message,
+    data: null,
+    stepId: null,
+    ...fields,
+  });
+  const summary = summarizeRun(
+    {
+      ...record(),
+      events: [
+        entry('run.started', ''),
+        entry('phase', 'watch', { phase: 'watch' }),
+        entry('wait.tolerated', 'HTTP 502: Bad Gateway', {
+          phase: 'watch',
+          stepId: 'ci',
+          data: { consecutive: 2, tolerate: 3, code: 'ECONNRESET' },
+        }),
+        entry('log', 'checked', { phase: 'watch', data: { n: 1 } }),
+      ],
+    },
+    unlocked,
+  );
+  expect(summary.recent.map((event) => event.type)).toEqual(['phase', 'wait.tolerated', 'log']);
+  const lines = formatRunSummary(summary)
+    .split('\n')
+    .filter((line) => line.startsWith('Recent:'));
+  expect(lines).toEqual([
+    `Recent: ${time} [watch] watch`,
+    `Recent: ${time} [watch] ci tolerated 2/3 [ECONNRESET]: HTTP 502: Bad Gateway`,
+    `Recent: ${time} [watch] checked {"n":1}`,
+  ]);
+});

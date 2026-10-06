@@ -83,7 +83,10 @@ export interface ExecutionRecord {
   errorStack: string | null;
 }
 
-/** Persisted lifecycle, phase, or log entry. Step transitions also have live WorkflowEvents. */
+/**
+ * Persisted lifecycle, phase, log, or tolerated poll error entry. Step transitions also have live
+ * WorkflowEvents.
+ */
 export interface RunEvent {
   /** Inline frame at the observation call site, or null/absent for root events. */
   readonly frame?: string | null;
@@ -99,16 +102,23 @@ export interface RunEvent {
     | 'run.cancelled'
     | 'run.suspended'
     | 'phase'
-    | 'log';
+    | 'log'
+    | 'wait.tolerated';
   /** Phase at the call site. */
   readonly phase: string | null;
   /** Expected phase step count, when known. */
   readonly total: number | null;
-  /** Human diagnostic or phase label. */
+  /**
+   * Human diagnostic or phase label; for `wait.tolerated`, the tolerated error's message cut to
+   * its first 1024 UTF-16 code units.
+   */
   readonly message: string | null;
-  /** Explicit user log data; null when absent. */
+  /**
+   * Explicit user log data, null when absent; for `wait.tolerated`, `{ consecutive, tolerate }`
+   * plus `code` when the error carried a string code (cut to 128 UTF-16 code units).
+   */
   readonly data: JsonValue;
-  /** Root effect on run failure; null for other notifications. */
+  /** Root effect on run failure, or the wait ID for `wait.tolerated`; null for other notifications. */
   readonly stepId: string | null;
 }
 

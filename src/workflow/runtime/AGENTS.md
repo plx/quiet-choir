@@ -118,13 +118,15 @@ it reruns on resume) or close; an observer ignoring it is abandoned after a real
 `waitWarnings` entry, and an abandoned scan never writes after close() returns. A poll's `onError`
 (policy, never identity) may tolerate only a rejected observation or its timeout, never
 cancellation, an `isFatal` authoring error, or a shape, schema or note failure; its consecutive
-count lives in the persisted `lastError`. A command poll observes through the same guarded path
-(`poll-command.ts`, one `context.exec.json` per check, then a pure `done`); its `poll.command`
-identity is present only for that form, so observer-form requests stay byte-identical.
-Due-within-1000ms waits remain active; long waits park under the same quiescence contract as
-questions. Error draining stops new checks and aborts only the in-flight observation, never active
-siblings. Tick must claim the ordinary writer before importing source and transfer that ownership to
-the runtime. See [ADR 0020](../../../docs/decisions/0020-durable-waits-and-tick.md).
+count lives in the persisted `lastError`. A tolerated error appends a `wait.tolerated` run event in
+the same save as `lastError`, outside `eventCounts`, and notifies it only after that save. A command
+poll observes through the same guarded path (`poll-command.ts`, one `context.exec.json` per check,
+then a pure `done`); its `poll.command` identity is present only for that form, so observer-form
+requests stay byte-identical. Due-within-1000ms waits remain active; long waits park under the same
+quiescence contract as questions. Error draining stops new checks and aborts only the in-flight
+observation, never active siblings. Tick must claim the ordinary writer before importing source and
+transfer that ownership to the runtime. See
+[ADR 0020](../../../docs/decisions/0020-durable-waits-and-tick.md).
 
 Exec depends on ProcessRunner, never a native spawn import. It shares durable registration with
 agents but never their admission slots, grants, or usage. Keep command/cwd/env/input/exit contract

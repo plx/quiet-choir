@@ -207,6 +207,18 @@ export class RunObservations {
     this.#event('log', message, data === undefined ? null : jsonValue(data));
   }
 
+  /**
+   * Append a runtime-owned entry, such as `wait.tolerated`, stamped with this execution, and return
+   * it. It schedules no save: the caller commits it with its own checkpoint and notifies after that
+   * save. It never enters the `eventCounts` replay ledger, because it records a runtime
+   * observation rather than a body call that replays.
+   */
+  public appendRuntime(event: Omit<RunEvent, 'execution'>): RunEvent {
+    const entry: RunEvent = { ...event, execution: this.execution.n };
+    this.#append(entry);
+    return entry;
+  }
+
   public async flush(): Promise<void> {
     while (this.#pending.size) await Promise.all(this.#pending);
     if (this.#error !== undefined) throw this.#error;

@@ -18,6 +18,7 @@ import type { ProcessRunner } from '../runtime/exec-model.js';
 import { lstat, realpath, stat } from 'node:fs/promises';
 import { isAbsolute, join } from 'node:path';
 import { WorkflowNotifications } from './notifications.js';
+import { eventMessage } from './event-line.js';
 import { WorkflowEventLog, type EventLogTarget } from './events.js';
 import { recordEventLines, type EventFollowCursor } from './event-follow.js';
 import { fixturesFromRun } from './fixtures.js';
@@ -64,7 +65,7 @@ import { describeWorkflow } from '../runtime/definition.js';
 import { listDefinitions } from './registry.js';
 import { analyzeTypecheckEntrypoint } from '../typecheck/plan.js';
 
-import type { ExecutionLogger, Executor } from '../../application/execution.js';
+import type { ExecutionLogger, Executor, LogLevel } from '../../application/execution.js';
 import type { Harness } from '../runtime/model.js';
 import { runWorkflow } from '../runtime/runner.js';
 import { legacyRunPath, resolveStateDir, runDirectory } from '../runtime/paths.js';
@@ -112,6 +113,35 @@ export function formatAgentEventDetail(event: WorkflowEvent): string {
     event.message ??
     `${event.stepId ?? ''} (attempt ${String(event.attempt)})${event.harness === undefined ? '' : ` harness=${event.harness}`}${agentProgress ? ` ${event.progress?.summary ?? event.outcome ?? 'started'}${event.sessionId ? ` session=${event.sessionId}` : ''}${windows === null ? '' : ` rate-limit: ${windows}`}` : event.waitedMs === undefined ? '' : ` waitedMs=${String(event.waitedMs)} inFlight=${JSON.stringify(event.inFlight)} queued=${String(event.queued)}`}`
   );
+}
+
+/**
+ * The stderr log level and line for one `WorkflowEvent`: phases, logs and tolerated poll errors
+ * (`wait.tolerated`, which names its wait and reads like its event line) are info, as are agent
+ * progress events with `progress`; a replay divergence warns; everything else is debug. @internal
+ */
+export function eventLogEntry(
+  event: WorkflowEvent,
+  progress: boolean,
+): { readonly level: LogLevel; readonly message: string } {
+  const tolerated = event.type === 'wait.tolerated';
+  const observational = event.type === 'phase' || event.type === 'log' || tolerated;
+  const agentProgress =
+    event.type === 'agent.started' ||
+    event.type === 'agent.progress' ||
+    event.type === 'agent.finished';
+  const detail = tolerated
+    ? `${event.stepId ?? ''} ${eventMessage(event) ?? ''}`
+    : formatAgentEventDetail(event);
+  return {
+    level:
+      observational || (progress && agentProgress)
+        ? 'info'
+        : event.type === 'replay.divergence'
+          ? 'warn'
+          : 'debug',
+    message: `${event.at} ${event.runId} ${event.type} ${detail}${event.data == null || tolerated ? '' : ` ${JSON.stringify(event.data)}`}${event.replayed ? ' (replay)' : ''}`,
+  };
 }
 
 /** Explicit live dependencies, kept outside serializable command plans. */
@@ -828,11 +858,6 @@ export class WorkflowExecutor implements Executor<WorkflowExecutorPlan, Workflow
           rehearsal?.observe(event);
           notifications?.observe(event);
           events?.observe(event);
-          const observational = event.type === 'phase' || event.type === 'log';
-          const agentProgress =
-            event.type === 'agent.started' ||
-            event.type === 'agent.progress' ||
-            event.type === 'agent.finished';
           const denials = event.diagnostics?.['permissionDenials'];
           if (event.type === 'agent.finished' && typeof denials === 'number' && denials > 0)
             this.#options.logger.log(
@@ -844,15 +869,8 @@ export class WorkflowExecutor implements Executor<WorkflowExecutorPlan, Workflow
             for (const warning of event.warnings ?? [])
               if (warning.startsWith('no-tool-use:'))
                 this.#options.logger.log('warn', `${event.stepId}: ${warning}`);
-          const detail = formatAgentEventDetail(event);
-          this.#options.logger.log(
-            observational || (plan.progress && agentProgress)
-              ? 'info'
-              : event.type === 'replay.divergence'
-                ? 'warn'
-                : 'debug',
-            `${event.at} ${event.runId} ${event.type} ${detail}${event.data == null ? '' : ` ${JSON.stringify(event.data)}`}${event.replayed ? ' (replay)' : ''}`,
-          );
+          const entry = eventLogEntry(event, plan.progress === true);
+          this.#options.logger.log(entry.level, entry.message);
         },
       });
       return {
