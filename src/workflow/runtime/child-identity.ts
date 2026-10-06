@@ -47,8 +47,8 @@ function chain(record: RunRecord, id: string): string[] {
  * or superseded, it is not settled, no committed map item or settled frame owns it or an ancestor,
  * and nothing in its subtree (the frame and every frame whose parent chain reaches it) is terminal:
  * no completed or settled-failed step attributed to a subtree frame or under a subtree frame's ID
- * prefix, no settled map with a completed item run by a subtree frame or under such a prefix, and
- * no completed or settled descendant frame. Compacted `child:<hash>` descendants are found by their
+ * prefix, no completed settled map or one with a completed item run by a subtree frame or under
+ * such a prefix, and no completed or settled descendant frame. Compacted `child:<hash>` descendants are found by their
  * parent links. @internal
  */
 export function frameRedefinition(record: RunRecord, id: string): FrameRedefinition {
@@ -100,8 +100,12 @@ export function frameRedefinition(record: RunRecord, id: string): FrameRedefinit
             }) ||
               item.children?.some((child) => subtree.has(child))),
         );
+  // A completed map over no items commits an empty result, so it is terminal work too.
   for (const [mapId, map] of Object.entries(record.maps ?? {}))
-    if (map.items.some((item) => item.status === 'completed') && inSubtree(map, mapId))
+    if (
+      (map.status === 'completed' || map.items.some((item) => item.status === 'completed')) &&
+      inSubtree(map, mapId)
+    )
       terminal.push(mapId);
   for (const member of subtree) {
     const descendant = frames[member];

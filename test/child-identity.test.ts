@@ -220,6 +220,30 @@ describe('frameRedefinition', () => {
     ).toEqual({ redefinable: true });
   });
 
+  it('counts a completed settled map over no items as terminal work', () => {
+    const children = { kid: frame(), other: frame({ label: 'other' }) };
+    const maps = (map: Record<string, unknown>, id = 'shared/m') =>
+      record({ children, maps: { [id]: { items: [], ...map } } });
+    expect(frameRedefinition(maps({ frame: 'kid', status: 'completed' }), 'kid')).toEqual({
+      redefinable: false,
+      reason: 'terminal-work',
+      terminal: ['shared/m'],
+    });
+    // A journal saved before `frame` existed is placed by its prefix alone.
+    expect(frameRedefinition(maps({ status: 'completed' }, 'kid/m'), 'kid')).toEqual({
+      redefinable: false,
+      reason: 'terminal-work',
+      terminal: ['kid/m'],
+    });
+    expect(frameRedefinition(maps({ status: 'completed' }), 'kid')).toEqual({ redefinable: true });
+    expect(frameRedefinition(maps({ frame: 'other', status: 'completed' }), 'kid')).toEqual({
+      redefinable: true,
+    });
+    expect(frameRedefinition(maps({ frame: 'kid', status: 'running' }), 'kid')).toEqual({
+      redefinable: true,
+    });
+  });
+
   it('follows parent links to compacted child IDs and their effects', () => {
     const hash = `child:${'a'.repeat(64)}`;
     const deeper = `child:${'b'.repeat(64)}`;

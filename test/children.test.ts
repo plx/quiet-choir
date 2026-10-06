@@ -1461,6 +1461,13 @@ it.for(
       work: (ctx: Parameters<WorkflowDefinition<null, null>['run']>[0]) =>
         ctx.map('items', [0], { concurrency: 1, onError: 'return' }, () => Promise.resolve(null)),
     },
+    {
+      declared,
+      holds: 'a completed settled map over no items',
+      terminal: 'kid/empty',
+      work: (ctx: Parameters<WorkflowDefinition<null, null>['run']>[0]) =>
+        ctx.map('empty', [], { concurrency: 1, onError: 'return' }, () => Promise.resolve(null)),
+    },
   ]),
 )(
   'refuses to redefine a failed frame holding $holds (declared: $declared)',
