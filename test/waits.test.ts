@@ -24,6 +24,8 @@ import {
   type JsonValue,
   type Command,
   type CommandPollSource,
+  type RunEvent,
+  type WorkflowEvent,
 } from '../src/index.js';
 import { RunActivity } from '../src/workflow/runtime/activity.js';
 import { answerCandidates } from '../src/workflow/runtime/inbox.js';
@@ -32,6 +34,7 @@ import { stepIdentity } from '../src/workflow/runtime/identity.js';
 import { digest, jsonValue } from '../src/workflow/runtime/json.js';
 import { waitRequest } from '../src/workflow/runtime/wait-schema.js';
 import { commandPollIdentity } from '../src/workflow/runtime/poll-command.js';
+import { recordEventLines } from '../src/workflow/loader/event-follow.js';
 import { pollIdentityKey } from '../src/workflow/runtime/poll-identity.js';
 import type { WaitSources } from '../src/workflow/runtime/wait-model.js';
 import type { RunRecord } from '../src/workflow/runtime/store.js';
@@ -1417,6 +1420,7 @@ function bareQuestions(save: () => Promise<void>): {
     warn: (message) => {
       warnings.push(message);
     },
+    tolerated: () => () => undefined,
     emit: () => undefined,
     fail: () => undefined,
   });
@@ -1612,6 +1616,11 @@ function policyPoll(
   });
 }
 
+/** The record's wait.tolerated run events. */
+function tolerated(record: RunRecord): RunEvent[] {
+  return (record.events ?? []).filter((event) => event.type === 'wait.tolerated');
+}
+
 it('tolerates a single observation error, shows it in pending and clears it on success', async () => {
   const clock = new Clock();
   const opened = clock.time;
@@ -1669,14 +1678,53 @@ it('fails with the error after the tolerated count, even across a suspension', a
     { onError: { tolerate: 3 }, every: 1, timeoutMs: 1_000_000 },
   );
   const blocked = { stateDir, runId: 'tolerate-exceeded', input: null, clock: new Clock(true) };
-  await expect(runWorkflow(failing, { ...blocked, waitMode: 'block' })).rejects.toThrow(
-    'HTTP 502 #4',
-  );
+  const live: WorkflowEvent[] = [];
+  await expect(
+    runWorkflow(failing, {
+      ...blocked,
+      waitMode: 'block',
+      onEvent: (event) => {
+        live.push(event);
+      },
+    }),
+  ).rejects.toThrow('HTTP 502 #4');
   expect(calls).toBe(4);
   const saved = await readRun(blocked);
   expect(saved.status).toBe('failed');
   expect(saved.steps['ready']?.error).toBe('HTTP 502 #4');
   expect(saved.steps['ready']?.wait?.checks).toBe(4);
+  // One wait.tolerated per tolerated error, none for the error past the tolerance, which still
+  // surfaces only as the failed wait and the run.failed naming it.
+  const expected = [1, 2, 3].map((consecutive): unknown =>
+    expect.objectContaining({
+      type: 'wait.tolerated',
+      stepId: 'ready',
+      message: `HTTP 502 #${String(consecutive)}`,
+      data: { consecutive, tolerate: 3 },
+    }),
+  );
+  expect(saved.events?.filter((event) => event.type === 'wait.tolerated')).toEqual(expected);
+  expect(live.filter((event) => event.type === 'wait.tolerated')).toEqual(expected);
+  expect(
+    live
+      .filter((event) => event.type === 'wait.tolerated' || event.type === 'run.failed')
+      .map((event) => event.type),
+  ).toEqual(['wait.tolerated', 'wait.tolerated', 'wait.tolerated', 'run.failed']);
+  expect(live.find((event) => event.type === 'run.failed')).toMatchObject({
+    stepId: 'ready',
+    message: expect.stringContaining('HTTP 502 #4') as unknown,
+  });
+  // A follower reads the same three events, then the run.failed that names the wait.
+  expect(
+    recordEventLines(saved, null, 'all')
+      .lines.map((line) => JSON.parse(line) as { ev: string; msg?: string })
+      .filter(({ ev }) => ev !== 'run.started'),
+  ).toEqual([
+    expect.objectContaining({ ev: 'wait.tolerated', msg: 'tolerated 1/3: HTTP 502 #1' }),
+    expect.objectContaining({ ev: 'wait.tolerated', msg: 'tolerated 2/3: HTTP 502 #2' }),
+    expect.objectContaining({ ev: 'wait.tolerated', msg: 'tolerated 3/3: HTTP 502 #3' }),
+    expect.objectContaining({ ev: 'run.failed', step: 'ready', msg: 'HTTP 502 #4' }),
+  ]);
 
   // The count persists across suspensions: each resume below runs one failing check.
   const clock = new Clock();
@@ -1734,7 +1782,9 @@ it('fails at once when classify says fatal, throws, or returns something else', 
       message,
     );
     expect(calls).toBe(1);
-    expect((await readRun(options)).steps['ready']?.wait).not.toHaveProperty('lastError');
+    const saved = await readRun(options);
+    expect(saved.steps['ready']?.wait).not.toHaveProperty('lastError');
+    expect(tolerated(saved)).toEqual([]);
   }
 });
 
@@ -1774,6 +1824,7 @@ it.each([
   expect(classified).toBe(0);
   expect(saved.steps['ready']?.wait).not.toHaveProperty('lastError');
   expect(saved.steps['ready']?.wait?.checks).toBe(1);
+  expect(tolerated(saved)).toEqual([]);
 });
 
 it('schedules the next check from retryAfterMs, falls back to spacing on null, and validates it', async () => {
@@ -1789,10 +1840,15 @@ it('schedules the next check from retryAfterMs, falls back to spacing on null, a
   expect(delayed.steps['ready']?.wait?.nextCheckAt).toBe(opened + 12_345);
   const spaced = await pendingAfter('retry-null', () => null);
   expect(spaced.steps['ready']?.wait?.nextCheckAt).toBe(opened + 30_000);
-  for (const [index, invalid] of [-1, Number.NaN, Number.POSITIVE_INFINITY].entries())
-    await expect(pendingAfter(`retry-invalid-${String(index)}`, () => invalid)).rejects.toThrow(
+  for (const [index, invalid] of [-1, Number.NaN, Number.POSITIVE_INFINITY].entries()) {
+    const runId = `retry-invalid-${String(index)}`;
+    await expect(pendingAfter(runId, () => invalid)).rejects.toThrow(
       'Wait ready: onError.retryAfterMs must return null or a finite number of at least 0.',
     );
+    // The validation runs before the error is recorded, so a failing wait carries no event.
+    expect(tolerated(await readRun({ stateDir, runId }))).toEqual([]);
+  }
+  expect(tolerated(delayed)).toHaveLength(1);
 });
 
 it('tolerates an observeTimeoutMs expiry, which classify sees by its code', async () => {
@@ -1860,7 +1916,9 @@ it('keeps the deadline and identity through tolerated errors and a changed onErr
   expect(changed.steps['ready']?.wait?.lastError?.consecutive).toBe(2);
   const bytes = await readFile(join(stateDir, 'policy-identity', 'run.json'), 'utf8');
   expect(bytes).not.toContain('onError');
-  expect(bytes).not.toContain('tolerate');
+  // Only the observational wait.tolerated events name the limit; the wait record never does.
+  const steps = JSON.stringify((JSON.parse(bytes) as { steps: unknown }).steps);
+  expect(steps).not.toContain('tolerate');
   // A tolerated error on the final check after a missed deadline still resolves by deadline.
   clock.time += 600_000;
   const late = await runWorkflow(definition({ tolerate: 5 }), { ...options, resume: true });
@@ -2057,7 +2115,310 @@ it('never tolerates authoring errors, and guards classify and retryAfterMs like 
     const saved = await readRun(options);
     expect(saved.status, name).toBe('failed');
     expect(saved.steps['ready']?.wait, name).not.toHaveProperty('lastError');
+    expect(tolerated(saved), name).toEqual([]);
   }
+});
+
+describe('wait.tolerated run events', () => {
+  /** Collect live events; `types` keeps their order. */
+  function collector(): { live: WorkflowEvent[]; onEvent: (event: WorkflowEvent) => void } {
+    const live: WorkflowEvent[] = [];
+    return {
+      live,
+      onEvent: (event) => {
+        live.push(event);
+      },
+    };
+  }
+
+  it('records one event per tolerated error, live and persisted, restarting the count after a success', async () => {
+    const outcomes = ['fail', 'fail', 'note', 'fail', 'done'] as const;
+    let calls = 0;
+    const definition = policyPoll(
+      'tolerated-events',
+      () => {
+        const outcome = outcomes[calls++];
+        if (outcome === 'fail') return Promise.reject(new Error(`HTTP 502 #${String(calls)}`));
+        if (outcome === 'note') return Promise.resolve({ done: false, note: { n: calls } });
+        return Promise.resolve({ done: true, value: 'ok' });
+      },
+      { onError: { tolerate: 3 }, every: 1, timeoutMs: 1_000_000 },
+    );
+    const { live, onEvent } = collector();
+    const options = { stateDir, runId: 'tolerated-events', input: null, clock: new Clock(true) };
+    const run = await runWorkflow(definition, { ...options, waitMode: 'block', onEvent });
+    expect(run.output).toMatchObject({ by: 'poll', value: 'ok', checks: 5 });
+    const expected = [
+      [1, 'HTTP 502 #1'],
+      [2, 'HTTP 502 #2'],
+      [1, 'HTTP 502 #4'],
+    ].map(([consecutive, message]): unknown =>
+      expect.objectContaining({
+        type: 'wait.tolerated',
+        stepId: 'ready',
+        message,
+        data: { consecutive, tolerate: 3 },
+        phase: null,
+        total: null,
+        execution: 1,
+      }),
+    );
+    expect(tolerated(run)).toEqual(expected);
+    expect(tolerated(await readRun(options))).toEqual(expected);
+    const liveTolerated = live.filter((event) => event.type === 'wait.tolerated');
+    expect(liveTolerated).toEqual(expected);
+    expect(liveTolerated.every((event) => event.replayed === false)).toBe(true);
+    // Each live event is the persisted entry plus the notification fields.
+    expect(liveTolerated[0]).toMatchObject({ ...tolerated(run)[0], runId: 'tolerated-events' });
+    // A tolerated error is not a body call: it never enters the replay ledger.
+    expect(Object.keys(run.eventCounts ?? {})).toEqual([]);
+    const order = live.map((event) => event.type);
+    expect(order.lastIndexOf('wait.tolerated')).toBeLessThan(order.indexOf('step.completed'));
+  });
+
+  it('records nothing for a poll without onError', async () => {
+    const definition = policyPoll('untolerated', () => Promise.reject(new Error('HTTP 502')));
+    const { live, onEvent } = collector();
+    const options = { stateDir, runId: 'untolerated', input: null, clock: new Clock() };
+    await expect(runWorkflow(definition, { ...options, onEvent })).rejects.toThrow('HTTP 502');
+    expect(tolerated(await readRun(options))).toEqual([]);
+    expect(live.some((event) => event.type === 'wait.tolerated')).toBe(false);
+  });
+
+  it('records nothing for an observation aborted by the failure drain', async () => {
+    const entered = latch();
+    const definition = defineWorkflow({
+      name: 'drain-tolerated',
+      version: '1',
+      input: z.null(),
+      output: z.unknown(),
+      run: async (ctx) => {
+        const [outcome] = await Promise.all([
+          ctx.poll('ready', {
+            input: null,
+            schema: z.null(),
+            every: 50,
+            timeoutMs: 600_000,
+            onError: { tolerate: 3 },
+            observe: ({ signal }) => {
+              entered.reach();
+              return rejectOnAbort(signal);
+            },
+          }),
+          ctx.step('failing', {
+            input: null,
+            schema: z.null(),
+            run: async () => {
+              await entered.reached;
+              throw new Error('initiating failure');
+            },
+          }),
+        ]);
+        return outcome;
+      },
+    });
+    const { live, onEvent } = collector();
+    const options = { stateDir, runId: 'drain-tolerated', input: null };
+    await expect(runWorkflow(definition, { ...options, onEvent })).rejects.toThrow(
+      'initiating failure',
+    );
+    const saved = await readRun(options);
+    expect(saved.steps['ready']?.wait?.lastError).toBeUndefined();
+    expect(tolerated(saved)).toEqual([]);
+    expect(live.some((event) => event.type === 'wait.tolerated')).toBe(false);
+  });
+
+  it('commits and notifies the event before step.completed when a signal wins the same check', async () => {
+    const clock = new Clock();
+    const options = { stateDir, runId: 'tolerated-signal', input: null, clock };
+    const definition = defineWorkflow({
+      name: 'tolerated-signal',
+      version: '1',
+      input: z.null(),
+      output: z.unknown(),
+      run: (ctx) =>
+        ctx.wait('gate', {
+          signal: { prompt: 'Ready?', schema: z.literal('go') },
+          poll: {
+            input: null,
+            schema: z.literal('ok'),
+            every: 30_000,
+            onError: { tolerate: 3 },
+            // The answer arrives while this check is in flight, and the check then fails.
+            observe: async () => {
+              await writeAnswer({ ...options, stepId: 'gate', value: 'go', by: 'agent:test' });
+              throw new Error('HTTP 502');
+            },
+          },
+        }),
+    });
+    const { live, onEvent } = collector();
+    const run = await runWorkflow(definition, { ...options, onEvent });
+    expect(run.output).toMatchObject({ by: 'signal', value: 'go' });
+    expect(run.steps['gate']?.wait?.lastError).toMatchObject({ consecutive: 1 });
+    expect(tolerated(run)).toEqual([
+      expect.objectContaining({ stepId: 'gate', data: { consecutive: 1, tolerate: 3 } }),
+    ]);
+    expect(
+      live
+        .filter((event) => event.type === 'wait.tolerated' || event.type === 'step.completed')
+        .map((event) => event.type),
+    ).toEqual(['wait.tolerated', 'step.completed']);
+    const lines = recordEventLines(await readRun(options), null, 'all').lines.map(
+      (line) => (JSON.parse(line) as { ev: string }).ev,
+    );
+    expect(lines.indexOf('wait.tolerated')).toBeLessThan(lines.indexOf('step.completed'));
+  });
+
+  it('commits and notifies the event before step.completed when the deadline wins the same check', async () => {
+    const clock = new Clock();
+    const opened = clock.time;
+    const definition = policyPoll(
+      'tolerated-deadline',
+      () => {
+        // The error is observed at the deadline.
+        clock.time = opened + 600_000;
+        return Promise.reject(new Error('down'));
+      },
+      { onError: { tolerate: 3 } },
+    );
+    const { live, onEvent } = collector();
+    const options = { stateDir, runId: 'tolerated-deadline', input: null, clock };
+    const run = await runWorkflow(definition, { ...options, onEvent });
+    expect(run.output).toMatchObject({ by: 'deadline' });
+    expect(tolerated(run)).toEqual([
+      expect.objectContaining({
+        stepId: 'ready',
+        message: 'down',
+        data: { consecutive: 1, tolerate: 3 },
+        at: new Date(opened + 600_000).toISOString(),
+      }),
+    ]);
+    expect(
+      live
+        .filter((event) => event.type === 'wait.tolerated' || event.type === 'step.completed')
+        .map((event) => event.type),
+    ).toEqual(['wait.tolerated', 'step.completed']);
+    const lines = recordEventLines(await readRun(options), null, 'all').lines.map(
+      (line) => (JSON.parse(line) as { ev: string }).ev,
+    );
+    expect(lines.indexOf('wait.tolerated')).toBeLessThan(lines.indexOf('step.completed'));
+  });
+
+  it('carries an error code such as the observeTimeoutMs expiry, and cuts a long message', async () => {
+    let calls = 0;
+    const long = 'x'.repeat(5_000);
+    const definition = defineWorkflow({
+      name: 'tolerated-code',
+      version: '1',
+      input: z.null(),
+      output: z.unknown(),
+      run: (ctx) =>
+        ctx.poll('ready', {
+          input: null,
+          schema: z.null(),
+          every: 50,
+          timeoutMs: 10_000,
+          observeTimeoutMs: 200,
+          onError: { tolerate: 3, retryAfterMs: () => 0 },
+          observe: ({ signal }) => {
+            calls++;
+            if (calls === 1) return rejectOnAbort(signal);
+            if (calls === 2) return Promise.reject(new Error(long));
+            return Promise.resolve({ done: true, value: null });
+          },
+        }),
+    });
+    const { live, onEvent } = collector();
+    const run = await runWorkflow(definition, {
+      stateDir,
+      runId: 'tolerated-code',
+      input: null,
+      onEvent,
+    });
+    expect(run.output).toMatchObject({ by: 'poll', checks: 3 });
+    const [timeout, cut] = tolerated(run);
+    expect(timeout?.data).toEqual({
+      consecutive: 1,
+      tolerate: 3,
+      code: 'QUIET_CHOIR_POLL_OBSERVE_TIMEOUT',
+    });
+    expect(timeout?.message).toContain('observeTimeoutMs');
+    expect(cut?.data).toEqual({ consecutive: 2, tolerate: 3 });
+    expect(cut?.message).toBe('x'.repeat(1024));
+    expect(live.filter((event) => event.type === 'wait.tolerated')).toHaveLength(2);
+  });
+
+  it('keeps the message at 4096 in lastError while the event cuts it to 1024', async () => {
+    const definition = policyPoll(
+      'tolerated-long',
+      () => Promise.reject(new Error('y'.repeat(5_000))),
+      { onError: { tolerate: 3 } },
+    );
+    const run = await runWorkflow(definition, {
+      stateDir,
+      runId: 'tolerated-long',
+      input: null,
+      clock: new Clock(),
+    });
+    expect(run.status).toBe('suspended');
+    expect(run.steps['ready']?.wait?.lastError?.message).toHaveLength(4096);
+    expect(tolerated(run)[0]?.message).toHaveLength(1024);
+  });
+
+  it('neither duplicates nor reorders the event across suspend, resume and a completed re-run', async () => {
+    const clock = new Clock();
+    let calls = 0;
+    const definition = policyPoll(
+      'tolerated-resume',
+      () =>
+        ++calls === 1
+          ? Promise.reject(new Error('HTTP 502'))
+          : Promise.resolve({ done: true, value: 'ok' }),
+      { onError: { tolerate: 3 } },
+    );
+    const options = { stateDir, runId: 'tolerated-resume', input: null, clock };
+    const first = collector();
+    expect((await runWorkflow(definition, { ...options, onEvent: first.onEvent })).status).toBe(
+      'suspended',
+    );
+    expect(first.live.filter((event) => event.type === 'wait.tolerated')).toHaveLength(1);
+    const suspended = tolerated(await readRun(options));
+    expect(suspended).toHaveLength(1);
+    clock.time += 31_000;
+    const second = collector();
+    const done = await runWorkflow(definition, {
+      ...options,
+      resume: true,
+      onEvent: second.onEvent,
+    });
+    expect(done.status).toBe('completed');
+    expect(second.live.some((event) => event.type === 'wait.tolerated')).toBe(false);
+    expect(tolerated(done)).toEqual(suspended);
+    const finishedAt = done.steps['ready']?.finishedAt ?? '';
+    expect(Date.parse(suspended[0]?.at ?? '')).toBeLessThan(Date.parse(finishedAt));
+    // Re-reading the completed run leaves the record's events unchanged.
+    const snapshot = await readFile(join(stateDir, 'tolerated-resume', 'run.json'), 'utf8');
+    const third = collector();
+    const again = await runWorkflow(definition, {
+      ...options,
+      resume: true,
+      onEvent: third.onEvent,
+    });
+    expect(again.status).toBe('completed');
+    expect(JSON.stringify(again.events)).toBe(JSON.stringify(done.events));
+    expect(await readFile(join(stateDir, 'tolerated-resume', 'run.json'), 'utf8')).toBe(snapshot);
+    expect(third.live.some((event) => event.type === 'wait.tolerated')).toBe(false);
+    expect(calls).toBe(2);
+    // A follower prints the event once, before step.completed and the terminal run line.
+    const record = await readRun(options);
+    const read = recordEventLines(record, null, 'all');
+    const types = read.lines.map((line) => (JSON.parse(line) as { ev: string }).ev);
+    expect(types.filter((type) => type === 'wait.tolerated')).toHaveLength(1);
+    expect(types.indexOf('wait.tolerated')).toBeLessThan(types.indexOf('step.completed'));
+    expect(types.indexOf('wait.tolerated')).toBeLessThan(types.lastIndexOf('run.completed'));
+    expect(recordEventLines(record, read.cursor, 'all').lines).toEqual([]);
+  });
 });
 
 it('validates onError', async () => {

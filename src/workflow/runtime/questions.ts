@@ -100,6 +100,24 @@ interface Waiter {
   readonly reject: (error: unknown) => void;
   readonly dispose: () => void;
 }
+/** What a tolerated poll error reports in its `wait.tolerated` run event. */
+interface ToleratedError {
+  /** Consecutive tolerated errors, this one included. */
+  readonly consecutive: number;
+  /** The poll's `onError.tolerate` limit. */
+  readonly tolerate: number;
+  /** The error message, as `lastError` keeps it. */
+  readonly message: string;
+  /** The error's string `code` property, when it has one. */
+  readonly code?: string;
+}
+/** The string `code` property of an error, such as ENOENT, or undefined. */
+function errorCode(error: unknown): string | undefined {
+  if (error === null || (typeof error !== 'object' && typeof error !== 'function'))
+    return undefined;
+  const code = (error as { readonly code?: unknown }).code;
+  return typeof code === 'string' ? code : undefined;
+}
 interface QuestionDependencies {
   readonly record: RunRecord;
   readonly stateDir: string;
@@ -127,6 +145,11 @@ interface QuestionDependencies {
    * a nested context operation fails the wait.
    */
   readonly guard?: <R>(action: () => R) => R;
+  /**
+   * Append a `wait.tolerated` run event for the wait `id` to the record in memory, committed by the
+   * caller's next save, and return the callback that notifies it live once that save resolves.
+   */
+  readonly tolerated: (id: string, step: StepRecord, details: ToleratedError) => () => void;
   readonly emit: (
     type: 'step.waiting' | 'step.completed' | 'step.replayed' | 'wait.opened',
     id: string,
@@ -595,7 +618,10 @@ export class RunQuestions {
    * Apply the poll's onError policy to a rejected observation or an observeTimeoutMs expiry. It
    * returns once the error is recorded and the next check scheduled, or the wait completed by
    * signal or deadline; otherwise it throws, failing the wait. Run cancellation, closing, and
-   * context-operation violations are never tolerated. The note is left untouched.
+   * context-operation violations are never tolerated. The note is left untouched. Each tolerated
+   * error appends one `wait.tolerated` run event together with `lastError`, so both commit in the
+   * same save, and notifies it only after that save; every throwing path runs before the append,
+   * so an error that fails the wait records no event.
    */
   async #tolerate(
     id: string,
@@ -630,18 +656,35 @@ export class RunQuestions {
       consecutive,
       at: clockNow(this.#clock),
     };
+    const code = errorCode(error);
+    // Record the error and its run event in one synchronous step; the caller's save commits both.
+    const record = (): (() => void) => {
+      progress.lastError = lastError;
+      return this.#deps.tolerated(id, step, {
+        consecutive,
+        tolerate: policy.tolerate,
+        message: lastError.message,
+        ...(code === undefined ? {} : { code }),
+      });
+    };
     // Keep the usual precedence: signal, then poll, then deadline.
     const signal = await this.#signal(id, step, waiter);
     if (this.#isClosed()) return;
     if (signal) {
-      progress.lastError = lastError;
-      await this.#complete(id, step, waiter, signal.outcome, signal);
+      await this.#complete(id, step, waiter, signal.outcome, signal, record());
       return;
     }
     const at = clockNow(this.#clock);
     if (progress.deadline !== null && at >= progress.deadline) {
-      progress.lastError = lastError;
-      await this.#complete(id, step, waiter, { by: 'deadline', at, note: progress.note });
+      const announce = record();
+      await this.#complete(
+        id,
+        step,
+        waiter,
+        { by: 'deadline', at, note: progress.note },
+        undefined,
+        announce,
+      );
       return;
     }
     let delay = this.#interval(progress);
@@ -655,10 +698,11 @@ export class RunQuestions {
         delay = requested;
       }
     }
-    progress.lastError = lastError;
+    const announce = record();
     progress.nextCheckAt = Math.min(MAX_EPOCH_MS, at + Math.ceil(delay));
     this.#updateWake();
     await this.#deps.save();
+    announce();
   }
   /**
    * Run one observation under its own signal, which aborts when the run scope aborts, when the
@@ -796,12 +840,17 @@ export class RunQuestions {
       { code: 'QUIET_CHOIR_POLL_OBSERVE_TIMEOUT' },
     );
   }
+  /**
+   * Save the wait's outcome, then notify: first `announce` (a tolerated error's run event committed
+   * in this save), then `step.completed`, so the live order matches the record.
+   */
   async #complete(
     id: string,
     step: StepRecord,
     waiter: Waiter,
     outcome: Outcome,
     signal?: { at: string; by: string },
+    announce?: () => void,
   ): Promise<void> {
     if (this.#closed) return;
     const output =
@@ -818,6 +867,7 @@ export class RunQuestions {
     await this.#deps.save();
     this.#waiters.delete(id);
     waiter.dispose();
+    announce?.();
     this.#deps.emit('step.completed', id, step);
     waiter.resolve(structuredClone(output));
     this.#deps.activity.touch();

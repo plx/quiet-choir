@@ -307,9 +307,12 @@ export type WorkflowEvent = {
         | 'agent.finished';
     }
   | {
-      /** Root effect for a failed run; otherwise null. */
+      /** Root effect for a failed run, or the wait ID for `wait.tolerated`; otherwise null. */
       readonly stepId: string | null;
-      /** Run lifecycle, phase, or log notification. */
+      /**
+       * Run lifecycle, phase, or log notification, or `wait.tolerated` after a poll error that
+       * `onError` tolerated was saved.
+       */
       readonly type: RunEvent['type'];
     }
   | {
@@ -3183,6 +3186,32 @@ export async function runWorkflow<
               }
             : {},
         );
+      },
+      tolerated: (id, step, { consecutive, tolerate, message, code }) => {
+        // Committed by the caller's save with lastError; outside eventCounts, so it never replays.
+        const event = observations.appendRuntime({
+          at: new Date(clockNow(clock)).toISOString(),
+          type: 'wait.tolerated',
+          phase: step.phase ?? null,
+          total: null,
+          message: message.slice(0, 1024),
+          data: jsonValue({
+            consecutive,
+            tolerate,
+            ...(code === undefined ? {} : { code: code.slice(0, 128) }),
+          }),
+          stepId: id,
+          ...(step.frame == null ? {} : { frame: step.frame }),
+        });
+        return () => {
+          notify({
+            ...event,
+            message: event.message ?? '',
+            attempt: step.attempts,
+            runId: record.id,
+            replayed: false,
+          });
+        };
       },
       beforeLive,
       nextSeq: () => nextSeq++,

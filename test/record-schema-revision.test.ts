@@ -19,11 +19,13 @@ import {
   type OwnedRunStore,
   type RunRecord,
   type RunStore,
+  type WorkflowClock,
 } from '../src/index.js';
 import { rehearsalState } from '../src/workflow/loader/rehearsal.js';
 import { JournalWriter } from '../src/workflow/runtime/journal.js';
 import { cleanWorktrees } from '../src/workflow/runtime/worktree-clean.js';
 import { digest } from '../src/workflow/runtime/json.js';
+import { pollIdentityKey } from '../src/workflow/runtime/poll-identity.js';
 import {
   hiddenRecordFields,
   RECORD_FIELD_KEYS,
@@ -43,6 +45,8 @@ const revisionDigests: Readonly<Record<string, string>> = {
   '3': '80010b03d1fa34c4b824b0682b5138e0c19d138186fb659c38d46eab204992ec',
   // Revision 4 (#171) changed only nested shapes (capabilities claude.addDirRoots, request addDirs).
   '4': '80010b03d1fa34c4b824b0682b5138e0c19d138186fb659c38d46eab204992ec',
+  // Revision 5 (#223) changed only the nested events shape (the wait.tolerated type).
+  '5': '80010b03d1fa34c4b824b0682b5138e0c19d138186fb659c38d46eab204992ec',
 };
 // digest(readRun(...)) of the installed pre-revision fixture, computed on unmodified main 91a6d2f.
 const preRevisionReadDigest = '714b6cb068de5c933b7ba04a26d1f931f589f7c9910f76f0e5c8cc493eb13016';
@@ -52,6 +56,8 @@ const revisionOneReadDigest = '73d8cec57513dde827ab1ced2a31745af52b6c8af39dad13c
 const revisionTwoReadDigest = '7c56687992acfa40d749086b301489e9babc93fc9be8f2db2a1bc29cdb1d02ae';
 // digest(readRun(...)) of the installed revision-three fixture, computed on unmodified main 4c3ebf5.
 const revisionThreeReadDigest = 'c2f4ad7fd501352343faa55e59b25ec9a70ef781f9849bc6282b90eb8b8c7fd0';
+// digest(readRun(...)) of the installed revision-four fixture, computed on unmodified main 7fa2348.
+const revisionFourReadDigest = '813c73ae37120ba658d75502e4a0757e6657a93d9f1e69ab41671716c4ebfc98';
 
 const sha256 = (value: string): string => createHash('sha256').update(value).digest('hex');
 
@@ -904,6 +910,153 @@ describe('revision-three records (static addDirs before bounded call-site roots,
     expect(record.steps['read']?.attemptHistory?.[0]?.request?.addDirs).toEqual(['docs']);
     expect(record.capabilities?.profiles['reader']?.claude.addDirRoots).toEqual(['runs']);
     expect(recordSchemaDrift(record)).toBeUndefined();
-    expect((await rawSnapshot('rooted'))['schemaRevision']).toBe(4);
+    expect((await rawSnapshot('rooted'))['schemaRevision']).toBe(SUPPORTED_SCHEMA_REVISION);
+  });
+});
+
+describe('revision-four records (tolerated poll errors before wait.tolerated events, #223)', () => {
+  const runId = 'revision-four';
+  async function install(): Promise<void> {
+    const fixture = await readFile(
+      new URL('./fixtures/schema-revision/revision-four-checkpoint.json', import.meta.url),
+      'utf8',
+    );
+    await mkdir(join(stateDir, runId));
+    await writeFile(paths(runId).snapshot, fixture);
+    await writeFile(paths(runId).journal, '');
+  }
+  // A fixed time after the fixture's saved nextCheckAt, so the resumed check is due at once.
+  const clock: WorkflowClock = {
+    now: () => 1_791_246_031_836 + 1_000,
+    sleep: (_milliseconds, signal) =>
+      new Promise((_resolve, reject) => {
+        signal.addEventListener(
+          'abort',
+          () => {
+            reject(signal.reason instanceof Error ? signal.reason : new Error('Clock cancelled'));
+          },
+          { once: true },
+        );
+      }),
+  };
+  // The fixture's observer source is replaced by a helper identity, so the wait's identity does
+  // not depend on how a test transformer prints the callback.
+  const watcher = (observe: () => Promise<{ done: true; value: 'ok' }>) =>
+    defineWorkflow({
+      name: 'schema-revision',
+      version: '1',
+      input: z.null(),
+      output: z.unknown(),
+      async run(ctx) {
+        ctx.phase('watch');
+        ctx.log('waiting', { n: 1 });
+        return ctx.wait('ready', {
+          poll: {
+            input: null,
+            schema: z.literal('ok'),
+            every: 60_000,
+            onError: { tolerate: 3 },
+            observe,
+            [pollIdentityKey]: { helper: 'schema-revision', version: 1 },
+          },
+        });
+      },
+    });
+
+  it('read exactly as on main, with a tolerated lastError and no wait.tolerated event', async () => {
+    await install();
+    const record = await readRun({ stateDir, runId });
+    expect(record.schemaRevision).toBe(4);
+    expect(recordSchemaDrift(record)).toBeUndefined();
+    expect(digest(record)).toBe(revisionFourReadDigest);
+    expect(record.steps['ready']?.wait?.lastError).toMatchObject({
+      message: 'HTTP 502: Bad Gateway',
+      consecutive: 1,
+    });
+    expect(record.events?.map((event) => event.type)).toEqual([
+      'run.started',
+      'phase',
+      'log',
+      'run.suspended',
+    ]);
+  });
+
+  it('resume with the persisted count and identity unchanged and are saved with the current revision', async () => {
+    await install();
+    const original = await readRun({ stateDir, runId });
+    const events: string[] = [];
+    // The saved check is due: it fails again, continuing the count from the old record.
+    const suspended = await runWorkflow(
+      watcher(() => Promise.reject(new Error('HTTP 503'))),
+      {
+        ...options,
+        stateDir,
+        runId,
+        resume: true,
+        clock,
+        onEvent: (event) => {
+          events.push(event.type);
+        },
+      },
+    );
+    expect(suspended.status).toBe('suspended');
+    expect(suspended.steps['ready']?.fingerprint).toBe(original.steps['ready']?.fingerprint);
+    expect(suspended.steps['ready']?.identity).toEqual(original.steps['ready']?.identity);
+    expect(suspended.steps['ready']?.wait?.lastError).toMatchObject({ consecutive: 2 });
+    expect(events.filter((type) => type === 'wait.tolerated')).toHaveLength(1);
+    const tolerated = (await readRun({ stateDir, runId })).events?.filter(
+      (event) => event.type === 'wait.tolerated',
+    );
+    expect(tolerated).toEqual([
+      expect.objectContaining({
+        stepId: 'ready',
+        phase: 'watch',
+        message: 'HTTP 503',
+        data: { consecutive: 2, tolerate: 3 },
+        execution: 2,
+      }),
+    ]);
+    expect((await rawSnapshot(runId))['schemaRevision']).toBe(SUPPORTED_SCHEMA_REVISION);
+    // The original phase and log entries were not replayed as new entries.
+    expect(
+      (await readRun({ stateDir, runId })).events?.filter(
+        (event) => event.type === 'phase' || event.type === 'log',
+      ),
+    ).toEqual(original.events?.filter((event) => event.type === 'phase' || event.type === 'log'));
+  });
+
+  it('round-trip a wait.tolerated entry through the record parser', async () => {
+    await install();
+    await editSnapshot(runId, (raw) => {
+      raw['schemaRevision'] = SUPPORTED_SCHEMA_REVISION;
+      (raw['events'] as unknown[]).splice(3, 0, {
+        at: '2026-10-06T00:19:31.836Z',
+        execution: 1,
+        type: 'wait.tolerated',
+        phase: 'watch',
+        total: null,
+        message: 'HTTP 502: Bad Gateway',
+        data: { consecutive: 1, tolerate: 3, code: 'ECONNRESET' },
+        stepId: 'ready',
+      });
+    });
+    const record = await readRun({ stateDir, runId });
+    expect(recordSchemaDrift(record)).toBeUndefined();
+    expect(record.events?.[3]).toEqual({
+      at: '2026-10-06T00:19:31.836Z',
+      execution: 1,
+      type: 'wait.tolerated',
+      phase: 'watch',
+      total: null,
+      message: 'HTTP 502: Bad Gateway',
+      data: { consecutive: 1, tolerate: 3, code: 'ECONNRESET' },
+      stepId: 'ready',
+    });
+    const done = await runWorkflow(
+      watcher(() => Promise.resolve({ done: true, value: 'ok' })),
+      { ...options, stateDir, runId, resume: true, clock },
+    );
+    expect(done.output).toMatchObject({ by: 'poll', value: 'ok', checks: 2 });
+    expect(done.events?.filter((event) => event.type === 'wait.tolerated')).toHaveLength(1);
   });
 });
