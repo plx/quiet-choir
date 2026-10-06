@@ -200,6 +200,10 @@ it('maps monorepo cwd, warns about dirty source files, and snapshots only commit
   expect(run.steps['edit']?.worktree?.files).toEqual([{ path: 'packages/a/new', status: 'added' }]);
 });
 
+// Three isolated calls and a merge serialize every worktree add/list/remove behind the admin lock,
+// so Git process latency under load adds up. measured: 1.6 s alone, 3.2 s worst of three full
+// coverage runs, 4.4 s with a CPU hog on every core, 0.7-1.6 s on the CI legs (#245 saw 10.5 s at
+// load average 15-20).
 it('never overlaps worktree administration for concurrent isolated calls', async () => {
   let active = 0,
     overlap = 0;
@@ -253,7 +257,7 @@ it('never overlaps worktree administration for concurrent isolated calls', async
   });
   expect(result.output).toBe(0);
   expect(overlap).toBe(0);
-});
+}, 15_000);
 
 it('keys worktree administration by the shared common Git directory across linked checkouts', async () => {
   const linked = join(directory, 'linked');
