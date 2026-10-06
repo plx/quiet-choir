@@ -3846,15 +3846,18 @@ export async function runWorkflow<
           `Replay skipped recorded steps (${missing.join(', ')}); workflow control flow changed.${healed.size ? ` Healed steps: ${[...healed].join(', ')}.` : ''}`,
           { kind: 'steps', skipped: missing, healed: [...healed] },
         );
-      const superseded = Object.entries(record.steps).filter(
-        ([id, step]) =>
-          !used.has(id) && step.status !== 'superseded' && step.status !== 'withdrawn',
-      );
-      for (const [, step] of superseded) step.status = 'superseded';
       warnUnmatched();
       record.output = jsonValue(definition.output.parse(output), 'Workflow output');
       if (!options.rehearsal) await worktrees.cleanup(true);
       // Last, after every check that can still fail the run: a failure must not claim retirements.
+      // Unvisited steps are retired here too, and a failed completion save puts them back.
+      const supersededSteps = Object.entries(record.steps)
+        .filter(
+          ([id, step]) =>
+            !used.has(id) && step.status !== 'superseded' && step.status !== 'withdrawn',
+        )
+        .map(([id, step]) => ({ id, step, status: step.status }));
+      for (const { step } of supersededSteps) step.status = 'superseded';
       const retired = children.supersede();
       record.status = 'completed';
       const priorEvents = [...(record.events ?? [])];
@@ -3867,11 +3870,12 @@ export async function runWorkflow<
         // A later failure snapshot must not claim that an uncommitted completion happened.
         record.events = priorEvents;
         if (priorStaleRecovery) record.staleRecovery = priorStaleRecovery;
+        for (const { step, status } of supersededSteps) step.status = status;
         retired.restore();
         throw error;
       }
       notify({ ...completed, message: 'Run completed.', attempt: 0, runId: record.id });
-      for (const [id, step] of superseded) emit('step.superseded', id, step);
+      for (const { id, step } of supersededSteps) emit('step.superseded', id, step);
       retired.announce();
       const warnings = recordWarnings(record);
       return {

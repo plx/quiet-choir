@@ -184,7 +184,7 @@ latest phase/timing/request/stack; existing cancellation status and `attemptHist
 no duplicate boolean or history array. A `running` attempt has no saved settlement. Redefined
 unfinished steps retain old hashes and change times in `redefinitions`; unvisited unfinished steps,
 and unvisited child frames that are still running, suspended, failed or cancelled, become
-`superseded` after a successful body replay. Existing terminal outcomes still must be visited.
+`superseded` when the completed run is saved. Existing terminal outcomes still must be visited.
 Storage format 7 retains replay contract 6. Flat format 6 migrates automatically; original format 1
 migrates by verifying its old step identities and must migrate before fork reuse. Formats 2–5 remain
 inspection-only in this runtime. See [legacy migration](durability.md#legacy-records).
