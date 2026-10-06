@@ -11,6 +11,7 @@ import {
   realpath,
   rename,
   rm,
+  utimes,
   writeFile,
 } from 'node:fs/promises';
 import { hostname, tmpdir } from 'node:os';
@@ -484,7 +485,13 @@ describe('workflow rm deletion', () => {
     }
     const bytes = await runBytes(stateDir, 'full');
     const result = removed(await remove('full'));
-    expect(result).toMatchObject({ paths: [directory], bytes, caches: [], tombstones: [] });
+    expect(result).toMatchObject({
+      paths: [directory],
+      bytes,
+      caches: [],
+      tombstones: [],
+      launchOnly: false,
+    });
     await onlyIgnoreFileLeft();
     expect(await gone(join(root, 'xdg'))).toBe(true);
   });
@@ -1237,4 +1244,266 @@ describe('workflow rm worktree caches', { timeout: 10_000 }, () => {
       expect((await readRun({ stateDir, runId: 'forged' })).id).toBe('forged');
     },
   );
+});
+
+describe('workflow rm of a leftover launch directory', () => {
+  const hour = 3_600_000;
+  const liveRunner = () => ({
+    pid: process.pid,
+    host: hostname(),
+    osStartTime: processIdentity(process.pid)?.start ?? null,
+  });
+  const deadRunner = { pid: DEAD, host: hostname(), osStartTime: null };
+
+  /** A record-less `<runId>/launch/` as a failed start leaves it, aged `ageMs`. */
+  async function leftover(
+    runId: string,
+    options: { runner?: object | string | null; ageMs?: number; extra?: string[] } = {},
+  ): Promise<string> {
+    const launch = join(stateDir, runId, 'launch');
+    await mkdir(launch, { recursive: true });
+    const files: Record<string, string> = {
+      '1.log': 'compiler output\n',
+      '1.result.json': '{"ok":false}\n',
+    };
+    const runner = options.runner === undefined ? deadRunner : options.runner;
+    if (runner !== null)
+      files['1.runner.json'] = typeof runner === 'string' ? runner : JSON.stringify(runner);
+    for (const [name, value] of Object.entries(files)) await writeFile(join(launch, name), value);
+    const at = new Date(Date.now() - (options.ageMs ?? 0));
+    for (const name of Object.keys(files)) await utimes(join(launch, name), at, at);
+    return join(stateDir, runId);
+  }
+
+  it('removes a leftover whose runner is dead, through the legacy guard', async () => {
+    const directory = await leftover('broken');
+    const bytes = await runBytes(stateDir, 'broken');
+    const result = removed(await remove('broken', { refs: true }));
+    expect(result).toMatchObject({
+      launchOnly: true,
+      removed: true,
+      verdict: 'remove',
+      refs: true,
+      paths: [directory],
+      bytes,
+      caches: [],
+      refsRemoved: [],
+      keptRefs: [],
+      tombstones: [],
+      warnings: [],
+    });
+    expect(bytes).toBeGreaterThan(0);
+    expect((await readdir(stateDir)).filter((name) => name !== '.gitignore')).toEqual([]);
+    expect(await gone(join(root, 'xdg'))).toBe(true);
+  });
+
+  it('removes an old leftover without a runner record, but refuses a young one', async () => {
+    await leftover('old', { runner: null, ageMs: 2 * hour });
+    expect(removed(await remove('old')).launchOnly).toBe(true);
+    expect(await gone(join(stateDir, 'old'))).toBe(true);
+    const directory = await leftover('young', { runner: null });
+    const before = await snapshot(directory);
+    const refusal = refused(await remove('young', { force: true }), 'run.active');
+    expect(refusal.message).toContain('no runner record');
+    expect(refusal.details).toMatchObject({
+      status: 'starting',
+      waiting: [],
+      launches: [{ n: 1, pid: null, host: null, state: 'none', inFlight: true }],
+    });
+    expect(await snapshot(directory)).toEqual(before);
+    // An injected floor settles it.
+    const outcome = await removeRun({ runId: 'young', stateDir }, processRunner, {
+      launchSettle: { floorMs: 0, now: () => Date.now() + 1_000 },
+    });
+    expect(outcome).toMatchObject({ kind: 'removed', result: { launchOnly: true } });
+  });
+
+  const flying: readonly (readonly [string, () => object | string, string])[] = [
+    ['a live runner', () => liveRunner(), 'alive'],
+    ['a runner on another host', () => ({ ...deadRunner, host: `${hostname()}-gone` }), 'remote'],
+    ['an unparsable runner record', () => '{"pid":', 'unparsable'],
+  ];
+  it.for(flying)(
+    'refuses %s even with --force and in a dry run, changing nothing',
+    async ([, runner, state]) => {
+      const directory = await leftover('flying', { runner: runner(), ageMs: 2 * hour });
+      const before = await snapshot(stateDir);
+      const refusal = refused(await remove('flying', { force: true }), 'run.active');
+      expect(refusal.message).toContain('may still create the record');
+      expect(refusal.details).toMatchObject({
+        status: 'starting',
+        launches: [{ n: 1, state, inFlight: true }],
+      });
+      for (const force of [false, true]) {
+        const preview = removed(await remove('flying', { dryRun: true, force }));
+        expect(preview).toMatchObject({
+          launchOnly: true,
+          removed: false,
+          verdict: { code: 'run.active' },
+          paths: [directory],
+        });
+      }
+      expect(await snapshot(stateDir)).toEqual(before);
+      expect((await listRuns({ stateDir })).leftoverLaunches).toEqual([]);
+    },
+  );
+
+  it('previews a removable leftover, changing nothing', async () => {
+    const directory = await leftover('broken');
+    const before = await snapshot(root);
+    expect(removed(await remove('broken', { dryRun: true }))).toMatchObject({
+      dryRun: true,
+      removed: false,
+      launchOnly: true,
+      verdict: 'remove',
+      paths: [directory],
+      bytes: await runBytes(stateDir, 'broken'),
+      tombstones: [],
+    });
+    expect(await snapshot(root)).toEqual(before);
+  });
+
+  it('refuses with run.locked while the legacy guard is held, changing nothing', async () => {
+    const directory = await leftover('guarded');
+    await plant(join(stateDir, 'guarded.json.lock'), {
+      owner: owner(process.pid, 'live', hostname(), {
+        osStartTime: processIdentity(process.pid)?.start ?? null,
+      }),
+    });
+    const before = await snapshot(directory);
+    refused(await remove('guarded'), 'run.locked');
+    expect(await snapshot(directory)).toEqual(before);
+  });
+
+  it('refuses with run.active when a new launch was allocated before the guard', async () => {
+    const directory = await leftover('again');
+    await expect(
+      removeRun({ runId: 'again', stateDir }, processRunner, {
+        beforeLock: async () => {
+          const prepared = await prepareStartLaunch({ runId: 'again', stateDir, cwd: root });
+          assert(prepared.ok);
+          await Promise.all(prepared.files.handles.map((handle) => handle.close()));
+          expect(prepared.files.log).toBe(join(directory, 'launch', '2.log'));
+        },
+      }),
+    ).rejects.toMatchObject({
+      code: 'run.active',
+      details: {
+        launches: [
+          { n: 1, inFlight: false },
+          { n: 2, inFlight: true },
+        ],
+      },
+    });
+    expect((await readdir(join(directory, 'launch'))).sort()).toEqual([
+      '1.log',
+      '1.result.json',
+      '1.runner.json',
+      '2.log',
+      '2.result.json',
+    ]);
+    expect(await gone(join(stateDir, 'again.json.lock'))).toBe(true);
+  });
+
+  it('refuses with run.exists when a record appeared before the guard, leaving it in place', async () => {
+    const directory = await leftover('raced');
+    let before: Record<string, string> = {};
+    await expect(
+      removeRun({ runId: 'raced', stateDir }, processRunner, {
+        beforeLock: async () => {
+          await writeFile(join(directory, 'run.json'), '{}');
+          before = await snapshot(directory);
+        },
+      }),
+    ).rejects.toMatchObject({ code: 'run.exists', runId: 'raced' });
+    expect(await snapshot(directory)).toEqual(before);
+    expect(await gone(join(stateDir, 'raced.json.lock'))).toBe(true);
+  });
+
+  it.for([
+    ['another entry beside launch/', async (directory: string) => mkdir(join(directory, 'lock'))],
+    [
+      'an unknown file in launch/',
+      async (directory: string) => writeFile(join(directory, 'launch', 'notes.txt'), ''),
+    ],
+    ['a legacy inbox', async () => mkdir(join(stateDir, 'odd.inbox'))],
+    ['a legacy cancel request', async () => writeFile(join(stateDir, 'odd.cancel.json'), '{}')],
+    ['a migration backup', async () => writeFile(join(stateDir, 'odd.json.v1'), '{}')],
+  ] as const)('still reports run.not_found with %s', async ([, add]) => {
+    const directory = await leftover('odd');
+    await add(directory);
+    const before = await snapshot(stateDir);
+    refused(await remove('odd'), 'run.not_found');
+    refused(await remove('odd', { dryRun: true }), 'run.not_found');
+    expect(await snapshot(stateDir)).toEqual(before);
+    expect((await listRuns({ stateDir })).leftoverLaunches).toEqual([]);
+  });
+
+  it('still reports run.unreadable for a run whose run.json is damaged', async () => {
+    await completedRun('damaged');
+    const directory = join(stateDir, 'damaged');
+    await mkdir(join(directory, 'launch'));
+    await writeFile(join(directory, 'launch', '1.log'), '');
+    await writeFile(join(directory, 'run.json'), 'not json');
+    refused(await remove('damaged'), 'run.unreadable');
+    refused(await remove('damaged', { dryRun: true }), 'run.unreadable');
+    expect(await gone(join(directory, 'launch', '1.log'))).toBe(false);
+  });
+
+  it('is listed only once every launch has settled, and never for a run with a record', async () => {
+    await completedRun('real');
+    await mkdir(join(stateDir, 'real', 'launch'));
+    await writeFile(join(stateDir, 'real', 'launch', '1.log'), '');
+    const broken = await leftover('broken', { ageMs: 2 * hour });
+    await leftover('flying', { runner: liveRunner() });
+    const listed = await listRuns({ stateDir });
+    expect(listed.runs.map((run) => run.id)).toEqual(['real']);
+    expect(listed.leftoverLaunches).toEqual([
+      {
+        runId: 'broken',
+        stateDir,
+        path: broken,
+        bytes: await runBytes(stateDir, 'broken'),
+        launches: [1],
+        newest: expect.any(String) as unknown,
+        log: join(broken, 'launch', '1.log'),
+      },
+    ]);
+    expect(Date.now() - Date.parse(listed.leftoverLaunches[0]?.newest ?? '')).toBeGreaterThan(hour);
+    expect(listed.warnings).toEqual([]);
+    expect((await listRuns({ stateDir, status: 'completed' })).leftoverLaunches).toEqual([]);
+    expect(removed(await remove('real')).launchOnly).toBe(false);
+  });
+
+  it('scans every registered project with --all', async () => {
+    const project = join(root, 'project');
+    await mkdir(project);
+    const workflow = defineWorkflow({
+      name: 'rm',
+      version: '1',
+      input: z.null(),
+      output: z.unknown(),
+      run: (ctx) => ctx.step('one', step(1)),
+    });
+    await runWorkflow(workflow, { runId: 'home', cwd: project, input: null });
+    const runs = defaultStateDir(project);
+    const elsewhere = join(runs, 'far');
+    await mkdir(join(elsewhere, 'launch'), { recursive: true });
+    await writeFile(
+      join(elsewhere, 'launch', '1.runner.json'),
+      JSON.stringify({ pid: DEAD, host: hostname(), osStartTime: null }),
+    );
+    await leftover('near');
+    const listed = await listRuns({ stateDir, all: true });
+    expect(listed.runs.map((run) => run.id)).toEqual(['home']);
+    expect(
+      listed.leftoverLaunches.map((entry) => [entry.runId, entry.stateDir, entry.log]).sort(),
+    ).toEqual([
+      ['far', runs, null],
+      ['near', stateDir, join(stateDir, 'near', 'launch', '1.log')],
+    ]);
+    expect((await listRuns({ stateDir })).leftoverLaunches.map((entry) => entry.runId)).toEqual([
+      'near',
+    ]);
+  });
 });

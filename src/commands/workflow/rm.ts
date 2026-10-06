@@ -34,7 +34,7 @@ export default class WorkflowRm extends WorkflowCommand {
   public static override readonly summary =
     'Remove one saved run and its caches without importing workflow code';
   public static override readonly description =
-    'Deletes the run directory (record, journal, attempts/ transcripts, artifacts, launch/, inbox), its legacy flat files and its worktree caches; pinned refs only with --refs. Refuses (exit 3, run.locked) while any lock owner or recoverer is alive, unverifiable or on a foreign host, even with --force; (exit 3, run.orphans) while a dead owner’s recorded child is alive or unverifiable; and, without --force, (exit 3, run.active) for a running or suspended run or one with a waiting step. A cache Git cannot remove while its repository exists stops the removal before the run is deleted (exit 74, workflow.storage): caches Git already removed stay removed, no ref is deleted, and the record stays for workflow clean. --dry-run exits 0 with the verdict whenever the run exists.';
+    'Deletes the run directory (record, journal, attempts/ transcripts, artifacts, launch/, inbox), its legacy flat files and its worktree caches; pinned refs only with --refs. Refuses (exit 3, run.locked) while any lock owner or recoverer is alive, unverifiable or on a foreign host, even with --force; (exit 3, run.orphans) while a dead owner’s recorded child is alive or unverifiable; and, without --force, (exit 3, run.active) for a running or suspended run or one with a waiting step. A cache Git cannot remove while its repository exists stops the removal before the run is deleted (exit 74, workflow.storage): caches Git already removed stay removed, no ref is deleted, and the record stays for workflow clean. An ID with no record whose directory holds only the launch/ of a start that failed before its record is a leftover launch directory: rm removes it under the same guard (launchOnly in the result; --refs changes nothing), and refuses it (exit 3, run.active), even with --force, while the start’s runner is alive, unverifiable or remote, or, for a launch without a runner record, its files are younger than an hour. --dry-run exits 0 with the verdict whenever the run or leftover exists.';
   public async run(): Promise<void> {
     const { args, flags } = await this.parse(WorkflowRm);
     const stateDir = this.runContext(args.runId, flags['state-dir']);
@@ -60,7 +60,9 @@ export default class WorkflowRm extends WorkflowCommand {
     const lines = result.dryRun
       ? [
           result.verdict === 'remove'
-            ? `Would remove ${result.runId} (${formatBytes(result.bytes)}).`
+            ? result.launchOnly
+              ? `Would remove the leftover launch directory of ${result.runId} (${formatBytes(result.bytes)}).`
+              : `Would remove ${result.runId} (${formatBytes(result.bytes)}).`
             : `Would refuse to remove ${result.runId} (${result.verdict.code}): ${result.verdict.message}`,
           ...result.paths.map((path) => `Path: ${path}`),
           ...caches.map((cache) => `Cache: ${cache}`),
@@ -68,14 +70,18 @@ export default class WorkflowRm extends WorkflowCommand {
           ...result.keptRefs.map((ref) => `Kept ref: ${ref}`),
           ...result.tombstones.map((name) => `Tombstone: ${name}`),
         ]
-      : [
-          `Removed ${result.runId} (${formatBytes(result.bytes)}), ${String(result.caches.length)} worktree caches and ${String(result.refsRemoved.length)} pinned refs.`,
-          ...(result.keptRefs.length
-            ? [
-                `Kept ${String(result.keptRefs.length)} pinned refs under refs/quiet-choir/${result.runId}/; git for-each-ref lists them (rm --refs would have deleted them).`,
-              ]
-            : []),
-        ];
+      : result.launchOnly
+        ? [
+            `Removed the leftover launch directory of ${result.runId} (${formatBytes(result.bytes)}).`,
+          ]
+        : [
+            `Removed ${result.runId} (${formatBytes(result.bytes)}), ${String(result.caches.length)} worktree caches and ${String(result.refsRemoved.length)} pinned refs.`,
+            ...(result.keptRefs.length
+              ? [
+                  `Kept ${String(result.keptRefs.length)} pinned refs under refs/quiet-choir/${result.runId}/; git for-each-ref lists them (rm --refs would have deleted them).`,
+                ]
+              : []),
+          ];
     const human = [...lines, ...result.warnings.map((warning) => `Warning: ${warning}`)].join('\n');
     // A removal that passed its commit point stands even when a signal arrived afterwards.
     if (result.removed) this.outputSavedCompletion(result, human);

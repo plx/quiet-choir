@@ -160,6 +160,16 @@ try {
   assert.match(readFileSync(typecheck.launch.log, 'utf8'), /not assignable/u);
   assert.equal(existsSync(join(stateDir, 'broken', 'run.json')), false);
   assert.equal(inspectSummary('broken').status, 3);
+  // Its runner has exited, so list reports the leftover launch directory and rm removes it.
+  const listed = documentOf(cli(['list', '--state-dir', stateDir, '--json']), 0);
+  assert.deepEqual(
+    listed.leftoverLaunches.map((entry) => [entry.runId, entry.log]),
+    [['broken', typecheck.launch.log]],
+  );
+  const leftover = documentOf(cli(['rm', 'broken', '--state-dir', stateDir, '--json']), 0);
+  assert.equal(leftover.kind, 'workflow.rm.result');
+  assert.equal(leftover.launchOnly, true);
+  assert.equal(existsSync(join(stateDir, 'broken')), false);
 
   // 4. A usage refusal by the runner comes back the same way.
   const usage = documentOf(start(echo, '--run-id', 'usage', '--kill-grace-ms', '0'), 2);

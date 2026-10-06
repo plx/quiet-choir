@@ -11,7 +11,7 @@ import type { HarnessFixtures } from '../../harnesses/fixture.js';
 import type { RehearsalReport } from './rehearsal.js';
 import type { HarnessSelection } from './harness-selection.js';
 import type { WorkflowFailure } from './failure.js';
-import type { InspectionStatus, RunSummary } from './inspection.js';
+import type { InspectionStatus, LeftoverLaunchSummary, RunSummary } from './inspection.js';
 import type { EventFollowStart } from './event-follow.js';
 import type { AgentLimits } from '../runtime/agent-limiter.js';
 import type { RunOwnership } from '../runtime/store.js';
@@ -389,6 +389,8 @@ export type WorkflowCommandResult = ExecutionResult &
         readonly ok: true;
         readonly stateDir: string;
         readonly runs: readonly RunSummary[];
+        /** Removable leftover launch directories of starts that failed before their record. */
+        readonly leftoverLaunches: readonly LeftoverLaunchSummary[];
         readonly warnings: readonly string[];
       }
     | {
