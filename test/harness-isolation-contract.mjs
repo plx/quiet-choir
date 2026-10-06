@@ -2,6 +2,7 @@
 import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
+import { createServer } from 'node:net';
 import { join } from 'node:path';
 import { CliHarness } from '../dist/index.js';
 import { materializeInvocation } from '../dist/harnesses/invocation.js';
@@ -38,6 +39,22 @@ const markers = {
 const authJson = `${JSON.stringify({ OPENAI_API_KEY: 'sk-local-fixture-auth' })}\n`;
 const listing = async (directory) =>
   (await readdir(directory, { recursive: true })).map(String).sort();
+const isPlainObject = (value) =>
+  typeof value === 'object' &&
+  value !== null &&
+  [Object.prototype, null].includes(Object.getPrototypeOf(value));
+// Merges by object structure, not by TOML dotted path: plain objects merge, everything else replaces.
+const mergeConfig = (base, override) =>
+  Object.fromEntries(
+    [...Object.keys(base), ...Object.keys(override).filter((key) => !(key in base))].map((key) => [
+      key,
+      !(key in override)
+        ? base[key]
+        : isPlainObject(base[key]) && isPlainObject(override[key])
+          ? mergeConfig(base[key], override[key])
+          : override[key],
+    ]),
+  );
 /** Write a skill whose description carries the marker, creating its directories. */
 const skill = async (directory, name, marker) => {
   await mkdir(join(directory, name), { recursive: true });
@@ -49,7 +66,7 @@ const skill = async (directory, name, marker) => {
 
 // extras.prepare({ home, project, config }) adjusts the instruction layout; extras.subdir
 // runs the call from a directory below the project; extras.env({ home }) overrides child
-// environment variables such as HOME.
+// environment variables such as HOME; extras.timeoutMs shortens the call's deadline.
 async function execute(provider, name, options = {}, tool, extras = {}) {
   const home = join(root, name),
     project = join(home, 'project'),
@@ -175,7 +192,7 @@ async function execute(provider, name, options = {}, tool, extras = {}) {
   for (const [key, value] of Object.entries(extras.env?.({ home }) ?? {}))
     if (value === undefined) delete environment[key];
     else environment[key] = value;
-  // An explicit config replaces this one, so a case that sets config spreads providerConfig in.
+  // An explicit Codex config is merged over this fixture provider, and explicit keys win.
   const providerConfig = {
     model_provider: 'fixture',
     model_providers: {
@@ -192,7 +209,7 @@ async function execute(provider, name, options = {}, tool, extras = {}) {
   };
   const explicit =
     typeof options === 'function'
-      ? options({ cwd, outside, plugin, hookDefinition, serverFile, providerConfig })
+      ? options({ cwd, outside, plugin, hookDefinition, serverFile })
       : options;
   const request = {
     harness: provider,
@@ -208,6 +225,13 @@ async function execute(provider, name, options = {}, tool, extras = {}) {
             config: providerConfig,
           }),
       ...explicit,
+      ...(provider === 'codex'
+        ? {
+            config: isPlainObject(explicit.config)
+              ? mergeConfig(providerConfig, explicit.config)
+              : providerConfig,
+          }
+        : {}),
     },
   };
   let invocation;
@@ -233,6 +257,7 @@ async function execute(provider, name, options = {}, tool, extras = {}) {
     });
     // After the version probe, which runs against the real home as harness metadata does.
     configBefore = await listing(config);
+    // A timeout keeps its captured output, so the assertions below report it as a failure.
     const result = await runProcess({
       binary: provider,
       args: invocation.args,
@@ -240,13 +265,19 @@ async function execute(provider, name, options = {}, tool, extras = {}) {
       input: plan.stdin,
       env: { ...environment, ...invocation.env },
       inheritEnv: false,
-      timeoutMs: 30_000,
+      timeoutMs: extras.timeoutMs ?? 30_000,
       maxOutputBytes: 4 * 1024 * 1024,
       killGraceMs: 1000,
       signal: new AbortController().signal,
+    }).catch((error) => {
+      if (error?.code === 'ETIMEDOUT' && error.processResult) return error.processResult;
+      throw error;
     });
+    assert(
+      bodies.length > 0,
+      `${name}: the native CLI did not reach the local fake API (Codex: an explicit config may have moved model_provider or the fixture base_url away from the local fixture)\n${result.stderr}\n${result.stdout}`,
+    );
     assert.equal(result.code, 0, `${name}: ${result.stderr}\n${result.stdout}`);
-    assert(bodies.length > 0, 'The native CLI did not reach the local fake API.');
     const messages = result.stdout.split('\n').flatMap((line) => {
       try {
         return [JSON.parse(line)];
@@ -635,17 +666,38 @@ try {
       homeAgentsSkillReachedRequest: reached(noGit, 'MOVED_HOME_SKILL_MARKER'),
     });
     // CODEX_HOME memories with the feature explicitly enabled.
-    const memories = await execute(
-      'codex',
-      'codex-restricted-memories-enabled',
-      ({ providerConfig }) => ({ config: { ...providerConfig, 'features.memories': true } }),
-    );
+    const memories = await execute('codex', 'codex-restricted-memories-enabled', {
+      config: { 'features.memories': true },
+    });
     report.cases.push({
       name: 'codex-restricted-memories-enabled',
       version: memories.version,
       memorySummaryReachedRequest: reached(memories, markers.memorySummary),
       memoryMdReachedRequest: reached(memories, markers.memoryMd),
     });
+    // Negative case: a Codex call that never reaches the local fake API makes execute() fail with the
+    // reach message, and the explicit nested base_url does reach Codex (it points at a closed local
+    // port). It does not prove that sibling fixture keys survive the merge; that is proven by
+    // codex-restricted-memories-enabled above, which passes only features.memories and still reaches
+    // the fixture provider. Asserted only; not a report case. Codex keeps retrying a refused
+    // connection ("Reconnecting...") despite the zero retry settings, so the call gets a short
+    // deadline and the timeout counts as not reaching the API.
+    const closed = createServer();
+    await new Promise((resolve) => closed.listen(0, '127.0.0.1', resolve));
+    const { port } = closed.address();
+    await new Promise((resolve) => closed.close(resolve));
+    await assert.rejects(
+      execute(
+        'codex',
+        'codex-explicit-config-unreached',
+        {
+          config: { model_providers: { fixture: { base_url: `http://127.0.0.1:${port}/v1` } } },
+        },
+        undefined,
+        { timeoutMs: 8000 },
+      ),
+      /did not reach the local fake API/u,
+    );
   }
   console.log(JSON.stringify(report, null, 2));
 } finally {
