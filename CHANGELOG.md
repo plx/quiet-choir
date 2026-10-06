@@ -1357,6 +1357,14 @@
   and `test/state-dir-fixture.test.ts` forces timeouts to check it. No runtime behavior changes; see
   CONTRIBUTING.md, "Per-test state directories".
 
+- Development and test infrastructure: add a per-test CLI capture fixture,
+  `test/setup/cli-capture.ts` (#249). A timed-out `test/cli.test.ts` body kept running and
+  re-pointed later tests' console spies and wrote `process.exitCode`, so under load one timeout
+  became several empty-stdout failures. The fixture's `cli.run` captures each call's output and exit
+  code on its own, refuses calls after its test ends, and drains the call in flight at teardown;
+  `test/cli.test.ts` uses it and `test/cli-capture-fixture.test.ts` forces a timeout to check it. No
+  runtime behavior changes; see CONTRIBUTING.md, "CLI command capture".
+
 - Add Workflow Lab Batch 02: six idiomatic ports with domain schemas, named roles, code-owned
   commands/writes, approved isolated setup, recoverable mutation tests, inline lifecycle children
   and settled bug panels. Record paired fixture metrics and actual SIGKILL recovery; keep model

@@ -207,6 +207,40 @@ The journal suite uses the fixture. The other suites still keep a module-level d
 the fixture incrementally; any suite that forks writers or can leave a run unawaited is a good next
 candidate.
 
+## CLI command capture
+
+Vitest does not cancel a timed-out test body: the test fails, its fixtures tear down and the next
+test starts while the old body keeps running. In `test/cli.test.ts` that abandoned body kept calling
+the shared `captureCommand` helper during later tests (#249). Each of its calls re-pointed the
+current test's `console.log` and `console.error` spies (`vi.spyOn` reuses an existing spy) into the
+stale output array, overwrote the current test's executor prototype mocks, and wrote
+`process.exitCode`, so one slow test was followed by tests that saw empty stdout or the wrong exit
+code. Reproduce it with a short timeout, which turns the slowest cases into timeouts:
+`npx vitest run test/cli.test.ts --testTimeout=40`. On the old helper this reported the genuine
+timeouts plus empty-stdout failures in the tests after them; now it reports only the timeouts.
+
+CLI adapter tests take their capture from the `cli` fixture in `test/setup/cli-capture.ts`. Import
+`it` from that module (it extends the state-directory `it`, so `stateDir` and `runs` remain
+available) and destructure it: `async ({ cli }) => …`, or `async (value, { cli }) => …` with
+`it.for`. `cli.run(Command, argv)` runs one command class from the project root and returns its
+`error`, `stdout`, `stderr` and `exitCode`.
+
+- Each call installs and restores its own console spies, and resets `process.exitCode` before the
+  command runs and again after reading it. Assert on the result's `exitCode`; never read or assign
+  `process.exitCode` in these tests.
+- A second `cli.run` while one is in flight from the same test is refused.
+- At teardown the handle is closed, so a timed-out body's later `cli.run` is refused, and the call
+  in flight is awaited, while that test's mocks are still installed, before the next test starts.
+  The wait is bounded by the `settleTimeoutMs` fixture (`SETTLE_TIMEOUT_MS`, 10 s); past it,
+  teardown fails the test with an error naming it.
+
+A stale body can still run code between its awaits that does not go through `cli.run`, such as a
+`vi.spyOn` on an executor prototype after an `await` on `mkdtemp`, so keep the slow work in a test
+inside `cli.run` and keep timeouts measured. `test/cli-capture-fixture.test.ts` forces a timeout
+with a fake command and checks the drain, the refusal and the next test's clean state. Other suites
+with a local console-spy capture helper (`run-result-cli`, `pending-cli`, `run-prune`,
+`events-follow`, `doctor`) can move to the fixture incrementally.
+
 ## Harness protocol captures
 
 `test/fixtures/harness/` contains sanitized stdout/stderr and process exit codes captured with

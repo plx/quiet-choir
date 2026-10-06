@@ -7,10 +7,9 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { inspect } from 'node:util';
 
 import { ExitError } from '@oclif/core/errors';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, vi } from 'vitest';
 
 import InfoVersion from '../src/commands/info/version.js';
 import WorkflowAnswer from '../src/commands/workflow/answer.js';
@@ -32,49 +31,12 @@ import type { RunRecord } from '../src/workflow/runtime/store.js';
 import WorkflowTypecheck from '../src/commands/workflow/typecheck.js';
 import { TypeScriptExecutor } from '../src/workflow/typecheck/typescript-executor.js';
 import WorkflowValidate from '../src/commands/workflow/validate.js';
+import { it } from './setup/cli-capture.js';
 
 const projectRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const temporaryDirectories: string[] = [];
 
-interface RunnableCommand {
-  run(argv: string[], options: { root: string }): Promise<unknown>;
-}
-
-interface CapturedCommand {
-  readonly error: unknown;
-  readonly stderr: string;
-  readonly stdout: string;
-}
-
-async function captureCommand(
-  command: RunnableCommand,
-  argv: string[] = [],
-): Promise<CapturedCommand> {
-  const standardOutput: string[] = [];
-  const standardError: string[] = [];
-  vi.spyOn(console, 'log').mockImplementation((message?: unknown) => {
-    standardOutput.push(typeof message === 'string' ? message : inspect(message));
-  });
-  vi.spyOn(console, 'error').mockImplementation((message?: unknown) => {
-    standardError.push(typeof message === 'string' ? message : inspect(message));
-  });
-
-  let error: unknown;
-  try {
-    await command.run(argv, { root: projectRoot });
-  } catch (caught: unknown) {
-    error = caught;
-  }
-
-  return {
-    error,
-    stderr: standardError.join('\n'),
-    stdout: standardOutput.join('\n'),
-  };
-}
-
 afterEach(async () => {
-  process.exitCode = undefined;
   await Promise.all(
     temporaryDirectories
       .splice(0)
@@ -83,23 +45,23 @@ afterEach(async () => {
 });
 
 describe('inherited verbosity flags', () => {
-  it('maps --verbose to trace logging', async () => {
-    const output = await captureCommand(InfoVersion, ['--verbose']);
+  it('maps --verbose to trace logging', async ({ cli }) => {
+    const output = await cli.run(InfoVersion, ['--verbose']);
 
     expect(output.error).toBeUndefined();
     expect(output.stdout).toBe('0.0.0');
     expect(output.stderr).toBe('[trace] Executing info.version');
   });
 
-  it('accepts an explicit inherited log level', async () => {
-    const output = await captureCommand(InfoVersion, ['--log-level', 'debug']);
+  it('accepts an explicit inherited log level', async ({ cli }) => {
+    const output = await cli.run(InfoVersion, ['--log-level', 'debug']);
 
     expect(output.error).toBeUndefined();
     expect(output.stderr).toBe('');
   });
 
-  it('rejects mutually exclusive verbosity flags', async () => {
-    const output = await captureCommand(InfoVersion, ['--verbose', '--log-level', 'debug']);
+  it('rejects mutually exclusive verbosity flags', async ({ cli }) => {
+    const output = await cli.run(InfoVersion, ['--verbose', '--log-level', 'debug']);
 
     expect(output.error).toBeInstanceOf(Error);
     if (output.error instanceof Error) {
@@ -109,8 +71,8 @@ describe('inherited verbosity flags', () => {
 });
 
 describe('implemented command adapters', () => {
-  it('reports the package version through a plan and executor', async () => {
-    const output = await captureCommand(InfoVersion);
+  it('reports the package version through a plan and executor', async ({ cli }) => {
+    const output = await cli.run(InfoVersion);
 
     expect(output.error).toBeUndefined();
     expect(output.stdout).toBe('0.0.0');
@@ -119,13 +81,13 @@ describe('implemented command adapters', () => {
   // Full TypeScript compile with no program cache (the CLI passes none). measured: 0.15-0.35 s alone,
   // 0.9 s worst of three full coverage runs, 2.0 s with a CPU hog on every core, 0.3-3.1 s on the CI legs
   // (slowest on the Node 24 coverage leg).
-  it('type-checks a valid entrypoint', { timeout: 10_000 }, async () => {
+  it('type-checks a valid entrypoint', { timeout: 10_000 }, async ({ cli }) => {
     const root = await mkdtemp(join(tmpdir(), 'quiet-choir-cli-'));
     temporaryDirectories.push(root);
     const entrypoint = join(root, 'workflow.ts');
     await writeFile(entrypoint, 'export const value: number = 1;\n', 'utf8');
 
-    const output = await captureCommand(WorkflowTypecheck, [entrypoint]);
+    const output = await cli.run(WorkflowTypecheck, [entrypoint]);
 
     expect(output.error).toBeUndefined();
     expect(output.stdout).toContain('Type check passed');
@@ -135,13 +97,13 @@ describe('implemented command adapters', () => {
   // Full TypeScript compile with no program cache (the CLI passes none). measured: 0.15-0.35 s alone,
   // 0.9 s worst of three full coverage runs, 2.0 s with a CPU hog on every core, 0.3-3.1 s on the CI legs
   // (slowest on the Node 24 coverage leg).
-  it('renders compiler errors and exits four', { timeout: 10_000 }, async () => {
+  it('renders compiler errors and exits four', { timeout: 10_000 }, async ({ cli }) => {
     const root = await mkdtemp(join(tmpdir(), 'quiet-choir-cli-'));
     temporaryDirectories.push(root);
     const entrypoint = join(root, 'workflow.ts');
     await writeFile(entrypoint, "const count: number = 'wrong';\n", 'utf8');
 
-    const output = await captureCommand(WorkflowTypecheck, [entrypoint]);
+    const output = await cli.run(WorkflowTypecheck, [entrypoint]);
 
     expect(output.error).toBeInstanceOf(ExitError);
     expect(output.error).toMatchObject({ oclif: { exit: 4 } });
@@ -149,13 +111,13 @@ describe('implemented command adapters', () => {
     expect(output.stderr).toContain('Type check failed with 1 error.');
   });
 
-  it('rejects unsupported source extensions during plan analysis', async () => {
+  it('rejects unsupported source extensions during plan analysis', async ({ cli }) => {
     const root = await mkdtemp(join(tmpdir(), 'quiet-choir-cli-'));
     temporaryDirectories.push(root);
     const entrypoint = join(root, 'workflow.js');
     await writeFile(entrypoint, 'export const value = 1;\n', 'utf8');
 
-    const output = await captureCommand(WorkflowTypecheck, [entrypoint]);
+    const output = await cli.run(WorkflowTypecheck, [entrypoint]);
 
     expect(output.error).toMatchObject({
       code: 'usage.entrypoint',
@@ -166,9 +128,10 @@ describe('implemented command adapters', () => {
   // Full TypeScript compile with no program cache (the CLI passes none). measured: 0.15-0.35 s alone,
   // 0.9 s worst of three full coverage runs, 2.0 s with a CPU hog on every core, 0.3-3.1 s on the CI legs
   // (slowest on the Node 24 coverage leg).
-  it.each([false, true])(
+  it.for([false, true])(
     'reports a first signal during a successful type check as interrupted (JSON=%s)',
-    async (json) => {
+    { timeout: 10_000 },
+    async (json, { cli }) => {
       const root = await mkdtemp(join(tmpdir(), 'quiet-choir-cli-'));
       temporaryDirectories.push(root);
       const entrypoint = join(root, 'workflow.ts');
@@ -181,10 +144,7 @@ describe('implemented command adapters', () => {
         return check(plan);
       });
 
-      const output = await captureCommand(WorkflowTypecheck, [
-        entrypoint,
-        ...(json ? ['--json'] : []),
-      ]);
+      const output = await cli.run(WorkflowTypecheck, [entrypoint, ...(json ? ['--json'] : [])]);
 
       expect(output.error).toMatchObject({ oclif: { exit: 130 } });
       expect(output.stdout).not.toContain('Type check passed');
@@ -196,11 +156,10 @@ describe('implemented command adapters', () => {
           error: { code: 'workflow.interrupted' },
         });
     },
-    10_000,
   );
 
-  it('uses oclif file validation for missing entrypoints', async () => {
-    const output = await captureCommand(WorkflowTypecheck, ['/definitely/missing/workflow.ts']);
+  it('uses oclif file validation for missing entrypoints', async ({ cli }) => {
+    const output = await cli.run(WorkflowTypecheck, ['/definitely/missing/workflow.ts']);
 
     expect(output.error).toBeInstanceOf(Error);
     if (output.error instanceof Error) {
@@ -246,7 +205,7 @@ const failedResult = workflowFailure('load.typecheck', 'Workflow type check fail
 });
 
 describe('workflow lifecycle command adapters', () => {
-  it.each([false, true])('validates and renders metadata (JSON=%s)', async (json) => {
+  it.for([false, true])('validates and renders metadata (JSON=%s)', async (json, { cli }) => {
     const file = await workflowFile();
     const execute = vi.spyOn(WorkflowExecutor.prototype, 'execute').mockResolvedValue({
       kind: 'workflow.validate.result',
@@ -270,28 +229,28 @@ describe('workflow lifecycle command adapters', () => {
         entrypoint: file,
       },
     });
-    const output = await captureCommand(WorkflowValidate, [file, ...(json ? ['--json'] : [])]);
+    const output = await cli.run(WorkflowValidate, [file, ...(json ? ['--json'] : [])]);
     expect(output.error).toBeUndefined();
     expect(execute).toHaveBeenCalledWith(expect.objectContaining({ kind: 'workflow.validate' }));
     expect(output.stdout).toContain(json ? '"fingerprint":"hash"' : 'Validated test@1');
   });
 
-  it.each([WorkflowValidate, WorkflowExecute])(
+  it.for([WorkflowValidate, WorkflowExecute])(
     'reports type errors before execution for %s',
-    async (command) => {
+    async (command, { cli }) => {
       const file = await workflowFile();
       vi.spyOn(WorkflowExecutor.prototype, 'execute').mockResolvedValue(failedResult);
-      const output = await captureCommand(command, [file]);
+      const output = await cli.run(command, [file]);
       expect(output.error).toMatchObject({ oclif: { exit: 4 } });
       expect(output.stderr).toContain('TS2322');
     },
   );
 
-  it.each([WorkflowValidate, WorkflowExecute])(
+  it.for([WorkflowValidate, WorkflowExecute])(
     'rejects unsupported extensions for %s',
-    async (command) => {
+    async (command, { cli }) => {
       const file = await workflowFile('js');
-      const output = await captureCommand(command, [file]);
+      const output = await cli.run(command, [file]);
       expect(output.error).toMatchObject({
         code: 'usage.entrypoint',
         oclif: { exit: 2 },
@@ -299,46 +258,51 @@ describe('workflow lifecycle command adapters', () => {
     },
   );
 
-  it('requires valid JSON input and a resume identifier', async () => {
+  it('requires valid JSON input and a resume identifier', async ({ cli }) => {
     const file = await workflowFile();
-    const invalid = await captureCommand(WorkflowExecute, [file, '--input', '{nope}']);
+    const invalid = await cli.run(WorkflowExecute, [file, '--input', '{nope}']);
     expect(invalid.error).toMatchObject({
       oclif: { exit: 2 },
       message: expect.stringContaining('--input must contain valid JSON.') as unknown,
     });
-    const missingId = await captureCommand(WorkflowExecute, [file, '--resume']);
+    const missingId = await cli.run(WorkflowExecute, [file, '--resume']);
     expect(missingId.error).toBeInstanceOf(Error);
   });
 
-  it.each([false, true])('executes with JSON input and renders a run (JSON=%s)', async (json) => {
-    const file = await workflowFile();
-    const execute = vi
-      .spyOn(WorkflowExecutor.prototype, 'execute')
-      .mockResolvedValue({ kind: 'workflow.run.result', ok: true, run: runRecord });
-    const output = await captureCommand(WorkflowExecute, [
-      file,
-      '--input',
-      '{"value":2}',
-      '--run-id',
-      'test-run',
-      ...(json ? ['--json'] : []),
-    ]);
-    expect(output.error).toBeUndefined();
-    expect(output.stderr).toBe(
-      `Run ID: test-run\nState directory: ${resolveStateDir({ runId: 'test-run' })}`,
-    );
-    expect(execute).toHaveBeenCalledWith(
-      expect.objectContaining({ input: { value: 2 }, runId: 'test-run', resume: false }),
-    );
-    expect(output.stdout).toContain(json ? '"output":42' : 'Run test-run completed.');
-  });
+  it.for([false, true])(
+    'executes with JSON input and renders a run (JSON=%s)',
+    async (json, { cli }) => {
+      const file = await workflowFile();
+      const execute = vi
+        .spyOn(WorkflowExecutor.prototype, 'execute')
+        .mockResolvedValue({ kind: 'workflow.run.result', ok: true, run: runRecord });
+      const output = await cli.run(WorkflowExecute, [
+        file,
+        '--input',
+        '{"value":2}',
+        '--run-id',
+        'test-run',
+        ...(json ? ['--json'] : []),
+      ]);
+      expect(output.error).toBeUndefined();
+      expect(output.stderr).toBe(
+        `Run ID: test-run\nState directory: ${resolveStateDir({ runId: 'test-run' })}`,
+      );
+      expect(execute).toHaveBeenCalledWith(
+        expect.objectContaining({ input: { value: 2 }, runId: 'test-run', resume: false }),
+      );
+      expect(output.stdout).toContain(json ? '"output":42' : 'Run test-run completed.');
+    },
+  );
 
-  it('passes positive agent limits as plain execution policy and rejects malformed values before execution', async () => {
+  it('passes positive agent limits as plain execution policy and rejects malformed values before execution', async ({
+    cli,
+  }) => {
     const file = await workflowFile();
     const execute = vi
       .spyOn(WorkflowExecutor.prototype, 'execute')
       .mockResolvedValue({ kind: 'workflow.run.result', ok: true, run: runRecord });
-    const valid = await captureCommand(WorkflowExecute, [
+    const valid = await cli.run(WorkflowExecute, [
       file,
       '--max-agents',
       '5',
@@ -358,26 +322,24 @@ describe('workflow lifecycle command adapters', () => {
       ['--provider-limit', 'codex=0'],
       ['--provider-limit', 'codex=9007199254740992'],
     ]) {
-      const invalid = await captureCommand(WorkflowExecute, [file, ...args]);
+      const invalid = await cli.run(WorkflowExecute, [file, ...args]);
       expect(invalid.error).toMatchObject({ oclif: { exit: 2 } });
     }
     expect(execute).not.toHaveBeenCalled();
   });
 
-  it('passes --max-window-utilization as plain policy and rejects one above 1 before execution', async () => {
+  it('passes --max-window-utilization as plain policy and rejects one above 1 before execution', async ({
+    cli,
+  }) => {
     const file = await workflowFile();
     const execute = vi
       .spyOn(WorkflowExecutor.prototype, 'execute')
       .mockResolvedValue({ kind: 'workflow.run.result', ok: true, run: runRecord });
-    const valid = await captureCommand(WorkflowExecute, [file, '--max-window-utilization', '0.5']);
+    const valid = await cli.run(WorkflowExecute, [file, '--max-window-utilization', '0.5']);
     expect(valid.error).toBeUndefined();
     expect(execute).toHaveBeenCalledWith(expect.objectContaining({ maxWindowUtilization: 0.5 }));
     execute.mockClear();
-    const invalid = await captureCommand(WorkflowExecute, [
-      file,
-      '--max-window-utilization',
-      '1.5',
-    ]);
+    const invalid = await cli.run(WorkflowExecute, [file, '--max-window-utilization', '1.5']);
     expect(invalid.error).toMatchObject({
       code: 'usage.flag',
       oclif: { exit: 2 },
@@ -386,16 +348,16 @@ describe('workflow lifecycle command adapters', () => {
     expect(execute).not.toHaveBeenCalled();
   });
 
-  it.each([false, true])(
+  it.for([false, true])(
     'prints cleanup warnings to stderr without failing the completed run (JSON=%s)',
-    async (json) => {
+    async (json, { cli }) => {
       const file = await workflowFile();
       vi.spyOn(WorkflowExecutor.prototype, 'execute').mockResolvedValue({
         kind: 'workflow.run.result',
         ok: true,
         run: { ...runRecord, warnings: ['Could not release run test-run lock: EACCES'] },
       });
-      const output = await captureCommand(WorkflowExecute, [
+      const output = await cli.run(WorkflowExecute, [
         file,
         '--run-id',
         'test-run',
@@ -407,43 +369,38 @@ describe('workflow lifecycle command adapters', () => {
     },
   );
 
-  it('preserves saved input on resume and removes signal handlers', async () => {
+  it('preserves saved input on resume and removes signal handlers', async ({ cli }) => {
     const file = await workflowFile();
     const interruptListeners = process.listenerCount('SIGINT');
     const terminateListeners = process.listenerCount('SIGTERM');
     const execute = vi
       .spyOn(WorkflowExecutor.prototype, 'execute')
       .mockResolvedValue({ kind: 'workflow.run.result', ok: true, run: runRecord });
-    const output = await captureCommand(WorkflowExecute, [
-      file,
-      '--run-id',
-      'test-run',
-      '--resume',
-    ]);
+    const output = await cli.run(WorkflowExecute, [file, '--run-id', 'test-run', '--resume']);
     expect(output.error).toBeUndefined();
     expect(execute.mock.calls[0]?.[0]).not.toHaveProperty('input');
     expect(process.listenerCount('SIGINT')).toBe(interruptListeners);
     expect(process.listenerCount('SIGTERM')).toBe(terminateListeners);
   });
 
-  it('uses exit 130 on cooperative cancellation', async () => {
+  it('uses exit 130 on cooperative cancellation', async ({ cli }) => {
     const file = await workflowFile();
     vi.spyOn(WorkflowExecutor.prototype, 'execute').mockImplementation(() => {
       process.emit('SIGINT');
       return Promise.resolve(workflowFailure('workflow.interrupted', 'Cancelled'));
     });
-    const output = await captureCommand(WorkflowExecute, [file]);
+    const output = await cli.run(WorkflowExecute, [file]);
     expect(output.error).toMatchObject({ oclif: { exit: 130 } });
   });
 
-  it('keeps exit 1 for a saved failed checkpoint when a signal also arrives', async () => {
+  it('keeps exit 1 for a saved failed checkpoint when a signal also arrives', async ({ cli }) => {
     const file = await workflowFile();
     const run = { ...runRecord, status: 'failed', error: 'application failure' } as const;
     vi.spyOn(WorkflowExecutor.prototype, 'execute').mockImplementation(() => {
       process.emit('SIGINT');
       return Promise.resolve(workflowFailure('workflow.failed', 'application failure', { run }));
     });
-    const output = await captureCommand(WorkflowExecute, [file, '--json']);
+    const output = await cli.run(WorkflowExecute, [file, '--json']);
     expect(output.error).toMatchObject({ oclif: { exit: 1 } });
     expect(JSON.parse(output.stdout)).toMatchObject({
       exitCode: 1,
@@ -452,13 +409,15 @@ describe('workflow lifecycle command adapters', () => {
     });
   });
 
-  it('keeps a saved completion successful when a signal arrives after the last check', async () => {
+  it('keeps a saved completion successful when a signal arrives after the last check', async ({
+    cli,
+  }) => {
     const file = await workflowFile();
     vi.spyOn(WorkflowExecutor.prototype, 'execute').mockImplementation(() => {
       process.emit('SIGINT');
       return Promise.resolve({ kind: 'workflow.run.result', ok: true, run: runRecord });
     });
-    const output = await captureCommand(WorkflowExecute, [file, '--run-id', 'test-run', '--json']);
+    const output = await cli.run(WorkflowExecute, [file, '--run-id', 'test-run', '--json']);
     expect(output.error).toBeUndefined();
     expect(JSON.parse(output.stdout)).toMatchObject({
       kind: 'workflow.run.result',
@@ -467,7 +426,9 @@ describe('workflow lifecycle command adapters', () => {
     });
   });
 
-  it('keeps a durably queued answer successful when a signal arrives after delivery', async () => {
+  it('keeps a durably queued answer successful when a signal arrives after delivery', async ({
+    cli,
+  }) => {
     const delivery = {
       runId: 'test-run',
       stepId: 'approve',
@@ -478,14 +439,14 @@ describe('workflow lifecycle command adapters', () => {
       process.emit('SIGINT');
       return Promise.resolve({ kind: 'workflow.answer.result', ok: true, delivery });
     });
-    const output = await captureCommand(WorkflowAnswer, ['test-run', 'approve', '--json', 'true']);
+    const output = await cli.run(WorkflowAnswer, ['test-run', 'approve', '--json', 'true']);
     expect(output.error).toBeUndefined();
     expect(JSON.parse(output.stdout)).toMatchObject({ kind: 'workflow.answer.result', delivery });
   });
 
-  it.each([false, true])(
+  it.for([false, true])(
     'reports a first signal during a successful inspect as interrupted (JSON=%s)',
-    async (json) => {
+    async (json, { cli }) => {
       const stateDir = await mkdtemp(join(tmpdir(), 'quiet-choir-cli-'));
       temporaryDirectories.push(stateDir);
       await writeFile(join(stateDir, 'test-run.json'), JSON.stringify(runRecord));
@@ -500,7 +461,7 @@ describe('workflow lifecycle command adapters', () => {
           summary: summarizeRun(runRecord, ownership),
         });
       });
-      const output = await captureCommand(WorkflowInspect, [
+      const output = await cli.run(WorkflowInspect, [
         'test-run',
         '--state-dir',
         stateDir,
@@ -519,7 +480,7 @@ describe('workflow lifecycle command adapters', () => {
     },
   );
 
-  it.each([false, true])('inspects a run without a source file (JSON=%s)', async (json) => {
+  it.for([false, true])('inspects a run without a source file (JSON=%s)', async (json, { cli }) => {
     const run = {
       ...runRecord,
       harnesses: { codex: { binary: 'codex', version: '0.157.1' } },
@@ -533,7 +494,7 @@ describe('workflow lifecycle command adapters', () => {
       ownership,
       summary: summarizeRun(run, ownership),
     });
-    const output = await captureCommand(WorkflowInspect, ['test-run', ...(json ? ['--json'] : [])]);
+    const output = await cli.run(WorkflowInspect, ['test-run', ...(json ? ['--json'] : [])]);
     expect(output.error).toBeUndefined();
     expect(execute).toHaveBeenCalledWith(
       expect.objectContaining({ kind: 'workflow.inspect', runId: 'test-run' }),
@@ -543,7 +504,7 @@ describe('workflow lifecycle command adapters', () => {
     expect(output.stdout).toContain('native version changed');
   });
 
-  it('renders failure metadata and missing-run errors', async () => {
+  it('renders failure metadata and missing-run errors', async ({ cli }) => {
     const execute = vi.spyOn(WorkflowExecutor.prototype, 'execute').mockResolvedValue({
       kind: 'workflow.run.result',
       ok: true,
@@ -554,10 +515,10 @@ describe('workflow lifecycle command adapters', () => {
         { locked: false, owner: null, processes: [], locks: [] },
       ),
     });
-    const failed = await captureCommand(WorkflowInspect, ['test-run']);
+    const failed = await cli.run(WorkflowInspect, ['test-run']);
     expect(failed.stdout).toContain('Effect failed.');
     execute.mockResolvedValue(workflowFailure('run.not_found', 'Run does not exist.'));
-    const missing = await captureCommand(WorkflowInspect, ['missing']);
+    const missing = await cli.run(WorkflowInspect, ['missing']);
     expect(missing.error).toMatchObject({ oclif: { exit: 3 }, message: 'Run does not exist.' });
   });
 });
@@ -572,9 +533,11 @@ describe('next commands in failures', () => {
   const failure = () =>
     workflowFailure('run.orphans', 'Orphans survive.', { runId: 'r1', stateDir: '/s', next });
 
-  it('prints one shell-quoted Next: line per entry after a human failure message', async () => {
+  it('prints one shell-quoted Next: line per entry after a human failure message', async ({
+    cli,
+  }) => {
     vi.spyOn(WorkflowExecutor.prototype, 'execute').mockResolvedValue(failure());
-    const output = await captureCommand(WorkflowResume, ['r1', '--state-dir', projectRoot]);
+    const output = await cli.run(WorkflowResume, ['r1', '--state-dir', projectRoot]);
     expect(output.error).toMatchObject({
       oclif: { exit: 3 },
       message:
@@ -582,17 +545,21 @@ describe('next commands in failures', () => {
     });
   });
 
-  it('keeps the JSON document constant-shape: next is the entries, or an empty array', async () => {
+  it('keeps the JSON document constant-shape: next is the entries, or an empty array', async ({
+    cli,
+  }) => {
     const execute = vi.spyOn(WorkflowExecutor.prototype, 'execute').mockResolvedValue(failure());
     const json = ['r1', '--state-dir', projectRoot, '--json'];
-    const orphans = await captureCommand(WorkflowResume, json);
+    const orphans = await cli.run(WorkflowResume, json);
     expect(JSON.parse(orphans.stdout)).toMatchObject({ error: { code: 'run.orphans' }, next });
     execute.mockResolvedValue(workflowFailure('run.locked', 'Locked.', { runId: 'r1' }));
-    const locked = await captureCommand(WorkflowResume, json);
+    const locked = await cli.run(WorkflowResume, json);
     expect(JSON.parse(locked.stdout)).toMatchObject({ error: { code: 'run.locked' }, next: [] });
   });
 
-  it('hands the detected launcher to the executor, which emits it in answerCommand', async () => {
+  it('hands the detected launcher to the executor, which emits it in answerCommand', async ({
+    cli,
+  }) => {
     const { setCommandLauncher } = await import('../src/cli/launcher.js');
     const { defineWorkflow, runWorkflow, z } = await import('../src/index.js');
     const stateDir = await stateDirectory();
@@ -606,7 +573,7 @@ describe('next commands in failures', () => {
     await runWorkflow(definition, { runId: 'gate', stateDir, input: null });
     try {
       setCommandLauncher(['/x/node', '/y/run.js']);
-      const output = await captureCommand(WorkflowPending, ['--state-dir', stateDir, '--json']);
+      const output = await cli.run(WorkflowPending, ['--state-dir', stateDir, '--json']);
       expect(output.error).toBeUndefined();
       expect(
         (JSON.parse(output.stdout) as { pending: PendingOperation[] }).pending[0]?.answerCommand,
@@ -629,9 +596,9 @@ describe('next commands in failures', () => {
 });
 
 describe('recovery command adapters', () => {
-  it.each([false, true])(
+  it.for([false, true])(
     'prints a compatibility report and uses its exit status (compatible=%s)',
-    async (compatible) => {
+    async (compatible, { cli }) => {
       const file = await workflowFile();
       const check = {
         compatible,
@@ -651,7 +618,7 @@ describe('recovery command adapters', () => {
             ? { kind: 'workflow.check-resume.result', ok: true, check }
             : workflowFailure('run.incompatible', check.message, { details: check }),
         );
-      const output = await captureCommand(WorkflowCheckResume, [
+      const output = await cli.run(WorkflowCheckResume, [
         file,
         '--run-id',
         'r',
@@ -669,10 +636,10 @@ describe('recovery command adapters', () => {
     },
   );
 
-  it.each([false, true])('reports check-resume load failures (JSON=%s)', async (json) => {
+  it.for([false, true])('reports check-resume load failures (JSON=%s)', async (json, { cli }) => {
     const file = await workflowFile();
     vi.spyOn(WorkflowExecutor.prototype, 'execute').mockResolvedValue(failedResult);
-    const output = await captureCommand(WorkflowCheckResume, [
+    const output = await cli.run(WorkflowCheckResume, [
       file,
       '--run-id',
       'r',
@@ -683,12 +650,14 @@ describe('recovery command adapters', () => {
     else expect(output.stderr).toContain('TS2322');
   });
 
-  it('passes explicit fork and replay options as data and inherits source input when omitted', async () => {
+  it('passes explicit fork and replay options as data and inherits source input when omitted', async ({
+    cli,
+  }) => {
     const file = await workflowFile();
     const execute = vi
       .spyOn(WorkflowExecutor.prototype, 'execute')
       .mockResolvedValue({ kind: 'workflow.run.result', ok: true, run: runRecord });
-    const fork = await captureCommand(WorkflowExecute, [
+    const fork = await cli.run(WorkflowExecute, [
       file,
       '--run-id',
       'new',
@@ -713,7 +682,7 @@ describe('recovery command adapters', () => {
       strictReplay: true,
     });
     expect(execute.mock.calls[0]?.[0]).not.toHaveProperty('input');
-    const resume = await captureCommand(WorkflowExecute, [
+    const resume = await cli.run(WorkflowExecute, [
       file,
       '--run-id',
       'old',
@@ -724,7 +693,7 @@ describe('recovery command adapters', () => {
     expect(execute.mock.calls[1]?.[0]).toMatchObject({ resume: true, acceptCodeChange: true });
   });
 
-  it('rejects incompatible recovery flags and detached fork modifiers', async () => {
+  it('rejects incompatible recovery flags and detached fork modifiers', async ({ cli }) => {
     const file = await workflowFile();
     for (const flags of [
       ['--resume', '--fork-from', 'old'],
@@ -733,14 +702,10 @@ describe('recovery command adapters', () => {
       ['--invalidate', 'a'],
     ]) {
       expect(
-        (await captureCommand(WorkflowExecute, [file, '--run-id', 'new', ...flags])).error,
+        (await cli.run(WorkflowExecute, [file, '--run-id', 'new', ...flags])).error,
       ).toBeInstanceOf(Error);
     }
-    const bad = await captureCommand(WorkflowCheckResume, [
-      await workflowFile('js'),
-      '--run-id',
-      'r',
-    ]);
+    const bad = await cli.run(WorkflowCheckResume, [await workflowFile('js'), '--run-id', 'r']);
     expect(bad.error).toMatchObject({ oclif: { exit: 2 } });
     vi.spyOn(WorkflowExecutor.prototype, 'execute').mockResolvedValue({
       kind: 'workflow.check-resume.result',
@@ -757,14 +722,12 @@ describe('recovery command adapters', () => {
         message: 'compatible',
       },
     });
-    expect((await captureCommand(WorkflowCheckResume, [file, '--run-id', 'r'])).stdout).toBe(
-      'compatible',
-    );
+    expect((await cli.run(WorkflowCheckResume, [file, '--run-id', 'r'])).stdout).toBe('compatible');
   });
 });
 
 describe('monitoring command adapters', () => {
-  it.each([false, true])('lists and filters saved runs (JSON=%s)', async (json) => {
+  it.for([false, true])('lists and filters saved runs (JSON=%s)', async (json, { cli }) => {
     const summary = summarizeRun(runRecord, {
       locked: false,
       owner: null,
@@ -778,7 +741,7 @@ describe('monitoring command adapters', () => {
       runs: [summary],
       warnings: ['Skipped corrupt checkpoint'],
     });
-    const output = await captureCommand(WorkflowList, [
+    const output = await cli.run(WorkflowList, [
       '--status',
       'completed',
       ...(json ? ['--json'] : []),
@@ -792,7 +755,9 @@ describe('monitoring command adapters', () => {
       expect.objectContaining({ kind: 'workflow.list', status: 'completed' }),
     );
   });
-  it('renders compact summaries and returns the watched terminal status without an error document', async () => {
+  it('renders compact summaries and returns the watched terminal status without an error document', async ({
+    cli,
+  }) => {
     const ownership = { locked: false, owner: null, processes: [], locks: [] };
     const summary = summarizeRun({ ...runRecord, status: 'failed' }, ownership);
     const execute = vi.spyOn(WorkflowExecutor.prototype, 'execute').mockResolvedValue({
@@ -802,26 +767,16 @@ describe('monitoring command adapters', () => {
       ownership,
       summary,
     });
-    const output = await captureCommand(WorkflowInspect, ['test-run', '--json', '--summary']);
+    const output = await cli.run(WorkflowInspect, ['test-run', '--json', '--summary']);
     expect(output.stdout).toContain('"counts"');
     expect(output.stdout).not.toContain('"output":42');
-    const previous = process.exitCode;
-    try {
-      const watched = await captureCommand(WorkflowInspect, [
-        'test-run',
-        '--watch',
-        '--interval',
-        '250ms',
-      ]);
-      expect(watched.error).toBeUndefined();
-      expect(watched.stdout).toBe('');
-      expect(process.exitCode).toBe(1);
-      expect(execute).toHaveBeenLastCalledWith(
-        expect.objectContaining({ kind: 'workflow.watch', intervalMs: 250 }),
-      );
-    } finally {
-      process.exitCode = previous;
-    }
+    const watched = await cli.run(WorkflowInspect, ['test-run', '--watch', '--interval', '250ms']);
+    expect(watched.error).toBeUndefined();
+    expect(watched.stdout).toBe('');
+    expect(watched.exitCode).toBe(1);
+    expect(execute).toHaveBeenLastCalledWith(
+      expect.objectContaining({ kind: 'workflow.watch', intervalMs: 250 }),
+    );
   });
 });
 
@@ -841,21 +796,21 @@ describe('resume command exit and error codes', () => {
     resumeCommand: ['quiet-choir', 'workflow', 'resume', 'test-run'],
   } as const;
 
-  it.each([false, true])(
+  it.for([false, true])(
     'exits 75 for a suspended run without an error (JSON=%s)',
-    async (json) => {
+    async (json, { cli }) => {
       const stateDir = await stateDirectory();
       const execute = vi
         .spyOn(WorkflowExecutor.prototype, 'execute')
         .mockResolvedValue({ kind: 'workflow.run.result', ok: true, run: suspendedRun });
-      const output = await captureCommand(WorkflowResume, [
+      const output = await cli.run(WorkflowResume, [
         'test-run',
         '--state-dir',
         stateDir,
         ...(json ? ['--json'] : []),
       ]);
       expect(output.error).toBeUndefined();
-      expect(process.exitCode).toBe(75);
+      expect(output.exitCode).toBe(75);
       expect(execute).toHaveBeenCalledWith(
         expect.objectContaining({ kind: 'workflow.resume', runId: 'test-run', stateDir }),
       );
@@ -871,9 +826,9 @@ describe('resume command exit and error codes', () => {
     },
   );
 
-  it.each([false, true])(
+  it.for([false, true])(
     'reports a window-gate suspension with its wake time (JSON=%s)',
-    async (json) => {
+    async (json, { cli }) => {
       const stateDir = await stateDirectory();
       const gated = {
         ...suspendedRun,
@@ -894,14 +849,14 @@ describe('resume command exit and error codes', () => {
         ok: true,
         run: gated,
       });
-      const output = await captureCommand(WorkflowResume, [
+      const output = await cli.run(WorkflowResume, [
         'test-run',
         '--state-dir',
         stateDir,
         ...(json ? ['--json'] : []),
       ]);
       expect(output.error).toBeUndefined();
-      expect(process.exitCode).toBe(75);
+      expect(output.exitCode).toBe(75);
       if (json)
         expect(JSON.parse(output.stdout)).toMatchObject({
           kind: 'workflow.run.suspended',
@@ -915,14 +870,14 @@ describe('resume command exit and error codes', () => {
     },
   );
 
-  it('forwards strictReplay only when --strict-replay is given', async () => {
+  it('forwards strictReplay only when --strict-replay is given', async ({ cli }) => {
     const stateDir = await stateDirectory();
     const execute = vi.spyOn(WorkflowExecutor.prototype, 'execute').mockResolvedValue({
       kind: 'workflow.run.result',
       ok: true,
       run: runRecord,
     });
-    const strict = await captureCommand(WorkflowResume, [
+    const strict = await cli.run(WorkflowResume, [
       'test-run',
       '--state-dir',
       stateDir,
@@ -934,46 +889,41 @@ describe('resume command exit and error codes', () => {
       runId: 'test-run',
       strictReplay: true,
     });
-    const plain = await captureCommand(WorkflowResume, ['test-run', '--state-dir', stateDir]);
+    const plain = await cli.run(WorkflowResume, ['test-run', '--state-dir', stateDir]);
     expect(plain.error).toBeUndefined();
     expect(execute.mock.calls[1]?.[0]).toMatchObject({ kind: 'workflow.resume' });
     expect(execute.mock.calls[1]?.[0]).not.toHaveProperty('strictReplay');
   });
 
-  it('exits 0 and renders a completed run', async () => {
+  it('exits 0 and renders a completed run', async ({ cli }) => {
     const stateDir = await stateDirectory();
     vi.spyOn(WorkflowExecutor.prototype, 'execute').mockResolvedValue({
       kind: 'workflow.run.result',
       ok: true,
       run: runRecord,
     });
-    const output = await captureCommand(WorkflowResume, ['test-run', '--state-dir', stateDir]);
+    const output = await cli.run(WorkflowResume, ['test-run', '--state-dir', stateDir]);
     expect(output.error).toBeUndefined();
-    expect(process.exitCode).toBeUndefined();
+    expect(output.exitCode).toBeUndefined();
     expect(output.stdout).toContain('Run test-run completed.');
     expect(output.stdout).toContain('42');
   });
 
-  it.each([
+  it.for([
     ['run.locked', 3],
     ['run.incompatible', 3],
     ['run.not_found', 3],
     ['run.unreadable', 3],
     ['workflow.storage', 74],
     ['workflow.failed', 1],
-  ] as const)('maps the %s failure to exit %i', async (code, exit) => {
+  ] as const)('maps the %s failure to exit %i', async ([code, exit], { cli }) => {
     const stateDir = await stateDirectory();
     vi.spyOn(WorkflowExecutor.prototype, 'execute').mockResolvedValue(
       workflowFailure(code, `Failure ${code}.`),
     );
-    const human = await captureCommand(WorkflowResume, ['test-run', '--state-dir', stateDir]);
+    const human = await cli.run(WorkflowResume, ['test-run', '--state-dir', stateDir]);
     expect(human.error).toMatchObject({ code, oclif: { exit }, message: `Failure ${code}.` });
-    const json = await captureCommand(WorkflowResume, [
-      'test-run',
-      '--state-dir',
-      stateDir,
-      '--json',
-    ]);
+    const json = await cli.run(WorkflowResume, ['test-run', '--state-dir', stateDir, '--json']);
     expect(json.error).toMatchObject({ oclif: { exit } });
     expect(JSON.parse(json.stdout)).toMatchObject({
       kind: 'workflow.error',
@@ -984,17 +934,17 @@ describe('resume command exit and error codes', () => {
     });
   });
 
-  it('rejects an invalid run ID before execution', async () => {
+  it('rejects an invalid run ID before execution', async ({ cli }) => {
     const execute = vi.spyOn(WorkflowExecutor.prototype, 'execute');
-    const output = await captureCommand(WorkflowResume, ['bad/id']);
+    const output = await cli.run(WorkflowResume, ['bad/id']);
     expect(output.error).toMatchObject({ code: 'usage.run_id', oclif: { exit: 2 } });
     expect(execute).not.toHaveBeenCalled();
   });
 
-  it('rejects an invalid run budget before execution', async () => {
+  it('rejects an invalid run budget before execution', async ({ cli }) => {
     const stateDir = await stateDirectory();
     const execute = vi.spyOn(WorkflowExecutor.prototype, 'execute');
-    const output = await captureCommand(WorkflowResume, [
+    const output = await cli.run(WorkflowResume, [
       'test-run',
       '--state-dir',
       stateDir,
@@ -1002,7 +952,7 @@ describe('resume command exit and error codes', () => {
       'lots',
     ]);
     expect(output.error).toMatchObject({ code: 'usage.flag', oclif: { exit: 2 } });
-    const window = await captureCommand(WorkflowResume, [
+    const window = await cli.run(WorkflowResume, [
       'test-run',
       '--state-dir',
       stateDir,
@@ -1058,7 +1008,7 @@ describe('pending command exit and error codes', () => {
     next: [],
   };
 
-  it('renders a question and a wait as human text', async () => {
+  it('renders a question and a wait as human text', async ({ cli }) => {
     const stateDir = await stateDirectory();
     const execute = vi.spyOn(WorkflowExecutor.prototype, 'execute').mockResolvedValue({
       kind: 'workflow.pending.result',
@@ -1066,9 +1016,9 @@ describe('pending command exit and error codes', () => {
       pending: [question, wait, { ...wait, stepId: 'ci', command: ['gh', 'pr', 'checks', '1'] }],
       hidden: 0,
     });
-    const output = await captureCommand(WorkflowPending, ['--state-dir', stateDir]);
+    const output = await cli.run(WorkflowPending, ['--state-dir', stateDir]);
     expect(output.error).toBeUndefined();
-    expect(process.exitCode).toBeUndefined();
+    expect(output.exitCode).toBeUndefined();
     expect(execute).toHaveBeenCalledWith(
       expect.objectContaining({ kind: 'workflow.pending', stateDir }),
     );
@@ -1080,7 +1030,9 @@ describe('pending command exit and error codes', () => {
     );
   });
 
-  it('renders the latest tolerated observation error of a wait as text and JSON', async () => {
+  it('renders the latest tolerated observation error of a wait as text and JSON', async ({
+    cli,
+  }) => {
     const stateDir = await stateDirectory();
     const tolerated: PendingRow = {
       ...wait,
@@ -1093,7 +1045,7 @@ describe('pending command exit and error codes', () => {
       pending: [tolerated, wait],
       hidden: 0,
     });
-    const text = await captureCommand(WorkflowPending, ['--state-dir', stateDir]);
+    const text = await cli.run(WorkflowPending, ['--state-dir', stateDir]);
     expect(text.stdout).toBe(
       [
         'run-b poll [wait] checks=3 nextCheckAt=2000 deadline=5000',
@@ -1102,7 +1054,7 @@ describe('pending command exit and error codes', () => {
         'run-b poll [wait] checks=3 nextCheckAt=2000 deadline=5000',
       ].join('\n'),
     );
-    const json = await captureCommand(WorkflowPending, ['--state-dir', stateDir, '--json']);
+    const json = await cli.run(WorkflowPending, ['--state-dir', stateDir, '--json']);
     const document = JSON.parse(json.stdout) as { pending: { lastError: unknown }[] };
     expect(document.pending.map((item) => item.lastError)).toEqual([
       { message: 'HTTP 502: Bad Gateway', consecutive: 2, at: 1_500 },
@@ -1110,7 +1062,9 @@ describe('pending command exit and error codes', () => {
     ]);
   });
 
-  it('marks queued and ended-run rows, prints their next command and the hidden hint', async () => {
+  it('marks queued and ended-run rows, prints their next command and the hidden hint', async ({
+    cli,
+  }) => {
     const stateDir = await stateDirectory();
     const queued: PendingRow = {
       ...question,
@@ -1127,7 +1081,7 @@ describe('pending command exit and error codes', () => {
       pending: [queued, ended],
       hidden: 2,
     });
-    const output = await captureCommand(WorkflowPending, ['--state-dir', stateDir, '--all']);
+    const output = await cli.run(WorkflowPending, ['--state-dir', stateDir, '--all']);
     expect(execute).toHaveBeenCalledWith(expect.objectContaining({ all: true }));
     expect(output.stdout).toBe(
       [
@@ -1139,7 +1093,9 @@ describe('pending command exit and error codes', () => {
     );
   });
 
-  it('keeps the hidden hint after "No pending waits." and omits all by default', async () => {
+  it('keeps the hidden hint after "No pending waits." and omits all by default', async ({
+    cli,
+  }) => {
     const stateDir = await stateDirectory();
     const execute = vi.spyOn(WorkflowExecutor.prototype, 'execute').mockResolvedValue({
       kind: 'workflow.pending.result',
@@ -1147,14 +1103,14 @@ describe('pending command exit and error codes', () => {
       pending: [],
       hidden: 1,
     });
-    const output = await captureCommand(WorkflowPending, ['--state-dir', stateDir]);
+    const output = await cli.run(WorkflowPending, ['--state-dir', stateDir]);
     expect(execute.mock.calls[0]?.[0]).not.toHaveProperty('all');
     expect(output.stdout).toBe(
       'No pending waits.\n1 hidden (answered, or from ended runs); --all lists them.',
     );
   });
 
-  it('renders the pending result as JSON', async () => {
+  it('renders the pending result as JSON', async ({ cli }) => {
     const stateDir = await stateDirectory();
     vi.spyOn(WorkflowExecutor.prototype, 'execute').mockResolvedValue({
       kind: 'workflow.pending.result',
@@ -1162,14 +1118,14 @@ describe('pending command exit and error codes', () => {
       pending: [question, wait],
       hidden: 0,
     });
-    const output = await captureCommand(WorkflowPending, ['--state-dir', stateDir, '--json']);
+    const output = await cli.run(WorkflowPending, ['--state-dir', stateDir, '--json']);
     expect(output.error).toBeUndefined();
     const document = JSON.parse(output.stdout) as { pending: { runId: string }[] };
     expect(document).toMatchObject({ kind: 'workflow.pending.result', ok: true });
     expect(document.pending.map((item) => item.runId)).toEqual(['run-a', 'run-b']);
   });
 
-  it('says so when nothing is pending', async () => {
+  it('says so when nothing is pending', async ({ cli }) => {
     const stateDir = await stateDirectory();
     vi.spyOn(WorkflowExecutor.prototype, 'execute').mockResolvedValue({
       kind: 'workflow.pending.result',
@@ -1177,22 +1133,22 @@ describe('pending command exit and error codes', () => {
       pending: [],
       hidden: 0,
     });
-    const output = await captureCommand(WorkflowPending, ['--state-dir', stateDir]);
+    const output = await cli.run(WorkflowPending, ['--state-dir', stateDir]);
     expect(output.error).toBeUndefined();
     expect(output.stdout).toBe('No pending waits.');
   });
 
-  it.each([
+  it.for([
     ['workflow.storage', 74],
     ['run.unreadable', 3],
-  ] as const)('maps the %s failure to exit %i', async (code, exit) => {
+  ] as const)('maps the %s failure to exit %i', async ([code, exit], { cli }) => {
     const stateDir = await stateDirectory();
     vi.spyOn(WorkflowExecutor.prototype, 'execute').mockResolvedValue(
       workflowFailure(code, `Failure ${code}.`),
     );
-    const human = await captureCommand(WorkflowPending, ['--state-dir', stateDir]);
+    const human = await cli.run(WorkflowPending, ['--state-dir', stateDir]);
     expect(human.error).toMatchObject({ code, oclif: { exit } });
-    const json = await captureCommand(WorkflowPending, ['--state-dir', stateDir, '--json']);
+    const json = await cli.run(WorkflowPending, ['--state-dir', stateDir, '--json']);
     expect(json.error).toMatchObject({ oclif: { exit } });
     expect(JSON.parse(json.stdout)).toMatchObject({ ok: false, exitCode: exit, error: { code } });
   });
@@ -1213,14 +1169,14 @@ describe('tick command exit and error codes', () => {
     exitCode,
   });
 
-  it.each([0, 75, 1] as const)('propagates a result exit code of %i', async (exitCode) => {
+  it.for([0, 75, 1] as const)('propagates a result exit code of %i', async (exitCode, { cli }) => {
     const stateDir = await stateDirectory();
     const execute = vi
       .spyOn(TickWorkflowExecutor.prototype, 'execute')
       .mockResolvedValue(tickResult(exitCode));
-    const output = await captureCommand(WorkflowTick, ['--state-dir', stateDir]);
+    const output = await cli.run(WorkflowTick, ['--state-dir', stateDir]);
     expect(output.error).toBeUndefined();
-    expect(process.exitCode ?? 0).toBe(exitCode);
+    expect(output.exitCode ?? 0).toBe(exitCode);
     expect(execute).toHaveBeenCalledWith(
       expect.objectContaining({ kind: 'workflow.tick', stateDir, watch: false }),
     );
@@ -1233,7 +1189,9 @@ describe('tick command exit and error codes', () => {
     if (exitCode === 1) expect(output.stdout).toContain('run-a: failed: It broke.');
   });
 
-  it('renders a suspended outcome with its next wake and a skip with its message', async () => {
+  it('renders a suspended outcome with its next wake and a skip with its message', async ({
+    cli,
+  }) => {
     const stateDir = await stateDirectory();
     vi.spyOn(TickWorkflowExecutor.prototype, 'execute').mockResolvedValue({
       kind: 'workflow.tick.result',
@@ -1243,7 +1201,7 @@ describe('tick command exit and error codes', () => {
       observed: 2,
       exitCode: 0,
     });
-    const output = await captureCommand(WorkflowTick, ['--state-dir', stateDir]);
+    const output = await cli.run(WorkflowTick, ['--state-dir', stateDir]);
     expect(output.error).toBeUndefined();
     expect(output.stdout).toContain(
       [
@@ -1254,12 +1212,12 @@ describe('tick command exit and error codes', () => {
     );
   });
 
-  it('renders the tick result as JSON', async () => {
+  it('renders the tick result as JSON', async ({ cli }) => {
     const stateDir = await stateDirectory();
     vi.spyOn(TickWorkflowExecutor.prototype, 'execute').mockResolvedValue(tickResult(75));
-    const output = await captureCommand(WorkflowTick, ['--state-dir', stateDir, '--json']);
+    const output = await cli.run(WorkflowTick, ['--state-dir', stateDir, '--json']);
     expect(output.error).toBeUndefined();
-    expect(process.exitCode).toBe(75);
+    expect(output.exitCode).toBe(75);
     expect(JSON.parse(output.stdout)).toMatchObject({
       kind: 'workflow.tick.result',
       ok: true,
@@ -1267,74 +1225,75 @@ describe('tick command exit and error codes', () => {
     });
   });
 
-  it('rejects an invalid --run ID before execution', async () => {
+  it('rejects an invalid --run ID before execution', async ({ cli }) => {
     const execute = vi.spyOn(TickWorkflowExecutor.prototype, 'execute');
-    const output = await captureCommand(WorkflowTick, ['--run', 'bad/id']);
+    const output = await cli.run(WorkflowTick, ['--run', 'bad/id']);
     expect(output.error).toMatchObject({ code: 'usage.run_id', oclif: { exit: 2 } });
     expect(execute).not.toHaveBeenCalled();
   });
 
-  it.each(['0s', '0', 'soon', '-5s'])('rejects --timeout %s before execution', async (timeout) => {
-    const stateDir = await stateDirectory();
-    const execute = vi.spyOn(TickWorkflowExecutor.prototype, 'execute');
-    const output = await captureCommand(WorkflowTick, [
-      '--state-dir',
-      stateDir,
-      '--timeout',
-      timeout,
-    ]);
-    expect(output.error).toMatchObject({ code: 'usage.flag', oclif: { exit: 2 } });
-    expect(execute).not.toHaveBeenCalled();
-  });
+  it.for(['0s', '0', 'soon', '-5s'])(
+    'rejects --timeout %s before execution',
+    async (timeout, { cli }) => {
+      const stateDir = await stateDirectory();
+      const execute = vi.spyOn(TickWorkflowExecutor.prototype, 'execute');
+      const output = await cli.run(WorkflowTick, ['--state-dir', stateDir, '--timeout', timeout]);
+      expect(output.error).toMatchObject({ code: 'usage.flag', oclif: { exit: 2 } });
+      expect(execute).not.toHaveBeenCalled();
+    },
+  );
 
-  it.each([
+  it.for([
     [['--timeout', '60s', '--claim-margin', '5s'], { timeoutMs: 60_000, claimMarginMs: 5_000 }],
     [['--timeout', '2m', '--claim-margin', '0ms'], { timeoutMs: 120_000, claimMarginMs: 0 }],
     [
       ['--timeout', '1h', '--claim-margin', '1.5m'],
       { timeoutMs: 3_600_000, claimMarginMs: 90_000 },
     ],
-  ] as const)('passes --claim-margin %j as claimMarginMs', async (flags, expected) => {
+  ] as const)('passes --claim-margin %j as claimMarginMs', async ([flags, expected], { cli }) => {
     const stateDir = await stateDirectory();
     const execute = vi
       .spyOn(TickWorkflowExecutor.prototype, 'execute')
       .mockResolvedValue(tickResult(0));
-    const output = await captureCommand(WorkflowTick, ['--state-dir', stateDir, ...flags]);
+    const output = await cli.run(WorkflowTick, ['--state-dir', stateDir, ...flags]);
     expect(output.error).toBeUndefined();
     expect(execute).toHaveBeenCalledWith(expect.objectContaining(expected));
   });
 
-  it('leaves the claim margin to the executor default when the flag is absent', async () => {
+  it('leaves the claim margin to the executor default when the flag is absent', async ({ cli }) => {
     const stateDir = await stateDirectory();
     const execute = vi
       .spyOn(TickWorkflowExecutor.prototype, 'execute')
       .mockResolvedValue(tickResult(0));
-    await captureCommand(WorkflowTick, ['--state-dir', stateDir, '--timeout', '10s']);
+    await cli.run(WorkflowTick, ['--state-dir', stateDir, '--timeout', '10s']);
     expect(execute.mock.calls[0]?.[0]).not.toHaveProperty('claimMarginMs');
   });
 
-  it.each([
+  it.for([
     ['10s', '10s'],
     ['10s', '11s'],
     ['10s', 'soon'],
     ['10s', '-1s'],
     ['10s', '0.5ms'],
-  ])('rejects --timeout %s with --claim-margin %s before execution', async (timeout, margin) => {
-    const stateDir = await stateDirectory();
-    const execute = vi.spyOn(TickWorkflowExecutor.prototype, 'execute');
-    const output = await captureCommand(WorkflowTick, [
-      '--state-dir',
-      stateDir,
-      '--timeout',
-      timeout,
-      '--claim-margin',
-      margin,
-    ]);
-    expect(output.error).toMatchObject({ code: 'usage.flag', oclif: { exit: 2 } });
-    expect(execute).not.toHaveBeenCalled();
-  });
+  ] as const)(
+    'rejects --timeout %s with --claim-margin %s before execution',
+    async ([timeout, margin], { cli }) => {
+      const stateDir = await stateDirectory();
+      const execute = vi.spyOn(TickWorkflowExecutor.prototype, 'execute');
+      const output = await cli.run(WorkflowTick, [
+        '--state-dir',
+        stateDir,
+        '--timeout',
+        timeout,
+        '--claim-margin',
+        margin,
+      ]);
+      expect(output.error).toMatchObject({ code: 'usage.flag', oclif: { exit: 2 } });
+      expect(execute).not.toHaveBeenCalled();
+    },
+  );
 
-  it('renders a deadline skip and an interrupted suspension', async () => {
+  it('renders a deadline skip and an interrupted suspension', async ({ cli }) => {
     const stateDir = await stateDirectory();
     vi.spyOn(TickWorkflowExecutor.prototype, 'execute').mockResolvedValue({
       kind: 'workflow.tick.result',
@@ -1351,7 +1310,7 @@ describe('tick command exit and error codes', () => {
       observed: 0,
       exitCode: 0,
     });
-    const output = await captureCommand(WorkflowTick, ['--state-dir', stateDir]);
+    const output = await cli.run(WorkflowTick, ['--state-dir', stateDir]);
     expect(output.stdout).toContain(
       [
         'run-a: suspended: Tick timeout reached. (next wake 2030-01-01T00:00:00.000Z)',
@@ -1360,18 +1319,18 @@ describe('tick command exit and error codes', () => {
     );
   });
 
-  it.each([
+  it.for([
     ['run.locked', 3],
     ['workflow.storage', 74],
-  ] as const)('maps the %s failure to exit %i', async (code, exit) => {
+  ] as const)('maps the %s failure to exit %i', async ([code, exit], { cli }) => {
     const stateDir = await stateDirectory();
     vi.spyOn(TickWorkflowExecutor.prototype, 'execute').mockResolvedValue(
       workflowFailure(code, `Failure ${code}.`),
     );
-    const human = await captureCommand(WorkflowTick, ['--state-dir', stateDir]);
+    const human = await cli.run(WorkflowTick, ['--state-dir', stateDir]);
     expect(human.error).toMatchObject({ code, oclif: { exit } });
-    expect(process.exitCode).toBeUndefined();
-    const json = await captureCommand(WorkflowTick, ['--state-dir', stateDir, '--json']);
+    expect(human.exitCode).toBeUndefined();
+    const json = await cli.run(WorkflowTick, ['--state-dir', stateDir, '--json']);
     expect(json.error).toMatchObject({ oclif: { exit } });
     expect(JSON.parse(json.stdout)).toMatchObject({ ok: false, exitCode: exit, error: { code } });
   });
@@ -1395,13 +1354,15 @@ describe('workflow start adapter', () => {
     next: [{ why: 'Inspect it.', argv: ['qc', 'workflow', 'inspect', 'x'] }],
   });
 
-  it('builds the runner argv behind the spawn launcher and prints the started run', async () => {
+  it('builds the runner argv behind the spawn launcher and prints the started run', async ({
+    cli,
+  }) => {
     const stateDir = await stateDirectory();
     setSpawnLauncher(launcher);
     const execute = vi
       .spyOn(StartWorkflowExecutor.prototype, 'execute')
       .mockResolvedValue(started(stateDir));
-    const output = await captureCommand(WorkflowStart, [
+    const output = await cli.run(WorkflowStart, [
       'wf.ts',
       '--run-id',
       'x',
@@ -1448,13 +1409,13 @@ describe('workflow start adapter', () => {
     );
   });
 
-  it('generates a run ID, defaults the timeout and grace, and prints JSON', async () => {
+  it('generates a run ID, defaults the timeout and grace, and prints JSON', async ({ cli }) => {
     const stateDir = await stateDirectory();
     setSpawnLauncher(launcher);
     const execute = vi
       .spyOn(StartWorkflowExecutor.prototype, 'execute')
       .mockResolvedValue(started(stateDir));
-    const output = await captureCommand(WorkflowStart, [
+    const output = await cli.run(WorkflowStart, [
       'wf.ts',
       '--state-dir',
       stateDir,
@@ -1470,7 +1431,7 @@ describe('workflow start adapter', () => {
     expect(JSON.parse(output.stdout)).toMatchObject({ kind: 'workflow.start.result', runId: 'x' });
   });
 
-  it('propagates a runner failure with its launch evidence and no run ID', async () => {
+  it('propagates a runner failure with its launch evidence and no run ID', async ({ cli }) => {
     const stateDir = await stateDirectory();
     setSpawnLauncher(launcher);
     const launch = {
@@ -1498,7 +1459,7 @@ describe('workflow start adapter', () => {
         ],
       }),
     );
-    const output = await captureCommand(WorkflowStart, [
+    const output = await cli.run(WorkflowStart, [
       'wf.ts',
       '--run-id',
       'x',
@@ -1517,13 +1478,15 @@ describe('workflow start adapter', () => {
     });
   });
 
-  it('refuses without a spawn launcher or with an invalid timeout, before executing', async () => {
+  it('refuses without a spawn launcher or with an invalid timeout, before executing', async ({
+    cli,
+  }) => {
     const stateDir = await stateDirectory();
     const execute = vi.spyOn(StartWorkflowExecutor.prototype, 'execute');
-    const missing = await captureCommand(WorkflowStart, ['wf.ts', '--state-dir', stateDir]);
+    const missing = await cli.run(WorkflowStart, ['wf.ts', '--state-dir', stateDir]);
     expect(missing.error).toMatchObject({ code: 'usage.flag', oclif: { exit: 2 } });
     setSpawnLauncher(launcher);
-    const timeout = await captureCommand(WorkflowStart, [
+    const timeout = await cli.run(WorkflowStart, [
       'wf.ts',
       '--state-dir',
       stateDir,
@@ -1531,7 +1494,7 @@ describe('workflow start adapter', () => {
       '0s',
     ]);
     expect(timeout.error).toMatchObject({ code: 'usage.flag', oclif: { exit: 2 } });
-    const resume = await captureCommand(WorkflowStart, ['wf.ts', '--resume']);
+    const resume = await cli.run(WorkflowStart, ['wf.ts', '--resume']);
     expect(resume.error).toBeDefined();
     expect(execute).not.toHaveBeenCalled();
   });
