@@ -236,6 +236,7 @@ it('uses package capabilities for grants, strict profiles and bounded child dele
     options: z.object({ prompt: z.string(), tools: z.array(z.string()).optional() }),
     policy: [],
     capabilityKeys: ['tools'],
+    sensitiveOptions: [],
     access: (options) => (options.tools?.length ? 'exec' : 'none'),
   });
   const adapter = { invoke: async () => response('done') };

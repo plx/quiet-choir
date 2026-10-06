@@ -6,6 +6,7 @@ import {
   type CapabilityKeysOf,
   type HarnessDeclaration,
 } from '../src/index.js';
+import { checkedDefinition } from '../src/workflow/runtime/definition.js';
 
 const review = defineHarness({
   name: 'review',
@@ -118,4 +119,98 @@ it('keeps a literal capabilityKeys tuple and widens the list when it is omitted'
   expect(explicit.capabilityKeys).toEqual(['tools']);
   expect(keyed.capabilityKeys).toEqual(['tools']);
   expect(review.capabilityKeys).toBeUndefined();
+});
+
+// Sensitive option keys for public capability manifests (#247).
+const vaultOptions = z.object({
+  prompt: z.string(),
+  token: z.string().optional(),
+  headers: z.record(z.string(), z.string()).optional(),
+  env: z.record(z.string(), z.string()).optional(),
+  maxTurns: z.number().optional(),
+  maxBudgetUsd: z.number().optional(),
+});
+const vaultBase = {
+  name: 'vault',
+  revision: 1,
+  options: vaultOptions,
+  capabilities: { structuredOutput: 'none' },
+} as const;
+const reserved: readonly (readonly [string, string])[] = [
+  ['prompt', 'profiles cannot set it'],
+  ['profile', 'profiles cannot set it'],
+  ['cwd', 'profiles cannot set it'],
+  ['onError', 'profiles cannot set it'],
+  ['retry', 'profiles cannot set it'],
+  ['worktree', 'profiles cannot set it'],
+  ['timeoutMs', 'profiles cannot set it'],
+  ['idleTimeoutMs', 'profiles cannot set it'],
+  ['maxTurns', 'profiles cannot set it'],
+  ['maxBudgetUsd', 'profiles cannot set it'],
+  ['model', 'the model stays reviewable'],
+  ['env', 'environment values never appear in capability manifests'],
+];
+/** Each invalid list with the error it must raise. */
+const invalidSensitive: readonly (readonly [unknown, string | RegExp])[] = [
+  [['secret'], 'Harness vault refers to unknown option secret.'],
+  ...reserved.map(
+    ([key, reason]) =>
+      [[key], `Harness vault sensitiveOptions cannot include ${key}: ${reason}`] as const,
+  ),
+  [['token', 'headers', 'token'], 'Harness vault sensitiveOptions lists token twice.'],
+  [[''], /too_small|>=1 characters/u],
+  [[42], /expected string/u],
+  ['token', /expected array/u],
+];
+
+it('accepts sensitiveOptions, passes them through and rejects keys outside the options', () => {
+  const vault = defineHarness({ ...vaultBase, sensitiveOptions: ['token', 'headers'] });
+  expect(vault.sensitiveOptions).toEqual(['token', 'headers']);
+  expectTypeOf(vault.sensitiveOptions).toEqualTypeOf<
+    | readonly (
+        | 'prompt'
+        | 'token'
+        | 'headers'
+        | 'env'
+        | 'maxTurns'
+        | 'maxBudgetUsd'
+        | 'profile'
+        | 'cwd'
+        | 'onError'
+        | 'retry'
+        | 'timeoutMs'
+        | 'idleTimeoutMs'
+        | 'worktree'
+        | 'model'
+      )[]
+    | undefined
+  >();
+  expect(defineHarness({ ...vaultBase }).sensitiveOptions).toBeUndefined();
+  expect(defineHarness({ ...vaultBase, sensitiveOptions: [] }).sensitiveOptions).toEqual([]);
+  // @ts-expect-error sensitiveOptions names keys of the option schema.
+  expect(() => defineHarness({ ...vaultBase, sensitiveOptions: ['secret'] })).toThrow(
+    'Harness vault refers to unknown option secret.',
+  );
+  for (const [list, message] of invalidSensitive)
+    expect(
+      () => defineHarness({ ...vaultBase, sensitiveOptions: list as never }),
+      JSON.stringify(list),
+    ).toThrow(message);
+});
+
+it('rejects the same sensitiveOptions when a workflow registers a raw declaration', () => {
+  const workflow = (sensitiveOptions: unknown) =>
+    defineWorkflow({
+      name: 'vaulted',
+      version: '1',
+      input: z.null(),
+      output: z.null(),
+      harnesses: [{ ...vaultBase, sensitiveOptions } as unknown as HarnessDeclaration],
+      run: () => Promise.resolve(null),
+    });
+  expect(checkedDefinition(workflow(['token'])).harnesses?.[0]?.sensitiveOptions).toEqual([
+    'token',
+  ]);
+  for (const [list, message] of invalidSensitive)
+    expect(() => checkedDefinition(workflow(list)), JSON.stringify(list)).toThrow(message);
 });

@@ -1322,7 +1322,8 @@ export async function runWorkflow<
     record.profileOverrides = profileOverrides;
     record.grants = grants;
     record.grantedProfiles = grantedProfiles;
-    record.capabilities = publicCapabilityManifest(capabilities);
+    // The record holds the root manifest, whose profiles name only root registrations.
+    record.capabilities = publicCapabilityManifest(capabilities, definition.harnesses);
     record.policy = policy;
     record.allowModelOverride = allowModelOverride;
     record.policyWarnings = [];

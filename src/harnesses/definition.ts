@@ -1,5 +1,6 @@
 import { retryPolicySchema } from '../workflow/runtime/policy.js';
 import { agentWorktreeSchema } from '../workflow/runtime/agent-isolation.js';
+import { profileForbiddenHarnessOptions } from '../workflow/runtime/registered-option-keys.js';
 import { z } from 'zod';
 import type { AgentOptions } from '../workflow/runtime/model.js';
 import type { HarnessCapabilities, HarnessDefinition } from '../workflow/runtime/harness-model.js';
@@ -41,6 +42,7 @@ export function defineHarness<
     }),
     policy: z.array(z.string().min(1)).optional(),
     capabilityKeys: z.array(z.string().min(1)).optional(),
+    sensitiveOptions: z.array(z.string().min(1)).optional(),
   });
   metadata.parse({
     name: definition.name,
@@ -50,6 +52,9 @@ export function defineHarness<
     ...(definition.capabilityKeys === undefined
       ? {}
       : { capabilityKeys: definition.capabilityKeys }),
+    ...(definition.sensitiveOptions === undefined
+      ? {}
+      : { sensitiveOptions: definition.sensitiveOptions }),
   });
   if (!(definition.options instanceof z.ZodObject))
     throw new Error(`Harness ${definition.name} options must be a Zod object schema.`);
@@ -84,7 +89,28 @@ export function defineHarness<
     );
   if (!Object.hasOwn(shape, 'prompt'))
     throw new Error(`Harness ${definition.name} options must declare prompt.`);
-  for (const key of [...(definition.policy ?? []), ...(definition.capabilityKeys ?? [])])
+  const sensitive = definition.sensitiveOptions ?? [];
+  for (const key of sensitive) {
+    const reason = profileForbiddenHarnessOptions.includes(key)
+      ? 'profiles cannot set it, so it never appears in a capability manifest'
+      : key === 'model'
+        ? 'the model stays reviewable in capability manifests and attempt request summaries'
+        : key === 'env'
+          ? 'environment values never appear in capability manifests; only names and a digest do'
+          : undefined;
+    if (reason !== undefined)
+      throw new Error(
+        `Harness ${definition.name} sensitiveOptions cannot include ${key}: ${reason}.`,
+      );
+  }
+  const repeated = sensitive.find((key, index) => sensitive.indexOf(key) !== index);
+  if (repeated !== undefined)
+    throw new Error(`Harness ${definition.name} sensitiveOptions lists ${repeated} twice.`);
+  for (const key of [
+    ...(definition.policy ?? []),
+    ...(definition.capabilityKeys ?? []),
+    ...sensitive,
+  ])
     if (!Object.hasOwn(shape, key))
       throw new Error(`Harness ${definition.name} refers to unknown option ${key}.`);
   if (definition.capabilityKeys?.includes('profile'))
