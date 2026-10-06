@@ -37,6 +37,7 @@ import {
 } from './worktree-rehearsal.js';
 import { isolationIdentity } from './worktree-identity.js';
 import { resolveIsolation } from './agent-isolation.js';
+import { environmentEdits } from './agent-environment.js';
 import {
   resolveWorktree,
   worktreeChangeSchema,
@@ -2512,8 +2513,12 @@ export async function runWorkflow<
 
     // Keyed by registration; a Map (not WeakMap) so draining can release abandoned discovery.
     const metadataRequests = new Map<object, Promise<HarnessMetadata | undefined>>();
-    // Project instruction detection, keyed by registration and then by isolation mode and cwd.
+    // Project instruction detection, keyed by registration and then by isolation mode, env edits
+    // and cwd.
     const projectRequests = new Map<object, Map<string, Promise<void>>>();
+    // Harness and cwd pairs this invocation already recorded: the first detection replaces a
+    // (possibly stale, resumed) entry, and later ones merge into it.
+    const projectRecorded = new Set<string>();
     // Discovery is run-owned; an aborted scope may abandon its wait, so draining releases the rest.
     const discoveryController = new AbortController();
     const discoverySignal = AbortSignal.any([signal, discoveryController.signal]);
@@ -2755,13 +2760,15 @@ export async function runWorkflow<
               };
               const processContext = processInvocation(id, context);
               let cliVersion: string | null = null;
-              // Project files follow the cwd, and some files load only in one isolation mode (Claude's
-              // user CLAUDE.md in inherit), so detection runs once per distinct cwd and mode. It
-              // starts before metadata is awaited, so a first call waits for the slower of the two.
+              // Project files follow the cwd, some files load only in one isolation mode (Claude's
+              // user CLAUDE.md in inherit), and env edits can move them (CLAUDE_CONFIG_DIR, HOME,
+              // CODEX_HOME), so detection runs once per distinct cwd, mode and env edits. It starts
+              // before metadata is awaited, so a first call waits for the slower of the two.
               let projectDetection: Promise<void> | undefined;
               if (liveAdapter.projectInstructions) {
                 const cwd = resolve(liveRequest.cwd);
-                const key = `${resolveIsolation(liveRequest.options).isolation}\0${cwd}`;
+                const env = digest(environmentEdits(liveRequest.options.env));
+                const key = `${resolveIsolation(liveRequest.options).isolation}\0${env}\0${cwd}`;
                 let byCwd = projectRequests.get(registration);
                 if (!byCwd)
                   projectRequests.set(registration, (byCwd = new Map<string, Promise<void>>()));
@@ -2787,12 +2794,17 @@ export async function runWorkflow<
                       );
                     }
                     if (sources === undefined && !warnings.length) return;
-                    // A re-detection (on resume) replaces its entry and moves it to the end.
-                    if (sources !== undefined)
+                    // A re-detection (on resume) replaces its entry and moves it to the end; another
+                    // mode or env at the same cwd in this invocation adds its files to that entry.
+                    if (sources !== undefined) {
+                      const recorded = `${harness}\0${cwd}`;
                       record.projectInstructions = withProjectInstructions(
                         record.projectInstructions,
                         { harness, cwd, sources },
+                        projectRecorded.has(recorded),
                       );
+                      projectRecorded.add(recorded);
+                    }
                     record.harnessWarnings = [
                       ...new Set([...(record.harnessWarnings ?? []), ...warnings]),
                     ];

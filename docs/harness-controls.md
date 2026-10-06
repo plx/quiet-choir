@@ -218,16 +218,18 @@ map scope stops waiting for it, and the run aborts `invocation.signal` and await
 releasing ownership when no effect still needs the result. They can also implement optional
 `projectInstructions(request, invocation)` (registered adapters:
 `projectInstructions(request, signal, invocation)`), which the runtime calls once per distinct
-resolved `request.cwd` and resolved isolation mode per run invocation, concurrently with `metadata`
-and before the first live call there, with the same shared discovery signal. An adapter can
-therefore be called twice for one `cwd`, once for `restricted` and once for `inherit` calls. It
-returns `{ sources, warnings? }` as paths and digests, or `undefined` to record nothing. The run
-stores each result in `projectInstructions`, one entry per harness and `cwd` that a later result
-replaces (at most 128 entries, oldest dropped), and adds its warnings to `harnessWarnings`; a
-rejection becomes one warning and never fails the call. `CliHarness` reports Codex project
-`AGENTS.md` and skill files here without spawning a process, and for an `inherit` Claude call the
-user `CLAUDE.md` from Claude's configuration directory (`scope: 'user'`, `kind: 'claude-md'`);
-restricted Claude reports nothing. Its `metadata` reports only user-level Codex files. See
+resolved `request.cwd`, resolved isolation mode and explicit env edits per run invocation,
+concurrently with `metadata` and before the first live call there, with the same shared discovery
+signal. An adapter can therefore be called several times for one `cwd`, such as once for
+`restricted` and once for `inherit` calls, or once per `env.set` value. It returns
+`{ sources, warnings? }` as paths and digests, or `undefined` to record nothing. The run stores each
+result in `projectInstructions`, one entry per harness and `cwd`: the first result there in a run
+invocation replaces the entry, and later ones add their files to it, deduplicated by kind and path
+(at most 128 entries, oldest dropped), and adds its warnings to `harnessWarnings`; a rejection
+becomes one warning and never fails the call. `CliHarness` reports Codex project `AGENTS.md` and
+skill files here without spawning a process, and for an `inherit` Claude call the user `CLAUDE.md`
+from Claude's configuration directory (`scope: 'user'`, `kind: 'claude-md'`); restricted Claude
+reports nothing. Its `metadata` reports only user-level Codex files. See
 [harness isolation](harness-isolation.md) for the discovery rules and
 [process lifecycle](process-lifecycle.md) for adapter migration and orphan recovery.
 

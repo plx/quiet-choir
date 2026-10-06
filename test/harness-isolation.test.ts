@@ -653,6 +653,69 @@ it('records the Claude user CLAUDE.md for an inherit call after a restricted cal
   expect(JSON.stringify(record)).not.toContain('USER_CLAUDE_RULES');
 });
 
+it('detects again for each distinct env edit at one cwd and merges the files into one entry', async () => {
+  const binary = join(directory, await fakeBinary());
+  const first = join(directory, 'config-one');
+  const second = join(directory, 'config-two');
+  await mkdir(first);
+  await mkdir(second);
+  await writeFile(join(first, 'CLAUDE.md'), 'FIRST_CLAUDE_RULES');
+  await writeFile(join(second, 'CLAUDE.md'), 'SECOND_CLAUDE_RULES');
+  vi.stubEnv('CLAUDE_CONFIG_DIR', undefined);
+  const workflow = defineWorkflow({
+    name: 'claude-env-detection',
+    version: '1',
+    strictProfiles: false,
+    input: z.null(),
+    output: z.null(),
+    async run(ctx) {
+      const call = (id: string, configDir: string) =>
+        ctx.claude.text(id, {
+          prompt: id,
+          isolation: 'inherit',
+          env: { set: { CLAUDE_CONFIG_DIR: configDir } },
+        });
+      await call('one', first);
+      await call('two', second);
+      await call('three', first);
+      return null;
+    },
+  });
+  const harness = new CliHarness({ claudeBinary: binary });
+  const detect = vi.spyOn(harness, 'projectInstructions');
+  const options = {
+    runId: 'claude-env-detection',
+    stateDir: join(directory, 'runs'),
+    cwd: directory,
+    grants: ['all'],
+    harness,
+  };
+  expect((await runWorkflow(workflow, { ...options, input: null })).status).toBe('completed');
+  // The repeated env edit reuses its detection.
+  expect(detect).toHaveBeenCalledTimes(2);
+  const record = await readRun(options);
+  expect(record.projectInstructions).toEqual([
+    {
+      harness: 'claude',
+      cwd: record.cwd,
+      sources: [
+        {
+          scope: 'user',
+          kind: 'claude-md',
+          path: join(first, 'CLAUDE.md'),
+          sha256: sha256('FIRST_CLAUDE_RULES'),
+        },
+        {
+          scope: 'user',
+          kind: 'claude-md',
+          path: join(second, 'CLAUDE.md'),
+          sha256: sha256('SECOND_CLAUDE_RULES'),
+        },
+      ],
+    },
+  ]);
+});
+
 it('records project instruction sources for each distinct Codex cwd and warns about user files once', async () => {
   const binary = join(directory, await fakeBinary());
   const home = await codexHome();

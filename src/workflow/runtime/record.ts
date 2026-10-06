@@ -374,9 +374,10 @@ export interface RunRecord {
   /** Discovery/version warnings retained across resume. */
   harnessWarnings?: string[];
   /**
-   * Project-level instruction files detected once per harness and distinct resolved cwd per run
-   * invocation, oldest first; capped at 128 entries. A later detection
-   * of the same harness and cwd replaces its entry. Diagnostic only, never step identity.
+   * Project-level instruction files detected once per harness and distinct resolved cwd, isolation
+   * mode and env edits per run invocation, oldest first; capped at 128 entries. The first detection
+   * of a harness and cwd in a run invocation replaces its entry and later ones merge into it.
+   * Diagnostic only, never step identity.
    */
   projectInstructions?: ProjectInstructionsRecord[];
   /** Resolved declared capabilities at the latest execution. Absent in older format-5 records. */
@@ -1113,17 +1114,27 @@ export const MAX_PROJECT_INSTRUCTIONS = 128;
 
 /**
  * The run's project instruction entries after recording `entry`: an existing entry for the same
- * harness and cwd is replaced and moves to the end, and the oldest entries beyond
+ * harness and cwd is replaced (or, with `merge`, unioned with `entry`'s sources by kind and path,
+ * the newer digest winning) and moves to the end, and the oldest entries beyond
  * {@link MAX_PROJECT_INSTRUCTIONS} are dropped. Returns a new array. @internal
  */
 export function withProjectInstructions(
   entries: readonly ProjectInstructionsRecord[] | undefined,
   entry: ProjectInstructionsRecord,
+  merge = false,
 ): ProjectInstructionsRecord[] {
-  const kept = (entries ?? []).filter(
-    (existing) => existing.harness !== entry.harness || existing.cwd !== entry.cwd,
-  );
-  kept.push(entry);
+  const same = (existing: ProjectInstructionsRecord): boolean =>
+    existing.harness === entry.harness && existing.cwd === entry.cwd;
+  const previous = merge ? entries?.find(same) : undefined;
+  let recorded = entry;
+  if (previous) {
+    const byFile = new Map<string, InstructionSource>();
+    for (const source of [...previous.sources, ...entry.sources])
+      byFile.set(`${source.kind}\0${source.path}`, source);
+    recorded = { ...entry, sources: [...byFile.values()] };
+  }
+  const kept = (entries ?? []).filter((existing) => !same(existing));
+  kept.push(recorded);
   return kept.slice(-MAX_PROJECT_INSTRUCTIONS);
 }
 

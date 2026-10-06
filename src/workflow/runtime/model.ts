@@ -354,10 +354,10 @@ export interface Harness {
   /**
    * Detect the instruction files the harness loads for one call that depend on the call, such as
    * project files under `request.cwd` or files only an inherit-mode call reads. Called once per
-   * distinct resolved cwd and isolation mode per run invocation, before the first live call there,
-   * with the run's shared discovery signal; never on replay, and never part of step identity.
-   * Resolve `undefined` to record nothing; a rejection becomes a run warning and never fails the
-   * call.
+   * distinct resolved cwd, isolation mode and env edits per run invocation, before the first live
+   * call there, with the run's shared discovery signal; never on replay, and never part of step
+   * identity. Resolve `undefined` to record nothing; a rejection becomes a run warning and never
+   * fails the call.
    */
   projectInstructions?(
     request: HarnessRequest,

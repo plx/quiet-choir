@@ -52,7 +52,8 @@ import { Collector, kindOf, maxSkills, SkillBudget, userHomeOf } from './instruc
  *
  * The two levels are detected separately: the runtime records user-level sources once per harness
  * registration per run invocation (through adapter metadata) and project-level sources once per
- * distinct working directory and isolation mode (through the adapter's projectInstructions hook).
+ * distinct working directory, isolation mode and env edits (through the adapter's
+ * projectInstructions hook).
  */
 
 /** Inputs for the Codex instruction detectors. @internal */

@@ -53,12 +53,13 @@ inside another skill's directory. Results can therefore depend on who runs the w
 records these files as paths and SHA-256 digests, never contents. User-level files, including
 `$HOME/.agents/skills` (`HOME` from the child environment), are detected once per run invocation and
 recorded under `harnesses.<name>.instructionSources`; the run warns once about them and again if
-they change on resume. Project files are detected once per distinct resolved `cwd` and isolation
-mode (including each runtime-owned worktree), before the first live call there, and recorded in the
-run's `projectInstructions` list (at most 128 entries, oldest dropped; a later detection for the
-same harness and `cwd` replaces its entry). Up to 64 skill files are listed per detection; the rest
-are counted, in the user-level warning or in a run warning for project skills. `workflow doctor`
-names both. None of it enters step identity or replay. Codex memories
+they change on resume. Project files are detected once per distinct resolved `cwd`, isolation mode
+and env edits (including each runtime-owned worktree), before the first live call there, and
+recorded in the run's `projectInstructions` list (at most 128 entries, oldest dropped; the first
+detection for a harness and `cwd` in a run invocation replaces its entry, so a resume refreshes it,
+and later detections there add their files to it). Up to 64 skill files are listed per detection;
+the rest are counted, in the user-level warning or in a run warning for project skills.
+`workflow doctor` names both. None of it enters step identity or replay. Codex memories
 (`CODEX_HOME/memories/memory_summary.md`) do not load by default; they load only when
 `features.memories` is enabled through explicit `config` or an inherited `config.toml`, so they are
 not detected. That key, like other inherit-mode config keys such as `project_doc_max_bytes`, is not
@@ -68,9 +69,9 @@ Claude instruction boundary. Restricted Claude loads no user or project instruct
 records nothing. An `inherit` call loads the user `CLAUDE.md` from Claude's configuration directory:
 `CLAUDE_CONFIG_DIR` when set (from the child environment, so `env.set` counts), otherwise
 `~/.claude`; a configured `CLAUDE_CONFIG_DIR` replaces `~/.claude` rather than adding to it.
-`CliHarness` detects that file for each distinct `cwd` and isolation mode and records it in
-`projectInstructions` as `{ scope: 'user', kind: 'claude-md' }`, by path and digest, even when it is
-blank. When `HOME` is the `cwd` or one of its ancestors, `~/.claude/CLAUDE.md` also loads as that
+`CliHarness` detects that file for each distinct `cwd`, isolation mode and env edits and records it
+in `projectInstructions` as `{ scope: 'user', kind: 'claude-md' }`, by path and digest, even when it
+is blank. When `HOME` is the `cwd` or one of its ancestors, `~/.claude/CLAUDE.md` also loads as that
 ancestor's project file even with `CLAUDE_CONFIG_DIR` set, and is recorded the same way. Inherit is
 an explicit trust decision, so the run adds no warning for it; `workflow doctor` names the file.
 Other inherit-mode inputs are not detected: project `CLAUDE.md` files (including other
