@@ -2,6 +2,7 @@ import type { InspectionStatus, RunSummary } from '../workflow/loader/inspection
 import type { ExecSummary } from '../workflow/runtime/exec-model.js';
 import { formatArgv, unlockNext, type CommandLauncher } from '../workflow/runtime/commands.js';
 import { unlockAdvice } from '../workflow/runtime/recovery-decision.js';
+import { eventMessage } from '../workflow/loader/event-line.js';
 import { formatNextCommands } from './presentation.js';
 import { parseDuration } from './duration.js';
 import {
@@ -307,7 +308,9 @@ export function formatRunSummary(
     );
   for (const event of run.recent)
     lines.push(
-      `Recent: ${event.at}${event.phase ? ` [${event.phase}]` : ''} ${event.message ?? event.type}${event.data === null ? '' : ` ${JSON.stringify(event.data)}`}`,
+      event.type === 'wait.tolerated'
+        ? `Recent: ${event.at}${event.phase ? ` [${event.phase}]` : ''} ${event.stepId ?? ''} ${eventMessage(event) ?? ''}`
+        : `Recent: ${event.at}${event.phase ? ` [${event.phase}]` : ''} ${event.message ?? event.type}${event.data === null ? '' : ` ${JSON.stringify(event.data)}`}`,
     );
   for (const lock of run.ownership.locks) lines.push(lockLine(lock));
   const hint = unlockHint(run, launcher);

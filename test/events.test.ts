@@ -19,7 +19,7 @@ import type { WorkflowEvent } from '../src/workflow/runtime/runner.js';
 import { formatEventFields } from '../src/workflow/loader/event-line.js';
 import { recordEventLines } from '../src/workflow/loader/event-follow.js';
 import type { AttemptRecord, RunRecord } from '../src/workflow/runtime/record.js';
-import { WorkflowExecutor } from '../src/workflow/loader/executor.js';
+import { eventLogEntry, WorkflowExecutor } from '../src/workflow/loader/executor.js';
 import { analyzeTypecheckEntrypoint } from '../src/workflow/typecheck/plan.js';
 import type { AgentUsage } from '../src/workflow/runtime/model.js';
 
@@ -224,6 +224,41 @@ describe('formatEventLine', () => {
     ).toMatchObject({ step: 'a', msg: 'Step a failed' });
   });
 
+  it('writes a tolerated poll error with its wait, count, limit and code, and no attempt', () => {
+    const tolerated = (fields: Partial<WorkflowEvent>): WorkflowEvent =>
+      event({
+        type: 'wait.tolerated',
+        stepId: 'ci',
+        phase: 'watch',
+        attempt: 1,
+        message: 'HTTP 502: Bad Gateway',
+        data: { consecutive: 2, tolerate: 3 },
+        ...fields,
+      } as WorkflowEvent);
+    const memory = new EventLineMemory();
+    expect(formatEventLine(tolerated({}), memory)).toBe(
+      `{"t":"${at(0)}","run":"r1","ev":"wait.tolerated","step":"ci","phase":"watch","msg":"tolerated 2/3: HTTP 502: Bad Gateway"}`,
+    );
+    expect(
+      line(tolerated({ data: { consecutive: 1, tolerate: 1, code: 'ENOENT' }, message: 'gone' }))
+        ?.msg,
+    ).toBe('tolerated 1/1 [ENOENT]: gone');
+    // Malformed data (only a hand-edited record could hold it) falls back to the plain message.
+    expect(line(tolerated({ data: null }))?.msg).toBe('HTTP 502: Bad Gateway');
+    expect(line(tolerated({ data: { consecutive: '2' } }))?.msg).toBe('HTTP 502: Bad Gateway');
+    // A started step of the same ID does not give the tolerated line a duration.
+    const started = new EventLineMemory();
+    formatEventLine(event({ type: 'step.started', stepId: 'ci' }), started);
+    expect(line(tolerated({ at: at(50) }), started)).not.toHaveProperty('ms');
+    // A long message is truncated within the cap.
+    const long = formatEventLine(tolerated({ message: 'x'.repeat(1024) }), memory) ?? '';
+    expect(Buffer.byteLength(long)).toBeLessThanOrEqual(EVENT_LINE_MAX_BYTES);
+    const parsed = JSON.parse(long) as EventLine;
+    expect(parsed.msg?.startsWith('tolerated 2/3: xxx')).toBe(true);
+    expect(parsed.msg?.endsWith('…')).toBe(true);
+    expect(line(tolerated({ replayed: true }))).toBeNull();
+  });
+
   it('truncates msg near 200 bytes so a typical line stays near 300', () => {
     const text = formatEventLine(
       event({
@@ -260,13 +295,25 @@ describe('formatEventLine', () => {
     ],
   ] as const)('keeps the line within the cap with %s', (_label, fields) => {
     const memory = new EventLineMemory();
-    for (const type of ['step.failed', 'log', 'run.failed', 'phase', 'wait.opened'] as const) {
+    for (const type of [
+      'step.failed',
+      'log',
+      'run.failed',
+      'phase',
+      'wait.opened',
+      'wait.tolerated',
+    ] as const) {
       const text =
         formatEventLine(
           event({
             type,
             ...fields,
-            data: type === 'wait.opened' ? { question: { prompt: '問'.repeat(2_000) } } : null,
+            data:
+              type === 'wait.opened'
+                ? { question: { prompt: '問'.repeat(2_000) } }
+                : type === 'wait.tolerated'
+                  ? { consecutive: 2, tolerate: 3, code: 'E'.repeat(128) }
+                  : null,
           }),
           memory,
         ) ?? '';
@@ -455,6 +502,37 @@ describe('shared formatter', () => {
     }
   });
 
+  it('gives a tolerated poll error the same line live and from the record', () => {
+    const entry = {
+      at: at(30),
+      execution: 1,
+      type: 'wait.tolerated' as const,
+      phase: 'review',
+      total: null,
+      message: 'HTTP 502',
+      data: { consecutive: 1, tolerate: 3, code: 'ECONNRESET' },
+      stepId: 'ci',
+    };
+    const fromRecord = recordEventLines(
+      { ...run, events: [entry], steps: {}, executions: [] },
+      null,
+      'all',
+    ).lines;
+    const fromLive = formatEventLine(
+      event({ ...entry, runId: 'r1', attempt: 1, message: entry.message }),
+      new EventLineMemory(),
+    );
+    expect(fromRecord).toEqual([fromLive]);
+    expect(JSON.parse(fromLive ?? '')).toEqual({
+      t: at(30),
+      run: 'r1',
+      ev: 'wait.tolerated',
+      step: 'ci',
+      phase: 'review',
+      msg: 'tolerated 1/3 [ECONNRESET]: HTTP 502',
+    });
+  });
+
   it('formats raw fields with omission and the attempt rule in one place', () => {
     expect(
       formatEventFields({
@@ -602,6 +680,27 @@ describe('WorkflowEventLog', () => {
     expect(() => {
       log.open();
     }).not.toThrow();
+  });
+});
+
+describe('eventLogEntry', () => {
+  it('logs a tolerated poll error at info with its wait and count, like phases and logs', () => {
+    const tolerated = event({
+      type: 'wait.tolerated',
+      stepId: 'ci',
+      message: 'HTTP 502',
+      data: { consecutive: 1, tolerate: 3 },
+    });
+    expect(eventLogEntry(tolerated, false)).toEqual({
+      level: 'info',
+      message: `${at(0)} r1 wait.tolerated ci tolerated 1/3: HTTP 502`,
+    });
+    expect(eventLogEntry(event({ type: 'log', stepId: null, message: 'm' }), false).level).toBe(
+      'info',
+    );
+    expect(eventLogEntry(event({ type: 'step.failed' }), false).level).toBe('debug');
+    expect(eventLogEntry(event({ type: 'agent.progress' }), true).level).toBe('info');
+    expect(eventLogEntry(event({ type: 'replay.divergence' }), false).level).toBe('warn');
   });
 });
 

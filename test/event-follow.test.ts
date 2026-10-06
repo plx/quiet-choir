@@ -340,6 +340,75 @@ describe('recordEventLines following', () => {
     expect(brief(read(run, 'all', first.cursor).lines)).toEqual(['log']);
   });
 
+  it('prints tolerated poll errors once, before the wait settles and the run ends', () => {
+    const tolerated = (wait: string, ms: number, consecutive: number): RunEvent =>
+      event('wait.tolerated', ms, {
+        stepId: wait,
+        phase: 'watch',
+        message: 'HTTP 502',
+        data: { consecutive, tolerate: 3 },
+      });
+    const run = record({
+      events: [event('run.started', 0), tolerated('ci', 5, 1)],
+      steps: {
+        ci: step([], { kind: 'wait', status: 'waiting', phase: 'watch', attempts: 1 }),
+      },
+    });
+    const first = read(run);
+    expect(parse(first.lines)).toEqual([
+      expect.objectContaining({ ev: 'run.started' }),
+      {
+        t: at(5),
+        run: 'r1',
+        ev: 'wait.tolerated',
+        step: 'ci',
+        phase: 'watch',
+        msg: 'tolerated 1/3: HTTP 502',
+      },
+    ]);
+    // A later read prints only the new entries; the wait completes in the same millisecond as
+    // its second tolerated error, and the run completes after it.
+    run.events?.push(tolerated('ci', 9, 2), event('run.completed', 9));
+    run.status = 'completed';
+    run.executions = [execution(1, 0, 9)];
+    run.steps['ci'] = step([], {
+      kind: 'wait',
+      status: 'completed',
+      phase: 'watch',
+      attempts: 1,
+      finishedAt: at(9),
+    });
+    const second = read(run, 'all', first.cursor);
+    expect(brief(second.lines)).toEqual([
+      'wait.tolerated ci',
+      'step.completed ci',
+      'run.completed',
+    ]);
+    expect(read(run, 'all', second.cursor).lines).toEqual([]);
+  });
+
+  it('keeps identical tolerated errors of two waits at the same time apart', () => {
+    const same = (wait: string): RunEvent =>
+      event('wait.tolerated', 5, {
+        stepId: wait,
+        message: 'HTTP 502',
+        data: { consecutive: 1, tolerate: 3 },
+      });
+    const run = record({ events: [event('run.started', 0), same('a'), same('b')] });
+    const first = read(run);
+    expect(brief(first.lines)).toEqual(['run.started', 'wait.tolerated a', 'wait.tolerated b']);
+    expect(first.cursor.seen.size).toBe(3);
+    // The wait ID is part of the identity, not only the occurrence count: once the first wait's
+    // entry is evicted, the second wait's identical entry is still a new line.
+    const only = read(record({ events: [event('run.started', 0), same('a')] }));
+    const evicted = read(
+      record({ events: [event('run.started', 0), same('b')] }),
+      'all',
+      only.cursor,
+    );
+    expect(brief(evicted.lines)).toEqual(['wait.tolerated b']);
+  });
+
   it('prints only later executions with afterExecution, and treats unknown executions as earlier', () => {
     const run = record({
       status: 'completed',
