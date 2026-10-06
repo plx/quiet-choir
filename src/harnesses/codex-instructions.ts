@@ -3,12 +3,14 @@ import { createReadStream } from 'node:fs';
 import { readdir, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
+import { Writable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import type { InstructionSource } from '../harness-kit.js';
 
 /*
- * Discovery rules measured against codex-cli 0.157.1 with the zero-cost fake-API probe in
- * test/harness-isolation-contract.mjs. Restricted calls pass --ignore-user-config, which skips
+ * Discovery rules measured against codex-cli 0.157.1 (2026-10-05; the whitespace rules were also
+ * seen on 0.160.0) with the zero-cost fake-API probe in test/harness-isolation-contract.mjs.
+ * Restricted calls pass --ignore-user-config, which skips
  * config.toml, so only Codex's built-in defaults apply:
  *
  * - User level: CODEX_HOME/AGENTS.override.md if present, otherwise CODEX_HOME/AGENTS.md.
@@ -18,9 +20,19 @@ import type { InstructionSource } from '../harness-kit.js';
  *   to cwd, each directory contributes AGENTS.override.md if present, otherwise AGENTS.md. With no
  *   .git entry, only cwd is read.
  *
- * An empty user-level override is ignored in favor of AGENTS.md, while an empty project-level
- * override still replaces it (measured). A whitespace-only override was not probed. Inherit-mode
- * config keys (project_root_markers, project_doc_fallback_filenames, project_doc_max_bytes) can
+ * Blank means empty or whitespace-only, following Rust's str::trim (Unicode White_Space; a lone
+ * U+FEFF is content). Measured by the contract cases codex-restricted-empty-override,
+ * codex-restricted-whitespace-override, codex-restricted-whitespace-user-agents and
+ * codex-restricted-whitespace-project-agents:
+ *
+ * - A blank user-level override counts as absent and falls back to AGENTS.md; a blank user-level
+ *   AGENTS.md contributes nothing. Neither is recorded.
+ * - A project-level override is selected by presence, so a blank one still replaces AGENTS.md in
+ *   its directory. It is recorded because it explains why AGENTS.md was not loaded.
+ * - A blank project-level AGENTS.md contributes nothing and is not recorded.
+ *
+ * BOM-only files and invalid UTF-8 were not probed; decoding is non-fatal, so they count as content,
+ * which errs toward recording a source. Inherit-mode config keys (project_root_markers, project_doc_fallback_filenames, project_doc_max_bytes) can
  * change what Codex loads and are not modelled; this is a diagnostic, never part of step identity.
  */
 
@@ -68,10 +80,32 @@ async function kindOf(path: string): Promise<'file' | 'directory' | 'absent' | '
   }
 }
 
-async function sha256(path: string, signal: AbortSignal | undefined): Promise<string> {
+const nonWhitespace = /[^\p{White_Space}]/u;
+
+/**
+ * Digest of the raw bytes, plus whether the file holds any character that is not Unicode
+ * White_Space, found in the same streaming pass without buffering the file.
+ */
+async function inspect(
+  path: string,
+  signal: AbortSignal | undefined,
+): Promise<{ sha256: string; hasContent: boolean }> {
   const hash = createHash('sha256');
-  await pipeline(createReadStream(path), hash, ...(signal ? [{ signal }] : []));
-  return hash.digest('hex');
+  const decoder = new TextDecoder('utf-8', { ignoreBOM: true });
+  let hasContent = false;
+  const sink = new Writable({
+    write(chunk: Buffer, _encoding, done) {
+      hash.update(chunk);
+      if (!hasContent) hasContent = nonWhitespace.test(decoder.decode(chunk, { stream: true }));
+      done();
+    },
+    final(done) {
+      if (!hasContent) hasContent = nonWhitespace.test(decoder.decode());
+      done();
+    },
+  });
+  await pipeline(createReadStream(path), sink, ...(signal ? [{ signal }] : []));
+  return { sha256: hash.digest('hex'), hasContent };
 }
 
 /** The Codex home a child with this environment resolves; empty values count as unset. @internal */
@@ -95,13 +129,14 @@ export async function detectCodexInstructionSources(
     scope: InstructionSource['scope'],
     kind: InstructionSource['kind'],
     path: string,
-    nonEmpty = false,
+    ifBlank: 'record' | 'skip' = 'record',
   ): Promise<boolean> => {
     signal?.throwIfAborted();
     try {
       if ((await kindOf(path)) !== 'file') return false;
-      if (nonEmpty && (await stat(path)).size === 0) return false;
-      sources.push({ scope, kind, path, sha256: await sha256(path, signal) });
+      const { sha256, hasContent } = await inspect(path, signal);
+      if (!hasContent && ifBlank === 'skip') return false;
+      sources.push({ scope, kind, path, sha256 });
       return true;
     } catch (error) {
       signal?.throwIfAborted();
@@ -112,13 +147,19 @@ export async function detectCodexInstructionSources(
   };
   // The override replaces the plain file in the same directory.
   const agents = async (scope: InstructionSource['scope'], directory: string): Promise<void> => {
-    // Measured: an empty user-level override falls back to AGENTS.md; an empty project-level one
-    // still replaces it.
+    // Measured: a blank (empty or whitespace-only) user-level override is treated as absent and
+    // falls back to AGENTS.md; a project-level override is selected by presence, so a blank one
+    // still replaces AGENTS.md and is recorded. A blank AGENTS.md is never recorded.
     if (
-      await add(scope, 'agents-override', join(directory, 'AGENTS.override.md'), scope === 'user')
+      await add(
+        scope,
+        'agents-override',
+        join(directory, 'AGENTS.override.md'),
+        scope === 'user' ? 'skip' : 'record',
+      )
     )
       return;
-    await add(scope, 'agents', join(directory, 'AGENTS.md'));
+    await add(scope, 'agents', join(directory, 'AGENTS.md'), 'skip');
   };
 
   const home = resolve(options.cwd, options.codexHome);

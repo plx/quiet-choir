@@ -109,6 +109,71 @@ describe('user discovery', () => {
     ]);
   });
 
+  it('falls back to AGENTS.md when the user-level override is whitespace-only', async () => {
+    await put(join(codexHome, 'AGENTS.md'), 'plain');
+    await put(join(codexHome, 'AGENTS.override.md'), ' \n\t\r\n ');
+    expect(names(await detect(root))).toEqual(['user:agents:codex-home/AGENTS.md']);
+  });
+
+  it.each([
+    ['empty', ''],
+    ['whitespace-only', '  \n\t\n   \r\n'],
+  ])('does not record a %s user-level AGENTS.md or warn about it', async (_name, blank) => {
+    await put(join(codexHome, 'AGENTS.md'), blank);
+    const found = await detect(root);
+    expect(names(found)).toEqual([]);
+    expect(codexInstructionWarning(found)).toBeUndefined();
+    await put(join(codexHome, 'AGENTS.override.md'), '\n  ');
+    const both = await detect(root);
+    expect(names(both)).toEqual([]);
+    expect(codexInstructionWarning(both)).toBeUndefined();
+  });
+
+  it('still lets a whitespace-only project override replace AGENTS.md', async () => {
+    await put(join(root, 'AGENTS.md'), 'project plain');
+    await put(join(root, 'AGENTS.override.md'), ' \n\t ');
+    expect(names(await detect(root))).toEqual(['project:agents-override:AGENTS.override.md']);
+  });
+
+  it.each([
+    ['empty', ''],
+    ['whitespace-only', ' \n\t\r\n '],
+  ])(
+    'does not record a %s project AGENTS.md but lists deeper non-blank ones',
+    async (_n, blank) => {
+      await mkdir(join(root, 'repo', 'pkg'), { recursive: true });
+      await mkdir(join(root, 'repo', '.git'));
+      await put(join(root, 'repo', 'AGENTS.md'), blank);
+      await put(join(root, 'repo', 'pkg', 'AGENTS.md'), 'pkg');
+      expect(names(await detect(join(root, 'repo', 'pkg')))).toEqual([
+        'project:agents:repo/pkg/AGENTS.md',
+      ]);
+    },
+  );
+
+  it('counts content padded with blank lines and hashes the raw bytes', async () => {
+    const padded = '\n\n  \t instructions \r\n\n';
+    await put(join(codexHome, 'AGENTS.md'), padded);
+    expect((await detect(root)).sources).toEqual([
+      { scope: 'user', kind: 'agents', path: join(codexHome, 'AGENTS.md'), sha256: sha(padded) },
+    ]);
+  });
+
+  it('counts content that follows a long blank run beyond one read chunk', async () => {
+    const padded = `${' '.repeat(200_000)}x`;
+    await put(join(codexHome, 'AGENTS.md'), padded);
+    expect((await detect(root)).sources).toEqual([
+      expect.objectContaining({ kind: 'agents', sha256: sha(padded) }),
+    ]);
+  });
+
+  it('treats Unicode White_Space-only content as blank but a lone BOM as content', async () => {
+    await put(join(codexHome, 'AGENTS.md'), '\u3000 \u00a0\u2003\n');
+    expect(names(await detect(root))).toEqual([]);
+    await put(join(codexHome, 'AGENTS.md'), '\ufeff');
+    expect(names(await detect(root))).toEqual(['user:agents:codex-home/AGENTS.md']);
+  });
+
   it('returns no sources for a missing CODEX_HOME', async () => {
     const found = await detectCodexInstructionSources({
       codexHome: join(root, 'absent'),
