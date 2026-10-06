@@ -2,7 +2,12 @@ import { isAbsolute } from 'node:path';
 import { z } from 'zod';
 import { jsonValue } from './json.js';
 import { schemaJson } from './schema.js';
-import type { AskOptions, QuestionRequest } from './question-model.js';
+import type {
+  AskOptions,
+  QuestionRequest,
+  WorkflowLaunch,
+  WorkflowLaunchOptions,
+} from './question-model.js';
 
 /** Persisted presentation is validated without loading workflow code. @internal */
 export const questionRequestSchema = z.object({
@@ -42,49 +47,73 @@ export const questionRecordSchema = z.object({
     .max(20),
 });
 
-/** Optional launch metadata, independent of runtime identity. @internal */
+/** The CLI's non-secret launch policy as persisted on a run record. */
+const launchPolicySchema = z
+  .object({
+    harness: z
+      .object({
+        kind: z.enum(['cli', 'fixture']),
+        fixtures: z
+          .array(
+            z
+              .object({
+                name: z
+                  .string()
+                  .regex(/^[a-z][a-z0-9-]{0,31}$/u)
+                  .optional(),
+                path: z.string().refine(isAbsolute),
+                sha256: z.string().regex(/^[a-f0-9]{64}$/u),
+              })
+              .strict(),
+          )
+          .optional(),
+      })
+      .strict()
+      .refine(({ kind, fixtures = [] }) => {
+        const names = fixtures.flatMap(({ name }) => (name === undefined ? [] : [name]));
+        const global = fixtures.length - names.length;
+        return new Set(names).size === names.length && global === (kind === 'fixture' ? 1 : 0);
+      }, 'A launch policy has one unnamed fixture exactly for kind fixture, and unique names.'),
+    waitMode: z.enum(['suspend', 'block']),
+    worktrees: z
+      .object({
+        keep: z.enum(['all', 'failed', 'none']).optional(),
+        root: z.string().refine(isAbsolute).optional(),
+      })
+      .strict()
+      .optional(),
+  })
+  .strict();
+
+/** Optional launch metadata as persisted on a record, independent of runtime identity. @internal */
 export const workflowLaunchSchema = z.object({
   entrypoint: z.string().refine(isAbsolute),
   tsconfig: z.string().refine(isAbsolute).nullable(),
   sources: z.record(z.string().refine(isAbsolute), z.string().regex(/^[a-f0-9]{64}$/u)).optional(),
-  policy: z
-    .object({
-      harness: z
-        .object({
-          kind: z.enum(['cli', 'fixture']),
-          fixtures: z
-            .array(
-              z
-                .object({
-                  name: z
-                    .string()
-                    .regex(/^[a-z][a-z0-9-]{0,31}$/u)
-                    .optional(),
-                  path: z.string().refine(isAbsolute),
-                  sha256: z.string().regex(/^[a-f0-9]{64}$/u),
-                })
-                .strict(),
-            )
-            .optional(),
-        })
-        .strict()
-        .refine(({ kind, fixtures = [] }) => {
-          const names = fixtures.flatMap(({ name }) => (name === undefined ? [] : [name]));
-          const global = fixtures.length - names.length;
-          return new Set(names).size === names.length && global === (kind === 'fixture' ? 1 : 0);
-        }, 'A launch policy has one unnamed fixture exactly for kind fixture, and unique names.'),
-      waitMode: z.enum(['suspend', 'block']),
-      worktrees: z
-        .object({
-          keep: z.enum(['all', 'failed', 'none']).optional(),
-          root: z.string().refine(isAbsolute).optional(),
-        })
-        .strict()
-        .optional(),
-    })
-    .strict()
-    .optional(),
+  policy: launchPolicySchema.optional(),
 });
+
+/**
+ * Launch metadata as an execution states it: like the record's, but a null policy clears the
+ * recorded one. The record itself never stores null. @internal
+ */
+export const workflowLaunchOptionsSchema = workflowLaunchSchema.extend({
+  policy: launchPolicySchema.nullable().optional(),
+});
+
+/**
+ * The launch a record keeps after an execution states `incoming`: every field but the policy is
+ * replaced, and the policy is replaced by a stated one, kept when absent and dropped when null.
+ * @internal
+ */
+export function mergeLaunch(
+  recorded: WorkflowLaunch | undefined,
+  incoming: WorkflowLaunchOptions,
+): WorkflowLaunch {
+  const { policy, ...rest } = structuredClone(incoming);
+  const kept = policy === undefined ? structuredClone(recorded?.policy) : (policy ?? undefined);
+  return { ...rest, ...(kept === undefined ? {} : { policy: kept }) };
+}
 
 /** Validate and snapshot every question identity component. @internal */
 export function questionRequest<T>(options: AskOptions<T>): QuestionRequest {

@@ -644,8 +644,10 @@ Each execution records a non-secret launch policy in the run's launch metadata (
 outside the workflow fingerprint and step identity: the global harness kind (`cli` or `fixture`),
 each fixture file as its absolute path (resolved against the command's working directory) with the
 SHA-256 of its bytes (unnamed for `fixture:<file>`, named for `name=fixture:<file>`), the wait mode,
-and `--worktree-keep` and `--worktree-root` (as an absolute path) when given. The latest execution's
-policy replaces the previous one, so an explicit flag becomes the new sticky value. No
+and `--worktree-keep` and `--worktree-root` (as an absolute path) when given. An execution that
+states a policy replaces the previous one, so an explicit flag becomes the new sticky value. An
+execution whose launch states none keeps the recorded policy, and `policy: null` clears it; the CLI
+passes null for a selection built from data, which a later resume could not reproduce. No
 `--harness-config` value is recorded; only its digest is, as before.
 
 - `resume`, `execute --resume` and `answer --resume` without `--harness` use the recorded harness
@@ -671,9 +673,10 @@ policy replaces the previous one, so an explicit flag becomes the new sticky val
   before importing it.
 - `tick` always resumes with `suspend` for that execution only, so one run's waits never hold the
   batch; the recorded wait mode stays, and a later plain `resume` of a `block` run blocks again.
-- A run recorded by an older build (or launched by an embedder, which supplies no policy) behaves as
+- A run recorded by an older build, or one no CLI execution launched, has no policy and behaves as
   before: the default `cli` selection, with tick forwarding its `--harness-config` only to runs that
-  last executed with the CLI harness.
+  last executed with the CLI harness. An embedder's `RunOptions.launch` without a policy keeps the
+  recorded one; with a `LaunchPolicy` it replaces it, and with `null` it clears it.
 
 Emitted resume commands carry `--harness fixture:<abs>`, `--harness <name>=fixture:<abs>`,
 `--wait-mode block`, `--worktree-keep` and `--worktree-root` as recorded; the defaults (`cli`,

@@ -213,6 +213,7 @@ export type {
   QuestionRejection,
   PendingQuestion,
   WorkflowLaunch,
+  WorkflowLaunchOptions,
   LaunchPolicy,
 } from './workflow/runtime/question-model.js';
 export { writeAnswer, listPending, AnswerError } from './workflow/runtime/inbox.js';

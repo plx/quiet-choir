@@ -49,6 +49,7 @@ import { cancelRun } from './cancel.js';
 import { failureKind, rootCauseErrorKind } from './failure-kind.js';
 import { failureNextCommands } from './next-commands.js';
 import type { CommandLauncher } from '../runtime/commands.js';
+import type { WorkflowLaunchOptions } from '../runtime/question-model.js';
 import { missingRunError, readRequiredRun } from '../runtime/read-required-run.js';
 import { unlockRun } from '../runtime/lock.js';
 import {
@@ -819,9 +820,12 @@ export class WorkflowExecutor implements Executor<WorkflowExecutorPlan, Workflow
             `Harness ${name} is not declared in the static workflow tree; this setting only applies if a child invoked dynamically (via ctx.workflow) declares it.`,
           );
       const policy = launchPolicyOf(selection, waitMode ?? 'suspend', worktreeFlags);
-      const launch = {
+      // A selection built from data (a fixture with no source file, a named selection without
+      // sources) has no policy a later resume could reproduce. State that explicitly: a launch
+      // without a policy keeps the recorded one, which that resume would then silently inherit.
+      const launch: WorkflowLaunchOptions = {
         ...(await workflowLaunch(plan.typecheck, source)),
-        ...(policy === undefined ? {} : { policy }),
+        policy: policy ?? null,
       };
       if (plan.resume && plan.acceptCodeChange && !plan.dryRun)
         // runWorkflow replays an accepted change on a disposable copy before it changes the run.

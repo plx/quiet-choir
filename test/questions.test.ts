@@ -734,7 +734,7 @@ it('emits --by human:<NAME> only on human questions, in the suspension and in li
   expect(commands(await listPending({ stateDir }))).toEqual(expected);
 });
 
-it('repeats a recorded launch policy in resumeCommand, validating and replacing it per execution', async () => {
+it('repeats a recorded launch policy in resumeCommand, validating it and keeping, replacing or clearing it per execution', async () => {
   const definition = workflow((ctx) => ctx.ask('gate', question));
   const policy = {
     harness: {
@@ -767,14 +767,30 @@ it('repeats a recorded launch policy in resumeCommand, validating and replacing 
       launch: { ...launch, policy: { ...policy, harness: { kind: 'fixture' as const } } },
     }),
   ).rejects.toThrow();
-  // A launch without a policy (an embedder) replaces the recorded one, and adds no flags.
+  // A launch without a policy (an embedder) keeps the recorded one, and its flags.
   const resumed = await runWorkflow(definition, {
     ...options(),
     resume: true,
     launch: { entrypoint: launch.entrypoint, tsconfig: null },
   });
   if (resumed.status !== 'suspended') throw new Error('Expected a suspension.');
-  expect(resumed.resumeCommand).toEqual([
+  expect(resumed.resumeCommand).toEqual(suspended.resumeCommand);
+  expect((await readRun(options())).launch?.policy).toEqual(policy);
+  // A stated policy replaces it, and null clears it along with its flags.
+  const replaced = { ...policy, waitMode: 'suspend' as const };
+  await runWorkflow(definition, {
+    ...options(),
+    resume: true,
+    launch: { ...launch, policy: replaced },
+  });
+  expect((await readRun(options())).launch?.policy).toEqual(replaced);
+  const cleared = await runWorkflow(definition, {
+    ...options(),
+    resume: true,
+    launch: { entrypoint: launch.entrypoint, tsconfig: null, policy: null },
+  });
+  if (cleared.status !== 'suspended') throw new Error('Expected a suspension.');
+  expect(cleared.resumeCommand).toEqual([
     'quiet-choir',
     'workflow',
     'resume',

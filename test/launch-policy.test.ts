@@ -17,11 +17,20 @@ import type { WorkflowCommandResult } from '../src/workflow/loader/model.js';
 import { analyzeTypecheckEntrypoint } from '../src/workflow/typecheck/plan.js';
 import {
   FileRunStore,
+  FixtureHarness,
+  parseHarnessFixtures,
   readRun,
+  runWorkflow,
   RunInterruptedError,
   type LaunchPolicy,
   type WorkflowClock,
+  type WorkflowLaunchOptions,
 } from '../src/index.js';
+import {
+  mergeLaunch,
+  workflowLaunchOptionsSchema,
+  workflowLaunchSchema,
+} from '../src/workflow/runtime/question-schema.js';
 
 const project = dirname(dirname(fileURLToPath(import.meta.url)));
 const fakeClaude = join(project, 'test/bin/fake-claude.mjs');
@@ -162,7 +171,35 @@ export default defineWorkflow({ name: 'launch-policy', version: '1', input: z.nu
       await owned.release();
     }
   };
-  return { root, stateDir, state, warnings, execute, resume, record, dropPolicy, select };
+  /**
+   * An embedder's `runWorkflow` resume of the same run: its own fixture harness and a launch built
+   * from the recorded one, with the policy as given (absent by default).
+   */
+  const embed = async (policy?: LaunchPolicy | null) => {
+    const { launch, workflow } = await record();
+    if (!launch || !workflow.identity?.code) throw new Error('missing launch');
+    const stated: WorkflowLaunchOptions = {
+      entrypoint: launch.entrypoint,
+      tsconfig: launch.tsconfig,
+      ...(launch.sources === undefined ? {} : { sources: launch.sources }),
+      ...(policy === undefined ? {} : { policy }),
+    };
+    const definition = (await import(file)) as { default: Parameters<typeof runWorkflow>[0] };
+    return runWorkflow(definition.default, {
+      ...ids,
+      cwd: root,
+      clock,
+      resume: true,
+      input: null,
+      // The code identity the CLI recorded, so the resume sees unchanged code.
+      source: { hash: workflow.identity.code, files: workflow.identity.files },
+      harness: new FixtureHarness(
+        parseHarnessFixtures(JSON.parse(await readFile(join(root, 'f.json'), 'utf8'))),
+      ),
+      launch: stated,
+    });
+  };
+  return { root, stateDir, state, warnings, execute, resume, record, dropPolicy, select, embed };
 }
 
 function ok(result: WorkflowCommandResult) {
@@ -395,5 +432,137 @@ describe('sticky launch policy', { timeout: 60_000 }, () => {
     // A relative root from a plan is refused before anything runs.
     const refused = await f.resume({}, { worktrees: { root: 'relative' } });
     expect(refused).toMatchObject({ ok: false, code: 'usage.flag' });
+  });
+
+  it('keeps the recorded policy across an embedder resume that passes none', async () => {
+    const f = await setup();
+    const path = join(f.root, 'f.json');
+    const recorded = policyOf(path, fixtureText('from f'), 'block');
+    // 1. CLI execution with fixture and block, interrupted once the block wait parks.
+    const controller = new AbortController();
+    f.state.onPark = () => {
+      controller.abort(new RunInterruptedError('Operator stop.'));
+    };
+    expect(await f.execute({ waitMode: 'block' }, controller.signal)).toMatchObject({
+      ok: false,
+      code: 'workflow.interrupted',
+    });
+    f.state.onPark = () => undefined;
+    const before = (await f.record()).launch;
+    expect(before?.policy).toEqual(recorded);
+    // 2. An embedder resumes with a launch that states no policy: the run suspends on the wait, and
+    // the record keeps the policy while taking the other launch fields from the embedder.
+    const embedded = await f.embed();
+    expect(embedded.status).toBe('suspended');
+    const after = (await f.record()).launch;
+    expect(after?.policy).toEqual(recorded);
+    expect(after?.entrypoint).toBe(before?.entrypoint);
+    expect(after?.tsconfig).toBe(before?.tsconfig);
+    expect(after?.sources).toEqual(before?.sources);
+    // 3. A flagless CLI resume still runs under fixture and block: the wait stays in this process.
+    f.state.mode = 'advance';
+    const sleeps = f.state.sleeps;
+    const completed = ok(await f.resume());
+    expect(completed.status).toBe('completed');
+    expect(completed.output).toBe('from f');
+    expect(f.state.sleeps).toBeGreaterThan(sleeps);
+    expect(completed.harness?.kind).toBe('fixture');
+    expect((await f.record()).launch?.policy).toEqual(recorded);
+  });
+
+  it('replaces the recorded policy when an embedder resume states one', async () => {
+    const f = await setup();
+    const path = join(f.root, 'f.json');
+    const controller = new AbortController();
+    f.state.onPark = () => {
+      controller.abort(new RunInterruptedError('Operator stop.'));
+    };
+    expect(await f.execute({ waitMode: 'block' }, controller.signal)).toMatchObject({
+      ok: false,
+      code: 'workflow.interrupted',
+    });
+    f.state.onPark = () => undefined;
+    expect((await f.record()).launch?.policy?.waitMode).toBe('block');
+    const stated = policyOf(path, fixtureText('from f'), 'suspend');
+    expect((await f.embed(stated)).status).toBe('suspended');
+    expect((await f.record()).launch?.policy).toEqual(stated);
+  });
+
+  it('clears the recorded policy when an embedder resume passes null', async () => {
+    const f = await setup();
+    expect(ok(await f.execute()).status).toBe('suspended');
+    expect((await f.record()).launch?.policy).toBeDefined();
+    expect((await f.embed(null)).status).toBe('suspended');
+    const cleared = await f.record();
+    expect(cleared.launch?.policy).toBeUndefined();
+    expect(cleared.launch).not.toHaveProperty('policy');
+    // The record now behaves like an older checkpoint without a policy.
+    expect(await f.resume()).toMatchObject({ ok: false, code: 'run.incompatible' });
+  });
+
+  it('clears the recorded policy on a CLI resume whose selection is built from data', async () => {
+    const f = await setup();
+    expect(ok(await f.execute()).status).toBe('suspended');
+    expect((await f.record()).launch?.policy).toBeDefined();
+    f.state.mode = 'advance';
+    const fixtures = parseHarnessFixtures({
+      version: 1,
+      calls: [{ step: 'call', text: 'from data' }],
+    });
+    const completed = ok(
+      await f.resume(
+        { harness: 'cli' },
+        {
+          harness: { kind: 'fixture', config: {}, fixtures },
+          inheritHarness: false,
+          allowHarnessChange: true,
+        },
+      ),
+    );
+    expect(completed.output).toBe('from data');
+    const cleared = await f.record();
+    expect(cleared.launch).not.toHaveProperty('policy');
+  });
+});
+
+describe('launch merge', () => {
+  const policy: LaunchPolicy = { harness: { kind: 'cli' }, waitMode: 'block' };
+  const other: LaunchPolicy = { harness: { kind: 'cli' }, waitMode: 'suspend' };
+  const base = { entrypoint: '/w/a.ts', tsconfig: null };
+
+  it('keeps the recorded policy when the incoming one is absent', () => {
+    const merged = mergeLaunch(
+      { ...base, sources: { '/w/old.ts': 'a'.repeat(64) }, policy },
+      { entrypoint: '/w/b.ts', tsconfig: '/w/tsconfig.json' },
+    );
+    expect(merged).toEqual({ entrypoint: '/w/b.ts', tsconfig: '/w/tsconfig.json', policy });
+    expect(merged.policy).not.toBe(policy);
+  });
+
+  it('replaces the recorded policy with a stated one', () => {
+    expect(mergeLaunch({ ...base, policy }, { ...base, policy: other })).toEqual({
+      ...base,
+      policy: other,
+    });
+  });
+
+  it('drops the recorded policy for null, without storing null', () => {
+    const merged = mergeLaunch({ ...base, policy }, { ...base, policy: null });
+    expect(merged).toEqual(base);
+    expect(merged).not.toHaveProperty('policy');
+  });
+
+  it('has no policy without a recorded launch unless one is stated', () => {
+    expect(mergeLaunch(undefined, base)).toEqual(base);
+    expect(mergeLaunch(undefined, { ...base, policy: null })).toEqual(base);
+    expect(mergeLaunch(undefined, { ...base, policy })).toEqual({ ...base, policy });
+  });
+
+  it('accepts a null policy in the options schema but never in the record schema', () => {
+    expect(workflowLaunchOptionsSchema.safeParse({ ...base, policy: null }).success).toBe(true);
+    expect(workflowLaunchOptionsSchema.safeParse(base).success).toBe(true);
+    expect(workflowLaunchOptionsSchema.safeParse({ ...base, policy }).success).toBe(true);
+    expect(workflowLaunchSchema.safeParse({ ...base, policy: null }).success).toBe(false);
+    expect(workflowLaunchSchema.safeParse({ ...base, policy }).success).toBe(true);
   });
 });

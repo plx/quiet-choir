@@ -154,7 +154,8 @@ whose workflow cannot suspend. Failures still throw `WorkflowRunError` when save
 `writeAnswer({ stateDir, runId, stepId, value, by? })` delivers an answer;
 `listPending({ stateDir })` lists all waiting questions and general waits. Optional
 `RunOptions.launch` contains absolute `entrypoint`, nullable absolute `tsconfig`, and optional
-absolute-path-to-SHA-256 `sources`. Without launch metadata a suspended embedded run has
-`resumeCommand: null`; resume through the embedding application. The core never imports these paths.
-There is no daemon, blocking answerer or authentication service. For a signal with a deadline, use
-`ctx.wait`; see [waits](waits.md).
+absolute-path-to-SHA-256 `sources`, and a `policy` that is kept when omitted, replaced by a
+`LaunchPolicy` and cleared by `null` ([launch policy](cli-contract.md#launch-policy)). Without
+launch metadata a suspended embedded run has `resumeCommand: null`; resume through the embedding
+application. The core never imports these paths. There is no daemon, blocking answerer or
+authentication service. For a signal with a deadline, use `ctx.wait`; see [waits](waits.md).
