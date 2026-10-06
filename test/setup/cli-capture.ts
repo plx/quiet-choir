@@ -3,7 +3,7 @@ import { fileURLToPath } from 'node:url';
 import { inspect } from 'node:util';
 import { vi } from 'vitest';
 
-import { SETTLE_TIMEOUT_MS, it as stateDirIt } from './state-dir.js';
+import { it as stateDirIt } from './state-dir.js';
 
 // A per-test handle for running oclif command classes in process and capturing their output and
 // exit code (#249). Vitest does not cancel a timed-out test body, so a shared capture helper let
@@ -141,15 +141,16 @@ export const it = stateDirIt.extend<{
   /** Runs this test's CLI commands; drained at teardown so none overlaps a later test. */
   cli: CliCapture;
 }>({
-  cli: async ({ task }, use) => {
+  cli: async ({ task, settleTimeoutMs }, use) => {
     const managed = createCliCapture();
     await use(managed.capture);
-    // Vitest gives fixture teardown no timeout, so bound the drain like the `runs` fixture does.
-    const settled = await managed.close(SETTLE_TIMEOUT_MS);
+    // Vitest gives fixture teardown no timeout, so bound the drain like the `runs` fixture does
+    // (`settleTimeoutMs` defaults to `SETTLE_TIMEOUT_MS`, 10 s).
+    const settled = await managed.close(settleTimeoutMs);
     process.exitCode = undefined;
     if (settled) return;
     throw new Error(
-      `A cli.run call from "${task.name}" did not settle within ${String(SETTLE_TIMEOUT_MS)} ms ` +
+      `A cli.run call from "${task.name}" did not settle within ${String(settleTimeoutMs)} ms ` +
         'of the test ending; it may still write to the console or process.exitCode.',
     );
   },
