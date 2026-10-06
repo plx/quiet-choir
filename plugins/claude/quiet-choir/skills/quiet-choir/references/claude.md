@@ -81,8 +81,11 @@ The CLI retains native authentication and defaults to `--restricted --strict-mcp
 User/project hooks, discovered MCP, project instructions, and user plugins/memory do not load
 implicitly. Typed settings/MCP/plugin/prompt options opt content back in; managed policy remains. An
 explicit inherited role selects project `.claude/` settings from `cwd`; headless Claude skips trust
-prompts, so never use it on an untrusted checkout. See [harness isolation](harness-isolation.md) for
-environment scrubbing, protected-write limits, and verified native behavior.
+prompts, so never use it on an untrusted checkout. Inherit also loads the user `CLAUDE.md` from
+`CLAUDE_CONFIG_DIR` (or `~/.claude`); the run records it per `cwd` in `projectInstructions` as a
+`claude-md` source (path and digest), and restricted calls record nothing. See
+[harness isolation](harness-isolation.md) for environment scrubbing, protected-write limits, and
+verified native behavior.
 
 See [process lifecycle](agent-calls.md#process-lifecycle) for deadlines, output caps, signals, and
 orphan recovery. A stopped call may already have edited files.

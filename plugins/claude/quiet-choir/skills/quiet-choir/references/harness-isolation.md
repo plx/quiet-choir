@@ -15,10 +15,10 @@ configuration mode from the selected profile; for example, a trusted inherited r
 
 ## Native boundary
 
-| Provider | Restricted invocation                 | Remaining dependencies                                                                                                                                                                                                                                                                                                                                      |
-| -------- | ------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Claude   | `--restricted --strict-mcp-config`    | Authentication, managed settings/policy, built-ins, and explicit opt-ins                                                                                                                                                                                                                                                                                    |
-| Codex    | `--ignore-user-config --ignore-rules` | Authentication through `CODEX_HOME`, managed/system layers, user `CODEX_HOME/AGENTS.md` or `AGENTS.override.md`, `CODEX_HOME/skills`, project `AGENTS.md`/`AGENTS.override.md` from the Git root to `cwd`, and explicit config. With `instructions: 'none'`: authentication (a private copy of `auth.json`), managed/system layers and explicit config only |
+| Provider | Restricted invocation                 | Remaining dependencies                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| -------- | ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Claude   | `--restricted --strict-mcp-config`    | Authentication, managed settings/policy, built-ins, and explicit opt-ins                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| Codex    | `--ignore-user-config --ignore-rules` | Authentication through `CODEX_HOME`, managed/system layers, user `CODEX_HOME/AGENTS.md` or `AGENTS.override.md`, skills under `CODEX_HOME/skills` and `$HOME/.agents/skills`, project `AGENTS.md`/`AGENTS.override.md` and `.agents/skills` from the Git root to `cwd`, skills under `<cwd>/.codex/skills`, and explicit config. With `instructions: 'none'`: authentication (a private copy of `auth.json`), managed/system layers, explicit config, and the `$HOME/.agents/skills`, project `.agents/skills` and `<cwd>/.codex/skills` skill roots, which it does not remove |
 
 Claude suppresses user/project/local settings, their hooks, discovered MCP servers, project
 instructions, user plugins/skills, and auto-memory. Built-in components can remain. Explicit
@@ -42,18 +42,38 @@ restricted mode rejects it; select `inherit` or configure the equivalent setting
 
 Codex instruction boundary. Unlike restricted Claude, restricted Codex still loads instruction
 files. `--ignore-user-config` skips `config.toml` and `--ignore-rules` skips execpolicy rules, but
-Codex 0.157.1 still reads the user's `CODEX_HOME/AGENTS.md` (or `AGENTS.override.md`, which replaces
+Codex 0.160.0 still reads the user's `CODEX_HOME/AGENTS.md` (or `AGENTS.override.md`, which replaces
 it unless empty or whitespace-only; blank files contribute nothing), the descriptions of skills
-under `CODEX_HOME/skills`, and project `AGENTS.md` or `AGENTS.override.md` in each directory from
-the nearest Git root down to `cwd` (only `cwd` when no `.git` entry exists), as well as managed
-layers. Results can therefore depend on who runs the workflow. The run records these files as paths
-and SHA-256 digests, never contents. User-level files are detected once per run invocation and
+under `CODEX_HOME/skills` and `$HOME/.agents/skills`, project `AGENTS.md` or `AGENTS.override.md`
+and the skills under `.agents/skills` in each directory from the nearest Git root down to `cwd`
+(only `cwd` when no `.git` entry exists), and the skills under `cwd`'s own `.codex/skills` (not
+those of its parents), as well as managed layers. A skill is a `SKILL.md` file anywhere up to six
+directory levels below a skill root, skipping names that start with a dot, including one nested
+inside another skill's directory. Results can therefore depend on who runs the workflow. The run
+records these files as paths and SHA-256 digests, never contents. User-level files, including
+`$HOME/.agents/skills` (`HOME` from the child environment), are detected once per run invocation and
 recorded under `harnesses.<name>.instructionSources`; the run warns once about them and again if
-they change on resume. Project files are detected once per distinct resolved `cwd` (including each
-runtime-owned worktree), before the first live call there, and recorded in the run's
-`projectInstructions` list (at most 128 entries, oldest dropped; a resume that detects the same
-`cwd` again replaces its entry). `workflow doctor` names both. None of it enters step identity or
-replay. Inherit-mode config keys such as `project_doc_max_bytes` are not modelled.
+they change on resume. Project files are detected once per distinct resolved `cwd` and isolation
+mode (including each runtime-owned worktree), before the first live call there, and recorded in the
+run's `projectInstructions` list (at most 128 entries, oldest dropped; a later detection for the
+same harness and `cwd` replaces its entry). Up to 64 skill files are listed per detection; the rest
+are counted, in the user-level warning or in a run warning for project skills. `workflow doctor`
+names both. None of it enters step identity or replay. Codex memories
+(`CODEX_HOME/memories/memory_summary.md`) do not load by default; they load only when
+`features.memories` is enabled through explicit `config` or an inherited `config.toml`, so they are
+not detected. That key, like other inherit-mode config keys such as `project_doc_max_bytes`, is not
+modelled.
+
+Claude instruction boundary. Restricted Claude loads no user or project instruction files, so it
+records nothing. An `inherit` call loads the user `CLAUDE.md` from Claude's configuration directory:
+`CLAUDE_CONFIG_DIR` when set (from the child environment, so `env.set` counts), otherwise
+`~/.claude`; a configured `CLAUDE_CONFIG_DIR` replaces `~/.claude` rather than adding to it.
+`CliHarness` detects that file for each distinct `cwd` and isolation mode and records it in
+`projectInstructions` as `{ scope: 'user', kind: 'claude-md' }`, by path and digest, even when it is
+blank. Inherit is an explicit trust decision, so the run adds no warning for it; `workflow doctor`
+names the file. Other inherit-mode inputs are not detected: project `CLAUDE.md` files (including
+`<ancestor>/.claude/CLAUDE.md`, which loads even when the ancestor is `HOME`), `CLAUDE.local.md`,
+rules directories, `@imports` and auto-memory.
 
 Set Codex `instructions: 'none'` (on a call, a profile's `codex` options or `defaults.codex`) to run
 without these files. The adapter adds `--config project_doc_max_bytes=0`, which stops project
@@ -61,18 +81,19 @@ without these files. The adapter adds `--config project_doc_max_bytes=0`, which 
 copy of the real `auth.json`, removed after every outcome. A token refreshed during the call is
 written back to the real `auth.json` atomically under a lock, and only if the real file is
 unchanged; when another process changed it meanwhile, the later `last_refresh` wins and the call
-warns (paths, never contents). The trade-off: results stop depending on who runs the workflow, but
-calls lose guidance users may expect from their own or the project's `AGENTS.md`, skills and
-memories. Supply instructions deliberately through the prompt or explicit `config` such as
-`developer_instructions`. `'none'` requires restricted isolation and is rejected with `inherit`,
-whose `config.toml` can carry instructions of its own; it also owns the `project_doc_max_bytes`
-config key. Custom providers still need explicit `config`. It grants nothing, so call sites may set
-it under `strictProfiles`. `'none'` enters step identity; `'native'` (the default) and unset
-fingerprint identically. Steps record `request.instructions`, inspect shows
-`no native instructions`, and dry-run plans show `codexHome: 'private'`. The restricted default is
-unchanged; making `'none'` the default is a separate decision. The lock covers quiet-choir processes
-sharing a temporary directory, not a concurrent plain `codex` run, and keyring-stored credentials
-are not copied.
+warns (paths, never contents). Skill roots outside `CODEX_HOME` are not affected: Codex 0.160.0
+still loads `$HOME/.agents/skills`, the project's `.agents/skills` and `<cwd>/.codex/skills`, so
+results can still depend on who runs the workflow. The trade-off: calls lose guidance users may
+expect from their own or the project's `AGENTS.md` and their `CODEX_HOME` skills. Supply
+instructions deliberately through the prompt or explicit `config` such as `developer_instructions`.
+`'none'` requires restricted isolation and is rejected with `inherit`, whose `config.toml` can carry
+instructions of its own; it also owns the `project_doc_max_bytes` config key. Custom providers still
+need explicit `config`. It grants nothing, so call sites may set it under `strictProfiles`. `'none'`
+enters step identity; `'native'` (the default) and unset fingerprint identically. Steps record
+`request.instructions`, inspect shows `no native instructions`, and dry-run plans show
+`codexHome: 'private'`. The restricted default is unchanged; making `'none'` the default is a
+separate decision. The lock covers quiet-choir processes sharing a temporary directory, not a
+concurrent plain `codex` run, and keyring-stored credentials are not copied.
 
 Neither mode confines the workflow's TypeScript, local callbacks, or `ctx.exec`. OS sandbox
 selection and tool grants remain separate controls. Custom harnesses must enforce the resolved mode
@@ -120,11 +141,14 @@ inherited mode if a CLI rejects the flags.
 ## Verified native behavior
 
 Claude 2.1.283 and Codex 0.157.1 were checked using fresh homes, dummy credentials, and local fake
-APIs. The tests verified inherited hook suppression, explicit opt-ins, file boundaries, and Codex
-provider configuration. For restricted Codex they also recorded that user and project `AGENTS.md`
-and user skill descriptions reach the request, how `AGENTS.override.md` takes precedence, and that
-discovery runs from the Git root down to `cwd`. With `instructions: 'none'` none of them reached the
-request and the real `CODEX_HOME` stayed unchanged. Earlier zero-cost invalid-model probes support
-retained Claude subscription authentication; they are not successful inference or fresh
-account-availability checks. Managed policy and future native versions can change the effective
-boundary.
+APIs, and re-checked on Claude 2.1.290 and Codex 0.160.0. The tests verified inherited hook
+suppression, explicit opt-ins, file boundaries, and Codex provider configuration. For restricted
+Codex they also recorded that user and project `AGENTS.md` and user skill descriptions reach the
+request, how `AGENTS.override.md` takes precedence, and that discovery runs from the Git root down
+to `cwd`. With `instructions: 'none'` none of those reached the request and the real `CODEX_HOME`
+stayed unchanged. On 0.160.0 they recorded the skill roots above (including that the `.agents` and
+`.codex` skills still reach a `'none'` call) and that memories load only with `features.memories`.
+For Claude they confirmed that only inherit loads `<CLAUDE_CONFIG_DIR or ~/.claude>/CLAUDE.md`.
+Earlier zero-cost invalid-model probes support retained Claude subscription authentication; they are
+not successful inference or fresh account-availability checks. Managed policy and future native
+versions can change the effective boundary.

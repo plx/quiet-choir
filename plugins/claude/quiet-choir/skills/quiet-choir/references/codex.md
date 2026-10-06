@@ -58,16 +58,19 @@ launch with `--grant role`. Add `worktree: true` for a fresh checkout on every a
 disjoint files; isolate overlapping targets, concurrent runners, and retries unsafe on partial
 edits. See [worktrees](worktrees.md) for snapshots and explicit integration. Restricted mode skips
 `config.toml` and execpolicy rules, but Codex still loads the user's `CODEX_HOME/AGENTS.md` (or
-`AGENTS.override.md`), `CODEX_HOME/skills` descriptions, and project `AGENTS.md` or
-`AGENTS.override.md` from the Git root down to `cwd`, plus managed layers. Metadata records these
-files as paths and digests, the run warns about user-level ones, and `workflow doctor` names them.
-Set `instructions: 'none'` to run a call without them: the child gets a private temporary
-`CODEX_HOME` holding only a copy of `auth.json` (a refreshed token is written back under a lock) and
-`--config project_doc_max_bytes=0`. It is rejected with `inherit`, enters identity only as `'none'`,
-and drops guidance users may expect; pass needed instructions in the prompt or explicit `config`.
-Custom providers need explicit `config` or an inherited role. Authentication still uses
-`CODEX_HOME`. See [harness isolation](harness-isolation.md); the workflow's own TypeScript remains
-outside this boundary.
+`AGENTS.override.md`), skill descriptions under `CODEX_HOME/skills` and `$HOME/.agents/skills`,
+project `AGENTS.md` or `AGENTS.override.md` and `.agents/skills` from the Git root down to `cwd`,
+and `<cwd>/.codex/skills`, plus managed layers. Memories load only with `features.memories`. The run
+records these files as paths and digests, warns about user-level ones, and `workflow doctor` names
+them. Set `instructions: 'none'` to run a call without the `AGENTS` files and `CODEX_HOME` skills:
+the child gets a private temporary `CODEX_HOME` holding only a copy of `auth.json` (a refreshed
+token is written back under a lock) and `--config project_doc_max_bytes=0`. The
+`$HOME/.agents/skills`, project `.agents/skills` and `<cwd>/.codex/skills` roots still load. It is
+rejected with `inherit`, enters identity only as `'none'`, and drops guidance users may expect; pass
+needed instructions in the prompt or explicit `config`. Custom providers need explicit `config` or
+an inherited role. Authentication still uses `CODEX_HOME`. See
+[harness isolation](harness-isolation.md); the workflow's own TypeScript remains outside this
+boundary.
 
 Calls use `--ephemeral`, so the native thread ID is correlation metadata and no local session
 transcript is persisted by Codex. quiet-choir separately retains capped private attempt transcripts

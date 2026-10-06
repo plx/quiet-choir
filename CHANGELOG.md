@@ -2,6 +2,21 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- Instruction detection covers more native sources, measured with the zero-cost isolation contract
+  on codex-cli 0.160.0 and Claude Code 2.1.290. Codex: skills under `$HOME/.agents/skills` (user
+  level, counted in the user-level warning), `.agents/skills` in each directory from the Git root
+  down to `cwd` and `<cwd>/.codex/skills` (project level, a run warning counts files beyond 64), and
+  skills nested up to six directories below each skill root, including `CODEX_HOME/skills`.
+  `CODEX_HOME` memories are not detected: they load only with `features.memories` enabled. Claude:
+  an inherit-mode call's user `CLAUDE.md` (`CLAUDE_CONFIG_DIR`, else `~/.claude`) is recorded in
+  `projectInstructions` with the new `InstructionSource` kind `'claude-md'`; restricted calls record
+  nothing, and `workflow doctor` names the file. The new kind bumps the record schema revision to 7
+  (nested-only); revision-6 records still read and resume, and a revision-6 build refuses a record
+  holding a `claude-md` source as `run.incompatible`. Behavior change: the runtime now calls
+  `projectInstructions` once per distinct resolved `cwd` and isolation mode, so an adapter can be
+  called twice for one `cwd`. The contract also found that `instructions: 'none'` does not remove
+  the `$HOME/.agents/skills`, project `.agents/skills` or `<cwd>/.codex/skills` roots; the docs and
+  the user-level warning now say so. Detection stays outside step identity and replay.
 - Codex project instruction files are now detected once per distinct resolved call `cwd` (each
   worktree or map item with its own `cwd`), instead of only from the first live Codex call's `cwd`,
   and recorded in a new top-level run-record field `projectInstructions`
