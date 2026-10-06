@@ -85,16 +85,17 @@ overlay also works. Explicit edits are fingerprinted, while saved diagnostics re
 a digest. Keep rotating secrets in the parent environment.
 
 Public manifests (the checkpoint's `capabilities`, `workflow validate --json` and the record
-`check-resume` prints) reduce every free-form native control to a digest. Claude `settings`,
-`mcpServers`, `agents` (descriptions and prompts), `systemPrompt`, `appendSystemPrompt` and Codex
-`config` are removed from the profile's `claude`/`codex` and listed under `redacted` as
-`{ sha256, keys? }`: `keys` are the top-level settings keys, MCP server names, subagent names or
-dotted config keys, and the two prompts have only `sha256`. A profile that sets none of them has no
-`redacted` member. Live calls, grant pins and step identity still use the raw values, so a changed
-value invalidates a pin or a completed step even though the manifest shows only a new digest.
-Reviewable controls stay plaintext: tools, permission mode, `agent`, plugins, `addDirs`,
-`addDirRoots`, `extraArgs`, models, limits, isolation and sandbox. Never put secret values in
-`extraArgs`; use `env`. A registered harness lists its own sensitive option keys in the
+`check-resume` prints; checkpoints and `check-resume` keep the full shape, while `validate` and
+`list-defs` print the [compact view](cli-contract.md)) reduce every free-form native control to a
+digest. Claude `settings`, `mcpServers`, `agents` (descriptions and prompts), `systemPrompt`,
+`appendSystemPrompt` and Codex `config` are removed from the profile's `claude`/`codex` and listed
+under `redacted` as `{ sha256, keys? }`: `keys` are the top-level settings keys, MCP server names,
+subagent names or dotted config keys, and the two prompts have only `sha256`. A profile that sets
+none of them has no `redacted` member. Live calls, grant pins and step identity still use the raw
+values, so a changed value invalidates a pin or a completed step even though the manifest shows only
+a new digest. Reviewable controls stay plaintext: tools, permission mode, `agent`, plugins,
+`addDirs`, `addDirRoots`, `extraArgs`, models, limits, isolation and sandbox. Never put secret
+values in `extraArgs`; use `env`. A registered harness lists its own sensitive option keys in the
 declaration's `sensitiveOptions`; a profile's values for them leave `harnesses.<name>` and
 `harnessCapabilities.<name>` and appear as `redacted.harnesses.<name>.<key>`, with `keys` only for
 an object value. `defineHarness` rejects unknown and duplicate keys, and keys that never reach a

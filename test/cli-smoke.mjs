@@ -122,18 +122,59 @@ export default defineWorkflow({
     [],
     'validate --json omits harness option schemas',
   );
-  // Measured: about 3.7 KB without option schemas (about 12 KB with them); the capability manifest
-  // is most of the remainder.
+  // Measured: 2776 bytes without option schemas (about 12 KB with them) with an 85-character
+  // path, down from about 3.7 KB; the bound leaves about 200 bytes for a longer temporary path.
   assert.ok(
-    Buffer.byteLength(validated.stdout) < 4096,
-    `validate --json should stay under 4 KB, was ${String(Buffer.byteLength(validated.stdout))}`,
+    Buffer.byteLength(validated.stdout) < 2976,
+    `validate --json should stay under 2976 bytes, was ${String(Buffer.byteLength(validated.stdout))}`,
   );
+  // The golden-path workflow from SKILL.md. Measured: 2737 bytes with a 59-character path (about
+  // 2.8 KB with a 146-character macOS temporary path), down from 3974 before each capability fact
+  // was stated once.
+  const goldenPath = join(fixtureRoot, 'first.workflow.mts');
+  writeFileSync(
+    goldenPath,
+    `import { defineWorkflow, z } from ${JSON.stringify(join(projectRoot, 'dist/index.js'))};
+export default defineWorkflow({
+  name: 'first',
+  version: '1',
+  input: z.object({}),
+  output: z.object({ message: z.string() }),
+  async run(ctx) {
+    return ctx.step('greeting', {
+      input: {},
+      schema: z.object({ message: z.string() }),
+      run: () => ({ message: 'Hello from a durable local step.' }),
+    });
+  },
+});
+`,
+  );
+  const golden = cli('workflow', 'validate', goldenPath, '--json');
+  assert.equal(golden.status, 0, golden.stderr);
+  assert.ok(
+    Buffer.byteLength(golden.stdout) < 3072,
+    `golden-path validate --json should stay under 3 KB, was ${String(Buffer.byteLength(golden.stdout))}`,
+  );
+  const goldenDocument = JSON.parse(golden.stdout);
+  assert.equal(goldenDocument.workflow.capabilities.defaults, undefined);
+  assert.equal(goldenDocument.workflow.entrypoint, undefined);
+  assert.deepEqual(goldenDocument.workflow.profiles, []);
   const withSchemas = cli('workflow', 'validate', workflow, '--json', '--harness-schemas');
   assert.equal(withSchemas.status, 0, withSchemas.stderr);
   const schemaHarnesses = JSON.parse(withSchemas.stdout).workflow.harnesses;
   assert.ok(schemaHarnesses.length > 0);
   for (const entry of schemaHarnesses)
     assert.equal(typeof entry.options, 'object', `${entry.name} options restored`);
+  const completeDocument = JSON.parse(withSchemas.stdout);
+  const completeManifest = completeDocument.workflow.capabilities;
+  assert.deepEqual(
+    completeManifest.defaults,
+    completeManifest.profiles[completeManifest.defaultProfile],
+    '--harness-schemas keeps the complete manifest, including defaults',
+  );
+  assert.equal(completeDocument.workflow.entrypoint, completeDocument.entrypoint);
+  assert.equal(JSON.parse(validated.stdout).entrypoint, completeDocument.entrypoint);
   assert.equal(existsSync(effects), false, 'Validation must not run the workflow body');
 
   const badInput = cli(

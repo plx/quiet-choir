@@ -2,6 +2,14 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- `validate --json` and `list-defs --json` (behavior change; no identity or storage-format change):
+  each capability fact is stated once, at every depth of `children`. `capabilities.defaults` is gone
+  (read `profiles[defaultProfile]`), the default profile's environment summaries are one shared
+  `capabilities.environment` and a profile's own `environment` lists only the harnesses that differ,
+  `workflow.profiles` is the array of declared profile names, and the root `workflow.entrypoint` is
+  omitted because it equals the top-level `entrypoint`. The golden-path document shrinks from 3,974
+  to 2,737 bytes, under the 3 KB target (#254). `--harness-schemas` prints the complete document as
+  before. Run records, checkpoints, `check-resume`, grant digests and step identity are unchanged.
 - Public capability manifests (bug fix; no persisted-shape or identity change): re-projecting a
   public manifest no longer re-digests a registered harness's `env` in `harnessCapabilities`, so the
   projection is safe to apply to its own output (#248, ADR 0033).

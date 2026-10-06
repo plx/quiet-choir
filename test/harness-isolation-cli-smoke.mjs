@@ -44,11 +44,19 @@ defaults:{claude:{env:{set:{QC_EXPLICIT:'explicit-private-value'},unset:['QC_UNS
 async run(ctx){return await ctx.claude.value('call',{prompt:'hello'});}});`,
   );
   const validation = JSON.parse(cli('validate', file, '--json'));
-  assert.equal(validation.workflow.capabilities.defaults.claude.isolation, 'restricted');
-  assert.equal(validation.workflow.capabilities.defaults.claude.env, undefined);
-  assert.deepEqual(validation.workflow.capabilities.defaults.environment.claude.set, [
-    'QC_EXPLICIT',
-  ]);
+  const manifest = validation.workflow.capabilities;
+  assert.equal(manifest.defaults, undefined, 'validate --json names the default profile once');
+  const defaultRole = manifest.profiles[manifest.defaultProfile];
+  assert.equal(defaultRole.claude.isolation, 'restricted');
+  assert.equal(defaultRole.claude.env, undefined);
+  assert.equal(defaultRole.environment, undefined, 'the default profile uses the shared summary');
+  assert.deepEqual(manifest.environment.claude.set, ['QC_EXPLICIT']);
+  const complete = JSON.parse(cli('validate', file, '--json', '--harness-schemas'));
+  assert.deepEqual(
+    complete.workflow.capabilities.defaults.environment.claude.set,
+    ['QC_EXPLICIT'],
+    '--harness-schemas keeps the complete manifest',
+  );
   for (const [runId, scrubEnv, expectedHost, expectedCustom] of [
     ['scrub', ['QC_CUSTOM_HOST'], null, null],
     ['retain', false, 'outer', 'custom'],

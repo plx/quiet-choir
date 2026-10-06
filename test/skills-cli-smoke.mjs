@@ -566,6 +566,12 @@ try {
       cwd: directory,
       env,
     });
+    const [validatedLine] = launch.trim().split('\n');
+    // The golden-path validate document stays under 3 KB (measured about 2.7 KB).
+    assert.ok(
+      Buffer.byteLength(validatedLine) < 3072,
+      `golden-path validate --json should stay under 3 KB, was ${String(Buffer.byteLength(validatedLine))}`,
+    );
     const [validated, started, inspected] = launch
       .trim()
       .split('\n')

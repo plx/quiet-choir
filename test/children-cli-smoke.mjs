@@ -72,8 +72,23 @@ export default defineWorkflow({name:'sdlc',version:'1',description:'Build from a
     [],
     'list-defs --json omits option schemas at every depth',
   );
+  // Each capability fact is stated once, at every depth of the child tree.
+  const compactNodes = (value) => [value, ...value.children.flatMap(compactNodes)];
+  for (const node of compactNodes(metadata)) {
+    assert.equal(node.capabilities.defaults, undefined, `${node.name} omits defaults`);
+    assert.ok(Array.isArray(node.profiles), `${node.name} lists declared profile names`);
+  }
+  assert.equal(metadata.entrypoint, undefined, 'the root entrypoint is the definition entrypoint');
+  assert.equal(typeof listing.definitions[0].entrypoint, 'string');
   const withSchemas = ok(['list-defs', definitions, '--json', '--harness-schemas']);
   const schemaTree = withSchemas.definitions[0].workflow;
+  for (const node of compactNodes(schemaTree))
+    assert.deepEqual(
+      node.capabilities.defaults,
+      node.capabilities.profiles[node.capabilities.defaultProfile],
+      `${node.name} keeps defaults with --harness-schemas`,
+    );
+  assert.equal(schemaTree.entrypoint, withSchemas.definitions[0].entrypoint);
   assert.ok(schemaTree.harnesses.every((entry) => typeof entry.options === 'object'));
   assert.ok(
     schemaTree.children[0].children[0].harnesses.every(

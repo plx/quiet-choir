@@ -98,22 +98,23 @@ quiet-choir workflow validate review.workflow.ts --json
 quiet-choir workflow execute review.workflow.ts --run-id review-1 --grant fixer
 ```
 
-Validation emits `workflow.capabilities`: resolved defaults, all named and built-in profiles,
-provider access, models, tool gates, limits, descriptions, and `requiredGrants`. Explicit
-environment values are omitted; per-provider environment names and digests remain available. It
-imports trusted source but does not evaluate the workflow body. By default, `strictProfiles: true`
-rejects raw capability controls at call sites: tools, allowed/disallowed rules, permission modes,
-sandbox, MCP/settings, native agents/profiles/config, dirs, environment, escape args and network
-access. Native configuration/agent/escape/env controls, explicit inherited mode, plugins, and
-enabled network access conservatively require exec grants. Codex additional directories require
-write access. Role prompts, model, effort, fallbacks and image attachments remain available per
-call. See [harness controls](harness-controls.md). The manifest bounds declared agent controls; it
-does not confine workflow JavaScript or arbitrary working directories. Printed and checkpointed
-manifests show settings, MCP servers, subagents, system prompts, Codex config, environment values
-and the registered harness options a declaration lists in `sensitiveOptions` (under
-`redacted.harnesses`) only as names and digests under `redacted`/`environment`; grant pins and step
-identity use the raw declaration. Configuration isolation is a separate
-[provider-specific boundary](harness-isolation.md).
+Validation emits `workflow.capabilities`: the `defaultProfile` name, all named and built-in
+profiles, provider access, models, tool gates, limits, descriptions, and `requiredGrants`. Explicit
+environment values are omitted; per-provider environment names and digests remain available, as a
+shared `capabilities.environment` plus each profile's differences (`--harness-schemas` prints the
+complete, uncompacted manifest). It imports trusted source but does not evaluate the workflow body.
+By default, `strictProfiles: true` rejects raw capability controls at call sites: tools,
+allowed/disallowed rules, permission modes, sandbox, MCP/settings, native agents/profiles/config,
+dirs, environment, escape args and network access. Native configuration/agent/escape/env controls,
+explicit inherited mode, plugins, and enabled network access conservatively require exec grants.
+Codex additional directories require write access. Role prompts, model, effort, fallbacks and image
+attachments remain available per call. See [harness controls](harness-controls.md). The manifest
+bounds declared agent controls; it does not confine workflow JavaScript or arbitrary working
+directories. Printed and checkpointed manifests show settings, MCP servers, subagents, system
+prompts, Codex config, environment values and the registered harness options a declaration lists in
+`sensitiveOptions` (under `redacted.harnesses`) only as names and digests under
+`redacted`/`environment`; grant pins and step identity use the raw declaration. Configuration
+isolation is a separate [provider-specific boundary](harness-isolation.md).
 
 Every declared or default role with write/exec access requires authorization before the body starts,
 even if a branch never uses it. `--grant fixer` authorizes that role; `--grant write` authorizes
