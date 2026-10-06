@@ -314,6 +314,14 @@ describe('unlockRun refusals', () => {
           'u',
         ),
       );
+      // The command is spelled with the program words in use, and the default keeps quiet-choir.
+      const killOrphans = ['workflow', 'resume', 'run-1', '--state-dir', resolve(stateDir)];
+      await expect(unlock()).rejects.toThrow(
+        `with ${formatArgv(['quiet-choir', ...killOrphans, '--kill-orphans'])}.`,
+      );
+      await expect(
+        unlockRun({ runId: 'run-1', stateDir, commandLauncher: noInstall }),
+      ).rejects.toThrow(`with ${formatArgv([...noInstall, ...killOrphans, '--kill-orphans'])}.`);
       expect(await snapshot(stateDir)).toEqual(before);
       // Nothing was renamed or deleted.
       expect(vi.mocked(fs.rename)).not.toHaveBeenCalled();

@@ -32,6 +32,7 @@ import type { PruneWorkflowPlan, WorkflowCommandResult } from '../src/workflow/l
 import { pruneRuns, type PruneResult } from '../src/workflow/loader/prune.js';
 import { defaultPruneStatuses } from '../src/workflow/loader/prune-selection.js';
 import { answerPath, writeAnswer } from '../src/workflow/runtime/inbox.js';
+import { formatArgv } from '../src/workflow/runtime/commands.js';
 import { defaultStateDir } from '../src/workflow/runtime/paths.js';
 import { runBytes } from '../src/workflow/runtime/run-size.js';
 import { WorktreeGit } from '../src/worktrees/git.js';
@@ -387,7 +388,11 @@ describe('workflow prune selection', () => {
       recovering: ['locked', 'run.locked'],
     });
     const queued = preview.skipped.find((run) => run.runId === 'queued');
-    expect(queued?.message).toContain(`quiet-choir workflow rm queued --state-dir ${stateDir}`);
+    expect(queued?.message).toContain(`quiet-choir workflow rm queued --state-dir ${stateDir}.`);
+    expect(queued?.message).not.toContain('--force');
+    expect(preview.skipped.find((run) => run.runId === 'waiting')?.message).toContain(
+      `quiet-choir workflow rm waiting --state-dir ${stateDir} --force.`,
+    );
     expect(preview.skipped.find((run) => run.runId === 'locked')).toMatchObject({
       details: { kind: 'primary', role: 'owner', state: 'alive' },
     });
@@ -422,6 +427,38 @@ describe('workflow prune selection', () => {
     const refused = await executor.execute(plan({ statuses: ['running' as 'completed'] }));
     assert(!refused.ok);
     expect(refused.code).toBe('usage.flag');
+  });
+
+  it('starts every rm suggestion with the launcher, and defaults to quiet-choir', async () => {
+    const launcher = [process.execPath, '/abs/bin/run.js'];
+    await suspendedRun('asked');
+    await failedWaitingRun('waiting');
+    await completedRun('queued');
+    await mkdir(join(stateDir, 'queued', 'inbox'), { recursive: true });
+    await writeFile(join(stateDir, 'queued', 'inbox', 'gate.answer.json'), '{"value":true}');
+    const selection = plan({
+      // Only a direct caller can name a non-terminal status; it reaches prune's active protection.
+      statuses: ['completed', 'failed', 'suspended' as 'completed'],
+      dryRun: true,
+    });
+    const messages = async (live?: { commandLauncher: readonly string[] }) => {
+      const outcome = await pruneRuns(selection, processRunner, live);
+      assert(outcome.kind === 'done');
+      return Object.fromEntries(outcome.result.skipped.map((run) => [run.runId, run.message]));
+    };
+    const rm = (program: readonly string[], runId: string, ...flags: string[]) =>
+      `${formatArgv([...program, 'workflow', 'rm', runId, '--state-dir', stateDir, ...flags])}.`;
+
+    const bare = await messages();
+    expect(bare['asked']).toContain(rm(['quiet-choir'], 'asked', '--force'));
+    expect(bare['waiting']).toContain(rm(['quiet-choir'], 'waiting', '--force'));
+    expect(bare['queued']).toContain(rm(['quiet-choir'], 'queued'));
+    const launched = await messages({ commandLauncher: launcher });
+    expect(launched['asked']).toContain(rm(launcher, 'asked', '--force'));
+    expect(launched['waiting']).toContain(rm(launcher, 'waiting', '--force'));
+    expect(launched['queued']).toContain(rm(launcher, 'queued'));
+    for (const message of Object.values(launched))
+      expect(message).not.toContain('quiet-choir workflow');
   });
 
   it('does not count consumed or quarantined deliveries as queued answers', async () => {

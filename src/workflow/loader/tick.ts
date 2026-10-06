@@ -489,7 +489,13 @@ export class TickWorkflowExecutor implements Executor<
         new Date(clockNow(clock)).toISOString(),
       );
       if (decision.kind === 'crash-loop')
-        skip(run.id, 'crash-loop', { message: crashLoopMessage(run.id, decision.count, plan.stateDir, this.options.commandLauncher),
+        skip(run.id, 'crash-loop', {
+          message: crashLoopMessage(
+            run.id,
+            decision.count,
+            plan.stateDir,
+            this.options.commandLauncher,
+          ),
         });
       return decision;
     };

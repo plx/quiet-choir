@@ -623,9 +623,13 @@ ignore it and fall back to the default.
 
 Emitted argv, including `resumeCommand`, `answerCommand`, the divergence fork command, the
 `workflow unlock` command in `run.locked` messages and in `inspect`'s `Unlock:` text line, start
-with the launcher of the invocation that produced them. When `process.argv[1]` is an installed
-`quiet-choir` that a PATH lookup resolves to the same file, the launcher is `quiet-choir`.
-Otherwise, including `node "$QC_CHECKOUT/bin/run.js"`, npx and `node_modules/.bin` shims, it is
+with the launcher of the invocation that produced them. So do the commands that prose hints spell
+out: `resume RUN --state-dir DIR --kill-orphans` in the unlock, rm and prune orphans refusals and
+tick's orphans entries, tick's crash-loop `resume`, the `workflow rm` suggestions of prune's skipped
+entries, rm's `workflow clean` retry hint and the `usage.flag` example. A state directory that needs
+quoting is shell-quoted there. When `process.argv[1]` is an installed `quiet-choir` that a PATH
+lookup resolves to the same file, the launcher is `quiet-choir`. Otherwise, including
+`node "$QC_CHECKOUT/bin/run.js"`, npx and `node_modules/.bin` shims, it is
 `[node, realpath(bin/run.js)]` with absolute paths (development mode keeps the tsx loader flags), so
 the commands run from any directory without `quiet-choir` on PATH. Embedders and in-process callers
 that pass no `commandLauncher` keep `['quiet-choir']`. Commands are computed for each invocation and
@@ -724,23 +728,23 @@ or unreadable), and an `observed` count of already-terminal runs. A due or stale
 this build cannot fully read ([record schema revision](storage.md#record-schema-revision)) is
 skipped `incompatible` with the `run.incompatible` message and left unchanged. Each run appears in
 at most one entry. Tick also recovers `running` runs whose owner is gone, up to 3 consecutive times
-without a new completed step; then it reports `crash-loop` with a message naming `workflow resume`.
-The count is saved before the resume starts, so any crash during it counts, but a harness
-configuration mismatch (below) is skipped before the count and never counts. An `orphans` entry's
-message says tick never signals a process and names
-`workflow resume RUN --state-dir DIR --kill-orphans`, behind the detected launcher like other
-emitted commands and with the state directory shell-quoted when it needs quoting. With --run, exits
-are 0 completed (now or earlier), 75 pending, interrupted, locked, orphans or deadline, and 1
-failed, cancelled (a run saved as cancelled), crash-loop, incompatible or unreadable; batch per-run
-failures remain data with exit 0. An `interrupted` outcome is a resume the deadline stopped before
-the runtime reopened a stale run, which stays `running` for the next tick. Usage/infrastructure
-errors retain the command failure document. Every tick is bounded by --timeout (default 540s),
-including --watch, with --max-runs limiting executed resumes. Without --run, runs are visited in
-ascending run-ID order (by character code), so --max-runs takes the first due runs in that order.
-When the timeout fires, tick interrupts in-flight resumes into resumable suspensions: each is
-reported `suspended` with `message: "Tick timeout reached."` and is due on the next tick, which
-reuses its completed steps. `--claim-margin` (same duration syntax; default 10% of --timeout, `0ms`
-disables it, and it must be smaller than --timeout) stops new claims once less than the margin
+without a new completed step; then it reports `crash-loop` with a message naming
+`workflow resume RUN --state-dir DIR`, behind the detected launcher like the orphans entry. The
+count is saved before the resume starts, so any crash during it counts, but a harness configuration
+mismatch (below) is skipped before the count and never counts. An `orphans` entry's message says
+tick never signals a process and names `workflow resume RUN --state-dir DIR --kill-orphans`, behind
+the detected launcher like other emitted commands and with the state directory shell-quoted when it
+needs quoting. With --run, exits are 0 completed (now or earlier), 75 pending, interrupted, locked,
+orphans or deadline, and 1 failed, cancelled (a run saved as cancelled), crash-loop, incompatible or
+unreadable; batch per-run failures remain data with exit 0. An `interrupted` outcome is a resume the
+deadline stopped before the runtime reopened a stale run, which stays `running` for the next tick.
+Usage/infrastructure errors retain the command failure document. Every tick is bounded by --timeout
+(default 540s), including --watch, with --max-runs limiting executed resumes. Without --run, runs
+are visited in ascending run-ID order (by character code), so --max-runs takes the first due runs in
+that order. When the timeout fires, tick interrupts in-flight resumes into resumable suspensions:
+each is reported `suspended` with `message: "Tick timeout reached."` and is due on the next tick,
+which reuses its completed steps. `--claim-margin` (same duration syntax; default 10% of --timeout,
+`0ms` disables it, and it must be smaller than --timeout) stops new claims once less than the margin
 remains: a ready run is then left untouched and reported as skipped `deadline`, and --watch ends
 there. Inside the margin tick still reads each record (terminal runs are observed, not-due runs not
 due) but checks no locks, orphans, crash-loop count or sources, so a due or stale run is reported

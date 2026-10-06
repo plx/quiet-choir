@@ -249,6 +249,17 @@ it('keeps launcher topic validation and JSON detection independent of successful
   expect(workflowArgvFailure(['workflow', 'inspect', 'run', '--json'])).toBeNull();
 });
 
+it('names the launcher in use in the usage.flag example', () => {
+  const argv = ['workflow', '--json', 'inspect', 'run'];
+  expect(workflowArgvFailure(argv)?.message).toContain('quiet-choir workflow inspect ID --json.');
+  expect(workflowArgvFailure(argv, ['/x/node', '/y/run.js'])?.message).toBe(
+    'Put flags after the command name, for example: /x/node /y/run.js workflow inspect ID --json.',
+  );
+  expect(workflowArgvFailure(argv, ['/x/my node', '/y/run.js'])?.message).toContain(
+    "'/x/my node' /y/run.js workflow inspect ID --json.",
+  );
+});
+
 it('renders explicit empty context for pre-run failures and reserves exit 1 for saved failure', () => {
   const failure = workflowFailure('load.import', 'failed import');
   expect(workflowErrorDocument(failure)).toEqual({

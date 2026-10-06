@@ -22,7 +22,8 @@
  *   local observations. Missing or unreadable metadata never holds an unlock; its warning travels
  *   with the result.
  *
- * ESLint keeps this module free of runtime imports.
+ * ESLint keeps this module free of runtime imports, except the argv builders in `./commands.js`
+ * that spell the `workflow resume` command of the crash-loop message.
  */
 import { formatArgv, workflowArgv, type CommandLauncher } from './commands.js';
 import type { RunOwnership } from './lock.js';

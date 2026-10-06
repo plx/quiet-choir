@@ -232,9 +232,21 @@ describe('decideStaleRecovery', () => {
 
   it('caps at three and names the explicit resume', () => {
     expect(STALE_RECOVERY_CAP).toBe(3);
-    const message = crashLoopMessage('r1', 3);
+    const message = crashLoopMessage('r1', 3, '/state/runs');
     expect(message).toContain('cap 3');
-    expect(message).toContain("'quiet-choir workflow resume r1'");
+    expect(message).toContain(
+      'run quiet-choir workflow resume r1 --state-dir /state/runs to retry',
+    );
+  });
+
+  it('starts the explicit resume with the launcher and shell-quotes the state directory', () => {
+    const launched = crashLoopMessage('r1', 3, '/state/runs', ['/x/node', '/y/run.js']);
+    expect(launched).toContain('/x/node /y/run.js workflow resume r1 --state-dir /state/runs to');
+    expect(launched).not.toContain("'quiet-choir");
+    expect(launched).not.toContain('quiet-choir workflow');
+    expect(crashLoopMessage('r1', 3, '/my state/runs')).toContain(
+      "quiet-choir workflow resume r1 --state-dir '/my state/runs' to retry",
+    );
   });
 });
 

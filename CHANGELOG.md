@@ -2,6 +2,12 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- Runtime prose hints (bug fix; no identity or storage-format change): the `resume --kill-orphans`
+  command in the unlock, rm, prune and tick orphans messages, tick's crash-loop message, prune's
+  `workflow rm` suggestions, rm's `workflow clean` retry hint and the `usage.flag` example now start
+  with the detected launcher instead of a hard-coded `quiet-choir`, like `next` entries, and
+  shell-quote a state directory that needs it. The crash-loop hint now includes `--state-dir`, so it
+  runs from any directory (#255).
 - `validate --json` and `list-defs --json` (behavior change; no identity or storage-format change):
   each capability fact is stated once, at every depth of `children`. `capabilities.defaults` is gone
   (read `profiles[defaultProfile]`), the default profile's environment summaries are one shared

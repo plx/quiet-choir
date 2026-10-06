@@ -111,7 +111,14 @@ export function killOrphansArgv(
   stateDir: string,
   runId: string,
 ): string[] {
-  return workflowArgv(launcher, 'resume', runId, '--state-dir', resolve(stateDir), '--kill-orphans');
+  return workflowArgv(
+    launcher,
+    'resume',
+    runId,
+    '--state-dir',
+    resolve(stateDir),
+    '--kill-orphans',
+  );
 }
 
 /**

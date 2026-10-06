@@ -206,6 +206,22 @@ try {
     installedLocked.error.message.includes('quiet-choir workflow unlock locked --state-dir'),
   );
 
+  // The early usage.flag refusal also spells its example behind the launcher in use.
+  const usage = spawnSync(process.execPath, [cli, 'workflow', '--json', 'inspect', 'x'], {
+    cwd: elsewhere,
+    env,
+    encoding: 'utf8',
+    timeout,
+  });
+  const usageDocument = documentOf(usage, 2);
+  assert.equal(usageDocument.error.code, 'usage.flag');
+  assert.ok(
+    usageDocument.error.message.includes(
+      formatArgv([process.execPath, realpathSync(cli), 'workflow', 'inspect', 'ID', '--json']),
+    ),
+    usageDocument.error.message,
+  );
+
   // A moved stored entrypoint is run.incompatible (exit 3), with a runnable fork entry.
   const moved = join(project, 'moved.workflow.mts');
   renameSync(file, moved);

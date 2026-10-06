@@ -1249,7 +1249,7 @@ export default defineWorkflow({ name: 'debounce', version: '1', input: z.null(),
           runId: 'run',
           reason: 'crash-loop',
           message: expect.stringMatching(
-            /recovered 3 times .*cap 3\).*'quiet-choir workflow resume run'/u,
+            /recovered 3 times .*cap 3\).*run quiet-choir workflow resume run --state-dir \S+ to retry/u,
           ) as unknown,
         },
       ],
@@ -1270,6 +1270,25 @@ export default defineWorkflow({ name: 'debounce', version: '1', input: z.null(),
       exitCode: 0,
     });
     expect((await readRun(progressed.plan)).staleRecovery).toBeUndefined();
+  });
+
+  it('starts the crash-loop resume command with the detected command launcher', async () => {
+    const f = await fixture();
+    await crashedWhileRunning(f.stateDir, 'run', (completedSteps) => ({
+      count: 3,
+      completedSteps,
+    }));
+    const launched = new TickWorkflowExecutor({
+      logger,
+      commandLauncher: ['node', '/opt/qc/bin/run.js'],
+    });
+    const result = oneEntryPerRun(await launched.execute(f.tickPlan));
+    const message = result.skipped[0]?.message ?? '';
+    expect(result.skipped[0]?.reason).toBe('crash-loop');
+    expect(message).toContain(
+      `node /opt/qc/bin/run.js workflow resume run --state-dir ${f.stateDir} to retry`,
+    );
+    expect(message).not.toContain('quiet-choir workflow');
   });
 
   // Issue #235: a refusal that no recovery attempt follows must not count toward the cap.
