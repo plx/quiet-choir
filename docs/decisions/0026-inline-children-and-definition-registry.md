@@ -4,7 +4,8 @@
 
 Accepted. Extends scope, profile, observation and journal decisions 0009, 0010, 0015 and 0019.
 Amended by #170 (settled child frames; see the amendment below and
-[ADR 0007](0007-durable-failure-outcomes.md)).
+[ADR 0007](0007-durable-failure-outcomes.md)) and #240 (redefining unfinished frames; see the
+amendment below and [ADR 0005](0005-step-identity-and-policy.md)).
 
 ## Context
 
@@ -48,10 +49,10 @@ visited in the completing execution keep their live outcome: an unawaited runnin
 `cancelled`, and a failed frame the parent caught stays `failed`. One `child.superseded` event per
 retired frame follows `run.completed`. Already superseded frames are skipped, so a later resume
 emits nothing again; a later execution that invokes the frame with the same identity replays it like
-any other unfinished frame. Failed, cancelled and superseded frames still must keep their name,
-version, input and schemas on resume; the refusal for such a frame points at keeping that identity
-and resuming with `--accept-code-change`. Redefining an unfinished frame's identity is not
-supported.
+any other unfinished frame. A failed, cancelled or superseded frame that owns no terminal work may
+be invoked under a changed identity (see the #240 amendment); otherwise it must keep its name,
+version, input and schemas on resume, and the refusal points at keeping that identity and resuming
+with `--accept-code-change`.
 
 Publish optional descriptive metadata and I/O schemas through validate. The directory registry
 discovers trusted `*.workflow.ts` files, rejects duplicate names, and caches only JSON metadata
@@ -76,11 +77,52 @@ skipped completed or settled child frames", supersession skips it, and its ident
 `child.failed`. The settle predicate, the identity rule for unsettled frames and the fork decision
 are in ADR 0007.
 
+## Amendment: redefining unfinished frames (#240)
+
+ADR 0005's unfinished-identity rule now covers inline child frames. A saved frame may adopt a
+changed name, version, input digest or schema digest when all of these hold:
+
+- its status is `failed`, `cancelled` or `superseded`, and it has no `settled` outcome;
+- no committed outcome owns it: neither it nor any ancestor (following `parent` links) is listed in
+  a completed settled-map item's `children` or a settled frame's `settled.children`, and no ancestor
+  is settled;
+- its subtree (the frame and every frame whose parent chain reaches it, including compacted
+  `child:<hash>` IDs) holds no terminal work: no completed or settled-failed step attributed to a
+  subtree frame or under a subtree frame's ID prefix, no settled map under such a prefix with a
+  completed item, and no completed or settled descendant frame.
+
+The predicate is one pure function (`src/workflow/runtime/child-identity.ts`) shared by the declared
+tree validation and invocation. Running and suspended frames still refuse: a running frame after a
+crash may have effects with unknown outcomes, and a suspended frame parks an open question or wait.
+Completed and settled frames, frames holding terminal work and owned frames refuse with the existing
+messages (`run.incompatible` on the declared path); for a failed, cancelled or superseded frame the
+message adds why its identity cannot be redefined, naming the first few terminal IDs or the owner. A
+parent change at the same frame ID, and the `onError` of a settled frame, stay refused for every
+frame, because they change the call's structure rather than revising it.
+
+Declared validation runs before any effect and changes nothing: for a redefinable frame it skips the
+refusal and still validates the frame's saved declared descendants against the current declaration
+of the same name, when there is one. The redefinition is recorded only when the body invokes the
+frame. Invocation then writes the fresh frame record as before and adds the replaced identity,
+`{ workflow: { name, version }, schemaDigest, inputDigest, redefinedAt }`, to an optional
+`redefinitions` list, oldest first. Every later invocation carries that list forward, so the history
+survives further resumes; frames never redefined omit the field and keep their earlier shape. The
+frame save is followed by `child.redefined` (message `kid@1 -> kid@2: running`) and then
+`child.started`. A frame the body no longer invokes is superseded under its old identity, as before.
+`inspect` shows the history in its JSON child rows and on the text tree row. The field changes the
+accepted `children` shape, so the record schema revision is 8 (see `docs/storage.md`).
+
+A CLI resume after a version bump still edits the workflow source, so it still needs
+`--accept-code-change` for the source gate; it then proceeds instead of failing on the frame.
+Embedded `runWorkflow` callers redefine without it.
+
 ## Consequences
 
 Effects and frames have separate identities and lifetimes; child completion does not memoize its
-body. Child version/schema changes remain refusals after source acceptance. Static descriptions do
-not change runtime fingerprints, while the CLI's source gate still covers their bytes. Per-frame
-usage is an inclusive projection over attempt records, never another spending ledger. Cache hits
-skip trusted imports, so environment-dependent declarations require explicit refresh. Separate-run
-children and a linked-run wait source remain later work under #57/#18; broad port migration is #65.
+body. Child version/schema changes remain refusals after source acceptance for completed, settled,
+running, suspended and owned frames and for frames holding terminal work; other unfinished frames
+record a redefinition (#240). Static descriptions do not change runtime fingerprints, while the
+CLI's source gate still covers their bytes. Per-frame usage is an inclusive projection over attempt
+records, never another spending ledger. Cache hits skip trusted imports, so environment-dependent
+declarations require explicit refresh. Separate-run children and a linked-run wait source remain
+later work under #57/#18; broad port migration is #65.

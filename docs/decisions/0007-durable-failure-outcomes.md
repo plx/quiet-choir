@@ -203,12 +203,14 @@ end-of-run visit checks and an enclosing settled map or frame see them.
 
 The frame's error mode is identity only once it is settled. A settled frame whose current call drops
 or changes `onError` is refused with the existing "Child frame ... changed" error, which names the
-`onError` change; version, input, schema and parent changes stay refused for every frame. An
-unsettled frame (running, failed, cancelled, suspended, superseded, or completed in throw mode) may
-change its mode, because its body runs again anyway and nothing about it was observed durably. This
-matches the step rule above, where only a terminal identity is immutable, and keeps the usual
-recovery open: add `onError: 'return'` to a child that failed and resume. The refusal for a settled
-frame does not suggest `--accept-code-change`, which cannot retry it.
+`onError` change; a parent change stays refused for every frame, and version, input and schema
+changes stay refused for every frame outside the unfinished-identity rule that #240 added (see the
+redefinition amendment in [ADR 0026](0026-inline-children-and-definition-registry.md)). An unsettled
+frame (running, failed, cancelled, suspended, superseded, or completed in throw mode) may change its
+mode, because its body runs again anyway and nothing about it was observed durably. This matches the
+step rule above, where only a terminal identity is immutable, and keeps the usual recovery open: add
+`onError: 'return'` to a child that failed and resume. The refusal for a settled frame does not
+suggest `--accept-code-change`, which cannot retry it.
 
 A settled frame is terminal for the run-level checks: an unvisited one fails the run as a
 control-flow change, supersession skips it, and the steps and maps it owns count as replayable

@@ -2,6 +2,19 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- A failed, cancelled or superseded child frame can now be resumed after a change to its child's
+  name, version, input or schemas, when it is not settled, no committed settled-map item or settled
+  frame owns it, and nothing beneath it (steps, settled maps, descendant frames) is completed or
+  settled. Such a frame adopts the new identity, records the replaced one in the new optional
+  `ChildRecord.redefinitions` history (exported type `ChildRedefinition`, kept across later
+  resumes), emits a `child.redefined` event before `child.started`, and shows the history in
+  `inspect`. This applies to declared and dynamically invoked children. Completed, settled, running
+  and suspended frames, frames holding terminal work, owned frames and parent changes still refuse;
+  the refusal for a failed, cancelled or superseded frame now names the work or owner that blocks
+  it. Behavior change: such a resume used to fail with `Child frame ... changed`; a CLI resume still
+  needs `--accept-code-change` for the edited source. The history bumps the record schema revision
+  to 8 (nested-only); revision-7 records still read and resume, and a revision-7 build refuses to
+  rewrite a revision-8 record.
 - Fixture export (fix; no identity change): `workflow fixtures` now also exports agent steps whose
   failure the workflow absorbed (a `try/catch` around the call, or a settled map item), which stay
   `failed` in a completed run, as `error` rules in execution order, so replay reproduces the failure

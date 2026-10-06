@@ -64,13 +64,14 @@ operations.
 
 ## Compatibility gates
 
-| Scope            | Compatibility rule                                                                                                                         |
-| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
-| Run              | Name, version, source/schema/engine fingerprint, canonical cwd, and validated input still match                                            |
-| Terminal step    | ID, kind, input/prompt, schema, local callback/version, onError, model/effort, capabilities, and cwd match; errors name changed components |
-| Unfinished step  | A changed identity is adopted, the old hashes remain in `redefinitions`, and `step.redefined` is emitted                                   |
-| Execution policy | `timeoutMs`, `maxTurns`, `maxBudgetUsd`, and `retry` may change without invalidating any step                                              |
-| Replay path      | Every terminal step must be visited; unvisited unfinished steps and child frames become `superseded` when the body completes               |
+| Scope                  | Compatibility rule                                                                                                                                                                                            |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Run                    | Name, version, source/schema/engine fingerprint, canonical cwd, and validated input still match                                                                                                               |
+| Terminal step          | ID, kind, input/prompt, schema, local callback/version, onError, model/effort, capabilities, and cwd match; errors name changed components                                                                    |
+| Unfinished step        | A changed identity is adopted, the old hashes remain in `redefinitions`, and `step.redefined` is emitted                                                                                                      |
+| Unfinished child frame | A failed, cancelled or superseded frame that owns no completed or settled work adopts a changed name, version, input or schemas; the old identity is kept in `redefinitions` and `child.redefined` is emitted |
+| Execution policy       | `timeoutMs`, `maxTurns`, `maxBudgetUsd`, and `retry` may change without invalidating any step                                                                                                                 |
+| Replay path            | Every terminal step must be visited; unvisited unfinished steps and child frames become `superseded` when the body completes                                                                                  |
 
 The CLI hashes raw bytes of compiler-discovered local source files and the nearest tsconfig, using
 real paths named relative to the tsconfig directory (or nearest package root, then entrypoint
