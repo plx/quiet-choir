@@ -180,6 +180,20 @@ journal was empty, so only `run.json` is checked in. Stack paths are scrubbed to
 the file was formatted with Prettier; its read-view digest in `test/record-schema-revision.test.ts`
 was computed on the same unmodified main from this file.
 
+`revision-six-checkpoint.json` was generated the same way at origin/main `2c6be06`, before
+repository skill and Claude instruction detection (#227) added the instruction source kind
+`claude-md` to the nested `harnesses` and `projectInstructions` shapes in revision 7. Its run ID is
+`revision-six`, and it ran the revision-five definition above with the launch policy
+`[{ transcripts: 'off' }]` and a custom harness whose `projectInstructions` returns two project
+sources (`/AGENTS.md`, kind `agents`, digest `b` repeated 64 times, and
+`/.agents/skills/review/SKILL.md`, kind `skill`, digest `d` repeated 64 times), and whose `invoke`
+returns `{ text: 'ok', sessionId: null }` for step `read` and rejects with `fixture call failed` for
+step `write`. It carries `schemaRevision: 6`, a `projectInstructions` entry for harness `codex` and
+cwd `/` with both sources, one completed Codex call `read` and the failed call `write`. The journal
+was empty, so only `run.json` is checked in. Stack paths are scrubbed to `/fixture/...` and the file
+was formatted with Prettier; its read-view digest in `test/record-schema-revision.test.ts` was
+computed on the same unmodified main from this file.
+
 `record-keys.json` lists the top-level run-record keys of each schema revision. Adding or changing a
 persisted run-level field adds a revision there and bumps `SUPPORTED_SCHEMA_REVISION`; a revision
 that only changes a nested shape repeats the previous key list. See `docs/storage.md`.

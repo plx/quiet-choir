@@ -246,11 +246,13 @@ confirming reaping. OS start time must identify process birth, not a current tim
 unavailable. `pgid` equals the detached leader PID on POSIX and is null on Windows. Optional
 `metadata(request, invocation)` receives the same port with the run's shared discovery signal, which
 also aborts once no effect awaits the result. Optional `projectInstructions(request, invocation)`
-gets the same signal once per distinct `request.cwd` per run invocation and returns the project
-instruction files found there (`{ sources, warnings? }`, paths and digests) or `undefined`; the run
-records them in `projectInstructions`, and a rejection only adds a warning. Registry failures abort
-as `CheckpointError.operation: 'process'`; they cannot become retry or settled data. Embedders may
-pass a `ProcessSupervisor` to `runWorkflow` and call its `forceKill()` from their own second-signal
+gets the same signal once per distinct `request.cwd`, isolation mode and env edits per run
+invocation (so possibly several times per `cwd`) and returns the instruction files that call loads
+there (`{ sources, warnings? }`, paths and digests) or `undefined`; the run records them in
+`projectInstructions`, one entry per harness and `cwd` that later detections in the invocation add
+to, and a rejection only adds a warning. Registry failures abort as
+`CheckpointError.operation: 'process'`; they cannot become retry or settled data. Embedders may pass
+a `ProcessSupervisor` to `runWorkflow` and call its `forceKill()` from their own second-signal
 handler. CLI signal handlers are not installed by the core. See [durability](durability.md).
 
 The core resolves profile limits (text: five minutes, 10 Claude turns, $0.50) and tool/sandbox

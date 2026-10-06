@@ -81,9 +81,9 @@ export interface HarnessAdapter<O extends AgentOptions = AgentOptions> {
     invocation?: HarnessInvocation,
   ): Promise<HarnessMetadata>;
   /**
-   * Optional project-level instruction detection for `request.cwd`, outside replay identity. Called
-   * once per distinct resolved cwd per run invocation with the run's shared discovery signal;
-   * `undefined` records nothing, and a rejection becomes a run warning.
+   * Optional per-call instruction detection for `request.cwd`, outside replay identity. Called once
+   * per distinct resolved cwd, isolation mode and env edits per run invocation with the run's shared
+   * discovery signal; `undefined` records nothing, and a rejection becomes a run warning.
    */
   projectInstructions?(
     request: AgentRequest<O>,

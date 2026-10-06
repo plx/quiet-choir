@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { chmod, mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { tmpdir, userInfo } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
@@ -10,12 +10,16 @@ import {
   detectCodexProjectInstructionSources,
   detectCodexUserInstructionSources,
 } from '../src/harnesses/codex-instructions.js';
+import { userHomeOf } from '../src/harnesses/instruction-files.js';
 
 let root: string;
 let codexHome: string;
+// The child's HOME, kept inside the temporary root so the real ~/.agents/skills never leaks in.
+let home: string;
 beforeEach(async () => {
   root = await mkdtemp(join(tmpdir(), 'choir-codex-instructions-'));
   codexHome = join(root, 'codex-home');
+  home = join(root, 'home');
   await mkdir(codexHome);
 });
 afterEach(async () => {
@@ -28,7 +32,7 @@ async function put(path: string, text: string): Promise<void> {
   await writeFile(path, text);
 }
 const detect = (cwd: string, signal?: AbortSignal) =>
-  detectCodexInstructionSources({ codexHome, cwd, signal });
+  detectCodexInstructionSources({ codexHome, home, cwd, signal });
 const names = (found: Awaited<ReturnType<typeof detect>>): string[] =>
   found.sources.map((source) =>
     `${source.scope}:${source.kind}:${source.path.slice(root.length + 1)}`.replaceAll('\\', '/'),
@@ -179,6 +183,7 @@ describe('user discovery', () => {
   it('returns no sources for a missing CODEX_HOME', async () => {
     const found = await detectCodexInstructionSources({
       codexHome: join(root, 'absent'),
+      home,
       cwd: root,
     });
     expect(found).toEqual({ sources: [], omittedSkills: 0, warnings: [] });
@@ -292,7 +297,7 @@ describe('separate user and project detection', () => {
     const cwd = await layout();
     // A CODEX_HOME inside cwd would be found by a user-level read; the project walk ignores it.
     await put(join(cwd, '.codex', 'AGENTS.md'), 'user-looking');
-    const found = await detectCodexProjectInstructionSources({ cwd });
+    const found = await detectCodexProjectInstructionSources({ cwd, home });
     expect(names({ ...found, omittedSkills: 0 })).toEqual([
       'project:agents:repo/AGENTS.md',
       // A blank project override still replaces AGENTS.md; a blank AGENTS.md is skipped.
@@ -304,7 +309,7 @@ describe('separate user and project detection', () => {
 
   it('finds only user files and skills, whatever cwd holds', async () => {
     const cwd = await layout();
-    const found = await detectCodexUserInstructionSources({ codexHome, cwd });
+    const found = await detectCodexUserInstructionSources({ codexHome, home, cwd });
     expect(names(found)).toEqual([
       'user:agents:codex-home/AGENTS.md',
       'user:skill:codex-home/skills/review/SKILL.md',
@@ -314,8 +319,8 @@ describe('separate user and project detection', () => {
 
   it('keeps the combined detection as user sources followed by project sources', async () => {
     const cwd = await layout();
-    const user = await detectCodexUserInstructionSources({ codexHome, cwd });
-    const project = await detectCodexProjectInstructionSources({ cwd });
+    const user = await detectCodexUserInstructionSources({ codexHome, home, cwd });
+    const project = await detectCodexProjectInstructionSources({ cwd, home });
     expect(await detect(cwd)).toEqual({
       sources: [...user.sources, ...project.sources],
       omittedSkills: 0,
@@ -328,7 +333,153 @@ describe('separate user and project detection', () => {
     const controller = new AbortController();
     controller.abort(new Error('stop'));
     await expect(
-      detectCodexProjectInstructionSources({ cwd, signal: controller.signal }),
+      detectCodexProjectInstructionSources({ cwd, home, signal: controller.signal }),
     ).rejects.toThrow('stop');
+  });
+});
+
+// Rules measured on codex-cli 0.160.0 by the contract cases codex-restricted-skill-layout,
+// codex-restricted-skill-no-git and codex-restricted (#227).
+describe('skill roots', () => {
+  const skill = (directory: string, text = 'skill') => put(join(directory, 'SKILL.md'), text);
+
+  it('lists .agents/skills from the Git root down to cwd after each AGENTS file, and .codex/skills in cwd only', async () => {
+    const repo = join(root, 'repo');
+    const leaf = join(repo, 'pkg', 'leaf');
+    await mkdir(join(repo, '.git'), { recursive: true });
+    await skill(join(root, '.agents', 'skills', 'above'));
+    await put(join(repo, 'AGENTS.md'), 'root');
+    await skill(join(repo, '.agents', 'skills', 'a'));
+    await skill(join(repo, '.codex', 'skills', 'not-cwd'));
+    await skill(join(repo, 'pkg', '.agents', 'skills', 'b'));
+    await put(join(leaf, 'AGENTS.md'), 'leaf');
+    await skill(join(leaf, '.agents', 'skills', 'c'));
+    await skill(join(leaf, '.codex', 'skills', 'd'));
+    const found = await detectCodexProjectInstructionSources({ cwd: leaf, home });
+    expect(names({ ...found, omittedSkills: 0 })).toEqual([
+      'project:agents:repo/AGENTS.md',
+      'project:skill:repo/.agents/skills/a/SKILL.md',
+      'project:skill:repo/pkg/.agents/skills/b/SKILL.md',
+      'project:agents:repo/pkg/leaf/AGENTS.md',
+      'project:skill:repo/pkg/leaf/.agents/skills/c/SKILL.md',
+      'project:skill:repo/pkg/leaf/.codex/skills/d/SKILL.md',
+    ]);
+    expect(found.sources[1]?.sha256).toBe(sha('skill'));
+    expect(found.warnings).toEqual([]);
+  });
+
+  it('reads only the cwd skill roots when no ancestor has a .git entry', async () => {
+    await skill(join(root, 'work', '.agents', 'skills', 'parent'));
+    await skill(join(root, 'work', 'leaf', '.agents', 'skills', 'cwd'));
+    expect(names(await detect(join(root, 'work', 'leaf')))).toEqual([
+      'project:skill:work/leaf/.agents/skills/cwd/SKILL.md',
+    ]);
+  });
+
+  it('searches six levels deep, skips dot names and keeps searching inside a skill', async () => {
+    const skills = join(root, 'work', '.agents', 'skills');
+    await skill(join(skills, '.hidden'));
+    await skill(join(skills, 'group', '.cache', 'tool'));
+    await skill(join(skills, 'group', 'deep'));
+    await skill(join(skills, 'outer'));
+    await skill(join(skills, 'outer', 'inner'));
+    await skill(join(skills, 'g6', 'a', 'b', 'c', 'd', 'depth6'));
+    await skill(join(skills, 'g7', 'a', 'b', 'c', 'd', 'e', 'depth7'));
+    await put(join(skills, 'loose.md'), 'not a skill directory');
+    expect(names(await detect(join(root, 'work')))).toEqual([
+      'project:skill:work/.agents/skills/g6/a/b/c/d/depth6/SKILL.md',
+      'project:skill:work/.agents/skills/group/deep/SKILL.md',
+      'project:skill:work/.agents/skills/outer/SKILL.md',
+      'project:skill:work/.agents/skills/outer/inner/SKILL.md',
+    ]);
+  });
+
+  it('stops a skill listing after 2000 directories with a warning', async () => {
+    const skills = join(root, 'work', '.agents', 'skills');
+    for (let index = 0; index < 2000; index += 1)
+      await mkdir(join(skills, `d${String(index).padStart(4, '0')}`), { recursive: true });
+    await skill(join(skills, 'z-late'));
+    const found = await detectCodexProjectInstructionSources({ cwd: join(root, 'work'), home });
+    expect(found.sources).toEqual([]);
+    expect(found.warnings).toEqual([
+      `Stopped listing Codex skills under ${skills} after 2000 directories; more skill files may load.`,
+    ]);
+  });
+
+  it('lists nested CODEX_HOME skills as user skills', async () => {
+    await skill(join(codexHome, 'skills', 'group', 'nested'));
+    expect(names(await detect(root))).toEqual([
+      'user:skill:codex-home/skills/group/nested/SKILL.md',
+    ]);
+  });
+
+  it('warns with the count when project skills exceed the cap', async () => {
+    const cwd = join(root, 'work');
+    for (let index = 0; index < 66; index += 1)
+      await skill(join(cwd, '.agents', 'skills', `s${String(index).padStart(3, '0')}`));
+    const found = await detectCodexProjectInstructionSources({ cwd, home });
+    expect(found.sources).toHaveLength(64);
+    expect(found.warnings).toEqual([
+      `Codex loads 2 more project skill files for ${cwd} than the 64 recorded.`,
+    ]);
+  });
+
+  it('lists $HOME/.agents/skills as user skills, counted in the warning', async () => {
+    await skill(join(home, '.agents', 'skills', 'personal'), 'mine');
+    const found = await detect(join(root, 'work'));
+    expect(found.sources).toEqual([
+      {
+        scope: 'user',
+        kind: 'skill',
+        path: join(home, '.agents', 'skills', 'personal', 'SKILL.md'),
+        sha256: sha('mine'),
+      },
+    ]);
+    const warning = codexInstructionWarning(found);
+    expect(warning).toContain('1 skill description file');
+    expect(warning).toContain('skills under $HOME/.agents/skills still load');
+  });
+
+  it('records HOME .agents skills once, as user skills, when HOME is on the project walk', async () => {
+    await mkdir(join(home, '.git'), { recursive: true });
+    await skill(join(home, '.agents', 'skills', 'personal'));
+    await skill(join(home, 'repo', '.agents', 'skills', 'project'));
+    expect(names(await detect(join(home, 'repo')))).toEqual([
+      'user:skill:home/.agents/skills/personal/SKILL.md',
+      'project:skill:home/repo/.agents/skills/project/SKILL.md',
+    ]);
+  });
+
+  it('counts HOME skills beyond the cap shared with CODEX_HOME/skills', async () => {
+    for (let index = 0; index < 64; index += 1)
+      await skill(join(codexHome, 'skills', `s${String(index).padStart(3, '0')}`));
+    await skill(join(home, '.agents', 'skills', 'personal'));
+    const found = await detect(root);
+    expect(found.omittedSkills).toBe(1);
+    expect(codexInstructionWarning(found)).toContain('65 skill description files');
+  });
+
+  it('resolves HOME from the child environment, treating an empty value as unset', () => {
+    expect(userHomeOf({ HOME: '/h' })).toBe('/h');
+    expect(userHomeOf({ HOME: '' })).toBe(userInfo().homedir);
+    expect(userHomeOf({})).toBe(userInfo().homedir);
+  });
+
+  it("falls back to the account home, not the parent's overridden HOME", () => {
+    const original = process.env['HOME'];
+    process.env['HOME'] = join(root, 'overridden-home');
+    try {
+      expect(userHomeOf({})).toBe(userInfo().homedir);
+      expect(userHomeOf({ HOME: '' })).toBe(userInfo().homedir);
+    } finally {
+      if (original === undefined) delete process.env['HOME'];
+      else process.env['HOME'] = original;
+    }
+  });
+
+  it('does not detect CODEX_HOME memories, which load only with features.memories enabled', async () => {
+    await put(join(codexHome, 'memories', 'memory_summary.md'), 'v1\nsummary');
+    await put(join(codexHome, 'memories', 'MEMORY.md'), 'memory');
+    expect(await detect(root)).toEqual({ sources: [], omittedSkills: 0, warnings: [] });
   });
 });

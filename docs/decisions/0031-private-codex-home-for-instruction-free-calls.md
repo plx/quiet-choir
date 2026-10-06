@@ -4,6 +4,10 @@
 - Issue: #130
 - Builds on [ADR 0023](0023-restricted-harness-configuration.md) (resolve restricted configuration
   before identity) and the instruction detection added by #129.
+- Amended by #227: codex-cli 0.160.0 also loads skills under `$HOME/.agents/skills`, the project's
+  `.agents/skills` from the Git root to `cwd` and `<cwd>/.codex/skills`. The private home does not
+  remove them, so `'none'` no longer makes results independent of who runs a workflow; it removes
+  the `AGENTS` files and `CODEX_HOME` skills only. See [harness isolation](../harness-isolation.md).
 
 ## Context
 

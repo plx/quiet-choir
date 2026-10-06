@@ -336,6 +336,12 @@ entries with the oldest dropped ([harness isolation](harness-isolation.md)). Rev
 and replay unchanged, including Codex project entries that older builds kept in
 `harnesses.codex.instructionSources`; a later live call adds `projectInstructions`. A revision-5
 build reads a revision-6 record without the field and reports it hidden, and refuses to rewrite it.
+Revision 7 (#227) is nested-only: instruction sources in `harnesses` and `projectInstructions` gain
+the kind `claude-md`, the user `CLAUDE.md` an inherit-mode Claude call loads
+([harness isolation](harness-isolation.md)). Revision-6 records read and resume unchanged. A
+revision-6 build cannot parse a record that holds a `claude-md` source (its kind enum rejects it),
+so every read of that record is the `run.incompatible` upgrade refusal described below; it refuses
+to rewrite any other revision-7 record.
 
 **Refusals.** A build must not rewrite a record it cannot fully read: its parse strips unknown
 top-level fields, and the next compaction would write the record back without them. When a record

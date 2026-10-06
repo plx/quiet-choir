@@ -917,6 +917,75 @@ it('detects project instructions once per distinct cwd, sequentially and in a pa
   ]);
 });
 
+it('detects again for the same cwd when the isolation mode differs, once per mode', async () => {
+  const harness = projectSpy(new Map([['a', 'rules a']]));
+  const definition = defineWorkflow({
+    ...base,
+    async run(ctx) {
+      await ctx.codex.text('one', { prompt: 'one', cwd: 'a' });
+      await ctx.codex.text('two', { prompt: 'two', cwd: 'a', isolation: 'restricted' });
+      await ctx.codex.text('three', { prompt: 'three', cwd: 'a', isolation: 'inherit' });
+      await ctx.codex.text('four', { prompt: 'four', cwd: 'a', isolation: 'inherit' });
+      return 'done';
+    },
+  });
+  expect((await runWorkflow(definition, { ...setup(), harness })).status).toBe('completed');
+  // Unset and explicit restricted resolve to the same mode.
+  expect(harness.projectInstructions).toHaveBeenCalledTimes(2);
+  expect(
+    harness.projectInstructions.mock.calls.map(
+      ([request]) => (request.options as { readonly isolation?: string }).isolation,
+    ),
+  ).toEqual(['restricted', 'inherit']);
+  // Both detections at one cwd keep one entry, the later one merged into it.
+  const record = await readRun(setup());
+  expect(record.projectInstructions).toEqual([
+    {
+      harness: 'codex',
+      cwd: join(record.cwd, 'a'),
+      sources: [expect.objectContaining({ path: join(record.cwd, 'a', 'AGENTS.md') })],
+    },
+  ]);
+});
+
+it('records only the inherit entry when restricted detection reports nothing', async () => {
+  const claudeMd = {
+    scope: 'user',
+    kind: 'claude-md',
+    path: '/home/fixture/.claude/CLAUDE.md',
+    sha256: 'e'.repeat(64),
+  } as const;
+  const harness = {
+    ...projectSpy(),
+    // Like CliHarness for Claude: the user CLAUDE.md loads only in inherit mode.
+    projectInstructions: vi
+      .fn<NonNullable<Harness['projectInstructions']>>()
+      .mockImplementation((request) =>
+        Promise.resolve(
+          (request.options as { readonly isolation?: string }).isolation === 'inherit'
+            ? { sources: [claudeMd] }
+            : undefined,
+        ),
+      ),
+  };
+  const definition = defineWorkflow({
+    ...base,
+    async run(ctx) {
+      await ctx.claude.text('restricted', { prompt: 'one' });
+      await ctx.claude.text('inherit', { prompt: 'two', isolation: 'inherit' });
+      await ctx.claude.text('restricted-again', { prompt: 'three' });
+      return 'done';
+    },
+  });
+  expect((await runWorkflow(definition, { ...setup(), harness })).status).toBe('completed');
+  expect(harness.projectInstructions).toHaveBeenCalledTimes(2);
+  const record = await readRun(setup());
+  expect(record.projectInstructions).toEqual([
+    { harness: 'claude', cwd: record.cwd, sources: [claudeMd] },
+  ]);
+  expect(record.harnessWarnings ?? []).toEqual([]);
+});
+
 it('keeps project detection out of step identity and replay', async () => {
   const files = new Map([
     ['a', 'rules a'],
@@ -1071,6 +1140,41 @@ it('keeps the 128 most recent project instruction entries and replaces a re-dete
   entries = withProjectInstructions(entries, { ...entry(5), harness: 'claude' });
   expect(entries.filter((existing) => existing.cwd === '/dir-5')).toHaveLength(2);
   expect(entries[0]?.cwd).toBe('/dir-3');
+});
+
+it('merges a project instruction entry by kind and path, the newer digest winning', () => {
+  const source = (path: string, digit: string) =>
+    ({ scope: 'user', kind: 'claude-md', path, sha256: digit.repeat(64) }) as const;
+  const other = { harness: 'claude', cwd: '/other', sources: [] };
+  let entries = withProjectInstructions(undefined, {
+    harness: 'claude',
+    cwd: '/work',
+    sources: [source('/a/CLAUDE.md', 'a'), source('/b/CLAUDE.md', 'b')],
+  });
+  entries = withProjectInstructions(entries, other);
+  entries = withProjectInstructions(
+    entries,
+    {
+      harness: 'claude',
+      cwd: '/work',
+      sources: [source('/b/CLAUDE.md', 'c'), source('/d/CLAUDE.md', 'd')],
+    },
+    true,
+  );
+  expect(entries).toEqual([
+    other,
+    {
+      harness: 'claude',
+      cwd: '/work',
+      sources: [
+        source('/a/CLAUDE.md', 'a'),
+        source('/b/CLAUDE.md', 'c'),
+        source('/d/CLAUDE.md', 'd'),
+      ],
+    },
+  ]);
+  // Without an earlier entry, a merge records the entry as given.
+  expect(withProjectInstructions(undefined, other, true)).toEqual([other]);
 });
 
 it('releases an aborted scope from stalled project detection and drains it before settling', async () => {

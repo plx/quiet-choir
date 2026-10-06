@@ -15,6 +15,8 @@ import { prepareInvocation } from './invocation.js';
 import { runProcess, type ProcessResult } from './process.js';
 import { parseClaude, parseCodex } from './protocol.js';
 import { detectCodexInstructionSources } from './codex-instructions.js';
+import { claudeConfigDirOf, detectClaudeUserInstructionSources } from './claude-instructions.js';
+import { userHomeOf } from './instruction-files.js';
 import { readInheritedCodexConfig, type InheritedCodexConfig } from './doctor-config.js';
 import { gradeHarnessVersion, testedHarnessVersions } from './tested-versions.js';
 
@@ -483,16 +485,27 @@ export async function probeHarnessContracts(options: DoctorOptions = {}): Promis
       };
     });
     await check('inherited-defaults', async () => {
-      if (harness === 'claude')
+      if (harness === 'claude') {
+        // Inherit mode also loads the user CLAUDE.md; name it by path and digest, never contents.
+        const claudeMd = await detectClaudeUserInstructionSources({
+          configDir: claudeConfigDirOf(process.env),
+          cwd: options.cwd ?? process.cwd(),
+          home: userHomeOf(process.env),
+          ...(options.signal ? { signal: options.signal } : {}),
+        });
+        const named = claudeMd.sources.map(
+          (source) => `${source.path} (sha256 ${source.sha256.slice(0, 12)})`,
+        );
         return {
           ok: true,
-          message:
-            'Restricted mode skips user/project settings; omitted model/effort use remaining native defaults. Doctor does not read Claude authentication/settings secrets.',
+          message: `Restricted mode skips user/project settings; omitted model/effort use remaining native defaults. Doctor does not read Claude authentication/settings secrets.${named.length ? ` Inherit-mode calls also load the user instruction file${named.length === 1 ? '' : 's'} ${named.join(', ')}; restricted calls skip ${named.length === 1 ? 'it' : 'them'}.` : ''}${claudeMd.warnings.length ? ` ${claudeMd.warnings.join(' ')}` : ''}`,
         };
+      }
       const home = codexHome(options);
       inherited = await readInheritedCodexConfig(home, options.codexProfile);
       const detection = await detectCodexInstructionSources({
         codexHome: home,
+        home: userHomeOf(process.env),
         cwd: options.cwd ?? process.cwd(),
         ...(options.signal ? { signal: options.signal } : {}),
       });
@@ -505,7 +518,7 @@ export async function probeHarnessContracts(options: DoctorOptions = {}): Promis
       ];
       return {
         ok: true,
-        message: `User/profile configuration: model=${inherited.model ?? 'inherited CLI default'}, effort=${inherited.effort ?? 'inherited CLI default'}, profile=${inherited.profile ?? 'none'}. These are inherit-mode diagnostics; restricted calls skip config.toml (model, provider, profiles) and execpolicy rules, but Codex still loads CODEX_HOME/AGENTS.md (or AGENTS.override.md), CODEX_HOME/skills descriptions, and project AGENTS.md files from the Git root to the working directory. ${named.length ? `User-level instruction sources found: ${named.join(', ')}.` : 'No user-level instruction files were found.'}${detection.warnings.length ? ` ${detection.warnings.join(' ')}` : ''} Project/managed layers may further override native defaults.`,
+        message: `User/profile configuration: model=${inherited.model ?? 'inherited CLI default'}, effort=${inherited.effort ?? 'inherited CLI default'}, profile=${inherited.profile ?? 'none'}. These are inherit-mode diagnostics; restricted calls skip config.toml (model, provider, profiles) and execpolicy rules, but Codex still loads CODEX_HOME/AGENTS.md (or AGENTS.override.md), skill descriptions under CODEX_HOME/skills and $HOME/.agents/skills, and project AGENTS.md files and .agents/skills from the Git root to the working directory, plus .codex/skills in the working directory. ${named.length ? `User-level instruction sources found: ${named.join(', ')}.` : 'No user-level instruction files were found.'}${detection.warnings.length ? ` ${detection.warnings.join(' ')}` : ''} Project/managed layers may further override native defaults.`,
       };
     });
   }

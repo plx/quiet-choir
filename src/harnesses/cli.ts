@@ -71,7 +71,11 @@ export class CliHarness implements Harness {
       invocation,
     );
   }
-  /** Detect project-level instruction files for `request.cwd`: Codex AGENTS files; none for Claude. */
+  /**
+   * Detect the instruction files one call loads that depend on the call: Codex project AGENTS and
+   * skill files for `request.cwd`, and the user CLAUDE.md for an inherit-mode Claude call (none for
+   * a restricted one).
+   */
   public projectInstructions(
     request: HarnessRequestInput<ClaudeOptions | CodexOptions>,
     invocation: HarnessInvocation,

@@ -75,7 +75,10 @@ export class BuiltinAdapter<O extends AgentOptions> implements HarnessAdapter<O>
     this.#check(request);
     return this.#native.metadata(request, this.#invocation(request, signal, invocation));
   }
-  /** Report the project-level instruction files the harness loads from `request.cwd`, spawning nothing. */
+  /**
+   * Report the instruction files this call loads that depend on the call, spawning nothing: Codex
+   * project files for `request.cwd`, or the user CLAUDE.md for an inherit-mode Claude call.
+   */
   public projectInstructions(
     request: AgentRequest<O>,
     signal: AbortSignal,

@@ -1,4 +1,4 @@
-import { validateAgentOptions } from '../harness-kit.js';
+import { resolveIsolation, validateAgentOptions } from '../harness-kit.js';
 import { isAbsolute, resolve } from 'node:path';
 import type {
   AgentUsage,
@@ -31,6 +31,8 @@ import {
   detectCodexProjectInstructionSources,
   detectCodexUserInstructionSources,
 } from './codex-instructions.js';
+import { claudeConfigDirOf, detectClaudeUserInstructionSources } from './claude-instructions.js';
+import { userHomeOf } from './instruction-files.js';
 import {
   childEnvironment,
   validateScrubEnvironment,
@@ -211,6 +213,7 @@ export class NativeCliHarness implements Harness {
       request.harness === 'codex'
         ? await detectCodexUserInstructionSources({
             codexHome: codexHomeOf(environment.env),
+            home: userHomeOf(environment.env),
             cwd: request.cwd,
             signal,
           })
@@ -272,7 +275,10 @@ export class NativeCliHarness implements Harness {
   }
 
   /**
-   * Detect the project-level Codex AGENTS files for `request.cwd` without spawning a process; Claude
+   * Detect the instruction files one call loads that depend on the call, without spawning a
+   * process: for Codex, the project AGENTS and skill files for `request.cwd`; for an inherit-mode
+   * Claude call, the user CLAUDE.md in its configuration directory (and $HOME/.claude/CLAUDE.md
+   * when HOME is an ancestor of the cwd). A restricted Claude call
    * reports nothing. Read problems become warnings; only an abort rejects.
    */
   public async projectInstructions(
@@ -280,12 +286,27 @@ export class NativeCliHarness implements Harness {
     context: Pick<HarnessInvocation, 'signal'>,
   ): Promise<ProjectInstructions | undefined> {
     assertBuiltinRequest(request);
-    if (request.harness !== 'codex') return undefined;
-    const { sources, warnings } = await detectCodexProjectInstructionSources({
-      cwd: request.cwd,
-      signal: context.signal,
-    });
-    return { sources, ...(warnings.length ? { warnings } : {}) };
+    const environment = childEnvironment(request.options.env, this.options.scrubEnv).env;
+    let detected: {
+      readonly sources: ProjectInstructions['sources'];
+      readonly warnings: readonly string[];
+    };
+    if (request.harness === 'codex')
+      detected = await detectCodexProjectInstructionSources({
+        cwd: request.cwd,
+        home: userHomeOf(environment),
+        signal: context.signal,
+      });
+    else if (resolveIsolation(request.options).isolation === 'inherit')
+      detected = await detectClaudeUserInstructionSources({
+        configDir: claudeConfigDirOf(environment),
+        cwd: request.cwd,
+        home: userHomeOf(environment),
+        signal: context.signal,
+      });
+    else return undefined;
+    const { sources, warnings } = detected;
+    return { sources, ...(warnings.length ? { warnings: [...warnings] } : {}) };
   }
 
   /** Execute a fresh headless session, rejecting cancellation, limits, and protocol failures. */
