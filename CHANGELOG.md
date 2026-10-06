@@ -2,6 +2,13 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- Launch policy (behavior change; no identity or storage-format change): an embedder's
+  `RunOptions.launch` without a `policy` now keeps the policy the run record holds instead of
+  erasing it, so a later CLI resume continues under the harness selection and wait mode the run
+  started with. A `LaunchPolicy` still replaces the recorded one and `policy: null` clears it; the
+  CLI passes null for a selection built from data. `RunOptions.launch` is typed as the new exported
+  `WorkflowLaunchOptions`. Records, `formatVersion`, `schemaRevision`, fingerprints and step
+  identity are unchanged (#258).
 - Emitted answer commands (bug fix; no identity or storage-format change): a human question's
   `answerCommand` (suspension, `workflow pending`, `inspect`) and the `answer` entries of `next` now
   end with `--by human:<NAME>`, so they no longer fail verbatim; replace `<NAME>` with the name of
