@@ -82,20 +82,20 @@ errors, and answers; keep them private. See
 
 ## Choose the command
 
-| Command after `npm run cli --`           | Behavior                                                                                                  |
-| ---------------------------------------- | --------------------------------------------------------------------------------------------------------- |
-| `workflow typecheck FILE`                | Compiler analysis only; does not import the workflow                                                      |
-| `workflow validate FILE`                 | Typechecks, lints (QC findings exit 4), imports, checks the export and I/O schema conversion; skips `run` |
-| `workflow execute FILE`                  | Typechecks, warns about durability lint findings, imports, and executes or resumes                        |
-| `workflow start FILE`                    | Launches execute detached; returns once the run record exists                                             |
-| `workflow check-resume FILE --run-id ID` | Typechecks/imports and compares run gates without a writer lock or workflow-body execution                |
-| `workflow fixtures RUN_ID`               | Export agent outputs and settled agent failures as reusable fixture JSON without importing source         |
-| `workflow list`                          | Lists run summaries with status filters without importing source                                          |
-| `workflow inspect RUN_ID`                | Reads the saved run without importing workflow code or acquiring a writer lock                            |
-| `workflow unlock RUN_ID`                 | Clears an abandoned lock without importing workflow code; refuses live owners and children                |
-| `workflow rm RUN_ID`                     | Removes a saved run and its caches without importing source; `--dry-run` previews, `--force` for active   |
-| `workflow prune`                         | Removes finished runs through rm, never forced; `--missing-cwd --all` also removes stale project roots    |
-| `workflow cancel RUN_ID`                 | Ends a live local run as `cancelled`; signals only an identity-verified owner on this host, else exit 3   |
+| Command after `npm run cli --`           | Behavior                                                                                                    |
+| ---------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| `workflow typecheck FILE`                | Compiler analysis only; does not import the workflow                                                        |
+| `workflow validate FILE`                 | Typechecks, lints (QC findings exit 4), imports, checks the export and I/O schema conversion; skips `run`   |
+| `workflow execute FILE`                  | Typechecks, warns about durability lint findings, imports, and executes or resumes                          |
+| `workflow start FILE`                    | Launches execute detached; returns once the run record exists                                               |
+| `workflow check-resume FILE --run-id ID` | Typechecks/imports and compares run gates without a writer lock or workflow-body execution                  |
+| `workflow fixtures RUN_ID`               | Export agent outputs, settled and absorbed agent failures as reusable fixture JSON without importing source |
+| `workflow list`                          | Lists run summaries with status filters without importing source                                            |
+| `workflow inspect RUN_ID`                | Reads the saved run without importing workflow code or acquiring a writer lock                              |
+| `workflow unlock RUN_ID`                 | Clears an abandoned lock without importing workflow code; refuses live owners and children                  |
+| `workflow rm RUN_ID`                     | Removes a saved run and its caches without importing source; `--dry-run` previews, `--force` for active     |
+| `workflow prune`                         | Removes finished runs through rm, never forced; `--missing-cwd --all` also removes stale project roots      |
+| `workflow cancel RUN_ID`                 | Ends a live local run as `cancelled`; signals only an identity-verified owner on this host, else exit 3     |
 
 Entrypoints must be TypeScript source (`.ts`, `.tsx`, `.mts`, `.cts`), not declaration files. The
 nearest `tsconfig.json` in or above the workflow directory applies and is fingerprinted. Under the

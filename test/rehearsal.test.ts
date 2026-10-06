@@ -337,6 +337,132 @@ describe('fixture routing and export', () => {
     expect(withMessage(undefined).calls[0]).toMatchObject({ error: 'Settled unknown failure' });
     expect(() => parseHarnessFixtures(withMessage(''))).not.toThrow();
   });
+  it('exports an agent failure absorbed by a body try/catch and replays it without an unmatched step', async () => {
+    const options = await setup();
+    const definition = workflow(async (ctx) => {
+      const first = await ctx.claude.text('first', { prompt: 'x' });
+      let caught = '';
+      try {
+        await ctx.codex.text('broken', { prompt: 'x' });
+      } catch (error) {
+        caught = error instanceof Error ? error.message : String(error);
+      }
+      const last = await ctx.claude.text('last', { prompt: 'x' });
+      return `${first.output}|${caught}|${last.output}`;
+    });
+    const source = await runWorkflow(definition, {
+      ...options,
+      harness: new FixtureHarness({
+        version: 1,
+        calls: [
+          { step: 'first', text: 'one' },
+          { step: 'broken', error: 'boom' },
+          { step: 'last', text: 'three' },
+        ],
+      }),
+    });
+    expect(source.status).toBe('completed');
+    expect(source.steps['broken']?.status).toBe('failed');
+    expect(source.output).toContain('boom');
+    const fixtures = fixturesFromRun(source);
+    expect(fixtures.calls).toEqual([
+      expect.objectContaining({ step: 'first', harness: 'claude', output: 'one' }),
+      { step: 'broken', harness: 'codex', error: 'boom' },
+      expect.objectContaining({ step: 'last', harness: 'claude', output: 'three' }),
+    ]);
+    const replay = await runWorkflow(definition, {
+      ...options,
+      runId: 'replay',
+      harness: new FixtureHarness(fixtures),
+    });
+    expect(replay.status).toBe('completed');
+    expect(replay.steps['broken']?.status).toBe('failed');
+    expect(replay.steps['broken']?.error).toBe(source.steps['broken']?.error);
+    expect(replay.output).toBe(source.output);
+    expect(replay.output).not.toContain('No fixture matches step');
+    expect(fixturesFromRun(replay)).toEqual(fixtures);
+  });
+  it('exports an agent failure inside a settled map item and replays it as the same settled item', async () => {
+    const options = await setup();
+    const definition = workflow(async (ctx) => {
+      const settled = await ctx.map(
+        'items',
+        [0, 1],
+        { concurrency: 1, onError: 'return' },
+        async (item) => (await ctx.claude.text('ask', { prompt: `p${String(item)}` })).output,
+      );
+      return settled.map((entry) => (entry.ok ? entry.value : entry.error.message)).join('|');
+    });
+    const source = await runWorkflow(definition, {
+      ...options,
+      harness: new FixtureHarness({
+        version: 1,
+        calls: [
+          { step: 'items/0/ask', error: 'boom' },
+          { step: 'items/1/ask', text: 'fine' },
+        ],
+      }),
+    });
+    expect(source.status).toBe('completed');
+    expect(source.steps['items/0/ask']?.status).toBe('failed');
+    expect(source.steps['items/1/ask']?.status).toBe('completed');
+    const fixtures = fixturesFromRun(source);
+    expect(fixtures.calls).toEqual([
+      { step: 'items/0/ask', harness: 'claude', error: 'boom' },
+      expect.objectContaining({ step: 'items/1/ask', harness: 'claude', output: 'fine' }),
+    ]);
+    const replay = await runWorkflow(definition, {
+      ...options,
+      runId: 'replay',
+      harness: new FixtureHarness(fixtures),
+    });
+    expect(replay.status).toBe('completed');
+    expect(replay.steps['items/0/ask']?.status).toBe('failed');
+    expect(replay.steps['items/0/ask']?.error).toBe(source.steps['items/0/ask']?.error);
+    expect(replay.output).toBe(source.output);
+    expect(replay.output).not.toContain('No fixture matches step');
+    expect(fixturesFromRun(replay)).toEqual(fixtures);
+  });
+  it('exports an unprefixed failed-step message verbatim and never an empty error', async () => {
+    const options = await setup();
+    const definition = workflow(async (ctx) => {
+      try {
+        await ctx.claude.text('broken', { prompt: 'x' });
+      } catch {
+        // The failure is absorbed so the run completes with a failed step.
+      }
+      return 'done';
+    });
+    const source = await runWorkflow(definition, {
+      ...options,
+      harness: new FixtureHarness({ version: 1, calls: [{ step: 'broken', error: 'boom' }] }),
+    });
+    const failed = source.steps['broken'];
+    if (failed?.status !== 'failed') throw new Error('expected a failed step');
+    const kind = failed.attemptHistory?.at(-1)?.errorKind ?? 'unknown';
+    const withError = (error: string | null, attempts = true) =>
+      fixturesFromRun({
+        ...source,
+        steps: {
+          broken: {
+            ...failed,
+            error,
+            ...(attempts ? {} : { attemptHistory: undefined }),
+          },
+        },
+      } as typeof source);
+    expect(withError('rate limited').calls).toEqual([
+      { step: 'broken', harness: 'claude', error: 'rate limited' },
+    ]);
+    expect(withError('Step other: x').calls[0]).toMatchObject({ error: 'Step other: x' });
+    expect(withError('Step broken: boom').calls[0]).toMatchObject({ error: 'boom' });
+    expect(withError('').calls[0]).toMatchObject({ error: `Failed ${kind} failure` });
+    expect(withError('Step broken: ').calls[0]).toMatchObject({ error: `Failed ${kind} failure` });
+    expect(withError(null).calls[0]).toMatchObject({ error: `Failed ${kind} failure` });
+    expect(withError(null, false).calls[0]).toMatchObject({ error: 'Failed unknown failure' });
+    expect(() => parseHarnessFixtures(withError(''))).not.toThrow();
+    expect(() => parseHarnessFixtures(withError(null, false))).not.toThrow();
+  });
   it('validates inline and @file config, resolves relative executables, and defers module loading', async () => {
     const { stateDir } = await setup();
     const config = { claudeBinary: './fake/claude', maxOutputBytes: 33554432 };

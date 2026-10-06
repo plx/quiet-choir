@@ -292,9 +292,10 @@ its in-memory run record. Failures retain the usual error document and exits, ad
 `error.stack`; the rehearsal warnings and `Rehearsal: ...` stderr summary are printed on both paths.
 Temporary state has already been removed on normal exit; dry-run never overwrites the
 requested/default state directory. `workflow fixtures ID --json` returns version-1 fixture JSON from
-a completed run: its agent outputs and settled agent failures, and its completed command results as
-`exec` rules with environment and stdin digests only, plus `"commands": "fixture"` when there is at
-least one. See [workflow rehearsal](rehearsal.md).
+a completed run: its agent outputs, settled agent failures and agent failures the workflow absorbed
+(a body `try/catch` or a settled map item) as `error` rules without `kind`, and its completed
+command results as `exec` rules with environment and stdin digests only, plus
+`"commands": "fixture"` when there is at least one. See [workflow rehearsal](rehearsal.md).
 
 Failures have these fields:
 
