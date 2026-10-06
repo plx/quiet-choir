@@ -93,6 +93,66 @@ describe('user CLAUDE.md detection', () => {
     },
   );
 
+  it('also records HOME/.claude/CLAUDE.md when CLAUDE_CONFIG_DIR is set and HOME is an ancestor of cwd', async () => {
+    const home = join(root, 'home');
+    const configDir = join(root, 'config');
+    const cwd = join(home, 'work', 'repo');
+    await mkdir(join(home, '.claude'), { recursive: true });
+    await mkdir(configDir);
+    await mkdir(cwd, { recursive: true });
+    await writeFile(join(configDir, 'CLAUDE.md'), 'configured');
+    await writeFile(join(home, '.claude', 'CLAUDE.md'), 'ancestor');
+    const found = await detectClaudeUserInstructionSources({ configDir, cwd, home });
+    expect(found.sources).toEqual([
+      {
+        scope: 'user',
+        kind: 'claude-md',
+        path: join(configDir, 'CLAUDE.md'),
+        sha256: sha('configured'),
+      },
+      {
+        scope: 'user',
+        kind: 'claude-md',
+        path: join(home, '.claude', 'CLAUDE.md'),
+        sha256: sha('ancestor'),
+      },
+    ]);
+    // HOME itself counts as an ancestor.
+    expect(
+      (await detectClaudeUserInstructionSources({ configDir, cwd: home, home })).sources,
+    ).toHaveLength(2);
+  });
+
+  it('records only the configured file when cwd is outside HOME', async () => {
+    const home = join(root, 'home');
+    const configDir = join(root, 'config');
+    // A sibling whose name starts with the home directory's name is not inside it.
+    const cwd = join(root, 'home-other');
+    await mkdir(join(home, '.claude'), { recursive: true });
+    await mkdir(configDir);
+    await mkdir(cwd);
+    await writeFile(join(configDir, 'CLAUDE.md'), 'configured');
+    await writeFile(join(home, '.claude', 'CLAUDE.md'), 'ancestor');
+    const found = await detectClaudeUserInstructionSources({ configDir, cwd, home });
+    expect(found.sources.map((source) => source.path)).toEqual([join(configDir, 'CLAUDE.md')]);
+  });
+
+  it('records HOME/.claude/CLAUDE.md once when it is the configuration directory', async () => {
+    const home = join(root, 'home');
+    const cwd = join(home, 'repo');
+    await mkdir(join(home, '.claude'), { recursive: true });
+    await mkdir(cwd);
+    await writeFile(join(home, '.claude', 'CLAUDE.md'), 'x');
+    const found = await detectClaudeUserInstructionSources({
+      configDir: claudeConfigDirOf({ HOME: home }),
+      cwd,
+      home,
+    });
+    expect(found.sources.map((source) => source.path)).toEqual([
+      join(home, '.claude', 'CLAUDE.md'),
+    ]);
+  });
+
   it('rejects on an aborted signal', async () => {
     await writeFile(join(root, 'CLAUDE.md'), 'x');
     const controller = new AbortController();

@@ -8,9 +8,10 @@
   down to `cwd` and `<cwd>/.codex/skills` (project level, a run warning counts files beyond 64), and
   skills nested up to six directories below each skill root, including `CODEX_HOME/skills`.
   `CODEX_HOME` memories are not detected: they load only with `features.memories` enabled. Claude:
-  an inherit-mode call's user `CLAUDE.md` (`CLAUDE_CONFIG_DIR`, else `~/.claude`) is recorded in
-  `projectInstructions` with the new `InstructionSource` kind `'claude-md'`; restricted calls record
-  nothing, and `workflow doctor` names the file. The new kind bumps the record schema revision to 7
+  an inherit-mode call's user `CLAUDE.md` (`CLAUDE_CONFIG_DIR`, else `~/.claude`, plus
+  `~/.claude/CLAUDE.md` when `HOME` is an ancestor of `cwd`) is recorded in `projectInstructions`
+  with the new `InstructionSource` kind `'claude-md'`; restricted calls record nothing, and
+  `workflow doctor` names the file. The new kind bumps the record schema revision to 7
   (nested-only); revision-6 records still read and resume, and a revision-6 build refuses a record
   holding a `claude-md` source as `run.incompatible`. Behavior change: the runtime now calls
   `projectInstructions` once per distinct resolved `cwd` and isolation mode, so an adapter can be

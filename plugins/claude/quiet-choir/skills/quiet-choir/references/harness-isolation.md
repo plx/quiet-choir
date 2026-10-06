@@ -70,10 +70,12 @@ records nothing. An `inherit` call loads the user `CLAUDE.md` from Claude's conf
 `~/.claude`; a configured `CLAUDE_CONFIG_DIR` replaces `~/.claude` rather than adding to it.
 `CliHarness` detects that file for each distinct `cwd` and isolation mode and records it in
 `projectInstructions` as `{ scope: 'user', kind: 'claude-md' }`, by path and digest, even when it is
-blank. Inherit is an explicit trust decision, so the run adds no warning for it; `workflow doctor`
-names the file. Other inherit-mode inputs are not detected: project `CLAUDE.md` files (including
-`<ancestor>/.claude/CLAUDE.md`, which loads even when the ancestor is `HOME`), `CLAUDE.local.md`,
-rules directories, `@imports` and auto-memory.
+blank. When `HOME` is the `cwd` or one of its ancestors, `~/.claude/CLAUDE.md` also loads as that
+ancestor's project file even with `CLAUDE_CONFIG_DIR` set, and is recorded the same way. Inherit is
+an explicit trust decision, so the run adds no warning for it; `workflow doctor` names the file.
+Other inherit-mode inputs are not detected: project `CLAUDE.md` files (including other
+`<ancestor>/.claude/CLAUDE.md` files), `CLAUDE.local.md`, rules directories, `@imports` and
+auto-memory.
 
 Set Codex `instructions: 'none'` (on a call, a profile's `codex` options or `defaults.codex`) to run
 without these files. The adapter adds `--config project_doc_max_bytes=0`, which stops project

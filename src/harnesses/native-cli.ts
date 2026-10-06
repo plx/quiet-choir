@@ -277,7 +277,8 @@ export class NativeCliHarness implements Harness {
   /**
    * Detect the instruction files one call loads that depend on the call, without spawning a
    * process: for Codex, the project AGENTS and skill files for `request.cwd`; for an inherit-mode
-   * Claude call, the user CLAUDE.md in its configuration directory. A restricted Claude call
+   * Claude call, the user CLAUDE.md in its configuration directory (and $HOME/.claude/CLAUDE.md
+   * when HOME is an ancestor of the cwd). A restricted Claude call
    * reports nothing. Read problems become warnings; only an abort rejects.
    */
   public async projectInstructions(
@@ -300,6 +301,7 @@ export class NativeCliHarness implements Harness {
       detected = await detectClaudeUserInstructionSources({
         configDir: claudeConfigDirOf(environment),
         cwd: request.cwd,
+        home: userHomeOf(environment),
         signal: context.signal,
       });
     else return undefined;

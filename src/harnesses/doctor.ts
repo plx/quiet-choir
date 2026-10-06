@@ -490,6 +490,7 @@ export async function probeHarnessContracts(options: DoctorOptions = {}): Promis
         const claudeMd = await detectClaudeUserInstructionSources({
           configDir: claudeConfigDirOf(process.env),
           cwd: options.cwd ?? process.cwd(),
+          home: userHomeOf(process.env),
           ...(options.signal ? { signal: options.signal } : {}),
         });
         const named = claudeMd.sources.map(
@@ -497,7 +498,7 @@ export async function probeHarnessContracts(options: DoctorOptions = {}): Promis
         );
         return {
           ok: true,
-          message: `Restricted mode skips user/project settings; omitted model/effort use remaining native defaults. Doctor does not read Claude authentication/settings secrets.${named.length ? ` Inherit-mode calls also load the user instruction file ${named.join(', ')}; restricted calls skip it.` : ''}${claudeMd.warnings.length ? ` ${claudeMd.warnings.join(' ')}` : ''}`,
+          message: `Restricted mode skips user/project settings; omitted model/effort use remaining native defaults. Doctor does not read Claude authentication/settings secrets.${named.length ? ` Inherit-mode calls also load the user instruction file${named.length === 1 ? '' : 's'} ${named.join(', ')}; restricted calls skip ${named.length === 1 ? 'it' : 'them'}.` : ''}${claudeMd.warnings.length ? ` ${claudeMd.warnings.join(' ')}` : ''}`,
         };
       }
       const home = codexHome(options);

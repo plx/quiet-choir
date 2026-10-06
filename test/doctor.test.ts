@@ -458,6 +458,8 @@ it('names the inherit-only Claude user CLAUDE.md in the inherited-defaults check
   const config = join(directory, 'claude-config');
   await mkdir(config);
   vi.stubEnv('CLAUDE_CONFIG_DIR', config);
+  // A HOME that is not an ancestor of the cwd keeps the host's ~/.claude/CLAUDE.md out.
+  vi.stubEnv('HOME', join(directory, 'user-home'));
   const options = { harness: 'claude', claudeBinary: await binary('claude') } as const;
   const check = (report: DoctorReport) =>
     report.checks.find((entry) => entry.check === 'inherited-defaults')?.message ?? '';
