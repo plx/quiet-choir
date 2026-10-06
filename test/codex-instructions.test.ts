@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { chmod, mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
-import { homedir, tmpdir } from 'node:os';
+import { tmpdir, userInfo } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
@@ -461,8 +461,20 @@ describe('skill roots', () => {
 
   it('resolves HOME from the child environment, treating an empty value as unset', () => {
     expect(userHomeOf({ HOME: '/h' })).toBe('/h');
-    expect(userHomeOf({ HOME: '' })).toBe(homedir());
-    expect(userHomeOf({})).toBe(homedir());
+    expect(userHomeOf({ HOME: '' })).toBe(userInfo().homedir);
+    expect(userHomeOf({})).toBe(userInfo().homedir);
+  });
+
+  it("falls back to the account home, not the parent's overridden HOME", () => {
+    const original = process.env['HOME'];
+    process.env['HOME'] = join(root, 'overridden-home');
+    try {
+      expect(userHomeOf({})).toBe(userInfo().homedir);
+      expect(userHomeOf({ HOME: '' })).toBe(userInfo().homedir);
+    } finally {
+      if (original === undefined) delete process.env['HOME'];
+      else process.env['HOME'] = original;
+    }
   });
 
   it('does not detect CODEX_HOME memories, which load only with features.memories enabled', async () => {

@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { createReadStream } from 'node:fs';
 import type { Dirent } from 'node:fs';
 import { readdir, stat } from 'node:fs/promises';
-import { homedir } from 'node:os';
+import { homedir, userInfo } from 'node:os';
 import { join } from 'node:path';
 import { Writable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
@@ -27,10 +27,24 @@ export const maxSkillDepth = 6;
 /** Directories read per skill root before the listing stops with a warning. */
 const maxSkillDirectories = 2000;
 
-/** The home directory a child with this environment resolves; an empty HOME counts as unset. @internal */
+/**
+ * The home directory a child with this environment resolves. An unset or empty HOME resolves to the
+ * OS account home, not to the parent process's own (possibly overridden) HOME. @internal
+ */
 export function userHomeOf(env: Readonly<Record<string, string | undefined>>): string {
   const home = env['HOME'];
-  return home === undefined || home === '' ? homedir() : home;
+  return home === undefined || home === '' ? accountHome() : home;
+}
+
+/** The account's home directory from the OS user database, independent of the HOME variable. */
+function accountHome(): string {
+  try {
+    const { homedir: account } = userInfo();
+    if (account !== '') return account;
+  } catch {
+    // userInfo throws when the user database has no entry for the uid.
+  }
+  return homedir();
 }
 
 /** Whether a filesystem error means the path does not exist. @internal */
