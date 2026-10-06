@@ -7,6 +7,8 @@ import {
   codexHomeOf,
   codexInstructionWarning,
   detectCodexInstructionSources,
+  detectCodexProjectInstructionSources,
+  detectCodexUserInstructionSources,
 } from '../src/harnesses/codex-instructions.js';
 
 let root: string;
@@ -271,5 +273,62 @@ describe('digests and diagnostics', () => {
     const controller = new AbortController();
     controller.abort(new Error('stop'));
     await expect(detect(root, controller.signal)).rejects.toThrow('stop');
+  });
+});
+
+describe('separate user and project detection', () => {
+  async function layout(): Promise<string> {
+    await put(join(codexHome, 'AGENTS.md'), 'user');
+    await put(join(codexHome, 'skills', 'review', 'SKILL.md'), 'skill');
+    await mkdir(join(root, 'repo', '.git'), { recursive: true });
+    await put(join(root, 'repo', 'AGENTS.md'), 'root');
+    await put(join(root, 'repo', 'pkg', 'AGENTS.override.md'), '  \n');
+    await put(join(root, 'repo', 'pkg', 'AGENTS.md'), 'replaced');
+    await put(join(root, 'repo', 'pkg', 'leaf', 'AGENTS.md'), ' \t\n');
+    return join(root, 'repo', 'pkg', 'leaf');
+  }
+
+  it('finds only project files from the Git root down to cwd, never reading CODEX_HOME', async () => {
+    const cwd = await layout();
+    // A CODEX_HOME inside cwd would be found by a user-level read; the project walk ignores it.
+    await put(join(cwd, '.codex', 'AGENTS.md'), 'user-looking');
+    const found = await detectCodexProjectInstructionSources({ cwd });
+    expect(names({ ...found, omittedSkills: 0 })).toEqual([
+      'project:agents:repo/AGENTS.md',
+      // A blank project override still replaces AGENTS.md; a blank AGENTS.md is skipped.
+      'project:agents-override:repo/pkg/AGENTS.override.md',
+    ]);
+    expect(found.warnings).toEqual([]);
+    expect(found).not.toHaveProperty('omittedSkills');
+  });
+
+  it('finds only user files and skills, whatever cwd holds', async () => {
+    const cwd = await layout();
+    const found = await detectCodexUserInstructionSources({ codexHome, cwd });
+    expect(names(found)).toEqual([
+      'user:agents:codex-home/AGENTS.md',
+      'user:skill:codex-home/skills/review/SKILL.md',
+    ]);
+    expect(found.omittedSkills).toBe(0);
+  });
+
+  it('keeps the combined detection as user sources followed by project sources', async () => {
+    const cwd = await layout();
+    const user = await detectCodexUserInstructionSources({ codexHome, cwd });
+    const project = await detectCodexProjectInstructionSources({ cwd });
+    expect(await detect(cwd)).toEqual({
+      sources: [...user.sources, ...project.sources],
+      omittedSkills: 0,
+      warnings: [],
+    });
+  });
+
+  it('rejects project detection on an aborted signal', async () => {
+    const cwd = await layout();
+    const controller = new AbortController();
+    controller.abort(new Error('stop'));
+    await expect(
+      detectCodexProjectInstructionSources({ cwd, signal: controller.signal }),
+    ).rejects.toThrow('stop');
   });
 });
