@@ -371,6 +371,67 @@ it('discovers each frame registration even when a child uses another revision of
   expect(record.harnessWarnings?.join(' ')).toContain('third@1 to third@2');
 });
 
+it('forwards per-cwd project instruction detection from a registered adapter', async () => {
+  const calls: { request: AgentRequest; signal: AbortSignal; invocation?: HarnessInvocation }[] =
+    [];
+  const invocations: AbortSignal[] = [];
+  const registration = defineHarness({
+    ...third,
+    createAdapter: () => ({
+      projectInstructions: async (request, signal, invocation) => {
+        calls.push({ request, signal, ...(invocation ? { invocation } : {}) });
+        return {
+          sources: [
+            {
+              scope: 'project',
+              kind: 'agents',
+              path: `${request.cwd}/AGENTS.md`,
+              sha256: 'c'.repeat(64),
+            },
+          ],
+          warnings: ['third: one file was unreadable'],
+        };
+      },
+      invoke: async (_request, signal) => {
+        invocations.push(signal);
+        return response('done');
+      },
+    }),
+  });
+  const definition = defineWorkflow({
+    ...base,
+    harnesses: [registration],
+    async run(ctx) {
+      await ctx.agent('third').value('first', { prompt: 'one' });
+      return ctx.agent('third').value('second', { prompt: 'two' });
+    },
+  });
+  const options = await setup();
+  const record = await runWorkflow(definition, { ...options, cwd: options.stateDir });
+  expect(record.output).toBe('done');
+  expect(calls).toHaveLength(1);
+  expect(calls[0]?.request).toMatchObject({ harness: 'third', revision: 1, stepId: 'first' });
+  // The run's shared discovery signal, also passed as the invocation's signal.
+  expect(calls[0]?.signal).toBe(calls[0]?.invocation?.signal);
+  expect(calls[0]?.signal).not.toBe(invocations[0]);
+  const saved = await readRun(options);
+  expect(saved.projectInstructions).toEqual([
+    {
+      harness: 'third',
+      cwd: saved.cwd,
+      sources: [
+        {
+          scope: 'project',
+          kind: 'agents',
+          path: `${saved.cwd}/AGENTS.md`,
+          sha256: 'c'.repeat(64),
+        },
+      ],
+    },
+  ]);
+  expect(saved.harnessWarnings).toEqual(['third: one file was unreadable']);
+});
+
 it('keeps object-level option refinements when adding runtime fields', async () => {
   const ranged = defineHarness({
     ...third,

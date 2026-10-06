@@ -124,7 +124,7 @@ import {
 import { missingRunError, unreadableRunError } from './read-required-run.js';
 import type { ProcessSupervisor } from '../../processes/supervisor.js';
 import { OrphanProcessesError } from './process-registry.js';
-import type { HarnessInvocation, HarnessMetadata } from './model.js';
+import type { HarnessInvocation, HarnessMetadata, InstructionSource } from './model.js';
 import {
   resolveAgentLimiter,
   type AgentLimiter,
@@ -222,12 +222,14 @@ import type {
 } from './model.js';
 import {
   hasTerminalOutcomes,
+  instructionSourceSchema,
   isTerminalStep,
   refuseRecordSchemaDrift,
   SUPPORTED_SCHEMA_REVISION,
   type RunRecord,
   type StepRecord,
   type AttemptRecord,
+  withProjectInstructions,
 } from './store.js';
 
 export { ConfigurationError } from './configuration-error.js';
@@ -2509,13 +2511,18 @@ export async function runWorkflow<
 
     // Keyed by registration; a Map (not WeakMap) so draining can release abandoned discovery.
     const metadataRequests = new Map<object, Promise<HarnessMetadata | undefined>>();
+    // Project instruction detection, keyed by registration and then by resolved cwd.
+    const projectRequests = new Map<object, Map<string, Promise<void>>>();
     // Discovery is run-owned; an aborted scope may abandon its wait, so draining releases the rest.
     const discoveryController = new AbortController();
     const discoverySignal = AbortSignal.any([signal, discoveryController.signal]);
     async function drainDiscovery(): Promise<void> {
       // Every effect that awaited discovery has settled, so any unsettled request is abandoned.
       discoveryController.abort(new CancelledError(null, undefined));
-      await Promise.allSettled(metadataRequests.values());
+      await Promise.allSettled([
+        ...metadataRequests.values(),
+        ...[...projectRequests.values()].flatMap((byCwd) => [...byCwd.values()]),
+      ]);
     }
     function client<TOptions extends AgentOptions>(harness: string): AgentClient<TOptions> {
       function invoke<T, TMode extends ErrorMode, TResult>(
@@ -2747,6 +2754,52 @@ export async function runWorkflow<
               };
               const processContext = processInvocation(id, context);
               let cliVersion: string | null = null;
+              // Project files follow the cwd, so detection runs once per distinct cwd. It starts
+              // before metadata is awaited, so a first call waits for the slower of the two.
+              let projectDetection: Promise<void> | undefined;
+              if (liveAdapter.projectInstructions) {
+                const cwd = resolve(liveRequest.cwd);
+                let byCwd = projectRequests.get(registration);
+                if (!byCwd)
+                  projectRequests.set(registration, (byCwd = new Map<string, Promise<void>>()));
+                projectDetection = byCwd.get(cwd);
+                if (!projectDetection) {
+                  projectDetection = (async () => {
+                    const warnings: string[] = [];
+                    let sources: InstructionSource[] | undefined;
+                    try {
+                      // Shared by the run like installation discovery, and diagnostic only.
+                      const detected = await liveAdapter.projectInstructions?.(liveRequest, {
+                        ...processContext,
+                        signal: discoverySignal,
+                      });
+                      if (detected) {
+                        sources = z.array(instructionSourceSchema).parse(detected.sources);
+                        warnings.push(...z.array(z.string()).parse(detected.warnings ?? []));
+                      }
+                    } catch (error) {
+                      if (discoverySignal.aborted) throw error;
+                      warnings.push(
+                        `${harness} project instruction detection failed for ${cwd}: ${(error instanceof Error ? error.message : String(error)).slice(0, 300)}`,
+                      );
+                    }
+                    if (sources === undefined && !warnings.length) return;
+                    // A re-detection (on resume) replaces its entry and moves it to the end.
+                    if (sources !== undefined)
+                      record.projectInstructions = withProjectInstructions(
+                        record.projectInstructions,
+                        { harness, cwd, sources },
+                      );
+                    record.harnessWarnings = [
+                      ...new Set([...(record.harnessWarnings ?? []), ...warnings]),
+                    ];
+                    await save();
+                  })();
+                  // Abandoned waits must not leave an unobserved rejection behind.
+                  projectDetection.catch(() => undefined);
+                  byCwd.set(cwd, projectDetection);
+                }
+              }
               if (liveAdapter.metadata) {
                 let discovery = metadataRequests.get(registration);
                 if (!discovery) {
@@ -2803,6 +2856,10 @@ export async function runWorkflow<
                     cliVersion: metadata.version,
                   };
                 }
+                context.signal.throwIfAborted();
+              }
+              if (projectDetection) {
+                await untilAborted(projectDetection, context.signal);
                 context.signal.throwIfAborted();
               }
               const invocation: HarnessInvocation = {

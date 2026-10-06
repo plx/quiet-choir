@@ -208,6 +208,7 @@ export class HarnessRegistry {
     // The registry's strict schema is the sole type-erasure boundary before dispatch.
     const request = (value: HarnessRequest): never => value as never;
     const metadata = adapter.metadata?.bind(adapter);
+    const projectInstructions = adapter.projectInstructions?.bind(adapter);
     const wrapped: Harness = {
       ...(adapter.kind === undefined ? {} : { kind: adapter.kind }),
       ...(adapter.policyDefaults === undefined
@@ -218,6 +219,12 @@ export class HarnessRegistry {
         : {
             metadata: (value, invocation) =>
               metadata(request(value), invocation.signal, invocation),
+          }),
+      ...(projectInstructions === undefined
+        ? {}
+        : {
+            projectInstructions: (value, invocation) =>
+              projectInstructions(request(value), invocation.signal, invocation),
           }),
       invoke: (value, invocation) => adapter.invoke(request(value), invocation.signal, invocation),
     };
