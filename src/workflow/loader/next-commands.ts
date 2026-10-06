@@ -223,8 +223,9 @@ function incompatibleNext(
 }
 
 /**
- * The `{why, argv}` entries a `run.locked` refusal carries in `details.next`, built by the runtime
- * with the invocation's launcher. A malformed entry, or a `next` that is not a list, is dropped.
+ * The `{why, argv}` entries a `run.locked` or `worktree.locked` refusal carries in `details.next`,
+ * built by the runtime with the invocation's launcher. A malformed entry, or a `next` that is not a
+ * list, is dropped.
  */
 function lockedNext(details: Record<string, JsonValue> | undefined): NextCommand[] {
   const entries = details?.['next'];
@@ -261,6 +262,8 @@ export function failureNextCommands(context: FailureNextContext): NextCommand[] 
         : [];
     });
   }
+  // The worktree administration lock belongs to a repository, so its refusal names no run.
+  if (code === 'worktree.locked') return lockedNext(details);
   if (runId === null || stateDir === null) return [];
   switch (code) {
     case 'workflow.failed':

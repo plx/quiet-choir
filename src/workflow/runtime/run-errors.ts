@@ -11,7 +11,9 @@ import type { RunRecord } from './store.js';
  * run that has not ended, so there was nothing to signal. `run.active` means `workflow rm` refused,
  * without `--force`, a run that is running or suspended or still has a waiting step.
  * `watch.record_not_created` means a `--wait-created` watch never saw the run's record appear
- * within its bound.
+ * within its bound. `worktree.locked` means `workflow unlock --worktree-admin` refused to clear a
+ * repository's worktree administration lock whose holder is alive, unverifiable or on a foreign
+ * host; it names no run.
  */
 export type CliErrorCode =
   | 'answer.invalid'
@@ -42,7 +44,8 @@ export type CliErrorCode =
   | 'start.timeout'
   | 'start.exited'
   | 'watch.timeout'
-  | 'watch.record_not_created';
+  | 'watch.record_not_created'
+  | 'worktree.locked';
 
 const cliErrorCodes: Readonly<Record<CliErrorCode, true>> = {
   'answer.invalid': true,
@@ -74,6 +77,7 @@ const cliErrorCodes: Readonly<Record<CliErrorCode, true>> = {
   'start.exited': true,
   'watch.timeout': true,
   'watch.record_not_created': true,
+  'worktree.locked': true,
 };
 
 /** Whether a string read from another process's document is a known {@link CliErrorCode}. @internal */
@@ -105,6 +109,37 @@ export class RunRefusedError extends Error {
   ) {
     super(message, options);
     this.name = 'RunRefusedError';
+  }
+}
+
+/**
+ * `workflow unlock --worktree-admin` refused to clear a repository's worktree administration lock,
+ * which belongs to no run: its owner or recoverer is alive, unverifiable or on a foreign host, or it
+ * changed during the unlock. `details.next` carries the unlock command to run once that is resolved.
+ * @internal
+ */
+export class WorktreeAdminLockRefusedError extends Error {
+  static {
+    brandError(this, 'WorktreeAdminLockRefusedError');
+  }
+
+  /** Recognize an instance from any quiet-choir module instance, such as a CLI workflow's own import. */
+  public static override [Symbol.hasInstance](
+    value: unknown,
+  ): value is WorktreeAdminLockRefusedError {
+    return isBranded(this, value);
+  }
+
+  /** Stable refusal classification. */
+  public readonly code = 'worktree.locked';
+
+  public constructor(
+    message: string,
+    /** Serializable lock, holder and `next` diagnostics. */
+    public readonly details: JsonValue,
+  ) {
+    super(message);
+    this.name = 'WorktreeAdminLockRefusedError';
   }
 }
 

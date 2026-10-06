@@ -1,24 +1,37 @@
 import { randomUUID } from 'node:crypto';
+import { readdir, realpath, stat } from 'node:fs/promises';
 import { hostname } from 'node:os';
 import { dirname, join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { processIdentity } from '../../processes/identity.js';
+import { WorktreeGit } from '../../worktrees/git.js';
+import {
+  formatArgv,
+  nextDetail,
+  unlockWorktreeAdminNext,
+  type CommandLauncher,
+} from './commands.js';
+import type { ProcessRunner } from './exec-model.js';
 import {
   claimRecovery,
   isErrno,
   liveness,
   lockGone,
+  observeUnlock,
   ownerState,
   publishLock,
   readContended,
   readMarker,
   readOwner,
+  removeObservedLock,
   retire,
   sweepStrays,
   takeMarker,
   type Marker,
   type Owner,
 } from './lock.js';
+import { decideUnlock } from './recovery-decision.js';
+import { WorktreeAdminLockRefusedError } from './run-errors.js';
 import { createStorageDirectory } from './storage-io.js';
 
 /**
@@ -67,7 +80,26 @@ interface Unverifiable {
   /** Identifies the holder, so a different one restarts the deadline. */
   readonly key: string;
   readonly describe: () => string;
+  /**
+   * What `workflow unlock --worktree-admin` needs to clear it: `force-remote` for a foreign-host
+   * holder, a local PID it refuses while that process may exist, or nothing extra (`unlock`) for
+   * unreadable metadata, which never holds an unlock.
+   */
+  readonly remedy: 'unlock' | 'force-remote' | { readonly wait: number };
   readonly cause?: unknown;
+}
+
+/** The stuck-holder refusal's remedy: the unlock command, never a manual removal. */
+function stuckRemedy(commonGitDir: string, remedy: Unverifiable['remedy']): string {
+  const command = formatArgv(
+    unlockWorktreeAdminNext(undefined, commonGitDir, {
+      forceRemote: remedy === 'force-remote',
+      why: '',
+    }).argv,
+  );
+  if (typeof remedy === 'object')
+    return `Unlock refuses while PID ${String(remedy.wait)} may still exist on this machine: wait for it to exit or stop it, then clear the lock with ${command}.`;
+  return `After confirming that no quiet-choir process on any machine sharing this repository is administering its worktrees, clear it with ${command}.`;
 }
 
 /** Thrown inside one recovery attempt to send the loop back to look again. */
@@ -87,7 +119,8 @@ const defaultStuckAfterMs = 30_000;
  * rename with a durable `owner.json`, a tombstone-and-verify retire, and a `recovery.json` claim so
  * exactly one contender retires a dead or released owner. A live local owner is waited on without a
  * bound until `signal` aborts; a remote, unverifiable or unreadable holder is refused after
- * `stuckAfterMs` (30 s) with the lock path to remove. See ADR 0032. @internal
+ * `stuckAfterMs` (30 s) with the `workflow unlock --worktree-admin` command that clears it. See ADR
+ * 0032. @internal
  */
 export async function acquireWorktreeAdminLock(
   commonGitDir: string,
@@ -107,7 +140,7 @@ export async function acquireWorktreeAdminLock(
   // Registered before the publish rename, so no other module instance here can judge it leaked.
   tokens.add(owner.token);
   try {
-    await contend(lockPath, owner, options);
+    await contend(commonGitDir, lockPath, owner, options);
   } catch (error) {
     tokens.delete(owner.token);
     throw error;
@@ -152,6 +185,7 @@ function judge(owner: Owner): ReturnType<typeof ownerState> {
 }
 
 async function contend(
+  commonGitDir: string,
   lockPath: string,
   owner: Owner,
   options: WorktreeAdminLockOptions,
@@ -166,7 +200,7 @@ async function contend(
       if (stuck?.key !== blocker.key) stuck = { key: blocker.key, since: Date.now() };
       if (Date.now() - stuck.since >= stuckAfterMs)
         throw new Error(
-          `Worktree administration lock ${lockPath} is held by ${blocker.describe()} for over ${stuckAfterMs < 1000 ? `${String(stuckAfterMs)} ms` : `${String(Math.round(stuckAfterMs / 1000))} s`}. After confirming that no quiet-choir process on any machine sharing this repository is administering its worktrees, remove ${lockPath}.`,
+          `Worktree administration lock ${lockPath} is held by ${blocker.describe()} for over ${stuckAfterMs < 1000 ? `${String(stuckAfterMs)} ms` : `${String(Math.round(stuckAfterMs / 1000))} s`}. ${stuckRemedy(commonGitDir, blocker.remedy)}`,
           blocker.cause === undefined ? undefined : { cause: blocker.cause },
         );
     }
@@ -188,6 +222,7 @@ async function contend(
       await wait({
         key: 'unreadable',
         describe: () => 'an owner whose metadata is incomplete or unreadable',
+        remedy: 'unlock',
         cause,
       });
       continue;
@@ -206,6 +241,7 @@ async function contend(
           state === 'remote'
             ? `${holder}, another host`
             : `${holder}, whose liveness cannot be determined`,
+        remedy: state === 'remote' ? 'force-remote' : { wait: previous.pid },
       });
       continue;
     }
@@ -219,6 +255,7 @@ async function contend(
         await wait({
           key: 'marker',
           describe: () => `a recoverer whose recovery.json is unreadable`,
+          remedy: 'unlock',
         });
         continue;
       }
@@ -230,6 +267,7 @@ async function contend(
               key: `marker:${marker.token}`,
               describe: () =>
                 `recoverer PID ${String(marker.pid)} on ${marker.host}, ${recoverer === 'remote' ? 'another host' : 'whose liveness cannot be determined'}`,
+              remedy: recoverer === 'remote' ? 'force-remote' : { wait: marker.pid },
             },
       );
     }
@@ -285,4 +323,240 @@ async function recover(lockPath: string, previous: Owner, owner: Owner): Promise
   } finally {
     if (!retired) await takeMarker(lockPath, marker.token).catch(() => undefined);
   }
+}
+
+/**
+ * Resolve any path inside a repository (a checkout, a linked worktree or the common Git directory
+ * itself) to the canonical common Git directory that keys its worktree administration lock: the
+ * realpath of `git rev-parse --path-format=absolute --git-common-dir`, as worktree isolation
+ * resolves it. Runs only that read-only `rev-parse`; rejects when `path` is not inside a Git
+ * repository. @internal
+ */
+export async function resolveCommonGitDir(
+  path: string,
+  runner: ProcessRunner,
+  signal: AbortSignal,
+): Promise<string> {
+  const git = new WorktreeGit(runner, true);
+  return realpath(
+    await git.text(path, ['rev-parse', '--path-format=absolute', '--git-common-dir'], {
+      runId: 'worktree-admin',
+      stepId: 'rev-parse',
+      attempt: 1,
+      signal,
+      // A short read the runner reaps itself; there is no run whose lock could record it.
+      trackProcess: () => Promise.resolve({ release: () => Promise.resolve() }),
+    }),
+  );
+}
+
+/** A repository's worktree administration lock as `workflow inspect` reports it. @internal */
+export interface WorktreeAdminLockView {
+  /** The canonical common Git directory the lock belongs to. */
+  readonly commonGitDir: string;
+  /** Absolute lock directory path. */
+  readonly path: string;
+  /** Owner metadata and liveness, or null when `owner.json` is missing or unreadable. */
+  readonly owner: {
+    /** Holder's recorded process ID. */
+    readonly pid: number;
+    /** Host on which the holder acquired the lock. */
+    readonly host: string;
+    /** Ownership token, which a guarded unlock compares before removal. */
+    readonly token: string;
+    /** Current local liveness, `remote` for another host, or `released`. */
+    readonly state: 'alive' | 'dead' | 'unknown' | 'remote' | 'released';
+    /** The holder's recorded OS birth identity, or null when it recorded none. */
+    readonly osStartTime: string | null;
+    /**
+     * Approximate acquisition time: the ISO modification time of `owner.json`, written just before
+     * the lock was published (filesystem granularity, and clock skew on a network filesystem). Null
+     * when it could not be read.
+     */
+    readonly acquiredAt: string | null;
+  } | null;
+  /** The recovery marker of a process retiring this lock, or null. */
+  readonly recovery: {
+    /** Recoverer's process ID. */
+    readonly pid: number;
+    /** Host on which the recoverer runs. */
+    readonly host: string;
+    /** Current local liveness of the recoverer, or `remote`. */
+    readonly state: 'alive' | 'dead' | 'unknown' | 'remote';
+  } | null;
+  /** Set when `owner.json` is missing, or `owner.json` or `recovery.json` cannot be read or parsed. */
+  readonly warning?: string;
+}
+
+function message(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * Read a repository's worktree administration lock without changing anything, or undefined when no
+ * lock is held. Owner and recoverer liveness are judged on this machine, as the acquire does.
+ * @internal
+ */
+export async function inspectWorktreeAdminLock(
+  commonGitDir: string,
+): Promise<WorktreeAdminLockView | undefined> {
+  const path = worktreeAdminLockPath(commonGitDir);
+  let names: string[];
+  try {
+    names = await readdir(path);
+  } catch (error) {
+    if (isErrno(error, 'ENOENT')) return undefined;
+    return { commonGitDir, path, owner: null, recovery: null, warning: message(error) };
+  }
+  const warnings: string[] = [];
+  let owner: WorktreeAdminLockView['owner'] = null;
+  if (names.includes('owner.json'))
+    try {
+      const value = await readContended(path);
+      // Retired between the listing and the read: there is no lock to report.
+      if (value === 'gone') return undefined;
+      const acquiredAt = await stat(join(path, 'owner.json')).then(
+        (info) => info.mtime.toISOString(),
+        () => null,
+      );
+      owner = {
+        pid: value.pid,
+        host: value.host,
+        token: value.token,
+        state: ownerState(value),
+        osStartTime: value.osStartTime ?? null,
+        acquiredAt,
+      };
+    } catch (error) {
+      warnings.push(`owner.json: ${message(error)}`);
+    }
+  else warnings.push("owner.json: missing (an older build's interrupted acquire, or damage)");
+  let recovery: WorktreeAdminLockView['recovery'] = null;
+  if (names.includes('recovery.json'))
+    try {
+      const value = await readMarker(join(path, 'recovery.json'));
+      recovery = { pid: value.pid, host: value.host, state: liveness(value) };
+    } catch (error) {
+      if (!isErrno(error, 'ENOENT')) warnings.push(`recovery.json: ${message(error)}`);
+    }
+  return {
+    commonGitDir,
+    path,
+    owner,
+    recovery,
+    ...(warnings.length ? { warning: warnings.join('; ') } : {}),
+  };
+}
+
+/** The worktree administration lock that unlock cleared, with the judgments it acted on. @internal */
+export interface UnlockedWorktreeAdminLock {
+  /** Absolute lock directory path. */
+  readonly path: string;
+  /** Owner with its local liveness, or null when `owner.json` was missing or unreadable. */
+  readonly owner: {
+    readonly pid: number;
+    readonly host: string;
+    readonly state: 'alive' | 'dead' | 'unknown' | 'released';
+  } | null;
+  /** A (dead) recoverer's marker, or null when there was none or it was unreadable. */
+  readonly recovery: {
+    readonly pid: number;
+    readonly host: string;
+    readonly state: 'alive' | 'dead' | 'unknown';
+  } | null;
+  /** Missing or unreadable metadata. */
+  readonly warning?: string;
+  /** `absent` when the lock vanished before it could be renamed away. */
+  readonly action: 'removed' | 'absent';
+}
+
+/** What `workflow unlock --worktree-admin` did. @internal */
+export interface WorktreeAdminUnlockResult {
+  /** The canonical common Git directory the lock belongs to. */
+  readonly commonGitDir: string;
+  /** Absolute lock directory path. */
+  readonly lockPath: string;
+  /** The lock found and cleared, or null when none was held. */
+  readonly lock: UnlockedWorktreeAdminLock | null;
+}
+
+/** Why a plain unlock entry accompanies a refusal for a race that a retry usually clears. */
+const transientWhy =
+  'If a retry is refused again, unlock reports who holds the lock and clears it only once no process holds it; it never removes a live lock or signals.';
+
+/**
+ * Clear a repository's abandoned worktree administration lock for an operator. The lock is observed
+ * once and judged with `decideUnlock`, as a run lock is: a foreign-host owner or recoverer is
+ * refused unless `forceRemote` asserts that host is gone (then it is judged by local PID
+ * observations), and a locally alive or unknown owner or recoverer is always refused, with
+ * `WorktreeAdminLockRefusedError` (`worktree.locked`). Missing or unreadable metadata never holds
+ * an unlock; its warning is reported. Removal re-reads and compares the observed tokens, then
+ * retires the lock through the verified tombstone rename. Nothing is ever signaled. @internal
+ */
+export async function unlockWorktreeAdminLock(options: {
+  readonly commonGitDir: string;
+  readonly forceRemote?: boolean;
+  /** The program words behind the command a refusal names; absent means `['quiet-choir']`. */
+  readonly commandLauncher?: CommandLauncher | undefined;
+}): Promise<WorktreeAdminUnlockResult> {
+  const { commonGitDir } = options;
+  const lockPath = worktreeAdminLockPath(commonGitDir);
+  const lock = await observeUnlock('worktree-admin', lockPath, null);
+  if (lock === undefined) return { commonGitDir, lockPath, lock: null };
+  const decision = decideUnlock([lock], options.forceRemote ?? false);
+  // No children are observed for this lock, so `orphans` cannot occur.
+  if (decision.kind === 'orphans') throw new Error('Unexpected unlock decision.');
+  if (decision.kind === 'locked') {
+    const { role, holder, reason } = decision;
+    const who = `Worktree administration lock ${lockPath} ${role === 'owner' ? 'owner' : 'recoverer'} PID ${String(holder.pid)}`;
+    const entry = unlockWorktreeAdminNext(options.commandLauncher, commonGitDir, {
+      forceRemote: reason === 'remote',
+      why:
+        reason === 'remote'
+          ? `Only if ${holder.host} is this machine under an old name or is permanently gone.`
+          : `Rerun once PID ${String(holder.pid)} on ${holder.host} has exited.`,
+    });
+    throw new WorktreeAdminLockRefusedError(
+      reason === 'remote'
+        ? `${who} is on foreign host ${holder.host}. If ${holder.host} is this machine under an old name or is permanently gone, rerun with ${formatArgv(entry.argv)}.`
+        : `${who} on ${holder.host} is ${reason === 'alive' ? 'alive' : 'unverifiable'}; unlock never stops a process. Wait for it to exit or stop it, then retry.`,
+      {
+        lockPath,
+        commonGitDir,
+        role,
+        pid: holder.pid,
+        host: holder.host,
+        state: reason,
+        next: nextDetail([entry]),
+      },
+    );
+  }
+  const action = await removeObservedLock(
+    lock,
+    () =>
+      new WorktreeAdminLockRefusedError(
+        `Worktree administration lock ${lockPath} changed during unlock; retry.`,
+        {
+          lockPath,
+          commonGitDir,
+          next: nextDetail([
+            unlockWorktreeAdminNext(options.commandLauncher, commonGitDir, { why: transientWhy }),
+          ]),
+        },
+      ),
+  );
+  return {
+    commonGitDir,
+    lockPath,
+    lock: {
+      path: lockPath,
+      owner: lock.owner && { pid: lock.owner.pid, host: lock.owner.host, state: lock.owner.state },
+      recovery:
+        lock.recovery === null || lock.recovery === 'unreadable'
+          ? null
+          : { pid: lock.recovery.pid, host: lock.recovery.host, state: lock.recovery.state },
+      ...(lock.warning === undefined ? {} : { warning: lock.warning }),
+      action,
+    },
+  };
 }
