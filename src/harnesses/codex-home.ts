@@ -265,6 +265,7 @@ async function acquireLock(
   const deadline = Date.now() + timeoutMs;
   const notes: string[] = [];
   let wait = 5;
+  let vanished = false;
   try {
     for (;;) {
       try {
@@ -282,7 +283,19 @@ async function acquireLock(
         if (errorCode(error) !== 'EEXIST') throw error;
       }
       const held = await observeLock(path);
-      if (held === 'gone') continue;
+      if (held === 'gone') {
+        // The holder released between link and open: retry at once, but once only. A dangling
+        // symlink also links as EEXIST and opens as ENOENT forever, so a repeat backs off.
+        if (!vanished) {
+          vanished = true;
+          continue;
+        }
+        if (Date.now() >= deadline) return { status: 'timed out', holder: 'unreadable' };
+        await delay(Math.min(wait, Math.max(1, deadline - Date.now())));
+        wait = Math.min(wait * 2, 200);
+        continue;
+      }
+      vanished = false;
       const holder = parseOwner(held.bytes);
       const reclaim = holder ? stale(holder) : Date.now() - held.mtimeMs >= unreadableAgeMs;
       if (reclaim) {

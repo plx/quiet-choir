@@ -320,6 +320,23 @@ describe('private home', () => {
     expect(await readFile(lock, 'utf8')).toBe('not json');
   });
 
+  it('times out on a dangling symlink at the lock path instead of spinning', async () => {
+    const original = auth('2026-09-01T00:00:00Z');
+    await seedRealHome(original);
+    const lock = codexAuthLockPath(realHome, locks);
+    await symlink(join(root, 'no-such-target'), lock);
+    const started = Date.now();
+    const home = await prepareCodexHome(realHome, { lockDirectory: locks, lockTimeoutMs: 30 });
+    await writeFile(join(home.path, 'auth.json'), auth('2026-09-03T00:00:00Z'));
+    const warnings = await home.settle();
+    await home.dispose();
+    expect(Date.now() - started).toBeLessThan(5_000);
+    expect(warnings).toEqual([expect.stringContaining('timed out waiting for the lock')]);
+    expect(warnings[0]).toContain(lock);
+    expect(await readFile(join(realHome, 'auth.json'), 'utf8')).toBe(original);
+    expect((await lstat(lock)).isSymbolicLink()).toBe(true);
+  });
+
   it('reclaims a recent unreadable lock once it ages out during the wait', async () => {
     await seedRealHome(auth('2026-09-01T00:00:00Z'));
     const lock = codexAuthLockPath(realHome, locks);
