@@ -502,6 +502,60 @@ describe('workflow lifecycle command adapters', () => {
       expect(Object.keys(named)).toEqual(['a', 'b']);
     });
 
+    it('keeps the positionals when --harness values precede them', async ({ cli }) => {
+      const a = await fixtureFile('a.json');
+      const b = await fixtureFile('b.json');
+      const stateDir = await stateDirectory();
+      const execute = resumingExecute();
+      const single = await cli.run(WorkflowAnswer, [
+        '--state-dir',
+        stateDir,
+        '--resume',
+        '--value',
+        'true',
+        '--harness',
+        'cli',
+        'test-run',
+        'approve',
+      ]);
+      expect(single.error).toBeUndefined();
+      expect(execute.mock.calls[0]?.[0]).toMatchObject({
+        kind: 'workflow.answer',
+        runId: 'test-run',
+        stepId: 'approve',
+        harness: { kind: 'cli' },
+      });
+      const repeated = await cli.run(WorkflowAnswer, [
+        '--state-dir',
+        stateDir,
+        '--resume',
+        '--value',
+        'true',
+        '--harness',
+        `a=fixture:${a}`,
+        '--harness',
+        `b=fixture:${b}`,
+        'test-run',
+        'approve',
+      ]);
+      expect(repeated.error).toBeUndefined();
+      const plan = execute.mock.calls[1]?.[0];
+      expect(plan).toMatchObject({
+        runId: 'test-run',
+        stepId: 'approve',
+        harness: {
+          sources: [
+            { name: 'a', path: a },
+            { name: 'b', path: b },
+          ],
+        },
+      });
+      expect(Object.keys((plan as { harness: { named: object } }).harness.named)).toEqual([
+        'a',
+        'b',
+      ]);
+    });
+
     it('combines a global fixture with a named one', async ({ cli }) => {
       const global = await fixtureFile('global.json');
       const a = await fixtureFile('a.json');

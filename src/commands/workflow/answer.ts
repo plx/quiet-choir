@@ -49,6 +49,8 @@ export default class WorkflowAnswer extends WorkflowCommand {
       description:
         'Harness for --resume: cli, fixture:<file>, or name=fixture:<file>; repeatable. Omitted uses the selection the run last executed with',
       multiple: true,
+      // Without this, values after --harness swallow the runId and stepId positionals.
+      multipleNonGreedy: true,
     }),
     'harness-config': Flags.string({
       description: 'Harness configuration for --resume',
