@@ -18,6 +18,7 @@ import {
   isErrno,
   liveness,
   lockGone,
+  markOwnerReleased,
   observeUnlock,
   ownerState,
   publishLock,
@@ -60,7 +61,8 @@ export type WorktreeAdminRelease = () => Promise<void>;
 /**
  * Tokens of the admin locks this process holds now, shared by every quiet-choir module instance in
  * the process (the CLI imports a second one with the workflow). A lock naming this process whose
- * token is not here was leaked by a failed release and is recovered instead of waited on forever.
+ * token is not here was leaked by a release that could neither retire it nor mark it released, and
+ * is recovered instead of waited on forever.
  */
 function liveTokens(): Set<string> {
   const scope = globalThis as unknown as Record<symbol, Set<string> | undefined>;
@@ -120,8 +122,10 @@ const defaultStuckAfterMs = 30_000;
  * rename with a durable `owner.json`, a tombstone-and-verify retire, and a `recovery.json` claim so
  * exactly one contender retires a dead or released owner. A live local owner is waited on without a
  * bound until `signal` aborts; a remote, unverifiable or unreadable holder is refused after
- * `stuckAfterMs` (30 s) with the `workflow unlock --worktree-admin` command that clears it. See ADR
- * 0032. @internal
+ * `stuckAfterMs` (30 s) with the `workflow unlock --worktree-admin` command that clears it. A
+ * release that cannot retire the lock still throws, but first marks its verified `owner.json`
+ * released, so other processes, inspect and unlock treat it as free at once. See ADR 0032.
+ * @internal
  */
 export async function acquireWorktreeAdminLock(
   commonGitDir: string,
@@ -168,16 +172,50 @@ export async function acquireWorktreeAdminLock(
       try {
         await retire(lockPath, { owner: owner.token }, lost);
       } catch (error) {
-        if (!isErrno(error, 'ENOENT')) throw error;
+        if (isErrno(error, 'ENOENT')) return;
+        throw await handOff(lockPath, owner, error);
       }
     } finally {
-      // Removed whether or not the retire worked, so a leaked lock never hangs this process.
+      // Removed whether or not the retire worked, so a leaked lock never hangs this process. Only
+      // after any hand-off, so no other module instance here judges the lock leaked mid-rewrite.
       tokens.delete(owner.token);
     }
   };
 }
 
-/** Judge a contended owner, treating this process's own leaked locks as released. */
+/**
+ * After a failed retire, mark this acquire's lock released, so every process recovers it at once
+ * instead of waiting for this live process to exit. The lock at `lockPath` is re-verified to carry
+ * this acquire's token first: a retire that moved it before failing, or that renamed back another
+ * owner's lock, leaves nothing of this acquire's to hand off, and a lock carrying this live,
+ * unreleased token cannot be retired by anyone else meanwhile. Returns the error the release
+ * throws: the retire's own when the hand-off worked or was skipped, otherwise one that names both
+ * failures, with the retire's as its cause; `judge` then still recovers the lock in this process.
+ */
+async function handOff(lockPath: string, owner: Owner, failure: unknown): Promise<unknown> {
+  try {
+    if ((await readOwner(lockPath)).token !== owner.token) return failure;
+  } catch {
+    return failure;
+  }
+  try {
+    await markOwnerReleased(lockPath, owner);
+    return failure;
+  } catch (error) {
+    // The lock vanished between the check and the rewrite; there is nothing left to hand off.
+    if (isErrno(error, 'ENOENT')) return failure;
+    return new Error(
+      `Worktree administration lock ${lockPath} could not be released (${message(failure)}) or handed to recovery (${message(error)}); other processes wait until this one exits.`,
+      { cause: failure },
+    );
+  }
+}
+
+/**
+ * Judge a contended owner, treating this process's own leaked locks as released: a lock whose
+ * release failed to both retire it and mark it released (see `handOff`) still names this live
+ * process, under a token no acquire here holds any more.
+ */
 function judge(owner: Owner): ReturnType<typeof ownerState> {
   // Only this process can be alive under its own PID, so a token it does not hold is not live.
   if (owner.pid === process.pid && owner.host === hostname() && !liveTokens().has(owner.token))

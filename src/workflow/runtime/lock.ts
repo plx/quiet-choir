@@ -524,6 +524,28 @@ export async function retire(
   await rm(tombstone, { recursive: true, force: true });
 }
 
+/**
+ * Hand a lock whose ownership the caller has just verified to recovery: rewrite its `owner.json` as
+ * `{ ...owner, released: true }` through a durable temporary file in the lock directory and a rename
+ * within it, so every process judges the owner `released` (see `ownerState`). Never re-creates a
+ * vanished lock: an `open` inside a missing directory fails with ENOENT. A failure removes the
+ * temporary file as a best effort and keeps its errno. @internal
+ */
+export async function markOwnerReleased(lockPath: string, owner: Owner): Promise<void> {
+  const temporary = join(lockPath, `owner.${randomUUID()}.tmp`);
+  try {
+    {
+      await using file = await open(temporary, 'wx', 0o600);
+      await file.writeFile(JSON.stringify({ ...owner, released: true }));
+      await syncHandle(file);
+    }
+    await rename(temporary, join(lockPath, 'owner.json'));
+  } catch (error) {
+    await rm(temporary, { force: true }).catch(() => undefined);
+    throw error;
+  }
+}
+
 /** Best effort: remove this lock's stray tombstones and dead creators' publish directories. @internal */
 export async function sweepStrays(lockPath: string): Promise<void> {
   const directory = dirname(lockPath);
@@ -808,11 +830,7 @@ async function acquireLock(
       const processes = await inspectProcesses(lockPath, runId, owner.token);
       if (processes.some((entry) => entry.state === 'alive' || entry.state === 'unknown')) {
         // The workflow no longer owns work, but its child records must survive even in a long-lived embedder.
-        const temp = join(lockPath, `owner.${randomUUID()}.tmp`);
-        await using file = await open(temp, 'wx', 0o600);
-        await file.writeFile(JSON.stringify({ ...owner, released: true }));
-        await syncHandle(file);
-        await rename(temp, join(lockPath, 'owner.json'));
+        await markOwnerReleased(lockPath, owner);
         throw new OrphanProcessesError(runId, processes);
       }
       await retire(lockPath, { owner: owner.token }, lost);

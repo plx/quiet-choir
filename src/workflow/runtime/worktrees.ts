@@ -121,7 +121,8 @@ export async function administer<T>(
     try {
       result = await work();
     } catch (error) {
-      // The work's failure is the attempt's outcome; a leaked lock is recovered by the next call.
+      // The work's failure is the attempt's outcome. A release that fails hands the lock to
+      // recovery for every process; if even that fails, this process's next call recovers it.
       await unlock().catch(() => undefined);
       throw error;
     }

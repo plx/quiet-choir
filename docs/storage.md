@@ -158,7 +158,7 @@ directories).
 <common Git dir>/                    # for example <repo>/.git
   quiet-choir/                       # 0700; Git ignores unknown entries here
     worktree-admin.lock/             # published whole by one rename
-      owner.json                     # { pid, host, token, osStartTime }
+      owner.json                     # { pid, host, token, osStartTime, released? }
       recovery.json                  # only while a recoverer claims a dead owner's lock
     worktree-admin.lock.<pid>.<uuid>.tmp/   # an acquire's publish directory; swept once its PID is dead
     worktree-admin.lock.<pid>.<uuid>.gone/  # a released or recovered lock's tombstone; swept
@@ -166,11 +166,12 @@ directories).
 
 It changes hands exactly like a run lock (same owner, marker, tombstone and sweep rules), but it is
 held only around each Git administration command and a contender waits instead of refusing. It
-records no child processes and changes no storage format. Plain `workflow inspect RUN` shows it for
-a run whose worktree ledger names the repository. A lock left by a holder that is gone, on a gone
-host, or with damaged metadata is cleared with `workflow unlock --worktree-admin PATH` (PATH is any
-path inside the repository), never by deleting the directory. See
-[ADR 0032](decisions/0032-interprocess-worktree-administration-lock.md).
+records no child processes and changes no storage format. `released: true` is set only by a release
+whose tombstone rename failed: it marks the still-live owner's lock free, so any process recovers it
+at once. Plain `workflow inspect RUN` shows it for a run whose worktree ledger names the repository.
+A lock left by a holder that is gone, on a gone host, or with damaged metadata is cleared with
+`workflow unlock --worktree-admin PATH` (PATH is any path inside the repository), never by deleting
+the directory. See [ADR 0032](decisions/0032-interprocess-worktree-administration-lock.md).
 
 ## Removing runs
 

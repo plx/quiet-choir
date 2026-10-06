@@ -2,6 +2,13 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- Worktree administration lock (behavior change; no identity or storage-format change): a release of
+  the repository lock whose tombstone rename fails (for example `EACCES`) now rewrites its verified
+  `owner.json` as `released: true` before it throws, the way a run lock with orphans is handed over.
+  Other processes recover the lock at once instead of waiting for the still-running owner to exit,
+  `workflow inspect` shows it as `released`, and `workflow unlock --worktree-admin` clears it
+  instead of refusing a live owner. When even that rewrite fails, only the owner's own next
+  administration command recovers the lock, as before, and the release error names both failures.
 - Worktree administration lock (addition; no identity or storage-format change): the repository lock
   `<common Git dir>/quiet-choir/worktree-admin.lock` (ADR 0032) can now be seen and cleared.
   `workflow unlock --worktree-admin PATH [--force-remote]`, with PATH any path inside the repository

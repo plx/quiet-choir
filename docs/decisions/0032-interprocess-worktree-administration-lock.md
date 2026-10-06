@@ -1,7 +1,7 @@
 # 0032: Interprocess worktree administration lock
 
 - Status: accepted
-- Issue: #108
+- Issue: #108; amended by #243 and #244
 - Extends [ADR 0022](0022-runtime-owned-worktree-isolation.md)'s worktree isolation and reuses
   [ADR 0030](0030-rename-published-run-locks.md)'s crash-atomic lock protocol.
 
@@ -72,6 +72,16 @@ that finds the lock already gone succeeds; another release error is thrown only 
 succeeded, so the command's own failure is never masked. The process's own OS start time is probed
 once, not on every acquire, because the probe spawns `ps` on macOS.
 
+Amended by #244: before it throws, a release whose retire failed hands the lock to recovery. It
+re-reads `owner.json`, and only while the lock there still carries this acquire's token does it
+rewrite it as `released: true`, through a temporary file and a rename inside the lock directory
+(`markOwnerReleased`, the primitive a run lock's release uses when it leaves orphans behind). A
+released owner is recovered at once by every process, so the token set matters only when this
+hand-off fails too. The rewrite happens before the token leaves the set, so no other module instance
+in this process judges the lock leaked mid-rewrite; a lock that the retire moved or replaced before
+failing is left alone. The release still throws the retire's error (or, when the hand-off failed
+too, an error naming both with the retire's as its cause); a hand-off is not a successful release.
+
 **Rejected: bounded retry.** Retrying Git's transient "failed to read .../commondir" errors would
 absorb the race without new lock state, but with real serialization among quiet-choir processes it
 would only mask bugs, and parsing Git's error text is fragile. It is not shipped alongside the lock.
@@ -92,8 +102,20 @@ would only mask bugs, and parsing Git's error text is fragile. It is not shipped
 - A live process that holds the lock across a hung Git command blocks other processes until the
   command times out or is cancelled, exactly as it blocked its own process before. Cleanup's Git
   calls have 10 s timeouts; the others honor the run signal.
-- A lock leaked by a still-running process (a release failure) blocks other processes until that
-  process exits; its own later calls recover it.
+- Amended by #244: a lock leaked by a still-running process (a release failure) no longer blocks
+  other processes until that process exits. The failed release marks it released, so contenders
+  recover it at once, `workflow inspect` reports it `released` with an `Unlock:` hint, and
+  `workflow unlock --worktree-admin` clears it without refusing. No holder-age bound is involved,
+  for the reason the unbounded live-owner wait gives. A failure that persists, such as an unwritable
+  `quiet-choir/` directory, now fails the contender's recovery at once with its errno and path, an
+  ordinary pre-launch attempt failure, instead of waiting. The residual cases are unchanged: when
+  the hand-off fails as well (an unwritable lock directory, a full disk), or the release cannot read
+  `owner.json` to verify ownership, only the owner's own later calls recover the lock; other
+  processes wait until it exits or their signal (or cleanup's 30 s bound) ends the wait, or refuse
+  unreadable metadata after the stuck deadline. `test/worktree-admin-lock.test.ts` covers this in
+  "hands a lock whose release fails to recovery so another process acquires it", "never hangs a
+  later acquire in another process after a release fails", "falls back to recovering its own leaked
+  lock when the hand-off also fails" and "clears a lock handed to recovery by a failed release".
 - Amended by #243: `workflow unlock --worktree-admin PATH` clears this lock with the same judgment
   and token-verified tombstone removal as a run unlock (`decideUnlock`). PATH is any path inside the
   repository; the lock belongs to the repository, not to a run. A dead or released owner, a dead
