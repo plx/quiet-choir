@@ -26,7 +26,10 @@ without a record or a readable document is `start.exited` (exit 70). An interrup
 runner the same way (exit 130), so start never leaves an unreported runner; if the runner had
 already saved a record, the failure carries its `runId` and a resume entry in `next`. An existing
 run is refused with `run.exists` before anything is launched, and a run ID whose guard is held (such
-as a `workflow rm` still in progress) with `run.locked`.
+as a `workflow rm` still in progress) with `run.locked`. Start also records the runner's PID and
+host in `<n>.runner.json`. A pre-record failure leaves `<runId>/launch/` without a record; once its
+runner has exited, `workflow list` reports it under `leftoverLaunches` (a `Leftover launch` line in
+text) with the `workflow rm` command that removes it.
 
 `--json` writes one completion, suspension, or failure document to stdout; logs and workflow console
 output go to stderr. Execute, resume and `answer --resume` print a compact result by default
@@ -293,6 +296,11 @@ exit 74, remaining caches in `error.details.caches`): caches Git already removed
 (`error.details.removedCaches`), no ref is deleted, and the record stays; fix the cause and retry
 with `workflow clean`. An interrupted rm leaves an intact run (run rm again) or a hidden
 `.<run>.<pid>.<uuid>.removing` directory, which the next rm in that state directory sweeps.
+
+`workflow rm ID` also removes the leftover `<runId>/launch/` of a start that failed before its
+record, reporting `launchOnly: true`. While that start may still be in flight (its recorded runner
+is alive, unverifiable or remote, or, without a runner record, its files are under an hour old) rm
+refuses with `run.active`, and `--force` does not override it.
 
 ### Retention recipe
 

@@ -112,3 +112,5 @@ part of the documentation.
 - [0053: Suspend on the subscription-window gate until the window resets](0053-window-utilization-gate-suspends-until-reset.md)
 
 - [0054: Bound call-site Claude directories by declared profile roots](0054-bounded-call-site-adddirs.md)
+
+- [0055: Remove leftover launch directories through rm](0055-remove-leftover-launch-directories.md)
