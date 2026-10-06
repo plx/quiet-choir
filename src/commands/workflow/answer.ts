@@ -24,7 +24,7 @@ export default class WorkflowAnswer extends WorkflowCommand {
     readonly by: string | undefined;
     readonly resume: boolean | undefined;
     readonly full: boolean | undefined;
-    readonly harness: string | undefined;
+    readonly harness: string[] | undefined;
     readonly 'harness-config': string | undefined;
     readonly 'wait-mode': 'suspend' | 'block' | undefined;
     readonly 'allow-harness-config-change': boolean | undefined;
@@ -47,7 +47,8 @@ export default class WorkflowAnswer extends WorkflowCommand {
     }),
     harness: Flags.string({
       description:
-        'Harness for --resume: cli or fixture:<JSON file>; omitted uses the selection the run last executed with',
+        'Harness for --resume: cli, fixture:<file>, or name=fixture:<file>; repeatable. Omitted uses the selection the run last executed with',
+      multiple: true,
     }),
     'harness-config': Flags.string({
       description: 'Harness configuration for --resume',
