@@ -2,6 +2,8 @@
 
 - Status: accepted
 - Issue: #139
+- Amended by #223: `wait.tolerated` joins the written types; its `msg` is
+  `tolerated N/LIMIT: message`, with ` [code]` after LIMIT when the error had a string code.
 
 ## Context
 

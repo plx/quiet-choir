@@ -120,7 +120,10 @@ least 0; null keeps spacing). Error `tolerate + 1` in a row, a `'fatal'` result 
 callback fails the wait. A success resets the count, which persists across resumes. The deadline
 still wins, including on the final check. The callbacks are guarded like observers. Never tolerated:
 run cancellation or interruption, context-operation violations, wrong `observe` result shape,
-terminal schema failures, `noteSchema` failures, and invalid or oversized notes.
+terminal schema failures, `noteSchema` failures, and invalid or oversized notes. Each tolerated
+error also records one `wait.tolerated` run event (wait ID, `consecutive`, `tolerate`, message cut
+to 1024, optional `code`), seen in `onEvent`, `--events`, `workflow events` and `inspect`; the error
+that fails the wait records none.
 
 Outcomes are discriminated by `by`: signal has value/at/actor, poll has value/at/checks, deadline
 has at/note. A valid signal timestamped at or before the deadline wins first, then a terminal poll,

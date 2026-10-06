@@ -324,7 +324,13 @@ Revision 4 (#171) is nested-only too: a capability profile's `claude` gains the 
 ([ADR 0054](decisions/0054-bounded-call-site-adddirs.md)). Revision-3 records read, and their
 completed agent steps replay, unchanged. A revision-3 build cannot read a record whose capabilities
 declare `addDirRoots` (its strict manifest parse rejects the field), and refuses to rewrite any
-other revision-4 record instead of dropping `addDirs`.
+other revision-4 record instead of dropping `addDirs`. Revision 5 (#223) is nested-only as well: run
+`events` gain the type `wait.tolerated`, one entry per poll error that `onError` tolerated
+([waits](waits.md#checks-and-outcomes)). Revision-4 records read unchanged, and a waiting poll's
+saved `lastError` count carries on after a resume. A revision-4 build cannot parse a record that
+holds a `wait.tolerated` entry (its event-type enum rejects it), so every read of that record is the
+`run.incompatible` upgrade refusal described below; it refuses to rewrite any other revision-5
+record.
 
 **Refusals.** A build must not rewrite a record it cannot fully read: its parse strips unknown
 top-level fields, and the next compaction would write the record back without them. When a record

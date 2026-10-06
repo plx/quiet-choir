@@ -115,6 +115,42 @@ and the file was formatted with Prettier; its read-view digest in
 `test/record-schema-revision.test.ts` was computed on the same unmodified main from this file. The
 same main also produced the golden `profileGrantDigest` values pinned in `test/profiles.test.ts`.
 
+`revision-four-checkpoint.json` was generated the same way at origin/main `7fa2348`, before
+tolerated poll errors (#223) added the event type `wait.tolerated` to the nested `events` shape in
+revision 5. Its run ID is `revision-four`, and it ran this definition (`pollIdentityKey` from
+`src/workflow/runtime/poll-identity.ts`, so the wait's identity does not depend on how a test
+transformer prints the observer), so it carries `schemaRevision: 4`, `phase` and `log` events, and a
+suspended poll wait `ready` whose first check failed and was tolerated (`lastError` with
+`consecutive: 1`, no `wait.tolerated` event):
+
+```ts
+defineWorkflow({
+  name: 'schema-revision',
+  version: '1',
+  input: z.null(),
+  output: z.unknown(),
+  async run(ctx) {
+    ctx.phase('watch');
+    ctx.log('waiting', { n: 1 });
+    return ctx.wait('ready', {
+      poll: {
+        input: null,
+        schema: z.literal('ok'),
+        every: 60_000,
+        onError: { tolerate: 3 },
+        observe: () => Promise.reject(new Error('HTTP 502: Bad Gateway')),
+        [pollIdentityKey]: { helper: 'schema-revision', version: 1 },
+      },
+    });
+  },
+});
+```
+
+The run suspended with an empty journal, so only `run.json` is checked in; it has no stack paths,
+and the file was formatted with Prettier. Its read-view digest in
+`test/record-schema-revision.test.ts` was computed on the same unmodified main from this file. The
+resume tests pin a clock after the saved `nextCheckAt`.
+
 `record-keys.json` lists the top-level run-record keys of each schema revision. Adding or changing a
 persisted run-level field adds a revision there and bumps `SUPPORTED_SCHEMA_REVISION`; a revision
 that only changes a nested shape repeats the previous key list. See `docs/storage.md`.

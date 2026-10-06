@@ -141,6 +141,17 @@ of the wrong shape, a terminal value that fails the schema, a note that fails `n
 or saved), and an invalid or oversized note. A tolerated `observeTimeoutMs` expiry can leave the
 abandoned observer running while the next check starts; the usual `waitWarnings` entry records it.
 
+Each tolerated error also records one `wait.tolerated` run event, saved together with `lastError`
+and announced after that save: `stepId` is the wait ID, `message` is the error message cut to 1024
+characters (`lastError` keeps 4096), and `data` is `{ consecutive, tolerate }` plus `code` when the
+error has a string `code`, such as `QUIET_CHOIR_POLL_OBSERVE_TIMEOUT` or `ENOENT`. It reaches
+`onEvent`, `--events`, `workflow events` and `workflow inspect`'s recent entries, where its line
+reads `tolerated 2/3: HTTP 502: Bad Gateway` ([observability](observability.md#event-stream)). The
+error past the tolerance, and every error that is never tolerated, records no such event: it fails
+the wait and the run as before, so `run.failed` names the wait and carries that error. The event is
+an observation, not a durable effect: it is not replayed on resume, a completed wait replays without
+it, and it never changes the wait's identity.
+
 Each check uses fixed precedence:
 
 1. A valid signal with recorded delivery time at or before the deadline wins. Signals use the same

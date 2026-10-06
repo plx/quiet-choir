@@ -2,6 +2,9 @@
 
 - Status: accepted
 - Issue: #140
+- Amended by #223: tolerated poll errors are `wait.tolerated` entries in the record's event list, so
+  the follower prints them from that list (under its 500-entry cap), and a run event's identity
+  includes its `stepId`.
 
 ## Context
 

@@ -3,8 +3,9 @@
 `workflow inspect ID` is a read-only dashboard. It shows the owner PID/liveness, latest body
 execution's start and elapsed time, last persisted activity, current phase progress, status counts,
 ordered running/failed/cancelled/settled-failed steps, resolved call limits, root cause, reported
-usage, and recent phase/log entries. `-v` adds the saved failure stack. It does not import workflow
-code or acquire the writer lock.
+usage, and the last five phase, log and tolerated poll error (`wait.tolerated`) entries; a tolerated
+error prints its wait ID and the same message as its [event line](#event-stream). `-v` adds the
+saved failure stack. It does not import workflow code or acquire the writer lock.
 
 ```sh
 quiet-choir workflow inspect review-42 --state-dir /absolute/path/to/runs
@@ -102,26 +103,31 @@ tail -n +1 -F /abs/review-42.events.jsonl | grep --line-buffered '"ev":"step.fai
 }
 ```
 
-| Field     | Meaning                                                                                                                                                                         |
-| --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `t`       | ISO event time                                                                                                                                                                  |
-| `run`     | Run ID                                                                                                                                                                          |
-| `ev`      | Event type                                                                                                                                                                      |
-| `step`    | Full step ID; on `run.failed`, the root effect when known                                                                                                                       |
-| `attempt` | Persisted attempt count, on `step.failed` and `step.settled` only                                                                                                               |
-| `harness` | The event's harness, or the one last seen on an agent event for this step in this process                                                                                       |
-| `ms`      | Step events: time since the step's latest start in this process. Terminal run events: time since this execution's `run.started`. Omitted when no start was seen in this process |
-| `costUsd` | Reported cost of a completed agent step, when known                                                                                                                             |
-| `phase`   | Phase at the call site                                                                                                                                                          |
-| `msg`     | The run error, phase title or lifecycle message; for `log`, the message plus the compact JSON of its data; for `wait.opened`, the compact JSON of the question                  |
+| Field     | Meaning                                                                                                                                                                                                                                                                         |
+| --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `t`       | ISO event time                                                                                                                                                                                                                                                                  |
+| `run`     | Run ID                                                                                                                                                                                                                                                                          |
+| `ev`      | Event type                                                                                                                                                                                                                                                                      |
+| `step`    | Full step ID; on `run.failed`, the root effect when known; on `wait.tolerated`, the wait ID                                                                                                                                                                                     |
+| `attempt` | Persisted attempt count, on `step.failed` and `step.settled` only                                                                                                                                                                                                               |
+| `harness` | The event's harness, or the one last seen on an agent event for this step in this process                                                                                                                                                                                       |
+| `ms`      | Step events: time since the step's latest start in this process. Terminal run events: time since this execution's `run.started`. Omitted when no start was seen in this process                                                                                                 |
+| `costUsd` | Reported cost of a completed agent step, when known                                                                                                                                                                                                                             |
+| `phase`   | Phase at the call site                                                                                                                                                                                                                                                          |
+| `msg`     | The run error, phase title or lifecycle message; for `log`, the message plus the compact JSON of its data; for `wait.opened`, the compact JSON of the question; for `wait.tolerated`, `tolerated N/LIMIT: message`, with ` [code]` after LIMIT when the error had a string code |
 
 Fields are written in this order, and absent or null fields are omitted. The written types are
 `run.started`, `run.completed`, `run.failed`, `run.cancelled`, `run.suspended`, `step.completed`,
-`step.failed`, `step.settled`, `wait.opened`, `phase` and `log`; agent admission and progress,
-child, `step.started` and `step.cancelled` events are not written. `msg` is cut at a code point with
-a trailing `…` to about 200 bytes, so a typical line is near 300 bytes, and no line exceeds **512
-bytes** (UTF-8, without the newline): a longer line shrinks `msg` further, then shortens `step` and
-`phase` in the middle, then `run`. A line carries no step error text; read it from `inspect`.
+`step.failed`, `step.settled`, `wait.opened`, `wait.tolerated`, `phase` and `log`; agent admission
+and progress, child, `step.started` and `step.cancelled` events are not written. `msg` is cut at a
+code point with a trailing `…` to about 200 bytes, so a typical line is near 300 bytes, and no line
+exceeds **512 bytes** (UTF-8, without the newline): a longer line shrinks `msg` further, then
+shortens `step` and `phase` in the middle, then `run`. A line carries no step error text; read it
+from `inspect`. The one error a line does carry is a poll error that the poll's `onError` tolerated:
+each one writes a `wait.tolerated` line naming the wait, the consecutive count and the `tolerate`
+limit, such as `tolerated 2/3: HTTP 502: Bad Gateway`
+([tolerated poll errors](waits.md#checks-and-outcomes)). The error past the limit is not tolerated
+and writes no such line; it fails the wait as before.
 
 Replay echoes are dropped: a resume does not write `step.replayed`, `step.reused` or a replayed
 phase or log entry, because the earlier execution already wrote them to the same file. Each
@@ -143,6 +149,9 @@ imports the workflow, and derives each line from what the record keeps:
 
 - **Run events.** Every entry of the record's event list (run lifecycle, `phase` and `log`) becomes
   one line. `run.failed` carries its root step and error message.
+- **Tolerated poll errors.** Each tolerated poll error is a `wait.tolerated` entry in the same event
+  list, saved with the wait's `lastError`, so it becomes one line in order before the wait settles.
+  It shares the 500-entry cap below with phase and log entries.
 - **Step attempts.** Every completed attempt becomes `step.completed`, every failed one
   `step.failed`, and the final attempt of a settled failure `step.settled`, as the runner emits
   them. Cancelled and interrupted attempts write nothing, and fork-reused steps are skipped.
@@ -159,12 +168,13 @@ an older execution's `run.suspended` is omitted, because only the latest interru
 The follower polls every two seconds by default (`--interval`). Several transitions that happen
 between two reads, including several attempts of one step, all appear on the next read, sorted by
 time with the latest execution's terminal run line last. Lines are deduplicated by identity (run
-event content and time, step and attempt, question and notification time), not by position, so a
-long run whose oldest entries are evicted neither repeats nor hides newer lines. The record keeps
-only the latest **500** run events: on a very long run, phase and log payloads can be evicted before
-a slow follower reads them, and those lines are then never printed. Step and question lines are not
-subject to that cap. See [the CLI contract](cli-contract.md#event-follower) for the flags and exit
-codes and [ADR 0038](decisions/0038-code-free-event-follower.md) for the design.
+event content, wait ID and time, step and attempt, question and notification time), not by position,
+so a long run whose oldest entries are evicted neither repeats nor hides newer lines. The record
+keeps only the latest **500** run events: on a very long run, phase, log and tolerated poll error
+payloads can be evicted before a slow follower reads them, and those lines are then never printed; a
+poll that tolerates errors often over a long time adds to that pressure. Step and question lines are
+not subject to that cap. See [the CLI contract](cli-contract.md#event-follower) for the flags and
+exit codes and [ADR 0038](decisions/0038-code-free-event-follower.md) for the design.
 
 ## Phases and logs
 
@@ -205,10 +215,12 @@ entry with the same type, message, data, and phase metadata. It is echoed with `
 logs inside a mapper skipped by a settled-map replay do not execute or echo. Changing observations
 does not change effect identity, though source changes still need the ordinary resume code gate.
 
-Only the most recent **500** lifecycle/phase/log payloads are retained. Compact signature/count
-entries survive eviction to preserve replay detection. That count ledger and attempt histories can
-still grow; high-volume logging remains unsuitable for this whole-file checkpoint store. The future
-journal work is separate. There is no token or tool transcript here.
+Only the most recent **500** lifecycle/phase/log/tolerated poll error payloads are retained. A
+`wait.tolerated` entry is a runtime observation, not a body call: it never enters the count ledger
+and is never replayed. Compact signature/count entries survive eviction to preserve replay
+detection. That count ledger and attempt histories can still grow; high-volume logging remains
+unsuitable for this whole-file checkpoint store. The future journal work is separate. There is no
+token or tool transcript here.
 
 ## Timing, requests, errors, and usage
 

@@ -2,6 +2,16 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- Each poll error that `onError` tolerates now records a `wait.tolerated` run event, saved with the
+  wait's `lastError` and announced after that save: `stepId` is the wait ID, `message` the error
+  message cut to 1024 characters, and `data` `{ consecutive, tolerate }` plus the error's string
+  `code` when it has one (such as `QUIET_CHOIR_POLL_OBSERVE_TIMEOUT`). `RunEvent['type']` and so
+  `WorkflowEvent['type']` gain the value. It appears in `onEvent`, `--events` and `workflow events`
+  as `tolerated 2/3: message` (with ` [code]`), among `workflow inspect`'s recent entries with its
+  wait ID, and in the CLI's info-level log. The error past the tolerance records none and fails the
+  wait as before. The event never replays and leaves wait identity unchanged. Run records move to
+  schema revision 5: a revision-4 build refuses to rewrite them, and cannot read at all a record
+  that holds a `wait.tolerated` entry (every read is the `run.incompatible` upgrade refusal).
 - `ctx.poll` (both forms) and `ctx.wait` poll sources take an optional `noteSchema`, a Zod schema
   that infers the note type, so `previous.note` is `z.infer<typeof schema> | null` without type
   arguments, and validates it in both directions: a nonterminal note is parsed before it is saved
