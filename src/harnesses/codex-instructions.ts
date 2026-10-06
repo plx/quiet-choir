@@ -10,8 +10,8 @@ import type { InstructionSource } from '../harness-kit.js';
 /*
  * Discovery rules measured against codex-cli 0.157.1 (2026-10-05; the whitespace rules were also
  * seen on 0.160.0) with the zero-cost fake-API probe in test/harness-isolation-contract.mjs.
- * Restricted calls pass --ignore-user-config, which skips
- * config.toml, so only Codex's built-in defaults apply:
+ * Restricted calls pass --ignore-user-config, which skips config.toml, so only Codex's built-in
+ * defaults apply:
  *
  * - User level: CODEX_HOME/AGENTS.override.md if present, otherwise CODEX_HOME/AGENTS.md.
  * - User skills: CODEX_HOME/skills/<name>/SKILL.md descriptions. Dot-directories are skipped;
@@ -31,9 +31,10 @@ import type { InstructionSource } from '../harness-kit.js';
  *   its directory. It is recorded because it explains why AGENTS.md was not loaded.
  * - A blank project-level AGENTS.md contributes nothing and is not recorded.
  *
- * BOM-only files and invalid UTF-8 were not probed; decoding is non-fatal, so they count as content,
- * which errs toward recording a source. Inherit-mode config keys (project_root_markers, project_doc_fallback_filenames, project_doc_max_bytes) can
- * change what Codex loads and are not modelled; this is a diagnostic, never part of step identity.
+ * BOM-only files and invalid UTF-8 were not probed; decoding is non-fatal, so they count as
+ * content, which errs toward recording a source. Inherit-mode config keys (project_root_markers,
+ * project_doc_fallback_filenames, project_doc_max_bytes) can change what Codex loads and are not
+ * modelled; this is a diagnostic, never part of step identity.
  */
 
 /** Skills listed individually before the remainder is only counted. */
