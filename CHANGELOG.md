@@ -2,6 +2,12 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- Fixture export (fix; no identity change): `workflow fixtures` now also exports agent steps whose
+  failure the workflow absorbed (a `try/catch` around the call, or a settled map item), which stay
+  `failed` in a completed run, as `error` rules in execution order, so replay reproduces the failure
+  instead of failing with `No fixture matches step`. The text comes from the step's recorded error
+  with the same prefix stripping and non-empty fallback as settled failures; kind and attempt count
+  are not exported. Runs without such steps export exactly as before.
 - `workflow tick` no longer counts a stale recovery for a CLI run it is certain to refuse for a
   harness configuration mismatch. A cron tick without the run's original `--harness-config` used to
   save the `staleRecovery` counter before the runtime refused the resume, so after 3 ticks a healthy
