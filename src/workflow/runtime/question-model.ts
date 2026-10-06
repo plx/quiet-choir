@@ -121,13 +121,28 @@ export interface WorkflowLaunch {
   readonly sources?: Readonly<Record<string, string>>;
   /**
    * Non-secret launch policy of the latest CLI execution, which a resume by ID without explicit
-   * flags inherits. Absent in older checkpoints and in launches an embedder supplies.
+   * flags inherits. An execution whose launch states no policy keeps it; absent in older
+   * checkpoints, in runs no CLI execution recorded one for, and after a selection built from data.
    */
   readonly policy?: LaunchPolicy;
 }
 
 /**
- * The CLI's harness selection, wait mode and worktree flags, replaced on every execution and outside
+ * The launch metadata an execution passes as `RunOptions.launch`. It is a {@link WorkflowLaunch}
+ * whose `policy` has three cases: absent keeps the policy the run record already holds, a
+ * {@link LaunchPolicy} replaces it, and `null` clears it. The record itself never stores `null`.
+ * Every other field replaces the recorded one.
+ */
+export type WorkflowLaunchOptions = Omit<WorkflowLaunch, 'policy'> & {
+  /**
+   * Absent keeps the recorded policy, a policy replaces it, and `null` drops it so a later resume
+   * by ID falls back to the default selection.
+   */
+  readonly policy?: LaunchPolicy | null;
+};
+
+/**
+ * The CLI's harness selection, wait mode and worktree flags, replaced whenever an execution states one, and outside
  * step identity.
  * It never holds CLI harness configuration values (only their digest is recorded, on
  * `RunRecord.harness.configDigest`).

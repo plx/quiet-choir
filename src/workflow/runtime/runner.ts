@@ -100,8 +100,8 @@ import type {
   DeadlineOutcome,
 } from './wait-model.js';
 import { pendingOperations } from './inbox.js';
-import { approvalSchema, workflowLaunchSchema } from './question-schema.js';
-import type { AskOptions, WorkflowLaunch } from './question-model.js';
+import { approvalSchema, mergeLaunch, workflowLaunchOptionsSchema } from './question-schema.js';
+import type { AskOptions, WorkflowLaunchOptions } from './question-model.js';
 import { RunObservations, errorStack, requestSummary } from './observability.js';
 import type { PhaseInfo, PhaseOptions, RequestSummary, RunEvent } from './observability-model.js';
 import {
@@ -418,8 +418,12 @@ export interface RunOptions extends WorkflowCodeOptions {
   readonly waitMode?: 'suspend' | 'block';
   /** Optional storage implementation; defaults to private local journal files. */
   readonly store?: RunStore;
-  /** Optional entrypoint metadata supplied by the CLI or embedder for resume by ID. */
-  readonly launch?: WorkflowLaunch;
+  /**
+   * Optional entrypoint metadata supplied by the CLI or embedder for resume by ID. It replaces the
+   * recorded launch, except that an absent `policy` keeps the recorded policy (a `LaunchPolicy`
+   * replaces it and `null` clears it), as an omitted `runBudget` cap does.
+   */
+  readonly launch?: WorkflowLaunchOptions;
   /**
    * Program words that start the emitted `resumeCommand`, each `answerCommand` and the
    * `workflow unlock` command in a `run.locked` refusal's message and `details.next`, such as
@@ -722,7 +726,7 @@ export async function runWorkflow<
   if (!isValidRunId(options.runId)) throw new Error(runIdMessage);
   if (!definition.name.trim() || !definition.version.trim())
     throw new Error('Workflow name and version must be nonempty.');
-  if (options.launch) workflowLaunchSchema.parse(options.launch);
+  if (options.launch) workflowLaunchOptionsSchema.parse(options.launch);
   const registry = new HarnessRegistry(options);
   registry.definitions(definition);
   let harnessKind = registry.kind(checkedDefinition(definition));
@@ -1227,7 +1231,7 @@ export async function runWorkflow<
       }
     const budget = new RunBudget(record, runBudget, clock);
     const sessionSalt = (record.sessionSalt ??= randomUUID());
-    if (options.launch) record.launch = structuredClone(options.launch);
+    if (options.launch) record.launch = mergeLaunch(record.launch, options.launch);
     const priorHarness = record.harness ?? forkSource?.harness;
     record.harness = {
       kind: harnessKind,
