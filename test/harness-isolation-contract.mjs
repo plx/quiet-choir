@@ -24,15 +24,32 @@ const markers = {
   userAgents: 'USER_AGENTS_MARKER',
   projectAgents: 'PROJECT_AGENTS_MARKER',
   userSkill: 'USER_SKILL_MARKER',
+  repoAgentsSkill: 'REPO_AGENTS_SKILL_MARKER',
+  homeAgentsSkill: 'HOME_AGENTS_SKILL_MARKER',
+  repoCodexSkill: 'REPO_CODEX_SKILL_MARKER',
+  nestedUserSkill: 'NESTED_USER_SKILL_MARKER',
+  memorySummary: 'MEMORY_SUMMARY_MARKER',
+  memoryMd: 'MEMORY_MD_MARKER',
+  userClaudeMd: 'USER_CLAUDE_MD_MARKER',
+  homeClaudeMd: 'HOME_CLAUDE_MD_MARKER',
 };
 // Inert credentials: the fixture provider authenticates through env_key, so Codex never uses them.
 // They exercise the private CODEX_HOME copy and write-back of instructions: 'none'.
 const authJson = `${JSON.stringify({ OPENAI_API_KEY: 'sk-local-fixture-auth' })}\n`;
 const listing = async (directory) =>
   (await readdir(directory, { recursive: true })).map(String).sort();
+/** Write a skill whose description carries the marker, creating its directories. */
+const skill = async (directory, name, marker) => {
+  await mkdir(join(directory, name), { recursive: true });
+  await writeFile(
+    join(directory, name, 'SKILL.md'),
+    `---\nname: ${name.split('/').at(-1)}\ndescription: ${marker}\n---\nCanary skill body.\n`,
+  );
+};
 
-// extras.prepare({ home, project, config }) adjusts the Codex instruction layout; extras.subdir
-// runs the call from a directory below the project.
+// extras.prepare({ home, project, config }) adjusts the instruction layout; extras.subdir
+// runs the call from a directory below the project; extras.env({ home }) overrides child
+// environment variables such as HOME.
 async function execute(provider, name, options = {}, tool, extras = {}) {
   const home = join(root, name),
     project = join(home, 'project'),
@@ -67,6 +84,13 @@ async function execute(provider, name, options = {}, tool, extras = {}) {
   });
   await writeFile(join(project, '.claude', 'settings.json'), projectSettings);
   await writeFile(join(project, 'CLAUDE.md'), 'PROJECT_INSTRUCTIONS_MARKER');
+  if (provider === 'claude') {
+    // User-level CLAUDE.md in the configured config dir, and one in HOME/.claude that a configured
+    // CLAUDE_CONFIG_DIR should make Claude ignore.
+    await writeFile(join(config, 'CLAUDE.md'), markers.userClaudeMd);
+    await mkdir(join(home, '.claude'), { recursive: true });
+    await writeFile(join(home, '.claude', 'CLAUDE.md'), markers.homeClaudeMd);
+  }
   if (provider === 'codex') {
     // Codex instruction canaries: user-level AGENTS.md and skill, and a project AGENTS.md. With no
     // .git entry above the project, Codex reads the working directory only.
@@ -77,8 +101,20 @@ async function execute(provider, name, options = {}, tool, extras = {}) {
       `---\nname: canary\ndescription: ${markers.userSkill}\n---\nCanary skill body.\n`,
     );
     await writeFile(join(project, 'AGENTS.md'), markers.projectAgents);
-    await extras.prepare?.({ home, project, config });
+    // Further skill and memory canaries (#227): repository .agents/skills, HOME .agents/skills, the
+    // repository .codex/skills, a nested user skill, and CODEX_HOME memories.
+    await skill(join(project, '.agents', 'skills'), 'repo-canary', markers.repoAgentsSkill);
+    await skill(join(home, '.agents', 'skills'), 'home-canary', markers.homeAgentsSkill);
+    await skill(join(project, '.codex', 'skills'), 'legacy-canary', markers.repoCodexSkill);
+    await skill(join(config, 'skills'), 'group/nested', markers.nestedUserSkill);
+    await mkdir(join(config, 'memories'));
+    await writeFile(
+      join(config, 'memories', 'memory_summary.md'),
+      `v1\n${markers.memorySummary}\n`,
+    );
+    await writeFile(join(config, 'memories', 'MEMORY.md'), `${markers.memoryMd}\n`);
   }
+  await extras.prepare?.({ home, project, config });
   const outside = join(home, 'outside');
   await mkdir(outside);
   await writeFile(join(outside, 'file.txt'), 'OUTSIDE_CONTENT_MARKER');
@@ -135,9 +171,28 @@ async function execute(provider, name, options = {}, tool, extras = {}) {
           OTEL_SDK_DISABLED: 'true',
         }),
   };
+  // An undefined override removes the variable.
+  for (const [key, value] of Object.entries(extras.env?.({ home }) ?? {}))
+    if (value === undefined) delete environment[key];
+    else environment[key] = value;
+  // An explicit config replaces this one, so a case that sets config spreads providerConfig in.
+  const providerConfig = {
+    model_provider: 'fixture',
+    model_providers: {
+      fixture: {
+        name: 'Local fixture',
+        base_url: `${api.url}/v1`,
+        wire_api: 'responses',
+        env_key: 'QUIET_CHOIR_FAKE_API_KEY',
+        requires_openai_auth: false,
+        request_max_retries: 0,
+        stream_max_retries: 0,
+      },
+    },
+  };
   const explicit =
     typeof options === 'function'
-      ? options({ cwd, outside, plugin, hookDefinition, serverFile })
+      ? options({ cwd, outside, plugin, hookDefinition, serverFile, providerConfig })
       : options;
   const request = {
     harness: provider,
@@ -150,20 +205,7 @@ async function execute(provider, name, options = {}, tool, extras = {}) {
         ? { tools: [], maxTurns: 4, maxBudgetUsd: 0.1 }
         : {
             skipGitRepoCheck: true,
-            config: {
-              model_provider: 'fixture',
-              model_providers: {
-                fixture: {
-                  name: 'Local fixture',
-                  base_url: `${api.url}/v1`,
-                  wire_api: 'responses',
-                  env_key: 'QUIET_CHOIR_FAKE_API_KEY',
-                  requires_openai_auth: false,
-                  request_max_retries: 0,
-                  stream_max_retries: 0,
-                },
-              },
-            },
+            config: providerConfig,
           }),
       ...explicit,
     },
@@ -248,12 +290,15 @@ try {
     assert.match(inherited.hooks, /project/u);
     assert.match(inherited.hooks, /prompt/u);
     assert(JSON.stringify(inherited.bodies).includes('PROJECT_INSTRUCTIONS_MARKER'));
+    // #227: inherit loads <CLAUDE_CONFIG_DIR>/CLAUDE.md, which CliHarness then reports.
+    assert(JSON.stringify(inherited.bodies).includes(markers.userClaudeMd));
     const restricted = await execute('claude', 'restricted');
     assert.equal(restricted.hooks, '');
     assert.deepEqual(restricted.init.tools, []);
     assert.deepEqual(restricted.init.mcp_servers, []);
     assert(!JSON.stringify(restricted.bodies).includes('PROJECT_INSTRUCTIONS_MARKER'));
     assert(!Object.keys(restricted.init).some((key) => /memory/iu.test(key)));
+    assert(!JSON.stringify(restricted.bodies).includes(markers.userClaudeMd));
     report.cases.push({
       name: 'claude-restricted',
       version: restricted.version,
@@ -263,6 +308,48 @@ try {
       tools: [],
       mcpServers: [],
       memoryFieldPresent: false,
+    });
+    // HOME is an ancestor of cwd in the calls above, so HOME/.claude/CLAUDE.md can also load as an
+    // ancestor directory's CLAUDE.md. These two calls move HOME off cwd's ancestors.
+    const movedHome = ({ home }) => join(home, 'user');
+    const moveHome = (env) => ({
+      env: (paths) => ({ HOME: movedHome(paths), ...env }),
+      prepare: async (paths) => {
+        await mkdir(join(movedHome(paths), '.claude'), { recursive: true });
+        await writeFile(
+          join(movedHome(paths), '.claude', 'CLAUDE.md'),
+          'MOVED_HOME_CLAUDE_MD_MARKER',
+        );
+      },
+    });
+    const withConfigDir = await execute(
+      'claude',
+      'inherit-config-dir',
+      { isolation: 'inherit' },
+      undefined,
+      moveHome({}),
+    );
+    const withoutConfigDir = await execute(
+      'claude',
+      'inherit-default-dir',
+      { isolation: 'inherit' },
+      undefined,
+      moveHome({ CLAUDE_CONFIG_DIR: undefined }),
+    );
+    const claudeReached = (run, marker) => JSON.stringify(run.bodies).includes(marker);
+    // Asserted, because CliHarness detects exactly this file: CLAUDE_CONFIG_DIR replaces
+    // HOME/.claude. The ancestor fact is recorded only; ancestor CLAUDE.md files are not detected.
+    assert(claudeReached(withConfigDir, markers.userClaudeMd));
+    assert(!claudeReached(withConfigDir, 'MOVED_HOME_CLAUDE_MD_MARKER'));
+    assert(claudeReached(withoutConfigDir, 'MOVED_HOME_CLAUDE_MD_MARKER'));
+    report.cases.push({
+      name: 'claude-user-instructions',
+      version: inherited.version,
+      userClaudeMdReachedInherit: true,
+      userClaudeMdReachedRestricted: false,
+      homeClaudeMdReachedWithConfigDir: false,
+      homeClaudeMdReachedWithoutConfigDir: true,
+      ancestorHomeClaudeMdReachedWithConfigDir: claudeReached(inherited, markers.homeClaudeMd),
     });
     const restored = await execute(
       'claude',
@@ -330,6 +417,16 @@ try {
     // Codex wraps the loaded AGENTS.md files in a message headed with this text, so a blank file
     // (which has no marker to look for) still shows whether any instructions message was sent.
     const instructionsMessage = (run) => reached(run, 'AGENTS.md instructions for');
+    // Skill and memory sources (#227), recorded rather than asserted in the cases that carry the
+    // default canaries.
+    const sourceFacts = (run) => ({
+      repoAgentsSkillReachedRequest: reached(run, markers.repoAgentsSkill),
+      homeAgentsSkillReachedRequest: reached(run, markers.homeAgentsSkill),
+      repoCodexSkillReachedRequest: reached(run, markers.repoCodexSkill),
+      nestedUserSkillReachedRequest: reached(run, markers.nestedUserSkill),
+      memorySummaryReachedRequest: reached(run, markers.memorySummary),
+      memoryMdReachedRequest: reached(run, markers.memoryMd),
+    });
     // instructions: 'none' (#130): a private CODEX_HOME holding only auth.json, and
     // project_doc_max_bytes=0. Asserted, because quiet-choir promises this boundary.
     const none = await execute('codex', 'codex-instructions-none', { instructions: 'none' });
@@ -353,6 +450,7 @@ try {
       userSkillReachedRequest: false,
       realCodexHomeUnchanged: true,
       authJsonUnchanged: true,
+      ...sourceFacts(none),
     });
     const native = await execute('codex', 'codex-instructions-native', { instructions: 'native' });
     assert.equal(native.plan.codexHome, undefined);
@@ -364,6 +462,7 @@ try {
       userInstructionsReachedRequest: true,
       projectInstructionsReachedRequest: true,
       userSkillReachedRequest: reached(native, markers.userSkill),
+      ...sourceFacts(native),
     });
     const codex = await execute('codex', 'codex-restricted');
     // Unset matches 'native'; Codex's native loading is the documented default.
@@ -382,6 +481,7 @@ try {
       projectInstructionsReachedRequest: reached(codex, markers.projectAgents),
       userSkillReachedRequest: reached(codex, markers.userSkill),
       instructionsMessageReachedRequest: instructionsMessage(codex),
+      ...sourceFacts(codex),
     });
     // Per-directory override precedence, and project discovery from a .git root down to cwd.
     const overrides = await execute('codex', 'codex-restricted-layout', {}, undefined, {
@@ -467,6 +567,84 @@ try {
       name: 'codex-restricted-whitespace-project-agents',
       version: whitespaceProject.version,
       instructionsMessageReachedRequest: instructionsMessage(whitespaceProject),
+    });
+    // Repository skill layout (#227). The Git root is project/pkg, so project (not HOME) sits above
+    // the root; the call runs from project/pkg/mid/leaf.
+    const skillLayout = await execute('codex', 'codex-restricted-skill-layout', {}, undefined, {
+      subdir: 'pkg/mid/leaf',
+      prepare: async ({ project }) => {
+        const root = join(project, 'pkg'),
+          mid = join(root, 'mid'),
+          leaf = join(mid, 'leaf');
+        await mkdir(join(root, '.git'));
+        await skill(join(root, '.agents', 'skills'), 'root-canary', 'ROOT_AGENTS_SKILL_MARKER');
+        await skill(join(mid, '.agents', 'skills'), 'mid-canary', 'MID_AGENTS_SKILL_MARKER');
+        const leafSkills = join(leaf, '.agents', 'skills');
+        await skill(leafSkills, 'leaf-canary', 'LEAF_AGENTS_SKILL_MARKER');
+        await skill(leafSkills, '.hidden', 'DOT_AGENTS_SKILL_MARKER');
+        await skill(leafSkills, 'g2/depth2', 'DEPTH2_AGENTS_SKILL_MARKER');
+        await skill(leafSkills, 'g4/a/b/depth4', 'DEPTH4_AGENTS_SKILL_MARKER');
+        await skill(leafSkills, 'g6/a/b/c/d/depth6', 'DEPTH6_AGENTS_SKILL_MARKER');
+        await skill(leafSkills, 'g7/a/b/c/d/e/depth7', 'DEPTH7_AGENTS_SKILL_MARKER');
+        await skill(leafSkills, 'g8/a/b/c/d/e/f/depth8', 'DEPTH8_AGENTS_SKILL_MARKER');
+        await skill(leafSkills, 'outer', 'OUTER_AGENTS_SKILL_MARKER');
+        await skill(leafSkills, 'outer/inner', 'INNER_AGENTS_SKILL_MARKER');
+        await skill(join(root, '.codex', 'skills'), 'root-codex', 'ROOT_CODEX_SKILL_MARKER');
+        await skill(join(leaf, '.codex', 'skills'), 'leaf-codex', 'LEAF_CODEX_SKILL_MARKER');
+      },
+    });
+    report.cases.push({
+      name: 'codex-restricted-skill-layout',
+      version: skillLayout.version,
+      aboveGitRootAgentsSkillReachedRequest: reached(skillLayout, markers.repoAgentsSkill),
+      gitRootAgentsSkillReachedRequest: reached(skillLayout, 'ROOT_AGENTS_SKILL_MARKER'),
+      intermediateAgentsSkillReachedRequest: reached(skillLayout, 'MID_AGENTS_SKILL_MARKER'),
+      cwdAgentsSkillReachedRequest: reached(skillLayout, 'LEAF_AGENTS_SKILL_MARKER'),
+      dotDirectorySkillReachedRequest: reached(skillLayout, 'DOT_AGENTS_SKILL_MARKER'),
+      depth2SkillReachedRequest: reached(skillLayout, 'DEPTH2_AGENTS_SKILL_MARKER'),
+      depth4SkillReachedRequest: reached(skillLayout, 'DEPTH4_AGENTS_SKILL_MARKER'),
+      depth6SkillReachedRequest: reached(skillLayout, 'DEPTH6_AGENTS_SKILL_MARKER'),
+      depth7SkillReachedRequest: reached(skillLayout, 'DEPTH7_AGENTS_SKILL_MARKER'),
+      depth8SkillReachedRequest: reached(skillLayout, 'DEPTH8_AGENTS_SKILL_MARKER'),
+      skillInsideSkillReachedRequest: reached(skillLayout, 'INNER_AGENTS_SKILL_MARKER'),
+      homeAgentsSkillReachedRequest: reached(skillLayout, markers.homeAgentsSkill),
+      aboveGitRootCodexSkillReachedRequest: reached(skillLayout, markers.repoCodexSkill),
+      gitRootCodexSkillReachedRequest: reached(skillLayout, 'ROOT_CODEX_SKILL_MARKER'),
+      cwdCodexSkillReachedRequest: reached(skillLayout, 'LEAF_CODEX_SKILL_MARKER'),
+    });
+    // Without a .git entry, and with HOME moved off the project's ancestors: whether the parent of
+    // cwd and the former HOME still contribute .agents skills, and whether HOME is a skill root.
+    const noGit = await execute('codex', 'codex-restricted-skill-no-git', {}, undefined, {
+      subdir: 'pkg',
+      env: ({ home }) => ({ HOME: join(home, 'user') }),
+      prepare: async ({ home, project }) => {
+        await skill(
+          join(home, 'user', '.agents', 'skills'),
+          'user-home',
+          'MOVED_HOME_SKILL_MARKER',
+        );
+        await skill(join(project, 'pkg', '.agents', 'skills'), 'cwd', 'NO_GIT_CWD_SKILL_MARKER');
+      },
+    });
+    report.cases.push({
+      name: 'codex-restricted-skill-no-git',
+      version: noGit.version,
+      cwdAgentsSkillReachedRequest: reached(noGit, 'NO_GIT_CWD_SKILL_MARKER'),
+      parentAgentsSkillReachedRequest: reached(noGit, markers.repoAgentsSkill),
+      nonHomeAncestorAgentsSkillReachedRequest: reached(noGit, markers.homeAgentsSkill),
+      homeAgentsSkillReachedRequest: reached(noGit, 'MOVED_HOME_SKILL_MARKER'),
+    });
+    // CODEX_HOME memories with the feature explicitly enabled.
+    const memories = await execute(
+      'codex',
+      'codex-restricted-memories-enabled',
+      ({ providerConfig }) => ({ config: { ...providerConfig, 'features.memories': true } }),
+    );
+    report.cases.push({
+      name: 'codex-restricted-memories-enabled',
+      version: memories.version,
+      memorySummaryReachedRequest: reached(memories, markers.memorySummary),
+      memoryMdReachedRequest: reached(memories, markers.memoryMd),
     });
   }
   console.log(JSON.stringify(report, null, 2));

@@ -1,16 +1,25 @@
 {
-  "capturedAt": "2026-10-06T01:30:13.198Z",
+  "capturedAt": "2026-10-06T03:18:21.257Z",
   "transport": "local fake APIs and dummy keys; no inference",
   "cases": [
     {
       "name": "claude-restricted",
-      "version": "2.1.286 (Claude Code)",
+      "version": "2.1.290 (Claude Code)",
       "inheritedHooksExecuted": true,
       "restrictedHooksExecuted": false,
       "projectInstructionsExcluded": true,
       "tools": [],
       "mcpServers": [],
       "memoryFieldPresent": false
+    },
+    {
+      "name": "claude-user-instructions",
+      "version": "2.1.290 (Claude Code)",
+      "userClaudeMdReachedInherit": true,
+      "userClaudeMdReachedRestricted": false,
+      "homeClaudeMdReachedWithConfigDir": false,
+      "homeClaudeMdReachedWithoutConfigDir": true,
+      "ancestorHomeClaudeMdReachedWithConfigDir": true
     },
     {
       "name": "claude-explicit-opt-ins",
@@ -28,34 +37,52 @@
     },
     {
       "name": "codex-instructions-none",
-      "version": "codex-cli 0.157.1",
+      "version": "codex-cli 0.160.0",
       "explicitProviderReachedLocalApi": true,
       "userInstructionsReachedRequest": false,
       "projectInstructionsReachedRequest": false,
       "userSkillReachedRequest": false,
       "realCodexHomeUnchanged": true,
-      "authJsonUnchanged": true
+      "authJsonUnchanged": true,
+      "repoAgentsSkillReachedRequest": true,
+      "homeAgentsSkillReachedRequest": true,
+      "repoCodexSkillReachedRequest": true,
+      "nestedUserSkillReachedRequest": false,
+      "memorySummaryReachedRequest": false,
+      "memoryMdReachedRequest": false
     },
     {
       "name": "codex-instructions-native",
-      "version": "codex-cli 0.157.1",
+      "version": "codex-cli 0.160.0",
       "userInstructionsReachedRequest": true,
       "projectInstructionsReachedRequest": true,
-      "userSkillReachedRequest": true
+      "userSkillReachedRequest": true,
+      "repoAgentsSkillReachedRequest": true,
+      "homeAgentsSkillReachedRequest": true,
+      "repoCodexSkillReachedRequest": true,
+      "nestedUserSkillReachedRequest": true,
+      "memorySummaryReachedRequest": false,
+      "memoryMdReachedRequest": false
     },
     {
       "name": "codex-restricted",
-      "version": "codex-cli 0.157.1",
+      "version": "codex-cli 0.160.0",
       "inheritedProviderIgnored": true,
       "explicitProviderReachedLocalApi": true,
       "userInstructionsReachedRequest": true,
       "projectInstructionsReachedRequest": true,
       "userSkillReachedRequest": true,
-      "instructionsMessageReachedRequest": true
+      "instructionsMessageReachedRequest": true,
+      "repoAgentsSkillReachedRequest": true,
+      "homeAgentsSkillReachedRequest": true,
+      "repoCodexSkillReachedRequest": true,
+      "nestedUserSkillReachedRequest": true,
+      "memorySummaryReachedRequest": false,
+      "memoryMdReachedRequest": false
     },
     {
       "name": "codex-restricted-layout",
-      "version": "codex-cli 0.157.1",
+      "version": "codex-cli 0.160.0",
       "userOverrideReachedRequest": true,
       "userAgentsReplacedByOverride": true,
       "projectOverrideReachedRequest": true,
@@ -64,25 +91,58 @@
     },
     {
       "name": "codex-restricted-empty-override",
-      "version": "codex-cli 0.157.1",
+      "version": "codex-cli 0.160.0",
       "userAgentsReachedRequest": true,
       "projectAgentsReachedRequest": false
     },
     {
       "name": "codex-restricted-whitespace-override",
-      "version": "codex-cli 0.157.1",
+      "version": "codex-cli 0.160.0",
       "userAgentsReachedRequest": true,
       "projectAgentsReachedRequest": false
     },
     {
       "name": "codex-restricted-whitespace-user-agents",
-      "version": "codex-cli 0.157.1",
+      "version": "codex-cli 0.160.0",
       "instructionsMessageReachedRequest": false
     },
     {
       "name": "codex-restricted-whitespace-project-agents",
-      "version": "codex-cli 0.157.1",
+      "version": "codex-cli 0.160.0",
       "instructionsMessageReachedRequest": false
+    },
+    {
+      "name": "codex-restricted-skill-layout",
+      "version": "codex-cli 0.160.0",
+      "aboveGitRootAgentsSkillReachedRequest": false,
+      "gitRootAgentsSkillReachedRequest": true,
+      "intermediateAgentsSkillReachedRequest": true,
+      "cwdAgentsSkillReachedRequest": true,
+      "dotDirectorySkillReachedRequest": false,
+      "depth2SkillReachedRequest": true,
+      "depth4SkillReachedRequest": true,
+      "depth6SkillReachedRequest": true,
+      "depth7SkillReachedRequest": false,
+      "depth8SkillReachedRequest": false,
+      "skillInsideSkillReachedRequest": true,
+      "homeAgentsSkillReachedRequest": true,
+      "aboveGitRootCodexSkillReachedRequest": false,
+      "gitRootCodexSkillReachedRequest": false,
+      "cwdCodexSkillReachedRequest": true
+    },
+    {
+      "name": "codex-restricted-skill-no-git",
+      "version": "codex-cli 0.160.0",
+      "cwdAgentsSkillReachedRequest": true,
+      "parentAgentsSkillReachedRequest": false,
+      "nonHomeAncestorAgentsSkillReachedRequest": false,
+      "homeAgentsSkillReachedRequest": true
+    },
+    {
+      "name": "codex-restricted-memories-enabled",
+      "version": "codex-cli 0.160.0",
+      "memorySummaryReachedRequest": true,
+      "memoryMdReachedRequest": false
     }
   ],
   "oauthEvidence": {
