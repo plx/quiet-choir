@@ -177,13 +177,14 @@ may be a checkout, a linked worktree or the common Git directory; it resolves to
 where `lock` is null when the lock was not held, or
 `{path, owner, recovery, warning?, action:"removed"|"absent"}` with `owner` and `recovery` as
 `{pid, host, state}` or null. A dead or released owner, a dead recoverer, and missing or unreadable
-metadata (reported in `warning`) are cleared through the token-verified tombstone rename. It refuses
-with `worktree.locked` (exit 3) and removes nothing while an owner or recoverer is locally alive or
-unverifiable (never overridable), or is on a foreign host without `--force-remote`; with it, a
-foreign holder is judged by local PID observations. `error.details` has `lockPath`, `commonGitDir`,
-`role`, `pid`, `host`, `state` and `next`, and the failure's `runId` and `stateDir` are null. `next`
-is the `workflow unlock --worktree-admin <common Git dir>` command to run once the holder is gone,
-with `--force-remote` only for a foreign holder; a race (`changed during unlock`) carries the plain
+metadata (reported in `warning`) are cleared under the lock's recovery claim, through the
+token-verified tombstone rename. It refuses with `worktree.locked` (exit 3) and removes nothing
+while an owner or recoverer is locally alive or unverifiable (never overridable), or is on a foreign
+host without `--force-remote`; with it, a foreign holder is judged by local PID observations.
+`error.details` has `lockPath`, `commonGitDir`, `role`, `pid`, `host`, `state` and `next`, and the
+failure's `runId` and `stateDir` are null. `next` is the
+`workflow unlock --worktree-admin <common Git dir>` command to run once the holder is gone, with
+`--force-remote` only for a foreign holder; a race (`changed during unlock`) carries the plain
 command. Nothing is ever signaled.
 
 `workflow rm ID [--force] [--refs] [--dry-run] --json` removes one saved run without importing

@@ -321,8 +321,9 @@ quiet-choir process on any machine sharing the repository is administering it:
 `workflow unlock --worktree-admin <common Git dir>`, with `--force-remote` for another host. Plain
 `workflow inspect RUN` shows a held lock for a run with a worktree ledger, with its holder's PID,
 host, token, liveness and age. Unlock refuses a holder that is alive or unverifiable on this
-machine; never delete the lock directory by hand. Git commands run outside quiet-choir, such as a
-manual `git worktree add`, are not serialized. See
+machine, and removes a lock only while holding its recovery claim, so automatic recovery in another
+process cannot retire and replace the lock underneath it; never delete the lock directory by hand.
+Git commands run outside quiet-choir, such as a manual `git worktree add`, are not serialized. See
 [ADR 0032](decisions/0032-interprocess-worktree-administration-lock.md).
 
 A hard kill can still interrupt Git while it writes a new worktree's `commondir` file. An empty file

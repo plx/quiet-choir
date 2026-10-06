@@ -16,7 +16,10 @@
   `list` run none. Behavior change: the error after an unverifiable holder blocks an attempt for 30
   s now names `quiet-choir workflow unlock --worktree-admin <common Git dir>` (with `--force-remote`
   for another host) instead of telling the operator to remove the lock directory.
-  `workflow unlock`'s RUN argument is now optional.
+  `workflow unlock`'s RUN argument is now optional. Both forms of unlock now take the lock's
+  recovery claim before removing it, as automatic recovery does, so a concurrent recoverer can no
+  longer retire and replace a lock that unlock is removing; a live recoverer's claim refuses the
+  unlock as "changed during unlock; retry".
 - Step supersession (fix; no identity or storage change): a completion now marks unvisited
   unfinished steps `superseded` only after the output validates and worktree cleanup succeeds, and
   puts them back if the completion checkpoint fails, as child frames already did. Before, a run that

@@ -100,7 +100,13 @@ would only mask bugs, and parsing Git's error text is fragile. It is not shipped
   recoverer, and missing or unreadable metadata are cleared (with a warning for the metadata). A
   holder on another host is refused unless `--force-remote` asserts that host is gone; a locally
   alive or unknown owner or recoverer is always refused. Refusals are `worktree.locked` (exit 3),
-  with the command to rerun in `details.next`. Nothing is ever signaled.
+  with the command to rerun in `details.next`. Nothing is ever signaled. Removal takes the lock's
+  recovery claim, as an automatic recoverer does: unlock sets aside the marker it observed (dead,
+  unreadable, or foreign under `--force-remote`) only while it is still that marker, links its own
+  `recovery.json` through `claimRecovery`, re-reads the owner token under the claim, and only then
+  retires the lock with both tokens checked. A concurrent recoverer waits on unlock's live marker
+  instead of retiring and replacing the lock under it, and a live marker or a changed owner refuses
+  the unlock ("changed during unlock; retry"). Run unlock shares this removal.
 - Plain `workflow inspect RUN` (text or JSON, not `--summary` or `--watch`) shows the lock of the
   repository in the run's worktree ledger as `worktreeAdminLock` (holder PID, host, token, state, OS
   start time and an approximate `acquiredAt` from `owner.json`'s modification time), and an

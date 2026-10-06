@@ -129,5 +129,11 @@ damage or an older build, a damaged marker, and a lock whose foreign host was re
   `absent`. As with release, if a new acquirer publishes onto the vacated path first, the rename
   back fails and the orphaned tombstone is swept later; do not run unlock concurrently with a resume
   or tick of the same run.
+- Amended by #243: removal now takes the lock's recovery claim first, as an automatic recoverer
+  does. Unlock sets aside the marker it judged removable only while it is still that marker, links
+  its own through `claimRecovery`, re-reads the owner token under the claim, and passes its own
+  marker token to `retire()`. Automatic recovery racing the unlock waits on (or refuses at) unlock's
+  live marker instead of retiring and replacing the lock, which the rename-back above could not
+  prevent; a live recoverer's marker refuses the unlock with "changed during unlock; retry".
 - A run with no lock is a no-op, but a run with neither a lock nor a checkpoint is `run.not_found`,
   so a mistyped ID is not a silent success. Unlock does not sweep strays; the next acquire does.
