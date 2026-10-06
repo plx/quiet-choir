@@ -327,10 +327,17 @@ export type WorkflowEvent = {
        * Inline invocation lifecycle after its frame checkpoint. `child.settled` reports an
        * `onError: 'return'` frame whose failure was saved as its outcome (a settled success reports
        * `child.completed`). `child.superseded` follows `run.completed` for each unfinished frame the
-       * completed run no longer invoked.
+       * completed run no longer invoked. `child.redefined` precedes `child.started` when an
+       * unfinished frame was invoked under a changed name, version, input or schemas; its message
+       * names the replaced and the new identity.
        */
       readonly type:
-        'child.started' | 'child.completed' | 'child.failed' | 'child.settled' | 'child.superseded';
+        | 'child.started'
+        | 'child.redefined'
+        | 'child.completed'
+        | 'child.failed'
+        | 'child.settled'
+        | 'child.superseded';
     }
 );
 
@@ -1452,6 +1459,7 @@ export async function runWorkflow<
       save,
       isolatePhase: (body) => observations.isolate(body),
       emit: (type, id, child) => {
+        const replaced = type === 'child.redefined' ? child.redefinitions?.at(-1) : undefined;
         notify({
           type,
           frame: id,
@@ -1460,7 +1468,7 @@ export async function runWorkflow<
           execution: observations.execution.n,
           runId: record.id,
           attempt: 0,
-          message: `${child.workflow.name}@${child.workflow.version}: ${child.status}`,
+          message: `${replaced ? `${replaced.workflow.name}@${replaced.workflow.version} -> ` : ''}${child.workflow.name}@${child.workflow.version}: ${child.status}`,
         });
       },
     });
@@ -3158,6 +3166,7 @@ export async function runWorkflow<
       save,
       acceptCodeChange: Boolean(options.acceptCodeChange),
       nextSeq: () => nextSeq++,
+      frame: () => children.frame,
       isCheckpointFailure: (error) => checkpointProblems.includes(error as CheckpointError),
       replayChild: (id) => {
         children.replay(id);

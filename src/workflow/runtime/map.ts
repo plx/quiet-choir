@@ -58,6 +58,8 @@ interface MapDependencies {
   readonly acceptCodeChange: boolean;
   /** Allocate the next run-wide first-use ordering value, shared with leaf steps. */
   readonly nextSeq: () => number;
+  /** The active inline child frame, or null at the root; a new settled journal records it. */
+  readonly frame: () => string | null;
   /** Whether an error is this run's own checkpoint failure, not a domain error reusing the class. */
   readonly isCheckpointFailure: (error: unknown) => boolean;
   readonly replayed: (id: string, step: StepRecord) => void;
@@ -82,6 +84,7 @@ export function createMap(dependencies: MapDependencies): WorkflowContext['map']
     save,
     acceptCodeChange,
     nextSeq,
+    frame,
     isCheckpointFailure,
     replayed,
     replayChild,
@@ -216,13 +219,21 @@ export function createMap(dependencies: MapDependencies): WorkflowContext['map']
             keys: digest(keys),
           };
           const prior = Object.hasOwn(maps, journalId) ? maps[journalId] : undefined;
+          const priorCommitted =
+            prior?.status === 'completed' ||
+            prior?.items.some((item) => item.status === 'completed') === true;
+          // Committed work never moves across a frame boundary. A journal without a frame ran at the
+          // root or predates the field; the two cannot be told apart, so it is left as is (#240).
+          const owner = frame();
+          if (priorCommitted && prior.frame !== undefined && prior.frame !== owner)
+            throw validationError(
+              `Settled map ${journalId} committed work in child frame ${prior.frame} but is now invoked ${owner === null ? 'at the root' : `in child frame ${owner}`}; a settled map stays in the frame that committed it. Use a new run or an explicit fork.`,
+            );
           const decision = decideSettledMapReplay({
             saved: prior && {
               fingerprint: prior.fingerprint,
               components: prior.components,
-              committed:
-                prior.status === 'completed' ||
-                prior.items.some((item) => item.status === 'completed'),
+              committed: priorCommitted,
             },
             fingerprint,
             components,
@@ -258,10 +269,17 @@ export function createMap(dependencies: MapDependencies): WorkflowContext['map']
               }
               break;
           }
-          // A reused journal keeps its first-use order; a new or reset one takes the next seq.
+          // A reused journal keeps its first-use order; a new or reset one takes the next seq. The
+          // journal records the active frame, which a bound view's map ID need not fall under, and
+          // a reused one with nothing committed adopts it: whichever frame commits owns it (#240).
+          if (journal && !priorCommitted && (journal.frame ?? null) !== owner) {
+            if (owner === null) delete journal.frame;
+            else journal.frame = owner;
+          }
           journal ??= {
             fingerprint,
             components,
+            ...(owner === null ? {} : { frame: owner }),
             seq: nextSeq(),
             status: 'running',
             items: data.map(() => ({ status: 'running', outcome: null, steps: [], maps: [] })),

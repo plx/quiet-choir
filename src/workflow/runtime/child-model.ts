@@ -69,6 +69,23 @@ export interface ChildSettledRecord {
   readonly children: readonly string[];
 }
 
+/** A prior identity of an unfinished child frame, replaced when a resume invoked it under a new one. */
+export interface ChildRedefinition {
+  /** The replaced child name and compatibility version. */
+  readonly workflow: {
+    /** Prior child name. */
+    readonly name: string;
+    /** Prior child compatibility version. */
+    readonly version: string;
+  };
+  /** Prior input/output schema identity. */
+  readonly schemaDigest: string;
+  /** Prior digest of the normalized, schema-validated input. */
+  readonly inputDigest: string;
+  /** When the resume replaced this identity. */
+  readonly redefinedAt: string;
+}
+
 /** Persisted inline invocation; the workflow body replays, while named effects retain their outcomes. */
 export interface ChildRecord {
   /** Whether the parent declares this child, allowing identity checks when a settled mapper is skipped. */
@@ -100,6 +117,12 @@ export interface ChildRecord {
    * resume replays the outcome and claims the owned IDs without running the body.
    */
   settled?: ChildSettledRecord;
+  /**
+   * Prior identities of this frame, oldest first. A failed, cancelled or superseded frame that owns
+   * no completed or settled work may be invoked under a changed name, version, input or schemas;
+   * the identity it replaced is appended here. Absent until the first redefinition.
+   */
+  redefinitions?: ChildRedefinition[];
   /**
    * Last recorded frame state. Suspension applies to the enclosing run. `superseded` is terminal
    * until a later execution invokes the frame again: a successfully completed run did not invoke

@@ -29,10 +29,11 @@ deterministically to a SHA-256 namespace; recorded parent links preserve the rea
 scopes and historical effect IDs retain their existing spellings.
 
 Resume reruns child bodies, reusing their named effects. A child is not a separately cached output
-or a JavaScript continuation. Its name, version, validated input and I/O schemas must still match;
-source acceptance does not waive these checks. Completed runs with frames also revisit the body so
-embedded callers cannot silently change a direct child's version. Removing a completed empty frame
-is detected even if it contained no effects.
+or a JavaScript continuation. Its name, version, validated input and I/O schemas must still match
+unless the frame is unfinished and owns no terminal work (see below); source acceptance does not
+waive these checks. Completed runs with frames also revisit the body so embedded callers cannot
+silently change a direct child's version. Removing a completed empty frame is detected even if it
+contained no effects.
 
 Inside a settled map or a settled child frame, every invoked child must appear in its immediate
 parent's `children` declaration. A committed mapper or settled frame is not invoked again: its saved
@@ -47,10 +48,19 @@ successful completion marks it `superseded` (terminal; `finishedAt` is the super
 earlier `error` is kept). A skipped frame that holds a completed or settled-failed step, or a
 completed or settled frame, still fails the run as a control-flow change. A frame that the
 completing body invoked but never awaited is `cancelled` instead. If a fixed child's frame failed,
-keep its name, version, input and schemas and resume with `--accept-code-change`; changing them is
-refused. Completed leaf effects survive. Infrastructure and unobserved operation failures retain the
-runtime's existing fatal rules. A child question can suspend the whole run at quiescence, then
-resume under the same frame after an answer arrives.
+either keep its name, version, input and schemas and resume with `--accept-code-change`, or change
+them: a `failed`, `cancelled` or `superseded` frame may adopt a new name, version, input or schemas
+when it is not settled, no completed settled-map item or settled frame owns it or an ancestor, and
+nothing beneath it (its own steps, the settled maps it ran, even through a bound `within` view, and
+descendant frames) is completed or settled. The frame then records the replaced identity in
+`redefinitions: [{ workflow, schemaDigest, inputDigest, redefinedAt }]`, oldest first, kept across
+later resumes. Running, suspended, completed and settled frames, frames holding terminal work and
+owned frames still refuse the change (`run.incompatible` when declared), and the refusal names the
+work or owner that blocks it; a parent change at the same frame ID is always refused. The CLI source
+gate still needs `--accept-code-change` for the edited source. Completed leaf effects survive.
+Infrastructure and unobserved operation failures retain the runtime's existing fatal rules. A child
+question can suspend the whole run at quiescence, then resume under the same frame after an answer
+arrives.
 
 A `try/catch` around `ctx.workflow` is not a durable decision: the frame stays `failed`, its body
 runs again on resume, and a healed failure takes the other branch. When the fallback must be
@@ -88,14 +98,17 @@ profile definitions remain the source of its requested tools; mapping never prom
 additional parent tools. Workflow JavaScript remains trusted operator code, not a security sandbox.
 
 Events carry `frame`; `child.started`, `child.completed`, `child.failed` and `child.settled` (a
-settled failure of an `onError: 'return'` frame) follow frame saves, and `child.superseded` follows
-`run.completed` for each frame the completed run retired. Phase/log observations retain their frame,
-and imperative phase updates stay local to each child. `inspect --json` includes the raw `children`
-ledger. Text inspection and compact JSON show the tree with status, step counts, reported usage,
-unknown costs and phases; a settled frame is marked `(settled)` and its compact row carries
-`settled: { ok: true }` or `{ ok: false, error }`. Frame totals include descendants, so do not add
-every row together. Child records use individual journal changes rather than rewriting the entire
-child collection. Storage remains format 7 with replay contract 6.
+settled failure of an `onError: 'return'` frame) follow frame saves, `child.redefined` (message
+`kid@1 -> kid@2: running`) precedes `child.started` when a frame adopted a new identity, and
+`child.superseded` follows `run.completed` for each frame the completed run retired. Phase/log
+observations retain their frame, and imperative phase updates stay local to each child.
+`inspect --json` includes the raw `children` ledger. Text inspection and compact JSON show the tree
+with status, step counts, reported usage, unknown costs and phases; a settled frame is marked
+`(settled)` and its compact row carries `settled: { ok: true }` or `{ ok: false, error }`. A
+redefined frame carries its `redefinitions`, and its tree row ends with
+`redefined from kid@1 at <time>`. Frame totals include descendants, so do not add every row
+together. Child records use individual journal changes rather than rewriting the entire child
+collection. Storage remains format 7 with replay contract 6.
 
 ## Describe, discover and execute
 

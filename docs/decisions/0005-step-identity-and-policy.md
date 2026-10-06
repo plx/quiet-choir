@@ -4,7 +4,8 @@
 
 Accepted. Supersedes the all-options/retry compatibility rule in ADR 0002; other durability and
 ownership guarantees remain in force. Superseded in part by
-[ADR 0007](0007-durable-failure-outcomes.md) (its checkpoint-format choice).
+[ADR 0007](0007-durable-failure-outcomes.md) (its checkpoint-format choice). Extended by #240: the
+unfinished-identity rule also covers inline child frames (see the note under Decision).
 
 ## Context
 
@@ -21,6 +22,13 @@ hashes and name changed components. Timeout, Claude turns/budget, retry, and ada
 are execution policy. They never invalidate completed results. An unfinished identity may change;
 preserve its old hashes and timestamp and emit `step.redefined` after saving. On successful body
 replay, unvisited unfinished records become `superseded`; unvisited completed records still fail.
+
+The same rule applies to inline child frames (#240): a failed, cancelled or superseded frame that no
+committed outcome owns and whose subtree holds no completed or settled work may change its name,
+version, input or schemas. The replaced identity goes to the frame's `redefinitions` history and
+`child.redefined` is emitted after saving. Running, suspended, completed and settled frames keep
+their identity. The predicate and the frame lifecycle are in the #240 amendment of
+[ADR 0026](0026-inline-children-and-definition-registry.md).
 
 Resolve policy in the core from adapter-reported defaults, call-site values, then ordered matching
 run overrides. Adapters report defaults through optional `Harness.policyDefaults`; the core never

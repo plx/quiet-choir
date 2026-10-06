@@ -77,6 +77,7 @@ describe('formatEventLine', () => {
     'agent.progress',
     'agent.finished',
     'child.started',
+    'child.redefined',
     'child.completed',
     'child.failed',
     'child.settled',

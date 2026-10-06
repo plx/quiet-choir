@@ -259,7 +259,7 @@ export function formatRunSummary(
     lines.push(`  ${run.workflow.name}@${run.workflow.version}: ${run.status}`);
     for (const child of run.children)
       lines.push(
-        `${'  '.repeat(Math.min(child.depth + 1, 32))}${child.label}: ${child.workflow.name}@${child.workflow.version} ${child.status}${child.settled ? ' (settled)' : ''}; ${String(child.steps)} steps; ${child.usage.costUsd === null ? 'unknown cost' : `$${child.usage.costUsd.toFixed(4)} reported`}; ${String(child.usage.unknownCostAttempts)} unknown cost${child.phases.length ? `; phases: ${child.phases.join(', ')}` : ''} [${child.id}]`,
+        `${'  '.repeat(Math.min(child.depth + 1, 32))}${child.label}: ${child.workflow.name}@${child.workflow.version} ${child.status}${child.settled ? ' (settled)' : ''}; ${String(child.steps)} steps; ${child.usage.costUsd === null ? 'unknown cost' : `$${child.usage.costUsd.toFixed(4)} reported`}; ${String(child.usage.unknownCostAttempts)} unknown cost${child.phases.length ? `; phases: ${child.phases.join(', ')}` : ''}${child.redefinitions?.length ? `; redefined from ${child.redefinitions.map((prior) => `${prior.workflow.name}@${prior.workflow.version} at ${prior.redefinedAt}`).join(', ')}` : ''} [${child.id}]`,
       );
   }
   const usage = run.usage;

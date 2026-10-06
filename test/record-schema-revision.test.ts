@@ -51,6 +51,8 @@ const revisionDigests: Readonly<Record<string, string>> = {
   '6': '14ecaff04c78634fdbaaca9796e99503df2c253e4c7db6208169ca21b74a9b1a',
   // Revision 7 (#227) changed only the nested instruction source kind (claude-md), so it repeats 6.
   '7': '14ecaff04c78634fdbaaca9796e99503df2c253e4c7db6208169ca21b74a9b1a',
+  // Revision 8 (#240) changed only nested shapes (children redefinitions, maps frame), so it repeats 7.
+  '8': '14ecaff04c78634fdbaaca9796e99503df2c253e4c7db6208169ca21b74a9b1a',
 };
 // digest(readRun(...)) of the installed pre-revision fixture, computed on unmodified main 91a6d2f.
 const preRevisionReadDigest = '714b6cb068de5c933b7ba04a26d1f931f589f7c9910f76f0e5c8cc493eb13016';
@@ -66,6 +68,8 @@ const revisionFourReadDigest = '813c73ae37120ba658d75502e4a0757e6657a93d9f1e69ab
 const revisionFiveReadDigest = 'b249d588cfd7dbcd1375f27b3dfccb9634b502ddd174c689ea2b4108cebadea0';
 // digest(readRun(...)) of the installed revision-six fixture, computed on unmodified main 2c6be06.
 const revisionSixReadDigest = 'aa4a92b3d3d284be8403ccbd2b3ad86cd048414202074063d95cbbf17089d855';
+// digest(readRun(...)) of the installed revision-seven fixture, computed on unmodified main 61fb951.
+const revisionSevenReadDigest = 'af4c0ae3367ad8f941f37a22168fa0ad06a33094d1c33abf816a13cb24d0d256';
 
 const sha256 = (value: string): string => createHash('sha256').update(value).digest('hex');
 
@@ -1249,6 +1253,76 @@ describe('revision-six records (instruction source kinds before claude-md, #227)
       { harness: 'codex', cwd: '/', sources },
       { harness: 'claude', cwd: '/', sources: [claudeMd] },
     ]);
+    expect(recordSchemaDrift(saved)).toBeUndefined();
+    expect((await rawSnapshot(runId))['schemaRevision']).toBe(SUPPORTED_SCHEMA_REVISION);
+  });
+});
+
+describe('revision-seven records (child frames before redefinitions, #240)', () => {
+  const runId = 'revision-seven';
+  async function install(): Promise<void> {
+    const fixture = await readFile(
+      new URL('./fixtures/schema-revision/revision-seven-checkpoint.json', import.meta.url),
+      'utf8',
+    );
+    await mkdir(join(stateDir, runId));
+    await writeFile(paths(runId).snapshot, fixture);
+    await writeFile(paths(runId).journal, '');
+  }
+  const root = (version: string) => {
+    const kid = defineWorkflow({
+      name: 'kid',
+      version,
+      input: z.null(),
+      output: z.null(),
+      run: () => Promise.resolve(null),
+    });
+    return defineWorkflow({
+      name: 'schema-revision',
+      version: '1',
+      input: z.null(),
+      output: z.null(),
+      children: [kid],
+      async run(ctx) {
+        await ctx.now('prepare');
+        await ctx.workflow('kid', kid, null);
+        return null;
+      },
+    });
+  };
+
+  it('read exactly as on main, with a failed frame and no redefinitions', async () => {
+    await install();
+    const record = await readRun({ stateDir, runId });
+    expect(record.schemaRevision).toBe(7);
+    expect(recordSchemaDrift(record)).toBeUndefined();
+    expect(digest(record)).toBe(revisionSevenReadDigest);
+    expect(record.children?.['kid']).toMatchObject({
+      status: 'failed',
+      workflow: { name: 'kid', version: '1' },
+    });
+    expect(record.children?.['kid']).not.toHaveProperty('redefinitions');
+  });
+
+  it('resume with a bumped child version, recording the old identity, saved with the current revision', async () => {
+    await install();
+    const original = await readRun({ stateDir, runId });
+    const result = await runWorkflow(root('2'), { ...options, stateDir, runId, resume: true });
+    expect(result.status).toBe('completed');
+    const saved = await readRun({ stateDir, runId });
+    expect(saved.steps['prepare']).toEqual(original.steps['prepare']);
+    const prior = original.children?.['kid'];
+    expect(saved.children?.['kid']).toMatchObject({
+      status: 'completed',
+      workflow: { name: 'kid', version: '2' },
+      redefinitions: [
+        {
+          workflow: { name: 'kid', version: '1' },
+          schemaDigest: prior?.schemaDigest,
+          inputDigest: prior?.inputDigest,
+        },
+      ],
+    });
     expect(recordSchemaDrift(saved)).toBeUndefined();
     expect((await rawSnapshot(runId))['schemaRevision']).toBe(SUPPORTED_SCHEMA_REVISION);
   });

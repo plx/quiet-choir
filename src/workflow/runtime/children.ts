@@ -15,6 +15,7 @@ import { CancelledError, type FailureOrigins, type MapStepError } from './fan-ou
 import { ReplaySkippedError, RunRefusedError } from './run-errors.js';
 import { duplicateStepId } from './identity.js';
 import { ownedRecords, settledFailure, settlesFailure } from './settled-outcome.js';
+import { frameRedefinition, type FrameRedefinition } from './child-identity.js';
 import type { Settled } from './model.js';
 
 interface Frame {
@@ -54,7 +55,12 @@ interface Dependencies {
   readonly isolatePhase: <T>(body: () => Promise<T>) => Promise<T>;
   readonly emit: (
     type:
-      'child.started' | 'child.completed' | 'child.failed' | 'child.settled' | 'child.superseded',
+      | 'child.started'
+      | 'child.redefined'
+      | 'child.completed'
+      | 'child.failed'
+      | 'child.settled'
+      | 'child.superseded',
     id: string,
     child: ChildRecord,
   ) => void;
@@ -72,14 +78,30 @@ interface Supersession {
 
 const SUPERSEDED_REASON = 'Superseded: the completed workflow no longer invoked this child frame.';
 
+/** At most three IDs, then a count of the rest. */
+function sample(ids: readonly string[]): string {
+  const shown = ids.slice(0, 3).join(', ');
+  return ids.length > 3 ? `${shown} and ${String(ids.length - 3)} more` : shown;
+}
+
 /**
  * Resume guidance for an identity refusal on a frame that never completed. A settled frame is
- * terminal, so accepting a code change cannot retry it.
+ * terminal, so accepting a code change cannot retry it. For a failed, cancelled or superseded frame
+ * refused under the unfinished-identity rule, it also says why the identity cannot be redefined.
  */
-function unfinishedHint(saved: ChildRecord, alternatives: boolean): string {
-  return saved.status === 'completed' || saved.settled !== undefined
-    ? ''
-    : ` The saved frame is ${saved.status}, not completed: to retry a fixed child, keep its name, version, input and schemas and resume with --accept-code-change${alternatives ? '; otherwise use a new run or an explicit fork' : ''}.`;
+function unfinishedHint(
+  saved: ChildRecord,
+  alternatives: boolean,
+  refusal?: FrameRedefinition,
+): string {
+  if (saved.status === 'completed' || saved.settled !== undefined) return '';
+  const reason =
+    refusal?.redefinable === false && refusal.reason === 'terminal-work'
+      ? ` Its identity cannot be redefined because it holds completed or settled work (${sample(refusal.terminal)}).`
+      : refusal?.redefinable === false && refusal.reason === 'owned'
+        ? ` Its identity cannot be redefined because the committed ${refusal.owner} owns it.`
+        : '';
+  return ` The saved frame is ${saved.status}, not completed: to retry a fixed child, keep its name, version, input and schemas and resume with --accept-code-change${alternatives ? '; otherwise use a new run or an explicit fork' : ''}.${reason}`;
 }
 
 const optionsSchema = z.strictObject({
@@ -124,10 +146,17 @@ export class RunChildren {
           digest({ input: schemaJson(current.input), output: schemaJson(current.output) }) !==
             saved.schemaDigest
         ) {
+          // An unfinished frame owning no terminal work may adopt the new identity; the body
+          // records the redefinition only when it invokes the frame again (#240).
+          const verdict = frameRedefinition(this.#deps.record, id);
+          if (verdict.redefinable) {
+            if (current) pending.push({ definition: current, parent: id });
+            continue;
+          }
           const error = new RunRefusedError(
             'run.incompatible',
             this.#deps.record.id,
-            `Child frame ${id} changed: ${saved.workflow.name}@${saved.workflow.version} -> ${current ? `${current.name}@${current.version}` : 'no matching declared child'}; declared child identity must match on resume.${unfinishedHint(saved, true)}`,
+            `Child frame ${id} changed: ${saved.workflow.name}@${saved.workflow.version} -> ${current ? `${current.name}@${current.version}` : 'no matching declared child'}; declared child identity must match on resume.${unfinishedHint(saved, true, verdict)}`,
           );
           this.#deps.origins.markFatal(error);
           throw error;
@@ -229,18 +258,25 @@ export class RunChildren {
         // switch, for example to settle a failure on resume (ADR 0007).
         const priorMode = prior?.onError ?? 'throw';
         const modeChanged = prior?.settled !== undefined && priorMode !== mode;
-        if (
-          prior &&
+        // A parent or settled-mode change is structural and always refused; a changed identity is
+        // accepted for an unfinished frame that owns no terminal work (ADR 0005, #240).
+        const structural =
+          prior !== undefined && (prior.parent !== (parent?.id ?? null) || modeChanged);
+        const identityChanged =
+          prior !== undefined &&
           (prior.workflow.name !== definition.name ||
             prior.workflow.version !== definition.version ||
             prior.inputDigest !== inputDigest ||
-            prior.schemaDigest !== schemaDigest ||
-            prior.parent !== (parent?.id ?? null) ||
-            modeChanged)
-        )
-          invalid(
-            `Child frame ${id} changed: ${prior.workflow.name}@${prior.workflow.version} -> ${definition.name}@${definition.version}${modeChanged ? ` (onError ${priorMode} -> ${mode})` : ''}; child name, version, input and schemas, and the onError of a settled frame, must match on resume. Use a new run or an explicit fork.${unfinishedHint(prior, false)}`,
-          );
+            prior.schemaDigest !== schemaDigest);
+        let redefined = false;
+        if (prior && (structural || identityChanged)) {
+          const verdict = structural ? undefined : frameRedefinition(d.record, id);
+          if (verdict?.redefinable) redefined = true;
+          else
+            invalid(
+              `Child frame ${id} changed: ${prior.workflow.name}@${prior.workflow.version} -> ${definition.name}@${definition.version}${modeChanged ? ` (onError ${priorMode} -> ${mode})` : ''}; child name, version, input and schemas, and the onError of a settled frame, must match on resume. Use a new run or an explicit fork.${unfinishedHint(prior, false, verdict)}`,
+            );
+        }
         // Dynamic parents become known only at invocation. Validate their declared descendants
         // before a committed settled map can skip those descendants' bodies.
         this.#validateDeclared(definition, id);
@@ -263,6 +299,21 @@ export class RunChildren {
         }
         // Captured at invocation, like a settled map's parent signal.
         const parentSignal = d.scopes.signal;
+        const startedAt = new Date().toISOString();
+        // Carry the history across every re-invocation; a redefinition appends the replaced identity.
+        const redefinitions = [
+          ...(prior?.redefinitions ?? []),
+          ...(prior && redefined
+            ? [
+                {
+                  workflow: { ...prior.workflow },
+                  schemaDigest: prior.schemaDigest,
+                  inputDigest: prior.inputDigest,
+                  redefinedAt: startedAt,
+                },
+              ]
+            : []),
+        ];
         const frame: ChildRecord = {
           declared,
           label: leaf,
@@ -272,8 +323,9 @@ export class RunChildren {
           inputDigest,
           schemaDigest,
           ...(mode === 'return' ? { onError: 'return' as const } : {}),
+          ...(redefinitions.length ? { redefinitions } : {}),
           status: 'running',
-          startedAt: new Date().toISOString(),
+          startedAt,
           finishedAt: null,
           error: null,
         };
@@ -284,6 +336,7 @@ export class RunChildren {
           writable: true,
         });
         await d.save();
+        if (redefined) d.emit('child.redefined', id, frame);
         d.emit('child.started', id, frame);
         // A settled frame's owner requires declared descendants, as a settled map item does.
         const owner = d.scopes.create(d.scopes.signal, mode === 'return');

@@ -392,4 +392,7 @@ already persisted as running; checkpoints do not distinguish waiting from native
 `inspect --json` includes `children`; text inspection renders the root and child tree with status,
 phase labels, step counts and known/unknown usage. Child totals include descendants and must not be
 added across tree levels. A changed child version/schema remains incompatible after source
-acceptance. See [composition and recovery](child-workflows.md).
+acceptance, except on a failed, cancelled or superseded frame that owns no completed or settled
+work: that frame adopts the new identity and lists the replaced ones in `redefinitions`, shown on
+its tree row as `redefined from kid@1 at <time>`. See
+[composition and recovery](child-workflows.md).

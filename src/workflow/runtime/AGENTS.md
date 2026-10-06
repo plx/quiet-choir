@@ -170,13 +170,15 @@ workflow data. Resume marks prior running agent attempts interrupted. See
 
 Inline children own frame records and operation scopes, not cached bodies or separate runs. Keep
 child I/O/name/version identity checked on replay, including declared children inside skipped
-settled mappers. Every child in a settled map or settled child frame must be declared. A settled
-frame (`onError: 'return'`) is terminal: replay claims its owned IDs without running the body, and
-it settles only under the settled map's predicate (`settled-outcome.ts`). Child namespaces compact
-independently from ordinary scope IDs; preserve parent links and frame attribution. Delegation may
-narrow parent roles and limits but never create authority for descendants. Children share the root's
-limiter, budgets, quiescence and cancellation; parked child frames cannot keep a run artificially
-active. Journal child changes individually. See
+settled mappers; only an unfinished, unowned frame with no terminal work beneath it may adopt a new
+identity with history, and `child-identity.ts` is the single place that rule is encoded. Every child
+in a settled map or settled child frame must be declared. A settled frame (`onError: 'return'`) is
+terminal: replay claims its owned IDs without running the body, and it settles only under the
+settled map's predicate (`settled-outcome.ts`). Child namespaces compact independently from ordinary
+scope IDs; preserve parent links and frame attribution. Delegation may narrow parent roles and
+limits but never create authority for descendants. Children share the root's limiter, budgets,
+quiescence and cancellation; parked child frames cannot keep a run artificially active. Journal
+child changes individually. See
 [ADR 0026](../../../docs/decisions/0026-inline-children-and-definition-registry.md).
 
 Registered harnesses share the existing effect path; never introduce untracked custom dispatch.

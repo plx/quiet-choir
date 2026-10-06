@@ -1654,6 +1654,67 @@ it('shows a compact settled outcome on child rows and marks settled frames in th
   expect(lines.find((line) => line.includes('[ok]'))).toContain('ok: kid@1 completed (settled);');
 });
 
+it('shows a child frame redefinition history in JSON rows and on its tree row (#240)', () => {
+  const later = '2026-01-02T00:00:00.000Z';
+  const redefinitions = [
+    {
+      workflow: { name: 'kid', version: '1' },
+      schemaDigest: 's1',
+      inputDigest: 'i1',
+      redefinedAt: time,
+    },
+    {
+      workflow: { name: 'kid', version: '2' },
+      schemaDigest: 's2',
+      inputDigest: 'i2',
+      redefinedAt: later,
+    },
+  ];
+  const run: RunRecord = {
+    ...record(),
+    children: {
+      kid: {
+        declared: true,
+        label: 'kid',
+        workflow: { name: 'kid', version: '3' },
+        parent: null,
+        depth: 1,
+        inputDigest: 'i3',
+        schemaDigest: 's3',
+        redefinitions,
+        status: 'completed',
+        startedAt: later,
+        finishedAt: later,
+        error: null,
+      },
+      plain: {
+        declared: true,
+        label: 'plain',
+        workflow: { name: 'plain', version: '1' },
+        parent: null,
+        depth: 1,
+        inputDigest: 'i',
+        schemaDigest: 's',
+        status: 'completed',
+        startedAt: time,
+        finishedAt: time,
+        error: null,
+      },
+    },
+  };
+  const summary = summarizeRun(run, unlocked);
+  const rows = JSON.parse(JSON.stringify(summary)) as { children: Record<string, unknown>[] };
+  expect(rows.children[0]).toMatchObject({ id: 'kid', redefinitions });
+  expect(rows.children[1]).not.toHaveProperty('redefinitions');
+  const lines = formatRunSummary(summary).split('\n');
+  const row = lines.find((line) => line.includes('[kid]'));
+  expect(row).toContain('kid: kid@3 completed;');
+  expect(row).toMatch(
+    new RegExp(`; redefined from kid@1 at ${time}, kid@2 at ${later} \\[kid\\]$`, 'u'),
+  );
+  expect(lines.find((line) => line.includes('[plain]'))).not.toContain('redefined');
+});
+
 it('lists tolerated poll errors among recent entries and prints them with their wait', () => {
   const entry = (
     type: 'log' | 'phase' | 'wait.tolerated' | 'run.started',

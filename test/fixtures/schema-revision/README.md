@@ -194,6 +194,38 @@ was empty, so only `run.json` is checked in. Stack paths are scrubbed to `/fixtu
 was formatted with Prettier; its read-view digest in `test/record-schema-revision.test.ts` was
 computed on the same unmodified main from this file.
 
+`revision-seven-checkpoint.json` was generated the same way at origin/main `61fb951`, before child
+frame redefinition (#240) added the nested `redefinitions` history to `children` in revision 8. Its
+run ID is `revision-seven`, and it ran this definition, so it carries `schemaRevision: 7`, one
+completed local effect `prepare` and one failed declared child frame `kid` (`kid@1`, no effects)
+that failed the run:
+
+```ts
+const child = defineWorkflow({
+  name: 'kid',
+  version: '1',
+  input: z.null(),
+  output: z.null(),
+  run: () => Promise.reject<null>(new Error('fixture tail')),
+});
+defineWorkflow({
+  name: 'schema-revision',
+  version: '1',
+  input: z.null(),
+  output: z.null(),
+  children: [child],
+  async run(ctx) {
+    await ctx.now('prepare');
+    await ctx.workflow('kid', child, null);
+    return null;
+  },
+});
+```
+
+The journal was empty, so only `run.json` is checked in. Stack paths are scrubbed to `/fixture/...`
+and the file was formatted with Prettier; its read-view digest in
+`test/record-schema-revision.test.ts` was computed on the same unmodified main from this file.
+
 `record-keys.json` lists the top-level run-record keys of each schema revision. Adding or changing a
 persisted run-level field adds a revision there and bumps `SUPPORTED_SCHEMA_REVISION`; a revision
 that only changes a nested shape repeats the previous key list. See `docs/storage.md`.
