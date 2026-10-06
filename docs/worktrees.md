@@ -313,7 +313,8 @@ sibling creation from observing partially written Git metadata. Calls in one pro
 memory; then each takes the repository lock `<common Git dir>/quiet-choir/worktree-admin.lock`,
 which excludes every other quiet-choir process using that repository, whatever its state directory
 or linked checkout. So `workflow clean` and live runs serialize against each other. The lock reuses
-the run lock's crash-atomic design: a dead or crashed owner's lock is recovered automatically, and a
+the run lock's crash-atomic design: a dead or crashed owner's lock is recovered automatically, as is
+one whose release failed in a still-running process (the failed release marks it released), and a
 live owner is waited on (the wait ends only with cancellation, except that cleanup's wait is bounded
 at 30 s and then reports a warning). An owner on another host, or one whose liveness or metadata
 cannot be verified, fails the attempt after about 30 s with the command that clears it once no
