@@ -24,7 +24,8 @@ interruption, which is due at once.
 `RunOptions.maxWindowUtilization` and `--max-window-utilization <0..1|off>` on `execute` (and so
 `start`) and `resume`. Like the other caps it is outside identity, kept by a resume or tick that
 omits it, cleared by `off` (null) and by `--policy-reset`. `launch.policy` is not its home: that
-field is CLI metadata replaced on every execution and dropped by an embedder's resume (ADR 0035),
+field is CLI metadata replaced on every execution and dropped by an embedder's resume (ADR 0035)
+(until #258; an embedder's launch without a policy now keeps it, see ADR 0035's #258 amendment),
 while `runBudget` is already merged by the runtime for every execution, including tick's.
 
 **Per harness, at admission.** With the cap set, admission takes the budgeted path of ADR 0025.
@@ -87,7 +88,8 @@ or resumed record. A revision-1 build refuses to rewrite a revision-2 record, by
   that one assignment after `questions.close()` is enough, with no new top-level field and no change
   to the question pump.
 - **The threshold in `launch.policy` (ADR 0035).** It would be CLI-only and lost on an embedder's
-  resume; `runBudget` is already sticky at the runtime level.
+  resume (at the time; #258 now keeps it across an embedder's resume that states none, but it stays
+  CLI-only); `runBudget` is already sticky at the runtime level.
 - **Sleep in-process until the reset.** A blocked process cannot be resumed by tick and holds the
   run's lock for hours.
 - **Suspend on a 429 attempt failure, or gate on `status`.** Out of scope for #168: the reset of a
