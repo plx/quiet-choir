@@ -215,7 +215,16 @@ once per run. Completed-only replay does not launch version probes. Custom harne
 optional `metadata(request, invocation)`; the invocation supplies the run's discovery signal and
 process-registration port. Older records remain readable. Discovery is shared by the run: an aborted
 map scope stops waiting for it, and the run aborts `invocation.signal` and awaits it before
-releasing ownership when no effect still needs the result. See
+releasing ownership when no effect still needs the result. They can also implement optional
+`projectInstructions(request, invocation)` (registered adapters:
+`projectInstructions(request, signal, invocation)`), which the runtime calls once per distinct
+resolved `request.cwd` per run invocation, concurrently with `metadata` and before the first live
+call there, with the same shared discovery signal. It returns `{ sources, warnings? }` as paths and
+digests, or `undefined` to record nothing. The run stores each result in `projectInstructions` (at
+most 128 entries, oldest dropped) and adds its warnings to `harnessWarnings`; a rejection becomes
+one warning and never fails the call. `CliHarness` reports Codex project `AGENTS.md` files here
+without spawning a process, and nothing for Claude; its `metadata` reports only user-level Codex
+files. See [harness isolation](harness-isolation.md) for the discovery rules and
 [process lifecycle](process-lifecycle.md) for adapter migration and orphan recovery.
 
 Doctor probes use the same first/second SIGINT, SIGTERM and SIGHUP cleanup as workflow execution,

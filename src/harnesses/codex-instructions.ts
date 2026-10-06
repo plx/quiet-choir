@@ -35,22 +35,26 @@ import type { InstructionSource } from '../harness-kit.js';
  * content, which errs toward recording a source. Inherit-mode config keys (project_root_markers,
  * project_doc_fallback_filenames, project_doc_max_bytes) can change what Codex loads and are not
  * modelled; this is a diagnostic, never part of step identity.
+ *
+ * The two levels are detected separately: the runtime records user-level sources once per harness
+ * registration per run invocation (through adapter metadata) and project-level sources once per
+ * distinct working directory (through the adapter's projectInstructions hook).
  */
 
 /** Skills listed individually before the remainder is only counted. */
 const maxSkills = 64;
 
-/** Inputs for {@link detectCodexInstructionSources}. @internal */
+/** Inputs for the Codex instruction detectors. @internal */
 export interface CodexInstructionOptions {
   /** Resolved Codex configuration directory. */
   readonly codexHome: string;
-  /** Working directory of the Codex call; project files are searched from here. */
+  /** Working directory of the Codex call; project files are searched from here, and a relative codexHome resolves against it. */
   readonly cwd: string;
   /** Cancellation; an abort rejects instead of becoming a warning. */
   readonly signal?: AbortSignal | undefined;
 }
 
-/** Instruction sources found for one call, as paths and digests only. @internal */
+/** Instruction sources found by one detection, as paths and digests only. @internal */
 export interface CodexInstructionDetection {
   /** User sources first, then project sources from the Git root down to cwd. */
   readonly sources: readonly InstructionSource[];
@@ -117,42 +121,43 @@ export function codexHomeOf(env: Readonly<Record<string, string | undefined>>): 
   return join(home === undefined || home === '' ? homedir() : home, '.codex');
 }
 
-/** Detect the instruction files Codex loads whatever the isolation mode. @internal */
-export async function detectCodexInstructionSources(
-  options: CodexInstructionOptions,
-): Promise<CodexInstructionDetection> {
-  const { signal } = options;
-  const sources: InstructionSource[] = [];
-  const warnings: string[] = [];
-  let omittedSkills = 0;
-  let listed = 0;
-  const add = async (
+/** Collects sources and read warnings for one detection pass. */
+class Collector {
+  public readonly sources: InstructionSource[] = [];
+  public readonly warnings: string[] = [];
+  readonly #signal: AbortSignal | undefined;
+  public constructor(signal: AbortSignal | undefined) {
+    this.#signal = signal;
+  }
+  /** Record one file if present; returns whether it counts as found (a read problem does). */
+  public async add(
     scope: InstructionSource['scope'],
     kind: InstructionSource['kind'],
     path: string,
     ifBlank: 'record' | 'skip' = 'record',
-  ): Promise<boolean> => {
+  ): Promise<boolean> {
+    const signal = this.#signal;
     signal?.throwIfAborted();
     try {
       if ((await kindOf(path)) !== 'file') return false;
       const { sha256, hasContent } = await inspect(path, signal);
       if (!hasContent && ifBlank === 'skip') return false;
-      sources.push({ scope, kind, path, sha256 });
+      this.sources.push({ scope, kind, path, sha256 });
       return true;
     } catch (error) {
       signal?.throwIfAborted();
       if (absent(error)) return false;
-      warnings.push(failure(path, error));
+      this.warnings.push(failure(path, error));
       return true;
     }
-  };
-  // The override replaces the plain file in the same directory.
-  const agents = async (scope: InstructionSource['scope'], directory: string): Promise<void> => {
+  }
+  /** The override replaces the plain file in the same directory. */
+  public async agents(scope: InstructionSource['scope'], directory: string): Promise<void> {
     // Measured: a blank (empty or whitespace-only) user-level override is treated as absent and
     // falls back to AGENTS.md; a project-level override is selected by presence, so a blank one
     // still replaces AGENTS.md and is recorded. A blank AGENTS.md is never recorded.
     if (
-      await add(
+      await this.add(
         scope,
         'agents-override',
         join(directory, 'AGENTS.override.md'),
@@ -160,11 +165,23 @@ export async function detectCodexInstructionSources(
       )
     )
       return;
-    await add(scope, 'agents', join(directory, 'AGENTS.md'), 'skip');
-  };
+    await this.add(scope, 'agents', join(directory, 'AGENTS.md'), 'skip');
+  }
+}
 
+/**
+ * Detect the user-level files Codex loads whatever the isolation mode: CODEX_HOME AGENTS files and
+ * skill descriptions. `cwd` only resolves a relative `codexHome`. @internal
+ */
+export async function detectCodexUserInstructionSources(
+  options: CodexInstructionOptions,
+): Promise<CodexInstructionDetection> {
+  const { signal } = options;
+  const found = new Collector(signal);
+  let omittedSkills = 0;
+  let listed = 0;
   const home = resolve(options.cwd, options.codexHome);
-  await agents('user', home);
+  await found.agents('user', home);
 
   const skills = join(home, 'skills');
   try {
@@ -179,17 +196,28 @@ export async function detectCodexInstructionSources(
           if ((await kindOf(file)) === 'file') omittedSkills += 1;
         } catch (error) {
           signal?.throwIfAborted();
-          if (!absent(error)) warnings.push(failure(file, error));
+          if (!absent(error)) found.warnings.push(failure(file, error));
         }
         continue;
       }
-      if (await add('user', 'skill', file)) listed += 1;
+      if (await found.add('user', 'skill', file)) listed += 1;
     }
   } catch (error) {
     signal?.throwIfAborted();
-    if (!absent(error)) warnings.push(failure(skills, error));
+    if (!absent(error)) found.warnings.push(failure(skills, error));
   }
+  return { sources: found.sources, omittedSkills, warnings: found.warnings };
+}
 
+/**
+ * Detect the project-level AGENTS files Codex loads for one working directory, from the Git root
+ * down to `cwd`. It never reads CODEX_HOME and spawns no process. @internal
+ */
+export async function detectCodexProjectInstructionSources(
+  options: Pick<CodexInstructionOptions, 'cwd' | 'signal'>,
+): Promise<Pick<CodexInstructionDetection, 'sources' | 'warnings'>> {
+  const { signal } = options;
+  const found = new Collector(signal);
   const cwd = resolve(options.cwd);
   const directories = [cwd];
   try {
@@ -208,11 +236,27 @@ export async function detectCodexInstructionSources(
     }
   } catch (error) {
     signal?.throwIfAborted();
-    warnings.push(failure(join(cwd, '.git'), error));
+    found.warnings.push(failure(join(cwd, '.git'), error));
   }
-  for (const directory of directories) await agents('project', directory);
+  for (const directory of directories) await found.agents('project', directory);
+  return { sources: found.sources, warnings: found.warnings };
+}
 
-  return { sources, omittedSkills, warnings };
+/**
+ * Detect every instruction file Codex loads for one call whatever the isolation mode: the user
+ * files, then the project files for `cwd`. `workflow doctor` reports this combined view; the
+ * runtime records the two levels separately. @internal
+ */
+export async function detectCodexInstructionSources(
+  options: CodexInstructionOptions,
+): Promise<CodexInstructionDetection> {
+  const user = await detectCodexUserInstructionSources(options);
+  const project = await detectCodexProjectInstructionSources(options);
+  return {
+    sources: [...user.sources, ...project.sources],
+    omittedSkills: user.omittedSkills,
+    warnings: [...user.warnings, ...project.warnings],
+  };
 }
 
 /** One run warning naming the user-level files Codex loads even in restricted mode. @internal */

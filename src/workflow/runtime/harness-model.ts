@@ -14,6 +14,7 @@ import type {
   HarnessResponse,
   ImageAttachment,
   JsonValue,
+  ProjectInstructions,
 } from './model.js';
 import type { AccessClass, BuiltinProfile } from './profiles-model.js';
 import type { HarnessIsolation } from './agent-isolation.js';
@@ -79,6 +80,16 @@ export interface HarnessAdapter<O extends AgentOptions = AgentOptions> {
     signal: AbortSignal,
     invocation?: HarnessInvocation,
   ): Promise<HarnessMetadata>;
+  /**
+   * Optional project-level instruction detection for `request.cwd`, outside replay identity. Called
+   * once per distinct resolved cwd per run invocation with the run's shared discovery signal;
+   * `undefined` records nothing, and a rejection becomes a run warning.
+   */
+  projectInstructions?(
+    request: AgentRequest<O>,
+    signal: AbortSignal,
+    invocation?: HarnessInvocation,
+  ): Promise<ProjectInstructions | undefined>;
   /** Honor abort and reject native/protocol failures; runtime calls always supply ownership hooks. */
   invoke(
     request: AgentRequest<O>,

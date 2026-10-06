@@ -46,12 +46,14 @@ Codex 0.157.1 still reads the user's `CODEX_HOME/AGENTS.md` (or `AGENTS.override
 it unless empty or whitespace-only; blank files contribute nothing), the descriptions of skills
 under `CODEX_HOME/skills`, and project `AGENTS.md` or `AGENTS.override.md` in each directory from
 the nearest Git root down to `cwd` (only `cwd` when no `.git` entry exists), as well as managed
-layers. Results can therefore depend on who runs the workflow. Codex harness metadata records these
-files as paths and SHA-256 digests (`HarnessMetadata.instructionSources`, never contents); the run
-warns once about user-level files and again if they change on resume, and `workflow doctor` names
-them. Detection runs on the first live Codex call of each run, from that call's `cwd`, so project
-files reached from other directories are not re-detected, and inherit-mode config keys such as
-`project_doc_max_bytes` are not modelled.
+layers. Results can therefore depend on who runs the workflow. The run records these files as paths
+and SHA-256 digests, never contents. User-level files are detected once per run invocation and
+recorded under `harnesses.<name>.instructionSources`; the run warns once about them and again if
+they change on resume. Project files are detected once per distinct resolved `cwd` (including each
+runtime-owned worktree), before the first live call there, and recorded in the run's
+`projectInstructions` list (at most 128 entries, oldest dropped; a resume that detects the same
+`cwd` again replaces its entry). `workflow doctor` names both. None of it enters step identity or
+replay. Inherit-mode config keys such as `project_doc_max_bytes` are not modelled.
 
 Set Codex `instructions: 'none'` (on a call, a profile's `codex` options or `defaults.codex`) to run
 without these files. The adapter adds `--config project_doc_max_bytes=0`, which stops project

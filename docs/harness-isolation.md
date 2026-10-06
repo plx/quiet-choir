@@ -46,12 +46,14 @@ Codex 0.157.1 still reads the user's `CODEX_HOME/AGENTS.md` (or `AGENTS.override
 it unless empty or whitespace-only; blank files contribute nothing), the descriptions of skills
 under `CODEX_HOME/skills`, and project `AGENTS.md` or `AGENTS.override.md` in each directory from
 the nearest Git root down to `cwd` (only `cwd` when no `.git` entry exists), as well as managed
-layers. Results can therefore depend on who runs the workflow. Codex harness metadata records these
-files as paths and SHA-256 digests (`HarnessMetadata.instructionSources`, never contents); the run
-warns once about user-level files and again if they change on resume, and `workflow doctor` names
-them. Detection runs on the first live Codex call of each run, from that call's `cwd`, so project
-files reached from other directories are not re-detected, and inherit-mode config keys such as
-`project_doc_max_bytes` are not modelled.
+layers. Results can therefore depend on who runs the workflow. The run records these files as paths
+and SHA-256 digests, never contents. User-level files are detected once per run invocation and
+recorded under `harnesses.<name>.instructionSources`; the run warns once about them and again if
+they change on resume. Project files are detected once per distinct resolved `cwd` (including each
+runtime-owned worktree), before the first live call there, and recorded in the run's
+`projectInstructions` list (at most 128 entries, oldest dropped; a resume that detects the same
+`cwd` again replaces its entry). `workflow doctor` names both. None of it enters step identity or
+replay. Inherit-mode config keys such as `project_doc_max_bytes` are not modelled.
 
 Instruction-free Codex calls. Set `instructions: 'none'` on a Codex call, in a profile's `codex`
 options or in `defaults.codex` to run without these files. The adapter adds
@@ -87,9 +89,10 @@ Limitations: the lock coordinates quiet-choir processes that share a temporary d
 `codex` run refreshing the same `auth.json` at the same moment is covered only by the
 compare-and-swap re-read. Credentials Codex keeps in the OS keyring instead of `auth.json` are not
 copied, and that setup is unverified. Codex writes its own state files into each private home, so
-every call starts with a fresh installation ID. Metadata detection still describes the real home
-from the first Codex call of a run, so a workflow that uses only `'none'` still gets the user-level
-warning; `request.instructions` records what each call actually did.
+every call starts with a fresh installation ID. Detection still describes what Codex would load
+without the opt-out: user-level detection reads the real home, so a workflow that uses only `'none'`
+still gets the user-level warning, and `'none'` calls still get a `projectInstructions` entry for
+their `cwd`. `request.instructions` records what each call actually did.
 
 Neither mode confines the workflow's TypeScript, local callbacks, or `ctx.exec`. OS sandbox
 selection and tool grants remain separate controls. Custom harnesses must enforce the resolved mode

@@ -1,4 +1,5 @@
 import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { testInvocation } from './harness-invocation.js';
 import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -14,6 +15,7 @@ import {
   type ClaudeOptions,
   type CodexOptions,
   type Harness,
+  type ProjectInstructionsRecord,
 } from '../src/index.js';
 import {
   codexEffortValues,
@@ -22,6 +24,10 @@ import {
   tomlLiteral,
 } from '../src/workflow/runtime/agent-controls.js';
 import { snapshotImages } from '../src/workflow/runtime/images.js';
+import {
+  MAX_PROJECT_INSTRUCTIONS,
+  withProjectInstructions,
+} from '../src/workflow/runtime/record.js';
 import { parse } from 'smol-toml';
 let directory: string;
 const signal = new AbortController().signal;
@@ -850,4 +856,280 @@ it('releases an aborted scope from stalled discovery and drains discovery before
   const saved = await readRun(setup());
   expect(saved.status).toBe('failed');
   expect(saved.steps['inside']?.status).not.toBe('running');
+});
+
+/** A spy harness whose project detection reports one digest per cwd from `files`. */
+function projectSpy(files = new Map<string, string>()) {
+  const metadata = vi
+    .fn<NonNullable<Harness['metadata']>>()
+    .mockResolvedValue({ binary: 'fake', version: '1' });
+  const projectInstructions = vi
+    .fn<NonNullable<Harness['projectInstructions']>>()
+    .mockImplementation((request) => {
+      const text = files.get(basename(request.cwd));
+      return Promise.resolve({
+        sources:
+          text === undefined
+            ? []
+            : [
+                {
+                  scope: 'project' as const,
+                  kind: 'agents' as const,
+                  path: join(request.cwd, 'AGENTS.md'),
+                  sha256: createHash('sha256').update(text).digest('hex'),
+                },
+              ],
+      });
+    });
+  const invoke = vi.fn<Harness['invoke']>().mockResolvedValue(reply);
+  return { metadata, projectInstructions, invoke };
+}
+
+it('detects project instructions once per distinct cwd, sequentially and in a parallel map', async () => {
+  const harness = projectSpy(new Map([['a', 'rules a']]));
+  const definition = defineWorkflow({
+    ...base,
+    async run(ctx) {
+      for (const leaf of ['one', 'two', 'three'])
+        await ctx.codex.text(leaf, { prompt: leaf, cwd: 'a' });
+      await ctx.map('fan', [0, 1, 2, 3], { concurrency: 4 }, async (item) =>
+        ctx.codex.text('call', { prompt: String(item), cwd: 'b' }),
+      );
+      return 'done';
+    },
+  });
+  const run = await runWorkflow(definition, { ...setup(), harness });
+  expect(run.status).toBe('completed');
+  expect(harness.invoke).toHaveBeenCalledTimes(7);
+  expect(harness.metadata).toHaveBeenCalledTimes(1);
+  expect(harness.projectInstructions).toHaveBeenCalledTimes(2);
+  // Detection gets the run's shared discovery signal, not the call's scope signal.
+  const detectionSignal = harness.projectInstructions.mock.calls[0]?.[1].signal;
+  expect(detectionSignal).not.toBe(harness.invoke.mock.calls[0]?.[1].signal);
+  const record = await readRun(setup());
+  expect(record.projectInstructions).toEqual([
+    {
+      harness: 'codex',
+      cwd: join(record.cwd, 'a'),
+      sources: [expect.objectContaining({ path: join(record.cwd, 'a', 'AGENTS.md') })],
+    },
+    { harness: 'codex', cwd: join(record.cwd, 'b'), sources: [] },
+  ]);
+});
+
+it('keeps project detection out of step identity and replay', async () => {
+  const files = new Map([
+    ['a', 'rules a'],
+    ['b', 'rules b'],
+  ]);
+  let fail = true;
+  const definition = defineWorkflow({
+    ...base,
+    async run(ctx) {
+      const first = await ctx.codex.text('first', { prompt: 'x', cwd: 'a' });
+      await ctx.codex.text('second', { prompt: 'y', cwd: 'b' });
+      await ctx.step('gate', {
+        input: null,
+        schema: z.null(),
+        run() {
+          if (fail) throw new Error('gate failure');
+          return null;
+        },
+      });
+      await ctx.codex.text('third', { prompt: 'z', cwd: 'a' });
+      return first.output;
+    },
+  });
+  // A mid-run failure: the completed calls replay on resume even though project files changed.
+  const failing = projectSpy(files);
+  await expect(runWorkflow(definition, { ...setup(), harness: failing })).rejects.toThrow(
+    'gate failure',
+  );
+  const before = await readRun(setup());
+  files.set('a', 'rules a, edited');
+  files.set('b', 'rules b, edited');
+  fail = false;
+  const resumed = projectSpy(files);
+  const completed = await runWorkflow(definition, { ...setup(), resume: true, harness: resumed });
+  expect(completed.output).toBe('ok');
+  // Only the new call runs live: one metadata and one project detection, for its cwd.
+  expect(resumed.invoke).toHaveBeenCalledTimes(1);
+  expect(resumed.metadata).toHaveBeenCalledTimes(1);
+  expect(resumed.projectInstructions).toHaveBeenCalledTimes(1);
+  expect(resumed.projectInstructions.mock.calls[0]?.[0].cwd).toBe(join(before.cwd, 'a'));
+  for (const id of ['first', 'second']) {
+    expect(completed.steps[id]?.fingerprint).toBe(before.steps[id]?.fingerprint);
+    expect(completed.steps[id]?.attempts).toBe(1);
+  }
+  // The re-detected cwd replaces its entry and moves to the end instead of duplicating it.
+  const digestOf = (text: string) => createHash('sha256').update(text).digest('hex');
+  const saved = await readRun(setup());
+  expect(
+    saved.projectInstructions?.map((entry) => [basename(entry.cwd), entry.sources[0]?.sha256]),
+  ).toEqual([
+    ['b', digestOf('rules b')],
+    ['a', digestOf('rules a, edited')],
+  ]);
+
+  // A completed-only replay launches nothing, whatever the files now hold.
+  files.set('a', 'rules a, edited again');
+  const replay = projectSpy(files);
+  const replayed = await runWorkflow(definition, { ...setup(), resume: true, harness: replay });
+  expect(replayed.output).toBe('ok');
+  expect(replay.invoke).not.toHaveBeenCalled();
+  expect(replay.metadata).not.toHaveBeenCalled();
+  expect(replay.projectInstructions).not.toHaveBeenCalled();
+  for (const id of ['first', 'second', 'third'])
+    expect(replayed.steps[id]?.fingerprint).toBe(completed.steps[id]?.fingerprint);
+  expect((await readRun(setup())).projectInstructions).toEqual(saved.projectInstructions);
+});
+
+it('turns a failed project detection into a warning and still runs the call', async () => {
+  const harness = {
+    ...projectSpy(),
+    projectInstructions: vi
+      .fn<NonNullable<Harness['projectInstructions']>>()
+      .mockRejectedValue(new Error(`unreadable ${'x'.repeat(400)}`)),
+  };
+  const definition = defineWorkflow({
+    ...base,
+    async run(ctx) {
+      return (await ctx.codex.text('ask', { prompt: 'x' })).output;
+    },
+  });
+  const run = await runWorkflow(definition, { ...setup(), harness });
+  expect(run.output).toBe('ok');
+  expect(harness.invoke).toHaveBeenCalledTimes(1);
+  const record = await readRun(setup());
+  expect(record.projectInstructions).toBeUndefined();
+  const warning = `codex project instruction detection failed for ${record.cwd}: unreadable `;
+  expect(record.harnessWarnings).toEqual([`${warning}${'x'.repeat(300 - 'unreadable '.length)}`]);
+});
+
+it('records detection warnings and rejects malformed sources as a warning', async () => {
+  const harness = {
+    ...projectSpy(),
+    projectInstructions: vi
+      .fn<NonNullable<Harness['projectInstructions']>>()
+      .mockImplementation((request) =>
+        Promise.resolve(
+          basename(request.cwd) === 'bad'
+            ? {
+                sources: [
+                  { scope: 'project', kind: 'agents', path: '/x/AGENTS.md', sha256: 'not hex' },
+                ],
+              }
+            : {
+                sources: [],
+                warnings: ['Could not inspect one file', 'Could not inspect one file'],
+              },
+        ),
+      ),
+  };
+  const definition = defineWorkflow({
+    ...base,
+    async run(ctx) {
+      await ctx.codex.text('good', { prompt: 'x', cwd: 'good' });
+      return (await ctx.codex.text('bad', { prompt: 'y', cwd: 'bad' })).output;
+    },
+  });
+  await expect(runWorkflow(definition, { ...setup(), harness })).resolves.toMatchObject({
+    status: 'completed',
+  });
+  const record = await readRun(setup());
+  expect(record.projectInstructions).toEqual([
+    { harness: 'codex', cwd: join(record.cwd, 'good'), sources: [] },
+  ]);
+  expect(record.harnessWarnings).toEqual([
+    'Could not inspect one file',
+    expect.stringContaining(
+      `codex project instruction detection failed for ${join(record.cwd, 'bad')}`,
+    ),
+  ]);
+});
+
+it('keeps the 128 most recent project instruction entries and replaces a re-detected cwd', () => {
+  const entry = (index: number) => ({
+    harness: 'codex',
+    cwd: `/dir-${String(index)}`,
+    sources: [],
+  });
+  let entries: ProjectInstructionsRecord[] | undefined;
+  for (let index = 0; index < 130; index++)
+    entries = withProjectInstructions(entries, entry(index));
+  expect(MAX_PROJECT_INSTRUCTIONS).toBe(128);
+  expect(entries).toHaveLength(128);
+  expect(entries?.[0]?.cwd).toBe('/dir-2');
+  expect(entries?.at(-1)?.cwd).toBe('/dir-129');
+  const before = entries;
+  entries = withProjectInstructions(entries, { ...entry(5), sources: [] });
+  expect(before).toHaveLength(128);
+  expect(entries.filter((existing) => existing.cwd === '/dir-5')).toHaveLength(1);
+  expect(entries.at(-1)?.cwd).toBe('/dir-5');
+  expect(entries[0]?.cwd).toBe('/dir-2');
+  // Another harness at the same cwd is a separate entry.
+  entries = withProjectInstructions(entries, { ...entry(5), harness: 'claude' });
+  expect(entries.filter((existing) => existing.cwd === '/dir-5')).toHaveLength(2);
+  expect(entries[0]?.cwd).toBe('/dir-3');
+});
+
+it('releases an aborted scope from stalled project detection and drains it before settling', async () => {
+  let ready!: () => void;
+  const detecting = new Promise<void>((resolve) => {
+    ready = resolve;
+  });
+  const order: string[] = [];
+  const signals: AbortSignal[] = [];
+  const projectInstructions = vi
+    .fn<NonNullable<Harness['projectInstructions']>>()
+    .mockImplementation(
+      (_request, { signal }) =>
+        new Promise((_resolve, reject) => {
+          signals.push(signal);
+          // A well-behaved adapter that waits for its supplied signal and nothing else.
+          signal.addEventListener(
+            'abort',
+            () => {
+              order.push('detection settled');
+              reject(new Error('detection aborted', { cause: signal.reason }));
+            },
+            { once: true },
+          );
+          ready();
+        }),
+    );
+  const invoke = vi.fn<Harness['invoke']>().mockResolvedValue(reply);
+  const definition = defineWorkflow({
+    ...base,
+    async run(ctx) {
+      await ctx.map('group', [0, 1], { concurrency: 2, cancelSiblings: true }, async (item) => {
+        if (item === 0) {
+          try {
+            return (await ctx.codex.text('inside', { prompt: 'x' })).output;
+          } finally {
+            order.push('inside released');
+          }
+        }
+        await detecting;
+        throw new Error('map failure');
+      });
+      return 'unreachable';
+    },
+  });
+  const failure = runWorkflow(definition, {
+    ...setup(),
+    harness: { projectInstructions, invoke },
+  }).finally(() => {
+    order.push('run settled');
+  });
+  await expect(failure).rejects.toThrow('map failure');
+  expect(order).toEqual(['inside released', 'detection settled', 'run settled']);
+  expect(signals).toHaveLength(1);
+  expect(signals[0]?.aborted).toBe(true);
+  expect(projectInstructions).toHaveBeenCalledTimes(1);
+  expect(invoke).not.toHaveBeenCalled();
+  const saved = await readRun(setup());
+  expect(saved.status).toBe('failed');
+  expect(saved.projectInstructions).toBeUndefined();
+  expect(saved.harnessWarnings ?? []).toEqual([]);
 });

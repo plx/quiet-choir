@@ -47,6 +47,8 @@ const revisionDigests: Readonly<Record<string, string>> = {
   '4': '80010b03d1fa34c4b824b0682b5138e0c19d138186fb659c38d46eab204992ec',
   // Revision 5 (#223) changed only the nested events shape (the wait.tolerated type).
   '5': '80010b03d1fa34c4b824b0682b5138e0c19d138186fb659c38d46eab204992ec',
+  // Revision 6 (#226) added the top-level projectInstructions list.
+  '6': '14ecaff04c78634fdbaaca9796e99503df2c253e4c7db6208169ca21b74a9b1a',
 };
 // digest(readRun(...)) of the installed pre-revision fixture, computed on unmodified main 91a6d2f.
 const preRevisionReadDigest = '714b6cb068de5c933b7ba04a26d1f931f589f7c9910f76f0e5c8cc493eb13016';
@@ -58,6 +60,8 @@ const revisionTwoReadDigest = '7c56687992acfa40d749086b301489e9babc93fc9be8f2db2
 const revisionThreeReadDigest = 'c2f4ad7fd501352343faa55e59b25ec9a70ef781f9849bc6282b90eb8b8c7fd0';
 // digest(readRun(...)) of the installed revision-four fixture, computed on unmodified main 7fa2348.
 const revisionFourReadDigest = '813c73ae37120ba658d75502e4a0757e6657a93d9f1e69ab41671716c4ebfc98';
+// digest(readRun(...)) of the installed revision-five fixture, computed on unmodified main 6a05a54.
+const revisionFiveReadDigest = 'b249d588cfd7dbcd1375f27b3dfccb9634b502ddd174c689ea2b4108cebadea0';
 
 const sha256 = (value: string): string => createHash('sha256').update(value).digest('hex');
 
@@ -1058,5 +1062,107 @@ describe('revision-four records (tolerated poll errors before wait.tolerated eve
     );
     expect(done.output).toMatchObject({ by: 'poll', value: 'ok', checks: 2 });
     expect(done.events?.filter((event) => event.type === 'wait.tolerated')).toHaveLength(1);
+  });
+});
+
+describe('revision-five records (project instruction sources inside harnesses, #226)', () => {
+  const runId = 'revision-five';
+  async function install(): Promise<void> {
+    const fixture = await readFile(
+      new URL('./fixtures/schema-revision/revision-five-checkpoint.json', import.meta.url),
+      'utf8',
+    );
+    await mkdir(join(stateDir, runId));
+    await writeFile(paths(runId).snapshot, fixture);
+    await writeFile(paths(runId).journal, '');
+  }
+  const caller = defineWorkflow({
+    name: 'schema-revision',
+    version: '1',
+    input: z.null(),
+    output: z.null(),
+    async run(ctx) {
+      await ctx.codex.text('read', { prompt: 'x' });
+      await ctx.codex.text('write', { prompt: 'y' });
+      return null;
+    },
+  });
+  const user = {
+    scope: 'user',
+    kind: 'agents',
+    path: '/home/fixture/.codex/AGENTS.md',
+    sha256: 'a'.repeat(64),
+  } as const;
+  const project = {
+    scope: 'project',
+    kind: 'agents',
+    path: '/AGENTS.md',
+    sha256: 'b'.repeat(64),
+  } as const;
+
+  it('read exactly as on main, with project sources under harnesses and no projectInstructions', async () => {
+    await install();
+    const record = await readRun({ stateDir, runId });
+    expect(record.schemaRevision).toBe(5);
+    expect(recordSchemaDrift(record)).toBeUndefined();
+    expect(digest(record)).toBe(revisionFiveReadDigest);
+    expect(record.harnesses?.['codex']?.instructionSources).toEqual([user, project]);
+    expect(record).not.toHaveProperty('projectInstructions');
+    expect(record.steps['write']?.status).toBe('failed');
+  });
+
+  it('resume, keep the old harnesses entry and add projectInstructions, saved with the current revision', async () => {
+    await install();
+    const original = await readRun({ stateDir, runId });
+    const invoked: string[] = [];
+    const harness: Harness = {
+      projectInstructions: (request) =>
+        Promise.resolve({
+          sources: [{ ...project, path: `${request.cwd}AGENTS.md`, sha256: 'c'.repeat(64) }],
+        }),
+      invoke: (request) => {
+        invoked.push(request.stepId);
+        return Promise.resolve({ text: 'ok', sessionId: null });
+      },
+    };
+    const result = await runWorkflow(caller, {
+      ...options,
+      stateDir,
+      runId,
+      resume: true,
+      harness,
+      policy: [{ transcripts: 'off' }],
+    });
+    expect(result.status).toBe('completed');
+    // The completed call replays; only the failed one runs again.
+    expect(invoked).toEqual(['write']);
+    const saved = await readRun({ stateDir, runId });
+    expect(saved.steps['read']).toEqual(original.steps['read']);
+    expect(saved.harnesses).toEqual(original.harnesses);
+    expect(saved.projectInstructions).toEqual([
+      { harness: 'codex', cwd: '/', sources: [{ ...project, sha256: 'c'.repeat(64) }] },
+    ]);
+    expect(recordSchemaDrift(saved)).toBeUndefined();
+    expect((await rawSnapshot(runId))['schemaRevision']).toBe(SUPPORTED_SCHEMA_REVISION);
+  });
+
+  it('compare only user-level sources when new metadata reports no project entries', async () => {
+    await install();
+    const harness: Harness = {
+      metadata: () =>
+        Promise.resolve({ binary: 'codex', version: '0.157.1', instructionSources: [user] }),
+      invoke: () => Promise.resolve({ text: 'ok', sessionId: null }),
+    };
+    await runWorkflow(caller, {
+      ...options,
+      stateDir,
+      runId,
+      resume: true,
+      harness,
+      policy: [{ transcripts: 'off' }],
+    });
+    const saved = await readRun({ stateDir, runId });
+    expect(saved.harnesses?.['codex']?.instructionSources).toEqual([user]);
+    expect(saved.harnessWarnings).toEqual([]);
   });
 });

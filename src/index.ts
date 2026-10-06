@@ -63,6 +63,7 @@ export type {
   Effort,
   HarnessMetadata,
   InstructionSource,
+  ProjectInstructions,
   ImageAttachment,
   AgentOptions,
   ClaudeOptions,
@@ -100,6 +101,7 @@ export type {
 export { readRun, inspectRunOwnership } from './workflow/runtime/store.js';
 export type {
   RunRecord,
+  ProjectInstructionsRecord,
   RunOwnership,
   RunLockView,
   MapRecord,

@@ -10,6 +10,7 @@ import type {
   HarnessResponse,
   HarnessMetadata,
   HarnessInvocation,
+  ProjectInstructions,
 } from '../harness-kit.js';
 import type { ExecutionPolicy } from '../harness-kit.js';
 import { attachHarnessEvidence, boundedResponse, HarnessError } from '../harness-kit.js';
@@ -27,7 +28,8 @@ import {
 import {
   codexHomeOf,
   codexInstructionWarning,
-  detectCodexInstructionSources,
+  detectCodexProjectInstructionSources,
+  detectCodexUserInstructionSources,
 } from './codex-instructions.js';
 import {
   childEnvironment,
@@ -203,10 +205,11 @@ export class NativeCliHarness implements Harness {
         ? (this.options.claudeBinary ?? 'claude')
         : (this.options.codexBinary ?? 'codex');
     const environment = childEnvironment(request.options.env, this.options.scrubEnv);
-    // Codex loads these files in every isolation mode, so detection never depends on it.
+    // Codex loads these files in every isolation mode, so detection never depends on it. Project
+    // files depend on the call's cwd and are reported by projectInstructions instead.
     const instructions =
       request.harness === 'codex'
-        ? await detectCodexInstructionSources({
+        ? await detectCodexUserInstructionSources({
             codexHome: codexHomeOf(environment.env),
             cwd: request.cwd,
             signal,
@@ -266,6 +269,23 @@ export class NativeCliHarness implements Harness {
         ]),
       };
     }
+  }
+
+  /**
+   * Detect the project-level Codex AGENTS files for `request.cwd` without spawning a process; Claude
+   * reports nothing. Read problems become warnings; only an abort rejects.
+   */
+  public async projectInstructions(
+    request: NativeRequest,
+    context: Pick<HarnessInvocation, 'signal'>,
+  ): Promise<ProjectInstructions | undefined> {
+    assertBuiltinRequest(request);
+    if (request.harness !== 'codex') return undefined;
+    const { sources, warnings } = await detectCodexProjectInstructionSources({
+      cwd: request.cwd,
+      signal: context.signal,
+    });
+    return { sources, ...(warnings.length ? { warnings } : {}) };
   }
 
   /** Execute a fresh headless session, rejecting cancellation, limits, and protocol failures. */

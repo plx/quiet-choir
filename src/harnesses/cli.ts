@@ -8,6 +8,7 @@ import type {
   HarnessMetadata,
   HarnessResponse,
   ExecutionPolicy,
+  ProjectInstructions,
 } from '../harness-kit.js';
 import { ClaudeAdapter, CodexAdapter } from './builtins/adapters.js';
 import type { CliHarnessOptions, CliHarnessPlan } from './native-cli.js';
@@ -65,6 +66,17 @@ export class CliHarness implements Harness {
     invocation: HarnessInvocation,
   ): Promise<HarnessMetadata> {
     return this.#adapter(request.harness).metadata(
+      this.#durable(request, invocation),
+      invocation.signal,
+      invocation,
+    );
+  }
+  /** Detect project-level instruction files for `request.cwd`: Codex AGENTS files; none for Claude. */
+  public projectInstructions(
+    request: HarnessRequestInput<ClaudeOptions | CodexOptions>,
+    invocation: HarnessInvocation,
+  ): Promise<ProjectInstructions | undefined> {
+    return this.#adapter(request.harness).projectInstructions(
       this.#durable(request, invocation),
       invocation.signal,
       invocation,

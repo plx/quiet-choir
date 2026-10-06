@@ -141,6 +141,17 @@ export interface HarnessMetadata {
   readonly instructionSources?: readonly InstructionSource[];
 }
 
+/**
+ * Project-level instruction files a harness loads for one working directory, as paths and digests.
+ * Recorded per distinct cwd in the run's `projectInstructions`, outside semantic identity.
+ */
+export interface ProjectInstructions {
+  /** Files found for the call's cwd, such as AGENTS.md from the Git root down to it. */
+  readonly sources: readonly InstructionSource[];
+  /** Nonfatal read problems, merged into the run's harness warnings. */
+  readonly warnings?: readonly string[];
+}
+
 /** An immutable image snapshot; adapters must use these bytes when provided. */
 export interface ImageAttachment {
   /** SHA-256 of the original file bytes. */
@@ -336,6 +347,16 @@ export interface Harness {
    * the result.
    */
   metadata?(request: HarnessRequest, invocation: HarnessInvocation): Promise<HarnessMetadata>;
+  /**
+   * Detect the project-level instruction files the harness loads from `request.cwd`. Called once
+   * per distinct resolved cwd per run invocation, before the first live call there, with the run's
+   * shared discovery signal; never on replay, and never part of step identity. Resolve `undefined`
+   * to record nothing; a rejection becomes a run warning and never fails the call.
+   */
+  projectInstructions?(
+    request: HarnessRequest,
+    invocation: HarnessInvocation,
+  ): Promise<ProjectInstructions | undefined>;
   /** Report effective adapter limits for attempt records. Omit unknown defaults; never perform effects here. */
   policyDefaults?(harness: HarnessRequest['harness']): ExecutionPolicy;
   /** Invoke one fresh session; enforce your own limits, settle on abort, and reject process/protocol failure. */

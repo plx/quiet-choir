@@ -454,11 +454,146 @@ it('records one user-level instruction warning per run, and flags a change on re
       expect(userWarnings(completed.harnessWarnings)).toHaveLength(1);
     }
     expect(JSON.stringify(completed)).not.toContain(userMarker);
-    if (mode === 'project')
-      expect(completed.harnesses?.['codex']?.instructionSources).toContainEqual(
-        expect.objectContaining({ scope: 'project', kind: 'agents' }),
-      );
+    // Registration metadata holds only user-level sources; project files are recorded per cwd.
+    expect(completed.harnesses?.['codex']?.instructionSources).toEqual([
+      expect.objectContaining({ scope: 'user' }),
+    ]);
+    expect(first.projectInstructions).toEqual([{ harness: 'codex', cwd: first.cwd, sources: [] }]);
+    expect(completed.projectInstructions).toEqual([
+      {
+        harness: 'codex',
+        cwd: completed.cwd,
+        sources:
+          mode === 'project'
+            ? [
+                {
+                  scope: 'project',
+                  kind: 'agents',
+                  path: join(completed.cwd, 'AGENTS.md'),
+                  sha256: sha256('project instructions'),
+                },
+              ]
+            : [],
+      },
+    ]);
   }
+});
+
+it('reports Codex project files through projectInstructions without spawning, and none for Claude', async () => {
+  const spawned = join(directory, 'spawned');
+  const binary = join(directory, 'spawn-marker');
+  await writeFile(
+    binary,
+    `#!${process.execPath}\nrequire('node:fs').writeFileSync(${JSON.stringify(spawned)}, 'x');`,
+    { mode: 0o700 },
+  );
+  const home = await codexHome();
+  vi.stubEnv('CODEX_HOME', home);
+  const repo = join(directory, 'repo');
+  await mkdir(join(repo, '.git'), { recursive: true });
+  await mkdir(join(repo, 'pkg'));
+  await writeFile(join(repo, 'AGENTS.md'), 'root rules');
+  await writeFile(join(repo, 'pkg', 'AGENTS.override.md'), 'pkg override');
+  const harness = new CliHarness({ claudeBinary: binary, codexBinary: binary });
+  const request = (name: 'claude' | 'codex') => ({
+    harness: name,
+    cwd: join(repo, 'pkg'),
+    outputSchema: null,
+    options: { prompt: 'x' },
+  });
+  expect(await harness.projectInstructions(request('codex'), testInvocation())).toEqual({
+    sources: [
+      {
+        scope: 'project',
+        kind: 'agents',
+        path: join(repo, 'AGENTS.md'),
+        sha256: sha256('root rules'),
+      },
+      {
+        scope: 'project',
+        kind: 'agents-override',
+        path: join(repo, 'pkg', 'AGENTS.override.md'),
+        sha256: sha256('pkg override'),
+      },
+    ],
+  });
+  expect(await harness.projectInstructions(request('claude'), testInvocation())).toBeUndefined();
+  await expect(readFile(spawned)).rejects.toMatchObject({ code: 'ENOENT' });
+  // Metadata from the same cwd reports the user file only.
+  const metadata = await harness.metadata(request('codex'), testInvocation());
+  expect(metadata.instructionSources).toEqual([
+    expect.objectContaining({ scope: 'user', path: join(home, 'AGENTS.md') }),
+  ]);
+});
+
+it('records project instruction sources for each distinct Codex cwd and warns about user files once', async () => {
+  const binary = join(directory, await fakeBinary());
+  const home = await codexHome();
+  vi.stubEnv('CODEX_HOME', home);
+  const repo = join(directory, 'repo');
+  await mkdir(join(repo, '.git'), { recursive: true });
+  await mkdir(join(repo, 'a'));
+  await mkdir(join(repo, 'b'));
+  const texts = { root: 'ROOT_RULES_1', a: 'A_RULES_2', b: 'B_OVERRIDE_3' };
+  await writeFile(join(repo, 'AGENTS.md'), texts.root);
+  await writeFile(join(repo, 'a', 'AGENTS.md'), texts.a);
+  await writeFile(join(repo, 'b', 'AGENTS.override.md'), texts.b);
+  await writeFile(join(repo, 'b', 'AGENTS.md'), 'replaced by the override');
+  const workflow = defineWorkflow({
+    name: 'per-cwd',
+    version: '1',
+    strictProfiles: false,
+    input: z.null(),
+    output: z.null(),
+    async run(ctx) {
+      await ctx.codex.text('a1', { prompt: 'one', cwd: 'a' });
+      await ctx.codex.text('b1', { prompt: 'two', cwd: 'b' });
+      await ctx.codex.text('a2', { prompt: 'three', cwd: 'a' });
+      return null;
+    },
+  });
+  const options = {
+    runId: 'per-cwd',
+    stateDir: join(directory, 'runs'),
+    cwd: repo,
+    grants: ['all'],
+    harness: new CliHarness({ codexBinary: binary }),
+  };
+  const run = await runWorkflow(workflow, { ...options, input: null });
+  expect(run.status).toBe('completed');
+  const record = await readRun(options);
+  const source = (kind: 'agents' | 'agents-override', path: string, text: string) => ({
+    scope: 'project',
+    kind,
+    path: join(record.cwd, path),
+    sha256: sha256(text),
+  });
+  expect(record.projectInstructions).toEqual([
+    {
+      harness: 'codex',
+      cwd: join(record.cwd, 'a'),
+      sources: [
+        source('agents', 'AGENTS.md', texts.root),
+        source('agents', 'a/AGENTS.md', texts.a),
+      ],
+    },
+    {
+      harness: 'codex',
+      cwd: join(record.cwd, 'b'),
+      sources: [
+        source('agents', 'AGENTS.md', texts.root),
+        source('agents-override', 'b/AGENTS.override.md', texts.b),
+      ],
+    },
+  ]);
+  expect(record.harnesses?.['codex']?.instructionSources).toEqual([
+    expect.objectContaining({ scope: 'user', path: join(home, 'AGENTS.md') }),
+  ]);
+  expect(
+    (record.harnessWarnings ?? []).filter((warning) => warning.includes('user-level instructions')),
+  ).toHaveLength(1);
+  const saved = JSON.stringify(record);
+  for (const text of [...Object.values(texts), userMarker]) expect(saved).not.toContain(text);
 });
 
 // Pinned on main before Codex `instructions` existed (#130): unset and 'native' must keep these.

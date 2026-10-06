@@ -2,6 +2,17 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- Codex project instruction files are now detected once per distinct resolved call `cwd` (each
+  worktree or map item with its own `cwd`), instead of only from the first live Codex call's `cwd`,
+  and recorded in a new top-level run-record field `projectInstructions`
+  (`{ harness, cwd, sources }` entries, at most 128 with the oldest dropped). The field bumps the
+  record schema revision to 6; revision-5 records still read and resume. User-level sources and
+  their warning are still detected once per registration per run invocation. Adapters gain an
+  optional `projectInstructions(request, invocation)` hook (`Harness`, and `HarnessAdapter` with a
+  signal argument) and the exported `ProjectInstructions` and `ProjectInstructionsRecord` types; a
+  rejecting hook becomes a run warning. Detection stays outside step identity and replay. Behavior
+  change: `CliHarness.metadata` (and the built-in adapters' `metadata`) now reports only user-level
+  Codex `instructionSources`; project files come from `projectInstructions`.
 - Codex instruction detection now ignores an empty or whitespace-only user-level
   `AGENTS.override.md` and `AGENTS.md` and a blank project-level `AGENTS.md`, matching measured
   Codex behavior (a blank user override falls back to `AGENTS.md`; blank `AGENTS.md` files send

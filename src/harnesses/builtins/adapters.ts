@@ -7,6 +7,7 @@ import type {
   HarnessResponse,
   HarnessMetadata,
   ExecutionPolicy,
+  ProjectInstructions,
   ClaudeOptions,
   CodexOptions,
 } from '../../harness-kit.js';
@@ -73,6 +74,15 @@ export class BuiltinAdapter<O extends AgentOptions> implements HarnessAdapter<O>
   ): Promise<HarnessMetadata> {
     this.#check(request);
     return this.#native.metadata(request, this.#invocation(request, signal, invocation));
+  }
+  /** Report the project-level instruction files the harness loads from `request.cwd`, spawning nothing. */
+  public projectInstructions(
+    request: AgentRequest<O>,
+    signal: AbortSignal,
+    invocation?: HarnessInvocation,
+  ): Promise<ProjectInstructions | undefined> {
+    this.#check(request);
+    return this.#native.projectInstructions(request, this.#invocation(request, signal, invocation));
   }
   /** Perform one fresh headless call; standalone calls get {@link standaloneInvocation}. */
   public invoke(

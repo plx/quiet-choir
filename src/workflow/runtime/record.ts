@@ -29,6 +29,7 @@ import type {
 import { codexEffortValues } from './agent-controls.js';
 import type {
   HarnessMetadata,
+  InstructionSource,
   AgentUsage,
   ErrorKind,
   JsonValue,
@@ -290,6 +291,16 @@ export interface MapRecord {
   items: MapItemRecord[];
 }
 
+/** Project-level instruction sources one harness reported for one working directory. */
+export interface ProjectInstructionsRecord {
+  /** Registered harness name. */
+  harness: string;
+  /** Resolved working directory of the call, including any runtime-owned worktree. */
+  cwd: string;
+  /** Files found, as paths and digests; empty when detection found none. */
+  sources: InstructionSource[];
+}
+
 /** Local checkpoint format. The format is intentionally versioned independently of workflows. */
 export interface RunRecord {
   /** Inline child invocations keyed by runtime frame ID. */
@@ -362,6 +373,12 @@ export interface RunRecord {
   harnesses?: Record<string, HarnessMetadata>;
   /** Discovery/version warnings retained across resume. */
   harnessWarnings?: string[];
+  /**
+   * Project-level instruction files detected once per harness and distinct resolved cwd per run
+   * invocation, oldest first; capped at 128 entries. A later detection
+   * of the same harness and cwd replaces its entry. Diagnostic only, never step identity.
+   */
+  projectInstructions?: ProjectInstructionsRecord[];
   /** Resolved declared capabilities at the latest execution. Absent in older format-5 records. */
   capabilities?: CapabilityManifest;
   /** Sticky profile limit rules. */
@@ -648,6 +665,14 @@ const stepSchema = z
     (step) => step.kind !== 'agent' || (step.harness !== undefined && step.revision !== undefined),
     'Agent records require harness and revision.',
   );
+/** One recorded instruction source, as a path and digest. @internal */
+export const instructionSourceSchema = z.object({
+  scope: z.enum(['user', 'project']),
+  kind: z.enum(['agents', 'agents-override', 'skill']),
+  path: z.string(),
+  sha256: z.string().regex(/^[a-f0-9]{64}$/u),
+});
+
 const stepsSchema = z.custom<Record<string, StepRecord>>(
   (value) =>
     typeof value === 'object' &&
@@ -881,20 +906,20 @@ const recordFieldsSchema = z.object({
         binary: z.string(),
         version: z.string().nullable(),
         warnings: z.array(z.string()).optional(),
-        instructionSources: z
-          .array(
-            z.object({
-              scope: z.enum(['user', 'project']),
-              kind: z.enum(['agents', 'agents-override', 'skill']),
-              path: z.string(),
-              sha256: z.string().regex(/^[a-f0-9]{64}$/u),
-            }),
-          )
-          .optional(),
+        instructionSources: z.array(instructionSourceSchema).optional(),
       }),
     )
     .optional(),
   harnessWarnings: z.array(z.string()).optional(),
+  projectInstructions: z
+    .array(
+      z.object({
+        harness: z.string().regex(/^[a-z][a-z0-9-]{0,31}$/u),
+        cwd: z.string(),
+        sources: z.array(instructionSourceSchema),
+      }),
+    )
+    .optional(),
   capabilities: capabilityManifestSchema.optional(),
   profileOverrides: z.array(profileOverrideSchema).optional(),
   grants: grantsSchema.optional(),
@@ -1083,6 +1108,25 @@ const recordSchema = recordFieldsSchema.superRefine((record, context) => {
   }
 });
 
+/** Most `projectInstructions` entries a run keeps; the oldest is dropped first. @internal */
+export const MAX_PROJECT_INSTRUCTIONS = 128;
+
+/**
+ * The run's project instruction entries after recording `entry`: an existing entry for the same
+ * harness and cwd is replaced and moves to the end, and the oldest entries beyond
+ * {@link MAX_PROJECT_INSTRUCTIONS} are dropped. Returns a new array. @internal
+ */
+export function withProjectInstructions(
+  entries: readonly ProjectInstructionsRecord[] | undefined,
+  entry: ProjectInstructionsRecord,
+): ProjectInstructionsRecord[] {
+  const kept = (entries ?? []).filter(
+    (existing) => existing.harness !== entry.harness || existing.cwd !== entry.cwd,
+  );
+  kept.push(entry);
+  return kept.slice(-MAX_PROJECT_INSTRUCTIONS);
+}
+
 /**
  * The newest run-record schema revision this build reads and writes in full. Bump it, and add a
  * revision to `test/fixtures/schema-revision/record-keys.json`, whenever a persisted run-level
@@ -1092,9 +1136,10 @@ const recordSchema = recordFieldsSchema.superRefine((record, context) => {
  * (#170) added the settled child frame's `onError` and `settled` fields to `children`. Revision 4
  * (#171) added the profile field `claude.addDirRoots` to `capabilities` and the optional `addDirs`
  * to step and attempt request summaries. Revision 5 (#223) added the run event type
- * `wait.tolerated` to `events`. @internal
+ * `wait.tolerated` to `events`. Revision 6 (#226) added the top-level `projectInstructions` list of
+ * per-cwd project instruction sources. @internal
  */
-export const SUPPORTED_SCHEMA_REVISION = 5;
+export const SUPPORTED_SCHEMA_REVISION = 6;
 
 /** The top-level run-record keys this build knows. @internal */
 export const RECORD_FIELD_KEYS: readonly string[] = Object.freeze(

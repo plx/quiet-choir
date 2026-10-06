@@ -151,6 +151,35 @@ and the file was formatted with Prettier. Its read-view digest in
 `test/record-schema-revision.test.ts` was computed on the same unmodified main from this file. The
 resume tests pin a clock after the saved `nextCheckAt`.
 
+`revision-five-checkpoint.json` was generated the same way at origin/main `6a05a54`, before per-cwd
+project instruction detection (#226) added the top-level `projectInstructions` field in revision 6.
+Its run ID is `revision-five`, and it ran this definition with the launch policy
+`[{ transcripts: 'off' }]` and a custom harness whose `metadata` returns binary `codex`, version
+`0.157.1` and two `instructionSources` (a user entry `/home/fixture/.codex/AGENTS.md` with digest
+`a` repeated 64 times and a project entry `/AGENTS.md` with digest `b` repeated 64 times, as builds
+before revision 6 recorded them), and whose `invoke` returns `{ text: 'ok', sessionId: null }` for
+step `read` and rejects with `fixture call failed` for step `write`:
+
+```ts
+defineWorkflow({
+  name: 'schema-revision',
+  version: '1',
+  input: z.null(),
+  output: z.null(),
+  async run(ctx) {
+    await ctx.codex.text('read', { prompt: 'x' });
+    await ctx.codex.text('write', { prompt: 'y' });
+    return null;
+  },
+});
+```
+
+It carries `schemaRevision: 5`, the `harnesses.codex` entry with both sources, one completed Codex
+call `read` and the failed call `write`, so a resume replays `read` and runs `write` again. The
+journal was empty, so only `run.json` is checked in. Stack paths are scrubbed to `/fixture/...` and
+the file was formatted with Prettier; its read-view digest in `test/record-schema-revision.test.ts`
+was computed on the same unmodified main from this file.
+
 `record-keys.json` lists the top-level run-record keys of each schema revision. Adding or changing a
 persisted run-level field adds a revision there and bumps `SUPPORTED_SCHEMA_REVISION`; a revision
 that only changes a nested shape repeats the previous key list. See `docs/storage.md`.
