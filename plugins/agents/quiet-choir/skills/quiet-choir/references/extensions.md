@@ -113,9 +113,10 @@ Adapter kinds are persisted outside identity; switching them on resume/fork need
 ## Keep raw responses when local validation fails
 
 This decorator logs a completed adapter response before core JSON/Zod validation. It forwards kind,
-metadata, policy defaults, cancellation, and process registration unchanged. A logging failure is
-best effort: it cannot invalidate an already completed external call. Use a private absolute log
-path outside the worktree; new files use mode 0600 (existing permissions are not changed).
+metadata, project instruction detection, policy defaults, cancellation, and process registration
+unchanged. A logging failure is best effort: it cannot invalidate an already completed external
+call. Use a private absolute log path outside the worktree; new files use mode 0600 (existing
+permissions are not changed).
 
 <!-- skills-check: example logging-harness -->
 
@@ -125,10 +126,12 @@ import { CliHarness, type Harness } from 'quiet-choir';
 
 export function loggingHarness(logFile: string, inner: Harness = new CliHarness()): Harness {
   const metadata = inner.metadata?.bind(inner);
+  const projectInstructions = inner.projectInstructions?.bind(inner);
   const policyDefaults = inner.policyDefaults?.bind(inner);
   return {
     ...(inner.kind === undefined ? {} : { kind: inner.kind }),
     ...(metadata === undefined ? {} : { metadata }),
+    ...(projectInstructions === undefined ? {} : { projectInstructions }),
     ...(policyDefaults === undefined ? {} : { policyDefaults }),
     async invoke(request, invocation) {
       const response = await inner.invoke(request, invocation);
@@ -242,9 +245,12 @@ spawn, await registration before sending task input, then await the returned `re
 confirming reaping. OS start time must identify process birth, not a current timestamp; use null if
 unavailable. `pgid` equals the detached leader PID on POSIX and is null on Windows. Optional
 `metadata(request, invocation)` receives the same port with the run's shared discovery signal, which
-also aborts once no effect awaits the result. Registry failures abort as
-`CheckpointError.operation: 'process'`; they cannot become retry or settled data. Embedders may pass
-a `ProcessSupervisor` to `runWorkflow` and call its `forceKill()` from their own second-signal
+also aborts once no effect awaits the result. Optional `projectInstructions(request, invocation)`
+gets the same signal once per distinct `request.cwd` per run invocation and returns the project
+instruction files found there (`{ sources, warnings? }`, paths and digests) or `undefined`; the run
+records them in `projectInstructions`, and a rejection only adds a warning. Registry failures abort
+as `CheckpointError.operation: 'process'`; they cannot become retry or settled data. Embedders may
+pass a `ProcessSupervisor` to `runWorkflow` and call its `forceKill()` from their own second-signal
 handler. CLI signal handlers are not installed by the core. See [durability](durability.md).
 
 The core resolves profile limits (text: five minutes, 10 Claude turns, $0.50) and tool/sandbox

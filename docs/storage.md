@@ -330,7 +330,12 @@ other revision-4 record instead of dropping `addDirs`. Revision 5 (#223) is nest
 saved `lastError` count carries on after a resume. A revision-4 build cannot parse a record that
 holds a `wait.tolerated` entry (its event-type enum rejects it), so every read of that record is the
 `run.incompatible` upgrade refusal described below; it refuses to rewrite any other revision-5
-record.
+record. Revision 6 (#226) adds the top-level `projectInstructions`: project-level instruction files
+(paths and digests) that a harness reported for each distinct resolved call `cwd`, at most 128
+entries with the oldest dropped ([harness isolation](harness-isolation.md)). Revision-5 records read
+and replay unchanged, including Codex project entries that older builds kept in
+`harnesses.codex.instructionSources`; a later live call adds `projectInstructions`. A revision-5
+build reads a revision-6 record without the field and reports it hidden, and refuses to rewrite it.
 
 **Refusals.** A build must not rewrite a record it cannot fully read: its parse strips unknown
 top-level fields, and the next compaction would write the record back without them. When a record
