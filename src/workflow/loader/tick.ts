@@ -1,5 +1,6 @@
 import { watch, type FSWatcher } from 'node:fs';
 import { stat } from 'node:fs/promises';
+import { resolve } from 'node:path';
 import type { ExecutionPlan, ExecutionResult, Executor } from '../../application/execution.js';
 import { answerCandidates, questionCodeChanged } from '../runtime/inbox.js';
 import { FileRunStore, type OwnedRunStore, type RunStore } from '../runtime/run-store.js';
@@ -493,7 +494,7 @@ export class TickWorkflowExecutor implements Executor<
           message: crashLoopMessage(
             run.id,
             decision.count,
-            plan.stateDir,
+            resolve(plan.stateDir),
             this.options.commandLauncher,
           ),
         });
