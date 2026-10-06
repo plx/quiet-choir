@@ -2,6 +2,12 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- Step supersession (fix; no identity or storage change): a completion now marks unvisited
+  unfinished steps `superseded` only after the output validates and worktree cleanup succeeds, and
+  puts them back if the completion checkpoint fails, as child frames already did. Before, a run that
+  failed output validation, cleanup or the completion save recorded those steps as `superseded` in
+  its failure snapshot, although it never completed. `step.superseded` events still follow
+  `run.completed`.
 - A failed, cancelled or superseded child frame can now be resumed after a change to its child's
   name, version, input or schemas, when it is not settled, no committed settled-map item or settled
   frame owns it, and nothing beneath it (steps, settled maps, descendant frames) is completed or
