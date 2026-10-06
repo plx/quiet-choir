@@ -116,7 +116,10 @@ describe('implemented command adapters', () => {
     expect(output.stdout).toBe('0.0.0');
   });
 
-  it('type-checks a valid entrypoint', async () => {
+  // Full TypeScript compile with no program cache (the CLI passes none). measured: 0.15-0.35 s alone,
+  // 0.9 s worst of three full coverage runs, 2.0 s with a CPU hog on every core, 0.3-3.1 s on the CI legs
+  // (slowest on the Node 24 coverage leg).
+  it('type-checks a valid entrypoint', { timeout: 10_000 }, async () => {
     const root = await mkdtemp(join(tmpdir(), 'quiet-choir-cli-'));
     temporaryDirectories.push(root);
     const entrypoint = join(root, 'workflow.ts');
@@ -129,7 +132,10 @@ describe('implemented command adapters', () => {
     expect(output.stderr).toBe('');
   });
 
-  it('renders compiler errors and exits four', async () => {
+  // Full TypeScript compile with no program cache (the CLI passes none). measured: 0.15-0.35 s alone,
+  // 0.9 s worst of three full coverage runs, 2.0 s with a CPU hog on every core, 0.3-3.1 s on the CI legs
+  // (slowest on the Node 24 coverage leg).
+  it('renders compiler errors and exits four', { timeout: 10_000 }, async () => {
     const root = await mkdtemp(join(tmpdir(), 'quiet-choir-cli-'));
     temporaryDirectories.push(root);
     const entrypoint = join(root, 'workflow.ts');
@@ -157,6 +163,9 @@ describe('implemented command adapters', () => {
     });
   });
 
+  // Full TypeScript compile with no program cache (the CLI passes none). measured: 0.15-0.35 s alone,
+  // 0.9 s worst of three full coverage runs, 2.0 s with a CPU hog on every core, 0.3-3.1 s on the CI legs
+  // (slowest on the Node 24 coverage leg).
   it.each([false, true])(
     'reports a first signal during a successful type check as interrupted (JSON=%s)',
     async (json) => {
@@ -187,6 +196,7 @@ describe('implemented command adapters', () => {
           error: { code: 'workflow.interrupted' },
         });
     },
+    10_000,
   );
 
   it('uses oclif file validation for missing entrypoints', async () => {
