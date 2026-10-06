@@ -3187,10 +3187,10 @@ export async function runWorkflow<
             : {},
         );
       },
-      tolerated: (id, step, { consecutive, tolerate, message, code }) => {
+      tolerated: (id, step, { consecutive, tolerate, message, at, code }) => {
         // Committed by the caller's save with lastError; outside eventCounts, so it never replays.
         const event = observations.appendRuntime({
-          at: new Date(clockNow(clock)).toISOString(),
+          at: new Date(at).toISOString(),
           type: 'wait.tolerated',
           phase: step.phase ?? null,
           total: null,

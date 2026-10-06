@@ -2176,6 +2176,36 @@ describe('wait.tolerated run events', () => {
     expect(order.lastIndexOf('wait.tolerated')).toBeLessThan(order.indexOf('step.completed'));
   });
 
+  it('stamps the event with the time lastError records, not a fresh clock read', async () => {
+    // Every read advances the clock, so a second read for the event would differ from lastError.at.
+    class TickingClock extends Clock {
+      public override now(): number {
+        return this.time++;
+      }
+    }
+    let calls = 0;
+    const definition = policyPoll(
+      'tolerated-at',
+      () => {
+        calls++;
+        if (calls === 1) return Promise.reject(new Error('HTTP 502'));
+        return Promise.resolve({ done: true, value: 'ok' });
+      },
+      { onError: { tolerate: 3 } },
+    );
+    const { live, onEvent } = collector();
+    const options = { stateDir, runId: 'tolerated-at', input: null, clock: new TickingClock() };
+    expect((await runWorkflow(definition, { ...options, onEvent })).status).toBe('suspended');
+    const saved = await readRun(options);
+    const lastError = saved.steps['ready']?.wait?.lastError;
+    expect(lastError?.message).toBe('HTTP 502');
+    const [persisted] = tolerated(saved);
+    expect(persisted?.at).toBe(new Date(lastError?.at ?? Number.NaN).toISOString());
+    const liveTolerated = live.filter((event) => event.type === 'wait.tolerated');
+    expect(liveTolerated).toHaveLength(1);
+    expect(liveTolerated[0]?.at).toBe(persisted?.at);
+  });
+
   it('records nothing for a poll without onError', async () => {
     const definition = policyPoll('untolerated', () => Promise.reject(new Error('HTTP 502')));
     const { live, onEvent } = collector();

@@ -108,6 +108,8 @@ interface ToleratedError {
   readonly tolerate: number;
   /** The error message, as `lastError` keeps it. */
   readonly message: string;
+  /** When the error was observed, in epoch milliseconds, as `lastError.at` keeps it. */
+  readonly at: number;
   /** The error's string `code` property, when it has one. */
   readonly code?: string;
 }
@@ -664,6 +666,7 @@ export class RunQuestions {
         consecutive,
         tolerate: policy.tolerate,
         message: lastError.message,
+        at: lastError.at,
         ...(code === undefined ? {} : { code }),
       });
     };
