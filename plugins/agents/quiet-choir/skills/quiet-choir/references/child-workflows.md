@@ -119,10 +119,12 @@ Missing required input fails before a new run record or agent call; returning `{
 ordinary successful output and should not replace input validation.
 
 `workflow validate FILE --json` includes input/output JSON Schemas, descriptions, phases, profiles,
-capabilities and a declared child tree, without each harness's option JSON Schema (pass
-`--harness-schemas` to include them; `list-defs --json` follows the same rule). Recursive
-declarations end in `recursive: true` reference nodes. Inline children have `entrypoint: null` when
-no source entrypoint is known.
+capabilities and a declared child tree, in a compact form: no harness option JSON Schemas, no
+`capabilities.defaults` (use `profiles[defaultProfile]`), a shared `capabilities.environment` with
+per-profile differences only, `profiles` as declared names, and no root `entrypoint` (it equals the
+document's own). Pass `--harness-schemas` for the complete document; `list-defs --json` follows the
+same rules. Recursive declarations end in `recursive: true` reference nodes. Inline children have
+`entrypoint: null` when no source entrypoint is known.
 
 After saving the reusable review recipe in your trusted `workflows` directory:
 

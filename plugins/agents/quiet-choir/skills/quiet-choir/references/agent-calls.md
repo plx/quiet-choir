@@ -62,10 +62,11 @@ bare `WorkflowContext` helper stays permissive (the runtime still checks);
 `defineWorkflow<Input, Output>`, the rest take the strict, childless defaults, so
 `strictProfiles: false` or a nonempty `children` list fails typecheck; drop the type arguments
 (preferred) or spell all seven. `workflow validate FILE --json` lists resolved
-`workflow.capabilities` without running the body (and omits harness option schemas unless
-`--harness-schemas`). Unknown tools/native config controls conservatively require exec capability.
-Configuration loading defaults to restricted mode; [harness isolation](harness-isolation.md)
-explains inherited roles, environment edits, and provider boundaries.
+`workflow.capabilities` without running the body, compactly: each fact once (no `defaults`; read
+`profiles[defaultProfile]`), harness option schemas omitted; `--harness-schemas` prints the complete
+document. Unknown tools/native config controls conservatively require exec capability. Configuration
+loading defaults to restricted mode; [harness isolation](harness-isolation.md) explains inherited
+roles, environment edits, and provider boundaries.
 
 Every declared/default write or exec role needs a launch grant: `--grant fixer`, `--grant write`,
 `--grant exec` (includes write), or `--grant all`. Declared roles preflight before effects;

@@ -1,6 +1,6 @@
 import { Args, Flags, type Interfaces } from '@oclif/core';
 import { resolve } from 'node:path';
-import { withoutHarnessOptions } from '../../cli/workflow-metadata-view.js';
+import { compactWorkflowMetadata } from '../../cli/workflow-metadata-view.js';
 import { WorkflowCommand } from '../../cli/workflow-command.js';
 import { WorkflowExecutor } from '../../workflow/loader/executor.js';
 
@@ -21,7 +21,8 @@ export default class WorkflowListDefinitions extends WorkflowCommand {
   }> = {
     json: Flags.boolean({ description: 'Print validated workflow schemas and metadata as JSON' }),
     'harness-schemas': Flags.boolean({
-      description: 'With --json, include each harness option JSON Schema',
+      description:
+        'With --json, print the complete document: harness option JSON Schemas, the uncompacted capability manifest and the root entrypoint',
       dependsOn: ['json'],
     }),
     refresh: Flags.boolean({
@@ -55,7 +56,7 @@ export default class WorkflowListDefinitions extends WorkflowCommand {
               ...result,
               definitions: result.definitions.map((entry) => ({
                 ...entry,
-                workflow: withoutHarnessOptions(entry.workflow),
+                workflow: compactWorkflowMetadata(entry.workflow, entry.entrypoint),
               })),
             },
         result.definitions
