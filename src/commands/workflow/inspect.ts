@@ -93,6 +93,7 @@ export default class WorkflowInspect extends WorkflowCommand {
       logger: this.createExecutionLogger(flags),
       commandLauncher: this.commandLauncher,
       signal: this.signal,
+      processSupervisor: this.processSupervisor,
       ...(stream ? { onInspection: render } : {}),
     });
     const result = await executor.execute({

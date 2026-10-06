@@ -6,6 +6,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import type { RunRecord } from '../src/index.js';
 import { formatRunSummary } from '../src/cli/inspection-view.js';
 import { NodeProcessRunner } from '../src/processes/runner.js';
+import { ProcessSupervisor } from '../src/processes/supervisor.js';
 import { WorkflowExecutor } from '../src/workflow/loader/executor.js';
 import type { WorkflowCommandResult } from '../src/workflow/loader/model.js';
 import type { ProcessRunner } from '../src/workflow/runtime/exec-model.js';
@@ -81,11 +82,17 @@ function recording(): { runner: ProcessRunner; commands: string[][] } {
 }
 
 async function inspect(
-  options: { runner?: ProcessRunner; worktreeAdminLock?: boolean; log?: () => void } = {},
+  options: {
+    runner?: ProcessRunner;
+    supervisor?: ProcessSupervisor;
+    worktreeAdminLock?: boolean;
+    log?: () => void;
+  } = {},
 ): Promise<Extract<WorkflowCommandResult, { kind: 'workflow.run.result' }>> {
   const executor = new WorkflowExecutor({
     logger: { log: options.log ?? (() => undefined) },
     ...(options.runner === undefined ? {} : { processRunner: options.runner }),
+    ...(options.supervisor === undefined ? {} : { processSupervisor: options.supervisor }),
   });
   const result = await executor.execute({
     kind: 'workflow.inspect',
@@ -177,6 +184,38 @@ it('runs no Git for a run without a worktree ledger, and one rev-parse for a run
   expect((await inspect({ runner })).worktreeAdminLock?.owner?.host).toBe('elsewhere.invalid');
   expect(commands).toHaveLength(1);
   expect(commands[0]).toContain('rev-parse');
+});
+
+it('tracks the rev-parse child with the CLI process supervisor while it runs', async () => {
+  await save({ repo });
+  const supervisor = new ProcessSupervisor();
+  const tracked: string[] = [];
+  const forgotten: string[] = [];
+  vi.spyOn(supervisor, 'track').mockImplementation((child) => {
+    tracked.push(child.binary);
+    return () => {
+      forgotten.push(child.binary);
+    };
+  });
+  const real = new NodeProcessRunner();
+  let trackedDuringCall = false;
+  const runner: ProcessRunner = {
+    run: async (request, invocation) => {
+      const result = await real.run(request, {
+        ...invocation,
+        trackProcess: async (child) => {
+          const ownership = await invocation.trackProcess(child);
+          trackedDuringCall = tracked.length === 1 && forgotten.length === 0;
+          return ownership;
+        },
+      });
+      return result;
+    },
+  };
+  expect((await inspect({ runner, supervisor })).ok).toBe(true);
+  expect(trackedDuringCall).toBe(true);
+  expect(tracked).toHaveLength(1);
+  expect(forgotten).toEqual(tracked);
 });
 
 it('never fails the inspection when the repository is gone', async () => {
