@@ -330,6 +330,65 @@ it('does not leave a superseded child frame behind when the completion save fail
   expect(saved.children?.['kid']).toEqual(before);
 });
 
+async function failedStepRun(
+  invoke: { value: boolean },
+  finish: () => string,
+): Promise<{ definition: WorkflowDefinition<null, string>; before: unknown }> {
+  const definition = workflow(async (ctx) => {
+    if (invoke.value)
+      await ctx.step('a', {
+        input: null,
+        schema: z.string(),
+        run: () => Promise.reject<string>(new Error('a broke')),
+      });
+    return finish();
+  });
+  await expect(runWorkflow(definition, options())).rejects.toThrow('a broke');
+  const before = (await readRun(options())).steps['a'];
+  expect(before?.status).toBe('failed');
+  invoke.value = false;
+  return { definition, before };
+}
+
+it('leaves unused steps unchanged when the output fails validation', async () => {
+  const events: string[] = [];
+  const invoke = { value: true };
+  const { definition, before } = await failedStepRun(invoke, () => 42 as unknown as string);
+  await expect(
+    runWorkflow(definition, {
+      ...options(),
+      resume: true,
+      onEvent: (event) => events.push(event.type),
+    }),
+  ).rejects.toThrow();
+  const saved = await readRun(options());
+  expect(saved.status).toBe('failed');
+  expect(saved.steps['a']).toEqual(before);
+  expect(events).not.toContain('step.superseded');
+});
+
+it('does not leave a superseded step behind when the completion save fails', async () => {
+  const events: string[] = [];
+  const invoke = { value: true };
+  const { definition, before } = await failedStepRun(invoke, () => 'done');
+  vi.mocked(store.writeRun).mockImplementation((directory, record) =>
+    record.status === 'completed'
+      ? Promise.reject(ioError('EIO'))
+      : actualStore.writeRun(directory, record),
+  );
+  await expect(
+    runWorkflow(definition, {
+      ...options(),
+      resume: true,
+      onEvent: (event) => events.push(event.type),
+    }),
+  ).rejects.toMatchObject({ cause: expect.any(CheckpointError) as unknown });
+  const saved = await readRun(options());
+  expect(saved.status).toBe('failed');
+  expect(saved.steps['a']).toEqual(before);
+  expect(events).not.toContain('step.superseded');
+});
+
 it('owns phase/log saves and preserves committed observations after a storage failure', async () => {
   let failures = 0;
   vi.mocked(store.writeRun).mockImplementation((directory, record) => {
