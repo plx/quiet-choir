@@ -4,7 +4,7 @@ import { mkdirSync, realpathSync, symlinkSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   capabilityManifest,
   claudeCapabilityKeys,
@@ -850,7 +850,7 @@ it('reduces free-form controls to names and digests in public manifests only', (
   expect(liveProfile.codex.config).toEqual(sensitiveProfile().codex?.config);
   expect(live).toEqual(raw);
   expect(publicCapabilityManifest(live, [])).toEqual(manifest);
-  // Idempotent only for built-in harnesses; registered harness env digests are re-digested on a second pass.
+  // A second pass changes nothing; registered env digests are covered with their own harness (#248).
   expect(publicCapabilityManifest(manifest, [])).toEqual(manifest);
 });
 
@@ -1024,12 +1024,105 @@ it('moves declared sensitive harness options to redacted digests in public manif
   expect(role(live, 'p').harnessCapabilities?.['vault']).toEqual({ headers: vaultHeaders() });
   expect(role(live, 'p').harnesses?.['vault']).toMatchObject({ token: vaultMarkers.token });
   expect(publicCapabilityManifest(live, [vault])).toEqual(manifest);
-  // Without registered env, a second pass changes nothing.
+  // A second pass changes nothing; registered env digests are covered separately (#248).
   expect(publicCapabilityManifest(manifest, [vault])).toEqual(manifest);
   // Without the declarations, the projection leaves registered options alone.
   expect(publicCapabilityManifest(live, undefined).profiles['p']?.harnesses?.['vault']).toEqual(
     role(live, 'p').harnesses?.['vault'],
   );
+});
+
+// Registered harness env (#248): env is a capability key and the only free-form option digested
+// outside `redacted`; secret is a declared sensitive option so one manifest mixes both paths.
+const envMarkers = { env: 'marker-env-harness-value', secret: 'marker-env-harness-secret' };
+const envHarness = defineHarness({
+  name: 'envh',
+  revision: 1,
+  options: z.object({
+    prompt: z.string(),
+    env: z.record(z.string(), z.string()).optional(),
+    secret: z.string().optional(),
+  }),
+  capabilities: { structuredOutput: 'none' },
+  capabilityKeys: ['env', 'secret'],
+  sensitiveOptions: ['secret'],
+  access: () => 'none',
+});
+const envProfile = (env: Record<string, string> = { TOKEN: envMarkers.env }): AgentProfile => ({
+  ...sensitiveProfile(),
+  harnesses: { envh: { env, secret: envMarkers.secret } },
+});
+
+describe('registered harness env digest (#248)', () => {
+  const definition = { harnesses: [envHarness], profiles: { p: envProfile() } };
+
+  it('digests env once in harnessCapabilities and drops the raw copy', () => {
+    const live = resolveCapabilities(definition);
+    expect(role(live, 'p').harnessCapabilities?.['envh']).toMatchObject({
+      env: { TOKEN: envMarkers.env },
+    });
+    const manifest = capabilityManifest(definition);
+    const profile = role(manifest, 'p');
+    expect(profile.harnessCapabilities?.['envh']).toEqual({
+      env: { sha256: digest({ TOKEN: envMarkers.env }) },
+    });
+    expect(profile.harnesses?.['envh']).not.toHaveProperty('env');
+    const text = JSON.stringify(manifest);
+    for (const marker of Object.values(envMarkers)) expect(text).not.toContain(marker);
+    expect(capabilityManifestSchema.parse(manifest)).toEqual(manifest);
+  });
+
+  it('is idempotent with built-in controls, declared sensitive options and registered env', () => {
+    const live = resolveCapabilities(definition);
+    const raw = structuredClone(live);
+    for (const declarations of [[envHarness], undefined]) {
+      const once = publicCapabilityManifest(live, declarations);
+      expect(publicCapabilityManifest(once, declarations)).toEqual(once);
+      expect(
+        publicCapabilityManifest(publicCapabilityManifest(once, declarations), declarations),
+      ).toEqual(once);
+      expect(capabilityManifestSchema.parse(once)).toEqual(once);
+      expect(role(once, 'p').harnessCapabilities?.['envh']?.['env']).toEqual({
+        sha256: digest({ TOKEN: envMarkers.env }),
+      });
+    }
+    // Built-in redactions and the declared sensitive option are in the same manifest.
+    const once = publicCapabilityManifest(live, [envHarness]);
+    expect(role(once, 'p').redacted?.claude?.settings).toBeDefined();
+    expect(role(once, 'p').redacted?.harnesses?.['envh']?.['secret']).toEqual({
+      sha256: digest(envMarkers.secret),
+    });
+    expect(live).toEqual(raw);
+  });
+
+  it('digests a live env shaped like a digest and then leaves the digest alone', () => {
+    const lookalike = { sha256: 'a'.repeat(64) };
+    const live = resolveCapabilities({
+      harnesses: [envHarness],
+      profiles: { p: envProfile(lookalike) },
+    });
+    expect(role(live, 'p').harnessCapabilities?.['envh']?.['env']).toEqual(lookalike);
+    const once = publicCapabilityManifest(live, [envHarness]);
+    const expected = { sha256: digest(lookalike) };
+    expect(role(once, 'p').harnessCapabilities?.['envh']?.['env']).toEqual(expected);
+    expect(publicCapabilityManifest(once, [envHarness])).toEqual(once);
+    expect(publicCapabilityManifest(once, undefined)).toEqual(once);
+  });
+
+  it('still digests a public-looking env that is not a digest', () => {
+    const once = publicCapabilityManifest(resolveCapabilities(definition), [envHarness]);
+    const bogus = { sha256: 'short', extra: 'marker-forged' };
+    const forged = {
+      ...once,
+      profiles: {
+        ...once.profiles,
+        p: { ...role(once, 'p'), harnessCapabilities: { envh: { env: bogus } } },
+      },
+    };
+    expect(
+      role(publicCapabilityManifest(forged, [envHarness]), 'p').harnessCapabilities?.['envh'],
+    ).toEqual({ env: { sha256: digest(bogus) } });
+  });
 });
 
 it('gives sensitive array options a digest only and leaves undeclared profiles unredacted', () => {
