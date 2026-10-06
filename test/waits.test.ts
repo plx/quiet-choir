@@ -1146,9 +1146,256 @@ it('keeps the persisted request and identity of an existing observer-form poll',
         ...poll,
         observeTimeoutMs: 5_000,
         onError: { tolerate: 3, classify: () => 'transient', retryAfterMs: () => null },
+        noteSchema: z.object({ seen: z.boolean() }),
       },
     }),
   ).toEqual(expected);
+});
+
+describe('noteSchema', () => {
+  const seenSchema = z.object({ seen: z.number() });
+  type Check = { done: true; value: 'ok' } | { done: false; note?: JsonValue };
+  /** An observer poll named `name`, with the given policy options; every check is due after 31 s. */
+  const notePoll = (
+    name: string,
+    observe: (context: PollContext) => Promise<Check>,
+    policy: { noteSchema?: z.ZodType<JsonValue>; onError?: PollErrorPolicy } = {},
+  ) =>
+    defineWorkflow({
+      name,
+      version: '1',
+      input: z.null(),
+      output: z.unknown(),
+      run: (ctx) =>
+        ctx.poll('ready', {
+          input: null,
+          schema: z.literal('ok'),
+          every: 30_000,
+          timeoutMs: 600_000,
+          ...policy,
+          observe: (context) => observe(context) as Promise<{ done: true; value: 'ok' }>,
+        }),
+    });
+  /** The rejection of a failed run, with the engine's own error (its cause) unwrapped. */
+  const failure = async (promise: Promise<unknown>): Promise<Error & { code?: string }> => {
+    const error = await promise.then(
+      () => {
+        throw new Error('expected the run to fail');
+      },
+      (rejection: unknown) => rejection,
+    );
+    expect(error).toBeInstanceOf(WorkflowRunError);
+    return (error as WorkflowRunError).cause as Error;
+  };
+
+  it('shows the next check the parsed note and persists it without unknown keys', async () => {
+    const clock = new Clock();
+    const seen: unknown[] = [];
+    const definition = notePoll(
+      'note-parsed',
+      ({ previous }) => {
+        seen.push(previous.note);
+        return Promise.resolve(
+          previous.checks === 0
+            ? { done: false, note: { seen: 1, extra: 'dropped' } }
+            : { done: true, value: 'ok' },
+        );
+      },
+      { noteSchema: seenSchema },
+    );
+    const options = { stateDir, runId: 'note-parsed', input: null, clock };
+    expect((await runWorkflow(definition, options)).status).toBe('suspended');
+    expect((await readRun(options)).steps['ready']?.wait?.note).toEqual({ seen: 1 });
+    clock.time += 31_000;
+    const done = await runWorkflow(definition, { ...options, resume: true });
+    expect(done.output).toMatchObject({ by: 'poll', checks: 2 });
+    expect(seen).toEqual([null, { seen: 1 }]);
+  });
+
+  it('fails a returned note that does not match with a coded error, and never tolerates it', async () => {
+    const definition = notePoll(
+      'note-returned',
+      () => Promise.resolve({ done: false, note: { seen: 'yes' } }),
+      { noteSchema: seenSchema, onError: { tolerate: 3 } },
+    );
+    const options = { stateDir, runId: 'note-returned', input: null };
+    const error = await failure(runWorkflow(definition, options));
+    expect(error.message).toContain(
+      'Wait ready: the note returned by observe does not match noteSchema:',
+    );
+    expect(error.code).toBe('QUIET_CHOIR_POLL_NOTE_INVALID');
+    expect(error.cause).toBeInstanceOf(z.ZodError);
+    const saved = await readRun(options);
+    expect(saved.status).toBe('failed');
+    expect(saved.rootCause).toMatchObject({ stepId: 'ready', errorKind: 'schema' });
+    expect(saved.steps['ready']?.wait).toMatchObject({ checks: 1, note: null });
+    expect(saved.steps['ready']?.wait?.lastError).toBeUndefined();
+  });
+
+  it('fails a saved note that a changed schema rejects, before the observer runs', async () => {
+    const clock = new Clock();
+    const options = { stateDir, runId: 'note-saved', input: null, clock };
+    const first = notePoll('note-saved', () => Promise.resolve({ done: false, note: { n: 1 } }));
+    expect((await runWorkflow(first, options)).status).toBe('suspended');
+    clock.time += 31_000;
+    let calls = 0;
+    const second = notePoll(
+      'note-saved',
+      () => {
+        calls++;
+        return Promise.resolve({ done: true, value: 'ok' });
+      },
+      { noteSchema: seenSchema, onError: { tolerate: 3 } },
+    );
+    const error = await failure(runWorkflow(second, { ...options, resume: true }));
+    expect(error.message).toContain(
+      'Wait ready: the saved note from an earlier check does not match noteSchema:',
+    );
+    expect(error.code).toBe('QUIET_CHOIR_POLL_NOTE_INVALID');
+    expect(calls).toBe(0);
+    const saved = await readRun(options);
+    expect(saved.rootCause).toMatchObject({ stepId: 'ready', errorKind: 'schema' });
+    expect(saved.steps['ready']?.wait).toMatchObject({ checks: 1, note: { n: 1 } });
+  });
+
+  describe('nested context operations in noteSchema', () => {
+    /** A poll whose noteSchema transform calls ctx.step; `ran` counts the step actions that ran. */
+    const nestingPoll = (name: string, nest: boolean, ran: { count: number }) =>
+      defineWorkflow({
+        name,
+        version: '1',
+        input: z.null(),
+        output: z.unknown(),
+        run: (ctx) =>
+          ctx.poll('ready', {
+            input: null,
+            schema: z.literal('ok'),
+            every: 30_000,
+            timeoutMs: 600_000,
+            ...(nest
+              ? {
+                  noteSchema: z.object({ n: z.number() }).transform((note) => {
+                    void ctx.step('inner', {
+                      input: null,
+                      schema: z.null(),
+                      run: () => {
+                        ran.count++;
+                        return null;
+                      },
+                    });
+                    return note;
+                  }),
+                }
+              : {}),
+            observe: (() =>
+              Promise.resolve({ done: false, note: { n: 1 } })) as unknown as () => Promise<{
+              done: true;
+              value: 'ok';
+            }>,
+          }),
+      });
+
+    it('fails the wait when parsing a returned note calls ctx.step', async () => {
+      const ran = { count: 0 };
+      const options = { stateDir, runId: 'note-nest-returned', input: null };
+      await expect(
+        runWorkflow(nestingPoll('note-nest-returned', true, ran), options),
+      ).rejects.toThrow('Nested durable');
+      expect(ran.count).toBe(0);
+      expect((await readRun(options)).steps['inner']).toBeUndefined();
+    });
+
+    it('fails the wait when parsing a saved note calls ctx.step', async () => {
+      const clock = new Clock();
+      const ran = { count: 0 };
+      const options = { stateDir, runId: 'note-nest-saved', input: null, clock };
+      const first = nestingPoll('note-nest-saved', false, ran);
+      expect((await runWorkflow(first, options)).status).toBe('suspended');
+      clock.time += 31_000;
+      await expect(
+        runWorkflow(nestingPoll('note-nest-saved', true, ran), { ...options, resume: true }),
+      ).rejects.toThrow('Nested durable');
+      expect(ran.count).toBe(0);
+      expect((await readRun(options)).steps['inner']).toBeUndefined();
+    });
+  });
+
+  it('lets a catch(null) schema reset an incompatible saved note', async () => {
+    const clock = new Clock();
+    const options = { stateDir, runId: 'note-reset', input: null, clock };
+    const first = notePoll('note-reset', () => Promise.resolve({ done: false, note: { n: 1 } }));
+    expect((await runWorkflow(first, options)).status).toBe('suspended');
+    clock.time += 31_000;
+    const seen: unknown[] = [];
+    const second = notePoll(
+      'note-reset',
+      ({ previous }) => {
+        seen.push(previous.note);
+        return Promise.resolve({ done: true, value: 'ok' });
+      },
+      { noteSchema: seenSchema.nullable().catch(null) },
+    );
+    const done = await runWorkflow(second, { ...options, resume: true });
+    expect(done.output).toMatchObject({ by: 'poll', checks: 2 });
+    expect(seen).toEqual([null]);
+  });
+
+  it('never passes a null or absent note to the schema', async () => {
+    const clock = new Clock();
+    const parsed: unknown[] = [];
+    const recording = seenSchema.nullable().transform((note) => {
+      parsed.push(note);
+      return note;
+    });
+    const definition = notePoll(
+      'note-null',
+      ({ previous }) =>
+        Promise.resolve(
+          previous.checks === 0
+            ? { done: false, note: null }
+            : previous.checks === 1
+              ? { done: false }
+              : { done: true, value: 'ok' },
+        ),
+      { noteSchema: recording },
+    );
+    const options = { stateDir, runId: 'note-null', input: null, clock };
+    for (const resume of [false, true, true]) {
+      await runWorkflow(definition, { ...options, resume });
+      clock.time += 31_000;
+    }
+    expect(parsed).toEqual([]);
+  });
+
+  it('rejects a noteSchema that is not a Zod schema when the wait opens', async () => {
+    const definition = notePoll('note-invalid', () => Promise.resolve({ done: false }), {
+      noteSchema: { parse: () => null } as unknown as z.ZodType<JsonValue>,
+    });
+    await expect(
+      runWorkflow(definition, { stateDir, runId: 'note-invalid', input: null }),
+    ).rejects.toThrow('Poll noteSchema must be a Zod schema.');
+  });
+
+  it('keeps noteSchema out of the persisted request and wait identity', async () => {
+    const clock = new Clock();
+    const options = { stateDir, runId: 'note-identity', input: null, clock };
+    const observe = (): Promise<Check> => Promise.resolve({ done: false, note: { seen: 1 } });
+    const first = await runWorkflow(notePoll('note-identity', observe), options);
+    const request = first.steps['ready']?.wait?.request.poll;
+    expect(Object.keys(request ?? {}).sort()).toEqual(['every', 'input', 'observe', 'schema']);
+    const fingerprint = first.steps['ready']?.fingerprint;
+    clock.time += 31_000;
+    const resumed = await runWorkflow(
+      notePoll('note-identity', observe, { noteSchema: seenSchema }),
+      { ...options, resume: true },
+    );
+    expect(resumed.status).toBe('suspended');
+    expect(resumed.steps['ready']?.fingerprint).toBe(fingerprint);
+    expect(resumed.steps['ready']?.wait?.request.poll).toEqual(request);
+    expect(await readFile(join(stateDir, 'note-identity', 'run.json'), 'utf8')).not.toContain(
+      'noteSchema',
+    );
+  });
 });
 
 /** A bare RunQuestions over an in-memory record, for close() paths the runner rarely reaches. */
@@ -1843,6 +2090,7 @@ it('validates onError', async () => {
 });
 
 it('types the poll context and the onError policy', () => {
+  const noteSchema = z.object({ seen: z.boolean() });
   type Previous = PollContext<{ seenComplete: boolean }>['previous'];
   expectTypeOf<Previous['note']>().toEqualTypeOf<{ seenComplete: boolean } | null>();
   expectTypeOf<Previous['checks']>().toEqualTypeOf<number>();
@@ -1883,6 +2131,129 @@ it('types the poll context and the onError policy', () => {
         observe: ({ previous }) => {
           expectTypeOf(previous.note).toEqualTypeOf<{ seenComplete: boolean } | null>();
           return Promise.resolve({ done: false, note: { seenComplete: true } });
+        },
+      });
+      await ctx.poll('schema-typed', {
+        input: null,
+        schema: z.null(),
+        every: 1,
+        timeoutMs: 1,
+        noteSchema,
+        observe: ({ previous }) => {
+          expectTypeOf(previous.note).toEqualTypeOf<z.infer<typeof noteSchema> | null>();
+          expectTypeOf(previous.note).toEqualTypeOf<{ seen: boolean } | null>();
+          return Promise.resolve({ done: false, note: { seen: previous.note?.seen ?? false } });
+        },
+      });
+      await ctx.poll('schema-optional', {
+        input: null,
+        schema: z.null(),
+        every: 1,
+        timeoutMs: 1,
+        noteSchema: z.object({ label: z.string().optional() }),
+        observe: ({ previous }) => {
+          expectTypeOf(previous.note).toEqualTypeOf<{ label?: string | undefined } | null>();
+          return Promise.resolve({ done: false, note: {} });
+        },
+      });
+      await ctx.poll('schema-wrong-note', {
+        input: null,
+        schema: z.null(),
+        every: 1,
+        timeoutMs: 1,
+        noteSchema,
+        // @ts-expect-error the returned note must match noteSchema
+        observe: () => Promise.resolve({ done: false, note: { seen: 'yes' } }),
+      });
+      // Null, or the previous note forwarded as is, is allowed whatever the schema.
+      await ctx.poll('schema-null-note', {
+        input: null,
+        schema: z.null(),
+        every: 1,
+        timeoutMs: 1,
+        noteSchema,
+        observe: ({ previous }) =>
+          Promise.resolve(
+            previous.checks === 0
+              ? { done: false, note: null }
+              : { done: false, note: previous.note },
+          ),
+      });
+      await ctx.poll('command-null-note', {
+        input: null,
+        schema: z.null(),
+        every: 1,
+        timeoutMs: 1,
+        command: ['true'],
+        output: z.unknown(),
+        noteSchema,
+        done: (_output, previous) =>
+          previous.checks === 0
+            ? { done: false, note: null }
+            : { done: false, note: previous.note },
+      });
+      await ctx.poll('command-async-null-note', {
+        input: null,
+        schema: z.null(),
+        every: 1,
+        timeoutMs: 1,
+        command: ['true'],
+        output: z.unknown(),
+        noteSchema,
+        done: (_output, previous) => Promise.resolve({ done: false, note: previous.note }),
+      });
+      // ctx.wait poll sources infer the note type from noteSchema too, optional fields included.
+      const waited = await ctx.wait('wait-schema-typed', {
+        timeoutMs: 1,
+        poll: {
+          input: null,
+          schema: z.literal('ok'),
+          every: 1,
+          noteSchema: z.object({ label: z.string().optional() }),
+          observe: ({ previous }) => {
+            expectTypeOf(previous.note).toEqualTypeOf<{ label?: string | undefined } | null>();
+            return Promise.resolve({ done: false, note: { label: previous.note?.label ?? 'x' } });
+          },
+        },
+      });
+      expectTypeOf(waited.by).toEqualTypeOf<'poll' | 'deadline'>();
+      if (waited.by === 'poll') expectTypeOf(waited.value).toEqualTypeOf<'ok'>();
+      await ctx.wait('wait-command-schema-typed', {
+        timeoutMs: 1,
+        poll: {
+          input: null,
+          schema: z.null(),
+          every: 1,
+          command: ['true'],
+          output: z.unknown(),
+          noteSchema: z.object({ label: z.string().optional() }),
+          done: (_output, previous) => {
+            expectTypeOf(previous.note).toEqualTypeOf<{ label?: string | undefined } | null>();
+            return { done: false, note: {} };
+          },
+        },
+      });
+      await ctx.wait('wait-default-note', {
+        timeoutMs: 1,
+        poll: {
+          input: null,
+          schema: z.null(),
+          every: 1,
+          observe: ({ previous }) => {
+            expectTypeOf(previous.note).toEqualTypeOf<JsonValue | null>();
+            return Promise.resolve({ done: false, note: null });
+          },
+        },
+      });
+      await ctx.wait('wait-wrong-note', {
+        timeoutMs: 1,
+        poll: {
+          input: null,
+          schema: z.null(),
+          every: 1,
+          noteSchema,
+          // @ts-expect-error the returned note must match noteSchema
+          observe: () => Promise.resolve({ done: false, note: { seen: 'yes' } }),
         },
       });
       await ctx.poll('missing-tolerate', {
@@ -2175,6 +2546,27 @@ describe('command polls', () => {
         message,
       ).rejects.toThrow(message);
     }
+  });
+
+  it('applies noteSchema to the notes done returns', async () => {
+    const definition = commandPoll('command-note', {
+      every: 1,
+      timeoutMs: 60_000,
+      command: counter(join(stateDir, 'count'), 99),
+      output: counted,
+      noteSchema: z.object({ green: z.boolean() }),
+      done: (output) => ({ done: false, note: { green: output.n } as unknown as JsonValue }),
+    });
+    const error = await runWorkflow(definition, run('command-note')).then(
+      () => undefined,
+      (rejection: unknown) => rejection,
+    );
+    expect(error).toBeInstanceOf(WorkflowRunError);
+    const cause = (error as WorkflowRunError).cause as Error & { code?: string };
+    expect(cause.message).toContain(
+      'Wait ci: the note returned by done does not match noteSchema:',
+    );
+    expect(cause.code).toBe('QUIET_CHOIR_POLL_NOTE_INVALID');
   });
 
   it('runs done under the observer guard, so it cannot call context operations', async () => {

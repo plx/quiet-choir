@@ -18,6 +18,7 @@ import {
   defaultObserveTimeoutMs,
   isCommandPoll,
   observePoll,
+  parsePollNote,
   type AnyPollSource,
   type PollObservation,
 } from './poll-command.js';
@@ -121,7 +122,10 @@ interface QuestionDependencies {
   readonly observe?: (id: string, source: AnyPollSource, context: PollContext) => PollObservation;
   /** Whether an error is an authoring violation that must fail the run; never tolerated. */
   readonly isFatal?: (error: unknown) => boolean;
-  /** Run a poll error-policy callback under the same guard as an observer. */
+  /**
+   * Run a poll error-policy callback or noteSchema parse under the same guard as an observer, so
+   * a nested context operation fails the wait.
+   */
   readonly guard?: <R>(action: () => R) => R;
   readonly emit: (
     type: 'step.waiting' | 'step.completed' | 'step.replayed' | 'wait.opened',
@@ -504,9 +508,12 @@ export class RunQuestions {
       // A failure drain stops new observations; this one stays due and runs again on resume.
       if (this.#draining) return;
       waiter.signal.throwIfAborted();
-      // Read before counting this check: observers see what earlier checks persisted.
+      // Read before counting this check: observers see what earlier checks persisted. A saved note
+      // that fails noteSchema fails the wait here, before the observer runs and without counting.
       const previous = Object.freeze({
-        note: deepFreeze(structuredClone(progress.note)),
+        note: deepFreeze(
+          structuredClone(this.#guard(() => parsePollNote(id, poll, progress.note, 'saved'))),
+        ) as JsonValue,
         checks: progress.checks,
         openedAt: progress.openedAt,
       });
@@ -559,7 +566,9 @@ export class RunQuestions {
         await this.#complete(id, step, waiter, { by: 'poll', value, at, checks: progress.checks });
         return;
       }
-      progress.note = waitNote(result.note);
+      progress.note = waitNote(
+        this.#guard(() => parsePollNote(id, poll, result.note ?? null, 'returned')),
+      );
       if (progress.deadline !== null && at >= progress.deadline) {
         await this.#complete(id, step, waiter, { by: 'deadline', at, note: progress.note });
         return;
@@ -577,6 +586,11 @@ export class RunQuestions {
     if (!every) throw new Error('Poll progress is missing its stored interval.');
     return Math.min(every.maxMs, every.initialMs * every.factor ** (progress.checks - 1));
   }
+  /** Run a synchronous poll callback under the nested-operation guard when the runner supplies one. */
+  #guard<R>(action: () => R): R {
+    return this.#deps.guard ? this.#deps.guard(action) : action();
+  }
+
   /**
    * Apply the poll's onError policy to a rejected observation or an observeTimeoutMs expiry. It
    * returns once the error is recorded and the next check scheduled, or the wait completed by
@@ -600,7 +614,7 @@ export class RunQuestions {
       this.#deps.isFatal?.(error) === true
     )
       throw error;
-    const guard = this.#deps.guard ?? (<R>(action: () => R): R => action());
+    const guard = <R>(action: () => R): R => this.#guard(action);
     const { classify, retryAfterMs } = policy;
     if (classify) {
       const kind = guard(() => classify(error)) as unknown;

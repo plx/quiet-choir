@@ -42,7 +42,7 @@ export type PollInterval =
  * before this check. Every check is a fresh call (often in a fresh process after a suspension), so
  * cross-check state such as debounce flags belongs in the note, not in closures.
  */
-export type PollContext<N extends JsonValue = JsonValue> = Omit<StepContext, 'exec'> & {
+export type PollContext<N extends JsonInput = JsonValue> = Omit<StepContext, 'exec'> & {
   /**
    * Run a command through the run's process runner during this observation; see
    * {@link StepContext.exec}. The child is owned by the wait and aborted with the observation's
@@ -52,8 +52,9 @@ export type PollContext<N extends JsonValue = JsonValue> = Omit<StepContext, 'ex
   /** Progress persisted before this check; frozen, so observers cannot change saved state. */
   readonly previous: {
     /**
-     * The latest nonterminal note, or null on the first check. It is read back from storage, so
-     * narrow or parse it (for example with a Zod schema); `N` is not inferred from returned notes.
+     * The latest nonterminal note, or null on the first check. `N` is inferred from the poll's
+     * `noteSchema`, which also validates the note when it is read back from storage. Without
+     * `noteSchema` it is {@link JsonValue}: narrow or parse it (for example with a Zod schema).
      */
     readonly note: N | null;
     /** Checks completed before this one, including tolerated errors; 0 on the first check. */
@@ -70,7 +71,8 @@ export type PollContext<N extends JsonValue = JsonValue> = Omit<StepContext, 'ex
  * Only a rejection of the observation itself, or an observeTimeoutMs expiry (code
  * `QUIET_CHOIR_POLL_OBSERVE_TIMEOUT`), is a candidate. Run cancellation or interruption,
  * context-operation violations, an invalid observe result, a terminal value that fails the schema,
- * and an invalid note always fail the wait.
+ * and an invalid note (including a note that fails `noteSchema`, returned or saved) always fail the
+ * wait.
  */
 export interface PollErrorPolicy {
   /**
@@ -89,7 +91,7 @@ export interface PollErrorPolicy {
 }
 
 /** One read-only check; only its final value becomes a workflow branch decision. */
-export interface PollSource<T, N extends JsonValue = JsonValue> {
+export interface PollSource<T, N extends JsonInput = JsonValue> {
   /** Explicit dependencies, included in durable identity. */
   readonly input: JsonInput;
   /** Terminal value schema; parsed before lossless-JSON validation. */
@@ -111,6 +113,22 @@ export interface PollSource<T, N extends JsonValue = JsonValue> {
    */
   readonly onError?: PollErrorPolicy;
   /**
+   * Schema for the poll's note. It types `previous.note` (as `N | null`, with `N` inferred from
+   * this schema, so no type arguments are needed) and validates notes in both directions: a
+   * nonterminal note the check returns is parsed before it is saved, and the saved note is parsed
+   * again before the next check sees it. Parsed output replaces the note, so a `z.object` strips
+   * unknown keys. Null is outside the schema: the first check's `null`, and the null saved for a
+   * `{ done: false }` with no note, are passed through unparsed, so the schema need not be
+   * nullable, and a check may return `note: null` or forward `previous.note` whatever the schema. A note that fails the schema fails the wait with code
+   * `QUIET_CHOIR_POLL_NOTE_INVALID` (error kind `schema`) and the Zod error as `cause`; `onError`
+   * never tolerates it. The schema is reapplied to its own output on the next check, so it should
+   * accept what it produces and avoid non-idempotent transforms. It is policy, not identity: it is
+   * not persisted and may change on resume, so to migrate a changed note shape accept the old shape
+   * (a union) or reset it with `.catch(null)`; otherwise use a new wait ID. Without it the note is
+   * {@link JsonValue} and unvalidated.
+   */
+  readonly noteSchema?: z.ZodType<N>;
+  /**
    * Read external state without writes or nested workflow operations. Honor `context.signal`: an
    * observation that ignores its aborted signal is abandoned after a short grace, with a run
    * warning. The signal also aborts when a body failure starts draining the run; that observation
@@ -121,7 +139,8 @@ export interface PollSource<T, N extends JsonValue = JsonValue> {
     (
       context: PollContext<N>,
     ) => Promise<
-      { readonly done: true; readonly value: T } | { readonly done: false; readonly note?: N }
+      | { readonly done: true; readonly value: T }
+      | { readonly done: false; readonly note?: N | null }
     >
   >;
   /** Only a {@link CommandPollSource} runs a command; an observer poll has none. */
@@ -139,10 +158,11 @@ export type PollCommandExecOptions = Omit<StepExecOptions, 'timeoutMs' | 'onErro
  * A poll whose every check runs one command through the run's process runner, validates its JSON
  * stdout with `output`, and lets `done` decide the outcome. The engine owns the child: it is
  * registered under the wait for orphan recovery, stopped with the observation's signal, and
- * synthesized or fixture-answered under a rehearsal. `input`, `schema`, `every`, `observeTimeoutMs`
- * and `onError` mean what they mean for an observer {@link PollSource}.
+ * synthesized or fixture-answered under a rehearsal. `input`, `schema`, `every`, `noteSchema`,
+ * `observeTimeoutMs` and `onError` mean what they mean for an observer {@link PollSource}; a
+ * `noteSchema` applies to the notes `done` returns and to `previous.note`.
  */
-export interface CommandPollSource<T, O = unknown, N extends JsonValue = JsonValue> extends Omit<
+export interface CommandPollSource<T, O = unknown, N extends JsonInput = JsonValue> extends Omit<
   PollSource<T, N>,
   'observe' | 'command'
 > {
@@ -180,17 +200,21 @@ export interface CommandPollSource<T, O = unknown, N extends JsonValue = JsonVal
       previous: PollContext<N>['previous'],
     ) =>
       | { readonly done: true; readonly value: T }
-      | { readonly done: false; readonly note?: N }
+      | { readonly done: false; readonly note?: N | null }
       | Promise<
-          { readonly done: true; readonly value: T } | { readonly done: false; readonly note?: N }
+          | { readonly done: true; readonly value: T }
+          | { readonly done: false; readonly note?: N | null }
         >
   >;
   /** Only an observer {@link PollSource} has `observe`. */
   readonly observe?: never;
 }
 
-/** Sources competing inside one durable wait; at least one must be supplied. */
-export interface WaitSources {
+/**
+ * Sources competing inside one durable wait; at least one must be supplied. `N` is the poll's note
+ * type, which `ctx.wait` infers from the poll source's `noteSchema` as `ctx.poll` does.
+ */
+export interface WaitSources<N extends JsonInput = JsonValue> {
   /** Relative duration, pinned to an absolute deadline when first opened. */
   readonly timeoutMs?: number;
   /** Absolute Unix epoch deadline; cannot be combined with timeoutMs. */
@@ -198,7 +222,7 @@ export interface WaitSources {
   /** An optional external answer, with its subject and presentation fingerprinted. */
   readonly signal?: SignalSource<unknown>;
   /** An optional changing-state observation, by an observer or by a command. */
-  readonly poll?: PollSource<unknown> | CommandPollSource<unknown>;
+  readonly poll?: PollSource<unknown, N> | CommandPollSource<unknown, unknown, N>;
 }
 
 /** A terminal external answer; its timestamp is supplied by the inbox writer. */
@@ -268,7 +292,7 @@ export type WaitOutcome<S> =
       : never);
 
 /** A polling convenience call must include a finite time bound. */
-export type PollOptions<T, N extends JsonValue = JsonValue> = PollSource<T, N> &
+export type PollOptions<T, N extends JsonInput = JsonValue> = PollSource<T, N> &
   (
     | {
         /** Relative duration, pinned on first open. */
@@ -288,7 +312,7 @@ export type PollOptions<T, N extends JsonValue = JsonValue> = PollSource<T, N> &
  * A command poll's time bound, like {@link PollOptions}: `ctx.poll` requires `timeoutMs` or
  * `deadline`.
  */
-export type CommandPollOptions<T, O = unknown, N extends JsonValue = JsonValue> = CommandPollSource<
+export type CommandPollOptions<T, O = unknown, N extends JsonInput = JsonValue> = CommandPollSource<
   T,
   O,
   N

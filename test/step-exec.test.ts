@@ -175,6 +175,21 @@ describe('command poll types', () => {
           return Promise.resolve({ done: false, note: { seen: true } });
         },
       });
+      // With noteSchema, N is inferred: no type arguments needed.
+      await ctx.poll('schema-note', {
+        input: null,
+        schema: z.boolean(),
+        every: 1,
+        deadline: 1,
+        command: ['gh', 'pr', 'checks', '1'],
+        output: checks,
+        noteSchema: z.object({ green: z.boolean() }),
+        done: (output, previous) => {
+          expectTypeOf(output).toEqualTypeOf<Checks>();
+          expectTypeOf(previous.note).toEqualTypeOf<{ green: boolean } | null>();
+          return { done: false, note: { green: previous.note?.green ?? output.length === 0 } };
+        },
+      });
       // ctx.wait accepts the command form too; there done's output is unknown, so narrow it.
       const waited = await ctx.wait('either', {
         timeoutMs: 1,

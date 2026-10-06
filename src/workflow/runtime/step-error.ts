@@ -7,6 +7,9 @@ import { outputLimitCode } from '../../processes/output-limit.js';
 import type { ExecStepError } from './exec-model.js';
 import type { ErrorKind, StepError } from './model.js';
 
+/** Code of the error a poll raises when a note fails its `noteSchema`; kind `schema`. @internal */
+export const pollNoteInvalidCode = 'QUIET_CHOIR_POLL_NOTE_INVALID';
+
 /** Shared validation for retry filters and saved failures. @internal */
 export const errorKindSchema = z.enum([
   'timeout',
@@ -79,6 +82,7 @@ export function errorKind(error: unknown): ErrorKind {
     if (code === 'QUIET_CHOIR_IDLE_TIMEOUT') return 'idle-timeout';
     if (code === 'ABORT_ERR') return 'cancelled';
     if (code === outputLimitCode) return 'output-limit';
+    if (code === pollNoteInvalidCode) return 'schema';
     if (code === 'ENOENT' || code === 'EPIPE') return 'process';
   }
   return 'unknown';
