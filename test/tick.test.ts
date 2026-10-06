@@ -40,6 +40,8 @@ import {
   readHarnessSelection,
 } from '../src/workflow/loader/harness-selection.js';
 import type { CliHarnessOptions } from '../src/harnesses/cli.js';
+import { FixtureHarness, parseHarnessFixtures } from '../src/harnesses/fixture.js';
+import type { Harness } from '../src/workflow/runtime/model.js';
 import * as store from '../src/workflow/runtime/store.js';
 import * as inbox from '../src/workflow/runtime/inbox.js';
 import * as requiredRun from '../src/workflow/runtime/read-required-run.js';
@@ -754,31 +756,43 @@ export default defineWorkflow({ name: 'debounce', version: '1', input: z.null(),
     const f = await fixture('agent', false, { harnessConfig: { claudeBinary } });
     const bytes = await runBytes(f.stateDir, 'run');
     // No --harness-config means the default configuration, which this run was not started with.
+    // Tick predicts the runtime's refusal and skips the run before importing it.
     expect(oneEntryPerRun(await tick.execute(f.tickPlan))).toEqual({
       kind: 'workflow.tick.result',
       ok: true,
-      resumed: [
+      resumed: [],
+      skipped: [
         {
           runId: 'run',
-          outcome: 'incompatible',
-          message: expect.stringContaining('--allow-harness-config-change') as unknown,
+          reason: 'incompatible',
+          message: expect.stringMatching(
+            /different harness configuration .*Repeat the original --harness-config, or pass --allow-harness-config-change/u,
+          ) as unknown,
         },
       ],
-      skipped: [],
       observed: 0,
       exitCode: 1,
     });
     expect(await runBytes(f.stateDir, 'run')).toEqual(bytes);
     expect((await readRun(f.plan)).status).toBe('suspended');
     await expect(stat(f.agentLog)).rejects.toMatchObject({ code: 'ENOENT' });
+    expect(await readFile(f.imports, 'utf8')).toBe('import\n');
     // Another binary path is another configuration, accepted only with the override.
     const other = join(f.root, 'other-claude.mjs');
     await symlink(claudeBinary, other);
     const changed = { kind: 'cli' as const, config: { claudeBinary: other } };
     expect(oneEntryPerRun(await tick.execute({ ...f.tickPlan, harness: changed }))).toMatchObject({
-      resumed: [{ runId: 'run', outcome: 'incompatible' }],
+      resumed: [],
+      skipped: [
+        {
+          runId: 'run',
+          reason: 'incompatible',
+          message: expect.stringContaining('--allow-harness-config-change') as unknown,
+        },
+      ],
       exitCode: 1,
     });
+    expect(await runBytes(f.stateDir, 'run')).toEqual(bytes);
     await expect(stat(f.agentLog)).rejects.toMatchObject({ code: 'ENOENT' });
     expect(
       oneEntryPerRun(
@@ -1256,6 +1270,90 @@ export default defineWorkflow({ name: 'debounce', version: '1', input: z.null(),
       exitCode: 0,
     });
     expect((await readRun(progressed.plan)).staleRecovery).toBeUndefined();
+  });
+
+  // Issue #235: a refusal that no recovery attempt follows must not count toward the cap.
+  it('refuses a crashed running run with a different harness configuration before counting a stale recovery', async () => {
+    const claudeBinary = join(project, 'test/bin/fake-claude.mjs');
+    const harness = { kind: 'cli' as const, config: { claudeBinary } };
+    const refused = {
+      kind: 'workflow.tick.result',
+      ok: true,
+      resumed: [],
+      skipped: [
+        {
+          runId: 'run',
+          reason: 'incompatible',
+          message: expect.stringContaining('Repeat the original --harness-config') as unknown,
+        },
+      ],
+      observed: 0,
+      exitCode: 1,
+    };
+    const f = await fixture('agent', false, { harnessConfig: { claudeBinary } });
+    await crashedWhileRunning(f.stateDir, 'run');
+    const before = await runBytes(f.stateDir, 'run');
+    // More ticks than the cap: a cron tick without --harness-config is never a crash loop.
+    for (let pass = 0; pass < 4; pass++) {
+      expect(oneEntryPerRun(await tick.execute(f.tickPlan))).toEqual(refused);
+      expect(await runBytes(f.stateDir, 'run')).toEqual(before);
+    }
+    const saved = await readRun(f.plan);
+    expect(saved.status).toBe('running');
+    expect(saved.staleRecovery).toBeUndefined();
+    expect(await readFile(f.imports, 'utf8')).toBe('import\n');
+    await expect(stat(f.agentLog)).rejects.toMatchObject({ code: 'ENOENT' });
+
+    // An earlier count, from real crashes, is kept exactly as it was, including its time.
+    const counted = await fixture('agent', false, { harnessConfig: { claudeBinary } });
+    await crashedWhileRunning(counted.stateDir, 'run', (completedSteps) => ({
+      count: 2,
+      completedSteps,
+    }));
+    const original = (await readRun(counted.plan)).staleRecovery;
+    expect(original).toMatchObject({ count: 2 });
+    const countedBytes = await runBytes(counted.stateDir, 'run');
+    for (let pass = 0; pass < 4; pass++)
+      expect(oneEntryPerRun(await tick.execute(counted.tickPlan))).toEqual(refused);
+    expect(await runBytes(counted.stateDir, 'run')).toEqual(countedBytes);
+    expect((await readRun(counted.plan)).staleRecovery).toEqual(original);
+
+    // The original configuration recovers both runs, and completion clears the counter.
+    for (const run of [f, counted]) {
+      expect(oneEntryPerRun(await tick.execute({ ...run.tickPlan, harness }))).toMatchObject({
+        resumed: [{ runId: 'run', outcome: 'completed' }],
+        skipped: [],
+        exitCode: 0,
+      });
+      const recovered = await readRun(run.plan);
+      expect(recovered.status).toBe('completed');
+      expect(recovered.staleRecovery).toBeUndefined();
+    }
+  });
+
+  it('leaves the configuration check to the runtime when a live harness is injected', async () => {
+    const claudeBinary = join(project, 'test/bin/fake-claude.mjs');
+    const f = await fixture('agent', false, { harnessConfig: { claudeBinary } });
+    await crashedWhileRunning(f.stateDir, 'run');
+    // An injected harness carries its own configuration, so no digest is compared or predicted.
+    const answers = new FixtureHarness(
+      parseHarnessFixtures({ version: 1, calls: [{ step: 'call', text: 'injected' }] }),
+    );
+    const injected: Harness = {
+      kind: 'cli',
+      invoke: (request, invocation) => answers.invoke(request, invocation),
+    };
+    expect(
+      oneEntryPerRun(
+        await new TickWorkflowExecutor({ logger, harness: injected }).execute(f.tickPlan),
+      ),
+    ).toMatchObject({
+      resumed: [{ runId: 'run', outcome: 'completed' }],
+      skipped: [],
+      exitCode: 0,
+    });
+    expect((await readRun(f.plan)).steps['call']?.status).toBe('completed');
+    await expect(stat(f.agentLog)).rejects.toMatchObject({ code: 'ENOENT' });
   });
 });
 

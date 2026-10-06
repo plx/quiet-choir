@@ -2,6 +2,17 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- `workflow tick` no longer counts a stale recovery for a CLI run it is certain to refuse for a
+  harness configuration mismatch. A cron tick without the run's original `--harness-config` used to
+  save the `staleRecovery` counter before the runtime refused the resume, so after 3 ticks a healthy
+  run was reported `crash-loop` and the real cause disappeared. Tick now applies the runtime's
+  configuration rule (shared through one pure helper) after claiming the run and before saving the
+  counter: the counter, the checkpoint and `--max-runs` stay untouched and the workflow is not
+  imported. Behavior change: such a run is reported under `skipped` with reason `incompatible` and
+  the same `run.incompatible` message, instead of under `resumed` with outcome `incompatible`; the
+  `--run` exit code (1) is unchanged. Other refusals that tick can find only after importing the
+  workflow, such as a harness kind change with an explicit `--harness`, still count, because the
+  counter is saved before the resume so that every crash counts.
 - A Codex auth write-back lock file that is not a quiet-choir owner record (corrupt, or another
   user's file in a shared `/tmp`) is now reclaimed with a warning once it is older than 60 s,
   instead of every `instructions: 'none'` call waiting about 10 s and losing the write-back. A

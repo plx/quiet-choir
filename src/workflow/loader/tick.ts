@@ -31,7 +31,8 @@ import {
 } from '../runtime/recovery-decision.js';
 import { WorkflowExecutor, type WorkflowExecutorOptions } from './executor.js';
 import { workflowFailure, type WorkflowFailure } from './failure.js';
-import type { HarnessSelection } from './harness-selection.js';
+import { harnessConfigDigest, type HarnessSelection } from './harness-selection.js';
+import { harnessConfigRefusal } from '../runtime/harness-config-decision.js';
 import { formatArgv } from './next-commands.js';
 
 /** One pass or bounded watch over plain checkpoint readiness. No scheduler is installed. */
@@ -52,8 +53,10 @@ export interface TickWorkflowsPlan extends ExecutionPlan {
   readonly events?: string;
   /**
    * CLI harness configuration for resumed CLI runs; omitted means the default configuration. A run
-   * records a digest of the configuration it last executed with, and a resume under a different one
-   * ends `incompatible` unless {@link TickWorkflowsPlan.allowHarnessConfigChange} is set.
+   * records a digest of the configuration it last executed with, and a CLI run under a different one
+   * is skipped as `incompatible`, before tick imports it or counts a stale recovery, unless
+   * {@link TickWorkflowsPlan.allowHarnessConfigChange} is set. With fixture selections the runtime
+   * applies the same rule and the resume ends `incompatible`.
    */
   readonly harness?: HarnessSelection;
   /**
@@ -291,6 +294,41 @@ function resumeHarness(
   return run.harness?.kind === 'cli'
     ? { harness: plan.harness ?? { kind: 'cli' as const, config: {} } }
     : {};
+}
+
+/**
+ * The runtime's harness configuration refusal for one claimed run, predicted before tick counts a
+ * stale recovery or imports the workflow; undefined when the resume may proceed or tick cannot be
+ * sure. The prediction is made only for a plain CLI selection (no global or named fixtures), whose
+ * runtime kind is always `cli`, and digests the configuration exactly as the executor will. An
+ * injected live harness carries its own configuration, so the executor passes no digest; fixture
+ * selections and other kinds are left to the executor.
+ */
+function harnessConfigPreflight(
+  plan: TickWorkflowsPlan,
+  run: RunRecord,
+  injected: boolean,
+): string | undefined {
+  if (injected) return undefined;
+  const { harness, inheritHarness } = resumeHarness(plan, run, false);
+  const recorded = run.launch?.policy?.harness;
+  // An inherited selection keeps only the invocation's configuration and takes its kind and
+  // fixtures from the recorded policy; an absent selection is the default CLI one.
+  const fixtures =
+    inheritHarness && recorded
+      ? recorded.kind !== 'cli' || (recorded.fixtures?.length ?? 0) > 0
+      : harness !== undefined &&
+        (harness.kind !== 'cli' ||
+          harness.fixtures !== undefined ||
+          Object.keys(harness.named ?? {}).length > 0);
+  if (fixtures) return undefined;
+  return harnessConfigRefusal({
+    runId: run.id,
+    previous: run.harness,
+    requestedKind: 'cli',
+    requestedConfigDigest: harnessConfigDigest(harness),
+    allowHarnessConfigChange: plan.allowHarnessConfigChange ?? false,
+  })?.message;
 }
 
 /** Transfer the already-held writer to the runtime, releasing it exactly once on every path. */
@@ -545,8 +583,23 @@ export class TickWorkflowExecutor implements Executor<
               });
               continue;
             }
+            // A resume the runtime is certain to refuse for its harness configuration is skipped
+            // before counting a stale recovery, importing the workflow or using a --max-runs attempt.
+            const configRefusal = harnessConfigPreflight(
+              plan,
+              latest,
+              this.options.harness !== undefined,
+            );
+            if (configRefusal !== undefined) {
+              skip(id, 'incompatible', { message: configRefusal });
+              continue;
+            }
             // Still running under our ownership: the previous owner is provably gone. Count the
             // recovery durably before resuming, so a run that crashes every time stops at the cap.
+            // The count is saved before the executor runs so that a crash anywhere in it (import,
+            // type check or body) counts. A harness configuration mismatch was refused above and
+            // never counts; a refusal found only after import (such as a harness kind change
+            // requested with an explicit --harness) still does.
             if (latest.status === 'running') {
               const decision = staleDecision(latest);
               if (decision.kind === 'crash-loop') continue;

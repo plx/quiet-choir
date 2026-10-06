@@ -191,6 +191,7 @@ import { bindContext } from './context.js';
 import { execFailureFields, stepError, errorKind } from './step-error.js';
 import { ConfigurationError, GrantRequiredError } from './configuration-error.js';
 import { chooseRecoveryHint, type RecoveryCause } from './recovery-hint.js';
+import { harnessConfigRefusal } from './harness-config-decision.js';
 import { classifyAttemptFailure } from './attempt-failure.js';
 import {
   decideReplay,
@@ -873,23 +874,21 @@ export async function runWorkflow<
     requireHarnessChange(forkSource);
     // A kind change is governed by allowHarnessChange alone. Records without a digest (older ones,
     // or an execution with an unknown configuration) stay resumable and adopt the supplied one.
-    // Forks are new runs and record their own digest.
-    const previousConfigDigest = existing?.harness?.configDigest;
-    const requestedConfigDigest = options.harnessConfigDigest;
-    if (
-      existing?.harness &&
-      previousConfigDigest !== undefined &&
-      requestedConfigDigest !== undefined &&
-      existing.harness.kind === harnessKind &&
-      harnessKind !== 'none' &&
-      previousConfigDigest !== requestedConfigDigest &&
-      !options.allowHarnessConfigChange
-    )
+    // Forks are new runs and record their own digest. Tick applies the same rule before it counts
+    // a stale recovery, so the rule lives in harness-config-decision.ts.
+    const configRefusal = harnessConfigRefusal({
+      runId: options.runId,
+      previous: existing?.harness,
+      requestedKind: harnessKind,
+      requestedConfigDigest: options.harnessConfigDigest,
+      allowHarnessConfigChange: options.allowHarnessConfigChange ?? false,
+    });
+    if (configRefusal)
       throw new RunRefusedError(
         'run.incompatible',
         options.runId,
-        `Run ${options.runId} last executed with a different harness configuration (sha256 ${previousConfigDigest.slice(0, 12)}); this invocation supplies ${requestedConfigDigest.slice(0, 12)}. Repeat the original --harness-config, or pass --allow-harness-config-change to accept the change.`,
-        { previousConfigDigest, requestedConfigDigest },
+        configRefusal.message,
+        configRefusal.details,
       );
     function parseInput(raw: unknown): TInput {
       try {

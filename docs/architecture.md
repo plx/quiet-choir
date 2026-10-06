@@ -154,7 +154,8 @@ free, reclaimable, orphans or held; the inspection stale display and `workflow t
 `decideStaleRecovery` applies tick's crash-loop cap of 3 consecutive recoveries with an unchanged
 completed-step count. Tick keeps the lock recovery, the durable counter save and the resume; the
 same ESLint import guard covers the module, and `test/recovery-decision.test.ts` is its executable
-table.
+table. `src/workflow/runtime/harness-config-decision.ts` is the pure harness configuration rule that
+`runWorkflow` and tick share, so tick can skip a mismatched run before it counts a recovery.
 
 HarnessInvocation carries run/step/attempt identity, the captured cancellation signal and a
 process-registration port. The runtime persists child/group ownership inside the run lock; adapters
