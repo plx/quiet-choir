@@ -113,12 +113,15 @@ decision. See [ADR 0031](decisions/0031-private-codex-home-for-instruction-free-
 
 Limitations: the lock coordinates quiet-choir processes that share a temporary directory. A plain
 `codex` run refreshing the same `auth.json` at the same moment is covered only by the
-compare-and-swap re-read. Credentials Codex keeps in the OS keyring instead of `auth.json` are not
-copied, and that setup is unverified. Codex writes its own state files into each private home, so
-every call starts with a fresh installation ID. Detection still describes what Codex would load
-without the opt-out: user-level detection reads the real home, so a workflow that uses only `'none'`
-still gets the user-level warning, and `'none'` calls still get a `projectInstructions` entry for
-their `cwd`. `request.instructions` records what each call actually did.
+compare-and-swap re-read. A lock file that is not a quiet-choir owner record (corrupt, or another
+user's file in a shared `/tmp`) is moved aside with a warning once it is older than 60 s; one that
+cannot be moved aside makes write-back warn at once with the lock path to remove. Credentials Codex
+keeps in the OS keyring instead of `auth.json` are not copied, and that setup is unverified. Codex
+writes its own state files into each private home, so every call starts with a fresh installation
+ID. Detection still describes what Codex would load without the opt-out: user-level detection reads
+the real home, so a workflow that uses only `'none'` still gets the user-level warning, and `'none'`
+calls still get a `projectInstructions` entry for their `cwd`. `request.instructions` records what
+each call actually did.
 
 Neither mode confines the workflow's TypeScript, local callbacks, or `ctx.exec`. OS sandbox
 selection and tool grants remain separate controls. Custom harnesses must enforce the resolved mode

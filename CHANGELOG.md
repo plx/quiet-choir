@@ -2,6 +2,11 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- A Codex auth write-back lock file that is not a quiet-choir owner record (corrupt, or another
+  user's file in a shared `/tmp`) is now reclaimed with a warning once it is older than 60 s,
+  instead of every `instructions: 'none'` call waiting about 10 s and losing the write-back. A
+  younger one is still waited on, and a live owner is never reclaimed. A lock that cannot be moved
+  aside fails fast, and every lock failure warning names the lock path.
 - Instruction detection covers more native sources, measured with the zero-cost isolation contract
   on codex-cli 0.160.0 and Claude Code 2.1.290. Codex: skills under `$HOME/.agents/skills` (user
   level, counted in the user-level warning), `.agents/skills` in each directory from the Git root
