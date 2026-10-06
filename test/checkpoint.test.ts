@@ -358,7 +358,7 @@ it('leaves unused steps unchanged when the output fails validation', async () =>
     runWorkflow(definition, {
       ...options(),
       resume: true,
-      onEvent: (event) => events.push(event.type),
+      onEvent: (event) => void events.push(event.type),
     }),
   ).rejects.toThrow();
   const saved = await readRun(options());
@@ -380,7 +380,7 @@ it('does not leave a superseded step behind when the completion save fails', asy
     runWorkflow(definition, {
       ...options(),
       resume: true,
-      onEvent: (event) => events.push(event.type),
+      onEvent: (event) => void events.push(event.type),
     }),
   ).rejects.toMatchObject({ cause: expect.any(CheckpointError) as unknown });
   const saved = await readRun(options());
