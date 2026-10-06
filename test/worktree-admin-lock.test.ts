@@ -10,6 +10,7 @@ import {
   rm,
   writeFile,
 } from 'node:fs/promises';
+import type * as fs from 'node:fs/promises';
 import { hostname, tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -23,12 +24,42 @@ import {
 } from '../src/workflow/runtime/worktree-admin-lock.js';
 import { holdAdminLock } from './worktree-admin-holder.js';
 
+/** A one-shot hook run just before a matching rename, which then proceeds for real. */
+const renameHook = vi.hoisted(() => ({
+  current: undefined as
+    | { readonly matches: (from: string, to: string) => boolean; readonly before: () => unknown }
+    | undefined,
+}));
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const actual = await importOriginal<typeof fs>();
+  return {
+    ...actual,
+    rename: async (...[from, to]: Parameters<typeof fs.rename>): Promise<void> => {
+      const hook = renameHook.current;
+      if (hook?.matches(String(from), String(to))) {
+        renameHook.current = undefined;
+        await hook.before();
+      }
+      return actual.rename(from, to);
+    },
+  };
+});
+
+/** Run `before` once, just before the next rename from `from` to a path ending in `suffix`. */
+function beforeRename(from: string, suffix: string, before: () => unknown): void {
+  renameHook.current = {
+    matches: (source, target) => source === from && target.endsWith(suffix),
+    before,
+  };
+}
+
 let common: string, lockPath: string;
 beforeEach(async () => {
   common = await realpath(await mkdtemp(join(tmpdir(), 'choir-admin-lock-')));
   lockPath = worktreeAdminLockPath(common);
 });
 afterEach(async () => {
+  renameHook.current = undefined;
   vi.restoreAllMocks();
   await chmod(dirname(lockPath), 0o700).catch(() => undefined);
   await rm(common, { recursive: true, force: true });
@@ -448,6 +479,100 @@ describe('unlockWorktreeAdminLock', () => {
     if (observed === undefined) throw new Error('The planted lock was not observed.');
     await expect(removeObservedLock(observed, () => changed)).rejects.toBe(changed);
     expect(await readdir(dirname(lockPath))).toEqual(['worktree-admin.lock']);
+    expect(await readFile(join(lockPath, 'owner.json'), 'utf8')).toBe(replacement);
+  });
+
+  it('removes a dead owner whose recovery marker is unreadable, with a warning', async () => {
+    await plant({ pid: deadPid() });
+    await writeFile(join(lockPath, 'recovery.json'), '{ torn');
+    const { lock } = await unlockWorktreeAdminLock({ commonGitDir: common });
+    expect(lock).toMatchObject({ owner: { state: 'dead' }, recovery: null, action: 'removed' });
+    expect(lock?.warning).toMatch(/^recovery\.json: /u);
+    await expectNoResidue();
+  });
+
+  it('defers to a live recoverer that claimed the lock after observation', async () => {
+    await plant({ pid: deadPid() });
+    const observed = await observeUnlock('worktree-admin', lockPath, null);
+    if (observed === undefined) throw new Error('The planted lock was not observed.');
+    // The (live) parent of this test process claims recovery before unlock does.
+    const claim = JSON.stringify({
+      pid: process.ppid,
+      host: hostname(),
+      token: randomUUID(),
+      osStartTime: null,
+    });
+    await writeFile(join(lockPath, 'recovery.json'), claim);
+    const changed = new Error('changed during unlock');
+    await expect(removeObservedLock(observed, () => changed)).rejects.toBe(changed);
+    expect(await readdir(lockPath)).toEqual(['owner.json', 'recovery.json']);
+    expect(await readFile(join(lockPath, 'recovery.json'), 'utf8')).toBe(claim);
+  });
+
+  it('holds the recovery claim while it retires, so a concurrent recoverer cannot take the lock', async () => {
+    const pid = deadPid();
+    await plant({ pid });
+    const controller = new AbortController();
+    const reason = new Error('stop waiting');
+    let contender: Promise<unknown> | undefined;
+    beforeRename(lockPath, '.gone', async () => {
+      // Unlock holds its claim now: the dead owner's lock carries unlock's live marker.
+      const marker = JSON.parse(await readFile(join(lockPath, 'recovery.json'), 'utf8')) as {
+        pid: number;
+      };
+      expect(marker.pid).toBe(process.pid);
+      setTimeout(() => {
+        controller.abort(reason);
+      }, 150);
+      // An automatic recoverer waits on the live claim instead of retiring and replacing the lock.
+      contender = acquireWorktreeAdminLock(common, {
+        signal: controller.signal,
+        stuckAfterMs: 0,
+        probeOwner: false,
+      }).then(
+        () => 'acquired',
+        (error: unknown) => error,
+      );
+      expect(await contender).toBe(reason);
+      expect(await readdir(lockPath)).toEqual(['owner.json', 'recovery.json']);
+      expect(await readdir(dirname(lockPath))).toEqual(['worktree-admin.lock']);
+    });
+    expect((await unlockWorktreeAdminLock({ commonGitDir: common })).lock).toMatchObject({
+      owner: { pid, state: 'dead' },
+      action: 'removed',
+    });
+    expect(await contender).toBe(reason);
+    await expectNoResidue();
+  });
+
+  it('refuses with worktree.locked, never removed, when the lock is replaced before its claim', async () => {
+    const pid = deadPid();
+    await plant({ pid }, { pid });
+    const replacement = JSON.stringify({
+      pid: process.ppid,
+      host: hostname(),
+      token: randomUUID(),
+      osStartTime: null,
+    });
+    // Just before unlock takes the dead marker aside, a recoverer retires the lock and a live
+    // owner publishes a new one.
+    beforeRename(join(lockPath, 'recovery.json'), '.stale', async () => {
+      await rm(lockPath, { recursive: true });
+      await mkdir(lockPath);
+      await writeFile(join(lockPath, 'owner.json'), replacement);
+    });
+    const error = await unlockWorktreeAdminLock({ commonGitDir: common }).then(
+      (result) => result,
+      (cause: unknown) => cause,
+    );
+    expect(error).toBeInstanceOf(WorktreeAdminLockRefusedError);
+    expect(error).toMatchObject({
+      code: 'worktree.locked',
+      message: `Worktree administration lock ${lockPath} changed during unlock; retry.`,
+    });
+    // The new lock stays, without unlock's marker.
+    expect(await readdir(dirname(lockPath))).toEqual(['worktree-admin.lock']);
+    expect(await readdir(lockPath)).toEqual(['owner.json']);
     expect(await readFile(join(lockPath, 'owner.json'), 'utf8')).toBe(replacement);
   });
 });

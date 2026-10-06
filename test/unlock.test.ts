@@ -164,8 +164,12 @@ describe('unlockRun removal', () => {
     ]);
     expect(await fs.readdir(stateDir)).toEqual(['run-1']);
     expect(await fs.readdir(join(stateDir, 'run-1'))).toEqual([]);
-    // Only tombstones were deleted: never the live lock path.
-    const removed = vi.mocked(fs.rm).mock.calls.map(([path]) => String(path));
+    // Only tombstones (and the temporary file of unlock's recovery claim) were deleted: never the
+    // live lock path.
+    const removed = vi
+      .mocked(fs.rm)
+      .mock.calls.map(([path]) => String(path))
+      .filter((path) => !/\/recovery\.[0-9a-f-]+\.tmp$/u.test(path));
     expect(removed.length).toBeGreaterThan(0);
     expect(removed.every((path) => /\.\d+\.[0-9a-f-]+\.gone$/u.test(path))).toBe(true);
     expect(removed).not.toContain(primary);
@@ -382,6 +386,21 @@ describe('unlockRun races', () => {
     // The lock is back in place with the new file, and no tombstone remains.
     expect((await fs.readdir(guard)).length).toBe(1);
     expect(await fs.readdir(stateDir)).toEqual(['run-1.json.lock']);
+  });
+
+  it('holds the recovery claim while it retires, so a concurrent resume cannot take the lock', async () => {
+    await plant(guard);
+    onTombstone(guard, async () => {
+      // Unlock's live marker holds the dead owner's lock, so automatic recovery refuses.
+      await expect(lockRun(stateDir, 'run-1', { probeOwner: false })).rejects.toMatchObject({
+        code: 'run.locked',
+        message: expect.stringContaining('lock recovery is in progress') as unknown,
+      });
+      expect((await fs.readdir(guard)).sort()).toEqual(['owner.json', 'recovery.json']);
+    });
+    expect(await unlock()).toMatchObject([{ kind: 'guard', action: 'removed' }]);
+    expect(await gone(guard)).toBe(true);
+    expect((await fs.readdir(stateDir)).filter((name) => name.endsWith('.gone'))).toEqual([]);
   });
 
   it('reports a lock that vanished before its rename as absent', async () => {
