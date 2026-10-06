@@ -624,9 +624,9 @@ it('prints each leftover launch directory with a launcher-correct rm command', (
       `Leftover launch broken (512 B, no record): /abs/my runs/broken/launch/2.log; remove with ${process.execPath} /abs/bin/run.js workflow rm broken --state-dir '/abs/my runs'`,
     ].join('\n'),
   );
-  expect(
-    formatRunList([], false, { leftoverLaunches: [{ ...leftover, log: null }] }),
-  ).toContain("(512 B, no record): /abs/my runs/broken; remove with quiet-choir workflow rm broken --state-dir '/abs/my runs'");
+  expect(formatRunList([], false, { leftoverLaunches: [{ ...leftover, log: null }] })).toContain(
+    "(512 B, no record): /abs/my runs/broken; remove with quiet-choir workflow rm broken --state-dir '/abs/my runs'",
+  );
 });
 
 it('watches only actual changes and stops after completion with one final snapshot', async () => {

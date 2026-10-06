@@ -942,7 +942,7 @@ describe('monitoring command adapters', () => {
     expect(output.stdout).toContain(
       json
         ? '"leftoverLaunches":[{"runId":"broken"'
-        : "Leftover launch broken (2.0 KiB, no record): /abs/runs dir/broken/launch/1.log; remove with ",
+        : 'Leftover launch broken (2.0 KiB, no record): /abs/runs dir/broken/launch/1.log; remove with ',
     );
     if (!json) expect(output.stdout).toMatch(/workflow rm broken --state-dir '\/abs\/runs dir'$/mu);
     expect(output.stderr).toContain('Skipped corrupt checkpoint');

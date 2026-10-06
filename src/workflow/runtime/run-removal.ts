@@ -298,10 +298,11 @@ export async function removeRun(
   const { runId } = options;
   const stateDir = resolveStateDir({ stateDir: options.stateDir });
   // Prune pins a listed record's updatedAt, and a listed run always has a record: only rm by ID
-  // reaches a leftover launch directory.
+  // reaches a leftover launch directory. A directory that cannot be inspected is left to the
+  // ordinary record read, which reports it.
   const leftoverOf = async (): Promise<LaunchLeftover | null> =>
     options.expectedUpdatedAt === undefined
-      ? inspectLaunchLeftover(stateDir, runId, live.launchSettle)
+      ? inspectLaunchLeftover(stateDir, runId, live.launchSettle).catch(() => null)
       : null;
   if (options.dryRun) {
     const leftover = await leftoverOf();
