@@ -30,6 +30,7 @@ import type { ChildRecord } from '../runtime/child-model.js';
 import type { MapStepError } from '../runtime/fan-out.js';
 import type { CodeChange } from '../runtime/replay-model.js';
 import type { CommandLauncher } from '../runtime/commands.js';
+import type { WorktreeAdminLockView } from '../runtime/worktree-admin-lock.js';
 import { runNextCommands, type NextCommand } from './next-commands.js';
 import { rootCauseSummary, stepErrorKind, type RootCauseSummary } from './failure-kind.js';
 
@@ -363,6 +364,11 @@ export interface RunInspection {
   readonly run: RunRecord;
   readonly ownership: RunOwnership;
   readonly summary: RunSummary;
+  /**
+   * The held worktree administration lock of the run's repository. Only the executor's plain
+   * inspect attaches it; `inspectRun`, `listRuns` and watches never run Git.
+   */
+  readonly worktreeAdminLock?: WorktreeAdminLockView;
 }
 
 /** A running run whose owner is gone: no lock, or a dead or released owner, whatever its children. */

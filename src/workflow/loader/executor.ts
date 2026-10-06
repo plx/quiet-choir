@@ -12,6 +12,7 @@ import type {
   ListDefinitionsPlan,
   ExecuteNamedWorkflowPlan,
   UnlockWorkflowPlan,
+  UnlockWorktreeAdminPlan,
 } from './model.js';
 import { NodeProcessRunner } from '../../processes/runner.js';
 import type { ProcessRunner } from '../runtime/exec-model.js';
@@ -51,12 +52,19 @@ import type { CommandLauncher } from '../runtime/commands.js';
 import { missingRunError, readRequiredRun } from '../runtime/read-required-run.js';
 import { unlockRun } from '../runtime/lock.js';
 import {
+  inspectWorktreeAdminLock,
+  resolveCommonGitDir,
+  unlockWorktreeAdminLock,
+  type WorktreeAdminLockView,
+} from '../runtime/worktree-admin-lock.js';
+import {
   findAcceptedReplayDivergence,
   isValidRunId,
   runIdMessage,
   RunRefusedError,
   WorkflowInputError,
   WorkflowRunError,
+  WorktreeAdminLockRefusedError,
   type CliErrorCode,
 } from '../runtime/run-errors.js';
 import { defaultAgentLimits, validateAgentLimits } from '../runtime/agent-limiter.js';
@@ -197,6 +205,7 @@ export type WorkflowExecutorPlan =
   | RemoveWorkflowPlan
   | PruneWorkflowPlan
   | UnlockWorkflowPlan
+  | UnlockWorktreeAdminPlan
   | CancelWorkflowPlan
   | ListDefinitionsPlan
   | ExecuteNamedWorkflowPlan;
@@ -412,6 +421,42 @@ export class WorkflowExecutor implements Executor<WorkflowExecutorPlan, Workflow
           locks,
         };
       }
+      if (plan.kind === 'workflow.unlock.worktree-admin') {
+        let commonGitDir: string;
+        try {
+          commonGitDir = await resolveCommonGitDir(
+            plan.path,
+            this.#options.processRunner ?? new NodeProcessRunner(),
+            this.#options.signal ?? new AbortController().signal,
+          );
+        } catch (error) {
+          this.#options.signal?.throwIfAborted();
+          return workflowFailure(
+            'usage.flag',
+            `--worktree-admin ${plan.path} is not inside a Git repository: ${error instanceof Error ? error.message : String(error)}`,
+            { ...context, details: { path: plan.path } },
+          );
+        }
+        stage = 'workflow.storage';
+        try {
+          return {
+            kind: 'workflow.unlock.worktree-admin.result',
+            ok: true,
+            forceRemote: plan.forceRemote,
+            ...(await unlockWorktreeAdminLock({
+              commonGitDir,
+              forceRemote: plan.forceRemote,
+              commandLauncher: this.#options.commandLauncher,
+            })),
+          };
+        } catch (error) {
+          if (!(error instanceof WorktreeAdminLockRefusedError)) throw error;
+          return workflowFailure(error.code, error.message, {
+            ...context,
+            details: error.details,
+          });
+        }
+      }
       if (plan.kind === 'workflow.cancel') {
         if (
           !Number.isSafeInteger(plan.timeoutMs) ||
@@ -541,10 +586,15 @@ export class WorkflowExecutor implements Executor<WorkflowExecutorPlan, Workflow
                 this.#options.signal,
               )
             : await inspectRun({ ...plan, commandLauncher: this.#options.commandLauncher });
+        const worktreeAdminLock =
+          plan.kind === 'workflow.inspect' && plan.worktreeAdminLock !== false
+            ? await this.#worktreeAdminLock(inspection.run)
+            : undefined;
         return {
           kind: 'workflow.run.result',
           ok: true,
           ...inspection,
+          ...(worktreeAdminLock === undefined ? {} : { worktreeAdminLock }),
         };
       }
       if (plan.kind === 'workflow.execute' && !plan.dryRun && runSignal !== undefined) {
@@ -986,6 +1036,31 @@ export class WorkflowExecutor implements Executor<WorkflowExecutorPlan, Workflow
       await notifications?.flush();
       unregister?.();
       await previewState?.dispose();
+    }
+  }
+
+  /**
+   * The held worktree administration lock of a run's repository, for plain inspect only. A run
+   * without a worktree ledger runs no Git; a missing repository or a failed read is logged at debug
+   * and reported as nothing, so it never fails the inspection.
+   */
+  async #worktreeAdminLock(run: RunRecord): Promise<WorktreeAdminLockView | undefined> {
+    const repo = run.worktrees?.repo;
+    if (repo === undefined) return undefined;
+    try {
+      return await inspectWorktreeAdminLock(
+        await resolveCommonGitDir(
+          repo,
+          this.#options.processRunner ?? new NodeProcessRunner(),
+          this.#options.signal ?? new AbortController().signal,
+        ),
+      );
+    } catch (error) {
+      this.#options.logger.log(
+        'debug',
+        `Inspect: could not read the worktree administration lock of ${repo}: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      return undefined;
     }
   }
 }
