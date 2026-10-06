@@ -91,7 +91,8 @@ schema, like `policy` and `capabilityKeys`):
   gets sorted top-level `keys`; strings, numbers, booleans and arrays get `sha256` only, because
   array indexes are not names. As for the built-in controls, the entries live in the `redacted`
   sibling rather than replacing the value in place, so a raw value that looks like a digest cannot
-  be confused with one and the projection stays idempotent on its own output.
+  be confused with one and a second pass leaves these entries unchanged (the registered `env` digest
+  is not yet idempotent; #248).
 - The projection learns the declarations explicitly: `publicCapabilityManifest(manifest, harnesses)`
   takes them as a required parameter, so a new call site cannot silently skip them.
   `capabilityManifest` passes the definition's registrations, and the runner passes the root
