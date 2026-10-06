@@ -365,6 +365,31 @@ it('quarantines stale fingerprints and spoofed human attribution from direct inb
   expect(first.steps['approval']?.attempts).toBe(1);
 });
 
+it('rejects a padded human:<NAME> placeholder at write time and leaves no inbox file', async () => {
+  const definition = workflow((ctx) =>
+    ctx.approve('approval', { prompt: 'Apply?', audience: 'human', subject: { revision: 'abc' } }),
+  );
+  await runWorkflow(definition, options());
+  for (const by of ['human:<NAME> ', ' human:<NAME>']) {
+    await expect(
+      writeAnswer({ ...options(), stepId: 'approval', value: { approved: true }, by }),
+    ).rejects.toMatchObject({ reason: 'invalid' });
+    await expect(
+      readFile(answerPath(stateDir, 'questions', 'approval'), 'utf8'),
+    ).rejects.toMatchObject({ code: 'ENOENT' });
+  }
+  await writeAnswer({
+    ...options(),
+    stepId: 'approval',
+    value: { approved: true },
+    by: ' human:Pat ',
+  });
+  const stored: unknown = JSON.parse(
+    await readFile(answerPath(stateDir, 'questions', 'approval'), 'utf8'),
+  );
+  expect(stored).toMatchObject({ by: 'human:Pat' });
+});
+
 it('pins all presentation and subject fields even before an answer arrives', async () => {
   const original = {
     ...question,

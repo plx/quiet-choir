@@ -191,13 +191,15 @@ export async function writeAnswer(options: WriteAnswerOptions): Promise<AnswerDe
     questionFingerprint: step.fingerprint,
     runCreatedAt: run.createdAt,
   };
+  let normalized: z.infer<typeof answerEnvelopeSchema>;
   try {
-    validateAnswerAuthor(step.question.request.audience, by);
-    answerEnvelopeSchema.parse(envelope);
+    // Validate the trimmed author the owner will see, not the raw --by.
+    normalized = answerEnvelopeSchema.parse(envelope);
+    validateAnswerAuthor(step.question.request.audience, normalized.by);
   } catch (error) {
     throw syntheticInvalid('answer_author', error);
   }
-  const serialized = JSON.stringify(envelope);
+  const serialized = JSON.stringify(normalized);
   if (Buffer.byteLength(serialized) > 1_048_576)
     throw syntheticInvalid('answer_too_large', new Error('Answer envelope exceeds 1 MiB.'));
   const path = answerPath(stateDir, run.id, options.stepId);
