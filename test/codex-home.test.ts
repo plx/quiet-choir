@@ -1,4 +1,4 @@
-import { fork, spawnSync } from 'node:child_process';
+import { fork, spawn, spawnSync } from 'node:child_process';
 import {
   chmod,
   lstat,
@@ -11,6 +11,7 @@ import {
   rm,
   stat,
   symlink,
+  utimes,
   writeFile,
 } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -265,11 +266,163 @@ describe('private home', () => {
     const warnings = await home.settle();
     await home.dispose();
     expect(warnings).toEqual([expect.stringContaining('timed out waiting for the lock')]);
+    expect(warnings[0]).toContain(lock);
+    expect(warnings[0]).not.toContain('not a quiet-choir owner record');
     expect(JSON.stringify(warnings)).not.toContain(secret);
     expect(await readFile(join(realHome, 'auth.json'), 'utf8')).toBe(original);
     expect(await readFile(lock, 'utf8')).toBe(owner);
     await expect(stat(home.path)).rejects.toMatchObject({ code: 'ENOENT' });
   });
+
+  const twoHoursAgo = (): Date => new Date(Date.now() - 2 * 60 * 60 * 1000);
+
+  it.each(['', 'not json', '{"pid":"1"}'])(
+    'reclaims an old unreadable lock %j at once and writes back',
+    async (content) => {
+      await seedRealHome(auth('2026-09-01T00:00:00Z'));
+      const lock = codexAuthLockPath(realHome, locks);
+      await writeFile(lock, content);
+      await utimes(lock, twoHoursAgo(), twoHoursAgo());
+      // Any wait would outlast the test timeout.
+      const home = await prepareCodexHome(realHome, {
+        lockDirectory: locks,
+        lockTimeoutMs: 60_000,
+      });
+      const refreshed = auth('2026-09-03T00:00:00Z', 'refreshed-token');
+      await writeFile(join(home.path, 'auth.json'), refreshed);
+      const warnings = await home.settle();
+      await home.dispose();
+      expect(warnings).toEqual([expect.stringContaining('Reclaimed')]);
+      expect(warnings[0]).toContain(lock);
+      expect(warnings[0]).toContain('60 s');
+      expect(JSON.stringify(warnings)).not.toContain(secret);
+      expect(await readFile(join(realHome, 'auth.json'), 'utf8')).toBe(refreshed);
+      expect(await readdir(locks)).toEqual([]);
+    },
+  );
+
+  it('respects a recent unreadable lock until the timeout', async () => {
+    const original = auth('2026-09-01T00:00:00Z');
+    await seedRealHome(original);
+    const lock = codexAuthLockPath(realHome, locks);
+    await writeFile(lock, 'not json');
+    const home = await prepareCodexHome(realHome, { lockDirectory: locks, lockTimeoutMs: 50 });
+    await writeFile(join(home.path, 'auth.json'), auth('2026-09-03T00:00:00Z'));
+    const warnings = await home.settle();
+    await home.dispose();
+    expect(warnings).toEqual([expect.stringContaining('timed out waiting for the lock')]);
+    expect(warnings[0]).toContain(lock);
+    expect(warnings[0]).toContain(
+      'not a quiet-choir owner record and will be reclaimed once older than 60 s',
+    );
+    expect(JSON.stringify(warnings)).not.toContain(secret);
+    expect(await readFile(join(realHome, 'auth.json'), 'utf8')).toBe(original);
+    expect(await readFile(lock, 'utf8')).toBe('not json');
+  });
+
+  it('reclaims a recent unreadable lock once it ages out during the wait', async () => {
+    await seedRealHome(auth('2026-09-01T00:00:00Z'));
+    const lock = codexAuthLockPath(realHome, locks);
+    await writeFile(lock, 'not json');
+    const home = await prepareCodexHome(realHome, {
+      lockDirectory: locks,
+      lockTimeoutMs: 10_000,
+      unreadableLockAgeMs: 200,
+    });
+    const refreshed = auth('2026-09-03T00:00:00Z', 'refreshed-token');
+    await writeFile(join(home.path, 'auth.json'), refreshed);
+    const warnings = await home.settle();
+    await home.dispose();
+    expect(warnings).toEqual([expect.stringContaining('Reclaimed')]);
+    expect(warnings[0]).toContain(lock);
+    expect(warnings[0]).toContain('200 ms');
+    expect(await readFile(join(realHome, 'auth.json'), 'utf8')).toBe(refreshed);
+    expect(await readdir(locks)).toEqual([]);
+  });
+
+  it('never steals an old lock from a live foreign owner', async () => {
+    const original = auth('2026-09-01T00:00:00Z');
+    await seedRealHome(original);
+    const sleeper = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 60_000)'], {
+      stdio: 'ignore',
+    });
+    try {
+      const pid = sleeper.pid;
+      if (pid === undefined) throw new Error('sleeper did not start');
+      const lock = codexAuthLockPath(realHome, locks);
+      const owner = JSON.stringify({
+        pid,
+        start: processIdentity(pid)?.start ?? null,
+        nonce: 'foreign',
+      });
+      await writeFile(lock, owner);
+      await utimes(lock, twoHoursAgo(), twoHoursAgo());
+      const home = await prepareCodexHome(realHome, {
+        lockDirectory: locks,
+        lockTimeoutMs: 50,
+        unreadableLockAgeMs: 1,
+      });
+      await writeFile(join(home.path, 'auth.json'), auth('2026-09-03T00:00:00Z'));
+      const warnings = await home.settle();
+      await home.dispose();
+      expect(warnings).toEqual([expect.stringContaining('timed out waiting for the lock')]);
+      expect(warnings[0]).toContain(lock);
+      expect(JSON.stringify(warnings)).not.toContain(secret);
+      expect(await readFile(join(realHome, 'auth.json'), 'utf8')).toBe(original);
+      expect(await readFile(lock, 'utf8')).toBe(owner);
+    } finally {
+      sleeper.kill('SIGKILL');
+    }
+  });
+
+  // chflags lets an unprivileged owner make rename fail as another user's sticky-/tmp file would.
+  it.runIf(process.platform === 'darwin')(
+    'fails fast, naming the lock, when an old unreadable lock cannot be moved aside',
+    async () => {
+      const original = auth('2026-09-01T00:00:00Z');
+      await seedRealHome(original);
+      const lock = codexAuthLockPath(realHome, locks);
+      await writeFile(lock, 'not json');
+      await utimes(lock, twoHoursAgo(), twoHoursAgo());
+      spawnSync('chflags', ['uchg', lock]);
+      try {
+        const home = await prepareCodexHome(realHome, {
+          lockDirectory: locks,
+          lockTimeoutMs: 60_000,
+        });
+        await writeFile(join(home.path, 'auth.json'), auth('2026-09-03T00:00:00Z'));
+        const warnings = await home.settle();
+        await home.dispose();
+        expect(warnings).toEqual([
+          expect.stringContaining(`cannot move aside the lock ${lock} (EPERM)`),
+        ]);
+        expect(await readFile(join(realHome, 'auth.json'), 'utf8')).toBe(original);
+        expect(await readdir(locks)).toEqual([lock.slice(locks.length + 1)]);
+      } finally {
+        spawnSync('chflags', ['nouchg', lock]);
+      }
+    },
+  );
+
+  it.skipIf(process.getuid?.() === 0)(
+    'names the lock path when the lock directory is not writable',
+    async () => {
+      const original = auth('2026-09-01T00:00:00Z');
+      await seedRealHome(original);
+      const lock = codexAuthLockPath(realHome, locks);
+      const home = await prepareCodexHome(realHome, { lockDirectory: locks });
+      await writeFile(join(home.path, 'auth.json'), auth('2026-09-03T00:00:00Z'));
+      await chmod(locks, 0o500);
+      try {
+        const warnings = await home.settle();
+        expect(warnings).toEqual([expect.stringContaining(`EACCES on the lock ${lock}`)]);
+      } finally {
+        await chmod(locks, 0o700);
+        await home.dispose();
+      }
+      expect(await readFile(join(realHome, 'auth.json'), 'utf8')).toBe(original);
+    },
+  );
 
   it('refuses a private-home plan without a source CODEX_HOME', async () => {
     const request = {
