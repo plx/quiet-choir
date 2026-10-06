@@ -675,11 +675,13 @@ try {
       memorySummaryReachedRequest: reached(memories, markers.memorySummary),
       memoryMdReachedRequest: reached(memories, markers.memoryMd),
     });
-    // An explicit nested key wins over the fixture default while its sibling keys survive the merge:
-    // the call stays on the fixture provider and env_key but targets a closed local port, so the
-    // contract must fail with the reach message. Asserted only; not a report case. Codex keeps
-    // retrying a refused connection ("Reconnecting...") despite the zero retry settings, so the call
-    // gets a short deadline and the timeout counts as not reaching the API.
+    // Negative case: a Codex call that never reaches the local fake API makes execute() fail with the
+    // reach message, and the explicit nested base_url does reach Codex (it points at a closed local
+    // port). It does not prove that sibling fixture keys survive the merge; that is proven by
+    // codex-restricted-memories-enabled above, which passes only features.memories and still reaches
+    // the fixture provider. Asserted only; not a report case. Codex keeps retrying a refused
+    // connection ("Reconnecting...") despite the zero retry settings, so the call gets a short
+    // deadline and the timeout counts as not reaching the API.
     const closed = createServer();
     await new Promise((resolve) => closed.listen(0, '127.0.0.1', resolve));
     const { port } = closed.address();
