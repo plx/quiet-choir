@@ -98,11 +98,21 @@ describe('trusted definition registry', { timeout: 30_000 }, () => {
     });
     expect(await readFile(marker, 'utf8')).toBe('xx');
     const cache = join(root, 'cache', 'quiet-choir', 'definitions');
-    for (const file of await readdir(cache)) await writeFile(join(cache, file), 'invalid JSON');
+    // A version-3 entry may hold plaintext registered harness options (#247): never served, rewritten.
+    for (const file of await readdir(cache)) {
+      const entry = JSON.parse(await readFile(join(cache, file), 'utf8')) as { version: number };
+      expect(entry.version).toBe(4);
+      await writeFile(join(cache, file), JSON.stringify({ ...entry, version: 3 }));
+    }
     expect(await engine.execute(plan)).toMatchObject({ ok: true });
     expect(await readFile(marker, 'utf8')).toBe('xxx');
-    expect(await engine.execute({ ...plan, refresh: true })).toMatchObject({ ok: true });
+    for (const file of await readdir(cache))
+      expect(JSON.parse(await readFile(join(cache, file), 'utf8'))).toMatchObject({ version: 4 });
+    for (const file of await readdir(cache)) await writeFile(join(cache, file), 'invalid JSON');
+    expect(await engine.execute(plan)).toMatchObject({ ok: true });
     expect(await readFile(marker, 'utf8')).toBe('xxxx');
+    expect(await engine.execute({ ...plan, refresh: true })).toMatchObject({ ok: true });
+    expect(await readFile(marker, 'utf8')).toBe('xxxxx');
   });
 
   it('keeps scanning past a leaf package.json to fingerprint a workspace root lockfile', async () => {

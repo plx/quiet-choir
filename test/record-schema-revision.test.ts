@@ -8,6 +8,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   checkResume,
+  defineHarness,
   defineWorkflow,
   FileRunStore,
   FixtureHarness,
@@ -53,6 +54,8 @@ const revisionDigests: Readonly<Record<string, string>> = {
   '7': '14ecaff04c78634fdbaaca9796e99503df2c253e4c7db6208169ca21b74a9b1a',
   // Revision 8 (#240) changed only nested shapes (children redefinitions, maps frame), so it repeats 7.
   '8': '14ecaff04c78634fdbaaca9796e99503df2c253e4c7db6208169ca21b74a9b1a',
+  // Revision 9 (#247) changed only the nested capabilities shape (redacted.harnesses), so it repeats 8.
+  '9': '14ecaff04c78634fdbaaca9796e99503df2c253e4c7db6208169ca21b74a9b1a',
 };
 // digest(readRun(...)) of the installed pre-revision fixture, computed on unmodified main 91a6d2f.
 const preRevisionReadDigest = '714b6cb068de5c933b7ba04a26d1f931f589f7c9910f76f0e5c8cc493eb13016';
@@ -70,6 +73,8 @@ const revisionFiveReadDigest = 'b249d588cfd7dbcd1375f27b3dfccb9634b502ddd174c689
 const revisionSixReadDigest = 'aa4a92b3d3d284be8403ccbd2b3ad86cd048414202074063d95cbbf17089d855';
 // digest(readRun(...)) of the installed revision-seven fixture, computed on unmodified main 61fb951.
 const revisionSevenReadDigest = 'af4c0ae3367ad8f941f37a22168fa0ad06a33094d1c33abf816a13cb24d0d256';
+// digest(readRun(...)) of the installed revision-eight fixture, computed on unmodified main b707169.
+const revisionEightReadDigest = 'c00a217c100cb94e3d20a7bdac94c3afd7c38c11940c5dbbe5bf08877bf6895e';
 
 const sha256 = (value: string): string => createHash('sha256').update(value).digest('hex');
 
@@ -1325,5 +1330,88 @@ describe('revision-seven records (child frames before redefinitions, #240)', () 
     });
     expect(recordSchemaDrift(saved)).toBeUndefined();
     expect((await rawSnapshot(runId))['schemaRevision']).toBe(SUPPORTED_SCHEMA_REVISION);
+  });
+});
+
+describe('revision-eight records (plaintext registered harness options, #247)', () => {
+  const runId = 'revision-eight';
+  async function install(): Promise<void> {
+    const fixture = await readFile(
+      new URL('./fixtures/schema-revision/revision-eight-checkpoint.json', import.meta.url),
+      'utf8',
+    );
+    await mkdir(join(stateDir, runId));
+    await writeFile(paths(runId).snapshot, fixture);
+    await writeFile(paths(runId).journal, '');
+  }
+  // The fixture's registration, now listing token as sensitive.
+  const vault = defineHarness({
+    name: 'vault',
+    revision: 1,
+    options: z.object({ prompt: z.string(), token: z.string().optional() }),
+    capabilities: { structuredOutput: 'none' },
+    access: () => 'none',
+    sensitiveOptions: ['token'],
+  });
+  const caller = defineWorkflow({
+    name: 'schema-revision',
+    version: '1',
+    input: z.null(),
+    output: z.null(),
+    harnesses: [vault],
+    profiles: { keeper: { harnesses: { vault: { token: 'fixture-token' } } } },
+    async run(ctx) {
+      await ctx.agent('vault').text('read', { prompt: 'x', profile: 'keeper' });
+      return null;
+    },
+  });
+
+  it('read exactly as on main, with the plaintext option and no redacted entry', async () => {
+    await install();
+    const record = await readRun({ stateDir, runId });
+    expect(record.schemaRevision).toBe(8);
+    expect(recordSchemaDrift(record)).toBeUndefined();
+    expect(digest(record)).toBe(revisionEightReadDigest);
+    const keeper = record.capabilities?.profiles['keeper'];
+    expect(keeper?.harnesses?.['vault']).toEqual({ token: 'fixture-token' });
+    expect(keeper).not.toHaveProperty('redacted');
+  });
+
+  it('resume without invoking (identity unchanged), scrub the option and save the current revision', async () => {
+    await install();
+    const original = await readRun({ stateDir, runId });
+    const invoked: string[] = [];
+    const result = await runWorkflow(caller, {
+      ...options,
+      stateDir,
+      runId,
+      resume: true,
+      policy: [{ transcripts: 'off' }],
+      adapters: {
+        vault: {
+          invoke: (request) => {
+            invoked.push(request.stepId);
+            return Promise.resolve({ text: 'ok', sessionId: null });
+          },
+        },
+      },
+    });
+    expect(result.status).toBe('completed');
+    expect(invoked).toEqual([]);
+    const saved = await readRun({ stateDir, runId });
+    expect(saved.steps['read']).toEqual(original.steps['read']);
+    const keeper = saved.capabilities?.profiles['keeper'];
+    expect(keeper?.harnesses?.['vault']).toEqual({});
+    expect(keeper?.redacted?.harnesses).toEqual({
+      vault: { token: { sha256: digest('fixture-token') } },
+    });
+    expect(recordSchemaDrift(saved)).toBeUndefined();
+    const raw = await readFile(paths(runId).snapshot, 'utf8');
+    expect(raw).not.toContain('fixture-token');
+    expect(await readFile(paths(runId).journal, 'utf8')).not.toContain('fixture-token');
+    expect((JSON.parse(raw) as Record<string, unknown>)['schemaRevision']).toBe(
+      SUPPORTED_SCHEMA_REVISION,
+    );
+    expect(SUPPORTED_SCHEMA_REVISION).toBe(9);
   });
 });
