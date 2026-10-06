@@ -4,7 +4,7 @@ import { lstat, readdir, rename, rm, rmdir } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join } from 'node:path';
 import { pidState } from '../../processes/identity.js';
 import type { ProcessSupervisor } from '../../processes/supervisor.js';
-import type { CommandLauncher } from './commands.js';
+import { formatArgv, workflowArgv, type CommandLauncher } from './commands.js';
 import type { ProcessRunner } from './exec-model.js';
 import { digest, jsonValue } from './json.js';
 import { isErrno, sweepStrays } from './lock.js';
@@ -416,7 +416,7 @@ async function removeOwned(
             kind: 'blocked',
             runId,
             stateDir,
-            message: `Run ${runId} was not removed: ${String(cleanup.remaining.length)} worktree caches could not be removed while their repository ${ledger.repo} exists (${cleanup.remaining.join(', ')}). Fix the cause in the warnings, then retry with quiet-choir workflow clean ${runId} --state-dir ${stateDir} and rm again.`,
+            message: `Run ${runId} was not removed: ${String(cleanup.remaining.length)} worktree caches could not be removed while their repository ${ledger.repo} exists (${cleanup.remaining.join(', ')}). Fix the cause in the warnings, then retry with ${formatArgv(workflowArgv(live.commandLauncher, 'clean', runId, '--state-dir', stateDir))} and rm again.`,
             caches: cleanup.remaining,
             removed: cleanup.directories,
             warnings: cleanup.warnings,

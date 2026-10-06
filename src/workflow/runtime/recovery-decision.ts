@@ -22,8 +22,10 @@
  *   local observations. Missing or unreadable metadata never holds an unlock; its warning travels
  *   with the result.
  *
- * ESLint keeps this module free of runtime imports.
+ * ESLint keeps this module free of runtime imports, except the argv builders in `./commands.js`
+ * that spell the `workflow resume` command of the crash-loop message.
  */
+import { formatArgv, workflowArgv, type CommandLauncher } from './commands.js';
 import type { RunOwnership } from './lock.js';
 import type { HarnessProcessInspection } from './process-registry.js';
 import type { RunRecord } from './record.js';
@@ -136,8 +138,14 @@ export function decideStaleRecovery(
 }
 
 /** Explain why tick stopped recovering a crash-looping run. @internal */
-export function crashLoopMessage(runId: string, count: number): string {
-  return `Run ${runId} was recovered ${String(count)} times after its owner stopped, without completing a new step; tick will not recover it again (cap ${String(STALE_RECOVERY_CAP)}). Inspect it, then run 'quiet-choir workflow resume ${runId}' to retry explicitly.`;
+export function crashLoopMessage(
+  runId: string,
+  count: number,
+  stateDir: string,
+  launcher?: CommandLauncher,
+): string {
+  const resume = formatArgv(workflowArgv(launcher, 'resume', runId, '--state-dir', stateDir));
+  return `Run ${runId} was recovered ${String(count)} times after its owner stopped, without completing a new step; tick will not recover it again (cap ${String(STALE_RECOVERY_CAP)}). Inspect it, then run ${resume} to retry explicitly.`;
 }
 
 /** A lock owner or recoverer as unlock observes it: judged locally, even on a foreign host. @internal */

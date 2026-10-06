@@ -291,12 +291,13 @@ Recovery of a stale `running` run is capped. Before resuming, tick durably saves
 counter `{ count, completedSteps, at }` in the checkpoint. The count grows by one while the number
 of completed steps is unchanged, and restarts at 1 when a step has completed since the last
 recovery. After 3 consecutive recoveries without a new completed step, tick neither resumes nor
-writes the run and reports it as `crash-loop`; inspect it and run `quiet-choir workflow resume RUN`
-to retry explicitly. A clean suspension or completion removes the counter. A due suspended run
-behind a dead lock never touches it. The counter is saved before the resume starts, so a crash
-anywhere in it (import, type check or workflow body) counts. A harness configuration mismatch (see
-below) is detected before the counter is saved and never counts toward the cap; a refusal that tick
-can find only after importing the workflow, such as a harness kind change requested with an explicit
+writes the run and reports it as `crash-loop`; inspect it and run the
+`workflow resume RUN --state-dir DIR` command the message names (behind the detected launcher) to
+retry explicitly. A clean suspension or completion removes the counter. A due suspended run behind a
+dead lock never touches it. The counter is saved before the resume starts, so a crash anywhere in it
+(import, type check or workflow body) counts. A harness configuration mismatch (see below) is
+detected before the counter is saved and never counts toward the cap; a refusal that tick can find
+only after importing the workflow, such as a harness kind change requested with an explicit
 `--harness`, still counts.
 
 Tick uses stored entrypoint/tsconfig/cwd. Local-only and default CLI-harness runs can resume

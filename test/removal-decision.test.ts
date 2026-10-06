@@ -262,6 +262,28 @@ describe('removalRefusal', () => {
       expect(JSON.stringify(unreadable.details)).not.toContain('--force-remote');
     });
 
+    it('starts the orphans recovery command with the launcher', () => {
+      const orphans = refuseWith(
+        removalVerdict(run('completed'), observed([lock('primary', 'dead')], 'alive'), {
+          force: true,
+        }),
+        launcher,
+      );
+      expect(orphans.code).toBe('run.orphans');
+      expect(orphans.message).toContain(
+        formatArgv([
+          ...launcher,
+          'workflow',
+          'resume',
+          'run-1',
+          '--state-dir',
+          '/state',
+          '--kill-orphans',
+        ]),
+      );
+      expect(orphans.message).not.toContain('quiet-choir workflow');
+    });
+
     it('falls back to the default launcher and gives live owners no entry', () => {
       const remote = refuseWith(
         removalVerdict(run('completed'), observed([lock('primary', 'remote')]), { force: true }),
@@ -300,6 +322,9 @@ describe('removalRefusal', () => {
     );
     expect(orphans.code).toBe('run.orphans');
     expect(orphans.message).toContain('--kill-orphans');
+    expect(orphans.message).toContain(
+      'quiet-choir workflow resume run-1 --state-dir /state --kill-orphans',
+    );
     expect(orphans.details).toMatchObject({ owner: { state: 'dead' }, processes: [{}, {}] });
     const active = refuse(removalVerdict(run('failed', true), unlocked, { force: false }));
     expect(active).toMatchObject({

@@ -1,7 +1,7 @@
 import { readdir, stat } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import type { ProcessSupervisor } from '../../processes/supervisor.js';
-import type { CommandLauncher } from '../runtime/commands.js';
+import { formatArgv, workflowArgv, type CommandLauncher } from '../runtime/commands.js';
 import type { ProcessRunner } from '../runtime/exec-model.js';
 import { jsonValue } from '../runtime/json.js';
 import { answerCandidates } from '../runtime/inbox.js';
@@ -254,7 +254,7 @@ function protectedEntry(
 ): PruneSkippedRun {
   const { id: runId } = row.summary;
   const { stateDir } = row;
-  const rm = `quiet-choir workflow rm ${runId} --state-dir ${stateDir}`;
+  const rmArgv = workflowArgv(launcher, 'rm', runId, '--state-dir', stateDir);
   const base = skippedBase(row);
   switch (protection.reason) {
     case 'locked':
@@ -273,7 +273,7 @@ function protectedEntry(
         ...base,
         reason: 'active',
         code: 'run.active',
-        message: `Run ${runId} is ${protection.status}; prune never removes a running, stale or suspended run. If nothing needs it, remove it deliberately with ${rm} --force.`,
+        message: `Run ${runId} is ${protection.status}; prune never removes a running, stale or suspended run. If nothing needs it, remove it deliberately with ${formatArgv([...rmArgv, '--force'])}.`,
         details: { status: protection.status },
       };
     case 'waiting':
@@ -281,7 +281,7 @@ function protectedEntry(
         ...base,
         reason: 'waiting',
         code: 'run.active',
-        message: `Run ${runId} still has waiting steps (${protection.waiting.join(', ')}); a pending wait, answer or resume may still need it. If nothing does, remove it deliberately with ${rm} --force.`,
+        message: `Run ${runId} still has waiting steps (${protection.waiting.join(', ')}); a pending wait, answer or resume may still need it. If nothing does, remove it deliberately with ${formatArgv([...rmArgv, '--force'])}.`,
         details: { waiting: [...protection.waiting] },
       };
     case 'queued-answer':
@@ -289,7 +289,7 @@ function protectedEntry(
         ...base,
         reason: 'queued-answer',
         code: null,
-        message: `Run ${runId} has ${String(protection.queuedAnswers)} queued answer deliveries in its inbox; a resume may still consume them. Resume it, or remove it deliberately with ${rm}.`,
+        message: `Run ${runId} has ${String(protection.queuedAnswers)} queued answer deliveries in its inbox; a resume may still consume them. Resume it, or remove it deliberately with ${formatArgv(rmArgv)}.`,
         details: { queuedAnswers: protection.queuedAnswers },
       };
   }

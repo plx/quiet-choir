@@ -1,4 +1,6 @@
-import { delimiter } from 'node:path';
+import { readdirSync, readFileSync } from 'node:fs';
+import { delimiter, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import {
@@ -13,6 +15,7 @@ import {
 } from '../src/cli/launcher.js';
 import {
   defaultCommandLauncher,
+  killOrphansArgv,
   launchPolicyFlags,
   workflowArgv,
 } from '../src/workflow/runtime/commands.js';
@@ -272,5 +275,57 @@ describe('launchPolicyFlags', () => {
 
   it('adds nothing without a launch', () => {
     expect(launchPolicyFlags(undefined)).toEqual([]);
+  });
+});
+
+describe('killOrphansArgv', () => {
+  it('spells resume --kill-orphans behind the default launcher with an absolute state directory', () => {
+    expect(killOrphansArgv(undefined, '/state', 'r1')).toEqual([
+      'quiet-choir',
+      'workflow',
+      'resume',
+      'r1',
+      '--state-dir',
+      '/state',
+      '--kill-orphans',
+    ]);
+    expect(killOrphansArgv(undefined, 'rel', 'r1')).toContain(resolve('rel'));
+  });
+
+  it('starts with a custom launcher', () => {
+    expect(killOrphansArgv(['/x/node', '/y/run.js'], '/state', 'r1')).toEqual([
+      '/x/node',
+      '/y/run.js',
+      'workflow',
+      'resume',
+      'r1',
+      '--state-dir',
+      '/state',
+      '--kill-orphans',
+    ]);
+  });
+});
+
+describe('runtime prose hints', () => {
+  /** Every non-comment source line that spells a workflow command with a hard-coded program word. */
+  it('never hard-codes the program word before a workflow command in src/', () => {
+    const source = fileURLToPath(new URL('../src', import.meta.url));
+    const files = (directory: string): string[] =>
+      readdirSync(directory, { withFileTypes: true }).flatMap((entry) =>
+        entry.isDirectory()
+          ? files(join(directory, entry.name))
+          : entry.name.endsWith('.ts')
+            ? [join(directory, entry.name)]
+            : [],
+      );
+    const offenders = files(source).flatMap((file) =>
+      readFileSync(file, 'utf8')
+        .split('\n')
+        .map((line, index) => ({ file, line, number: index + 1 }))
+        .filter(({ line }) => !/^\s*(\*|\/\/|\/\*)/u.test(line))
+        .filter(({ line }) => line.includes('quiet-choir workflow '))
+        .map(({ file, number }) => `${file}:${String(number)}`),
+    );
+    expect(offenders).toEqual([]);
   });
 });

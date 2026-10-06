@@ -174,7 +174,6 @@ export default defineConfig(
     files: [
       'src/workflow/runtime/attempt-failure.ts',
       'src/workflow/runtime/replay-decision.ts',
-      'src/workflow/runtime/recovery-decision.ts',
       'src/workflow/runtime/recovery-hint.ts',
       'src/workflow/runtime/harness-config-decision.ts',
       'src/workflow/loader/start-readiness.ts',
@@ -205,10 +204,13 @@ export default defineConfig(
     },
   },
   {
-    // The removal decision is pure too, but its refusals embed launcher-correct `workflow unlock`
-    // commands, so it may also import values from the argv builders in ./commands.js, which read no
-    // I/O, clock or store.
-    files: ['src/workflow/runtime/removal-decision.ts'],
+    // The removal and recovery decisions are pure too, but their messages embed launcher-correct
+    // `workflow` commands, so they may also import values from the argv builders in ./commands.js,
+    // which read no I/O, clock or store.
+    files: [
+      'src/workflow/runtime/removal-decision.ts',
+      'src/workflow/runtime/recovery-decision.ts',
+    ],
     rules: {
       '@typescript-eslint/no-restricted-imports': [
         'error',
@@ -226,7 +228,7 @@ export default defineConfig(
               ],
               allowTypeImports: true,
               message:
-                'The removal decision must stay free of I/O: import values only from ./step-error.js, ./configuration-error.js and ./commands.js; everything else must be import type.',
+                'The removal and recovery decisions must stay free of I/O: import values only from ./step-error.js, ./configuration-error.js and ./commands.js; everything else must be import type.',
             },
           ],
         },

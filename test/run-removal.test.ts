@@ -1098,7 +1098,21 @@ describe('workflow rm worktree caches', { timeout: 10_000 }, () => {
     try {
       const failure = refused(await remove('blocked', { refs: true }), 'workflow.storage');
       expect(failure.message).toContain(blocked.path);
-      expect(failure.message).toContain('workflow clean blocked');
+      expect(failure.message).toContain(
+        `quiet-choir workflow clean blocked --state-dir ${stateDir}`,
+      );
+      const launched = new WorkflowExecutor({
+        logger: new ThresholdLogger('silent', () => undefined),
+        commandLauncher: [process.execPath, '/abs/bin/run.js'],
+      });
+      const viaLauncher = refused(
+        await launched.execute(plan('blocked', { refs: true })),
+        'workflow.storage',
+      );
+      expect(viaLauncher.message).toContain(
+        `${formatArgv([process.execPath, '/abs/bin/run.js'])} workflow clean blocked --state-dir ${stateDir}`,
+      );
+      expect(viaLauncher.message).not.toContain('quiet-choir workflow');
       expect(failure.details).toMatchObject({
         caches: [blocked.path],
         removedCaches: [],

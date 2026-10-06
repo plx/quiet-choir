@@ -17,6 +17,7 @@ import {
 import { RunRefusedError } from './run-errors.js';
 import {
   formatArgv,
+  killOrphansArgv,
   nextDetail,
   unlockNext,
   type CommandLauncher,
@@ -1064,7 +1065,7 @@ export async function unlockRun(options: {
       decision.processes,
       owner && { pid: owner.pid, host: owner.host, state: owner.state },
     );
-    refusal.message = `${refusal.message} Unlock never signals a process: wait for them to exit and retry, or stop confirmed ones with quiet-choir workflow resume ${runId} --state-dir ${stateDir} --kill-orphans.`;
+    refusal.message = `${refusal.message} Unlock never signals a process: wait for them to exit and retry, or stop confirmed ones with ${formatArgv(killOrphansArgv(options.commandLauncher, stateDir, runId))}.`;
     throw refusal;
   }
   const unlocked: UnlockedLock[] = [];
