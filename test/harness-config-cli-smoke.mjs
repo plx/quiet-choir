@@ -128,12 +128,14 @@ export default defineWorkflow({ name: 'harness-config-cli', version: '1', input:
   const ticked = checkpoint('ticked');
   const tickRefused = run(['tick', '--run', 'ticked']);
   assert.equal(tickRefused.status, 1, tickRefused.stderr);
-  assert.equal(tickRefused.value.resumed[0].outcome, 'incompatible');
-  assert.match(tickRefused.value.resumed[0].message, /original --harness-config/u);
-  assert.deepEqual(tickRefused.value.skipped, []);
+  // Tick predicts the refusal and skips the run before importing it (#235).
+  assert.equal(tickRefused.value.skipped[0].reason, 'incompatible');
+  assert.match(tickRefused.value.skipped[0].message, /original --harness-config/u);
+  assert.deepEqual(tickRefused.value.resumed, []);
   const tickChanged = run(['tick', '--run', 'ticked', '--harness-config', config(other)]);
   assert.equal(tickChanged.status, 1, tickChanged.stderr);
-  assert.equal(tickChanged.value.resumed[0].outcome, 'incompatible');
+  assert.equal(tickChanged.value.skipped[0].reason, 'incompatible');
+  assert.deepEqual(tickChanged.value.resumed, []);
   assert.deepEqual(checkpoint('ticked'), ticked);
   assert.equal(callCount(), 0);
 
