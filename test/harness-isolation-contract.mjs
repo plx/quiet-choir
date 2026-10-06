@@ -327,6 +327,9 @@ try {
   }
   if (providers.includes('codex')) {
     const reached = (run, marker) => JSON.stringify(run.bodies).includes(marker);
+    // Codex wraps the loaded AGENTS.md files in a message headed with this text, so a blank file
+    // (which has no marker to look for) still shows whether any instructions message was sent.
+    const instructionsMessage = (run) => reached(run, 'AGENTS.md instructions for');
     // instructions: 'none' (#130): a private CODEX_HOME holding only auth.json, and
     // project_doc_max_bytes=0. Asserted, because quiet-choir promises this boundary.
     const none = await execute('codex', 'codex-instructions-none', { instructions: 'none' });
@@ -366,8 +369,10 @@ try {
     // Unset matches 'native'; Codex's native loading is the documented default.
     assert(reached(codex, markers.userAgents), 'user AGENTS.md missed an unset call');
     assert(reached(codex, markers.projectAgents), 'project AGENTS.md missed an unset call');
-    // The layout details below are recorded, not asserted: a change in Codex's native instruction
-    // loading shows up as a fixture diff, and the metadata warning and doctor text describe them.
+    // The layout and blank-file facts below are recorded, not asserted: a change in Codex's native
+    // instruction loading shows up as a fixture diff, and the metadata warning and doctor text
+    // describe them. instructionsMessageReachedRequest is true here so a rewording of the header in
+    // a future Codex shows up as a diff rather than silently turning the blank-file facts false.
     report.cases.push({
       name: 'codex-restricted',
       version: codex.version,
@@ -376,6 +381,7 @@ try {
       userInstructionsReachedRequest: reached(codex, markers.userAgents),
       projectInstructionsReachedRequest: reached(codex, markers.projectAgents),
       userSkillReachedRequest: reached(codex, markers.userSkill),
+      instructionsMessageReachedRequest: instructionsMessage(codex),
     });
     // Per-directory override precedence, and project discovery from a .git root down to cwd.
     const overrides = await execute('codex', 'codex-restricted-layout', {}, undefined, {
@@ -407,6 +413,60 @@ try {
       version: empty.version,
       userAgentsReachedRequest: reached(empty, markers.userAgents),
       projectAgentsReachedRequest: reached(empty, markers.projectAgents),
+    });
+    // Whitespace-only files. 'blank' mixes spaces, tabs, LF and CRLF.
+    const blank = '  \n\t\n   \r\n';
+    const whitespace = await execute(
+      'codex',
+      'codex-restricted-whitespace-override',
+      {},
+      undefined,
+      {
+        prepare: async ({ project, config }) => {
+          await writeFile(join(config, 'AGENTS.override.md'), blank);
+          await writeFile(join(project, 'AGENTS.override.md'), blank);
+        },
+      },
+    );
+    report.cases.push({
+      name: 'codex-restricted-whitespace-override',
+      version: whitespace.version,
+      userAgentsReachedRequest: reached(whitespace, markers.userAgents),
+      projectAgentsReachedRequest: reached(whitespace, markers.projectAgents),
+    });
+    const whitespaceUser = await execute(
+      'codex',
+      'codex-restricted-whitespace-user-agents',
+      {},
+      undefined,
+      {
+        prepare: async ({ project, config }) => {
+          await writeFile(join(config, 'AGENTS.md'), blank);
+          await rm(join(project, 'AGENTS.md'));
+        },
+      },
+    );
+    report.cases.push({
+      name: 'codex-restricted-whitespace-user-agents',
+      version: whitespaceUser.version,
+      instructionsMessageReachedRequest: instructionsMessage(whitespaceUser),
+    });
+    const whitespaceProject = await execute(
+      'codex',
+      'codex-restricted-whitespace-project-agents',
+      {},
+      undefined,
+      {
+        prepare: async ({ project, config }) => {
+          await writeFile(join(project, 'AGENTS.md'), blank);
+          await rm(join(config, 'AGENTS.md'));
+        },
+      },
+    );
+    report.cases.push({
+      name: 'codex-restricted-whitespace-project-agents',
+      version: whitespaceProject.version,
+      instructionsMessageReachedRequest: instructionsMessage(whitespaceProject),
     });
   }
   console.log(JSON.stringify(report, null, 2));

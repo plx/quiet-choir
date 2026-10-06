@@ -1,5 +1,5 @@
 {
-  "capturedAt": "2026-10-01T04:26:38.270Z",
+  "capturedAt": "2026-10-06T01:30:13.198Z",
   "transport": "local fake APIs and dummy keys; no inference",
   "cases": [
     {
@@ -50,7 +50,8 @@
       "explicitProviderReachedLocalApi": true,
       "userInstructionsReachedRequest": true,
       "projectInstructionsReachedRequest": true,
-      "userSkillReachedRequest": true
+      "userSkillReachedRequest": true,
+      "instructionsMessageReachedRequest": true
     },
     {
       "name": "codex-restricted-layout",
@@ -66,6 +67,22 @@
       "version": "codex-cli 0.157.1",
       "userAgentsReachedRequest": true,
       "projectAgentsReachedRequest": false
+    },
+    {
+      "name": "codex-restricted-whitespace-override",
+      "version": "codex-cli 0.157.1",
+      "userAgentsReachedRequest": true,
+      "projectAgentsReachedRequest": false
+    },
+    {
+      "name": "codex-restricted-whitespace-user-agents",
+      "version": "codex-cli 0.157.1",
+      "instructionsMessageReachedRequest": false
+    },
+    {
+      "name": "codex-restricted-whitespace-project-agents",
+      "version": "codex-cli 0.157.1",
+      "instructionsMessageReachedRequest": false
     }
   ],
   "oauthEvidence": {

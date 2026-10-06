@@ -43,14 +43,15 @@ restricted mode rejects it; select `inherit` or configure the equivalent setting
 Codex instruction boundary. Unlike restricted Claude, restricted Codex still loads instruction
 files. `--ignore-user-config` skips `config.toml` and `--ignore-rules` skips execpolicy rules, but
 Codex 0.157.1 still reads the user's `CODEX_HOME/AGENTS.md` (or `AGENTS.override.md`, which replaces
-it unless empty), the descriptions of skills under `CODEX_HOME/skills`, and project `AGENTS.md` or
-`AGENTS.override.md` in each directory from the nearest Git root down to `cwd` (only `cwd` when no
-`.git` entry exists), as well as managed layers. Results can therefore depend on who runs the
-workflow. Codex harness metadata records these files as paths and SHA-256 digests
-(`HarnessMetadata.instructionSources`, never contents); the run warns once about user-level files
-and again if they change on resume, and `workflow doctor` names them. Detection runs on the first
-live Codex call of each run, from that call's `cwd`, so project files reached from other directories
-are not re-detected, and inherit-mode config keys such as `project_doc_max_bytes` are not modelled.
+it unless empty or whitespace-only; blank files contribute nothing), the descriptions of skills
+under `CODEX_HOME/skills`, and project `AGENTS.md` or `AGENTS.override.md` in each directory from
+the nearest Git root down to `cwd` (only `cwd` when no `.git` entry exists), as well as managed
+layers. Results can therefore depend on who runs the workflow. Codex harness metadata records these
+files as paths and SHA-256 digests (`HarnessMetadata.instructionSources`, never contents); the run
+warns once about user-level files and again if they change on resume, and `workflow doctor` names
+them. Detection runs on the first live Codex call of each run, from that call's `cwd`, so project
+files reached from other directories are not re-detected, and inherit-mode config keys such as
+`project_doc_max_bytes` are not modelled.
 
 Instruction-free Codex calls. Set `instructions: 'none'` on a Codex call, in a profile's `codex`
 options or in `defaults.codex` to run without these files. The adapter adds
@@ -145,7 +146,12 @@ override. For restricted Codex it also records, without asserting, whether canar
 `userSkillReachedRequest`, all true on 0.157.1, and the same with an explicit
 `instructions: 'native'`), how `AGENTS.override.md` replaces `AGENTS.md`, that discovery runs from
 the Git root down to `cwd`, and that an empty user-level override falls back to `AGENTS.md` while an
-empty project-level one does not. A change in Codex then shows as a fixture diff. It asserts that
+empty project-level one does not. Whitespace-only files (spaces, tabs, newlines) behave the same on
+0.157.1: a whitespace-only user override falls back to `AGENTS.md`, a whitespace-only project
+override still replaces `AGENTS.md`, and a blank `AGENTS.md` at either level sends no instructions
+message (`instructionsMessageReachedRequest`, recorded true on the plain restricted case so a
+reworded header shows as a diff). Instruction detection treats blank files accordingly, following
+Rust's `trim` (Unicode White_Space). A change in Codex then shows as a fixture diff. It asserts that
 with `instructions: 'none'` none of the three canaries reaches the request, the call still reaches
 the explicit provider, and the real `CODEX_HOME` listing and `auth.json` stay unchanged. A probe on
 0.157.1 showed that `project_doc_max_bytes=0` (spelled `--config` or `-c`) removes only the project

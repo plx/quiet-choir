@@ -2,6 +2,16 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- Codex instruction detection now ignores an empty or whitespace-only user-level
+  `AGENTS.override.md` and `AGENTS.md` and a blank project-level `AGENTS.md`, matching measured
+  Codex behavior (a blank user override falls back to `AGENTS.md`; blank `AGENTS.md` files send
+  nothing), so the user-level instruction warning no longer fires for them. A blank project-level
+  `AGENTS.override.md` is still recorded, because it displaces `AGENTS.md`. This is a
+  diagnostics-only change: the isolation contract gains three whitespace cases
+  (`codex-restricted-whitespace-override`, `-whitespace-user-agents`, `-whitespace-project-agents`)
+  and `instructionsMessageReachedRequest` on `codex-restricted`, with no identity change and no
+  `formatVersion` bump. A resumed run whose earlier metadata recorded a blank user file may see the
+  existing "instruction sources changed" warning once.
 - Each poll error that `onError` tolerates now records a `wait.tolerated` run event, saved with the
   wait's `lastError` and announced after that save: `stepId` is the wait ID, `message` the error
   message cut to 1024 characters, and `data` `{ consecutive, tolerate }` plus the error's string
