@@ -2,6 +2,9 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- Public capability manifests (bug fix; no persisted-shape or identity change): re-projecting a
+  public manifest no longer re-digests a registered harness's `env` in `harnessCapabilities`, so the
+  projection is safe to apply to its own output (#248, ADR 0033).
 - Registered harness declarations (addition; storage revision 9, nested-only): `defineHarness`
   accepts `sensitiveOptions`, a list of option keys whose profile values public capability manifests
   (checkpoints, `workflow validate --json` and the record `check-resume --json` prints) move out of

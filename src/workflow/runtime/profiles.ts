@@ -497,8 +497,9 @@ export function resolveProfileCall(
   return { profile, options: resolved };
 }
 
+const sha256Pattern = /^[a-f0-9]{64}$/u;
 const redactedControlSchema = z.strictObject({
-  sha256: z.string().regex(/^[a-f0-9]{64}$/u),
+  sha256: z.string().regex(sha256Pattern),
   keys: z.array(z.string()).optional(),
 });
 const resolvedProfileSchema = z.strictObject({
@@ -574,14 +575,30 @@ function redactControls(
   return redacted;
 }
 
+/** True for exactly `{ sha256: '<64 hex>' }`, the shape a projected registered `env` has. */
+function isEnvDigest(value: unknown): boolean {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
+  const keys = Object.keys(value);
+  const sha256 = (value as Record<string, unknown>)['sha256'];
+  return (
+    keys.length === 1 &&
+    keys[0] === 'sha256' &&
+    typeof sha256 === 'string' &&
+    sha256Pattern.test(sha256)
+  );
+}
+
 /**
  * Snapshot for checkpoints and CLI diagnostics; live execution retains its private values. Drops
  * environment values (names and a digest stay in `environment`) and moves Claude settings, MCP
  * servers, subagents, system prompts, Codex config and each registered harness's declared
  * `sensitiveOptions` into `redacted` as digests with top-level names. `harnesses` are the
  * declarations the manifest was resolved from (the root definition's for a run record); the
- * parameter is required so no caller silently skips their sensitive options. Apply only to a live
- * manifest from resolveCapabilities: a second pass re-digests registered harness env digests.
+ * parameter is required so no caller silently skips their sensitive options. Safe to apply to its
+ * own output: every redaction is idempotent. A registered harness's `env` in `harnessCapabilities`
+ * becomes `{ sha256 }` once, and a public manifest's digest is kept because the raw
+ * `harnesses.<name>.env` copy a live manifest holds is gone; a live env that merely looks like a
+ * digest is still digested. Grant pins and step identity use the live manifest.
  * @internal
  */
 export function publicCapabilityManifest(
@@ -627,11 +644,16 @@ export function publicCapabilityManifest(
           },
         });
     }
+    // Read the raw `harnesses.<name>.env` copy before deleting it: only a live manifest has one, so
+    // a digest-shaped value without it is already public and stays; anything else is digested.
+    for (const [name, controls] of Object.entries(profile.harnessCapabilities ?? {})) {
+      if (!Object.hasOwn(controls, 'env')) continue;
+      const rawCopy = Object.hasOwn(profile.harnesses?.[name] ?? {}, 'env');
+      if (rawCopy || !isEnvDigest(controls['env']))
+        Object.assign(controls, { env: { sha256: digest(controls['env']) } });
+    }
     for (const controls of Object.values(profile.harnesses ?? {}))
       Reflect.deleteProperty(controls, 'env');
-    for (const controls of Object.values(profile.harnessCapabilities ?? {}))
-      if (Object.hasOwn(controls, 'env'))
-        Object.assign(controls, { env: { sha256: digest(controls['env']) } });
   }
   return result;
 }
