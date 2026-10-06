@@ -188,6 +188,26 @@ it('hands a lock whose release fails to recovery so another process acquires it'
   await expectNoResidue();
 });
 
+it('never hands off a lock that a failed retire left to another owner', async () => {
+  const release = await acquireWorktreeAdminLock(common, { signal });
+  const replacement = JSON.stringify({
+    pid: process.ppid,
+    host: hostname(),
+    token: randomUUID(),
+    osStartTime: null,
+  });
+  // As if the retire had moved the lock before failing and another owner then published one.
+  beforeRename(lockPath, '.gone', async () => {
+    await rm(lockPath, { recursive: true });
+    await mkdir(lockPath);
+    await writeFile(join(lockPath, 'owner.json'), replacement);
+    throw Object.assign(new Error('EIO: injected i/o error, rename'), { code: 'EIO' });
+  });
+  await expect(release()).rejects.toMatchObject({ code: 'EIO' });
+  expect(await readdir(lockPath)).toEqual(['owner.json']);
+  expect(await readFile(join(lockPath, 'owner.json'), 'utf8')).toBe(replacement);
+});
+
 /** Directory modes do not stop writes: on Windows, or as root. */
 const modesUnenforced = process.platform === 'win32' || process.getuid?.() === 0;
 
