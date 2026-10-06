@@ -206,8 +206,10 @@ inside another loading. `codex-restricted-skill-no-git` shows only `cwd` contrib
 loads `<CLAUDE_CONFIG_DIR>/CLAUDE.md` and a restricted one does not, that `HOME/.claude/CLAUDE.md`
 does not load when `CLAUDE_CONFIG_DIR` is set and `HOME` is not an ancestor of `cwd`, and that it
 loads when `CLAUDE_CONFIG_DIR` is unset; it also records that `HOME/.claude/CLAUDE.md` loads as an
-ancestor's file when `HOME` is an ancestor of `cwd`. No upstream inference occurs. The sanitized
-report is in
+ancestor's file when `HOME` is an ancestor of `cwd`. Every case asserts that the native CLI reached
+the local fake API; an explicit Codex `config` is merged over the fixture provider, and a negative
+case confirms that a call steered away from it fails the contract. No upstream inference occurs. The
+sanitized report is in
 [`test/fixtures/harness-isolation-results.json`](../test/fixtures/harness-isolation-results.json).
 
 Earlier zero-cost OAuth probes on the same Claude version reached invalid-model responses with
