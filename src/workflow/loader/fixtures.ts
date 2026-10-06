@@ -8,10 +8,13 @@ import {
 import { execResultSchema, execSummarySchema } from '../runtime/exec-schema.js';
 import { RunRefusedError } from '../runtime/run-errors.js';
 import type { RunRecord } from '../runtime/store.js';
+import { stepErrorKind } from './failure-kind.js';
 
 /**
- * Export saved agent outputs, settled agent failures and completed command results without
- * importing source, taking ownership, or rewriting a run. @internal
+ * Export saved agent outputs, settled agent failures, absorbed agent failures (steps left `failed`
+ * in a completed run by a body try/catch or a settled map item) and completed command results
+ * without importing source, taking ownership, or rewriting a run. Failure rules carry the recorded
+ * message but no kind or attempt pin. @internal
  */
 export function fixturesFromRun(run: RunRecord): HarnessFixtures {
   if (run.status !== 'completed')
@@ -36,7 +39,9 @@ export function fixturesFromRun(run: RunRecord): HarnessFixtures {
       .filter(
         ([, step]) =>
           stepHarness(step) !== null &&
-          (step.status === 'completed' || step.status === 'settled-failed'),
+          (step.status === 'completed' ||
+            step.status === 'settled-failed' ||
+            step.status === 'failed'),
       )
       .sort((a, b) => (a[1].seq ?? 0) - (b[1].seq ?? 0))
       .map(([stepId, step]) => {
@@ -44,7 +49,24 @@ export function fixturesFromRun(run: RunRecord): HarnessFixtures {
           return {
             step: stepId,
             harness: stepHarness(step),
-            error: fixtureErrorText(stepId, step.settledError),
+            error: fixtureErrorText(
+              stepId,
+              step.settledError?.message,
+              `Settled ${step.settledError?.kind ?? 'unknown'} failure`,
+            ),
+          };
+        // A failure the workflow absorbed leaves the step `failed` in a completed run. It has no
+        // settledError: the runner records the latest message in `error` and the kind in the last
+        // attempt, and the kind is deliberately not exported.
+        if (step.status === 'failed')
+          return {
+            step: stepId,
+            harness: stepHarness(step),
+            error: fixtureErrorText(
+              stepId,
+              step.error,
+              `Failed ${stepErrorKind(step) ?? 'unknown'} failure`,
+            ),
           };
         const data = result.parse(step.output);
         return { step: stepId, harness: stepHarness(step), output: data.output, usage: data.usage };
@@ -84,16 +106,18 @@ function execFixtures(run: RunRecord): FixtureExecCall[] {
 }
 
 /**
- * The fixture error text for a settled failure. FixtureHarness prefixes its rejections with
- * `Step <id>: `, so a message that already carries that prefix is exported without it, which keeps
- * export, replay and export stable. The text is never empty, as the fixture schema requires.
+ * The fixture error text for a settled or absorbed failure. FixtureHarness prefixes its rejections
+ * with `Step <id>: `, so a message that already carries that prefix is exported without it, which
+ * keeps export, replay and export stable. The text is never empty, as the fixture schema requires:
+ * a missing, empty or prefix-only message uses `fallback`.
  */
 function fixtureErrorText(
   stepId: string,
-  settledError: { kind: string; message: string } | undefined,
+  message: string | null | undefined,
+  fallback: string,
 ): string {
   const prefix = `Step ${stepId}: `;
-  const message = settledError?.message ?? '';
-  const text = message.startsWith(prefix) ? message.slice(prefix.length) : message;
-  return text.length > 0 ? text : `Settled ${settledError?.kind ?? 'unknown'} failure`;
+  const full = message ?? '';
+  const text = full.startsWith(prefix) ? full.slice(prefix.length) : full;
+  return text.length > 0 ? text : fallback;
 }
