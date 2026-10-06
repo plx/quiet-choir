@@ -329,7 +329,8 @@ describe('crash windows', () => {
 // ---------------------------------------------------------------------------------------------
 // pr.merge (a1, a4, a8)
 
-describe('pr.merge', () => {
+// The lag cases spawn the fake gh dozens of times, which outlasts the default timeout under load.
+describe('pr.merge', { timeout: 30_000 }, () => {
   it('returns head-moved without a PUT when the head already moved', async () => {
     const { runner, state } = await fake({ pulls: pull(9, { head_sha: OTHER }) });
     const result = await outcome(runner, 'moved', (ctx) =>
