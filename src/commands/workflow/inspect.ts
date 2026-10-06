@@ -74,11 +74,18 @@ export default class WorkflowInspect extends WorkflowCommand {
     const waitCreatedMs = this.#bound('wait-created', flags['wait-created']);
     const stream = flags.watch === true && flags.final !== true;
     const render = (value: RunInspection): void => {
-      const human = `${stream && !flags.json && process.stdout.isTTY ? '\u001b[2J\u001b[H' : ''}${formatRunSummary(value.summary, flags.verbose, this.commandLauncher)}`;
+      const human = `${stream && !flags.json && process.stdout.isTTY ? '\u001b[2J\u001b[H' : ''}${formatRunSummary(value.summary, flags.verbose, this.commandLauncher, value.worktreeAdminLock)}`;
       this.output(
         flags.summary
           ? value.summary
-          : { ...value.run, ownership: value.ownership, usageSummary: value.summary.usage },
+          : {
+              ...value.run,
+              ownership: value.ownership,
+              usageSummary: value.summary.usage,
+              ...(value.worktreeAdminLock === undefined
+                ? {}
+                : { worktreeAdminLock: value.worktreeAdminLock }),
+            },
         human,
       );
     };
@@ -86,6 +93,7 @@ export default class WorkflowInspect extends WorkflowCommand {
       logger: this.createExecutionLogger(flags),
       commandLauncher: this.commandLauncher,
       signal: this.signal,
+      processSupervisor: this.processSupervisor,
       ...(stream ? { onInspection: render } : {}),
     });
     const result = await executor.execute({
@@ -96,14 +104,21 @@ export default class WorkflowInspect extends WorkflowCommand {
             ...(timeoutMs === undefined ? {} : { timeoutMs }),
             ...(waitCreatedMs === undefined ? {} : { waitCreatedMs }),
           }
-        : { kind: 'workflow.inspect' as const }),
+        : { kind: 'workflow.inspect' as const, worktreeAdminLock: flags.summary !== true }),
       runId: args.runId,
       stateDir: stateDir,
     });
     if (!result.ok) this.failResult(result);
     if (result.kind === 'workflow.run.result' && result.summary && result.ownership) {
       if (!stream)
-        render({ run: result.run, summary: result.summary, ownership: result.ownership });
+        render({
+          run: result.run,
+          summary: result.summary,
+          ownership: result.ownership,
+          ...(result.worktreeAdminLock === undefined
+            ? {}
+            : { worktreeAdminLock: result.worktreeAdminLock }),
+        });
       if (flags.watch) process.exitCode = watchExitCodes[result.summary.status];
     }
   }

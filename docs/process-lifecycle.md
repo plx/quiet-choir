@@ -143,9 +143,22 @@ owner or recoverer refuses unless `--force-remote` asserts that the recorded hos
 under an old name or is permanently gone; the owner, recoverer and children are then judged by local
 PID and birth-identity observations, so a recorded PID that is alive here still refuses. Missing or
 unreadable `owner.json` and `recovery.json` do not block it and are reported as warnings. Each lock
-leaves only by the tombstone rename, after re-reading the observed tokens; a lock that changed
-meanwhile refuses with "changed during unlock; retry", and one that vanished is reported `absent`. A
-run with no lock is a no-op. Do not run it concurrently with a resume or tick of the same run.
+leaves only by the tombstone rename, while unlock holds its recovery claim as an automatic recoverer
+would (so automatic recovery cannot retire and replace the lock under it) and after re-reading the
+observed owner token under that claim; a lock that changed meanwhile, or a live recoverer's claim,
+refuses with "changed during unlock; retry", and one that vanished is reported `absent`. A run with
+no lock is a no-op. Do not run it concurrently with a resume or tick of the same run.
+
+The repository's worktree administration lock (`<common Git dir>/quiet-choir/worktree-admin.lock`,
+[ADR 0032](decisions/0032-interprocess-worktree-administration-lock.md)) belongs to no run, so it
+has its own form: `quiet-choir workflow unlock --worktree-admin PATH [--force-remote] [--json]`,
+where PATH is any path inside the repository. It applies the same judgment to the lock's owner and
+recoverer (the lock records no children) and the same claimed, token-verified tombstone removal, and
+refuses with `worktree.locked` (exit 3) instead of `run.locked`. A locally alive or unverifiable
+holder is always refused, since the lock is held only for one Git command. When an attempt fails
+because a holder on another host, of unknown liveness or with unreadable metadata kept the lock for
+30 s, the error names this command. Plain `workflow inspect RUN` shows the lock of the repository in
+the run's worktree ledger while it is held. Do not delete the lock directory by hand.
 
 Linux identity combines boot ID and `/proc/<pid>/stat` start ticks; macOS uses boot time and the
 C-locale `ps lstart` timestamp (one-second resolution); Windows uses the process creation timestamp

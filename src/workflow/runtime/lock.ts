@@ -570,13 +570,14 @@ async function publishMarker(
 }
 
 /**
- * Take `recovery.json` aside and keep it only if it still carries `token`; otherwise put it back
- * (leaving it aside if a new marker appeared meanwhile). `missing` means there was none to take.
- * @internal
+ * Take `recovery.json` aside and keep it only if it still carries `token` (null: only while it is
+ * still unreadable, since a marker is published whole and a readable one is a new claim); otherwise
+ * put it back (leaving it aside if a new marker appeared meanwhile). `missing` means there was none
+ * to take. @internal
  */
 export async function takeMarker(
   lockPath: string,
-  token: string,
+  token: string | null,
 ): Promise<'taken' | 'kept' | 'missing'> {
   const current = join(lockPath, 'recovery.json');
   const aside = join(lockPath, `recovery.${randomUUID()}.stale`);
@@ -592,7 +593,7 @@ export async function takeMarker(
   } catch {
     taken = undefined;
   }
-  if (taken?.token === token) {
+  if (token === null ? taken === undefined : taken?.token === token) {
     await rm(aside, { force: true });
     return 'taken';
   }
@@ -843,12 +844,15 @@ function unlockHolder(
   };
 }
 
-/** Observe one lock directory for unlock, or undefined when it does not exist. */
-async function observeUnlock(
-  kind: RunLockView['kind'],
+/**
+ * Observe one lock directory for unlock, or undefined when it does not exist. A null `runId` (the
+ * worktree administration lock, which records no children) observes no child records. @internal
+ */
+export async function observeUnlock<Kind extends UnlockObservation['kind']>(
+  kind: Kind,
   path: string,
-  runId: string,
-): Promise<UnlockObservation | undefined> {
+  runId: string | null,
+): Promise<(UnlockObservation & { readonly kind: Kind }) | undefined> {
   let names: string[];
   try {
     names = await readdir(path);
@@ -883,31 +887,80 @@ async function observeUnlock(
     path,
     owner,
     recovery,
-    processes: await inspectProcesses(path, runId, owner?.token ?? null),
+    processes: runId === null ? [] : await inspectProcesses(path, runId, owner?.token ?? null),
     ...(warnings.length ? { warning: warnings.join('; ') } : {}),
   };
 }
 
-/** The owner and marker tokens a lock carries now (null for none readable), or `gone`. */
-async function currentTokens(
-  path: string,
-): Promise<{ readonly owner: string | null; readonly recovery: string | null } | 'gone'> {
-  let owner: string | null;
+/** The owner token a lock carries now (null for none readable), or undefined when it is gone. */
+async function ownerToken(path: string): Promise<string | null | undefined> {
   try {
     const value = await readContended(path);
-    if (value === 'gone') return 'gone';
-    owner = value.token;
+    return value === 'gone' ? undefined : value.token;
   } catch {
-    if (await lockGone(path)) return 'gone';
-    owner = null;
+    return (await lockGone(path)) ? undefined : null;
   }
-  let recovery: string | null;
+}
+
+/**
+ * Remove one lock that unlock observed and judged removable, as its single recoverer. The observed
+ * marker (dead, unreadable, or a foreign one `--force-remote` judged) is taken aside only while it
+ * is still that marker, then unlock claims recovery through `claimRecovery` like an automatic
+ * recoverer, so no recoverer can retire and replace the lock under it: a live marker refuses with
+ * `changed()`. Holding the claim, it re-reads the owner and its own marker, requires the observed
+ * owner token (or still no readable owner), and retires the lock through the tombstone rename,
+ * which checks both once more. Any difference throws `changed()` and leaves the lock in place,
+ * without unlock's marker. `absent` means the lock vanished first. Nothing is signaled. @internal
+ */
+export async function removeObservedLock(
+  lock: UnlockObservation,
+  changed: () => Error,
+): Promise<'removed' | 'absent'> {
+  const { path } = lock;
+  const expected = lock.owner?.token ?? null;
+  const vanished = async (): Promise<'absent'> => {
+    if (await lockGone(path)) return 'absent';
+    throw changed();
+  };
+  // A lock that already changed is refused before unlock touches it.
+  const before = await ownerToken(path);
+  if (before === undefined) return 'absent';
+  if (before !== expected) throw changed();
+  if (lock.recovery !== null) {
+    const observed = lock.recovery === 'unreadable' ? null : lock.recovery.token;
+    if ((await takeMarker(path, observed)) === 'kept') throw changed();
+  }
+  const marker: Marker = {
+    pid: process.pid,
+    host: hostname(),
+    token: randomUUID(),
+    osStartTime: processIdentity(process.pid)?.start ?? null,
+  };
+  if ((await claimRecovery(path, marker, changed, () => changed())) === 'retry') return vanished();
+  let retired = false;
   try {
-    recovery = (await readMarker(join(path, 'recovery.json'))).token;
-  } catch {
-    recovery = null;
+    const owner = await ownerToken(path);
+    if (owner === undefined) return 'absent';
+    if (owner !== expected) throw changed();
+    // A reclaimer that judged unlock dead may have taken the marker meanwhile.
+    let mine: Marker;
+    try {
+      mine = await readMarker(join(path, 'recovery.json'));
+    } catch {
+      throw changed();
+    }
+    if (mine.token !== marker.token) throw changed();
+    try {
+      await retire(path, { owner, recovery: marker.token }, changed);
+    } catch (error) {
+      if (!isErrno(error, 'ENOENT')) throw error;
+      return 'absent';
+    }
+    retired = true;
+    return 'removed';
+  } finally {
+    if (!retired) await takeMarker(path, marker.token).catch(() => undefined);
   }
-  return { owner, recovery };
 }
 
 /** One lock that `workflow unlock` found, with the local judgments it acted on. @internal */
@@ -998,11 +1051,6 @@ export async function unlockRun(options: {
   }
   const unlocked: UnlockedLock[] = [];
   for (const lock of locks) {
-    const expected = {
-      owner: lock.owner?.token ?? null,
-      recovery:
-        lock.recovery === null || lock.recovery === 'unreadable' ? null : lock.recovery.token,
-    };
     const changed = (): RunRefusedError =>
       new RunRefusedError(
         'run.locked',
@@ -1015,19 +1063,7 @@ export async function unlockRun(options: {
           ]),
         },
       );
-    let action: UnlockedLock['action'] = 'removed';
-    const current = await currentTokens(lock.path);
-    if (current === 'gone') action = 'absent';
-    else {
-      if (current.owner !== expected.owner || current.recovery !== expected.recovery)
-        throw changed();
-      try {
-        await retire(lock.path, expected, changed);
-      } catch (error) {
-        if (!isErrno(error, 'ENOENT')) throw error;
-        action = 'absent';
-      }
-    }
+    const action = await removeObservedLock(lock, changed);
     unlocked.push({
       kind: lock.kind,
       path: lock.path,

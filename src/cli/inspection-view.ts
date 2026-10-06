@@ -1,6 +1,12 @@
 import type { InspectionStatus, RunSummary } from '../workflow/loader/inspection.js';
 import type { ExecSummary } from '../workflow/runtime/exec-model.js';
-import { formatArgv, unlockNext, type CommandLauncher } from '../workflow/runtime/commands.js';
+import {
+  formatArgv,
+  unlockNext,
+  unlockWorktreeAdminNext,
+  type CommandLauncher,
+} from '../workflow/runtime/commands.js';
+import type { WorktreeAdminLockView } from '../workflow/runtime/worktree-admin-lock.js';
 import { unlockAdvice } from '../workflow/runtime/recovery-decision.js';
 import { eventMessage } from '../workflow/loader/event-line.js';
 import { formatNextCommands } from './presentation.js';
@@ -150,11 +156,52 @@ function unlockHint(run: RunSummary, launcher: CommandLauncher | undefined): str
     : `Unlock: ${command}`;
 }
 
-/** Render only known values: a running workflow never ends in a bare null. @internal */
+/**
+ * The `Worktree admin lock` line for a held repository lock, then an `Unlock:` line only when
+ * `workflow unlock --worktree-admin` would not refuse it: no owner or recoverer is alive or
+ * unverifiable here. A foreign holder's hint carries `--force-remote` and its caveat. View-only.
+ */
+function worktreeAdminLines(
+  lock: WorktreeAdminLockView,
+  launcher: CommandLauncher | undefined,
+  now: number,
+): string[] {
+  const owner = lock.owner;
+  const age =
+    owner?.acquiredAt == null
+      ? ''
+      : `, held ${duration(Math.max(0, now - Date.parse(owner.acquiredAt)))}`;
+  const lines = [
+    `Worktree admin lock ${lock.path}: ${owner ? `owner pid ${String(owner.pid)} (${owner.state}) on ${owner.host}${age}` : 'owner unreadable'}${lock.recovery ? `; recovery pid ${String(lock.recovery.pid)} (${lock.recovery.state}) on ${lock.recovery.host}` : ''}${lock.warning ? `; warning: ${lock.warning}` : ''}`,
+  ];
+  const holders = [...(owner ? [owner] : []), ...(lock.recovery ? [lock.recovery] : [])];
+  if (holders.some((holder) => holder.state === 'alive' || holder.state === 'unknown'))
+    return lines;
+  const remote = holders.find((holder) => holder.state === 'remote');
+  const command = formatArgv(
+    unlockWorktreeAdminNext(launcher, lock.commonGitDir, {
+      forceRemote: remote !== undefined,
+      why: 'Clear the abandoned worktree administration lock.',
+    }).argv,
+  );
+  lines.push(
+    remote === undefined
+      ? `Unlock: ${command}`
+      : `Unlock: ${command} (only if ${remote.host} is this machine under an old name or is permanently gone)`,
+  );
+  return lines;
+}
+
+/**
+ * Render only known values: a running workflow never ends in a bare null. `worktreeAdminLock`, the
+ * held administration lock of the run's repository, adds its line and any unlock hint. @internal
+ */
 export function formatRunSummary(
   run: RunSummary,
   verbose = false,
   launcher?: CommandLauncher,
+  worktreeAdminLock?: WorktreeAdminLockView,
+  now = Date.now(),
 ): string {
   const lines = [
     `Run ${run.id}: ${run.status}  ${run.workflow.name}@${run.workflow.version}`,
@@ -315,6 +362,7 @@ export function formatRunSummary(
   for (const lock of run.ownership.locks) lines.push(lockLine(lock));
   const hint = unlockHint(run, launcher);
   if (hint !== null) lines.push(hint);
+  if (worktreeAdminLock) lines.push(...worktreeAdminLines(worktreeAdminLock, launcher, now));
   for (const process of run.ownership.processes)
     lines.push(
       process.process

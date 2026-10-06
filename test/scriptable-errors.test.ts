@@ -311,6 +311,24 @@ it('refuses an unowned cancel with exit 3, like the other run refusals', () => {
   });
 });
 
+it('refuses a held worktree administration lock with exit 3 and no run', () => {
+  expect(isCliErrorCode('worktree.locked')).toBe(true);
+  expect(workflowExitCodes['worktree.locked']).toBe(3);
+  expect(
+    workflowErrorDocument(
+      workflowFailure('worktree.locked', 'Worktree administration lock /l owner PID 7 is alive.', {
+        details: { lockPath: '/l', state: 'alive' },
+      }),
+    ),
+  ).toMatchObject({
+    ok: false,
+    exitCode: 3,
+    runId: null,
+    stateDir: null,
+    error: { code: 'worktree.locked', details: { state: 'alive' } },
+  });
+});
+
 it('refuses an active run removal with exit 3, like the other run refusals', () => {
   expect(isCliErrorCode('run.active')).toBe(true);
   expect(workflowExitCodes['run.active']).toBe(3);

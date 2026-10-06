@@ -3,6 +3,10 @@ import type { RunRemovalResult } from '../runtime/run-removal.js';
 import type { PruneResult } from './prune.js';
 import type { PruneStatus } from './prune-selection.js';
 import type { UnlockedLock } from '../runtime/lock.js';
+import type {
+  UnlockedWorktreeAdminLock,
+  WorktreeAdminLockView,
+} from '../runtime/worktree-admin-lock.js';
 import type { HarnessFixtures } from '../../harnesses/fixture.js';
 import type { RehearsalReport } from './rehearsal.js';
 import type { HarnessSelection } from './harness-selection.js';
@@ -163,6 +167,11 @@ export interface InspectWorkflowPlan extends ExecutionPlan {
   readonly kind: 'workflow.inspect';
   readonly runId: string;
   readonly stateDir: string;
+  /**
+   * Also report the repository's worktree administration lock (`worktreeAdminLock`) for a run with a
+   * worktree ledger, which runs one `git rev-parse`. Omitted means true; `--summary` passes false.
+   */
+  readonly worktreeAdminLock?: boolean;
 }
 
 /** Export completed run outputs as portable fixture rules. */
@@ -281,6 +290,18 @@ export interface UnlockWorkflowPlan extends ExecutionPlan {
 }
 
 /**
+ * Plain-data request to clear a repository's abandoned worktree administration lock, which belongs
+ * to no run. `path` is any path inside the repository (a checkout, a linked worktree or the common
+ * Git directory); `forceRemote` asserts that a foreign recorded host is this machine under an old
+ * name or is gone.
+ */
+export interface UnlockWorktreeAdminPlan extends ExecutionPlan {
+  readonly kind: 'workflow.unlock.worktree-admin';
+  readonly path: string;
+  readonly forceRemote: boolean;
+}
+
+/**
  * Plain-data request to end a live local run as `cancelled`: verify that its lock owner is a live
  * process on this host with the recorded birth identity, leave a cancel request bound to that
  * owner's lock token, signal it, and wait up to `timeoutMs` for the run to end. `force` sends a
@@ -314,6 +335,17 @@ export type WorkflowCommandResult = ExecutionResult &
         readonly forceRemote: boolean;
         /** Every lock found, primary first; empty when the run was not locked. */
         readonly locks: readonly UnlockedLock[];
+      }
+    | {
+        readonly kind: 'workflow.unlock.worktree-admin.result';
+        readonly ok: true;
+        /** The canonical common Git directory the path resolved to. */
+        readonly commonGitDir: string;
+        /** `<common Git dir>/quiet-choir/worktree-admin.lock`. */
+        readonly lockPath: string;
+        readonly forceRemote: boolean;
+        /** The lock found and cleared, or null when none was held. */
+        readonly lock: UnlockedWorktreeAdminLock | null;
       }
     | {
         readonly kind: 'workflow.cancel.result';
@@ -383,6 +415,11 @@ export type WorkflowCommandResult = ExecutionResult &
         readonly ownership?: RunOwnership;
         readonly summary?: RunSummary;
         readonly rehearsal?: RehearsalReport;
+        /**
+         * Plain `workflow inspect` only: the worktree administration lock of the repository in the
+         * run's worktree ledger, present only while that lock is held.
+         */
+        readonly worktreeAdminLock?: WorktreeAdminLockView;
       }
   );
 

@@ -1,4 +1,4 @@
-import { spawn, type ChildProcess } from 'node:child_process';
+import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
 import { once } from 'node:events';
 import * as fs from 'node:fs/promises';
 import { writeFileSync } from 'node:fs';
@@ -164,8 +164,12 @@ describe('unlockRun removal', () => {
     ]);
     expect(await fs.readdir(stateDir)).toEqual(['run-1']);
     expect(await fs.readdir(join(stateDir, 'run-1'))).toEqual([]);
-    // Only tombstones were deleted: never the live lock path.
-    const removed = vi.mocked(fs.rm).mock.calls.map(([path]) => String(path));
+    // Only tombstones (and the temporary file of unlock's recovery claim) were deleted: never the
+    // live lock path.
+    const removed = vi
+      .mocked(fs.rm)
+      .mock.calls.map(([path]) => String(path))
+      .filter((path) => !/\/recovery\.[0-9a-f-]+\.tmp$/u.test(path));
     expect(removed.length).toBeGreaterThan(0);
     expect(removed.every((path) => /\.\d+\.[0-9a-f-]+\.gone$/u.test(path))).toBe(true);
     expect(removed).not.toContain(primary);
@@ -382,6 +386,21 @@ describe('unlockRun races', () => {
     // The lock is back in place with the new file, and no tombstone remains.
     expect((await fs.readdir(guard)).length).toBe(1);
     expect(await fs.readdir(stateDir)).toEqual(['run-1.json.lock']);
+  });
+
+  it('holds the recovery claim while it retires, so a concurrent resume cannot take the lock', async () => {
+    await plant(guard);
+    onTombstone(guard, async () => {
+      // Unlock's live marker holds the dead owner's lock, so automatic recovery refuses.
+      await expect(lockRun(stateDir, 'run-1', { probeOwner: false })).rejects.toMatchObject({
+        code: 'run.locked',
+        message: expect.stringContaining('lock recovery is in progress') as unknown,
+      });
+      expect((await fs.readdir(guard)).sort()).toEqual(['owner.json', 'recovery.json']);
+    });
+    expect(await unlock()).toMatchObject([{ kind: 'guard', action: 'removed' }]);
+    expect(await gone(guard)).toBe(true);
+    expect((await fs.readdir(stateDir)).filter((name) => name.endsWith('.gone'))).toEqual([]);
   });
 
   it('reports a lock that vanished before its rename as absent', async () => {
@@ -682,5 +701,114 @@ describe('workflow.unlock plan', () => {
     await expect(
       executor().execute({ kind: 'workflow.unlock', runId: '../x', stateDir, forceRemote: false }),
     ).resolves.toMatchObject({ ok: false, code: 'usage.run_id' });
+  });
+});
+
+describe('workflow.unlock.worktree-admin plan', () => {
+  const executor = (): WorkflowExecutor =>
+    new WorkflowExecutor({ logger: new ThresholdLogger('silent', () => undefined) });
+  const git = (cwd: string, ...args: string[]): string =>
+    execFileSync('git', ['-C', cwd, ...args], { encoding: 'utf8', stdio: 'pipe' });
+
+  /** A repository with one commit and a linked worktree; returns the realpath of its common dir. */
+  async function repository(): Promise<{ checkout: string; linked: string; common: string }> {
+    const checkout = join(stateDir, 'repo');
+    const linked = join(stateDir, 'linked');
+    await fs.mkdir(checkout);
+    git(checkout, 'init', '--quiet');
+    git(
+      checkout,
+      '-c',
+      'user.name=t',
+      '-c',
+      'user.email=t@example.invalid',
+      'commit',
+      '--quiet',
+      '--allow-empty',
+      '-m',
+      'init',
+    );
+    git(checkout, 'worktree', 'add', '--quiet', '--detach', linked);
+    return { checkout, linked, common: await fs.realpath(join(checkout, '.git')) };
+  }
+
+  it('resolves a checkout, a linked worktree or the common dir to one lock and clears it', async () => {
+    const { checkout, linked, common } = await repository();
+    const lockPath = join(common, 'quiet-choir', 'worktree-admin.lock');
+    for (const path of [checkout, linked, common]) {
+      await plant(lockPath);
+      await expect(
+        executor().execute({ kind: 'workflow.unlock.worktree-admin', path, forceRemote: false }),
+      ).resolves.toEqual({
+        kind: 'workflow.unlock.worktree-admin.result',
+        ok: true,
+        commonGitDir: common,
+        lockPath,
+        forceRemote: false,
+        lock: {
+          path: lockPath,
+          owner: { pid: DEAD, host: hostname(), state: 'dead' },
+          recovery: null,
+          action: 'removed',
+        },
+      });
+      expect(await gone(lockPath)).toBe(true);
+    }
+    await expect(
+      executor().execute({
+        kind: 'workflow.unlock.worktree-admin',
+        path: linked,
+        forceRemote: true,
+      }),
+    ).resolves.toMatchObject({ ok: true, lock: null, forceRemote: true });
+  });
+
+  it('refuses a path outside any repository as a usage error', async () => {
+    const outside = await fs.mkdtemp(join(tmpdir(), 'quiet-choir-not-a-repo-'));
+    try {
+      await expect(
+        executor().execute({
+          kind: 'workflow.unlock.worktree-admin',
+          path: outside,
+          forceRemote: false,
+        }),
+      ).resolves.toMatchObject({
+        ok: false,
+        code: 'usage.flag',
+        runId: null,
+        stateDir: null,
+        message: expect.stringContaining(
+          `--worktree-admin ${outside} is not inside a Git repository`,
+        ) as unknown,
+      });
+    } finally {
+      await actualFs.rm(outside, { recursive: true, force: true });
+    }
+  });
+
+  it('maps a refusal to worktree.locked with details.next as the top-level next', async () => {
+    const { checkout, common } = await repository();
+    const lockPath = join(common, 'quiet-choir', 'worktree-admin.lock');
+    await plant(lockPath, { owner: owner(DEAD, 'far', 'elsewhere.invalid') });
+    const result = await executor().execute({
+      kind: 'workflow.unlock.worktree-admin',
+      path: checkout,
+      forceRemote: false,
+    });
+    const next = [
+      {
+        why: 'Only if elsewhere.invalid is this machine under an old name or is permanently gone.',
+        argv: ['quiet-choir', 'workflow', 'unlock', '--worktree-admin', common, '--force-remote'],
+      },
+    ];
+    expect(result).toMatchObject({
+      ok: false,
+      code: 'worktree.locked',
+      runId: null,
+      stateDir: null,
+      details: { lockPath, commonGitDir: common, host: 'elsewhere.invalid', state: 'remote', next },
+      next,
+    });
+    expect(await gone(lockPath)).toBe(false);
   });
 });

@@ -156,8 +156,11 @@ export interface UnlockHolder {
 
 /** One existing lock directory as unlock observes it. @internal */
 export interface UnlockObservation {
-  /** `primary` is `<runId>/lock`; `guard` is the legacy `<runId>.json.lock`. */
-  readonly kind: 'primary' | 'guard';
+  /**
+   * `primary` is `<runId>/lock`; `guard` is the legacy `<runId>.json.lock`; `worktree-admin` is a
+   * repository's `<common Git dir>/quiet-choir/worktree-admin.lock`, which records no children.
+   */
+  readonly kind: 'primary' | 'guard' | 'worktree-admin';
   /** Absolute lock directory path. */
   readonly path: string;
   /** Owner, or null when `owner.json` is missing or unreadable. */

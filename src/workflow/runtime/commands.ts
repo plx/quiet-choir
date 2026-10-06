@@ -101,6 +101,28 @@ export function unlockNext(
   };
 }
 
+/**
+ * The follow-up that clears a repository's abandoned worktree administration lock:
+ * `workflow unlock --worktree-admin <abs common Git dir>` behind the launcher, with
+ * `--force-remote` only when the holder is on a foreign host. @internal
+ */
+export function unlockWorktreeAdminNext(
+  launcher: CommandLauncher | undefined,
+  commonGitDir: string,
+  options: { readonly forceRemote?: boolean; readonly why: string },
+): NextCommand {
+  return {
+    why: options.why,
+    argv: workflowArgv(
+      launcher,
+      'unlock',
+      '--worktree-admin',
+      resolve(commonGitDir),
+      ...(options.forceRemote ? ['--force-remote'] : []),
+    ),
+  };
+}
+
 /** Plain-JSON copy of next-command entries, for a refusal's `details.next`. @internal */
 export function nextDetail(entries: readonly NextCommand[]): JsonValue[] {
   return entries.map((entry) => ({ why: entry.why, argv: [...entry.argv] }));

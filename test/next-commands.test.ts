@@ -426,6 +426,33 @@ describe('failureNextCommands', () => {
       expect(locked({ next: [entry] }, { runId: null })).toEqual([]);
     });
   });
+
+  describe('worktree.locked', () => {
+    const unlock = ['quiet-choir', 'workflow', 'unlock', '--worktree-admin', '/repo/.git'];
+    const entry = { why: 'Rerun once PID 7 on here has exited.', argv: unlock };
+    const locked = (details: JsonValue, overrides: Partial<FailureNextContext> = {}) =>
+      failureNextCommands({
+        code: 'worktree.locked',
+        details,
+        run: null,
+        runId: null,
+        stateDir: null,
+        launcher,
+        rehearsal: false,
+        ...overrides,
+      });
+
+    it('passes details.next through although the refusal names no run or state directory', () => {
+      const forced = { why: 'Only if far is gone.', argv: [...unlock, '--force-remote'] };
+      expect(locked({ next: [entry, forced] })).toEqual([entry, forced]);
+      expect(locked({ next: [entry, { why: 'no argv' }] })).toEqual([entry]);
+    });
+
+    it('gives nothing without details.next or for a rehearsal', () => {
+      expect(locked({ lockPath: '/repo/.git/quiet-choir/worktree-admin.lock' })).toEqual([]);
+      expect(locked({ next: [entry] }, { rehearsal: true })).toEqual([]);
+    });
+  });
 });
 
 describe('launch policy on next entries', () => {

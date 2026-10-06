@@ -10,14 +10,52 @@ import {
   rm,
   writeFile,
 } from 'node:fs/promises';
+import type * as fs from 'node:fs/promises';
 import { hostname, tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { afterEach, beforeEach, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { ProcessSupervisor } from '../src/processes/supervisor.js';
+import type { ProcessRunner } from '../src/workflow/runtime/exec-model.js';
+import type { HarnessProcess } from '../src/workflow/runtime/model.js';
+import { observeUnlock, removeObservedLock } from '../src/workflow/runtime/lock.js';
+import { WorktreeAdminLockRefusedError } from '../src/workflow/runtime/run-errors.js';
 import {
   acquireWorktreeAdminLock,
+  inspectWorktreeAdminLock,
+  resolveCommonGitDir,
+  unlockWorktreeAdminLock,
   worktreeAdminLockPath,
 } from '../src/workflow/runtime/worktree-admin-lock.js';
 import { holdAdminLock } from './worktree-admin-holder.js';
+
+/** A one-shot hook run just before a matching rename, which then proceeds for real. */
+const renameHook = vi.hoisted(() => ({
+  current: undefined as
+    | { readonly matches: (from: string, to: string) => boolean; readonly before: () => unknown }
+    | undefined,
+}));
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const actual = await importOriginal<typeof fs>();
+  return {
+    ...actual,
+    rename: async (...[from, to]: Parameters<typeof fs.rename>): Promise<void> => {
+      const hook = renameHook.current;
+      if (hook?.matches(String(from), String(to))) {
+        renameHook.current = undefined;
+        await hook.before();
+      }
+      return actual.rename(from, to);
+    },
+  };
+});
+
+/** Run `before` once, just before the next rename from `from` to a path ending in `suffix`. */
+function beforeRename(from: string, suffix: string, before: () => unknown): void {
+  renameHook.current = {
+    matches: (source, target) => source === from && target.endsWith(suffix),
+    before,
+  };
+}
 
 let common: string, lockPath: string;
 beforeEach(async () => {
@@ -25,6 +63,8 @@ beforeEach(async () => {
   lockPath = worktreeAdminLockPath(common);
 });
 afterEach(async () => {
+  renameHook.current = undefined;
+  vi.restoreAllMocks();
   await chmod(dirname(lockPath), 0o700).catch(() => undefined);
   await rm(common, { recursive: true, force: true });
 });
@@ -38,7 +78,7 @@ function deadPid(): number {
 
 /** Write a lock directory as another owner left it, without publishing through the lock module. */
 async function plant(
-  owner: { pid: number; host?: string; token?: string } | string,
+  owner: { pid: number; host?: string; token?: string; released?: boolean } | string,
   recovery?: { pid: number; host?: string; token?: string },
 ): Promise<void> {
   await mkdir(lockPath, { recursive: true });
@@ -153,29 +193,65 @@ it('rejects with the abort reason while waiting and leaves the holder untouched'
   expect(await readFile(join(lockPath, 'owner.json'), 'utf8')).toBe(owner);
 });
 
-it('refuses a remote owner after the stuck deadline, naming the lock and host', async () => {
+/** The stuck refusal's message: it names the unlock command and never a manual removal. */
+async function stuckMessage(stuckAfterMs: number): Promise<string> {
+  const error = await acquireWorktreeAdminLock(common, { signal, stuckAfterMs }).then(
+    () => undefined,
+    (cause: unknown) => cause,
+  );
+  expect(error).toBeInstanceOf(Error);
+  const text = (error as Error).message;
+  expect(text).not.toContain(`remove ${lockPath}`);
+  return text;
+}
+
+it('refuses a remote owner after the stuck deadline, naming the lock, host and unlock command', async () => {
   await plant({ pid: 4242, host: 'elsewhere.invalid' });
   const started = Date.now();
-  const refusal = acquireWorktreeAdminLock(common, { signal, stuckAfterMs: 100 });
-  await expect(refusal).rejects.toThrow(lockPath);
-  await expect(refusal).rejects.toThrow('PID 4242 on elsewhere.invalid, another host');
+  const text = await stuckMessage(100);
+  expect(text).toContain(lockPath);
+  expect(text).toContain('PID 4242 on elsewhere.invalid, another host');
+  expect(text).toContain(
+    `clear it with quiet-choir workflow unlock --worktree-admin ${common} --force-remote.`,
+  );
   expect(Date.now() - started).toBeGreaterThanOrEqual(100);
   expect(await readdir(dirname(lockPath))).toEqual(['worktree-admin.lock']);
 });
 
-it('refuses unreadable ownership metadata after the stuck deadline', async () => {
+it('refuses unreadable ownership metadata after the stuck deadline, naming the unlock command', async () => {
   await plant('{ torn');
-  await expect(acquireWorktreeAdminLock(common, { signal, stuckAfterMs: 50 })).rejects.toThrow(
+  const text = await stuckMessage(50);
+  expect(text).toContain(
     `${lockPath} is held by an owner whose metadata is incomplete or unreadable`,
   );
+  expect(text).toContain(`clear it with quiet-choir workflow unlock --worktree-admin ${common}.`);
 });
 
 it('refuses a dead owner whose recoverer is on another host after the stuck deadline', async () => {
   await plant({ pid: deadPid() }, { pid: 4343, host: 'elsewhere.invalid' });
-  await expect(acquireWorktreeAdminLock(common, { signal, stuckAfterMs: 50 })).rejects.toThrow(
-    'recoverer PID 4343 on elsewhere.invalid, another host',
-  );
+  const text = await stuckMessage(50);
+  expect(text).toContain('recoverer PID 4343 on elsewhere.invalid, another host');
+  expect(text).toContain(`workflow unlock --worktree-admin ${common} --force-remote.`);
   expect(await readdir(lockPath)).toEqual(['owner.json', 'recovery.json']);
+});
+
+it('tells the operator to wait for or stop a local holder of unknown liveness before unlocking', async () => {
+  const pid = deadPid();
+  // kill(pid, 0) fails with EPERM: some process exists under that PID.
+  const kill = process.kill.bind(process);
+  vi.spyOn(process, 'kill').mockImplementation((target, sig) => {
+    if (target === pid) throw Object.assign(new Error('EPERM'), { code: 'EPERM' });
+    return kill(target, sig);
+  });
+  await plant({ pid });
+  const text = await stuckMessage(50);
+  expect(text).toContain(
+    `PID ${String(pid)} on ${hostname()}, whose liveness cannot be determined`,
+  );
+  expect(text).toContain(
+    `Unlock refuses while PID ${String(pid)} may still exist on this machine: wait for it to exit or stop it, then clear the lock with quiet-choir workflow unlock --worktree-admin ${common}.`,
+  );
+  expect(text).not.toContain('--force-remote');
 });
 
 it('refuses to release a lock whose owner changed, and a later acquire still never hangs', async () => {
@@ -202,4 +278,366 @@ it('waits for a live recoverer without a stuck deadline', async () => {
     acquireWorktreeAdminLock(common, { signal: controller.signal, stuckAfterMs: 0 }),
   ).rejects.toBe(reason);
   expect(await readdir(lockPath)).toEqual(['owner.json', 'recovery.json']);
+});
+
+/** An unlock refusal's error, asserting it is a worktree.locked refusal that names the command. */
+async function refusal(forceRemote = false): Promise<WorktreeAdminLockRefusedError> {
+  const error = await unlockWorktreeAdminLock({ commonGitDir: common, forceRemote }).then(
+    () => undefined,
+    (cause: unknown) => cause,
+  );
+  expect(error).toBeInstanceOf(WorktreeAdminLockRefusedError);
+  const refused = error as WorktreeAdminLockRefusedError;
+  expect(refused.code).toBe('worktree.locked');
+  return refused;
+}
+
+describe('inspectWorktreeAdminLock', () => {
+  it('reports nothing when the lock is not held', async () => {
+    expect(await inspectWorktreeAdminLock(common)).toBeUndefined();
+  });
+
+  it('reports a live holder in another process with its token and acquisition time', async () => {
+    const holder = holdAdminLock(common, 'forever');
+    try {
+      await holder.held;
+      const view = await inspectWorktreeAdminLock(common);
+      const owner = JSON.parse(await readFile(join(lockPath, 'owner.json'), 'utf8')) as {
+        token: string;
+      };
+      expect(view).toEqual({
+        commonGitDir: common,
+        path: lockPath,
+        owner: {
+          pid: holder.child.pid,
+          host: hostname(),
+          token: owner.token,
+          state: 'alive',
+          osStartTime: null,
+          acquiredAt: expect.any(String) as unknown,
+        },
+        recovery: null,
+      });
+      expect(new Date(view?.owner?.acquiredAt ?? '').toISOString()).toBe(view?.owner?.acquiredAt);
+      // Unlock refuses the live holder and leaves the lock in place.
+      const refused = await refusal(true);
+      expect(refused.details).toMatchObject({
+        lockPath,
+        commonGitDir: common,
+        role: 'owner',
+        pid: holder.child.pid,
+        state: 'alive',
+      });
+      expect(await readdir(lockPath)).toEqual(['owner.json']);
+    } finally {
+      holder.child.kill('SIGKILL');
+      await holder.exited;
+    }
+  });
+
+  it.for([
+    ['dead', () => ({ pid: deadPid() })],
+    ['released', () => ({ pid: process.pid, released: true })],
+    ['remote', () => ({ pid: 4242, host: 'elsewhere.invalid' })],
+  ] as const)('reports a %s owner', async ([state, owner]) => {
+    await plant(owner());
+    expect(await inspectWorktreeAdminLock(common)).toMatchObject({
+      owner: { state },
+      recovery: null,
+    });
+  });
+
+  it('reports unreadable ownership metadata as a warning with no owner', async () => {
+    await plant('{ torn');
+    const view = await inspectWorktreeAdminLock(common);
+    expect(view).toMatchObject({ owner: null, recovery: null });
+    expect(view?.warning).toMatch(/^owner\.json: /u);
+  });
+
+  it('reports a dead owner with a remote recoverer', async () => {
+    await plant({ pid: deadPid() }, { pid: 4343, host: 'elsewhere.invalid' });
+    expect(await inspectWorktreeAdminLock(common)).toMatchObject({
+      owner: { state: 'dead' },
+      recovery: { pid: 4343, host: 'elsewhere.invalid', state: 'remote' },
+    });
+  });
+});
+
+describe('unlockWorktreeAdminLock', () => {
+  it('returns no lock when none is held', async () => {
+    expect(await unlockWorktreeAdminLock({ commonGitDir: common })).toEqual({
+      commonGitDir: common,
+      lockPath,
+      lock: null,
+    });
+  });
+
+  it('removes a dead owner and its dead recoverer without residue', async () => {
+    const pid = deadPid();
+    await plant({ pid }, { pid });
+    expect(await unlockWorktreeAdminLock({ commonGitDir: common })).toEqual({
+      commonGitDir: common,
+      lockPath,
+      lock: {
+        path: lockPath,
+        owner: { pid, host: hostname(), state: 'dead' },
+        recovery: { pid, host: hostname(), state: 'dead' },
+        action: 'removed',
+      },
+    });
+    await expectNoResidue();
+  });
+
+  it('removes a released owner', async () => {
+    await plant({ pid: process.pid, released: true });
+    expect((await unlockWorktreeAdminLock({ commonGitDir: common })).lock).toMatchObject({
+      owner: { pid: process.pid, state: 'released' },
+      action: 'removed',
+    });
+    await expectNoResidue();
+  });
+
+  it('removes unreadable ownership metadata with a warning', async () => {
+    await plant('{ torn');
+    const { lock } = await unlockWorktreeAdminLock({ commonGitDir: common });
+    expect(lock).toMatchObject({ owner: null, recovery: null, action: 'removed' });
+    expect(lock?.warning).toMatch(/^owner\.json: /u);
+    await expectNoResidue();
+  });
+
+  it('refuses a local owner of unknown liveness even with forceRemote', async () => {
+    const pid = deadPid();
+    const kill = process.kill.bind(process);
+    vi.spyOn(process, 'kill').mockImplementation((target, sig) => {
+      if (target === pid) throw Object.assign(new Error('EPERM'), { code: 'EPERM' });
+      return kill(target, sig);
+    });
+    await plant({ pid });
+    const refused = await refusal(true);
+    expect(refused.message).toContain('is unverifiable; unlock never stops a process');
+    expect(refused.details).toMatchObject({ role: 'owner', pid, state: 'unknown' });
+    expect(await readdir(lockPath)).toEqual(['owner.json']);
+  });
+
+  it('refuses a remote owner without forceRemote, naming --force-remote, and removes it with it', async () => {
+    await plant({ pid: deadPid(), host: 'elsewhere.invalid' });
+    const refused = await refusal();
+    expect(refused.message).toContain(
+      `rerun with quiet-choir workflow unlock --worktree-admin ${common} --force-remote.`,
+    );
+    expect(refused.details).toMatchObject({
+      lockPath,
+      commonGitDir: common,
+      role: 'owner',
+      host: 'elsewhere.invalid',
+      state: 'remote',
+      next: [
+        {
+          why: 'Only if elsewhere.invalid is this machine under an old name or is permanently gone.',
+          argv: ['quiet-choir', 'workflow', 'unlock', '--worktree-admin', common, '--force-remote'],
+        },
+      ],
+    });
+    expect(await readdir(lockPath)).toEqual(['owner.json']);
+    expect(
+      (await unlockWorktreeAdminLock({ commonGitDir: common, forceRemote: true })).lock,
+    ).toMatchObject({ owner: { host: 'elsewhere.invalid', state: 'dead' }, action: 'removed' });
+    await expectNoResidue();
+  });
+
+  it('refuses a remote recoverer over a dead owner without forceRemote', async () => {
+    await plant({ pid: deadPid() }, { pid: deadPid(), host: 'elsewhere.invalid' });
+    const refused = await refusal();
+    expect(refused.details).toMatchObject({ role: 'recovery', state: 'remote' });
+    expect(await readdir(lockPath)).toEqual(['owner.json', 'recovery.json']);
+  });
+
+  it('names the plain command, behind the given launcher, for a live local holder', async () => {
+    await plant({ pid: process.ppid });
+    const error = await unlockWorktreeAdminLock({
+      commonGitDir: common,
+      commandLauncher: ['node', '/abs/bin/run.js'],
+    }).catch((cause: unknown) => cause as WorktreeAdminLockRefusedError);
+    expect(error).toBeInstanceOf(WorktreeAdminLockRefusedError);
+    expect((error as WorktreeAdminLockRefusedError).details).toMatchObject({
+      state: 'alive',
+      next: [
+        {
+          argv: ['node', '/abs/bin/run.js', 'workflow', 'unlock', '--worktree-admin', common],
+        },
+      ],
+    });
+  });
+
+  it('refuses with changed and keeps the new lock when the owner changes before removal', async () => {
+    await plant({ pid: deadPid() });
+    const observed = await observeUnlock('worktree-admin', lockPath, null);
+    const replacement = JSON.stringify({
+      pid: process.pid,
+      host: hostname(),
+      token: randomUUID(),
+      osStartTime: null,
+    });
+    await writeFile(join(lockPath, 'owner.json'), replacement);
+    const changed = new Error('changed during unlock');
+    if (observed === undefined) throw new Error('The planted lock was not observed.');
+    await expect(removeObservedLock(observed, () => changed)).rejects.toBe(changed);
+    expect(await readdir(dirname(lockPath))).toEqual(['worktree-admin.lock']);
+    expect(await readFile(join(lockPath, 'owner.json'), 'utf8')).toBe(replacement);
+  });
+
+  it('removes a dead owner whose recovery marker is unreadable, with a warning', async () => {
+    await plant({ pid: deadPid() });
+    await writeFile(join(lockPath, 'recovery.json'), '{ torn');
+    const { lock } = await unlockWorktreeAdminLock({ commonGitDir: common });
+    expect(lock).toMatchObject({ owner: { state: 'dead' }, recovery: null, action: 'removed' });
+    expect(lock?.warning).toMatch(/^recovery\.json: /u);
+    await expectNoResidue();
+  });
+
+  it('defers to a live recoverer that claimed the lock after observation', async () => {
+    await plant({ pid: deadPid() });
+    const observed = await observeUnlock('worktree-admin', lockPath, null);
+    if (observed === undefined) throw new Error('The planted lock was not observed.');
+    // The (live) parent of this test process claims recovery before unlock does.
+    const claim = JSON.stringify({
+      pid: process.ppid,
+      host: hostname(),
+      token: randomUUID(),
+      osStartTime: null,
+    });
+    await writeFile(join(lockPath, 'recovery.json'), claim);
+    const changed = new Error('changed during unlock');
+    await expect(removeObservedLock(observed, () => changed)).rejects.toBe(changed);
+    expect(await readdir(lockPath)).toEqual(['owner.json', 'recovery.json']);
+    expect(await readFile(join(lockPath, 'recovery.json'), 'utf8')).toBe(claim);
+  });
+
+  it('holds the recovery claim while it retires, so a concurrent recoverer cannot take the lock', async () => {
+    const pid = deadPid();
+    await plant({ pid });
+    const controller = new AbortController();
+    const reason = new Error('stop waiting');
+    let contender: Promise<unknown> | undefined;
+    beforeRename(lockPath, '.gone', async () => {
+      // Unlock holds its claim now: the dead owner's lock carries unlock's live marker.
+      const marker = JSON.parse(await readFile(join(lockPath, 'recovery.json'), 'utf8')) as {
+        pid: number;
+      };
+      expect(marker.pid).toBe(process.pid);
+      setTimeout(() => {
+        controller.abort(reason);
+      }, 150);
+      // An automatic recoverer waits on the live claim instead of retiring and replacing the lock.
+      contender = acquireWorktreeAdminLock(common, {
+        signal: controller.signal,
+        stuckAfterMs: 0,
+        probeOwner: false,
+      }).then(
+        () => 'acquired',
+        (error: unknown) => error,
+      );
+      expect(await contender).toBe(reason);
+      expect(await readdir(lockPath)).toEqual(['owner.json', 'recovery.json']);
+      expect(await readdir(dirname(lockPath))).toEqual(['worktree-admin.lock']);
+    });
+    expect((await unlockWorktreeAdminLock({ commonGitDir: common })).lock).toMatchObject({
+      owner: { pid, state: 'dead' },
+      action: 'removed',
+    });
+    expect(await contender).toBe(reason);
+    await expectNoResidue();
+  });
+
+  it('refuses with worktree.locked, never removed, when the lock is replaced before its claim', async () => {
+    const pid = deadPid();
+    await plant({ pid }, { pid });
+    const replacement = JSON.stringify({
+      pid: process.ppid,
+      host: hostname(),
+      token: randomUUID(),
+      osStartTime: null,
+    });
+    // Just before unlock takes the dead marker aside, a recoverer retires the lock and a live
+    // owner publishes a new one.
+    beforeRename(join(lockPath, 'recovery.json'), '.stale', async () => {
+      await rm(lockPath, { recursive: true });
+      await mkdir(lockPath);
+      await writeFile(join(lockPath, 'owner.json'), replacement);
+    });
+    const error = await unlockWorktreeAdminLock({ commonGitDir: common }).then(
+      (result) => result,
+      (cause: unknown) => cause,
+    );
+    expect(error).toBeInstanceOf(WorktreeAdminLockRefusedError);
+    expect(error).toMatchObject({
+      code: 'worktree.locked',
+      message: `Worktree administration lock ${lockPath} changed during unlock; retry.`,
+    });
+    // The new lock stays, without unlock's marker.
+    expect(await readdir(dirname(lockPath))).toEqual(['worktree-admin.lock']);
+    expect(await readdir(lockPath)).toEqual(['owner.json']);
+    expect(await readFile(join(lockPath, 'owner.json'), 'utf8')).toBe(replacement);
+  });
+});
+
+describe('resolveCommonGitDir', () => {
+  const child: HarnessProcess = {
+    pid: 4242,
+    pgid: 4242,
+    binary: 'git',
+    cwd: '/repo',
+    startedAt: '2026-01-01T00:00:00.000Z',
+    osStartTime: null,
+  };
+
+  /** A runner that spawns a fake child, which `during` observes while it runs. */
+  function runnerWith(during: () => void): ProcessRunner {
+    return {
+      run: async (_request, invocation) => {
+        const registration = await invocation.trackProcess(child);
+        during();
+        await registration.release();
+        return {
+          code: 0,
+          signal: null,
+          stdout: `${common}\n`,
+          stderr: '',
+          truncated: false,
+          durationMs: 1,
+        };
+      },
+    };
+  }
+
+  it('registers the rev-parse child with a supervisor until it is reaped', async () => {
+    const supervisor = new ProcessSupervisor();
+    const track = vi.spyOn(supervisor, 'track');
+    const forget = vi.fn();
+    track.mockImplementation((tracked) => {
+      expect(tracked).toBe(child);
+      return forget;
+    });
+    const resolved = await resolveCommonGitDir(
+      common,
+      runnerWith(() => {
+        expect(track).toHaveBeenCalledOnce();
+        expect(forget).not.toHaveBeenCalled();
+      }),
+      new AbortController().signal,
+      supervisor,
+    );
+    expect(resolved).toBe(common);
+    expect(forget).toHaveBeenCalledOnce();
+  });
+
+  it('runs without a supervisor', async () => {
+    expect(
+      await resolveCommonGitDir(
+        common,
+        runnerWith(() => undefined),
+        new AbortController().signal,
+      ),
+    ).toBe(common);
+  });
 });

@@ -39,6 +39,7 @@ export const workflowExitCodes = {
   'start.exited': 70,
   'watch.timeout': 79,
   'watch.record_not_created': 66,
+  'worktree.locked': 3,
 } as const satisfies Record<CliErrorCode, number>;
 
 /** A CLI-local carrier for an executor's plain-data failure. @internal */

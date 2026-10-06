@@ -166,7 +166,10 @@ directories).
 
 It changes hands exactly like a run lock (same owner, marker, tombstone and sweep rules), but it is
 held only around each Git administration command and a contender waits instead of refusing. It
-records no child processes and changes no storage format. See
+records no child processes and changes no storage format. Plain `workflow inspect RUN` shows it for
+a run whose worktree ledger names the repository. A lock left by a holder that is gone, on a gone
+host, or with damaged metadata is cleared with `workflow unlock --worktree-admin PATH` (PATH is any
+path inside the repository), never by deleting the directory. See
 [ADR 0032](decisions/0032-interprocess-worktree-administration-lock.md).
 
 ## Removing runs

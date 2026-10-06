@@ -101,8 +101,8 @@ function emitDeclarations(cwd: string, project: string, outDir: string): Promise
 }
 
 describe('published declarations', () => {
-  // Fits the default timeout: 0.8 s alone and 0.9 s in a full coverage run (one native tsc emit and
-  // one compile).
+  // 0.8 s alone and 0.9 s in a full coverage run (one native tsc emit and one compile), but a loaded
+  // CI runner has taken over the 5 s default, so it gets a generous explicit bound.
   it('type every runtime export of quiet-choir, its harness kit, decision and github helpers', async () => {
     const temp = await mkdtemp(join(tmpdir(), 'qc-public-types-'));
     try {
@@ -157,7 +157,7 @@ describe('published declarations', () => {
     } finally {
       await rm(temp, { recursive: true, force: true });
     }
-  });
+  }, 60_000);
 
   // Fits the default timeout: 0.3 s alone and 0.5 s in a full coverage run.
   it('fail when an entry point re-exports a declaration that stripInternal removes', async () => {

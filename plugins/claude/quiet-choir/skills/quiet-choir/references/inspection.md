@@ -141,12 +141,17 @@ alive or unverifiable, it then adds one `Unlock:` line with the exact `workflow 
 by that line. JSON adds `ownership: { locked, owner, processes, warning?, locks }`; this field is
 not saved in the checkpoint. `locks` lists the existing `primary` lock and legacy `guard`, each as
 `{ kind, path, owner, recovery, warning? }`, where `owner` and `recovery` (a `recovery.json`
-recoverer) are `{ pid, host, state }` or null. Tick skips a run as `locked` while any lock's owner
-or recoverer is alive, unknown or remote; a dead recoverer's marker is reclaimed. Missing identities
-and malformed records are reported, never permission to kill. Foreign-host or incomplete ownership
-needs inspection. Prefer `inspect` or `readRun` to validate data. `inspect` without `--watch` exits
-0 even for `failed`, `cancelled`, or `running` records; check `status`. A JSON inspection result has
-these useful fields:
+recoverer) are `{ pid, host, state }` or null. For a run with a worktree ledger, plain `inspect`
+(not `--summary` or `--watch`) also reports the repository's held worktree administration lock: a
+`Worktree admin lock` text line with the holder's PID, state, host and age, an `Unlock:` line with
+`workflow unlock --worktree-admin <common Git dir>` when no holder is alive or unverifiable, and
+JSON `worktreeAdminLock: { commonGitDir, path, owner, recovery, warning? }`, whose `owner` adds
+`token`, `osStartTime` and an approximate `acquiredAt`; it is absent while the lock is free. Tick
+skips a run as `locked` while any lock's owner or recoverer is alive, unknown or remote; a dead
+recoverer's marker is reclaimed. Missing identities and malformed records are reported, never
+permission to kill. Foreign-host or incomplete ownership needs inspection. Prefer `inspect` or
+`readRun` to validate data. `inspect` without `--watch` exits 0 even for `failed`, `cancelled`, or
+`running` records; check `status`. A JSON inspection result has these useful fields:
 
 | Field                                     | Interpretation                                                                 |
 | ----------------------------------------- | ------------------------------------------------------------------------------ |
