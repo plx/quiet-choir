@@ -14,11 +14,15 @@ import type * as fs from 'node:fs/promises';
 import { hostname, tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { ProcessSupervisor } from '../src/processes/supervisor.js';
+import type { ProcessRunner } from '../src/workflow/runtime/exec-model.js';
+import type { HarnessProcess } from '../src/workflow/runtime/model.js';
 import { observeUnlock, removeObservedLock } from '../src/workflow/runtime/lock.js';
 import { WorktreeAdminLockRefusedError } from '../src/workflow/runtime/run-errors.js';
 import {
   acquireWorktreeAdminLock,
   inspectWorktreeAdminLock,
+  resolveCommonGitDir,
   unlockWorktreeAdminLock,
   worktreeAdminLockPath,
 } from '../src/workflow/runtime/worktree-admin-lock.js';
@@ -574,5 +578,66 @@ describe('unlockWorktreeAdminLock', () => {
     expect(await readdir(dirname(lockPath))).toEqual(['worktree-admin.lock']);
     expect(await readdir(lockPath)).toEqual(['owner.json']);
     expect(await readFile(join(lockPath, 'owner.json'), 'utf8')).toBe(replacement);
+  });
+});
+
+describe('resolveCommonGitDir', () => {
+  const child: HarnessProcess = {
+    pid: 4242,
+    pgid: 4242,
+    binary: 'git',
+    cwd: '/repo',
+    startedAt: '2026-01-01T00:00:00.000Z',
+    osStartTime: null,
+  };
+
+  /** A runner that spawns a fake child, which `during` observes while it runs. */
+  function runnerWith(during: () => void): ProcessRunner {
+    return {
+      run: async (_request, invocation) => {
+        const registration = await invocation.trackProcess(child);
+        during();
+        await registration.release();
+        return {
+          code: 0,
+          signal: null,
+          stdout: `${common}\n`,
+          stderr: '',
+          truncated: false,
+          durationMs: 1,
+        };
+      },
+    };
+  }
+
+  it('registers the rev-parse child with a supervisor until it is reaped', async () => {
+    const supervisor = new ProcessSupervisor();
+    const track = vi.spyOn(supervisor, 'track');
+    const forget = vi.fn();
+    track.mockImplementation((tracked) => {
+      expect(tracked).toBe(child);
+      return forget;
+    });
+    const resolved = await resolveCommonGitDir(
+      common,
+      runnerWith(() => {
+        expect(track).toHaveBeenCalledOnce();
+        expect(forget).not.toHaveBeenCalled();
+      }),
+      new AbortController().signal,
+      supervisor,
+    );
+    expect(resolved).toBe(common);
+    expect(forget).toHaveBeenCalledOnce();
+  });
+
+  it('runs without a supervisor', async () => {
+    expect(
+      await resolveCommonGitDir(
+        common,
+        runnerWith(() => undefined),
+        new AbortController().signal,
+      ),
+    ).toBe(common);
   });
 });

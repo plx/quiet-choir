@@ -428,6 +428,7 @@ export class WorkflowExecutor implements Executor<WorkflowExecutorPlan, Workflow
             plan.path,
             this.#options.processRunner ?? new NodeProcessRunner(),
             this.#options.signal ?? new AbortController().signal,
+            this.#options.processSupervisor,
           );
         } catch (error) {
           this.#options.signal?.throwIfAborted();
@@ -1053,6 +1054,7 @@ export class WorkflowExecutor implements Executor<WorkflowExecutorPlan, Workflow
           repo,
           this.#options.processRunner ?? new NodeProcessRunner(),
           this.#options.signal ?? new AbortController().signal,
+          this.#options.processSupervisor,
         ),
       );
     } catch (error) {

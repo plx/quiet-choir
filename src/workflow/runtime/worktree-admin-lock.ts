@@ -4,6 +4,7 @@ import { hostname } from 'node:os';
 import { dirname, join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { processIdentity } from '../../processes/identity.js';
+import type { ProcessSupervisor } from '../../processes/supervisor.js';
 import { WorktreeGit } from '../../worktrees/git.js';
 import {
   formatArgv,
@@ -330,12 +331,15 @@ async function recover(lockPath: string, previous: Owner, owner: Owner): Promise
  * itself) to the canonical common Git directory that keys its worktree administration lock: the
  * realpath of `git rev-parse --path-format=absolute --git-common-dir`, as worktree isolation
  * resolves it. Runs only that read-only `rev-parse`; rejects when `path` is not inside a Git
- * repository. @internal
+ * repository. With a `supervisor`, the child is registered with it for the run of the command, so
+ * an embedder's second-signal handler can force-kill it; there is no run lock to record it in.
+ * @internal
  */
 export async function resolveCommonGitDir(
   path: string,
   runner: ProcessRunner,
   signal: AbortSignal,
+  supervisor?: ProcessSupervisor,
 ): Promise<string> {
   const git = new WorktreeGit(runner, true);
   return realpath(
@@ -344,8 +348,16 @@ export async function resolveCommonGitDir(
       stepId: 'rev-parse',
       attempt: 1,
       signal,
-      // A short read the runner reaps itself; there is no run whose lock could record it.
-      trackProcess: () => Promise.resolve({ release: () => Promise.resolve() }),
+      // There is no run whose lock could record the child; the CLI supervisor, when given, owns it.
+      trackProcess: (child) => {
+        const forget = supervisor?.track(child);
+        return Promise.resolve({
+          release: () => {
+            forget?.();
+            return Promise.resolve();
+          },
+        });
+      },
     }),
   );
 }
