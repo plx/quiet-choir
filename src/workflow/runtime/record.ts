@@ -711,6 +711,17 @@ const recordFieldsSchema = z.object({
               children: z.array(z.string()),
             })
             .optional(),
+          // Revision 8 (#240): prior identities of a redefined unfinished frame, oldest first.
+          redefinitions: z
+            .array(
+              z.object({
+                workflow: z.object({ name: z.string().min(1), version: z.string().min(1) }),
+                schemaDigest: z.string(),
+                inputDigest: z.string(),
+                redefinedAt: z.iso.datetime(),
+              }),
+            )
+            .optional(),
           status: z.enum([
             'running',
             'completed',
@@ -1149,9 +1160,10 @@ export function withProjectInstructions(
  * to step and attempt request summaries. Revision 5 (#223) added the run event type
  * `wait.tolerated` to `events`. Revision 6 (#226) added the top-level `projectInstructions` list of
  * per-cwd project instruction sources. Revision 7 (#227) changed only a nested shape: the
- * instruction source kind `claude-md`, in `harnesses` and `projectInstructions`. @internal
+ * instruction source kind `claude-md`, in `harnesses` and `projectInstructions`. Revision 8 (#240)
+ * changed only a nested shape: the child frame's `redefinitions` history in `children`. @internal
  */
-export const SUPPORTED_SCHEMA_REVISION = 7;
+export const SUPPORTED_SCHEMA_REVISION = 8;
 
 /** The top-level run-record keys this build knows. @internal */
 export const RECORD_FIELD_KEYS: readonly string[] = Object.freeze(

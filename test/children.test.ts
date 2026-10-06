@@ -1122,20 +1122,23 @@ it('supersedes a grandchild that a revisited parent frame no longer invokes', as
   });
 });
 
+// Before #240 every case below refused with the --accept-code-change hint; an unfinished frame that
+// owns no completed or settled work now adopts the new identity and keeps the old one in history.
+const isoTime = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u;
+
 it.each([true, false])(
-  'suggests --accept-code-change when a changed child identity hits an unfinished frame (declared: %s)',
+  'redefines a failed child frame after version bumps and keeps the history (declared: %s)',
   async (declared) => {
     const stateDir = await directory();
     let version = '1';
-    const child = () =>
-      defineWorkflow({
+    let broken = true;
+    const root = () => {
+      const kid = defineWorkflow({
         name: 'kid',
         ...base,
         version,
-        run: () => Promise.reject<null>(new Error('kid broke')),
+        run: () => (broken ? Promise.reject<null>(new Error('kid broke')) : Promise.resolve(null)),
       });
-    const root = () => {
-      const kid = child();
       return defineWorkflow({
         name: 'parent',
         ...base,
@@ -1143,16 +1146,457 @@ it.each([true, false])(
         run: (ctx) => ctx.workflow('kid', kid, null),
       });
     };
-    const options = { stateDir, runId: `hint-${String(declared)}` };
+    const options = { stateDir, runId: `redefine-${String(declared)}` };
     await expect(runWorkflow(root(), { ...options, input: null })).rejects.toThrow('kid broke');
+    const first = (await readRun(options)).children?.['kid'];
+    expect(first).not.toHaveProperty('redefinitions');
+
+    // A second failure under the new identity can itself be redefined: history appends.
     version = '2';
+    const failedAgain: WorkflowEvent[] = [];
+    await expect(
+      runWorkflow(root(), {
+        ...options,
+        resume: true,
+        onEvent: (event) => {
+          failedAgain.push(event);
+        },
+      }),
+    ).rejects.toThrow('kid broke');
+    expect(failedAgain.find((event) => event.type === 'child.redefined')).toMatchObject({
+      frame: 'kid',
+      message: 'kid@1 -> kid@2: running',
+    });
+    const second = (await readRun(options)).children?.['kid'];
+    expect(second).toMatchObject({ status: 'failed', workflow: { name: 'kid', version: '2' } });
+    expect(second?.redefinitions).toEqual([
+      {
+        workflow: { name: 'kid', version: '1' },
+        schemaDigest: first?.schemaDigest,
+        inputDigest: first?.inputDigest,
+        redefinedAt: expect.stringMatching(isoTime) as unknown,
+      },
+    ]);
+
+    version = '3';
+    broken = false;
+    const events: WorkflowEvent[] = [];
+    const resumed = await runWorkflow(root(), {
+      ...options,
+      resume: true,
+      onEvent: (event) => {
+        events.push(event);
+      },
+    });
+    expect(resumed.status).toBe('completed');
+    const frameEvents = events.filter((event) => event.frame === 'kid').map((event) => event.type);
+    expect(frameEvents).toEqual(['child.redefined', 'child.started', 'child.completed']);
+    expect(events.find((event) => event.type === 'child.redefined')?.message).toBe(
+      'kid@2 -> kid@3: running',
+    );
+    const saved = await readRun(options);
+    expect(saved.children?.['kid']).toMatchObject({
+      status: 'completed',
+      workflow: { name: 'kid', version: '3' },
+      error: null,
+    });
+    expect(saved.children?.['kid']?.redefinitions?.map((entry) => entry.workflow)).toEqual([
+      { name: 'kid', version: '1' },
+      { name: 'kid', version: '2' },
+    ]);
+
+    // An unchanged re-invocation carries the history forward instead of rebuilding it.
+    const replayed = await runWorkflow(root(), { ...options, resume: true });
+    expect(replayed.children?.['kid']?.redefinitions).toEqual(
+      saved.children?.['kid']?.redefinitions,
+    );
+    expect((await readRun(options)).children?.['kid']?.redefinitions).toHaveLength(2);
+  },
+);
+
+it.for([
+  { declared: true, change: 'schema' },
+  { declared: false, change: 'schema' },
+  { declared: true, change: 'input' },
+  { declared: false, change: 'input' },
+] as const)(
+  'redefines a failed child frame after a $change change (declared: $declared)',
+  async ({ declared, change }) => {
+    const stateDir = await directory();
+    let changed = false;
+    let broken = true;
+    const root = () => {
+      const kid = defineWorkflow({
+        name: 'kid',
+        version: '1',
+        input: z.object({ n: z.number() }),
+        output: change === 'schema' && changed ? z.number().nullable() : z.null(),
+        run: () => (broken ? Promise.reject<null>(new Error('kid broke')) : Promise.resolve(null)),
+      });
+      return defineWorkflow({
+        name: 'parent',
+        ...base,
+        ...(declared ? { children: [kid] } : {}),
+        async run(ctx) {
+          await ctx.workflow('kid', kid, { n: change === 'input' && changed ? 2 : 1 });
+          return null;
+        },
+      });
+    };
+    const options = { stateDir, runId: `redefine-${change}-${String(declared)}` };
+    await expect(runWorkflow(root(), { ...options, input: null })).rejects.toThrow('kid broke');
+    const before = (await readRun(options)).children?.['kid'];
+    changed = true;
+    broken = false;
+    const resumed = await runWorkflow(root(), { ...options, resume: true });
+    expect(resumed.status).toBe('completed');
+    const after = (await readRun(options)).children?.['kid'];
+    expect(after?.status).toBe('completed');
+    const digestKey = change === 'schema' ? 'schemaDigest' : 'inputDigest';
+    expect(after?.[digestKey]).not.toBe(before?.[digestKey]);
+    expect(after?.redefinitions).toEqual([
+      {
+        workflow: { name: 'kid', version: '1' },
+        schemaDigest: before?.schemaDigest,
+        inputDigest: before?.inputDigest,
+        redefinedAt: expect.stringMatching(isoTime) as unknown,
+      },
+    ]);
+  },
+);
+
+it.each([true, false])(
+  'redefines a cancelled child frame on resume (declared: %s)',
+  async (declared) => {
+    const stateDir = await directory();
+    const controller = new AbortController();
+    let version = '1';
+    let started: (() => void) | undefined;
+    const ready = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    const root = () => {
+      const kid = defineWorkflow({
+        name: 'kid',
+        ...base,
+        version,
+        async run(ctx) {
+          if (version !== '1') return null;
+          return ctx.step('blocked', {
+            input: null,
+            schema: z.null(),
+            run: ({ signal }) =>
+              new Promise<null>((_resolve, reject) => {
+                started?.();
+                signal.addEventListener(
+                  'abort',
+                  () => {
+                    reject(new DOMException('stopped', 'AbortError'));
+                  },
+                  { once: true },
+                );
+              }),
+          });
+        },
+      });
+      return defineWorkflow({
+        name: 'parent',
+        ...base,
+        ...(declared ? { children: [kid] } : {}),
+        run: (ctx) => ctx.workflow('kid', kid, null),
+      });
+    };
+    const options = { stateDir, runId: `redefine-cancelled-${String(declared)}` };
+    const pending = runWorkflow(root(), { ...options, input: null, signal: controller.signal });
+    await ready;
+    controller.abort(new Error('stop'));
+    await expect(pending).rejects.toThrow('stop');
+    expect((await readRun(options)).children?.['kid']?.status).toBe('cancelled');
+    await pause();
+
+    version = '2';
+    const resumed = await runWorkflow(root(), { ...options, resume: true });
+    expect(resumed.status).toBe('completed');
+    expect(resumed.children?.['kid']).toMatchObject({
+      status: 'completed',
+      workflow: { version: '2' },
+      redefinitions: [{ workflow: { name: 'kid', version: '1' } }],
+    });
+  },
+);
+
+it('redefines a superseded child frame that a later resume invokes again', async () => {
+  const stateDir = await directory();
+  let version = '1';
+  let invoke = true;
+  const root = () => {
+    const kid = defineWorkflow({
+      name: 'kid',
+      ...base,
+      version,
+      run: () =>
+        version === '1' ? Promise.reject<null>(new Error('kid broke')) : Promise.resolve(null),
+    });
+    return defineWorkflow({
+      name: 'parent',
+      ...base,
+      children: [kid],
+      async run(ctx) {
+        if (invoke) await ctx.workflow('kid', kid, null);
+        return null;
+      },
+    });
+  };
+  const options = { stateDir, runId: 'redefine-superseded' };
+  await expect(runWorkflow(root(), { ...options, input: null })).rejects.toThrow('kid broke');
+  invoke = false;
+  await runWorkflow(root(), { ...options, resume: true });
+  expect((await readRun(options)).children?.['kid']?.status).toBe('superseded');
+
+  invoke = true;
+  version = '2';
+  const resumed = await runWorkflow(root(), { ...options, resume: true });
+  expect(resumed.children?.['kid']).toMatchObject({
+    status: 'completed',
+    workflow: { version: '2' },
+    redefinitions: [{ workflow: { name: 'kid', version: '1' } }],
+  });
+});
+
+it.for([
+  { declared: true, change: 'version' },
+  { declared: false, change: 'version' },
+  { declared: true, change: 'schema' },
+  { declared: false, change: 'schema' },
+  { declared: true, change: 'input' },
+  { declared: false, change: 'input' },
+] as const)(
+  'still refuses a $change change on a completed child frame (declared: $declared)',
+  async ({ declared, change }) => {
+    const stateDir = await directory();
+    let changed = false;
+    const root = () => {
+      const kid = defineWorkflow({
+        name: 'kid',
+        version: change === 'version' && changed ? '2' : '1',
+        input: z.object({ n: z.number() }),
+        output: change === 'schema' && changed ? z.number().nullable() : z.null(),
+        run: () => Promise.resolve(null),
+      });
+      return defineWorkflow({
+        name: 'parent',
+        ...base,
+        ...(declared ? { children: [kid] } : {}),
+        async run(ctx) {
+          await ctx.workflow('kid', kid, { n: change === 'input' && changed ? 2 : 1 });
+          throw new Error('tail');
+        },
+      });
+    };
+    const options = { stateDir, runId: `completed-${change}-${String(declared)}` };
+    await expect(runWorkflow(root(), { ...options, input: null })).rejects.toThrow('tail');
+    changed = true;
+    const refusal = runWorkflow(root(), { ...options, resume: true });
+    await expect(refusal).rejects.toThrow(/Child frame kid changed: kid@1 -> kid@[12]/u);
+    await expect(refusal).rejects.not.toThrow(/accept-code-change/u);
+    // The declared tree is checked before any effect; an input change is seen only at invocation.
+    if (declared && change !== 'input')
+      await expect(refusal).rejects.toMatchObject({ code: 'run.incompatible' });
+    expect((await readRun(options)).children?.['kid']).not.toHaveProperty('redefinitions');
+  },
+);
+
+/** A parent that runs `kid` once, which does `work` and then throws until fixed. */
+function holdingWork(
+  declared: boolean,
+  work: (ctx: Parameters<WorkflowDefinition<null, null>['run']>[0]) => Promise<unknown>,
+) {
+  let version = '1';
+  const root = () => {
+    const kid = defineWorkflow({
+      name: 'kid',
+      ...base,
+      version,
+      async run(ctx) {
+        await work(ctx);
+        throw new Error('kid broke');
+      },
+    });
+    return defineWorkflow({
+      name: 'parent',
+      ...base,
+      ...(declared ? { children: [kid] } : {}),
+      run: (ctx) => ctx.workflow('kid', kid, null),
+    });
+  };
+  return {
+    root,
+    bump: () => {
+      version = '2';
+    },
+  };
+}
+
+const grand = defineWorkflow({ name: 'grand', ...base, run: () => Promise.resolve(null) });
+it.for(
+  [true, false].flatMap((declared) => [
+    {
+      declared,
+      holds: 'a completed step',
+      terminal: 'kid/done',
+      work: (ctx: Parameters<WorkflowDefinition<null, null>['run']>[0]) =>
+        ctx.step('done', { input: null, schema: z.null(), run: () => null }),
+    },
+    {
+      declared,
+      holds: 'a completed grandchild frame',
+      terminal: 'kid/grand',
+      work: (ctx: Parameters<WorkflowDefinition<null, null>['run']>[0]) =>
+        ctx.workflow('grand', grand, null),
+    },
+    {
+      declared,
+      holds: 'a settled map with a completed item',
+      terminal: 'kid/items',
+      work: (ctx: Parameters<WorkflowDefinition<null, null>['run']>[0]) =>
+        ctx.map('items', [0], { concurrency: 1, onError: 'return' }, () => Promise.resolve(null)),
+    },
+  ]),
+)(
+  'refuses to redefine a failed frame holding $holds (declared: $declared)',
+  async ({ declared, terminal, work }) => {
+    const stateDir = await directory();
+    const { root, bump } = holdingWork(declared, work);
+    const options = {
+      stateDir,
+      runId: `holding-${terminal.replace('/', '-')}-${String(declared)}`,
+    };
+    await expect(runWorkflow(root(), { ...options, input: null })).rejects.toThrow('kid broke');
+    bump();
     const refusal = runWorkflow(root(), { ...options, resume: true });
     await expect(refusal).rejects.toThrow(/Child frame kid changed: kid@1 -> kid@2/u);
     await expect(refusal).rejects.toThrow(
       /saved frame is failed, not completed: to retry a fixed child, keep its name, version, input and schemas and resume with --accept-code-change/u,
     );
+    await expect(refusal).rejects.toThrow(
+      `Its identity cannot be redefined because it holds completed or settled work (${terminal}).`,
+    );
+    if (declared) await expect(refusal).rejects.toMatchObject({ code: 'run.incompatible' });
+    expect((await readRun(options)).children?.['kid']).toMatchObject({
+      status: 'failed',
+      workflow: { version: '1' },
+    });
   },
 );
+
+it.each([true, false])(
+  'refuses to redefine a suspended child frame (declared: %s)',
+  async (declared) => {
+    const stateDir = await directory();
+    let version = '1';
+    const root = () => {
+      const kid = defineWorkflow({
+        name: 'kid',
+        ...base,
+        version,
+        output: z.string(),
+        run: (ctx) => ctx.ask('answer', { prompt: 'Choose', schema: z.string() }),
+      });
+      return defineWorkflow({
+        name: 'parent',
+        ...base,
+        output: z.string(),
+        ...(declared ? { children: [kid] } : {}),
+        run: (ctx) => ctx.workflow('kid', kid, null),
+      });
+    };
+    const options = { stateDir, runId: `redefine-suspended-${String(declared)}` };
+    expect((await runWorkflow(root(), { ...options, input: null })).status).toBe('suspended');
+    version = '2';
+    const refusal = runWorkflow(root(), { ...options, resume: true });
+    await expect(refusal).rejects.toThrow(/Child frame kid changed: kid@1 -> kid@2/u);
+    await expect(refusal).rejects.toThrow(/saved frame is suspended, not completed/u);
+    await expect(refusal).rejects.not.toThrow(/cannot be redefined/u);
+    if (declared) await expect(refusal).rejects.toMatchObject({ code: 'run.incompatible' });
+  },
+);
+
+it('refuses a child frame whose parent changed at the same ID, even when unfinished', async () => {
+  const stateDir = await directory();
+  let wrapped = false;
+  const kid = defineWorkflow({
+    name: 'kid',
+    ...base,
+    run: () => Promise.reject<null>(new Error('kid broke')),
+  });
+  const wrapper = defineWorkflow({
+    name: 'wrapper',
+    ...base,
+    run: (ctx) => ctx.workflow('kid', kid, null),
+  });
+  const root = defineWorkflow({
+    name: 'parent',
+    ...base,
+    run: (ctx) =>
+      wrapped
+        ? ctx.workflow('a', wrapper, null)
+        : ctx.scope('a', () => ctx.workflow('kid', kid, null)),
+  });
+  const options = { stateDir, runId: 'redefine-parent' };
+  await expect(runWorkflow(root, { ...options, input: null })).rejects.toThrow('kid broke');
+  expect((await readRun(options)).children?.['a/kid']).toMatchObject({
+    status: 'failed',
+    parent: null,
+  });
+  wrapped = true;
+  await expect(runWorkflow(root, { ...options, resume: true })).rejects.toThrow(
+    /Child frame a\/kid changed: kid@1 -> kid@1/u,
+  );
+  expect((await readRun(options)).children?.['a/kid']).not.toHaveProperty('redefinitions');
+});
+
+it('refuses at construction to redefine a failed declared child that a committed map item owns', async () => {
+  const stateDir = await directory();
+  let version = '1';
+  let bodies = 0;
+  const root = () => {
+    const kid = defineWorkflow({
+      name: 'kid',
+      ...base,
+      version,
+      run: () => {
+        bodies++;
+        return Promise.reject<null>(new Error('kid broke'));
+      },
+    });
+    return defineWorkflow({
+      name: 'parent',
+      ...base,
+      children: [kid],
+      async run(ctx) {
+        await ctx.map('items', [0], { concurrency: 1, onError: 'return' }, () =>
+          ctx.workflow('kid', kid, null),
+        );
+        throw new Error('tail');
+      },
+    });
+  };
+  const options = { stateDir, runId: 'redefine-owned' };
+  await expect(runWorkflow(root(), { ...options, input: null })).rejects.toThrow('tail');
+  const saved = await readRun(options);
+  expect(saved.children?.['items/0/kid']?.status).toBe('failed');
+  expect(saved.maps?.['items']?.items[0]).toMatchObject({
+    status: 'completed',
+    children: ['items/0/kid'],
+  });
+  version = '2';
+  const refusal = runWorkflow(root(), { ...options, resume: true });
+  await expect(refusal).rejects.toMatchObject({ code: 'run.incompatible' });
+  await expect(refusal).rejects.toThrow(
+    'Its identity cannot be redefined because the committed settled map items item 0 owns it.',
+  );
+  expect(bodies).toBe(1);
+});
 
 it('delegates root-bounded Claude directories to children and refuses wider child roots (#171)', async () => {
   const stateDir = await directory();
