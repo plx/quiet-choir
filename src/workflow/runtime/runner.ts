@@ -3166,6 +3166,7 @@ export async function runWorkflow<
       save,
       acceptCodeChange: Boolean(options.acceptCodeChange),
       nextSeq: () => nextSeq++,
+      frame: () => children.frame,
       isCheckpointFailure: (error) => checkpointProblems.includes(error as CheckpointError),
       replayChild: (id) => {
         children.replay(id);

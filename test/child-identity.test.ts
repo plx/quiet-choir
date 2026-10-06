@@ -156,6 +156,70 @@ describe('frameRedefinition', () => {
     expect(frameRedefinition(run, 'kid/open')).toEqual({ redefinable: true });
   });
 
+  it('finds a settled map outside the prefix by its recorded frame or, before it, its owned work', () => {
+    const children = {
+      kid: frame(),
+      'kid/grand': frame({ parent: 'kid', depth: 2, label: 'grand' }),
+      other: frame({ label: 'other' }),
+    };
+    const bound = (map: Record<string, unknown>) => record({ children, maps: { 'shared/m': map } });
+    // Revision 8 records the frame that ran the map, so an effect-free mapper still counts.
+    for (const owner of ['kid', 'kid/grand'])
+      expect(
+        frameRedefinition(bound({ frame: owner, items: [mapItem('completed')] }), 'kid'),
+      ).toEqual({ redefinable: false, reason: 'terminal-work', terminal: ['shared/m'] });
+    expect(
+      frameRedefinition(bound({ frame: 'other', items: [mapItem('completed')] }), 'kid'),
+    ).toEqual({ redefinable: true });
+    expect(frameRedefinition(bound({ frame: 'kid', items: [mapItem('running')] }), 'kid')).toEqual({
+      redefinable: true,
+    });
+    // A journal saved before the field counts through a completed item's steps or children.
+    const legacy = (item: Record<string, unknown>, steps: Record<string, unknown> = {}) =>
+      record({ children, steps, maps: { 'shared/m': { items: [item] } } });
+    expect(
+      frameRedefinition(
+        legacy(
+          { ...mapItem('completed'), steps: ['shared/m/0/x'] },
+          {
+            'shared/m/0/x': step('failed', 'kid/grand'),
+          },
+        ),
+        'kid',
+      ),
+    ).toEqual({ redefinable: false, reason: 'terminal-work', terminal: ['shared/m'] });
+    expect(frameRedefinition(legacy({ ...mapItem('completed'), steps: ['kid/x'] }), 'kid')).toEqual(
+      { redefinable: false, reason: 'terminal-work', terminal: ['shared/m'] },
+    );
+    expect(frameRedefinition(legacy(mapItem('completed', ['kid/grand'])), 'kid')).toEqual({
+      redefinable: false,
+      reason: 'terminal-work',
+      terminal: ['shared/m'],
+    });
+    expect(
+      frameRedefinition(
+        legacy(
+          { ...mapItem('completed', ['other']), steps: ['shared/m/0/x'] },
+          {
+            'shared/m/0/x': step('failed', 'other'),
+          },
+        ),
+        'kid',
+      ),
+    ).toEqual({ redefinable: true });
+    expect(
+      frameRedefinition(
+        legacy(
+          { ...mapItem('running'), steps: ['shared/m/0/x'] },
+          {
+            'shared/m/0/x': step('failed', 'kid'),
+          },
+        ),
+        'kid',
+      ),
+    ).toEqual({ redefinable: true });
+  });
+
   it('follows parent links to compacted child IDs and their effects', () => {
     const hash = `child:${'a'.repeat(64)}`;
     const deeper = `child:${'b'.repeat(64)}`;
@@ -223,6 +287,21 @@ describe('redefinition history record shape', () => {
         ...frame(),
         redefinitions: [{ ...history, workflow: { name: '', version: '1' } }],
       });
+    }).toThrow();
+  });
+});
+
+describe('settled map frame record shape', () => {
+  it('accepts a map journal with or without its frame and rejects a non-string frame', () => {
+    const journal = { fingerprint: 'f', status: 'completed', items: [mapItem('completed')] };
+    expect(() => {
+      validateRecordChange('maps', 'shared/m', { ...journal, frame: 'kid' });
+    }).not.toThrow();
+    expect(() => {
+      validateRecordChange('maps', 'shared/m', journal);
+    }).not.toThrow();
+    expect(() => {
+      validateRecordChange('maps', 'shared/m', { ...journal, frame: 1 });
     }).toThrow();
   });
 });

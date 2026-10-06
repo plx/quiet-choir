@@ -88,8 +88,11 @@ changed name, version, input digest or schema digest when all of these hold:
   is settled;
 - its subtree (the frame and every frame whose parent chain reaches it, including compacted
   `child:<hash>` IDs) holds no terminal work: no completed or settled-failed step attributed to a
-  subtree frame or under a subtree frame's ID prefix, no settled map under such a prefix with a
-  completed item, and no completed or settled descendant frame.
+  subtree frame or under a subtree frame's ID prefix, no settled map with a completed item that a
+  subtree frame ran (its `frame`, which a bound `within` view can place outside the prefix) or that
+  sits under such a prefix, and no completed or settled descendant frame. A map journal saved before
+  `frame` existed counts when a completed item owns a step attributed to the subtree or under its
+  prefix, or lists a subtree frame in its `children`.
 
 The predicate is one pure function (`src/workflow/runtime/child-identity.ts`) shared by the declared
 tree validation and invocation. Running and suspended frames still refuse: a running frame after a

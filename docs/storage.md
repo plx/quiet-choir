@@ -344,9 +344,12 @@ so every read of that record is the `run.incompatible` upgrade refusal described
 to rewrite any other revision-7 record. Revision 8 (#240) is nested-only: each `children` frame
 gains the optional `redefinitions` history, the prior identities (`workflow`, `schemaDigest`,
 `inputDigest`, `redefinedAt`) of an unfinished frame that a resume invoked under a changed identity
-([ADR 0026](decisions/0026-inline-children-and-definition-registry.md)). Revision-7 records read and
-resume unchanged, and a failed frame in one can be redefined. A revision-7 build reads a revision-8
-record without the history and refuses to rewrite it instead of dropping `redefinitions`.
+([ADR 0026](decisions/0026-inline-children-and-definition-registry.md)), and each `maps` journal
+gains the optional `frame`, the inline child frame that first ran it, so a map run through a bound
+view outside the frame's ID prefix still counts as that frame's terminal work. Revision-7 records
+read and resume unchanged, and a failed frame in one can be redefined. A revision-7 build reads a
+revision-8 record without the history or map frames and refuses to rewrite it instead of dropping
+`redefinitions` and `frame`.
 
 **Refusals.** A build must not rewrite a record it cannot fully read: its parse strips unknown
 top-level fields, and the next compaction would write the record back without them. When a record

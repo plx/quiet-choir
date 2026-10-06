@@ -52,8 +52,8 @@ completing body invoked but never awaited is `cancelled` instead. If a fixed chi
 either keep its name, version, input and schemas and resume with `--accept-code-change`, or change
 them: a `failed`, `cancelled` or `superseded` frame may adopt a new name, version, input or schemas
 when it is not settled, no completed settled-map item or settled frame owns it or an ancestor, and
-nothing beneath it (its own steps, settled maps and descendant frames) is completed or settled. The
-frame then records the replaced identity in
+nothing beneath it (its own steps, the settled maps it ran, even through a bound `within` view, and
+descendant frames) is completed or settled. The frame then records the replaced identity in
 `redefinitions: [{ workflow, schemaDigest, inputDigest, redefinedAt }]`, oldest first, kept across
 later resumes. Running, suspended, completed and settled frames, frames holding terminal work and
 owned frames still refuse the change (`run.incompatible` when declared), and the refusal names the

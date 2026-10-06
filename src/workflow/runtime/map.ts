@@ -58,6 +58,8 @@ interface MapDependencies {
   readonly acceptCodeChange: boolean;
   /** Allocate the next run-wide first-use ordering value, shared with leaf steps. */
   readonly nextSeq: () => number;
+  /** The active inline child frame, or null at the root; a new settled journal records it. */
+  readonly frame: () => string | null;
   /** Whether an error is this run's own checkpoint failure, not a domain error reusing the class. */
   readonly isCheckpointFailure: (error: unknown) => boolean;
   readonly replayed: (id: string, step: StepRecord) => void;
@@ -82,6 +84,7 @@ export function createMap(dependencies: MapDependencies): WorkflowContext['map']
     save,
     acceptCodeChange,
     nextSeq,
+    frame,
     isCheckpointFailure,
     replayed,
     replayChild,
@@ -258,10 +261,13 @@ export function createMap(dependencies: MapDependencies): WorkflowContext['map']
               }
               break;
           }
-          // A reused journal keeps its first-use order; a new or reset one takes the next seq.
+          // A reused journal keeps its first-use order and frame; a new or reset one takes the
+          // next seq and the active frame, which a bound view's map ID need not fall under (#240).
+          const owner = frame();
           journal ??= {
             fingerprint,
             components,
+            ...(owner === null ? {} : { frame: owner }),
             seq: nextSeq(),
             status: 'running',
             items: data.map(() => ({ status: 'running', outcome: null, steps: [], maps: [] })),

@@ -283,6 +283,11 @@ export interface MapRecord {
    * changed component cannot be named.
    */
   components?: MapComponents;
+  /**
+   * Inline child frame that first ran the map, absent at the root and in journals saved before
+   * revision 8. A bound view can give the map an ID outside the frame's prefix.
+   */
+  frame?: string;
   /** First-use ordering shared with step seq values; absent in journals saved before it existed. */
   seq?: number;
   /** Partially evaluated or completely settled collection. */
@@ -874,6 +879,8 @@ const recordFieldsSchema = z.object({
             keys: z.string().optional(),
           })
           .optional(),
+        // Revision 8 (#240): the inline child frame that first ran the map.
+        frame: z.string().optional(),
         seq: z.number().int().positive().optional(),
         status: z.enum(['running', 'completed']),
         items: z.array(
@@ -1161,7 +1168,8 @@ export function withProjectInstructions(
  * `wait.tolerated` to `events`. Revision 6 (#226) added the top-level `projectInstructions` list of
  * per-cwd project instruction sources. Revision 7 (#227) changed only a nested shape: the
  * instruction source kind `claude-md`, in `harnesses` and `projectInstructions`. Revision 8 (#240)
- * changed only a nested shape: the child frame's `redefinitions` history in `children`. @internal
+ * changed only nested shapes: the child frame's `redefinitions` history in `children` and the
+ * settled map's `frame` in `maps`. @internal
  */
 export const SUPPORTED_SCHEMA_REVISION = 8;
 

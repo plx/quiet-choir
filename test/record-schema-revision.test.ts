@@ -51,7 +51,7 @@ const revisionDigests: Readonly<Record<string, string>> = {
   '6': '14ecaff04c78634fdbaaca9796e99503df2c253e4c7db6208169ca21b74a9b1a',
   // Revision 7 (#227) changed only the nested instruction source kind (claude-md), so it repeats 6.
   '7': '14ecaff04c78634fdbaaca9796e99503df2c253e4c7db6208169ca21b74a9b1a',
-  // Revision 8 (#240) changed only the nested children shape (redefinitions), so it repeats 7.
+  // Revision 8 (#240) changed only nested shapes (children redefinitions, maps frame), so it repeats 7.
   '8': '14ecaff04c78634fdbaaca9796e99503df2c253e4c7db6208169ca21b74a9b1a',
 };
 // digest(readRun(...)) of the installed pre-revision fixture, computed on unmodified main 91a6d2f.

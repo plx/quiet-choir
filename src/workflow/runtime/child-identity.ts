@@ -3,7 +3,7 @@
  * frame may be invoked again under a changed name, version, input or schemas. Declared-tree
  * validation and invocation share it, so the two paths cannot drift.
  */
-import { isTerminalStep, type RunRecord } from './record.js';
+import { isTerminalStep, type MapRecord, type RunRecord } from './record.js';
 
 /** Whether a saved child frame may adopt a new identity, and why not when it may not. @internal */
 export type FrameRedefinition =
@@ -47,8 +47,9 @@ function chain(record: RunRecord, id: string): string[] {
  * or superseded, it is not settled, no committed map item or settled frame owns it or an ancestor,
  * and nothing in its subtree (the frame and every frame whose parent chain reaches it) is terminal:
  * no completed or settled-failed step attributed to a subtree frame or under a subtree frame's ID
- * prefix, no settled map under such a prefix with a completed item, and no completed or settled
- * descendant frame. Compacted `child:<hash>` descendants are found by their parent links. @internal
+ * prefix, no settled map with a completed item run by a subtree frame or under such a prefix, and
+ * no completed or settled descendant frame. Compacted `child:<hash>` descendants are found by their
+ * parent links. @internal
  */
 export function frameRedefinition(record: RunRecord, id: string): FrameRedefinition {
   const frames = record.children ?? {};
@@ -83,8 +84,25 @@ export function frameRedefinition(record: RunRecord, id: string): FrameRedefinit
   for (const [stepId, step] of Object.entries(record.steps))
     if (isTerminalStep(step) && ((step.frame != null && subtree.has(step.frame)) || under(stepId)))
       terminal.push(stepId);
+  // A map run through a bound view need not sit under a subtree prefix: its recorded frame, or for
+  // a journal saved before revision 8, an owned step attributed to the subtree or an owned subtree
+  // frame, places it.
+  const inSubtree = (map: MapRecord, mapId: string): boolean =>
+    map.frame != null
+      ? subtree.has(map.frame) || under(mapId)
+      : under(mapId) ||
+        map.items.some(
+          (item) =>
+            item.status === 'completed' &&
+            (item.steps.some((stepId) => {
+              const step = Object.hasOwn(record.steps, stepId) ? record.steps[stepId] : undefined;
+              return (step?.frame != null && subtree.has(step.frame)) || under(stepId);
+            }) ||
+              item.children?.some((child) => subtree.has(child))),
+        );
   for (const [mapId, map] of Object.entries(record.maps ?? {}))
-    if (under(mapId) && map.items.some((item) => item.status === 'completed')) terminal.push(mapId);
+    if (map.items.some((item) => item.status === 'completed') && inSubtree(map, mapId))
+      terminal.push(mapId);
   for (const member of subtree) {
     const descendant = frames[member];
     if (member !== id && (descendant?.status === 'completed' || descendant?.settled !== undefined))

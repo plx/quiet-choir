@@ -1490,6 +1490,55 @@ it.for(
 );
 
 it.each([true, false])(
+  'refuses to redefine a failed frame whose settled map ran through a parent bound view (declared: %s)',
+  async (declared) => {
+    const stateDir = await directory();
+    let version = '1';
+    const root = () => {
+      let shared: Parameters<WorkflowDefinition<null, null>['run']>[0] | undefined;
+      const kid = defineWorkflow({
+        name: 'kid',
+        ...base,
+        version,
+        async run() {
+          // An effect-free mapper owns no steps, and the map ID sits outside the kid/ prefix.
+          await shared?.map('items', [0], { concurrency: 1, onError: 'return' }, () =>
+            Promise.resolve(null),
+          );
+          throw new Error('kid broke');
+        },
+      });
+      return defineWorkflow({
+        name: 'parent',
+        ...base,
+        ...(declared ? { children: [kid] } : {}),
+        run: (ctx) => {
+          shared = ctx.within('shared');
+          return ctx.workflow('kid', kid, null);
+        },
+      });
+    };
+    const options = { stateDir, runId: `bound-map-${String(declared)}` };
+    await expect(runWorkflow(root(), { ...options, input: null })).rejects.toThrow('kid broke');
+    expect((await readRun(options)).maps?.['shared/items']).toMatchObject({
+      frame: 'kid',
+      items: [{ status: 'completed', steps: [], maps: [] }],
+    });
+    version = '2';
+    const refusal = runWorkflow(root(), { ...options, resume: true });
+    await expect(refusal).rejects.toThrow(/Child frame kid changed: kid@1 -> kid@2/u);
+    await expect(refusal).rejects.toThrow(
+      'Its identity cannot be redefined because it holds completed or settled work (shared/items).',
+    );
+    if (declared) await expect(refusal).rejects.toMatchObject({ code: 'run.incompatible' });
+    expect((await readRun(options)).children?.['kid']).toMatchObject({
+      status: 'failed',
+      workflow: { version: '1' },
+    });
+  },
+);
+
+it.each([true, false])(
   'refuses to redefine a suspended child frame (declared: %s)',
   async (declared) => {
     const stateDir = await directory();
