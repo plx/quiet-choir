@@ -843,12 +843,15 @@ function unlockHolder(
   };
 }
 
-/** Observe one lock directory for unlock, or undefined when it does not exist. */
-async function observeUnlock(
-  kind: RunLockView['kind'],
+/**
+ * Observe one lock directory for unlock, or undefined when it does not exist. A null `runId` (the
+ * worktree administration lock, which records no children) observes no child records. @internal
+ */
+export async function observeUnlock<Kind extends UnlockObservation['kind']>(
+  kind: Kind,
   path: string,
-  runId: string,
-): Promise<UnlockObservation | undefined> {
+  runId: string | null,
+): Promise<(UnlockObservation & { readonly kind: Kind }) | undefined> {
   let names: string[];
   try {
     names = await readdir(path);
@@ -883,7 +886,7 @@ async function observeUnlock(
     path,
     owner,
     recovery,
-    processes: await inspectProcesses(path, runId, owner?.token ?? null),
+    processes: runId === null ? [] : await inspectProcesses(path, runId, owner?.token ?? null),
     ...(warnings.length ? { warning: warnings.join('; ') } : {}),
   };
 }
@@ -908,6 +911,32 @@ async function currentTokens(
     recovery = null;
   }
   return { owner, recovery };
+}
+
+/**
+ * Remove one lock that unlock observed and judged removable. The owner and marker tokens are read
+ * again and compared with the observed ones immediately before the tombstone retire, which checks
+ * them once more; any difference throws `changed()` and leaves the lock in place. `absent` means
+ * the lock vanished before it could be renamed away. Nothing is signaled. @internal
+ */
+export async function removeObservedLock(
+  lock: UnlockObservation,
+  changed: () => Error,
+): Promise<'removed' | 'absent'> {
+  const expected = {
+    owner: lock.owner?.token ?? null,
+    recovery: lock.recovery === null || lock.recovery === 'unreadable' ? null : lock.recovery.token,
+  };
+  const current = await currentTokens(lock.path);
+  if (current === 'gone') return 'absent';
+  if (current.owner !== expected.owner || current.recovery !== expected.recovery) throw changed();
+  try {
+    await retire(lock.path, expected, changed);
+  } catch (error) {
+    if (!isErrno(error, 'ENOENT')) throw error;
+    return 'absent';
+  }
+  return 'removed';
 }
 
 /** One lock that `workflow unlock` found, with the local judgments it acted on. @internal */
@@ -998,11 +1027,6 @@ export async function unlockRun(options: {
   }
   const unlocked: UnlockedLock[] = [];
   for (const lock of locks) {
-    const expected = {
-      owner: lock.owner?.token ?? null,
-      recovery:
-        lock.recovery === null || lock.recovery === 'unreadable' ? null : lock.recovery.token,
-    };
     const changed = (): RunRefusedError =>
       new RunRefusedError(
         'run.locked',
@@ -1015,19 +1039,7 @@ export async function unlockRun(options: {
           ]),
         },
       );
-    let action: UnlockedLock['action'] = 'removed';
-    const current = await currentTokens(lock.path);
-    if (current === 'gone') action = 'absent';
-    else {
-      if (current.owner !== expected.owner || current.recovery !== expected.recovery)
-        throw changed();
-      try {
-        await retire(lock.path, expected, changed);
-      } catch (error) {
-        if (!isErrno(error, 'ENOENT')) throw error;
-        action = 'absent';
-      }
-    }
+    const action = await removeObservedLock(lock, changed);
     unlocked.push({
       kind: lock.kind,
       path: lock.path,
