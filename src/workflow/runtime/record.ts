@@ -1170,9 +1170,11 @@ export function withProjectInstructions(
  * per-cwd project instruction sources. Revision 7 (#227) changed only a nested shape: the
  * instruction source kind `claude-md`, in `harnesses` and `projectInstructions`. Revision 8 (#240)
  * changed only nested shapes: the child frame's `redefinitions` history in `children` and the
- * settled map's `frame` in `maps`. @internal
+ * settled map's `frame` in `maps`. Revision 9 (#247) changed only a nested shape: the profile
+ * field `redacted.harnesses` in `capabilities`, which holds digests of registered harness
+ * `sensitiveOptions`. @internal
  */
-export const SUPPORTED_SCHEMA_REVISION = 8;
+export const SUPPORTED_SCHEMA_REVISION = 9;
 
 /** The top-level run-record keys this build knows. @internal */
 export const RECORD_FIELD_KEYS: readonly string[] = Object.freeze(

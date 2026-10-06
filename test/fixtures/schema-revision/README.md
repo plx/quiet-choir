@@ -226,6 +226,41 @@ The journal was empty, so only `run.json` is checked in. Stack paths are scrubbe
 and the file was formatted with Prettier; its read-view digest in
 `test/record-schema-revision.test.ts` was computed on the same unmodified main from this file.
 
+`revision-eight-checkpoint.json` was generated the same way at origin/main `b707169`, before
+registered harness `sensitiveOptions` (#247) added the nested `redacted.harnesses` profile field to
+`capabilities` in revision 9. Its run ID is `revision-eight`, and it ran this definition with the
+launch policy `[{ transcripts: 'off' }]` and `adapters: { vault }`, whose `invoke` returns
+`{ text: 'ok', sessionId: null }`:
+
+```ts
+const vault = defineHarness({
+  name: 'vault',
+  revision: 1,
+  options: z.object({ prompt: z.string(), token: z.string().optional() }),
+  capabilities: { structuredOutput: 'none' },
+  access: () => 'none',
+});
+defineWorkflow({
+  name: 'schema-revision',
+  version: '1',
+  input: z.null(),
+  output: z.null(),
+  harnesses: [vault],
+  profiles: { keeper: { harnesses: { vault: { token: 'fixture-token' } } } },
+  async run(ctx) {
+    await ctx.agent('vault').text('read', { prompt: 'x', profile: 'keeper' });
+    throw new Error('fixture tail');
+  },
+});
+```
+
+It carries `schemaRevision: 8`, the plaintext `token` under
+`capabilities.profiles.keeper.harnesses`, one completed `vault` call `read` and a workflow-body
+failure after it; `fixture-token` appears nowhere else in the record. The journal was empty, so only
+`run.json` is checked in. Stack paths are scrubbed to `/fixture/...` and the file was formatted with
+Prettier; its read-view digest in `test/record-schema-revision.test.ts` was computed on the same
+unmodified main from this file.
+
 `record-keys.json` lists the top-level run-record keys of each schema revision. Adding or changing a
 persisted run-level field adds a revision there and bumps `SUPPORTED_SCHEMA_REVISION`; a revision
 that only changes a nested shape repeats the previous key list. See `docs/storage.md`.

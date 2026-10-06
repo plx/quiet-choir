@@ -130,6 +130,17 @@ export interface HarnessDefinition<
    * Under `strictProfiles` the workflow's `ctx.agent(name)` option type omits a literal list's keys.
    */
   readonly capabilityKeys?: K;
+  /**
+   * Option keys whose values public capability manifests (checkpoints, `workflow validate --json`
+   * and `workflow check-resume --json`) must not print. A profile's value for a listed key moves
+   * out of `harnesses.<name>` and `harnessCapabilities.<name>` into
+   * `redacted.harnesses.<name>.<key>` as a SHA-256 digest, plus sorted top-level key names for an
+   * object. Live calls, grant pins and step identity keep the raw values, so rotating one still
+   * changes them. Step records and prompts are outside its scope. `defineHarness` rejects unknown
+   * keys, duplicates, and keys that never reach a manifest: `prompt`, `model`, `env` and the
+   * runtime call options profiles cannot set.
+   */
+  readonly sensitiveOptions?: readonly (keyof O & string)[];
   /** Pure access classification of partial profile or resolved call options; omission conservatively requires exec access. */
   readonly access?: (options: Partial<O>) => AccessClass;
   /** Construct an adapter from operator configuration, outside effect identity. */
@@ -152,6 +163,8 @@ export interface HarnessDeclaration {
   readonly policy?: readonly string[];
   /** Profile-owned capability option keys. */
   readonly capabilityKeys?: readonly string[];
+  /** Option keys that public capability manifests show only as digests and key names. */
+  readonly sensitiveOptions?: readonly string[];
   /** Pure access classifier; receives validated partial profile or concrete call options. */
   readonly access?: (options: never) => AccessClass;
   /** Type-erased factory; callers recover its options from the registration schema. */

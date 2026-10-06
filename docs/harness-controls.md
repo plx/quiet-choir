@@ -94,7 +94,12 @@ dotted config keys, and the two prompts have only `sha256`. A profile that sets 
 value invalidates a pin or a completed step even though the manifest shows only a new digest.
 Reviewable controls stay plaintext: tools, permission mode, `agent`, plugins, `addDirs`,
 `addDirRoots`, `extraArgs`, models, limits, isolation and sandbox. Never put secret values in
-`extraArgs`; use `env`. A digest of a short value can be confirmed by guessing. Checkpoints written
+`extraArgs`; use `env`. A registered harness lists its own sensitive option keys in the
+declaration's `sensitiveOptions`; a profile's values for them leave `harnesses.<name>` and
+`harnessCapabilities.<name>` and appear as `redacted.harnesses.<name>.<key>`, with `keys` only for
+an object value. `defineHarness` rejects unknown and duplicate keys, and keys that never reach a
+manifest (`prompt`, `model`, `env` and the call options profiles cannot set). Other registered
+options stay plaintext. A digest of a short value can be confirmed by guessing. Checkpoints written
 before this change keep what they saved until the run next executes, which rewrites them. Prompts
 and previews in step records are plaintext state, outside the manifest. See
 [ADR 0033](decisions/0033-redact-free-form-controls-from-public-manifests.md). Configuration

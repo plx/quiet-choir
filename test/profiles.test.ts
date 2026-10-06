@@ -17,6 +17,7 @@ import {
   z,
   type AgentProfile,
   type Harness,
+  type HarnessAdapter,
   type ProfileOverride,
 } from '../src/index.js';
 import {
@@ -848,9 +849,9 @@ it('reduces free-form controls to names and digests in public manifests only', (
   expect(liveProfile.claude.mcpServers).toEqual(sensitiveProfile().claude?.mcpServers);
   expect(liveProfile.codex.config).toEqual(sensitiveProfile().codex?.config);
   expect(live).toEqual(raw);
-  expect(publicCapabilityManifest(live)).toEqual(manifest);
+  expect(publicCapabilityManifest(live, [])).toEqual(manifest);
   // Idempotent only for built-in harnesses; registered harness env digests are re-digested on a second pass.
-  expect(publicCapabilityManifest(manifest)).toEqual(manifest);
+  expect(publicCapabilityManifest(manifest, [])).toEqual(manifest);
 });
 
 it('keeps grant digests of the live profile stable across redaction', () => {
@@ -944,6 +945,203 @@ const role = (manifest: ReturnType<typeof resolveCapabilities>, name: string) =>
   if (!profile) throw new Error(`missing profile ${name}`);
   return profile;
 };
+
+// Registered harness sensitiveOptions (#247): headers is sensitive and a capability key, token is
+// sensitive only, and region is neither.
+const vaultMarkers = {
+  header: 'marker-vault-header',
+  trace: 'marker-vault-trace',
+  token: 'marker-vault-token',
+};
+const vault = defineHarness({
+  name: 'vault',
+  revision: 1,
+  options: z.object({
+    prompt: z.string(),
+    headers: z.record(z.string(), z.string()).optional(),
+    token: z.string().optional(),
+    region: z.string().optional(),
+  }),
+  capabilities: { structuredOutput: 'none' },
+  capabilityKeys: ['headers'],
+  sensitiveOptions: ['headers', 'token'],
+  access: (options) => (options.headers ? 'write' : 'none'),
+});
+const vaultHeaders = (header = vaultMarkers.header) => ({
+  Authorization: header,
+  'X-Trace': vaultMarkers.trace,
+});
+const vaultProfile = (header?: string, token = vaultMarkers.token): AgentProfile => ({
+  harnesses: { vault: { headers: vaultHeaders(header), token, region: 'eu-west' } },
+});
+// Captured on main b707169 before #247 for vaultProfile() under the same registration without
+// sensitiveOptions (access 'write'), and with the header rotated to 'other'; neither may move.
+const vaultGrantDigest = '74877c78d0261e0b6c35d6c480438597cbb275344cfd02977477d655622d9613';
+const rotatedVaultGrantDigest = '53f34a784c3da809af2498cc76cc878ae9beebda6d01f033a2d44eaf37ec1999';
+const vaultDefinition = (profiles: Record<string, AgentProfile>, fail: () => boolean) =>
+  defineWorkflow({
+    ...base,
+    harnesses: [vault],
+    profiles,
+    async run(ctx) {
+      await ctx.agent('vault').text('first', { prompt: 'one', profile: 'p' });
+      await ctx.agent('vault').text('second', { prompt: 'two', profile: 'p' });
+      if (fail()) throw new Error('pause');
+      return 'done';
+    },
+  });
+
+it('moves declared sensitive harness options to redacted digests in public manifests only', () => {
+  const definition = {
+    harnesses: [vault],
+    profiles: { p: vaultProfile(), child: { extends: 'p' } },
+  };
+  const live = resolveCapabilities(definition);
+  const raw = structuredClone(live);
+  const manifest = capabilityManifest(definition);
+  const text = JSON.stringify(manifest);
+  for (const marker of Object.values(vaultMarkers)) expect(text).not.toContain(marker);
+  for (const name of ['p', 'child']) {
+    const profile = role(manifest, name);
+    expect(profile.redacted).toEqual({
+      harnesses: {
+        vault: {
+          headers: { sha256: digest(vaultHeaders()), keys: ['Authorization', 'X-Trace'] },
+          token: { sha256: digest(vaultMarkers.token) },
+        },
+      },
+    });
+    // The non-sensitive option stays in plaintext; the capability copy loses the sensitive key.
+    expect(profile.harnesses?.['vault']).toEqual({ region: 'eu-west' });
+    expect(profile.harnessCapabilities?.['vault']).toEqual({});
+  }
+  expect(manifest.defaults).not.toHaveProperty('redacted');
+  for (const [name, profile] of Object.entries(manifest.profiles))
+    if (name !== 'p' && name !== 'child') expect(profile).not.toHaveProperty('redacted');
+  expect(capabilityManifestSchema.parse(manifest)).toEqual(manifest);
+  // The live manifest keeps raw values for execution, grants and identity, and is not mutated.
+  expect(live).toEqual(raw);
+  expect(role(live, 'p').harnessCapabilities?.['vault']).toEqual({ headers: vaultHeaders() });
+  expect(role(live, 'p').harnesses?.['vault']).toMatchObject({ token: vaultMarkers.token });
+  expect(publicCapabilityManifest(live, [vault])).toEqual(manifest);
+  // Without registered env, a second pass changes nothing.
+  expect(publicCapabilityManifest(manifest, [vault])).toEqual(manifest);
+  // Without the declarations, the projection leaves registered options alone.
+  expect(publicCapabilityManifest(live, undefined).profiles['p']?.harnesses?.['vault']).toEqual(
+    role(live, 'p').harnesses?.['vault'],
+  );
+});
+
+it('gives sensitive array options a digest only and leaves undeclared profiles unredacted', () => {
+  const lister = defineHarness({
+    name: 'lister',
+    revision: 1,
+    options: z.object({ prompt: z.string(), scopes: z.array(z.string()).optional() }),
+    capabilities: { structuredOutput: 'none' },
+    sensitiveOptions: ['scopes'],
+    access: () => 'none',
+  });
+  const manifest = capabilityManifest({
+    harnesses: [lister],
+    profiles: { p: { harnesses: { lister: { scopes: ['marker-scope'] } } }, q: {} },
+  });
+  expect(role(manifest, 'p').redacted).toEqual({
+    harnesses: { lister: { scopes: { sha256: digest(['marker-scope']) } } },
+  });
+  expect(JSON.stringify(manifest)).not.toContain('marker-scope');
+  expect(role(manifest, 'q')).not.toHaveProperty('redacted');
+  // A registration without sensitiveOptions publishes its options as before.
+  const open = defineHarness({ ...lister, sensitiveOptions: [] });
+  expect(
+    capabilityManifest({
+      harnesses: [open],
+      profiles: { p: { harnesses: { lister: { scopes: ['visible'] } } } },
+    }).profiles['p'],
+  ).toMatchObject({ harnesses: { lister: { scopes: ['visible'] } } });
+});
+
+it('keeps grant digests of sensitive registered options stable and sensitive to rotation', () => {
+  const live = resolveCapabilities({ harnesses: [vault], profiles: { p: vaultProfile() } });
+  expect(profileGrantDigest(role(live, 'p'))).toBe(vaultGrantDigest);
+  const rotated = resolveCapabilities({
+    harnesses: [vault],
+    profiles: { p: vaultProfile('other') },
+  });
+  expect(profileGrantDigest(role(rotated, 'p'))).toBe(rotatedVaultGrantDigest);
+});
+
+it('checkpoints redacted registered options, invokes with raw values and replays an unchanged resume', async () => {
+  let stop = true;
+  const invoke = vi.fn<HarnessAdapter['invoke']>().mockResolvedValue(reply);
+  const definition = vaultDefinition({ p: vaultProfile() }, () => stop);
+  const options = { ...setup(), adapters: { vault: { invoke } }, grants: ['p'] };
+  await expect(runWorkflow(definition, options)).rejects.toThrow('pause');
+  const saved = await readRun(setup());
+  const text = JSON.stringify(saved);
+  for (const marker of Object.values(vaultMarkers)) expect(text).not.toContain(marker);
+  expect(
+    saved.capabilities?.profiles['p']?.redacted?.harnesses?.['vault']?.['headers']?.keys,
+  ).toEqual(['Authorization', 'X-Trace']);
+  expect(saved.grantedProfiles?.['p']).toBe(vaultGrantDigest);
+  expect(invoke.mock.calls[0]?.[0].options).toMatchObject({
+    headers: vaultHeaders(),
+    token: vaultMarkers.token,
+    region: 'eu-west',
+  });
+  stop = false;
+  await expect(runWorkflow(definition, { ...options, resume: true })).resolves.toMatchObject({
+    status: 'completed',
+  });
+  expect(invoke).toHaveBeenCalledTimes(2);
+});
+
+it.each([
+  ['the capability-key header', () => vaultProfile('rotated-header')],
+  ['the token', () => vaultProfile(undefined, 'rotated-token')],
+])(
+  'refuses a resume whose only change is a rotated sensitive option (%s)',
+  async (_label, rotate) => {
+    const profiles = { p: vaultProfile() };
+    const invoke = vi.fn<HarnessAdapter['invoke']>().mockResolvedValue(reply);
+    const definition = vaultDefinition(profiles, () => true);
+    const options = { ...setup(), adapters: { vault: { invoke } }, grants: ['p'] };
+    await expect(runWorkflow(definition, options)).rejects.toThrow('pause');
+    profiles.p = rotate();
+    // Step identity still sees the raw value, even under --grant all.
+    await expect(
+      runWorkflow(definition, { ...options, resume: true, grants: ['all'] }),
+    ).rejects.toThrow('Step first: options changed on a completed step');
+    await expect(runWorkflow(definition, { ...options, resume: true })).rejects.toThrow(
+      'Step first: options changed on a completed step',
+    );
+    expect(invoke).toHaveBeenCalledTimes(2);
+  },
+);
+
+it('refuses a saved named grant for a pending step whose sensitive capability option rotated', async () => {
+  const profiles = { p: vaultProfile() };
+  const invoke = vi.fn<HarnessAdapter['invoke']>().mockRejectedValue(new Error('offline'));
+  const definition = defineWorkflow({
+    ...base,
+    harnesses: [vault],
+    profiles,
+    async run(ctx) {
+      return (await ctx.agent('vault').text('pending', { prompt: 'x', profile: 'p' })).output;
+    },
+  });
+  const options = { ...setup(), adapters: { vault: { invoke } }, grants: ['p'] };
+  await expect(runWorkflow(definition, options)).rejects.toThrow('offline');
+  expect((await readRun(setup())).grantedProfiles?.['p']).toBe(vaultGrantDigest);
+  profiles.p = vaultProfile('rotated-header');
+  await expect(
+    runWorkflow(definition, { ...setup(), adapters: { vault: { invoke } }, resume: true }),
+  ).rejects.toThrow('Retry with --grant p');
+  expect(invoke).toHaveBeenCalledTimes(1);
+  invoke.mockResolvedValue(reply);
+  await expect(
+    runWorkflow(definition, { ...options, resume: true, grants: ['all'] }),
+  ).resolves.toMatchObject({ status: 'completed' });
+});
 
 it.each([
   ['present', 'pr-1'],

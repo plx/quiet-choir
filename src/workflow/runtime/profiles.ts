@@ -19,6 +19,7 @@ import { environmentSummary, environmentSummarySchema } from './agent-environmen
 import { builtinCapabilityKeys } from '../../harnesses/builtins/capability-keys.js';
 import { codexBlock, legacyEffort, rejectRenamedEffort } from './effort-compat.js';
 import { boundCallAddDirs } from './add-dir-roots.js';
+import { profileForbiddenHarnessOptions } from './registered-option-keys.js';
 
 const nameSchema = z.string().regex(/^[a-zA-Z][a-zA-Z0-9_-]{0,63}$/u);
 const limits = {
@@ -261,18 +262,7 @@ export function resolveCapabilities(definition: {
     const harnessCapabilities: Record<string, Record<string, JsonValue>> = {};
     for (const [registered, declaration] of registrations) {
       const supplied = data.harnesses?.[registered] ?? {};
-      for (const field of [
-        'prompt',
-        'profile',
-        'cwd',
-        'onError',
-        'retry',
-        'worktree',
-        'timeoutMs',
-        'idleTimeoutMs',
-        'maxTurns',
-        'maxBudgetUsd',
-      ])
+      for (const field of profileForbiddenHarnessOptions)
         if (Object.hasOwn(supplied, field))
           throw new Error(
             `Profile ${name} cannot set harness ${registered}.${field}; use profile limits or call options.`,
@@ -332,14 +322,18 @@ export function resolveCapabilities(definition: {
   };
 }
 
-/** Validate capability declarations and expose the public manifest: environment, settings, MCP servers, subagents, system prompts and Codex config appear as names and digests only. */
+/**
+ * Validate capability declarations and expose the public manifest: environment, settings, MCP
+ * servers, subagents, system prompts, Codex config and registered harness `sensitiveOptions` appear
+ * as names and digests only.
+ */
 export function capabilityManifest(definition: {
   readonly defaults?: AgentDefaults;
   readonly profiles?: Readonly<Record<string, AgentProfile>>;
   readonly strictProfiles?: boolean;
   readonly harnesses?: readonly HarnessDeclaration[];
 }): CapabilityManifest {
-  return publicCapabilityManifest(resolveCapabilities(definition));
+  return publicCapabilityManifest(resolveCapabilities(definition), definition.harnesses);
 }
 
 /** Validate launch rules and reject misspelled names before effects. @internal */
@@ -527,6 +521,7 @@ const resolvedProfileSchema = z.strictObject({
         })
         .optional(),
       codex: z.strictObject({ config: redactedControlSchema.optional() }).optional(),
+      harnesses: z.record(z.string(), z.record(z.string(), redactedControlSchema)).optional(),
     })
     .optional(),
   access: z.enum(['none', 'read', 'write', 'exec']),
@@ -570,8 +565,9 @@ function redactControls(
     const value = controls[field];
     Reflect.deleteProperty(controls, field);
     if (value === undefined) continue;
+    // An array's indexes are not names, so it gets a digest only.
     redacted[field] =
-      typeof value === 'object' && value !== null
+      typeof value === 'object' && value !== null && !Array.isArray(value)
         ? { sha256: digest(value), keys: Object.keys(value).sort() }
         : { sha256: digest(value) };
   }
@@ -581,11 +577,17 @@ function redactControls(
 /**
  * Snapshot for checkpoints and CLI diagnostics; live execution retains its private values. Drops
  * environment values (names and a digest stay in `environment`) and moves Claude settings, MCP
- * servers, subagents, system prompts and Codex config into `redacted` as digests with top-level
- * names. Apply only to a live manifest from resolveCapabilities: a second pass re-digests
- * registered harness env digests. @internal
+ * servers, subagents, system prompts, Codex config and each registered harness's declared
+ * `sensitiveOptions` into `redacted` as digests with top-level names. `harnesses` are the
+ * declarations the manifest was resolved from (the root definition's for a run record); the
+ * parameter is required so no caller silently skips their sensitive options. Apply only to a live
+ * manifest from resolveCapabilities: a second pass re-digests registered harness env digests.
+ * @internal
  */
-export function publicCapabilityManifest(manifest: CapabilityManifest): CapabilityManifest {
+export function publicCapabilityManifest(
+  manifest: CapabilityManifest,
+  harnesses: readonly Pick<HarnessDeclaration, 'name' | 'sensitiveOptions'>[] | undefined,
+): CapabilityManifest {
   const result = structuredClone(manifest);
   for (const profile of [result.defaults, ...Object.values(result.profiles)]) {
     Reflect.deleteProperty(profile.claude, 'env');
@@ -604,6 +606,27 @@ export function publicCapabilityManifest(manifest: CapabilityManifest): Capabili
             : {}),
         },
       });
+    for (const { name, sensitiveOptions } of harnesses ?? []) {
+      if (!sensitiveOptions?.length) continue;
+      // harnessCapabilities holds the capabilityKeys subset of the same profile options, so both
+      // copies digest alike; one entry per harness and key, the options copy winning.
+      const capabilities = profile.harnessCapabilities?.[name];
+      const options = profile.harnesses?.[name];
+      const entries = {
+        ...(capabilities ? redactControls(capabilities, sensitiveOptions) : {}),
+        ...(options ? redactControls(options, sensitiveOptions) : {}),
+      };
+      if (Object.keys(entries).length > 0)
+        Object.assign(profile, {
+          redacted: {
+            ...profile.redacted,
+            harnesses: {
+              ...profile.redacted?.harnesses,
+              [name]: { ...profile.redacted?.harnesses?.[name], ...entries },
+            },
+          },
+        });
+    }
     for (const controls of Object.values(profile.harnesses ?? {}))
       Reflect.deleteProperty(controls, 'env');
     for (const controls of Object.values(profile.harnessCapabilities ?? {}))

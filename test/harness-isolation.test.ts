@@ -150,7 +150,7 @@ it('resolves shared and provider-specific mode defaults and hides environment va
   expect(manifest.defaults.claude.isolation).toBe('inherit');
   expect(manifest.profiles['reader']?.claude.isolation).toBe('restricted');
   expect(manifest.profiles['reader']?.codex.isolation).toBe('inherit');
-  const visible = publicCapabilityManifest(manifest);
+  const visible = publicCapabilityManifest(manifest, undefined);
   expect(JSON.stringify(visible)).not.toContain('secret-marker');
   expect(visible.defaults.environment?.claude).toMatchObject({
     set: ['PRIVATE'],

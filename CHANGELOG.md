@@ -2,6 +2,18 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- Registered harness declarations (addition; storage revision 9, nested-only): `defineHarness`
+  accepts `sensitiveOptions`, a list of option keys whose profile values public capability manifests
+  (checkpoints, `workflow validate --json` and the record `check-resume --json` prints) move out of
+  `harnesses.<name>` and `harnessCapabilities.<name>` into `redacted.harnesses.<name>.<key>` as
+  `{ sha256, keys? }`, with `keys` only for an object value (#247, ADR 0033). It rejects unknown and
+  duplicate keys, and `prompt`, `model`, `env` and the call options profiles cannot set, which never
+  reach a manifest. Grant pins and step identity still use the raw values, so declaring a key
+  changes neither and a rotated value still invalidates both. Revision-8 checkpoints read and resume
+  unchanged and are scrubbed the next time they execute; a revision-8 build refuses a record holding
+  `redacted.harnesses` with the upgrade message. The definition registry cache envelope moves to
+  version 4, so cached validate results that printed a now-sensitive option are recomputed.
+  `redactControls` gives an array value only a `sha256`; no built-in redacted control is an array.
 - Worktree administration lock (behavior change; no identity or storage-format change): a release of
   the repository lock whose tombstone rename fails (for example `EACCES`) now rewrites its verified
   `owner.json` as `released: true` before it throws, the way a run lock with orphans is handed over.

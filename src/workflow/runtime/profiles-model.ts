@@ -110,7 +110,11 @@ export interface ProfileOverride extends ProfileLimits {
 export interface RedactedControl {
   /** SHA-256 of the canonical JSON of the raw control value. */
   readonly sha256: string;
-  /** Sorted top-level names (settings keys, server or subagent names, dotted config keys); absent for strings. */
+  /**
+   * Sorted top-level names (settings keys, server or subagent names, dotted config keys, or the
+   * keys of an object-valued registered harness option); absent for strings, numbers, booleans and
+   * arrays.
+   */
   readonly keys?: readonly string[];
 }
 
@@ -132,7 +136,8 @@ export interface ResolvedProfile extends Omit<
   };
   /**
    * Names and digests of free-form controls that public manifests (checkpoints, validate and
-   * check-resume output) omit from `claude` and `codex`. Absent when the profile sets none of them.
+   * check-resume output) omit from `claude` and `codex`, and of registered harness options a
+   * declaration lists in `sensitiveOptions`. Absent when the profile sets none of them.
    */
   readonly redacted?: {
     /** Claude controls omitted from `claude`. */
@@ -153,6 +158,11 @@ export interface ResolvedProfile extends Omit<
       /** Dotted native config overrides, by key. */
       readonly config?: RedactedControl;
     };
+    /**
+     * Registered harness options listed in the declaration's `sensitiveOptions`, by harness name
+     * and option key, omitted from both `harnesses` and `harnessCapabilities`.
+     */
+    readonly harnesses?: Readonly<Record<string, Readonly<Record<string, RedactedControl>>>>;
   };
   /** Name used for selection and diagnostics, outside step identity. */
   readonly name: string;

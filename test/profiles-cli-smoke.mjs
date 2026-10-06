@@ -158,8 +158,65 @@ async run(ctx){return (await ctx.claude.text('only',{prompt:'secret',profile:'va
   assert.equal(incompatible.status, 3, incompatible.stderr);
   assert.equal(JSON.parse(incompatible.stdout).error.code, 'run.incompatible');
   clean('check-resume --json (incompatible)', incompatible.stdout + incompatible.stderr);
+
+  // Registered harness sensitiveOptions reach the adapter but never a printed manifest or
+  // checkpoint (#247); headers is also a capability key, region is not sensitive.
+  const optionMarkers = ['marker-harness-token', 'marker-harness-header'];
+  const scrubbed = (label, text) => {
+    for (const marker of optionMarkers)
+      assert.ok(!text.includes(marker), `${label} leaked ${marker}`);
+  };
+  const keeperFile = join(fixture, 'keeper.ts');
+  const keeperCalls = join(fixture, 'keeper-calls.jsonl');
+  const keeperSource = (tail) => `import {appendFileSync} from 'node:fs';
+import {defineWorkflow,z} from 'quiet-choir';
+import {defineHarness} from 'quiet-choir/harness-kit';
+const keeper=defineHarness({name:'keeper',revision:1,options:z.object({prompt:z.string(),token:z.string().optional(),headers:z.record(z.string(),z.string()).optional(),region:z.string().optional()}),
+capabilities:{structuredOutput:'none'},capabilityKeys:['headers'],sensitiveOptions:['token','headers'],access:()=>'none',
+createAdapter:()=>({invoke(request){appendFileSync(${JSON.stringify(keeperCalls)},JSON.stringify(request.options)+'\\n');return Promise.resolve({text:'kept',sessionId:null});}})});
+export default defineWorkflow({name:'keeper-cli',version:'1',input:z.object({}),output:z.string(),harnesses:[keeper],
+profiles:{locked:{harnesses:{keeper:{token:'marker-harness-token',headers:{Authorization:'marker-harness-header','X-Trace':'trace'},region:'eu'}}}},
+async run(ctx){return (await ctx.agent('keeper').text('only',{prompt:'secret',profile:'locked'})).output${tail};}});`;
+  writeFileSync(keeperFile, keeperSource(''));
+  const keeperValidation = cli('validate', keeperFile, '--json');
+  assert.equal(keeperValidation.status, 0, keeperValidation.stderr);
+  scrubbed('validate --json', keeperValidation.stdout);
+  const locked = JSON.parse(keeperValidation.stdout).workflow.capabilities.profiles.locked;
+  assert.match(locked.redacted.harnesses.keeper.token.sha256, /^[a-f0-9]{64}$/);
+  assert.equal(locked.redacted.harnesses.keeper.token.keys, undefined);
+  assert.match(locked.redacted.harnesses.keeper.headers.sha256, /^[a-f0-9]{64}$/);
+  assert.deepEqual(locked.redacted.harnesses.keeper.headers.keys, ['Authorization', 'X-Trace']);
+  assert.deepEqual(locked.harnesses.keeper, { region: 'eu' });
+  assert.deepEqual(locked.harnessCapabilities.keeper, {});
+  const keeperArgs = ['--run-id', 'keeper', '--state-dir', state];
+  const keeperRun = cli('execute', keeperFile, ...keeperArgs);
+  assert.equal(keeperRun.status, 0, keeperRun.stderr);
+  scrubbed('execute output', keeperRun.stdout + keeperRun.stderr);
+  const keeperCheckpoint = readFileSync(join(state, 'keeper', 'run.json'), 'utf8');
+  scrubbed('checkpoint', keeperCheckpoint);
+  assert.deepEqual(
+    JSON.parse(keeperCheckpoint).capabilities.profiles.locked.redacted.harnesses.keeper.headers,
+    locked.redacted.harnesses.keeper.headers,
+  );
+  const keeperCall = JSON.parse(readFileSync(keeperCalls, 'utf8').trim());
+  assert.equal(keeperCall.token, 'marker-harness-token');
+  assert.deepEqual(keeperCall.headers, {
+    Authorization: 'marker-harness-header',
+    'X-Trace': 'trace',
+  });
+  const keeperCompatible = cli('check-resume', keeperFile, ...keeperArgs, '--json');
+  assert.equal(keeperCompatible.status, 0, keeperCompatible.stderr);
+  scrubbed('check-resume --json', keeperCompatible.stdout + keeperCompatible.stderr);
+  writeFileSync(keeperFile, keeperSource('+"!"'));
+  const keeperIncompatible = cli('check-resume', keeperFile, ...keeperArgs, '--json');
+  assert.equal(keeperIncompatible.status, 3, keeperIncompatible.stderr);
+  assert.equal(JSON.parse(keeperIncompatible.stdout).error.code, 'run.incompatible');
+  scrubbed(
+    'check-resume --json (incompatible)',
+    keeperIncompatible.stdout + keeperIncompatible.stderr,
+  );
   console.log(
-    'PASS CLI capability manifest, grant preflight, limit diagnostics, sticky profile recovery, typed names and redacted free-form controls',
+    'PASS CLI capability manifest, grant preflight, limit diagnostics, sticky profile recovery, typed names, redacted free-form controls and redacted registered harness options',
   );
 } finally {
   rmSync(fixture, { recursive: true, force: true });

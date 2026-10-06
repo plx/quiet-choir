@@ -1,0 +1,361 @@
+{
+  "allowModelOverride": false,
+  "capabilities": {
+    "defaultProfile": "text",
+    "defaults": {
+      "access": "read",
+      "claude": { "allowedTools": [], "isolation": "restricted", "tools": [] },
+      "claudeAccess": "none",
+      "codex": { "isolation": "restricted", "sandbox": "read-only" },
+      "codexAccess": "read",
+      "environment": {
+        "claude": {
+          "set": [],
+          "sha256": "2427b8a3193f4941d731ebcc7f2ea9ae4029bd00b6f30c119edb89cc70dd7247",
+          "unset": []
+        },
+        "codex": {
+          "set": [],
+          "sha256": "2427b8a3193f4941d731ebcc7f2ea9ae4029bd00b6f30c119edb89cc70dd7247",
+          "unset": []
+        }
+      },
+      "expectsToolUse": false,
+      "harnessAccess": { "vault": "none" },
+      "harnessCapabilities": { "vault": {} },
+      "harnesses": { "vault": {} },
+      "maxBudgetUsd": 0.5,
+      "maxTurns": 10,
+      "name": "text",
+      "onPermissionDenied": "warn",
+      "timeoutMs": 300000
+    },
+    "profiles": {
+      "edit": {
+        "access": "write",
+        "claude": {
+          "allowedTools": ["Read", "Grep", "Glob", "Edit", "Write"],
+          "isolation": "restricted",
+          "tools": ["Read", "Grep", "Glob", "Edit", "Write"]
+        },
+        "claudeAccess": "write",
+        "codex": { "isolation": "restricted", "sandbox": "workspace-write" },
+        "codexAccess": "write",
+        "environment": {
+          "claude": {
+            "set": [],
+            "sha256": "2427b8a3193f4941d731ebcc7f2ea9ae4029bd00b6f30c119edb89cc70dd7247",
+            "unset": []
+          },
+          "codex": {
+            "set": [],
+            "sha256": "2427b8a3193f4941d731ebcc7f2ea9ae4029bd00b6f30c119edb89cc70dd7247",
+            "unset": []
+          }
+        },
+        "expectsToolUse": true,
+        "harnessAccess": { "vault": "none" },
+        "harnessCapabilities": { "vault": {} },
+        "harnesses": { "vault": {} },
+        "maxBudgetUsd": 5,
+        "maxTurns": 40,
+        "name": "edit",
+        "onPermissionDenied": "warn",
+        "timeoutMs": 1800000
+      },
+      "keeper": {
+        "access": "read",
+        "claude": { "allowedTools": [], "isolation": "restricted", "tools": [] },
+        "claudeAccess": "none",
+        "codex": { "isolation": "restricted", "sandbox": "read-only" },
+        "codexAccess": "read",
+        "environment": {
+          "claude": {
+            "set": [],
+            "sha256": "2427b8a3193f4941d731ebcc7f2ea9ae4029bd00b6f30c119edb89cc70dd7247",
+            "unset": []
+          },
+          "codex": {
+            "set": [],
+            "sha256": "2427b8a3193f4941d731ebcc7f2ea9ae4029bd00b6f30c119edb89cc70dd7247",
+            "unset": []
+          }
+        },
+        "expectsToolUse": false,
+        "harnessAccess": { "vault": "none" },
+        "harnessCapabilities": { "vault": {} },
+        "harnesses": { "vault": { "token": "fixture-token" } },
+        "maxBudgetUsd": 0.5,
+        "maxTurns": 10,
+        "name": "keeper",
+        "onPermissionDenied": "warn",
+        "timeoutMs": 300000
+      },
+      "readonly": {
+        "access": "read",
+        "claude": {
+          "allowedTools": ["Read", "Grep", "Glob"],
+          "isolation": "restricted",
+          "tools": ["Read", "Grep", "Glob"]
+        },
+        "claudeAccess": "read",
+        "codex": { "isolation": "restricted", "sandbox": "read-only" },
+        "codexAccess": "read",
+        "environment": {
+          "claude": {
+            "set": [],
+            "sha256": "2427b8a3193f4941d731ebcc7f2ea9ae4029bd00b6f30c119edb89cc70dd7247",
+            "unset": []
+          },
+          "codex": {
+            "set": [],
+            "sha256": "2427b8a3193f4941d731ebcc7f2ea9ae4029bd00b6f30c119edb89cc70dd7247",
+            "unset": []
+          }
+        },
+        "expectsToolUse": true,
+        "harnessAccess": { "vault": "none" },
+        "harnessCapabilities": { "vault": {} },
+        "harnesses": { "vault": {} },
+        "maxBudgetUsd": 2,
+        "maxTurns": 25,
+        "name": "readonly",
+        "onPermissionDenied": "warn",
+        "timeoutMs": 900000
+      },
+      "text": {
+        "access": "read",
+        "claude": { "allowedTools": [], "isolation": "restricted", "tools": [] },
+        "claudeAccess": "none",
+        "codex": { "isolation": "restricted", "sandbox": "read-only" },
+        "codexAccess": "read",
+        "environment": {
+          "claude": {
+            "set": [],
+            "sha256": "2427b8a3193f4941d731ebcc7f2ea9ae4029bd00b6f30c119edb89cc70dd7247",
+            "unset": []
+          },
+          "codex": {
+            "set": [],
+            "sha256": "2427b8a3193f4941d731ebcc7f2ea9ae4029bd00b6f30c119edb89cc70dd7247",
+            "unset": []
+          }
+        },
+        "expectsToolUse": false,
+        "harnessAccess": { "vault": "none" },
+        "harnessCapabilities": { "vault": {} },
+        "harnesses": { "vault": {} },
+        "maxBudgetUsd": 0.5,
+        "maxTurns": 10,
+        "name": "text",
+        "onPermissionDenied": "warn",
+        "timeoutMs": 300000
+      }
+    },
+    "requiredGrants": [],
+    "strictProfiles": true
+  },
+  "createdAt": "2026-10-06T15:51:24.090Z",
+  "cwd": "/",
+  "engine": { "node": "v26.10.0", "quietChoir": "0.0.0", "tsx": "4.23.11", "zod": "4.5.4" },
+  "error": "fixture tail",
+  "errorStack": "Error: fixture tail\n    at Object.run (/fixture/generate.ts:29:11)\n    at async executeOwned (/fixture/src/workflow/runtime/runner.ts:3773:22)\n    at async runWorkflow (/fixture/src/workflow/runtime/runner.ts:4008:32)\n    at async <anonymous> (/fixture/generate.ts:33:1)",
+  "eventCounts": {},
+  "events": [
+    {
+      "at": "2026-10-06T15:51:24.092Z",
+      "data": null,
+      "execution": 1,
+      "message": null,
+      "phase": null,
+      "stepId": null,
+      "total": null,
+      "type": "run.started"
+    },
+    {
+      "at": "2026-10-06T15:51:24.139Z",
+      "data": null,
+      "execution": 1,
+      "message": "fixture tail",
+      "phase": null,
+      "stepId": null,
+      "total": null,
+      "type": "run.failed"
+    }
+  ],
+  "executions": [
+    {
+      "endedAt": "2026-10-06T15:51:24.136Z",
+      "error": "fixture tail",
+      "errorStack": "Error: fixture tail\n    at Object.run (/fixture/generate.ts:29:11)\n    at async executeOwned (/fixture/src/workflow/runtime/runner.ts:3773:22)\n    at async runWorkflow (/fixture/src/workflow/runtime/runner.ts:4008:32)\n    at async <anonymous> (/fixture/generate.ts:33:1)",
+      "n": 1,
+      "outcome": "failed",
+      "pid": 88116,
+      "startedAt": "2026-10-06T15:51:24.091Z"
+    }
+  ],
+  "formatVersion": 7,
+  "grantedProfiles": {},
+  "grants": [],
+  "harness": { "kind": "registered:5bcc33335fa42f0e189aed2658190d8f", "previousKinds": [] },
+  "id": "revision-eight",
+  "input": null,
+  "maps": {},
+  "maxChildDepth": 8,
+  "nextWakeAt": null,
+  "output": null,
+  "phase": null,
+  "policy": [{ "transcripts": "off" }],
+  "policyWarnings": [],
+  "profileOverrides": [],
+  "recoveryHint": "All recorded work has terminal outcomes, including settled map items. Fix the workflow tail, output or configuration and use --resume --accept-code-change to re-finalize; unchanged identities reuse their results.",
+  "replayWarnings": [],
+  "rootCause": { "effect": null, "error": "fixture tail", "errorKind": null, "stepId": null },
+  "runBudget": { "maxRunAgentAttempts": null, "maxRunCostUsd": null, "maxWindowUtilization": null },
+  "schemaRevision": 8,
+  "seq": 3,
+  "sessionSalt": "dd13c013-78ca-4cec-85ab-daff7b9256dc",
+  "status": "failed",
+  "steps": {
+    "read": {
+      "attemptHistory": [
+        {
+          "attempt": 1,
+          "diagnostics": {},
+          "durationMs": 10,
+          "effort": null,
+          "error": null,
+          "errorStack": null,
+          "execution": 1,
+          "fingerprint": "00b3ba4a508639876f737c4368d37be6e6b2c4261412047f5ab0b83a5015d223",
+          "finishedAt": "2026-10-06T15:51:24.130Z",
+          "policy": {
+            "maxTranscriptBytes": 67108864,
+            "retry": { "delayMs": 100, "maxAttempts": 1 },
+            "timeoutMs": 300000,
+            "transcripts": "off"
+          },
+          "profile": "keeper",
+          "request": {
+            "cwd": "/",
+            "environment": {
+              "set": [],
+              "sha256": "2427b8a3193f4941d731ebcc7f2ea9ae4029bd00b6f30c119edb89cc70dd7247",
+              "unset": []
+            },
+            "harness": "vault",
+            "isolation": "restricted",
+            "limits": {
+              "idleTimeoutMs": null,
+              "killGraceMs": null,
+              "maxBudgetUsd": null,
+              "maxTurns": null,
+              "sandbox": null,
+              "timeoutMs": 300000
+            },
+            "model": null,
+            "profile": "keeper",
+            "promptPreview": "x",
+            "promptSha256": "2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881",
+            "revision": 1,
+            "structured": false,
+            "tools": null
+          },
+          "requested": { "effort": "inherited", "model": "inherited" },
+          "requestedModel": null,
+          "sessionId": null,
+          "sources": {
+            "maxTranscriptBytes": "runtime",
+            "retry.delayMs": "runtime",
+            "retry.maxAttempts": "runtime",
+            "timeoutMs": "profile:keeper",
+            "transcripts": "override:0"
+          },
+          "startedAt": "2026-10-06T15:51:24.120Z",
+          "status": "completed",
+          "usage": {
+            "completeness": "unavailable",
+            "costUsd": null,
+            "inputTokens": null,
+            "model": { "effective": null, "requested": null },
+            "outputTokens": null
+          }
+        }
+      ],
+      "attempts": 1,
+      "durationMs": 10,
+      "error": null,
+      "errorStack": null,
+      "fingerprint": "00b3ba4a508639876f737c4368d37be6e6b2c4261412047f5ab0b83a5015d223",
+      "finishedAt": "2026-10-06T15:51:24.130Z",
+      "harness": "vault",
+      "identity": {
+        "cwd": "df7e940f72aa93cbcb6d70cc35124b0767c7a0e353043c7c24b660ea9be7b952",
+        "harness": "21a44fce42d4363d1c53d61f17c39f45f2dbd4352fb0fd021813155d464037fd",
+        "kind": "7649b444a37e5ea51af536af65bdde29d549803a064bdd0707db6a00c9285673",
+        "options": "4e1cf84c8b00717b40ce511c9d8e2b9bf86a81d3c6fcd13feff228c9858d38cd",
+        "revision": "6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b",
+        "schema": "1a7dffe553dca5717f29f1586271c9a170f0aa97be651b7f2e59bbaecde9bbd1"
+      },
+      "kind": "agent",
+      "launchStamp": 0,
+      "output": {
+        "diagnostics": {},
+        "output": "ok",
+        "sessionId": null,
+        "usage": {
+          "completeness": "unavailable",
+          "costUsd": null,
+          "inputTokens": null,
+          "model": { "effective": null, "requested": null },
+          "outputTokens": null
+        }
+      },
+      "phase": null,
+      "request": {
+        "cwd": "/",
+        "environment": {
+          "set": [],
+          "sha256": "2427b8a3193f4941d731ebcc7f2ea9ae4029bd00b6f30c119edb89cc70dd7247",
+          "unset": []
+        },
+        "harness": "vault",
+        "isolation": "restricted",
+        "limits": {
+          "idleTimeoutMs": null,
+          "killGraceMs": null,
+          "maxBudgetUsd": null,
+          "maxTurns": null,
+          "sandbox": null,
+          "timeoutMs": 300000
+        },
+        "model": null,
+        "profile": "keeper",
+        "promptPreview": "x",
+        "promptSha256": "2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881",
+        "revision": 1,
+        "structured": false,
+        "tools": null
+      },
+      "revision": 1,
+      "seq": 1,
+      "settleStamp": 1,
+      "startedAt": "2026-10-06T15:51:24.120Z",
+      "status": "completed",
+      "wakeAt": null
+    }
+  },
+  "updatedAt": "2026-10-06T15:51:24.139Z",
+  "workflow": {
+    "fingerprint": "fbd16d6260602af37e4f87392b8a896e7059d0ac8694532f2cd0e55d76565838",
+    "identity": {
+      "code": "schema-revision",
+      "engine": { "formatVersion": 6, "version": "0.0.0" },
+      "files": {},
+      "inputSchema": "199490fad0bd9dd1925ebbce2ed02f949ef0396fcbabcd41baa5ffa3b1ea49b2",
+      "outputSchema": "199490fad0bd9dd1925ebbce2ed02f949ef0396fcbabcd41baa5ffa3b1ea49b2"
+    },
+    "name": "schema-revision",
+    "version": "1"
+  }
+}
