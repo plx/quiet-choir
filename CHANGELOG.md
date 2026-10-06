@@ -2,6 +2,21 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- Worktree administration lock (addition; no identity or storage-format change): the repository lock
+  `<common Git dir>/quiet-choir/worktree-admin.lock` (ADR 0032) can now be seen and cleared.
+  `workflow unlock --worktree-admin PATH [--force-remote]`, with PATH any path inside the repository
+  and no RUN or `--state-dir`, clears a dead or released owner, a dead recoverer, or unreadable
+  metadata through the same judgment and token-verified tombstone removal as a run unlock, and
+  returns `workflow.unlock.worktree-admin.result`. It refuses a locally alive or unverifiable
+  holder, and a foreign one without `--force-remote`, with the new error code `worktree.locked`
+  (exit 3) and the command to rerun in `error.details.next`. Plain `workflow inspect RUN` of a run
+  with a worktree ledger adds `worktreeAdminLock` (holder PID, host, token, state, OS start time and
+  an approximate `acquiredAt`) to the JSON while the lock is held, and a `Worktree admin lock` line
+  with an `Unlock:` hint to the text; this runs one `git rev-parse`, and `--summary`, `--watch` and
+  `list` run none. Behavior change: the error after an unverifiable holder blocks an attempt for 30
+  s now names `quiet-choir workflow unlock --worktree-admin <common Git dir>` (with `--force-remote`
+  for another host) instead of telling the operator to remove the lock directory.
+  `workflow unlock`'s RUN argument is now optional.
 - Step supersession (fix; no identity or storage change): a completion now marks unvisited
   unfinished steps `superseded` only after the output validates and worktree cleanup succeeds, and
   puts them back if the completion checkpoint fails, as child frames already did. Before, a run that

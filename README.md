@@ -174,7 +174,8 @@ at least one filter and removes finished runs in bulk through the same guarded r
 that is active, waiting, holds a queued answer or is locked. `workflow list` shows each run's
 on-disk size. `workflow unlock RUN [--force-remote] [--json]` clears an abandoned run lock without
 importing source; it refuses while an owner, recoverer or recorded child is alive or unverifiable
-(see [process ownership](docs/process-lifecycle.md)).
+(see [process ownership](docs/process-lifecycle.md)). `workflow unlock --worktree-admin PATH` clears
+a repository's abandoned worktree administration lock the same way.
 `workflow cancel RUN [--force] [--timeout 30s]` ends a live local run as `cancelled`, which tick
 never resumes: it signals only a live owner on this host whose recorded OS start time still matches,
 and refuses with exit 3 otherwise (a plain signal saves a resumable suspension instead; see

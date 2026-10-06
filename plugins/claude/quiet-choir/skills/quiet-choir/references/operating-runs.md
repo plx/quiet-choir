@@ -203,6 +203,21 @@ with `run.orphans` (naming the owner and child records) while a recorded child i
 unverifiable; stop confirmed children with `--resume --kill-orphans` below instead. A run with no
 lock is a no-op (`locks: []`).
 
+Worktree isolation also serializes Git worktree administration with a repository lock,
+`<common Git dir>/quiet-choir/worktree-admin.lock`, which belongs to no run. When its holder is on
+another host, of unknown liveness or has unreadable metadata, an attempt fails after about 30 s with
+an error that names the clearing command. Run it only after confirming that no quiet-choir process
+on any machine sharing the repository is administering its worktrees:
+
+```sh
+node "$QC_CHECKOUT/bin/run.js" workflow unlock --worktree-admin "$QC_TARGET" --json
+```
+
+The path can be any path inside the repository, and the form takes no RUN or `--state-dir`. It uses
+the same judgment and tombstone removal as a run unlock, adds `--force-remote` under the same rule,
+and exits 3 with `worktree.locked` (`error.details.next` names the command to rerun) while a holder
+is alive or unverifiable here or foreign without the flag. A free lock returns `lock: null`.
+
 For a dead same-host owner or no lock, a normal compatible resume automatically recovers ownership
 if there are no surviving/unverified children. After fixing an external cause, omit input to reuse
 it:

@@ -50,9 +50,13 @@ an error. Two runs administering one repository is normal, so this lock waits:
   ordinary cleanup warning naming the lock path.
 - A holder this host cannot judge (an owner or recoverer on another host, an unknown liveness, or
   unreadable metadata) is polled until a stuck deadline of 30 s, then the attempt fails with a plain
-  `Error` naming the lock path, the holder's PID and host when known, and the remedy: remove the
-  directory after confirming no quiet-choir process on any machine sharing the repository is
-  administering it. The deadline restarts when a different holder appears.
+  `Error` naming the lock path, the holder's PID and host when known, and the remedy: after
+  confirming no quiet-choir process on any machine sharing the repository is administering it, clear
+  it with `quiet-choir workflow unlock --worktree-admin <common Git dir>`, adding `--force-remote`
+  for a holder on another host. For a local holder of unknown liveness, which unlock refuses, the
+  message says to wait for that PID to exit or stop it first. The message uses the default
+  `quiet-choir` program words. It never tells the operator to remove the directory by hand, which
+  could race with a live holder. The deadline restarts when a different holder appears.
 
 Acquisition happens before any harness launches, so a refusal is an ordinary pre-launch attempt
 failure, subject to retry policy; it is neither a `CheckpointError` nor a `ConfigurationError`.
@@ -90,5 +94,16 @@ would only mask bugs, and parsing Git's error text is fragile. It is not shipped
   calls have 10 s timeouts; the others honor the run signal.
 - A lock leaked by a still-running process (a release failure) blocks other processes until that
   process exits; its own later calls recover it.
-- `workflow unlock` and `workflow inspect` do not show or clear this lock.
+- Amended by #243: `workflow unlock --worktree-admin PATH` clears this lock with the same judgment
+  and token-verified tombstone removal as a run unlock (`decideUnlock`). PATH is any path inside the
+  repository; the lock belongs to the repository, not to a run. A dead or released owner, a dead
+  recoverer, and missing or unreadable metadata are cleared (with a warning for the metadata). A
+  holder on another host is refused unless `--force-remote` asserts that host is gone; a locally
+  alive or unknown owner or recoverer is always refused. Refusals are `worktree.locked` (exit 3),
+  with the command to rerun in `details.next`. Nothing is ever signaled.
+- Plain `workflow inspect RUN` (text or JSON, not `--summary` or `--watch`) shows the lock of the
+  repository in the run's worktree ledger as `worktreeAdminLock` (holder PID, host, token, state, OS
+  start time and an approximate `acquiredAt` from `owner.json`'s modification time), and an
+  `Unlock:` hint when unlock would not refuse. Runs without a worktree ledger, `workflow list`,
+  watches and tick run no Git for it, and a missing repository never fails the inspection.
 - Mixed builds are not coordinated: an older build serializes only within its own process.
