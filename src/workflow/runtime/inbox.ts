@@ -17,7 +17,7 @@ import { isValidRunId, runIdMessage } from './run-errors.js';
 import { answerEnvelopeSchema, validateAnswerAuthor } from './question-schema.js';
 import type { JsonValue } from './model.js';
 import type { PendingDelivery, PendingListing, PendingOperation } from './wait-model.js';
-import { workflowArgv, type CommandLauncher } from './commands.js';
+import { answerArgv, type CommandLauncher } from './commands.js';
 
 /**
  * One reason an answer was refused as invalid. Zod issues are normalized to this shape so the
@@ -191,13 +191,15 @@ export async function writeAnswer(options: WriteAnswerOptions): Promise<AnswerDe
     questionFingerprint: step.fingerprint,
     runCreatedAt: run.createdAt,
   };
+  let normalized: z.infer<typeof answerEnvelopeSchema>;
   try {
-    validateAnswerAuthor(step.question.request.audience, by);
-    answerEnvelopeSchema.parse(envelope);
+    // Validate the trimmed author the owner will see, not the raw --by.
+    normalized = answerEnvelopeSchema.parse(envelope);
+    validateAnswerAuthor(step.question.request.audience, normalized.by);
   } catch (error) {
     throw syntheticInvalid('answer_author', error);
   }
-  const serialized = JSON.stringify(envelope);
+  const serialized = JSON.stringify(normalized);
   if (Buffer.byteLength(serialized) > 1_048_576)
     throw syntheticInvalid('answer_too_large', new Error('Answer envelope exceeds 1 MiB.'));
   const path = answerPath(stateDir, run.id, options.stepId);
@@ -358,16 +360,7 @@ export async function pendingOperations(
   for (const [stepId, step] of Object.entries(run.steps)) {
     if (step.status !== 'waiting') continue;
     const answerCommand = step.question
-      ? workflowArgv(
-          launcher,
-          'answer',
-          run.id,
-          stepId,
-          '--state-dir',
-          stateDir,
-          '--json',
-          '<ANSWER_JSON>',
-        )
+      ? answerArgv(launcher, run.id, stepId, stateDir, step.question.request.audience)
       : null;
     if (step.kind === 'wait' && step.wait) {
       pending.push({

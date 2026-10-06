@@ -351,6 +351,9 @@ it('quarantines stale fingerprints and spoofed human attribution from direct inb
   await writeFile(path, JSON.stringify({ ...envelope, by: 'agent:guessed' }));
   expect((await runWorkflow(definition, { ...options(), resume: true })).status).toBe('suspended');
   expect((await listPending({ stateDir }))[0]?.rejections).toHaveLength(2);
+  await writeFile(path, JSON.stringify({ ...envelope, by: 'human:<NAME>' }));
+  expect((await runWorkflow(definition, { ...options(), resume: true })).status).toBe('suspended');
+  expect((await listPending({ stateDir }))[0]?.rejections).toHaveLength(3);
   await writeAnswer({
     ...options(),
     stepId: 'approval',
@@ -360,6 +363,31 @@ it('quarantines stale fingerprints and spoofed human attribution from direct inb
   const result = await runWorkflow(definition, { ...options(), resume: true });
   expect(result.output).toEqual({ approved: false, comment: 'revise' });
   expect(first.steps['approval']?.attempts).toBe(1);
+});
+
+it('rejects a padded human:<NAME> placeholder at write time and leaves no inbox file', async () => {
+  const definition = workflow((ctx) =>
+    ctx.approve('approval', { prompt: 'Apply?', audience: 'human', subject: { revision: 'abc' } }),
+  );
+  await runWorkflow(definition, options());
+  for (const by of ['human:<NAME> ', ' human:<NAME>']) {
+    await expect(
+      writeAnswer({ ...options(), stepId: 'approval', value: { approved: true }, by }),
+    ).rejects.toMatchObject({ reason: 'invalid' });
+    await expect(
+      readFile(answerPath(stateDir, 'questions', 'approval'), 'utf8'),
+    ).rejects.toMatchObject({ code: 'ENOENT' });
+  }
+  await writeAnswer({
+    ...options(),
+    stepId: 'approval',
+    value: { approved: true },
+    by: ' human:Pat ',
+  });
+  const stored: unknown = JSON.parse(
+    await readFile(answerPath(stateDir, 'questions', 'approval'), 'utf8'),
+  );
+  expect(stored).toMatchObject({ by: 'human:Pat' });
 });
 
 it('pins all presentation and subject fields even before an answer arrives', async () => {
@@ -672,6 +700,40 @@ it('builds resumeCommand and answerCommand behind an explicit launcher, quiet-ch
   expect(resumed.resumeCommand?.slice(0, 3)).toEqual(['quiet-choir', 'workflow', 'resume']);
 });
 
+it('emits --by human:<NAME> only on human questions, in the suspension and in listPending', async () => {
+  const suspended = await runWorkflow(
+    workflow((ctx) =>
+      Promise.all([
+        ctx.approve('human', { prompt: 'Apply?', audience: 'human' }),
+        ctx.ask('agent', { ...question, audience: 'agent' }),
+        ctx.ask('any', question),
+      ]),
+    ),
+    { ...options(), launch: { entrypoint: '/project/gate.workflow.ts', tsconfig: null } },
+  );
+  if (suspended.status !== 'suspended') throw new Error('Expected a suspension.');
+  const answerBase = (stepId: string) => [
+    'quiet-choir',
+    'workflow',
+    'answer',
+    'questions',
+    stepId,
+    '--state-dir',
+    stateDir,
+    '--json',
+    '<ANSWER_JSON>',
+  ];
+  const expected = {
+    human: [...answerBase('human'), '--by', 'human:<NAME>'],
+    agent: answerBase('agent'),
+    any: answerBase('any'),
+  };
+  const commands = (rows: readonly { stepId: string; answerCommand: readonly string[] | null }[]) =>
+    Object.fromEntries(rows.map((row) => [row.stepId, row.answerCommand]));
+  expect(commands(suspended.pending)).toEqual(expected);
+  expect(commands(await listPending({ stateDir }))).toEqual(expected);
+});
+
 it('repeats a recorded launch policy in resumeCommand, validating and replacing it per execution', async () => {
   const definition = workflow((ctx) => ctx.ask('gate', question));
   const policy = {
@@ -842,6 +904,21 @@ it('reports author, size and JSON refusals as one documented synthetic issue eac
     ],
   });
   expect(author.message).not.toContain('\n');
+  for (const placeholder of ['human:<NAME>', 'human:<name>']) {
+    const unreplaced = await refusal('human', { approved: true }, placeholder);
+    expect(unreplaced).toMatchObject({
+      reason: 'invalid',
+      issues: [
+        {
+          code: 'answer_author',
+          path: [],
+          message: expect.stringContaining('Replace the placeholder') as unknown,
+        },
+      ],
+    });
+    expect(unreplaced.message).not.toContain('\n');
+  }
+  await writeAnswer({ ...options(), stepId: 'human', value: { approved: true }, by: 'human:Pat' });
   const large = await refusal('text', 'x'.repeat(1_048_576));
   expect(large).toMatchObject({
     reason: 'invalid',

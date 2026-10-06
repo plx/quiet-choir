@@ -1,6 +1,6 @@
 import { resolve } from 'node:path';
 import type { JsonValue } from './model.js';
-import type { WorkflowLaunch } from './question-model.js';
+import type { QuestionRequest, WorkflowLaunch } from './question-model.js';
 
 /**
  * The program words that start every emitted command, such as `resumeCommand` and
@@ -18,6 +18,36 @@ export const defaultCommandLauncher: CommandLauncher = ['quiet-choir'];
  */
 export function workflowArgv(launcher: CommandLauncher | undefined, ...args: string[]): string[] {
   return [...(launcher?.length ? launcher : defaultCommandLauncher), 'workflow', ...args];
+}
+
+/** The `--by` value an emitted human-question answer command carries for the caller to replace. @internal */
+export const humanAuthorPlaceholder = 'human:<NAME>';
+
+/**
+ * The `workflow answer` argument vector for one waiting question, behind the launcher. Every
+ * emitted answer command (`answerCommand`, the `next` answer entries) is built here so they cannot
+ * drift. `<ANSWER_JSON>` is a placeholder for the answer; a human question also ends with
+ * `--by` {@link humanAuthorPlaceholder}, which answer validation refuses until the human's name
+ * replaces `<NAME>`. Other audiences get no `--by`. @internal
+ */
+export function answerArgv(
+  launcher: CommandLauncher | undefined,
+  runId: string,
+  stepId: string,
+  stateDir: string,
+  audience: QuestionRequest['audience'],
+): string[] {
+  return workflowArgv(
+    launcher,
+    'answer',
+    runId,
+    stepId,
+    '--state-dir',
+    stateDir,
+    '--json',
+    '<ANSWER_JSON>',
+    ...(audience === 'human' ? ['--by', humanAuthorPlaceholder] : []),
+  );
 }
 
 /** The `--harness` specifiers that reproduce a recorded harness policy, unnamed fixture first. @internal */
@@ -61,7 +91,7 @@ export interface NextCommand {
   readonly argv: readonly string[];
 }
 
-const placeholder = /^<[A-Z][A-Z_]*>$/u;
+const placeholder = /^(?:[a-z]+:)?<[A-Z][A-Z_]*>$/u;
 
 /**
  * Quote an argument vector for a POSIX shell, leaving placeholders bare so they read as slots to

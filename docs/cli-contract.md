@@ -96,8 +96,8 @@ such as `invalid_type`), and `error.message` is one line, for example
 A refusal with no schema location has one issue with path `[]` and a synthetic code:
 `answer_not_json` (not JSON, or not representable as JSON), `question_schema_invalid` (the stored
 schema cannot be used), `answer_author` (`--by` is missing or wrong for a human question, or is
-invalid) and `answer_too_large` (the envelope exceeds 1 MiB). Re-ask from `issues`; nothing was
-written.
+invalid, including an unreplaced `human:<NAME>` placeholder) and `answer_too_large` (the envelope
+exceeds 1 MiB). Re-ask from `issues`; nothing was written.
 
 ## Run results of execute, resume and answer --resume
 
@@ -583,32 +583,33 @@ Every failure document has a top-level `next` array, and `inspect --json --summa
 placeholders. Text inspect and human failure messages print each entry as
 `Next: <shell-quoted argv>  (why)`.
 
-| Source                                          | Entries                                                                                               |
-| ----------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
-| `workflow.failed` with a saved failed run       | `resume RUN --state-dir DIR`                                                                          |
-| `workflow.interrupted` with a saved suspension  | as for a suspended summary                                                                            |
-| `start.timeout` with a saved suspension         | as for a suspended summary                                                                            |
-| `run.orphans`                                   | `resume RUN --state-dir DIR --kill-orphans`                                                           |
-| `run.locked`, holder local, gone or damaged     | `unlock RUN --state-dir DIR` from `error.details.next`                                                |
-| `run.locked`, holder on a foreign host          | `unlock RUN --state-dir DIR --force-remote` from `error.details.next`, and no other entry             |
-| `run.locked` from `cancel` or `rm`, live owner  | none: the message does not name `workflow unlock`                                                     |
-| `worktree.locked`                               | `unlock --worktree-admin DIR`, with `--force-remote` for a foreign holder, from `error.details.next`  |
-| `run.incompatible`, code or schema change only  | `resume … --accept-code-change` (unless the run completed), then a fork                               |
-| `run.incompatible`, other run-level changes     | a fork from the stored entrypoint; none when the workflow name changed or for a legacy checkpoint     |
-| `run.incompatible`, divergent or skipped path   | the fork command from `error.details.next`                                                            |
-| `run.incompatible`, different requested FILE    | `resume` with the stored entrypoint, then a fork from the requested FILE                              |
-| `run.incompatible`, `entrypoint_missing`        | `execute <ENTRYPOINT> --fork-from RUN --run-id <NEW_RUN_ID> --state-dir DIR`                          |
-| `run.incompatible`, `record_schema`             | none: upgrade quiet-choir                                                                             |
-| `run.not_found` with `details.candidates`       | `inspect RUN --state-dir CANDIDATE` for at most 5 candidates, RUN being `details.runId`               |
-| Failed or stale summary                         | `resume RUN --state-dir DIR`                                                                          |
-| Suspended summary                               | `answer RUN STEP --state-dir DIR --json <ANSWER_JSON>` for at most 5 waiting questions, then `resume` |
-| Dry-run failures, embedded runs, any other case | `[]`                                                                                                  |
+| Source                                          | Entries                                                                                                                   |
+| ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| `workflow.failed` with a saved failed run       | `resume RUN --state-dir DIR`                                                                                              |
+| `workflow.interrupted` with a saved suspension  | as for a suspended summary                                                                                                |
+| `start.timeout` with a saved suspension         | as for a suspended summary                                                                                                |
+| `run.orphans`                                   | `resume RUN --state-dir DIR --kill-orphans`                                                                               |
+| `run.locked`, holder local, gone or damaged     | `unlock RUN --state-dir DIR` from `error.details.next`                                                                    |
+| `run.locked`, holder on a foreign host          | `unlock RUN --state-dir DIR --force-remote` from `error.details.next`, and no other entry                                 |
+| `run.locked` from `cancel` or `rm`, live owner  | none: the message does not name `workflow unlock`                                                                         |
+| `worktree.locked`                               | `unlock --worktree-admin DIR`, with `--force-remote` for a foreign holder, from `error.details.next`                      |
+| `run.incompatible`, code or schema change only  | `resume … --accept-code-change` (unless the run completed), then a fork                                                   |
+| `run.incompatible`, other run-level changes     | a fork from the stored entrypoint; none when the workflow name changed or for a legacy checkpoint                         |
+| `run.incompatible`, divergent or skipped path   | the fork command from `error.details.next`                                                                                |
+| `run.incompatible`, different requested FILE    | `resume` with the stored entrypoint, then a fork from the requested FILE                                                  |
+| `run.incompatible`, `entrypoint_missing`        | `execute <ENTRYPOINT> --fork-from RUN --run-id <NEW_RUN_ID> --state-dir DIR`                                              |
+| `run.incompatible`, `record_schema`             | none: upgrade quiet-choir                                                                                                 |
+| `run.not_found` with `details.candidates`       | `inspect RUN --state-dir CANDIDATE` for at most 5 candidates, RUN being `details.runId`                                   |
+| Failed or stale summary                         | `resume RUN --state-dir DIR`                                                                                              |
+| Suspended summary                               | `answer RUN STEP --state-dir DIR --json <ANSWER_JSON> [--by human:<NAME>]` for at most 5 waiting questions, then `resume` |
+| Dry-run failures, embedded runs, any other case | `[]`                                                                                                                      |
 
 A fork is `execute ENTRYPOINT --fork-from RUN --run-id <NEW_RUN_ID> --state-dir DIR`; it records the
 directory it is launched from as the new run's cwd. Placeholders are `<ANSWER_JSON>` (serialized
-answer data), `<NEW_RUN_ID>` and `<ENTRYPOINT>` (the workflow file's new path). A human question
-also needs `--by human:<name>`, added after asking the human. A run without stored launch paths (an
-embedded run) gets no entries, since it cannot be resumed by ID.
+answer data), `<NAME>` in `--by human:<NAME>` (the name of the human who answered, asked first; a
+human question's entry carries the flag, others do not), `<NEW_RUN_ID>` and `<ENTRYPOINT>` (the
+workflow file's new path). `answer` refuses the unreplaced `human:<NAME>`. A run without stored
+launch paths (an embedded run) gets no entries, since it cannot be resumed by ID.
 
 `run.locked` refusals from `resume`, `execute`, `start`, `tick`, `clean`, `rm`, `cancel` and
 `unlock` build the unlock entry once, in the runtime, and render both the prose and

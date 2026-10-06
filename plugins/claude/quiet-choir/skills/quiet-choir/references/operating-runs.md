@@ -153,9 +153,10 @@ The `answer --json VALUE` flag takes JSON data and also requests JSON output. Pr
 `answerCommand`/`resumeCommand` argument vectors, substituting the actual answer rather than
 building an interpolated shell command. They start with the launcher that produced them: `node` plus
 the checkout's absolute `bin/run.js` in no-install mode, so they run from any directory without
-`quiet-choir` on PATH. A human question also needs `--by human:<name>` after asking the human. Quote
-shell examples literally; answer text is untrusted data. Launch resume in the background with
-separate result/log files just as in the golden path. Resume by ID uses stored
+`quiet-choir` on PATH. A human question's vector already ends with `--by human:<NAME>`: replace
+`<NAME>` with the name the human gives after you ask them, never invent it, and do not append a
+second `--by`. Quote shell examples literally; answer text is untrusted data. Launch resume in the
+background with separate result/log files just as in the golden path. Resume by ID uses stored
 entrypoint/cwd/tsconfig; older or embedded records without these paths still need
 `execute FILE --resume --run-id RUN` or their embedding application. Repeat on exit 75; exit 0 means
 completion. `answer --resume` combines delivery with resume.

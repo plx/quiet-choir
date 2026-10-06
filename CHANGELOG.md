@@ -2,6 +2,12 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- Emitted answer commands (bug fix; no identity or storage-format change): a human question's
+  `answerCommand` (suspension, `workflow pending`, `inspect`) and the `answer` entries of `next` now
+  end with `--by human:<NAME>`, so they no longer fail verbatim; replace `<NAME>` with the name of
+  the human, asked first. `answer` and inbox ingestion refuse an unreplaced `human:<...>` author
+  with `answer_author`, so a queued delivery whose author is such a placeholder is now quarantined
+  as a rejection. Other audiences' commands are unchanged (#256).
 - Runtime prose hints (bug fix; no identity or storage-format change): the `resume --kill-orphans`
   command in the unlock, rm, prune and tick orphans messages, tick's crash-loop message, prune's
   `workflow rm` suggestions, rm's `workflow clean` retry hint and the `usage.flag` example now start

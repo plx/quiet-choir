@@ -121,8 +121,13 @@ export const answerEnvelopeSchema = z.object({
 
 /** Routing guard only: attribution is self-asserted, never authentication. @internal */
 export function validateAnswerAuthor(audience: QuestionRequest['audience'], by: string): void {
-  if (audience === 'human' && !/^human:\S.*$/u.test(by))
+  if (audience !== 'human') return;
+  if (!/^human:\S.*$/u.test(by))
     throw new Error(
       'A human question requires attribution --by human:<name>; ask the human first.',
+    );
+  if (/^human:<[^<>]*>$/u.test(by))
+    throw new Error(
+      "Replace the placeholder in --by human:<NAME> with the human's name; ask the human first.",
     );
 }

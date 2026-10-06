@@ -104,7 +104,10 @@ export interface PendingQuestion extends QuestionRequest {
   readonly rejections: readonly QuestionRejection[];
   /** Whether recorded source bytes changed; null when no source paths were saved. */
   readonly codeChanged: boolean | null;
-  /** Argument vector; replace ANSWER_JSON with serialized data. Null in a disposed CLI rehearsal. */
+  /**
+   * Argument vector; replace ANSWER_JSON with serialized data and, for a human question, replace
+   * NAME in the trailing `--by human:<NAME>` with the human's name. Null in a disposed CLI rehearsal.
+   */
   readonly answerCommand: readonly string[] | null;
 }
 
