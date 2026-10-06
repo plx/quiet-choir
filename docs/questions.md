@@ -84,8 +84,9 @@ codes `answer_not_json`, `question_schema_invalid`, `answer_author` and `answer_
 (`answer.conflict`), as does a delivery whose run `workflow rm` removed meanwhile; that delivery is
 withdrawn while its path still holds an envelope addressed to the removed run
 ([storage](storage.md#removing-runs)). Successful delivery exits 0. `--resume` on `answer` combines
-delivery with resume and returns the resumed outcome. If resume fails, the delivery remains queued;
-run `resume` after fixing the cause, without answering again.
+delivery with resume, takes `resume`'s `--harness` (repeatable), `--harness-config`, `--wait-mode`
+and `--events`, and returns the resumed outcome. If resume fails, the delivery remains queued; run
+`resume` after fixing the cause, without answering again.
 
 `pending` lists only rows still awaiting an answer: a row whose answer is already queued, and rows
 of failed, cancelled or completed runs, are hidden (counted in `hidden`); `pending --all` lists

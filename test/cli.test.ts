@@ -31,7 +31,7 @@ import type { RunRecord } from '../src/workflow/runtime/store.js';
 import WorkflowTypecheck from '../src/commands/workflow/typecheck.js';
 import { TypeScriptExecutor } from '../src/workflow/typecheck/typescript-executor.js';
 import WorkflowValidate from '../src/commands/workflow/validate.js';
-import { it } from './setup/cli-capture.js';
+import { it, type CapturedCommand, type CliCapture } from './setup/cli-capture.js';
 
 const projectRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const temporaryDirectories: string[] = [];
@@ -442,6 +442,184 @@ describe('workflow lifecycle command adapters', () => {
     const output = await cli.run(WorkflowAnswer, ['test-run', 'approve', '--json', 'true']);
     expect(output.error).toBeUndefined();
     expect(JSON.parse(output.stdout)).toMatchObject({ kind: 'workflow.answer.result', delivery });
+  });
+
+  describe('answer --resume --harness', () => {
+    async function fixtureFile(name: string): Promise<string> {
+      const file = join(await stateDirectory(), name);
+      await writeFile(file, JSON.stringify({ version: 1, calls: [] }));
+      return file;
+    }
+
+    function resumingExecute() {
+      return vi
+        .spyOn(WorkflowExecutor.prototype, 'execute')
+        .mockResolvedValue({ kind: 'workflow.run.result', ok: true, run: runRecord });
+    }
+
+    async function answerResume(cli: CliCapture, extra: string[]): Promise<CapturedCommand> {
+      const stateDir = await stateDirectory();
+      return cli.run(WorkflowAnswer, [
+        'test-run',
+        'approve',
+        '--state-dir',
+        stateDir,
+        '--value',
+        'true',
+        '--resume',
+        ...extra,
+      ]);
+    }
+
+    it('applies repeated named fixtures and does not inherit the recorded selection', async ({
+      cli,
+    }) => {
+      const a = await fixtureFile('a.json');
+      const b = await fixtureFile('b.json');
+      const execute = resumingExecute();
+      const output = await answerResume(cli, [
+        '--harness',
+        `a=fixture:${a}`,
+        '--harness',
+        `b=fixture:${b}`,
+      ]);
+      expect(output.error).toBeUndefined();
+      expect(execute).toHaveBeenCalledOnce();
+      const plan = execute.mock.calls[0]?.[0];
+      expect(plan).toMatchObject({
+        kind: 'workflow.answer',
+        resume: true,
+        inheritHarness: false,
+        harness: {
+          kind: 'cli',
+          sources: [
+            { name: 'a', path: a },
+            { name: 'b', path: b },
+          ],
+        },
+      });
+      const named = (plan as { harness: { named: object } }).harness.named;
+      expect(Object.keys(named)).toEqual(['a', 'b']);
+    });
+
+    it('keeps the positionals when --harness values precede them', async ({ cli }) => {
+      const a = await fixtureFile('a.json');
+      const b = await fixtureFile('b.json');
+      const stateDir = await stateDirectory();
+      const execute = resumingExecute();
+      const single = await cli.run(WorkflowAnswer, [
+        '--state-dir',
+        stateDir,
+        '--resume',
+        '--value',
+        'true',
+        '--harness',
+        'cli',
+        'test-run',
+        'approve',
+      ]);
+      expect(single.error).toBeUndefined();
+      expect(execute.mock.calls[0]?.[0]).toMatchObject({
+        kind: 'workflow.answer',
+        runId: 'test-run',
+        stepId: 'approve',
+        harness: { kind: 'cli' },
+      });
+      const repeated = await cli.run(WorkflowAnswer, [
+        '--state-dir',
+        stateDir,
+        '--resume',
+        '--value',
+        'true',
+        '--harness',
+        `a=fixture:${a}`,
+        '--harness',
+        `b=fixture:${b}`,
+        'test-run',
+        'approve',
+      ]);
+      expect(repeated.error).toBeUndefined();
+      const plan = execute.mock.calls[1]?.[0];
+      expect(plan).toMatchObject({
+        runId: 'test-run',
+        stepId: 'approve',
+        harness: {
+          sources: [
+            { name: 'a', path: a },
+            { name: 'b', path: b },
+          ],
+        },
+      });
+      expect(Object.keys((plan as { harness: { named: object } }).harness.named)).toEqual([
+        'a',
+        'b',
+      ]);
+    });
+
+    it('combines a global fixture with a named one', async ({ cli }) => {
+      const global = await fixtureFile('global.json');
+      const a = await fixtureFile('a.json');
+      const execute = resumingExecute();
+      const output = await answerResume(cli, [
+        '--harness',
+        `fixture:${global}`,
+        '--harness',
+        `a=fixture:${a}`,
+      ]);
+      expect(output.error).toBeUndefined();
+      const plan = execute.mock.calls[0]?.[0];
+      expect(plan).toMatchObject({ inheritHarness: false, harness: { kind: 'fixture' } });
+      expect(Object.keys((plan as { harness: { named: object } }).harness.named)).toEqual(['a']);
+    });
+
+    it('inherits the recorded selection when --harness is omitted', async ({ cli }) => {
+      const execute = resumingExecute();
+      const output = await answerResume(cli, []);
+      expect(output.error).toBeUndefined();
+      expect(execute.mock.calls[0]?.[0]).toMatchObject({
+        kind: 'workflow.answer',
+        resume: true,
+        inheritHarness: true,
+      });
+    });
+
+    it('keeps a single --harness cli or fixture selection as before', async ({ cli }) => {
+      const x = await fixtureFile('x.json');
+      const execute = resumingExecute();
+      expect((await answerResume(cli, ['--harness', 'cli'])).error).toBeUndefined();
+      const cliPlan = execute.mock.calls[0]?.[0] as { harness: object };
+      expect(cliPlan).toMatchObject({ inheritHarness: false, harness: { kind: 'cli' } });
+      expect(cliPlan.harness).not.toHaveProperty('named');
+      expect((await answerResume(cli, ['--harness', `fixture:${x}`])).error).toBeUndefined();
+      const fixturePlan = execute.mock.calls[1]?.[0] as { harness: object };
+      expect(fixturePlan).toMatchObject({
+        inheritHarness: false,
+        harness: { kind: 'fixture', fixtures: { version: 1 }, sources: [{ path: x }] },
+      });
+      expect(fixturePlan.harness).not.toHaveProperty('named');
+    });
+
+    it('refuses two global values or a repeated name before delivering the answer', async ({
+      cli,
+    }) => {
+      const x = await fixtureFile('x.json');
+      const y = await fixtureFile('y.json');
+      const execute = resumingExecute();
+      const twoGlobal = await answerResume(cli, ['--harness', 'cli', '--harness', `fixture:${x}`]);
+      expect(twoGlobal.error).toMatchObject({ code: 'usage.flag', oclif: { exit: 2 } });
+      const repeated = await answerResume(cli, [
+        '--harness',
+        `a=fixture:${x}`,
+        '--harness',
+        `a=fixture:${y}`,
+      ]);
+      expect(repeated.error).toMatchObject({
+        code: 'usage.flag',
+        oclif: { exit: 2 },
+        message: expect.stringContaining('Duplicate --harness selection a') as unknown,
+      });
+      expect(execute).not.toHaveBeenCalled();
+    });
   });
 
   it.for([false, true])(
