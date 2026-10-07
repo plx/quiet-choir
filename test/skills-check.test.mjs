@@ -315,6 +315,16 @@ for (const [label, transform, expected] of [
     (text) => `${text}\n\`\`\`!\ndate\n\`\`\`\n`,
     /run\.md:\d+: Claude Code runs a fence whose info string starts with !/u,
   ],
+  [
+    'a command fence with ! nested inside a longer fence',
+    (text) => `${text}\n~~~~text\n\`\`\`!\ndate\n\`\`\`\n~~~~\n`,
+    /run\.md:\d+: Claude Code runs a fence whose info string starts with !/u,
+  ],
+  [
+    'an indented command fence whose info string starts with !',
+    (text) => `${text}\n    \`\`\`!\n    date\n    \`\`\`\n`,
+    /run\.md:\d+: Claude Code runs a fence whose info string starts with !/u,
+  ],
 ])
   test(`rejects ${label}`, async () => {
     await fixture(async (root) => {

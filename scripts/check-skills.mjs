@@ -95,16 +95,17 @@ const commandSubstitution = /\$(?:ARGUMENTS\b|\d|\{\d)/u;
  */
 function checkPreExecution(text, file) {
   text.split('\n').forEach((line, index) => {
+    const where = `${file}:${String(index + 1)}`;
     requireThat(
       !line.includes('!`'),
-      `${file}:${String(index + 1)}: Claude Code runs !\`...\` at load time, before the model reads the file; put the command in a shell fence for the model to run, with exported QC_* variables as commands/run.md does`,
+      `${where}: Claude Code runs !\`...\` at load time, before the model reads the file; put the command in a shell fence for the model to run, with exported QC_* variables as commands/run.md does`,
+    );
+    // A raw line scan, not the Markdown fence parser: Claude Code's match ignores nesting and indent.
+    requireThat(
+      !/^\s*(?:`{3,}|~{3,})\s*!/u.test(line),
+      `${where}: Claude Code runs a fence whose info string starts with ! at load time, before the model reads the file; use a shell fence for the model to run, with exported QC_* variables as commands/run.md does`,
     );
   });
-  for (const fence of fences(text, file))
-    requireThat(
-      !fence.language.startsWith('!'),
-      `${file}:${String(fence.start + 1)}: Claude Code runs a fence whose info string starts with ! at load time, before the model reads the file; use a shell fence for the model to run, with exported QC_* variables as commands/run.md does`,
-    );
 }
 /** Reject a shell fence line that starts with a bare launcher the reader may not have installed. */
 function checkShellFence(fence, file) {
