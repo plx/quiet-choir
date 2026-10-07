@@ -49,6 +49,8 @@ describe('stepEventError', () => {
     ['    at foo (file.js:1:1)'],
     ['    at file:///a/b.js:1:1'],
     ['    at async foo (file.js:1:1)'],
+    ['    at async file:///tmp/fail.mjs:12:3'],
+    ['    at new file:///tmp/fail.mjs:12:3'],
     ['    at new Foo (file.js:1:1)'],
     ['    at Array.map (native)'],
     ['    at Object.<anonymous> (<anonymous>)'],
@@ -56,6 +58,28 @@ describe('stepEventError', () => {
   ])('treats %j as a stack frame', (frame) => {
     expect(stepEventError(`boom\n${frame}\n    at bar (file.js:2:2)`)).toBe('boom');
     expect(stepEventError(frame)).toBeUndefined();
+  });
+
+  it('keeps a long message with no frame line and bounds it', () => {
+    const message = `Error: ${'word '.repeat(400)}\n  at the end of the batch\n(context: none)`;
+    const cut = stepEventError(message) ?? '';
+    expect(Array.from(cut)).toHaveLength(STEP_EVENT_ERROR_MAX_CHARS);
+    expect(cut.startsWith('Error: word word')).toBe(true);
+    expect(stepEventError('first\n    at foo (bar)\n    at baz qux\nlast')).toBe(
+      'first at foo (bar) at baz qux last',
+    );
+  });
+
+  it.each([
+    ['open parens', `failed\n    at ${'('.repeat(65536)}`],
+    ['nested parens with locations', `failed\n    at ${'f (a:1:1 '.repeat(20000)}x)`],
+    ['spaces before a mismatch', `failed\n    at ${' '.repeat(65536)}x`],
+    ['colons and digits', `failed\n    at ${':1'.repeat(40000)}x`],
+  ])('scans adversarial frame-like text in linear time (%s)', (_name, text) => {
+    const started = performance.now();
+    const result = stepEventError(text) ?? '';
+    expect(performance.now() - started).toBeLessThan(250);
+    expect(result.startsWith('failed at ')).toBe(true);
   });
 
   it.each([undefined, null, '', '  \n\t ', '    at foo (file.js:1:1)'])(
