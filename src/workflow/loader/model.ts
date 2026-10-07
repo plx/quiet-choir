@@ -150,6 +150,11 @@ export interface PendingWorkflowsPlan extends ExecutionPlan {
   readonly stateDir: string;
   /** List answered rows and rows of failed, cancelled or completed runs too. */
   readonly all?: boolean;
+  /**
+   * Only these runs; an unknown ID is run.not_found, an invalid one usage.run_id. Default hiding
+   * and all still apply.
+   */
+  readonly runIds?: readonly string[];
 }
 
 /** Read-only run-level compatibility inspection after checking/importing trusted source. */

@@ -13,7 +13,9 @@ import {
   type StateDirectoryOptions,
 } from './paths.js';
 import { readRun, listRunIds, type RunRecord } from './store.js';
-import { isValidRunId, runIdMessage } from './run-errors.js';
+import { isValidRunId, runIdMessage, RunRefusedError } from './run-errors.js';
+import { errorCode } from './checkpoint.js';
+import { holdsRun, unreadableRunError } from './read-required-run.js';
 import { answerEnvelopeSchema, validateAnswerAuthor } from './question-schema.js';
 import type { JsonValue } from './model.js';
 import type { PendingDelivery, PendingListing, PendingOperation } from './wait-model.js';
@@ -434,6 +436,28 @@ async function readDelivery(
   return { state: 'none', at: null, by: null };
 }
 
+/** One run's waiting rows with run and delivery state, or null when it has none. */
+async function pendingGroup(
+  run: RunRecord,
+  stateDir: string,
+  launcher: CommandLauncher | undefined,
+): Promise<{ run: RunRecord; pending: PendingListing[] } | null> {
+  const operations = await pendingOperations(run, stateDir, launcher);
+  if (!operations.length) return null;
+  return {
+    run,
+    pending: await Promise.all(
+      operations.map(async (operation) => ({
+        ...operation,
+        runStatus: run.status,
+        delivery: operation.answerCommand
+          ? await readDelivery(stateDir, run, operation.stepId)
+          : null,
+      })),
+    ),
+  };
+}
+
 /** Every run's waiting rows with run and delivery state, one group per run that has any. @internal */
 export async function listPendingRuns(
   options: ListPendingOptions = {},
@@ -441,23 +465,44 @@ export async function listPendingRuns(
   const stateDir = resolveStateDir(options);
   const groups: { run: RunRecord; pending: PendingListing[] }[] = [];
   for (const runId of await listRunIds(stateDir)) {
-    const run = await readRun({ stateDir, runId });
-    const operations = await pendingOperations(run, stateDir, options.commandLauncher);
-    if (!operations.length) continue;
-    groups.push({
-      run,
-      pending: await Promise.all(
-        operations.map(async (operation) => ({
-          ...operation,
-          runStatus: run.status,
-          delivery: operation.answerCommand
-            ? await readDelivery(stateDir, run, operation.stepId)
-            : null,
-        })),
-      ),
-    });
+    const group = await pendingGroup(
+      await readRun({ stateDir, runId }),
+      stateDir,
+      options.commandLauncher,
+    );
+    if (group) groups.push(group);
   }
   return groups;
+}
+
+/**
+ * Waiting rows of only the named runs in one container, in the given order. Reads those records
+ * and no others, so a damaged neighbour cannot fail the call. `found` names the IDs whose record
+ * exists here, whether or not the run is waiting; a record that is absent (ENOENT) is skipped, any
+ * other read failure is `run.unreadable`, and a refusal such as `run.incompatible` propagates.
+ * @internal
+ */
+export async function listPendingRunsById(
+  options: ListPendingOptions & { readonly runIds: readonly string[] },
+): Promise<{ groups: { run: RunRecord; pending: PendingListing[] }[]; found: string[] }> {
+  const stateDir = resolveStateDir(options);
+  const groups: { run: RunRecord; pending: PendingListing[] }[] = [];
+  const found: string[] = [];
+  for (const runId of options.runIds) {
+    let run: RunRecord;
+    try {
+      run = await readRun({ stateDir, runId });
+    } catch (cause) {
+      if (cause instanceof RunRefusedError) throw cause;
+      // A record with a missing part, such as a lost journal, is damaged, not absent.
+      if (errorCode(cause) === 'ENOENT' && !(await holdsRun(stateDir, runId))) continue;
+      throw unreadableRunError({ stateDir, runId }, cause);
+    }
+    found.push(runId);
+    const group = await pendingGroup(run, stateDir, options.commandLauncher);
+    if (group) groups.push(group);
+  }
+  return { groups, found };
 }
 
 /**

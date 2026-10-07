@@ -88,7 +88,12 @@ import { formatDurabilityDiagnostic } from '../typecheck/model.js';
 import { fingerprintSources, workflowLaunch } from './source.js';
 import { formatRateLimitWindows, readRateLimit } from '../runtime/rate-limit.js';
 import type { WorkflowEvent } from '../runtime/runner.js';
-import { AnswerError, listPendingRuns, writeAnswer } from '../runtime/inbox.js';
+import {
+  AnswerError,
+  listPendingRuns,
+  listPendingRunsById,
+  writeAnswer,
+} from '../runtime/inbox.js';
 import { selectPendingRows } from './pending-listing.js';
 import { canonicalCwd, compareResume, workflowSnapshot } from '../runtime/compatibility.js';
 import type {
@@ -482,20 +487,36 @@ export class WorkflowExecutor implements Executor<WorkflowExecutorPlan, Workflow
         });
       }
       if (plan.kind === 'workflow.pending') {
+        if (plan.runIds?.some((runId) => !isValidRunId(runId)))
+          return workflowFailure('usage.run_id', runIdMessage, context);
         stage = 'run.unreadable';
+        const launcher = this.#options.commandLauncher;
+        const found = new Set<string>();
         const selections = await Promise.all(
-          [...new Set([plan.stateDir, ...(plan.additionalStateDirs ?? [])])].map(async (stateDir) =>
-            selectPendingRows(
-              await listPendingRuns({
-                stateDir,
-                ...(this.#options.commandLauncher === undefined
-                  ? {}
-                  : { commandLauncher: this.#options.commandLauncher }),
-              }),
-              { all: plan.all ?? false, stateDir, launcher: this.#options.commandLauncher },
-            ),
+          [...new Set([plan.stateDir, ...(plan.additionalStateDirs ?? [])])].map(
+            async (stateDir) => {
+              let groups;
+              if (plan.runIds === undefined)
+                groups = await listPendingRuns({
+                  stateDir,
+                  ...(launcher === undefined ? {} : { commandLauncher: launcher }),
+                });
+              else {
+                const listed = await listPendingRunsById({
+                  stateDir,
+                  runIds: plan.runIds,
+                  ...(launcher === undefined ? {} : { commandLauncher: launcher }),
+                });
+                for (const runId of listed.found) found.add(runId);
+                groups = listed.groups;
+              }
+              return selectPendingRows(groups, { all: plan.all ?? false, stateDir, launcher });
+            },
           ),
         );
+        const missing = plan.runIds?.find((runId) => !found.has(runId));
+        if (missing !== undefined)
+          throw await missingRunError({ stateDir: plan.stateDir, runId: missing });
         return {
           kind: 'workflow.pending.result',
           ok: true,

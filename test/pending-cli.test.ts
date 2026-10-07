@@ -2,7 +2,7 @@
 // runs: the delivery state a queued answer leaves behind, the default listing filter, and the
 // structured issues of a refused answer. No workflow code is imported by either command.
 import { createHash } from 'node:crypto';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -165,6 +165,160 @@ describe('workflow pending and answer', () => {
     expect(text.text).toBe(
       'No pending waits.\n1 hidden (answered, or from ended runs); --all lists them.',
     );
+  });
+});
+
+describe('workflow pending --run', () => {
+  const state = (): string[] => ['--state-dir', stateDir];
+  const asker = (name: string) =>
+    defineWorkflow({
+      name,
+      version: '1',
+      input: z.null(),
+      output: z.unknown(),
+      run: (ctx) => ctx.approve('gate', { prompt: `Ship ${name}?` }),
+    });
+  async function suspend(runId: string): Promise<void> {
+    const sha256 = createHash('sha256')
+      .update(await readFile(fixture))
+      .digest('hex');
+    const policy = {
+      harness: { kind: 'fixture' as const, fixtures: [{ path: fixture, sha256 }] },
+      waitMode: 'suspend' as const,
+    };
+    const run = await runWorkflow(asker(runId), {
+      stateDir,
+      runId,
+      input: null,
+      launch: { entrypoint, tsconfig: null, policy },
+    });
+    expect(run.status).toBe('suspended');
+  }
+  const ids = (document: unknown): string[] =>
+    (document as PendingDocument).pending.map((row) => row.runId);
+
+  it('lists only the named runs, in text and JSON, once each', async () => {
+    await suspend('ask-run');
+    await suspend('other-run');
+    expect(ids((await capture(WorkflowPending, [...state(), '--json'])).document).sort()).toEqual([
+      'ask-run',
+      'other-run',
+    ]);
+
+    const one = await capture(WorkflowPending, [...state(), '--run', 'ask-run', '--json']);
+    expect(ids(one.document)).toEqual(['ask-run']);
+    expect((one.document as PendingDocument).hidden).toBe(0);
+
+    const text = await capture(WorkflowPending, [...state(), '--run', 'ask-run']);
+    expect(text.text).toContain('ask-run gate');
+    expect(text.text).not.toContain('other-run');
+
+    const both = await capture(WorkflowPending, [
+      ...state(),
+      '--run',
+      'other-run',
+      '--run',
+      'ask-run',
+      '--run',
+      'other-run',
+      '--json',
+    ]);
+    expect(ids(both.document)).toEqual(['other-run', 'ask-run']);
+  });
+
+  it('refuses an unknown run with run.not_found and an invalid one with usage.run_id', async () => {
+    await suspend('ask-run');
+    const unknown = await capture(WorkflowPending, [
+      ...state(),
+      '--run',
+      'ask-run',
+      '--run',
+      'no-such-run',
+      '--json',
+    ]);
+    const missing = unknown.document as {
+      exitCode: number;
+      error: { code: string; message: string; details: { runId: string; available: string[] } };
+    };
+    expect(missing.exitCode).toBe(3);
+    expect(missing.error.code).toBe('run.not_found');
+    expect(missing.error.message).toContain('no-such-run');
+    expect(missing.error.details).toMatchObject({ runId: 'no-such-run', available: ['ask-run'] });
+
+    const invalid = await capture(WorkflowPending, [...state(), '--run', 'bad id!', '--json']);
+    const usage = invalid.document as { exitCode: number; error: { code: string } };
+    expect(usage.exitCode).toBe(2);
+    expect(usage.error.code).toBe('usage.run_id');
+  });
+
+  it('composes with default hiding and --all, counting only the selected runs', async () => {
+    await suspend('ask-run');
+    await suspend('other-run');
+    const queued = await capture(WorkflowAnswer, [
+      'ask-run',
+      'gate',
+      '--json',
+      '{"approved":true}',
+      ...state(),
+    ]);
+    expect(queued.error).toBeUndefined();
+
+    const hiddenDefault = (
+      await capture(WorkflowPending, [...state(), '--run', 'ask-run', '--json'])
+    ).document as PendingDocument;
+    expect(hiddenDefault.pending).toEqual([]);
+    expect(hiddenDefault.hidden).toBe(1);
+    const text = await capture(WorkflowPending, [...state(), '--run', 'ask-run']);
+    expect(text.text).toBe(
+      'No pending waits.\n1 hidden (answered, or from ended runs); --all lists them.',
+    );
+
+    const all = (
+      await capture(WorkflowPending, [...state(), '--run', 'ask-run', '--all', '--json'])
+    ).document as PendingDocument;
+    expect(all.hidden).toBe(0);
+    expect(all.pending).toHaveLength(1);
+    expect(all.pending[0]).toMatchObject({ runId: 'ask-run', delivery: { state: 'queued' } });
+    expect(all.pending[0]?.next).toHaveLength(1);
+
+    const other = (await capture(WorkflowPending, [...state(), '--run', 'other-run', '--json']))
+      .document as PendingDocument;
+    expect(ids(other)).toEqual(['other-run']);
+    expect(other.hidden).toBe(0);
+  });
+
+  it('answers a known run with no waiting rows as an empty listing', async () => {
+    await suspend('ask-run');
+    await runWorkflow(
+      defineWorkflow({
+        name: 'done',
+        version: '1',
+        input: z.null(),
+        output: z.null(),
+        run: () => Promise.resolve(null),
+      }),
+      { stateDir, runId: 'done-run', input: null },
+    );
+    const listed = await capture(WorkflowPending, [...state(), '--run', 'done-run', '--json']);
+    expect(listed.document).toMatchObject({ ok: true, pending: [], hidden: 0 });
+    expect((await capture(WorkflowPending, [...state(), '--run', 'done-run'])).text).toBe(
+      'No pending waits.',
+    );
+  });
+
+  it('does not fail on a damaged record of another run', async () => {
+    await suspend('ask-run');
+    await mkdir(join(stateDir, 'broken-run'), { recursive: true });
+    await writeFile(join(stateDir, 'broken-run', 'run.json'), '{ not json');
+
+    const unfiltered = await capture(WorkflowPending, [...state(), '--json']);
+    expect((unfiltered.document as { error: { code: string } }).error.code).toBe('run.unreadable');
+
+    const filtered = await capture(WorkflowPending, [...state(), '--run', 'ask-run', '--json']);
+    expect(ids(filtered.document)).toEqual(['ask-run']);
+
+    const damaged = await capture(WorkflowPending, [...state(), '--run', 'broken-run', '--json']);
+    expect((damaged.document as { error: { code: string } }).error.code).toBe('run.unreadable');
   });
 });
 

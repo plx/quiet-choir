@@ -14,7 +14,8 @@ export interface RunCandidate {
 /** At most this many candidate roots are reported for a missing run. @internal */
 export const maxRunCandidates = 10;
 
-async function holdsRun(stateDir: string, runId: string): Promise<boolean> {
+/** Whether the container has a run record (directory or legacy file) for the ID, readable or not. @internal */
+export async function holdsRun(stateDir: string, runId: string): Promise<boolean> {
   for (const path of [join(stateDir, runId, 'run.json'), join(stateDir, `${runId}.json`)])
     try {
       await lstat(path);
