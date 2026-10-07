@@ -290,6 +290,51 @@ for (const [label, transform, expected] of [
     (text) => `${text}\n\`\`\`sh\necho "$1"\n\`\`\`\n`,
     /run\.md:\d+: command fence uses \$ARGUMENTS or a positional/u,
   ],
+  [
+    'pre-execution syntax in command prose',
+    (text) => `${text}\nToday is !\`date\`.\n`,
+    /run\.md:\d+: Claude Code runs !`\.\.\.` at load time/u,
+  ],
+  [
+    'pre-execution syntax in a command shell fence',
+    (text) => `${text}\n\`\`\`sh\necho !\`date\`\n\`\`\`\n`,
+    /run\.md:\d+: Claude Code runs !`/u,
+  ],
+  [
+    'pre-execution syntax in command inline code',
+    (text) => `${text}\nRun \`!\`date\`\` here.\n`,
+    /run\.md:\d+: Claude Code runs !`/u,
+  ],
+  [
+    'pre-execution syntax in a command HTML comment',
+    (text) => `${text}\n<!-- !\`date\` -->\n`,
+    /run\.md:\d+: Claude Code runs !`/u,
+  ],
+  [
+    'a command fence whose info string starts with !',
+    (text) => `${text}\n\`\`\`!\ndate\n\`\`\`\n`,
+    /run\.md:\d+: Claude Code runs a fence whose info string starts with !/u,
+  ],
+  [
+    'a command fence with ! nested inside a longer fence',
+    (text) => `${text}\n~~~~text\n\`\`\`!\ndate\n\`\`\`\n~~~~\n`,
+    /run\.md:\d+: Claude Code runs a fence whose info string starts with !/u,
+  ],
+  [
+    'an indented command fence whose info string starts with !',
+    (text) => `${text}\n    \`\`\`!\n    date\n    \`\`\`\n`,
+    /run\.md:\d+: Claude Code runs a fence whose info string starts with !/u,
+  ],
+  [
+    'a command fence marker after other text in an HTML comment',
+    (text) => `${text}\n<!-- \`\`\`!printf preexecution\`\`\` -->\n`,
+    /run\.md:\d+: Claude Code runs a fence whose info string starts with !/u,
+  ],
+  [
+    'a command fence marker after other text in prose',
+    (text) => `${text}\nsee \`\`\`!date\`\`\` here\n`,
+    /run\.md:\d+: Claude Code runs a fence whose info string starts with !/u,
+  ],
 ])
   test(`rejects ${label}`, async () => {
     await fixture(async (root) => {
@@ -297,6 +342,36 @@ for (const [label, transform, expected] of [
       await assert.rejects(checkSkills(root, { compile: false }), expected);
     });
   });
+test('pre-execution syntax in a command is rejected at its line', async () => {
+  await fixture(async (root) => {
+    const before = (await readFile(command(root), 'utf8')).split('\n').length;
+    await editCommand(root, (text) => `${text}\nfirst\nToday is !\`date\`.\n`);
+    // The appended text starts on the file's last (empty) line; the span is two lines later.
+    await assert.rejects(
+      checkSkills(root, { compile: false }),
+      new RegExp(`run\\.md:${String(before + 2)}: Claude Code runs !`, 'u'),
+    );
+  });
+});
+test('pre-execution syntax in SKILL.md is rejected at its line', async () => {
+  await fixture(async (root) => {
+    const before = (await readFile(skill(root), 'utf8')).split('\n').length;
+    await append(root, '\nfirst\nToday is !`date`.\n');
+    await assert.rejects(
+      checkSkills(root, { compile: false }),
+      new RegExp(`SKILL\\.md:${String(before + 2)}: Claude Code runs !`, 'u'),
+    );
+  });
+});
+test('shell negation and a lone backtick are not pre-execution syntax', async () => {
+  await fixture(async (root) => {
+    const text =
+      '\nUse ! to negate, `code`, or a lone ` backtick.\n\n```sh\nif ! true; then echo `date`; fi\n```\n';
+    await editCommand(root, (body) => body + text);
+    await append(root, text);
+    await checkSkills(root, { compile: false });
+  });
+});
 test('a broken TypeScript example in a command is rejected at its line', async () => {
   await fixture(async (root) => {
     await editCommand(

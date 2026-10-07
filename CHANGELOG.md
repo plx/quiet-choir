@@ -2,6 +2,12 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- `skills:check` pre-execution syntax (addition; no runtime, record format, `schemaRevision` or step
+  identity change): rejects Claude Code's !`cmd` pre-execution syntax, and a fence whose info string
+  starts with `!`, anywhere in a plugin command or `SKILL.md` (prose, inline code, fences and
+  comments included), naming the file and line, so a command cannot silently run shell when it loads
+  (#272).
+
 - `workflow pending --run RUN` (addition; no record format, `schemaRevision` or step identity
   change): lists only the named runs, repeatable. It composes with the default hiding and `--all`
   (`hidden` counts only the named runs), a known run with nothing waiting lists nothing, an invalid
