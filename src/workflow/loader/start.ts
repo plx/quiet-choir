@@ -54,6 +54,12 @@ export interface StartWorkflowPlan extends ExecutionPlan {
   readonly timeoutMs: number;
   /** SIGTERM grace for the runner's own cleanup; start waits this plus 2 s before SIGKILL. */
   readonly killGraceMs: number;
+  /**
+   * With `resume`: stop the live recorded children of a dead owner of the run's legacy guard, which
+   * start recovers itself before spawning. Recovery of the primary lock stays with the runner,
+   * which gets `--kill-orphans` in its argv.
+   */
+  readonly killOrphans?: boolean;
 }
 
 /** A started run: its runner owns (or already finished) the record, and keeps running detached. */
@@ -259,7 +265,8 @@ async function launchRefusal(
  * guard fails with `run.locked`. @internal
  */
 export async function prepareStartLaunch(
-  plan: Pick<StartWorkflowPlan, 'runId' | 'stateDir' | 'cwd' | 'stdinInput' | 'resume'>,
+  plan: Pick<StartWorkflowPlan, 'runId' | 'stateDir' | 'cwd' | 'stdinInput' | 'resume'> &
+    Partial<Pick<StartWorkflowPlan, 'killOrphans' | 'killGraceMs'>>,
   signal?: AbortSignal,
   commandLauncher?: CommandLauncher,
 ): Promise<{ readonly ok: true; readonly files: LaunchFiles } | WorkflowFailure> {
@@ -289,7 +296,19 @@ export async function prepareStartLaunch(
           );
         }
       },
-      { cwd: plan.cwd, commandLauncher, ...(signal === undefined ? {} : { signal }) },
+      {
+        cwd: plan.cwd,
+        commandLauncher,
+        // A dead owner's legacy guard is recovered here, before the runner exists, so a resume's
+        // --kill-orphans applies to it too. A new run has no legacy children to stop.
+        ...(plan.resume === true && plan.killOrphans === true
+          ? {
+              killOrphans: true,
+              ...(plan.killGraceMs === undefined ? {} : { killGraceMs: plan.killGraceMs }),
+            }
+          : {}),
+        ...(signal === undefined ? {} : { signal }),
+      },
     );
   } catch (error) {
     // Only a failed guard release reaches here with files open; nothing will launch with them.
@@ -297,7 +316,9 @@ export async function prepareStartLaunch(
     if (error instanceof RunRefusedError)
       return workflowFailure(
         error.code,
-        `Run ID ${runId} is locked or being removed; retry once it is free. ${error.message}`,
+        error.code === 'run.orphans'
+          ? error.message
+          : `Run ID ${runId} is locked or being removed; retry once it is free. ${error.message}`,
         {
           // A new run is not this start's to own (the failure keeps no run ID), but its unlock entry
           // names the run the guard refused. A resume names the existing run it was refused.

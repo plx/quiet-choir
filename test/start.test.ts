@@ -1,3 +1,5 @@
+import { spawn } from 'node:child_process';
+import { once } from 'node:events';
 import { existsSync } from 'node:fs';
 import { mkdir, mkdtemp, open, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { hostname, tmpdir } from 'node:os';
@@ -7,7 +9,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { defineWorkflow, NodeProcessRunner, runWorkflow, z } from '../src/index.js';
 import { ProcessSupervisor } from '../src/processes/supervisor.js';
-import { pidState } from '../src/processes/identity.js';
+import { groupState, pidState, processIdentity } from '../src/processes/identity.js';
 import type { WorkflowFailure } from '../src/workflow/loader/failure.js';
 import { listRuns } from '../src/workflow/loader/inspection.js';
 import { writeRunnerIdentity } from '../src/workflow/runtime/launch-leftovers.js';
@@ -468,6 +470,58 @@ describe('StartWorkflowExecutor', () => {
     expect(failure.next?.[0]?.argv.slice(0, 4)).toEqual(['qc', 'workflow', 'unlock', 'r1']);
     expect(existsSync(marker())).toBe(false);
   });
+
+  it.skipIf(process.platform === 'win32')(
+    'recovers a dead owner’s legacy guard children for a resume only with killOrphans',
+    async () => {
+      await mkdir(stateDir, { recursive: true });
+      await writeFile(join(stateDir, 'r1.json'), '{}');
+      const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {
+        detached: true,
+        stdio: 'ignore',
+      });
+      const pid = child.pid;
+      if (pid === undefined) throw new Error('Missing fixture PID');
+      spawned.push(pid);
+      await delay(50);
+      const guard = join(stateDir, 'r1.json.lock');
+      await mkdir(join(guard, 'processes'), { recursive: true });
+      await writeFile(
+        join(guard, 'owner.json'),
+        JSON.stringify({ pid: 2_000_000_000, host: hostname(), token: 'old' }),
+      );
+      await writeFile(
+        join(guard, 'processes', `${String(pid)}.json`),
+        JSON.stringify({
+          pid,
+          pgid: pid,
+          binary: 'fake-harness',
+          cwd: root,
+          startedAt: new Date().toISOString(),
+          osStartTime: processIdentity(pid)?.start ?? null,
+          runId: 'r1',
+          stepId: 'review',
+          attempt: 1,
+          ownerToken: 'old',
+        }),
+      );
+      const base = { runId: 'r1', stateDir, cwd: root, killGraceMs: 100 };
+
+      // Without --kill-orphans the child is neither stopped nor recovered.
+      const refused = await prepareStartLaunch({ ...base, resume: true });
+      expect(refused).toMatchObject({ ok: false, code: 'run.orphans' });
+      expect(groupState({ pid, pgid: pid })).toBe('alive');
+      expect((refused as WorkflowFailure).message).not.toContain('locked or being removed');
+      expect((refused as WorkflowFailure).message).toContain('--kill-orphans');
+
+      const exited = once(child, 'exit');
+      const prepared = await prepareStartLaunch({ ...base, resume: true, killOrphans: true });
+      expect(prepared).toMatchObject({ ok: true });
+      if ('files' in prepared) await Promise.all(prepared.files.handles.map((h) => h.close()));
+      await exited;
+      expect(groupState({ pid, pgid: pid })).toBe('dead');
+    },
+  );
 
   it('reports a runner that cannot be spawned', async () => {
     const failure = failed(

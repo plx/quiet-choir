@@ -26,9 +26,13 @@ and the host would read the old `suspended` or `failed` status as progress.
 - `--resume` is accepted. `start --resume --run-id ID [FILE]` resumes an existing run detached. FILE
   is optional as for execute, and `--resume` without `--run-id` is refused before spawning with
   `usage.resume_requires_run_id`, because a generated ID can never exist.
-- `--kill-orphans` is accepted with `--resume`. Orphan recovery runs while the runner acquires the
-  lock, before it owns the run. A `run.orphans` refusal comes back as the runner's failure document,
-  and the start timeout also covers recovery, including its kill grace.
+- `--kill-orphans` is accepted with `--resume`. Recovery of the primary lock runs while the runner
+  acquires it, before it owns the run. A `run.orphans` refusal comes back as the runner's failure
+  document, and the start timeout also covers that recovery, including its kill grace. Start itself
+  takes the run's legacy guard (`<runId>.json.lock`) before spawning, so it also recovers a dead
+  owner's legacy guard there: with `--kill-orphans` it stops that guard's identity-confirmed
+  children, and without it it refuses with `run.orphans`. That recovery happens before the runner
+  exists, so `--start-timeout` does not cover it.
 - `--accept-code-change` is accepted with `--resume`. Its preflight refusals happen before the
   execution is recorded and come back as the runner's own error. Both flags already depend on
   `--resume` in execute's flag table, so oclif enforces the pairing.

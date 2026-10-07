@@ -530,7 +530,10 @@ document, such an execution counts whatever the document says, and so does a suc
 readable record (a completed run, whose resume returns the stored output without a new execution).
 Any other document is reported with the runner's own code and the run's `runId`, for example
 `run.locked`, `run.orphans`, `run.incompatible` or `run.input_changed`. `--start-timeout` also
-covers `--kill-orphans` recovery and the `--accept-code-change` preflight. Success (exit 0) is
+covers the runner's `--kill-orphans` recovery of the primary lock and the `--accept-code-change`
+preflight. A dead owner's legacy guard (`<runId>.json.lock`) is checked by start itself before it
+spawns, so with `--kill-orphans` start stops its identity-confirmed children there, outside
+`--start-timeout`, and without the flag it refuses with `run.orphans`. Success (exit 0) is
 
 ```json
 {
