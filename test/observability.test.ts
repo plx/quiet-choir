@@ -16,6 +16,7 @@ import {
   type WorkflowEvent,
 } from '../src/index.js';
 import { MAX_RUN_EVENTS } from '../src/workflow/runtime/observability.js';
+import { recordEventLines } from '../src/workflow/loader/event-follow.js';
 import { summarizeRun } from '../src/workflow/loader/inspection.js';
 
 let stateDir: string;
@@ -555,4 +556,149 @@ it('isolates persisted log data from observers that mutate, throw, or reject', a
     { count: 2 },
   ]);
   expect((await readRun(options())).status).toBe('completed');
+});
+
+async function failureEvents(
+  run: (ctx: WorkflowContext) => Promise<unknown>,
+  extra: { signal?: AbortSignal; runId?: string } = {},
+): Promise<WorkflowEvent[]> {
+  const events: WorkflowEvent[] = [];
+  await runWorkflow(workflow(run), {
+    ...options(),
+    ...extra,
+    onEvent: (event) => {
+      events.push(event);
+    },
+  }).catch(() => undefined);
+  return events;
+}
+
+it('carries each attempt of a failing step as the error of its step.failed event', async () => {
+  let calls = 0;
+  const events = await failureEvents((ctx) =>
+    ctx.step('flaky', {
+      input: null,
+      schema: z.string(),
+      retry: { maxAttempts: 2, delayMs: 0 },
+      run: () => {
+        calls += 1;
+        throw new Error(calls === 1 ? 'first' : 'second');
+      },
+    }),
+  );
+  const failed = events.filter((event) => event.type === 'step.failed');
+  expect(failed.map((event) => [event.attempt, event.error])).toEqual([
+    [1, 'first'],
+    [2, 'second'],
+  ]);
+  expect(failed.every((event) => event.message === undefined)).toBe(true);
+  // Other step events never carry the field.
+  expect(events.filter((event) => event.error !== undefined)).toHaveLength(2);
+});
+
+it('bounds a long multi-line step error to one line of at most 500 code points without a stack', async () => {
+  const long = `${'x'.repeat(600)}\n${'😀'.repeat(600)}`;
+  const events = await failureEvents(async (ctx) => {
+    await ctx.step('long', {
+      input: null,
+      schema: z.string(),
+      run: () => {
+        throw new Error(long);
+      },
+    });
+  });
+  const error = events.find((event) => event.type === 'step.failed')?.error ?? '';
+  expect(error).not.toMatch(/\n/);
+  expect(Array.from(error)).toHaveLength(500);
+  expect(error.endsWith('…')).toBe(true);
+  const stacked = await failureEvents(
+    async (ctx) => {
+      await ctx.step('stacked', {
+        input: null,
+        schema: z.string(),
+        run: () => {
+          throw new Error('boom\n    at foo (file.js:1:1)\n    at bar (file.js:2:2)');
+        },
+      });
+    },
+    { runId: 'stacked-run' },
+  );
+  expect(stacked.find((event) => event.type === 'step.failed')?.error).toBe('boom');
+  // The record keeps the full text.
+  expect((await readRun({ ...options(), runId: 'stacked-run' })).steps['stacked']?.error).toContain(
+    'at foo',
+  );
+});
+
+it('keeps a step error that starts with "at " on its events and event-follow lines', async () => {
+  const events = await failureEvents(
+    async (ctx) => {
+      await ctx.step('quorum', {
+        input: null,
+        schema: z.string(),
+        run: () => {
+          throw new Error('at least one reviewer is required');
+        },
+      });
+    },
+    { runId: 'at-message' },
+  );
+  expect(events.find((event) => event.type === 'step.failed')?.error).toBe(
+    'at least one reviewer is required',
+  );
+  const soft = await failureEvents(
+    async (ctx) => {
+      await ctx.step('soft', {
+        input: null,
+        schema: z.string(),
+        onError: 'return',
+        run: () => {
+          throw new Error('Failed:\nat noon the job stopped');
+        },
+      });
+    },
+    { runId: 'at-settled' },
+  );
+  expect(soft.find((event) => event.type === 'step.settled')?.error).toBe(
+    'Failed: at noon the job stopped',
+  );
+  const followed = async (runId: string, ev: string) =>
+    recordEventLines(await readRun({ ...options(), runId }), null, 'all')
+      .lines.map((line) => JSON.parse(line) as { ev: string; msg?: string })
+      .find((line) => line.ev === ev)?.msg;
+  expect(await followed('at-message', 'step.failed')).toBe('at least one reviewer is required');
+  expect(await followed('at-settled', 'step.settled')).toBe('Failed: at noon the job stopped');
+});
+
+it('carries the error on step.settled for onError: return and none on step.cancelled', async () => {
+  const settled = await failureEvents(async (ctx) => {
+    const result = await ctx.step('soft', {
+      input: null,
+      schema: z.string(),
+      onError: 'return',
+      run: () => {
+        throw new Error('soft failure');
+      },
+    });
+    return result.ok;
+  });
+  expect(settled.filter((event) => event.type === 'step.failed')).toEqual([]);
+  expect(settled.find((event) => event.type === 'step.settled')?.error).toBe('soft failure');
+
+  const controller = new AbortController();
+  const cancelled = await failureEvents(
+    async (ctx) => {
+      await ctx.step('stopped', {
+        input: null,
+        schema: z.string(),
+        run: () => {
+          controller.abort(new Error('stop'));
+          throw new Error('aborted work');
+        },
+      });
+    },
+    { signal: controller.signal, runId: 'cancelled-run' },
+  );
+  expect(cancelled.some((event) => event.type === 'step.cancelled')).toBe(true);
+  expect(cancelled.filter((event) => event.error !== undefined)).toEqual([]);
 });

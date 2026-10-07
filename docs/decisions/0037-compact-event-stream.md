@@ -4,6 +4,9 @@
 - Issue: #139
 - Amended by #223: `wait.tolerated` joins the written types; its `msg` is
   `tolerated N/LIMIT: message`, with ` [code]` after LIMIT when the error had a string code.
+- Amended by #267: `step.failed` and `step.settled` lines carry the step's error text as `msg`, from
+  a new optional `WorkflowEvent.error` bounded to one line of at most 500 characters with no stack
+  (the `message` field is untouched, so the debug log is unchanged).
 
 ## Context
 
@@ -68,7 +71,8 @@ callback, beside rehearsal and the notification hook.
   line is visible as soon as the runner emits it, and the Claude skill's "Drive a run from Claude
   Code" recipe uses that with `run_in_background` and Monitor.
 - The stream is best effort. A crash can lose the event of a transition that was saved, and a line
-  carries no step error text; the checkpoint and `inspect` remain the source of truth.
-- `WorkflowEvent`, the notification hook and the debug logger are unchanged. Adding a step error
-  message or failure categories is separate work; `workflow events --follow` followed in
+  carries only a bounded, single-line step error without its stack; the checkpoint and `inspect`
+  remain the source of truth.
+- The notification hook and the debug logger are unchanged; `WorkflowEvent` gained the optional
+  `error` field (#267). Failure categories are separate work; `workflow events --follow` followed in
   [ADR 0038](0038-code-free-event-follower.md).

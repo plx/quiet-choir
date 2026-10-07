@@ -108,7 +108,7 @@ describe('formatEventLine', () => {
           harness: 'codex',
           at: at(40),
           phase: 'review',
-          message: 'boom',
+          error: 'boom',
           usage: { inputTokens: null, outputTokens: null, costUsd: 0.5 },
         }),
         memory,
@@ -122,6 +122,27 @@ describe('formatEventLine', () => {
     expect(line(event({ type: 'step.settled', attempt: 3 }))?.attempt).toBe(3);
     expect(line(event({ type: 'step.completed', attempt: 3 }))).not.toHaveProperty('attempt');
     expect(line(event({ type: 'wait.opened', attempt: 3 }))).not.toHaveProperty('attempt');
+  });
+
+  it('writes the step error as msg on step.failed and step.settled only', () => {
+    expect(line(event({ type: 'step.failed', error: 'boom' }))?.msg).toBe('boom');
+    expect(line(event({ type: 'step.settled', error: 'boom' }))?.msg).toBe('boom');
+    expect(line(event({ type: 'step.failed' }))).not.toHaveProperty('msg');
+    // The replay-divergence style message is never taken for a step failure.
+    expect(line(event({ type: 'step.failed', message: 'other' }))).not.toHaveProperty('msg');
+    expect(line(event({ type: 'step.completed', error: 'boom' }))).not.toHaveProperty('msg');
+    expect(
+      formatEventLine(event({ type: 'step.cancelled', error: 'boom' }), new EventLineMemory()),
+    ).toBeNull();
+  });
+
+  it('keeps a line with an oversized step error within the byte cap', () => {
+    const text = formatEventLine(
+      event({ type: 'step.failed', stepId: 'a/'.repeat(80), error: 'e'.repeat(500) }),
+      new EventLineMemory(),
+    );
+    expect(Buffer.byteLength(text ?? '')).toBeLessThanOrEqual(EVENT_LINE_MAX_BYTES);
+    expect(JSON.parse(text ?? '')).toHaveProperty('msg');
   });
 
   it('takes costUsd from usage and omits a null or missing cost', () => {
@@ -456,7 +477,14 @@ describe('shared formatter', () => {
     event({ type: 'agent.started', stepId: 'a', at: at(10), harness: 'codex' }),
     event({ type: 'step.started', stepId: 'b', at: at(20), phase: 'review' }),
     event({ type: 'agent.started', stepId: 'b', at: at(20), harness: 'claude' }),
-    event({ type: 'step.failed', stepId: 'a', at: at(40), phase: 'review', attempt: 1 }),
+    event({
+      type: 'step.failed',
+      stepId: 'a',
+      at: at(40),
+      phase: 'review',
+      attempt: 1,
+      error: 'boom',
+    }),
     event({ type: 'step.completed', stepId: 'b', at: at(50), phase: 'review', usage }),
     event({
       type: 'run.failed',
@@ -483,6 +511,7 @@ describe('shared formatter', () => {
     // The durations line up here by construction; in general `ms` is process-observed live and
     // the recorded attempt or execution duration in the record (documented under the field).
     expect(fromRecord).toEqual(fromLive);
+    expect(JSON.parse(fromLive[2] ?? '')).toMatchObject({ ev: 'step.failed', msg: 'boom' });
     for (const text of [...fromLive, ...fromRecord]) {
       expect(Buffer.byteLength(text)).toBeLessThanOrEqual(EVENT_LINE_MAX_BYTES);
       const parsed = JSON.parse(text) as Record<string, unknown>;
@@ -700,6 +729,10 @@ describe('eventLogEntry', () => {
       'info',
     );
     expect(eventLogEntry(event({ type: 'step.failed' }), false).level).toBe('debug');
+    // The step error rides its own field, so the debug line still names the step and attempt.
+    const failed = eventLogEntry(event({ type: 'step.failed', stepId: 'a', error: 'boom' }), false);
+    expect(failed).toEqual(eventLogEntry(event({ type: 'step.failed', stepId: 'a' }), false));
+    expect(failed.message).not.toContain('boom');
     expect(eventLogEntry(event({ type: 'agent.progress' }), true).level).toBe('info');
     expect(eventLogEntry(event({ type: 'replay.divergence' }), false).level).toBe('warn');
   });

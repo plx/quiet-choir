@@ -60,8 +60,8 @@ export interface EventLine {
   /** Phase at the call site. */
   readonly phase?: string;
   /**
-   * Truncated message: the run error, phase title, log text plus data, the open question, or the
-   * tolerated poll error with its count.
+   * Truncated message: the run error, the step error on `step.failed` and `step.settled`, phase
+   * title, log text plus data, the open question, or the tolerated poll error with its count.
    */
   readonly msg?: string;
 }
@@ -157,15 +157,19 @@ function fit(line: Record<string, unknown>): string {
 /**
  * The untruncated `msg` of an event: the compact JSON of `question` in a `wait.opened` payload,
  * the message plus the compact JSON of non-null data for `log`, `tolerated N/LIMIT: message` (with
- * ` [code]` after LIMIT when the error had a code) for `wait.tolerated`, and the message otherwise.
+ * ` [code]` after LIMIT when the error had a code) for `wait.tolerated`, the bounded step `error`
+ * (or nothing) for `step.failed` and `step.settled`, and the message otherwise.
  * A `wait.tolerated` entry whose data lacks the counts falls back to its message.
  * @internal
  */
 export function eventMessage(event: {
   readonly type: string;
   readonly message?: string | null | undefined;
+  readonly error?: string | null | undefined;
   readonly data?: JsonValue | undefined;
 }): string | undefined {
+  if (event.type === 'step.failed' || event.type === 'step.settled')
+    return event.error ?? undefined;
   if (event.type === 'wait.opened') {
     const data = event.data;
     const question =

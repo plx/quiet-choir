@@ -288,6 +288,79 @@ describe('recordEventLines derivation', () => {
   });
 });
 
+describe('recordEventLines step errors', () => {
+  it('writes each failed attempt with its own recorded error as msg', () => {
+    const run = record({
+      steps: {
+        flaky: step(
+          [
+            attempt(1, 'failed', 10, { error: 'first' }),
+            attempt(2, 'failed', 20, { error: 'multi\nline\n    at foo (file.js:1:1)' }),
+            attempt(3, 'completed', 30),
+          ],
+          { status: 'completed' },
+        ),
+      },
+    });
+    const lines = parse(read(run).lines).filter((line) => line.step === 'flaky');
+    expect(lines.map((line) => [line.ev, line.attempt, line.msg])).toEqual([
+      ['step.failed', 1, 'first'],
+      ['step.failed', 2, 'multi line'],
+      ['step.completed', undefined, undefined],
+    ]);
+  });
+
+  it('writes the final attempt of a settled failure as step.settled with its error', () => {
+    const run = record({
+      steps: {
+        soft: step(
+          [attempt(1, 'failed', 10, { error: 'one' }), attempt(2, 'failed', 20, { error: 'two' })],
+          {
+            status: 'settled-failed',
+          },
+        ),
+      },
+    });
+    const lines = parse(read(run).lines).filter((line) => line.step === 'soft');
+    expect(lines.map((line) => [line.ev, line.attempt, line.msg])).toEqual([
+      ['step.failed', 1, 'one'],
+      ['step.settled', 2, 'two'],
+    ]);
+  });
+
+  it('takes a history-less failure from the step error and omits a missing one', () => {
+    const run = record({
+      steps: {
+        old: step([], {
+          status: 'settled-failed',
+          attempts: 2,
+          finishedAt: at(26),
+          error: 'old failure',
+        }),
+        broken: step([], { status: 'failed', attempts: 1, finishedAt: at(27), error: 'broken' }),
+        silent: step([], { status: 'failed', attempts: 1, finishedAt: at(28), error: null }),
+        done: step([], { status: 'completed', attempts: 1, finishedAt: at(29), error: 'ignored' }),
+      },
+    });
+    const lines = parse(read(run).lines).filter((line) => line.step !== undefined);
+    expect(lines.map((line) => [line.step, line.msg])).toEqual([
+      ['old', 'old failure'],
+      ['broken', 'broken'],
+      ['silent', undefined],
+      ['done', undefined],
+    ]);
+  });
+
+  it('keeps a line with a long error within the byte cap and the msg budget', () => {
+    const run = record({
+      steps: { big: step([attempt(1, 'failed', 10, { error: 'e'.repeat(2000) })]) },
+    });
+    const [text] = read(run).lines.filter((line) => line.includes('"step":"big"'));
+    expect(Buffer.byteLength(text ?? '')).toBeLessThanOrEqual(EVENT_LINE_MAX_BYTES);
+    expect((JSON.parse(text ?? '') as EventLine).msg?.endsWith('…')).toBe(true);
+  });
+});
+
 describe('recordEventLines following', () => {
   it('treats the first read as the baseline by default and prints only later lines', () => {
     const run = record({ steps: { a: step([attempt(1, 'completed', 5)]) } });

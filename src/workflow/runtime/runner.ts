@@ -189,6 +189,7 @@ import { ExecutionScopes } from './scopes.js';
 import { NameScopes } from './names.js';
 import { bindContext } from './context.js';
 import { execFailureFields, stepError, errorKind } from './step-error.js';
+import { stepEventError } from './step-event-error.js';
 import { ConfigurationError, GrantRequiredError } from './configuration-error.js';
 import { chooseRecoveryHint, type RecoveryCause } from './recovery-hint.js';
 import { harnessConfigRefusal } from './harness-config-decision.js';
@@ -279,6 +280,12 @@ export type WorkflowEvent = {
   readonly waitedMs?: number;
   /** Replay divergence diagnosis, when relevant. */
   readonly message?: string;
+  /**
+   * The step's error text on `step.failed` and `step.settled`: one line, no stack, at most 500
+   * code points (a cut message ends with `…`). Absent when the message is empty. The full text and
+   * stack stay in the run record and `inspect`.
+   */
+  readonly error?: string;
   /** Terminal or later recorded steps not yet visited before a live effect. */
   readonly skippedStepIds?: readonly string[];
   /** Failed step whose recovery could change a previously observed branch. */
@@ -1496,6 +1503,12 @@ export async function runWorkflow<
       });
     };
 
+    /** The bounded step error for a `step.failed` or `step.settled` event; empty when none. */
+    const errorDetail = (step: StepRecord): { error?: string } => {
+      const error = stepEventError(step.error);
+      return error === undefined ? {} : { error };
+    };
+
     const emitAdmission = (
       type: 'agent.queued' | 'agent.admitted',
       id: string,
@@ -2250,7 +2263,7 @@ export async function runWorkflow<
                     : outcome;
                 settle(step);
                 if (!(await trySave())) throw error;
-                emit('step.settled', id, step);
+                emit('step.settled', id, step, errorDetail(step));
                 return replay(step);
               }
               if (!classification.retry) {
@@ -2259,8 +2272,10 @@ export async function runWorkflow<
                 const stamp = settle(step);
                 if (step.status === 'failed') step.failureStamp ??= stamp;
               }
-              if (await trySave())
-                emit(classification.scoped ? 'step.cancelled' : 'step.failed', id, step);
+              if (await trySave()) {
+                if (classification.scoped) emit('step.cancelled', id, step);
+                else emit('step.failed', id, step, errorDetail(step));
+              }
               if (!classification.retry || signal.reason instanceof CheckpointError) throw error;
               try {
                 await waitUntil(
