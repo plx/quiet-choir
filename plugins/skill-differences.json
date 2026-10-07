@@ -3,5 +3,15 @@
     "file": "SKILL.md",
     "region": "claude-host",
     "reason": "Claude's invocation, native Workflow comparison, run_in_background/Monitor recipe, and the /quiet-choir:run command pointer apply only in the Claude package."
+  },
+  {
+    "file": "references/waits.md",
+    "region": "claude-host",
+    "reason": "The run_in_background and Monitor pointer for following --events applies only in the Claude package."
+  },
+  {
+    "file": "references/operating-runs.md",
+    "region": "claude-host",
+    "reason": "The run_in_background and Monitor pointer for following --events applies only in the Claude package."
   }
 ]

@@ -122,6 +122,30 @@ ownership; full-record `.status` remains the last saved status. Use
 Use stable `error.code` for automation. Put flags after the command
 (`workflow execute FILE --json`).
 
+## Follow the event stream
+
+For one line per transition instead of snapshots, launch with `--events FILE` (execute, start,
+resume, tick or `answer --resume`) and follow the file with
+`tail -n +1 -F FILE | grep --line-buffered '"ev":"step.failed"'`; `-F` waits for a file that does
+not exist yet. Each line is at most 512 bytes and names its run. The written types are
+`run.started`, `run.completed`, `run.failed`, `run.cancelled`, `run.suspended`, `step.completed`,
+`step.failed`, `step.settled`, `wait.opened`, `wait.tolerated`, `phase` and `log`; `step.failed` and
+`step.settled` carry the step's bounded error text as `msg`. The file is created owner-only and an
+existing file keeps its mode, so use a new path or one under an owner-only `$QC_RUNS`.
+
+The stream is a best-effort observation: lines are written without fsync, and a write failure warns
+once without changing the outcome. Branch on inspect or watch status, not on the stream. The flag is
+not saved with the run, so pass it to every resume, tick and `answer --resume`; a resume never
+repeats lines for finished work. `--events -` writes to stdout, but is refused on `start` and with
+`--json`.
+
+<!-- skills-difference: claude-host -->
+
+In Claude Code, [drive a run from Claude Code](../SKILL.md#drive-a-run-from-claude-code) follows
+that file with Monitor while a background launch (`run_in_background`) waits for the end.
+
+<!-- /skills-difference: claude-host -->
+
 ## Answer a suspended run
 
 For a real run, exit 75 is a saved external wait, not a failure. A `--dry-run` suspension includes a
