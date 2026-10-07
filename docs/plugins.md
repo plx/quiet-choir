@@ -85,7 +85,11 @@ package, and the recipe smoke in the CLI smokes job. The skill check:
   1024 characters, optional `argument-hint` and `allowed-tools`, no unknown or duplicate keys), the
   same link, fence-annotation and bare-launcher rules as the skill, compilation of complete
   TypeScript fences, and no `$ARGUMENTS` or positional `$1` in shell fences, because Claude Code
-  substitutes those in a command body before the shell runs it. The summary counts command files.
+  substitutes those in a command body before the shell runs it. A command may not contain Claude
+  Code's !`cmd` pre-execution syntax or a fence whose info string starts with `!` anywhere, prose
+  and fences included, because Claude Code runs it when it loads the command, before the model reads
+  the file; put the command in a shell fence for the model to run. `SKILL.md` is held to the same
+  rule. The summary counts command files.
 - Rejects symlinks and verifies Markdown links/anchors stay inside their physical installed package.
   External URLs are syntax-checked; validation does not depend on network availability.
 - Compares the physical skill trees against the narrow difference allowlist.
@@ -110,8 +114,9 @@ a POSIX shell must be on PATH for that smoke test (available on the CI Ubuntu ru
 
 Mutation tests prove rejection of broken TypeScript, both invalid manifests, a bad marketplace path,
 dangling links/anchors, package escapes, unintended differences, malformed annotations, duplicate
-frontmatter, symlinked deliverables, and each command rule above, and that a differing manifest
-`description` is accepted while a differing `version` is not.
+frontmatter, symlinked deliverables, each command rule above (and the pre-execution rule in
+`SKILL.md`), and that a differing manifest `description` is accepted while a differing `version` is
+not.
 
 Host-side Claude packaging checks remain useful when its CLI is installed:
 
