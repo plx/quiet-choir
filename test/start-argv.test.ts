@@ -1,7 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
 import { executeFlags } from '../src/cli/execute-flags.js';
-import { buildStartChildArgv, type ArgvFlagTable } from '../src/cli/start-argv.js';
+import {
+  buildStartChildArgv,
+  foregroundExecuteArgs,
+  type ArgvFlagTable,
+} from '../src/cli/start-argv.js';
 import WorkflowStart from '../src/commands/workflow/start.js';
 import { BaseCommand } from '../src/cli/base-command.js';
 
@@ -149,5 +153,63 @@ describe('buildStartChildArgv', () => {
         ids,
       ).args,
     ).toEqual(['wf.ts', '--provider-limit', 'codex=1', '--progress', '-v', ...tail]);
+  });
+});
+
+// The foreground hint of a refused flag: start's argv as `workflow execute` arguments.
+describe('foregroundExecuteArgs', () => {
+  it.each<[string, string[], string[]]>([
+    [
+      'drops --start-timeout and its separate value',
+      ['wf.ts', '--dry-run', '--start-timeout', '5s', '--json'],
+      ['wf.ts', '--dry-run', '--json'],
+    ],
+    [
+      'drops --start-timeout=value',
+      ['--start-timeout=5s', 'wf.ts', '--dry-run'],
+      ['wf.ts', '--dry-run'],
+    ],
+    [
+      'keeps --json, aliases and repeated flags as given and appends nothing',
+      ['wf.ts', '--json', '--provider-limit', 'codex=1', '--harness', 'a', '--harness', 'b'],
+      ['wf.ts', '--json', '--provider-limit', 'codex=1', '--harness', 'a', '--harness', 'b'],
+    ],
+    [
+      'keeps a flag-looking value of a value-taking flag',
+      ['wf.ts', '--input', '--start-timeout', '--full'],
+      ['wf.ts', '--input', '--start-timeout', '--full'],
+    ],
+    [
+      'keeps --input - as given',
+      ['wf.ts', '--input=-', '--dry-run'],
+      ['wf.ts', '--input=-', '--dry-run'],
+    ],
+    [
+      'keeps everything after a literal -- verbatim',
+      ['wf.ts', '--full', '--', '--start-timeout', '5s'],
+      ['wf.ts', '--full', '--', '--start-timeout', '5s'],
+    ],
+    ['keeps short flags', ['-l', 'debug', 'wf.ts', '-v'], ['-l', 'debug', 'wf.ts', '-v']],
+  ])('%s', (_label, argv, args) => {
+    expect(foregroundExecuteArgs(argv, table)).toEqual(args);
+  });
+
+  it('parses the refused rehearsal flags as hidden start flags without dependencies', () => {
+    for (const name of ['dry-run', 'stub-steps', 'full']) {
+      const flag = WorkflowStart.flags[name as keyof typeof WorkflowStart.flags] as {
+        hidden?: boolean;
+        dependsOn?: string[];
+      };
+      expect(flag.hidden).toBe(true);
+      expect(flag.dependsOn).toBeUndefined();
+    }
+    const flags: ArgvFlagTable = { ...BaseCommand.baseFlags, ...WorkflowStart.flags };
+    expect(flags['stub-steps']?.type).toBe('option');
+    expect(
+      foregroundExecuteArgs(
+        ['wf.ts', '--stub-steps', 'a*', '--dry-run', '--start-timeout', '1s', '--json'],
+        flags,
+      ),
+    ).toEqual(['wf.ts', '--stub-steps', 'a*', '--dry-run', '--json']);
   });
 });
