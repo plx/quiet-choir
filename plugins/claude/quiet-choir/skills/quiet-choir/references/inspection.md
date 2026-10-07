@@ -279,8 +279,9 @@ from the record have limits:
 Without `--follow` it prints the whole record once and exits 0. With `--follow` it starts at the
 current end; `--from-start` replays the record first. `--after-execution N`, given the suspended
 snapshot's `execution`, follows a run resumed with `answer --resume` without stopping on the old
-`suspended` status. The follow exit codes match the watch: completed 0, failed 1, suspended 75,
-cancelled or interrupted 130, stale 3. `--timeout` exits 79 (`watch.timeout`) and `--wait-created`
+`suspended` status. The follow exit codes match the watch: completed 0, failed 1, suspended 75 (an
+interrupted run ends as suspended), cancelled 130, stale 3; interrupting the follower, or closing
+the pipe it writes to, also exits 130. `--timeout` exits 79 (`watch.timeout`) and `--wait-created`
 exits 66. Without `--wait-created`, a missing record exits 3 (`run.not_found`). Output is always
 JSONL; `--json` affects only the failure document. The in-process `onEvent` callback and debug logs
 are a different mechanism: see [live events](#live-events).

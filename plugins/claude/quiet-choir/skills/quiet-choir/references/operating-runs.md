@@ -140,7 +140,7 @@ repeats lines for finished work. `--events -` writes to stdout, but is refused o
 `--json`.
 
 For a run launched without `--events`, or by another process, `workflow events RUN --follow` prints
-the same lines from the saved record; see
+lines of the same shape, derived from the saved record (without live-only `agent.*` events); see
 [follow a run's events](inspection.md#follow-a-runs-events).
 
 <!-- skills-difference: claude-host -->
