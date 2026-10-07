@@ -90,19 +90,21 @@ their bytes need not be fsynced and are never replay inputs. Native transcripts 
 root stays outside the checkout.
 
 `workflow start` allocates the smallest free `n` exclusively, so a retry never overwrites an earlier
-launch's evidence, and skips an `n` whose `<n>.runner.json` survives. Right after spawning the
-runner it records `{pid, host, osStartTime}` in `<n>.runner.json` (best effort; a failed write
-changes nothing else). A launch that failed before the record existed (for example a type error)
-leaves `<runId>/launch/` without `run.json`, and the log keeps the only copy of the compiler output.
-`inspect` reports `run.not_found` for it. Such a directory is a leftover launch directory when the
-ID has no `run.json` or `<runId>.json`, no `<runId>.inbox/`, `<runId>.cancel.json` or
-`<runId>.json.v<N>` sibling, and `<runId>/` holds only `launch/` with nothing but numbered
-`<n>.log`, `<n>.result.json`, `<n>.input.json` and `<n>.runner.json` files. Each launch number is
-settled when its `<n>.runner.json` names a runner that is dead, or, without a runner record, when
-its newest file is more than an hour old. A runner that is alive, unverifiable or on another host,
-or an unreadable runner record, keeps the launch in flight. Once every launch is settled,
-`workflow list` reports the leftover (`leftoverLaunches` in JSON, a `Leftover launch` line in text,
-with the `workflow rm` command) and `workflow rm ID` removes it; see
+launch's evidence, and skips an `n` whose `<n>.runner.json` survives. Numbering continues across
+`workflow start --resume` launches of the same run: a run started with start and then resumed
+detached has `launch/1.*` and `launch/2.*`. Right after spawning the runner it records
+`{pid, host, osStartTime}` in `<n>.runner.json` (best effort; a failed write changes nothing else).
+A launch that failed before the record existed (for example a type error) leaves `<runId>/launch/`
+without `run.json`, and the log keeps the only copy of the compiler output. `inspect` reports
+`run.not_found` for it. Such a directory is a leftover launch directory when the ID has no
+`run.json` or `<runId>.json`, no `<runId>.inbox/`, `<runId>.cancel.json` or `<runId>.json.v<N>`
+sibling, and `<runId>/` holds only `launch/` with nothing but numbered `<n>.log`, `<n>.result.json`,
+`<n>.input.json` and `<n>.runner.json` files. Each launch number is settled when its
+`<n>.runner.json` names a runner that is dead, or, without a runner record, when its newest file is
+more than an hour old. A runner that is alive, unverifiable or on another host, or an unreadable
+runner record, keeps the launch in flight. Once every launch is settled, `workflow list` reports the
+leftover (`leftoverLaunches` in JSON, a `Leftover launch` line in text, with the `workflow rm`
+command) and `workflow rm ID` removes it; see
 [ADR 0055](decisions/0055-remove-leftover-launch-directories.md). Anything else in the directory (a
 lock, a journal, an unknown file) leaves it alone, and rm keeps reporting `run.not_found`.
 

@@ -1610,14 +1610,7 @@ describe('workflow start adapter', () => {
     const execute = vi
       .spyOn(StartWorkflowExecutor.prototype, 'execute')
       .mockResolvedValue(started(stateDir));
-    const output = await cli.run(WorkflowStart, [
-      'wf.ts',
-      '--state-dir',
-      stateDir,
-      '--json',
-      '--kill-grace-ms',
-      '0',
-    ]);
+    const output = await cli.run(WorkflowStart, ['wf.ts', '--state-dir', stateDir, '--json']);
     expect(output.error).toBeUndefined();
     const plan = execute.mock.calls[0]?.[0];
     expect(plan?.runId).toMatch(/^[0-9a-f-]{36}$/u);
@@ -1693,4 +1686,112 @@ describe('workflow start adapter', () => {
     expect(resume.error).toBeDefined();
     expect(execute).not.toHaveBeenCalled();
   });
+
+  for (const grace of ['0', '2147483648', '1e3', '-5', '']) {
+    it(`refuses --kill-grace-ms ${JSON.stringify(grace)} with usage.flag before launching or recovering anything`, async ({
+      cli,
+    }) => {
+      const stateDir = await stateDirectory();
+      setSpawnLauncher(launcher);
+      const execute = vi.spyOn(StartWorkflowExecutor.prototype, 'execute');
+      const output = await cli.run(WorkflowStart, [
+        'wf.ts',
+        '--state-dir',
+        stateDir,
+        '--kill-grace-ms',
+        grace,
+      ]);
+      expect(output.error).toMatchObject({
+        code: 'usage.flag',
+        message: '--kill-grace-ms must be an integer from 1 to 2147483647.',
+        oclif: { exit: 2 },
+      });
+      expect(execute).not.toHaveBeenCalled();
+    });
+  }
+
+  it('plans a resume without a file and prints the resumed run', async ({ cli }) => {
+    const stateDir = await stateDirectory();
+    setSpawnLauncher(launcher);
+    const execute = vi
+      .spyOn(StartWorkflowExecutor.prototype, 'execute')
+      .mockResolvedValue(started(stateDir));
+    const output = await cli.run(WorkflowStart, [
+      '--resume',
+      '--run-id',
+      'x',
+      '--kill-orphans',
+      '--state-dir',
+      stateDir,
+    ]);
+    expect(output.error).toBeUndefined();
+    expect(execute).toHaveBeenCalledWith(
+      expect.objectContaining({
+        resume: true,
+        runId: 'x',
+        argv: [
+          ...launcher,
+          'workflow',
+          'execute',
+          '--resume',
+          '--run-id',
+          'x',
+          '--kill-orphans',
+          '--state-dir',
+          stateDir,
+          '--json',
+        ],
+      }),
+    );
+    expect(output.stdout.split('\n')[0]).toBe('Resumed run x (runner PID 42, status running).');
+  });
+
+  it('refuses --resume without --run-id, and a missing file without --resume', async ({ cli }) => {
+    setSpawnLauncher(launcher);
+    const execute = vi.spyOn(StartWorkflowExecutor.prototype, 'execute');
+    const resume = await cli.run(WorkflowStart, ['--resume']);
+    expect(resume.error).toMatchObject({
+      code: 'usage.resume_requires_run_id',
+      oclif: { exit: 2 },
+    });
+    const file = await cli.run(WorkflowStart, ['--run-id', 'x']);
+    expect(file.error).toMatchObject({ code: 'usage.flag', oclif: { exit: 2 } });
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it.for(['--dry-run', '--full', '--stub-steps'])(
+    'refuses %s with the foreground execute command, before reading input',
+    async (flag, { cli }) => {
+      setSpawnLauncher(launcher);
+      const execute = vi.spyOn(StartWorkflowExecutor.prototype, 'execute');
+      const args = flag === '--stub-steps' ? [flag, 'a*'] : [flag];
+      // --input - would block on stdin if start read it before the refusal.
+      const output = await cli.run(WorkflowStart, [
+        'wf.ts',
+        ...args,
+        '--input',
+        '-',
+        '--start-timeout',
+        '5s',
+        '--json',
+      ]);
+      expect(output.error).toMatchObject({ oclif: { exit: 2 } });
+      const document = JSON.parse(output.stdout) as {
+        error: { code: string; message: string };
+        next: { argv: string[] }[];
+      };
+      expect(document.error.code).toBe('usage.flag');
+      expect(document.error.message).toContain(`does not accept ${flag}`);
+      expect(document.error.message).toContain('workflow execute in the foreground');
+      expect(document.next[0]?.argv.slice(-5 - args.length)).toEqual([
+        'execute',
+        'wf.ts',
+        ...args,
+        '--input',
+        '-',
+        '--json',
+      ]);
+      expect(execute).not.toHaveBeenCalled();
+    },
+  );
 });

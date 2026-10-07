@@ -1,3 +1,5 @@
+import { spawn } from 'node:child_process';
+import { once } from 'node:events';
 import { existsSync } from 'node:fs';
 import { mkdir, mkdtemp, open, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { hostname, tmpdir } from 'node:os';
@@ -5,15 +7,24 @@ import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { defineWorkflow, NodeProcessRunner, runWorkflow, z } from '../src/index.js';
+import {
+  defineWorkflow,
+  NodeProcessRunner,
+  RunInterruptedError,
+  runWorkflow,
+  z,
+} from '../src/index.js';
 import { ProcessSupervisor } from '../src/processes/supervisor.js';
-import { pidState } from '../src/processes/identity.js';
+import type { HarnessProcess } from '../src/workflow/runtime/model.js';
+import { groupState, pidState, processIdentity } from '../src/processes/identity.js';
 import type { WorkflowFailure } from '../src/workflow/loader/failure.js';
 import { listRuns } from '../src/workflow/loader/inspection.js';
 import { writeRunnerIdentity } from '../src/workflow/runtime/launch-leftovers.js';
 import { removeRun } from '../src/workflow/runtime/run-removal.js';
+import { readRun } from '../src/workflow/runtime/store.js';
 import {
   observeStartedRun,
+  prepareStartLaunch,
   StartWorkflowExecutor,
   type StartRunObservation,
   type StartWorkflowPlan,
@@ -467,6 +478,148 @@ describe('StartWorkflowExecutor', () => {
     expect(existsSync(marker())).toBe(false);
   });
 
+  it.skipIf(process.platform === 'win32')(
+    'recovers a dead owner’s legacy guard children for a resume only with killOrphans',
+    async () => {
+      await mkdir(stateDir, { recursive: true });
+      await writeFile(join(stateDir, 'r1.json'), '{}');
+      const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {
+        detached: true,
+        stdio: 'ignore',
+      });
+      const pid = child.pid;
+      if (pid === undefined) throw new Error('Missing fixture PID');
+      spawned.push(pid);
+      await delay(50);
+      const guard = join(stateDir, 'r1.json.lock');
+      await mkdir(join(guard, 'processes'), { recursive: true });
+      await writeFile(
+        join(guard, 'owner.json'),
+        JSON.stringify({ pid: 2_000_000_000, host: hostname(), token: 'old' }),
+      );
+      await writeFile(
+        join(guard, 'processes', `${String(pid)}.json`),
+        JSON.stringify({
+          pid,
+          pgid: pid,
+          binary: 'fake-harness',
+          cwd: root,
+          startedAt: new Date().toISOString(),
+          osStartTime: processIdentity(pid)?.start ?? null,
+          runId: 'r1',
+          stepId: 'review',
+          attempt: 1,
+          ownerToken: 'old',
+        }),
+      );
+      const base = { runId: 'r1', stateDir, cwd: root, killGraceMs: 100 };
+
+      // Without --kill-orphans the child is neither stopped nor recovered.
+      const refused = await prepareStartLaunch({ ...base, resume: true });
+      expect(refused).toMatchObject({ ok: false, code: 'run.orphans' });
+      expect(groupState({ pid, pgid: pid })).toBe('alive');
+      expect((refused as WorkflowFailure).message).not.toContain('locked or being removed');
+      expect((refused as WorkflowFailure).message).toContain('--kill-orphans');
+
+      const exited = once(child, 'exit');
+      const prepared = await prepareStartLaunch({ ...base, resume: true, killOrphans: true });
+      expect(prepared).toMatchObject({ ok: true });
+      if ('files' in prepared) await Promise.all(prepared.files.handles.map((h) => h.close()));
+      await exited;
+      expect(groupState({ pid, pgid: pid })).toBe('dead');
+    },
+  );
+
+  /** A dead owner's legacy guard in `stateDir` recording one live child that ignores SIGTERM. */
+  async function legacyGuardWithStubbornChild(): Promise<{
+    pid: number;
+    exited: Promise<unknown>;
+  }> {
+    await mkdir(stateDir, { recursive: true });
+    await writeFile(join(stateDir, 'r1.json'), '{}');
+    const child = spawn(
+      process.execPath,
+      ['-e', "process.on('SIGTERM', () => {}); setInterval(() => {}, 1000)"],
+      { detached: true, stdio: 'ignore' },
+    );
+    const pid = child.pid;
+    if (pid === undefined) throw new Error('Missing fixture PID');
+    spawned.push(pid);
+    await delay(100);
+    const guard = join(stateDir, 'r1.json.lock');
+    await mkdir(join(guard, 'processes'), { recursive: true });
+    await writeFile(
+      join(guard, 'owner.json'),
+      JSON.stringify({ pid: 2_000_000_000, host: hostname(), token: 'old' }),
+    );
+    await writeFile(
+      join(guard, 'processes', `${String(pid)}.json`),
+      JSON.stringify({
+        pid,
+        pgid: pid,
+        binary: 'fake-harness',
+        cwd: root,
+        startedAt: new Date().toISOString(),
+        osStartTime: processIdentity(pid)?.start ?? null,
+        runId: 'r1',
+        stepId: 'review',
+        attempt: 1,
+        ownerToken: 'old',
+      }),
+    );
+    return { pid, exited: once(child, 'exit') };
+  }
+
+  it.skipIf(process.platform === 'win32')(
+    'tracks a recovered legacy child in the executor’s supervisor',
+    async () => {
+      const { pid, exited } = await legacyGuardWithStubbornChild();
+      const tracked: HarnessProcess[] = [];
+      class ObservedSupervisor extends ProcessSupervisor {
+        public override track(child: HarnessProcess): () => void {
+          tracked.push(child);
+          return super.track(child);
+        }
+      }
+      const result = started(
+        await executor({ processSupervisor: new ObservedSupervisor() }).execute(
+          plan(
+            `${markExecutions('running', '[{ n: 1, pid: process.pid }]', 'process.pid')} ${forever}`,
+            {
+              resume: true,
+              killOrphans: true,
+            },
+          ),
+        ),
+      );
+      await exited;
+      expect(tracked.map((child) => child.pid)).toContain(pid);
+      expect(groupState({ pid, pgid: pid })).toBe('dead');
+      expect(result.runId).toBe('r1');
+    },
+  );
+
+  it.skipIf(process.platform === 'win32')(
+    'reports workflow.interrupted when an interrupt arrives during legacy guard recovery',
+    async () => {
+      const { pid, exited } = await legacyGuardWithStubbornChild();
+      const controller = new AbortController();
+      setTimeout(() => {
+        controller.abort(new RunInterruptedError('Interrupted by SIGINT.'));
+      }, 50);
+      const failure = failed(
+        await executor({ signal: controller.signal }).execute(
+          plan(`${own} ${forever}`, { resume: true, killOrphans: true, killGraceMs: 400 }),
+        ),
+      );
+      await exited;
+      expect(failure).toMatchObject({ code: 'workflow.interrupted', stateDir });
+      expect(failure.launch).toBeUndefined();
+      expect(groupState({ pid, pgid: pid })).toBe('dead');
+      expect(existsSync(marker())).toBe(false);
+    },
+  );
+
   it('reports a runner that cannot be spawned', async () => {
     const failure = failed(
       await executor().execute(plan('', { argv: [join(root, 'missing-binary')] })),
@@ -484,20 +637,160 @@ describe('StartWorkflowExecutor', () => {
   });
 });
 
-describe('observeStartedRun', () => {
-  it('reads nothing for a missing record and the status of a released one', async () => {
-    expect(await observeStartedRun(stateDir, 'missing')).toEqual({ status: null, ownerPid: null });
-    const workflow = defineWorkflow({
-      name: 'observed',
+/** A real completed run with one recorded execution, the baseline a resume must exceed. */
+async function completedRun(runId = 'r1'): Promise<void> {
+  const workflow = defineWorkflow({
+    name: 'observed',
+    version: '1',
+    input: z.null(),
+    output: z.string(),
+    run: () => Promise.resolve('done'),
+  });
+  await runWorkflow(workflow, { runId, stateDir, input: null });
+}
+
+/** A fake runner script that marks the record with these executions; `$pid` is its own PID. */
+function markExecutions(status: string, executions: string, ownerPid = 'null'): string {
+  return `require('fs').writeFileSync(process.argv[1], JSON.stringify({ status: ${JSON.stringify(status)}, ownerPid: ${ownerPid}, executions: ${executions} }));`;
+}
+
+describe('StartWorkflowExecutor resume', () => {
+  it('reports a resume once the runner records an execution above the baseline', async () => {
+    await completedRun();
+    const script = `${markExecutions('running', '[{ n: 1, pid: 1 }, { n: 2, pid: process.pid }]', 'process.pid')} ${forever}`;
+    const result = started(await executor().execute(plan(script, { resume: true })));
+    expect(result).toMatchObject({
+      runId: 'r1',
+      status: 'running',
+      log: join(stateDir, 'r1', 'launch', '1.log'),
+    });
+    expect(pidState(result.pid)).toBe('alive');
+  });
+
+  it('does not count an execution at or below the baseline that carries the runner’s PID', async () => {
+    // PID reuse: the record's last execution (n 1) names the new runner's PID, but it is old.
+    await completedRun();
+    const script = `${markExecutions('running', '[{ n: 1, pid: process.pid }]', 'process.pid')} ${forever}`;
+    const failure = failed(
+      await executor().execute(plan(script, { resume: true, timeoutMs: 1_000 })),
+    );
+    expect(failure).toMatchObject({ code: 'start.timeout', runId: 'r1' });
+    expect(failure.message).toContain('no execution recorded by its resuming runner');
+  });
+
+  it('reports a refusal under the lock with its own code and the run ID', async () => {
+    // The runner owned the lock, then refused before recording an execution.
+    await completedRun();
+    const incompatible = JSON.stringify({
+      kind: 'workflow.error',
+      ok: false,
+      exitCode: 3,
+      error: {
+        code: 'run.incompatible',
+        message: 'Run r1 is incompatible.',
+        stepId: null,
+        details: null,
+      },
+      next: [],
+    });
+    const script = `${markExecutions('completed', '[{ n: 1, pid: 1 }]', 'process.pid')}
+      setTimeout(() => { process.stdout.write(${JSON.stringify(incompatible)} + '\\n'); process.exit(3); }, 100);`;
+    const failure = failed(await executor().execute(plan(script, { resume: true })));
+    expect(failure).toMatchObject({
+      code: 'run.incompatible',
+      message: 'Run r1 is incompatible.',
+      runId: 'r1',
+      launch: { runId: 'r1', exitCode: 3 },
+    });
+  });
+
+  it('reports the stored status of a completed run whose resume records no execution', async () => {
+    await completedRun();
+    const script = `${markExecutions('completed', '[{ n: 1, pid: 1 }]')}
+      process.stdout.write(JSON.stringify({ kind: 'workflow.run.result', ok: true }) + '\\n');`;
+    const result = started(await executor().execute(plan(script, { resume: true })));
+    expect(result.status).toBe('completed');
+  });
+
+  it('refuses a missing run with run.not_found without spawning or creating its directory', async () => {
+    const failure = failed(await executor().execute(plan(`${own} ${forever}`, { resume: true })));
+    expect(failure).toMatchObject({ code: 'run.not_found', runId: null, stateDir });
+    expect(failure.launch).toBeUndefined();
+    expect(existsSync(join(stateDir, 'r1'))).toBe(false);
+    expect(existsSync(marker())).toBe(false);
+  });
+
+  it('takes the next launch number and keeps the earlier launch’s files', async () => {
+    await completedRun();
+    const launch = join(stateDir, 'r1', 'launch');
+    await mkdir(launch, { recursive: true });
+    await writeFile(join(launch, '1.log'), 'first');
+    await writeFile(join(launch, '1.result.json'), 'first');
+    const script = `${markExecutions('running', '[{ n: 1, pid: 1 }, { n: 2, pid: process.pid }]')} ${forever}`;
+    const result = started(await executor().execute(plan(script, { resume: true })));
+    expect(result.log).toBe(join(launch, '2.log'));
+    expect(result.result).toBe(join(launch, '2.result.json'));
+    expect(await readFile(join(launch, '1.log'), 'utf8')).toBe('first');
+    expect(await readFile(join(launch, '1.result.json'), 'utf8')).toBe('first');
+  });
+
+  it('launches beside an unmigrated flat run, which the runner then migrates', async () => {
+    await mkdir(stateDir, { recursive: true });
+    await writeFile(
+      join(stateDir, 'legacy.json'),
+      await readFile(new URL('./fixtures/storage/v1.json', import.meta.url), 'utf8'),
+    );
+    const prepared = await prepareStartLaunch({
+      runId: 'legacy',
+      stateDir,
+      cwd: root,
+      resume: true,
+    });
+    if (!prepared.ok) throw new Error(`Expected launch files: ${prepared.code}`);
+    await Promise.all(prepared.files.handles.map((handle) => handle.close()));
+    const launch = join(stateDir, 'legacy', 'launch');
+    expect(prepared.files.log).toBe(join(launch, '1.log'));
+    // The resume's migration (as in test/run-removal.test.ts) creates `legacy/` around launch/.
+    const definition = defineWorkflow({
+      name: 'legacy-v1',
       version: '1',
       input: z.null(),
       output: z.string(),
-      run: () => Promise.resolve('done'),
+      run: async (ctx) => {
+        const value = await ctx.step('local', { input: null, schema: z.number(), run: () => 7 });
+        const agent = await ctx.claude.text('agent', { prompt: 'legacy question' });
+        await ctx.sleep('pause', 0);
+        return `${String(value)}/${agent.output}`;
+      },
     });
-    await runWorkflow(workflow, { runId: 'done', stateDir, input: null });
+    await expect(
+      runWorkflow(definition, {
+        stateDir,
+        runId: 'legacy',
+        cwd: '/quiet-choir/legacy-project',
+        input: null,
+        resume: true,
+        fingerprint: 'fixed-source',
+        acceptCodeChange: true,
+      }),
+    ).rejects.toThrow('no pinned isolation mode');
+    expect((await readRun({ stateDir, runId: 'legacy' })).formatVersion).toBe(7);
+    expect((await readdir(launch)).sort()).toEqual(['1.log', '1.result.json']);
+  });
+});
+
+describe('observeStartedRun', () => {
+  it('reads nothing for a missing record and the status and executions of a released one', async () => {
+    expect(await observeStartedRun(stateDir, 'missing')).toEqual({
+      status: null,
+      ownerPid: null,
+      executions: [],
+    });
+    await completedRun('done');
     expect(await observeStartedRun(stateDir, 'done')).toEqual({
       status: 'completed',
       ownerPid: null,
+      executions: [{ n: 1, pid: process.pid }],
     });
   });
 });

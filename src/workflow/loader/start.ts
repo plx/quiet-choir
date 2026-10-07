@@ -12,8 +12,9 @@ import { legacyRunPath, prepareStateDirectory, runDirectory } from '../runtime/p
 import { runnerFileName } from '../runtime/launch-leftover-decision.js';
 import { writeRunnerIdentity } from '../runtime/launch-leftovers.js';
 import { withRunGuard } from '../runtime/lock.js';
-import { isCliErrorCode, RunRefusedError } from '../runtime/run-errors.js';
+import { isCliErrorCode, RunInterruptedError, RunRefusedError } from '../runtime/run-errors.js';
 import { createStorageDirectory } from '../runtime/storage-io.js';
+import { missingRunError } from '../runtime/read-required-run.js';
 import { inspectRunOwnership, readRun, type RunRecord } from '../runtime/store.js';
 import type { DurabilityDiagnostic, TypecheckDiagnostic } from '../typecheck/model.js';
 import { workflowFailure, type StartLaunchEvidence, type WorkflowFailure } from './failure.js';
@@ -21,13 +22,22 @@ import { failureNextCommands, type NextCommand } from './next-commands.js';
 import { decideStart, type StartChildDocument } from './start-readiness.js';
 
 /**
- * Launch `workflow execute` detached and return once its runner owns the run's record. Plain data:
- * the CLI builds the runner's argv and resolves the run ID and state directory first.
+ * Launch `workflow execute` detached and return once its runner owns the run's record (for a resume,
+ * once it records its own execution). Plain data: the CLI builds the runner's argv and resolves the
+ * run ID and state directory first.
  */
 export interface StartWorkflowPlan extends ExecutionPlan {
   readonly kind: 'workflow.start';
-  /** The run ID the runner was given; the record must not exist yet. */
+  /**
+   * The run ID the runner was given. Without {@link resume} the record must not exist yet; with it,
+   * the record must exist.
+   */
   readonly runId: string;
+  /**
+   * Resume an existing run (`--resume`) instead of creating one; the readiness rule of ADR 0056
+   * applies. Default false.
+   */
+  readonly resume?: boolean;
   /** Absolute runs container the runner was given. */
   readonly stateDir: string;
   /** The runner's working directory, which is also the run's. */
@@ -40,10 +50,16 @@ export interface StartWorkflowPlan extends ExecutionPlan {
    * stdin is `/dev/null`.
    */
   readonly stdinInput?: { readonly value: JsonValue; readonly argvIndex: number };
-  /** How long to wait for an owned record before stopping the runner. */
+  /** How long to wait for an owned record (or a resumed execution) before stopping the runner. */
   readonly timeoutMs: number;
   /** SIGTERM grace for the runner's own cleanup; start waits this plus 2 s before SIGKILL. */
   readonly killGraceMs: number;
+  /**
+   * With `resume`: stop the live recorded children of a dead owner of the run's legacy guard, which
+   * start recovers itself before spawning. Recovery of the primary lock stays with the runner,
+   * which gets `--kill-orphans` in its argv.
+   */
+  readonly killOrphans?: boolean;
 }
 
 /** A started run: its runner owns (or already finished) the record, and keeps running detached. */
@@ -71,6 +87,8 @@ export interface StartRunObservation {
   readonly status: RunRecord['status'] | null;
   /** PID of the local run-lock owner, or null when unlocked, unreadable or remote. */
   readonly ownerPid: number | null;
+  /** The record's body executions as `{n, pid}`; empty or absent when unreadable. */
+  readonly executions?: readonly { readonly n: number; readonly pid: number }[];
 }
 
 /** Ports of {@link StartWorkflowExecutor}; tests inject the observer and the poll interval. */
@@ -97,7 +115,10 @@ export interface StartWorkflowExecutorOptions {
 /** Extra time after the kill grace for the runner to save its interrupted record. */
 const saveMarginMs = 2_000;
 
-/** The default observer: `readRun`, then the local lock owner's PID from `inspectRunOwnership`. @internal */
+/**
+ * The default observer: `readRun` (status and executions), then the local lock owner's PID from
+ * `inspectRunOwnership`. @internal
+ */
 export async function observeStartedRun(
   stateDir: string,
   runId: string,
@@ -106,14 +127,25 @@ export async function observeStartedRun(
   try {
     run = await readRun({ stateDir, runId });
   } catch {
-    return { status: null, ownerPid: null };
+    return { status: null, ownerPid: null, executions: [] };
   }
   const ownership = await inspectRunOwnership({ stateDir, runId }).catch(() => null);
   const owner = ownership?.owner;
   return {
     status: run.status,
     ownerPid: owner && owner.state !== 'remote' ? owner.pid : null,
+    executions: (run.executions ?? []).map(({ n, pid }) => ({ n, pid })),
   };
+}
+
+/** The number of the run's last recorded execution before a resume, or 0 when there is none. */
+async function lastExecution(stateDir: string, runId: string): Promise<number> {
+  try {
+    return (await readRun({ stateDir, runId })).executions?.at(-1)?.n ?? 0;
+  } catch {
+    // An unreadable record: the runner reports run.unreadable itself.
+    return 0;
+  }
 }
 
 /** A launch's evidence files, created exclusively; the caller closes the two handles. @internal */
@@ -183,8 +215,49 @@ function existsFailure(stateDir: string, runId: string): WorkflowFailure {
   );
 }
 
+/** `run.not_found` as `readRun` words it, with its candidate roots and their inspect entries. */
+async function notFoundFailure(
+  plan: Pick<StartWorkflowPlan, 'runId' | 'stateDir' | 'cwd'>,
+  commandLauncher: CommandLauncher | undefined,
+): Promise<WorkflowFailure> {
+  const { runId, stateDir } = plan;
+  const error = await missingRunError({ runId, stateDir, cwd: plan.cwd }).catch((cause: unknown) =>
+    cause instanceof RunRefusedError ? cause : null,
+  );
+  if (error === null)
+    return workflowFailure('run.not_found', `Run ${runId} not found in ${stateDir}.`, {
+      stateDir,
+      details: { runId, stateDir },
+    });
+  return workflowFailure(error.code, error.message, {
+    stateDir,
+    details: error.details,
+    next: failureNextCommands({
+      code: error.code,
+      details: error.details,
+      run: null,
+      runId: null,
+      stateDir,
+      launcher: commandLauncher,
+      rehearsal: false,
+    }),
+  });
+}
+
+/** The refusal of a launch whose run exists (new run) or is missing (resume), or null. */
+async function launchRefusal(
+  plan: Pick<StartWorkflowPlan, 'runId' | 'stateDir' | 'cwd' | 'resume'>,
+  commandLauncher: CommandLauncher | undefined,
+): Promise<WorkflowFailure | null> {
+  const exists = runExists(plan.stateDir, plan.runId);
+  if (plan.resume === true) return exists ? null : notFoundFailure(plan, commandLauncher);
+  return exists ? existsFailure(plan.stateDir, plan.runId) : null;
+}
+
 /**
- * Check that the run does not exist and allocate its launch files, under the run's legacy guard.
+ * Check that the run does not exist (with `resume`: that it does) and allocate its launch files,
+ * under the run's legacy guard. A resume refuses a missing run with `run.not_found` before creating
+ * anything, and an existing run's launch files take the next free `n`, keeping earlier launches.
  * `workflow rm` holds that guard until the run is gone, and an unmigrated flat run's `<runId>/`
  * (holding only the primary lock) outlives its `<runId>.json` there, so without the guard this
  * check could pass mid-removal and rm's rename would carry the new `launch/` into its tombstone.
@@ -192,20 +265,24 @@ function existsFailure(stateDir: string, runId: string): WorkflowFailure {
  * guard fails with `run.locked`. @internal
  */
 export async function prepareStartLaunch(
-  plan: Pick<StartWorkflowPlan, 'runId' | 'stateDir' | 'cwd' | 'stdinInput'>,
+  plan: Pick<StartWorkflowPlan, 'runId' | 'stateDir' | 'cwd' | 'stdinInput' | 'resume'> &
+    Partial<Pick<StartWorkflowPlan, 'killOrphans' | 'killGraceMs'>>,
   signal?: AbortSignal,
   commandLauncher?: CommandLauncher,
+  processSupervisor?: ProcessSupervisor,
 ): Promise<{ readonly ok: true; readonly files: LaunchFiles } | WorkflowFailure> {
   const { runId, stateDir } = plan;
   // Fast path outside the guard: a live run's writer holds the guard, and its ID is simply taken.
-  if (runExists(stateDir, runId)) return existsFailure(stateDir, runId);
+  const refused = await launchRefusal(plan, commandLauncher);
+  if (refused) return refused;
   let allocated: LaunchFiles | undefined;
   try {
     return await withRunGuard(
       stateDir,
       runId,
       async () => {
-        if (runExists(stateDir, runId)) return existsFailure(stateDir, runId);
+        const refusedUnderGuard = await launchRefusal(plan, commandLauncher);
+        if (refusedUnderGuard) return refusedUnderGuard;
         try {
           await prepareStateDirectory(stateDir, plan.cwd);
           const launchDir = join(runDirectory(stateDir, runId), 'launch');
@@ -220,7 +297,21 @@ export async function prepareStartLaunch(
           );
         }
       },
-      { cwd: plan.cwd, commandLauncher, ...(signal === undefined ? {} : { signal }) },
+      {
+        cwd: plan.cwd,
+        commandLauncher,
+        // A dead owner's legacy guard is recovered here, before the runner exists, so a resume's
+        // --kill-orphans applies to it too. A new run has no legacy children to stop.
+        ...(plan.resume === true && plan.killOrphans === true
+          ? {
+              killOrphans: true,
+              ...(plan.killGraceMs === undefined ? {} : { killGraceMs: plan.killGraceMs }),
+            }
+          : {}),
+        ...(signal === undefined ? {} : { signal }),
+        // Recovered legacy children stay tracked, so a second signal's force kill reaches them.
+        ...(processSupervisor === undefined ? {} : { processSupervisor }),
+      },
     );
   } catch (error) {
     // Only a failed guard release reaches here with files open; nothing will launch with them.
@@ -228,12 +319,15 @@ export async function prepareStartLaunch(
     if (error instanceof RunRefusedError)
       return workflowFailure(
         error.code,
-        `Run ID ${runId} is locked or being removed; retry once it is free. ${error.message}`,
+        error.code === 'run.orphans'
+          ? error.message
+          : `Run ID ${runId} is locked or being removed; retry once it is free. ${error.message}`,
         {
+          // A new run is not this start's to own (the failure keeps no run ID), but its unlock entry
+          // names the run the guard refused. A resume names the existing run it was refused.
+          runId: plan.resume === true ? runId : null,
           stateDir,
           details: error.details,
-          // The run is not this start's to own (the failure keeps no run ID), but its unlock entry
-          // names the run the guard refused.
           next: failureNextCommands({
             code: error.code,
             details: error.details,
@@ -245,6 +339,11 @@ export async function prepareStartLaunch(
           }),
         },
       );
+    // An interrupt during guard recovery is an interruption, not a storage failure.
+    if (signal?.aborted || error instanceof RunInterruptedError)
+      return workflowFailure('workflow.interrupted', 'Workflow start interrupted before launch.', {
+        stateDir,
+      });
     return workflowFailure(
       'workflow.storage',
       `Could not take or release the legacy guard of run ${runId}: ${error instanceof Error ? error.message : String(error)}`,
@@ -310,7 +409,11 @@ function describeExit(exit: ExitState | null): string {
     : `was killed by ${exit.signal}`;
 }
 
-/** Runs `workflow execute` detached and reports when, and whether, it took ownership of its run. */
+/**
+ * Runs `workflow execute` detached and reports when, and whether, it took ownership of its run: a new
+ * run once the runner owns its record (ADR 0036), a resume once the runner records its own execution
+ * (ADR 0056).
+ */
 export class StartWorkflowExecutor implements Executor<
   StartWorkflowPlan,
   StartWorkflowResult | WorkflowFailure
@@ -325,8 +428,17 @@ export class StartWorkflowExecutor implements Executor<
     const { runId, stateDir } = plan;
     const signal = this.#options.signal;
     const observe = this.#options.observeRun ?? observeStartedRun;
-    const prepared = await prepareStartLaunch(plan, signal, this.#options.commandLauncher);
+    const resume = plan.resume === true;
+    const prepared = await prepareStartLaunch(
+      plan,
+      signal,
+      this.#options.commandLauncher,
+      this.#options.processSupervisor,
+    );
     if (!prepared.ok) return prepared;
+    // A resume counts only an execution numbered above this one, so an old execution by a reused
+    // PID never reads as the new runner's.
+    const baseline = resume ? await lastExecution(stateDir, runId) : 0;
     const { files } = prepared;
     const argv = [...plan.argv];
     if (plan.stdinInput && files.input !== null)
@@ -455,6 +567,10 @@ export class StartWorkflowExecutor implements Executor<
       const observed = await observe(stateDir, runId);
       const document = exit === null ? null : await readDocument(files.result);
       const decision = decideStart({
+        mode: resume ? 'resume' : 'new',
+        executionByRunner: (observed.executions ?? []).some(
+          (execution) => execution.n > baseline && execution.pid === pid,
+        ),
         childPid: pid,
         exit,
         recordReadable: observed.status !== null,
@@ -507,7 +623,7 @@ export class StartWorkflowExecutor implements Executor<
           await stop();
           return failure(
             'start.timeout',
-            `Run ${runId} had no record owned by its runner after ${String(plan.timeoutMs)} ms; stopped runner PID ${String(pid)}. See ${files.log}.`,
+            `Run ${runId} had ${resume ? 'no execution recorded by its resuming runner' : 'no record owned by its runner'} after ${String(plan.timeoutMs)} ms; stopped runner PID ${String(pid)}. See ${files.log}.`,
             await observe(stateDir, runId),
           );
         }

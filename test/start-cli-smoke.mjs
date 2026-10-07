@@ -103,6 +103,20 @@ const count: number = 'not a number';
 export default defineWorkflow({ name: 'broken', version: '1', input: z.object({}), output: z.number(),
   async run() { return count; } });`,
 );
+const held = workflowFile(
+  'held.workflow.mts',
+  `import { existsSync } from 'node:fs';
+import { setTimeout as delay } from 'node:timers/promises';
+import { defineWorkflow, z } from ${dist};
+export default defineWorkflow({ name: 'held', version: '1', input: z.object({ gate: z.string() }),
+  output: z.string(),
+  async run(ctx, input) {
+    return ctx.step('gate', { input: input.gate, schema: z.string(), run: async ({ signal }) => {
+      while (!existsSync(input.gate)) { signal.throwIfAborted(); await delay(50); }
+      return 'released';
+    } });
+  } });`,
+);
 const hanging = workflowFile(
   'hanging.workflow.mts',
   `import { defineWorkflow, z } from ${dist};
@@ -172,7 +186,7 @@ try {
   assert.equal(existsSync(join(stateDir, 'broken')), false);
 
   // 4. A usage refusal by the runner comes back the same way.
-  const usage = documentOf(start(echo, '--run-id', 'usage', '--kill-grace-ms', '0'), 2);
+  const usage = documentOf(start(echo, '--run-id', 'usage', '--max-agents', '0'), 2);
   assert.equal(usage.error.code, 'usage.flag');
   assert.equal(usage.runId, null);
   assert.equal(usage.launch.exitCode, 2);
@@ -224,7 +238,81 @@ try {
   assert.equal(timedOut.runId, null);
   assert.equal(alive(timedOut.launch.pid), false);
 
-  console.log('workflow start: readiness, failures, survival, stdin and timeout passed');
+  // 9. A detached resume of an interrupted run returns once its new runner records an execution.
+  const gate = join(root, 'held-gate');
+  const held1 = documentOf(
+    start(held, '--run-id', 'resumed', '--input', JSON.stringify({ gate })),
+    0,
+  );
+  process.kill(held1.pid, 'SIGTERM');
+  await gone(held1.pid);
+  const suspended = inspectSummary('resumed');
+  assert.equal(suspended.status, 0, suspended.stdout || suspended.stderr);
+  assert.equal(JSON.parse(suspended.stdout).status, 'suspended');
+  const executionsOf = (runId) =>
+    documentOf(cli(['inspect', runId, '--state-dir', stateDir, '--json']), 0).executions;
+  const before1 = executionsOf('resumed');
+  const resumed = documentOf(start('--resume', '--run-id', 'resumed'), 0);
+  assert.equal(resumed.kind, 'workflow.start.result');
+  assert.equal(resumed.runId, 'resumed');
+  assert.notEqual(resumed.pid, held1.pid);
+  assert.equal(resumed.log, join(stateDir, 'resumed', 'launch', '2.log'));
+  assert.ok(existsSync(resumed.log));
+  assert.ok(existsSync(join(stateDir, 'resumed', 'launch', '1.log')));
+  assert.ok(existsSync(join(stateDir, 'resumed', 'launch', '1.result.json')));
+  const after1 = executionsOf('resumed');
+  assert.equal(after1.length, before1.length + 1);
+  assert.equal(after1.at(-1).pid, resumed.pid);
+
+  // 10. A second resume while that runner holds the run is refused, never reported as started.
+  const contended = documentOf(start('--resume', '--run-id', 'resumed'), 3);
+  assert.equal(contended.error.code, 'run.locked');
+  assert.equal(contended.runId, 'resumed');
+  assert.ok(alive(resumed.pid), 'the refused resume must not stop the owner');
+
+  // 11. Releasing the gate completes the resumed run; resuming the completed run reports it.
+  writeFileSync(gate, '');
+  await gone(resumed.pid);
+  assert.equal(JSON.parse(inspectSummary('resumed').stdout).status, 'completed');
+  const replayed = documentOf(start('--resume', '--run-id', 'resumed'), 0);
+  assert.equal(replayed.status, 'completed');
+  await gone(replayed.pid);
+
+  // 12. A missing run or a missing --run-id is refused before anything is launched.
+  const missing = documentOf(start('--resume', '--run-id', 'unknown'), 3);
+  assert.equal(missing.error.code, 'run.not_found');
+  assert.equal(missing.launch, undefined);
+  assert.equal(existsSync(join(stateDir, 'unknown')), false);
+  const noRunId = documentOf(start('--resume'), 2);
+  assert.equal(noRunId.error.code, 'usage.resume_requires_run_id');
+
+  // 13. Rehearsal and --full stay foreground-only: a usage error naming the execute command.
+  for (const flag of ['--dry-run', '--full']) {
+    const refused = documentOf(
+      start(echo, '--run-id', 'rehearsal', flag, '--start-timeout', '5s'),
+      2,
+    );
+    assert.equal(refused.error.code, 'usage.flag');
+    assert.match(refused.error.message, /workflow execute in the foreground/u);
+    assert.deepEqual(refused.next[0].argv, [
+      process.execPath,
+      cliPath,
+      'workflow',
+      'execute',
+      echo,
+      '--run-id',
+      'rehearsal',
+      flag,
+      '--state-dir',
+      stateDir,
+      '--json',
+    ]);
+    assert.equal(existsSync(join(stateDir, 'rehearsal')), false);
+  }
+
+  console.log(
+    'workflow start: readiness, failures, survival, stdin, timeout, resume and refusals passed',
+  );
 } finally {
   for (const pid of runners)
     await gone(pid).catch(() => {

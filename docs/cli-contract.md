@@ -494,12 +494,20 @@ imports, never quiet-choir's own sources or `node_modules`.
 ## Workflow start
 
 `workflow start FILE [execute flags] [--start-timeout DURATION] [--json]` launches
-`workflow execute` as a detached runner and returns once the run's record exists. It accepts
-execute's flags except `--resume`, `--kill-orphans`, `--accept-code-change`, `--dry-run`,
-`--stub-steps` and `--full`, which do not create a new persisted run. The run ID is generated when
-`--run-id` is absent and the state directory is resolved as for execute, both before the runner
-starts; start passes the rest of its argv through unchanged, appends `--run-id` and `--state-dir`
-when absent, and always appends `--json`. The runner is
+`workflow execute` as a detached runner and returns once the run's record exists.
+`workflow start --resume --run-id ID [FILE] [execute flags]` resumes an existing run the same way
+(FILE is optional, as for execute). Start accepts execute's flags, including `--resume`,
+`--kill-orphans` and `--accept-code-change`, except `--dry-run`, `--stub-steps` and `--full`. Those
+three are refused with `usage.flag` (exit 2) before anything is read or launched. A dry run removes
+its state, so no record remains for a detached runner to own; `--stub-steps` applies only to a dry
+run; and `--full` only shapes execute's foreground result. The refusal's message gives the reason,
+and `next[0].argv` is the launcher-correct foreground `workflow execute` command with start's own
+arguments as given, minus `--start-timeout` and its value; for `--full` the message also names
+`workflow inspect RUN --json --full`. `--resume` without `--run-id` is refused with
+`usage.resume_requires_run_id` and a missing FILE without `--resume` with `usage.flag`, both before
+spawning. The run ID is generated when `--run-id` is absent and the state directory is resolved as
+for execute, both before the runner starts; start passes the rest of its argv through unchanged,
+appends `--run-id` and `--state-dir` when absent, and always appends `--json`. The runner is
 `[node, realpath(bin/run.js), "workflow", "execute", …]` (development mode keeps the tsx loader
 flags), never a PATH lookup, in its own session with stdin from `/dev/null`. Its stdout and stderr
 go to `<stateDir>/<runId>/launch/<n>.result.json` and `<n>.log`, created exclusively for the
@@ -511,7 +519,21 @@ flight; a failed write changes nothing else.
 Readiness: start polls every 50 ms. While the runner lives, start succeeds once the record is
 readable and the run lock's owner is the runner's PID; another process's lock does not count. After
 the runner exits, a readable record counts when its document is a success (a fast completion or
-suspension) or a failure other than `run.exists` and `run.locked`. Success (exit 0) is
+suspension) or a failure other than `run.exists` and `run.locked`.
+
+Resume readiness ([ADR 0056](decisions/0056-detached-resume.md)): the record exists before the
+runner starts, and the runner takes the lock before it refuses an incompatible or changed run, so
+neither counts. Before spawning, start reads the run's last execution number as a baseline. While
+the runner lives, start succeeds once the record holds an execution numbered above the baseline
+whose `pid` is the runner's (saved when the body starts). After the runner exits with a usable
+document, such an execution counts whatever the document says, and so does a success document with a
+readable record (a completed run, whose resume returns the stored output without a new execution).
+Any other document is reported with the runner's own code and the run's `runId`, for example
+`run.locked`, `run.orphans`, `run.incompatible` or `run.input_changed`. `--start-timeout` also
+covers the runner's `--kill-orphans` recovery of the primary lock and the `--accept-code-change`
+preflight. A dead owner's legacy guard (`<runId>.json.lock`) is checked by start itself before it
+spawns, so with `--kill-orphans` start stops its identity-confirmed children there, outside
+`--start-timeout`, and without the flag it refuses with `run.orphans`. Success (exit 0) is
 
 ```json
 {
@@ -535,8 +557,9 @@ suspension) or a failure other than `run.exists` and `run.locked`. Success (exit
 
 `status` is the saved status when start returned: `running`, or `completed`, `failed` or `suspended`
 when the runner already finished. `next` holds `inspect --json --summary` and `inspect --watch`
-entries. The text form prints `Started run ID (runner PID n, status s).` with `Log:`, `Result:` and
-`Next:` lines. The runner's own exit and document stay in the result file.
+entries. The text form prints `Started run ID (runner PID n, status s).` (for a resume,
+`Resumed run ID …`) with `Log:`, `Result:` and `Next:` lines. The runner's own exit and document
+stay in the result file.
 
 Failures use the ordinary `workflow.error` document with an added `launch` field
 `{runId, pid, log, result, exitCode, signal}`: the run ID passed to the runner, its PID (null when
@@ -545,21 +568,26 @@ failure before the record exists, such as `load.typecheck` (exit 4) or a `usage.
 carries the runner's error, diagnostics and `next`, the exit code of that error, and top-level
 `runId: null`, so no run is reported as started. Top-level `runId` is set only when a record is
 readable. An existing run (`run.json` or a legacy flat checkpoint) is refused with `run.exists`
-(exit 3) before anything is launched, without `launch`. Start checks for the run and creates its
+(exit 3) before anything is launched, without `launch`. With `--resume` the check is inverted: a
+missing run is refused with `run.not_found` (exit 3, with `readRun`'s candidates and inspect
+entries), without `launch` and without creating `<runId>/`, and an existing run's launch files take
+the next free `n`, so earlier launches' evidence is kept. Start checks for the run and creates its
 launch files while holding the run's legacy guard, so a held guard (for example a `workflow rm` of
-that ID still in progress) is refused with `run.locked` (exit 3), also without `launch`. Without an
-owned record within `--start-timeout` (default `60s`), start sends SIGTERM to the runner's process
-group, waits `--kill-grace-ms` (default 3000) plus 2 s for it to save, sends SIGKILL if needed, and
-fails with `start.timeout` (exit 124). A runner that exits without a record or a readable document
-is `start.exited` (exit 70). A first signal to start stops the runner the same way and reports
-`workflow.interrupted` (exit 130); a second one kills it at once. A runner that had saved a record
-leaves a resumable suspension, reported with its `runId` and a resume entry in `next`. The launch
-directory of a pre-record failure has no `run.json`, so `inspect` reports `run.not_found`; a retry
-with the same ID uses the next `n`. Once its runner has exited, `workflow list` reports it in
-`leftoverLaunches` and `workflow rm ID` removes it
+that ID still in progress, or a live runner of the run being resumed) is refused with `run.locked`
+(exit 3), also without `launch`; for a resume the failure carries the run's `runId`. Without an
+owned record (for a resume, an execution recorded by the runner) within `--start-timeout` (default
+`60s`), start sends SIGTERM to the runner's process group, waits `--kill-grace-ms` (default 3000;
+validated as for execute, so a bad value is `usage.flag` before anything is launched) plus 2 s for
+it to save, sends SIGKILL if needed, and fails with `start.timeout` (exit 124). A runner that exits
+without a record or a readable document is `start.exited` (exit 70). A first signal to start stops
+the runner the same way and reports `workflow.interrupted` (exit 130); a second one kills it at
+once. A runner that had saved a record leaves a resumable suspension, reported with its `runId` and
+a resume entry in `next`. The launch directory of a pre-record failure has no `run.json`, so
+`inspect` reports `run.not_found`; a retry with the same ID uses the next `n`. Once its runner has
+exited, `workflow list` reports it in `leftoverLaunches` and `workflow rm ID` removes it
 ([ADR 0055](decisions/0055-remove-leftover-launch-directories.md)). See
-[ADR 0036](decisions/0036-detached-start.md). Detached sessions are POSIX behaviour; Windows is not
-covered.
+[ADR 0036](decisions/0036-detached-start.md) and [ADR 0056](decisions/0056-detached-resume.md).
+Detached sessions are POSIX behaviour; Windows is not covered.
 
 ## Event stream
 

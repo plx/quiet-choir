@@ -2,6 +2,16 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- Detached resume (addition; no record format, `schemaRevision` or step identity change):
+  `workflow start --resume --run-id ID [FILE]` resumes an existing run detached, with
+  `--kill-orphans` and `--accept-code-change` as for execute. It returns once the new runner has
+  recorded its own execution in the record (or returned a completed run's stored output), and
+  reports a refusal by the runner (`run.locked`, `run.orphans`, `run.incompatible`, …) with its own
+  code and the run's ID. A missing run is `run.not_found` and a missing `--run-id` is
+  `usage.resume_requires_run_id`, both before anything is launched; launch numbering continues, so
+  earlier launch evidence is kept. `--dry-run`, `--stub-steps` and `--full` stay refused, now with
+  `usage.flag` and a `next` entry for the foreground `workflow execute` command instead of oclif's
+  unknown-flag error (#262, ADR 0056).
 - Leftover launch directories (addition; no record format, `schemaRevision` or step identity
   change): `workflow start` now records its spawned runner in `launch/<n>.runner.json`
   (`{pid, host, osStartTime}`, 0600) as additive launch evidence. The record-less `<runId>/launch/`
