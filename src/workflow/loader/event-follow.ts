@@ -1,6 +1,7 @@
 import type { JsonValue } from '../runtime/model.js';
 import type { RunEvent } from '../runtime/observability-model.js';
 import { windowSuspensionMessage } from '../runtime/rate-limit.js';
+import { stepEventError } from '../runtime/step-event-error.js';
 import type { AttemptRecord, RunRecord, StepRecord } from '../runtime/record.js';
 import { eventMessage, formatEventFields, type EventLineFields } from './event-line.js';
 
@@ -165,6 +166,7 @@ function stepCandidates(record: RunRecord, id: string, step: StepRecord): Candid
           ev: settled ? 'step.settled' : 'step.failed',
           attempt: attempt.attempt,
           ms: attempt.durationMs ?? undefined,
+          msg: stepEventError(attempt.error),
         },
       });
     }
@@ -192,6 +194,7 @@ function stepCandidates(record: RunRecord, id: string, step: StepRecord): Candid
           ev,
           attempt: step.attempts,
           ms: step.durationMs ?? undefined,
+          msg: ev === 'step.completed' ? undefined : stepEventError(step.error),
         },
       });
   }
@@ -222,7 +225,7 @@ function stepCandidates(record: RunRecord, id: string, step: StepRecord): Candid
  * workflow. Sources: every `record.events` entry (run lifecycle, phase, log, and `wait.tolerated`
  * for each tolerated poll error); every settled step
  * attempt (`step.completed`, `step.failed`, and `step.settled` for the final attempt of a settled
- * failure); and every question that notified (`wait.opened`). Fork-reused steps and cancelled or
+ * failure, the last two with the attempt's recorded error as `msg`); and every question that notified (`wait.opened`). Fork-reused steps and cancelled or
  * interrupted attempts write nothing, and fields the record cannot supply are omitted. Lines are
  * deduplicated by identity, not position, so eviction past the 500-event cap neither repeats nor
  * hides newer lines. Each call returns the lines not yet accounted for in `cursor` (null on the

@@ -257,6 +257,26 @@ export default defineConfig(
     },
   },
   {
+    // The bounded step error text carried on step.failed and step.settled events: pure, so the
+    // record follower can share it with the runner.
+    files: ['src/workflow/runtime/step-event-error.ts'],
+    rules: {
+      '@typescript-eslint/no-restricted-imports': [
+        'error',
+        {
+          patterns: [
+            {
+              group: ['node:*', ...builtinModules, './**', '../**'],
+              allowTypeImports: true,
+              message:
+                'The step event error helper must stay free of I/O and the run store: use import type only.',
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
     // Rate-limit windows: the stored shape, its validation and its formatting, shared by the stream
     // handler, the inspection summary and the text views.
     files: ['src/workflow/runtime/rate-limit.ts'],
@@ -298,7 +318,8 @@ export default defineConfig(
   {
     // The event line formatter and the record follower's derivation: no I/O, clock or store, so
     // `--events` and `workflow events` share one pure line shape. The pure rate-limit module
-    // supplies the window gate's suspension message, which the runtime's notification also uses.
+    // supplies the window gate's suspension message, which the runtime's notification also uses, and
+    // the pure step-event-error module bounds the step error text the runner also puts on events.
     files: ['src/workflow/loader/event-line.ts', 'src/workflow/loader/event-follow.ts'],
     rules: {
       '@typescript-eslint/no-restricted-imports': [
@@ -309,14 +330,15 @@ export default defineConfig(
               group: ['node:*', ...builtinModules],
               allowTypeImports: true,
               message:
-                'Event line modules must stay free of I/O: import values only from ./event-line.js and the pure ../runtime/rate-limit.js; everything else must be import type.',
+                'Event line modules must stay free of I/O: import values only from ./event-line.js and the pure ../runtime/rate-limit.js and ../runtime/step-event-error.js; everything else must be import type.',
             },
             {
               // A regex, because a gitignore group cannot re-include a file below ../runtime/.
-              regex: '^(?:\\./(?!event-line\\.js$)|\\.\\./(?!runtime/rate-limit\\.js$))',
+              regex:
+                '^(?:\\./(?!event-line\\.js$)|\\.\\./(?!runtime/(?:rate-limit|step-event-error)\\.js$))',
               allowTypeImports: true,
               message:
-                'Event line modules must stay free of I/O: import values only from ./event-line.js and the pure ../runtime/rate-limit.js; everything else must be import type.',
+                'Event line modules must stay free of I/O: import values only from ./event-line.js and the pure ../runtime/rate-limit.js and ../runtime/step-event-error.js; everything else must be import type.',
             },
           ],
         },
