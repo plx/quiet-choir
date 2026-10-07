@@ -51,6 +51,8 @@ describe('stepEventError', () => {
     ['    at async foo (file.js:1:1)'],
     ['    at async file:///tmp/fail.mjs:12:3'],
     ['    at new file:///tmp/fail.mjs:12:3'],
+    ['    at /tmp/my project/worker.js:1:8'],
+    ['    at async /tmp/my project/worker.js:1:8'],
     ['    at new Foo (file.js:1:1)'],
     ['    at Array.map (native)'],
     ['    at Object.<anonymous> (<anonymous>)'],
@@ -74,6 +76,7 @@ describe('stepEventError', () => {
     ['open parens', `failed\n    at ${'('.repeat(65536)}`],
     ['nested parens with locations', `failed\n    at ${'f (a:1:1 '.repeat(20000)}x)`],
     ['spaces before a mismatch', `failed\n    at ${' '.repeat(65536)}x`],
+    ['spaced run then colon pairs', `failed\n    at ${'a b '.repeat(20000)}${':1'.repeat(40000)}x`],
     ['colons and digits', `failed\n    at ${':1'.repeat(40000)}x`],
   ])('scans adversarial frame-like text in linear time (%s)', (_name, text) => {
     const started = performance.now();

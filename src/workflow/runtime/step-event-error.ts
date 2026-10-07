@@ -6,7 +6,6 @@ export const STEP_EVENT_ERROR_MAX_CHARS = 500;
 
 const FRAME_PREFIX = /^[ \t]+at /;
 const LOCATION_END = /:\d+:\d+$/;
-const BARE_LOCATION = /^\S+:\d+:\d+$/;
 
 /**
  * Whether one line (without its `\n`) is a V8 stack-frame line. Each test is a linear, anchored
@@ -29,7 +28,7 @@ function isV8FrameLine(line: string): boolean {
     : rest.startsWith('new ')
       ? rest.slice('new '.length)
       : rest;
-  return BARE_LOCATION.test(bare);
+  return bare.length > 0 && !/^\s/.test(bare) && LOCATION_END.test(bare);
 }
 
 /** The text before the first V8 stack-frame line, or all of it when there is none. */
@@ -48,7 +47,7 @@ function beforeFirstFrame(text: string): string {
 /**
  * The bounded, single-line form of a step's saved error text for event consumers: everything from
  * the first V8 stack-frame line onward is dropped (an indented `at fn (file:LINE:COL)`,
- * `at file:LINE:COL`, `at fn (native)` or `at fn (<anonymous>)` line, with an optional `async` or
+ * `at file:LINE:COL` (the path may contain spaces), `at fn (native)` or `at fn (<anonymous>)` line, with an optional `async` or
  * `new`; an ordinary line that merely starts with `at `, such as `at least one is required`, is
  * message text and stays), every whitespace run becomes one space, the result is trimmed, and text longer than {@link STEP_EVENT_ERROR_MAX_CHARS} code
  * points is cut at a code point to exactly that many including a trailing `…`. Returns undefined
