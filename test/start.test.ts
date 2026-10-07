@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs';
-import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, open, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { hostname, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -357,6 +357,18 @@ describe('StartWorkflowExecutor', () => {
     expect(failure.launch?.log).toBe(join(launch, '2.log'));
     expect(await readFile(join(launch, '1.runner.json'), 'utf8')).toBe('kept');
     expect(existsSync(join(launch, '2.runner.json'))).toBe(true);
+  });
+
+  it('removes the partial runner record when writing it fails', async () => {
+    const launch = join(stateDir, 'r1', 'launch');
+    await mkdir(launch, { recursive: true });
+    const failingOpen = (async (...args: Parameters<typeof open>) => {
+      const handle = await open(...args);
+      handle.writeFile = () => Promise.reject(new Error('disk full'));
+      return handle;
+    }) as typeof open;
+    expect(await writeRunnerIdentity(launch, 1, process.pid, failingOpen)).toBe(false);
+    expect(existsSync(join(launch, '1.runner.json'))).toBe(false);
   });
 
   it('skips a slot whose result file already exists', async () => {

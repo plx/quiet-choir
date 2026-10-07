@@ -1,5 +1,5 @@
 import type { Dirent, Stats } from 'node:fs';
-import { lstat, open, readdir, readFile } from 'node:fs/promises';
+import { lstat, open, readdir, readFile, rm } from 'node:fs/promises';
 import { hostname } from 'node:os';
 import { join, resolve } from 'node:path';
 import { processIdentity } from '../../processes/identity.js';
@@ -23,23 +23,30 @@ import { runBytes, runSiblingPaths } from './run-size.js';
  * Record the runner that `workflow start` just spawned as `launch/<n>.runner.json` (0600, created
  * exclusively): its PID, this host and its OS birth identity. Best effort: a failure returns false
  * and changes nothing else, since a launch without a runner record is judged by its age (ADR 0055).
+ * A failed write removes the partial record this call created, so it never reads as a runner record;
+ * a record that already existed is never touched. `openFile` is a test seam replacing `open`.
  * @internal
  */
 export async function writeRunnerIdentity(
   launchDir: string,
   n: number,
   pid: number,
+  openFile: typeof open = open,
 ): Promise<boolean> {
+  const path = join(launchDir, runnerFileName(n));
+  let created = false;
   try {
     const identity: RunnerIdentity = {
       pid,
       host: hostname(),
       osStartTime: processIdentity(pid)?.start ?? null,
     };
-    await using handle = await open(join(launchDir, runnerFileName(n)), 'wx', 0o600);
+    await using handle = await openFile(path, 'wx', 0o600);
+    created = true;
     await handle.writeFile(`${JSON.stringify(identity)}\n`);
     return true;
   } catch {
+    if (created) await rm(path, { force: true }).catch(() => undefined);
     return false;
   }
 }
