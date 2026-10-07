@@ -227,3 +227,16 @@ first-open attempt, but a crash can lose delivery; lifecycle hooks can repeat ac
 local example is --notify-command 'cat >> /absolute/events.jsonl'. A user may configure a desktop
 notifier or HTTP client; no messaging integration is built in. Business notifications remain
 explicit idempotent workflow steps. Polls of replies must check the expected author's authority.
+
+For a filterable stream of run, step-outcome, wait, phase and log events (agent progress, child,
+`step.started` and `step.cancelled` events are not written), pass `--events FILE` on execute, start,
+resume, tick or `answer --resume` instead of a hook. Each event is one JSON line of at most 512
+bytes naming its run; no command runs. The file is created owner-only but an existing file keeps its
+mode, so use a new path or one under an owner-only directory. The flag is not saved with the run, so
+repeat it on every resume, tick and `answer --resume`. `--events -` writes to stdout, but not on
+`start` and not with `--json`. See
+[follow the event stream](operating-runs.md#follow-the-event-stream).
+
+<!-- skills-difference: claude-host -->
+
+<!-- /skills-difference: claude-host -->
