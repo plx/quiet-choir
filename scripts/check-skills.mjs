@@ -87,6 +87,25 @@ function commandFrontmatter(text, file) {
 }
 /** Claude Code substitutes these in a command body, fences included, before the shell sees them. */
 const commandSubstitution = /\$(?:ARGUMENTS\b|\d|\{\d)/u;
+/**
+ * Claude Code runs a `!` followed by a backtick span, and a fence whose info string starts with
+ * `!`, when it loads a command or skill, before the model reads the file. It finds them with a text
+ * match over the whole body and respects neither fences nor comments, so no context is exempt:
+ * prose, inline code, shell fences, HTML comments and frontmatter are all rejected.
+ */
+function checkPreExecution(text, file) {
+  text.split('\n').forEach((line, index) => {
+    requireThat(
+      !line.includes('!`'),
+      `${file}:${String(index + 1)}: Claude Code runs !\`...\` at load time, before the model reads the file; put the command in a shell fence for the model to run, with exported QC_* variables as commands/run.md does`,
+    );
+  });
+  for (const fence of fences(text, file))
+    requireThat(
+      !fence.language.startsWith('!'),
+      `${file}:${String(fence.start + 1)}: Claude Code runs a fence whose info string starts with ! at load time, before the model reads the file; use a shell fence for the model to run, with exported QC_* variables as commands/run.md does`,
+    );
+}
 /** Reject a shell fence line that starts with a bare launcher the reader may not have installed. */
 function checkShellFence(fence, file) {
   if (!shellLanguages.has(fence.language) || fence.installed) return;
@@ -321,7 +340,10 @@ export async function checkSkills(root = repository, { compile = true } = {}) {
         continue;
       }
       const text = await readFile(absolute, 'utf8');
-      if (file === 'SKILL.md') frontmatter(text, absolute);
+      if (file === 'SKILL.md') {
+        frontmatter(text, absolute);
+        checkPreExecution(text, absolute);
+      }
       links += await checkLinks(absolute, text, packageRoot);
       if (file === 'references/patterns.md') checkPatternsIndex(text, absolute);
       tree.set(file, normalizeDifferences(text, file, rules, seen));
@@ -365,6 +387,7 @@ export async function checkSkills(root = repository, { compile = true } = {}) {
       requireThat(file.endsWith('.md'), `${absolute}: commands must be Markdown files`);
       const text = await readFile(absolute, 'utf8');
       commandFrontmatter(text, absolute);
+      checkPreExecution(text, absolute);
       links += await checkLinks(absolute, text, packageRoot);
       commands++;
       for (const fence of fences(text, absolute)) {
