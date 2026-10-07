@@ -5,6 +5,7 @@ import {
   formatArgv,
   maxAnswerEntries,
   queuedNextCommands,
+  relaunchNextCommands,
   runNextCommands,
   type FailureNextContext,
 } from '../src/workflow/loader/next-commands.js';
@@ -560,6 +561,85 @@ describe('queuedNextCommands', () => {
 
   it('offers nothing for an embedded run without launch metadata', () => {
     expect(queuedNextCommands(run({ launch: undefined }), stateDir, launcher)).toEqual([]);
+  });
+});
+
+describe('relaunchNextCommands', () => {
+  const unlock = ['unlock', 'r1', '--state-dir', stateDir];
+  const entry = (argv: unknown, why: unknown = 'Release.') => ({ why, argv });
+
+  it('rewrites a runner-form entry behind the given launcher', () => {
+    const next = [entry(['/x/node', '/abs/bin/run.js', 'workflow', ...unlock])];
+    expect(relaunchNextCommands(next, ['quiet-choir'])).toEqual([
+      { why: 'Release.', argv: ['quiet-choir', 'workflow', ...unlock] },
+    ]);
+    expect(relaunchNextCommands(next, launcher)).toEqual([
+      { why: 'Release.', argv: [...prefix, ...unlock] },
+    ]);
+  });
+
+  it('rewrites a development-form entry with loader flags and an installed-form entry', () => {
+    const dev = ['/x/node', '--import', 'tsx', '/repo/bin/run.ts', 'workflow', ...unlock];
+    const installed = ['quiet-choir', 'workflow', ...unlock];
+    expect(relaunchNextCommands([entry(dev), entry(installed)], launcher)).toEqual([
+      { why: 'Release.', argv: [...prefix, ...unlock] },
+      { why: 'Release.', argv: [...prefix, ...unlock] },
+    ]);
+  });
+
+  it('falls back to the default launcher when none is given', () => {
+    const next = [entry(['/x/node', '/abs/bin/run.js', 'workflow', ...unlock])];
+    expect(relaunchNextCommands(next, undefined)).toEqual([
+      { why: 'Release.', argv: ['quiet-choir', 'workflow', ...unlock] },
+    ]);
+    expect(relaunchNextCommands(next, [])).toEqual(relaunchNextCommands(next, undefined));
+  });
+
+  it('keeps later words equal to workflow', () => {
+    const argv = [
+      '/x/node',
+      '/abs/bin/run.js',
+      'workflow',
+      'inspect',
+      'workflow',
+      '--state-dir',
+      'workflow',
+    ];
+    expect(relaunchNextCommands([entry(argv)], launcher)).toEqual([
+      { why: 'Release.', argv: [...prefix, 'inspect', 'workflow', '--state-dir', 'workflow'] },
+    ]);
+  });
+
+  it('strips extra keys', () => {
+    const next = [{ ...entry(['n', 'workflow', 'x']), extra: true }];
+    expect(relaunchNextCommands(next, launcher)).toEqual([
+      { why: 'Release.', argv: [...prefix, 'x'] },
+    ]);
+  });
+
+  it.each([
+    ['an object', { argv: ['n', 'workflow', 'x'] }],
+    ['a string', 'workflow'],
+    ['null', null],
+    ['undefined', undefined],
+  ])('returns nothing for %s instead of a list', (_name, value) => {
+    expect(relaunchNextCommands(value, launcher)).toEqual([]);
+  });
+
+  it.each([
+    ['a non-object element', 'text'],
+    ['a null element', null],
+    ['an array element', [['n', 'workflow', 'x']]],
+    ['a missing why', { argv: ['n', 'workflow', 'x'] }],
+    ['a non-string why', entry(['n', 'workflow', 'x'], 3)],
+    ['an argv that is not a list', entry('n workflow x')],
+    ['an argv with a non-string word', entry(['n', 'workflow', 7])],
+    ['an empty argv', entry([])],
+    ['an argv without a workflow word', entry(['n', 'inspect', 'x'])],
+    ['workflow as the first word', entry(['workflow', 'x'])],
+    ['workflow as the last word', entry(['n', 'workflow'])],
+  ])('drops %s', (_name, element) => {
+    expect(relaunchNextCommands([element], launcher)).toEqual([]);
   });
 });
 

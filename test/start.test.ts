@@ -211,6 +211,78 @@ describe('StartWorkflowExecutor', () => {
     expect(existsSync(join(stateDir, 'r1', 'run.json'))).toBe(false);
   });
 
+  describe('propagated next entries', () => {
+    const runnerLauncher = [process.execPath, '/abs/bin/run.js'];
+    const entry = (...args: string[]) => ({
+      why: 'Release the lock.',
+      argv: [...runnerLauncher, 'workflow', ...args],
+    });
+
+    function refusal(code: string, next: unknown, details: unknown = null): string {
+      return JSON.stringify({
+        kind: 'workflow.error',
+        ok: false,
+        exitCode: 3,
+        error: { code, message: `Refused: ${code}.`, stepId: null, details },
+        next,
+      });
+    }
+
+    async function propagated(document: string, resume = false): Promise<WorkflowFailure> {
+      const script = `process.stdout.write(${JSON.stringify(document)} + '\\n'); process.exit(3);`;
+      return failed(
+        await executor({ commandLauncher: ['quiet-choir'] }).execute(plan(script, { resume })),
+      );
+    }
+
+    it('rebuilds a run.locked refusal behind start’s launcher and leaves details verbatim', async () => {
+      const args = ['unlock', 'r1', '--state-dir', stateDir];
+      const details = { next: [entry(...args)] };
+      const failure = await propagated(refusal('run.locked', [entry(...args)], details));
+      expect(failure.code).toBe('run.locked');
+      expect(failure.next).toEqual([
+        { why: 'Release the lock.', argv: ['quiet-choir', 'workflow', ...args] },
+      ]);
+      expect(failure.details).toEqual(details);
+    });
+
+    it('rebuilds a resume refusal the same way', async () => {
+      await completedRun();
+      const resumeEntry = {
+        why: 'Resume with the entrypoint the run was launched from.',
+        argv: [...runnerLauncher, 'workflow', 'resume', 'r1', '--state-dir', stateDir],
+      };
+      const failure = await propagated(refusal('run.incompatible', [resumeEntry]), true);
+      expect(failure.code).toBe('run.incompatible');
+      expect(failure.next).toEqual([
+        {
+          why: resumeEntry.why,
+          argv: ['quiet-choir', 'workflow', 'resume', 'r1', '--state-dir', stateDir],
+        },
+      ]);
+    });
+
+    it('propagates only the well-formed entries of a mixed next', async () => {
+      const failure = await propagated(
+        refusal('run.locked', [
+          entry('unlock', 'r1'),
+          { why: 'No argv.' },
+          { why: 1, argv: ['quiet-choir', 'workflow', 'x'] },
+          { why: 'Not a runner command.', argv: ['ls'] },
+          'text',
+          null,
+        ]),
+      );
+      expect(failure.next).toEqual([
+        { why: 'Release the lock.', argv: ['quiet-choir', 'workflow', 'unlock', 'r1'] },
+      ]);
+    });
+
+    it('propagates no entries for a next that is not a list', async () => {
+      expect((await propagated(refusal('run.locked', { argv: ['x'] }))).next).toEqual([]);
+    });
+  });
+
   it('leaves a leftover that list reports and rm removes once the runner has exited', async () => {
     const script = `process.stdout.write(${JSON.stringify(typecheckFailure)} + '\\n'); console.error('compiler output'); process.exit(4);`;
     const failure = failed(await executor().execute(plan(script)));

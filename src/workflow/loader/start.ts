@@ -18,7 +18,7 @@ import { missingRunError } from '../runtime/read-required-run.js';
 import { inspectRunOwnership, readRun, type RunRecord } from '../runtime/store.js';
 import type { DurabilityDiagnostic, TypecheckDiagnostic } from '../typecheck/model.js';
 import { workflowFailure, type StartLaunchEvidence, type WorkflowFailure } from './failure.js';
-import { failureNextCommands, type NextCommand } from './next-commands.js';
+import { failureNextCommands, relaunchNextCommands, type NextCommand } from './next-commands.js';
 import { decideStart, type StartChildDocument } from './start-readiness.js';
 
 /**
@@ -631,7 +631,6 @@ export class StartWorkflowExecutor implements Executor<
         const error = record(document?.['error']);
         if (decision.reason === 'document' && error && isCliErrorCode(error['code'])) {
           const diagnostics = document?.['diagnostics'];
-          const next = document?.['next'];
           return failure(
             error['code'],
             typeof error['message'] === 'string' ? error['message'] : `Run ${runId} did not start.`,
@@ -642,7 +641,7 @@ export class StartWorkflowExecutor implements Executor<
               diagnostics: Array.isArray(diagnostics)
                 ? (diagnostics as (TypecheckDiagnostic | DurabilityDiagnostic)[])
                 : [],
-              next: Array.isArray(next) ? (next as NextCommand[]) : [],
+              next: relaunchNextCommands(document?.['next'], this.#options.commandLauncher),
             },
           );
         }
