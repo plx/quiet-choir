@@ -12,7 +12,7 @@ import { legacyRunPath, prepareStateDirectory, runDirectory } from '../runtime/p
 import { runnerFileName } from '../runtime/launch-leftover-decision.js';
 import { writeRunnerIdentity } from '../runtime/launch-leftovers.js';
 import { withRunGuard } from '../runtime/lock.js';
-import { isCliErrorCode, RunRefusedError } from '../runtime/run-errors.js';
+import { isCliErrorCode, RunInterruptedError, RunRefusedError } from '../runtime/run-errors.js';
 import { createStorageDirectory } from '../runtime/storage-io.js';
 import { missingRunError } from '../runtime/read-required-run.js';
 import { inspectRunOwnership, readRun, type RunRecord } from '../runtime/store.js';
@@ -269,6 +269,7 @@ export async function prepareStartLaunch(
     Partial<Pick<StartWorkflowPlan, 'killOrphans' | 'killGraceMs'>>,
   signal?: AbortSignal,
   commandLauncher?: CommandLauncher,
+  processSupervisor?: ProcessSupervisor,
 ): Promise<{ readonly ok: true; readonly files: LaunchFiles } | WorkflowFailure> {
   const { runId, stateDir } = plan;
   // Fast path outside the guard: a live run's writer holds the guard, and its ID is simply taken.
@@ -308,6 +309,8 @@ export async function prepareStartLaunch(
             }
           : {}),
         ...(signal === undefined ? {} : { signal }),
+        // Recovered legacy children stay tracked, so a second signal's force kill reaches them.
+        ...(processSupervisor === undefined ? {} : { processSupervisor }),
       },
     );
   } catch (error) {
@@ -336,6 +339,11 @@ export async function prepareStartLaunch(
           }),
         },
       );
+    // An interrupt during guard recovery is an interruption, not a storage failure.
+    if (signal?.aborted || error instanceof RunInterruptedError)
+      return workflowFailure('workflow.interrupted', 'Workflow start interrupted before launch.', {
+        stateDir,
+      });
     return workflowFailure(
       'workflow.storage',
       `Could not take or release the legacy guard of run ${runId}: ${error instanceof Error ? error.message : String(error)}`,
@@ -421,7 +429,12 @@ export class StartWorkflowExecutor implements Executor<
     const signal = this.#options.signal;
     const observe = this.#options.observeRun ?? observeStartedRun;
     const resume = plan.resume === true;
-    const prepared = await prepareStartLaunch(plan, signal, this.#options.commandLauncher);
+    const prepared = await prepareStartLaunch(
+      plan,
+      signal,
+      this.#options.commandLauncher,
+      this.#options.processSupervisor,
+    );
     if (!prepared.ok) return prepared;
     // A resume counts only an execution numbered above this one, so an old execution by a reused
     // PID never reads as the new runner's.

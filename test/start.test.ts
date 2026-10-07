@@ -7,8 +7,15 @@ import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { defineWorkflow, NodeProcessRunner, runWorkflow, z } from '../src/index.js';
+import {
+  defineWorkflow,
+  NodeProcessRunner,
+  RunInterruptedError,
+  runWorkflow,
+  z,
+} from '../src/index.js';
 import { ProcessSupervisor } from '../src/processes/supervisor.js';
+import type { HarnessProcess } from '../src/workflow/runtime/model.js';
 import { groupState, pidState, processIdentity } from '../src/processes/identity.js';
 import type { WorkflowFailure } from '../src/workflow/loader/failure.js';
 import { listRuns } from '../src/workflow/loader/inspection.js';
@@ -520,6 +527,96 @@ describe('StartWorkflowExecutor', () => {
       if ('files' in prepared) await Promise.all(prepared.files.handles.map((h) => h.close()));
       await exited;
       expect(groupState({ pid, pgid: pid })).toBe('dead');
+    },
+  );
+
+  /** A dead owner's legacy guard in `stateDir` recording one live child that ignores SIGTERM. */
+  async function legacyGuardWithStubbornChild(): Promise<{
+    pid: number;
+    exited: Promise<unknown>;
+  }> {
+    await mkdir(stateDir, { recursive: true });
+    await writeFile(join(stateDir, 'r1.json'), '{}');
+    const child = spawn(
+      process.execPath,
+      ['-e', "process.on('SIGTERM', () => {}); setInterval(() => {}, 1000)"],
+      { detached: true, stdio: 'ignore' },
+    );
+    const pid = child.pid;
+    if (pid === undefined) throw new Error('Missing fixture PID');
+    spawned.push(pid);
+    await delay(100);
+    const guard = join(stateDir, 'r1.json.lock');
+    await mkdir(join(guard, 'processes'), { recursive: true });
+    await writeFile(
+      join(guard, 'owner.json'),
+      JSON.stringify({ pid: 2_000_000_000, host: hostname(), token: 'old' }),
+    );
+    await writeFile(
+      join(guard, 'processes', `${String(pid)}.json`),
+      JSON.stringify({
+        pid,
+        pgid: pid,
+        binary: 'fake-harness',
+        cwd: root,
+        startedAt: new Date().toISOString(),
+        osStartTime: processIdentity(pid)?.start ?? null,
+        runId: 'r1',
+        stepId: 'review',
+        attempt: 1,
+        ownerToken: 'old',
+      }),
+    );
+    return { pid, exited: once(child, 'exit') };
+  }
+
+  it.skipIf(process.platform === 'win32')(
+    'tracks a recovered legacy child in the executor’s supervisor',
+    async () => {
+      const { pid, exited } = await legacyGuardWithStubbornChild();
+      const tracked: HarnessProcess[] = [];
+      class ObservedSupervisor extends ProcessSupervisor {
+        public override track(child: HarnessProcess): () => void {
+          tracked.push(child);
+          return super.track(child);
+        }
+      }
+      const result = started(
+        await executor({ processSupervisor: new ObservedSupervisor() }).execute(
+          plan(
+            `${markExecutions('running', '[{ n: 1, pid: process.pid }]', 'process.pid')} ${forever}`,
+            {
+              resume: true,
+              killOrphans: true,
+            },
+          ),
+        ),
+      );
+      await exited;
+      expect(tracked.map((child) => child.pid)).toContain(pid);
+      expect(groupState({ pid, pgid: pid })).toBe('dead');
+      expect(result.runId).toBe('r1');
+    },
+  );
+
+  it.skipIf(process.platform === 'win32')(
+    'reports workflow.interrupted when an interrupt arrives during legacy guard recovery',
+    async () => {
+      const { pid, exited } = await legacyGuardWithStubbornChild();
+      const controller = new AbortController();
+      setTimeout(() => {
+        controller.abort(new RunInterruptedError('Interrupted by SIGINT.'));
+      }, 50);
+      const failure = failed(
+        await executor({ signal: controller.signal }).execute(
+          plan(`${own} ${forever}`, { resume: true, killOrphans: true, killGraceMs: 400 }),
+        ),
+      );
+      await exited;
+      expect(failure).toMatchObject({ code: 'workflow.interrupted', stateDir });
+      expect(failure.launch).toBeUndefined();
+      expect(groupState({ pid, pgid: pid })).toBe('dead');
+      expect(existsSync(marker())).toBe(false);
     },
   );
 
