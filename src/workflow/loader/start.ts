@@ -18,7 +18,7 @@ import { missingRunError } from '../runtime/read-required-run.js';
 import { inspectRunOwnership, readRun, type RunRecord } from '../runtime/store.js';
 import type { DurabilityDiagnostic, TypecheckDiagnostic } from '../typecheck/model.js';
 import { workflowFailure, type StartLaunchEvidence, type WorkflowFailure } from './failure.js';
-import { failureNextCommands, type NextCommand } from './next-commands.js';
+import { failureNextCommands, relaunchNextCommands, type NextCommand } from './next-commands.js';
 import { decideStart, type StartChildDocument } from './start-readiness.js';
 
 /**
@@ -44,6 +44,12 @@ export interface StartWorkflowPlan extends ExecutionPlan {
   readonly cwd: string;
   /** The runner's full argv, program words first, ending with `--json` (before any `--`). */
   readonly argv: readonly string[];
+  /**
+   * The program words at the start of {@link argv} (before `workflow execute`). The runner's
+   * refusal `next` entries normally start with them, which marks where those entries' program words
+   * end when they are rebuilt behind this invocation's launcher.
+   */
+  readonly runnerLauncher?: CommandLauncher;
   /**
    * Input read from this process's stdin. It is written to `launch/<n>.input.json` and
    * `argv[argvIndex]` (the value of `--input`) is replaced with `@<that file>`, because the runner's
@@ -631,7 +637,6 @@ export class StartWorkflowExecutor implements Executor<
         const error = record(document?.['error']);
         if (decision.reason === 'document' && error && isCliErrorCode(error['code'])) {
           const diagnostics = document?.['diagnostics'];
-          const next = document?.['next'];
           return failure(
             error['code'],
             typeof error['message'] === 'string' ? error['message'] : `Run ${runId} did not start.`,
@@ -642,7 +647,11 @@ export class StartWorkflowExecutor implements Executor<
               diagnostics: Array.isArray(diagnostics)
                 ? (diagnostics as (TypecheckDiagnostic | DurabilityDiagnostic)[])
                 : [],
-              next: Array.isArray(next) ? (next as NextCommand[]) : [],
+              next: relaunchNextCommands(
+                document?.['next'],
+                this.#options.commandLauncher,
+                plan.runnerLauncher,
+              ),
             },
           );
         }

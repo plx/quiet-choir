@@ -170,6 +170,7 @@ export default class WorkflowStart extends WorkflowCommand {
       ...(flags.resume ? { resume: true } : {}),
       cwd: process.cwd(),
       argv: [...prefix, ...child.args],
+      runnerLauncher: launcher,
       ...(stdinInput === undefined ? {} : { stdinInput }),
       timeoutMs,
       killGraceMs,

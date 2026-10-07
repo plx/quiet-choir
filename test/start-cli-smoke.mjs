@@ -2,11 +2,13 @@ import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import {
   existsSync,
+  mkdirSync,
   mkdtempSync,
   readdirSync,
   readFileSync,
   rmSync,
   statSync,
+  symlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -268,6 +270,34 @@ try {
   const contended = documentOf(start('--resume', '--run-id', 'resumed'), 3);
   assert.equal(contended.error.code, 'run.locked');
   assert.equal(contended.runId, 'resumed');
+  assert.ok(alive(resumed.pid), 'the refused resume must not stop the owner');
+
+  // Behind an installed quiet-choir on PATH (a symlink to bin/run.js) the propagated refusal's next
+  // entries are rebuilt behind that launcher, though the runner itself was spawned as node + path.
+  const installed = join(root, 'installed-bin');
+  mkdirSync(installed);
+  symlinkSync(cliPath, join(installed, 'quiet-choir'));
+  const contendedInstalled = documentOf(
+    spawnSync(
+      process.execPath,
+      [
+        join(installed, 'quiet-choir'),
+        'workflow',
+        ...['start', '--resume', '--run-id', 'resumed', '--state-dir', stateDir, '--json'],
+      ],
+      {
+        cwd: root,
+        env: { ...env, PATH: `${installed}:${env.PATH}` },
+        encoding: 'utf8',
+        timeout: 120_000,
+      },
+    ),
+    3,
+  );
+  assert.equal(contendedInstalled.error.code, 'run.locked');
+  assert.ok(contendedInstalled.next.length > 0);
+  for (const entry of contendedInstalled.next)
+    assert.deepEqual(entry.argv.slice(0, 2), ['quiet-choir', 'workflow']);
   assert.ok(alive(resumed.pid), 'the refused resume must not stop the owner');
 
   // 11. Releasing the gate completes the resumed run; resuming the completed run reports it.

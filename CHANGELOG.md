@@ -2,6 +2,12 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- `workflow start` failures (fix; no record format, `schemaRevision` or step identity change): the
+  `next` entries propagated from the runner's refusal (`run.locked`, `run.orphans`,
+  `run.incompatible`, `usage.*`, …) are rebuilt behind start's own launcher, so behind an installed
+  `quiet-choir` they start `quiet-choir workflow` rather than the runner's `node /path/bin/run.js`.
+  Malformed entries are dropped. `error.message` and `error.details` stay the runner's verbatim
+  (#263).
 - Detached resume (addition; no record format, `schemaRevision` or step identity change):
   `workflow start --resume --run-id ID [FILE]` resumes an existing run detached, with
   `--kill-orphans` and `--accept-code-change` as for execute. It returns once the new runner has

@@ -145,6 +145,57 @@ function strings(value: JsonValue | undefined): string[] | undefined {
     : undefined;
 }
 
+/**
+ * The index of the `workflow` word that ends an argv's program words, or -1: the word right after
+ * the runner's own launcher words when the argv starts with exactly them, else the first exact
+ * `workflow` word (which also covers the installed `quiet-choir workflow` form). A launcher word can
+ * itself be `workflow` (the value of a Node option such as `--title` in development mode), which
+ * only the exact match handles.
+ */
+function programWordsEnd(
+  argv: readonly string[],
+  runnerLauncher: CommandLauncher | undefined,
+): number {
+  if (
+    runnerLauncher?.length &&
+    argv.length > runnerLauncher.length &&
+    runnerLauncher.every((word, index) => argv[index] === word) &&
+    argv[runnerLauncher.length] === 'workflow'
+  )
+    return runnerLauncher.length;
+  return argv.indexOf('workflow');
+}
+
+/**
+ * Rebuilds the `next` entries of a runner's result document behind this invocation's launcher.
+ * The runner builds its entries with its own launcher (an executable, optional Node loader flags
+ * and a script path, or bare `quiet-choir`). An entry's program words end at its `workflow` word:
+ * the one right after `runnerLauncher` when the entry starts with exactly those words (the words
+ * start spawned the runner with), else the first exact `workflow` word. They are replaced by
+ * `launcher` (the default launcher when it is absent or empty) and the words after `workflow` are
+ * kept. A `why` is kept as is. Anything else is dropped: a `value` that is not a list, an element
+ * that is not an object with a string `why` and an `argv` list of strings, an `argv` without
+ * program words before its `workflow` word or without a subcommand after it. Only `{why, argv}` is
+ * emitted. @internal
+ */
+export function relaunchNextCommands(
+  value: unknown,
+  launcher: CommandLauncher | undefined,
+  runnerLauncher?: CommandLauncher,
+): NextCommand[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((entry: unknown): NextCommand[] => {
+    if (entry === null || typeof entry !== 'object' || Array.isArray(entry)) return [];
+    const { why, argv } = entry as { why?: unknown; argv?: unknown };
+    if (typeof why !== 'string' || !Array.isArray(argv)) return [];
+    if (!argv.every((word): word is string => typeof word === 'string')) return [];
+    const at = programWordsEnd(argv, runnerLauncher);
+    return at >= 1 && at < argv.length - 1
+      ? [{ why, argv: workflowArgv(launcher, ...argv.slice(at + 1)) }]
+      : [];
+  });
+}
+
 /** Plain-data failure context that {@link failureNextCommands} reads. @internal */
 export interface FailureNextContext {
   readonly code: CliErrorCode;

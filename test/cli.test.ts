@@ -1591,6 +1591,7 @@ describe('workflow start adapter', () => {
         '250',
         '--json',
       ],
+      runnerLauncher: launcher,
       timeoutMs: 5000,
       killGraceMs: 250,
     });
